@@ -26,7 +26,7 @@ func ExampleRun() {
 	if err != nil {
 		panic(err)
 	}
-	if err := cluster.RemoveOSD(ctx, osd.ID); err != nil {
+	if err := osd.Remove(ctx); err != nil {
 		panic(err)
 	}
 }

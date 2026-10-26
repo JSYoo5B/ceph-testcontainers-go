@@ -329,7 +329,7 @@ func pgQueryRaw(ctx context.Context, cluster *ceph.Container, pgid string) ([]by
 // min_size, and that exactly the expected OSD containers are running.
 func secondFaultReceipt(t *testing.T, ctx context.Context, cluster *ceph.Container, phase string, stopped map[int]bool) ceph.PGState {
 	t.Helper()
-	snapshot, err := cluster.PoolPGs(ctx, "tc-paths")
+	snapshot, err := poolHandle(t, ctx, cluster, "tc-paths").PGs(ctx)
 	if err != nil || len(snapshot.PGs) != 1 || snapshot.PoolBefore.Size != 3 || snapshot.PoolAfter.Size != 3 || snapshot.PoolBefore.MinSize != 2 || snapshot.PoolAfter.MinSize != 2 {
 		t.Fatalf("%s placement and policy receipt: %+v: %v", phase, snapshot, err)
 	}
@@ -563,7 +563,7 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restore("osd in", func(cleanup context.Context) error { return cluster.SetOSDIn(cleanup, a.ID, true) })
+	restore("osd in", func(cleanup context.Context) error { return a.SetIn(cleanup, true) })
 
 	// The live writer keeps one connection and one ledger for the whole run.
 	actor := startNative(ctx, cluster, client, secondFaultCommand("actor", 20*time.Minute, "actor", "tc-paths", ledger, stopFile, "2", "600"))
@@ -602,7 +602,7 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	// Marking the stopped replica out admits the spare as a new member. The
 	// held backfill is the baseline: its interval, up and acting sets, and the
 	// destination's cursor at MIN.
-	if err := cluster.SetOSDIn(ctx, a.ID, false); err != nil {
+	if err := a.SetIn(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	secondFaultWaitPG(t, ctx, cluster, "held backfill to the spare", func(pg ceph.PGState) bool {
@@ -703,7 +703,7 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 			t.Fatal(err)
 		}
 	}
-	if err := cluster.SetOSDIn(ctx, a.ID, true); err != nil {
+	if err := a.SetIn(ctx, true); err != nil {
 		t.Fatal(err)
 	}
 	for _, osd := range []*ceph.OSDContainer{a, d} {
@@ -778,7 +778,7 @@ func secondFaultWaitPG(t *testing.T, parent context.Context, cluster *ceph.Conta
 	defer cancel()
 	var seen, failure string
 	for {
-		snapshot, err := cluster.PoolPGs(ctx, "tc-paths")
+		snapshot, err := poolHandle(t, ctx, cluster, "tc-paths").PGs(ctx)
 		if err == nil && len(snapshot.PGs) == 1 {
 			if ok(snapshot.PGs[0]) {
 				return snapshot.PGs[0]

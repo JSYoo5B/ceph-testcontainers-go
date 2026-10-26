@@ -18,7 +18,7 @@ import (
 
 func monitorBootstrapRBDPeerConfig(t *testing.T, ctx context.Context, destination *ceph.Container, pool, peer string) (string, string) {
 	t.Helper()
-	policy, err := destination.PoolStatus(ctx, pool)
+	policy, err := poolHandle(t, ctx, destination, pool).Status(ctx)
 	if err != nil || policy.ID <= 0 {
 		t.Fatalf("read RBD receiving pool identity: error=%v", err)
 	}

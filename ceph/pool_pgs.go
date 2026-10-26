@@ -47,7 +47,7 @@ type PGStats struct {
 	ObjectsDegraded, ObjectsMisplaced, ObjectsUnfound int64
 }
 
-// PoolPGs observes one existing pool through one captured control CLI handle.
+// poolPGs implements Pool.PGs. It observes one existing pool through one captured control CLI handle.
 // It checks the original bootstrap FSID and the exact pool name/ID before and
 // after pg ls-by-pool, using five CLI reads and no per-PG mapping fanout. It
 // works before any OSD is started when a native pool has been prepared through
@@ -59,7 +59,7 @@ type PGStats struct {
 // workers. External native/configuration writers must not race these separate
 // reads. Compare original fixture identities and data when asserting movement;
 // these reported PGs are not current mappings or read-after-write evidence.
-func (c *Container) PoolPGs(ctx context.Context, name string) (PoolPGSnapshot, error) {
+func (c *Container) poolPGs(ctx context.Context, name string, handle *Pool) (PoolPGSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return PoolPGSnapshot{}, err
 	}
@@ -75,6 +75,9 @@ func (c *Container) PoolPGs(ctx context.Context, name string) (PoolPGSnapshot, e
 	defer c.mu.Unlock()
 	if c.closed {
 		return PoolPGSnapshot{}, clientOperationError(ctx, "ceph cluster is terminated", nil)
+	}
+	if err := handle.matchLocked(name, -1); err != nil {
+		return PoolPGSnapshot{}, err
 	}
 	control, err := c.controlContainerContext(ctx)
 	if err != nil {
@@ -130,6 +133,9 @@ func (c *Container) PoolPGs(ctx context.Context, name string) (PoolPGSnapshot, e
 	}
 	before, beforeEpoch, err := readPool()
 	if err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	if err := handle.matchLocked(name, before.ID); err != nil {
 		return PoolPGSnapshot{}, err
 	}
 	data, err := query("pg", "ls-by-pool", name, "--format", "json")

@@ -107,7 +107,7 @@ finally:
 			// Both principals retain valid MDS/OSD access to the neighbor.
 			// Require strict source denial, authoritative absent grants and
 			// concurrently healthy fresh admin mounts/namespace reads.
-			caps, err := cluster.ClientCapabilities(ctx, identity)
+			caps, err := identity.Capabilities(ctx)
 			if err != nil || strings.Contains(caps.MDS, "path="+own.Path) || strings.Contains(caps.OSD, "namespace="+ownInfo.PoolNamespace) {
 				t.Fatalf("revoked principal still has original native clauses: %+v error=%v", caps, err)
 			}
@@ -152,14 +152,14 @@ finally:
 	// these unrelated rights exactly for both the original RO and RW grants.
 	originalKeyrings := make(map[*cephfs.SubvolumeAuthorization][]byte)
 	for _, grant := range []*cephfs.SubvolumeAuthorization{writer, reader} {
-		caps, err := cluster.ClientCapabilities(ctx, grant.Client)
+		caps, err := grant.Client.Capabilities(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		caps.MGR = "allow r"
 		caps.MDS += ", allow r path=" + neighbor.Path
 		caps.OSD += ", allow r pool=" + neighborInfo.DataPool + " namespace=" + neighborInfo.PoolNamespace
-		if err := cluster.UpdateClientCaps(ctx, grant.Client, caps); err != nil {
+		if err := grant.Client.UpdateCaps(ctx, caps); err != nil {
 			t.Fatal(err)
 		}
 		_, keyring, err := grant.Client.ConnectionConfig()
@@ -172,7 +172,7 @@ finally:
 	probe(readerClient, reader.Client, neighbor, source, neighborInfo, sourceInfo, "r-both")
 	assertPreserved := func(grant *cephfs.SubvolumeAuthorization) {
 		t.Helper()
-		currentCaps, err := cluster.ClientCapabilities(ctx, grant.Client)
+		currentCaps, err := grant.Client.Capabilities(ctx)
 		if err != nil || currentCaps.MDS != "allow r path="+neighbor.Path || currentCaps.OSD != "allow r pool="+neighborInfo.DataPool+" namespace="+neighborInfo.PoolNamespace || currentCaps.MGR != "allow r" {
 			t.Fatalf("unrelated rights were not preserved: %+v error=%v", currentCaps, err)
 		}
@@ -229,7 +229,7 @@ finally:
 		t.Fatalf("native deauthorization metadata remains: %+v error=%v", listing, err)
 	}
 	for _, grant := range []*cephfs.SubvolumeAuthorization{writer, reader} {
-		if err := cluster.DeleteClient(ctx, grant.Client); err != nil {
+		if err := grant.Client.Delete(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

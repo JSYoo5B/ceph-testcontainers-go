@@ -47,7 +47,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	// A missing data shard: reads reconstruct the object, and a write under a
 	// snapshot context still preserves a clone. Recovery restores the shard.
 	receipt := erasureCodedPhase(t, ctx, cluster, client, "shard-write", overwrite)
-	pgs, err := cluster.PoolPGs(ctx, overwrite)
+	pgs, err := poolHandle(t, ctx, cluster, overwrite).PGs(ctx)
 	if err != nil || len(pgs.PGs) != 1 || len(pgs.PGs[0].Acting) != 3 || slices.Contains(pgs.PGs[0].Acting, crushItemNone) {
 		t.Fatalf("PG of %s before the failure: %+v, %v", overwrite, pgs.PGs, err)
 	}
@@ -81,7 +81,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	}
 	var degraded ceph.PGState
 	for deadline := time.Now().Add(2 * time.Minute); ; {
-		pgs, err := cluster.PoolPGs(ctx, overwrite)
+		pgs, err := poolHandle(t, ctx, cluster, overwrite).PGs(ctx)
 		if err == nil && len(pgs.PGs) == 1 {
 			degraded = pgs.PGs[0]
 			if strings.HasPrefix(degraded.State, "active+") && strings.Contains(degraded.State, "degraded") &&
@@ -104,7 +104,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	pgs, err = cluster.PoolPGs(ctx, overwrite)
+	pgs, err = poolHandle(t, ctx, cluster, overwrite).PGs(ctx)
 	if err != nil || len(pgs.PGs) != 1 || !slices.Equal(pgs.PGs[0].Acting, clean.Acting) {
 		t.Fatalf("PG of %s after recovery: %+v, %v", overwrite, pgs.PGs, err)
 	}
@@ -112,7 +112,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	t.Logf("%s served reads and a write as %s with acting %v and recovered to %v", overwrite, degraded.State, degraded.Acting, clean.Acting)
 
 	for _, pool := range []string{appendOnly, overwrite} {
-		if err := cluster.RemovePool(ctx, pool); err != nil {
+		if err := poolHandle(t, ctx, cluster, pool).Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

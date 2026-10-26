@@ -119,7 +119,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 			if _, err := cluster.AddMonitor(ctx, "replacement"); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.RemoveMonitor(ctx, "a"); err != nil {
+			if err := monitorHandle(t, ctx, cluster, "a").Remove(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if len(clusteraccess.Monitors(t, cluster)) != 3 {

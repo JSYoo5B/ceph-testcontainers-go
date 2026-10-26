@@ -100,7 +100,7 @@ func TestRGWTopology(t *testing.T) {
 			check(a, "from-b", reverse)
 			check(a, "during-outage", outage)
 			oldID := second.GetContainerID()
-			if err := rgw.Remove(ctx, cluster, "gateway-b"); err != nil {
+			if err := second.Remove(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if len(clusteraccess.Gateways(t, cluster)) != 1 || len(cluster.ServiceContainers()) != 1 {

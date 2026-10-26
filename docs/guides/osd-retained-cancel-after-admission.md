@@ -1,7 +1,7 @@
 # A retained reopen canceled after its container was created
 
 The optional `retained_cancel_after_admission` batch in `./ceph` qualifies one
-bounded cancellation boundary of `ReopenOSD`: the caller's context ends after
+bounded cancellation boundary of `DetachedOSD.Reopen`: the caller's context ends after
 the creation request was dispatched and the runner returned a ready container.
 It uses the existing private `osdRunner` test seam in the same package and
 changes no public API or production code.
@@ -15,22 +15,22 @@ and not a cancellation during container creation or readiness.
 
 Expected outcome of the canceled call:
 
-- `ReopenOSD` returns an error, and the new descriptor owns the created
-  container. The detached handle is consumed, and a second `ReopenOSD` refuses
+- `DetachedOSD.Reopen` returns an error, and the new descriptor owns the created
+  container. The detached handle is consumed, and a second `DetachedOSD.Reopen` refuses
   with no further runner dispatch.
 - Owner-filtered Docker create events bounded by daemon timestamps show exactly
   one creation, and independent inspection shows that container running.
 - The daemon keeps booting after the cancellation: a fresh context waits for
   it to be up/in. The first native attempt detached the candidate right after
   the cancellation, while the daemon was still starting. The stop took the full
-  10 s grace period and `DetachOSD` then never observed the OSD as down within
+  10 s grace period and `OSDContainer.Detach` then never observed the OSD as down within
   its 3 minute budget (`exec ceph: context deadline exceeded`). The log does
   not show the OSD map at that point. A plausible cause is a daemon killed
   before it could mark itself down in a one-OSD cluster with no peer to report
   it, but that is not established. This batch therefore detaches only a booted
   candidate; detaching a still-booting one is unqualified.
 - A fresh context then settles the candidate through the ordinary lifecycle:
-  `DetachOSD` stops and removes the canceled candidate, and a second `ReopenOSD`
+  `OSDContainer.Detach` stops and removes the canceled candidate, and a second `DetachedOSD.Reopen`
   creates a distinct container with the same ID, registration UUID and cluster
   FSID.
 - An independent client reads all 1,048,583 known bytes from a single-replica,

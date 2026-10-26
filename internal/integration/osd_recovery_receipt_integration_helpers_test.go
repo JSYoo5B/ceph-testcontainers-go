@@ -244,7 +244,7 @@ func waitPG(t *testing.T, parent context.Context, cluster *ceph.Container, what 
 	defer cancel()
 	var last string
 	for {
-		snapshot, err := cluster.PoolPGs(ctx, "tc-paths")
+		snapshot, err := poolHandle(t, ctx, cluster, "tc-paths").PGs(ctx)
 		if err == nil && len(snapshot.PGs) == 1 {
 			if ok(snapshot.PGs[0]) {
 				return snapshot.PGs[0]

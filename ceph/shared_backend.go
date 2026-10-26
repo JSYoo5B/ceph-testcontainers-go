@@ -544,7 +544,7 @@ func (b containerBackend) createClient(ctx context.Context, entity string, caps 
 	return client, nil
 }
 
-// deleteClient removes a tenant's client with one auth rm. DeleteClient
+// deleteClient removes a tenant's client with one auth rm. ClientConfig.Delete
 // settles the MONs and reads the entry back, which takes seconds and holds
 // the cluster mutex; here the release's verification, which must not find
 // the client, confirms the removal instead.

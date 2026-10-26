@@ -456,7 +456,11 @@ func retainedMapSources(t testing.TB, cluster *ceph.Container, client testcontai
 			return result.Stdout, nil
 		},
 		OSDAdmin: func(ctx context.Context, osd int, args ...string) ([]byte, error) {
-			return cluster.AdminSocket(ctx, fmt.Sprintf("osd.%d", osd), args...)
+			handle, err := findOSD(ctx, cluster, osd)
+			if err != nil {
+				return nil, err
+			}
+			return handle.AdminSocket(ctx, args...)
 		},
 		MonCommand: func(ctx context.Context, args ...string) ([]byte, error) { return cluster.Ceph(ctx, args...) },
 	}

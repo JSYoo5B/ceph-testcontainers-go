@@ -46,7 +46,7 @@ func testClientRevocation(t *testing.T) {
 			holder := startClientContainer(t, ctx, cluster, client)
 			startHeldSession(t, ctx, holder, client, "reconnect")
 			revokedAt := containerTime(t, ctx, holder)
-			revocation, err := cluster.RevokeClient(ctx, client)
+			revocation, err := client.Revoke(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,7 +59,7 @@ func testClientRevocation(t *testing.T) {
 			if code, _ := osdRead(t, ctx, holder, client); code == 0 {
 				t.Fatal("a fresh client of the revoked identity read from the OSD")
 			}
-			if _, err := cluster.ClientCapabilities(ctx, client); err == nil {
+			if _, err := client.Capabilities(ctx); err == nil {
 				t.Fatal("ClientCapabilities accepted the revoked descriptor")
 			}
 			if err := cluster.WithClientIdentity(client)(&testcontainers.GenericContainerRequest{}); err == nil {
@@ -86,7 +86,7 @@ func testClientRevocation(t *testing.T) {
 			if code, read := osdRead(t, ctx, holder, client); code != 0 || !bytes.Equal(read, payload) {
 				t.Fatalf("OSD read with the original keyring after Restore: exit %d, same bytes %t", code, bytes.Equal(read, payload))
 			}
-			if got, err := cluster.ClientCapabilities(ctx, client); err != nil || got != caps {
+			if got, err := client.Capabilities(ctx); err != nil || got != caps {
 				t.Fatalf("ClientCapabilities after Restore: %+v, %v", got, err)
 			}
 			startClientContainer(t, ctx, cluster, client)
@@ -123,7 +123,7 @@ func testClientRevocation(t *testing.T) {
 		holder := startClientContainer(t, ctx, cluster, client)
 		startHeldSession(t, ctx, holder, client, "hold")
 		revokedAt := containerTime(t, ctx, holder)
-		revocation, err := cluster.RevokeClient(ctx, client)
+		revocation, err := client.Revoke(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,7 +159,7 @@ func testClientRevocation(t *testing.T) {
 			t.Fatal(err)
 		}
 		before := authEntry(t, ctx, cluster, client.Name())
-		revocation, err := cluster.RevokeClient(ctx, client)
+		revocation, err := client.Revoke(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -169,7 +169,7 @@ func testClientRevocation(t *testing.T) {
 		if after := authEntry(t, ctx, cluster, client.Name()); after.Key != before.Key || len(after.Caps) != 0 {
 			t.Fatalf("restored caps %v, same key %t", after.Caps, after.Key == before.Key)
 		}
-		if _, err := cluster.ReplaceClientKey(ctx, client); err == nil {
+		if _, err := client.ReplaceKey(ctx); err == nil {
 			t.Fatal("a key replacement of an identity without capabilities succeeded")
 		}
 	})
@@ -183,7 +183,7 @@ func testClientRevocation(t *testing.T) {
 		original := authEntry(t, ctx, cluster, client.Name())
 		holder := startClientContainer(t, ctx, cluster, client)
 		mons := monitorOverrides(t, ctx, cluster)
-		revocation, err := cluster.RevokeClient(ctx, client)
+		revocation, err := client.Revoke(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -204,7 +204,7 @@ func testClientRevocation(t *testing.T) {
 		// a revocation that Restore undoes, also after a canceled Restore.
 		for _, delay := range []time.Duration{50 * time.Millisecond, 300 * time.Millisecond, time.Second, 3 * time.Second} {
 			callCtx, callCancel := context.WithTimeout(ctx, delay)
-			revocation, err := cluster.RevokeClient(callCtx, client)
+			revocation, err := client.Revoke(callCtx)
 			callCancel()
 			if revocation == nil {
 				t.Logf("a revocation canceled after %v did not apply: %v", delay, err)
@@ -220,7 +220,7 @@ func testClientRevocation(t *testing.T) {
 			if entry := authEntry(t, ctx, cluster, client.Name()); entry.Key != original.Key || !maps.Equal(entry.Caps, original.Caps) {
 				t.Fatalf("after a call canceled after %v, the identity differs from the original", delay)
 			}
-			if _, err := cluster.ClientCapabilities(ctx, client); err != nil {
+			if _, err := client.Capabilities(ctx); err != nil {
 				t.Fatalf("after a call canceled after %v, the descriptor is unusable: %v", delay, err)
 			}
 		}

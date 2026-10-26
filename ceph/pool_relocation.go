@@ -20,18 +20,15 @@ type PoolPlacement struct {
 	DeviceClass   string
 }
 
-// SetPoolPGCount requests a new PG count for an existing pool with autoscaling
+// setPoolPGCount implements Pool.SetPGCount. It requests a new PG count for an existing pool with autoscaling
 // off or warn. It records both native pg_num and pgp_num targets; the active
 // manager then splits or merges PGs in steps, and merges wait for clean PGs.
 // Success means the targets were accepted, not that PGs have changed. Use
-// WaitForPoolPGCount for the count and WaitForClean for the resulting movement.
+// Pool.WaitForPGCount for the count and WaitForClean for the resulting movement.
 // Without an active manager the targets remain pending. The native pool ID is
-// checked before each mutation; on partial failure inspect PoolStatus. Native
+// checked before each mutation; on partial failure inspect Pool.Status. Native
 // per-OSD PG limits can still reject the request.
-func (c *Container) SetPoolPGCount(ctx context.Context, name string, pgNum int) error {
-	if gateErr := c.sharedGate("SetPoolPGCount"); gateErr != nil {
-		return gateErr
-	}
+func (c *Container) setPoolPGCount(ctx context.Context, name string, handle *Pool, pgNum int) error {
 	if err := validateExistingPoolName(name); err != nil {
 		return err
 	}
@@ -47,7 +44,7 @@ func (c *Container) SetPoolPGCount(ctx context.Context, name string, pgNum int) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	pool, err := c.poolState(ctx, name)
+	pool, err := c.handlePoolState(ctx, name, handle)
 	if err != nil {
 		return err
 	}
@@ -66,14 +63,14 @@ func (c *Container) SetPoolPGCount(ctx context.Context, name string, pgNum int) 
 	return nil
 }
 
-// WaitForPoolPGCount waits until the native pool reports pgNum as its current,
+// waitForPoolPGCount implements Pool.WaitForPGCount. It waits until the native pool reports pgNum as its current,
 // pending and target PG and PGP counts and the manager reports exactly pgNum
 // PGs for it. Until then WaitForClean can pass on the previous PG set. It
 // identifies the pool by the native ID first observed and fails if the name is
 // later bound to another pool. The count does not imply clean PGs, completed
-// backfill or data visibility; call WaitForClean afterwards or use PoolPGs.
+// backfill or data visibility; call WaitForClean afterwards or use Pool.PGs.
 // Cluster startup timeout applies.
-func (c *Container) WaitForPoolPGCount(ctx context.Context, name string, pgNum int) error {
+func (c *Container) waitForPoolPGCount(ctx context.Context, name string, handle *Pool, pgNum int) error {
 	if err := validateExistingPoolName(name); err != nil {
 		return err
 	}
@@ -97,7 +94,11 @@ func (c *Container) WaitForPoolPGCount(ctx context.Context, name string, pgNum i
 			}
 			return err
 		}
-		pool, err := c.poolState(ctx, name)
+		pool, err := c.handlePoolState(ctx, name, handle)
+		if handle != nil && err != nil && errors.Is(err, errStalePool) {
+			c.mu.Unlock()
+			return err
+		}
 		replaced := err == nil && poolID >= 0 && pool.ID != poolID
 		reported := 0
 		if err == nil && !replaced && poolPGCountReached(pool, pgNum) {
@@ -167,22 +168,19 @@ func validatePoolPGCount(pgNum int) error {
 	return nil
 }
 
-// SetPoolPlacement moves a replicated pool to a simple osd/host/rack CRUSH rule.
+// setPoolPlacement implements Pool.SetPlacement. It moves a replicated pool to a simple osd/host/rack CRUSH rule.
 // The size and min_size are unchanged and the new placement needs enough owned
 // eligible domains in the native CRUSH map. It reuses the pool's CreatePool rule
 // or an earlier rule from this method when its native steps match; otherwise it
 // creates tc-<pool>-placement-<hash>. Rules are not deleted, so a pool can move
 // back. Success means the pool references the rule; data moves asynchronously.
 // Until PG reports reflect the new map, WaitForClean can pass on the previous
-// placement, so poll PoolPGs for the expected up/acting sets. Holding both
+// placement, so poll Pool.PGs for the expected up/acting sets. Holding both
 // nobackfill and norecover with OverrideOSDFlag keeps the move incomplete;
 // nobackfill alone does not stop log-based recovery of small PGs. EC rules are
 // bound to their profile and are refused. External pool/CRUSH edits must not
 // race this call.
-func (c *Container) SetPoolPlacement(ctx context.Context, name string, placement PoolPlacement) error {
-	if gateErr := c.sharedGate("SetPoolPlacement"); gateErr != nil {
-		return gateErr
-	}
+func (c *Container) setPoolPlacement(ctx context.Context, name string, handle *Pool, placement PoolPlacement) error {
 	if err := validateExistingPoolName(name); err != nil {
 		return err
 	}
@@ -199,7 +197,7 @@ func (c *Container) SetPoolPlacement(ctx context.Context, name string, placement
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	pool, err := c.poolState(ctx, name)
+	pool, err := c.handlePoolState(ctx, name, handle)
 	if err != nil {
 		return err
 	}

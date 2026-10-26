@@ -459,7 +459,7 @@ the logical sizes.
 - The module creates a uniquely named volume and one idle keeper container (from
   the control image, without network) before the first OSD. The keeper holds the
   volume so OSD `Stop`/`Start` keeps data. Purging an OSD with
-  [RemoveOSD](#removeosd) discards its directory.
+  [OSDContainer.Remove](#osdcontainerremove) discards its directory.
 - `Terminate` removes the OSDs, the keeper and the volume. Losing the keeper or
   restarting the Docker daemon or VM loses data; the module refuses to continue
   with a restarted keeper.
@@ -489,7 +489,7 @@ fresh and purged directories. A stopped or restarted helper refuses further
 storage operations before new OSD registration; it is not automatically replaced.
 Existing OSDs can still stop/start with their original containers.
 
-`RemoveOSD` drains and purges the native registration, removes its container,
+`OSDContainer.Remove` drains and purges the native registration, removes its container,
 then discards only its directory. `Terminate` removes all owned OSDs and the
 helper before deleting the volume without force. A failed or busy deletion
 retains ownership for another `Terminate` call. Changed volume metadata is
@@ -497,7 +497,7 @@ refused before directory operations or deletion. Never externally modify or
 attach this owned volume while using the cluster.
 
 There is no caller-supplied volume, host path, device or driver option.
-[DetachOSD](#detachosd) and [ReopenOSD](#reopenosd) restart a retained store in
+[OSDContainer.Detach](#osdcontainerdetach) and [DetachedOSD.Reopen](#detachedosdreopen) restart a retained store in
 a new container; this backend gives no host-reboot durability. `Terminate`
 always discards its owned volume, including detached stores. See
 [the storage design](design/osd-volume-storage.md) and
@@ -992,7 +992,7 @@ daemons bind the concrete address of each family. The wildcard listener
 accepts connections to the advertised address, so clients are not affected,
 but a test that reads the MGR container's listening sockets sees `[::]`.
 
-`Run`, [AddManager](#addmanager) and [RemoveManager](#removemanager) then read
+`Run`, [AddManager](#addmanager) and [ManagerContainer.Remove](#managercontainerremove) then read
 [DaemonAddresses](#daemonaddresses) and check that every MON, the active MGR
 and every up OSD advertise exactly one concrete IPv4 and one concrete IPv6
 address for each protocol. An unspecified, IPv4-mapped or link-local address,
@@ -1069,11 +1069,11 @@ The RGW's own librados session follows the vectors like any other client.
 `TestDualStackReplacement` replaces one daemon of each kind with a new
 container on a CephFS cluster with two MONs, one MGR, two OSDs and one MDS:
 
-1. [AddMonitor](#addmonitor) `c`, then [RemoveMonitor](#removemonitor) `b`;
-2. [AddOSD](#addosd) (osd.2), then [RemoveOSD](#removeosd) `0`;
+1. [AddMonitor](#addmonitor) `c`, then [MonitorContainer.Remove](#monitorcontainerremove) `b`;
+2. [AddOSD](#addosd) (osd.2), then [OSDContainer.Remove](#osdcontainerremove) `0`;
 3. the MDS container stopped, its GID failed with `ceph mds fail` and a new
-   MDS started with `AddMDSReplacement` (see [cephfs](cephfs.md#addmdsreplacement));
-4. [AddManager](#addmanager) `b`, then [RemoveManager](#removemanager) `a`.
+   MDS started with `MDS.AddReplacement` (see [cephfs](cephfs.md#mdsaddreplacement));
+4. [AddManager](#addmanager) `b`, then [ManagerContainer.Remove](#managercontainerremove) `a`.
 
 `[osd.2]`, `[mds.tc-cephfs-1]` and `[mgr.b]` set `ms bind prefer ipv4 =
 false`, so clients reach each replacement over IPv6 and the daemon it
@@ -1101,7 +1101,7 @@ files of the earlier steps. After each step the test checks that:
 - new clients whose MON session `mon_host_override` pins to mon.c's IPv4 or
   IPv6 address complete their operations over that family.
 
-The MGR is replaced last, so the admission check of `RemoveManager` also reads
+The MGR is replaced last, so the admission check of `ManagerContainer.Remove` also reads
 the vectors of mon.c and osd.2. `AddMonitor` and `AddOSD` do not run the
 check, and MDS vectors are not part of it. At the end a new process reads back
 every file and the last objects.
@@ -1167,7 +1167,7 @@ ceph.WithStartupTimeout(5 * time.Minute)
 ```
 
 Bounds `Run` as a whole and each later topology, readiness and wait operation
-(`AddOSD`, `WaitForClean`, `WaitForPoolPGCount`, `DeepScrubPG`, ...). The default
+(`AddOSD`, `WaitForClean`, `Pool.WaitForPGCount`, `DeepScrubPG`, ...). The default
 is 3 minutes and the value must be positive. Every operation is also bounded by
 the caller's context, so a wait never outlives the shorter of the two. Increase
 it for slow engines, large pools or long recovery waits.
@@ -1487,15 +1487,16 @@ func TestRecoversWithNoout(t *testing.T) {
 
 The tenant never gets the `*ceph.Container`. While a cluster is shared, its
 methods that could reach outside one tenant return an error that matches
-`ErrSharedCluster` and names the method in `OperationError.Op`. The methods
-that only read state stay available.
+`ErrSharedCluster` and names the method in `OperationError.Op`; an operation
+that is a method of a handle is named `Type.Method`, such as `Pool.Remove`. The
+methods that only read state stay available, including `Container.Pool`.
 
 | Methods | Why they are refused |
 | --- | --- |
-| `CreateClient`, `DeleteClient`, `UpdateClientCaps`, `ReplaceClientKey`, `RevokeClient`, `ClientCapabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `OverrideConfig`, `OverrideDebugLevel`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `TemporaryBlocklist`, `SetOSDIn`, `CreatePool`, `RemovePool`, `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount`, `SetPoolPlacement`, `DeepScrubPG`, `RepairPG`, `RotateDaemonKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
-| `Ceph`, `AdminSocket`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
-| `AddOSD`, `AddOSDWithConfig`, `RemoveOSD`, `DetachOSD`, `ReopenOSD`, `AddMonitor`, `RemoveMonitor`, `AddManager`, `RemoveManager` | Change the topology. |
+| `CreateClient`, `ClientConfig.Delete`, `ClientConfig.UpdateCaps`, `ClientConfig.ReplaceKey`, `ClientConfig.Revoke`, `ClientConfig.Capabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
+| `OverrideConfig`, `OverrideDebugLevel`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `TemporaryBlocklist`, `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
+| `Ceph`, `OSDContainer.AdminSocket`, `MonitorContainer.AdminSocket`, `ManagerContainer.AdminSocket`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
+| `AddOSD`, `AddOSDWithConfig`, `OSDContainer.Remove`, `OSDContainer.Detach`, `DetachedOSD.Reopen`, `AddMonitor`, `MonitorContainer.Remove`, `AddManager`, `ManagerContainer.Remove` | Change the topology. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
 
 Under an [exclusive lease](#exclusive-lease) the gate refuses only `Terminate`.
@@ -1528,6 +1529,18 @@ These rules apply across its methods:
   canceled while waiting returns without native changes and can be retried with
   a fresh context. A call canceled after it sent a native command can leave that
   command applied, which is why results and handles are kept (below).
+- Handles. An operation on one daemon, pool or Cephx identity is a method of
+  its handle, not of `Container`, and takes no name or ID: `OSDContainer`
+  (`Remove`, `SetIn`, `Detach`, `AdminSocket`, `RotateKey`), `DetachedOSD`
+  (`Reopen`), `MonitorContainer` (`Remove`, `AdminSocket`), `ManagerContainer`
+  (`Remove`, `AdminSocket`, `RotateKey`), `Pool` and `ClientConfig`, and in the
+  service packages `cephfs.Filesystem`, `cephfs.MDS` and `rgw.Gateway`. A handle
+  acts on the instance it names. The handle of a removed, detached, replaced or
+  deleted daemon, pool or identity returns an error, and so does a handle of a
+  terminated cluster. Functions that create handles, such as `AddOSD`,
+  `CreatePool` and `CreateClient`, and cluster-wide operations stay on
+  `Container`. [Upgrading to handle operations](guides/upgrading-handle-operations.md)
+  maps each former method to its handle method.
 - Partial results. A method that creates something (an OSD, a pool, a client
   identity, a handle) can return a non-nil result together with an error. The
   result identifies what was attempted and stays owned by the cluster; inspect it,
@@ -1556,7 +1569,7 @@ Methods that change cluster state temporarily return a restoration handle:
 | `*fault.PauseLease` | [fault.Pause](fault.md#pause) | `Resume` |
 | `*fault.NetworkInterruption` | [fault.InterruptNetwork](fault.md#interruptnetwork) | `Restore` |
 | `*fault.NetworkProfileLease` | [fault.ApplyNetworkProfile](fault.md#applynetworkprofile) | `Restore` |
-| `*ceph.ClientRevocationHandle` | [RevokeClient](#revokeclient) | `Restore` |
+| `*ceph.ClientRevocationHandle` | [ClientConfig.Revoke](#clientconfigrevoke) | `Restore` |
 
 All handles follow the same contract:
 
@@ -2201,7 +2214,7 @@ The returned slice is independent; descriptors and containers remain owned by
 the cluster. Each `*ceph.MonitorContainer`
 embeds its `testcontainers.Container` and has a `DaemonName`. `Stop` and `Start`
 on the handle inject failures and preserve the monitor's store; use
-[RemoveMonitor](#removemonitor) to change membership.
+[MonitorContainer.Remove](#monitorcontainerremove) to change membership.
 
 ```golang
 monitors, err := cluster.Monitors(ctx)
@@ -2248,10 +2261,10 @@ stays owned on error; if only the configuration copy failed, retry
 [RefreshMonitorConfig](#refreshmonitorconfig). Client containers you own are not
 updated (see [RefreshClientMonitorConfig](#refreshclientmonitorconfig)).
 
-#### RemoveMonitor
+#### MonitorContainer.Remove
 
 ```golang
-func (c *Container) RemoveMonitor(ctx context.Context, name string) error
+func (m *MonitorContainer) Remove(ctx context.Context) error
 ```
 
 Removes an owned monitor from the monmap, deletes its container and refreshes the
@@ -2259,9 +2272,12 @@ owned daemons' `mon_host`. It refuses a removal that would leave fewer than a
 majority of the current map running; add a replacement first. MON `a` can be
 removed too; afterwards the embedded container of `*ceph.Container` is gone and
 fixture commands use the control container. If the `mon remove` reply is lost,
-the call returns an error without resending; calling `RemoveMonitor` again with a
+the call returns an error without resending; calling `MonitorContainer.Remove` again with a
 fresh context reads current membership, skips the completed native step and
-finishes the container and configuration cleanup.
+finishes the container and configuration cleanup. The call acts on the monitor
+that this handle names; the handle of a removed monitor returns an error. The
+primary MON `a` is described by a fresh descriptor on every listing, so a handle
+is matched by its name and container, not by pointer identity.
 
 #### QuorumStatus
 
@@ -2305,7 +2321,7 @@ func (c *Container) RefreshMonitorConfig(ctx context.Context) error
 Copies the live quorum's bootstrap addresses into the global `mon_host` entry of
 every owned daemon's `/etc/ceph/ceph.conf`, including stopped daemons, without
 starting or restarting them. Other entries and comments are kept, and files that
-are already current are not rewritten. `AddMonitor` and `RemoveMonitor` already
+are already current are not rewritten. `AddMonitor` and `MonitorContainer.Remove` already
 do this; call it to retry after an `AddMonitor` that joined the monmap but could
 not copy every file. Caller-owned clients and cross-cluster links are not
 updated. Running daemons learn new monitors from the monmap; the file matters for
@@ -2371,10 +2387,10 @@ afterwards. A non-nil descriptor returned with an error stays owned. On an
 `AddressDualStack` cluster it then checks the advertised addresses of the
 active MGR; see [Dual-stack clusters](#dual-stack-clusters).
 
-#### RemoveManager
+#### ManagerContainer.Remove
 
 ```golang
-func (c *Container) RemoveManager(ctx context.Context, name string) error
+func (m *ManagerContainer) Remove(ctx context.Context) error
 ```
 
 Deletes an owned manager after confirming that another running, registered
@@ -2382,7 +2398,8 @@ candidate is available. Removing the last candidate is refused; add a replacemen
 first. Removing the active manager makes a standby take over; on an
 `AddressDualStack` cluster the new active manager's addresses are checked as in
 [Dual-stack clusters](#dual-stack-clusters). On failure the handle stays owned
-for a retry or for cluster cleanup.
+for a retry or for cluster cleanup. The handle of a removed manager returns an
+error.
 
 #### ManagerStatus
 
@@ -2448,7 +2465,7 @@ Registers, formats and starts a new OSD with the default CRUSH location and wait
 until it is up and in. It uses the OSD image, block size and storage options
 selected at `Run`. An OSD returned with an error is tracked for cleanup and can be
 inspected; nothing is purged automatically. `AddOSD` is refused while an
-earlier [RemoveOSD](#removeosd) has not finished its cleanup, so a reused numeric
+earlier [OSDContainer.Remove](#osdcontainerremove) has not finished its cleanup, so a reused numeric
 ID cannot be confused with the old handle. Adding OSDs does not change existing
 pool sizes.
 
@@ -2470,7 +2487,7 @@ osd, err := cluster.AddOSDWithConfig(ctx, ceph.OSDConfig{
 })
 ```
 
-#### RemoveOSD
+#### OSDContainer.Remove
 
 After identity and last-OSD admission, removal permanently fences that Docker
 instance from new public `RunNativeCommand` calls and drains its tracked native
@@ -2483,11 +2500,11 @@ not close cluster-wide native admission.
 This increment does not add retained-store detach/reopen, attachment leases or
 fault-handle fencing. Internal service shell admission and raw Docker handles
 keep their existing contracts; raw references are not revoked by a Go admission
-fence. `RemoveOSD` still confirms container cleanup after permanent purge.
+fence. `OSDContainer.Remove` still confirms container cleanup after permanent purge.
 
 
 ```golang
-func (c *Container) RemoveOSD(ctx context.Context, id int) error
+func (o *OSDContainer) Remove(ctx context.Context) error
 ```
 
 Removes an owned OSD in the safe order: mark it out and drain it, wait for
@@ -2502,17 +2519,24 @@ reweighted and is not marked in again automatically. If the purge reply is lost,
 the handle is kept: a retry with a fresh context treats the OSD's absence as
 completion of its own purge, and after a completed purge only the Docker cleanup
 is retried. Do not register or replace OSDs externally while a removal runs.
-`RemoveOSD` refuses an OSD that [DetachOSD](#detachosd) is detaching or has
+`OSDContainer.Remove` refuses an OSD that [OSDContainer.Detach](#osdcontainerdetach) is detaching or has
 detached.
 
-#### DetachOSD
+Like every method of an `*ceph.OSDContainer`, `Remove` acts on the daemon
+instance that this handle names, not on whatever owns the ID now. The handle of
+a removed or detached OSD, or one that [DetachedOSD.Reopen](#detachedosdreopen)
+replaced, returns an error. After `Detach` and `Reopen`, operate on the handle
+that `Reopen` returns. A handle of another cluster, or one of a terminated
+cluster, returns an error too.
+
+#### OSDContainer.Detach
 
 ```golang
-func (c *Container) DetachOSD(ctx context.Context, id int) (*ceph.DetachedOSD, error)
+func (o *OSDContainer) Detach(ctx context.Context) (*ceph.DetachedOSD, error)
 ```
 
 Stops and removes an owned OSD's container but keeps its store in the owned
-volume and its MON registration, so that [ReopenOSD](#reopenosd) can start a
+volume and its MON registration, so that [DetachedOSD.Reopen](#detachedosdreopen) can start a
 new container on them. It needs [WithOSDVolumeStorage](#withosdvolumestorage);
 other storage is an invalid request. The OSD is down while it is detached, not
 out or purged: hold `noout` with [OverrideOSDFlag](#overrideosdflag) if Ceph
@@ -2520,24 +2544,24 @@ must not mark it out.
 
 Detach checks the registration UUID, refuses an OSD whose container a held
 network delay, network interruption or pause still targets, then fences the
-instance against new native commands as [RemoveOSD](#removeosd) does, stops it,
+instance against new native commands as [OSDContainer.Remove](#osdcontainerremove) does, stops it,
 waits for it to be down and removes the container. Only after the removal does
 it read the store's identity files, keyring and block inode and size, and
 returns a `*ceph.DetachedOSD` with `ID()`, `UUID()`, `ClusterFSID()` and
-`Placement()`. The OSD leaves [OSDs](#osds); the previous `*ceph.OSDContainer`
-keeps naming the removed container.
+`Placement()`. The OSD leaves [OSDs](#osds); this `*ceph.OSDContainer` keeps
+naming the removed container and is stale: its methods return an error.
 
-On error the OSD stays owned and fenced. Retry `DetachOSD` with a fresh context;
-it resumes after a completed removal. `RemoveOSD` refuses it meanwhile.
+On error the OSD stays owned and fenced. Retry `OSDContainer.Detach` with a fresh context;
+it resumes after a completed removal. `OSDContainer.Remove` refuses it meanwhile.
 
-#### ReopenOSD
+#### DetachedOSD.Reopen
 
 ```golang
-func (c *Container) ReopenOSD(ctx context.Context, detached *ceph.DetachedOSD) (*ceph.OSDContainer, error)
+func (d *DetachedOSD) Reopen(ctx context.Context) (*ceph.OSDContainer, error)
 ```
 
-Starts a new container on a store that `DetachOSD` of the same cluster
-retained and waits for the OSD to be up/in. It returns a new
+Starts a new container on a store that `OSDContainer.Detach` of the cluster
+that detached it retained and waits for the OSD to be up/in. It returns a new
 `*ceph.OSDContainer` with the same ID, UUID and placement and a different
 container.
 
@@ -2555,12 +2579,16 @@ noout, err := cluster.OverrideOSDFlag(ctx, "noout", true)
 if err != nil {
 	t.Fatal(err)
 }
-detached, err := cluster.DetachOSD(ctx, 0)
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+detached, err := osds[0].Detach(ctx) // osds[0] is osd.0
 if err != nil {
 	t.Fatal(err)
 }
 // The store and registration of osd.0 have no container here.
-osd, err := cluster.ReopenOSD(ctx, detached)
+osd, err := detached.Reopen(ctx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -2585,10 +2613,10 @@ and `Weight`. `Weight` is the OSDMap reweight in `[0,1]`, not the CRUSH capacity
 weight. An owned OSD that is missing, purged or registered with another UUID is
 reported as an error.
 
-#### SetOSDIn
+#### OSDContainer.SetIn
 
 ```golang
-func (c *Container) SetOSDIn(ctx context.Context, id int, in bool) error
+func (o *OSDContainer) SetIn(ctx context.Context, in bool) error
 ```
 
 Marks an owned OSD in or out of the OSDMap, then reads the state back and checks
@@ -2596,7 +2624,7 @@ the UUID. Out does not stop, purge or reweight the OSD in CRUSH: the container,
 identity and data stay. Ceph restores the previous reweight when the OSD is
 marked in again. Use [WaitForPGClean](#waitforpgclean) to wait for recovery while
 an OSD remains out. The `noout` flag suppresses automatic out-marking by the MON
-but does not block an explicit `SetOSDIn(ctx, id, false)`.
+but does not block an explicit `OSDContainer.SetIn(ctx, false)`.
 
 #### OSDFlags
 
@@ -2645,21 +2673,52 @@ The pool uses a dedicated CRUSH rule `tc-<name>-replicated` (or `tc-<name>-ec` w
 an EC profile of the same name) and is created with the autoscaler off. The
 returned `*ceph.Pool` embeds the resolved `PoolConfig` and adds `CRUSHRule` and
 `ErasureCodeProfile`. It describes the requested settings at creation; use
-[PoolStatus](#poolstatus) for current state.
+[Pool.Status](#poolstatus) for current state.
 
-A non-nil `Pool` with an error identifies resources whose creation was attempted;
+A non-nil `Pool` with an error identifies resources whose creation was attempted
+(this includes a pool that was created but whose native ID could not be read; the
+handle then binds to the pool of its name at its first successful operation, so
+use it only to clean up; a `Pool` returned without an error is always bound);
 no data is deleted after a partial failure. Call [WaitForClean](#waitforclean)
 before application I/O.
 
 ```golang
-pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{
+appData, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 	Name: "app-data", Replicas: 2, MinSize: 1, Application: "rados",
 })
 ```
 
+Every later operation on the pool is a method of the returned `*ceph.Pool`:
+[Status](#poolstatus), [Usage](#poolusage), [PGs](#poolpgs),
+[SetReplication](#poolsetreplication), [SetQuota](#poolsetquota),
+[SetPlacement](#poolsetplacement), [SetPGCount](#poolsetpgcount),
+[WaitForPGCount](#poolwaitforpgcount) and [Remove](#poolremove). The handle
+identifies the native pool by its name and native ID. After `Remove`, or when
+the name belongs to another pool, every method returns an error instead of
+acting on the pool that now has the name. Copies of the `Pool` share that
+identity.
+
 For RBD on an EC pool, create the images in a replicated metadata pool and pass
 the EC pool as the data pool (`--data-pool` for the `rbd` CLI, or the data pool
 option of librbd).
+
+#### Pool
+
+```golang
+func (c *Container) Pool(ctx context.Context, name string) (*ceph.Pool, error)
+```
+
+Returns the handle of an existing pool by its exact native name, for a pool that
+`CreatePool` did not create: an initial pool from `WithPools`, a default pool, or
+a pool of a service. It fails when the pool does not exist. The handle is bound
+to the pool's native ID. The returned `Pool` reports `Name`, `PGNum`, `Replicas`
+(of a replicated pool), `MinSize` and `ErasureCodeProfile`; its other fields,
+`CRUSHRule` included, are zero, and [Pool.Status](#poolstatus) reports the full
+native state. A shared cluster allows the call.
+
+```golang
+appData, err := cluster.Pool(ctx, "app-data")
+```
 
 #### Pools
 
@@ -2670,10 +2729,10 @@ func (c *Container) Pools(ctx context.Context) ([]ceph.PoolState, error)
 Lists the current native policy of every pool, including pools created by Ceph,
 by services or through the CLI.
 
-#### PoolStatus
+#### Pool.Status
 
 ```golang
-func (c *Container) PoolStatus(ctx context.Context, name string) (ceph.PoolState, error)
+func (p *Pool) Status(ctx context.Context) (ceph.PoolState, error)
 ```
 
 Returns the current policy of one pool by its exact name. `ceph.PoolState` fields:
@@ -2688,40 +2747,40 @@ Returns the current policy of one pool by its exact name. `ceph.PoolState` field
 | `AutoscaleMode`, `ErasureCodeProfile`, `Flags` | Native values. |
 | `Quota` | `ceph.PoolQuota` with `MaxBytes` and `MaxObjects` (zero means unlimited). |
 
-#### SetPoolReplication
+#### Pool.SetReplication
 
 ```golang
-func (c *Container) SetPoolReplication(ctx context.Context, name string, replicas, minSize int) error
+func (p *Pool) SetReplication(ctx context.Context, replicas, minSize int) error
 ```
 
 Changes a replicated pool's `size` and `min_size` without changing data, PG count
 or placement. The pool's CRUSH rule must contain enough owned placement domains
 for the new size. EC shard counts cannot be changed. Commands are sequential; on
-a partial failure inspect [PoolStatus](#poolstatus). Use
+a partial failure inspect [Pool.Status](#poolstatus). Use
 [WaitForClean](#waitforclean) for the resulting recovery.
 
-#### SetPoolQuota
+#### Pool.SetQuota
 
 ```golang
-func (c *Container) SetPoolQuota(ctx context.Context, name string, quota ceph.PoolQuota) error
+func (p *Pool) SetQuota(ctx context.Context, quota ceph.PoolQuota) error
 ```
 
 Replaces both pool quota limits; a zero field removes that limit. Existing data
 is never removed. The native pool ID is checked before each command, and the two
-commands can partially succeed (inspect `PoolStatus` after an error). Quotas are
+commands can partially succeed (inspect `Pool.Status` after an error). Quotas are
 enforced from asynchronously reported PG statistics, so writes can overshoot
 briefly; they are not a per-write accounting boundary. When a quota is reached,
 Ceph marks the pool full and clients see writes blocked or `EDQUOT`, depending on
 the client.
 
 ```golang
-err := cluster.SetPoolQuota(ctx, "app-data", ceph.PoolQuota{MaxBytes: 64 << 20, MaxObjects: 1000})
+err := appData.SetQuota(ctx, ceph.PoolQuota{MaxBytes: 64 << 20, MaxObjects: 1000})
 ```
 
-#### SetPoolPlacement
+#### Pool.SetPlacement
 
 ```golang
-func (c *Container) SetPoolPlacement(ctx context.Context, name string, placement ceph.PoolPlacement) error
+func (p *Pool) SetPlacement(ctx context.Context, placement ceph.PoolPlacement) error
 ```
 
 Moves a replicated pool to another simple CRUSH rule. `ceph.PoolPlacement` has
@@ -2740,16 +2799,16 @@ The rule is chosen as follows:
 
 Success means the pool references the rule; data moves asynchronously. Until PG
 reports reflect the new map, [WaitForClean](#waitforclean) can succeed on the old
-placement, so poll [PoolPGs](#poolpgs) for the expected up/acting sets. To hold
+placement, so poll [Pool.PGs](#poolpgs) for the expected up/acting sets. To hold
 the move incomplete, set both `nobackfill` and `norecover` with
 [OverrideOSDFlag](#overrideosdflag): small PGs recover through the PG log
 instead of backfill, so `nobackfill` alone does not stop them. EC pools are
 refused because their rule is bound to the EC profile.
 
-#### SetPoolPGCount
+#### Pool.SetPGCount
 
 ```golang
-func (c *Container) SetPoolPGCount(ctx context.Context, name string, pgNum int) error
+func (p *Pool) SetPGCount(ctx context.Context, pgNum int) error
 ```
 
 Requests a new PG count (1 to 65536) for a pool whose autoscale mode is `off` or
@@ -2759,12 +2818,12 @@ Requests a new PG count (1 to 65536) for a pool whose autoscale mode is `off` or
 not that the PGs changed. Without an active manager the targets stay pending.
 Ceph's per-OSD PG limit (`mon_max_pg_per_osd`) can still reject the request. The
 pool ID is checked before each command; after a partial failure inspect
-[PoolStatus](#poolstatus).
+[Pool.Status](#poolstatus).
 
-#### WaitForPoolPGCount
+#### Pool.WaitForPGCount
 
 ```golang
-func (c *Container) WaitForPoolPGCount(ctx context.Context, name string, pgNum int) error
+func (p *Pool) WaitForPGCount(ctx context.Context, pgNum int) error
 ```
 
 Waits until the pool's current, pending and target PG and PGP counts all equal
@@ -2774,10 +2833,10 @@ native ID first observed; the wait fails if the name is bound to another pool.
 Reaching the count does not imply clean PGs; call `WaitForClean` afterwards.
 
 ```golang
-if err := cluster.SetPoolPGCount(ctx, "app-data", 16); err != nil {
+if err := appData.SetPGCount(ctx, 16); err != nil {
 	t.Fatal(err)
 }
-if err := cluster.WaitForPoolPGCount(ctx, "app-data", 16); err != nil {
+if err := appData.WaitForPGCount(ctx, 16); err != nil {
 	t.Fatal(err)
 }
 if err := cluster.WaitForClean(ctx); err != nil {
@@ -2785,10 +2844,10 @@ if err := cluster.WaitForClean(ctx); err != nil {
 }
 ```
 
-#### RemovePool
+#### Pool.Remove
 
 ```golang
-func (c *Container) RemovePool(ctx context.Context, name string) error
+func (p *Pool) Remove(ctx context.Context) error
 ```
 
 Deletes a pool created by `CreatePool` or `WithPools`, together with its
@@ -2801,7 +2860,7 @@ long-lived cluster can give each test its own pool without reaching PG limits.
   and pools in use by a CephFS filesystem are refused. Remove filesystems with
   `cephfs.Remove`, which also removes the pools their configuration created.
 - Ownership is recognised by the pool's rule name. A pool moved to a
-  `tc-<pool>-placement-<hash>` rule with `SetPoolPlacement` is refused; move it
+  `tc-<pool>-placement-<hash>` rule with `Pool.SetPlacement` is refused; move it
   back to its original placement first. Placement rules are not removed.
 - `mon_allow_pool_delete` is enabled in the central configuration only during the
   removal and then restored. It is refused while an `OverrideConfig` handle holds
@@ -2809,10 +2868,10 @@ long-lived cluster can give each test its own pool without reaching PG limits.
 - A retry after an error removes whatever owned resources remain. An unknown name
   is an error.
 
-#### PoolUsage
+#### Pool.Usage
 
 ```golang
-func (c *Container) PoolUsage(ctx context.Context, name string) (ceph.PoolUsageSnapshot, error)
+func (p *Pool) Usage(ctx context.Context) (ceph.PoolUsageSnapshot, error)
 ```
 
 Reads one pool's row of `ceph df detail` and checks the cluster FSID and the
@@ -2834,17 +2893,17 @@ A pool without a statistics row is reported as an error, not as empty. Do not
 assume `AllocatedBytes` equals `StoredBytes` times the replica count.
 
 ```golang
-usage, err := cluster.PoolUsage(ctx, "app-data")
+usage, err := appData.Usage(ctx)
 if err != nil {
 	t.Fatal(err)
 }
 t.Logf("objects=%d logical=%d allocated=%d", usage.Objects, usage.StoredBytes, usage.AllocatedBytes)
 ```
 
-#### PoolPGs
+#### Pool.PGs
 
 ```golang
-func (c *Container) PoolPGs(ctx context.Context, name string) (ceph.PoolPGSnapshot, error)
+func (p *Pool) PGs(ctx context.Context) (ceph.PoolPGSnapshot, error)
 ```
 
 Reads the reported state of every PG of one pool (`pg ls-by-pool`), bracketed by
@@ -2869,7 +2928,7 @@ These are reports, not current mappings:
 - Counters arrive asynchronously, even with `StatsInvalid == false`.
 
 ```golang
-snapshot, err := cluster.PoolPGs(ctx, "app-data")
+snapshot, err := appData.PGs(ctx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -2926,8 +2985,8 @@ select its identity, for example `rados --id reader ...`,
 `CEPH_ARGS="--id reader"`, librados `rados_create(&cluster, "reader")` or go-ceph
 `rados.NewConnWithUser("reader")`. Descriptors from another cluster, incomplete
 creations and revoked identities are rejected, and so are descriptors whose key
-[ReplaceClientKey](#replaceclientkey) replaced, whose identity
-[RevokeClient](#revokeclient) removed until its
+[ClientConfig.ReplaceKey](#clientconfigreplacekey) replaced, whose identity
+[ClientConfig.Revoke](#clientconfigrevoke) removed until its
 `Restore`, or whose identity has a change that is not resolved yet. You own the container. The options are those of
 [WithClient](#withclient).
 
@@ -2978,46 +3037,46 @@ authenticate depends on the MonMap's `auth_allowed_ciphers`. `aes256k` needs a
 control image whose `ceph-authtool` has `--key-type` (see
 [WithAuth](#withauth)); without it the call fails before any change.
 
-#### ClientCapabilities
+#### ClientConfig.Capabilities
 
 ```golang
-func (c *Container) ClientCapabilities(ctx context.Context, client *ceph.ClientConfig) (ceph.ClientCaps, error)
+func (client *ClientConfig) Capabilities(ctx context.Context) (ceph.ClientCaps, error)
 ```
 
 Returns the current capabilities of an identity created by this cluster, after
 verifying that its native key is still the one that was created. It does not
 return secrets.
 
-#### UpdateClientCaps
+#### ClientConfig.UpdateCaps
 
 ```golang
-func (c *Container) UpdateClientCaps(ctx context.Context, client *ceph.ClientConfig, caps ceph.ClientCaps) error
+func (client *ClientConfig) UpdateCaps(ctx context.Context, caps ceph.ClientCaps) error
 ```
 
 Replaces all capabilities of an owned identity while keeping its key. Services
 omitted from `caps` lose their previous capabilities. Sessions that already hold
 tickets may keep the previous permissions for a while; verify the change with a
 fresh client connection. The change is fenced like the import of
-[ReplaceClientKey](#replaceclientkey): a failed or canceled call reports what
+[ClientConfig.ReplaceKey](#clientconfigreplacekey): a failed or canceled call reports what
 the MONs hold once nothing can change it any more, and an outcome that stays
 uncertain is resolved by the next operation on the identity.
 
-#### DeleteClient
+#### ClientConfig.Delete
 
 ```golang
-func (c *Container) DeleteClient(ctx context.Context, client *ceph.ClientConfig) error
+func (client *ClientConfig) Delete(ctx context.Context) error
 ```
 
 Revokes an identity created by this cluster, without deleting data. It refuses if
 the native key was replaced externally. A repeated call after success is a no-op.
 Established sessions may keep their tickets; test revocation with a new
 connection. Credentials already copied elsewhere are not erased. The removal is
-fenced like the import of [ReplaceClientKey](#replaceclientkey).
+fenced like the import of [ClientConfig.ReplaceKey](#clientconfigreplacekey).
 
-#### ReplaceClientKey
+#### ClientConfig.ReplaceKey
 
 ```golang
-func (c *Container) ReplaceClientKey(ctx context.Context, client *ceph.ClientConfig, opts ...ceph.ClientOption) (*ceph.ClientConfig, error)
+func (client *ClientConfig) ReplaceKey(ctx context.Context, opts ...ceph.ClientOption) (*ceph.ClientConfig, error)
 ```
 
 Gives an identity created by this cluster a fresh key and keeps its name and
@@ -3029,7 +3088,7 @@ capability, because Ceph refuses to import an entry without any; an identity
 without capabilities is refused before any change.
 
 ```golang
-renewed, err := cluster.ReplaceClientKey(ctx, client)
+renewed, err := client.ReplaceKey(ctx)
 ```
 
 The call returns a new descriptor for the new key and leaves the old one
@@ -3039,10 +3098,10 @@ stale:
   so a test can check that they are rejected.
 - Every other operation with the old descriptor fails:
   [WithClientIdentity](#withclientidentity),
-  [ClientCapabilities](#clientcapabilities),
-  [UpdateClientCaps](#updateclientcaps) and [DeleteClient](#deleteclient).
+  [ClientConfig.Capabilities](#clientconfigcapabilities),
+  [ClientConfig.UpdateCaps](#clientconfigupdatecaps) and [ClientConfig.Delete](#clientconfigdelete).
   Use the returned descriptor for them.
-- `ReplaceClientKey` with the old descriptor again returns the same new
+- `ClientConfig.ReplaceKey` with the old descriptor again returns the same new
   descriptor without another change, as long as that descriptor is still the
   identity's current one.
 - Containers attached with the old descriptor keep the old keyring.
@@ -3070,7 +3129,7 @@ changed outside the module is refused before any change, and external auth
 changes must not race the call.
 
 The import is fenced like the MON commands of
-[RotateDaemonKey](#rotatedaemonkey): the command runs under the supervisor,
+[RotateKey](#rotatekey): the command runs under the supervisor,
 and after it the call settles the MONs and reads the outcome. So a failed or
 canceled call reports what the MONs hold once nothing can change it any more:
 either the new key, in which case the call returns the new descriptor without
@@ -3079,13 +3138,13 @@ an error, or the old one. When settling itself fails, the outcome stays open:
 - The call returns a descriptor of the attempted key that stays unusable,
   with an error saying so. A returned descriptor never changes afterwards.
 - The next operation on the identity settles first and then resolves the
-  outcome. `ReplaceClientKey` with the old descriptor returns a usable
+  outcome. `ClientConfig.ReplaceKey` with the old descriptor returns a usable
   descriptor of the attempted key once the import turns out to have applied,
   and replaces the key anew once it turns out not to have.
 - Until then, [WithClientIdentity](#withclientidentity) refuses both
   descriptors.
 
-[UpdateClientCaps](#updateclientcaps) and [DeleteClient](#deleteclient) are
+[ClientConfig.UpdateCaps](#clientconfigupdatecaps) and [ClientConfig.Delete](#clientconfigdelete) are
 fenced the same way, so none of these operations races a command of another
 one that may still apply. The CephFS subvolume grants of the
 [cephfs](cephfs.md) package settle these commands before they change a
@@ -3096,10 +3155,10 @@ or revoke a client after a failed `AuthorizeSubvolume` or
 `DeauthorizeSubvolume` for it. A `SubvolumeAuthorizedClients` listing shows
 only the state at that moment.
 
-#### RevokeClient
+#### ClientConfig.Revoke
 
 ```golang
-func (c *Container) RevokeClient(ctx context.Context, client *ceph.ClientConfig) (*ceph.ClientRevocationHandle, error)
+func (client *ClientConfig) Revoke(ctx context.Context) (*ceph.ClientRevocationHandle, error)
 ```
 
 Removes an identity created by this cluster from the MONs until `Restore`
@@ -3108,7 +3167,7 @@ the rejection of a client and then its return with the same credentials. The
 identity keeps its name and key type, and the descriptor is not recreated.
 
 ```golang
-revocation, err := cluster.RevokeClient(ctx, client)
+revocation, err := client.Revoke(ctx)
 // ... check that the client is rejected ...
 err = revocation.Restore(ctx)
 ```
@@ -3118,11 +3177,11 @@ While the identity is revoked:
 - The descriptor's `ConnectionConfig` keeps returning its credentials, which
   work again after `Restore`.
 - [WithClientIdentity](#withclientidentity),
-  [ClientCapabilities](#clientcapabilities),
-  [UpdateClientCaps](#updateclientcaps), [ReplaceClientKey](#replaceclientkey)
-  and another `RevokeClient` refuse the descriptor.
+  [ClientConfig.Capabilities](#clientconfigcapabilities),
+  [ClientConfig.UpdateCaps](#clientconfigupdatecaps), [ClientConfig.ReplaceKey](#clientconfigreplacekey)
+  and another `ClientConfig.Revoke` refuse the descriptor.
 - [CreateClient](#createclient) refuses the name.
-- [DeleteClient](#deleteclient) makes the removal permanent, after which
+- [ClientConfig.Delete](#clientconfigdelete) makes the removal permanent, after which
   `Restore` fails.
 
 The client behaves as follows on the official images:
@@ -3153,30 +3212,32 @@ The client behaves as follows on the official images:
 - A `Restore` of an earlier revocation does not undo a later one.
 
 The revocation belongs to the identity, not to one descriptor: copies of the
-descriptor are refused the same way, and `DeleteClient` through any
+descriptor are refused the same way, and `ClientConfig.Delete` through any
 descriptor of the revoked key makes the removal permanent.
 
 The removal and the restoration are fenced like the import of
-[ReplaceClientKey](#replaceclientkey). A failed or canceled call settles the
+[ClientConfig.ReplaceKey](#clientconfigreplacekey). A failed or canceled call settles the
 MONs and reports what they hold:
 
 - A removal that did not apply returns no handle, and the descriptor stays
   usable.
-- When the outcome stays uncertain, `RevokeClient` returns the
+- When the outcome stays uncertain, `ClientConfig.Revoke` returns the
   handle with the error, and `Restore` settles first and then restores.
 
 The cluster needs no `Restore` before `Terminate`. The handle's `String` and
 `GoString` never include credentials.
 
-#### RotateDaemonKey
+#### RotateKey
 
 ```golang
-func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) error
+func (o *OSDContainer) RotateKey(ctx context.Context) error
+func (m *ManagerContainer) RotateKey(ctx context.Context) error
 ```
 
 Replaces the Cephx key of a running MGR or OSD that the cluster owns, without a
-restart, the way cephadm rotates daemon keys. `daemon` is `mgr.<name>` or
-`osd.<id>`.
+restart, the way cephadm rotates daemon keys. It is a method of
+`*ceph.OSDContainer` and `*ceph.ManagerContainer`; `*ceph.MonitorContainer` has
+none, so rotating a MON key does not compile.
 
 1. `ceph auth get-or-create-pending` creates the new key on the MONs.
 2. The daemon's keyring files in its container get the new key, so a later
@@ -3185,15 +3246,16 @@ restart, the way cephadm rotates daemon keys. `daemon` is `mgr.<name>` or
 4. `ceph auth commit-pending` makes it the entity's only key.
 
 ```golang
-err := cluster.RotateDaemonKey(ctx, "osd.0")
+err := osd.RotateKey(ctx) // osd is the *ceph.OSDContainer of osd.0
 key, err := cluster.Ceph(ctx, "auth", "get-key", "osd.0") // the new key
 ```
 
 - The daemon keeps running and answering throughout.
 - Without step 2, a restarted daemon would read its old key and fail to start;
   `ceph tell <daemon> rotate-key` changes only the running process.
-- MONs share the `mon.` key and are refused, as are stopped, paused and
-  unknown daemons; nothing changes in these cases.
+- MONs share the `mon.` key, so their handle has no `RotateKey`. A stopped or
+  paused daemon and the handle of a removed daemon are refused; nothing changes
+  in these cases.
 - Until step 4, the MONs accept both keys, so the running daemon and a
   restarted one can always authenticate. The MONs also commit the pending key
   on their own as soon as the daemon authenticates with it, after a restart or
@@ -3201,9 +3263,9 @@ key, err := cluster.Ceph(ctx, "auth", "get-key", "osd.0") // the new key
 
   | Failure | State afterwards | Recovery |
   | --- | --- | --- |
-  | Before step 3, including cancellation | The MONs keep the pending key, and each keyring file holds the old or the new key, so the daemon authenticates with either. Nothing is undone: undoing would race with a restart from a file that already holds the new key. If such a restart has already made the MONs commit the new key, the call returns nil instead. | Call `RotateDaemonKey` again: it finishes with the same key, unless a restart has made the MONs commit it meanwhile, which finishes the rotation. |
-  | Step 3 | Unknown whether the daemon received the new key, and a `rotate-key` that was already sent may still reach it later. The keyring files hold the new key; both keys stay valid. | Call `RotateDaemonKey` again: it finishes with the same key. Until the daemon's container restarts, for example through `Stop` and `Start` on its `testcontainers.Container`, the cluster refuses to give that daemon any other key, because a late `rotate-key` would switch it back to this one. |
-  | Step 4 | The daemon and its files hold the new key, which the MONs accept whether or not the commit applied. `RotateDaemonKey` settles the MONs (see below) and reads the keys: a commit that applied returns nil. | If the error says that the commit did not apply, call `RotateDaemonKey` again or run `ceph auth commit-pending <daemon>`. |
+  | Before step 3, including cancellation | The MONs keep the pending key, and each keyring file holds the old or the new key, so the daemon authenticates with either. Nothing is undone: undoing would race with a restart from a file that already holds the new key. If such a restart has already made the MONs commit the new key, the call returns nil instead. | Call `RotateKey` again: it finishes with the same key, unless a restart has made the MONs commit it meanwhile, which finishes the rotation. |
+  | Step 3 | Unknown whether the daemon received the new key, and a `rotate-key` that was already sent may still reach it later. The keyring files hold the new key; both keys stay valid. | Call `RotateKey` again: it finishes with the same key. Until the daemon's container restarts, for example through `Stop` and `Start` on its `testcontainers.Container`, the cluster refuses to give that daemon any other key, because a late `rotate-key` would switch it back to this one. |
+  | Step 4 | The daemon and its files hold the new key, which the MONs accept whether or not the commit applied. `RotateKey` settles the MONs (see below) and reads the keys: a commit that applied returns nil. | If the error says that the commit did not apply, call `RotateKey` again or run `ceph auth commit-pending <daemon>`. |
 
   A call that finds a pending key from an earlier one resumes with it and
   never clears it, because the daemon may already hold it.
@@ -3383,7 +3445,7 @@ the requested level and verifies the normalized readback, so `20` reads back as
 `20/20`. The window is bound to the OSD container's generation (container ID and
 start time). Only one window per daemon and option is admitted at a time. Each
 set is issued only while the OSD still runs that generation, and the cluster's
-own topology operations, such as `RemoveOSD`, `DetachOSD` and `ReopenOSD`, wait
+own topology operations, such as `OSDContainer.Remove`, `OSDContainer.Detach` and `DetachedOSD.Reopen`, wait
 until the set has ended.
 
 `DebugLevelOverrideHandle.Restore` first checks the same generation and that
@@ -3399,7 +3461,7 @@ verifies it:
 - A set of the window whose end could not be confirmed may still apply. The
   window keeps it open as unconfirmed, and a later `Restore` first confirms that
   the set has stopped before it reads, sets or releases anything. Until then
-  `RemoveOSD` and `DetachOSD` first stop that set or refuse, so it cannot reach
+  `OSDContainer.Remove` and `OSDContainer.Detach` first stop that set or refuse, so it cannot reach
   a replacement OSD through the shared socket path.
 
 The generation is checked again after each read, so a replacement during a read
@@ -3536,7 +3598,7 @@ module's `mgr/prometheus/exclude_perf_counters` option set to `false` adds
 them back (see the
 [Ceph documentation](https://docs.ceph.com/en/tentacle/mgr/prometheus/#ceph-daemon-performance-counters-metrics);
 the module's tests do not cover that setting). Each daemon's own counters are
-also in `cluster.AdminSocket(ctx, "osd.0", "perf", "dump")`.
+also in `osd.AdminSocket(ctx, "perf", "dump")`.
 
 ```golang
 metrics, err := cluster.ManagerMetrics(ctx)
@@ -3629,9 +3691,9 @@ pools and after topology changes, before client I/O.
 - PG states with extra flags (`active+clean+scrubbing`,
   `active+clean+inconsistent`) do not count as clean.
 - OSDs registered outside the fixture make the count differ.
-- After `SetPoolPGCount` or `SetPoolPlacement` it can pass before the new PG set
-  is reported; see [WaitForPoolPGCount](#waitforpoolpgcount) and
-  [PoolPGs](#poolpgs).
+- After `Pool.SetPGCount` or `Pool.SetPlacement` it can pass before the new PG set
+  is reported; see [Pool.WaitForPGCount](#poolwaitforpgcount) and
+  [Pool.PGs](#poolpgs).
 - A pool whose replica count exceeds the OSD count never becomes clean (for
   example size 2 with one OSD).
 
@@ -3960,13 +4022,16 @@ for _, mon := range addresses.Monitors {
 #### AdminSocket
 
 ```golang
-func (c *Container) AdminSocket(ctx context.Context, daemon string, args ...string) ([]byte, error)
+func (o *OSDContainer) AdminSocket(ctx context.Context, args ...string) ([]byte, error)
+func (m *MonitorContainer) AdminSocket(ctx context.Context, args ...string) ([]byte, error)
+func (m *ManagerContainer) AdminSocket(ctx context.Context, args ...string) ([]byte, error)
 ```
 
-Runs one command on the admin socket of a MON, MGR or OSD that the cluster
-owns and returns its output. `daemon` is the Ceph daemon name, such as `mon.a`,
-`mgr.b` or `osd.0`; `args` are the command words. `help` lists a daemon's
-commands.
+Runs one command on the admin socket of the MON, MGR or OSD that the handle
+names, which the cluster must still own, and returns its output. `args` are the
+command words. `help` lists a daemon's commands. The three handle types cover
+exactly the daemons that have an admin socket here; there is no method for an
+MDS, and a handle of a removed daemon returns an error.
 
 The admin socket bypasses the Messenger and Cephx: the command reaches the
 daemon through a local Unix socket. Use it to check what a daemon has applied
@@ -3982,7 +4047,7 @@ independently of the client under test, for example:
 
 ```golang
 // Wait until osd.0 has applied the OSDMap epoch the cluster reports.
-out, err := cluster.AdminSocket(ctx, "osd.0", "status")
+out, err := osd.AdminSocket(ctx, "status") // osd is the *ceph.OSDContainer of osd.0
 var status struct {
 	NewestMap string `json:"newest_map"`
 }
@@ -4090,7 +4155,7 @@ cluster was already terminated), `Complete` and `Artifacts`. Each
   before `CollectDiagnostics` returns, so a canceled collection leaves no Ceph
   CLI behind.
 - Known admin and RGW secrets, every client key the cluster generated (also
-  keys that [ReplaceClientKey](#replaceclientkey) replaced or only attempted),
+  keys that [ClientConfig.ReplaceKey](#clientconfigreplacekey) replaced or only attempted),
   `RedactValues` and named secret patterns are masked, but redaction is best
   effort; review arbitrary application logs before sharing a report.
 
@@ -4401,13 +4466,13 @@ Selects the client/public network or the OSD replication network for
 
 | Type | Fields and methods | Notes |
 | --- | --- | --- |
-| `MonitorContainer` | embeds `testcontainers.Container`; `DaemonName` | `Stop`/`Start` keep the store. See [Monitors](#monitors). |
-| `ManagerContainer` | embeds `testcontainers.Container`; `DaemonName` | Active or standby. See [Managers](#managers). |
-| `OSDContainer` | embeds `testcontainers.Container`; `ID`; `Placement() OSDConfig` | Backed by a sparse BlueStore file. `Placement` returns a copy of the resolved CRUSH location. See [OSDs](#osds). |
-| `DetachedOSD` | `ID() int`; `UUID() string`; `ClusterFSID() string`; `Placement() OSDConfig` | A retained store and registration without a container. See [DetachOSD](#detachosd) and [ReopenOSD](#reopenosd). |
+| `MonitorContainer` | embeds `testcontainers.Container`; `DaemonName`; `Remove(ctx)`; `AdminSocket(ctx, args...)` | `Stop`/`Start` keep the store. See [Monitors](#monitors). |
+| `ManagerContainer` | embeds `testcontainers.Container`; `DaemonName`; `Remove(ctx)`; `AdminSocket(ctx, args...)`; `RotateKey(ctx)` | Active or standby. See [Managers](#managers). |
+| `OSDContainer` | embeds `testcontainers.Container`; `ID`; `Placement() OSDConfig`; `Remove(ctx)`; `SetIn(ctx, in)`; `Detach(ctx)`; `AdminSocket(ctx, args...)`; `RotateKey(ctx)` | Backed by a sparse BlueStore file. `Placement` returns a copy of the resolved CRUSH location. See [OSDs](#osds). |
+| `DetachedOSD` | `ID() int`; `UUID() string`; `ClusterFSID() string`; `Placement() OSDConfig`; `Reopen(ctx)` | A retained store and registration without a container. See [OSDContainer.Detach](#osdcontainerdetach) and [DetachedOSD.Reopen](#detachedosdreopen). |
 
 The cluster owns these containers. Do not terminate them individually; use
-`RemoveMonitor`, `RemoveManager` or `RemoveOSD`.
+`MonitorContainer.Remove`, `ManagerContainer.Remove` or `OSDContainer.Remove`.
 
 #### ClientConfig
 
@@ -4419,8 +4484,9 @@ The cluster owns the auth database; containers you attach with it are yours.
 | `Name() string` | The full entity, for example `client.reader`. |
 | `User() string` | The ID without `client.`, for APIs such as librados `rados_create` and go-ceph `rados.NewConnWithUser`. |
 | `KeyringPath() string` | The keyring path used inside attached containers, `/etc/ceph/ceph.client.<id>.keyring`. |
-| `ConnectionConfig() ([]byte, []byte, error)` | Independent copies of a `ceph.conf` and the identity's keyring for a client you run yourself. The configuration is a snapshot taken at creation; after replacing monitors, update `mon_host` (see [MonitorBootstrapAddresses](#monitorbootstrapaddresses)). Revocation does not erase copies, and a descriptor that [ReplaceClientKey](#replaceclientkey) replaced keeps returning its old key. |
+| `ConnectionConfig() ([]byte, []byte, error)` | Independent copies of a `ceph.conf` and the identity's keyring for a client you run yourself. The configuration is a snapshot taken at creation; after replacing monitors, update `mon_host` (see [MonitorBootstrapAddresses](#monitorbootstrapaddresses)). Revocation does not erase copies, and a descriptor that [ClientConfig.ReplaceKey](#clientconfigreplacekey) replaced keeps returning its old key. |
 | `String() string`, `GoString() string` | A description that never includes credentials, safe for logs and `%v`/`%#v`. |
+| `Capabilities(ctx)`, `UpdateCaps(ctx, caps)`, `ReplaceKey(ctx, opts...)`, `Revoke(ctx)`, `Delete(ctx)` | The operations on the identity. See [ClientConfig.Capabilities](#clientconfigcapabilities), [ClientConfig.UpdateCaps](#clientconfigupdatecaps), [ClientConfig.ReplaceKey](#clientconfigreplacekey), [ClientConfig.Revoke](#clientconfigrevoke) and [ClientConfig.Delete](#clientconfigdelete). |
 
 #### Restoration handles
 
@@ -4433,7 +4499,7 @@ The cluster owns the auth database; containers you attach with it are yours.
 | `BlocklistOverride` | `Address() string`, `Restore(ctx) error` | [TemporaryBlocklist](#temporaryblocklist) |
 | `fault.PauseLease` | `ContainerID`; `Resume(ctx) error` | [fault.Pause](fault.md#pause) |
 | `fault.NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [fault.InterruptNetwork](fault.md#interruptnetwork) (cluster-bound or standalone) |
-| `ClientRevocationHandle` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [RevokeClient](#revokeclient) |
+| `ClientRevocationHandle` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [ClientConfig.Revoke](#clientconfigrevoke) |
 
 See the [handle contract](#container-methods).
 
@@ -4444,13 +4510,13 @@ See the [handle contract](#container-methods).
 | `OSDConfig` | [WithInitialOSDs](#withinitialosds), [AddOSDWithConfig](#addosdwithconfig), `OSDContainer.Placement` |
 | `OSDState` | [OSDStates](#osdstates) |
 | `PoolConfig`, `ErasureCodeConfig` | [WithPools](#withpools), [CreatePool](#createpool) |
-| `Pool` | [CreatePool](#createpool) |
-| `PoolState`, `PoolQuota` | [PoolStatus](#poolstatus), [Pools](#pools), [SetPoolQuota](#setpoolquota) |
-| `PoolPlacement` | [SetPoolPlacement](#setpoolplacement) |
-| `PoolUsageSnapshot` | [PoolUsage](#poolusage) |
-| `PoolPGSnapshot`, `PGState`, `PGStats` | [PoolPGs](#poolpgs) |
-| `ClientCaps` | [CreateClient](#createclient), [ClientCapabilities](#clientcapabilities), [UpdateClientCaps](#updateclientcaps) |
-| `ClientOption` | [CreateClient](#createclient), [ReplaceClientKey](#replaceclientkey) |
+| `Pool` | [CreatePool](#createpool), [Pool](#pool); its methods are [Status](#poolstatus), [Usage](#poolusage), [PGs](#poolpgs), [SetReplication](#poolsetreplication), [SetQuota](#poolsetquota), [SetPlacement](#poolsetplacement), [SetPGCount](#poolsetpgcount), [WaitForPGCount](#poolwaitforpgcount) and [Remove](#poolremove) |
+| `PoolState`, `PoolQuota` | [Pool.Status](#poolstatus), [Pools](#pools), [Pool.SetQuota](#poolsetquota) |
+| `PoolPlacement` | [Pool.SetPlacement](#poolsetplacement) |
+| `PoolUsageSnapshot` | [Pool.Usage](#poolusage) |
+| `PoolPGSnapshot`, `PGState`, `PGStats` | [Pool.PGs](#poolpgs) |
+| `ClientCaps` | [CreateClient](#createclient), [ClientConfig.Capabilities](#clientconfigcapabilities), [ClientConfig.UpdateCaps](#clientconfigupdatecaps) |
+| `ClientOption` | [CreateClient](#createclient), [ClientConfig.ReplaceKey](#clientconfigreplacekey) |
 | `ConfigSetting` | [OverrideConfig](#overrideconfig) |
 | `ConfigEntry` | [Configuration](#configuration) |
 | `MGRModuleState` | [MGRModules](#mgrmodules) |
@@ -4497,7 +4563,7 @@ if err != nil {
 // Writes, other namespaces and other pools are denied with EPERM.
 
 // Widen the identity; the key stays the same. Omitted services lose their caps.
-if err := cluster.UpdateClientCaps(ctx, reader, ceph.ClientCaps{
+if err := reader.UpdateCaps(ctx, ceph.ClientCaps{
 	Mon: "allow r",
 	OSD: "allow rw pool=app-data namespace=tenant-a",
 }); err != nil {
@@ -4505,7 +4571,7 @@ if err := cluster.UpdateClientCaps(ctx, reader, ceph.ClientCaps{
 }
 // Use a new client process to observe the change; existing sessions may keep
 // their old tickets for a while.
-if err := cluster.DeleteClient(ctx, reader); err != nil {
+if err := reader.Delete(ctx); err != nil {
 	t.Fatal(err)
 }
 ```
@@ -4521,13 +4587,14 @@ func newTestPool(t *testing.T, cluster *ceph.Container) string {
 	t.Helper()
 	ctx := t.Context()
 	name := "t-" + strings.ToLower(strings.NewReplacer("/", "-", "_", "-").Replace(t.Name()))
-	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: name, Application: "rados"}); err != nil {
+	pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: name, Application: "rados"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		if err := cluster.RemovePool(ctx, name); err != nil {
+		if err := pool.Remove(ctx); err != nil {
 			t.Error(err)
 		}
 	})
@@ -4739,7 +4806,7 @@ pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 - `CreatePool` adds its own rule, `tc-<pool>-replicated`, which with the
   default `osd` failure domain also chooses OSDs directly. To use the map's
   `replicated_rule`, create the pool with `cluster.Ceph(ctx, "osd", "pool",
-  "create", ...)` instead; such a pool is not one that `RemovePool` removes.
+  "create", ...)` instead; such a pool is not one that `Pool.Remove` removes.
 - The legacy tunables lower the features a client needs to read the CRUSH map.
   Switching to modern tunables later (`ceph osd crush tunables optimal`) raises
   them again, which tests a client's refusal of unsupported features.
@@ -4839,11 +4906,15 @@ are not.
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithMonitorCount(3))
 // ... CleanupContainer, error check, client container `client` with WithClient()
-for _, pair := range [][2]string{{"a", "d"}, {"b", "e"}, {"c", "f"}} {
-	if _, err := cluster.AddMonitor(ctx, pair[1]); err != nil {
+original, err := cluster.Monitors(ctx) // a, b, c
+if err != nil {
+	t.Fatal(err)
+}
+for i, name := range []string{"d", "e", "f"} {
+	if _, err := cluster.AddMonitor(ctx, name); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.RemoveMonitor(ctx, pair[0]); err != nil {
+	if err := original[i].Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -4897,7 +4968,7 @@ if err := cluster.WaitForClean(ctx); err != nil {
 }
 ```
 
-To move data off a running OSD instead, use `SetOSDIn(ctx, id, false)`, wait with
+To move data off a running OSD instead, use `OSDContainer.SetIn(ctx, false)` on its handle, wait with
 `WaitForPGClean`, and mark it in again.
 
 ### Hold a pool relocation mid-flight
@@ -4913,9 +4984,10 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 	),
 )
 // ... CleanupContainer and error check
-if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{
+app, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 	Name: "app", Application: "rados", Replicas: 1, DeviceClass: "fast",
-}); err != nil {
+})
+if err != nil {
 	t.Fatal(err)
 }
 if err := cluster.WaitForClean(ctx); err != nil {
@@ -4931,18 +5003,18 @@ for _, flag := range []string{"nobackfill", "norecover"} {
 		t.Fatal(err)
 	}
 }
-if err := cluster.SetPoolPlacement(ctx, "app", ceph.PoolPlacement{DeviceClass: "slow"}); err != nil {
+if err := app.SetPlacement(ctx, ceph.PoolPlacement{DeviceClass: "slow"}); err != nil {
 	t.Fatal(err)
 }
-// PoolPGs now reports up/acting on the slow OSD with most PGs in
+// Pool.PGs now reports up/acting on the slow OSD with most PGs in
 // active+recovery_wait+degraded. Reads of old objects trigger on-demand
 // recovery and succeed; new writes succeed.
-// Restore both flags, then poll PoolPGs until every PG is active+clean on the
+// Restore both flags, then poll Pool.PGs until every PG is active+clean on the
 // slow OSD (WaitForClean alone can pass before the new mapping is reported).
 ```
 
-Moving the pool back with `SetPoolPlacement(ctx, "app", ceph.PoolPlacement{DeviceClass: "fast"})`
-reuses its original rule, which also makes it removable with `RemovePool` again.
+Moving the pool back with `app.SetPlacement(ctx, ceph.PoolPlacement{DeviceClass: "fast"})`
+reuses its original rule, which also makes it removable with `Pool.Remove` again.
 
 ### Fill the cluster with low full ratios
 
@@ -5208,7 +5280,7 @@ examples.
 | Setting | Fixture value | Change with |
 | --- | --- | --- |
 | `osd_pool_default_size` / `min_size` | `min(2, initial OSDs)` / 1 | `WithPoolDefaults` |
-| `osd_pool_default_pg_num`, autoscale mode | 8, `off` | `PoolConfig.PGNum`, `SetPoolPGCount` |
+| `osd_pool_default_pg_num`, autoscale mode | 8, `off` | `PoolConfig.PGNum`, `Pool.SetPGCount` |
 | `mon_allow_pool_size_one` | `true` (replica-1 pools allowed) | config file |
 | `mgr_stats_period` | 1 second (faster PG reports) | config file |
 | `bluestore_block_size` | 1 GiB sparse file | `WithOSDBlockSize` |
@@ -5238,7 +5310,7 @@ examples.
   values with `OverrideConfig` when a test needs them sooner.
 - Changed capabilities and revoked identities take effect for new connections;
   existing sessions may keep their tickets.
-- After `SetPoolPlacement` or `SetPoolPGCount`, `WaitForClean` can pass before
+- After `Pool.SetPlacement` or `Pool.SetPGCount`, `WaitForClean` can pass before
   the new PG set is reported.
 
 ### Concurrency with raw commands
@@ -5275,9 +5347,9 @@ See [Releases and images](guides/releases-and-images.md) for details.
 - Small `WithOSDBlockSize` values with initial OSDs make `Run` time out (see
   [Run small OSDs](#run-small-osds)).
 - A key set with `WithConfigFile` cannot be changed with `OverrideConfig`;
-  `mon_allow_pool_delete = false` in a config file blocks `RemovePool`.
+  `mon_allow_pool_delete = false` in a config file blocks `Pool.Remove`.
 - `t.Context()` is canceled before cleanup functions run. Use a fresh context in
-  `t.Cleanup` for `Restore`, `RemovePool` and `CollectDiagnostics`.
+  `t.Cleanup` for `Restore`, `Pool.Remove` and `CollectDiagnostics`.
 - Terminate client containers before the cluster: register their cleanup after
   the cluster's.
 - Keys copied by `WithClient` and `ConnectionConfig` are the cluster's admin

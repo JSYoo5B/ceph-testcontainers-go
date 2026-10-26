@@ -80,7 +80,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			}
 			fault := &osdRemovalPurgeReplyFault{Container: cluster.Container, id: original.ID}
 			cluster.Container = fault
-			if err := cluster.RemoveOSD(ctx, original.ID); !errors.Is(err, errOSDPurgeReplyLost) {
+			if err := original.Remove(ctx); !errors.Is(err, errOSDPurgeReplyLost) {
 				t.Fatalf("real purge did not retain its lost reply error: %v", err)
 			}
 			if fault.purges.Load() != 1 || len(clusteraccess.OSDs(t, cluster)) != 3 {
@@ -90,7 +90,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if _, err := cluster.AddOSD(ctx); err == nil {
 				t.Fatal("pending purge allowed OSD ID reuse before cleanup")
 			}
-			if err := cluster.RemoveOSD(ctx, original.ID); err != nil {
+			if err := original.Remove(ctx); err != nil {
 				t.Fatal("retry uncertain purge", err)
 			}
 			if fault.purges.Load() != 1 || len(clusteraccess.OSDs(t, cluster)) != 2 {
@@ -156,7 +156,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			mutations := fault.mutations.Load()
 			foreignCalls := &osdRemovalContainerCalls{Container: foreignTarget.Container}
 			foreignTarget.Container = foreignCalls
-			if err := cluster.RemoveOSD(ctx, foreignTarget.ID); err == nil || !strings.Contains(err.Error(), "UUID") {
+			if err := foreignTarget.Remove(ctx); err == nil || !strings.Contains(err.Error(), "UUID") {
 				t.Fatalf("foreign same-ID OSD was not rejected by UUID: %v", err)
 			}
 			after, err := cluster.Ceph(ctx, "osd", "dump", "--format", "json")

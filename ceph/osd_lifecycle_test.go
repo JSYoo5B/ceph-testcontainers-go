@@ -24,7 +24,7 @@ const osdLifecycleForeignUUID = "41174ab4-654f-47e3-a7b2-c826b634f7bc"
 
 func TestOSDRemovalDrainsExactIdentityAndCleansOwnedContainer(t *testing.T) {
 	cluster, control, daemon := newOSDLifecycleFixture()
-	if err := cluster.RemoveOSD(t.Context(), 3); err != nil {
+	if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if cluster.osds[3] != nil || cluster.osds[4] == nil || control.native[4].UUID != osdLifecycleOtherUUID || daemon.stops != 1 || daemon.terminations != 1 {
@@ -62,7 +62,7 @@ func TestOSDRemovalRejectsMissingMalformedAndForeignIdentity(t *testing.T) {
 				cluster.osds[3].nativeUUID = "urn:uuid:00000000-0000-0000-0000-000000000000"
 			}
 			owned := cluster.osds[3]
-			if err := cluster.RemoveOSD(t.Context(), 3); err == nil {
+			if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err == nil {
 				t.Fatal("absent/malformed/replaced registration was accepted")
 			}
 			if len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 || cluster.osds[3] != owned || owned.purged || owned.purgeIssued {
@@ -83,7 +83,7 @@ func TestOSDRemovalRejectsMalformedNativeSnapshotBeforeMutation(t *testing.T) {
 			control.raw = raw
 			// Even a pending own purge cannot infer absence from malformed data.
 			cluster.osds[3].purgeIssued = true
-			if err := cluster.RemoveOSD(t.Context(), 3); err == nil {
+			if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err == nil {
 				t.Fatal("malformed OSDMap was accepted as a purge acknowledgement")
 			}
 			if len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 || cluster.osds[3].purged {
@@ -118,7 +118,7 @@ func TestOSDRemovalRechecksIdentityBetweenAllRemovalPhases(t *testing.T) {
 					}
 				}
 			}
-			if err := cluster.RemoveOSD(t.Context(), 3); err == nil {
+			if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err == nil {
 				t.Fatalf("replacement after %s reached successful purge", phase)
 			}
 			if control.purges != 0 || daemon.terminations != 0 || cluster.osds[3] == nil || cluster.osds[3].purgeIssued {
@@ -139,7 +139,7 @@ func TestOSDRemovalLostPurgeReplyReconcilesFreshAbsence(t *testing.T) {
 	lost := errors.New("purge reply lost after commit")
 	control.purgeErr, control.applyPurgeOnError = lost, true
 	owned := cluster.osds[3]
-	if err := cluster.RemoveOSD(t.Context(), 3); !errors.Is(err, lost) {
+	if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); !errors.Is(err, lost) {
 		t.Fatalf("uncertain purge response lost its original error: %v", err)
 	}
 	if !owned.purgeIssued || owned.purged || cluster.osds[3] != owned || daemon.terminations != 0 || control.purges != 1 {
@@ -147,7 +147,7 @@ func TestOSDRemovalLostPurgeReplyReconcilesFreshAbsence(t *testing.T) {
 	}
 	beforeActions, beforeDumps := len(control.actions), control.dumps
 	control.purgeErr = nil
-	if err := cluster.RemoveOSD(t.Context(), 3); err != nil {
+	if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if cluster.osds[3] != nil || daemon.stops != 1 || daemon.terminations != 1 || control.purges != 1 || len(control.actions) != beforeActions || control.dumps != beforeDumps+1 {
@@ -159,14 +159,14 @@ func TestOSDRemovalPendingPurgeStillPresentCanRetryExactIdentity(t *testing.T) {
 	cluster, control, daemon := newOSDLifecycleFixture()
 	lost := errors.New("purge request response unavailable")
 	control.purgeErr = lost
-	if err := cluster.RemoveOSD(t.Context(), 3); !errors.Is(err, lost) {
+	if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); !errors.Is(err, lost) {
 		t.Fatal("uncertain purge error was lost", err)
 	}
 	if cluster.osds[3].purged || !cluster.osds[3].purgeIssued || control.native[3].UUID != osdLifecycleUUID || daemon.terminations != 0 {
 		t.Fatal("an uncommitted purge was treated as absence")
 	}
 	control.purgeErr = nil
-	if err := cluster.RemoveOSD(t.Context(), 3); err != nil {
+	if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if control.purges != 2 || daemon.terminations != 1 || cluster.osds[3] != nil {
@@ -187,7 +187,7 @@ func TestOSDRemovalPendingPurgeRejectsForeignReplacementAndReadError(t *testing.
 			} else {
 				control.dumpErr = readErr
 			}
-			err := cluster.RemoveOSD(t.Context(), 3)
+			err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context())
 			if err == nil || (scenario == "read error" && !errors.Is(err, readErr)) {
 				t.Fatalf("fresh state was adopted or error lost: %v", err)
 			}
@@ -203,14 +203,14 @@ func TestOSDRemovalCompletedPurgeRetriesOnlyDockerCleanup(t *testing.T) {
 	cleanupErr := errors.New("Docker cleanup temporarily unavailable")
 	daemon.terminateErr = cleanupErr
 	owned := cluster.osds[3]
-	if err := cluster.RemoveOSD(t.Context(), 3); !errors.Is(err, cleanupErr) || !owned.purged || !owned.purgeIssued || cluster.osds[3] != owned {
+	if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); !errors.Is(err, cleanupErr) || !owned.purged || !owned.purgeIssued || cluster.osds[3] != owned {
 		t.Fatalf("completed native purge lost retryable Docker ownership: %v", err)
 	}
 	beforeDumps, beforeActions := control.dumps, len(control.actions)
 	// The acknowledged purge does not adopt a later native reuse of the ID.
 	control.native[3] = OSDState{ID: 3, UUID: osdLifecycleForeignUUID, Up: true, In: true, Weight: 1}
 	daemon.terminateErr = nil
-	if err := cluster.RemoveOSD(t.Context(), 3); err != nil {
+	if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if cluster.osds[3] != nil || control.dumps != beforeDumps || len(control.actions) != beforeActions || control.native[3].UUID != osdLifecycleForeignUUID || daemon.stops != 1 || daemon.terminations != 2 {
@@ -221,7 +221,7 @@ func TestOSDRemovalCompletedPurgeRetriesOnlyDockerCleanup(t *testing.T) {
 func TestOSDRemovalAcceptsAlreadyMissingOwnedDockerContainer(t *testing.T) {
 	cluster, control, daemon := newOSDLifecycleFixture()
 	daemon.terminateErr = errdefs.ErrNotFound
-	if err := cluster.RemoveOSD(t.Context(), 3); err != nil || cluster.osds[3] != nil || control.purges != 1 {
+	if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err != nil || cluster.osds[3] != nil || control.purges != 1 {
 		t.Fatalf("missing acknowledged-purge Docker container prevented cleanup: %v", err)
 	}
 }
@@ -245,7 +245,7 @@ func TestOSDRemovalProtectsLastNativeOwnedRegistration(t *testing.T) {
 				state.UUID = osdLifecycleForeignUUID
 				control.native[4] = state
 			}
-			if err := cluster.RemoveOSD(t.Context(), 3); err == nil || !strings.Contains(err.Error(), "last OSD") {
+			if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "last OSD") {
 				t.Fatalf("last actual owned registration was removable: %v", err)
 			}
 			if len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 {
@@ -260,7 +260,7 @@ func TestOSDRemovalProtectsLastNativeOwnedRegistration(t *testing.T) {
 	delete(control.native, 4)
 	delete(control.native, 3)
 	cluster.osds[3].purgeIssued = true
-	if err := cluster.RemoveOSD(t.Context(), 3); err != nil || daemon.terminations != 1 || len(control.actions) != 0 {
+	if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err != nil || daemon.terminations != 1 || len(control.actions) != 0 {
 		t.Fatalf("last pending purge cleanup was blocked or changed native state: %v", err)
 	}
 }
@@ -276,7 +276,7 @@ func TestOSDRemovalDeadlineRetainsPartialOwnershipAndOriginalFailure(t *testing.
 			} else {
 				daemon.keepUp = true
 			}
-			err := cluster.RemoveOSD(t.Context(), 3)
+			err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context())
 			if !errors.Is(err, context.DeadlineExceeded) || (phase == "drain" && !errors.Is(err, busy)) {
 				t.Fatalf("partial removal lost deadline or native failure: %v", err)
 			}
@@ -288,7 +288,7 @@ func TestOSDRemovalDeadlineRetainsPartialOwnershipAndOriginalFailure(t *testing.
 			}
 			cluster.settings.startupTimeout = time.Second
 			control.safeErr, daemon.keepUp = nil, false
-			if err := cluster.RemoveOSD(t.Context(), 3); err != nil || cluster.osds[3] != nil {
+			if err := osdHandle(t, t.Context(), cluster, 3).Remove(t.Context()); err != nil || cluster.osds[3] != nil {
 				t.Fatalf("fresh-context partial removal retry failed: %v", err)
 			}
 		})
@@ -311,7 +311,7 @@ func TestOSDRemovalCanceledAndClosedDoNotChangeState(t *testing.T) {
 			case "cancel during map read":
 				control.afterDump = cancel
 			}
-			if err := cluster.RemoveOSD(ctx, 3); err == nil {
+			if err := osdHandle(t, ctx, cluster, 3).Remove(ctx); err == nil {
 				t.Fatal("expired/closed operation was accepted")
 			}
 			if len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 || cluster.osds[3] == nil || cluster.osds[3].purgeIssued {

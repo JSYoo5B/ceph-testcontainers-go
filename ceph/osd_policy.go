@@ -48,19 +48,16 @@ func (c *Container) OSDStates(ctx context.Context) ([]OSDState, error) {
 	return states, nil
 }
 
-// SetOSDIn changes native OSDMap membership of an existing owned OSD. It does
-// not stop, purge or change CRUSH capacity weights. Readback verifies the owned
-// UUID and desired state, since native in/out can succeed for nonexistent IDs.
-// WaitForPGClean can wait for recovery while an OSD remains out. Ceph preserves
-// a nonzero map reweight across out/in. External replacement must not race this
-// method; Ceph has no compare-and-swap operation for OSD membership.
-func (c *Container) SetOSDIn(ctx context.Context, id int, in bool) error {
-	if gateErr := c.sharedGate("SetOSDIn"); gateErr != nil {
-		return gateErr
-	}
+// setOSDIn implements OSDContainer.SetIn, which documents the behavior. The caller
+// admitted the shared-cluster policy; the handle is checked under the lock.
+func (c *Container) setOSDIn(ctx context.Context, handle *OSDContainer, in bool) error {
+	id := handle.ID
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
+		return err
+	}
+	if err := c.currentOSD(handle); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)

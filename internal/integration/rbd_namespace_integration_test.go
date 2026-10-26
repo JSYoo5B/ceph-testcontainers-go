@@ -86,7 +86,7 @@ func TestRBDNamespaces(t *testing.T) {
 				cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
 				defer stop()
 				for _, identity := range ownedIdentities {
-					if err := cluster.DeleteClient(cleanup, identity); err != nil {
+					if err := identity.Delete(cleanup); err != nil {
 						t.Errorf("remove owned RBD client: %v", err)
 					}
 				}
@@ -101,7 +101,7 @@ func TestRBDNamespaces(t *testing.T) {
 				t.Fatal(err)
 			}
 			ownedIdentities = append(ownedIdentities, reader)
-			caps, err := cluster.ClientCapabilities(ctx, reader)
+			caps, err := reader.Capabilities(ctx)
 			if err != nil || caps != readOnlyCaps {
 				t.Fatalf("native RBD read-only capabilities differ: %+v error=%v", caps, err)
 			}
@@ -135,7 +135,7 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, c
 			if err != nil {
 				t.Fatal(err)
 			}
-			poolState, err := cluster.PoolStatus(ctx, pool)
+			poolState, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 			if err != nil || poolState.ID <= 0 {
 				t.Fatalf("native RBD namespace pool identity unavailable: %+v error=%v", poolState, err)
 			}
@@ -180,7 +180,7 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, c
 			execCommand(t, ctx, admin, "rbd", "namespace", "remove", "--pool", pool, "--namespace", "foreign")
 			assertNamespaces()
 			for _, identity := range ownedIdentities {
-				if err := cluster.DeleteClient(ctx, identity); err != nil {
+				if err := identity.Delete(ctx); err != nil {
 					t.Fatal(err)
 				}
 			}

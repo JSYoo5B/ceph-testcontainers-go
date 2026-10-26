@@ -117,9 +117,22 @@ func runDebugOverhead(t *testing.T, option string) {
 		t.Fatalf("fixed warm-up did not complete: %s %v", warmupText, err)
 	}
 	time.Sleep(time.Second)
+	osds, err := cluster.OSDs(ctx)
+	if err != nil {
+		t.Fatalf("list OSDs: %v", err)
+	}
+	var osd0 *ceph.OSDContainer
+	for _, osd := range osds {
+		if osd.ID == 0 {
+			osd0 = osd
+		}
+	}
+	if osd0 == nil {
+		t.Fatal("osd.0 is not owned by the cluster")
+	}
 	get := func(name string) string {
 		t.Helper()
-		out, err := cluster.AdminSocket(ctx, "osd.0", "config", "get", name)
+		out, err := osd0.AdminSocket(ctx, "config", "get", name)
 		var fields map[string]json.RawMessage
 		if err != nil || json.Unmarshal(out, &fields) != nil || len(fields[name]) == 0 {
 			t.Fatalf("effective option %s unavailable: %s %v", name, out, err)

@@ -52,7 +52,8 @@ func TestRemoveWaitsForAllUpRanksBeforeCleanup(t *testing.T) {
 		}}
 		return sequence
 	})
-	if err := Remove(t.Context(), cluster, "app"); err != nil {
+	app := ownedFilesystem(t, cluster, "app")
+	if err := app.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if sequence.reads != 3 || len(f.Filesystems) != 0 || !f.HasPool("attached") {
@@ -75,7 +76,8 @@ func TestRemovePreservesOwnedResourcesWhenDrainCannotFinish(t *testing.T) {
 			})
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 			defer cancel()
-			if err := Remove(ctx, cluster, "app"); err == nil {
+			app := ownedFilesystem(t, cluster, "app")
+			if err := app.Remove(ctx); err == nil {
 				t.Fatal("unfinished or invalid drain succeeded")
 			}
 			assertRemovalNotCommitted(t, cluster, f)
@@ -91,12 +93,13 @@ func TestRemoveCancelledDrainCanBeRetriedWithoutForce(t *testing.T) {
 		return sequence
 	})
 	defer cancel()
-	if err := Remove(ctx, cluster, "app"); !errors.Is(err, context.Canceled) {
+	app := ownedFilesystem(t, cluster, "app")
+	if err := app.Remove(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled removal: %v", err)
 	}
 	assertRemovalNotCommitted(t, cluster, f)
 	sequence.maps, sequence.reads, sequence.onDown = []string{shutdownMap(41, 0, `{}`)}, 0, nil
-	if err := Remove(t.Context(), cluster, "app"); err != nil {
+	if err := app.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	assertNoForcedRemoval(t, f)
@@ -105,7 +108,8 @@ func TestRemoveCancelledDrainCanBeRetriedWithoutForce(t *testing.T) {
 func TestRemoveDownFailureDoesNotFallBack(t *testing.T) {
 	cluster, f := cephFSRemovalCluster(t, true)
 	f.FailNext("fs set app down true", 1)
-	if err := Remove(t.Context(), cluster, "app"); err == nil {
+	app := ownedFilesystem(t, cluster, "app")
+	if err := app.Remove(t.Context()); err == nil {
 		t.Fatal("failed shutdown succeeded")
 	}
 	assertRemovalNotCommitted(t, cluster, f)
@@ -121,7 +125,8 @@ func TestRemoveReadFailurePreservesOwnershipBeforeAndAfterDown(t *testing.T) {
 					}
 				}}
 			})
-			if err := Remove(t.Context(), cluster, "app"); err == nil {
+			app := ownedFilesystem(t, cluster, "app")
+			if err := app.Remove(t.Context()); err == nil {
 				t.Fatal("failed native map query succeeded")
 			}
 			assertRemovalNotCommitted(t, cluster, f)
@@ -141,7 +146,8 @@ func TestRemoveReadFailurePreservesOwnershipBeforeAndAfterDown(t *testing.T) {
 func TestRemoveRefusesReplacedFilesystemBeforeShutdown(t *testing.T) {
 	cluster, f := cephFSRemovalCluster(t, true)
 	filesystems(cluster).byName["app"].nativeIdentity = &cephFSNativeIdentity{id: 99}
-	if err := Remove(t.Context(), cluster, "app"); err == nil {
+	app := ownedFilesystem(t, cluster, "app")
+	if err := app.Remove(t.Context()); err == nil {
 		t.Fatal("replaced filesystem was admitted")
 	}
 	for _, args := range f.Calls {

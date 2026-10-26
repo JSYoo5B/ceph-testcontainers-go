@@ -53,7 +53,7 @@ func TestRBDClientFeatures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			state, err := cluster.PoolStatus(ctx, pool)
+			state, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 			if err != nil || state.ID <= 0 || state.Type != "replicated" || state.Size != 1 || state.MinSize != 1 {
 				t.Fatalf("native RBD metadata pool: %+v error=%v", state, err)
 			}
@@ -127,7 +127,7 @@ sys.exit(result.returncode)`,
 				}
 			}
 			execCommand(t, ctx, admin, "python3", "-c", rbdClientFeatureSentinelScript, pool, "verify-and-remove")
-			after, err := cluster.PoolStatus(ctx, pool)
+			after, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 			if err != nil || after.ID != state.ID {
 				t.Fatalf("native pool identity changed: before=%+v after=%+v error=%v", state, after, err)
 			}

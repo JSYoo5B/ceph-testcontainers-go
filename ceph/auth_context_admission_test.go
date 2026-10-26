@@ -31,11 +31,11 @@ func TestClientOwnerAdmissionQueuedDeadline(t *testing.T) {
 				case "create":
 					created, err = cluster.CreateClient(ctx, "writer", ClientCaps{Mon: "allow r"})
 				case "delete":
-					err = cluster.DeleteClient(ctx, client)
+					err = client.Delete(ctx)
 				case "capabilities":
-					_, err = cluster.ClientCapabilities(ctx, client)
+					_, err = client.Capabilities(ctx)
 				case "update caps":
-					err = cluster.UpdateClientCaps(ctx, client, ClientCaps{OSD: "allow r pool=tenant"})
+					err = client.UpdateCaps(ctx, ClientCaps{OSD: "allow r pool=tenant"})
 				}
 				return err
 			}
@@ -69,11 +69,11 @@ func TestClientControlAdmissionQueuedDeadline(t *testing.T) {
 				case "create":
 					created, err = cluster.CreateClient(ctx, "writer", ClientCaps{Mon: "allow r"})
 				case "delete":
-					err = cluster.DeleteClient(ctx, client)
+					err = client.Delete(ctx)
 				case "capabilities":
-					_, err = cluster.ClientCapabilities(ctx, client)
+					_, err = client.Capabilities(ctx)
 				case "update caps":
-					err = cluster.UpdateClientCaps(ctx, client, ClientCaps{OSD: "allow r pool=tenant"})
+					err = client.UpdateCaps(ctx, ClientCaps{OSD: "allow r pool=tenant"})
 				}
 				return err
 			}
@@ -313,9 +313,9 @@ func TestClientConfirmedNativePublicationSurvivesCancellation(t *testing.T) {
 			case "auth add", "auth get":
 				client, err = cluster.CreateClient(ctx, "reader", ClientCaps{Mon: "allow r"})
 			case "auth del":
-				err = cluster.DeleteClient(ctx, client)
+				err = client.Delete(ctx)
 			case "auth caps":
-				err = cluster.UpdateClientCaps(ctx, client, ClientCaps{OSD: "allow r pool=tenant"})
+				err = client.UpdateCaps(ctx, ClientCaps{OSD: "allow r pool=tenant"})
 			}
 			if client == nil || !client.created || ctx.Err() != context.Canceled {
 				t.Fatal("native success did not retain its confirmed owned identity")
@@ -335,13 +335,13 @@ func TestClientConfirmedNativePublicationSurvivesCancellation(t *testing.T) {
 			}
 			control.afterRead = nil
 			if stage == "auth caps" {
-				caps, err := cluster.ClientCapabilities(t.Context(), client)
+				caps, err := client.Capabilities(t.Context())
 				if err != nil || caps != (ClientCaps{OSD: "allow r pool=tenant"}) {
 					t.Fatal("fresh capability readback did not preserve the confirmed replacement")
 				}
 			} else {
 				before := len(control.calls)
-				if err := cluster.DeleteClient(t.Context(), client); err != nil || !client.revoked {
+				if err := client.Delete(t.Context()); err != nil || !client.revoked {
 					t.Fatalf("fresh context could not revoke the retained confirmed identity: %v", err)
 				}
 				if stage == "auth del" && len(control.calls) != before {

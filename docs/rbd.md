@@ -224,9 +224,9 @@ packages. The `ceph.Container` methods most RBD tests use are:
 | Method | Use in RBD tests |
 | --- | --- |
 | `WithClient()` | Attach an application container with the admin keyring. |
-| `CreateClient(ctx, name, ceph.ClientCaps)`, `WithClientIdentity(client)`, `DeleteClient` | Least-privilege identities such as `profile rbd` or `profile rbd-read-only` scoped to a pool and namespace. |
+| `CreateClient(ctx, name, ceph.ClientCaps)`, `WithClientIdentity(client)`, `ClientConfig.Delete` | Least-privilege identities such as `profile rbd` or `profile rbd-read-only` scoped to a pool and namespace. |
 | `ConnectionConfig(ctx)` | `ceph.conf` and admin keyring for a native client outside Docker (host network mode). |
-| `CreatePool`, `PoolStatus`, `RemovePool`, `WaitForClean` | Pools created after `Run`; wait for `active+clean` before I/O. |
+| `CreatePool`, `Pool.Status`, `Pool.Remove`, `WaitForClean` | Pools created after `Run`; wait for `active+clean` before I/O. |
 | `Ceph(ctx, args...)`, `ControlContainer(ctx)`, `ControlImage()` | Run the `ceph` CLI, run `rbd`/`rados` in the control container, reuse the control image. |
 | `fault.Pause`, `TemporaryBlocklist`, `BlocklistEntries` | Freeze and fence RBD clients (see [the lock handover example](#hand-over-an-exclusive-lock-from-an-unresponsive-client)). |
 | `OverrideConfig` | Set any Ceph option and restore it. |
@@ -822,7 +822,7 @@ token from the source (`RunMirror` calls it once during setup).
 func (m *Mirror) RefreshMonitorConfig(ctx context.Context) error
 ```
 
-After you replace monitors on either cluster (`AddMonitor`/`RemoveMonitor`),
+After you replace monitors on either cluster (`AddMonitor`/`MonitorContainer.Remove`),
 running Ceph sessions learn the new monmap, but a restarted process reads the
 monitor addresses from its local `ceph.conf`. This method rewrites the global
 `mon_host` entry in the local configuration of both setup clients and every
@@ -1353,8 +1353,8 @@ deny: image creation, a direct RADOS write, or access to another namespace,
 which fail with `EPERM`/`EACCES`.
 
 Cephx changes apply to new connections; an existing session can keep tickets
-with the old capabilities. Change capabilities with `UpdateClientCaps` and
-revoke identities with `DeleteClient` (see [ceph.md](ceph.md)).
+with the old capabilities. Change capabilities with `ClientConfig.UpdateCaps` and
+revoke identities with `ClientConfig.Delete` (see [ceph.md](ceph.md)).
 
 To remove the namespace before the cluster ends, delete its images (and empty
 its trash) through the client, then call

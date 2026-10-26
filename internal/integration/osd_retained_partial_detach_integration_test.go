@@ -125,7 +125,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 		t.Fatal("rename receipt differs from original marker")
 	}
 	before := partialDetachClock(t, ctx, docker.Client)
-	detached, err := cluster.DetachOSD(ctx, original.ID)
+	detached, err := original.Detach(ctx)
 	if err == nil || detached != nil || !strings.Contains(err.Error(), "store lacks a regular ready") {
 		t.Fatalf("post-removal marker refusal: detached=%v err=%v", detached != nil, err)
 	}
@@ -144,7 +144,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	if len(native) != 1 || native[0].ID != original.ID || native[0].UUID != identities[original.ID] || native[0].Up != 0 || native[0].In != 1 {
 		t.Fatal("partial detach changed registration", native)
 	}
-	if err := cluster.RemoveOSD(ctx, original.ID); err == nil || !strings.Contains(err.Error(), "being detached") {
+	if err := original.Remove(ctx); err == nil || !strings.Contains(err.Error(), "being detached") {
 		t.Fatal("partial ownership did not refuse purge", err)
 	}
 	if !slices.Equal(native, noInitialOSDNativeDump(t, ctx, cluster)) {
@@ -161,7 +161,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	}
 	markerMayBeHidden = false
 	beforeRetry := partialDetachClock(t, ctx, docker.Client)
-	detached, err = cluster.DetachOSD(ctx, original.ID)
+	detached, err = original.Detach(ctx)
 	if err != nil {
 		t.Fatal("settle known post-removal failure", err)
 	}
@@ -184,7 +184,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	}
 	observerRemoved = true
 	beforeReopen := partialDetachClock(t, ctx, docker.Client)
-	reopened, err := cluster.ReopenOSD(ctx, detached)
+	reopened, err := detached.Reopen(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

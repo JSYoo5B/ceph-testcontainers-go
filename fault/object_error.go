@@ -65,7 +65,7 @@ func validateInjectObjectName(name string) error {
 // restarts. Client reads served by a healthy primary are unaffected. Use
 // ceph.Container.DeepScrubPG to report the damage and
 // ceph.Container.PGInconsistencies, ceph.Container.HealthDetails
-// (OSD_SCRUB_ERRORS, PG_DAMAGED) or ceph.Container.PoolPGs to observe it. It
+// (OSD_SCRUB_ERRORS, PG_DAMAGED) or ceph.Pool.PGs to observe it. It
 // needs BlueStore OSDs and refuses a cluster that uses OSDMemStore. A failure
 // after the debug setting was enabled leaves it enabled and is not retried or
 // disarmed.

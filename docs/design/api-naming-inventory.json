@@ -3,7 +3,7 @@
   "scope": "Declared exports in ceph, fault, rbd, cephfs, rgw and capture; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
     "capture": 36,
-    "ceph": 361,
+    "ceph": 365,
     "cephfs": 155,
     "fault": 35,
     "rbd": 77,
@@ -350,11 +350,27 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.ClientConfig.Capabilities",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ClientCaps, error)",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.Capabilities",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.ClientConfig.ConnectionConfig",
       "kind": "method",
       "signature": "func() ([]byte, []byte, error)",
       "receiver": "*ClientConfig",
       "proposed": "ceph.ClientConfig.ConnectionConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.Delete",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.Delete",
       "decision": "baseline"
     },
     {
@@ -382,11 +398,35 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.ClientConfig.ReplaceKey",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...ClientOption) (*ClientConfig, error)",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.ReplaceKey",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.Revoke",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*ClientRevocationHandle, error)",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.Revoke",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.ClientConfig.String",
       "kind": "method",
       "signature": "func() string",
       "receiver": "ClientConfig",
       "proposed": "ceph.ClientConfig.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.UpdateCaps",
+      "kind": "method",
+      "signature": "func(ctx context.Context, caps ClientCaps) error",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.UpdateCaps",
       "decision": "baseline"
     },
     {
@@ -548,14 +588,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.AdminSocket",
-      "kind": "method",
-      "signature": "func(ctx context.Context, daemon string, args ...string) ([]byte, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.AdminSocket",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.BlocklistEntries",
       "kind": "method",
       "signature": "func(ctx context.Context) ([]BlocklistEntry, error)",
@@ -577,14 +609,6 @@
       "signature": "func() string",
       "receiver": "*Container",
       "proposed": "ceph.Container.CephVersion",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.ClientCapabilities",
-      "kind": "method",
-      "signature": "func(ctx context.Context, client *ClientConfig) (ClientCaps, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ClientCapabilities",
       "decision": "baseline"
     },
     {
@@ -713,22 +737,6 @@
       "signature": "func(ctx context.Context, pgid string) error",
       "receiver": "*Container",
       "proposed": "ceph.Container.DeepScrubPG",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.DeleteClient",
-      "kind": "method",
-      "signature": "func(ctx context.Context, client *ClientConfig) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.DeleteClient",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.DetachOSD",
-      "kind": "method",
-      "signature": "func(ctx context.Context, id int) (*DetachedOSD, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.DetachOSD",
       "decision": "baseline"
     },
     {
@@ -940,27 +948,11 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.PoolPGs",
+      "current": "ceph.Container.Pool",
       "kind": "method",
-      "signature": "func(ctx context.Context, name string) (PoolPGSnapshot, error)",
+      "signature": "func(ctx context.Context, name string) (*Pool, error)",
       "receiver": "*Container",
-      "proposed": "ceph.Container.PoolPGs",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.PoolStatus",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string) (PoolState, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.PoolStatus",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.PoolUsage",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string) (PoolUsageSnapshot, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.PoolUsage",
+      "proposed": "ceph.Container.Pool",
       "decision": "baseline"
     },
     {
@@ -1012,75 +1004,11 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.RemoveManager",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.RemoveManager",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.RemoveMonitor",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.RemoveMonitor",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.RemoveOSD",
-      "kind": "method",
-      "signature": "func(ctx context.Context, id int) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.RemoveOSD",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.RemovePool",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.RemovePool",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.ReopenOSD",
-      "kind": "method",
-      "signature": "func(ctx context.Context, detached *DetachedOSD) (*OSDContainer, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ReopenOSD",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.RepairPG",
       "kind": "method",
       "signature": "func(ctx context.Context, pgid string) error",
       "receiver": "*Container",
       "proposed": "ceph.Container.RepairPG",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.ReplaceClientKey",
-      "kind": "method",
-      "signature": "func(ctx context.Context, client *ClientConfig, opts ...ClientOption) (*ClientConfig, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ReplaceClientKey",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.RevokeClient",
-      "kind": "method",
-      "signature": "func(ctx context.Context, client *ClientConfig) (*ClientRevocationHandle, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.RevokeClient",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.RotateDaemonKey",
-      "kind": "method",
-      "signature": "func(ctx context.Context, daemon string) (err error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.RotateDaemonKey",
       "decision": "baseline"
     },
     {
@@ -1097,46 +1025,6 @@
       "signature": "func() []testcontainers.Container",
       "receiver": "*Container",
       "proposed": "ceph.Container.ServiceContainers",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.SetOSDIn",
-      "kind": "method",
-      "signature": "func(ctx context.Context, id int, in bool) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.SetOSDIn",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.SetPoolPGCount",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string, pgNum int) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.SetPoolPGCount",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.SetPoolPlacement",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string, placement PoolPlacement) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.SetPoolPlacement",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.SetPoolQuota",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string, quota PoolQuota) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.SetPoolQuota",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.SetPoolReplication",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string, replicas, minSize int) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.SetPoolReplication",
       "decision": "baseline"
     },
     {
@@ -1188,14 +1076,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.UpdateClientCaps",
-      "kind": "method",
-      "signature": "func(ctx context.Context, client *ClientConfig, caps ClientCaps) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.UpdateClientCaps",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.UsesHostNetwork",
       "kind": "method",
       "signature": "func() bool",
@@ -1217,14 +1097,6 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*Container",
       "proposed": "ceph.Container.WaitForPGClean",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.WaitForPoolPGCount",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string, pgNum int) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.WaitForPoolPGCount",
       "decision": "baseline"
     },
     {
@@ -1511,6 +1383,14 @@
       "signature": "func() OSDConfig",
       "receiver": "*DetachedOSD",
       "proposed": "ceph.DetachedOSD.Placement",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD.Reopen",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*OSDContainer, error)",
+      "receiver": "*DetachedOSD",
+      "proposed": "ceph.DetachedOSD.Reopen",
       "decision": "baseline"
     },
     {
@@ -1814,6 +1694,30 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.ManagerContainer.AdminSocket",
+      "kind": "method",
+      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
+      "receiver": "*ManagerContainer",
+      "proposed": "ceph.ManagerContainer.AdminSocket",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerContainer.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ManagerContainer",
+      "proposed": "ceph.ManagerContainer.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerContainer.RotateKey",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ManagerContainer",
+      "proposed": "ceph.ManagerContainer.RotateKey",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.ManagerMetrics",
       "kind": "type",
       "proposed": "ceph.ManagerMetrics",
@@ -1937,6 +1841,22 @@
       "current": "ceph.MonitorContainer",
       "kind": "type",
       "proposed": "ceph.MonitorContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorContainer.AdminSocket",
+      "kind": "method",
+      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
+      "receiver": "*MonitorContainer",
+      "proposed": "ceph.MonitorContainer.AdminSocket",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorContainer.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*MonitorContainer",
+      "proposed": "ceph.MonitorContainer.Remove",
       "decision": "baseline"
     },
     {
@@ -2084,11 +2004,51 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.OSDContainer.AdminSocket",
+      "kind": "method",
+      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.AdminSocket",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDContainer.Detach",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*DetachedOSD, error)",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.Detach",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.OSDContainer.Placement",
       "kind": "method",
       "signature": "func() OSDConfig",
       "receiver": "*OSDContainer",
       "proposed": "ceph.OSDContainer.Placement",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDContainer.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDContainer.RotateKey",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.RotateKey",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDContainer.SetIn",
+      "kind": "method",
+      "signature": "func(ctx context.Context, in bool) error",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.SetIn",
       "decision": "baseline"
     },
     {
@@ -2189,6 +2149,78 @@
       "current": "ceph.Pool",
       "kind": "type",
       "proposed": "ceph.Pool",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.PGs",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (PoolPGSnapshot, error)",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.PGs",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.SetPGCount",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pgNum int) error",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.SetPGCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.SetPlacement",
+      "kind": "method",
+      "signature": "func(ctx context.Context, placement PoolPlacement) error",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.SetPlacement",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.SetQuota",
+      "kind": "method",
+      "signature": "func(ctx context.Context, quota PoolQuota) error",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.SetQuota",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.SetReplication",
+      "kind": "method",
+      "signature": "func(ctx context.Context, replicas, minSize int) error",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.SetReplication",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (PoolState, error)",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.Usage",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (PoolUsageSnapshot, error)",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.Usage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.WaitForPGCount",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pgNum int) error",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.WaitForPGCount",
       "decision": "baseline"
     },
     {
@@ -2817,14 +2849,6 @@
       "decision": "baseline"
     },
     {
-      "current": "cephfs.Filesystem.AddMDSReplacement",
-      "kind": "method",
-      "signature": "func(ctx context.Context, stopped *MDS) (*MDS, error)",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.AddMDSReplacement",
-      "decision": "baseline"
-    },
-    {
       "current": "cephfs.Filesystem.AddSnapshotSchedule",
       "kind": "method",
       "signature": "func(ctx context.Context, schedule SnapshotSchedule) (*SnapshotScheduleLease, error)",
@@ -2953,19 +2977,19 @@
       "decision": "baseline"
     },
     {
+      "current": "cephfs.Filesystem.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.Remove",
+      "decision": "baseline"
+    },
+    {
       "current": "cephfs.Filesystem.RemovePartialSubvolumeClone",
       "kind": "method",
       "signature": "func(ctx context.Context, clone *SubvolumeClone) error",
       "receiver": "*Filesystem",
       "proposed": "cephfs.Filesystem.RemovePartialSubvolumeClone",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Filesystem.RemoveStoppedMDS",
-      "kind": "method",
-      "signature": "func(parent context.Context, daemon *MDS) error",
-      "receiver": "*Filesystem",
-      "proposed": "cephfs.Filesystem.RemoveStoppedMDS",
       "decision": "baseline"
     },
     {
@@ -3160,6 +3184,22 @@
       "current": "cephfs.MDS",
       "kind": "type",
       "proposed": "cephfs.MDS",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDS.AddReplacement",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*MDS, error)",
+      "receiver": "*MDS",
+      "proposed": "cephfs.MDS.AddReplacement",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDS.RemoveStopped",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*MDS",
+      "proposed": "cephfs.MDS.RemoveStopped",
       "decision": "baseline"
     },
     {
@@ -3608,13 +3648,6 @@
       "current": "cephfs.QuiesceState",
       "kind": "type",
       "proposed": "cephfs.QuiesceState",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Remove",
-      "kind": "function",
-      "signature": "func(ctx context.Context, c *ceph.Container, name string) error",
-      "proposed": "cephfs.Remove",
       "decision": "baseline"
     },
     {
@@ -4843,6 +4876,14 @@
       "decision": "baseline"
     },
     {
+      "current": "rgw.Gateway.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.Remove",
+      "decision": "baseline"
+    },
+    {
       "current": "rgw.Gateway.RemoveAccount",
       "kind": "method",
       "signature": "func(ctx context.Context, a *Account) error",
@@ -5232,13 +5273,6 @@
       "current": "rgw.Quota",
       "kind": "type",
       "proposed": "rgw.Quota",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Remove",
-      "kind": "function",
-      "signature": "func(ctx context.Context, c *ceph.Container, name string) error",
-      "proposed": "rgw.Remove",
       "decision": "baseline"
     },
     {

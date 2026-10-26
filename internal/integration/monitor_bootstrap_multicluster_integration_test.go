@@ -161,7 +161,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 				for _, mds := range []*cephfs.Filesystem{sourceFS, destinationFS}[i].MDSs() {
 					mdss = append(mdss, monReplacementExecDaemon{Daemon: "mds." + mds.ID, Container: mds.Container, Socket: "/var/run/ceph/ceph-mds." + mds.ID + ".asok"})
 				}
-				recorder := newMonReplacementRecorder([]string{"source", "destination"}[i], cluster, monReplacementDefaultBounds, stopped...).withDaemons(mdss...)
+				recorder := newMonReplacementRecorder([]string{"source", "destination"}[i], withSockets(t, cluster), monReplacementDefaultBounds, stopped...).withDaemons(mdss...)
 				t.Cleanup(func() { finishMonReplacement(t, recorder) })
 				runMonReplacement(t, ctx, recorder, [][2]string{{"a", "d"}, {"b", "e"}, {"c", "f"}})
 				quorum, err := cluster.QuorumStatus(ctx)

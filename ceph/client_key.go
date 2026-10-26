@@ -179,38 +179,8 @@ func (c *Container) changeClient(ctx context.Context, entity string, command map
 	return false, fmt.Errorf("%s: the auth entry changed in an unexpected way; inspect ceph auth get %s", operation, entity)
 }
 
-// ReplaceClientKey gives a client identity that this cluster created a fresh
-// Cephx key and keeps its name and its exact capabilities, in one auth
-// import, so that the MONs never lack the identity. The identity needs a
-// capability, as auth import refuses an entry without any. The new key has
-// the type of the old one unless WithClientKeyType selects another. It
-// returns a new descriptor for the new key, and the old descriptor goes
-// stale: its ConnectionConfig still returns the old credentials, for tests
-// that check their rejection, while every other operation on it fails.
-// Containers that were attached with the old descriptor keep the old
-// keyring.
-//
-// A fresh connection with the old key fails at once. A client that
-// authenticated before keeps its session and its tickets until it renews them
-// within auth_mon_ticket_ttl (AuthConfig.MonTicketTTL), when the MONs reject
-// the old key: Tentacle then drops the client's MON session, while Squid
-// keeps an open one answering. The new key works for fresh MON and MGR
-// clients at once.
-//
-// The identity must still have the key of client; one changed outside the
-// module is refused. External auth changes must not race this call. The
-// import is fenced like the MON commands of RotateDaemonKey: when it fails,
-// the call settles the MONs and reads whether it applied. When that stays
-// uncertain, the call returns a descriptor of the attempted key that stays
-// unusable, with the error, and a later call with client, or any other
-// operation on the identity, settles first: ReplaceClientKey then returns a
-// usable descriptor of that key once the import turns out to have applied,
-// or replaces the key anew once it turns out not to have. A returned
-// descriptor never changes afterwards.
-func (c *Container) ReplaceClientKey(ctx context.Context, client *ClientConfig, opts ...ClientOption) (*ClientConfig, error) {
-	if gateErr := c.sharedGate("ReplaceClientKey"); gateErr != nil {
-		return nil, gateErr
-	}
+// replaceClientKey implements ClientConfig.ReplaceKey, which documents the behavior.
+func (c *Container) replaceClientKey(ctx context.Context, client *ClientConfig, opts ...ClientOption) (*ClientConfig, error) {
 	settings := clientOptions{}
 	for _, opt := range opts {
 		if err := opt(&settings); err != nil {
@@ -321,10 +291,10 @@ func (c *Container) ownedClientRecord(ctx context.Context, client *ClientConfig,
 // The caller holds c.mu and has settled the identity when it could.
 func (c *Container) checkCurrentClient(client *ClientConfig) error {
 	if client.replacedBy != nil {
-		return invalid(fmt.Errorf("cephx client %s has a new key; ReplaceClientKey with this descriptor returns the current one", client.name))
+		return invalid(fmt.Errorf("cephx client %s has a new key; ClientConfig.ReplaceKey with this descriptor returns the current one", client.name))
 	}
 	if c.authFences[client.name] != nil {
-		return invalid(fmt.Errorf("an earlier change of cephx client %s is not resolved yet; a call that can run commands, such as ClientCapabilities, resolves it", client.name))
+		return invalid(fmt.Errorf("an earlier change of cephx client %s is not resolved yet; a call that can run commands, such as ClientConfig.Capabilities, resolves it", client.name))
 	}
 	if c.clientRevocations[client.name] != nil {
 		return invalid(fmt.Errorf("cephx client %s is revoked temporarily; Restore its revocation first", client.name))

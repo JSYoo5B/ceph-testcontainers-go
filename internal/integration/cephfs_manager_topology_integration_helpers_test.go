@@ -46,7 +46,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	if _, err := source.AddManager(ctx, "b"); err != nil {
 		t.Fatal(err)
 	}
-	if err := source.RemoveManager(ctx, "a"); err != nil {
+	if err := managerHandle(t, ctx, source, "a").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if source.ManagerContainer() != nil {
@@ -128,7 +128,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	cephFSAssertManagerPeerNetworks(t, ctx, source, destination.NetworkName(), true)
-	if err := source.RemoveManager(ctx, "b"); err != nil {
+	if err := managerHandle(t, ctx, source, "b").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	status, err = source.ManagerStatus(ctx)

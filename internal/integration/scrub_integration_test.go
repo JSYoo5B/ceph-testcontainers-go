@@ -66,7 +66,7 @@ func TestScrubInconsistency(t *testing.T) {
 			}
 			expectScrub := func(t *testing.T, phase string, inconsistent bool) {
 				t.Helper()
-				snapshot, err := cluster.PoolPGs(ctx, poolName)
+				snapshot, err := poolHandle(t, ctx, cluster, poolName).PGs(ctx)
 				if err != nil || len(snapshot.PGs) != 1 || snapshot.PGs[0].PGID != mapping.PGID {
 					t.Fatalf("%s: native PG report unavailable: %v", phase, err)
 				}

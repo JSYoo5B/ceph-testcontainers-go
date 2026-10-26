@@ -39,7 +39,7 @@ func TestOSDFullRatios(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			pool, err := cluster.PoolStatus(ctx, "tc-full-ratios")
+			pool, err := poolHandle(t, ctx, cluster, "tc-full-ratios").Status(ctx)
 			if err != nil || pool.ID <= 0 {
 				t.Fatal("positive native pool identity unavailable", err)
 			}
@@ -97,7 +97,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=Tr
 					}
 					waitFullRatioHealth(t, ctx, cluster, original.FSID, fault.code, false)
 					probe(t, "resumed-"+fault.name)
-					state, err := cluster.PoolStatus(ctx, "tc-full-ratios")
+					state, err := poolHandle(t, ctx, cluster, "tc-full-ratios").Status(ctx)
 					if err != nil || state.ID != pool.ID || state.Size != pool.Size || state.PGNum != pool.PGNum || state.Quota != pool.Quota {
 						t.Fatalf("ratio override changed pool identity/policy: %+v %v", state, err)
 					}

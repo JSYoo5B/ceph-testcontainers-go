@@ -93,7 +93,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	pausedRegistration := noInitialOSDNativeDump(t, ctx, cluster)
-	if refused, err := cluster.DetachOSD(ctx, original.ID); err == nil || refused != nil || !strings.Contains(err.Error(), "container pause") {
+	if refused, err := original.Detach(ctx); err == nil || refused != nil || !strings.Contains(err.Error(), "container pause") {
 		t.Fatal("DetachOSD of a paused OSD was not refused", err)
 	}
 	if raw := osdMemoryInspect(t, ctx, docker.Client, oldContainer); !raw.State.Running || !raw.State.Paused {
@@ -114,7 +114,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 		t.Fatal("pause refusal fenced the OSD instance", probe.ExitCode, err)
 	}
 
-	detached, err := cluster.DetachOSD(ctx, original.ID)
+	detached, err := original.Detach(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 	if len(native) != 1 || native[0].ID != original.ID || native[0].UUID != detached.UUID() || native[0].Up != 0 || native[0].In != 1 {
 		t.Fatalf("detached registration %+v", native)
 	}
-	if err := cluster.RemoveOSD(ctx, original.ID); err == nil {
+	if err := original.Remove(ctx); err == nil {
 		t.Fatal("RemoveOSD purged a detached OSD")
 	}
 	if !slices.Equal(native, noInitialOSDNativeDump(t, ctx, cluster)) {
@@ -169,7 +169,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 		t.Fatal("the observer did not change the retained keyring")
 	}
 	containers := retainedContainerIDs(t, ctx, docker.Client)
-	if refused, err := cluster.ReopenOSD(ctx, detached); err == nil || refused != nil || !strings.Contains(err.Error(), "changed since it was detached") {
+	if refused, err := detached.Reopen(ctx); err == nil || refused != nil || !strings.Contains(err.Error(), "changed since it was detached") {
 		t.Fatal("ReopenOSD of a changed store was not refused", err)
 	}
 	if !slices.Equal(containers, retainedContainerIDs(t, ctx, docker.Client)) {
@@ -203,14 +203,14 @@ func TestOSDRetainedReopen(t *testing.T) {
 	}
 	observerRemoved = true
 
-	reopened, err := cluster.ReopenOSD(ctx, detached)
+	reopened, err := detached.Reopen(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reopened == original || reopened.ID != original.ID || reopened.GetContainerID() == oldContainer || original.GetContainerID() != oldContainer {
 		t.Fatalf("reopen handle osd.%d %s, previous %s", reopened.ID, reopened.GetContainerID(), original.GetContainerID())
 	}
-	if again, err := cluster.ReopenOSD(ctx, detached); err == nil || again != nil {
+	if again, err := detached.Reopen(ctx); err == nil || again != nil {
 		t.Fatal("a detached OSD was reopened twice")
 	}
 	if current := osdMemoryIdentities(t, ctx, cluster); len(current) != 1 || current[original.ID] != registered[original.ID] {

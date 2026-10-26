@@ -45,11 +45,11 @@ func TestPoolPolicies(t *testing.T) {
 subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=True)`, poolPolicyProbe, phase)
 			}
 			probe("seed")
-			initial, err := cluster.PoolStatus(ctx, "tc-policy")
+			initial, err := poolHandle(t, ctx, cluster, "tc-policy").Status(ctx)
 			if err != nil || initial.ID <= 0 {
 				t.Fatalf("positive native policy pool ID unavailable: %+v error=%v", initial, err)
 			}
-			other, err := cluster.PoolStatus(ctx, "tc-unaffected")
+			other, err := poolHandle(t, ctx, cluster, "tc-unaffected").Status(ctx)
 			if err != nil || other.ID <= 0 || other.ID == initial.ID {
 				t.Fatalf("native pool identities are not distinct: policy=%d other=%+v error=%v", initial.ID, other, err)
 			}
@@ -76,13 +76,13 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 			}
 			t.Logf("native policy pool ID=%d; unrelated pool ID=%d", initial.ID, other.ID)
 			for _, size := range []struct{ size, min int }{{3, 2}, {2, 1}} {
-				if err := cluster.SetPoolReplication(ctx, "tc-policy", size.size, size.min); err != nil {
+				if err := poolHandle(t, ctx, cluster, "tc-policy").SetReplication(ctx, size.size, size.min); err != nil {
 					t.Fatal(err)
 				}
 				if err := cluster.WaitForClean(ctx); err != nil {
 					t.Fatal(err)
 				}
-				state, err := cluster.PoolStatus(ctx, "tc-policy")
+				state, err := poolHandle(t, ctx, cluster, "tc-policy").Status(ctx)
 				if err != nil || state.ID != initial.ID || state.Size != size.size || state.MinSize != size.min || state.PGNum != initial.PGNum || state.CRUSHRule != initial.CRUSHRule {
 					t.Fatalf("policy mutation changed identity/layout: %+v %v", state, err)
 				}
@@ -139,10 +139,10 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 			if weight := nativeWeight(); weight != 0 {
 				t.Fatalf("zero-weight native fault was not applied: %s weight=%d", osdName, weight)
 			}
-			if err := cluster.SetPoolReplication(ctx, "tc-policy", 3, 2); err == nil {
+			if err := poolHandle(t, ctx, cluster, "tc-policy").SetReplication(ctx, 3, 2); err == nil {
 				t.Fatal("zero-weight native placement accepted three replicas")
 			}
-			unchanged, err := cluster.PoolStatus(ctx, "tc-policy")
+			unchanged, err := poolHandle(t, ctx, cluster, "tc-policy").Status(ctx)
 			if err != nil || unchanged.ID != initial.ID || unchanged.Size != 2 || unchanged.MinSize != 1 {
 				t.Fatalf("rejected replication still changed policy: %+v %v", unchanged, err)
 			}
@@ -153,14 +153,14 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if err := cluster.SetPoolQuota(ctx, "tc-policy", ceph.PoolQuota{MaxBytes: 1, MaxObjects: 1}); err != nil {
+			if err := poolHandle(t, ctx, cluster, "tc-policy").SetQuota(ctx, ceph.PoolQuota{MaxBytes: 1, MaxObjects: 1}); err != nil {
 				t.Fatal(err)
 			}
 			waitFull := func(full bool) {
 				t.Helper()
 				deadline := time.Now().Add(90 * time.Second)
 				for {
-					state, err := cluster.PoolStatus(ctx, "tc-policy")
+					state, err := poolHandle(t, ctx, cluster, "tc-policy").Status(ctx)
 					if err != nil || state.ID != initial.ID {
 						t.Fatalf("pool identity changed while observing quota: %+v error=%v", state, err)
 					}
@@ -178,21 +178,21 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 				}
 			}
 			waitFull(true)
-			state, err := cluster.PoolStatus(ctx, "tc-policy")
+			state, err := poolHandle(t, ctx, cluster, "tc-policy").Status(ctx)
 			if err != nil || state.ID != initial.ID || state.Quota.MaxBytes != 1 || state.Quota.MaxObjects != 1 {
 				t.Fatalf("quota not native: %+v %v", state, err)
 			}
 			probe("full")
-			if err := cluster.SetPoolQuota(ctx, "tc-policy", ceph.PoolQuota{}); err != nil {
+			if err := poolHandle(t, ctx, cluster, "tc-policy").SetQuota(ctx, ceph.PoolQuota{}); err != nil {
 				t.Fatal(err)
 			}
 			waitFull(false)
 			probe("resumed")
-			final, err := cluster.PoolStatus(ctx, "tc-policy")
+			final, err := poolHandle(t, ctx, cluster, "tc-policy").Status(ctx)
 			if err != nil || final.ID != initial.ID || final.Quota != (ceph.PoolQuota{}) || final.Size != 2 || final.MinSize != 1 {
 				t.Fatalf("restored quota changed native pool identity/policy: %+v error=%v", final, err)
 			}
-			state, err = cluster.PoolStatus(ctx, "tc-unaffected")
+			state, err = poolHandle(t, ctx, cluster, "tc-unaffected").Status(ctx)
 			if err != nil || state != other {
 				t.Fatalf("unrelated policy changed: %+v %v", state, err)
 			}

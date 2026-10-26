@@ -32,8 +32,8 @@ described below. A deadline is not a universal return-time guarantee.
 cluster's startup timeout, 3 minutes by default. Change it with
 `ceph.WithStartupTimeout(d)`. The shorter of the startup timeout and your
 context deadline applies to each operation. This covers, for example,
-bootstrap, `AddOSD`, `RemoveOSD`, `WaitForClean`, `WaitForPGClean`,
-`WaitForQuorum`, `WaitForPoolPGCount`, `DeepScrubPG`, `RepairPG`,
+bootstrap, `AddOSD`, `OSDContainer.Remove`, `WaitForClean`, `WaitForPGClean`,
+`WaitForQuorum`, `Pool.WaitForPGCount`, `DeepScrubPG`, `RepairPG`,
 `cephfs.Filesystem.WaitReady`, `WaitForSubvolumeClone` and
 `rgw.Gateway.Admin`.
 
@@ -78,8 +78,8 @@ Not every call waits for the gate under your context. Many other methods of
 the same cluster also serialize with topology operations but wait for a running
 one to finish regardless of `ctx`, then apply `ctx` to their native work.
 Examples are `OverrideConfig`, `OverrideOSDFlag`, `OverrideMGRModule`,
-`TemporaryBlocklist` and their `Restore` methods, `SetOSDIn`, `SetPoolQuota`,
-`SetPoolReplication`, the RBD pool and namespace helpers, the RGW user, account
+`TemporaryBlocklist` and their `Restore` methods, `OSDContainer.SetIn`, `Pool.SetQuota`,
+`Pool.SetReplication`, the RBD pool and namespace helpers, the RGW user, account
 and placement helpers, and `rgw.Gateway.Admin`. Some cleanup steps also use their own short context,
 for example removing temporary keyring files. So a deadline bounds how long
 native work runs, but does not guarantee that every call returns before the
@@ -341,8 +341,8 @@ result:
 | `AddMonitor`, `AddManager`, `AddOSD`, `AddOSDWithConfig`, `rgw.Start`, `cephfs.Start` | Partial daemon or service, owned by the cluster | Inspect it, or let `Terminate` remove it |
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
-| `ReplaceClientKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ReplaceClientKey](../ceph.md#replaceclientkey)) |
-| `OverrideConfig`, `OverrideMessengerPolicy`, `RevokeClient`, `OverrideOSDFlag`, `OverrideMGRModule`, `OverrideFullRatios`, `TemporaryBlocklist`, `cephfs` `OverrideSessionTimeouts`, `OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
+| `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](../ceph.md#clientconfigreplacekey)) |
+| `OverrideConfig`, `OverrideMessengerPolicy`, `ClientConfig.Revoke`, `OverrideOSDFlag`, `OverrideMGRModule`, `OverrideFullRatios`, `TemporaryBlocklist`, `cephfs` `OverrideSessionTimeouts`, `OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
 | `fault.Pause` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
@@ -360,7 +360,7 @@ back. Some wrap several native settings:
 | --- | --- |
 | `OverrideConfig` | One central configuration entry (section, optional mask, name) |
 | `OverrideMessengerPolicy` | The selected MON/MGR/OSD client-facing mode entries; established connections keep their modes |
-| `RevokeClient` | Removes one owned client identity; `Restore` puts back its exact key and capabilities |
+| `ClientConfig.Revoke` | Removes one owned client identity; `Restore` puts back its exact key and capabilities |
 | `OverrideOSDFlag` | One global OSD map flag |
 | `OverrideMGRModule` | Whether one MGR module is enabled |
 | `OverrideFullRatios` | The nearfull, backfillfull and full ratios |
@@ -410,8 +410,8 @@ Handle-specific details:
   returned with an error. An empty policy, an unknown connection mode and any
   use under `MessengerV2Secure` are refused before any change with
   `ErrInvalidRequest`.
-- `RevokeClient.Restore` refuses an identity recreated outside
-  the fixture with another key or capabilities. `DeleteClient` makes the
+- `Restore` of a `ClientConfig.Revoke` handle refuses an identity recreated outside
+  the fixture with another key or capabilities. `ClientConfig.Delete` makes the
   removal permanent instead of restoring it.
 - `TemporaryBlocklist.Restore` removes only the entry it created. An entry
   that expired on its own counts as removed; an entry whose expiry someone
@@ -439,13 +439,13 @@ rolls back automatically. Each one keeps enough state to retry or to clean up:
 
 | Operation | After an error |
 | --- | --- |
-| `RemoveOSD` | Retry with a fresh context. If the purge reply was lost, the retry accepts the OSD's absence; if the purge completed, only the Docker cleanup is repeated. `AddOSD` is refused until the removal is finished. A removal that timed out because data could not move leaves the OSD out and reweighted. |
-| `RemoveMonitor`, `RemoveManager` | The member stays owned; retry or terminate. |
+| `OSDContainer.Remove` | Retry with a fresh context. If the purge reply was lost, the retry accepts the OSD's absence; if the purge completed, only the Docker cleanup is repeated. `AddOSD` is refused until the removal is finished. A removal that timed out because data could not move leaves the OSD out and reweighted. |
+| `MonitorContainer.Remove`, `ManagerContainer.Remove` | The member stays owned; retry or terminate. |
 | `AddMonitor` that joined but could not update every daemon's `ceph.conf` | `RefreshMonitorConfig(ctx)`; do not add the same name again. |
-| `RemovePool` | Retry; it finishes removing whichever owned resources remain. |
-| `SetPoolQuota`, `SetPoolReplication`, `SetPoolPGCount` | Inspect `PoolStatus`; commands may have partly succeeded. |
-| `UpdateClientCaps`, `DeleteClient`, `ReplaceClientKey`, `RevokeClient` | Submitted MON changes are fenced and settled; when the outcome remains uncertain, later operations on the identity settle first. Preserve partial descriptors/handles and inspect `ClientCapabilities` or auth state before relying on a change. |
-| `RotateDaemonKey` | Keep the failure and inspect the daemon/auth state; the operation fences submitted MON commands and reconciles its keyring files. Do not replace keys with a raw command while it runs. |
+| `Pool.Remove` | Retry; it finishes removing whichever owned resources remain. |
+| `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount` | Inspect `Pool.Status`; commands may have partly succeeded. |
+| `ClientConfig.UpdateCaps`, `ClientConfig.Delete`, `ClientConfig.ReplaceKey`, `ClientConfig.Revoke` | Submitted MON changes are fenced and settled; when the outcome remains uncertain, later operations on the identity settle first. Preserve partial descriptors/handles and inspect `ClientConfig.Capabilities` or auth state before relying on a change. |
+| `RotateKey` | Keep the failure and inspect the daemon/auth state; the operation fences submitted MON commands and reconciles its keyring files. Do not replace keys with a raw command while it runs. |
 | `cephfs.Remove` | Retry; it continues with whatever remains. |
 | `cephfs.Filesystem.ScaleMDS` | Desired counts and partial daemons are kept for cleanup; the filesystem and its data are never deleted. |
 | `RefreshMonitorConfig`, `RefreshClientMonitorConfig`, mirror `RefreshMonitorConfig` | Successful copies are kept; retry with a fresh context and up-to-date files are skipped. |
@@ -494,7 +494,7 @@ func TestSomething(t *testing.T) {
 		t.Cleanup(func() {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			if err := shared.RemovePool(cleanupCtx, pool.Name); err != nil {
+			if err := pool.Remove(cleanupCtx); err != nil {
 				t.Error(err)
 			}
 		})
@@ -506,11 +506,11 @@ func TestSomething(t *testing.T) {
 }
 ```
 
-- Give every test its own pool and remove it with `RemovePool`, which also
+- Give every test its own pool and remove it with `Pool.Remove`, which also
   removes the CRUSH rule and erasure-code profile, so long runs do not reach
   PG limits.
 - Restore every `Temporary*` override, delete Cephx clients with
-  `DeleteClient`, and resume or restore every fault before the test ends.
+  `ClientConfig.Delete`, and resume or restore every fault before the test ends.
 - Tests that use overlapping overrides (the same configuration key, flag or
   module) cannot run in parallel: the second override is refused.
 - Topology operations are serialized per cluster, so parallel tests that add

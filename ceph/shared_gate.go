@@ -77,9 +77,7 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"OSDFlags":                  sharedOpen,
 	"OSDStates":                 sharedOpen,
 	"PGInconsistencies":         sharedOpen,
-	"PoolPGs":                   sharedOpen,
-	"PoolStatus":                sharedOpen,
-	"PoolUsage":                 sharedOpen,
+	"Pool":                      sharedOpen,
 	"Pools":                     sharedOpen,
 	"PublicAddress":             sharedOpen,
 	"QuorumStatus":              sharedOpen,
@@ -88,7 +86,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"UsesHostNetwork":           sharedOpen,
 	"WaitForClean":              sharedOpen,
 	"WaitForPGClean":            sharedOpen,
-	"WaitForPoolPGCount":        sharedOpen,
 	"WaitForQuorum":             sharedOpen,
 	"WaitMGRModuleReady":        sharedOpen,
 	// Promoted from the primary MON's testcontainers.Container: inspection.
@@ -114,28 +111,16 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"StopLogProducer":              sharedOpen,
 
 	// Client identities and native commands, scoped by Tenant.
-	"ClientCapabilities":         sharedTenant,
 	"CreateClient":               sharedTenant,
-	"DeleteClient":               sharedTenant,
 	"RefreshClientMonitorConfig": sharedTenant,
-	"ReplaceClientKey":           sharedTenant,
 	"RunNativeCommand":           sharedTenant,
-	"RevokeClient":               sharedTenant,
-	"UpdateClientCaps":           sharedTenant,
 	"WithClientIdentity":         sharedTenant,
 
 	// Cluster-wide changes.
 	"DeepScrubPG":             sharedExclusive,
 	"CreatePool":              sharedExclusive,
 	"RefreshMonitorConfig":    sharedExclusive,
-	"RemovePool":              sharedExclusive,
 	"RepairPG":                sharedExclusive,
-	"RotateDaemonKey":         sharedExclusive,
-	"SetOSDIn":                sharedExclusive,
-	"SetPoolPGCount":          sharedExclusive,
-	"SetPoolPlacement":        sharedExclusive,
-	"SetPoolQuota":            sharedExclusive,
-	"SetPoolReplication":      sharedExclusive,
 	"TemporaryBlocklist":      sharedExclusive,
 	"OverrideConfig":          sharedExclusive,
 	"OverrideDebugLevel":      sharedExclusive,
@@ -144,7 +129,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"OverrideMessengerPolicy": sharedExclusive,
 	"OverrideOSDFlag":         sharedExclusive,
 	// Raw access: the admin CLI and keyring, and daemon container handles.
-	"AdminSocket":       sharedExclusive,
 	"Ceph":              sharedExclusive,
 	"ConnectionConfig":  sharedExclusive,
 	"ControlContainer":  sharedExclusive,
@@ -168,11 +152,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"AddMonitor":       sharedRecycle,
 	"AddOSD":           sharedRecycle,
 	"AddOSDWithConfig": sharedRecycle,
-	"DetachOSD":        sharedRecycle,
-	"RemoveManager":    sharedRecycle,
-	"RemoveMonitor":    sharedRecycle,
-	"RemoveOSD":        sharedRecycle,
-	"ReopenOSD":        sharedRecycle,
 
 	"Terminate":          sharedRefused,
 	"TerminateOnCleanup": sharedRefused,
@@ -216,6 +195,48 @@ func (c *Container) admitFault(op string) error {
 	policy, ok := sharedFaultPolicies[op]
 	if !ok {
 		return invalidRequest("fault operation %q has no shared-cluster policy", op)
+	}
+	return c.admitShared(op, policy)
+}
+
+// sharedHandlePolicies classifies the operations that live on handles by the
+// name that admitHandle admits them with. Each keeps the policy of the
+// *Container method that it replaced.
+var sharedHandlePolicies = map[string]sharedPolicy{
+	"OSDContainer.Remove":          sharedRecycle,
+	"OSDContainer.Detach":          sharedRecycle,
+	"DetachedOSD.Reopen":           sharedRecycle,
+	"OSDContainer.SetIn":           sharedExclusive,
+	"OSDContainer.AdminSocket":     sharedExclusive,
+	"OSDContainer.RotateKey":       sharedExclusive,
+	"MonitorContainer.Remove":      sharedRecycle,
+	"MonitorContainer.AdminSocket": sharedExclusive,
+	"ManagerContainer.Remove":      sharedRecycle,
+	"ManagerContainer.AdminSocket": sharedExclusive,
+	"ManagerContainer.RotateKey":   sharedExclusive,
+	"Pool.Remove":                  sharedExclusive,
+	"Pool.SetPGCount":              sharedExclusive,
+	"Pool.SetPlacement":            sharedExclusive,
+	"Pool.SetQuota":                sharedExclusive,
+	"Pool.SetReplication":          sharedExclusive,
+	"Pool.Status":                  sharedOpen,
+	"Pool.Usage":                   sharedOpen,
+	"Pool.PGs":                     sharedOpen,
+	"Pool.WaitForPGCount":          sharedOpen,
+	"ClientConfig.Capabilities":    sharedTenant,
+	"ClientConfig.UpdateCaps":      sharedTenant,
+	"ClientConfig.ReplaceKey":      sharedTenant,
+	"ClientConfig.Revoke":          sharedTenant,
+	"ClientConfig.Delete":          sharedTenant,
+}
+
+// admitHandle refuses the handle operation op while a SharedCluster shares c,
+// as sharedGate refuses a method of *Container. An operation without a policy
+// is refused even on a cluster of its own, so it cannot run unclassified.
+func (c *Container) admitHandle(op string) error {
+	policy, ok := sharedHandlePolicies[op]
+	if !ok {
+		return invalidRequest("handle operation %q has no shared-cluster policy", op)
 	}
 	return c.admitShared(op, policy)
 }

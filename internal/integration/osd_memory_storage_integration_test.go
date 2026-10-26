@@ -120,7 +120,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	poolState, err := cluster.PoolStatus(ctx, pool.Name)
+	poolState, err := pool.Status(ctx)
 	if err != nil || poolState.ID < 0 || poolState.Size != 2 || poolState.MinSize != 1 {
 		t.Fatal("original replicated pool identity unavailable", err)
 	}
@@ -200,7 +200,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	started = time.Now()
 	original := initial[0]
 	oldCID, oldUUID := original.GetContainerID(), identities[original.ID]
-	if err := cluster.RemoveOSD(ctx, original.ID); err != nil {
+	if err := original.Remove(ctx); err != nil {
 		t.Fatal("drain original memory OSD failed", err)
 	}
 	if _, err := docker.Client.ContainerInspect(ctx, oldCID, mobycl.ContainerInspectOptions{}); !errdefs.IsNotFound(err) {

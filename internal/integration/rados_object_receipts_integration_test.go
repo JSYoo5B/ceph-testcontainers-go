@@ -121,7 +121,7 @@ func TestRADOSObjectReceipts(t *testing.T) {
 	}
 	t.Logf("RADOS_HINTS_RECEIPT %s", receipt)
 
-	pool, err := cluster.PoolStatus(ctx, stats)
+	pool, err := poolHandle(t, ctx, cluster, stats).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

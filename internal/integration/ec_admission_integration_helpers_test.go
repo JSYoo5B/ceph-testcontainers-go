@@ -134,7 +134,7 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	if initial := ecAdmissionClient(t, ctx, cluster, client, pool.Name, "observe"); initial["object"].(map[string]any)["present"] != false {
 		t.Fatal("uncertain-write object existed before its single submission")
 	}
-	before, err := cluster.PoolPGs(ctx, pool.Name)
+	before, err := pool.PGs(ctx)
 	if err != nil || len(before.PGs) != 1 {
 		t.Fatalf("initial placement: %+v %v", before, err)
 	}
@@ -204,7 +204,7 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	var fault ceph.PoolPGSnapshot
 	var lastErr error
 	for deadline := time.Now().Add(3 * time.Minute); ; {
-		fault, err = cluster.PoolPGs(ctx, pool.Name)
+		fault, err = pool.PGs(ctx)
 		if err == nil {
 			lastErr = checkECAdmissionState(plan, before, fault)
 		} else {
@@ -244,7 +244,7 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	}
 	// Check the threshold and shard/primary identity again after I/O; a client
 	// result cannot replace the policy/mapping observation around the interval.
-	afterIO, err := cluster.PoolPGs(ctx, pool.Name)
+	afterIO, err := pool.PGs(ctx)
 	if err != nil || checkECAdmissionState(plan, before, afterIO) != nil {
 		t.Fatalf("admission interval moved: %+v %v", afterIO, err)
 	}
@@ -254,7 +254,7 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := cluster.PoolPGs(ctx, pool.Name)
+	recovered, err := pool.PGs(ctx)
 	if err != nil || len(recovered.PGs) != 1 || !slices.Equal(recovered.PGs[0].Acting, plan.Original) || recovered.PoolAfter.MinSize != plan.MinSize || !strings.Contains(recovered.PGs[0].State, "clean") {
 		t.Fatalf("restoration changed retained placement/policy: %+v %v", recovered, err)
 	}
@@ -267,7 +267,7 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	if err := noout.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.RemovePool(ctx, pool.Name); err != nil {
+	if err := pool.Remove(ctx); err != nil {
 		t.Fatal(fmt.Errorf("remove admission pool: %w", err))
 	}
 }

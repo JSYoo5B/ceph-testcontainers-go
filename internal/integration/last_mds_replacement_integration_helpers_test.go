@@ -89,7 +89,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	identities := map[string]int64{}
 	for _, fs := range []*cephfs.Filesystem{target, sibling} {
 		for _, name := range append([]string{fs.MetadataPool, fs.DataPool}, fs.AdditionalDataPools...) {
-			p, err := cluster.PoolStatus(ctx, name)
+			p, err := poolHandle(t, ctx, cluster, name).Status(ctx)
 			if err != nil || p.ID < 0 || p.Size != 2 || p.MinSize != 1 {
 				t.Fatal("original replicated pool identity unavailable", err)
 			}
@@ -109,7 +109,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 			t.Fatal("original cluster changed", err)
 		}
 		for name, id := range identities {
-			p, err := cluster.PoolStatus(ctx, name)
+			p, err := poolHandle(t, ctx, cluster, name).Status(ctx)
 			if err != nil || p.ID != id || p.Size != 2 || p.MinSize != 1 {
 				t.Fatal("original pool changed", err)
 			}
@@ -141,7 +141,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 		t.Fatal("original registration expired before negative preflight")
 	}
 	short, stop := context.WithTimeout(ctx, 30*time.Second)
-	unexpected, refused := target.AddMDSReplacement(short, old)
+	unexpected, refused := old.AddReplacement(short)
 	contextErr := short.Err()
 	stop()
 	if unexpected != nil || refused == nil || contextErr != nil || errors.Is(refused, context.Canceled) || errors.Is(refused, context.DeadlineExceeded) || refused.Error() != "original stopped MDS name is still registered" {
@@ -176,7 +176,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	}
 	lastMDSRetainedResources(t, ctx, oracle, cluster, client, "last-failed", old, oldTask)
 	t.Logf("LAST_MDS_FAILED fsid=%s fscid=%d old_name=%s old_gid=%d old_cid=%s global_absent=true in=[0] failed=[0] owned_mds=1", q.MonMap.FSID, before.target.id, old.ID, originalGID, oldCID)
-	replacement, err := target.AddMDSReplacement(ctx, old)
+	replacement, err := old.AddReplacement(ctx)
 	if err != nil || replacement == nil {
 		t.Fatal("sole stopped MDS replacement failed", err)
 	}
@@ -199,7 +199,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	}
 	checkPublic(current)
 	copy := *old
-	retried, err := target.AddMDSReplacement(ctx, &copy)
+	retried, err := (&copy).AddReplacement(ctx)
 	if err != nil || retried != replacement || old.Container != oldHandle || old.GetContainerID() != oldCID || customizers.Load() != 2 || target.Container != old.Container || coldMDSProcess(t, ctx, oracle, replacement) != newTask {
 		t.Fatal("completed copied replacement retry changed original result", err)
 	}
@@ -210,7 +210,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	stoppedMDSBytes(t, ctx, client, q.MonMap.FSID, target, newNonce, "verify", "last-extra")
 	stoppedMDSBytes(t, ctx, client, q.MonMap.FSID, sibling, siblingNonce, "verify", sibling.DataPool)
 	t.Logf("LAST_MDS_ACTIVE fsid=%s fscid=%d name=%s gid=%d cid=%s started_at=%s pid=%d old_cid=%s owned_mds=2 customizers=2", q.MonMap.FSID, before.target.id, replacement.ID, current.target.active.gid, replacement.GetContainerID(), newTask.startedAt, newTask.pid, oldCID)
-	if err := target.RemoveStoppedMDS(ctx, old); err != nil {
+	if err := old.RemoveStopped(ctx); err != nil {
 		t.Fatal("unchanged Q original stopped CID retirement failed", err)
 	}
 	stoppedMDSRemoved(t, ctx, oracle, oldCID)
@@ -218,11 +218,11 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	if len(members) != 1 || members[0] != replacement || target.Container != replacement.Container || len(cluster.ServiceContainers()) != 2 {
 		t.Fatal("Q retirement did not remove only original CID/registry")
 	}
-	retried, err = target.AddMDSReplacement(ctx, &copy)
+	retried, err = (&copy).AddReplacement(ctx)
 	if err != nil || retried != replacement || customizers.Load() != 2 || coldMDSProcess(t, ctx, oracle, replacement) != newTask || target.Container != replacement.Container {
 		t.Fatal("completed copied replacement retry failed after confirmed Q retirement", err)
 	}
-	if err := target.RemoveStoppedMDS(ctx, &copy); err != nil {
+	if err := (&copy).RemoveStopped(ctx); err != nil {
 		t.Fatal("completed Q copied receipt retry failed", err)
 	}
 	stoppedMDSRemoved(t, ctx, oracle, oldCID)

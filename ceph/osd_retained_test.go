@@ -142,7 +142,7 @@ func (f *retainedFixture) helperWrites() [][]string {
 func TestDetachedOSDReopensInANewContainerWithTheSameIdentity(t *testing.T) {
 	f := newRetainedFixture(t)
 	old := f.cluster.osds[3]
-	detached, err := f.cluster.DetachOSD(t.Context(), 3)
+	detached, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestDetachedOSDReopensInANewContainerWithTheSameIdentity(t *testing.T) {
 	if names := osdIDs(f.cluster.osdsLocked()); !slices.Equal(names, []int{4}) {
 		t.Fatalf("OSDs after detach %v", names)
 	}
-	reopened, err := f.cluster.ReopenOSD(t.Context(), detached)
+	reopened, err := detached.Reopen(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestDetachedOSDReopensInANewContainerWithTheSameIdentity(t *testing.T) {
 	}) || len(f.request.Mounts) != 1 || f.request.Mounts[0].Target != "/var/lib/ceph/osd" {
 		t.Fatalf("reopen request env=%v mounts=%v", env, f.request.Mounts)
 	}
-	if _, err := f.cluster.ReopenOSD(t.Context(), detached); err == nil || !strings.Contains(err.Error(), "already reopened") || f.runs != 1 {
+	if _, err := detached.Reopen(t.Context()); err == nil || !strings.Contains(err.Error(), "already reopened") || f.runs != 1 {
 		t.Fatalf("second reopen: %v runs=%d", err, f.runs)
 	}
 }
@@ -194,7 +194,7 @@ func TestReopenRefusesChangedStoreOrRegistrationBeforeAnyWrite(t *testing.T) {
 	for _, scenario := range []string{"keyring", "osd uuid", "whoami", "cluster fsid", "block", "symlink", "ready", "registration missing", "registration foreign", "registration up", "mon key", "cluster fsid served", "canceled"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newRetainedFixture(t)
-			detached, err := f.cluster.DetachOSD(t.Context(), 3)
+			detached, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -236,7 +236,7 @@ func TestReopenRefusesChangedStoreOrRegistrationBeforeAnyWrite(t *testing.T) {
 				cancel()
 				ctx = canceled
 			}
-			if osd, err := f.cluster.ReopenOSD(ctx, detached); err == nil || osd != nil {
+			if osd, err := detached.Reopen(ctx); err == nil || osd != nil {
 				t.Fatalf("reopen admitted a changed %s: %v", scenario, osd)
 			}
 			if f.runs != 0 || f.cluster.osds[3] != nil || f.cluster.detachedOSDs[3] != detached || detached.reopened || len(f.helperWrites()) != 0 {
@@ -244,7 +244,7 @@ func TestReopenRefusesChangedStoreOrRegistrationBeforeAnyWrite(t *testing.T) {
 			}
 			f.helper.files, f.helper.links, f.helper.block = saved, map[string]bool{}, savedBlock
 			f.control.native[3], f.control.key, f.control.fsid = savedState, savedKey, savedFSID
-			if _, err := f.cluster.ReopenOSD(t.Context(), detached); err != nil {
+			if _, err := detached.Reopen(t.Context()); err != nil {
 				t.Fatal("reopen after the refusal was resolved:", err)
 			}
 		})
@@ -274,7 +274,7 @@ func TestDetachRefusesBeforeStoppingTheOSD(t *testing.T) {
 			case "no container":
 				f.cluster.osds[3].Container = nil
 			}
-			detached, err := f.cluster.DetachOSD(t.Context(), id)
+			detached, err := osdHandle(t, t.Context(), f.cluster, id).Detach(t.Context())
 			if err == nil || detached != nil {
 				t.Fatal("detach admitted", scenario)
 			}
@@ -290,7 +290,7 @@ func TestDetachRefusesBeforeStoppingTheOSD(t *testing.T) {
 	f := newRetainedFixture(t)
 	f.cluster.faults.entries = map[faultID]*faultEntry{{kind: faultNetworkDelay, key: "public/osd-lifecycle-3"}: {handle: struct{}{},
 		complete: func(context.Context) (bool, error) { return true, nil }}}
-	if _, err := f.cluster.DetachOSD(t.Context(), 3); err != nil {
+	if _, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context()); err != nil {
 		t.Fatal("completed delay refused detach:", err)
 	}
 }
@@ -301,18 +301,18 @@ func TestPartialDetachStaysOwnedAndResumes(t *testing.T) {
 	t.Run("removal failed", func(t *testing.T) {
 		f := newRetainedFixture(t)
 		f.daemon.terminateErr = errors.New("synthetic removal failure")
-		if _, err := f.cluster.DetachOSD(t.Context(), 3); err == nil {
+		if _, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context()); err == nil {
 			t.Fatal("failed removal released the store")
 		}
 		osd := f.cluster.osds[3]
 		if osd == nil || !osd.detaching || osd.detachRemoved || f.cluster.detachedOSDs[3] != nil || !f.cluster.nativeFenced["osd-lifecycle-3"] {
 			t.Fatalf("partial detach state %+v", osd)
 		}
-		if err := f.cluster.RemoveOSD(t.Context(), 3); err == nil || !strings.Contains(err.Error(), "being detached") || len(f.control.actions) != 0 {
+		if err := osdHandle(t, t.Context(), f.cluster, 3).Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "being detached") || len(f.control.actions) != 0 {
 			t.Fatal("RemoveOSD purged a detaching OSD:", err)
 		}
 		f.daemon.terminateErr = nil
-		if _, err := f.cluster.DetachOSD(t.Context(), 3); err != nil {
+		if _, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if f.daemon.terminations != 2 {
@@ -322,14 +322,14 @@ func TestPartialDetachStaysOwnedAndResumes(t *testing.T) {
 	t.Run("store unreadable after removal", func(t *testing.T) {
 		f := newRetainedFixture(t)
 		f.helper.files[retainedStoreDir+"/whoami"] = "9"
-		if _, err := f.cluster.DetachOSD(t.Context(), 3); err == nil || !strings.Contains(err.Error(), "holds osd.9") {
+		if _, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context()); err == nil || !strings.Contains(err.Error(), "holds osd.9") {
 			t.Fatal("foreign store detached:", err)
 		}
 		if osd := f.cluster.osds[3]; osd == nil || !osd.detachRemoved || f.cluster.detachedOSDs[3] != nil {
 			t.Fatal("removed container's OSD was not kept for retry")
 		}
 		f.helper.files[retainedStoreDir+"/whoami"] = "3"
-		if _, err := f.cluster.DetachOSD(t.Context(), 3); err != nil {
+		if _, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if f.daemon.stops != 1 || f.daemon.terminations != 1 {
@@ -340,24 +340,28 @@ func TestPartialDetachStaysOwnedAndResumes(t *testing.T) {
 
 func TestDetachedOSDHandleBelongsToOneCluster(t *testing.T) {
 	f := newRetainedFixture(t)
-	detached, err := f.cluster.DetachOSD(t.Context(), 3)
+	detached, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.cluster.DetachOSD(t.Context(), 3); err == nil || !strings.Contains(err.Error(), "already detached") {
+	if _, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context()); err == nil || !strings.Contains(err.Error(), "already detached") {
 		t.Fatal("second detach:", err)
 	}
-	if err := f.cluster.RemoveOSD(t.Context(), 3); !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "reopen it") {
+	if err := osdHandle(t, t.Context(), f.cluster, 3).Remove(t.Context()); !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "reopen it") {
 		t.Fatal("RemoveOSD of a detached OSD:", err)
 	}
+	// A detached OSD acts on the cluster that detached it, never on another
+	// cluster, even one that is asked to adopt its store.
 	other := newRetainedFixture(t)
-	if _, err := other.cluster.ReopenOSD(t.Context(), detached); !errors.Is(err, ErrInvalidRequest) || other.runs != 0 {
+	foreign := *detached
+	foreign.cluster = other.cluster
+	if _, err := foreign.Reopen(t.Context()); !errors.Is(err, ErrInvalidRequest) || other.runs != 0 || f.runs != 0 {
 		t.Fatal("another cluster reopened the store:", err)
 	}
-	if _, err := f.cluster.ReopenOSD(t.Context(), nil); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := (*DetachedOSD)(nil).Reopen(t.Context()); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatal("nil detached OSD:", err)
 	}
-	if _, err := f.cluster.ReopenOSD(t.Context(), &DetachedOSD{cluster: f.cluster, id: 3}); err == nil || f.runs != 0 {
+	if _, err := (&DetachedOSD{cluster: f.cluster, id: 3}).Reopen(t.Context()); err == nil || f.runs != 0 {
 		t.Fatal("a forged detached OSD was reopened:", err)
 	}
 }
@@ -366,16 +370,16 @@ func TestDetachedOSDHandleBelongsToOneCluster(t *testing.T) {
 // failed start returns the new handle, which the cluster owns.
 func TestFailedReopenKeepsTheCandidateOwned(t *testing.T) {
 	f := newRetainedFixture(t)
-	detached, err := f.cluster.DetachOSD(t.Context(), 3)
+	detached, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.runErr = errors.New("synthetic readiness failure")
-	osd, err := f.cluster.ReopenOSD(t.Context(), detached)
+	osd, err := detached.Reopen(t.Context())
 	if err == nil || osd == nil || osd.GetContainerID() != "osd-reopened-3" || f.cluster.osds[3] != osd || !detached.reopened || f.cluster.detachedOSDs[3] != nil {
 		t.Fatalf("failed reopen: %v %+v", err, osd)
 	}
-	if _, err := f.cluster.ReopenOSD(t.Context(), detached); err == nil || f.runs != 1 {
+	if _, err := detached.Reopen(t.Context()); err == nil || f.runs != 1 {
 		t.Fatal("a consumed detached OSD was replayed:", err)
 	}
 }

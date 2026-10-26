@@ -1,9 +1,9 @@
 # Settling a retained OSD detach after container removal
 
-`DetachOSD` can remove the old container and then fail to admit the retained
+`OSDContainer.Detach` can remove the old container and then fail to admit the retained
 store. The OSD descriptor remains owned and marked as detaching; this is not a
-published `DetachedOSD`. `RemoveOSD` refuses that descriptor. Resolve the known
-store-admission failure, then call `DetachOSD` again with a fresh context, or
+published `DetachedOSD`. `OSDContainer.Remove` refuses that descriptor. Resolve the known
+store-admission failure, then call `OSDContainer.Detach` again with a fresh context, or
 terminate the cluster. A retry after confirmed removal reads the store and
 registration without stopping or removing that instance again.
 

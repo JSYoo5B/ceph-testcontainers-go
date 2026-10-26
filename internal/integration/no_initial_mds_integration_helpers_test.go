@@ -98,7 +98,7 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	identities := map[string]int64{}
 	for _, fs := range []*cephfs.Filesystem{sibling, target} {
 		for _, name := range append([]string{fs.MetadataPool, fs.DataPool}, fs.AdditionalDataPools...) {
-			p, err := cluster.PoolStatus(ctx, name)
+			p, err := poolHandle(t, ctx, cluster, name).Status(ctx)
 			if err != nil || p.ID < 0 || p.Size != 2 || p.MinSize != 1 {
 				t.Fatal("original replicated FS pool identity unavailable", err)
 			}
@@ -123,7 +123,7 @@ func testNoInitialMDS(t *testing.T, host bool) {
 			t.Fatal("cold target affected original ordinary sibling")
 		}
 		for name, id := range identities {
-			p, err := cluster.PoolStatus(ctx, name)
+			p, err := poolHandle(t, ctx, cluster, name).Status(ctx)
 			if err != nil || p.ID != id || p.Size != 2 || p.MinSize != 1 {
 				t.Fatal("original FS pool changed", err)
 			}

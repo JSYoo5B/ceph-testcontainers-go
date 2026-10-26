@@ -51,10 +51,10 @@ func checkCephFSRemoval(t *testing.T, ctx context.Context, cluster *ceph.Contain
 		t.Fatal(err)
 	}
 	daemons := removable.MDSs()
-	if err := cephfs.Remove(ctx, cluster, removable.FilesystemName); err != nil {
+	if err := removable.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cephfs.Remove(ctx, cluster, removable.FilesystemName); err == nil {
+	if err := removable.Remove(ctx); err == nil {
 		t.Fatal("second removal succeeded")
 	}
 	data, err := cluster.Ceph(ctx, "fs", "ls", "--format", "json")

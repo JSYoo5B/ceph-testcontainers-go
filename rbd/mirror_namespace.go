@@ -117,7 +117,12 @@ func rbdMirrorImageSpec(pool, namespace, image string) string {
 	return rbdMirrorNamespaceSpec(pool, namespace) + "/" + image
 }
 
-type rbdMirrorPoolIdentities struct{ source, destination int64 }
+type rbdMirrorPoolIdentities struct {
+	source, destination int64
+	// sourcePool and destinationPool identify the native pools by ID, so
+	// that a later pool that reuses the name is refused.
+	sourcePool, destinationPool *ceph.Pool
+}
 
 func preflightRBDMirrorPools(ctx context.Context, config MirrorConfig) (*rbdMirrorPoolIdentities, error) {
 	identities := &rbdMirrorPoolIdentities{}
@@ -125,14 +130,20 @@ func preflightRBDMirrorPools(ctx context.Context, config MirrorConfig) (*rbdMirr
 		cluster   *ceph.Container
 		namespace string
 		id        *int64
+		handle    **ceph.Pool
 	}{
-		{config.Source, config.SourceNamespace, &identities.source},
-		{config.Destination, config.DestinationNamespace, &identities.destination},
+		{config.Source, config.SourceNamespace, &identities.source, &identities.sourcePool},
+		{config.Destination, config.DestinationNamespace, &identities.destination, &identities.destinationPool},
 	} {
-		pool, err := site.cluster.PoolStatus(ctx, config.Pool)
+		handle, err := site.cluster.Pool(ctx, config.Pool)
 		if err != nil {
 			return nil, err
 		}
+		pool, err := handle.Status(ctx)
+		if err != nil {
+			return nil, err
+		}
+		*site.handle = handle
 		if pool.Type != "replicated" {
 			return nil, errors.New("RBD mirror metadata pool must be replicated")
 		}
@@ -155,10 +166,19 @@ func (m *Mirror) checkRBDMirrorPools(ctx context.Context) error {
 	for _, site := range []struct {
 		cluster *ceph.Container
 		id      int64
+		handle  *ceph.Pool
 	}{
-		{m.config.Source, m.poolIdentities.source}, {m.config.Destination, m.poolIdentities.destination},
+		{m.config.Source, m.poolIdentities.source, m.poolIdentities.sourcePool}, {m.config.Destination, m.poolIdentities.destination, m.poolIdentities.destinationPool},
 	} {
-		pool, err := site.cluster.PoolStatus(ctx, m.config.Pool)
+		handle := site.handle
+		if handle == nil {
+			// Only internal unit fixtures lack the captured handle.
+			var err error
+			if handle, err = site.cluster.Pool(ctx, m.config.Pool); err != nil {
+				return err
+			}
+		}
+		pool, err := handle.Status(ctx)
 		if err != nil {
 			return err
 		}

@@ -228,7 +228,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.RemoveOSD(ctx, added.ID); err != nil {
+	if err := added.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	topologyRados(t, ctx, client, "dual-network-OSD-add-remove")

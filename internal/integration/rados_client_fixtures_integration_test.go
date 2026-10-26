@@ -32,7 +32,7 @@ func TestRADOSClientFixtures(t *testing.T) {
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", PGNum: 1}); err != nil {
 				t.Fatal(err)
 			}
-			state, err := cluster.PoolStatus(ctx, pool)
+			state, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 			if err != nil || state.ID <= 0 {
 				t.Fatalf("native detail pool identity: %+v %v", state, err)
 			}

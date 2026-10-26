@@ -272,7 +272,7 @@ func testDualStackAddressFamily(t *testing.T) {
 	// Fail the active MGR over. RemoveManager admits the replacement's
 	// advertised addresses before it returns.
 	first := addresses.ActiveManager.Name
-	if err := cluster.RemoveManager(ctx, first); err != nil {
+	if err := managerHandle(t, ctx, cluster, first).Remove(ctx); err != nil {
 		t.Fatalf("fail over from mgr.%s: %v", first, err)
 	}
 	addresses, endpoints = waitDualStackAddresses(t, ctx, cluster, 2, 2)

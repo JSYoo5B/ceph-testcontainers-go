@@ -125,7 +125,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	nonce := uuid.NewString()
 	var originalPoolID int64
 	if !noStorage {
-		p, err := cluster.PoolStatus(ctx, pool)
+		p, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 		if err != nil || p.ID <= 0 || p.Size != 2 || p.MinSize != 1 {
 			t.Fatal("initial pool before MGR lost native identity/defaults", err)
 		}
@@ -166,7 +166,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		if err != nil || created == nil || created.Replicas != 2 || created.MinSize != 1 {
 			t.Fatal("late pool lost prospective defaults", err)
 		}
-		p, err := cluster.PoolStatus(ctx, pool)
+		p, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 		if err != nil || p.ID <= 0 || p.Size != 2 || p.MinSize != 1 {
 			t.Fatal("late pool native identity unavailable", err)
 		}
@@ -200,7 +200,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		noInitialManagerBytes(t, ctx, client, fsid, pool, nonce, "seed", "after-provision", originalPoolID)
 	}
 	noInitialManagerBytes(t, ctx, client, fsid, pool, nonce, "readback", "after-provision", originalPoolID)
-	p, err := cluster.PoolStatus(ctx, pool)
+	p, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil || p.ID != originalPoolID || p.Size != 2 || p.MinSize != 1 {
 		t.Fatal("manager/storage addition replaced original pool", err)
 	}
@@ -221,7 +221,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 			t.Fatal("late storage is not up/in")
 		}
 	}
-	if err := cluster.RemoveManager(ctx, "a"); err == nil || !strings.Contains(err.Error(), "cannot remove the last manager") || noInitialManagerMap(t, ctx, cluster, true) != gid {
+	if err := managerHandle(t, ctx, cluster, "a").Remove(ctx); err == nil || !strings.Contains(err.Error(), "cannot remove the last manager") || noInitialManagerMap(t, ctx, cluster, true) != gid {
 		t.Fatal("zero-initial option bypassed last-manager protection", err)
 	}
 	noInitialManagerResources(t, ctx, oracle, cluster, client, "after-provision")

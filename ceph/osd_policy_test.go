@@ -28,22 +28,22 @@ func TestOSDStatesAndMembershipVerifyOwnedUUID(t *testing.T) {
 	if err != nil || len(states) != 1 || states[0] != ctr.osds[0] {
 		t.Fatalf("authoritative owned state: %v %v", states, err)
 	}
-	if err := c.SetOSDIn(t.Context(), 3, false); err != nil || ctr.osds[0].In || ctr.osds[0].Up == false || ctr.osds[0].UUID != osdPolicyUUID {
+	if err := osdHandle(t, t.Context(), c, 3).SetIn(t.Context(), false); err != nil || ctr.osds[0].In || ctr.osds[0].Up == false || ctr.osds[0].UUID != osdPolicyUUID {
 		t.Fatalf("out changed unrelated native identity/daemon state: %v", err)
 	}
-	if err := c.SetOSDIn(t.Context(), 3, true); err != nil || !ctr.osds[0].In || ctr.osds[0].Weight != 0.75 {
+	if err := osdHandle(t, t.Context(), c, 3).SetIn(t.Context(), true); err != nil || !ctr.osds[0].In || ctr.osds[0].Weight != 0.75 {
 		t.Fatalf("in did not recover original map reweight: %v", err)
 	}
 	before := len(ctr.calls)
-	if err := c.SetOSDIn(t.Context(), 99, false); err == nil || len(ctr.calls) != before+1 {
-		t.Fatal("unowned ID reached native membership mutation")
+	if err := osdHandle(t, t.Context(), c, 99).SetIn(t.Context(), false); err == nil || len(ctr.calls) != before {
+		t.Fatal("a handle that the cluster does not own reached the native membership")
 	}
 	ctr.osds[0].UUID = "c09ab9b3-3f50-4169-a6a4-4a58ab1c0d6c"
 	before = len(ctr.calls)
 	if _, err := c.OSDStates(t.Context()); err == nil {
 		t.Fatal("outside replacement accepted for native state")
 	}
-	if err := c.SetOSDIn(t.Context(), 3, false); err == nil || len(ctr.calls) != before+2 || !ctr.osds[0].In {
+	if err := osdHandle(t, t.Context(), c, 3).SetIn(t.Context(), false); err == nil || len(ctr.calls) != before+2 || !ctr.osds[0].In {
 		t.Fatal("outside replacement was mutated")
 	}
 }
@@ -57,14 +57,14 @@ func TestOSDMembershipRejectsAbsentAndPostMutationReplacement(t *testing.T) {
 			ctr.replaceAfter = true
 		}
 		c := osdPolicyCluster(ctr)
-		if err := c.SetOSDIn(t.Context(), 3, false); err == nil {
+		if err := osdHandle(t, t.Context(), c, 3).SetIn(t.Context(), false); err == nil {
 			t.Fatalf("%s missing/replaced registration accepted", phase)
 		}
 	}
 	ctr := &osdPolicyFixture{osds: []OSDState{{ID: 3, UUID: osdPolicyUUID, Up: true, In: true, Weight: 1}}}
 	c := osdPolicyCluster(ctr)
 	c.osds[3].nativeUUID = ""
-	if err := c.SetOSDIn(t.Context(), 3, false); err == nil || len(ctr.calls) != 1 {
+	if err := osdHandle(t, t.Context(), c, 3).SetIn(t.Context(), false); err == nil || len(ctr.calls) != 1 {
 		t.Fatal("missing captured UUID adopted from current native state")
 	}
 	c.osds[3].nativeUUID = osdPolicyUUID

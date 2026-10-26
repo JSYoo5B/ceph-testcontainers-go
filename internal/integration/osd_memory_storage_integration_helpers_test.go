@@ -236,7 +236,7 @@ func osdMemoryPlacement(t *testing.T, parent context.Context, cluster *ceph.Cont
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
 	for {
-		snapshot, err := cluster.PoolPGs(ctx, pool)
+		snapshot, err := poolHandle(t, ctx, cluster, pool).PGs(ctx)
 		if err != nil || snapshot.FSID != fsid || snapshot.PoolBefore.ID != poolID || snapshot.PoolAfter.ID != poolID {
 			t.Fatal("original pool placement identity changed", err)
 		}
@@ -274,7 +274,7 @@ func osdMemoryExec(t *testing.T, parent context.Context, ctr testcontainers.Cont
 
 func osdMemoryData(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid string, poolID int64, pool, phase string) {
 	t.Helper()
-	status, err := cluster.PoolStatus(ctx, pool)
+	status, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil || status.ID != poolID || status.Size != 2 || status.MinSize != 1 {
 		t.Fatal("retained pool identity/policy changed", err)
 	}

@@ -53,7 +53,8 @@ type Config struct {
 // buckets and data remain available through other gateways or a replacement.
 // Multisite period endpoints are not changed automatically. The last gateway
 // can be removed because RGW is optional. Failed cleanup remains tracked.
-func removeGateway(ctx context.Context, c *ceph.Container, name string) error {
+func removeGateway(ctx context.Context, c *ceph.Container, handle *Gateway) error {
+	name := handle.GatewayName
 	if err := servicehook.LockTopology(ctx, c); err != nil {
 		return err
 	}
@@ -65,8 +66,8 @@ func removeGateway(ctx context.Context, c *ceph.Container, name string) error {
 		name = "default"
 	}
 	gateway, ok := gateways(c).byName[name]
-	if !ok || gateway.Container == nil {
-		return invalid(fmt.Errorf("RGW gateway %q is not owned by this cluster", name))
+	if !ok || gateway != handle || gateway.Container == nil {
+		return invalid(fmt.Errorf("RGW gateway %q is not owned by this cluster, or this descriptor is stale", name))
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 	defer cancel()

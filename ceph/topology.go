@@ -23,16 +23,18 @@ import (
 )
 
 // MonitorContainer is an owned quorum member. Stop/Start preserves its store;
-// RemoveMonitor explicitly removes membership and deletes the container.
+// MonitorContainer.Remove explicitly removes membership and deletes the container.
 type MonitorContainer struct {
 	testcontainers.Container
 	DaemonName string
+	owner      *Container
 }
 
 // ManagerContainer is an owned active or standby manager.
 type ManagerContainer struct {
 	testcontainers.Container
 	DaemonName string
+	owner      *Container
 	authOwned  bool
 	terminated bool
 }
@@ -80,7 +82,7 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 func (c *Container) monitorsLocked() []*MonitorContainer {
 	result := make([]*MonitorContainer, 0, len(c.monitors)+1)
 	if c.Container != nil && !c.monitorTerminated {
-		result = append(result, &MonitorContainer{Container: c.Container, DaemonName: "a"})
+		result = append(result, &MonitorContainer{Container: c.Container, DaemonName: "a", owner: c})
 	}
 	for _, mon := range c.monitors {
 		result = append(result, mon)
@@ -173,7 +175,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 	if err != nil {
 		return nil, err
 	}
-	mon := &MonitorContainer{DaemonName: name}
+	mon := &MonitorContainer{DaemonName: name, owner: c}
 	if c.monitors == nil {
 		c.monitors = make(map[string]*MonitorContainer)
 	}
@@ -248,12 +250,9 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 	return mon, c.refreshMonitorConfig(ctx)
 }
 
-// RemoveMonitor preserves a working quorum; add a replacement first when a
-// stop would leave fewer than a majority of the current map running.
-func (c *Container) RemoveMonitor(ctx context.Context, name string) error {
-	if gateErr := c.sharedGate("RemoveMonitor"); gateErr != nil {
-		return gateErr
-	}
+// removeMonitor implements MonitorContainer.Remove, which documents the behavior. The caller
+// admitted the shared-cluster policy; the handle is checked under the lock.
+func (c *Container) removeMonitor(ctx context.Context, handle *MonitorContainer) error {
 	if err := c.lockTopology(ctx); err != nil {
 		return err
 	}
@@ -261,12 +260,10 @@ func (c *Container) RemoveMonitor(ctx context.Context, name string) error {
 	if c.closed {
 		return errClusterTerminated
 	}
-	mon := c.monitors[name]
-	if name == "a" && !c.monitorTerminated {
-		mon = &MonitorContainer{Container: c.Container, DaemonName: "a"}
-	}
-	if mon == nil {
-		return invalid(fmt.Errorf("monitor %s is not owned", name))
+	name := handle.DaemonName
+	mon, err := c.currentMonitor(handle)
+	if err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
@@ -353,9 +350,9 @@ func (c *Container) refreshMonitorConfig(ctx context.Context) error {
 // daemons, without starting or restarting them. Other entries and comments are
 // retained. Caller-owned clients and multicluster daemon configs are not copied.
 //
-// AddMonitor and RemoveMonitor already refresh these files. Retry this method
+// AddMonitor and MonitorContainer.Remove already refresh these files. Retry this method
 // after an AddMonitor that joined native membership but could not copy every
-// config; retry RemoveMonitor itself after a partial removal. Successful copies
+// config; retry MonitorContainer.Remove itself after a partial removal. Successful copies
 // and the future-client template are retained on partial failure. Repeating a
 // refresh reads each current file and skips copies that are already up to date.
 // External config writers must not race this operation: Docker has no file CAS.
@@ -766,7 +763,7 @@ func (c *Container) startManager(ctx context.Context, name string) (*ManagerCont
 	if err != nil {
 		return nil, err
 	}
-	mgr := &ManagerContainer{DaemonName: name, authOwned: true}
+	mgr := &ManagerContainer{DaemonName: name, owner: c, authOwned: true}
 	if c.managers == nil {
 		c.managers = make(map[string]*ManagerContainer)
 	}
@@ -806,14 +803,10 @@ func (c *Container) waitManagerRegistered(ctx context.Context, name string) erro
 	return nil
 }
 
-// RemoveManager deletes an owned manager after another running, registered
-// candidate is available. Add a replacement before removing the last candidate.
-// On failure the handle remains owned for retry or cluster cleanup. Do not edit
-// these manager identities externally while a topology operation is in progress.
-func (c *Container) RemoveManager(ctx context.Context, name string) error {
-	if gateErr := c.sharedGate("RemoveManager"); gateErr != nil {
-		return gateErr
-	}
+// removeManager implements ManagerContainer.Remove, which documents the behavior. The caller
+// admitted the shared-cluster policy; the handle is checked under the lock.
+func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer) error {
+	name := handle.DaemonName
 	if !daemonNamePattern.MatchString(name) {
 		return errors.New("invalid manager name")
 	}
@@ -824,8 +817,11 @@ func (c *Container) RemoveManager(ctx context.Context, name string) error {
 	if c.closed {
 		return errClusterTerminated
 	}
-	mgr := c.managers[name]
-	if mgr == nil || !mgr.authOwned {
+	mgr, err := c.currentManager(handle)
+	if err != nil {
+		return err
+	}
+	if !mgr.authOwned {
 		return invalid(fmt.Errorf("manager %s is not owned", name))
 	}
 	if len(c.managers) <= 1 {

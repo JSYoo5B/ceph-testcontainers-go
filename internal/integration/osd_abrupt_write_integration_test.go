@@ -128,7 +128,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	}
 	t.Log("OSD_ABRUPT_CONTROL presubmit=no_requests clean_stop=exit_0 independent_read=exact")
 
-	poolStatus, err := cluster.PoolStatus(ctx, pool)
+	poolStatus, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

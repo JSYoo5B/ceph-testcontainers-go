@@ -19,6 +19,30 @@ change the API.
   error instead of an empty result, waiting honors `ctx`, and a nil cluster
   returns an error. There is no deprecated phase and no alias. See
   `docs/guides/upgrading-context-accessors.md`.
+- Place each operation on the handle it acts on and take handles instead of
+  names. `OSDContainer` gets `Remove`, `SetIn`, `Detach`, `AdminSocket` and
+  `RotateKey`; `DetachedOSD` gets `Reopen`; `MonitorContainer` gets `Remove` and
+  `AdminSocket`; `ManagerContainer` gets `Remove`, `AdminSocket` and `RotateKey`;
+  `Pool` gets `Status`, `Usage`, `PGs`, `SetPGCount`, `WaitForPGCount`,
+  `SetPlacement`, `SetQuota`, `SetReplication` and `Remove`; `ClientConfig` gets
+  `Capabilities`, `UpdateCaps`, `ReplaceKey`, `Revoke` and `Delete`;
+  `cephfs.Filesystem` gets `Remove`, `cephfs.MDS` gets `RemoveStopped` and
+  `AddReplacement`, and `rgw.Gateway` gets `Remove`. `Container.Pool(ctx, name)`
+  is new and returns the handle of an existing pool. The `ceph.Container` methods
+  `RemoveOSD`, `SetOSDIn`, `DetachOSD`, `ReopenOSD`, `RemoveMonitor`,
+  `RemoveManager`, `AdminSocket`, `RotateDaemonKey`, `PoolStatus`, `PoolUsage`,
+  `PoolPGs`, `SetPoolPGCount`, `WaitForPoolPGCount`, `SetPoolPlacement`,
+  `SetPoolQuota`, `SetPoolReplication`, `RemovePool`, `ClientCapabilities`,
+  `UpdateClientCaps`, `ReplaceClientKey`, `RevokeClient` and `DeleteClient`, the
+  functions `cephfs.Remove` and `rgw.Remove`, and the `cephfs.Filesystem`
+  methods `RemoveStoppedMDS` and `AddMDSReplacement` are removed with no
+  deprecated phase and no alias. A handle acts on its own instance: the handle
+  of a removed, detached, replaced or deleted daemon, pool or identity, and the
+  handle of a terminated cluster, returns an error instead of acting on whatever
+  owns the ID or name now. Daemon names are no longer parsed at run time, and
+  rotating a MON key no longer compiles. `Tenant.PoolStatus` and
+  `Tenant.PoolUsage` are unchanged. See
+  `docs/guides/upgrading-handle-operations.md` for the migration table.
 - Finish the staged naming pass: `rbd.TemporaryImmutableObjectCache` becomes
   `rbd.StartImmutableObjectCache`. The lease, client options, Stop/Restore,
   error ownership and cleanup stay unchanged; there is no automatic expiry or

@@ -331,7 +331,7 @@ func testNoInitialOSDStorage(t *testing.T, host bool) {
 	if err != nil || len(before) != 1 || before[0].ID != first.ID || !before[0].Up || !before[0].In {
 		t.Fatal("first explicit OSD is not exact up/in", err)
 	}
-	if err := cluster.RemoveOSD(ctx, first.ID); err == nil || !strings.Contains(err.Error(), "cannot remove the last OSD") {
+	if err := first.Remove(ctx); err == nil || !strings.Contains(err.Error(), "cannot remove the last OSD") {
 		t.Fatal("zero-initial option changed last-OSD protection", err)
 	}
 	after, err := cluster.OSDStates(ctx)
@@ -364,7 +364,7 @@ func testNoInitialOSDStorage(t *testing.T, host bool) {
 	healthCtx, healthCancel := context.WithTimeout(ctx, 90*time.Second)
 	defer healthCancel()
 	topologyWait(t, healthCtx, func() bool { return noInitialOSDHealth(t, healthCtx, cluster, "after-storage", true) })
-	poolState, err := cluster.PoolStatus(ctx, pool.Name)
+	poolState, err := pool.Status(ctx)
 	if err != nil || poolState.ID <= 0 || poolState.Size != 2 || poolState.MinSize != 1 {
 		t.Fatal("native provisioned pool identity/defaults unavailable", err)
 	}
@@ -428,7 +428,7 @@ func testNoInitialOSDPartial(t *testing.T, host bool) {
 		t.Fatal("partial native registration unavailable", err)
 	}
 	oracle.assertOnlyControl(t, ctx, cluster, "partial-registered-no-process")
-	if err := cluster.RemoveOSD(ctx, partial.ID); err == nil || !strings.Contains(err.Error(), "cannot remove the last OSD") {
+	if err := partial.Remove(ctx); err == nil || !strings.Contains(err.Error(), "cannot remove the last OSD") {
 		t.Fatal("partial first registration bypassed last-OSD guard", err)
 	}
 	t.Logf("NO_INITIAL_OSD_PARTIAL fsid=%s osd_id=%d uuid=%s owned=1 container=absent", fsid, partial.ID, states[0].UUID)

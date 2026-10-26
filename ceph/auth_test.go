@@ -117,7 +117,10 @@ func TestDeleteClientOnlyRevokesOwnedUnchangedIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := authFixtureCluster(&authFixtureContainer{})
-	if err := other.DeleteClient(t.Context(), client); err == nil {
+	// A descriptor belongs to the cluster that created it. One that names the
+	// identity for a cluster that did not create it is refused.
+	foreign := &ClientConfig{owner: other, name: client.name}
+	if err := foreign.Delete(t.Context()); err == nil {
 		t.Fatal("another cluster revoked an unowned client")
 	}
 	var request testcontainers.GenericContainerRequest
@@ -125,15 +128,15 @@ func TestDeleteClientOnlyRevokesOwnedUnchangedIdentity(t *testing.T) {
 		t.Fatal("another cluster attached an unowned client")
 	}
 	ctr.key = "REPLACEMENT-KEY"
-	if err := cluster.DeleteClient(t.Context(), client); err == nil || ctr.deleted {
+	if err := client.Delete(t.Context()); err == nil || ctr.deleted {
 		t.Fatal("revocation deleted an externally replaced key")
 	}
 	ctr.key = "PRIVATE-KEY"
-	if err := cluster.DeleteClient(t.Context(), client); err != nil {
+	if err := client.Delete(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	before := len(ctr.calls)
-	if err := cluster.DeleteClient(t.Context(), client); err != nil || len(ctr.calls) != before {
+	if err := client.Delete(t.Context()); err != nil || len(ctr.calls) != before {
 		t.Fatal("repeat revocation was not a no-op")
 	}
 	if err := cluster.WithClientIdentity(client)(&request); err == nil {

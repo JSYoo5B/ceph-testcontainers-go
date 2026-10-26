@@ -80,7 +80,7 @@ func TestOSDRetainedConcurrentReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	detached, err := cluster.DetachOSD(ctx, original.ID)
+	detached, err := original.Detach(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestOSDRetainedConcurrentReopen(t *testing.T) {
 		go func() {
 			<-start
 			observed := &retainedReopenContext{Context: ctx, acquired: func() { once.Do(func() { close(admitted) }) }}
-			osd, err := cluster.ReopenOSD(observed, detached)
+			osd, err := detached.Reopen(observed)
 			results <- result{osd, err}
 		}()
 	}
@@ -125,7 +125,7 @@ func TestOSDRetainedConcurrentReopen(t *testing.T) {
 	defer stopWaiter()
 	queued := false
 	waiter := &retainedReopenContext{Context: waiterBase, waiting: func() { queued = true; stopWaiter() }}
-	refused, waiterErr := cluster.ReopenOSD(waiter, detached)
+	refused, waiterErr := detached.Reopen(waiter)
 	if !queued || refused != nil || !errors.Is(waiterErr, context.Canceled) {
 		t.Fatalf("cancelled topology waiter queued=%v candidate=%v err=%v", queued, refused != nil, waiterErr)
 	}

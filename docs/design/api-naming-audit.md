@@ -8,7 +8,7 @@ for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **789** functions, declared methods on
+The declaration catalogue contains **793** functions, declared methods on
 exported receivers, types, constants and variables. The separate member
 catalogue contains **1089** exported field/nested-record/embedding entries in
 **181** types. It scans exported declared interfaces as well; the current public packages declare `ceph.CaptureSettler` (two methods) and
@@ -18,18 +18,18 @@ anonymous array/map records, and refuses to expose ordinary private fields.
 
 | Package | Declaration entries | Member/embedding entries |
 | --- | ---: | ---: |
-| `ceph` | 361 | 424 |
+| `ceph` | 365 | 424 |
 | `fault` | 35 | 64 |
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
 | `rgw` | 125 | 204 |
 | `capture` | 36 | 56 |
-| Total | 789 | 1089 |
+| Total | 793 | 1089 |
 
 This includes the dependency-role migration through #32: `ImageSet`,
 `RunWithImages`, `WithImages`, `Images`, `ClientContainer` and the
 mirror variants, the context-bounded `Monitors` and `OSDs`
-getters added for #4, and the retained OSD lifecycle (`DetachOSD`, `ReopenOSD`
+getters added for #4, and the retained OSD lifecycle (`OSDContainer.Detach`, `DetachedOSD.Reopen`
 and `DetachedOSD` with its `ID`, `UUID`, `ClusterFSID` and `Placement`
 accessors) added for #6, the test finalization added for #49
 (`TerminateOnCleanup`, `Finalization` with `Check` and `Cleanup`, and
@@ -63,7 +63,8 @@ The receipt is not a stability guarantee or approval of later APIs.
 | Saved policies and revocation handles | Retain the completed `Override*` and management `*Handle` names from #18/#19. Retain `FullRatiosOverride` and `BlocklistOverride` as the explicit #15/#16 exceptions: their domain/Restore methods already identify the saved policy. This does not move either policy into `fault`, add automatic undo, or claim an uncertain handle succeeded. |
 | Owned additions and disruption leases | Retain `PauseLease`, `NetworkProfileLease`, `SnapshotScheduleLease`, and `ImmutableObjectCacheLease`. Preserve `Pause`/`Resume`, Apply/Restore and Add/Restore. `TemporaryBlocklist` retains its real native TTL; the cache's Start name deliberately drops Temporary because it has none. `Lease` identifies ownership, not universal expiry or automatic restoration. |
 | Quiesce and staged removal/addition | Retain `QuiesceSubvolumes`/`Quiesce.Release`, `MirrorDirectoryAddition`, `MirrorDirectoryRemoval`, `MirrorPeerRemoval`, their Begin/Status/Wait/Acknowledge methods and observation types. They represent native set or phased transition ownership, including partial/uncertain progress; a past-participle name or common Undo would misstate their contract. |
-| Retained OSD lifecycle | Retain `DetachOSD`, `ReopenOSD` and `DetachedOSD`. Detach names releasing a daemon's container while keeping its store and MON registration, and is distinct from `RemoveOSD` (drain and purge) and from container Stop/Start (same container). Reopen names starting a new container on that retained store; it neither allocates a registration like `Add*` nor formats like a fresh start. `DetachedOSD` exposes read-only accessors instead of mutable fields, because ReopenOSD validates against private copies; `ClusterFSID` qualifies which FSID it is. |
+| Operations on handles | Retain `OSDContainer.Remove`, `SetIn`, `Detach`, `AdminSocket` and `RotateKey`, `DetachedOSD.Reopen`, `MonitorContainer.Remove` and `AdminSocket`, `ManagerContainer.Remove`, `AdminSocket` and `RotateKey`, the `Pool` operations `Status`, `Usage`, `PGs`, `SetPGCount`, `WaitForPGCount`, `SetPlacement`, `SetQuota`, `SetReplication` and `Remove`, the `ClientConfig` operations `Capabilities`, `UpdateCaps`, `ReplaceKey`, `Revoke` and `Delete`, `cephfs.Filesystem.Remove`, `cephfs.MDS.RemoveStopped` and `AddReplacement`, `rgw.Gateway.Remove` and the lookup `Container.Pool`. The receiver names the object, so the method drops the noun (`Remove`, not `RemoveOSD`) and takes no name or ID; the verbs keep their meaning. Creating operations (`AddOSD`, `AddMonitor`, `AddManager`, `CreatePool`, `CreateClient`, `cephfs.Start`, `rgw.Start`) have no handle yet and stay where they are. The former `Container` methods and package functions are gone, with no alias ([migration](../guides/upgrading-handle-operations.md)). |
+| Retained OSD lifecycle | Retain `OSDContainer.Detach`, `DetachedOSD.Reopen` and `DetachedOSD`. Detach names releasing a daemon's container while keeping its store and MON registration, and is distinct from `Remove` (drain and purge) and from container Stop/Start (same container). Reopen names starting a new container on that retained store; it neither allocates a registration like `Add*` nor formats like a fresh start. `DetachedOSD` exposes read-only accessors instead of mutable fields, because Reopen validates against private copies; `ClusterFSID` qualifies which FSID it is. |
 | Test finalization | Retain `TerminateOnCleanup`, `Finalization`, `Finalization.Check`, `Finalization.Cleanup` and `FinalizationConfig`. `TerminateOnCleanup` names what the call owns: it registers the cluster's termination with test cleanup, like `testcontainers.CleanupContainer`, and orders the checks, failure archive and cleanups before it. `Finalization` is that registered phase sequence, not a lease or restore handle; `Check` and `Cleanup` add steps to its two phases and keep `testing.TB.Cleanup`'s meaning of a function that runs at test end. `Archive` opts into the failure archive; `ArchiveDirectory`, `ArchiveTimeout`, `CheckTimeout` and `CleanupTimeout` qualify the phase they bound, and `Diagnostics` and `CrashMetadata` take the existing collector configurations unchanged. No generic cleanup interface or automatic archive for other fixtures follows. |
 | Lifetime and recovery operations | Retain `Terminate` for owned clusters/fixtures, `Close` for streams/shared fixtures, explicit Restore for policies/files, Stop for a process that may retain files, and Resume for thawing. `RestoreBackup`, `RestoreIncremental`, `Rebootstrap*`, `RepairPG` and clone cancel/remove are domain recovery operations, not interchangeable cleanup handles. |
 | Debug and fault operations | Retain `fault.InjectObjectDataError` (moved from `ceph.Container` by the #9 checkpoint under the maintainer decision that dedicated synthetic-error injection belongs in `fault`), `InterruptNetwork`, `InterruptLink` and peer/zone interruption helpers. The name and signature otherwise follow the pre-move method. A one-shot injection has no generic Restore contract; caller-bound links differ from cluster-selected networks. No new fault guarantee follows from the naming pass. |

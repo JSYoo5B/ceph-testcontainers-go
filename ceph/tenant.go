@@ -205,23 +205,25 @@ func (t *Tenant) Pools(ctx context.Context) ([]PoolState, error) {
 	return c.Pools(ctx)
 }
 
-// PoolStatus returns one pool's state; see Container.PoolStatus.
+// PoolStatus returns one pool's state by its exact native name; see
+// Pool.Status.
 func (t *Tenant) PoolStatus(ctx context.Context, name string) (PoolState, error) {
 	c, err := t.cluster()
 	if err != nil {
 		return PoolState{}, err
 	}
-	return c.PoolStatus(ctx, name)
+	return c.poolStatus(ctx, name, nil)
 }
 
-// PoolUsage returns one pool's usage; see Container.PoolUsage. Usage of
+// PoolUsage returns one pool's usage by its exact native name; see
+// Pool.Usage. Usage of
 // SharedPool includes the other tenants' objects.
 func (t *Tenant) PoolUsage(ctx context.Context, name string) (PoolUsageSnapshot, error) {
 	c, err := t.cluster()
 	if err != nil {
 		return PoolUsageSnapshot{}, err
 	}
-	return c.PoolUsage(ctx, name)
+	return c.poolUsage(ctx, name, nil)
 }
 
 // ObjectWatchers lists an object's watchers; see Container.ObjectWatchers.

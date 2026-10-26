@@ -15,7 +15,7 @@ import (
 )
 
 // DetachedOSD is the retained store and MON registration of an OSD whose
-// container DetachOSD removed. ReopenOSD of the same cluster starts a new
+// container OSDContainer.Detach removed. DetachedOSD.Reopen of the same cluster starts a new
 // container on it once. The cluster owns the store: Terminate discards it
 // with the owned volume, and the MONs keep the registration down meanwhile.
 type DetachedOSD struct {
@@ -42,7 +42,7 @@ func (d *DetachedOSD) UUID() string { return d.osdUUID }
 // ClusterFSID returns the cluster FSID that the retained store holds.
 func (d *DetachedOSD) ClusterFSID() string { return d.fsid }
 
-// Placement returns the CRUSH location that ReopenOSD starts the OSD in.
+// Placement returns the CRUSH location that DetachedOSD.Reopen starts the OSD in.
 func (d *DetachedOSD) Placement() OSDConfig { return d.placement }
 
 // osdStoreIdentity is what a detached store holds: its identity files and the
@@ -168,7 +168,7 @@ var instanceFaultNames = map[faultKind]string{
 }
 
 // refuseInstanceFaults refuses an OSD container that a held network or
-// pause fault still targets: its undo needs the container DetachOSD removes.
+// pause fault still targets: its undo needs the container OSDContainer.Detach removes.
 // The caller holds c.mu.
 func (c *Container) refuseInstanceFaults(ctx context.Context, id int, containerID string) error {
 	for fid, entry := range c.faults.entries {
@@ -193,23 +193,10 @@ func (c *Container) refuseInstanceFaults(ctx context.Context, id int, containerI
 	return nil
 }
 
-// DetachOSD stops and removes an owned OSD's container but keeps its store in
-// the owned volume and its MON registration, so that ReopenOSD can start a
-// new container on them. It needs WithOSDVolumeStorage. The OSD is down, not
-// out or purged, while it is detached; hold noout to keep it in.
-//
-// Detach admits the native identity, refuses an OSD that a held network or
-// pause fault targets, fences the instance against new native commands and
-// drains its tracked ones, then stops it, waits for down and removes the
-// container. Only after confirmed removal does it read the store's identity
-// and publish the DetachedOSD; the old *OSDContainer stays tied to the removed
-// instance. On error the OSD stays owned with its fence: retry DetachOSD with
-// a fresh context or terminate the cluster. RemoveOSD refuses a detaching or
-// detached OSD.
-func (c *Container) DetachOSD(ctx context.Context, id int) (*DetachedOSD, error) {
-	if gateErr := c.sharedGate("DetachOSD"); gateErr != nil {
-		return nil, gateErr
-	}
+// detachOSD implements OSDContainer.Detach, which documents the behavior. The caller
+// admitted the shared-cluster policy; the handle is checked under the lock.
+func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*DetachedOSD, error) {
+	id := handle.ID
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -221,17 +208,14 @@ func (c *Container) DetachOSD(ctx context.Context, id int) (*DetachedOSD, error)
 		return nil, errClusterTerminated
 	}
 	if !c.settings.osdVolumeStorage || c.osdVolume == nil {
-		return nil, invalidRequest("DetachOSD retains stores only with WithOSDVolumeStorage")
+		return nil, invalidRequest("OSDContainer.Detach retains stores only with WithOSDVolumeStorage")
 	}
-	osd := c.osds[id]
-	if osd == nil {
-		if c.detachedOSDs[id] != nil {
-			return nil, invalid(fmt.Errorf("osd.%d is already detached", id))
-		}
-		return nil, invalid(fmt.Errorf("osd.%d is not owned by this cluster", id))
+	if err := c.currentOSD(handle); err != nil {
+		return nil, err
 	}
+	osd := handle
 	if osd.purged || osd.purgeIssued {
-		return nil, fmt.Errorf("osd.%d is being removed; retry RemoveOSD", id)
+		return nil, fmt.Errorf("osd.%d is being removed; retry OSDContainer.Remove", id)
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
@@ -291,38 +275,9 @@ func (c *Container) DetachOSD(ctx context.Context, id int) (*DetachedOSD, error)
 	return detached, nil
 }
 
-// ReopenOSD starts a new container on a store and registration that
-// DetachOSD of this cluster retained, and waits for the OSD to be up/in. It
-// returns a new *OSDContainer with the same ID, UUID and placement; the
-// detached OSD's previous handle keeps naming the removed container.
-//
-// Before any write it requires the store's identity files, keyring and block
-// inode and size to be unchanged since the detach, the MON registration to
-// hold the same UUID and be down, and the MONs' key for the OSD to equal the
-// stored one. A refusal there, a failed cleanup of the stale admin socket,
-// or a canceled context before the container is requested leaves the OSD
-// detached for another attempt; none of them dispatches a creation request.
-// The cleanup runs under the supervisor. If its end stays unconfirmed, the
-// detached OSD records it and every later ReopenOSD first has to stop or
-// confirm it, so that a late cleanup cannot remove the socket of the
-// replacement; until then ReopenOSD refuses without creating a container.
-// Once the new container is requested the detached OSD is consumed: an
-// error returns the new handle, which the cluster owns. If that handle has a
-// container, detach it again, remove it or terminate the cluster. If the
-// creation request returned no container, its reply may have been lost after
-// the runtime accepted it, so it is never replayed and the handle has no
-// container to detach: DetachOSD and ReopenOSD refuse it, RemoveOSD refuses
-// the last OSD, and only Terminate recovers it. ReopenOSD does not reconcile
-// a container that such a lost reply may have created. The store is started through the
-// ordinary bootstrap, which validates the stored identity again and never
-// formats a store that has its ready marker.
-func (c *Container) ReopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDContainer, error) {
-	if gateErr := c.sharedGate("ReopenOSD"); gateErr != nil {
-		return nil, gateErr
-	}
-	if detached == nil {
-		return nil, invalidRequest("ReopenOSD needs a detached OSD")
-	}
+// reopenOSD implements DetachedOSD.Reopen, which documents the behavior. The caller
+// admitted the shared-cluster policy; the handle is checked under the lock.
+func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDContainer, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -363,7 +318,7 @@ func (c *Container) ReopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 	}
 	detached.reopened = true
 	delete(c.detachedOSDs, id)
-	osd := &OSDContainer{ID: id, nativeUUID: detached.osdUUID, placement: detached.placement}
+	osd := &OSDContainer{ID: id, owner: c, nativeUUID: detached.osdUUID, placement: detached.placement}
 	c.osds[id] = osd
 	launch := osdLaunch{osd: osd, recipe: c.newOSDLaunchRecipe(osd, []byte(detached.store.keyring))}
 	if err := c.startOSD(ctx, launch); err != nil {

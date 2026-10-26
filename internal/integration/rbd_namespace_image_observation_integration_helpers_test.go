@@ -55,11 +55,11 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 	}{{source, sourceClient}, {destination, destinationClient}} {
 		rbdScopedImageHealth(t, ctx, site.cluster, site.client, []string{"source", "destination"}[role], "after-initial-pools")
 	}
-	sourcePool, err := source.PoolStatus(ctx, pool)
+	sourcePool, err := poolHandle(t, ctx, source, pool).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationPool, err := destination.PoolStatus(ctx, pool)
+	destinationPool, err := poolHandle(t, ctx, destination, pool).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

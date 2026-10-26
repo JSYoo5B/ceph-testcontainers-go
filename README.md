@@ -47,8 +47,9 @@ audit are recorded in [API naming](docs/design/api-naming.md). Upgrade guides
 cover [ceph policy names](docs/guides/upgrading-ceph-policy-names.md),
 [CephFS names](docs/guides/upgrading-cephfs-names.md),
 [network profiles](docs/guides/upgrading-network-profile-names.md) and the
-[RBD cache operation](docs/guides/upgrading-rbd-cache-name.md) and the
-[topology accessors](docs/guides/upgrading-context-accessors.md).
+[RBD cache operation](docs/guides/upgrading-rbd-cache-name.md), the
+[topology accessors](docs/guides/upgrading-context-accessors.md) and the
+[operations that moved onto handles](docs/guides/upgrading-handle-operations.md).
 
 ## Requirements
 

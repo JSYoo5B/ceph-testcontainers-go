@@ -42,7 +42,7 @@ func ecBelowKWait(t *testing.T, ctx context.Context, c *ceph.Container, pool str
 	defer done()
 	var last error
 	for {
-		s, err := c.PoolPGs(wait, pool)
+		s, err := poolHandle(t, wait, c, pool).PGs(wait)
 		if err == nil {
 			last = checkECBelowKPlacement(p, base, s, lost, floor)
 			if last == nil {
@@ -135,7 +135,7 @@ func testECBelowK(t *testing.T) {
 	if seed.Phase != "seed" || seed.PID <= 0 || seed.Writer == 0 || seed.Reader == 0 || seed.Writer == seed.Reader || seed.Snap == 0 || seed.Size != size || seed.HeadVersion == 0 || seed.HeadSHA256 != ecFourTwoPayloadHash(size, 0) || seed.SnapSHA256 != seed.HeadSHA256 || seed.SnapVersion != seed.HeadVersion {
 		t.Fatalf("invalid below-K seed: %+v", seed)
 	}
-	base, err := c.PoolPGs(ctx, pool.Name)
+	base, err := pool.PGs(ctx)
 	if err != nil || len(base.PGs) != 1 {
 		t.Fatalf("initial placement %+v %v", base, err)
 	}
@@ -196,7 +196,7 @@ func testECBelowK(t *testing.T) {
 	if err := checkECFourTwoAck(seed, seed, ack, size, 1, 1); err != nil {
 		t.Fatal(err)
 	}
-	oneAfter, err := c.PoolPGs(ctx, pool.Name)
+	oneAfter, err := pool.PGs(ctx)
 	if err != nil || checkECBelowKPlacement(p, base, oneAfter, p.Losses[:1], base.PGs[0].ReportedEpoch) != nil {
 		t.Fatalf("exact-K write interval changed %+v %v", oneAfter, err)
 	}
@@ -211,7 +211,7 @@ func testECBelowK(t *testing.T) {
 	if err := checkECBelowKUnknown(seed, unknown); err != nil {
 		t.Fatal(err)
 	}
-	belowAfter, err := c.PoolPGs(ctx, pool.Name)
+	belowAfter, err := pool.PGs(ctx)
 	if err != nil || checkECBelowKPlacement(p, base, belowAfter, p.Losses, oneAfter.PGs[0].ReportedEpoch) != nil {
 		t.Fatalf("below-K operation interval changed %+v %v", belowAfter, err)
 	}
@@ -265,7 +265,7 @@ func testECBelowK(t *testing.T) {
 			t.Fatal("recovery write reused a prior client")
 		}
 	}
-	resumedAfter, err := c.PoolPGs(ctx, pool.Name)
+	resumedAfter, err := pool.PGs(ctx)
 	if err != nil || checkECBelowKPlacement(p, base, resumedAfter, p.Losses[:1], belowAfter.PGs[0].ReportedEpoch) != nil {
 		t.Fatalf("resumed I/O interval changed %+v %v", resumedAfter, err)
 	}
@@ -310,7 +310,7 @@ func testECBelowK(t *testing.T) {
 		t.Fatal(err)
 	}
 	policyRestored = true
-	if err := c.RemovePool(ctx, pool.Name); err != nil {
+	if err := pool.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

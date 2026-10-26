@@ -228,7 +228,7 @@ func (f *Multisite) RemoveZone(ctx context.Context, name string) error {
 	}
 	if !removal.gatewayRemoved {
 		if state.cluster != nil {
-			if err := Remove(ctx, state.cluster, state.Gateway.GatewayName); err != nil {
+			if err := state.Gateway.Remove(ctx); err != nil {
 				return fmt.Errorf("remove detached RGW gateway: %w", err)
 			}
 		} else if err := multicluster.IgnoreMissing(state.Gateway.Terminate(ctx)); err != nil {

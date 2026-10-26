@@ -80,7 +80,7 @@ sys.exit(0 if ret==0 else 1)
 `
 
 // authCall collects the MON mutations of one call that changes the auth
-// entry of entity, such as one RotateDaemonKey or ReplaceClientKey call, until
+// entry of entity, such as one RotateKey or ClientConfig.ReplaceKey call, until
 // they are settled. The caller holds c.mu.
 type authCall struct {
 	c      *Container
@@ -219,41 +219,11 @@ type keyRotationExecClient interface {
 	Close() error
 }
 
-// RotateDaemonKey replaces the Cephx key of a running MGR or OSD that the
-// cluster owns, as cephadm's daemon key rotation does, without a restart:
-//
-//  1. auth get-or-create-pending creates the new key on the MONs, which then
-//     accept both keys.
-//  2. The daemon's keyring files in its container get the new key, so that a
-//     later restart authenticates with it.
-//  3. ceph tell <daemon> rotate-key hands the key to the running daemon.
-//  4. auth commit-pending makes it the entity's only key.
-//
-// daemon is "mgr.<name>" or "osd.<id>". MONs share the mon. key and are
-// refused.
-//
-// The MONs accept both keys until step 4, and they also commit the pending key
-// on their own when the daemon authenticates with it, after a restart or a
-// handoff. A failure before step 4 therefore keeps both keys valid, and the
-// next call finishes the rotation with the same key; a failed step 4 is
-// reported with the outcome that the MONs show once settled. A call returns only once none of its
-// commands can still change the keys or the keyring files, or after recording
-// such commands for the daemon: the next call stops them, waits for them and
-// settles the MONs for them before it changes anything, and fails while it
-// cannot. After a handoff that may still reach the daemon, a later call
-// finishes the rotation with the same key and generates another key only once
-// the daemon's container has restarted.
-func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) (err error) {
-	if gateErr := c.sharedGate("RotateDaemonKey"); gateErr != nil {
-		return gateErr
-	}
-	kind, id, err := parseAdminSocketDaemon(daemon)
-	if err != nil {
-		return err
-	}
-	if kind == "mon" {
-		return errors.New("MONs share the mon. key; RotateDaemonKey rotates MGR and OSD keys")
-	}
+// rotateDaemonKey implements RotateKey, which documents the behavior. The caller
+// admitted the shared-cluster policy; the handle is checked under the lock.
+func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (err error) {
+	kind, id := handle.daemonRef()
+	daemon := kind + "." + id
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	if err := c.lockTopology(ctx); err != nil {
@@ -263,8 +233,8 @@ func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) (err err
 	if c.closed {
 		return errClusterTerminated
 	}
-	if !c.ownsDaemon(kind, id) {
-		return invalid(fmt.Errorf("daemon %s is not owned by this cluster", daemon))
+	if !handle.ownedBy(c) {
+		return invalid(fmt.Errorf("daemon %s is not owned by this cluster, or this handle is stale", daemon))
 	}
 	ctr, keyrings := c.daemonKeyrings(kind, id)
 	if err := c.stopEarlierAuthCommands(ctx, daemon); err != nil {
@@ -309,7 +279,7 @@ func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) (err err
 			fence.handedDone = true
 			return nil
 		}
-		return fmt.Errorf("an earlier handoff of a key to %s may still reach the running daemon, so RotateDaemonKey gives it no other key until its container restarts", daemon)
+		return fmt.Errorf("an earlier handoff of a key to %s may still reach the running daemon, so RotateKey gives it no other key until its container restarts", daemon)
 	}
 	keys, err := call.keys(ctx)
 	if err != nil {
@@ -333,7 +303,7 @@ func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) (err err
 			}
 			return nil
 		}
-		return fmt.Errorf("%w; the MONs keep accepting both keys of %s, and its keyring files may hold the new key, which the MONs commit on their own once the daemon authenticates with it. Call RotateDaemonKey again to finish the rotation", cause, daemon)
+		return fmt.Errorf("%w; the MONs keep accepting both keys of %s, and its keyring files may hold the new key, which the MONs commit on their own once the daemon authenticates with it. Call RotateKey again to finish the rotation", cause, daemon)
 	}
 	if err := c.writeDaemonKeyrings(ctx, ctr, daemon, next, keyrings); err != nil {
 		return abandon(err)
@@ -365,7 +335,7 @@ func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) (err err
 				fence.handedTo = daemonIdentity(ctr, after)
 			}
 		}
-		return errors.Join(fmt.Errorf("hand the new key to %s: %w; it is unknown whether the daemon holds it, so the MONs keep accepting both keys and its keyring files hold the new key. Call RotateDaemonKey again to finish with the same key; a different key needs a restart of %s first", daemon, tellErr, daemon), removeErr)
+		return errors.Join(fmt.Errorf("hand the new key to %s: %w; it is unknown whether the daemon holds it, so the MONs keep accepting both keys and its keyring files hold the new key. Call RotateKey again to finish with the same key; a different key needs a restart of %s first", daemon, tellErr, daemon), removeErr)
 	}
 	// The daemon and its files hold the new key, which the MONs accept
 	// whether or not the commit applies. The MONs also commit a pending key
@@ -389,7 +359,7 @@ func (c *Container) RotateDaemonKey(ctx context.Context, daemon string) (err err
 		commitErr = errors.New("the MONs answered without applying it")
 	}
 	if readErr == nil && after.Key == current && after.PendingKey == next {
-		return errors.Join(fmt.Errorf("commit the new key of %s, which the daemon holds: %w; the commit did not apply and no longer can, and the MONs accept both keys. Call RotateDaemonKey again or run ceph auth commit-pending %s", daemon, commitErr, daemon), removeErr)
+		return errors.Join(fmt.Errorf("commit the new key of %s, which the daemon holds: %w; the commit did not apply and no longer can, and the MONs accept both keys. Call RotateKey again or run ceph auth commit-pending %s", daemon, commitErr, daemon), removeErr)
 	}
 	return errors.Join(fmt.Errorf("commit the new key of %s: %w; the keys changed in an unexpected way, inspect ceph auth get %s", daemon, commitErr, daemon), readErr, removeErr)
 }
@@ -739,7 +709,7 @@ func (c *Container) writeDaemonKeyrings(ctx context.Context, ctr testcontainers.
 // placeDaemonKeyring replaces the keyring file path in the daemon container.
 // Docker may complete an archive copy after its request failed, so the
 // content goes to a new file first, which only a Docker exec of mv, whose end
-// RotateDaemonKey can confirm, renames into place. An exec that may still run
+// RotateKey can confirm, renames into place. An exec that may still run
 // is recorded in the daemon's fence.
 func (c *Container) placeDaemonKeyring(ctx context.Context, ctr testcontainers.Container, daemon, key, path string) error {
 	staged := path + ".tc-" + uuid.NewString()

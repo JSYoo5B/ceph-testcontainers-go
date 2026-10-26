@@ -31,7 +31,7 @@ func (w *rotationWorld) requireRevoked(t *testing.T) {
 // requireUsableClient checks that every operation accepts the descriptor.
 func requireUsableClient(t *testing.T, c *Container, client *ClientConfig) {
 	t.Helper()
-	if caps, err := c.ClientCapabilities(t.Context(), client); err != nil || caps != (ClientCaps{Mon: "allow r", OSD: "allow rw pool=data namespace=tenant-a"}) {
+	if caps, err := client.Capabilities(t.Context()); err != nil || caps != (ClientCaps{Mon: "allow r", OSD: "allow rw pool=data namespace=tenant-a"}) {
 		t.Fatalf("ClientCapabilities: %+v, %v", caps, err)
 	}
 	if err := identityErr(c, client); err != nil {
@@ -43,7 +43,7 @@ func TestRevokeClientRestoresTheSameIdentity(t *testing.T) {
 	w, c, client := clientWorld()
 	c.config = []byte("[global]\n")
 	original := w.clients["client.app"]
-	revocation, err := c.RevokeClient(t.Context(), client)
+	revocation, err := client.Revoke(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,11 +55,11 @@ func TestRevokeClientRestoresTheSameIdentity(t *testing.T) {
 		t.Fatalf("the revoked descriptor's credentials: %v", err)
 	}
 	for name, err := range map[string]error{
-		"ClientCapabilities": func() error { _, err := c.ClientCapabilities(t.Context(), client); return err }(),
+		"ClientCapabilities": func() error { _, err := client.Capabilities(t.Context()); return err }(),
 		"WithClientIdentity": identityErr(c, client),
-		"UpdateClientCaps":   c.UpdateClientCaps(t.Context(), client, ClientCaps{Mon: "allow *"}),
-		"ReplaceClientKey":   func() error { _, err := c.ReplaceClientKey(t.Context(), client); return err }(),
-		"RevokeClient":       func() error { _, err := c.RevokeClient(t.Context(), client); return err }(),
+		"UpdateClientCaps":   client.UpdateCaps(t.Context(), ClientCaps{Mon: "allow *"}),
+		"ReplaceClientKey":   func() error { _, err := client.ReplaceKey(t.Context()); return err }(),
+		"RevokeClient":       func() error { _, err := client.Revoke(t.Context()); return err }(),
 		"CreateClient":       func() error { _, err := c.CreateClient(t.Context(), "app", ClientCaps{Mon: "allow r"}); return err }(),
 	} {
 		if err == nil || !strings.Contains(err.Error(), "revoked temporarily") {
@@ -79,7 +79,7 @@ func TestRevokeClientRestoresTheSameIdentity(t *testing.T) {
 		t.Fatalf("the identity was imported %d times", w.counts["add"])
 	}
 	// The descriptor can be revoked again.
-	again, err := c.RevokeClient(t.Context(), client)
+	again, err := client.Revoke(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,9 +93,9 @@ func TestRevokeClientRestoresTheSameIdentity(t *testing.T) {
 }
 
 func TestRevokeClientRefusesAChangedIdentity(t *testing.T) {
-	w, c, client := clientWorld()
+	w, _, client := clientWorld()
 	w.clients["client.app"] = fakeClient{key: fakeCephxKey(CipherAES256K, 950), caps: maps.Clone(replacedCaps)}
-	if revocation, err := c.RevokeClient(t.Context(), client); err == nil || revocation != nil {
+	if revocation, err := client.Revoke(t.Context()); err == nil || revocation != nil {
 		t.Fatalf("returned %v, %v", revocation, err)
 	}
 	if w.counts["remove"] != 0 || w.clients["client.app"].key != fakeCephxKey(CipherAES256K, 950) {
@@ -145,7 +145,7 @@ func TestRevokeClientSettlesFailures(t *testing.T) {
 				w.onHang = cancel
 			}
 			w.route = "b"
-			revocation, err := c.RevokeClient(ctx, client)
+			revocation, err := client.Revoke(ctx)
 			if test.op == "remove" {
 				w.onHang = nil
 				switch {
@@ -210,9 +210,9 @@ func TestRevokeClientSettlesFailures(t *testing.T) {
 }
 
 func TestRevokeClientRefusesToOverwrite(t *testing.T) {
-	w, c, client := clientWorld()
+	w, _, client := clientWorld()
 	original := w.clients["client.app"]
-	revocation, err := c.RevokeClient(t.Context(), client)
+	revocation, err := client.Revoke(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,21 +235,21 @@ func TestRevokeClientEndsWithDeleteClient(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			w, c, client := clientWorld()
 			original := w.clients["client.app"]
-			revocation, err := c.RevokeClient(t.Context(), client)
+			revocation, err := client.Revoke(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
 			if restoredOutside {
 				w.clients["client.app"] = original
 			}
-			if err := c.DeleteClient(t.Context(), client); err != nil {
+			if err := client.Delete(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			w.requireRevoked(t)
 			if err := revocation.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "deleted for good") {
 				t.Fatalf("Restore after DeleteClient returned %v", err)
 			}
-			if err := c.DeleteClient(t.Context(), client); err != nil {
+			if err := client.Delete(t.Context()); err != nil {
 				t.Fatalf("a repeated DeleteClient returned %v", err)
 			}
 			if c.clientRevocations["client.app"] != nil {
@@ -262,10 +262,10 @@ func TestRevokeClientEndsWithDeleteClient(t *testing.T) {
 // An identity without capabilities, which auth import refuses, is restored
 // exactly too.
 func TestRevokeClientRestoresAnIdentityWithoutCaps(t *testing.T) {
-	w, c, client := clientWorld()
+	w, _, client := clientWorld()
 	original := fakeClient{key: w.clients["client.app"].key, caps: map[string]string{}}
 	w.clients["client.app"] = original
-	revocation, err := c.RevokeClient(t.Context(), client)
+	revocation, err := client.Revoke(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestRevokeClientRestoresAnIdentityWithoutCaps(t *testing.T) {
 func TestClientRevocationCopiesShareState(t *testing.T) {
 	w, c, client := clientWorld()
 	original := w.clients["client.app"]
-	revocation, err := c.RevokeClient(t.Context(), client)
+	revocation, err := client.Revoke(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,12 +294,12 @@ func TestClientRevocationCopiesShareState(t *testing.T) {
 	if c.clientRevocations["client.app"] != nil || revocation.Restore(t.Context()) != nil {
 		t.Fatal("the original handle does not see the restoration of its copy")
 	}
-	again, err := c.RevokeClient(t.Context(), client)
+	again, err := client.Revoke(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	deleting := *again
-	if err := c.DeleteClient(t.Context(), client); err != nil {
+	if err := client.Delete(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := deleting.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "deleted for good") {
@@ -310,10 +310,10 @@ func TestClientRevocationCopiesShareState(t *testing.T) {
 
 // A permanent removal that settling confirms during Restore is final.
 func TestClientRevocationRestoreAfterAnUncertainDeletion(t *testing.T) {
-	w, c, client := clientWorld()
+	w, _, client := clientWorld()
 	w.faults["remove"] = rotationFault{occurrence: 1, effect: hangsQueued}
 	w.faults["barrier"] = rotationFault{occurrence: 1}
-	revocation, err := c.RevokeClient(t.Context(), client)
+	revocation, err := client.Revoke(t.Context())
 	if err == nil || revocation == nil {
 		t.Fatalf("an unsettled removal returned %v, %v", revocation, err)
 	}
@@ -321,7 +321,7 @@ func TestClientRevocationRestoreAfterAnUncertainDeletion(t *testing.T) {
 	// the identity for good, uncertainly again.
 	w.faults["remove"] = rotationFault{occurrence: 2, effect: hangsPrepared}
 	w.faults["barrier"] = rotationFault{occurrence: w.counts["barrier"] + 4}
-	if err := c.DeleteClient(t.Context(), client); err == nil || !strings.Contains(err.Error(), "not known yet") {
+	if err := client.Delete(t.Context()); err == nil || !strings.Contains(err.Error(), "not known yet") {
 		t.Fatalf("an unsettled permanent removal returned %v", err)
 	}
 	if err := revocation.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "deleted for good") {
@@ -336,16 +336,16 @@ func TestClientRevocationRestoreAfterAnUncertainDeletion(t *testing.T) {
 // A revocation belongs to the identity: every descriptor of the revoked key
 // sees it, and a permanent removal through any of them is final.
 func TestClientRevocationIsSharedByEveryDescriptor(t *testing.T) {
-	w, c, client := clientWorld()
+	w, _, client := clientWorld()
 	copied := *client
-	revocation, err := c.RevokeClient(t.Context(), client)
+	revocation, err := client.Revoke(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.ClientCapabilities(t.Context(), &copied); err == nil || !strings.Contains(err.Error(), "revoked temporarily") {
+	if _, err := (&copied).Capabilities(t.Context()); err == nil || !strings.Contains(err.Error(), "revoked temporarily") {
 		t.Fatalf("a copied descriptor returned %v while revoked", err)
 	}
-	if err := c.DeleteClient(t.Context(), &copied); err != nil {
+	if err := (&copied).Delete(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := revocation.Restore(t.Context()); err == nil || !strings.Contains(err.Error(), "deleted for good") {
@@ -357,14 +357,14 @@ func TestClientRevocationIsSharedByEveryDescriptor(t *testing.T) {
 // The descriptor that an uncertain replacement returns stands for no
 // confirmed key, so no operation, a removal included, accepts it.
 func TestUncertainReplacementDescriptorIsRefused(t *testing.T) {
-	w, c, client := clientWorld()
+	w, _, client := clientWorld()
 	w.faults["import"] = rotationFault{occurrence: 1, effect: hangsPrepared}
 	w.faults["barrier"] = rotationFault{occurrence: 1}
-	attempted, err := c.ReplaceClientKey(t.Context(), client)
+	attempted, err := client.ReplaceKey(t.Context())
 	if err == nil || attempted == nil {
 		t.Fatalf("an unsettled import returned %v, %v", attempted, err)
 	}
-	current, err := c.ReplaceClientKey(t.Context(), client)
+	current, err := client.ReplaceKey(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,11 +372,11 @@ func TestUncertainReplacementDescriptorIsRefused(t *testing.T) {
 	// identity with the key of both descriptors.
 	w.faults["remove"] = rotationFault{occurrence: 1, effect: hangsQueued}
 	w.faults["barrier"] = rotationFault{occurrence: w.counts["barrier"] + 1}
-	revocation, err := c.RevokeClient(t.Context(), current)
+	revocation, err := current.Revoke(t.Context())
 	if err == nil || revocation == nil {
 		t.Fatalf("an unsettled removal returned %v, %v", revocation, err)
 	}
-	if err := c.DeleteClient(t.Context(), attempted); err == nil {
+	if err := attempted.Delete(t.Context()); err == nil {
 		t.Fatal("DeleteClient accepted the uncertain descriptor")
 	}
 	if err := revocation.Restore(t.Context()); err != nil {
@@ -390,7 +390,7 @@ func TestUncertainReplacementDescriptorIsRefused(t *testing.T) {
 func TestDiagnosticsRedactRevokedClientKeys(t *testing.T) {
 	w, c, client := clientWorld()
 	original := w.clients["client.app"].key
-	revocation, err := c.RevokeClient(t.Context(), client)
+	revocation, err := client.Revoke(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

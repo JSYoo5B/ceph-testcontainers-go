@@ -76,7 +76,7 @@ func newPoolPGFixture() (*Container, *poolPGFixtureContainer) {
 
 func assertPoolPGFailure(t *testing.T, cluster *Container, ctx context.Context) error {
 	t.Helper()
-	result, err := cluster.PoolPGs(ctx, "fixture")
+	result, err := poolHandle(t, ctx, cluster, "fixture").PGs(ctx)
 	if err == nil || !reflect.DeepEqual(result, PoolPGSnapshot{}) {
 		t.Fatalf("unusable PG observation published: %+v error=%v", result, err)
 	}
@@ -85,7 +85,7 @@ func assertPoolPGFailure(t *testing.T, cluster *Container, ctx context.Context) 
 
 func TestPoolPGsRetainsReportedOrderIdentityAndNativeIntegers(t *testing.T) {
 	cluster, ctr := newPoolPGFixture()
-	result, err := cluster.PoolPGs(t.Context(), "fixture")
+	result, err := poolHandle(t, t.Context(), cluster, "fixture").PGs(t.Context())
 	wantPool := PoolState{ID: 7, Name: "fixture", Type: "replicated", Size: 2, MinSize: 1, PGNum: 8, CRUSHRule: 0, AutoscaleMode: "off"}
 	wantPG := PGState{PGID: "7.a", State: "active+future", Up: []int{9, 4, 2147483647, 2147483647}, Acting: []int{4, 9, 2147483647, 2147483647},
 		UpPrimary: 4, ActingPrimary: 9, ReportedEpoch: 19, ReportedSequence: 9007199254740993, MappingEpoch: 7, LastEpochClean: 3,
@@ -129,7 +129,7 @@ func TestPoolPGsRetainsColdEmptyUnknownAndUnreadyReports(t *testing.T) {
 				if tc.omit {
 					ctr.outputs[2] = fmt.Sprintf(`{"pg_ready":%t}`, ready)
 				}
-				result, err := cluster.PoolPGs(t.Context(), "fixture")
+				result, err := poolHandle(t, t.Context(), cluster, "fixture").PGs(t.Context())
 				if err != nil || result.PGReady != ready || result.PGs == nil || len(ctr.calls) != 5 {
 					t.Fatalf("unready/empty report rejected: %+v %v", result, err)
 				}
@@ -155,7 +155,7 @@ func TestPoolPGsBracketsChangingPoliciesWithoutRequiringFreshness(t *testing.T) 
 	changed = strings.Replace(changed, `"flags_names":""`, `"flags_names":"creating"`, 1)
 	changed = strings.Replace(changed, `"crush_rule":0`, `"crush_rule":255`, 1)
 	ctr.outputs[3] = poolPGFixtureMap(changed, 19) // No monotonic/equality predicate is invented.
-	result, err := cluster.PoolPGs(t.Context(), "fixture")
+	result, err := poolHandle(t, t.Context(), cluster, "fixture").PGs(t.Context())
 	if err != nil || result.PoolBefore.PGNum != 8 || result.PoolAfter.PGNum != 16 || result.PoolAfter.Quota.MaxBytes != math.MaxUint64 || result.PoolAfter.Flags != "creating" || result.PoolAfter.CRUSHRule != 255 || result.OSDMapEpochAfter != 19 {
 		t.Fatalf("bracket policy change incorrectly treated as replacement: %+v %v", result, err)
 	}
@@ -164,7 +164,7 @@ func TestPoolPGsBracketsChangingPoliciesWithoutRequiringFreshness(t *testing.T) 
 	ec = strings.Replace(ec, `"size":2`, `"size":3`, 1)
 	ec = strings.Replace(ec, `"erasure_code_profile":""`, `"erasure_code_profile":"ec-profile"`, 1)
 	ctr.outputs[1], ctr.outputs[3] = poolPGFixtureMap(ec, 20), poolPGFixtureMap(ec, 21)
-	result, err = cluster.PoolPGs(t.Context(), "fixture")
+	result, err = poolHandle(t, t.Context(), cluster, "fixture").PGs(t.Context())
 	if err != nil || result.PoolBefore.Type != "erasure" || result.PoolAfter.ErasureCodeProfile != "ec-profile" {
 		t.Fatalf("EC policy or repeated missing shard slots rejected: %+v %v", result, err)
 	}
@@ -183,7 +183,7 @@ func TestPoolPGsUsesOneCapturedControlHandle(t *testing.T) {
 		}
 		return nil
 	}
-	result, err := cluster.PoolPGs(t.Context(), "fixture")
+	result, err := poolHandle(t, t.Context(), cluster, "fixture").PGs(t.Context())
 	if err != nil || result.FSID != poolPGFixtureFSID || len(control.calls) != 5 || len(embedded.calls) != 0 || len(replacement.calls) != 0 {
 		t.Fatalf("observation changed control handle: %+v %v calls=%v/%v/%v", result, err, control.calls, embedded.calls, replacement.calls)
 	}
@@ -218,7 +218,7 @@ func TestPoolPGsRejectsUnavailableBootstrapAndInvalidInputBeforeQuery(t *testing
 	_ = assertPoolPGFailure(t, nil, t.Context())
 	for _, name := range []string{"", "bad name", "--format", strings.Repeat("a", 129)} {
 		cluster, ctr := newPoolPGFixture()
-		result, err := cluster.PoolPGs(t.Context(), name)
+		result, err := poolHandle(t, t.Context(), cluster, name).PGs(t.Context())
 		if err == nil || !reflect.DeepEqual(result, PoolPGSnapshot{}) || len(ctr.calls) != 0 {
 			t.Fatalf("invalid name reached CLI: %q %+v %v", name, result, err)
 		}
@@ -426,7 +426,7 @@ func TestPoolPGsBoundsOwnerControlAndConfigAdmission(t *testing.T) {
 			t.Cleanup(func() { cancel(); release(); <-joined })
 			go func() {
 				defer close(joined)
-				result, err := cluster.PoolPGs(ctx, "fixture")
+				result, err := poolHandle(t, ctx, cluster, "fixture").PGs(ctx)
 				if !reflect.DeepEqual(result, PoolPGSnapshot{}) {
 					err = errors.Join(err, errors.New("busy gate published a snapshot"))
 				}

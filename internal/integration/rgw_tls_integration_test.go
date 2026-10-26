@@ -115,7 +115,7 @@ func TestRGWNativeTLS(t *testing.T) {
 			if err := gateway.RemoveUser(ctx, user); err != nil {
 				t.Fatal(err)
 			}
-			if err := rgw.Remove(ctx, cluster, gateway.GatewayName); err != nil {
+			if err := gateway.Remove(ctx); err != nil {
 				t.Fatal(err)
 			}
 			t.Log("native Beast dual listeners with separate mapped/selected ports; trusted CA+SAN+TLS12 verification and exact S3 bytes, unknown CA rejected, HTTP reads same data, owned resource cleanup")

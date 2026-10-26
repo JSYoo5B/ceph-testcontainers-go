@@ -214,7 +214,7 @@ The helper containers are released by the cluster, also in `Terminate`.
 and the admin keyring. In host mode the MON addresses in it are final.
 `ConnectionConfig(ctx)` does the same while bounding the wait for
 concurrent topology changes. The copy is a snapshot: after `AddMonitor` or
-`RemoveMonitor`, call it again.
+`MonitorContainer.Remove`, call it again.
 
 For a restricted identity, use `client.ConnectionConfig()` on a
 `*ceph.ClientConfig` from `CreateClient`. Its configuration is a snapshot taken

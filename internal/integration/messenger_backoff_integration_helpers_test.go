@@ -430,7 +430,7 @@ func waitBackoffPG(t *testing.T, parent context.Context, cluster *ceph.Container
 	defer cancel()
 	var last string
 	for {
-		snapshot, err := cluster.PoolPGs(ctx, backoffPool)
+		snapshot, err := poolHandle(t, ctx, cluster, backoffPool).PGs(ctx)
 		if err == nil && len(snapshot.PGs) == 1 {
 			if ok(snapshot.PGs[0]) {
 				return snapshot.PGs[0], snapshot.OSDMapEpochAfter

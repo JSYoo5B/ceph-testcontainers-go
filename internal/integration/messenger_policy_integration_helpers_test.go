@@ -265,7 +265,7 @@ func checkMessengerV2Only(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	}
 	for _, daemon := range daemons {
 		for option, want := range map[string]string{"ms_bind_msgr1": "false", "ms_bind_msgr2": "true"} {
-			out, err := cluster.AdminSocket(ctx, daemon, "config", "get", option)
+			out, err := adminSocket(t, ctx, cluster, daemon, "config", "get", option)
 			var value map[string]string
 			if err != nil || json.Unmarshal(out, &value) != nil || value[option] != want {
 				t.Fatalf("%s %s = %s, want %s: %v", daemon, option, out, want, err)
@@ -382,7 +382,7 @@ func waitEffectiveMode(t *testing.T, ctx context.Context, cluster *ceph.Containe
 	t.Helper()
 	for _, daemon := range daemons {
 		for deadline := time.Now().Add(time.Minute); ; {
-			out, err := cluster.AdminSocket(ctx, daemon, "config", "get", option)
+			out, err := adminSocket(t, ctx, cluster, daemon, "config", "get", option)
 			var value map[string]string
 			if err == nil && json.Unmarshal(out, &value) == nil && value[option] == want {
 				break

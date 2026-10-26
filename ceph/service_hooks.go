@@ -249,7 +249,7 @@ func (serviceHooks) PoolPolicyReady(c *Container) error { return c.poolPolicyRea
 // skipForeign, a pool the fixture did not create is left alone. The caller
 // holds the cluster mutex.
 func (serviceHooks) RemovePool(ctx context.Context, c *Container, name string, skipForeign bool) error {
-	return c.removePool(ctx, name, skipForeign)
+	return c.removePool(ctx, name, skipForeign, nil)
 }
 
 // PoolMissing reports a RemovePool error for a name with nothing to remove.
@@ -359,7 +359,7 @@ func (serviceHooks) TestCluster(control testcontainers.Container, config testClu
 	if config.OSDs > 0 {
 		c.osds = make(map[int]*OSDContainer)
 		for id := range config.OSDs {
-			c.osds[id] = &OSDContainer{ID: id, Container: control, placement: config.OSDPlacement}
+			c.osds[id] = &OSDContainer{ID: id, owner: c, Container: control, placement: config.OSDPlacement}
 		}
 	}
 	return c

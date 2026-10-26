@@ -26,7 +26,7 @@ while the helper is stopped. There is no automatic repair or replacement.
 
 ## Purge and termination
 
-`RemoveOSD` keeps its existing drain, native UUID/purge and target-command fences.
+`OSDContainer.Remove` keeps its existing drain, native UUID/purge and target-command fences.
 Only after purge and confirmed container removal does it delete that numeric
 ID's directory. A cleanup failure retains the purged descriptor and refuses new
 registrations until cleanup is retried; sibling OSD directories remain intact.
@@ -57,8 +57,8 @@ uses the same OSD containers; an independent observer reference makes volume
 removal fail until that reference is removed and `Terminate` retried.
 
 [Retained detach and reopen](osd-retained-reopen.md) builds on this backend:
-`DetachOSD` removes the container after a fence and keeps the store and
-registration, and `ReopenOSD` starts a new descriptor and container after a
+`OSDContainer.Detach` removes the container after a fence and keeps the store and
+registration, and `DetachedOSD.Reopen` starts a new descriptor and container after a
 read-only identity, registration and key preflight. Its native batch reads
 known bytes back from a single-replica pool through a different container.
 Same-container restart, replication and ordinary volume allocation above do

@@ -49,7 +49,7 @@ func newPoolUsageFixture() (*Container, *poolUsageFixtureContainer) {
 
 func assertPoolUsageFailure(t *testing.T, cluster *Container, ctx context.Context, want string) error {
 	t.Helper()
-	usage, err := cluster.PoolUsage(ctx, "fixture")
+	usage, err := poolHandle(t, ctx, cluster, "fixture").Usage(ctx)
 	if err == nil || usage != (PoolUsageSnapshot{}) || want != "" && !strings.Contains(err.Error(), want) {
 		t.Fatalf("unusable observation published: usage=%+v err=%v, want %q", usage, err, want)
 	}
@@ -58,7 +58,7 @@ func assertPoolUsageFailure(t *testing.T, cluster *Container, ctx context.Contex
 
 func TestPoolUsageReportsNativeUnitsAndReadOnlyScope(t *testing.T) {
 	cluster, ctr := newPoolUsageFixture()
-	usage, err := cluster.PoolUsage(t.Context(), "fixture")
+	usage, err := poolHandle(t, t.Context(), cluster, "fixture").Usage(t.Context())
 	want := PoolUsageSnapshot{FSID: poolUsageFixtureFSID, Name: "fixture", ID: 7, StoredBytes: 4099, StoredDataBytes: 4096, StoredOMAPBytes: 3, AllocatedBytes: 16384, AllocatedDataBytes: 12288, AllocatedOMAPBytes: 4096, Objects: 2, MaxAvailableBytes: 1048576, UsedRatio: 0.125}
 	if err != nil || usage != want {
 		t.Fatalf("logical/allocated bytes or fraction changed: %+v %v", usage, err)
@@ -72,14 +72,14 @@ func TestPoolUsageReportsNativeUnitsAndReadOnlyScope(t *testing.T) {
 	}
 	zero := `{"stored":0,"stored_data":0,"stored_omap":0,"bytes_used":0,"data_bytes_used":0,"omap_bytes_used":0,"objects":0,"max_avail":0,"percent_used":0}`
 	ctr.Output["df detail --format json"] = poolUsageFixtureDF(zero)
-	usage, err = cluster.PoolUsage(t.Context(), "fixture")
+	usage, err = poolHandle(t, t.Context(), cluster, "fixture").Usage(t.Context())
 	if err != nil || usage.ID != 7 || usage.StoredBytes != 0 || usage.AllocatedBytes != 0 || usage.MaxAvailableBytes != 0 {
 		t.Fatalf("reported zero confused with missing fields: %+v %v", usage, err)
 	}
 	large := strings.Replace(poolUsageFixtureStats, `"stored":4099`, `"stored":9007199254740993`, 1)
 	large = strings.Replace(large, `"stored_data":4096`, `"stored_data":9007199254740990`, 1)
 	ctr.Output["df detail --format json"] = poolUsageFixtureDF(large)
-	usage, err = cluster.PoolUsage(t.Context(), "fixture")
+	usage, err = poolHandle(t, t.Context(), cluster, "fixture").Usage(t.Context())
 	if err != nil || usage.StoredBytes != 9007199254740993 {
 		t.Fatalf("integer rounded through float64: %+v %v", usage, err)
 	}
@@ -289,11 +289,11 @@ func TestPoolUsageRejectsUnavailableFixtureBeforeQuery(t *testing.T) {
 			}
 		})
 	}
-	if usage, err := (*Container)(nil).PoolUsage(t.Context(), "fixture"); err == nil || usage != (PoolUsageSnapshot{}) {
+	if usage, err := poolHandle(t, t.Context(), (*Container)(nil), "fixture").Usage(t.Context()); err == nil || usage != (PoolUsageSnapshot{}) {
 		t.Fatal("nil fixture accepted")
 	}
 	cluster, ctr := newPoolUsageFixture()
-	if _, err := cluster.PoolUsage(t.Context(), "--option"); err == nil || len(ctr.Calls) != 0 {
+	if _, err := poolHandle(t, t.Context(), cluster, "--option").Usage(t.Context()); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("invalid name queried native state")
 	}
 }
@@ -376,7 +376,7 @@ func TestPoolUsageBoundsOwnerControlAndConfigAdmission(t *testing.T) {
 			t.Cleanup(func() { cancel(); release(); <-joined })
 			go func() {
 				defer close(joined)
-				usage, err := cluster.PoolUsage(ctx, "fixture")
+				usage, err := poolHandle(t, ctx, cluster, "fixture").Usage(ctx)
 				if !reflect.DeepEqual(usage, PoolUsageSnapshot{}) {
 					err = errors.Join(err, errors.New("busy admission published partial snapshot"))
 				}
@@ -399,7 +399,7 @@ func TestPoolUsageBoundsOwnerControlAndConfigAdmission(t *testing.T) {
 				t.Fatal("failed admission retained topology gate")
 			}
 			cluster.mu.Unlock()
-			if _, err := cluster.PoolUsage(t.Context(), "fixture"); err != nil {
+			if _, err := poolHandle(t, t.Context(), cluster, "fixture").Usage(t.Context()); err != nil {
 				t.Fatalf("deadline made fixture unusable: %v", err)
 			}
 		})

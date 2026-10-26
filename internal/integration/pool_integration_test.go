@@ -94,14 +94,14 @@ func TestErasureCodedPools(t *testing.T) {
 // profile, then proves the names are reusable and deletion stays disabled.
 func checkPoolRemoval(t *testing.T, ctx context.Context, cluster *ceph.Container, pools ...*ceph.Pool) {
 	t.Helper()
-	if err := cluster.RemovePool(ctx, ".mgr"); err == nil {
+	if err := poolHandle(t, ctx, cluster, ".mgr").Remove(ctx); err == nil {
 		t.Fatal("RemovePool accepted a pool that Ceph created")
 	}
 	for _, pool := range pools {
-		if err := cluster.RemovePool(ctx, pool.Name); err != nil {
+		if err := pool.Remove(ctx); err != nil {
 			t.Fatalf("remove pool %s: %v", pool.Name, err)
 		}
-		if err := cluster.RemovePool(ctx, pool.Name); err == nil {
+		if err := pool.Remove(ctx); err == nil {
 			t.Fatalf("second removal of %s succeeded", pool.Name)
 		}
 	}
@@ -147,7 +147,7 @@ func checkPoolRemoval(t *testing.T, ctx context.Context, cluster *ceph.Container
 	if err != nil {
 		t.Fatalf("recreate removed pool %s: %v", pools[0].Name, err)
 	}
-	if err := cluster.RemovePool(ctx, recreated.Name); err != nil {
+	if err := recreated.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("RemovePool removed %d pools with their CRUSH rules and EC profile, refused .mgr and repeats, restored mon_allow_pool_delete and allowed name reuse", len(pools))

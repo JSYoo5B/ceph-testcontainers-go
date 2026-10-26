@@ -28,7 +28,7 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)}, opts...)...)
 
 	for _, daemon := range []string{"mon.a", "mgr.a", "osd.0"} {
-		out, err := cluster.AdminSocket(ctx, daemon, "version")
+		out, err := adminSocket(t, ctx, cluster, daemon, "version")
 		var version struct {
 			Version string `json:"version"`
 		}
@@ -36,7 +36,7 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 			t.Fatalf("%s admin socket version %q, err=%v, cluster release %s", daemon, out, err, cluster.CephVersion())
 		}
 	}
-	out, err := cluster.AdminSocket(ctx, "mon.a", "mon_status")
+	out, err := monitorHandle(t, ctx, cluster, "a").AdminSocket(ctx, "mon_status")
 	var monStatus struct {
 		Name  string `json:"name"`
 		State string `json:"state"`
@@ -99,7 +99,7 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 	if err := osd.Stop(ctx, &stop); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cluster.AdminSocket(ctx, "osd.0", "status"); err == nil {
+	if _, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "status"); err == nil {
 		t.Fatal("a stopped OSD answered its admin socket")
 	}
 	if err := osd.Start(ctx); err != nil {
@@ -107,9 +107,8 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 	}
 	waitAdminSocketOSDEpoch(t, ctx, cluster, after)
 
-	if _, err := cluster.AdminSocket(ctx, "osd.9", "status"); err == nil {
-		t.Fatal("an OSD that the cluster does not own was reachable")
-	}
+	// A daemon that the cluster does not own has no handle, so its socket
+	// cannot be named; the stale-handle refusals are unit-tested.
 	t.Log("MON, MGR and OSD admin sockets: versions match the cluster release, MON a is leader, osd.0 applied the new OSDMap epoch before and after a restart, canceled calls to a frozen osd.0 left no process behind")
 }
 
@@ -133,7 +132,7 @@ func waitAdminSocketOSDEpoch(t *testing.T, ctx context.Context, cluster *ceph.Co
 	defer cancel()
 	var last string
 	for {
-		out, err := cluster.AdminSocket(ctx, "osd.0", "status")
+		out, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "status")
 		var status struct {
 			State     string `json:"state"`
 			NewestMap string `json:"newest_map"`
@@ -175,8 +174,10 @@ func startAdminSocketCall(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	callCtx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
 	call := &adminSocketCall{cancel: cancel, done: make(chan error, 1)}
+	// Resolve the handle in the test goroutine, before the call can be canceled.
+	osd := osdHandle(t, ctx, cluster, 0)
 	go func() {
-		_, err := cluster.AdminSocket(callCtx, "osd.0", "status")
+		_, err := osd.AdminSocket(callCtx, "status")
 		call.done <- err
 	}()
 	waitCtx, cancelWait := context.WithTimeout(ctx, time.Minute)
@@ -233,9 +234,12 @@ func cancelAdminSocketCallAfter(t *testing.T, ctx context.Context, cluster *ceph
 	name := "cancel after " + delay.String()
 	callCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Resolve the handle with the parent context: callCtx may be canceled
+	// before the goroutine runs, and a fatal helper must not run in it.
+	osd := osdHandle(t, ctx, cluster, 0)
 	done := make(chan error, 1)
 	go func() {
-		_, err := cluster.AdminSocket(callCtx, "osd.0", "status")
+		_, err := osd.AdminSocket(callCtx, "status")
 		done <- err
 	}()
 	time.Sleep(delay)
