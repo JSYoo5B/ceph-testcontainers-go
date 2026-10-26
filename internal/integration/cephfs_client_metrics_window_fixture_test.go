@@ -132,6 +132,7 @@ func TestClientMetricsWindowJudge(t *testing.T) {
 		{"cumulative bytes above the acknowledged size still attribute", attributed(sample(25, 26, tot(2, 262144), tot(0, 0))), clientMetricsAttributed, ""},
 		{"idle client attributed", attributed(sample(25, 26, tot(1, 131072), tot(1, 4096))), clientMetricsContradicted, ""},
 		{"idle writes win over a later covering writer", attributed(sample(25, 26, tot(0, 0), tot(1, 1)), sample(30, 31, tot(1, 131072), tot(1, 1))), clientMetricsContradicted, ""},
+		{"covering writer then idle writes", attributed(sample(25, 26, tot(1, 131072), tot(0, 0)), sample(30, 31, tot(1, 131072), tot(1, 4096))), clientMetricsContradicted, ""},
 		{"writer bytes short", attributed(sample(25, 26, tot(1, 4096), tot(0, 0))), clientMetricsInconclusive, "no observation sample"},
 		{"writer ops zero", attributed(sample(25, 26, tot(0, 131072), tot(0, 0))), clientMetricsInconclusive, "no observation sample"},
 		{"writer row missing", attributed(sample(25, 26, nil, tot(0, 0))), clientMetricsInconclusive, "no observation sample"},

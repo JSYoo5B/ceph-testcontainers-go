@@ -182,8 +182,9 @@ func metricsInconclusive(format string, args ...any) clientMetricsOutcome {
 //     and ended by the deadline count. A straddling sample or a late one is not
 //     evidence. Cumulative totals must never decrease for a client across
 //     the series.
-//   - Result: the first observation sample with both rows decides. An idle
-//     row with writes is a contradiction. The writer needs at least one write
+//   - Result: every eligible observation sample is scanned. An idle
+//     row with writes in any of them is a contradiction, even after a sample
+//     that already covered the writer. The writer needs at least one write
 //     op and at least the acknowledged bytes. Exact equality is not required,
 //     because the totals are cumulative counters, not message counts.
 func judgeClientMetricsWindow(w clientMetricsWindow) clientMetricsOutcome {
@@ -228,21 +229,22 @@ func judgeClientMetricsWindow(w clientMetricsWindow) clientMetricsOutcome {
 	if !baseline {
 		return metricsInconclusive("no baseline sample before the gate showed both rows at zero")
 	}
+	var attributed *clientMetricsOutcome
 	for _, s := range w.Samples {
 		if s.Start.Before(w.Acked) || s.End.After(w.Deadline) {
 			continue
 		}
 		wt, wok := s.Section.Rows[w.Writer]
 		it, iok := s.Section.Rows[w.Idle]
-		if !wok || !iok {
-			continue
-		}
-		if it != (clientWriteTotals{}) {
+		if iok && it != (clientWriteTotals{}) {
 			return clientMetricsOutcome{Verdict: clientMetricsContradicted, Reason: "idle client row carries writes", Writer: wt, Idle: it}
 		}
-		if wt.Ops >= 1 && wt.Bytes >= w.AckedBytes {
-			return clientMetricsOutcome{Verdict: clientMetricsAttributed, Reason: "writer row covers the acknowledged write", Writer: wt, Idle: it}
+		if attributed == nil && wok && iok && wt.Ops >= 1 && wt.Bytes >= w.AckedBytes {
+			attributed = &clientMetricsOutcome{Verdict: clientMetricsAttributed, Reason: "writer row covers the acknowledged write", Writer: wt, Idle: it}
 		}
+	}
+	if attributed != nil {
+		return *attributed
 	}
 	return metricsInconclusive("no observation sample inside the acknowledgement-to-deadline window showed both rows with the writer covering %d bytes", w.AckedBytes)
 }
