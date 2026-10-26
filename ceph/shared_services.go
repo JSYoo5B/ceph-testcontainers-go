@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/sharedinvariants"
 )
 
 // sharedService is what a service package (rbd, cephfs, rgw) registers for
@@ -45,7 +47,7 @@ func registeredSharedServices() []sharedService {
 	sharedServices.mu.Lock()
 	defer sharedServices.mu.Unlock()
 	services := make([]sharedService, 0, len(sharedServices.byKind))
-	for _, kind := range sortedKeys(sharedServices.byKind) {
+	for _, kind := range sharedinvariants.SortedKeys(sharedServices.byKind) {
 		services = append(services, sharedServices.byKind[kind])
 	}
 	return services
@@ -67,30 +69,6 @@ func (b containerBackend) resources(ctx context.Context) (map[string]string, err
 		}
 	}
 	return resources, nil
-}
-
-// resourceDiff lists the resources of current that differ from baseline:
-// those of tenant self, which its release should have removed, and those of
-// no live or earlier tenant that were added or removed.
-func resourceDiff(baseline, current map[string]string, self string, others map[string]bool) []string {
-	var problems []string
-	for _, key := range sortedKeys(current) {
-		owner := current[key]
-		_, known := baseline[key]
-		switch {
-		case owner == self:
-			problems = append(problems, key+" remains")
-		case others[owner]:
-		case !known:
-			problems = append(problems, key+" was added")
-		}
-	}
-	for _, key := range sortedKeys(baseline) {
-		if _, ok := current[key]; !ok {
-			problems = append(problems, key+" was removed")
-		}
-	}
-	return problems
 }
 
 // releaseScopes releases tenant's service scopes in reverse order of

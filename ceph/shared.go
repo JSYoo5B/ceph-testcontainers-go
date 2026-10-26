@@ -543,7 +543,7 @@ func (s *SharedCluster) admit(ctx context.Context, inst *sharedInstance) error {
 		if err != nil {
 			return err
 		}
-		problems := inst.baseline.admissionDiff(current)
+		problems := inst.baseline.AdmissionDiff(current)
 		if len(problems) == 0 {
 			return nil
 		}
@@ -647,7 +647,7 @@ func (s *SharedCluster) cleanAndVerify(ctx context.Context, tenant *Tenant) ([]s
 			}
 		}
 		s.mu.Unlock()
-		problems, lagging := inst.baseline.releaseDiff(current, tenant.id, others)
+		problems, lagging := inst.baseline.ReleaseDiff(current, SharedPool, tenant.id, others)
 		if problems = append(remains, problems...); len(problems) > 0 || !lagging {
 			return problems, nil
 		}
@@ -655,7 +655,7 @@ func (s *SharedCluster) cleanAndVerify(ctx context.Context, tenant *Tenant) ([]s
 		// not settle, the cluster is unusable but not proven dirty.
 		select {
 		case <-settle.Done():
-			return nil, fmt.Errorf("cluster did not settle: %s", strings.Join(inst.baseline.admissionDiff(current), "; "))
+			return nil, fmt.Errorf("cluster did not settle: %s", strings.Join(inst.baseline.AdmissionDiff(current), "; "))
 		case <-time.After(sharedPollInterval(s.settings.settle)):
 		}
 	}
