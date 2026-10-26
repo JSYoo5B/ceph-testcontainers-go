@@ -32,7 +32,7 @@ func (f *Multisite) InterruptZoneLink(ctx context.Context, zoneName string) (*fa
 			return multicluster.InterruptOwnedPeerLink(ctx, &f.owned, zone.Gateway, f.httpNetwork.Name)
 		}
 	}
-	return nil, invalid(fmt.Errorf("RGW zone %s is not owned", zoneName))
+	return nil, multisiteInvalid(fmt.Errorf("RGW zone %s is not owned", zoneName))
 }
 
 // ApplyZoneLinkProfile applies netem shaping, below RGW, to packets that the
@@ -51,10 +51,10 @@ func (f *Multisite) ApplyZoneLinkProfile(ctx context.Context, zoneName, peerZone
 		return nil, errors.New("RGW multisite is unavailable")
 	}
 	if delay.Plane != "" || delay.Peer.IsValid() || delay.PeerPort != 0 || delay.Peers != nil {
-		return nil, invalid(errors.New("a zone link delay selects its own network and peer; leave Plane, Peer, PeerPort and Peers empty"))
+		return nil, multisiteInvalid(errors.New("a zone link delay selects its own network and peer; leave Plane, Peer, PeerPort and Peers empty"))
 	}
 	if zoneName == peerZone {
-		return nil, invalid(fmt.Errorf("RGW zone %s has no link to itself", zoneName))
+		return nil, multisiteInvalid(fmt.Errorf("RGW zone %s has no link to itself", zoneName))
 	}
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return nil, err
@@ -74,7 +74,7 @@ func (f *Multisite) ApplyZoneLinkProfile(ctx context.Context, zoneName, peerZone
 		}
 	}
 	if zone == nil || peer == nil {
-		return nil, invalid(fmt.Errorf("RGW zones %s and %s are not both owned with a gateway", zoneName, peerZone))
+		return nil, multisiteInvalid(fmt.Errorf("RGW zones %s and %s are not both owned with a gateway", zoneName, peerZone))
 	}
 	endpoint, err := url.Parse(peer.PeerEndpoint)
 	if err != nil || endpoint.Port() == "" {

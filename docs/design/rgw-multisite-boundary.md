@@ -214,3 +214,26 @@ Evidence from this inventory; none of this is done by the current revision.
 - Coordination with #144 (public API moves) and #146 (core state and locks)
   is not performed here. No `ceph` package declaration is touched.
 - The final destination names are proposals, not decisions.
+
+## Internal preparation (no public change)
+
+Before any public move, the family is separated inside package `rgw`
+without changing an exported name or behavior:
+
+- `network.go`, `network_test.go` and `context_lock_test.go` (whose single test
+  covers `Multisite` mutations) are renamed to `multisite_network.go`,
+  `multisite_network_test.go` and `multisite_context_lock_test.go`, so the
+  filename prefix matches the family listed above.
+- The family no longer calls the unexported single-gateway helper `invalid`.
+  It uses its own copy, `multisiteInvalid` in `multisite_errors.go`, with the
+  same error kind. This removes the only unexported dependency listed above.
+- `TestMultisiteFamilyBoundary` fails when a `multisite*` file refers to an
+  unexported package-level declaration of a single-gateway file, or when a
+  single-gateway file refers to a package-level declaration of the family.
+  It is a static check on package-level identifiers (not fields or methods).
+
+Still open, and required before the package move: the owner decision on the
+destination names in the table above (`multisite.Fixture` against keeping
+`Multisite`, `multisite.Run`) and on the package label for
+`internal/apiinventory` (`multisite.` against `rgw/multisite.`). Until these
+are recorded no exported declaration moves.
