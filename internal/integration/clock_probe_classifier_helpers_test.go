@@ -406,11 +406,20 @@ func judgeClockPath(j *clockProbeJudgement, r clockProbeRecord, p clockProbePath
 	if unsupported > 0 {
 		j.add(clockProbeInconclusive, "%s is unsupported in only some phases", p)
 	}
-	switch {
-	case rep.During == clockAtShifted && rep.Expectation == clockExpectBypass:
-		j.add(clockProbeRejected, "%s shifted but the pinned source predicts a bypass; the recorded build or environment facts are wrong", p)
-	case rep.During == clockAtBaseline && rep.Expectation == clockExpectShift && p != clockPathPublic:
-		j.add(clockProbeRejected, "%s stayed at baseline but the pinned source predicts a shift; the recorded build or environment facts are wrong", p)
+	if rep.Expectation == clockExpectBypass {
+		for _, ph := range []clockProbePhase{clockPhaseDuring, clockPhaseAfter} {
+			switch states[ph] {
+			case clockAtShifted:
+				j.add(clockProbeRejected, "%s shifted in the %s phase but the pinned source predicts a bypass; the recorded build or environment facts are wrong", p, ph)
+			case clockAmbiguous:
+				j.add(clockProbeInconclusive, "%s/%s matches neither the baseline nor the intended shift", p, ph)
+			}
+		}
+	}
+	if rep.Expectation == clockExpectShift && p != clockPathPublic {
+		if rep.During == clockAtBaseline {
+			j.add(clockProbeRejected, "%s stayed at baseline but the pinned source predicts a shift; the recorded build or environment facts are wrong", p)
+		}
 	}
 	rep.UsableReference = rep.ControllerAgrees && rep.Expectation == clockExpectBypass &&
 		rep.Before == clockAtBaseline && rep.During == clockAtBaseline && rep.After == clockAtBaseline

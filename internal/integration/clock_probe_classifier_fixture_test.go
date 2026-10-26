@@ -103,7 +103,7 @@ func TestClockProbeInterceptSyscallBuild(t *testing.T) {
 	r.Facts.InterceptSyscall = boolPtr(true)
 	r.Facts.TimestampFile = nil
 	r.Samples[clockPathLibcSys] = probeSeq(0, probeD, 0)
-	wantProbe(t, "wrapper without env mode", r, clockProbeRejected, "libc_syscall shifted but the pinned source predicts a bypass")
+	wantProbe(t, "wrapper without env mode", r, clockProbeRejected, "libc_syscall shifted in the during phase but the pinned source predicts a bypass")
 
 	// Macro present and env set but the route stayed at baseline.
 	r = probeBase()
@@ -117,7 +117,7 @@ func TestClockProbeBypassRoutesContradicted(t *testing.T) {
 	for _, p := range []clockProbePath{clockPathVDSO, clockPathRawSyscall} {
 		r := probeBase()
 		r.Samples[p] = probeSeq(0, probeD, 0)
-		wantProbe(t, string(p)+" shifted", r, clockProbeRejected, string(p)+" shifted but the pinned source predicts a bypass")
+		wantProbe(t, string(p)+" shifted", r, clockProbeRejected, string(p)+" shifted in the during phase but the pinned source predicts a bypass")
 	}
 }
 
@@ -195,7 +195,7 @@ func TestClockProbeMonotonicControl(t *testing.T) {
 	// A control that moved despite the opt-out contradicts the facts.
 	r = probeBase()
 	r.Samples[clockPathMonotonic] = probeSeq(0, probeD, 0)
-	wantProbe(t, "monotonic moved", r, clockProbeRejected, "monotonic_control shifted but the pinned source predicts a bypass")
+	wantProbe(t, "monotonic moved", r, clockProbeRejected, "monotonic_control shifted in the during phase but the pinned source predicts a bypass")
 }
 
 func TestClockProbeMissingFactsAreInconclusive(t *testing.T) {
@@ -252,5 +252,30 @@ func TestClockProbeControllerDisagreement(t *testing.T) {
 	}
 	if j.Verdict != clockProbeInconclusive {
 		t.Errorf("verdict %s", j)
+	}
+}
+
+// Every supported bypass route is validated in the during and after phases.
+func TestClockProbeBypassPhaseContradictions(t *testing.T) {
+	routes := []clockProbePath{clockPathRawSyscall, clockPathVDSO, clockPathLibcSys}
+	for _, p := range routes {
+		r := probeBase()
+		r.Samples[p] = probeSeq(0, 0, probeD)
+		j := wantProbe(t, string(p)+" shifted after", r, clockProbeRejected, string(p)+" shifted in the after phase")
+		if got := clockReferencePaths(j); len(got) != 0 {
+			t.Errorf("%s: rejected record offered references %v", p, got)
+		}
+
+		r = probeBase()
+		r.Samples[p] = probeSeq(0, 5e9, 0)
+		j = wantProbe(t, string(p)+" ambiguous during", r, clockProbeInconclusive, string(p)+"/during matches neither")
+		if got := clockReferencePaths(j); len(got) != 0 {
+			t.Errorf("%s: inconclusive record offered references %v", p, got)
+		}
+
+		// Positive control: flat in every phase stays admitted.
+		r = probeBase()
+		r.Samples[p] = probeSeq(0, 0, 0)
+		wantProbe(t, string(p)+" flat", r, clockProbeAdmitted, "")
 	}
 }
