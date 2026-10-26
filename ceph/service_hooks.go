@@ -60,19 +60,67 @@ func (serviceHooks) TenantCluster(t *Tenant) *Container {
 	return c
 }
 
-// TenantClient creates client.ID-suffix for a live tenant with caps that the
-// service limited to the tenant's resources. The tenant's release deletes it,
-// and WithClientIdentity and RunNativeCommand of the tenant accept it.
-func (serviceHooks) TenantClient(ctx context.Context, t *Tenant, suffix string, caps ClientCaps) (*ClientConfig, error) {
-	return t.serviceClient(ctx, suffix, caps)
+// tenantPort is what the service adapters may do for one tenant: check that
+// it is live, create its scoped clients, attach scopes that its release
+// removes, and run bounded CLI commands in its cluster. It does not return the
+// cluster. internal/servicehook names the same method set as an alias, so the
+// adapters depend on this port and not on *Tenant.
+type tenantPort = interface {
+	ID() string
+	// Live fails once the tenant is released or its cluster terminated.
+	Live() error
+	StartupTimeout() time.Duration
+	// Command runs a CLI command in the tenant's cluster. It does not check
+	// liveness: a scope's release runs it after the tenant stopped
+	// admitting.
+	Command(ctx context.Context, args ...string) ([]byte, error)
+	// CreateClient creates client.ID-suffix with caps that the service
+	// limited to the tenant's resources. The tenant's release deletes it.
+	CreateClient(ctx context.Context, suffix string, caps ClientCaps) (*ClientConfig, error)
+	// AttachScope registers a service resource that the tenant's release
+	// removes, in reverse order and before its clients are deleted.
+	AttachScope(key string, release func(ctx context.Context) ([]string, error)) error
+	WithClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption
 }
 
-// AttachTenantScope registers a service resource of a live tenant that its
-// release removes with release, before its clients are deleted. release
-// returns what remains of the resource; a remainder or an error poisons the
-// shared cluster. Attach before creating the resource.
-func (serviceHooks) AttachTenantScope(t *Tenant, key string, release func(ctx context.Context) ([]string, error)) error {
-	return t.attachScope(key, release)
+// tenantLease is the tenantPort of one tenant. It holds the cluster that the
+// tenant had when the port was taken, the same one that the commands of an
+// adapter used before the port existed.
+type tenantLease struct {
+	t *Tenant
+	c *Container
+}
+
+func (l tenantLease) ID() string { return l.t.id }
+
+func (l tenantLease) Live() error { return l.t.check() }
+
+func (l tenantLease) StartupTimeout() time.Duration { return l.c.settings.startupTimeout }
+
+func (l tenantLease) Command(ctx context.Context, args ...string) ([]byte, error) {
+	return serviceHooks{}.ClientCommand(ctx, l.c, args...)
+}
+
+func (l tenantLease) CreateClient(ctx context.Context, suffix string, caps ClientCaps) (*ClientConfig, error) {
+	return l.t.serviceClient(ctx, suffix, caps)
+}
+
+func (l tenantLease) AttachScope(key string, release func(ctx context.Context) ([]string, error)) error {
+	return l.t.attachScope(key, release)
+}
+
+func (l tenantLease) WithClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
+	return l.t.WithClientIdentity(client, opts...)
+}
+
+// TenantPort returns the port of a live tenant, or the error that says it is
+// released.
+func (serviceHooks) TenantPort(t *Tenant) (tenantPort, error) {
+	c, err := t.cluster()
+	if err != nil {
+		return nil, err
+	}
+	return tenantLease{t: t, c: c}, nil
 }
 
 // RegisterSharedService records a service's shared-cluster hooks: prepare
