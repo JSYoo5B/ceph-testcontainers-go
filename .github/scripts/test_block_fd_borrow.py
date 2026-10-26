@@ -256,6 +256,60 @@ class BorrowLeaseTest(unittest.TestCase):
         rec = self._interrupted_enter(host).record
         self.assertEqual(rec["closure"], bor.UNCONFIRMED)
 
+    def test_interrupt_during_close_still_attempts_every_close_in_body_path(self):
+        host = FakeBorrowHost()
+        host.close_error[101] = KeyboardInterrupt()
+        lease = bor.BorrowLease(host, PID, DEV, "x86_64", entries())
+        with self.assertRaises(ValueError):  # initiating exception is preserved
+            with lease:
+                raise ValueError("body")
+        rec = lease.record
+        self.assertEqual(host.closed, [102, 100])  # later borrow and pidfd attempted
+        self.assertEqual(rec["first_failure"], "scope-ValueError")
+        self.assertEqual(rec["closure"], bor.UNCONFIRMED)
+        self.assertEqual(rec["close_failures"],
+                         [{"fd": 101, "errno": None, "error": "KeyboardInterrupt"}])
+        self.assertEqual(
+            bor.release_gate(rec, True, clean_snapshot(), DEV),
+            "observer-reference-unconfirmed")
+
+    def test_interrupt_during_close_without_initiating_failure_is_reraised_after_settling(self):
+        host = FakeBorrowHost()
+        host.close_error[101] = KeyboardInterrupt()
+        lease = bor.BorrowLease(host, PID, DEV, "x86_64", entries())
+        with self.assertRaises(KeyboardInterrupt):
+            with lease:
+                pass
+        rec = lease.record
+        self.assertEqual(host.closed, [102, 100])
+        self.assertEqual(rec["closure"], bor.UNCONFIRMED)
+        self.assertEqual(rec["start_after"], "1234")
+
+    def test_interrupt_during_close_on_enter_path_attempts_every_close(self):
+        host = FakeBorrowHost()
+        host.fstat_error = ValueError("validation")
+        host.close_error[101] = KeyboardInterrupt()
+        lease = bor.BorrowLease(host, PID, DEV, "x86_64", entries())
+        with self.assertRaises(ValueError):
+            with lease:
+                self.fail("body must not run")
+        rec = lease.record
+        self.assertEqual(host.closed, [100])  # pidfd still closed
+        self.assertEqual(rec["first_failure"], "scope-ValueError")
+        self.assertEqual(rec["closure"], bor.UNCONFIRMED)
+        self.assertEqual(rec["close_failures"][0]["error"], "KeyboardInterrupt")
+
+    def test_second_cleanup_interrupt_is_recorded_separately(self):
+        host = FakeBorrowHost()
+        host.close_error[101] = KeyboardInterrupt()
+        host.close_error[100] = OSError(errno.EIO, "io")
+        lease = bor.BorrowLease(host, PID, DEV, "x86_64", entries())
+        with self.assertRaises(KeyboardInterrupt):
+            with lease:
+                pass
+        self.assertEqual(len(lease.record["close_failures"]), 2)
+        self.assertEqual(host.closed, [102])
+
     def test_interrupt_before_any_acquisition_holds_nothing(self):
         host = FakeBorrowHost()
         host.start_error = KeyboardInterrupt()

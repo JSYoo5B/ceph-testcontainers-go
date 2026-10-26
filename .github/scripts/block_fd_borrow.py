@@ -160,39 +160,61 @@ class BorrowLease:
         return None
 
     def __exit__(self, exc_type, exc, tb):
-        self._unwind(exc_type)
+        deferred = self._unwind(exc_type)
+        if deferred is not None and exc_type is None:
+            raise deferred
         return False
 
     def _unwind(self, exc_type):
-        """Attempt every close, then settle the closure outcome and identity."""
+        """Attempt every close, then settle the closure outcome and identity.
+
+        The initiating failure is recorded before any cleanup. An interruption
+        raised by a cleanup call does not stop the remaining closes: it is
+        recorded as a close failure (that reference stays unconfirmed) and the
+        first one is returned so the caller re-raises it only when no initiating
+        exception exists.
+        """
         rec = self.record
         failures = rec["close_failures"]
+        if exc_type is not None and rec["first_failure"] is None:
+            rec["first_failure"] = "scope-" + exc_type.__name__
+        deferred = None
+
+        def attempt(fd, item):
+            nonlocal deferred
+            try:
+                self.host.close(fd)
+                if item is not None:
+                    item["closed"] = True
+                return True
+            except OSError as err:
+                failures.append({"fd": fd, "errno": err.errno})
+            except BaseException as err:
+                failures.append({"fd": fd, "errno": None, "error": type(err).__name__})
+                if deferred is None:
+                    deferred = err
+            return False
+
         for item in rec["borrowed"]:
-            if item["closed"]:
-                continue
-            try:
-                self.host.close(item["borrowed_fd"])
-                item["closed"] = True
-            except OSError as err:
-                failures.append({"fd": item["borrowed_fd"], "errno": err.errno})
-        if self._pidfd is not None:
-            try:
-                self.host.close(self._pidfd)
-                self._pidfd = None
-            except OSError as err:
-                failures.append({"fd": self._pidfd, "errno": err.errno})
+            if not item["closed"]:
+                attempt(item["borrowed_fd"], item)
+        if self._pidfd is not None and attempt(self._pidfd, None):
+            self._pidfd = None
         if failures or self._uncertain:
             rec["closure"] = UNCONFIRMED
         elif self._acquired:
             rec["closure"] = CLOSED
         else:
             rec["closure"] = NOTHING_BORROWED
-        if exc_type is not None and rec["first_failure"] is None:
-            rec["first_failure"] = "scope-" + exc_type.__name__
         try:
             rec["start_after"] = self.host.start_identity(self.pid)
         except Exception:
             rec["start_after"] = None
+        except BaseException as err:
+            rec["start_after"] = None
+            if deferred is None:
+                deferred = err
+        return deferred
 
 
 def attachment_evidence(record):
