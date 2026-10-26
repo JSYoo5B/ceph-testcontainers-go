@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // OSDState reports authoritative OSDMap state for an owned OSD. Weight is the
@@ -32,20 +30,11 @@ func (c *Container) OSDStates(ctx context.Context) ([]OSDState, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	dump, err := c.osdPolicyDump(ctx)
-	if err != nil {
-		return nil, err
+	owned := make(map[int]*osdRegistration, len(c.osds))
+	for id, osd := range c.osds {
+		owned[id] = registrationOf(osd)
 	}
-	states := make([]OSDState, 0, len(c.osds))
-	for id := range c.osds {
-		state, err := c.ownedOSDState(dump, id)
-		if err != nil {
-			return nil, err
-		}
-		states = append(states, state)
-	}
-	slices.SortFunc(states, func(a, b OSDState) int { return a.ID - b.ID })
-	return states, nil
+	return readOwnedOSDStates(ctx, c.cephCLI, owned)
 }
 
 // setOSDIn implements OSDContainer.SetIn, which documents the behavior. The caller
@@ -313,23 +302,7 @@ func decodeOSDPolicyDump(data []byte) (osdPolicySnapshot, error) {
 }
 
 func (c *Container) ownedOSDState(dump osdPolicySnapshot, id int) (OSDState, error) {
-	osd := c.osds[id]
-	if osd == nil || osd.purged {
-		return OSDState{}, fmt.Errorf("osd.%d is not an active owned OSD", id)
-	}
-	expected, err := uuid.Parse(osd.nativeUUID)
-	if err != nil || expected == uuid.Nil {
-		return OSDState{}, fmt.Errorf("osd.%d registration UUID is unavailable", id)
-	}
-	state, exists := dump.osds[id]
-	if !exists {
-		return OSDState{}, fmt.Errorf("owned osd.%d is missing from native OSDMap", id)
-	}
-	actual, err := uuid.Parse(state.UUID)
-	if err != nil || actual != expected {
-		return OSDState{}, fmt.Errorf("native osd.%d UUID no longer matches its owned registration", id)
-	}
-	return state, nil
+	return resolveOwnedOSDState(dump, id, registrationOf(c.osds[id]))
 }
 
 // WaitForPGClean waits for every existing PG to be exactly active+clean. Unlike
