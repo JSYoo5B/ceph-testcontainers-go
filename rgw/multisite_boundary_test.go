@@ -74,26 +74,95 @@ func packageLevelNames(file *ast.File) []string {
 	return names
 }
 
+// structTypeNames lists the names of struct types declared in the files.
+func structTypeNames(files ...*ast.File) map[string]bool {
+	names := map[string]bool{}
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				if ts, ok := spec.(*ast.TypeSpec); ok {
+					if _, ok := ts.Type.(*ast.StructType); ok {
+						names[ts.Name.Name] = true
+					}
+				}
+			}
+		}
+	}
+	return names
+}
+
 // packageReferences lists the identifiers a file uses without declaring them
 // itself, so each is a package-level declaration of another file, a builtin
-// or an import. Composite-literal keys are dropped: the parser cannot tell a
-// struct field key from a variable, and a struct key never names a
-// package-level declaration.
-func packageReferences(file *ast.File) []string {
+// or an import. An identifier key is dropped only when the enclosing literal
+// is a struct literal: its type is a struct type literal or names a struct
+// type in structs, or, for an elided literal type, the enclosing literal is
+// one of those or an array or slice of them. Map keys, and keys of literals
+// whose type is not known to be a struct, stay references because they can
+// name a package-level declaration.
+func packageReferences(file *ast.File, structs map[string]bool) []string {
+	isStruct := func(typ ast.Expr) bool {
+		switch x := typ.(type) {
+		case *ast.StructType:
+			return true
+		case *ast.Ident:
+			return structs[x.Name]
+		}
+		return false
+	}
+	// element reports whether a composite type's elements are structs.
+	element := func(typ ast.Expr) bool {
+		switch x := typ.(type) {
+		case *ast.ArrayType:
+			return isStruct(x.Elt)
+		case *ast.MapType:
+			return isStruct(x.Value)
+		}
+		return false
+	}
 	keys := map[*ast.Ident]bool{}
+	// mark records the struct field labels of lit when structLit is true.
+	var mark func(lit *ast.CompositeLit, structLit bool)
+	mark = func(lit *ast.CompositeLit, structLit bool) {
+		inner := lit.Type != nil && element(lit.Type)
+		for _, elt := range lit.Elts {
+			if kv, ok := elt.(*ast.KeyValueExpr); ok {
+				if id, ok := kv.Key.(*ast.Ident); ok && structLit {
+					keys[id] = true
+				}
+				elt = kv.Value
+			}
+			if sub, ok := elt.(*ast.CompositeLit); ok && sub.Type == nil {
+				mark(sub, inner)
+			}
+		}
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.CompositeLit); ok && lit.Type != nil {
+			mark(lit, isStruct(lit.Type))
+		}
+		return true
+	})
+	var refs []string
+	// The parser leaves composite-literal keys out of file.Unresolved because
+	// a key may be a field label, so a map key naming a package-level
+	// declaration of another file is collected here: any key that is not a
+	// known struct label and resolved to nothing in this file.
 	ast.Inspect(file, func(n ast.Node) bool {
 		if lit, ok := n.(*ast.CompositeLit); ok {
 			for _, elt := range lit.Elts {
 				if kv, ok := elt.(*ast.KeyValueExpr); ok {
-					if id, ok := kv.Key.(*ast.Ident); ok {
-						keys[id] = true
+					if id, ok := kv.Key.(*ast.Ident); ok && id.Obj == nil && !keys[id] {
+						refs = append(refs, id.Name)
 					}
 				}
 			}
 		}
 		return true
 	})
-	var refs []string
 	for _, id := range file.Unresolved {
 		if !keys[id] {
 			refs = append(refs, id.Name)
@@ -111,6 +180,11 @@ func packageReferences(file *ast.File) []string {
 // methods, and it does not prove runtime behavior.
 func TestMultisiteFamilyBoundary(t *testing.T) {
 	files := loadBoundaryFiles(t)
+	var parsed []*ast.File
+	for _, f := range files {
+		parsed = append(parsed, f.file)
+	}
+	structs := structTypeNames(parsed...)
 	staying := map[string]string{}
 	moving := map[string]string{}
 	for _, f := range files {
@@ -129,7 +203,7 @@ func TestMultisiteFamilyBoundary(t *testing.T) {
 		t.Fatal("boundary check no longer sees the single-gateway invalid helper; the unexported control is vacuous")
 	}
 	for _, f := range files {
-		for _, ref := range packageReferences(f.file) {
+		for _, ref := range packageReferences(f.file, structs) {
 			if f.moving {
 				if where, ok := staying[ref]; ok && !ast.IsExported(ref) {
 					t.Errorf("%s uses unexported single-gateway declaration %s from %s", f.name, ref, where)
@@ -163,11 +237,17 @@ func TestMultisiteFamilyBoundaryDetectsViolations(t *testing.T) {
 	}{
 		{"call of another file's helper", "package rgw\nfunc f() error { return invalid(nil) }", []string{"error", "invalid", "nil"}},
 		{"struct key is not a reference", "package rgw\nvar v = Config{Zone: 1}", []string{"Config"}},
+		{"map key is a reference", "package rgw\nvar v = map[any]bool{SyncAllowed: true}", []string{"SyncAllowed", "any", "bool", "true"}},
+		{"map key of a private declaration", "package rgw\nvar v = map[string]bool{rgwBootstrapKind: true}", []string{"bool", "rgwBootstrapKind", "string", "true"}},
+		{"nested slice of struct keys are labels", "package rgw\nvar v = []Config{{Zone: 1}}", []string{"Config"}},
+		{"map of struct values keeps labels only", "package rgw\nvar v = map[string]Config{\"a\": {Zone: 1}}", []string{"Config", "string"}},
+		{"unknown type keys stay references", "package rgw\nvar v = Named{Zone: 1}", []string{"Named", "Zone"}},
+		{"direct assignment", "package rgw\nvar v = SyncAllowed", []string{"SyncAllowed"}},
 		{"local shadow is not a reference", "package rgw\nfunc f() { invalid := 1; _ = invalid }", nil},
 		{"selector name is not a reference", "package rgw\nfunc f(g G) { g.invalid() }", []string{"G"}},
 	}
 	for _, test := range tests {
-		got := packageReferences(parse(test.src))
+		got := packageReferences(parse(test.src), map[string]bool{"Config": true})
 		slices.Sort(got)
 		if !slices.Equal(got, test.want) {
 			t.Errorf("%s: references = %v, want %v", test.name, got, test.want)
