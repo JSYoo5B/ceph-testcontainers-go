@@ -181,11 +181,7 @@ func findBlocklistEntry(entries []BlocklistEntry, address string) *BlocklistEntr
 }
 
 func (c *Container) blocklistEntries(ctx context.Context) ([]BlocklistEntry, error) {
-	data, err := c.cephCLI(ctx, "osd", "blocklist", "ls", "--format", "json")
-	if err != nil {
-		return nil, err
-	}
-	return decodeBlocklistEntries(data)
+	return readBlocklistEntries(ctx, c.cephCLI)
 }
 
 func decodeBlocklistEntries(data []byte) ([]BlocklistEntry, error) {
