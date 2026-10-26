@@ -281,8 +281,22 @@ func judgeClockOffsetLedger(l clockOffsetLedger) clockLedgerJudgement {
 	}
 
 	var lastShift clockOffsetInterval
+	prevAck, prevSample, prevKnown := int64(0), int64(0), true
 	for _, s := range l.Steps {
 		state, reason := judgeClockStep(l, s)
+		if state == clockStepAdmitted || state == clockStepAckOnly {
+			if !prevKnown || s.AckedMono <= prevAck || s.AckedMono < prevSample {
+				state, reason = clockStepInconclusive, "acknowledgement does not follow the previous step's acknowledgement and measurement"
+			}
+		}
+		if s.AckKnown {
+			prevAck = max(prevAck, s.AckedMono)
+		} else {
+			prevKnown = false
+		}
+		if s.SampleKnown {
+			prevSample = max(prevSample, s.SampleLoMono)
+		}
 		if !admitted {
 			state, reason = clockStepInconclusive, "target was not admitted: "+j.Admission.Reason
 		}
@@ -296,6 +310,9 @@ func judgeClockOffsetLedger(l clockOffsetLedger) clockLedgerJudgement {
 	}
 	if l.Restore != nil && admitted {
 		j.Restore, j.RestoreReason = judgeClockRestore(l, *l.Restore, lastShift)
+		if j.Restore == clockRestoreVerified {
+			j.Restore, j.RestoreReason = demoteRestoreByChronology(l)
+		}
 	} else if l.Restore != nil {
 		j.Restore, j.RestoreReason = clockRestoreUnknown, "target was not admitted"
 	}
@@ -305,6 +322,26 @@ func judgeClockOffsetLedger(l clockOffsetLedger) clockLedgerJudgement {
 	j.CleanupVerdict, j.CleanupReason = judgeClockCleanup(l.Cleanup, j.Restore == clockRestoreVerified)
 	j.CleanupErrors = append([]string(nil), l.Cleanup.Errors...)
 	return j
+}
+
+// demoteRestoreByChronology keeps a verified restore only when its
+// acknowledgement and measurement follow every earlier step. An earlier attempt
+// whose acknowledgement time was never recorded (a failed or canceled write)
+// could have landed after the restore, so the order cannot be established.
+func demoteRestoreByChronology(l clockOffsetLedger) (clockRestoreState, string) {
+	r := *l.Restore
+	for _, s := range l.Steps {
+		if !s.AckKnown {
+			return clockRestoreUnknown, "an earlier write attempt has no recorded time, so it may follow the restore"
+		}
+		if r.AckedMono <= s.AckedMono || (s.SampleKnown && r.AckedMono < s.SampleLoMono) {
+			return clockRestoreUnknown, "restore acknowledgement does not follow the offset sequence"
+		}
+		if r.SampleLoMono <= s.AckedMono {
+			return clockRestoreUnknown, "restore measurement does not follow the offset sequence"
+		}
+	}
+	return clockRestoreVerified, "same instance measured inside the reference interval after the +0 acknowledgement"
 }
 
 // judgeClockRestore requires the acknowledged +0 write, the owned file with its
@@ -446,6 +483,8 @@ func judgeClockFleet(entries []clockFleetEntry) map[string]clockLedgerJudgement 
 			if j.Restore == clockRestoreVerified {
 				j.Restore, j.RestoreReason = clockRestoreUnknown, "ledger shares an owned resource"
 			}
+			// Live cleanup depends on a verified restore; rejudge it.
+			j.CleanupVerdict, j.CleanupReason = judgeClockCleanup(e.Ledger.Cleanup, j.Restore == clockRestoreVerified)
 		}
 		out[e.Name] = j
 	}

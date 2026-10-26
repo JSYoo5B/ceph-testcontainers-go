@@ -355,3 +355,92 @@ func TestClockOffsetLedgerFleet(t *testing.T) {
 		t.Fatalf("nil ledger: %s", res["n"])
 	}
 }
+
+func TestClockOffsetLedgerRestoreChronology(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(*clockOffsetLedger)
+		want clockRestoreState
+	}{
+		{"restore before offsets", func(l *clockOffsetLedger) {
+			l.Restore.AckedMono, l.Restore.SampleLoMono = 50*clockLedSec, 62*clockLedSec
+		}, clockRestoreUnknown},
+		{"restore acked before last measurement", func(l *clockOffsetLedger) {
+			l.Restore.AckedMono = l.Steps[1].SampleLoMono - 1
+			l.Restore.SampleLoMono = l.Restore.AckedMono + 12*clockLedSec
+		}, clockRestoreUnknown},
+		{"restore measured before last ack", func(l *clockOffsetLedger) { l.Restore.SampleLoMono = l.Steps[1].AckedMono }, clockRestoreUnknown},
+		{"earlier attempt has no time", func(l *clockOffsetLedger) {
+			l.Steps[0].Write, l.Steps[0].AckKnown = clockWriteFailed, false
+		}, clockRestoreUnknown},
+		{"in order", func(l *clockOffsetLedger) {}, clockRestoreVerified},
+	}
+	for _, c := range cases {
+		l := clockLedgerOK()
+		c.mut(&l)
+		if j := judgeClockOffsetLedger(l); j.Restore != c.want {
+			t.Errorf("%s: %s (%s), want %s", c.name, j.Restore, j.RestoreReason, c.want)
+		}
+	}
+	// Steps acknowledged out of order are not admitted.
+	l := clockLedgerOK()
+	l.Steps[1].AckedMono = l.Steps[0].AckedMono - 1
+	l.Steps[1].SampleLoMono = l.Steps[1].AckedMono + 12*clockLedSec
+	if j := judgeClockOffsetLedger(l); j.Steps[1].State == clockStepAdmitted {
+		t.Errorf("out-of-order step admitted: %s", j)
+	}
+}
+
+func TestClockOffsetLedgerFleetRejudgesLiveCleanup(t *testing.T) {
+	live := clockOffsetCleanup{Process: clockProcessRunning, File: clockFilePresent}
+	a, b := clockLedgerOK(), clockLedgerOK()
+	b.Target = clockOffsetTarget{ID: "target-b", PID: 77, StartTicks: 5}
+	b.BaselineTarget = b.Target
+	for i := range b.Steps {
+		b.Steps[i].Target = b.Target
+	}
+	b.Restore.Target = b.Target
+	a.Cleanup, b.Cleanup = live, live
+
+	// Positive control: separate resources keep the live cleanup valid.
+	b.Owned.Path = "owned-b.txt"
+	b.Env.TimestampFile = strPtr("owned-b.txt")
+	res := judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}})
+	for n, j := range res {
+		if j.Restore != clockRestoreVerified || j.CleanupVerdict != clockProvenanceValid {
+			t.Fatalf("%s: %s", n, j)
+		}
+	}
+
+	// Shared path: restore is demoted, so live cleanup must not stay valid.
+	b.Owned.Path = a.Owned.Path
+	b.Env.TimestampFile = strPtr(a.Owned.Path)
+	res = judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}})
+	for n, j := range res {
+		if j.Restore != clockRestoreUnknown || j.CleanupVerdict != clockProvenanceInvalid {
+			t.Errorf("%s shared path: %s", n, j)
+		}
+	}
+
+	// Shared instance, same expectation.
+	b.Owned.Path = "owned-b.txt"
+	b.Env.TimestampFile = strPtr("owned-b.txt")
+	b.Target = a.Target
+	res = judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}})
+	for n, j := range res {
+		if j.CleanupVerdict != clockProvenanceInvalid {
+			t.Errorf("%s shared instance: %s", n, j)
+		}
+	}
+
+	// Disposal that was proven separately is preserved.
+	a.Cleanup, b.Cleanup = clockLedgerOK().Cleanup, clockLedgerOK().Cleanup
+	b.Owned.Path = a.Owned.Path
+	b.Env.TimestampFile = strPtr(a.Owned.Path)
+	res = judgeClockFleet([]clockFleetEntry{{"a", &a}, {"b", &b}})
+	for n, j := range res {
+		if j.CleanupVerdict != clockProvenanceValid {
+			t.Errorf("%s exited-then-removed lost: %s", n, j)
+		}
+	}
+}
