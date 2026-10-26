@@ -10,6 +10,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
@@ -21,7 +22,7 @@ func managerLifecycleRBDReady(t *testing.T, parent context.Context, cluster *cep
 	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
 	defer cancel()
 	for {
-		code, reader, err := cluster.ControlContainer().Exec(ctx,
+		code, reader, err := clusteraccess.ControlContainer(t, cluster).Exec(ctx,
 			topologyCommandWithTimeout(40*time.Second, "ceph", "--connect-timeout", "5", "rbd", "task", "list", "--format", "json"), tcexec.Multiplexed())
 		var output []byte
 		if err == nil {

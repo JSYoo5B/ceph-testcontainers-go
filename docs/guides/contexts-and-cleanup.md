@@ -80,8 +80,7 @@ one to finish regardless of `ctx`, then apply `ctx` to their native work.
 Examples are `OverrideConfig`, `OverrideOSDFlag`, `OverrideMGRModule`,
 `TemporaryBlocklist` and their `Restore` methods, `SetOSDIn`, `SetPoolQuota`,
 `SetPoolReplication`, the RBD pool and namespace helpers, the RGW user, account
-and placement helpers, `rgw.Gateway.Admin`, and descriptor getters such as
-`OSDs()` and `Monitors()`. Some cleanup steps also use their own short context,
+and placement helpers, and `rgw.Gateway.Admin`. Some cleanup steps also use their own short context,
 for example removing temporary keyring files. So a deadline bounds how long
 native work runs, but does not guarantee that every call returns before the
 deadline while another operation holds the cluster.
@@ -94,15 +93,17 @@ their waits by `ctx`:
 
 | Method | Returns |
 | --- | --- |
-| `ConnectionConfigContext(ctx)` | Independent copies of `ceph.conf` and the admin keyring; refuses a terminated or incompletely bootstrapped cluster |
-| `MonitorsContext(ctx)` | MON descriptors sorted by name |
-| `ManagersContext(ctx)` | MGR descriptors sorted by name |
-| `OSDsContext(ctx)` | OSD descriptors sorted by ID |
-| `rgw.GatewaysContext(ctx, cluster)` | Gateway descriptors sorted by name, including partially started ones |
-| `ControlContainerContext(ctx)` | The control CLI container; the snapshot does not guarantee the process stays alive |
+| `ConnectionConfig(ctx)` | Independent copies of `ceph.conf` and the admin keyring; refuses a terminated or incompletely bootstrapped cluster |
+| `Monitors(ctx)` | MON descriptors sorted by name |
+| `Managers(ctx)` | MGR descriptors sorted by name |
+| `OSDs(ctx)` | OSD descriptors sorted by ID |
+| `rgw.Gateways(ctx, cluster)` | Gateway descriptors sorted by name, including partially started ones |
+| `ControlContainer(ctx)` | The control CLI container; the snapshot does not guarantee the process stays alive |
 
-The context-free versions (`ConnectionConfig`, `Monitors`, `Managers`, `OSDs`,
-`rgw.Gateways`, `ControlContainer`) remain available.
+These are the only forms of these accessors: the context-free versions were
+removed without aliases (see
+[upgrading the topology accessors](upgrading-context-accessors.md)). A refused
+or unavailable cluster and a cancelled `ctx` are returned as errors.
 
 ### Waiting in the background
 

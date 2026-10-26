@@ -17,6 +17,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // cephFSMDSOSDPathWriter keeps one mount with an admin socket and one O_RDWR
@@ -131,7 +132,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 
 	// The tuples: each OSD's public address from the OSDMap, the MDS's v2
 	// address from the FSMap, and the containers' endpoints.
-	osds := m.cluster.OSDs()
+	osds := clusteraccess.OSDs(t, m.cluster)
 	if len(osds) != osdCount {
 		t.Fatalf("want %d owned OSDs, have %d", osdCount, len(osds))
 	}

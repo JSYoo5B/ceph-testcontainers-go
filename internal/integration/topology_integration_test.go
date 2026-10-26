@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -36,10 +37,10 @@ func TestMonitorManagerTopology(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(cluster.Monitors()) != 3 || len(cluster.Managers()) != 2 || cluster.ControlContainer().GetContainerID() == cluster.GetContainerID() {
+			if len(clusteraccess.Monitors(t, cluster)) != 3 || len(clusteraccess.Managers(t, cluster)) != 2 || clusteraccess.ControlContainer(t, cluster).GetContainerID() == cluster.GetContainerID() {
 				t.Fatal("HA fixture lacks separate control or daemon counts")
 			}
-			config, _, err := cluster.ConnectionConfig()
+			config, _, err := cluster.ConnectionConfig(ctx)
 			if err != nil || strings.Count(string(config), "[v2:") != 3 {
 				t.Fatalf("fresh client lacks three monitor addrvecs: %v: %s", err, config)
 			}
@@ -59,7 +60,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 			}
 			session := startTopologyRadosSession(t, ctx, client)
 			topologyFreshConnection(t, ctx, client, false)
-			monitors := cluster.Monitors()
+			monitors := clusteraccess.Monitors(t, cluster)
 			primary := monitors[0]
 			stop := 3 * time.Second
 			if err := primary.Stop(ctx, &stop); err != nil {
@@ -114,14 +115,14 @@ func TestMonitorManagerTopology(t *testing.T) {
 			})
 			topologyFreshConnection(t, ctx, client, false)
 			session.check(t, ctx, client, "quorum-recovered")
-			topologyQuorumStall(t, ctx, cluster, cluster.Monitors())
+			topologyQuorumStall(t, ctx, cluster, clusteraccess.Monitors(t, cluster))
 			if _, err := cluster.AddMonitor(ctx, "replacement"); err != nil {
 				t.Fatal(err)
 			}
 			if err := cluster.RemoveMonitor(ctx, "a"); err != nil {
 				t.Fatal(err)
 			}
-			if len(cluster.Monitors()) != 3 {
+			if len(clusteraccess.Monitors(t, cluster)) != 3 {
 				t.Fatal("replacement did not preserve three owned monitors")
 			}
 			topologyRados(t, ctx, client, "verify")
@@ -146,7 +147,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 				t.Fatal(err)
 			}
 			previous := mgrStatus.ActiveName
-			for _, mgr := range cluster.Managers() {
+			for _, mgr := range clusteraccess.Managers(t, cluster) {
 				if mgr.DaemonName == previous {
 					if err := mgr.Stop(ctx, &stop); err != nil {
 						t.Fatal(err)

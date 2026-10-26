@@ -10,6 +10,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -44,7 +45,7 @@ func osdVolumeInventory(t *testing.T, ctx context.Context, docker *mobycl.Client
 func osdVolumeBacking(t *testing.T, ctx context.Context, docker *mobycl.Client, cluster *ceph.Container) (string, container.InspectResponse) {
 	t.Helper()
 	var name string
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		raw := osdMemoryInspect(t, ctx, docker, osd.GetContainerID())
 		found := 0
 		for _, mounted := range raw.Mounts {
@@ -92,7 +93,7 @@ func osdVolumeBacking(t *testing.T, ctx context.Context, docker *mobycl.Client, 
 
 func osdVolumeData(t *testing.T, ctx context.Context, cluster *ceph.Container, pool, phase string) {
 	t.Helper()
-	control, err := cluster.ControlContainerContext(ctx)
+	control, err := cluster.ControlContainer(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func osdVolumeWaitState(t *testing.T, parent context.Context, cluster *ceph.Cont
 	defer cancel()
 	for {
 		if up {
-			for _, osd := range cluster.OSDs() {
+			for _, osd := range clusteraccess.OSDs(t, cluster) {
 				state, err := osd.State(ctx)
 				if err != nil || state == nil || !state.Running {
 					t.Fatal("restarted volume OSD exited", err)

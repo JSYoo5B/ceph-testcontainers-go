@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -225,7 +226,7 @@ func checkMessengerV2Only(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	if err != nil || !strings.Contains(bootstrap, "v2:") || strings.Contains(bootstrap, "v1:") {
 		t.Fatalf("MON bootstrap addresses are not v2-only: %q, %v", bootstrap, err)
 	}
-	config, _, err := cluster.ConnectionConfig()
+	config, _, err := cluster.ConnectionConfig(ctx)
 	if err != nil || strings.Contains(string(config), "v1:") {
 		t.Fatalf("the connection configuration names a v1 address: %v", err)
 	}
@@ -253,13 +254,13 @@ func checkMessengerV2Only(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	}
 	// Every owned daemon, standby MGRs included, through its admin socket.
 	daemons := []string{}
-	for _, mon := range cluster.Monitors() {
+	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		daemons = append(daemons, "mon."+mon.DaemonName)
 	}
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		daemons = append(daemons, "mgr."+mgr.DaemonName)
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		daemons = append(daemons, fmt.Sprintf("osd.%d", osd.ID))
 	}
 	for _, daemon := range daemons {
@@ -276,7 +277,7 @@ func checkMessengerV2Only(t *testing.T, ctx context.Context, cluster *ceph.Conta
 			t.Fatalf("the MON publishes the v1 port as %s", port)
 		}
 	}
-	for _, mon := range cluster.Monitors() {
+	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		out := execOutput(t, ctx, mon.Container, "python3", "-c", `import json
 listening=set()
 for table in ('/proc/net/tcp','/proc/net/tcp6'):

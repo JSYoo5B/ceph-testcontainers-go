@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -332,7 +333,7 @@ func secondFaultReceipt(t *testing.T, ctx context.Context, cluster *ceph.Contain
 	if err != nil || len(snapshot.PGs) != 1 || snapshot.PoolBefore.Size != 3 || snapshot.PoolAfter.Size != 3 || snapshot.PoolBefore.MinSize != 2 || snapshot.PoolAfter.MinSize != 2 {
 		t.Fatalf("%s placement and policy receipt: %+v: %v", phase, snapshot, err)
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		state, err := osd.State(ctx)
 		if err != nil || state == nil || state.Running == stopped[osd.ID] || state.OOMKilled {
 			t.Fatalf("%s: unexpected state of osd.%d: %+v: %v (expected stopped=%t)", phase, osd.ID, state, err, stopped[osd.ID])
@@ -419,7 +420,7 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 			t.Fatal(err)
 		}
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		for name, want := range map[string]string{"osd_op_queue": "wpq", "osd_recovery_sleep": "0.5"} {
 			out, err := cluster.Ceph(ctx, "tell", "osd."+strconv.Itoa(osd.ID), "config", "get", name)
 			var effective map[string]string
@@ -444,7 +445,7 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	})
 	pgid, primary := clean.PGID, clean.ActingPrimary
 	var a, d *ceph.OSDContainer
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		switch {
 		case !slices.Contains(clean.Acting, osd.ID):
 			d = osd
@@ -466,7 +467,7 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	t.Logf("OSD_SECOND_FAULT_RUNTIME ceph=%q platform=%q pg=%s primary=osd.%d replica=osd.%d spare=osd.%d scheduler=wpq recovery_sleep=0.5", strings.TrimSpace(string(out)), strings.TrimSpace(string(uname.Stdout)), pgid, primary, a.ID, d.ID)
 
 	stopped := map[int]bool{}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		restore(fmt.Sprintf("osd.%d", osd.ID), func(cleanup context.Context) error {
 			if stopped[osd.ID] {
 				stopped[osd.ID] = false
@@ -480,7 +481,7 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	// from the request.
 	ecInstances := map[int]ecAdmissionInstance{}
 	instances := map[int]secondFaultInstance{}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		instances[osd.ID] = secondFaultInstanceOf(t, ctx, osd)
 		if erasure {
 			ecInstances[osd.ID] = ecAdmissionInstanceOf(t, ctx, osd)

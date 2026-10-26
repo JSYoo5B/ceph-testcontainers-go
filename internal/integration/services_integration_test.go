@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
@@ -101,16 +102,16 @@ func newServiceClusterRun(t *testing.T, run clusterRun, image string, opts ...te
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			if t.Failed() {
-				ctrs := append([]testcontainers.Container{cluster.Container, cluster.ControlContainer()}, cluster.ServiceContainers()...)
-				for _, monitor := range cluster.Monitors() {
+				ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.ControlContainer(t, cluster)}, cluster.ServiceContainers()...)
+				for _, monitor := range clusteraccess.Monitors(t, cluster) {
 					if monitor != nil && monitor.Container != nil {
 						ctrs = append(ctrs, monitor.Container)
 					}
 				}
-				ctrs = append(ctrs, osdContainers(cluster)...)
+				ctrs = append(ctrs, osdContainers(t, cluster)...)
 				// A MGR that did not register is a common partial bootstrap.
 				ctrs = append(ctrs, cluster.ManagerContainer())
-				for _, mgr := range cluster.Managers() {
+				for _, mgr := range clusteraccess.Managers(t, cluster) {
 					if mgr != nil && mgr.Container != nil {
 						ctrs = append(ctrs, mgr.Container)
 					}
@@ -163,7 +164,7 @@ func newServiceClusterRun(t *testing.T, run clusterRun, image string, opts ...te
 
 func advanceServiceTopology(t *testing.T, ctx context.Context, cluster *ceph.Container) {
 	t.Helper()
-	original := cluster.OSDs()[0]
+	original := clusteraccess.OSDs(t, cluster)[0]
 	added, err := cluster.AddOSD(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +187,7 @@ func advanceServiceTopology(t *testing.T, ctx context.Context, cluster *ceph.Con
 // Keep daemon-local admin sockets and process observation on their daemon.
 func toolkitContainer(t *testing.T, cluster *ceph.Container) testcontainers.Container {
 	t.Helper()
-	client, err := cluster.ClientContainerContext(t.Context())
+	client, err := cluster.ClientContainer(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

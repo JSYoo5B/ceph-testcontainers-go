@@ -32,12 +32,13 @@ type Container struct {
 }
 
 // Gateways returns the cluster's gateways sorted by name: the package
-// function Gateways applied to the embedded cluster.
-func (c *Container) Gateways() []*Gateway {
+// function Gateways applied to the embedded cluster. A nil receiver returns an
+// error.
+func (c *Container) Gateways(ctx context.Context) ([]*Gateway, error) {
 	if c == nil {
-		return nil
+		return nil, errNilCluster
 	}
-	return Gateways(c.Container)
+	return Gateways(ctx, c.Container)
 }
 
 // S3Endpoint returns the S3 endpoint of the cluster's only gateway, such as
@@ -48,7 +49,7 @@ func (c *Container) S3Endpoint(ctx context.Context) (string, error) {
 	if c == nil {
 		return "", errNilCluster
 	}
-	gateways, err := GatewaysContext(ctx, c.Container)
+	gateways, err := Gateways(ctx, c.Container)
 	if err != nil {
 		return "", err
 	}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -295,7 +296,7 @@ func testECEligibleFragments(t *testing.T) {
 		if id == clean.ActingPrimary {
 			continue
 		}
-		for _, osd := range cluster.OSDs() {
+		for _, osd := range clusteraccess.OSDs(t, cluster) {
 			if osd.ID == id && victim == nil {
 				victim, victimIndex = osd, index
 			}

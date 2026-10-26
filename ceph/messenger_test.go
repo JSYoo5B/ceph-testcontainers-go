@@ -268,7 +268,7 @@ func TestMessengerSecurePolicySurvivesMonitorRefreshAndClientAttachment(t *testi
 			t.Fatal("MON refresh changed the secure-only protocol policy")
 		}
 	}
-	config, _, err := cluster.ConnectionConfig()
+	config, _, err := cluster.ConnectionConfig(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 const (
@@ -96,7 +97,7 @@ func fullnessWaitBackfillFull(t *testing.T, parent context.Context, cluster *cep
 // fullnessEffective requires every OSD to report the running value of name.
 func fullnessEffective(t *testing.T, ctx context.Context, cluster *ceph.Container, name, want string) {
 	t.Helper()
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		out, err := cluster.Ceph(ctx, "tell", "osd."+strconv.Itoa(osd.ID), "config", "get", name)
 		var effective map[string]string
 		if err != nil || json.Unmarshal(out, &effective) != nil || !abruptSameNumber(effective[name], want) {
@@ -183,7 +184,7 @@ func testOSDFullnessBarrier(t *testing.T) {
 	})
 	pgid, primary := clean.PGID, clean.ActingPrimary
 	var victim *ceph.OSDContainer
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		if osd.ID != primary && slices.Contains(clean.Acting, osd.ID) {
 			victim = osd
 		}

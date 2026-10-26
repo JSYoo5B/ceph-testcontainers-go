@@ -483,25 +483,6 @@ func (c *Container) PublicAddress() string {
 	return c.settings.publicAddress
 }
 
-// ConnectionConfig returns independent copies of ceph.conf and the ephemeral
-// admin keyring for a native client. In host mode the MON ports are final.
-func (c *Container) ConnectionConfig() ([]byte, []byte, error) {
-	if gateErr := c.sharedGate("ConnectionConfig"); gateErr != nil {
-		return nil, nil, gateErr
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return nil, nil, errClusterTerminated
-	}
-	c.configMu.RLock()
-	defer c.configMu.RUnlock()
-	if len(c.config) == 0 || len(c.keyring) == 0 {
-		return nil, nil, errors.New("ceph cluster bootstrap is incomplete")
-	}
-	return bytes.Clone(c.config), bytes.Clone(c.keyring), nil
-}
-
 func (c *Container) trackHostPortLease(lease *hostPortLease) {
 	if lease == nil {
 		return
@@ -969,16 +950,6 @@ func (c *Container) waitOSDRemoval(ctx context.Context, id int, drain bool) erro
 		case <-ticker.C:
 		}
 	}
-}
-
-// OSDs returns a snapshot of owned OSD containers sorted by ID.
-func (c *Container) OSDs() []*OSDContainer {
-	if c.sharedGate("OSDs") != nil {
-		return nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.osdsLocked()
 }
 
 // osdsLocked lists the owned OSDs. The caller holds c.mu.

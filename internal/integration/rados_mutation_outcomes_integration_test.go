@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // What a writer observes and what the OSD did can differ. The fixture supplies
@@ -35,7 +36,7 @@ func TestRADOSMutationOutcomes(t *testing.T) {
 		t.Fatal(err)
 	}
 	pg := fmt.Sprintf("%d.0", poolState.ID)
-	osd := cluster.OSDs()[0]
+	osd := clusteraccess.OSDs(t, cluster)[0]
 	osdName := fmt.Sprintf("osd.%d", osd.ID)
 	phase := func(out any, name string, args ...string) []byte {
 		t.Helper()

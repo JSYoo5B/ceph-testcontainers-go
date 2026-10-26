@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 func ecFourTwoFacts(t *testing.T, ctx context.Context, cluster *ceph.Container, pool *ceph.Pool) int {
@@ -46,7 +47,7 @@ func ecFourTwoFacts(t *testing.T, ctx context.Context, cluster *ceph.Container, 
 	}
 	locations := map[int]map[string]string{}
 	hosts := map[string]bool{}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		raw, err := cluster.Ceph(ctx, "osd", "find", strconv.Itoa(osd.ID), "--format", "json")
 		if err != nil {
 			t.Fatal(err)
@@ -134,7 +135,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 	}
 	byID := map[int]*ceph.OSDContainer{}
 	captured := map[int]ecAdmissionInstance{}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		byID[osd.ID] = osd
 		captured[osd.ID] = ecAdmissionInstanceOf(t, ctx, osd)
 		if err := checkECAdmissionHealthy(captured[osd.ID]); err != nil {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -210,7 +211,7 @@ func listeningSockets(t *testing.T, ctx context.Context, ctr testcontainers.Cont
 // monitorContainer returns the owned container of the named MON.
 func monitorContainer(t *testing.T, cluster *ceph.Container, name string) testcontainers.Container {
 	t.Helper()
-	for _, mon := range cluster.Monitors() {
+	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		if mon.DaemonName == name {
 			return mon.Container
 		}

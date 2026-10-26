@@ -161,7 +161,7 @@ func (mirror *Mirror) refreshPeerMonitorConfig(ctx context.Context, addresses fu
 // The bootstrap contains an auth key. Keep its payload out of process argv,
 // command hooks and native CLI error strings, including after cancellation.
 func writeCephFSOwnedPeerConfig(ctx context.Context, source *ceph.Container, key string, data []byte) (returnErr error) {
-	control, err := source.ControlContainerContext(ctx)
+	control, err := source.ControlContainer(ctx)
 	if err != nil {
 		return cephFSObserveQuery("select CephFS source control handle", err)
 	}

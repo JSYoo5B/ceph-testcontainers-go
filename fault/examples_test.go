@@ -17,7 +17,11 @@ func ExampleApplyNetworkProfile() {
 	if err != nil {
 		panic(err)
 	}
-	lease, err := fault.ApplyNetworkProfile(ctx, cluster, cluster.OSDs()[0], fault.NetworkProfile{
+	osds, err := cluster.OSDs(ctx)
+	if err != nil {
+		panic(err)
+	}
+	lease, err := fault.ApplyNetworkProfile(ctx, cluster, osds[0], fault.NetworkProfile{
 		HelperImage: fault.NetemHelperImage, Plane: ceph.PublicNetworkPlane, Delay: 100 * time.Millisecond,
 	})
 	if lease != nil {
@@ -38,7 +42,11 @@ func ExampleInterruptNetwork() {
 	if err != nil {
 		panic(err)
 	}
-	cut, err := fault.InterruptNetwork(ctx, cluster, cluster.OSDs()[0], ceph.ClusterNetworkPlane)
+	osds, err := cluster.OSDs(ctx)
+	if err != nil {
+		panic(err)
+	}
+	cut, err := fault.InterruptNetwork(ctx, cluster, osds[0], ceph.ClusterNetworkPlane)
 	if cut != nil {
 		defer func() { _ = cut.Restore(ctx) }()
 	}
@@ -57,7 +65,11 @@ func ExamplePause() {
 	if err != nil {
 		panic(err)
 	}
-	pause, err := fault.Pause(ctx, cluster, cluster.OSDs()[0])
+	osds, err := cluster.OSDs(ctx)
+	if err != nil {
+		panic(err)
+	}
+	pause, err := fault.Pause(ctx, cluster, osds[0])
 	if pause != nil {
 		defer func() { _ = pause.Resume(ctx) }()
 	}

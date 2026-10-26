@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -42,7 +43,7 @@ func TestMessengerFaultInjection(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			osds := cluster.OSDs()
+			osds := clusteraccess.OSDs(t, cluster)
 			if len(osds) != 2 {
 				t.Fatalf("want two owned OSDs, got %d", len(osds))
 			}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // TestRADOSCompoundTupleNoFault is the no-fault native control of the compound
@@ -50,7 +51,7 @@ func TestRADOSCompoundTupleNoFault(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	client, err := cluster.ClientContainerContext(ctx)
+	client, err := cluster.ClientContainer(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +102,7 @@ func TestRADOSCompoundTupleNoFault(t *testing.T) {
 	if !maps.Equal(osds, after) {
 		t.Fatalf("OSD identity changed: %v then %v", osds, after)
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		state, err := osd.State(ctx)
 		if err != nil || state == nil || !state.Running || state.OOMKilled {
 			t.Fatalf("OSD %d did not stay running: %+v %v", osd.ID, state, err)

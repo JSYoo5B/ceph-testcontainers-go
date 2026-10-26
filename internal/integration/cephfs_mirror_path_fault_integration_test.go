@@ -16,6 +16,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -117,7 +118,7 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 	baseline := synced.Value
 
 	peer := cephFSMirrorDaemonAddress(t, ctx, daemon, source.NetworkName())
-	osd := source.OSDs()[0]
+	osd := clusteraccess.OSDs(t, source)[0]
 	// osd.0 drops every packet it sends to the daemon's address on the
 	// source network, and only those: the daemon's requests reach the OSD,
 	// its replies do not. The source MON and MDS still reach the daemon.

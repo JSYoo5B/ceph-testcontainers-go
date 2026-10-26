@@ -165,7 +165,7 @@ func (fs *Filesystem) beginDataPoolOperation(ctx context.Context) (context.Conte
 	valid := !servicehook.Closed(c) && filesystems(c).byName[fs.config.Name] == fs && fs.nativeIdentity != nil
 	timeout := servicehook.StartupTimeout(c)
 	if valid {
-		control, err := c.ControlContainerContext(ctx)
+		control, err := c.ControlContainer(ctx)
 		if err != nil {
 			servicehook.Unlock(c)
 			filesystems(c).setupMu.Unlock()
@@ -453,7 +453,7 @@ func (fs *Filesystem) checkUnusedDataPool(ctx context.Context, name string) erro
 			}
 		}
 	}
-	control, err := fs.cluster.ClientContainerContext(ctx)
+	control, err := fs.cluster.ClientContainer(ctx)
 	if err != nil {
 		return fmt.Errorf("select data pool CLI container: %w", err)
 	}

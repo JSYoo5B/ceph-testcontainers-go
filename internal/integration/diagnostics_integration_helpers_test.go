@@ -18,6 +18,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -42,7 +43,7 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	diagnosticsDataProbe(t, ctx, client, "seed")
-	owned := diagnosticsOwnedContainers(cluster)
+	owned := diagnosticsOwnedContainers(t, cluster)
 	if cluster.Images().Client != cluster.Images().Essential {
 		// Initial CephFS setup owns a separate toolkit. Include that same
 		// container in the before/after inventory and diagnostic coverage proof.
@@ -80,7 +81,7 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 	})
 
 	t.Run("stopped-daemon", func(t *testing.T) {
-		gateway := rgw.Gateways(cluster)[0]
+		gateway := clusteraccess.Gateways(t, cluster)[0]
 		stopTimeout := 5 * time.Second
 		if err := gateway.Stop(ctx, &stopTimeout); err != nil {
 			t.Fatal(err)
@@ -154,7 +155,7 @@ type diagnosticsStableState struct {
 	Native           map[string]string
 }
 
-func diagnosticsOwnedContainers(cluster *ceph.Container) []testcontainers.Container {
+func diagnosticsOwnedContainers(t testing.TB, cluster *ceph.Container) []testcontainers.Container {
 	var result []testcontainers.Container
 	seen := make(map[string]bool)
 	appendContainer := func(container testcontainers.Container) {
@@ -163,19 +164,19 @@ func diagnosticsOwnedContainers(cluster *ceph.Container) []testcontainers.Contai
 			result = append(result, container)
 		}
 	}
-	for _, mon := range cluster.Monitors() {
+	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		appendContainer(mon.Container)
 	}
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		appendContainer(mgr.Container)
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		appendContainer(osd.Container)
 	}
 	for _, service := range cluster.ServiceContainers() {
 		appendContainer(service)
 	}
-	appendContainer(cluster.ControlContainer())
+	appendContainer(clusteraccess.ControlContainer(t, cluster))
 	return result
 }
 
@@ -476,7 +477,7 @@ func testCanceledDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control := cluster.ControlContainer()
+	control := clusteraccess.ControlContainer(t, cluster)
 	callCtx, cancelCall := context.WithCancel(ctx)
 	defer cancelCall()
 	done := make(chan error, 1)

@@ -106,13 +106,13 @@ func configureImages(o *options) error {
 	return nil
 }
 
-// ClientContainerContext returns the owned userspace toolkit executor. It starts
+// ClientContainer returns the owned userspace toolkit executor. It starts
 // lazily for a separate client image; aggregate images reuse the control executor.
-func (c *Container) ClientContainerContext(ctx context.Context) (testcontainers.Container, error) {
+func (c *Container) ClientContainer(ctx context.Context) (testcontainers.Container, error) {
 	if c == nil {
 		return nil, fmt.Errorf("ceph cluster is unavailable")
 	}
-	if err := c.sharedGate("ClientContainerContext"); err != nil {
+	if err := c.sharedGate("ClientContainer"); err != nil {
 		return nil, err
 	}
 	// Initial attachment must observe one MON configuration: a concurrent

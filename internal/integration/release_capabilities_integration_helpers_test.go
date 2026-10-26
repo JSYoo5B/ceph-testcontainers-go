@@ -221,7 +221,7 @@ func cachedCapability(t *testing.T, cluster *ceph.Container, id capabilityID, pr
 func detectRBDNamespaceMapping(t *testing.T, ctx context.Context, cluster *ceph.Container) bool {
 	t.Helper()
 	return cachedCapability(t, cluster, capabilityRBDNamespaceMapping, func() bool {
-		client, err := cluster.ClientContainerContext(ctx)
+		client, err := cluster.ClientContainer(ctx)
 		if err != nil {
 			t.Fatalf("select the client container for capability %q: %v", capabilityRBDNamespaceMapping, err)
 		}

@@ -50,7 +50,7 @@ func ExampleRun_services() {
 		panic(err)
 	}
 	_ = cephfs.Filesystems(cluster)
-	_ = rgw.Gateways(cluster)
+	_, _ = rgw.Gateways(context.Background(), cluster)
 }
 
 func ExampleContainer_OverrideConfig() {

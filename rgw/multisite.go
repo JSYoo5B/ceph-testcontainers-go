@@ -410,7 +410,7 @@ func (f *Multisite) zoneGroupName(zone string) string {
 }
 
 func ensureFreshRGWCluster(ctx context.Context, cluster *ceph.Container) error {
-	gateways, err := GatewaysContext(ctx, cluster)
+	gateways, err := Gateways(ctx, cluster)
 	if err != nil {
 		return fmt.Errorf("inspect RGW storage gateways: %w", err)
 	}

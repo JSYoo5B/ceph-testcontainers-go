@@ -26,6 +26,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -509,7 +510,7 @@ func cephFSAdminMkdir(t *testing.T, ctx context.Context, m *cephFSSingleMDS, pat
 	var made struct {
 		Inode uint64 `json:"inode"`
 	}
-	fuseExec(t, ctx, m.cluster.ControlContainer(), &made, `
+	fuseExec(t, ctx, clusteraccess.ControlContainer(t, m.cluster), &made, `
 import cephfs, json, sys
 fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
 fs.conf_set("client_mount_timeout", "30")

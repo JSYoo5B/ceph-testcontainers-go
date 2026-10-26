@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -62,7 +63,7 @@ func topologySnapshotHoldOwner(t *testing.T, ctx context.Context, clusters []*ce
 	originals := make([]testcontainers.Container, len(clusters))
 	for i, cluster := range clusters {
 		originals[i] = cluster.Container
-		if cluster.ControlContainer() != originals[i] {
+		if clusteraccess.ControlContainer(t, cluster) != originals[i] {
 			t.Fatal("barrier requires a default single-MON control handle")
 		}
 	}

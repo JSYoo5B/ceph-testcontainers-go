@@ -11,6 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -47,7 +48,7 @@ func testMonitorAddressAcrossNetworkInterruption(t *testing.T) {
 		ceph.WithAddressFamily(ceph.AddressIPv6))...)
 	waitQuorumNames(t, ctx, cluster, "a", "b", "c")
 	monitors := map[string]*ceph.MonitorContainer{}
-	for _, mon := range cluster.Monitors() {
+	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		monitors[mon.DaemonName] = mon
 	}
 	network := cluster.NetworkName()

@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
@@ -52,7 +53,7 @@ func TestServicePackages(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 		defer cancel()
 		cluster, _ := newServiceClusterRun(t, rgwRun, image, append(roles, ceph.WithOSDCount(1))...)
-		gateways := rgw.Gateways(cluster)
+		gateways := clusteraccess.Gateways(t, cluster)
 		if len(gateways) != 1 || gateways[0].AccessKey == "" {
 			t.Fatalf("default gateway or its user was not created: %+v", gateways)
 		}
@@ -73,7 +74,7 @@ func TestServicePackages(t *testing.T) {
 			}
 			cluster, client := newServiceClusterRun(t, ceph.Run, image, opts...)
 			servicePackageApplication(t, ctx, cluster, "volumes", "rbd")
-			filesystems, gateways := cephfs.Filesystems(cluster), rgw.Gateways(cluster)
+			filesystems, gateways := cephfs.Filesystems(cluster), clusteraccess.Gateways(t, cluster)
 			if len(filesystems) != 1 || filesystems[0].FilesystemName != "shared" || len(gateways) != 1 || gateways[0].GatewayName != "s3" {
 				t.Fatalf("combined services differ: filesystems=%+v gateways=%+v", filesystems, gateways)
 			}

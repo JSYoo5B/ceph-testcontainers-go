@@ -15,6 +15,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -62,7 +63,7 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 	// repeated canceled calls do not accumulate, and must leave other calls
 	// running. A cancel at any point of startup, including before the CLI is
 	// visible, must not let a CLI start afterwards.
-	osd := cluster.OSDs()[0]
+	osd := clusteraccess.OSDs(t, cluster)[0]
 	pause, err := fault.Pause(ctx, cluster, osd)
 	if err != nil {
 		if pause != nil {
@@ -304,7 +305,7 @@ print(json.dumps(found))
 // osd.0's socket and, when group is not zero, the members of that group.
 func adminSocketProcesses(t *testing.T, ctx context.Context, cluster *ceph.Container, group int) adminSocketProcessScan {
 	t.Helper()
-	code, reader, err := cluster.ControlContainer().Exec(ctx, []string{"python3", "-c", adminSocketProcessScript, adminSocketOSDPath, strconv.Itoa(group)}, tcexec.Multiplexed())
+	code, reader, err := clusteraccess.ControlContainer(t, cluster).Exec(ctx, []string{"python3", "-c", adminSocketProcessScript, adminSocketOSDPath, strconv.Itoa(group)}, tcexec.Multiplexed())
 	if err != nil {
 		t.Fatal(err)
 	}

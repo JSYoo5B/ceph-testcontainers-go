@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -19,7 +20,7 @@ func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ce
 	if err != nil || !strings.Contains(addresses, "v2:") || strings.Contains(addresses, "v1:") {
 		t.Fatal("secure MON bootstrap is not v2-only", err)
 	}
-	config, _, err := cluster.ConnectionConfig()
+	config, _, err := cluster.ConnectionConfig(ctx)
 	if err != nil || !strings.Contains(string(config), "v2:") || strings.Contains(string(config), "v1:") {
 		t.Fatal("secure connection config is not v2-only", err)
 	}
@@ -40,7 +41,7 @@ func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ce
 		} `json:"osds"`
 	}
 	data, err := cluster.Ceph(ctx, "osd", "dump", "--format", "json")
-	if err != nil || json.Unmarshal(data, &osdMap) != nil || osdMap.FSID == "" || len(osdMap.OSDs) != len(cluster.OSDs()) {
+	if err != nil || json.Unmarshal(data, &osdMap) != nil || osdMap.FSID == "" || len(osdMap.OSDs) != len(clusteraccess.OSDs(t, cluster)) {
 		t.Fatal("secure native OSDMap unavailable", err)
 	}
 	for _, osd := range osdMap.OSDs {
@@ -50,10 +51,10 @@ func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ce
 	}
 	control := toolkitContainer(t, cluster)
 	var daemons []string
-	for _, mon := range cluster.Monitors() {
+	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		daemons = append(daemons, "mon."+mon.DaemonName)
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		daemons = append(daemons, fmt.Sprintf("osd.%d", osd.ID))
 	}
 	// tell forwards admin-socket commands; the OSD role needs no ceph CLI.
@@ -62,7 +63,7 @@ func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ce
 		t.Logf("MSGR2_NATIVE %s", data)
 	}
 	// Standby MGRs have an admin socket but do not serve forwarded tell commands.
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		data := topologyExecOutput(t, ctx, mgr.Container, "python3", "-c", secureMessengerDaemonProbe, "mgr."+mgr.DaemonName, osdMap.FSID, "/var/run/ceph/ceph-mgr."+mgr.DaemonName+".asok", messengerDumpArg(t, ctx, cluster))
 		t.Logf("MSGR2_NATIVE %s", data)
 	}

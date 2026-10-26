@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
@@ -275,7 +276,7 @@ func stoppedMDSGrace(t *testing.T, parent context.Context, o *noInitialOSDOracle
 	if err != nil || len(cid) != 64 || raw.Container.ID != cid || raw.Container.Config == nil || raw.Container.State == nil || !raw.Container.State.Running || !slices.Contains(raw.Container.Config.Env, "CEPH_ARGS=--mds-beacon-grace=3600") {
 		t.Fatal("original MON startup grace environment unavailable")
 	}
-	data := topologyExecOutput(t, ctx, cluster.ControlContainer(), "ceph", "--connect-timeout", "5", "config", "show", "mon.a", "mds_beacon_grace")
+	data := topologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--connect-timeout", "5", "config", "show", "mon.a", "mds_beacon_grace")
 	value, err := strconv.ParseFloat(strings.TrimSpace(string(data)), 64)
 	if err != nil || value != 3600 {
 		t.Fatalf("MON effective beacon grace not positively 3600; fixture configuration failed: %q", data)

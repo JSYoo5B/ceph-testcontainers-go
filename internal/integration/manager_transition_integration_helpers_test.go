@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // The receipt of one MGR transition: a baseline with an active and a standby,
@@ -598,11 +599,11 @@ func testManagerTransitionReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt.FSID = quorum.MonMap.FSID
-	for _, monitor := range cluster.Monitors() {
+	for _, monitor := range clusteraccess.Monitors(t, cluster) {
 		receipt.Monitors = append(receipt.Monitors, monitor.DaemonName)
 	}
 	slices.Sort(receipt.Monitors)
-	managers, err := cluster.ManagersContext(ctx)
+	managers, err := cluster.Managers(ctx)
 	if err != nil || len(managers) != 2 {
 		t.Fatalf("owned MGRs %v: %v", managers, err)
 	}

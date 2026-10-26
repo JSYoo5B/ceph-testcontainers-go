@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 const twoDomainPool = "tc-two-domain-ledger"
@@ -53,7 +54,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	}
 
 	// Map 1: native CRUSH placement of the OSDs, read from Ceph.
-	osds := cluster.OSDs()
+	osds := clusteraccess.OSDs(t, cluster)
 	hostByOSD := map[int]string{}
 	for _, osd := range osds {
 		var location struct {
@@ -68,7 +69,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		}
 		hostByOSD[osd.ID] = location.CRUSH.Host
 	}
-	monitors, managers := cluster.Monitors(), cluster.Managers()
+	monitors, managers := clusteraccess.Monitors(t, cluster), clusteraccess.Managers(t, cluster)
 	if len(osds) != 3 || len(monitors) != 3 || len(managers) != 2 {
 		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(monitors), len(managers))
 	}
@@ -113,7 +114,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		name := mon.DaemonName
 		members = append(members, outageMember{Role: "mon", Name: name, Host: hosts[i], Container: mon.GetContainerID(), daemon: outageContainer{mon.Container},
 			current: func() string {
-				for _, m := range cluster.Monitors() {
+				for _, m := range clusteraccess.Monitors(t, cluster) {
 					if m.DaemonName == name {
 						return m.GetContainerID()
 					}
@@ -130,7 +131,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		}
 		members = append(members, outageMember{Role: "mgr", Name: name, Host: host, Container: mgr.GetContainerID(), daemon: outageContainer{mgr.Container},
 			current: func() string {
-				for _, m := range cluster.Managers() {
+				for _, m := range clusteraccess.Managers(t, cluster) {
 					if m.DaemonName == name {
 						return m.GetContainerID()
 					}
@@ -147,7 +148,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		}
 		members = append(members, outageMember{Role: "osd", Name: strconv.Itoa(id), Host: hostByOSD[id], Container: osd.GetContainerID(), daemon: outageContainer{osd.Container},
 			current: func() string {
-				for _, o := range cluster.OSDs() {
+				for _, o := range clusteraccess.OSDs(t, cluster) {
 					if o.ID == id {
 						return o.GetContainerID()
 					}
@@ -159,7 +160,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owned[client.GetContainerID()] || owned[cluster.ControlContainer().GetContainerID()] {
+	if owned[client.GetContainerID()] || owned[clusteraccess.ControlContainer(t, cluster).GetContainerID()] {
 		t.Fatal("the client or control container is inside the outage membership")
 	}
 	if monitors[0].DaemonName != "a" || survivorOSD < 0 {

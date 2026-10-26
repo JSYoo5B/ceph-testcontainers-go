@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // TestPostTestVerificationLogEnvelope pairs a real WRN cluster log entry of
@@ -113,7 +114,7 @@ func waitEnvelopeLines(t *testing.T, ctx context.Context, cluster *ceph.Containe
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		var lines []string
-		for _, mon := range cluster.Monitors() {
+		for _, mon := range clusteraccess.Monitors(t, cluster) {
 			reader, err := mon.Logs(ctx)
 			if err != nil {
 				t.Fatal(err)

@@ -21,6 +21,10 @@
    "rgw.Remove(ctx, \\1, "
   ],
   [
+   "\\b([A-Za-z_]\\w*)\\.(ControlContainer|ClientContainer)Context\\(ctx\\)",
+   "\\1.\\2(ctx)"
+  ],
+  [
    "\\b([A-Za-z_]\\w*)\\.Filesystems\\(\\)",
    "cephfs.Filesystems(\\1)"
   ],
@@ -72,7 +76,7 @@
   "ceph.CreateRBDNamespace": "rbd.CreateNamespace",
   "ceph.Filesystems": "cephfs.Filesystems",
   "ceph.Gateways": "rgw.Gateways",
-  "ceph.GatewaysContext": "rgw.GatewaysContext",
+  "ceph.GatewaysContext": "rgw.Gateways",
   "ceph.InitRBDPool": "rbd.InitPool",
   "ceph.ListRBDNamespaces": "rbd.ListNamespaces",
   "ceph.MDSContainer": "cephfs.MDS",

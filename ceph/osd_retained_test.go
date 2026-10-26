@@ -156,7 +156,7 @@ func TestDetachedOSDReopensInANewContainerWithTheSameIdentity(t *testing.T) {
 	if len(f.control.actions) != 0 || f.control.native[3].UUID != osdLifecycleUUID || f.control.native[3].Up {
 		t.Fatalf("detach mutated the registration: %v %+v", f.control.actions, f.control.native[3])
 	}
-	if names := osdIDs(f.cluster.OSDs()); !slices.Equal(names, []int{4}) {
+	if names := osdIDs(f.cluster.osdsLocked()); !slices.Equal(names, []int{4}) {
 		t.Fatalf("OSDs after detach %v", names)
 	}
 	reopened, err := f.cluster.ReopenOSD(t.Context(), detached)

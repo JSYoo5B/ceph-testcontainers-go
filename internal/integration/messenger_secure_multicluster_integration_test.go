@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
@@ -217,7 +218,7 @@ func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool)
 		if json.Unmarshal(mixedMessengerExec(t, ctx, client, "ceph", "fsid", "--format", "json"), &observed) != nil || observed.FSID != status.FSID {
 			t.Fatal("exported client connected to a different cluster")
 		}
-		_, keyring, err := cluster.ConnectionConfig()
+		_, keyring, err := cluster.ConnectionConfig(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -262,7 +263,7 @@ func checkMixedMessengerPeers(t *testing.T, ctx context.Context, cluster *ceph.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	daemons := []string{"mon.a", fmt.Sprintf("osd.%d", cluster.OSDs()[0].ID)}
+	daemons := []string{"mon.a", fmt.Sprintf("osd.%d", clusteraccess.OSDs(t, cluster)[0].ID)}
 	if filesystem != nil {
 		for _, mds := range filesystem.MDSs() {
 			daemons = append(daemons, "mds."+mds.ID)

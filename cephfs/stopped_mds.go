@@ -102,7 +102,7 @@ func (fs *Filesystem) RemoveStoppedMDS(parent context.Context, daemon *MDS) erro
 		return err
 	}
 	// Admission to control/config precedes any Docker or native reads.
-	control, err := c.ControlContainerContext(ctx)
+	control, err := c.ControlContainer(ctx)
 	if err != nil || control == nil {
 		return clusterutil.OperationError(ctx, "select stopped MDS control", err)
 	}

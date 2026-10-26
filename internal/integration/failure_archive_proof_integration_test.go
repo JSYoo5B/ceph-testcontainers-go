@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // TestFailureArchiveProof deliberately fails real tests, not recorder stand-ins.
@@ -78,7 +79,7 @@ func TestFailureArchiveProof(t *testing.T) {
 			}
 			ready, err := json.Marshal(map[string]any{
 				"mode": mode, "fsid": identity.FSID, "osds": nativeOSDs,
-				"osd_container": cluster.OSDs()[0].GetContainerID(), "ceph_version": cluster.CephVersion(),
+				"osd_container": clusteraccess.OSDs(t, cluster)[0].GetContainerID(), "ceph_version": cluster.CephVersion(),
 				"debug_state": window.Receipt().State,
 			})
 			if err != nil {

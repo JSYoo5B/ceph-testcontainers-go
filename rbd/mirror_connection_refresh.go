@@ -104,7 +104,7 @@ func (m *Mirror) checkRBDMonitorRefreshIdentities(ctx context.Context) error {
 		{m.config.Source, m.poolIdentities.source, m.config.SourceNamespace, m.policyIdentities.source},
 		{m.config.Destination, m.poolIdentities.destination, m.config.DestinationNamespace, m.policyIdentities.destination},
 	} {
-		control, err := site.cluster.ClientContainerContext(ctx)
+		control, err := site.cluster.ClientContainer(ctx)
 		if err != nil {
 			return fmt.Errorf("inspect RBD mirror cluster toolkit handle: %w", err)
 		}

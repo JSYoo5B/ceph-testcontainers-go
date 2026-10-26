@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -163,7 +164,7 @@ func testRBDMirrorBandwidthCatchUp(t *testing.T) {
 		t.Fatalf("daemon %s has no endpoint on %s", daemon.DaemonName, source.NetworkName())
 	}
 	peer := endpoint.IPAddress
-	osd := source.OSDs()[0]
+	osd := clusteraccess.OSDs(t, source)[0]
 
 	// osd.0 sends the daemon's reads of the source image through the limit,
 	// and only those: the source client's path through the same OSD stays

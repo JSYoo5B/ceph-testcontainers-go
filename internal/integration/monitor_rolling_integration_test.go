@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -43,10 +44,10 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if len(cluster.Monitors()) != 3 || len(cluster.Managers()) != 1 || len(cluster.OSDs()) != 2 || len(rgw.Gateways(cluster)) != 1 || len(cephfs.Filesystems(cluster)) != 1 {
+			if len(clusteraccess.Monitors(t, cluster)) != 3 || len(clusteraccess.Managers(t, cluster)) != 1 || len(clusteraccess.OSDs(t, cluster)) != 2 || len(clusteraccess.Gateways(t, cluster)) != 1 || len(cephfs.Filesystems(cluster)) != 1 {
 				t.Fatal("initial MON/MGR/OSD/RGW/MDS topology differs")
 			}
-			manager, gateway, filesystem := cluster.Managers()[0], rgw.Gateways(cluster)[0], cephfs.Filesystems(cluster)[0]
+			manager, gateway, filesystem := clusteraccess.Managers(t, cluster)[0], clusteraccess.Gateways(t, cluster)[0], cephfs.Filesystems(cluster)[0]
 			if len(filesystem.MDSs()) != 1 {
 				t.Fatal("initial filesystem lacks its one owned metadata daemon")
 			}
@@ -73,12 +74,12 @@ func TestMonitorRollingReplacement(t *testing.T) {
 				}
 				nodes[name] = monitorRollingNode{container: ctr, config: config, keyringPath: keyringPath, keyring: monitorRollingFile(t, ctx, ctr, keyringPath)}
 			}
-			record("control", "/etc/ceph/ceph.client.admin.keyring", cluster.ControlContainer())
-			for _, monitor := range cluster.Monitors() {
+			record("control", "/etc/ceph/ceph.client.admin.keyring", clusteraccess.ControlContainer(t, cluster))
+			for _, monitor := range clusteraccess.Monitors(t, cluster) {
 				record("mon."+monitor.DaemonName, "/etc/ceph/mon.keyring", monitor)
 			}
 			record("mgr."+manager.DaemonName, "/etc/ceph/mgr.keyring", manager)
-			for _, osd := range cluster.OSDs() {
+			for _, osd := range clusteraccess.OSDs(t, cluster) {
 				record(fmt.Sprintf("osd.%d", osd.ID), "/etc/ceph/osd.keyring", osd)
 			}
 			record("mds."+mds.ID, "/etc/ceph/mds.keyring", mds)
@@ -134,7 +135,7 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			if !slices.Equal(quorum.QuorumNames, []string{"d", "e", "f"}) {
 				t.Fatalf("final quorum is %v", quorum.QuorumNames)
 			}
-			currentConfig, _, err := cluster.ConnectionConfig()
+			currentConfig, _, err := cluster.ConnectionConfig(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}

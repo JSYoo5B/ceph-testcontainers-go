@@ -16,6 +16,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -762,8 +763,8 @@ func targetedBinaryIO(t *testing.T, ctx context.Context, cluster *ceph.Container
 	}
 
 	// The daemons' messengers received each input buffer whole.
-	daemons := []testcontainers.Container{cluster.OSDs()[0]}
-	for _, mon := range cluster.Monitors() {
+	daemons := []testcontainers.Container{clusteraccess.OSDs(t, cluster)[0]}
+	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		daemons = append(daemons, mon)
 	}
 	awaitDaemonRequests(t, ctx, func(lines []commandWireLine) error {
@@ -786,7 +787,7 @@ func targetedBinaryIO(t *testing.T, ctx context.Context, cluster *ceph.Container
 func targetedCancellation(t *testing.T, ctx context.Context, cluster *ceph.Container) map[string]any {
 	t.Helper()
 	control := toolkitContainer(t, cluster)
-	osd := cluster.OSDs()[1]
+	osd := clusteraccess.OSDs(t, cluster)[1]
 	const work = "/tmp/tc-binary-cancel"
 	execOutput(t, ctx, control, "sh", "-c", `rm -rf "$1" && mkdir -p "$1" && cd "$1" && mkfifo ready go cancelled resumed`, "sh", work)
 	type outcome struct {

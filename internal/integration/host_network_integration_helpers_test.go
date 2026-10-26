@@ -21,6 +21,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -144,7 +145,7 @@ func hostNetworkCleanupCluster(t *testing.T, cluster *ceph.Container) {
 		defer cancel()
 		if t.Failed() {
 			ctrs := append([]testcontainers.Container{cluster.Container, cluster.ManagerContainer()}, cluster.ServiceContainers()...)
-			ctrs = append(ctrs, osdContainers(cluster)...)
+			ctrs = append(ctrs, osdContainers(t, cluster)...)
 			for _, ctr := range ctrs {
 				if ctr == nil {
 					continue
@@ -281,7 +282,7 @@ func hostNetworkAssertRunnerTCP(t *testing.T, ctx context.Context, groups []host
 func hostNetworkAdvanceTopology(t *testing.T, ctx context.Context, cluster *ceph.Container, clusters []*ceph.Container) {
 	t.Helper()
 	hostNetworkAssertDistinctAddresses(t, ctx, clusters)
-	original := cluster.OSDs()[0]
+	original := clusteraccess.OSDs(t, cluster)[0]
 	added, err := cluster.AddOSD(ctx)
 	if err != nil {
 		t.Fatal(err)

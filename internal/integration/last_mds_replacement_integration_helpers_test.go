@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -376,11 +377,11 @@ func lastMDSRetainedResources(t *testing.T, parent context.Context, o *noInitial
 		}
 		expected[c.GetContainerID()] = role
 	}
-	add(cluster.ControlContainer(), "mon")
-	for _, mgr := range cluster.Managers() {
+	add(clusteraccess.ControlContainer(t, cluster), "mon")
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		add(mgr.Container, "mgr")
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		add(osd.Container, "osd")
 	}
 	for _, fs := range cephfs.Filesystems(cluster) {
@@ -470,7 +471,7 @@ func lastMDSFailedHealth(t *testing.T, parent context.Context, cluster *ceph.Con
 	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
 	defer cancel()
 	for {
-		data := topologyExecOutput(t, ctx, cluster.ControlContainer(), "ceph", "--connect-timeout", "5", "health", "detail", "--format", "json")
+		data := topologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--connect-timeout", "5", "health", "detail", "--format", "json")
 		var native struct {
 			Status *string `json:"status"`
 			Checks *map[string]struct {
@@ -525,7 +526,7 @@ func lastMDSFailedHealth(t *testing.T, parent context.Context, cluster *ceph.Con
 
 func lastMDSModules(t *testing.T, ctx context.Context, cluster *ceph.Container, phase string) {
 	t.Helper()
-	data := topologyExecOutput(t, ctx, cluster.ControlContainer(), "ceph", "--connect-timeout", "5", "mgr", "dump", "--format", "json")
+	data := topologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--connect-timeout", "5", "mgr", "dump", "--format", "json")
 	var native struct {
 		Available *bool               `json:"available"`
 		GID       *uint64             `json:"active_gid"`

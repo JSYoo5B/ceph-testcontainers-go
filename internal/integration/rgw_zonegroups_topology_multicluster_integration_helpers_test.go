@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -254,7 +255,7 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 	if err := fixture.RemoveZone(ctx, "b"); err != nil {
 		t.Fatalf("completed zone detach not idempotent: %v", err)
 	}
-	if len(fixture.Zones()) != 2 || len(rgw.Gateways(clusters[1])) != 0 {
+	if len(fixture.Zones()) != 2 || len(clusteraccess.Gateways(t, clusters[1])) != 0 {
 		t.Fatal("leaving zone/gateway remained attached")
 	}
 	if _, err := fixture.ZoneAdmin(ctx, "b", "period", "get"); err == nil {

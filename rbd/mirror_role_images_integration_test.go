@@ -51,7 +51,7 @@ func TestRoleImagesMirrorRefresh(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		core, err := c.ControlContainerContext(ctx)
+		core, err := c.ControlContainer(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -547,7 +548,7 @@ func testDualStackFamilyCut(t *testing.T) {
 	// advertises both families again with a new nonce, and the actor reaches
 	// it over IPv6 on a new connection.
 	var osd1Handle *ceph.OSDContainer
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		if osd.ID == 1 {
 			osd1Handle = osd
 		}

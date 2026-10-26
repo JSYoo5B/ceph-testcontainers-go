@@ -38,15 +38,15 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 	payload := []byte("busy constructor admission retains exact Ceph client data")
 	for i, cluster := range clusters {
 		var err error
-		before[i].config, before[i].keyring, err = cluster.ConnectionConfigContext(ctx)
+		before[i].config, before[i].keyring, err = cluster.ConnectionConfig(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		before[i].managers, err = cluster.ManagersContext(ctx)
+		before[i].managers, err = cluster.Managers(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		before[i].gateways, err = rgw.GatewaysContext(ctx, cluster)
+		before[i].gateways, err = rgw.Gateways(ctx, cluster)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -109,15 +109,15 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 		}
 	}
 	for i, cluster := range clusters {
-		config, keyring, err := cluster.ConnectionConfigContext(ctx)
+		config, keyring, err := cluster.ConnectionConfig(ctx)
 		if err != nil || !bytes.Equal(config, before[i].config) || !bytes.Equal(keyring, before[i].keyring) {
 			t.Fatalf("fresh bootstrap snapshot changed after canceled admission: %v", err)
 		}
-		managers, err := cluster.ManagersContext(ctx)
+		managers, err := cluster.Managers(ctx)
 		if err != nil || !slices.Equal(managers, before[i].managers) {
 			t.Fatalf("manager descriptors changed: %v", err)
 		}
-		gateways, err := rgw.GatewaysContext(ctx, cluster)
+		gateways, err := rgw.Gateways(ctx, cluster)
 		if err != nil || !slices.Equal(gateways, before[i].gateways) {
 			t.Fatalf("gateway descriptors changed: %v", err)
 		}

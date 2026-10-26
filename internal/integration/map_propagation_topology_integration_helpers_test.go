@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // mapPropagationReceipt is what TestMapPropagationReceipt logs.
@@ -116,7 +117,7 @@ func testMapPropagationReceipt(t *testing.T) {
 	if receipt.OSDMapAfter <= receipt.OSDMapBefore {
 		t.Fatalf("pool creation left the OSDMap at e%d", receipt.OSDMapAfter)
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		deadline := time.Now().Add(time.Minute)
 		for {
 			out, err := cluster.AdminSocket(ctx, fmt.Sprintf("osd.%d", osd.ID), "status")
@@ -140,7 +141,7 @@ func testMapPropagationReceipt(t *testing.T) {
 	}
 
 	names := []string{}
-	for _, mon := range cluster.Monitors() {
+	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		names = append(names, mon.DaemonName)
 	}
 	slices.Sort(names)

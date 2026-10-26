@@ -10,6 +10,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 )
 
 // Self-managed snapshot write contexts are client state: the fixture supplies
@@ -30,7 +31,7 @@ func TestRADOSSelfManagedSnapshots(t *testing.T) {
 	}
 	written := selfManagedSnapshotPhase(t, ctx, cluster, client, pool, namespace, "write", nil)
 
-	osd := cluster.OSDs()[0]
+	osd := clusteraccess.OSDs(t, cluster)[0]
 	stop := 20 * time.Second
 	if err := osd.Stop(ctx, &stop); err != nil {
 		t.Fatal(err)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -42,7 +43,7 @@ func TestPoolPGReportedBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	quorum, err := cluster.QuorumStatus(ctx)
-	if err != nil || quorum.MonMap.FSID == "" || len(cluster.OSDs()) != 0 {
+	if err != nil || quorum.MonMap.FSID == "" || len(clusteraccess.OSDs(t, cluster)) != 0 {
 		t.Fatal("cold PG original fixture identity unavailable", err)
 	}
 	fsid := quorum.MonMap.FSID

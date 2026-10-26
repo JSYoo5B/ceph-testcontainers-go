@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -311,7 +312,7 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 	})
 	pgid, primary := clean.PGID, clean.ActingPrimary
 	var victim *ceph.OSDContainer
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		if osd.ID != primary && slices.Contains(clean.Acting, osd.ID) {
 			victim = osd
 		}
@@ -436,7 +437,7 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 	// The replica now holds every object: with the primary stopped, the PG
 	// serves them without it.
 	var first *ceph.OSDContainer
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		if osd.ID == primary {
 			first = osd
 		}

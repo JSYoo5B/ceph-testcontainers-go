@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -43,7 +44,7 @@ func TestManagerLifecycle(t *testing.T) {
 		if !status.Available || status.ActiveName != active || status.ActiveGID == 0 || !slices.Equal(actual, standbys) {
 			t.Fatalf("unexpected native manager map: %+v", status)
 		}
-		owned := cluster.Managers()
+		owned := clusteraccess.Managers(t, cluster)
 		if len(owned) != 1+len(standbys) {
 			t.Fatalf("native manager map and owned daemon count differ: %+v", owned)
 		}
@@ -63,7 +64,7 @@ func TestManagerLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkMap("b")
-	if cluster.ManagerContainer() != nil || cluster.Managers()[0] != b {
+	if cluster.ManagerContainer() != nil || clusteraccess.Managers(t, cluster)[0] != b {
 		t.Fatal("removing primary a retained its legacy pointer or replaced b's container")
 	}
 	managerLifecycleRBDReady(t, ctx, cluster)

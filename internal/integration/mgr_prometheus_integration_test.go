@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -33,7 +34,7 @@ func TestManagerPrometheusExporter(t *testing.T) {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
 			cluster, client := newServiceCluster(t, opts...)
-			managers := cluster.Managers()
+			managers := clusteraccess.Managers(t, cluster)
 			if len(managers) != 2 {
 				t.Fatalf("two managers expected, got %d", len(managers))
 			}
@@ -214,7 +215,7 @@ func TestManagerMetrics(t *testing.T) {
 	if before.Types["ceph_pool_wr"] != "counter" || before.Types["ceph_pool_objects"] != "gauge" || len(before.Samples) < 100 {
 		t.Fatalf("first scrape of %s: types %q and %q, %d samples", before.URL, before.Types["ceph_pool_wr"], before.Types["ceph_pool_objects"], len(before.Samples))
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		if up, err := before.Value("ceph_osd_up", map[string]string{"ceph_daemon": fmt.Sprintf("osd.%d", osd.ID)}); err != nil || up != 1 {
 			t.Fatalf("osd.%d up = %v, %v", osd.ID, up, err)
 		}

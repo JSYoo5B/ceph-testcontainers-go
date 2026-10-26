@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
@@ -56,7 +57,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 			cleanup, done := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer done()
 			if t.Failed() {
-				for _, osd := range cluster.OSDs() {
+				for _, osd := range clusteraccess.OSDs(t, cluster) {
 					if osd.Container == nil {
 						continue
 					}
@@ -89,12 +90,12 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 			t.Fatal("small-device OSD setup failed", err)
 		}
 	}
-	initial := cluster.OSDs()
+	initial := clusteraccess.OSDs(t, cluster)
 	if len(initial) != 2 {
 		t.Fatal("two original OSDs unavailable")
 	}
 	owned[cluster.GetContainerID()] = true
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		owned[mgr.GetContainerID()] = true
 	}
 	identities := osdMemoryIdentities(t, ctx, cluster)
@@ -176,7 +177,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 	owned[added.GetContainerID()] = true
 	smallOSDLogicalSize(t, ctx, docker.Client, cluster, added, size, fsid, osdMemoryIdentities(t, ctx, cluster)[added.ID], skipBenchmark)
 	if ram {
-		freshVolume, freshKeeper := smallOSDRAMBacking(t, ctx, docker.Client, cluster, cluster.OSDs(), ramCap)
+		freshVolume, freshKeeper := smallOSDRAMBacking(t, ctx, docker.Client, cluster, clusteraccess.OSDs(t, cluster), ramCap)
 		if freshVolume != volume || freshKeeper.ID != keeper.ID || freshKeeper.State.StartedAt != keeper.State.StartedAt {
 			t.Fatal("third OSD replaced the shared RAM storage")
 		}
@@ -314,7 +315,7 @@ func smallOSDData(t *testing.T, ctx context.Context, cluster *ceph.Container, fs
 	if err != nil || state.ID != poolID || state.Size != 2 || state.MinSize != 1 {
 		t.Fatal("small-device original pool changed", err)
 	}
-	control, err := cluster.ControlContainerContext(ctx)
+	control, err := cluster.ControlContainer(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

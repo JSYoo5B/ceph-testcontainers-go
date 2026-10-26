@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	mobycl "github.com/moby/moby/client"
@@ -61,7 +62,7 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	}
 	t.Logf("partial bootstrap (%v): %d containers read", err, len(partialReport.Containers))
 
-	_, keyring, err := cluster.ConnectionConfig()
+	_, keyring, err := cluster.ConnectionConfig(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ if os.path.exists(p):
 os.makedirs(p)
 `)
 	config := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "client", Name: "helper", Container: helper}}}
-	osds := cluster.OSDs()
+	osds := clusteraccess.OSDs(t, cluster)
 
 	// Before any crash, every crash directory is empty.
 	before := dockerObjects(t, ctx, docker)
@@ -228,7 +229,7 @@ os.makedirs(p)
 // Docker does for a create request whose reply was lost.
 func lostCreate(t *testing.T, ctx context.Context, docker *testcontainers.DockerClient, cluster *ceph.Container) {
 	t.Helper()
-	inspection, err := cluster.Monitors()[0].Inspect(ctx)
+	inspection, err := clusteraccess.Monitors(t, cluster)[0].Inspect(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

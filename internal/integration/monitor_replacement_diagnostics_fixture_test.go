@@ -302,7 +302,7 @@ func (f *fakeMonCluster) CollectDiagnostics(ctx context.Context, _ ceph.Diagnost
 	return &ceph.DiagnosticsReport{SchemaVersion: 1, Complete: true, Artifacts: []ceph.DiagnosticArtifact{{Kind: "logs", Name: "mon.e", Data: "mon.e@-1(probing)"}}}, nil
 }
 
-func (f *fakeMonCluster) Monitors() []*ceph.MonitorContainer {
+func (f *fakeMonCluster) monitors() []*ceph.MonitorContainer {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var result []*ceph.MonitorContainer
@@ -317,38 +317,38 @@ func (f *fakeMonCluster) Monitors() []*ceph.MonitorContainer {
 	return result
 }
 
-func (f *fakeMonCluster) Managers() []*ceph.ManagerContainer {
+func (f *fakeMonCluster) managers() []*ceph.ManagerContainer {
 	return []*ceph.ManagerContainer{{DaemonName: "x", Container: &fakeDaemonContainer{cluster: f, daemon: "mgr.x"}}}
 }
 
-func (f *fakeMonCluster) OSDs() []*ceph.OSDContainer {
+func (f *fakeMonCluster) osds() []*ceph.OSDContainer {
 	return []*ceph.OSDContainer{{ID: 0, Container: &fakeDaemonContainer{cluster: f, daemon: "osd.0"}}}
 }
 
 // The context getters, like the real ones, list membership under the
 // topology mutex and stop waiting for it when ctx ends.
-func (f *fakeMonCluster) MonitorsContext(ctx context.Context) ([]*ceph.MonitorContainer, error) {
+func (f *fakeMonCluster) Monitors(ctx context.Context) ([]*ceph.MonitorContainer, error) {
 	if err := f.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer f.unlock()
-	return f.Monitors(), nil
+	return f.monitors(), nil
 }
 
-func (f *fakeMonCluster) ManagersContext(ctx context.Context) ([]*ceph.ManagerContainer, error) {
+func (f *fakeMonCluster) Managers(ctx context.Context) ([]*ceph.ManagerContainer, error) {
 	if err := f.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer f.unlock()
-	return f.Managers(), nil
+	return f.managers(), nil
 }
 
-func (f *fakeMonCluster) OSDsContext(ctx context.Context) ([]*ceph.OSDContainer, error) {
+func (f *fakeMonCluster) OSDs(ctx context.Context) ([]*ceph.OSDContainer, error) {
 	if err := f.lock(ctx); err != nil {
 		return nil, err
 	}
 	defer f.unlock()
-	return f.OSDs(), nil
+	return f.osds(), nil
 }
 
 // fakeDaemonContainer reports the generation that its cluster records.
@@ -664,16 +664,16 @@ type heldTopologyMonCluster struct {
 	real *ceph.Container
 }
 
-func (c heldTopologyMonCluster) MonitorsContext(ctx context.Context) ([]*ceph.MonitorContainer, error) {
-	return c.real.MonitorsContext(ctx)
+func (c heldTopologyMonCluster) Monitors(ctx context.Context) ([]*ceph.MonitorContainer, error) {
+	return c.real.Monitors(ctx)
 }
 
-func (c heldTopologyMonCluster) ManagersContext(ctx context.Context) ([]*ceph.ManagerContainer, error) {
-	return c.real.ManagersContext(ctx)
+func (c heldTopologyMonCluster) Managers(ctx context.Context) ([]*ceph.ManagerContainer, error) {
+	return c.real.Managers(ctx)
 }
 
-func (c heldTopologyMonCluster) OSDsContext(ctx context.Context) ([]*ceph.OSDContainer, error) {
-	return c.real.OSDsContext(ctx)
+func (c heldTopologyMonCluster) OSDs(ctx context.Context) ([]*ceph.OSDContainer, error) {
+	return c.real.OSDs(ctx)
 }
 
 // holdTopology holds the real cluster's topology mutex until the test ends.

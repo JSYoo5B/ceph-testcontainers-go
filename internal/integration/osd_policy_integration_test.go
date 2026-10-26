@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -38,7 +39,7 @@ func TestOSDPolicies(t *testing.T) {
 subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=True)`, osdPolicyProbe, phase)
 			}
 			probe("seed")
-			original := cluster.OSDs()[0]
+			original := clusteraccess.OSDs(t, cluster)[0]
 			containerID := original.GetContainerID()
 			states, err := cluster.OSDStates(ctx)
 			if err != nil || len(states) != 4 {

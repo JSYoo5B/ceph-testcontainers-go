@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
@@ -166,7 +167,7 @@ func TestSharedClusterServices(t *testing.T) {
 		decodeCommand(t, ctx, cluster, &namespaces, "rbd", "namespace", "ls", "--pool", sharedRBDPool, "--format", "json")
 		var groups []json.RawMessage
 		decodeCommand(t, ctx, cluster, &groups, "ceph", "fs", "subvolumegroup", "ls", "tc-cephfs", "--format", "json")
-		gateways := rgw.Gateways(cluster)
+		gateways := clusteraccess.Gateways(t, cluster)
 		if len(gateways) != 1 {
 			t.Fatalf("%d gateways", len(gateways))
 		}

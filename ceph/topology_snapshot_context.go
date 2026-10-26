@@ -10,10 +10,10 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// ConnectionConfigContext returns independent bootstrap copies, waiting for
+// ConnectionConfig returns independent bootstrap copies, waiting for
 // topology and the configuration cache only while ctx remains active.
-func (c *Container) ConnectionConfigContext(ctx context.Context) ([]byte, []byte, error) {
-	if gateErr := c.sharedGate("ConnectionConfigContext"); gateErr != nil {
+func (c *Container) ConnectionConfig(ctx context.Context) ([]byte, []byte, error) {
+	if gateErr := c.sharedGate("ConnectionConfig"); gateErr != nil {
 		return nil, nil, gateErr
 	}
 	if c == nil {
@@ -36,10 +36,10 @@ func (c *Container) ConnectionConfigContext(ctx context.Context) ([]byte, []byte
 	return bytes.Clone(c.config), bytes.Clone(c.keyring), nil
 }
 
-// ManagersContext returns sorted owned candidate descriptors. The slice is
+// Managers returns sorted owned candidate descriptors. The slice is
 // independent; descriptors and their containers retain fixture ownership.
-func (c *Container) ManagersContext(ctx context.Context) ([]*ManagerContainer, error) {
-	if gateErr := c.sharedGate("ManagersContext"); gateErr != nil {
+func (c *Container) Managers(ctx context.Context) ([]*ManagerContainer, error) {
+	if gateErr := c.sharedGate("Managers"); gateErr != nil {
 		return nil, gateErr
 	}
 	if c == nil {
@@ -57,10 +57,10 @@ func (c *Container) ManagersContext(ctx context.Context) ([]*ManagerContainer, e
 	return result, nil
 }
 
-// MonitorsContext returns the owned MON membership sorted by daemon name,
+// Monitors returns the owned MON membership sorted by daemon name,
 // like Monitors, waiting for the topology only while ctx remains active.
-func (c *Container) MonitorsContext(ctx context.Context) ([]*MonitorContainer, error) {
-	if gateErr := c.sharedGate("MonitorsContext"); gateErr != nil {
+func (c *Container) Monitors(ctx context.Context) ([]*MonitorContainer, error) {
+	if gateErr := c.sharedGate("Monitors"); gateErr != nil {
 		return nil, gateErr
 	}
 	if c == nil {
@@ -73,10 +73,10 @@ func (c *Container) MonitorsContext(ctx context.Context) ([]*MonitorContainer, e
 	return c.monitorsLocked(), nil
 }
 
-// OSDsContext returns the owned OSD descriptors sorted by ID, like OSDs,
+// OSDs returns the owned OSD descriptors sorted by ID, like OSDs,
 // waiting for the topology only while ctx remains active.
-func (c *Container) OSDsContext(ctx context.Context) ([]*OSDContainer, error) {
-	if gateErr := c.sharedGate("OSDsContext"); gateErr != nil {
+func (c *Container) OSDs(ctx context.Context) ([]*OSDContainer, error) {
+	if gateErr := c.sharedGate("OSDs"); gateErr != nil {
 		return nil, gateErr
 	}
 	if c == nil {
@@ -89,11 +89,11 @@ func (c *Container) OSDsContext(ctx context.Context) ([]*OSDContainer, error) {
 	return c.osdsLocked(), nil
 }
 
-// ControlContainerContext returns the stable CLI handle while bounding a
+// ControlContainer returns the stable CLI handle while bounding a
 // concurrent control-plane creation or termination publication wait by ctx.
 // The cluster owns the handle; this snapshot does not promise it remains live.
-func (c *Container) ControlContainerContext(ctx context.Context) (testcontainers.Container, error) {
-	if err := c.sharedGate("ControlContainerContext"); err != nil {
+func (c *Container) ControlContainer(ctx context.Context) (testcontainers.Container, error) {
+	if err := c.sharedGate("ControlContainer"); err != nil {
 		return nil, err
 	}
 	return c.controlContainerContext(ctx)

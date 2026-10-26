@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -52,7 +53,7 @@ func testDaemonAddresses(t *testing.T, opts ...testcontainers.ContainerCustomize
 			}
 		}
 	}
-	monitors := cluster.Monitors()
+	monitors := clusteraccess.Monitors(t, cluster)
 	if len(addresses.Monitors) != len(monitors) {
 		t.Fatalf("monmap members %+v, owned %d", addresses.Monitors, len(monitors))
 	}
@@ -63,7 +64,7 @@ func testDaemonAddresses(t *testing.T, opts ...testcontainers.ContainerCustomize
 		checkVector("mon."+mon.DaemonName, addresses.Monitors[i].Addrs, expectedIP(mon))
 	}
 	managers := map[string]*ceph.ManagerContainer{}
-	for _, mgr := range cluster.Managers() {
+	for _, mgr := range clusteraccess.Managers(t, cluster) {
 		managers[mgr.DaemonName] = mgr
 	}
 	active := addresses.ActiveManager
@@ -71,7 +72,7 @@ func testDaemonAddresses(t *testing.T, opts ...testcontainers.ContainerCustomize
 		t.Fatalf("mgrmap active %+v standbys %v", active, addresses.StandbyManagers)
 	}
 	checkVector("mgr."+active.Name, active.Addrs, expectedIP(managers[active.Name]))
-	osd := cluster.OSDs()[0]
+	osd := clusteraccess.OSDs(t, cluster)[0]
 	if len(addresses.OSDs) != 1 || addresses.OSDs[0].ID != osd.ID || !addresses.OSDs[0].Up || !addresses.OSDs[0].In {
 		t.Fatalf("osdmap entries %+v", addresses.OSDs)
 	}

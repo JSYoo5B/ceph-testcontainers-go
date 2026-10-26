@@ -365,7 +365,7 @@ func (mirror *Mirror) loadFilesystemIdentity(ctx context.Context) error {
 // different GIDs. Resolve each owned process through its exact admin-socket
 // rados_inst address and the native mirror index object's watcher list.
 func (mirror *Mirror) ownedFilesystemWatcherIDs(ctx context.Context) (map[string]bool, error) {
-	control, err := mirror.source.ClientContainerContext(ctx)
+	control, err := mirror.source.ClientContainer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select CephFS source control handle: %w", err)
 	}
@@ -690,7 +690,7 @@ func cephFSManagerCandidates(ctx context.Context, cluster *ceph.Container) ([]st
 	waitCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	return waitForCephFSManagerCandidates(waitCtx, 500*time.Millisecond, func(observeCtx context.Context) (ceph.ManagerStatus, []*ceph.ManagerContainer, error) {
-		managers, err := cluster.ManagersContext(observeCtx)
+		managers, err := cluster.Managers(observeCtx)
 		if err != nil {
 			return ceph.ManagerStatus{}, nil, err
 		}

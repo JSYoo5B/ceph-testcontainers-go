@@ -144,7 +144,7 @@ func TestRefreshMonitorConfigUpdatesEveryOwnedRoleWhileStopped(t *testing.T) {
 	if caller.reads != 0 || caller.writes != 0 || !bytes.Contains(caller.config, []byte("mon host = old")) {
 		t.Fatal("caller-owned config was implicitly adopted")
 	}
-	config, keyring, err := cluster.ConnectionConfig()
+	config, keyring, err := cluster.ConnectionConfig(t.Context())
 	if err != nil || !bytes.Contains(config, []byte(monitorConfigAddresses)) || bytes.Contains(config, []byte("control_private")) || string(keyring) != "retained-admin-keyring" {
 		t.Fatal("future-client template imported control-only settings or lost bootstrap/keyring", err)
 	}
@@ -209,7 +209,7 @@ func TestRefreshMonitorConfigPartialCopyPublishesControlAndRetries(t *testing.T)
 			if !errors.Is(err, lost) || !strings.Contains(err.Error(), "mgr.b") {
 				t.Fatalf("partial copy did not retain its named error: %v", err)
 			}
-			config, _, err := cluster.ConnectionConfig()
+			config, _, err := cluster.ConnectionConfig(t.Context())
 			if err != nil || !bytes.Contains(config, []byte(monitorConfigAddresses)) || other.writes != 1 || control.writes != 1 || bad.writes != 1 {
 				t.Fatal("partial daemon copy kept future clients stale or skipped another owned daemon", err)
 			}

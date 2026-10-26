@@ -110,7 +110,7 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 	// transparent counter while retrying Begin, then restore the original handle
 	// before observational Status/Wait. There is no Docker or native replacement.
 	originalControl := source.Container
-	control, err := source.ControlContainerContext(ctx)
+	control, err := source.ControlContainer(ctx)
 	if err != nil || control != originalControl {
 		t.Fatalf("lost-response probe needs original single-MON CLI: %v", err)
 	}
@@ -217,7 +217,7 @@ func cephFSReadRemovalWitness(t *testing.T, ctx context.Context, source *ceph.Co
 	if hasCommand != present {
 		t.Fatal("independent EXACT old peer command registration disagrees")
 	}
-	client, err := source.ClientContainerContext(ctx)
+	client, err := source.ClientContainer(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

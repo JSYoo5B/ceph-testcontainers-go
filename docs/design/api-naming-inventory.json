@@ -3,11 +3,11 @@
   "scope": "Declared exports in ceph, fault, rbd, cephfs, rgw and capture; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
     "capture": 36,
-    "ceph": 366,
+    "ceph": 361,
     "cephfs": 155,
     "fault": 35,
     "rbd": 77,
-    "rgw": 126
+    "rgw": 125
   },
   "entries": [
     {
@@ -588,11 +588,11 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.ClientContainerContext",
+      "current": "ceph.Container.ClientContainer",
       "kind": "method",
       "signature": "func(ctx context.Context) (testcontainers.Container, error)",
       "receiver": "*Container",
-      "proposed": "ceph.Container.ClientContainerContext",
+      "proposed": "ceph.Container.ClientContainer",
       "decision": "baseline"
     },
     {
@@ -630,33 +630,17 @@
     {
       "current": "ceph.Container.ConnectionConfig",
       "kind": "method",
-      "signature": "func() ([]byte, []byte, error)",
+      "signature": "func(ctx context.Context) ([]byte, []byte, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.ConnectionConfig",
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.ConnectionConfigContext",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]byte, []byte, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ConnectionConfigContext",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.ControlContainer",
-      "kind": "method",
-      "signature": "func() testcontainers.Container",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ControlContainer",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.ControlContainerContext",
       "kind": "method",
       "signature": "func(ctx context.Context) (testcontainers.Container, error)",
       "receiver": "*Container",
-      "proposed": "ceph.Container.ControlContainerContext",
+      "proposed": "ceph.Container.ControlContainer",
       "decision": "baseline"
     },
     {
@@ -830,17 +814,9 @@
     {
       "current": "ceph.Container.Managers",
       "kind": "method",
-      "signature": "func() []*ManagerContainer",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.Managers",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.ManagersContext",
-      "kind": "method",
       "signature": "func(ctx context.Context) ([]*ManagerContainer, error)",
       "receiver": "*Container",
-      "proposed": "ceph.Container.ManagersContext",
+      "proposed": "ceph.Container.Managers",
       "decision": "baseline"
     },
     {
@@ -862,17 +838,9 @@
     {
       "current": "ceph.Container.Monitors",
       "kind": "method",
-      "signature": "func() []*MonitorContainer",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.Monitors",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.MonitorsContext",
-      "kind": "method",
       "signature": "func(ctx context.Context) ([]*MonitorContainer, error)",
       "receiver": "*Container",
-      "proposed": "ceph.Container.MonitorsContext",
+      "proposed": "ceph.Container.Monitors",
       "decision": "baseline"
     },
     {
@@ -902,17 +870,9 @@
     {
       "current": "ceph.Container.OSDs",
       "kind": "method",
-      "signature": "func() []*OSDContainer",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OSDs",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OSDsContext",
-      "kind": "method",
       "signature": "func(ctx context.Context) ([]*OSDContainer, error)",
       "receiver": "*Container",
-      "proposed": "ceph.Container.OSDsContext",
+      "proposed": "ceph.Container.OSDs",
       "decision": "baseline"
     },
     {
@@ -4769,7 +4729,7 @@
     {
       "current": "rgw.Container.Gateways",
       "kind": "method",
-      "signature": "func() []*Gateway",
+      "signature": "func(ctx context.Context) ([]*Gateway, error)",
       "receiver": "*Container",
       "proposed": "rgw.Container.Gateways",
       "decision": "baseline"
@@ -4989,15 +4949,8 @@
     {
       "current": "rgw.Gateways",
       "kind": "function",
-      "signature": "func(c *ceph.Container) []*Gateway",
-      "proposed": "rgw.Gateways",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.GatewaysContext",
-      "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container) ([]*Gateway, error)",
-      "proposed": "rgw.GatewaysContext",
+      "proposed": "rgw.Gateways",
       "decision": "baseline"
     },
     {

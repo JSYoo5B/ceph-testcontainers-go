@@ -11,6 +11,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -29,7 +30,7 @@ func TestInitialClusterComposition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cluster.OSDs()) != 1 || len(cephfs.Filesystems(cluster)) != 1 {
+	if len(clusteraccess.OSDs(t, cluster)) != 1 || len(cephfs.Filesystems(cluster)) != 1 {
 		t.Fatal("Run did not build the requested initial topology")
 	}
 	fs := cephfs.Filesystems(cluster)[0]

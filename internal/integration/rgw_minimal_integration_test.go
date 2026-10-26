@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -40,17 +41,17 @@ func TestRGWMinimalS3Recipe(t *testing.T) {
 
 	// Four containers: the MON, which also runs the Ceph CLIs, the MGR, the
 	// OSD and the gateway.
-	gateways := cluster.Gateways()
-	if len(cluster.Monitors()) != 1 || len(cluster.Managers()) != 1 || len(cluster.OSDs()) != 1 || len(gateways) != 1 {
+	gateways := clusteraccess.RGWGateways(t, cluster)
+	if len(clusteraccess.Monitors(t, cluster.Container)) != 1 || len(clusteraccess.Managers(t, cluster.Container)) != 1 || len(clusteraccess.OSDs(t, cluster.Container)) != 1 || len(gateways) != 1 {
 		t.Fatalf("Run started %d MONs, %d MGRs, %d OSDs and %d gateways, want one of each",
-			len(cluster.Monitors()), len(cluster.Managers()), len(cluster.OSDs()), len(gateways))
+			len(clusteraccess.Monitors(t, cluster.Container)), len(clusteraccess.Managers(t, cluster.Container)), len(clusteraccess.OSDs(t, cluster.Container)), len(gateways))
 	}
 	gateway := gateways[0]
 	containers := map[string]bool{}
-	for _, ctr := range []testcontainers.Container{cluster.Container.Container, cluster.ManagerContainer(), cluster.OSDs()[0], gateway} {
+	for _, ctr := range []testcontainers.Container{cluster.Container.Container, cluster.ManagerContainer(), clusteraccess.OSDs(t, cluster.Container)[0], gateway} {
 		containers[ctr.GetContainerID()] = true
 	}
-	if control, err := cluster.ControlContainerContext(ctx); err != nil || control.GetContainerID() != cluster.Container.Container.GetContainerID() {
+	if control, err := cluster.ControlContainer(ctx); err != nil || control.GetContainerID() != cluster.Container.Container.GetContainerID() {
 		t.Fatalf("the control CLI does not run in the MON container: %v", err)
 	}
 	if len(containers) != 4 {

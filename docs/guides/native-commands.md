@@ -15,10 +15,10 @@ native changes conflict with what the fixture tracks.
 | You want to run | Use | Runs in |
 | --- | --- | --- |
 | The `ceph` CLI as `client.admin` | `cluster.Ceph(ctx, args...)` | The control container |
-| `rados`, `rbd`, `radosgw-admin`, `ceph-authtool`, Python bindings | `cluster.ControlContainer().Exec(ctx, argv, ...)` | The control container |
+| `rados`, `rbd`, `radosgw-admin`, `ceph-authtool`, Python bindings | `control.Exec(ctx, argv, ...)` with `control` from `cluster.ControlContainer(ctx)` | The control container |
 | A command with bounded run time and output whose process must not outlive the test | `cluster.RunNativeCommand(ctx, target, command)` | The control container, a daemon container, or your attached container |
 | A workload, a restricted identity or your own client software | A container attached with `WithClient` or `WithClientIdentity` | Your container |
-| A native client in the test process | `cluster.ConnectionConfig()` with host networking | Your process |
+| A native client in the test process | `cluster.ConnectionConfig(ctx)` with host networking | Your process |
 | `radosgw-admin` in a gateway's realm and zone | `rgw.Gateway.Admin(ctx, args...)` | The gateway container |
 | `radosgw-admin` in a multisite zone | `rgw.Multisite.SourceAdmin`, `DestinationAdmin`, `ZoneAdmin` | The fixture's setup client for that zone |
 | `rbd` on either side of a mirror link | `rbd.Mirror.SourceRBD`, `DestinationRBD` | The link's setup clients |
@@ -70,7 +70,7 @@ stopped as long as a quorum remains.
 
 ## Other CLIs in the control container
 
-`ControlContainer()` returns the control container handle. It has every Ceph
+`ControlContainer(ctx)` returns the control container handle. It has every Ceph
 CLI, `/etc/ceph/ceph.conf` and the admin keyring, so `rados`, `rbd` and
 `radosgw-admin` work without extra flags. For RGW administration prefer
 `rgw.Gateway.Admin`, which runs in the gateway's own realm and zone.
@@ -93,7 +93,10 @@ func exec(ctx context.Context, ctr testcontainers.Container, argv ...string) ([]
 	return stdout.Bytes(), nil
 }
 
-control := cluster.ControlContainer()
+control, err := cluster.ControlContainer(ctx)
+if err != nil {
+	t.Fatal(err)
+}
 if _, err := exec(ctx, control, "rbd", "create", "--size", "64M", "rbd/disk"); err != nil {
 	t.Fatal(err)
 }
@@ -776,7 +779,7 @@ _, err = exec(ctx, restricted, "rados", "--id", reader.User(), "-p", "volumes", 
 
 ## Clients in the test process
 
-`cluster.ConnectionConfig()` returns copies of `ceph.conf` and the admin
+`cluster.ConnectionConfig(ctx)` returns copies of `ceph.conf` and the admin
 keyring for a native client in your test process. Daemons must be reachable
 from the process, which normally requires `ceph.WithHostNetwork()`. See
 [Host network and native clients](host-network.md).
@@ -811,9 +814,9 @@ images always have it; OSD, MDS and RGW role images are not required to (see
 
 | Daemon | Socket inside its container | Handle |
 | --- | --- | --- |
-| MON | `/var/run/ceph/ceph-mon.<name>.asok` | `cluster.Monitors()[i]`, name `DaemonName` |
-| MGR | `/var/run/ceph/ceph-mgr.<name>.asok` | `cluster.Managers()[i]`, name `DaemonName` |
-| OSD | `/var/run/ceph/ceph-osd.<id>.asok` | `cluster.OSDs()[i]`, `ID` |
+| MON | `/var/run/ceph/ceph-mon.<name>.asok` | element `i` of `cluster.Monitors(ctx)`, name `DaemonName` |
+| MGR | `/var/run/ceph/ceph-mgr.<name>.asok` | element `i` of `cluster.Managers(ctx)`, name `DaemonName` |
+| OSD | `/var/run/ceph/ceph-osd.<id>.asok` | element `i` of `cluster.OSDs(ctx)`, `ID` |
 | MDS | `/var/run/ceph/ceph-mds.<id>.asok` | `fs.MDSs()[i]`, `ID` |
 | `rbd-mirror` | the local validation artifact | `rbdMirror.Daemons()[i]` |
 | `cephfs-mirror` | `/var/run/ceph/cephfs-mirror.asok` | `cephfsMirror.Daemons()[i]` |
@@ -856,7 +859,11 @@ two things to its container output:
 ```golang
 _, err := cluster.AdminSocket(ctx, "osd.0", "config", "set", "debug_auth", "10/10")
 // ... let a client connect to osd.0 ...
-logs, err := cluster.OSDs()[0].Logs(ctx)
+osds, err := cluster.OSDs(ctx)
+if err != nil {
+	t.Fatal(err)
+}
+logs, err := osds[0].Logs(ctx)
 ```
 
 | Event | Tentacle 20.2.4 | Squid 19.2.5 |
@@ -918,7 +925,11 @@ gateway's realm, zonegroup, zone, configuration and keyring. It adds
 `--format json`.
 
 ```golang
-gateway := rgw.Gateways(cluster)[0]
+gateways, err := rgw.Gateways(ctx, cluster)
+if err != nil {
+	t.Fatal(err)
+}
+gateway := gateways[0]
 stats, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", "photos")
 ```
 

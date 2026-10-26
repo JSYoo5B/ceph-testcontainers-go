@@ -15,6 +15,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -197,7 +198,7 @@ func TestTargetedCommandRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("TARGETED_BINARY_IO_RECEIPT %s", data)
-	osds := cluster.OSDs()
+	osds := clusteraccess.OSDs(t, cluster)
 
 	// A stopped OSD that the map marks down: librados refuses it with ENXIO.
 	stop := 20 * time.Second

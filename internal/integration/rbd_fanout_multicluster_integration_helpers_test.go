@@ -25,7 +25,7 @@ func rbdFanoutThirdCluster(t *testing.T, ctx context.Context, a, b *ceph.Contain
 		t.Cleanup(func() {
 			if t.Failed() {
 				ctrs := append([]testcontainers.Container{cluster.Container}, cluster.ServiceContainers()...)
-				ctrs = append(ctrs, osdContainers(cluster)...)
+				ctrs = append(ctrs, osdContainers(t, cluster)...)
 				for _, ctr := range ctrs {
 					logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
 					multiClusterLogContainer(t, logCtx, ctr)

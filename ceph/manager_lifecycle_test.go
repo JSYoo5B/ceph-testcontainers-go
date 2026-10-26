@@ -72,8 +72,8 @@ func TestManagerActiveRemovalWaitsForAvailableReplacement(t *testing.T) {
 	if target.terminations != 1 || replacement.terminations != 0 || cluster.ManagerContainer() != nil {
 		t.Fatal("primary manager cleanup changed another daemon or retained its primary pointer")
 	}
-	if got := cluster.Managers(); len(got) != 1 || got[0].DaemonName != "b" {
-		t.Fatalf("unexpected remaining ownership: %+v", got)
+	if got, err := cluster.Managers(t.Context()); err != nil || len(got) != 1 || got[0].DaemonName != "b" {
+		t.Fatalf("unexpected remaining ownership: %+v %v", got, err)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -78,10 +79,10 @@ func osdVolumeTopology(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	owned := []string{cluster.GetContainerID(), helper.ID}
-	for _, m := range cluster.Managers() {
+	for _, m := range clusteraccess.Managers(t, cluster) {
 		owned = append(owned, m.GetContainerID())
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		owned = append(owned, osd.GetContainerID())
 	}
 	pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "volume-data", Application: "rados", Replicas: 2, MinSize: 1, PGNum: 8})
@@ -92,7 +93,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "seed")
-	original := cluster.OSDs()[0]
+	original := clusteraccess.OSDs(t, cluster)[0]
 	oldUUID := osdMemoryIdentities(t, ctx, cluster)[original.ID]
 	added, err := cluster.AddOSD(ctx)
 	if err != nil {
@@ -133,7 +134,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 	}
 	grace := 3 * time.Second
 	cids := map[int]string{}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		cids[osd.ID] = osd.GetContainerID()
 		if err := osd.Stop(ctx, &grace); err != nil {
 			t.Fatal(err)
@@ -184,7 +185,7 @@ print('ready')`, strconv.Itoa(id), nativeUUID, q.MonMap.FSID)
 			t.Fatal("unmounted directory identity differs")
 		}
 	}
-	for _, osd := range cluster.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		if err := osd.Start(ctx); err != nil {
 			t.Fatal(err)
 		}

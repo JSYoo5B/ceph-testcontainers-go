@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
 	"slices"
 	"strconv"
@@ -89,7 +90,7 @@ func testECBelowK(t *testing.T) {
 	}
 	holders := map[int]*ceph.OSDContainer{}
 	captured := map[int]ecAdmissionInstance{}
-	for _, osd := range c.OSDs() {
+	for _, osd := range clusteraccess.OSDs(t, c) {
 		holders[osd.ID] = osd
 		captured[osd.ID] = ecAdmissionInstanceOf(t, ctx, osd)
 		if err := checkECAdmissionHealthy(captured[osd.ID]); err != nil {

@@ -88,11 +88,11 @@ def client_watcher_routing(source):
     daemon-local sockets and every watcher parsing/assertion byte stay bound.
     """
     old = ("func cephFSOriginalProcessWatchers(ctx context.Context, source *ceph.Container, pool string) (map[string]string, error) {\n"
-           "\tcontrol, err := source.ControlContainerContext(ctx)\n"
+           "\tcontrol, err := source.ControlContainer(ctx)\n"
            "\tif err != nil {\n\t\treturn nil, err\n\t}\n"
            '\tdata, err := cephFSOriginalProcessExec(ctx, control, "rados", "--pool", pool, "listwatchers", "cephfs_mirror")\n')
-    new = old.replace("control, err := source.ControlContainerContext(ctx)",
-                      "client, err := source.ClientContainerContext(ctx)").replace(
+    new = old.replace("control, err := source.ControlContainer(ctx)",
+                      "client, err := source.ClientContainer(ctx)").replace(
                           'cephFSOriginalProcessExec(ctx, control, "rados"',
                           'cephFSOriginalProcessExec(ctx, client, "rados"')
     if source.count(old) != 1:
@@ -198,9 +198,9 @@ class QuiescenceCoverageTests(unittest.TestCase):
     def test_client_watcher_routing_binds_only_the_exact_userspace_probe(self):
         retained = diagnostic_rewrites(package_split(SOURCE_FIXTURE.read_text()))
         rewritten = client_watcher_routing(retained)
-        self.assertEqual(rewritten.count("source.ClientContainerContext(ctx)"), 1)
+        self.assertEqual(rewritten.count("source.ClientContainer(ctx)"), 1)
         # The original MON command counter is still selected on control.
-        self.assertIn("control, err := source.ControlContainerContext(ctx)", rewritten)
+        self.assertIn("control, err := source.ControlContainer(ctx)", rewritten)
         self.assertIn('"rados", "--pool", pool, "listwatchers", "cephfs_mirror"', rewritten)
         for invalid in (rewritten, retained + retained,
                         retained.replace('"rados", "--pool", pool, "listwatchers"',

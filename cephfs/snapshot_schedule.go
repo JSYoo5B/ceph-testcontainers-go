@@ -335,7 +335,7 @@ func (l *SnapshotScheduleLease) Status(ctx context.Context) (SnapshotScheduleSta
 // took, named "scheduled-…", oldest first, through libcephfs in the control
 // container.
 func (l *SnapshotScheduleLease) Snapshots(ctx context.Context) ([]string, error) {
-	control, err := l.filesystem.cluster.ClientContainerContext(ctx)
+	control, err := l.filesystem.cluster.ClientContainer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select the CephFS CLI container: %w", err)
 	}
