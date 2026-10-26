@@ -207,7 +207,7 @@ func (c *upgradeCollector) collect(ctx context.Context, phase *upgradePhase, dae
 // collectAndSettle is the checked way to hand collected evidence to the
 // sequence. A plain upgradeSettled carries no ownership, so the phase is
 // revalidated immediately before the sequence advances: a target that changed
-// generation, or a phase that was superseded, between the collection and this
+// generation, a phase that was superseded, or a cancelled caller or passed phase deadline, between the collection and this
 // call keeps the sequence where it is. Evidence from collect must not be
 // passed to settle directly.
 func (c *upgradeCollector) collectAndSettle(ctx context.Context, phase *upgradePhase, daemon string, want upgradeCheckpoint, seq *upgradeSequence) error {
@@ -220,6 +220,12 @@ func (c *upgradeCollector) collectAndSettle(ctx context.Context, phase *upgradeP
 	}
 	if c.cfg.BeforeConsume != nil {
 		c.cfg.BeforeConsume()
+	}
+	// Ownership and lifetime are separate: a cancelled caller or a passed
+	// phase deadline leaves every generation valid, so phase.current() alone
+	// would not notice them.
+	if err := c.expired(ctx); err != nil {
+		return fmt.Errorf("evidence for %q expired before it was consumed: %w", daemon, err)
 	}
 	if err := phase.current(); err != nil {
 		return fmt.Errorf("evidence for %q expired before it was consumed: %w", daemon, err)

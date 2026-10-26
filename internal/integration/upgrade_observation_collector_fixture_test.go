@@ -749,6 +749,49 @@ func TestUpgradeCollectorEvidenceKeepsItsOwnershipUntilConsumed(t *testing.T) {
 			}
 		})
 	}
+	t.Run("cancellation between collection and consumption", func(t *testing.T) {
+		s := sequenceAtConfirmedMon(t)
+		env := newCollectEnv(t, 1)
+		ctx, cancel := context.WithCancel(context.Background())
+		col := env.newCollector(func(c *upgradeCollectorConfig) { c.BeforeConsume = cancel })
+		err := col.collectAndSettle(ctx, env.phase, "mon.a", env.want, s)
+		if !errors.Is(err, errUpgradeCollectDeadline) {
+			t.Fatalf("collectAndSettle = %v", err)
+		}
+		if _, _, err := s.admit(); err == nil {
+			t.Fatal("the sequence admitted the next transition after the caller was cancelled")
+		}
+	})
+	for name, shift := range map[string]time.Duration{"one nanosecond past": time.Nanosecond, "far past": time.Hour} {
+		t.Run("phase deadline "+name+" between collection and consumption", func(t *testing.T) {
+			s := sequenceAtConfirmedMon(t)
+			env := newCollectEnv(t, 1)
+			deadline := env.clock.now.Add(10 * time.Minute)
+			col := env.newCollector(func(c *upgradeCollectorConfig) {
+				c.Deadline = deadline
+				c.BeforeConsume = func() { env.clock.now = deadline.Add(shift) }
+			})
+			err := col.collectAndSettle(context.Background(), env.phase, "mon.a", env.want, s)
+			if !errors.Is(err, errUpgradeCollectDeadline) {
+				t.Fatalf("collectAndSettle = %v", err)
+			}
+			if _, _, err := s.admit(); err == nil {
+				t.Fatal("the sequence admitted the next transition after the phase deadline")
+			}
+		})
+	}
+	t.Run("a consumption exactly at the deadline is allowed", func(t *testing.T) {
+		s := sequenceAtConfirmedMon(t)
+		env := newCollectEnv(t, 1)
+		deadline := env.clock.now.Add(10 * time.Minute)
+		col := env.newCollector(func(c *upgradeCollectorConfig) {
+			c.Deadline = deadline
+			c.BeforeConsume = func() { env.clock.now = deadline }
+		})
+		if err := col.collectAndSettle(context.Background(), env.phase, "mon.a", env.want, s); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("unchanged ownership settles and admits the next daemon", func(t *testing.T) {
 		s := sequenceAtConfirmedMon(t)
 		env := newCollectEnv(t, 1)
