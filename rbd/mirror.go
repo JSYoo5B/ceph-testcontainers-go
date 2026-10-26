@@ -148,18 +148,7 @@ func (d *MirrorDaemon) Terminate(ctx context.Context, opts ...testcontainers.Ter
 	if d == nil {
 		return nil
 	}
-	if err := multicluster.LockObservation(ctx, &d.mu); err != nil {
-		return err
-	}
-	defer d.mu.Unlock()
-	if d.terminated || d.Container == nil {
-		return nil
-	}
-	if err := multicluster.IgnoreMissing(d.Container.Terminate(ctx, opts...)); err != nil {
-		return err
-	}
-	d.terminated = true
-	return nil
+	return multicluster.TerminateOnce(ctx, &d.mu, &d.terminated, d.Container, opts...)
 }
 
 // RunMirror enables the selected scope on both pool/namespaces, imports a receiving
@@ -241,11 +230,7 @@ func RunMirror(ctx context.Context, image string, config MirrorConfig, opts ...t
 	}
 
 	for index := range config.DaemonCount {
-		name := fmt.Sprintf("node-%d", index+1)
-		if index < 26 {
-			name = string(rune('a' + index))
-		}
-		if _, err := mirror.AddDaemon(ctx, name); err != nil {
+		if _, err := mirror.AddDaemon(ctx, multicluster.InitialMirrorDaemonName(index)); err != nil {
 			return mirror, err
 		}
 	}

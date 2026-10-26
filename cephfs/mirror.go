@@ -69,18 +69,7 @@ func (daemon *MirrorDaemon) Terminate(ctx context.Context, opts ...testcontainer
 	if daemon == nil {
 		return nil
 	}
-	if err := multicluster.LockObservation(ctx, &daemon.mu); err != nil {
-		return err
-	}
-	defer daemon.mu.Unlock()
-	if daemon.removed || daemon.Container == nil {
-		return nil
-	}
-	if err := multicluster.IgnoreMissing(daemon.Container.Terminate(ctx, opts...)); err != nil {
-		return err
-	}
-	daemon.removed = true
-	return nil
+	return multicluster.TerminateOnce(ctx, &daemon.mu, &daemon.removed, daemon.Container, opts...)
 }
 
 // Mirror owns its daemons and network attachments added to source MGR
@@ -203,11 +192,7 @@ func RunMirror(ctx context.Context, image string, config MirrorConfig, opts ...t
 		return mirror, err
 	}
 	for i := 0; i < config.DaemonCount; i++ {
-		name := "node-" + strconv.Itoa(i+1)
-		if i < 26 {
-			name = string(rune('a' + i))
-		}
-		if _, err := mirror.AddDaemon(ctx, name); err != nil {
+		if _, err := mirror.AddDaemon(ctx, multicluster.InitialMirrorDaemonName(i)); err != nil {
 			return mirror, err
 		}
 	}
