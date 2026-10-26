@@ -632,10 +632,10 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         workflow = self.workflows["code.yml"]
         jobs = self.jobs["code.yml"]
         self.assertRegex(workflow, r"(?m)^name: Code checks$")
-        self.assertEqual(set(jobs), {"unit", "race", "static", "tag-coverage", "vulncheck"})
+        self.assertEqual(set(jobs), {"changes", "unit", "race", "static", "tag-coverage", "vulncheck"})
         self.assertEqual({scalar(job.split("    steps:", 1)[0], "name") for job in jobs.values()},
-                         {"Unit tests", "Race detector", "Vet, compile and CI tooling", "Compiled tag coverage and helpers",
-                          "Vulnerability check (Go ${{ matrix.go }})"})
+                         {"Detect documentation-only changes", "Unit tests", "Race detector", "Vet, compile and CI tooling",
+                          "Compiled tag coverage and helpers", "Vulnerability check (Go ${{ matrix.go }})"})
         for event in ("push", "pull_request", "workflow_dispatch"):
             self.assertRegex(workflow, r"(?m)^  " + event + r":")
         self.assertIn("  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:", workflow)
@@ -646,12 +646,18 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertNotIn("./.github/actions/scenario-images", block)
             self.assertNotIn("./.github/actions/runtime-cleanup", block)
             self.assertNotRegex(block, r"\bdocker\s|docker://|docker/setup-")
-            self.assertNotRegex(block, r"(?m)^    needs:")
+        # Every check job waits for the documentation-only detection and nothing else.
+        self.assertNotRegex(jobs["changes"], r"(?m)^    needs:")
+        for name in ("unit", "race", "static", "tag-coverage", "vulncheck"):
+            self.assertIn("    needs: changes\n", jobs[name])
         # The weekly schedule runs only the vulnerability check.
         self.assertRegex(workflow, r"(?m)^  schedule:\n    - cron: '[^']+'$")
         for name in ("unit", "race", "static", "tag-coverage"):
-            self.assertIn("    if: github.event_name != 'schedule'\n", jobs[name])
-        self.assertNotIn("if:", jobs["vulncheck"].split("    steps:", 1)[0])
+            self.assertIn("    if: ${{ github.event_name != 'schedule' && !cancelled() && "
+                          "needs.changes.outputs.docs_only != 'true' }}\n", jobs[name])
+        # The matrix job always runs (so its expanded check name is always reported)
+        # and skips its steps instead.
+        self.assertIn("    if: ${{ !cancelled() }}\n", jobs["vulncheck"].split("    steps:", 1)[0])
         self.assertIn("make vulncheck", jobs["vulncheck"])
         self.assertIn("make test", jobs["unit"])
         self.assertIn("make race", jobs["race"])
@@ -740,7 +746,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                 uploads = [step for step in steps(block) if "uses: actions/upload-artifact" in step]
                 for upload in uploads:
                     with self.subTest(workflow=filename, job=name):
-                        self.assertEqual(scalar(upload, "if"), "always()")
+                        expected = ("${{ always() && needs.changes.outputs.docs_only != 'true' }}"
+                                    if (filename, name) == ("code.yml", "vulncheck") else "always()")
+                        self.assertEqual(scalar(upload, "if"), expected)
         runtime_steps = steps(self.jobs["tagged-runtime.yml"]["runtime"])
         native = engine_step(runtime_steps, "run")
         reporter = next(step for step in runtime_steps if "report_test_failures.py" in run_command(step))
