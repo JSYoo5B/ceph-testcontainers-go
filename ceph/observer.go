@@ -208,3 +208,40 @@ func (o *Observer) FullRatios(ctx context.Context) (FullRatioSnapshot, error) {
 	}
 	return c.FullRatios(ctx)
 }
+
+// The queries below run `rados` in the client container or a supervised scrape
+// in the control container. Each one resolves the target (validating the tenant
+// lease) and runs the Container method of the same name, so argument
+// validation, topology lock, liveness check, client or control container
+// selection, bounds and errors are the existing ones. A failed or refused
+// collection is an error; it is never returned as an empty result.
+
+// PGInconsistencies lists the objects that the last deep scrub of a PG found
+// inconsistent; see Container.PGInconsistencies.
+func (o *Observer) PGInconsistencies(ctx context.Context, pgid PGID) ([]InconsistentObject, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return nil, err
+	}
+	return c.PGInconsistencies(ctx, pgid)
+}
+
+// ObjectWatchers lists the clients watching one object; see
+// Container.ObjectWatchers.
+func (o *Observer) ObjectWatchers(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return nil, err
+	}
+	return c.ObjectWatchers(ctx, pool, namespace, object)
+}
+
+// ManagerMetrics scrapes the active manager's prometheus module once; see
+// Container.ManagerMetrics.
+func (o *Observer) ManagerMetrics(ctx context.Context) (ManagerMetrics, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return ManagerMetrics{}, err
+	}
+	return c.ManagerMetrics(ctx)
+}
