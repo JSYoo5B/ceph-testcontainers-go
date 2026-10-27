@@ -104,7 +104,6 @@ created from the **essential** image, not a published role.
 | `.github/scripts/fixtures/cephfs-quiescence-native.source.go.txt`, `cephfs-recovery-native.source.go.txt` | Retained native producer sources; their SHA-256 is asserted in `test_scenario_quiescence.py` | Never edited. |
 | `.github/scripts/fixtures/package-split.json` (`cephfsmirror.Run(ctx, source.ControlImage(), ...)` rewrite) | Rewrites the retained producers to current names so declaration parity with current helpers holds | Any change to the call text in current helpers needs a matching rewrite entry here (see "Coordination: retained producers"). |
 | Negative role fixtures: `test_run_image_matrix.py` `test_unknown_role_and_missing_essential_are_refused` (`control`, `osd`), `test_tag_scenarios.py` (`image-roles` values `osd`, `control,...`) | They assert that retired names are refused | Keep; add a comment that the values are retired names. |
-| `docs/design/api-naming-audit.md` row "Role selection and feature executors" | A reviewed decision | Contradicts #227 for `ControlImage` (see O2). Revise when the owner decides, not before. |
 
 ## Class 1 inventory: old to new
 
@@ -117,12 +116,12 @@ could get wrong.
 
 | Old | Proposed | Consumers (from code) | Kind |
 | --- | --- | --- | --- |
-| `(*ceph.Container).ControlImage()` (`ceph/ceph.go`; present since v0.1.0) | **Remove, do not rename.** Callers use the role accessor that matches what they run: `Images().Client`, `Images().RBDAux`, `Images().CephFS`, `Images().RGW`, or `Images().Essential` | 55 call sites in 43 Go files (the definition is not counted). 11 feed `nativeClientImage` (client toolkit oracle), 8 feed `nativeMirrorImage(..., "rbd-aux", ...)` and 10 feed `nativeMirrorImage(..., "cephfs", ...)` (all by the test helper in `internal/integration/services_integration_test.go`), 11 are locals that feed the mirror constructors, 2 pass it to `multisite.Run`/`RunTopology` as the gateway image, 6 only log it in receipts, 1 builds a Docker container request labelled as a MON image, 2 are negative fixtures (an image without `tc`; a stranger container), 1 is the FUSE helper, plus the definition and 3 unit-test uses | **R** for the mirror, client, multisite and FUSE call sites (the accessor returns the essential image, which is the wrong role for all of them under split roles); **N** for the rest |
-| `ceph.ClusterFacts.ControlImage` (`ceph/cluster_facts.go`; unreleased, added by #146's `FactsOf`) | **Remove.** `ClusterFacts.Images.Essential` already carries it | `FactsOf`, `ceph/cluster_facts_test.go`, `docs/ceph.md` | **N** |
-| Static-fact policy key `"ControlImage": sharedOpen` (`ceph/shared_gate.go`) | Removed with the method in the same change (the gate test cross-checks method names) | `ceph/shared_gate.go` | **N** |
+| `(*ceph.Container).ControlImage()` (`ceph/ceph.go`) | **Decided (O1): both.** Every call site that is not the essential role moves to the role accessor it runs: `Images().Client`, `Images().RBDAux`, `Images().CephFS`, `Images().RGW`. Remaining real essential uses call `EssentialImage()`, the renamed accessor. No function named `ControlImage` remains and no alias is kept (O2) | 55 call sites in 43 Go files (the definition is not counted). 11 feed `nativeClientImage` (client toolkit oracle), 8 feed `nativeMirrorImage(..., "rbd-aux", ...)` and 10 feed `nativeMirrorImage(..., "cephfs", ...)` (all by the test helper in `internal/integration/services_integration_test.go`), 11 are locals that feed the mirror constructors, 2 pass it to `multisite.Run`/`RunTopology` as the gateway image, 6 only log it in receipts, 1 builds a Docker container request labelled as a MON image, 2 are negative fixtures (an image without `tc`; a stranger container), 1 is the FUSE helper, plus the definition and 3 unit-test uses | **R** for the mirror, client, multisite and FUSE call sites (the accessor returns the essential image, which is the wrong role for all of them under split roles); **N** for the rest |
+| `ceph.ClusterFacts.ControlImage` (`ceph/cluster_facts.go`, added by #146's `FactsOf`) | **Remove.** `ClusterFacts.Images.Essential` already carries it; no replacement field | `FactsOf`, `ceph/cluster_facts_test.go`, `docs/ceph.md` | **N** |
+| Static-fact policy key `"ControlImage": sharedOpen` (`ceph/shared_gate.go`) | Renamed to `EssentialImage` with the method in the same change (the gate test cross-checks method names) | `ceph/shared_gate.go` | **N** |
 | `cephfs.WithMDSImage`, `rgw.WithImage` | **No rename proposed.** Document that they set the role-wide `ImageSet.CephFS` / `ImageSet.RGW` | `ceph/service_hooks.go` (`WithServiceImage` also writes `imageSet.CephFS`/`.RGW`); `cephfs/mirror` `RunWithImages` reads `Images().CephFS`, so `WithMDSImage` also selects the CephFS mirror daemon image | **R** (naming understates scope; owner decision O6) |
 | `rbdmirror.Run(ctx, image, ...)`, `cephfsmirror.Run(ctx, image, ...)` parameter `image` | No signature change. Doc: "the mirror **daemon** image: rbd-aux for RBD, cephfs for CephFS" | `rbd/mirror/mirror.go` (`Mirror.image` is used only to start daemons in `AddDaemon`; setup clients come from `config.*.Images().Client` through `multicluster.RunClient`); `cephfs/mirror/mirror.go` (`daemonImage`; setup through `ClientContainer`). `ValidatePair` only checks the argument is non-blank | **R** (see R1) |
-| Error text of `CreateClient`/`WithAuth` refusal: "which the control image lacks" (`ceph/auth_config.go`) | "which the essential image lacks" (the probe runs `ceph-authtool` from the first MON image, an essential responsibility) | `ceph/auth_config.go`, `ceph/errors_test.go`, `docs/guides/errors.md` | **N**, but the string is observable; list in the upgrade note (N2) |
+| Error text of `CreateClient`/`WithAuth` refusal: "which the control image lacks" (`ceph/auth_config.go`) | "which the essential image lacks" (the probe runs `ceph-authtool` from the first MON image, an essential responsibility) | `ceph/auth_config.go`, `ceph/errors_test.go`, `docs/guides/errors.md` | **N**, but the string is observable; list in the release fragment (O10) |
 
 ### Unexported fields, hooks and helpers
 
@@ -169,6 +168,7 @@ could get wrong.
 | `docs/rgw.md` ("The image passed to `Run` is the control image ... `ceph.WithImages` for OSDs"; "control image has Python") and `docs/rgw-multisite.md` ("setup client of each zone (control image)") | Passed image is the essential image; OSDs always use essential; multisite setup clients use the RGW image unless `SetupImage` is set (already stated elsewhere in that page) | **N** (the code is right) |
 | `docs/rbd.md` ("included in `control` and `all` images", "`control`/`all` image ships `cryptsetup`", `ControlContainer` runs `rbd`/`rados`) | client role (`libcryptsetup`, `cryptsetup`, `rbd`, `rados` are client capabilities) | **R** (R3) |
 | `docs/ceph.md` (18 lines): `ControlImage` section ("used for MONs, MGRs and auxiliary CLI, client and mirror containers ... use it as the image of your client containers"), `CephVersion`, `WithNoInitialManagers`, OSD memory/volume helpers, `WithClient` examples, `RunNativeCommand`, `ControlContainer` | The `ControlImage` section describes a role mix that no longer exists; client examples use `Images().Client`; the rest use "essential" | **R** for the examples and the `ControlImage` section; **N** for the rest |
+| `docs/design/api-naming-audit.md` row "Role selection and feature executors" | It says `ControlImage` retains its control-plane meaning. Superseded by O1 and O2: amend the row to name `EssentialImage` and keep `ControlContainer` | **N** |
 | `docs/design/*` (container-decomposition, post-termination-diagnostics, osd-volume-storage, bug-compatibility-audit) | Earlier design notes and audit tables that use the accessor names or "detected from the control image" | Update the two live audit tables (`bug-compatibility-audit.md` rows for `rbd mirror pool enable --remote-namespace` and `generateKeyArgs`); leave the dated decomposition notes and add a pointer here |
 
 ## Real routing and admission questions the old names hide
@@ -199,7 +199,7 @@ where a name, example or comment points an operation at the wrong image.
   verified by compilation, `make check`, the API catalogue checks and the
   affected Docker-free unit tests.
 - **Observable but not routing:** the key-type refusal text, the "cluster
-  control handle" messages, receipt values. These need the upgrade note and
+  control handle" messages, receipt values. These need the release fragment and
   the affected unit tests; no native run.
 - **Possible behavior change (needs a targeted native split-role scenario with
   actual image IDs, original data/state assertions and owned cleanup):** only
@@ -217,12 +217,12 @@ where a name, example or comment points an operation at the wrong image.
 - **#146 (static facts).** `FactsOf` and `ClusterFacts` exist. The earlier
   decomposition note counts `ControlImage` among the ten static accessors that
   are to become one function. Do not migrate the 55 `ControlImage()` callers to
-  `FactsOf(c).ControlImage`. First migrate each caller to the role accessor it
-  needs (`Images()`), and remove `ControlImage` and `ClusterFacts.ControlImage`
-  before the accessor-to-`FactsOf` caller migration, so the field is deleted
-  rather than carried across a second move. `ClusterFacts` is unreleased, so
-  its field needs no upgrade mapping. The method is in v0.1.0 to v0.3.0, so its
-  removal is an `api-break` with a migration guide and no alias.
+  `FactsOf(c).ControlImage`. First migrate each non-essential caller to the
+  role accessor it needs (`Images()`), then rename `ControlImage` to
+  `EssentialImage` for the remaining essential uses and delete
+  `ClusterFacts.ControlImage` in one `api-break` PR, before the
+  accessor-to-`FactsOf` caller migration, so no caller moves twice. Old names
+  are deleted outright: no alias, no shim and no mapping table (O2).
 - **#64 (per-daemon image identity).** The role image reference
   (`ImageSet`) and the image ID of a container generation are different
   facts. `controlImageID` is one value from the first MON at `Run`; after a
@@ -235,9 +235,9 @@ where a name, example or comment points an operation at the wrong image.
   that seam as a per-launch image when fields are folded.
 - **#216 (metadata).** Use the package-scoped catalogues and fragments.
   Public removal touches only `docs/design/api-naming/ceph/` (regenerate for
-  the `ceph` package, then approve as a separate step) and, if the cutover
-  rule applies, `docs/design/api-naming-audit.md`. Release text goes in one
-  `docs/changes/<id>.md` fragment of kind `api-break` with a migration guide;
+  the `ceph` package, then approve as a separate step) and `docs/design/api-naming-audit.md`. Release text goes in one
+  `docs/changes/<id>.md` fragment of kind `api-break`, with only what the
+  fragment validator mechanically requires and no mapping of old names;
   do not edit `Unreleased` in `CHANGELOG.md`.
 - **#155/#156/#157 (package moves).** The `rbd/mirror`, `cephfs/mirror` and
   `rgw/multisite` call sites are already in their new packages. The shared
@@ -262,57 +262,61 @@ where a name, example or comment points an operation at the wrong image.
 
 ## Proposed sequence of implementation PRs
 
-Order is chosen so that no caller is migrated twice, no public name is
-decided before the owner decides it, and each PR is small and independently
-checked.
+Order is chosen so that no caller is migrated twice and each PR is small and
+independently checked.
 
 1. **Guides and README wording (documentation-only CI).** README,
    `docs/guides/*`, `docs/contributing/testing.md`, the research note's
    historical sentence. Correct R3, R4, R5 and R7 claims using accessors that
-   exist today (`Images().Client`, `ClientContainer`). No new name appears.
-   First, because it removes wrong instructions at no API risk and shrinks the
-   later caller migration (the examples stop using `ControlImage()`).
+   exist today (`Images().Client`, `ClientContainer`). First, because it
+   removes wrong instructions at no API risk and the examples stop using
+   `ControlImage()`.
 2. **API reference pages and Go comments (full Code checks, no signature
    change).** `docs/ceph.md`, `docs/rbd-mirror.md`, `docs/rbd.md`,
    `docs/cephfs*.md`, `docs/rgw*.md` and the Go comments in the class 1 table.
    Separate from step 1 only because of CI cost and because these pages are
-   API-checked. The `ControlImage` section is left for step 5 except for its
-   incorrect role claim.
-3. **Test-side caller migration.** `internal/integration` helpers move from
-   `ControlImage()` to `Images().Client`/`RBDAux`/`CephFS`/`RGW`/`Essential`,
-   the FUSE helper (R6) is aligned, receipts log `Images()`. Test-only;
-   `make check` and `tag-compile`; package-split rewrite entries as above. No
-   native claim from compilation.
+   API-checked.
+3. **Caller migration to role accessors.** Every non-essential
+   `ControlImage()` caller (native clients, rbd-aux and cephfs mirror
+   daemons, multisite, FUSE helper R6) moves to `Images().Client`/`RBDAux`/
+   `CephFS`/`RGW`; receipts log `Images()`. Test-only; `make check` and
+   `tag-compile`; package-split rewrite entries as above. No native claim
+   from compilation.
 4. **Internal renames.** `options.controlImage` to `essentialImage`,
    `controlImageID`, hook state fields, `ServiceImage` role strings, Python and
-   comment vocabulary. Unexported only; Docker-free unit tests. After step 3 so
-   `ceph/` files are touched once, and sequenced with #146's extractions to
-   avoid shared-file conflicts.
-5. **Public removal with upgrade mapping.** Delete `Container.ControlImage` and
-   `ClusterFacts.ControlImage`, `shared_gate.go` key, reference-page section,
-   `docs/guides/upgrading-image-role-names.md` (mapping: `ControlImage()` to
-   the role accessor by use), `api-break` fragment, regenerate and then approve
-   the `ceph` catalogue. Last of the renames because it needs the owner
-   decision (O1, O2) and zero remaining callers.
+   comment vocabulary. Unexported only; Docker-free unit tests. Sequenced with
+   #146's extractions to avoid shared-file conflicts.
+5. **Rename and removal in one `api-break` PR, coordinated with #146.**
+   `Container.ControlImage` becomes `EssentialImage` for the remaining real
+   essential uses, `ClusterFacts.ControlImage` and the old reference-page
+   section are deleted, the `shared_gate.go` key follows, the audit row is
+   amended, an `api-break` fragment is added, and the `ceph` catalogue is
+   regenerated and then approved as a separate step. No alias, shim or
+   old-name mapping. Afterwards no function named `ControlImage` exists.
 6. **Option consolidation (R9) and any mirror admission (R1/O4).** Only with
    Docker-free precedence tests; and, for admission, a targeted native
    split-role scenario with actual image IDs.
 7. **Final scan guard.** A check that the current-contract wording does not
-   regress: it lists retained occurrences by path (class 3) and fails on
-   `control image`, `ControlImage`, `control or all` or `official-*-control`
+   regress: it lists retained historical records by path (class 3) and fails
+   on `control image`, `ControlImage`, `control or all` or `official-*-control`
    elsewhere, while allowing `control plane`, `control container` and
    `ControlContainer`. If a Go test reads the allowlist file, that file must
    be added to `READ_DOC_FILES`/`READ_DOC_PREFIXES` in `docs_only.py`.
 
 ## Open questions and what is not decided
 
-- **O1.** Remove `ControlImage` (proposed) or rename it to `EssentialImage`.
-  Removal avoids keeping an accessor that 43 of the 55 call sites feed to a
-  role other than essential; a rename keeps that trap under a correct name. Owner decision.
-- **O2.** `docs/design/api-naming-audit.md` currently records that
-  `ControlImage` and `ControlContainer` "retain their control-plane meaning".
-  #227 asks to revisit the first half. Whether that row is amended in step 5 or
-  earlier is undecided; `ControlContainer` is kept either way (class 2).
+- **O1 (decided).** Do both. Non-essential call sites move to the role
+  accessor the pinned contract names; the remaining real essential uses call
+  `EssentialImage`, the renamed `ControlImage`. No function named
+  `ControlImage` remains.
+- **O2 (decided).** Compatibility with published versions is not a concern.
+  Retired names are deleted outright, with no deprecated alias, shim or kept
+  mapping table. The repository's own process still applies because the API
+  surface changes: an `api-break` fragment under `docs/changes` and a
+  package-scoped catalogue regenerate followed by a separate approve. The
+  class 3 list applies only to text that is a historical record (published
+  `CHANGELOG.md` sections, old upgrade guides, retained fixtures), not to live
+  API or documentation.
 - **O3.** Whether essential, cephfs and rgw guarantee `python3` for
   `RunNativeCommand` targets. The pinned table says essential and client only;
   the guide text must not move until the image project answers.
