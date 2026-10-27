@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -59,6 +60,9 @@ var (
 	// Any other write error leaves the outcome unknown.
 	errUpgradeWriteRejected = errors.New("upgrade workload write rejected before submission")
 	errUpgradeStepConfig    = errors.New("upgrade MON step is misconfigured")
+	// errUpgradeStepConsumed is returned by every call after the first, whether
+	// the first call is finished, failed, cancelled or still running.
+	errUpgradeStepConsumed = errors.New("upgrade MON step was already run; its receipt is kept")
 )
 
 // upgradeMonEffects is the only seam to containers. Fence stops the source
@@ -274,6 +278,38 @@ type upgradeMonReceipt struct {
 
 type upgradeMonStep struct {
 	cfg upgradeMonStepConfig
+
+	mu       sync.Mutex
+	consumed bool
+	first    *upgradeMonReceipt // set once the first call finished
+}
+
+// consume claims the single run atomically. It is the first thing run does,
+// before any workload, effect or cleanup, so a second call (also a concurrent
+// one, or one after a failed or cancelled first call) performs nothing.
+func (s *upgradeMonStep) consume() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.consumed {
+		return false
+	}
+	s.consumed = true
+	return true
+}
+
+// firstReceipt returns a copy of the receipt of the one run, once it finished.
+// A refused call never replaces it.
+func (s *upgradeMonStep) firstReceipt() (upgradeMonReceipt, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.first == nil {
+		return upgradeMonReceipt{}, false
+	}
+	rc := *s.first
+	rc.Events = slices.Clone(rc.Events)
+	rc.Instances = slices.Clone(rc.Instances)
+	rc.Writes = slices.Clone(rc.Writes)
+	return rc, true
 }
 
 func newUpgradeMonStep(cfg upgradeMonStepConfig) (*upgradeMonStep, error) {
@@ -295,6 +331,23 @@ func newUpgradeMonStep(cfg upgradeMonStepConfig) (*upgradeMonStep, error) {
 // run performs the step once. It always returns a receipt. Cleanup runs on
 // every outcome, with a context that survives cancellation of ctx.
 func (s *upgradeMonStep) run(ctx context.Context) upgradeMonReceipt {
+	if !s.consume() {
+		// No ledger, write, effect, receipt callback or cleanup: the original
+		// receipt (see firstReceipt) is the only record of the run.
+		return upgradeMonReceipt{Err: errUpgradeStepConsumed}
+	}
+	rc := s.execute(ctx)
+	s.mu.Lock()
+	kept := rc
+	kept.Events = slices.Clone(rc.Events)
+	kept.Instances = slices.Clone(rc.Instances)
+	kept.Writes = slices.Clone(rc.Writes)
+	s.first = &kept
+	s.mu.Unlock()
+	return rc
+}
+
+func (s *upgradeMonStep) execute(ctx context.Context) upgradeMonReceipt {
 	var (
 		rc     upgradeMonReceipt
 		ledger upgradeWorkloadLedger

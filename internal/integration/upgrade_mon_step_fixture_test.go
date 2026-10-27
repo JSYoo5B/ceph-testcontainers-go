@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -746,21 +747,174 @@ func TestUpgradeMonStepRejectsMisconfiguration(t *testing.T) {
 	}
 }
 
+// snapshotStepEffects captures every observable side effect of a step.
+func (e *stepEnv) effectsSnapshot() string {
+	return fmt.Sprintf("writes=%v reads=%v calls=%v launches=%v disposed=%v collector=%d receipts=%d ledger=%d/%d/%d seq=%d/%d gen=%v",
+		e.workload.writes, e.workload.reads, e.effects.calls, e.effects.launches, e.effects.disposed, len(e.runner.calls), len(e.receipts),
+		len(e.seq.ledger.transitions), len(e.seq.ledger.instances), len(e.seq.ledger.owned()), e.seq.began, e.seq.settled, e.targets.generation)
+}
+
 func TestUpgradeMonStepRunsOnlyOnce(t *testing.T) {
-	env := newStepEnv(t)
-	s := env.step(nil)
-	if rc := s.run(context.Background()); rc.Err != nil {
-		t.Fatal(rc.Err)
+	outcomes := map[string]func(*stepEnv) context.Context{
+		"success": func(*stepEnv) context.Context { return context.Background() },
+		"unknown baseline write": func(e *stepEnv) context.Context {
+			e.workload.writeErr[1] = errors.New("timeout")
+			return context.Background()
+		},
+		"unknown baseline write that applied": func(e *stepEnv) context.Context {
+			e.workload.writeErr[1] = errors.New("timeout")
+			e.workload.applyOnError = true
+			return context.Background()
+		},
+		"launch error": func(e *stepEnv) context.Context {
+			e.effects.launchErr = errors.New("connection reset")
+			return context.Background()
+		},
+		"cancelled before the first write": func(*stepEnv) context.Context {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			return ctx
+		},
+		"halted by the source still present": func(e *stepEnv) context.Context {
+			e.effects.present = true
+			return context.Background()
+		},
 	}
-	// The first settled transition makes the sequence admit the next planned
-	// daemon (MON b), which is not the retained store this step owns, so the
-	// repeated run stops before it fences or starts anything and the ledger
-	// never offers a second writer for MON a.
-	rc := s.run(context.Background())
-	if rc.Err == nil {
-		t.Fatal("second run succeeded")
+	for name, setup := range outcomes {
+		t.Run(name, func(t *testing.T) {
+			env := newStepEnv(t)
+			ctx := setup(env)
+			s := env.step(nil)
+			first := s.run(ctx)
+			saved, ok := s.firstReceipt()
+			if !ok {
+				t.Fatal("no receipt kept for the first run")
+			}
+			before := env.effectsSnapshot()
+			for i := 0; i < 2; i++ {
+				// Also with a live context and after the failure was fixed.
+				env.workload.writeErr = map[int]error{}
+				env.effects.present, env.effects.launchErr = false, nil
+				rc := s.run(context.Background())
+				if !errors.Is(rc.Err, errUpgradeStepConsumed) || rc.Settled || len(rc.Events) != 0 || len(rc.Instances) != 0 || rc.Transition != "" {
+					t.Fatalf("repeated run = %+v, want only a consumed refusal", rc)
+				}
+				if after := env.effectsSnapshot(); after != before {
+					t.Fatalf("repeated run had side effects:\nbefore %s\nafter  %s", before, after)
+				}
+			}
+			kept, _ := s.firstReceipt()
+			if fmt.Sprint(kept) != fmt.Sprint(saved) || fmt.Sprint(kept.Events) != fmt.Sprint(first.Events) || fmt.Sprint(kept.Err) != fmt.Sprint(first.Err) {
+				t.Fatalf("original receipt was replaced:\n%+v\n%+v", saved, kept)
+			}
+			if len(env.receipts) != 1 {
+				t.Fatalf("receipt callback ran %d times", len(env.receipts))
+			}
+		})
 	}
-	if len(env.effects.launches) != 1 {
-		t.Fatalf("launches = %v", env.effects.launches)
+	t.Run("the original unknown write stays unknown in the kept receipt", func(t *testing.T) {
+		env := newStepEnv(t)
+		env.workload.writeErr[1] = errors.New("timeout")
+		s := env.step(nil)
+		s.run(context.Background())
+		s.run(context.Background())
+		kept, _ := s.firstReceipt()
+		if len(kept.Writes) != 1 || kept.Writes[0].Outcome != upgradeWriteUnknown || len(env.workload.writes) != 1 {
+			t.Fatalf("writes = %+v submitted %v", kept.Writes, env.workload.writes)
+		}
+	})
+	t.Run("concurrent calls run once", func(t *testing.T) {
+		env := newStepEnv(t)
+		s := env.step(nil)
+		const n = 8
+		results := make(chan upgradeMonReceipt, n)
+		var wg sync.WaitGroup
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func() { defer wg.Done(); results <- s.run(context.Background()) }()
+		}
+		wg.Wait()
+		close(results)
+		ran, refused := 0, 0
+		for rc := range results {
+			if errors.Is(rc.Err, errUpgradeStepConsumed) {
+				refused++
+			} else {
+				ran++
+			}
+		}
+		if ran != 1 || refused != n-1 || len(env.effects.launches) != 1 || len(env.workload.writes) != 4 {
+			t.Fatalf("ran %d refused %d launches %v writes %v", ran, refused, env.effects.launches, env.workload.writes)
+		}
+	})
+	t.Run("a new step over the same sequence cannot replay the transition", func(t *testing.T) {
+		env := newStepEnv(t)
+		env.step(nil).run(context.Background())
+		before := len(env.effects.launches)
+		rc := env.step(nil).run(context.Background())
+		if rc.Err == nil || len(env.effects.launches) != before || env.hasCallAfterFence() {
+			t.Fatalf("err %v launches %v", rc.Err, env.effects.launches)
+		}
+	})
+}
+
+// hasCallAfterFence reports more than one fence, i.e. a second writer attempt.
+func (e *stepEnv) hasCallAfterFence() bool {
+	n := 0
+	for _, c := range e.effects.calls {
+		if c == "fence" {
+			n++
+		}
+	}
+	return n > 1
+}
+
+// The ledger and handoff are the other entry points with side effects. Each
+// refuses a repeated call and keeps its state.
+func TestUpgradeMonStepLedgerAndHandoffRefuseRepeats(t *testing.T) {
+	l := newTestLedger(t)
+	d := ledgerDaemon("mon", "a")
+	ledgerOK(t, l.begin(ledgerBegin("t", d)))
+	repeat := func(name string, f func() error, call func() error) {
+		t.Helper()
+		ledgerOK(t, f())
+		before, _ := l.stepOf("t")
+		if err := call(); err == nil {
+			t.Fatalf("%s: repeated call accepted", name)
+		}
+		if after, _ := l.stepOf("t"); after != before {
+			t.Fatalf("%s: repeated call moved %s to %s", name, before, after)
+		}
+	}
+	ledgerOK(t, func() error {
+		if err := l.begin(ledgerBegin("t2", d)); err == nil {
+			return errors.New("second transition for the same daemon accepted")
+		}
+		return nil
+	}())
+	repeat("fence", func() error { return l.fence("t", d) }, func() error { return l.fence("t", d) })
+	repeat("oldAbsent", func() error { return l.oldAbsent("t", false, nil) }, func() error { return l.oldAbsent("t", false, nil) })
+	repeat("startAttempted", func() error { return l.startAttempted("t", "dst") }, func() error { return l.startAttempted("t", "dst2") })
+	ev := upgradeNativeEvidence{Instance: "dst", Version: "20.2.4", FSID: d.FSID, StoreID: d.StoreID}
+	repeat("confirm", func() error { return l.confirm("t", ev) }, func() error { return l.confirm("t", ev) })
+	if act, _ := l.next("t"); act != upgradeActNone {
+		t.Fatalf("next action after confirmation = %v", act)
+	}
+	h, err := newUpgradeMonHandoff(retainedMon())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.admit(launchFor(retainedMon())); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.admit(launchFor(retainedMon())); err == nil {
+		t.Fatal("handoff admitted a second writer for one transition")
+	}
+	s := newSeq(t, goodFacts(t))
+	if _, _, err := s.admit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.admit(); err == nil {
+		t.Fatal("sequence admitted a second transition before the first settled")
 	}
 }
