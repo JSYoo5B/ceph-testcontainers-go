@@ -26,11 +26,6 @@ type Status struct {
 	} `json:"pgmap"`
 }
 
-// Status queries the monitor's JSON API through the container-local CLI.
-func (c *Container) Status(ctx context.Context) (Status, error) {
-	return readStatus(ctx, c.cephCLI)
-}
-
 // WaitForClean waits until a manager is available, the native OSD count
 // equals the owned OSD count with every OSD up and in, at least one PG exists
 // and every PG is exactly active+clean. HEALTH_WARN alone does not block it.
@@ -46,7 +41,7 @@ func (c *Container) WaitForClean(ctx context.Context) error {
 	expected := len(c.osds)
 	c.mu.Unlock()
 	return c.poll(ctx, func() (bool, error) {
-		s, err := c.Status(ctx)
+		s, err := readStatus(ctx, c.cephCLI)
 		if err != nil {
 			return false, err
 		}

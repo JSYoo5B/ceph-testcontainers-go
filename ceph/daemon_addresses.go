@@ -1,7 +1,6 @@
 package ceph
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,15 +59,6 @@ type DaemonAddresses struct {
 	OSDMapEpoch      int
 	// OSDs are the OSDMap entries in ID order.
 	OSDs []OSDAddress
-}
-
-// DaemonAddresses reads the names and advertised addresses of the cluster's
-// MONs, MGRs and OSDs from the native maps. They are the addresses a client
-// learns from the cluster, which can differ from the addresses a container
-// has: a host-network cluster advertises its host address, and an OSD that
-// is down keeps its last addresses.
-func (c *Container) DaemonAddresses(ctx context.Context) (DaemonAddresses, error) {
-	return readDaemonAddresses(ctx, c.cephCLI)
 }
 
 type nativeAddressVector struct {

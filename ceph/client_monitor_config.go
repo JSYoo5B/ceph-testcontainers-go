@@ -13,11 +13,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// MonitorBootstrapAddresses returns the current majority monmap's versioned
-// address vectors, suitable for the Ceph mon_host setting. The live cluster
-// FSID must match this fixture's original bootstrap configuration. This is a
-// bounded native observation, not a network attachment or membership mutation.
-func (c *Container) MonitorBootstrapAddresses(ctx context.Context) (string, error) {
+// monitorBootstrapAddresses implements Observer.MonitorBootstrapAddresses.
+func (c *Container) monitorBootstrapAddresses(ctx context.Context) (string, error) {
 	if c == nil {
 		return "", errors.New("ceph cluster is unavailable")
 	}
@@ -95,7 +92,7 @@ func (c *Container) currentMonitorBootstrapAddresses(ctx context.Context) (strin
 	if err != nil || !confirmed {
 		return "", "", errors.New("ceph original bootstrap identity is unavailable")
 	}
-	status, err := c.QuorumStatus(ctx)
+	status, err := c.quorumStatus(ctx)
 	if err != nil {
 		return "", "", fmt.Errorf("read current monitor bootstrap: %w", err)
 	}

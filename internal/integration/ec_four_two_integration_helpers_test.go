@@ -129,7 +129,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 		t.Fatal(err)
 	}
 	size := ecFourTwoFacts(t, ctx, cluster, pool)
-	initialStates, err := cluster.OSDStates(ctx)
+	initialStates, err := observeCluster(cluster).OSDStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 			}
 		}
 	}
-	finalStates, err := cluster.OSDStates(ctx)
+	finalStates, err := observeCluster(cluster).OSDStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -209,7 +209,7 @@ func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool)
 		if _, err := cluster.AddOSD(ctx); err != nil {
 			t.Fatal(err)
 		}
-		status, err := cluster.Status(ctx)
+		status, err := observeCluster(cluster).Status(ctx)
 		parsed, parseErr := uuid.Parse(status.FSID)
 		if err != nil || parseErr != nil || parsed == uuid.Nil || parsed.String() != status.FSID || status.OSDMap.NumOSDs != 1 {
 			t.Fatal("independent one-OSD native identity unavailable", err)
@@ -254,7 +254,7 @@ sys.exit(result.returncode if result.returncode>=0 else 128-result.returncode)`}
 
 func checkMixedMessengerPeers(t *testing.T, ctx context.Context, cluster *ceph.Container, clientName string, mirror testcontainers.Container, filesystem *cephfs.Filesystem) {
 	t.Helper()
-	status, err := cluster.Status(ctx)
+	status, err := observeCluster(cluster).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

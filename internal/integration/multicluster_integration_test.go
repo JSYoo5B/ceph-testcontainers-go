@@ -77,11 +77,11 @@ func newMultiClusterPairWithContext(t *testing.T, ctx context.Context, customize
 		clusters[i] = cluster
 	}
 	source, destination := clusters[0], clusters[1]
-	a, err := source.Status(ctx)
+	a, err := observeCluster(source).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := destination.Status(ctx)
+	b, err := observeCluster(destination).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

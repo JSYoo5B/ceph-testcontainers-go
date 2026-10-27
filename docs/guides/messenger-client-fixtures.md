@@ -58,8 +58,8 @@ opens its MON session. `NoHashPSPool` clears the flag only on the pool that
 `CreatePool` creates. Ceph creates the MGR's `.mgr` pool on its own, with the
 MON's default flags, so the default has to be off before that:
 `osd_pool_default_flag_hashpspool = false` in a `WithConfigFile` file does
-that at bootstrap. Check every pool's flags with `cluster.Pools`, not only
-the pool under test.
+that at bootstrap. Check every pool's flags with `Observer.Pools` and `Pool.Status`, not
+only the pool under test.
 
 An image without `ceph-authtool --key-type`, such as Tentacle 20.2.3 or Squid,
 makes only AES keys. `Run` refuses a profile that needs `aes256k` with

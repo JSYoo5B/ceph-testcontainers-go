@@ -16,7 +16,7 @@ func waitOSDPolicyState(t *testing.T, ctx context.Context, cluster *ceph.Contain
 	defer cancel()
 	var last ceph.OSDState
 	for {
-		states, err := cluster.OSDStates(ctx)
+		states, err := observeCluster(cluster).OSDStates(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

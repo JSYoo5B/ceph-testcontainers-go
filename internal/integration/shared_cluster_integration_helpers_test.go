@@ -34,7 +34,7 @@ func newSharedCluster(t *testing.T, opts ...ceph.SharedOption) *ceph.SharedClust
 
 func sharedFSID(t *testing.T, ctx context.Context, tenant *ceph.Tenant) string {
 	t.Helper()
-	status, err := tenant.Status(ctx)
+	status, err := observeTenant(tenant).Status(ctx)
 	if err != nil || status.FSID == "" {
 		t.Fatalf("tenant status: %q, %v", status.FSID, err)
 	}

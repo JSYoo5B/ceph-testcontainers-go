@@ -49,7 +49,7 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	// Enabling a module restarts the active MGR; its commands answer again
 	// once it is back.
 	for {
-		status, err := cluster.ManagerStatus(ctx)
+		status, err := observeCluster(cluster).ManagerStatus(ctx)
 		if err == nil && status.Available {
 			if _, err := cluster.Ceph(ctx, "fs", "snap-schedule", "list", "/", "--fs", fs.FilesystemName, "--format", "json"); err == nil {
 				break

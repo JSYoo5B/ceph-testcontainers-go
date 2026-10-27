@@ -90,7 +90,7 @@ func TestServicePackages(t *testing.T) {
 			servicePackageS3(t, ctx, gateways[0], gateways[0].AccessKey, gateways[0].SecretKey, name)
 			servicePackageProbe(t, ctx, client, "rbd", "volumes")
 			servicePackageProbe(t, ctx, client, "cephfs", "shared")
-			pools, err := cluster.Pools(ctx)
+			pools, err := observeCluster(cluster).Pools(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}

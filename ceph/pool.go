@@ -67,7 +67,16 @@ type Pool struct {
 	ErasureCodeProfile string
 	owner              *Container
 	ident              *poolIdentity
+	// lease is set on a Pool that a tenant-backed Observer listed.
+	lease *poolLease
 }
+
+// poolLease is the lease that a tenant-derived Pool comes from. Every Tenant
+// is one lease and is never reused, so the pointer is the lease identity: a
+// later lease of the same shared cluster, exclusive or not, is another value.
+// The Pool checks it on every operation and applies the tenant policy under
+// it, whatever mode the cluster is in then.
+type poolLease struct{ tenant *Tenant }
 
 // poolIdentity is what the copies of one Pool handle share: the native pool
 // ID once it is known and whether the handle removed the pool. The owner's

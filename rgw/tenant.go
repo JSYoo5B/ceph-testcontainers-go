@@ -247,7 +247,11 @@ func prepareShared(ctx context.Context, c *ceph.Container) error {
 	if err != nil {
 		return err
 	}
-	existing, err := c.Pools(ctx)
+	observer, err := ceph.Observe(c)
+	if err != nil {
+		return err
+	}
+	existing, err := observer.Pools(ctx)
 	if err != nil {
 		return err
 	}

@@ -75,7 +75,7 @@ func TestRGWMinimalS3Recipe(t *testing.T) {
 	}
 	// After the first bucket and object, the gateway has created its index
 	// and data pools too; every pool has one copy.
-	pools, err := cluster.Pools(ctx)
+	pools, err := observedPoolStates(ctx, cluster.Container)
 	if err != nil {
 		t.Fatal(err)
 	}

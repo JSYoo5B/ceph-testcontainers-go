@@ -75,7 +75,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "seed")
 	volume, _ := osdVolumeBacking(t, ctx, docker.Client, cluster)
-	quorum, err := cluster.QuorumStatus(ctx)
+	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	if current, _ := osdVolumeBacking(t, ctx, docker.Client, cluster); current != volume {
 		t.Fatal("reopened volume differs")
 	}
-	currentQuorum, err := cluster.QuorumStatus(ctx)
+	currentQuorum, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil || currentQuorum.MonMap.FSID != quorum.MonMap.FSID {
 		t.Fatal("reopened FSID differs", err)
 	}

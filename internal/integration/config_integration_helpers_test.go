@@ -49,7 +49,7 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 	cephCommand(t, ctx, cluster, "config", "set", "global", option, "3600")
 	lookup := func(section, mask string) *ceph.ConfigEntry {
 		t.Helper()
-		entries, err := cluster.Configuration(ctx)
+		entries, err := observeCluster(cluster).Configuration(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -157,7 +157,7 @@ try:
         assert io.read("shared",len(payload))==payload
 finally: c.shutdown()
 `)
-	entries, err := cluster.Configuration(ctx)
+	entries, err := observeCluster(cluster).Configuration(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

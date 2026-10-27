@@ -265,7 +265,7 @@ func testECRecoveredContribution(t *testing.T) {
 
 	// Second outage: a different holder, so exactly K indices remain.
 	receipt.Stage = "second outage"
-	states, err := cluster.OSDStates(ctx)
+	states, err := observeCluster(cluster).OSDStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

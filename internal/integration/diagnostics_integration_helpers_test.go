@@ -249,7 +249,7 @@ func diagnosticsCaptureState(t *testing.T, ctx context.Context, cluster *ceph.Co
 			}
 			state.Native[name] = string(canonical)
 		}
-		identities, err := cluster.OSDStates(ctx)
+		identities, err := observeCluster(cluster).OSDStates(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -295,7 +295,7 @@ func diagnosticsAssertUnchanged(t *testing.T, before, after diagnosticsStableSta
 
 func diagnosticsFSID(t *testing.T, ctx context.Context, cluster *ceph.Container) string {
 	t.Helper()
-	status, err := cluster.Status(ctx)
+	status, err := observeCluster(cluster).Status(ctx)
 	if err != nil || status.FSID == "" {
 		t.Fatal("independent native FSID unavailable")
 	}

@@ -20,7 +20,7 @@ import (
 func TestMGRModulesReportMembershipAndNativeDependencies(t *testing.T) {
 	ctr := newMGRModuleFixture()
 	ctr.canRun["mirroring"] = false
-	modules, err := mgrModuleCluster(ctr).MGRModules(t.Context())
+	modules, err := mgrModuleCluster(ctr).mgrModules(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,14 +306,14 @@ func TestMGRModulesRefuseMalformedAndInconsistentNativeState(t *testing.T) {
 	for _, raw := range []string{"null", `{}`, `{"enabled_modules":[],"always_on_modules":[],"disabled_modules":[{"name":"bad name"}]}`, `{"enabled_modules":["mirroring"],"always_on_modules":["mirroring"],"disabled_modules":[]}`} {
 		ctr := newMGRModuleFixture()
 		ctr.rawListing = raw
-		if _, err := mgrModuleCluster(ctr).MGRModules(t.Context()); err == nil {
+		if _, err := mgrModuleCluster(ctr).mgrModules(t.Context()); err == nil {
 			t.Fatal("invalid listing accepted", raw)
 		}
 	}
 	for _, raw := range []string{"null", `{"available":true,"modules":[],"available_modules":[{"name":"mirroring"}]}`, `{"available":true,"modules":[],"available_modules":[{"name":"mirroring","can_run":true},{"name":"mirroring","can_run":true}]}`, `{"available":true,"modules":["other"],"available_modules":[]}`} {
 		ctr := newMGRModuleFixture()
 		ctr.rawDump = raw
-		if _, err := mgrModuleCluster(ctr).MGRModules(t.Context()); err == nil {
+		if _, err := mgrModuleCluster(ctr).mgrModules(t.Context()); err == nil {
 			t.Fatal("invalid dump accepted", raw)
 		}
 	}
