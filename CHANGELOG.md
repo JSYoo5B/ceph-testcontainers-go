@@ -10,6 +10,12 @@ change the API.
 
 ### API naming
 
+- Add `ceph.FactsOf(cluster) (ceph.ClusterFacts, error)`, an independent
+  snapshot of the ten static cluster facts with exported fields and no new
+  `Container` method. It also works on a terminated cluster, and a nil cluster
+  returns an error and the zero value. The snapshot holds copies only and
+  carries no control path or cleanup state. The ten `Container` accessors are
+  unchanged in this step; their migration is a separate change.
 - Add `ceph.Observe(cluster)` and `ceph.ObserveTenant(tenant)`, which return
   one `*ceph.Observer` with `Status`, `ManagerStatus` and `DaemonAddresses`, and
   no new `Container` method. Construction reads nothing and every query reads
