@@ -452,7 +452,7 @@ of the later ones.
 - Invariants: R1 to R3 unchanged; `MDSs` still uses the blocking lock and
   `mdsSnapshot` the context-aware one; creation order and descriptor identity are
   kept, including retained cleanup handles; `ConfigTargets` returns the same map;
-  partial and typed-nil handles are published as today (R7).
+  partial real handles are published and typed-nil handles are rejected as today (R7).
 - Acceptance evidence: `go vet`, `make check`; existing unit tests unchanged apart
   from field references (61 test lines move); an AST guard test, modeled on
   `TestNetworkStateRemovalFlagsHaveOneWriter`, that fails when a function outside
