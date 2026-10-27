@@ -34,7 +34,7 @@ func readManagerMetrics(ctx context.Context, services managerServicesReader, loo
 	}
 	endpoint := advertised["prometheus"]
 	if endpoint == "" {
-		return ManagerMetrics{}, invalidRequest("the MGR prometheus module serves no metrics: enable it with OverrideMGRModule and wait for ManagerServices")
+		return ManagerMetrics{}, invalidRequest("the MGR prometheus module serves no metrics: enable it with override.SetMGRModule and wait for ManagerServices")
 	}
 	if !strings.HasSuffix(endpoint, "/") {
 		endpoint += "/"

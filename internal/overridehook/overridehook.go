@@ -31,6 +31,10 @@ const (
 	// registry only records it for overlap and identity: Terminate does not
 	// undo it, the entry ends with the cluster.
 	Blocklist Kind = "Blocklist"
+	// MGRModule tracks the override of one MGR module per module name. The
+	// registry only records it for overlap and identity: Terminate does not
+	// undo it, the module state ends with the cluster.
+	MGRModule Kind = "MGRModule"
 	// FullRatios tracks the one override of the three OSDMap thresholds. The
 	// registry only records it for overlap and identity: Terminate does not
 	// undo it.
@@ -59,6 +63,11 @@ type hooks interface {
 	BlocklistEntries(ctx context.Context, c *ceph.Container) ([]ceph.BlocklistEntry, error)
 	BlocklistAdd(ctx context.Context, c *ceph.Container, address string, duration time.Duration) error
 	BlocklistRemove(ctx context.Context, c *ceph.Container, address string) error
+	ValidMGRModuleName(name string) bool
+	MGRModulesSnapshot(ctx context.Context, c *ceph.Container) ([]ceph.MGRModuleState, error)
+	WaitMGRModuleMembership(ctx context.Context, c *ceph.Container, name string, enabled, alwaysOn bool) error
+	SetMGRModule(ctx context.Context, c *ceph.Container, name string, enabled bool) error
+	ProtectMGRModule(ctx context.Context, c *ceph.Container, name string) error
 	OpenFullRatios(ctx context.Context, c *ceph.Container) (any, error)
 }
 
@@ -180,6 +189,36 @@ func BlocklistAdd(ctx context.Context, c *ceph.Container, address string, durati
 // caller holds the mutex.
 func BlocklistRemove(ctx context.Context, c *ceph.Container, address string) error {
 	return get().BlocklistRemove(ctx, c, address)
+}
+
+// ValidMGRModuleName reports whether name can be a Ceph manager module name.
+func ValidMGRModuleName(name string) bool { return get().ValidMGRModuleName(name) }
+
+// MGRModulesSnapshot waits for a coherent active-MGR snapshot of the modules
+// and returns it. ctx carries the operation deadline. The caller holds the
+// mutex.
+func MGRModulesSnapshot(ctx context.Context, c *ceph.Container) ([]ceph.MGRModuleState, error) {
+	return get().MGRModulesSnapshot(ctx, c)
+}
+
+// WaitMGRModuleMembership waits until the native listing shows the module in
+// the requested state with the given always-on property. The caller holds the
+// mutex.
+func WaitMGRModuleMembership(ctx context.Context, c *ceph.Container, name string, enabled, alwaysOn bool) error {
+	return get().WaitMGRModuleMembership(ctx, c, name, enabled, alwaysOn)
+}
+
+// SetMGRModule enables or disables one module with the native command. The
+// caller holds the mutex.
+func SetMGRModule(ctx context.Context, c *ceph.Container, name string, enabled bool) error {
+	return get().SetMGRModule(ctx, c, name, enabled)
+}
+
+// ProtectMGRModule refuses to disable a module that configured or owned
+// CephFS filesystems, or native filesystems and mirror policies, still need.
+// The caller holds the mutex.
+func ProtectMGRModule(ctx context.Context, c *ceph.Container, name string) error {
+	return get().ProtectMGRModule(ctx, c, name)
 }
 
 // OpenFullRatios captures the control container and the original bootstrap

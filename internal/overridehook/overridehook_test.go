@@ -27,6 +27,12 @@ func TestRegistryThroughHooks(t *testing.T) {
 	if err := overridehook.Admit(c, "override.AddBlocklist"); err != nil {
 		t.Fatalf("a cluster of its own refused an override: %v", err)
 	}
+	if err := overridehook.Admit(c, "override.SetMGRModule"); err != nil {
+		t.Fatalf("a cluster of its own refused the MGR module override: %v", err)
+	}
+	if !overridehook.ValidMGRModuleName("mirroring") || overridehook.ValidMGRModuleName("--force") {
+		t.Fatal("the MGR module name check changed")
+	}
 	if err := overridehook.Admit(c, "override.Unclassified"); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("an unclassified override was admitted: %v", err)
 	}
@@ -85,7 +91,32 @@ func TestRegistryThroughHooks(t *testing.T) {
 		if !overridehook.Tracks(c, first) || !overridehook.Release(c, first) || overridehook.Tracks(c, first) || overridehook.Release(c, first) {
 			t.Error("release through the hooks did not forget the token exactly once")
 		}
+		// The MGR module kind reserves its own key space.
+		module, err := overridehook.Reserve(ctx, c, overridehook.MGRModule, "mirroring")
+		if err != nil {
+			t.Errorf("reserve MGR module: %v", err)
+		}
+		if _, err := overridehook.Reserve(ctx, c, overridehook.MGRModule, "mirroring"); err == nil || err.Error() != "restore the existing MGR module override first" {
+			t.Errorf("a reserved module was reserved twice: %v", err)
+		}
+		if _, err := overridehook.Settle(c, module, nil); err != nil || overridehook.Tracks(c, module) {
+			t.Errorf("a settled reservation without a handle stayed tracked: %v", err)
+		}
 		// Without a control container every native operation fails and none panics.
+		bounded, stop := context.WithTimeout(ctx, 200*time.Millisecond)
+		defer stop()
+		if _, err := overridehook.MGRModulesSnapshot(bounded, c); err == nil {
+			t.Error("MGR module snapshot without a control container")
+		}
+		if err := overridehook.SetMGRModule(ctx, c, "mirroring", true); err == nil {
+			t.Error("MGR module change without a control container")
+		}
+		if err := overridehook.WaitMGRModuleMembership(bounded, c, "mirroring", true, false); err == nil {
+			t.Error("MGR module readback without a control container")
+		}
+		if err := overridehook.ProtectMGRModule(ctx, c, "mirroring"); err == nil {
+			t.Error("MGR module protection read without a control container")
+		}
 		if _, err := overridehook.BlocklistEntries(ctx, c); err == nil {
 			t.Error("blocklist read without a control container")
 		}

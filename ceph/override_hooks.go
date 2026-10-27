@@ -27,6 +27,7 @@ func init() {
 var overrideKindNames = map[string]faultKind{
 	"Blocklist":  faultBlocklist,
 	"FullRatios": faultFullRatios,
+	"MGRModule":  faultMGRModule,
 }
 
 // Admit refuses the override operation op while a SharedCluster shares c,
@@ -128,6 +129,38 @@ func (overrideHooks) BlocklistAdd(ctx context.Context, c *Container, address str
 func (overrideHooks) BlocklistRemove(ctx context.Context, c *Container, address string) error {
 	_, err := c.cephCLI(ctx, "osd", "blocklist", "rm", address)
 	return err
+}
+
+// ValidMGRModuleName reports whether name can be a Ceph manager module name.
+func (overrideHooks) ValidMGRModuleName(name string) bool {
+	return mgrModuleNamePattern.MatchString(name)
+}
+
+// MGRModulesSnapshot waits for a coherent active-MGR snapshot of the modules
+// and returns it. ctx carries the operation deadline. The caller holds the
+// mutex.
+func (overrideHooks) MGRModulesSnapshot(ctx context.Context, c *Container) ([]MGRModuleState, error) {
+	return c.waitMGRModules(ctx)
+}
+
+// WaitMGRModuleMembership waits until the native listing shows name in the
+// requested state with the given always-on property. The caller holds the
+// mutex.
+func (overrideHooks) WaitMGRModuleMembership(ctx context.Context, c *Container, name string, enabled, alwaysOn bool) error {
+	return c.waitMGRModuleMembership(ctx, name, enabled, alwaysOn)
+}
+
+// SetMGRModule enables or disables one module with the native command. The
+// caller holds the mutex.
+func (overrideHooks) SetMGRModule(ctx context.Context, c *Container, name string, enabled bool) error {
+	return c.setMGRModule(ctx, name, enabled)
+}
+
+// ProtectMGRModule refuses to disable a module that configured or owned
+// CephFS filesystems, or native filesystems and mirror policies, still need.
+// The caller holds the mutex.
+func (overrideHooks) ProtectMGRModule(ctx context.Context, c *Container, name string) error {
+	return c.protectMGRModule(ctx, name)
 }
 
 // OpenFullRatios captures the control container and the original bootstrap

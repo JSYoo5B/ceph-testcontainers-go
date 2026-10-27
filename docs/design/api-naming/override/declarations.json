@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "override",
-  "count": 7,
+  "count": 10,
   "entries": [
     {
       "current": "override.AddBlocklist",
@@ -48,10 +48,31 @@
       "decision": "baseline"
     },
     {
+      "current": "override.MGRModuleHandle",
+      "kind": "type",
+      "proposed": "override.MGRModuleHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.MGRModuleHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*MGRModuleHandle",
+      "proposed": "override.MGRModuleHandle.Restore",
+      "decision": "baseline"
+    },
+    {
       "current": "override.SetFullRatios",
       "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container, requested ceph.FullRatios) (*FullRatiosHandle, error)",
       "proposed": "override.SetFullRatios",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.SetMGRModule",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, name string, enabled bool) (*MGRModuleHandle, error)",
+      "proposed": "override.SetMGRModule",
       "decision": "baseline"
     }
   ]
