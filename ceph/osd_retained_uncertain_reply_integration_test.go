@@ -80,7 +80,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 	if _, err := docker.Client.ContainerInspect(ctx, oldID, mobycl.ContainerInspectOptions{}); !errdefs.IsNotFound(err) {
 		t.Fatal("old container remains", err)
 	}
-	if !c.nativeFenced[oldID] {
+	if !c.nativeCmds.fenced[oldID] {
 		t.Fatal("detached instance lost its fence")
 	}
 	before := retainedUncertainClock(t, ctx, docker.Client)

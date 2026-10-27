@@ -68,6 +68,9 @@ func readStrict(path string, into any) error {
 	if err := dec.Decode(into); err != nil {
 		return fmt.Errorf("%s: %w", filepath.Base(path), err)
 	}
+	if err := requireEOF(dec); err != nil {
+		return fmt.Errorf("%s: %w", filepath.Base(path), err)
+	}
 	return nil
 }
 

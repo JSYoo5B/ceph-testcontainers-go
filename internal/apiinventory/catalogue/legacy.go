@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"slices"
 	"strings"
@@ -55,8 +56,16 @@ func DecodeStrict(data []byte, into any) error {
 	if err := dec.Decode(into); err != nil {
 		return err
 	}
-	if dec.More() {
-		return errors.New("trailing data")
+	return requireEOF(dec)
+}
+
+// requireEOF refuses anything after the first JSON value. Decoder.More is not
+// an end-of-input check: a stray closing delimiter makes it report false.
+// Decoding again must return io.EOF exactly, which rejects a second value and
+// any trailing syntax error alike. Whitespace after the value is accepted.
+func requireEOF(dec *json.Decoder) error {
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("trailing data after the JSON value")
 	}
 	return nil
 }

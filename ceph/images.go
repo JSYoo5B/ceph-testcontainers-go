@@ -150,10 +150,7 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 		return nil, err
 	}
 	defer c.clientMu.Unlock()
-	c.nativeMu.Lock()
-	closed := c.nativeClosed
-	c.nativeMu.Unlock()
-	if closed {
+	if c.nativeCmds.isClosed() {
 		return nil, errClusterTerminated
 	}
 	if c.featureClientAttempted {
@@ -163,15 +160,11 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 		return c.featureClient, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	c.nativeMu.Lock()
-	if c.nativeClosed {
-		c.nativeMu.Unlock()
+	if !c.nativeCmds.beginClientStartup(cancel) {
 		cancel()
 		return nil, errClusterTerminated
 	}
-	c.clientStartupCancel = cancel
-	c.nativeMu.Unlock()
-	defer func() { c.nativeMu.Lock(); c.clientStartupCancel = nil; c.nativeMu.Unlock(); cancel() }()
+	defer func() { c.nativeCmds.endClientStartup(); cancel() }()
 	c.featureClientAttempted = true
 	ctr, err := testcontainers.Run(ctx, images.Client, append([]testcontainers.ContainerCustomizer{
 		c.adminClient(), c.ownedLabel(), WithIdleEntrypoint(),
@@ -193,10 +186,7 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 			}
 		}
 	}
-	c.nativeMu.Lock()
-	closed = c.nativeClosed
-	c.nativeMu.Unlock()
-	if closed {
+	if c.nativeCmds.isClosed() {
 		err = errClusterTerminated
 	}
 	if err == nil && ctr == nil {

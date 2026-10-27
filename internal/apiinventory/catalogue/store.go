@@ -210,8 +210,8 @@ func LoadReceipt(root, pkg string) (Receipt, error) {
 	if err := dec.Decode(&receipt); err != nil {
 		return receipt, fmt.Errorf("%s/%s/%s: %w", Dir, pkg, ReceiptFile, err)
 	}
-	if dec.More() {
-		return receipt, fmt.Errorf("%s/%s/%s: trailing data", Dir, pkg, ReceiptFile)
+	if err := requireEOF(dec); err != nil {
+		return receipt, fmt.Errorf("%s/%s/%s: %w", Dir, pkg, ReceiptFile, err)
 	}
 	return receipt, nil
 }

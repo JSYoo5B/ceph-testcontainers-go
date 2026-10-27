@@ -81,7 +81,7 @@ func TestClientExecutorMissingAndClosedDoNotAllocate(t *testing.T) {
 		t.Fatalf("missing client: %v %v", ctr, err)
 	}
 	c.settings.imageSet.Client = "toolkit"
-	c.nativeClosed = true
+	c.nativeCmds.closed = true
 	if ctr, err := c.ClientContainer(context.Background()); ctr != nil || !errors.Is(err, errClusterTerminated) {
 		t.Fatalf("closed client: %v %v", ctr, err)
 	}
@@ -122,7 +122,7 @@ func TestSingleImageToolkitReusesCoreWithoutAllocation(t *testing.T) {
 func TestTerminationCancelsToolkitStartup(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	c := &Container{clientStartupCancel: cancel}
+	c := &Container{nativeCmds: nativeState{clientStartupCancel: cancel}}
 	c.cancelNativeInvocations()
 	select {
 	case <-ctx.Done():
