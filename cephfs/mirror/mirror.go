@@ -694,7 +694,11 @@ func cephFSManagerCandidates(ctx context.Context, cluster *ceph.Container) ([]st
 		if err != nil {
 			return ceph.ManagerStatus{}, nil, err
 		}
-		status, err := cluster.ManagerStatus(observeCtx)
+		observer, err := ceph.Observe(cluster)
+		if err != nil {
+			return ceph.ManagerStatus{}, nil, err
+		}
+		status, err := observer.ManagerStatus(observeCtx)
 		return status, managers, err
 	})
 }

@@ -38,7 +38,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal("last-MDS cluster setup failed", err)
 	}
-	q, err := cluster.QuorumStatus(ctx)
+	q, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal("original quorum unavailable", err)
 	}
@@ -104,7 +104,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 		if current.target.id != before.target.id || current.target.metadata != before.target.metadata || !slices.Equal(current.target.data, before.target.data) || current.sibling.id != before.sibling.id || current.sibling.metadata != before.sibling.metadata || !slices.Equal(current.sibling.data, before.sibling.data) || current.sibling.active != before.sibling.active || coldMDSProcess(t, ctx, oracle, siblingMembers[0]) != siblingTask {
 			t.Fatal("original sibling/FS/pool authority changed")
 		}
-		fresh, err := cluster.QuorumStatus(ctx)
+		fresh, err := observeCluster(cluster).QuorumStatus(ctx)
 		if err != nil || fresh.MonMap.FSID != q.MonMap.FSID {
 			t.Fatal("original cluster changed", err)
 		}

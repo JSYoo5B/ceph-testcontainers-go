@@ -50,7 +50,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q, err := cluster.QuorumStatus(ctx)
+	q, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal("original MON quorum unavailable", err)
 	}
@@ -65,7 +65,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	noInitialManagerMap(t, ctx, cluster, false)
 	noInitialManagerAuth(t, ctx, cluster, nil)
-	states, err := cluster.OSDStates(ctx)
+	states, err := observeCluster(cluster).OSDStates(ctx)
 	wantOSDs := 2
 	if noStorage {
 		wantOSDs = 0
@@ -204,7 +204,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	if err != nil || p.ID != originalPoolID || p.Size != 2 || p.MinSize != 1 {
 		t.Fatal("manager/storage addition replaced original pool", err)
 	}
-	q, err = cluster.QuorumStatus(ctx)
+	q, err = observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil || q.MonMap.FSID != fsid || cluster.GetContainerID() != originalMONCID || manager.GetContainerID() != originalMGRCID || cluster.ManagerContainer() != manager.Container || noInitialManagerMap(t, ctx, cluster, true) != gid || customizers.Load() != 1 {
 		t.Fatal("provisioning replaced original MON/MGR identity", err)
 	}
@@ -212,7 +212,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		finalOSDCIDs = append(finalOSDCIDs, osd.GetContainerID())
 	}
-	finalStates, err := cluster.OSDStates(ctx)
+	finalStates, err := observeCluster(cluster).OSDStates(ctx)
 	if err != nil || len(finalStates) != 2 || !noStorage && (!slices.Equal(states, finalStates) || !slices.Equal(originalOSDCIDs, finalOSDCIDs)) {
 		t.Fatal("first management provisioning changed original storage", err)
 	}
@@ -253,7 +253,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 // both the flag and mute are restored before the original strict closure.
 func noInitialManagerHealthMutes(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid string) (func(), func()) {
 	t.Helper()
-	flags, err := cluster.OSDFlags(ctx)
+	flags, err := observeCluster(cluster).OSDFlags(ctx)
 	if err != nil || slices.Contains(flags, "noout") {
 		t.Fatal("fresh fixture has no exact unmodified noout baseline", err)
 	}

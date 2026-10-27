@@ -66,7 +66,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 				}
 			}
 			verify()
-			initial, err := cluster.OSDStates(ctx)
+			initial, err := observeCluster(cluster).OSDStates(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +110,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			states, err := cluster.OSDStates(ctx)
+			states, err := observeCluster(cluster).OSDStates(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}

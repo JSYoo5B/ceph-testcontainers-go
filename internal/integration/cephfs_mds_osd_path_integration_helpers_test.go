@@ -136,7 +136,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	if len(osds) != osdCount {
 		t.Fatalf("want %d owned OSDs, have %d", osdCount, len(osds))
 	}
-	daemons, err := m.cluster.DaemonAddresses(ctx)
+	daemons, err := observeCluster(m.cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	if err != nil || len(status.Active) != 1 || status.Active[0].GID != m.mds.GID {
 		t.Fatalf("mds.%s GID %d was replaced: %+v, %v", m.mds.Name, m.mds.GID, status, err)
 	}
-	entries, err := m.cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(m.cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

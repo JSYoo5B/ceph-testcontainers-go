@@ -20,10 +20,8 @@ type ObjectWatcher struct {
 	Cookie   uint64
 }
 
-// ObjectWatchers lists the clients watching one object, including clients
-// outside this fixture. Namespace is empty for the default namespace. It
-// reads native state only and grants no ownership.
-func (c *Container) ObjectWatchers(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error) {
+// objectWatchers implements Observer.ObjectWatchers.
+func (c *Container) objectWatchers(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error) {
 	if err := validateExistingPoolName(pool); err != nil {
 		return nil, err
 	}

@@ -72,7 +72,7 @@ func testManagerMonClients(t *testing.T) {
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	var last string
 	for deadline := time.Now().Add(2 * time.Minute); ; {
-		status, err := cluster.ManagerStatus(ctx)
+		status, err := observeCluster(cluster).ManagerStatus(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

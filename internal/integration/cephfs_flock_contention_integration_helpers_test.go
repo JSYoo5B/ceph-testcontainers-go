@@ -198,7 +198,7 @@ func testCephFSFlockContention(t *testing.T) {
 		t.Fatalf("contender's unlock: %+v", released)
 	}
 
-	entries, err := m.cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(m.cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

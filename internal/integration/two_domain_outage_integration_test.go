@@ -73,7 +73,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	if len(osds) != 3 || len(monitors) != 3 || len(managers) != 2 {
 		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(monitors), len(managers))
 	}
-	states, err := cluster.OSDStates(ctx)
+	states, err := observeCluster(cluster).OSDStates(ctx)
 	if err != nil || len(states) != 3 {
 		t.Fatalf("initial OSD identities: %v %+v", err, states)
 	}
@@ -102,7 +102,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 
 	// Map 2: outage membership, which also places MONs and MGRs. Nothing in
 	// Ceph says where they live; this manifest is the simulation's claim.
-	managerBefore, err := cluster.ManagerStatus(ctx)
+	managerBefore, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil || !managerBefore.Available || len(managerBefore.Standbys) != 1 {
 		t.Fatalf("initial MGR identities: %+v %v", managerBefore, err)
 	}
@@ -317,9 +317,9 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer recoverCancel()
 	for {
-		q, qerr := cluster.QuorumStatus(recoverCtx)
-		m, merr := cluster.ManagerStatus(recoverCtx)
-		s, serr := cluster.OSDStates(recoverCtx)
+		q, qerr := observeCluster(cluster).QuorumStatus(recoverCtx)
+		m, merr := observeCluster(cluster).ManagerStatus(recoverCtx)
+		s, serr := observeCluster(cluster).OSDStates(recoverCtx)
 		if qerr == nil && merr == nil && serr == nil && len(q.QuorumNames) == 3 && m.Available && len(m.Standbys) == 1 &&
 			slices.EqualFunc(states, s, func(a, b ceph.OSDState) bool { return a.ID == b.ID && a.UUID == b.UUID && b.Up && b.In }) {
 			break

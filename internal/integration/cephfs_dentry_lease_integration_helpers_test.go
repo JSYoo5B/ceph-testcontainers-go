@@ -238,7 +238,7 @@ func testCephFSDentryLeaseRecall(t *testing.T) {
 	if retained := cephFSRetainedSession(t, ctx, fs, holderID, 0); retained.Address != session.Address || retained.PID != session.PID {
 		t.Fatalf("holder session %+v, before %+v", retained, session)
 	}
-	entries, err := cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

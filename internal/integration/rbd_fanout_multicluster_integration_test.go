@@ -33,7 +33,7 @@ func TestMultiClusterRBDSnapshotFanout(t *testing.T) {
 	const image = pool + "/" + name
 	const size = 8 << 20
 	for i, cluster := range clusters {
-		status, err := cluster.Status(ctx)
+		status, err := observeCluster(cluster).Status(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

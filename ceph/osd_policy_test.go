@@ -24,7 +24,7 @@ const osdPolicyUUID = "f7e51c0d-b1c5-4b02-9cf3-07e980da36f1"
 func TestOSDStatesAndMembershipVerifyOwnedUUID(t *testing.T) {
 	ctr := &osdPolicyFixture{osds: []OSDState{{ID: 3, UUID: osdPolicyUUID, Up: true, In: true, Weight: 0.75}}}
 	c := osdPolicyCluster(ctr)
-	states, err := c.OSDStates(t.Context())
+	states, err := c.osdStates(t.Context())
 	if err != nil || len(states) != 1 || states[0] != ctr.osds[0] {
 		t.Fatalf("authoritative owned state: %v %v", states, err)
 	}
@@ -40,7 +40,7 @@ func TestOSDStatesAndMembershipVerifyOwnedUUID(t *testing.T) {
 	}
 	ctr.osds[0].UUID = "c09ab9b3-3f50-4169-a6a4-4a58ab1c0d6c"
 	before = len(ctr.calls)
-	if _, err := c.OSDStates(t.Context()); err == nil {
+	if _, err := c.osdStates(t.Context()); err == nil {
 		t.Fatal("outside replacement accepted for native state")
 	}
 	if err := osdHandle(t, t.Context(), c, 3).SetIn(t.Context(), false); err == nil || len(ctr.calls) != before+2 || !ctr.osds[0].In {
@@ -69,7 +69,7 @@ func TestOSDMembershipRejectsAbsentAndPostMutationReplacement(t *testing.T) {
 	}
 	c.osds[3].nativeUUID = osdPolicyUUID
 	c.osds[3].purged = true
-	if _, err := c.OSDStates(t.Context()); err == nil {
+	if _, err := c.osdStates(t.Context()); err == nil {
 		t.Fatal("purged registration treated as active")
 	}
 }
@@ -147,7 +147,7 @@ func TestOSDFlagValidationAndMalformedDump(t *testing.T) {
 	}
 	for _, raw := range []string{`null`, `{}`, `{"flags":[],"osds":[]}`, `{"flags":"noout,noout","osds":[]}`, `{"flags":"noout,","osds":[]}`, `{"flags":"","osds":[{"osd":3,"up":1,"in":2,"weight":1}]}`, `{"flags":"","osds":[{"osd":3,"up":1,"in":1,"weight":1},{"osd":3,"up":1,"in":1,"weight":1}]}`} {
 		ctr := &osdPolicyFixture{raw: raw}
-		if _, err := osdPolicyCluster(ctr).OSDFlags(t.Context()); err == nil {
+		if _, err := osdPolicyCluster(ctr).osdFlags(t.Context()); err == nil {
 			t.Fatal("malformed native dump accepted", raw)
 		}
 	}

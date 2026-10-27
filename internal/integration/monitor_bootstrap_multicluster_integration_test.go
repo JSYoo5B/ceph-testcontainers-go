@@ -35,11 +35,11 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
 			source, destination, sourceClient, destinationClient := newMultiClusterPair(t, opts...)
-			sourceStatus, err := source.Status(ctx)
+			sourceStatus, err := observeCluster(source).Status(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			destinationStatus, err := destination.Status(ctx)
+			destinationStatus, err := observeCluster(destination).Status(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -165,7 +165,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 				recorder := newMonReplacementRecorder([]string{"source", "destination"}[i], withSockets(t, cluster), monReplacementDefaultBounds, stopped...).withDaemons(mdss...)
 				t.Cleanup(func() { finishMonReplacement(t, recorder) })
 				runMonReplacement(t, ctx, recorder, [][2]string{{"a", "d"}, {"b", "e"}, {"c", "f"}})
-				quorum, err := cluster.QuorumStatus(ctx)
+				quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -201,7 +201,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			if rbdScenarioPeer(t, ctx, rbdMirror, pool) != originalRBDPeer {
 				t.Fatal("RBD bootstrap refresh replaced the original receiving peer")
 			}
-			currentSource, err := source.MonitorBootstrapAddresses(ctx)
+			currentSource, err := observeCluster(source).MonitorBootstrapAddresses(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -212,7 +212,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			if err := mirror.RefreshPeerMonitorConfig(ctx); err != nil {
 				t.Fatal(err)
 			}
-			currentDestination, err := destination.MonitorBootstrapAddresses(ctx)
+			currentDestination, err := observeCluster(destination).MonitorBootstrapAddresses(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -220,7 +220,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			monitorBootstrapAssertPeerConfig(t, peerBefore, peerAfter, currentDestination)
 			for _, n := range nodes {
 				config := monitorRollingFile(t, ctx, n.ctr, "/etc/ceph/ceph.conf")
-				current, err := n.cluster.MonitorBootstrapAddresses(ctx)
+				current, err := observeCluster(n.cluster).MonitorBootstrapAddresses(ctx)
 				if err != nil || monitorRollingBootstrap(config) != "mon host = "+current || monitorRollingBootstrap(config) == monitorRollingBootstrap(n.config) {
 					t.Fatalf("explicit refresh did not adopt new monitor addresses: container=%s error=%v", n.id[:12], err)
 				}

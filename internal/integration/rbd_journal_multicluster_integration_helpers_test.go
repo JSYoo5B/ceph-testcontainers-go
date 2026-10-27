@@ -28,11 +28,11 @@ func testMultiClusterRBDJournalMirrorFailback(t *testing.T, opts ...testcontaine
 	const size = 8 << 20
 	rbdMultiClusterPool(t, ctx, source, sourceClient, pool)
 	rbdMultiClusterPool(t, ctx, destination, destinationClient, pool)
-	sourceStatus, err := source.Status(ctx)
+	sourceStatus, err := observeCluster(source).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationStatus, err := destination.Status(ctx)
+	destinationStatus, err := observeCluster(destination).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

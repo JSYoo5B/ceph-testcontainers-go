@@ -110,7 +110,8 @@ type QuorumStatus struct {
 	} `json:"monmap"`
 }
 
-func (c *Container) QuorumStatus(ctx context.Context) (QuorumStatus, error) {
+// quorumStatus implements Observer.QuorumStatus.
+func (c *Container) quorumStatus(ctx context.Context) (QuorumStatus, error) {
 	control, err := c.controlContainerContext(ctx)
 	if err != nil {
 		return QuorumStatus{}, fmt.Errorf("select monitor quorum control: %w", err)
@@ -124,7 +125,7 @@ func (c *Container) WaitForQuorum(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	return c.poll(ctx, func() (bool, error) {
-		status, err := c.QuorumStatus(ctx)
+		status, err := c.quorumStatus(ctx)
 		return len(status.MonMap.Mons) > 0 && len(status.QuorumNames) > len(status.MonMap.Mons)/2, err
 	})
 }
@@ -160,7 +161,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	status, err := c.QuorumStatus(ctx)
+	status, err := c.quorumStatus(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("inspect monitor membership: %w", err)
 	}
@@ -251,7 +252,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 		}
 	}
 	if err := c.poll(ctx, func() (bool, error) {
-		status, err := c.QuorumStatus(ctx)
+		status, err := c.quorumStatus(ctx)
 		return slices.Contains(status.QuorumNames, name), err
 	}); err != nil {
 		return mon, fmt.Errorf("join monitor %s to quorum: %w", name, err)
@@ -278,7 +279,7 @@ func (c *Container) removeMonitor(ctx context.Context, handle *MonitorContainer)
 	defer cancel()
 	var status QuorumStatus
 	if err := c.poll(ctx, func() (bool, error) {
-		current, err := c.QuorumStatus(ctx)
+		current, err := c.quorumStatus(ctx)
 		if err != nil {
 			return false, err
 		}
@@ -399,7 +400,7 @@ func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, remove
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		current, err := c.QuorumStatus(ctx)
+		current, err := c.quorumStatus(ctx)
 		if err != nil {
 			return false, err
 		}
@@ -768,7 +769,7 @@ func (c *Container) startManager(ctx context.Context, name, image string) (*Mana
 			return nil, invalid(fmt.Errorf("manager identity mgr.%s already exists", name))
 		}
 	}
-	status, err := c.ManagerStatus(ctx)
+	status, err := readManagerStatus(ctx, c.cephCLI)
 	if err != nil {
 		return nil, err
 	}
@@ -803,7 +804,7 @@ func (c *Container) startManager(ctx context.Context, name, image string) (*Mana
 // standby.
 func (c *Container) waitManagerRegistered(ctx context.Context, name string) error {
 	if err := c.poll(ctx, func() (bool, error) {
-		status, err := c.ManagerStatus(ctx)
+		status, err := readManagerStatus(ctx, c.cephCLI)
 		if status.ActiveName == name && status.Available {
 			return true, err
 		}
@@ -845,7 +846,7 @@ func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer)
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	status, err := c.ManagerStatus(ctx)
+	status, err := readManagerStatus(ctx, c.cephCLI)
 	if err != nil {
 		return err
 	}
@@ -888,7 +889,7 @@ func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer)
 		}
 	}
 	if err := c.poll(ctx, func() (bool, error) {
-		status, err := c.ManagerStatus(ctx)
+		status, err := readManagerStatus(ctx, c.cephCLI)
 		_, present := managerMapGID(status, name)
 		return !present && status.Available && candidates[status.ActiveName], err
 	}); err != nil {
@@ -929,10 +930,6 @@ type ManagerStatus struct {
 	} `json:"standbys"`
 }
 
-func (c *Container) ManagerStatus(ctx context.Context) (ManagerStatus, error) {
-	return readManagerStatus(ctx, c.cephCLI)
-}
-
 // monitorRemovalObserveInterval spaces membership reads while a removal runs.
 const monitorRemovalObserveInterval = 500 * time.Millisecond
 
@@ -956,7 +953,7 @@ func (c *Container) removeMonitorMember(ctx context.Context, hosts, name string)
 		case err := <-done:
 			return err
 		case <-ticker.C:
-			status, err := c.QuorumStatus(command)
+			status, err := c.quorumStatus(command)
 			if err != nil || len(status.MonMap.Mons) == 0 {
 				continue
 			}

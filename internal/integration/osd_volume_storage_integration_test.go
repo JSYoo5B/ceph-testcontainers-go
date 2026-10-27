@@ -124,7 +124,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "fresh-after-purge")
-	q, err := cluster.QuorumStatus(ctx)
+	q, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

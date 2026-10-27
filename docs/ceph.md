@@ -893,7 +893,11 @@ cluster endpoint, IPv4 and IPv6, and keeps its public endpoint.
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 	ceph.WithAddressFamily(ceph.AddressIPv6), ceph.WithSeparateClusterNetwork())
-addresses, err := cluster.DaemonAddresses(ctx)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+addresses, err := observer.DaemonAddresses(ctx)
 // With Docker Desktop's default IPv6 pool, for example:
 // addresses.OSDs[0].Public[0].Addr  == "[fd62:93fe:2c9e::4]:6800"
 // addresses.OSDs[0].Cluster[0].Addr == "[fd62:93fe:2c9e:1::2]:6800"
@@ -933,7 +937,11 @@ selected family for every daemon, including the heartbeat addresses of OSDs.
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 	ceph.WithAddressFamily(ceph.AddressIPv4MappedIPv6))
-addresses, err := cluster.DaemonAddresses(ctx)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+addresses, err := observer.DaemonAddresses(ctx)
 // addresses.Monitors[0].Addrs[0].Addr == "[::ffff:172.19.0.2]:3300"
 ```
 
@@ -968,7 +976,11 @@ and v1 unless [WithMessengerMode](#withmessengermode) removes it.
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 	ceph.WithAddressFamily(ceph.AddressDualStack))
-addresses, err := cluster.DaemonAddresses(ctx)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+addresses, err := observer.DaemonAddresses(ctx)
 // addresses.Monitors[0].Addrs:
 //   v2 [fd62:93fe:2c9e::2]:3300, v1 [fd62:93fe:2c9e::2]:6789,
 //   v2 172.19.0.2:3300, v1 172.19.0.2:6789
@@ -1123,7 +1135,11 @@ cuts only that family of the path: the same daemon stays reachable over IPv4,
 and the container's paths to other daemons are untouched.
 
 ```golang
-addresses, err := cluster.DaemonAddresses(ctx)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+addresses, err := observer.DaemonAddresses(ctx)
 // osd.1 lists [fd62:93fe:2c9e::4]:6800 first; a native client dials it.
 peer := netip.MustParseAddrPort("[fd62:93fe:2c9e::4]:6800")
 cut, err := fault.ApplyNetworkProfile(ctx, cluster, client, fault.NetworkProfile{
@@ -1301,15 +1317,6 @@ func (t *Tenant) WithClientIdentity(client *ClientConfig, opts ...ClientContaine
 func (t *Tenant) CreateClient(ctx context.Context, name string, access TenantAccess) (*ClientConfig, error)
 func (t *Tenant) RunNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error)
 
-func (t *Tenant) Status(ctx context.Context) (Status, error)
-func (t *Tenant) HealthDetails(ctx context.Context) (HealthSnapshot, error)
-func (t *Tenant) Pools(ctx context.Context) ([]PoolState, error)
-func (t *Tenant) PoolStatus(ctx context.Context, name string) (PoolState, error)
-func (t *Tenant) PoolUsage(ctx context.Context, name string) (PoolUsageSnapshot, error)
-func (t *Tenant) ObjectWatchers(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error)
-func (t *Tenant) OSDFlags(ctx context.Context) ([]OSDFlag, error)
-func (t *Tenant) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, error)
-
 const SharedPool = "tenants"
 const (
 	TenantReadOnly TenantAccess = iota + 1
@@ -1332,15 +1339,15 @@ namespace only. `WithClient` and `WithClientIdentity` attach a container like
 the `Container` methods of the same names: it gets `ceph.conf` and the
 client's keyring, never the admin keyring, and a label that marks it as the
 tenant's. `RunNativeCommand` runs a command only in a container with that
-label. The other methods are the read-only views of the `Container` methods of
-the same names.
+label. The tenant has no read-only views of its own: `ceph.ObserveTenant(tenant)`
+returns the [Observer](#observer) that reads the shared cluster for it.
 
 What a tenant can do:
 
 - read and write objects of its own namespace, through its clients;
 - create read-only and read-write clients of that namespace;
 - read the cluster's status, health, pools, usage, watchers, OSD flags and
-  blocklist.
+  blocklist through `ceph.ObserveTenant(tenant)`.
 
 What it cannot do, checked natively:
 
@@ -2327,7 +2334,7 @@ is matched by its name and container, not by pointer identity.
 #### QuorumStatus
 
 ```golang
-func (c *Container) QuorumStatus(ctx context.Context) (ceph.QuorumStatus, error)
+func (o *Observer) QuorumStatus(ctx context.Context) (ceph.QuorumStatus, error)
 ```
 
 Returns the native `quorum_status`: `QuorumNames` (members currently in quorum)
@@ -2349,7 +2356,7 @@ to run.
 #### MonitorBootstrapAddresses
 
 ```golang
-func (c *Container) MonitorBootstrapAddresses(ctx context.Context) (string, error)
+func (o *Observer) MonitorBootstrapAddresses(ctx context.Context) (string, error)
 ```
 
 Returns the current majority monmap's versioned address vectors in the format of
@@ -2387,7 +2394,11 @@ active manager's container to trigger a standby takeover, or stop the only
 manager to test behaviour without a manager:
 
 ```golang
-status, err := cluster.ManagerStatus(ctx)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+status, err := observer.ManagerStatus(ctx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -2450,7 +2461,7 @@ error.
 #### ManagerStatus
 
 ```golang
-func (c *Container) ManagerStatus(ctx context.Context) (ceph.ManagerStatus, error)
+func (o *Observer) ManagerStatus(ctx context.Context) (ceph.ManagerStatus, error)
 ```
 
 Returns the native MGR map summary: `Available`, `ActiveName`, `ActiveGID` and
@@ -2487,35 +2498,39 @@ func (o *Observer) FullRatios(ctx context.Context) (ceph.FullRatioSnapshot, erro
 func (o *Observer) PGInconsistencies(ctx context.Context, pgid ceph.PGID) ([]ceph.InconsistentObject, error)
 func (o *Observer) ObjectWatchers(ctx context.Context, pool, namespace, object string) ([]ceph.ObjectWatcher, error)
 func (o *Observer) ManagerMetrics(ctx context.Context) (ceph.ManagerMetrics, error)
+func (o *Observer) Pools(ctx context.Context) ([]*ceph.Pool, error)
 ```
 
 Each query reads the cluster when it is called; constructing an `Observer`
 captures nothing and a retained one never returns an earlier result. A query is
-not an atomic cluster-wide snapshot. Each query has the execution path, context
-handling and errors of the `Container` method of the same name. A
-tenant-backed `Observer` checks its lease on every query, so after the tenant is
-released or the shared cluster is terminated every query returns an error that
-matches `ErrInvalidRequest`. A cluster-backed `Observer` has no lease, and its
+not an atomic cluster-wide snapshot. These queries are methods of the
+`Observer` only: the `Container` and the `Tenant` have no method of the same
+names. A tenant-backed `Observer` checks its lease on every query, so after
+the tenant is released or the shared cluster is terminated every query returns
+an error that matches `ErrInvalidRequest`. A cluster-backed `Observer` has no lease, and its
 queries after `Terminate` fail with the error of the command path. An
 `Observer` exposes only its queries, owns no resource and needs no cleanup.
 `Configuration`, `BlocklistEntries`, `MGRModules`, `OSDFlags`, `OSDStates` and
-`ManagerServices` take the topology lock first, each as its `Container` method
-does, and refuse a terminated cluster before running a command.
+`ManagerServices` take the topology lock first and refuse a terminated cluster
+before running a command.
 `ManagerServices` waits for the lock under `ctx`; the others wait for it without
 a context. `QuorumStatus` takes no topology lock and selects the control
 container for each read. `MonitorBootstrapAddresses`, `HealthDetails` and
 `FullRatios` wait for the topology lock under `ctx`, refuse a terminated cluster
-before running a command, and keep the control handle and original-FSID checks
-of their `Container` methods. `QuorumStatus` has no liveness check, so on a
+before running a command, and keep the control handle and original-FSID checks.
+`QuorumStatus` has no liveness check, so on a
 terminated cluster it fails with the error of the command path.
 `PGInconsistencies` and `ObjectWatchers` validate their arguments, wait for the
 topology lock (`PGInconsistencies` under `ctx`, `ObjectWatchers` without a
 context), refuse a terminated cluster and then run `rados` in the client
-container that the client image role selects, as their `Container` methods do.
+container that the client image role selects.
 `ManagerMetrics` reads `ManagerServices` first and then runs the bounded
 supervised scrape in the control container. A refused or failed collection is an
-error and is never returned as an empty result. All sixteen observations are now
-available through an `Observer`, and the `Container` methods stay.
+error and is never returned as an empty result. `Pools` lists the pools as
+`Pool` objects (see [Pools](#pools)). The `Observer` stays in package `ceph`,
+because its queries need the captured control handle, the topology and
+configuration locks and the shared-cluster admission, which are internal to the
+package.
 
 #### OSDs
 
@@ -2713,7 +2728,7 @@ in another cluster are not.
 #### OSDStates
 
 ```golang
-func (c *Container) OSDStates(ctx context.Context) ([]ceph.OSDState, error)
+func (o *Observer) OSDStates(ctx context.Context) ([]ceph.OSDState, error)
 ```
 
 Returns the OSDMap state of the owned OSDs sorted by ID: `ID`, `UUID`, `Up`, `In`
@@ -2737,7 +2752,7 @@ but does not block an explicit `OSDContainer.SetIn(ctx, false)`.
 #### OSDFlags
 
 ```golang
-func (c *Container) OSDFlags(ctx context.Context) ([]ceph.OSDFlag, error)
+func (o *Observer) OSDFlags(ctx context.Context) ([]ceph.OSDFlag, error)
 ```
 
 Lists the exact global OSDMap flag tokens as [OSDFlag](#osdflag) values,
@@ -2835,11 +2850,25 @@ appData, err := cluster.Pool(ctx, "app-data")
 #### Pools
 
 ```golang
-func (c *Container) Pools(ctx context.Context) ([]ceph.PoolState, error)
+func (o *Observer) Pools(ctx context.Context) ([]*ceph.Pool, error)
 ```
 
-Lists the current native policy of every pool, including pools created by Ceph,
-by services or through the CLI.
+Lists every pool, including pools created by Ceph, by services or through the
+CLI, as one `*ceph.Pool` for each. Each handle identifies its native pool by
+name and native ID, like the handle of [Container.Pool](#pool), and describes
+what the listing reports: `Name`, `PGNum`, `Replicas` of a replicated pool,
+`MinSize` and `ErasureCodeProfile`. Read the full native state with
+[Pool.Status](#poolstatus), the usage with [Pool.Usage](#poolusage) and the PGs
+with `Pool.PGs`. The listing is one read of the native pool map, so a failed or
+malformed listing is an error and never an empty list. The `Observer` of a
+tenant lists the pools too. Each of its handles remembers the tenant lease and
+checks it on every operation, reads included: after the tenant is released or
+its shared cluster is terminated, every operation returns an error that matches
+`ErrInvalidRequest` without reaching the cluster. Operations that change a pool
+are always refused with `ErrSharedCluster`, also after the cluster has been lent
+to a later exclusive lease. Handles of `Container.Pool` and of a cluster-backed
+`Observer` are unchanged. The usage of `SharedPool` includes the objects of the
+other tenants.
 
 #### Pool.Status
 
@@ -3529,7 +3558,7 @@ preparing OSDs before they start.
 #### Configuration
 
 ```golang
-func (c *Container) Configuration(ctx context.Context) ([]ceph.ConfigEntry, error)
+func (o *Observer) Configuration(ctx context.Context) ([]ceph.ConfigEntry, error)
 ```
 
 Lists the exact entries stored in the central configuration database, including
@@ -3631,7 +3660,7 @@ are not established yet.
 #### MGRModules
 
 ```golang
-func (c *Container) MGRModules(ctx context.Context) ([]ceph.MGRModuleState, error)
+func (o *Observer) MGRModules(ctx context.Context) ([]ceph.MGRModuleState, error)
 ```
 
 Lists configured and available manager modules sorted by name. Each
@@ -3670,7 +3699,7 @@ Success does not mean that queued worker tasks have completed.
 #### ManagerServices
 
 ```golang
-func (c *Container) ManagerServices(ctx context.Context) (map[string]string, error)
+func (o *Observer) ManagerServices(ctx context.Context) (map[string]string, error)
 ```
 
 Returns the service URLs that the active manager advertises in the MGR map,
@@ -3685,7 +3714,7 @@ advertises a service. See
 #### ManagerMetrics
 
 ```golang
-func (c *Container) ManagerMetrics(ctx context.Context) (ceph.ManagerMetrics, error)
+func (o *Observer) ManagerMetrics(ctx context.Context) (ceph.ManagerMetrics, error)
 ```
 
 Scrapes the active manager's `prometheus` module once and returns its
@@ -3718,7 +3747,11 @@ the module's tests do not cover that setting). Each daemon's own counters are
 also in `osd.AdminSocket(ctx, "perf", "dump")`.
 
 ```golang
-metrics, err := cluster.ManagerMetrics(ctx)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+metrics, err := observer.ManagerMetrics(ctx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -3733,7 +3766,7 @@ few seconds: poll until the expected value appears.
 #### Status
 
 ```golang
-func (c *Container) Status(ctx context.Context) (ceph.Status, error)
+func (o *Observer) Status(ctx context.Context) (ceph.Status, error)
 ```
 
 Runs `ceph status --format json` and decodes the subset used for readiness:
@@ -3744,7 +3777,7 @@ Runs `ceph status --format json` and decodes the subset used for readiness:
 #### HealthDetails
 
 ```golang
-func (c *Container) HealthDetails(ctx context.Context) (ceph.HealthSnapshot, error)
+func (o *Observer) HealthDetails(ctx context.Context) (ceph.HealthSnapshot, error)
 ```
 
 Reads `ceph health detail` from one control container, checking the cluster's
@@ -3776,8 +3809,12 @@ Ceph raises many checks only after a delay, so poll with a deadline:
 func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	observer, err := ceph.Observe(cluster)
+	if err != nil {
+		return err
+	}
 	for {
-		health, err := cluster.HealthDetails(ctx)
+		health, err := observer.HealthDetails(ctx)
 		if err == nil {
 			if check, ok := health.Checks[code]; ok && !check.Muted {
 				return nil
@@ -3864,7 +3901,7 @@ if override != nil {
 #### ObjectWatchers
 
 ```golang
-func (c *Container) ObjectWatchers(ctx context.Context, pool, namespace, object string) ([]ceph.ObjectWatcher, error)
+func (o *Observer) ObjectWatchers(ctx context.Context, pool, namespace, object string) ([]ceph.ObjectWatcher, error)
 ```
 
 Lists the clients watching one RADOS object (`rados listwatchers`), including
@@ -3879,7 +3916,7 @@ been removed. It reads native state only.
 #### BlocklistEntries
 
 ```golang
-func (c *Container) BlocklistEntries(ctx context.Context) ([]ceph.BlocklistEntry, error)
+func (o *Observer) BlocklistEntries(ctx context.Context) ([]ceph.BlocklistEntry, error)
 ```
 
 Lists the OSDMap blocklist: exact client addresses and CIDR ranges, including
@@ -3914,7 +3951,7 @@ session and a new connection recover. See [Fence one client session](#fence-one-
 #### FullRatios
 
 ```golang
-func (c *Container) FullRatios(ctx context.Context) (ceph.FullRatioSnapshot, error)
+func (o *Observer) FullRatios(ctx context.Context) (ceph.FullRatioSnapshot, error)
 ```
 
 Reads the OSDMap's global `nearfull`, `backfillfull` and `full` ratios, checking
@@ -3983,7 +4020,7 @@ primary, keep the scrub from starting, and the wait then fails at the deadline.
 #### PGInconsistencies
 
 ```golang
-func (c *Container) PGInconsistencies(ctx context.Context, pgid ceph.PGID) ([]ceph.InconsistentObject, error)
+func (o *Observer) PGInconsistencies(ctx context.Context, pgid ceph.PGID) ([]ceph.InconsistentObject, error)
 ```
 
 Lists the objects that the last deep scrub of a PG found inconsistent
@@ -4042,7 +4079,7 @@ See [Host networking](guides/host-network.md) for the networking modes in detail
 #### DaemonAddresses
 
 ```golang
-func (c *Container) DaemonAddresses(ctx context.Context) (ceph.DaemonAddresses, error)
+func (o *Observer) DaemonAddresses(ctx context.Context) (ceph.DaemonAddresses, error)
 ```
 
 Reads the names and advertised addresses of the cluster's MONs, MGRs and OSDs
@@ -4062,7 +4099,11 @@ instance nonce that MONs leave at 0. `ceph.DaemonAddress` pairs a MON or MGR
 name with its vector, and `ceph.OSDAddress` holds one OSD's entry.
 
 ```golang
-addresses, err := cluster.DaemonAddresses(ctx)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+addresses, err := observer.DaemonAddresses(ctx)
 for _, mon := range addresses.Monitors {
 	fmt.Println(mon.Name, mon.Addrs) // a [{v2 172.20.0.2:3300 0} {v1 172.20.0.2:6789 0}]
 }
@@ -4681,7 +4722,7 @@ See the [handle contract](#container-methods).
 | `OSDState` | [OSDStates](#osdstates) |
 | `PoolConfig`, `ErasureCodeConfig` | [WithPools](#withpools), [CreatePool](#createpool) |
 | `Pool` | [CreatePool](#createpool), [Pool](#pool); its methods are [Status](#poolstatus), [Usage](#poolusage), [PGs](#poolpgs), [SetReplication](#poolsetreplication), [SetQuota](#poolsetquota), [SetPlacement](#poolsetplacement), [SetPGCount](#poolsetpgcount), [WaitForPGCount](#poolwaitforpgcount) and [Remove](#poolremove) |
-| `PoolState`, `PoolQuota` | [Pool.Status](#poolstatus), [Pools](#pools), [Pool.SetQuota](#poolsetquota) |
+| `PoolState`, `PoolQuota` | [Pool.Status](#poolstatus), [Pool.SetQuota](#poolsetquota) |
 | `PoolPlacement` | [Pool.SetPlacement](#poolsetplacement) |
 | `PoolUsageSnapshot` | [Pool.Usage](#poolusage) |
 | `PoolPGSnapshot`, `PGState`, `PGStats` | [Pool.PGs](#poolpgs) |
@@ -4973,7 +5014,7 @@ pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{
   feature of every client and refuses a client without it when it opens its
   MON session. `NoHashPSPool` clears the flag only on the pool it creates;
   the configuration file keeps it off `.mgr` and every later pool. Check
-  every pool with `cluster.Pools` once `.mgr` exists.
+  every pool with `Observer.Pools` once `.mgr` exists.
 - `CreatePool` adds its own rule, `tc-<pool>-replicated`, which with the
   default `osd` failure domain also chooses OSDs directly. To use the map's
   `replicated_rule`, create the pool with `cluster.Ceph(ctx, "osd", "pool",
@@ -5097,7 +5138,11 @@ if err := cluster.RefreshClientMonitorConfig(ctx, client); err != nil {
 	t.Fatal(err)
 }
 // For a client you configure yourself, write the new mon_host value.
-addresses, err := cluster.MonitorBootstrapAddresses(ctx)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+addresses, err := observer.MonitorBootstrapAddresses(ctx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -5241,7 +5286,11 @@ if err := fault.InjectObjectDataError(ctx, cluster, "app", "victim", replica); e
 if err := cluster.DeepScrubPG(ctx, mapping.PGID); err != nil {
 	t.Fatal(err)
 }
-objects, err := cluster.PGInconsistencies(ctx, mapping.PGID)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+objects, err := observer.PGInconsistencies(ctx, mapping.PGID)
 if err != nil {
 	t.Fatal(err)
 }
@@ -5296,7 +5345,11 @@ if pause != nil {
 if err != nil {
 	t.Fatal(err)
 }
-watchers, err := cluster.ObjectWatchers(ctx, "app-data", "", "notify-object")
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+watchers, err := observer.ObjectWatchers(ctx, "app-data", "", "notify-object")
 if err != nil {
 	t.Fatal(err)
 }
@@ -5320,8 +5373,12 @@ if err != nil {
 	t.Fatal(err)
 }
 var url string
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
 for url == "" {
-	services, err := cluster.ManagerServices(ctx)
+	services, err := observer.ManagerServices(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5330,7 +5387,7 @@ for url == "" {
 		time.Sleep(time.Second) // bound this loop with ctx in real tests
 	}
 }
-metrics, err := cluster.ManagerMetrics(ctx) // parsed samples; see ManagerMetrics
+metrics, err := observer.ManagerMetrics(ctx) // parsed samples; see ManagerMetrics
 ```
 
 In bridge mode each manager listens on its own container address on port 9283,

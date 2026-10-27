@@ -40,7 +40,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 		clusters[i] = cluster
-		status, err := cluster.Status(ctx)
+		status, err := observeCluster(cluster).Status(ctx)
 		if err != nil || status.FSID == "" || fsids[status.FSID] {
 			t.Fatalf("cluster identity not independent: status=%+v error=%v", status, err)
 		}
@@ -51,7 +51,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 	if err := monitorHandle(t, ctx, clusters[0], "a").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if status, err := clusters[0].QuorumStatus(ctx); err != nil || len(status.QuorumNames) != 2 {
+	if status, err := observeCluster(clusters[0]).QuorumStatus(ctx); err != nil || len(status.QuorumNames) != 2 {
 		t.Fatalf("source quorum did not survive primary removal: status=%+v error=%v", status, err)
 	}
 	t.Log("source primary MON a removed before multisite construction; surviving quorum b,c and independent CLI remain available")

@@ -88,7 +88,7 @@ func TestPausedOSDFaults(t *testing.T) {
 				}
 				probe(t, "blocked")
 				waitHealthCode(t, ctx, cluster, fsid, "SLOW_OPS", true)
-				status, err := cluster.Status(ctx)
+				status, err := observeCluster(cluster).Status(ctx)
 				if err != nil || status.OSDMap.NumUpOSDs != 2 {
 					t.Fatalf("nodown did not keep the frozen OSD up: %+v %v", status.OSDMap, err)
 				}
@@ -154,7 +154,7 @@ func waitOSDsUp(t *testing.T, ctx context.Context, cluster *ceph.Container, up i
 	defer cancel()
 	started := time.Now()
 	for {
-		status, err := cluster.Status(phaseCtx)
+		status, err := observeCluster(cluster).Status(phaseCtx)
 		if err == nil && status.OSDMap.NumUpOSDs == up {
 			t.Logf("CONTAINER_PAUSE up_osds=%d after=%s", up, time.Since(started).Round(time.Second))
 			return

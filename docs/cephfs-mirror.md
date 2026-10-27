@@ -1162,7 +1162,11 @@ for deadline := time.Now().Add(2 * time.Minute); findSession(id) != nil; time.Sl
 		t.Fatal("the MDS kept the frozen client's session")
 	}
 }
-entries, err := cluster.BlocklistEntries(ctx)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+entries, err := observer.BlocklistEntries(ctx)
 if err != nil {
 	t.Fatal(err)
 }

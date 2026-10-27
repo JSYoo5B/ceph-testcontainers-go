@@ -312,7 +312,7 @@ documented in [Ceph](ceph.md). The ones CephFS tests use most are:
 | `ConnectionConfig(ctx)` | `ceph.conf` and admin keyring bytes for a native client in the test process (host networking). |
 | `OverrideConfig(ctx, setting)` | Change a central option for MDS daemons or clients and restore it. |
 | `fault.Pause(ctx, cluster, ctr)` | Freeze a client or MDS container without stopping its process. |
-| `BlocklistEntries(ctx)` | List OSDMap blocklist entries, for example after a client eviction. |
+| `Observer.BlocklistEntries(ctx)` | List OSDMap blocklist entries, for example after a client eviction. |
 | `CreatePool`, `Pool.Remove`, `WaitForClean` | Create a pool to attach with `AddDataPool`, delete it afterwards, wait for clean PGs. |
 | `ControlContainer(ctx)`, `ClientContainer(ctx)` | The control container (`ceph` CLI, essential image) and the client toolkit. Mirror daemons use `ClusterFacts.Images.CephFS` or `ClusterFacts.Images.RBDAux`. |
 | `ServiceContainers()` | Owned MDS (and RGW) containers. |
@@ -1847,7 +1847,11 @@ for deadline := time.Now().Add(2 * time.Minute); findSession(id) != nil; time.Sl
 		t.Fatal("the MDS kept the frozen client's session")
 	}
 }
-entries, err := cluster.BlocklistEntries(ctx)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+entries, err := observer.BlocklistEntries(ctx)
 if err != nil {
 	t.Fatal(err)
 }

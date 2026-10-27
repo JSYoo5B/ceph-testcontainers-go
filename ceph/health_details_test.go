@@ -74,7 +74,7 @@ func newHealthDetailsFixture() (*Container, *healthDetailsFixtureContainer) {
 
 func assertHealthDetailsFailure(t *testing.T, cluster *Container, ctx context.Context) error {
 	t.Helper()
-	result, err := cluster.HealthDetails(ctx)
+	result, err := cluster.healthDetails(ctx)
 	if err == nil || !reflect.DeepEqual(result, HealthSnapshot{}) {
 		t.Fatalf("unusable health snapshot published: %+v error=%v", result, err)
 	}
@@ -83,7 +83,7 @@ func assertHealthDetailsFailure(t *testing.T, cluster *Container, ctx context.Co
 
 func TestHealthDetailsReportsNativeMessagesAndReadOnlyScope(t *testing.T) {
 	cluster, ctr := newHealthDetailsFixture()
-	result, err := cluster.HealthDetails(t.Context())
+	result, err := cluster.healthDetails(t.Context())
 	want := HealthSnapshot{FSID: healthDetailsFixtureFSID, Status: "HEALTH_WARN",
 		Checks: map[string]HealthCheck{"FUTURE_CODE": {Severity: "HEALTH_WARN", Summary: "native summary",
 			Count: 9007199254740993, Details: []string{"detail one", "detail two"}}}, Mutes: []HealthMute{}}
@@ -101,7 +101,7 @@ func TestHealthDetailsReportsNativeMessagesAndReadOnlyScope(t *testing.T) {
 	// A healthy MON-only fixture needs no manager, OSD, pool or service map.
 	cluster, ctr = newHealthDetailsFixture()
 	ctr.outputs[1] = healthDetailsFixtureHealthy
-	result, err = cluster.HealthDetails(t.Context())
+	result, err = cluster.healthDetails(t.Context())
 	if err != nil || result.Status != "HEALTH_OK" || result.FSID != healthDetailsFixtureFSID ||
 		result.Checks == nil || len(result.Checks) != 0 || result.Mutes == nil || len(result.Mutes) != 0 || len(ctr.calls) != 3 {
 		t.Fatalf("cold healthy fixture rejected: %+v error=%v", result, err)
@@ -121,7 +121,7 @@ func TestHealthDetailsUsesOneCapturedControlHandle(t *testing.T) {
 		}
 		return nil
 	}
-	result, err := cluster.HealthDetails(t.Context())
+	result, err := cluster.healthDetails(t.Context())
 	if err != nil || result.FSID != healthDetailsFixtureFSID || len(control.calls) != 3 || len(embedded.calls) != 0 || len(replacement.calls) != 0 {
 		t.Fatalf("observation changed control handle: result=%+v error=%v calls=%v/%v/%v", result, err, embedded.calls, control.calls, replacement.calls)
 	}
@@ -348,7 +348,7 @@ func TestHealthDetailsBoundsOwnerControlAndConfigAdmission(t *testing.T) {
 			t.Cleanup(func() { cancel(); release(); <-joined })
 			go func() {
 				defer close(joined)
-				result, err := cluster.HealthDetails(ctx)
+				result, err := cluster.healthDetails(ctx)
 				if !reflect.DeepEqual(result, HealthSnapshot{}) {
 					err = errors.Join(err, errors.New("blocked observation published a snapshot"))
 				}

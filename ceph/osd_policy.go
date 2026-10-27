@@ -22,9 +22,8 @@ type OSDState struct {
 	Weight float64
 }
 
-// OSDStates returns owned OSD states sorted by native ID. It refuses an owned
-// ID that is missing, purged or now belongs to a different native UUID.
-func (c *Container) OSDStates(ctx context.Context) ([]OSDState, error) {
+// osdStates implements Observer.OSDStates.
+func (c *Container) osdStates(ctx context.Context) ([]OSDState, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
@@ -109,10 +108,8 @@ const (
 // String returns the native flag token.
 func (f OSDFlag) String() string { return string(f) }
 
-// OSDFlags lists exact global OSDMap flag tokens, including native compatibility
-// flags that are not among the OSDFlag constants. Per-OSD, CRUSH-node or
-// device-class flags are separate native state.
-func (c *Container) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
+// osdFlags implements Observer.OSDFlags.
+func (c *Container) osdFlags(ctx context.Context) ([]OSDFlag, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {
@@ -333,7 +330,7 @@ func (c *Container) WaitForPGClean(ctx context.Context) error {
 			c.mu.Unlock()
 			return errors.Join(err, last)
 		}
-		s, err := c.Status(ctx)
+		s, err := readStatus(ctx, c.cephCLI)
 		c.mu.Unlock()
 		if err != nil {
 			last = err

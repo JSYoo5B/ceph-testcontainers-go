@@ -52,32 +52,15 @@ func (p sharedPolicy) reason() string {
 // method cannot bypass the gate unnoticed.
 var sharedMethodPolicies = map[string]sharedPolicy{
 	// Inspection of the fixture and read-only views of the cluster.
-	"BlocklistEntries":          sharedOpen,
-	"CollectCrashMetadata":      sharedOpen,
-	"CollectDiagnostics":        sharedOpen,
-	"Configuration":             sharedOpen,
-	"ClientContainer":           sharedExclusive,
-	"DaemonAddresses":           sharedOpen,
-	"FullRatios":                sharedOpen,
-	"HealthDetails":             sharedOpen,
-	"ManagerMetrics":            sharedOpen,
-	"ManagerServices":           sharedOpen,
-	"ManagerStatus":             sharedOpen,
-	"MGRModules":                sharedOpen,
-	"MonitorBootstrapAddresses": sharedOpen,
-	"ObjectWatchers":            sharedOpen,
-	"OSDFlags":                  sharedOpen,
-	"OSDStates":                 sharedOpen,
-	"PGInconsistencies":         sharedOpen,
-	"Pool":                      sharedOpen,
-	"Pools":                     sharedOpen,
-	"QuorumStatus":              sharedOpen,
-	"RedactSecrets":             sharedOpen,
-	"Status":                    sharedOpen,
-	"WaitForClean":              sharedOpen,
-	"WaitForPGClean":            sharedOpen,
-	"WaitForQuorum":             sharedOpen,
-	"WaitMGRModuleReady":        sharedOpen,
+	"CollectCrashMetadata": sharedOpen,
+	"CollectDiagnostics":   sharedOpen,
+	"ClientContainer":      sharedExclusive,
+	"Pool":                 sharedOpen,
+	"RedactSecrets":        sharedOpen,
+	"WaitForClean":         sharedOpen,
+	"WaitForPGClean":       sharedOpen,
+	"WaitForQuorum":        sharedOpen,
+	"WaitMGRModuleReady":   sharedOpen,
 	// Promoted from the primary MON's testcontainers.Container: inspection.
 	"ContainerIP":                  sharedOpen,
 	"ContainerIPs":                 sharedOpen,
@@ -225,6 +208,7 @@ var sharedHandlePolicies = map[string]sharedPolicy{
 	"ClientConfig.ReplaceKey":            sharedTenant,
 	"ClientConfig.Revoke":                sharedTenant,
 	"ClientConfig.Delete":                sharedTenant,
+	"Observer.Pools":                     sharedOpen,
 	"Observer.Status":                    sharedOpen,
 	"Observer.ManagerStatus":             sharedOpen,
 	"Observer.DaemonAddresses":           sharedOpen,
@@ -247,18 +231,31 @@ var sharedHandlePolicies = map[string]sharedPolicy{
 // as sharedGate refuses a method of *Container. An operation without a policy
 // is refused even on a cluster of its own, so it cannot run unclassified.
 func (c *Container) admitHandle(op string) error {
+	return c.admitHandleAs(op, sharingMode(c.sharing.Load()))
+}
+
+// admitHandleAs admits op as for a cluster in mode. A handle that a tenant
+// obtained passes sharedWithTenants, so a later exclusive lease of the cluster
+// does not widen what the handle may do.
+func (c *Container) admitHandleAs(op string, mode sharingMode) error {
 	policy, ok := sharedHandlePolicies[op]
 	if !ok {
 		return invalidRequest("handle operation %q has no shared-cluster policy", op)
 	}
-	return c.admitShared(op, policy)
+	if c == nil {
+		return nil
+	}
+	return admitSharedIn(mode, op, policy)
 }
 
 func (c *Container) admitShared(method string, policy sharedPolicy) error {
 	if c == nil {
 		return nil
 	}
-	mode := sharingMode(c.sharing.Load())
+	return admitSharedIn(sharingMode(c.sharing.Load()), method, policy)
+}
+
+func admitSharedIn(mode sharingMode, method string, policy sharedPolicy) error {
 	switch {
 	case mode == notShared, policy == sharedOpen:
 		return nil

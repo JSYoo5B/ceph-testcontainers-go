@@ -773,9 +773,13 @@ func (mirror *Mirror) peerRemovalClusterIdentities(ctx context.Context) ([2]stri
 		if cluster == nil {
 			return result, cephFSObserveGuard("CephFS peer drain original cluster is unavailable")
 		}
-		original, err := readCephFSRemovalClusterIdentity(ctx, cluster.MonitorBootstrapAddresses,
+		observer, err := ceph.Observe(cluster)
+		if err != nil {
+			return result, err
+		}
+		original, err := readCephFSRemovalClusterIdentity(ctx, observer.MonitorBootstrapAddresses,
 			func(queryCtx context.Context) (string, error) {
-				status, err := cluster.QuorumStatus(queryCtx)
+				status, err := observer.QuorumStatus(queryCtx)
 				return status.MonMap.FSID, err
 			},
 			func(queryCtx context.Context) (string, error) {

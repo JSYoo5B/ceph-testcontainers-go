@@ -95,7 +95,7 @@ Other bridge-mode endpoints:
 - `rgw.Gateway.S3Endpoint(ctx)` returns a mapped host port for host S3 clients.
   `DaemonEndpoint(ctx)` returns the gateway's address on the cluster network
   for clients inside it.
-- `cluster.ManagerServices(ctx)` returns the URLs that MGR modules such as
+- `Observer.ManagerServices(ctx)` returns the URLs that MGR modules such as
   `prometheus` advertise. They use container addresses reachable from
   `WithClient` containers, not mapped host ports.
 

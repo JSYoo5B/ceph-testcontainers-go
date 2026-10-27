@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 404,
+  "count": 380,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -361,14 +361,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.BlocklistEntries",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]BlocklistEntry, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.BlocklistEntries",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.Ceph",
       "kind": "method",
       "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
@@ -398,14 +390,6 @@
       "signature": "func(ctx context.Context, config DiagnosticsConfig) (*DiagnosticsReport, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.CollectDiagnostics",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.Configuration",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]ConfigEntry, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.Configuration",
       "decision": "baseline"
     },
     {
@@ -473,14 +457,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.DaemonAddresses",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (DaemonAddresses, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.DaemonAddresses",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.DeepScrubPG",
       "kind": "method",
       "signature": "func(ctx context.Context, pgid PGID) error",
@@ -497,59 +473,11 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.FullRatios",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (FullRatioSnapshot, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.FullRatios",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.HealthDetails",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (HealthSnapshot, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.HealthDetails",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.MGRModules",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]MGRModuleState, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.MGRModules",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.ManagerContainer",
       "kind": "method",
       "signature": "func() testcontainers.Container",
       "receiver": "*Container",
       "proposed": "ceph.Container.ManagerContainer",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.ManagerMetrics",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (ManagerMetrics, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ManagerMetrics",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.ManagerServices",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (map[string]string, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ManagerServices",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.ManagerStatus",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (ManagerStatus, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ManagerStatus",
       "decision": "baseline"
     },
     {
@@ -561,14 +489,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.MonitorBootstrapAddresses",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (string, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.MonitorBootstrapAddresses",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.Monitors",
       "kind": "method",
       "signature": "func(ctx context.Context) ([]*MonitorContainer, error)",
@@ -577,35 +497,11 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.OSDFlags",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]OSDFlag, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OSDFlags",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OSDStates",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]OSDState, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OSDStates",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.OSDs",
       "kind": "method",
       "signature": "func(ctx context.Context) ([]*OSDContainer, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.OSDs",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.ObjectWatchers",
-      "kind": "method",
-      "signature": "func(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ObjectWatchers",
       "decision": "baseline"
     },
     {
@@ -657,35 +553,11 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.PGInconsistencies",
-      "kind": "method",
-      "signature": "func(ctx context.Context, pgid PGID) ([]InconsistentObject, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.PGInconsistencies",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.Pool",
       "kind": "method",
       "signature": "func(ctx context.Context, name string) (*Pool, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.Pool",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.Pools",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]PoolState, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.Pools",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.QuorumStatus",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (QuorumStatus, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.QuorumStatus",
       "decision": "baseline"
     },
     {
@@ -742,14 +614,6 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*Container",
       "proposed": "ceph.Container.Start",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.Status",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (Status, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.Status",
       "decision": "baseline"
     },
     {
@@ -2084,6 +1948,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Observer.Pools",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]*Pool, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.Pools",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Observer.QuorumStatus",
       "kind": "method",
       "signature": "func(ctx context.Context) (QuorumStatus, error)",
@@ -2392,14 +2264,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Tenant.BlocklistEntries",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]BlocklistEntry, error)",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.BlocklistEntries",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Tenant.Client",
       "kind": "method",
       "signature": "func() *ClientConfig",
@@ -2413,14 +2277,6 @@
       "signature": "func(ctx context.Context, name string, access TenantAccess) (*ClientConfig, error)",
       "receiver": "*Tenant",
       "proposed": "ceph.Tenant.CreateClient",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.HealthDetails",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (HealthSnapshot, error)",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.HealthDetails",
       "decision": "baseline"
     },
     {
@@ -2440,22 +2296,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Tenant.OSDFlags",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]OSDFlag, error)",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.OSDFlags",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.ObjectWatchers",
-      "kind": "method",
-      "signature": "func(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error)",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.ObjectWatchers",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Tenant.Pool",
       "kind": "method",
       "signature": "func() string",
@@ -2464,43 +2304,11 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Tenant.PoolStatus",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string) (PoolState, error)",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.PoolStatus",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.PoolUsage",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string) (PoolUsageSnapshot, error)",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.PoolUsage",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.Pools",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]PoolState, error)",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.Pools",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Tenant.RunNativeCommand",
       "kind": "method",
       "signature": "func(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error)",
       "receiver": "*Tenant",
       "proposed": "ceph.Tenant.RunNativeCommand",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.Status",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (Status, error)",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.Status",
       "decision": "baseline"
     },
     {

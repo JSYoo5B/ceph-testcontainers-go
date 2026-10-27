@@ -155,7 +155,7 @@ func TestRBDPausedLockOwner(t *testing.T) {
 			}
 			blocklisted := func(address string) bool {
 				t.Helper()
-				entries, err := cluster.BlocklistEntries(ctx)
+				entries, err := observeCluster(cluster).BlocklistEntries(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}

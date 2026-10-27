@@ -33,7 +33,7 @@ func testClientFencing(t *testing.T, host bool) {
 	const other = "192.0.2.245:0/9999"
 	cephCommand(t, ctx, cluster, "osd", "blocklist", "add", other, "300")
 	cephCommand(t, ctx, cluster, "osd", "blocklist", "range", "add", "198.51.100.0/24", "300")
-	prior, err := cluster.BlocklistEntries(ctx)
+	prior, err := observeCluster(cluster).BlocklistEntries(ctx)
 	if err != nil || len(prior) != 2 {
 		t.Fatalf("native entries and ranges: %+v %v", prior, err)
 	}
@@ -73,7 +73,7 @@ func testClientFencing(t *testing.T, host bool) {
 	if err := change.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	after, err := cluster.BlocklistEntries(ctx)
+	after, err := observeCluster(cluster).BlocklistEntries(ctx)
 	if err != nil || !slices.Equal(prior, after) {
 		t.Fatal("restoration changed an unrelated exact entry or range")
 	}
@@ -102,7 +102,7 @@ func testClientFencing(t *testing.T, host bool) {
 	}
 	deadline := time.Now().Add(40 * time.Second)
 	for {
-		entries, err := cluster.BlocklistEntries(ctx)
+		entries, err := observeCluster(cluster).BlocklistEntries(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,7 +126,7 @@ func testClientFencing(t *testing.T, host bool) {
 	if !status.OtherClientOK || !status.FreshClientOK {
 		t.Fatal("new session did not recover after native expiration")
 	}
-	final, err := cluster.BlocklistEntries(ctx)
+	final, err := observeCluster(cluster).BlocklistEntries(ctx)
 	if err != nil || !slices.Equal(prior, final) {
 		t.Fatal("TTL reconciliation changed another native entry")
 	}

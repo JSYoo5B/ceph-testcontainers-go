@@ -41,7 +41,7 @@ func TestMultiClusterRBDPeerNetworkInterruption(t *testing.T) {
 	instance := status.PoolReplayers[0].InstanceID
 	peer := rbdDaemonPoolIdentity(t, ctx, b, pool)
 	fsid := func(c *ceph.Container) string {
-		status, err := c.Status(ctx)
+		status, err := observeCluster(c).Status(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

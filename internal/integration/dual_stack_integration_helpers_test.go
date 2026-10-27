@@ -130,7 +130,7 @@ func waitDualStackAddresses(t *testing.T, ctx context.Context, cluster *ceph.Con
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		var err error
-		addresses, err = cluster.DaemonAddresses(ctx)
+		addresses, err = observeCluster(cluster).DaemonAddresses(ctx)
 		up := 0
 		for _, osd := range addresses.OSDs {
 			if osd.Up {

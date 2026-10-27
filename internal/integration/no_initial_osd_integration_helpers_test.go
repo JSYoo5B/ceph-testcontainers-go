@@ -211,7 +211,7 @@ func noInitialOSDNativeDump(t *testing.T, ctx context.Context, cluster *ceph.Con
 
 func noInitialOSDBootstrap(t *testing.T, ctx context.Context, cluster *ceph.Container) (string, uint64) {
 	t.Helper()
-	status, err := cluster.Status(ctx)
+	status, err := observeCluster(cluster).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,11 +219,11 @@ func noInitialOSDBootstrap(t *testing.T, ctx context.Context, cluster *ceph.Cont
 	if err != nil || id == uuid.Nil || id.String() != status.FSID {
 		t.Fatal("native original FSID unavailable")
 	}
-	q, err := cluster.QuorumStatus(ctx)
+	q, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil || q.MonMap.FSID != status.FSID || len(q.MonMap.Mons) != 1 || !slices.Equal(q.QuorumNames, []string{"a"}) {
 		t.Fatal("MON-only native majority unavailable", err)
 	}
-	mgr, err := cluster.ManagerStatus(ctx)
+	mgr, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil || !mgr.Available || mgr.ActiveName != "a" || mgr.ActiveGID == 0 || !status.MgrMap.Available {
 		t.Fatal("actual active MGR unavailable", err)
 	}
@@ -327,14 +327,14 @@ func testNoInitialOSDStorage(t *testing.T, host bool) {
 		t.Fatal("first explicit storage launch failed", err)
 	}
 	oracle.owned = append(oracle.owned, first.GetContainerID())
-	before, err := cluster.OSDStates(ctx)
+	before, err := observeCluster(cluster).OSDStates(ctx)
 	if err != nil || len(before) != 1 || before[0].ID != first.ID || !before[0].Up || !before[0].In {
 		t.Fatal("first explicit OSD is not exact up/in", err)
 	}
 	if err := first.Remove(ctx); err == nil || !strings.Contains(err.Error(), "cannot remove the last OSD") {
 		t.Fatal("zero-initial option changed last-OSD protection", err)
 	}
-	after, err := cluster.OSDStates(ctx)
+	after, err := observeCluster(cluster).OSDStates(ctx)
 	if err != nil || !slices.Equal(before, after) {
 		t.Fatal("rejected last removal changed native registration")
 	}
@@ -343,7 +343,7 @@ func testNoInitialOSDStorage(t *testing.T, host bool) {
 		t.Fatal("second explicit storage launch failed", err)
 	}
 	oracle.owned = append(oracle.owned, second.GetContainerID())
-	states, err := cluster.OSDStates(ctx)
+	states, err := observeCluster(cluster).OSDStates(ctx)
 	if err != nil || len(states) != 2 || states[0].UUID == states[1].UUID || len(noInitialOSDNativeDump(t, ctx, cluster)) != 2 {
 		t.Fatal("explicit storage identities unavailable", err)
 	}
@@ -380,11 +380,11 @@ func testNoInitialOSDStorage(t *testing.T, host bool) {
 		}
 		t.Logf("NO_INITIAL_OSD_BYTES phase=%s fsid=%s pool_id=%d bytes=%d sha256=%s", phase, fsid, poolState.ID, result.Bytes, result.SHA256)
 	}
-	finalStatus, err := cluster.Status(ctx)
+	finalStatus, err := observeCluster(cluster).Status(ctx)
 	if err != nil || finalStatus.FSID != fsid || finalStatus.OSDMap.NumOSDs != 2 || finalStatus.OSDMap.NumUpOSDs != 2 || finalStatus.OSDMap.NumInOSDs != 2 {
 		t.Fatal("explicit storage replaced original cluster", err)
 	}
-	mgr, err := cluster.ManagerStatus(ctx)
+	mgr, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil || !mgr.Available || mgr.ActiveGID != mgrGID || customizers.Load() != 1 {
 		t.Fatal("explicit storage replaced original manager/customizer authority", err)
 	}
@@ -423,7 +423,7 @@ func testNoInitialOSDPartial(t *testing.T, host bool) {
 	if err == nil || partial == nil || partial.Container != nil || partial.ID != 0 || partial.Placement().Host != "osd-0" || len(clusteraccess.OSDs(t, cluster)) != 1 || clusteraccess.OSDs(t, cluster)[0] != partial {
 		t.Fatal("generated-host conflict lost original partial registration", err)
 	}
-	states, err := cluster.OSDStates(ctx)
+	states, err := observeCluster(cluster).OSDStates(ctx)
 	if err != nil || len(states) != 1 || states[0].ID != partial.ID || states[0].Up || len(noInitialOSDNativeDump(t, ctx, cluster)) != 1 {
 		t.Fatal("partial native registration unavailable", err)
 	}

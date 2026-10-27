@@ -81,16 +81,9 @@ func (m ManagerMetrics) Value(name string, labels map[string]string) (float64, e
 	return selected[0].Value, nil
 }
 
-// ManagerMetrics scrapes the active manager's prometheus module once and
-// parses the Prometheus text exposition format. It never enables the module:
-// enable it with OverrideMGRModule first, and wait until ManagerServices
-// lists it. A module that serves no endpoint is ErrInvalidRequest. The
-// scrape runs in the control container, on the cluster's network, at the
-// address that ManagerServices advertises; it is bounded to 30 seconds and
-// 32 MiB, and a failed fetch or unparsable output is a *NativeFailure or an
-// error.
-func (c *Container) ManagerMetrics(ctx context.Context) (ManagerMetrics, error) {
-	return readManagerMetrics(ctx, c.ManagerServices, c.controlSupervisedLookup())
+// managerMetrics implements Observer.ManagerMetrics.
+func (c *Container) managerMetrics(ctx context.Context) (ManagerMetrics, error) {
+	return readManagerMetrics(ctx, c.managerServices, c.controlSupervisedLookup())
 }
 
 // parseMetrics reads the Prometheus text exposition format.

@@ -50,7 +50,7 @@ func TestRADOSSelfManagedSnapshots(t *testing.T) {
 	if err := poolHandle(t, ctx, cluster, pool).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	pools, err := cluster.Pools(ctx)
+	pools, err := observeCluster(cluster).Pools(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

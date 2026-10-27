@@ -73,7 +73,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	// the container endpoint it belongs to, and returns the OSDs' entries.
 	checkAddresses := func() map[int]ceph.OSDAddress {
 		t.Helper()
-		native, err := cluster.DaemonAddresses(ctx)
+		native, err := observeCluster(cluster).DaemonAddresses(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -297,7 +297,10 @@ func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		topologyWait(t, ctx, func() bool { q, err := cluster.QuorumStatus(ctx); return err == nil && len(q.QuorumNames) == 4-i })
+		topologyWait(t, ctx, func() bool {
+			q, err := observeCluster(cluster).QuorumStatus(ctx)
+			return err == nil && len(q.QuorumNames) == 4-i
+		})
 		if !mon.IsRunning() {
 			t.Fatal("network cut stopped the monitor process")
 		}
@@ -308,7 +311,10 @@ func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	topologyWait(t, ctx, func() bool { q, err := cluster.QuorumStatus(ctx); return err == nil && len(q.QuorumNames) == 5 })
+	topologyWait(t, ctx, func() bool {
+		q, err := observeCluster(cluster).QuorumStatus(ctx)
+		return err == nil && len(q.QuorumNames) == 5
+	})
 	topologyRados(t, ctx, client, "five-monitor-network-recovery")
 	t.Log("five MONs: network-isolated two running members, 3/5 quorum retained, restored original endpoint IPs and 5/5 membership")
 }

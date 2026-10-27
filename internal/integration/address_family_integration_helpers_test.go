@@ -57,7 +57,7 @@ func testAddressFamily(t *testing.T, family ceph.AddressFamily, opts ...testcont
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		var err error
-		addresses, err = cluster.DaemonAddresses(ctx)
+		addresses, err = observeCluster(cluster).DaemonAddresses(ctx)
 		if err == nil && addresses.ManagerAvailable && len(addresses.OSDs) == 1 && addresses.OSDs[0].Up {
 			break
 		}

@@ -31,7 +31,7 @@ func TestMGRModules(t *testing.T) {
 				t.Helper()
 				deadline := time.Now().Add(35 * time.Second)
 				for {
-					modules, err := cluster.MGRModules(ctx)
+					modules, err := observeCluster(cluster).MGRModules(ctx)
 					if err == nil {
 						for _, module := range modules {
 							if module.Name == name {

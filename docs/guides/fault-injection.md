@@ -194,7 +194,7 @@ reclaims those resources on its own timers:
 
 | Client resource | Observe with | Behaviour |
 | --- | --- | --- |
-| RADOS watch | `cluster.ObjectWatchers(ctx, pool, namespace, object)` | A notify from another client fails with ETIMEDOUT after its own timeout. The watch expires after `osd_client_watch_timeout` (30 s by default); later notifies succeed at once. No blocklist entry is created. |
+| RADOS watch | `Observer.ObjectWatchers(ctx, pool, namespace, object)` | A notify from another client fails with ETIMEDOUT after its own timeout. The watch expires after `osd_client_watch_timeout` (30 s by default); later notifies succeed at once. No blocklist entry is created. |
 | RBD exclusive lock | `rbd.ImageClients` | See [Handing over an RBD exclusive lock](#handing-over-an-rbd-exclusive-lock). |
 | CephFS session | `cephfs.Filesystem.Sessions` | See [Evicting a silent CephFS client](#evicting-a-silent-cephfs-client). |
 
@@ -1115,7 +1115,11 @@ if err := fault.InjectObjectDataError(ctx, cluster, "scrub", "victim", replica);
 if err := cluster.DeepScrubPG(ctx, mapping.PGID); err != nil {
 	t.Fatal(err)
 }
-objects, err := cluster.PGInconsistencies(ctx, mapping.PGID)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+objects, err := observer.PGInconsistencies(ctx, mapping.PGID)
 if err != nil {
 	t.Fatal(err)
 }
@@ -1191,7 +1195,7 @@ if err != nil {
 	t.Fatal(err)
 }
 // Poll fs.Sessions until the client's session is gone and
-// cluster.BlocklistEntries until its Address appears.
+// observer.BlocklistEntries until its Address appears.
 ```
 
 - Values must be whole seconds, at least 30 s (the MDS monitor rejects
@@ -1287,8 +1291,12 @@ deadline:
 
 ```golang
 func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code string) error {
+	observer, err := ceph.Observe(cluster)
+	if err != nil {
+		return err
+	}
 	for {
-		snapshot, err := cluster.HealthDetails(ctx)
+		snapshot, err := observer.HealthDetails(ctx)
 		if err == nil {
 			if _, ok := snapshot.Checks[code]; ok {
 				return nil

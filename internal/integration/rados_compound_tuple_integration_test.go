@@ -59,7 +59,7 @@ func TestRADOSCompoundTupleNoFault(t *testing.T) {
 	if err != nil || poolState.ID <= 0 {
 		t.Fatalf("pool identity unavailable: %+v %v", poolState, err)
 	}
-	quorum, err := cluster.QuorumStatus(ctx)
+	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -41,7 +41,7 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q, err := cluster.QuorumStatus(ctx)
+	q, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func testNoInitialMDS(t *testing.T, host bool) {
 				t.Fatal("original FS pool changed", err)
 			}
 		}
-		currentQuorum, err := cluster.QuorumStatus(ctx)
+		currentQuorum, err := observeCluster(cluster).QuorumStatus(ctx)
 		if err != nil || currentQuorum.MonMap.FSID != q.MonMap.FSID {
 			t.Fatal("original cluster changed", err)
 		}

@@ -107,7 +107,7 @@ func TestManagerPrometheusExporter(t *testing.T) {
 			deadline, stop := context.WithTimeout(ctx, 2*time.Minute)
 			defer stop()
 			for {
-				services, err := cluster.ManagerServices(deadline)
+				services, err := observeCluster(cluster).ManagerServices(deadline)
 				if _, found := services["prometheus"]; err == nil && !found {
 					break
 				}
@@ -131,7 +131,7 @@ print(' '.join(str(s.getsockname()[1]) for s in sockets))
 
 func activeManager(t *testing.T, ctx context.Context, cluster *ceph.Container) string {
 	t.Helper()
-	status, err := cluster.ManagerStatus(ctx)
+	status, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil || !status.Available || status.ActiveName == "" {
 		t.Fatal("active manager unavailable", err)
 	}
@@ -143,7 +143,7 @@ func waitPrometheusService(t *testing.T, ctx context.Context, cluster *ceph.Cont
 	deadline, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	for {
-		services, err := cluster.ManagerServices(deadline)
+		services, err := observeCluster(cluster).ManagerServices(deadline)
 		if address, found := services["prometheus"]; err == nil && found {
 			parsed, err := url.Parse(address)
 			if err != nil {
@@ -182,10 +182,10 @@ func TestManagerMetrics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	cluster, client := newServiceCluster(t, ceph.WithManagerCount(2), ceph.WithPoolDefaults(1, 1))
-	if _, err := cluster.ManagerMetrics(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+	if _, err := observeCluster(cluster).ManagerMetrics(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("metrics without the module: %v", err)
 	}
-	modules, err := cluster.MGRModules(ctx)
+	modules, err := observeCluster(cluster).MGRModules(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestManagerMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := waitPrometheusService(t, ctx, cluster, "")
-	before, err := cluster.ManagerMetrics(ctx)
+	before, err := observeCluster(cluster).ManagerMetrics(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestManagerMetrics(t *testing.T) {
 	var start float64
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		current, err := cluster.ManagerMetrics(ctx)
+		current, err := observeCluster(cluster).ManagerMetrics(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -258,7 +258,7 @@ func TestManagerMetrics(t *testing.T) {
 	var writes, stored float64
 	deadline = time.Now().Add(2 * time.Minute)
 	for {
-		after, err := cluster.ManagerMetrics(ctx)
+		after, err := observeCluster(cluster).ManagerMetrics(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -279,7 +279,7 @@ func TestManagerMetrics(t *testing.T) {
 	var failover ceph.ManagerMetrics
 	deadline = time.Now().Add(2 * time.Minute)
 	for {
-		failover, err = cluster.ManagerMetrics(ctx)
+		failover, err = observeCluster(cluster).ManagerMetrics(ctx)
 		if err == nil && strings.Contains(failover.URL, second.Host) {
 			break
 		}

@@ -103,7 +103,7 @@ func (r recoveryPG) String() string {
 // lookRecoveryPG reads the PG pgid of pool and the OSDMap state of osd.
 func lookRecoveryPG(ctx context.Context, cluster *ceph.Container, pool, pgid string, osd int) (recoveryPG, error) {
 	var look recoveryPG
-	states, err := cluster.OSDStates(ctx)
+	states, err := observeCluster(cluster).OSDStates(ctx)
 	if err != nil {
 		return look, err
 	}
@@ -335,7 +335,7 @@ func testCephFSOSDRecovery(t *testing.T) {
 	if err != nil || len(status.Active) != 1 || status.Active[0].GID != m.mds.GID {
 		t.Fatalf("mds.%s GID %d was replaced: %+v, %v", m.mds.Name, m.mds.GID, status, err)
 	}
-	entries, err := m.cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(m.cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
