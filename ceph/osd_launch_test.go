@@ -42,8 +42,8 @@ func consumeOSDLaunchFiles(t *testing.T, req testcontainers.GenericContainerRequ
 func TestOSDLaunchRecipeRebuildsConsumedFilesAndRequestState(t *testing.T) {
 	c := &Container{settings: options{essentialImage: "synthetic-osd-image", startupTimeout: time.Minute},
 		config: []byte("[global]\nfsid = synthetic-cluster\n"), keyring: []byte("synthetic-admin-keyring"), owner: "synthetic-owner",
-		network: &testcontainers.DockerNetwork{Name: "synthetic-public"}, clusterNetwork: &testcontainers.DockerNetwork{Name: "synthetic-cluster"},
-		run: &runVolume{name: "synthetic-run"}, osdMemory: &osdMemoryStorage{name: "synthetic-memory"}}
+		nets: networkState{public: &testcontainers.DockerNetwork{Name: "synthetic-public"}, cluster: &testcontainers.DockerNetwork{Name: "synthetic-cluster"}},
+		run:  &runVolume{name: "synthetic-run"}, osdMemory: &osdMemoryStorage{name: "synthetic-memory"}}
 	osd := &OSDContainer{ID: 7, nativeUUID: "synthetic-osd-uuid", placement: OSDConfig{Host: "synthetic-host", Root: "default", Rack: "rack-a", DeviceClass: "fast"}}
 	key := []byte("synthetic-osd-keyring")
 	r := c.newOSDLaunchRecipe(osd, key)
@@ -65,7 +65,7 @@ func TestOSDLaunchRecipeRebuildsConsumedFilesAndRequestState(t *testing.T) {
 	// request must reflect the captured recipe, not either mutable object.
 	c.config[0], c.keyring[0], key[0] = 'X', 'X', 'X'
 	c.settings.essentialImage, c.settings.hostNetwork = "other-image", true
-	c.network.Name, c.clusterNetwork.Name = "other-public", "other-cluster"
+	c.nets.public.Name, c.nets.cluster.Name = "other-public", "other-cluster"
 	c.run.name, c.osdMemory.name, c.owner = "other-run", "other-memory", "other-owner"
 	first.Env["CEPH_OSD_UUID"], first.Labels[clusterOwnerLabel] = "foreign", "foreign"
 	first.Networks[0] = "foreign"

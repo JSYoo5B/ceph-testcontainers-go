@@ -505,8 +505,8 @@ func waiterCommand(target *nativeTarget, name string, timeout time.Duration) Nat
 
 func nativeCluster() *Container {
 	return &Container{settings: options{startupTimeout: time.Second},
-		network: &testcontainers.DockerNetwork{Name: "tc-public"}, networkRemoved: true,
-		clusterNetwork: &testcontainers.DockerNetwork{Name: "tc-cluster"}, clusterNetworkRemoved: true}
+		nets: networkState{public: &testcontainers.DockerNetwork{Name: "tc-public"}, publicRemoved: true,
+			cluster: &testcontainers.DockerNetwork{Name: "tc-cluster"}, clusterRemoved: true}}
 }
 
 func registered(c *Container) int {

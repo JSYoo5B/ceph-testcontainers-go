@@ -41,8 +41,8 @@ func (c *Container) newOSDLaunchRecipe(osd *OSDContainer, keyring []byte) *osdLa
 		id: osd.ID, uuid: osd.nativeUUID, placement: osd.placement,
 		hostNetwork: c.settings.hostNetwork, publicAddress: c.settings.publicAddress, publicNetwork: c.NetworkName(),
 		owner: c.owner, timeout: c.settings.startupTimeout}
-	if c.clusterNetwork != nil {
-		r.clusterNetwork = c.clusterNetwork.Name
+	if c.nets.cluster != nil {
+		r.clusterNetwork = c.nets.cluster.Name
 	}
 	if c.run != nil {
 		r.runVolume = c.run.name

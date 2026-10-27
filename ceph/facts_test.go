@@ -40,11 +40,11 @@ func TestStaticFactsNetworkNames(t *testing.T) {
 		separate, host                 bool
 	}{
 		{"no network", &Container{}, "", "", "", false, false},
-		{"single bridge", &Container{network: public}, "public-net", "public-net", "", false, false},
-		{"separate bridge", &Container{network: public, clusterNetwork: cluster}, "public-net", "cluster-net", "", true, false},
-		{"bridge hides address", &Container{network: public, settings: options{publicAddress: "192.0.2.1"}}, "public-net", "public-net", "", false, false},
-		{"host mode", &Container{network: public, settings: options{hostNetwork: true, publicAddress: "192.0.2.1"}}, "host", "host", "192.0.2.1", false, true},
-		{"host mode with cluster bridge", &Container{network: public, clusterNetwork: cluster, settings: options{hostNetwork: true}}, "host", "cluster-net", "", true, true},
+		{"single bridge", &Container{nets: networkState{public: public}}, "public-net", "public-net", "", false, false},
+		{"separate bridge", &Container{nets: networkState{public: public, cluster: cluster}}, "public-net", "cluster-net", "", true, false},
+		{"bridge hides address", &Container{nets: networkState{public: public}, settings: options{publicAddress: "192.0.2.1"}}, "public-net", "public-net", "", false, false},
+		{"host mode", &Container{nets: networkState{public: public}, settings: options{hostNetwork: true, publicAddress: "192.0.2.1"}}, "host", "host", "192.0.2.1", false, true},
+		{"host mode with cluster bridge", &Container{nets: networkState{public: public, cluster: cluster}, settings: options{hostNetwork: true}}, "host", "cluster-net", "", true, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -261,10 +261,8 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	// Every client key the module generated, including replaced, attempted
 	// and revoked ones.
 	snapshot.secrets = append(snapshot.secrets, slices.Sorted(maps.Keys(c.clientSecrets))...)
-	for _, nw := range []*testcontainers.DockerNetwork{c.network, c.clusterNetwork} {
-		if nw != nil {
-			snapshot.networks = append(snapshot.networks, diagnosticNetwork{id: nw.ID, name: nw.Name})
-		}
+	for _, nw := range c.nets.bridges() {
+		snapshot.networks = append(snapshot.networks, diagnosticNetwork{id: nw.ID, name: nw.Name})
 	}
 	c.mu.Unlock()
 	if err := diagnosticLock(ctx, c.controlMu.TryRLock); err != nil {

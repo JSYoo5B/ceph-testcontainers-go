@@ -423,7 +423,7 @@ func (serviceHooks) TestCluster(control testcontainers.Container, config testClu
 		c.sharing.Store(int32(sharedWithTenants))
 	}
 	if config.NetworkName != "" {
-		c.network = &testcontainers.DockerNetwork{Name: config.NetworkName}
+		c.nets.public = &testcontainers.DockerNetwork{Name: config.NetworkName}
 	}
 	if config.OSDs > 0 {
 		c.osds = make(map[int]*OSDContainer)
@@ -463,7 +463,7 @@ func (serviceHooks) TestState(c *Container) testState {
 		Config: &c.config, Keyring: &c.keyring, CephVersion: &c.cephVersion, ControlPlane: &c.controlPlane,
 		OSDs: &c.osds, InitialOSDs: &c.settings.osds, PoolReplicas: &c.settings.poolReplicas,
 		PoolMinSize: &c.settings.poolMinSize, StartupTimeout: &c.settings.startupTimeout,
-		CephFSImage: &c.settings.cephfsOverride, RGWImage: &c.settings.rgwOverride, PortLeases: len(c.portLeases), NetworkRemoved: &c.networkRemoved,
+		CephFSImage: &c.settings.cephfsOverride, RGWImage: &c.settings.rgwOverride, PortLeases: len(c.portLeases), NetworkRemoved: &c.nets.publicRemoved,
 	}
 }
 

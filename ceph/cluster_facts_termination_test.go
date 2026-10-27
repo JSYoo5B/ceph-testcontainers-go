@@ -18,7 +18,7 @@ import (
 // the closed flag and runs the real teardown path.
 func terminableFacts() *Container {
 	c := factsFixture()
-	c.networkRemoved, c.clusterNetworkRemoved = true, true
+	c.nets.publicRemoved, c.nets.clusterRemoved = true, true
 	c.settings.hostNetwork = false
 	c.settings.imageSet = &ImageSet{Essential: "e", Client: "c", CephFS: "f", RBDAux: "r", RGW: "g", All: "a"}
 	return c
@@ -33,7 +33,7 @@ func TestClusterFactsTerminateKeepsRecordedFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings, public, cluster, version := c.settings, *c.network, *c.clusterNetwork, c.cephVersion
+	settings, public, cluster, version := c.settings, *c.nets.public, *c.nets.cluster, c.cephVersion
 	imageSet := *c.settings.imageSet
 
 	if err := c.Terminate(t.Context()); err != nil {
@@ -49,7 +49,7 @@ func TestClusterFactsTerminateKeepsRecordedFacts(t *testing.T) {
 	if after != before {
 		t.Fatalf("termination changed the snapshot: %+v != %+v", after, before)
 	}
-	if !reflect.DeepEqual(c.settings, settings) || *c.network != public || *c.clusterNetwork != cluster ||
+	if !reflect.DeepEqual(c.settings, settings) || *c.nets.public != public || *c.nets.cluster != cluster ||
 		c.cephVersion != version || *c.settings.imageSet != imageSet {
 		t.Fatal("termination rewrote a recorded source of the static facts")
 	}
@@ -158,7 +158,11 @@ func TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup(t *testing.T) 
 
 // recordedFactFields are the Container fields FactsOf reads directly, and the
 // options fields it reads through c.settings.
-var recordedContainerFields = map[string]bool{"cephVersion": true, "network": true, "clusterNetwork": true, "settings": true}
+var recordedContainerFields = map[string]bool{"cephVersion": true, "nets": true, "settings": true}
+
+// recordedNetworkFields are the networkState fields FactsOf reads. The removal
+// flags next to them are guarded by Container.mu and are not facts.
+var recordedNetworkFields = map[string]bool{"public": true, "cluster": true, "publicSubnet": true, "clusterSubnet": true}
 var recordedSettingsFields = map[string]bool{
 	"addressFamily": true, "essentialImage": true, "imageSet": true, "cephfsOverride": true, "rgwOverride": true,
 	"messengerMode": true, "hostNetwork": true, "publicAddress": true,
@@ -181,6 +185,7 @@ func scanRecordedWrites(t *testing.T, file string, allowed map[string]bool) []st
 		if !ok || fn.Body == nil || allowed[fn.Name.Name] {
 			continue
 		}
+		recv := networkStateReceiver(fn)
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			var targets []ast.Expr
 			switch s := n.(type) {
@@ -194,7 +199,7 @@ func scanRecordedWrites(t *testing.T, file string, allowed map[string]bool) []st
 				}
 			}
 			for _, target := range targets {
-				if recordedSourceTarget(target) {
+				if recordedSourceTarget(target) || (recv != "" && networkStateTarget(target, recv)) {
 					out = append(out, fset.Position(target.Pos()).String())
 				}
 			}
@@ -204,10 +209,48 @@ func scanRecordedWrites(t *testing.T, file string, allowed map[string]bool) []st
 	return out
 }
 
+// networkStateReceiver returns the receiver name of a networkState method, or
+// the empty string for any other function.
+func networkStateReceiver(fn *ast.FuncDecl) string {
+	if fn.Recv == nil || len(fn.Recv.List) != 1 || len(fn.Recv.List[0].Names) != 1 {
+		return ""
+	}
+	typ := fn.Recv.List[0].Type
+	if star, ok := typ.(*ast.StarExpr); ok {
+		typ = star.X
+	}
+	if id, ok := typ.(*ast.Ident); ok && id.Name == "networkState" {
+		return fn.Recv.List[0].Names[0].Name
+	}
+	return ""
+}
+
+// networkStateTarget reports whether e writes a recorded bridge or subnet
+// through the receiver of a networkState method.
+func networkStateTarget(e ast.Expr, recv string) bool {
+	for {
+		switch v := e.(type) {
+		case *ast.ParenExpr:
+			e = v.X
+		case *ast.IndexExpr:
+			e = v.X
+		case *ast.StarExpr:
+			e = v.X
+		case *ast.SelectorExpr:
+			if id, ok := v.X.(*ast.Ident); ok && id.Name == recv && recordedNetworkFields[v.Sel.Name] {
+				return true
+			}
+			e = v.X
+		default:
+			return false
+		}
+	}
+}
+
 // recordedSourceTarget reports whether e names a recorded Container source:
-// X.cephVersion, X.network, X.clusterNetwork, X.settings, X.settings.<fact
+// X.cephVersion, X.nets (and anything under it), X.settings, X.settings.<fact
 // field> (also nested, such as X.settings.imageSet.RGW), or a field of the
-// pointed-to network (X.network.Name).
+// pointed-to network (X.nets.public.Name).
 func recordedSourceTarget(e ast.Expr) bool {
 	for {
 		switch v := e.(type) {

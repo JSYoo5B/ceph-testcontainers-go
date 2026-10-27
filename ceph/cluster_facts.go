@@ -52,11 +52,11 @@ func FactsOf(c *Container) (ClusterFacts, error) {
 		AddressFamily:             c.settings.addressFamily,
 		Images:                    c.settings.effectiveImages(),
 		MessengerMode:             c.settings.messengerMode,
-		NetworkName:               c.settings.publicNetworkName(c.network),
+		NetworkName:               c.settings.publicNetworkName(c.nets.public),
 		UsesHostNetwork:           c.settings.hostNetwork,
 		PublicAddress:             c.settings.advertisedPublicAddress(),
-		ClusterNetworkName:        c.settings.clusterNetworkName(c.network, c.clusterNetwork),
-		HasSeparateClusterNetwork: c.clusterNetwork != nil,
+		ClusterNetworkName:        c.settings.clusterNetworkName(c.nets.public, c.nets.cluster),
+		HasSeparateClusterNetwork: c.nets.cluster != nil,
 		CephVersion:               c.cephVersion,
 	}, nil
 }
