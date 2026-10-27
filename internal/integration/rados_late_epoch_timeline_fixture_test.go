@@ -343,3 +343,252 @@ func TestRadosLateOperationTimestampFieldTypes(t *testing.T) {
 		}
 	})
 }
+
+// hostileTimeline is the review's counterexample: the largest accepted
+// timeline, eight epochs of thirty-two changes whose text is as long as the
+// per-string cap allows and expands when JSON-escaped.
+func hostileTimeline() []radosLateEpoch {
+	var timeline []radosLateEpoch
+	for epoch := 16; epoch < 16+radosLateEpochLimit; epoch++ {
+		entry := radosLateEpoch{Epoch: epoch, Modified: radosLateStamp(radosLateBase, time.Duration(epoch)*time.Second), ModifiedUnix: float64(1793074000 + epoch), Compared: true}
+		for change := 0; change < radosLateListLimit; change++ {
+			entry.Changes = append(entry.Changes, strings.Repeat("\x00", radosLateTextLimit))
+		}
+		timeline = append(timeline, entry)
+	}
+	return timeline
+}
+
+func TestRadosLateEpochTimelineStaysWithinTheRecordBudget(t *testing.T) {
+	state := &radosLateClusterState{Label: "failure", Pool: "tc-contracts", Timeline: hostileTimeline()}
+	boundRadosLateState(state)
+	if size := encodedRadosLateSize(t, state); size > radosLateStateLimit {
+		t.Fatalf("final record is %d bytes, budget %d (timeline %d epochs, truncated=%v)", size, radosLateStateLimit, len(state.Timeline), state.Truncated)
+	}
+	if !state.Truncated {
+		t.Fatalf("shedding not recorded")
+	}
+	// Every omission is counted: epochs kept plus omitted equal the epochs
+	// read, and changes kept plus changes omitted (including those of omitted
+	// epochs) equal the changes read.
+	if len(state.Timeline)+state.TimelineOmitted != radosLateEpochLimit {
+		t.Fatalf("epochs: kept %d, omitted %d, read %d", len(state.Timeline), state.TimelineOmitted, radosLateEpochLimit)
+	}
+	kept := 0
+	for _, entry := range state.Timeline {
+		kept += len(entry.Changes)
+	}
+	if kept+state.TimelineChangesOmitted != radosLateEpochLimit*radosLateListLimit {
+		t.Fatalf("changes: kept %d, omitted %d, read %d", kept, state.TimelineChangesOmitted, radosLateEpochLimit*radosLateListLimit)
+	}
+	// What stays is the earliest epochs, in order, still with their own time.
+	for index, entry := range state.Timeline {
+		if entry.Epoch != 16+index || entry.ModifiedUnix == 0 {
+			t.Fatalf("retained epoch %d: %+v", index, entry)
+		}
+	}
+}
+
+// Each fallback stage is reached by some input, and the final record is
+// within budget after every one of them, whichever of the large fields are
+// combined with the largest accepted timeline.
+func TestRadosLateRecordBudgetHoldsAfterEveryFallbackStage(t *testing.T) {
+	heavy := strings.Repeat("\x00", radosLateTextLimit)
+	build := func(timeline bool, probes, errLen int, notes, pgs, osds, ops bool) *radosLateClusterState {
+		state := &radosLateClusterState{Label: "failure", Pool: "tc-contracts"}
+		if timeline {
+			state.Timeline = hostileTimeline()
+		}
+		for i := 0; i < probes; i++ {
+			state.Probes = append(state.Probes, radosLateProbe{Name: heavy, Error: strings.Repeat("\x00", errLen)})
+		}
+		if notes {
+			for i := 0; i < 3*radosLateNoteLimit; i++ {
+				state.Notes = append(state.Notes, strings.Repeat("\x00", 3*radosLateErrorLimit))
+			}
+		}
+		if pgs {
+			for i := 0; i < 2*radosLateListLimit; i++ {
+				state.PGStates = append(state.PGStates, radosLatePGState{State: heavy, Count: 1})
+			}
+		}
+		if osds {
+			for i := 0; i < 2*radosLateListLimit; i++ {
+				up := i
+				state.OSDs = append(state.OSDs, radosLateOSDInfo{ID: i, Up: true, In: true, UpFrom: &up, UpThru: &up})
+			}
+			state.MonFlags, state.LastUpChange, state.LastInChange, state.PoolLastChange = heavy, heavy, heavy, heavy
+		}
+		if ops {
+			for i := 0; i < radosLateOpLimit; i++ {
+				op := radosLateOp{Description: heavy, Client: heavy, FlagPoint: heavy, WaitsForMap: true}
+				age := 9.0
+				op.Age = &age
+				for e := 0; e < radosLateEventLimit; e++ {
+					op.Events = append(op.Events, radosLateEvent{Event: heavy, Time: heavy})
+				}
+				op.Waits = op.Events[:2]
+				state.Historic = append(state.Historic, op)
+				state.InFlight = append(state.InFlight, op)
+			}
+		}
+		return state
+	}
+	seen := map[int]bool{}
+	type probeLoad struct{ probes, errLen int }
+	loads := []probeLoad{{0, 0}, {5, 40}, {5, 200}, {5, 512}, {12, 512}, {20, 512}, {32, 128}, {32, 512}, {32, 2048}}
+	for index := 0; index < (1<<5)*len(loads); index++ {
+		mask, load := index%(1<<5), loads[index/(1<<5)]
+		state := build(mask&1 != 0, load.probes, load.errLen, mask&2 != 0, mask&4 != 0, mask&8 != 0, mask&16 != 0)
+		epochs, changes := len(state.Timeline), 0
+		for _, entry := range state.Timeline {
+			changes += len(entry.Changes)
+		}
+		boundRadosLateState(state)
+		seen[state.fallbackStages] = true
+		if size := encodedRadosLateSize(t, state); size > radosLateStateLimit {
+			t.Fatalf("mask %05b load %+v stages=%d: %d bytes", mask, load, state.fallbackStages, size)
+		}
+		kept := 0
+		for _, entry := range state.Timeline {
+			kept += len(entry.Changes)
+		}
+		if len(state.Timeline)+state.TimelineOmitted != epochs || kept+state.TimelineChangesOmitted != changes {
+			t.Fatalf("mask %05b load %+v: timeline omissions do not add up: epochs %d+%d of %d, changes %d+%d of %d", mask, load, len(state.Timeline), state.TimelineOmitted, epochs, kept, state.TimelineChangesOmitted, changes)
+		}
+	}
+	// The per-field caps and the operation shedding leave the later stages
+	// idle for most inputs; the stages are exercised one by one below.
+	for _, stage := range []int{0, 1, 2, radosLateFallbackStages - 1, radosLateFallbackStages} {
+		if !seen[stage] {
+			t.Errorf("no input reached fallback stage %d (reached %v)", stage, seen)
+		}
+	}
+}
+
+// Every fallback stage, applied in order to the largest record the caps allow,
+// leaves the record no larger than before, counts what it drops, and the
+// record fits once the last stage has run.
+func TestRadosLateEveryFallbackStageKeepsTheRecordWithinBudget(t *testing.T) {
+	heavy := strings.Repeat("\x00", radosLateTextLimit)
+	state := &radosLateClusterState{Label: "failure", Pool: "tc-contracts", Timeline: hostileTimeline(), MonFlags: heavy, LastUpChange: heavy, LastInChange: heavy, PoolLastChange: heavy, MonModified: heavy}
+	for i := 0; i < radosLateNoteLimit; i++ {
+		state.Notes = append(state.Notes, strings.Repeat("\x00", radosLateErrorLimit))
+	}
+	for i := 0; i < radosLateListLimit; i++ {
+		up := i
+		state.PGStates = append(state.PGStates, radosLatePGState{State: heavy, Count: 1})
+		state.OSDs = append(state.OSDs, radosLateOSDInfo{ID: i, Up: true, In: true, UpFrom: &up, UpThru: &up})
+		state.Probes = append(state.Probes, radosLateProbe{Name: strings.Repeat("\x00", radosLateProbeNameLimit), Error: strings.Repeat("\x00", radosLateErrorLimit)})
+	}
+	capRadosLateFields(state)
+	size := func() int { return encodedRadosLateSize(t, state) }
+	steps := radosLateFallbackSteps(state, size)
+	if len(steps) != radosLateFallbackStages {
+		t.Fatalf("%d stages, constant says %d", len(steps), radosLateFallbackStages)
+	}
+	epochs, changes := len(state.Timeline), 0
+	for _, entry := range state.Timeline {
+		changes += len(entry.Changes)
+	}
+	previous := size()
+	if previous <= radosLateStateLimit {
+		t.Fatalf("fixture does not exceed the budget: %d", previous)
+	}
+	for index, step := range steps {
+		step()
+		now := size()
+		if now > previous {
+			t.Fatalf("stage %d grew the record: %d -> %d", index+1, previous, now)
+		}
+		kept := 0
+		for _, entry := range state.Timeline {
+			kept += len(entry.Changes)
+		}
+		if len(state.Timeline)+state.TimelineOmitted > epochs || kept+state.TimelineChangesOmitted > changes {
+			t.Fatalf("stage %d: omission counters overcount", index+1)
+		}
+		previous = now
+	}
+	if previous > radosLateStateLimit {
+		t.Fatalf("record is %d bytes after the last stage, budget %d", previous, radosLateStateLimit)
+	}
+	kept := 0
+	for _, entry := range state.Timeline {
+		kept += len(entry.Changes)
+	}
+	if len(state.Timeline)+state.TimelineOmitted != epochs || kept+state.TimelineChangesOmitted != changes {
+		t.Fatalf("omissions do not add up: epochs %d+%d of %d, changes %d+%d of %d", len(state.Timeline), state.TimelineOmitted, epochs, kept, state.TimelineChangesOmitted, changes)
+	}
+	// Each timeline stage on its own: it counts what it drops, keeps the
+	// epochs' own times and never invents a change.
+	for name, apply := range map[string]func(*radosLateClusterState){
+		"changes to one":    func(s *radosLateClusterState) { shedRadosLateTimelineChanges(s, 1) },
+		"changes to none":   func(s *radosLateClusterState) { shedRadosLateTimelineChanges(s, 0) },
+		"epochs to nothing": func(s *radosLateClusterState) { shedRadosLateTimelineEpochs(s, func() bool { return false }) },
+		"epochs to fit": func(s *radosLateClusterState) {
+			shedRadosLateTimelineEpochs(s, func() bool { return len(s.Timeline) <= 3 })
+		},
+	} {
+		each := &radosLateClusterState{Timeline: hostileTimeline()}
+		apply(each)
+		keptChanges := 0
+		for index, entry := range each.Timeline {
+			keptChanges += len(entry.Changes)
+			if entry.Epoch != 16+index || entry.ModifiedUnix == 0 {
+				t.Fatalf("%s: epoch %d altered: %+v", name, index, entry)
+			}
+		}
+		if len(each.Timeline)+each.TimelineOmitted != radosLateEpochLimit || keptChanges+each.TimelineChangesOmitted != radosLateEpochLimit*radosLateListLimit {
+			t.Fatalf("%s: counters %d+%d epochs, %d+%d changes", name, len(each.Timeline), each.TimelineOmitted, keptChanges, each.TimelineChangesOmitted)
+		}
+	}
+}
+
+// The timeline has its own share of the record, so a large timeline cannot
+// push the parked-operation evidence out of the budget.
+func TestRadosLateTimelineShareProtectsTheOperationEvidence(t *testing.T) {
+	state := &radosLateClusterState{Label: "failure", Pool: "tc-contracts", Timeline: hostileTimeline()}
+	age := 9.0
+	for i := 0; i < 6; i++ {
+		op := radosLateOp{Description: fmt.Sprintf("osd_op(client.%d.0:1 2.0 x e16)", 4300+i), Client: fmt.Sprintf("client.%d", 4300+i), Age: &age, WaitsForMap: true,
+			Waits: []radosLateEvent{{Event: "op must wait for map", Time: "t"}}}
+		for e := 0; e < radosLateEventLimit; e++ {
+			op.Events = append(op.Events, radosLateEvent{Event: fmt.Sprintf("event-%02d-%s", e, strings.Repeat("v", 60)), Time: strings.Repeat("t", 30)})
+		}
+		state.Historic = append(state.Historic, op)
+	}
+	boundRadosLateState(state)
+	if encodedRadosLateTimelineSize(state) > radosLateTimelineShare {
+		t.Fatalf("timeline takes %d bytes, share %d", encodedRadosLateTimelineSize(state), radosLateTimelineShare)
+	}
+	if len(state.Historic) != 6 || state.HistoricDropped != 0 {
+		t.Fatalf("operations were shed to make room for the timeline: kept %d, dropped %d", len(state.Historic), state.HistoricDropped)
+	}
+	for _, op := range state.Historic {
+		if len(op.Events) == 0 || !op.WaitsForMap || len(op.Waits) != 1 {
+			t.Fatalf("relevant operation lost evidence: %+v", op)
+		}
+	}
+	if len(state.Timeline) == 0 || state.TimelineOmitted+state.TimelineChangesOmitted == 0 {
+		t.Fatalf("share applied without a count: %d epochs, omitted %d/%d", len(state.Timeline), state.TimelineOmitted, state.TimelineChangesOmitted)
+	}
+}
+
+func TestRadosLateTimelineGapIsNotedNextToTheJoin(t *testing.T) {
+	baseline := timelineBaseline(t)
+	last := 15 + radosLateEpochLimit + 2
+	reader := timelineReader(last, func(e int) string {
+		return radosLateDumpAt(e, radosLateStamp(radosLateBase, time.Duration(20+e)*time.Second), 15, "sortbitwise")
+	})
+	state := collectFixture(reader, "failure", baseline)
+	if state.TimelineSkipped != 2 || len(state.Notes) != 1 || !strings.Contains(state.Notes[0], "newest observation, not the exact epoch") {
+		t.Fatalf("skipped %d notes %v", state.TimelineSkipped, state.Notes)
+	}
+	whole := collectFixture(timelineReader(17, func(e int) string {
+		return radosLateDumpAt(e, radosLateStamp(radosLateBase, time.Duration(20+e)*time.Second), 15, "x")
+	}), "failure", baseline)
+	if len(whole.Notes) != 0 {
+		t.Fatalf("a complete timeline needs no note: %v", whole.Notes)
+	}
+}

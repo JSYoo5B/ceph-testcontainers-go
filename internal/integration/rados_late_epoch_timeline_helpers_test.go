@@ -4,7 +4,9 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 )
@@ -143,6 +145,14 @@ func collectRadosLateEpochTimeline(overall context.Context, reader radosLateRead
 	}
 }
 
+// A skipped or omitted epoch is never read as "no change": when the timeline
+// has gaps, the per-operation epoch join says so in the record's notes.
+func noteRadosLateTimelineGap(state *radosLateClusterState) {
+	if state.TimelineSkipped > 0 {
+		state.Notes = append(state.Notes, fmt.Sprintf("%d epochs after the last one read were not read; epoch_committed_at_initiated is the newest observation, not the exact epoch", state.TimelineSkipped))
+	}
+}
+
 // joinRadosLateOps fills the two derived per-operation fields from facts that
 // were all read: the op's stamped epoch against the newest map osd.0 stored,
 // and the newest epoch already committed when the op was initiated.
@@ -177,4 +187,60 @@ func joinRadosLateOps(state, baseline *radosLateClusterState) {
 			op.EpochAtInitiated = &best
 		}
 	}
+}
+
+// radosLateTimelineShare is the encoded size the timeline may take of the
+// record before any other shedding starts, so that a large timeline cannot
+// push the operation evidence out of the budget.
+const radosLateTimelineShare = 6 << 10
+
+// radosLateTimelineChangesKept is how many changes per epoch stay after the
+// first timeline shedding stage.
+const radosLateTimelineChangesKept = 4
+
+func encodedRadosLateTimelineSize(state *radosLateClusterState) int {
+	encoded, err := json.Marshal(state.Timeline)
+	if err != nil {
+		return math.MaxInt
+	}
+	return len(encoded)
+}
+
+// shedRadosLateTimelineChanges keeps at most keep changes per epoch and counts
+// every dropped change.
+func shedRadosLateTimelineChanges(state *radosLateClusterState, keep int) {
+	for index := range state.Timeline {
+		changes := state.Timeline[index].Changes
+		if len(changes) > keep {
+			state.TimelineChangesOmitted += len(changes) - keep
+			state.Timeline[index].Changes = changes[:keep]
+		}
+	}
+}
+
+// shedRadosLateTimelineEpochs drops epochs from the tail (the earliest, which
+// are the nearest to the first change, stay longest) until fits reports true
+// or none is left. Dropped epochs and the changes they still held are counted.
+func shedRadosLateTimelineEpochs(state *radosLateClusterState, fits func() bool) {
+	for len(state.Timeline) > 0 && !fits() {
+		last := len(state.Timeline) - 1
+		state.TimelineChangesOmitted += len(state.Timeline[last].Changes)
+		state.TimelineOmitted++
+		state.Timeline = state.Timeline[:last]
+	}
+}
+
+// boundRadosLateTimelineShare applies the timeline's own share of the record.
+func boundRadosLateTimelineShare(state *radosLateClusterState) {
+	fits := func() bool { return encodedRadosLateTimelineSize(state) <= radosLateTimelineShare }
+	if fits() {
+		return
+	}
+	state.Truncated = true
+	shedRadosLateTimelineChanges(state, radosLateTimelineChangesKept)
+	if fits() {
+		return
+	}
+	shedRadosLateTimelineChanges(state, 0)
+	shedRadosLateTimelineEpochs(state, fits)
 }

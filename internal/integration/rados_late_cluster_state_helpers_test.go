@@ -96,9 +96,11 @@ type radosLateOp struct {
 	Waits       []radosLateEvent `json:"waits,omitempty"`
 	WaitsForMap bool             `json:"waits_for_map,omitempty"`
 	// EpochLead is the op's stamped epoch minus the newest map osd.0 had
-	// stored when it was dumped; EpochAtInitiated is the newest epoch of the
-	// record's timeline that was already committed when the op was initiated.
-	// Both are absent unless every input was read.
+	// stored when it was dumped; EpochAtInitiated is the newest epoch among
+	// the timeline observations (the baseline and the epochs read) that was
+	// already committed when the op was initiated. When epochs were skipped or
+	// later omitted it is the newest observation, not proof of the globally
+	// exact epoch at that moment. Both are absent unless every input was read.
 	EpochLead        *int             `json:"epoch_lead_over_osd,omitempty"`
 	EpochAtInitiated *int             `json:"epoch_committed_at_initiated,omitempty"`
 	Age              *float64         `json:"age,omitempty"`
@@ -172,6 +174,12 @@ type radosLateClusterState struct {
 	// from "osd dump <epoch>" (see radosLateEpoch).
 	Timeline        []radosLateEpoch `json:"epoch_timeline,omitempty"`
 	TimelineSkipped int              `json:"epoch_timeline_skipped,omitempty"`
+	// Epochs and changes that were read but dropped to fit the record budget.
+	// TimelineSkipped counts epochs never read; these count epochs and
+	// changes that were read and then shed.
+	TimelineOmitted        int `json:"epoch_timeline_omitted,omitempty"`
+	TimelineChangesOmitted int `json:"epoch_timeline_changes_omitted,omitempty"`
+	fallbackStages         int
 
 	OSDState     string `json:"osd_state,omitempty"`
 	OSDNewestMap *int   `json:"osd_newest_map,omitempty"`
@@ -646,6 +654,7 @@ func collectRadosLateClusterState(parent context.Context, reader radosLateReader
 	}
 	collectRadosLateEpochTimeline(overall, reader, pool, state, baseline)
 	joinRadosLateOps(state, baseline)
+	noteRadosLateTimelineGap(state)
 	state.Ready = radosLateReady(state)
 	boundRadosLateState(state)
 	return state
@@ -715,6 +724,13 @@ func radosLateReady(state *radosLateClusterState) *bool {
 
 // boundRadosLateState keeps the encoded state within radosLateStateLimit by
 // dropping detail in a fixed order and recording that it did.
+// radosLateFallbackStages is the number of whole-record shedding stages that
+// follow the per-field caps and the operation shedding.
+const radosLateFallbackStages = 9
+
+// radosLateProbeNameLimit bounds a probe name; the real names are shorter.
+const radosLateProbeNameLimit = 48
+
 const (
 	radosLateErrorLimit = 512
 	radosLateTextLimit  = 128
@@ -754,7 +770,7 @@ func capRadosLateFields(state *radosLateClusterState) bool {
 	text(&state.PoolLastChange, radosLateTextLimit)
 	text(&state.OSDState, radosLateTextLimit)
 	for index := range state.Probes {
-		text(&state.Probes[index].Name, radosLateTextLimit)
+		text(&state.Probes[index].Name, radosLateProbeNameLimit)
 		text(&state.Probes[index].Error, radosLateErrorLimit)
 	}
 	if len(state.Probes) > radosLateListLimit {
@@ -820,6 +836,7 @@ func boundRadosLateState(state *radosLateClusterState) {
 	if capRadosLateFields(state) {
 		state.Truncated = true
 	}
+	boundRadosLateTimelineShare(state)
 	if size() <= radosLateStateLimit {
 		return
 	}
@@ -879,15 +896,34 @@ func boundRadosLateState(state *radosLateClusterState) {
 			state.InFlight, state.InFlightDropped = state.InFlight[:len(state.InFlight)-1], state.InFlightDropped+1
 		}
 	}
-	// Escaping can still make capped text larger than its byte count. Drop the
-	// remaining detail in order of least value; the probe table and the
-	// epoch, readiness and lag fields are kept last.
-	steps := []func(){
+	for _, step := range radosLateFallbackSteps(state, size) {
+		if size() <= radosLateStateLimit {
+			return
+		}
+		step()
+		state.fallbackStages++
+	}
+}
+
+// radosLateFallbackSteps are the whole-record shedding stages that follow the
+// per-field caps and the operation shedding, in order of least value first.
+// Escaping can still make capped text larger than its byte count, so these
+// run until the encoded record fits; the probe table and the epoch, readiness
+// and lag fields are kept last.
+func radosLateFallbackSteps(state *radosLateClusterState, size func() int) []func() {
+	return []func(){
 		func() { state.Notes = nil },
 		func() { state.PGStates = nil },
 		func() { state.OSDs = nil },
 		func() {
 			state.MonFlags, state.LastUpChange, state.LastInChange, state.PoolLastChange, state.MonModified = "", "", "", "", ""
+		},
+		// The epoch timeline is shed after the other detail and before the
+		// probe table, in three steps, each counted.
+		func() { shedRadosLateTimelineChanges(state, 1) },
+		func() { shedRadosLateTimelineChanges(state, 0) },
+		func() {
+			shedRadosLateTimelineEpochs(state, func() bool { return size() <= radosLateStateLimit })
 		},
 		func() {
 			for index := range state.Probes {
@@ -901,12 +937,6 @@ func boundRadosLateState(state *radosLateClusterState) {
 				}
 			}
 		},
-	}
-	for _, step := range steps {
-		if size() <= radosLateStateLimit {
-			return
-		}
-		step()
 	}
 }
 
