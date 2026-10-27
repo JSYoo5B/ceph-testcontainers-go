@@ -22,10 +22,9 @@ type MGRModuleState struct {
 	ErrorString                      string
 }
 
-// MGRModules lists configured and available modules, sorted by name. Enabled
-// and CanRun do not prove command readiness; WaitMGRModuleReady probes selected
-// built-in modules, and callers must probe their intended commands for others.
-func (c *Container) MGRModules(ctx context.Context) ([]MGRModuleState, error) {
+// observedMGRModules implements Observer.MGRModules. It takes the topology lock and refuses
+// a cluster without pool policy readiness before it reads.
+func (c *Container) observedMGRModules(ctx context.Context) ([]MGRModuleState, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {

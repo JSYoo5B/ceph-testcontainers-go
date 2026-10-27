@@ -114,7 +114,7 @@ func TestFullRatiosObservesNativeMapAndCapturedControl(t *testing.T) {
 		}
 		return nil
 	}
-	got, err := c.FullRatios(t.Context())
+	got, err := c.fullRatios(t.Context())
 	if err != nil || got != (FullRatioSnapshot{FSID: fullRatiosFSID, Epoch: 7, Ratios: original}) {
 		t.Fatalf("native map snapshot changed: %+v %v", got, err)
 	}
@@ -288,7 +288,7 @@ func TestFullRatiosFailureBeforeRegistrationAndNativeErrorSafety(t *testing.T) {
 		}
 	}
 	var unavailable *Container
-	if got, err := unavailable.FullRatios(t.Context()); err == nil || got != (FullRatioSnapshot{}) {
+	if got, err := unavailable.fullRatios(t.Context()); err == nil || got != (FullRatioSnapshot{}) {
 		t.Fatal("nil cluster provided a native observation")
 	}
 	if change, err := unavailable.OverrideFullRatios(t.Context(), FullRatios{.1, .2, .3}); err == nil || change != nil {
@@ -315,7 +315,7 @@ func TestFullRatiosStrictNativeJSONAndFixtureValidation(t *testing.T) {
 		strings.Replace(string(valid), fullRatiosFSID, "8797c2db-bf63-40a1-990e-eb6658b50cf7", 1),
 		strings.Repeat(" ", (4<<20)+1)} {
 		ctr.raw = raw
-		got, err := c.FullRatios(t.Context())
+		got, err := c.fullRatios(t.Context())
 		if err == nil || got != (FullRatioSnapshot{}) || ctr.mutations != 0 {
 			t.Fatal("invalid native map accepted", err)
 		}
@@ -323,7 +323,7 @@ func TestFullRatiosStrictNativeJSONAndFixtureValidation(t *testing.T) {
 	for _, values := range []FullRatios{{0, .5, 1}, {.9, .9, .9}, {.9, .7, .5}} {
 		ctr.raw = ""
 		ctr.ratios = values
-		if got, err := c.FullRatios(t.Context()); err != nil || got.Ratios != values {
+		if got, err := c.fullRatios(t.Context()); err != nil || got.Ratios != values {
 			t.Fatal("diagnostic check rejected native zero/equal/misordered values", err)
 		}
 		before := ctr.mutations
@@ -349,7 +349,7 @@ func TestFullRatiosIdentityCancellationAndBoundedAdmission(t *testing.T) {
 			}
 			return nil
 		}
-		got, err := c.FullRatios(ctx)
+		got, err := c.fullRatios(ctx)
 		if !errors.Is(err, context.Canceled) || got != (FullRatioSnapshot{}) || len(ctr.calls) != phase {
 			t.Fatal("query cancellation published a snapshot or sent later command", phase, err, ctr.calls)
 		}
@@ -362,7 +362,7 @@ func TestFullRatiosIdentityCancellationAndBoundedAdmission(t *testing.T) {
 			}
 			return nil
 		}
-		if got, err := c.FullRatios(t.Context()); err == nil || got != (FullRatioSnapshot{}) {
+		if got, err := c.fullRatios(t.Context()); err == nil || got != (FullRatioSnapshot{}) {
 			t.Fatal("native FSID drift accepted", phase)
 		}
 	}

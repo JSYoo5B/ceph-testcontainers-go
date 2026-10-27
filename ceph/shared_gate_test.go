@@ -110,7 +110,7 @@ func TestSharedGateOpensForTheModuleAndUnsharedClusters(t *testing.T) {
 	}
 	shared := &Container{}
 	shared.sharing.Store(int32(sharedWithTenants))
-	if err := shared.sharedGate("Status"); err != nil {
+	if err := shared.sharedGate("WaitForClean"); err != nil {
 		t.Fatalf("an open method was refused: %v", err)
 	}
 	err := shared.sharedGate("Terminate")

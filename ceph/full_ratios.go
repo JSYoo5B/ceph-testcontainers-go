@@ -27,13 +27,8 @@ type FullRatioSnapshot struct {
 	Ratios FullRatios
 }
 
-// FullRatios reads native thresholds through one captured control CLI handle,
-// checking the original bootstrap FSID before and after the map query. Native
-// zero, equal and misordered thresholds remain observable. It makes no writes,
-// retries or background workers and returns a zero snapshot on any failure.
-// These separate reads are not atomic; external configuration writers must not
-// race the observation. Poll HealthDetails for eventual OSD fullness reports.
-func (c *Container) FullRatios(ctx context.Context) (FullRatioSnapshot, error) {
+// fullRatios implements Observer.FullRatios.
+func (c *Container) fullRatios(ctx context.Context) (FullRatioSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return FullRatioSnapshot{}, err
 	}

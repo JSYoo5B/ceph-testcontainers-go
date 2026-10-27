@@ -178,24 +178,6 @@ func (t *Tenant) RunNativeCommand(ctx context.Context, target testcontainers.Con
 	return c.runNativeCommand(ctx, target, command)
 }
 
-// Status returns the cluster's status; see Container.Status.
-func (t *Tenant) Status(ctx context.Context) (Status, error) {
-	c, err := t.cluster()
-	if err != nil {
-		return Status{}, err
-	}
-	return c.Status(ctx)
-}
-
-// HealthDetails returns the cluster's health; see Container.HealthDetails.
-func (t *Tenant) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
-	c, err := t.cluster()
-	if err != nil {
-		return HealthSnapshot{}, err
-	}
-	return c.HealthDetails(ctx)
-}
-
 // Pools lists the cluster's pools; see Container.Pools.
 func (t *Tenant) Pools(ctx context.Context) ([]PoolState, error) {
 	c, err := t.cluster()
@@ -224,33 +206,6 @@ func (t *Tenant) PoolUsage(ctx context.Context, name string) (PoolUsageSnapshot,
 		return PoolUsageSnapshot{}, err
 	}
 	return c.poolUsage(ctx, name, nil)
-}
-
-// ObjectWatchers lists an object's watchers; see Container.ObjectWatchers.
-func (t *Tenant) ObjectWatchers(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error) {
-	c, err := t.cluster()
-	if err != nil {
-		return nil, err
-	}
-	return c.ObjectWatchers(ctx, pool, namespace, object)
-}
-
-// OSDFlags lists the global OSD flags; see Container.OSDFlags.
-func (t *Tenant) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
-	c, err := t.cluster()
-	if err != nil {
-		return nil, err
-	}
-	return c.OSDFlags(ctx)
-}
-
-// BlocklistEntries lists the blocklist; see Container.BlocklistEntries.
-func (t *Tenant) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, error) {
-	c, err := t.cluster()
-	if err != nil {
-		return nil, err
-	}
-	return c.BlocklistEntries(ctx)
 }
 
 func (t *Tenant) check() error {

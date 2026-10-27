@@ -74,7 +74,7 @@ func TestOverrideConfigPreservesModuleOptionsAndStoredStrings(t *testing.T) {
 	if err := change.Restore(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := c.Configuration(t.Context())
+	entries, err := c.configuration(t.Context())
 	if err != nil || len(entries) != 2 || !slices.Contains(entries, module) || !slices.Contains(entries, foreign) {
 		t.Fatal("module setting or arbitrary foreign stored string lost")
 	}
@@ -155,7 +155,7 @@ func TestOverrideConfigValidationAndMaskCanonicalization(t *testing.T) {
 
 func TestConfigurationRejectsMalformedDuplicateDump(t *testing.T) {
 	for _, raw := range []string{"null", `[{"section":"osd","name":"debug_osd","value":"2"},{"section":"osd","name":"debug_osd","value":"3"}]`, `[{"section":"osd","mask":{},"name":"debug_osd"}]`} {
-		if _, err := configCluster(&configFixture{raw: raw}).Configuration(t.Context()); err == nil {
+		if _, err := configCluster(&configFixture{raw: raw}).configuration(t.Context()); err == nil {
 			t.Fatal("invalid configuration dump accepted")
 		}
 	}
