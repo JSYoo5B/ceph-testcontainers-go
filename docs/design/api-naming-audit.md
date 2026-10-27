@@ -246,3 +246,14 @@ option follows the `With...` idiom of the other options and is not an alias or
 a rename; no existing name, receiver or operation verb changed. `OSDConfig`
 was left as the CRUSH placement descriptor. The record lists the added
 rows as historical API accounting only.
+
+## 146-static-facts-accessors
+
+The change deletes the ten `Container` accessors that returned static cluster
+facts: `AddressFamily`, `CephVersion`, `ClusterNetworkName`, `EssentialImage`,
+`HasSeparateClusterNetwork`, `Images`, `MessengerMode`, `NetworkName`,
+`PublicAddress` and `UsesHostNetwork`. `FactsOf` and `ClusterFacts`, merged
+earlier, serve every one of them, so no name is added and none is renamed. The
+essential image is read as `ClusterFacts.Images.Essential`. No alias, shim or
+mapping remains. The record lists the removed rows as historical API accounting
+only.

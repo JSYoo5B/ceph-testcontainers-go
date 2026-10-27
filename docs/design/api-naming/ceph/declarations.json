@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 412,
+  "count": 402,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -361,14 +361,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.AddressFamily",
-      "kind": "method",
-      "signature": "func() AddressFamily",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.AddressFamily",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.BlocklistEntries",
       "kind": "method",
       "signature": "func(ctx context.Context) ([]BlocklistEntry, error)",
@@ -385,27 +377,11 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.CephVersion",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.CephVersion",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.ClientContainer",
       "kind": "method",
       "signature": "func(ctx context.Context) (testcontainers.Container, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.ClientContainer",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.ClusterNetworkName",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ClusterNetworkName",
       "decision": "baseline"
     },
     {
@@ -513,14 +489,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.EssentialImage",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.EssentialImage",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.Exec",
       "kind": "method",
       "signature": "func(ctx context.Context, cmd []string, options ...tcexec.ProcessOption) (int, io.Reader, error)",
@@ -537,27 +505,11 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.HasSeparateClusterNetwork",
-      "kind": "method",
-      "signature": "func() bool",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.HasSeparateClusterNetwork",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.HealthDetails",
       "kind": "method",
       "signature": "func(ctx context.Context) (HealthSnapshot, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.HealthDetails",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.Images",
-      "kind": "method",
-      "signature": "func() ImageSet",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.Images",
       "decision": "baseline"
     },
     {
@@ -609,14 +561,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.MessengerMode",
-      "kind": "method",
-      "signature": "func() MessengerMode",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.MessengerMode",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.MonitorBootstrapAddresses",
       "kind": "method",
       "signature": "func(ctx context.Context) (string, error)",
@@ -630,14 +574,6 @@
       "signature": "func(ctx context.Context) ([]*MonitorContainer, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.Monitors",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.NetworkName",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.NetworkName",
       "decision": "baseline"
     },
     {
@@ -745,14 +681,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.PublicAddress",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.PublicAddress",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.QuorumStatus",
       "kind": "method",
       "signature": "func(ctx context.Context) (QuorumStatus, error)",
@@ -854,14 +782,6 @@
       "signature": "func(t testing.TB, config FinalizationConfig) (*Finalization, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.TerminateOnCleanup",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.UsesHostNetwork",
-      "kind": "method",
-      "signature": "func() bool",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.UsesHostNetwork",
       "decision": "baseline"
     },
     {
