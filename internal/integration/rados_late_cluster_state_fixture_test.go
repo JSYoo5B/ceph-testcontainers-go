@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // These fixtures replace the cluster with synthetic admin output shaped like
@@ -458,5 +459,192 @@ func TestRadosLateClusterStateProbeBoundsFitTheBudget(t *testing.T) {
 	}
 	if radosLateStateBound > 30*time.Second {
 		t.Fatalf("diagnostic bound %v is too long to follow a failed phase", radosLateStateBound)
+	}
+}
+
+// Every probe reads one JSON document: a closing delimiter or a second value
+// after it makes the answer unavailable, and only whitespace may follow.
+func TestRadosLateClusterStateTrailingDataIsUnavailableForEveryProbe(t *testing.T) {
+	probes := []struct{ key, name string }{
+		{radosLateKeyInFlight, "ops_in_flight"}, {radosLateKeyHistoric, "historic_ops_by_duration"},
+		{radosLateKeyOSD, "osd_status"}, {radosLateKeyDump, "osd_dump"}, {radosLateKeyStatus, "status"},
+	}
+	for _, probe := range probes {
+		good, _ := healthyRadosLateReader(15, 15).answers[probe.key](context.Background())
+		for _, suffix := range []string{"}", "]", " }", "{}", "[]", "x", "\n}\n", `{"a":1}`} {
+			t.Run(probe.name+"/"+strings.TrimSpace(suffix), func(t *testing.T) {
+				reader := healthyRadosLateReader(15, 15)
+				reader.answers[probe.key] = fixedRadosLateAnswer(string(good) + suffix)
+				state := collectFixture(reader, "failure", nil)
+				if err := radosLateProbeError(t, state, probe.name); !strings.Contains(err, "trailing data") {
+					t.Fatalf("suffix %q accepted: %q", suffix, err)
+				}
+				if state.MonEpoch != nil && probe.name == "osd_dump" || state.OSDNewestMap != nil && probe.name == "osd_status" || state.PGsActiveClean != nil && probe.name == "status" || state.InFlightTotal != nil && probe.name == "ops_in_flight" || state.HistoricTotal != nil && probe.name == "historic_ops_by_duration" {
+					t.Fatalf("evidence published from an answer with trailing data: %+v", state)
+				}
+			})
+		}
+		t.Run(probe.name+"/whitespace", func(t *testing.T) {
+			reader := healthyRadosLateReader(15, 15)
+			reader.answers[probe.key] = fixedRadosLateAnswer(string(good) + " \n\t\r\n")
+			if err := radosLateProbeError(t, collectFixture(reader, "failure", nil), probe.name); err != "" {
+				t.Fatalf("trailing whitespace rejected: %q", err)
+			}
+		})
+	}
+}
+
+func encodedRadosLateSize(t *testing.T, state *radosLateClusterState) int {
+	t.Helper()
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(encoded)
+}
+
+// The advertised record budget holds for the final encoded record whatever
+// field is large, including text that JSON escaping makes larger.
+func TestRadosLateClusterStateFinalRecordStaysWithinBudget(t *testing.T) {
+	huge := strings.Repeat("e", radosLateStateLimit+1)
+	events := make([]string, radosLateEventLimit+4)
+	for i := range events {
+		events[i] = "event-" + strings.Repeat("v", 60)
+	}
+	opsBody := func() string {
+		var ops []string
+		for i := 0; i < radosLateOpLimit+5; i++ {
+			ops = append(ops, radosLateOpJSON(fmt.Sprintf("osd_op(client.%d.0:1 2.0 %s e15)", i, strings.Repeat("o", 700)), float64(i), strings.Repeat("f", 300), events...))
+		}
+		return `{"ops":[` + strings.Join(ops, ",") + `]}`
+	}
+	cases := []struct {
+		name  string
+		build func(*fakeRadosLateReader)
+		cut   bool
+	}{
+		{"large command error", func(r *fakeRadosLateReader) {
+			r.answers[radosLateKeyOSD] = func(context.Context) ([]byte, error) { return nil, fmt.Errorf("%s", huge) }
+		}, true},
+		{"large non-operation field", func(r *fakeRadosLateReader) {
+			r.answers[radosLateKeyDump] = fixedRadosLateAnswer(`{"epoch":15,"flags":"` + huge + `","last_up_change":"` + huge + `","osds":[{"osd":0,"up":1,"in":1}]}`)
+		}, true},
+		{"large pg state names", func(r *fakeRadosLateReader) {
+			r.answers[radosLateKeyStatus] = fixedRadosLateAnswer(`{"osdmap":{},"pgmap":{"num_pgs":1,"pgs_by_state":[{"state_name":"` + huge + `","count":1}]}}`)
+		}, true},
+		{"many osds and pg states", func(r *fakeRadosLateReader) {
+			var osds, states []string
+			for i := 0; i < 500; i++ {
+				osds = append(osds, fmt.Sprintf(`{"osd":%d,"up":1,"in":1,"up_from":1,"up_thru":2}`, i))
+				states = append(states, fmt.Sprintf(`{"state_name":"s%d","count":1}`, i))
+			}
+			r.answers[radosLateKeyDump] = fixedRadosLateAnswer(`{"epoch":15,"osds":[` + strings.Join(osds, ",") + `]}`)
+			r.answers[radosLateKeyStatus] = fixedRadosLateAnswer(`{"osdmap":{},"pgmap":{"num_pgs":500,"pgs_by_state":[` + strings.Join(states, ",") + `]}}`)
+		}, true},
+		{"large operation and event lists", func(r *fakeRadosLateReader) {
+			r.answers[radosLateKeyInFlight] = fixedRadosLateAnswer(opsBody())
+			r.answers[radosLateKeyHistoric] = fixedRadosLateAnswer(opsBody())
+		}, true},
+		{"escape-heavy error text", func(r *fakeRadosLateReader) {
+			r.answers[radosLateKeyOSD] = func(context.Context) ([]byte, error) {
+				return nil, fmt.Errorf("%s", strings.Repeat("\x00\"\\", 4*radosLateErrorLimit))
+			}
+			r.answers[radosLateKeyDump] = fixedRadosLateAnswer(`{"epoch":15,"flags":"` + strings.Repeat(`\u0000`, 40000) + `","osds":[{"osd":0,"up":1,"in":1}]}`)
+		}, true},
+		{"escape-heavy pg states and osd list", func(r *fakeRadosLateReader) {
+			var states []string
+			for i := 0; i < 100; i++ {
+				states = append(states, fmt.Sprintf(`{"state_name":"%s","count":1}`, strings.Repeat(`\u0000`, 400)+fmt.Sprint(i)))
+			}
+			r.answers[radosLateKeyStatus] = fixedRadosLateAnswer(`{"osdmap":{},"pgmap":{"num_pgs":100,"pgs_by_state":[` + strings.Join(states, ",") + `]}}`)
+			r.answers[radosLateKeyDump] = fixedRadosLateAnswer(`{"epoch":15,"flags":"` + strings.Repeat(`\u0000`, 400) + `","last_up_change":"` + strings.Repeat(`\u0000`, 400) + `","osds":[{"osd":0,"up":1,"in":1}]}`)
+		}, true},
+		{"everything at once", func(r *fakeRadosLateReader) {
+			r.answers[radosLateKeyOSD] = func(context.Context) ([]byte, error) { return nil, fmt.Errorf("%s", huge) }
+			r.answers[radosLateKeyDump] = fixedRadosLateAnswer(`{"epoch":15,"flags":"` + huge + `","modified":"` + huge + `","osds":[{"osd":0,"up":1,"in":1}]}`)
+			r.answers[radosLateKeyStatus] = func(context.Context) ([]byte, error) { return nil, fmt.Errorf("%s", huge) }
+			r.answers[radosLateKeyInFlight] = fixedRadosLateAnswer(opsBody())
+			r.answers[radosLateKeyHistoric] = fixedRadosLateAnswer(opsBody())
+		}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := healthyRadosLateReader(15, 15)
+			tc.build(reader)
+			state := collectFixture(reader, "failure", nil)
+			if size := encodedRadosLateSize(t, state); size > radosLateStateLimit {
+				t.Fatalf("final record is %d bytes, budget %d", size, radosLateStateLimit)
+			}
+			if tc.cut && !state.Truncated {
+				t.Fatalf("cut not recorded")
+			}
+			// Each retained field is bounded on its own, not only the total.
+			for name, text := range map[string]string{"flags": state.MonFlags, "last_up_change": state.LastUpChange, "last_in_change": state.LastInChange, "modified": state.MonModified, "pool_last_change": state.PoolLastChange} {
+				if len(text) > radosLateTextLimit+64 {
+					t.Fatalf("%s is %d bytes", name, len(text))
+				}
+			}
+			for _, pg := range state.PGStates {
+				if len(pg.State) > radosLateTextLimit+64 {
+					t.Fatalf("pg state name is %d bytes", len(pg.State))
+				}
+			}
+			if len(state.PGStates) > radosLateListLimit || len(state.OSDs) > radosLateListLimit || len(state.Notes) > radosLateNoteLimit {
+				t.Fatalf("lists: %d pg states, %d osds, %d notes", len(state.PGStates), len(state.OSDs), len(state.Notes))
+			}
+			for _, probe := range state.Probes {
+				if len(probe.Error) > radosLateErrorLimit+64 {
+					t.Fatalf("probe %s error is %d bytes", probe.Name, len(probe.Error))
+				}
+			}
+		})
+	}
+	t.Run("error just over the limit is marked", func(t *testing.T) {
+		reader := healthyRadosLateReader(15, 15)
+		reader.answers[radosLateKeyOSD] = func(context.Context) ([]byte, error) {
+			return nil, fmt.Errorf("%s", strings.Repeat("x", radosLateErrorLimit+1))
+		}
+		state := collectFixture(reader, "failure", nil)
+		if err := radosLateProbeError(t, state, "osd_status"); !strings.Contains(err, "[cut ") || !state.Truncated {
+			t.Fatalf("unmarked cut: %q truncated=%v", err, state.Truncated)
+		}
+	})
+	t.Run("small values are untouched", func(t *testing.T) {
+		state := collectFixture(healthyRadosLateReader(15, 15), "pre-late", nil)
+		if state.Truncated || strings.Contains(fmt.Sprint(state.Probes), "[cut") {
+			t.Fatalf("healthy record cut: %+v", state)
+		}
+	})
+}
+
+// Capping keeps what fits: a long state name or a long OSD list is shortened
+// and marked, not replaced by dropping the whole field.
+func TestRadosLateClusterStateCappedFieldsAreKeptAndMarked(t *testing.T) {
+	reader := healthyRadosLateReader(15, 15)
+	var osds []string
+	for i := 0; i < 500; i++ {
+		osds = append(osds, fmt.Sprintf(`{"osd":%d,"up":1,"in":1}`, i))
+	}
+	reader.answers[radosLateKeyDump] = fixedRadosLateAnswer(`{"epoch":15,"osds":[` + strings.Join(osds, ",") + `]}`)
+	reader.answers[radosLateKeyStatus] = fixedRadosLateAnswer(`{"osdmap":{},"pgmap":{"num_pgs":1,"pgs_by_state":[{"state_name":"` + strings.Repeat("s", 4*radosLateTextLimit) + `","count":1}]}}`)
+	state := collectFixture(reader, "failure", nil)
+	if len(state.OSDs) != radosLateListLimit || !state.Truncated {
+		t.Fatalf("osd list: kept %d truncated=%v", len(state.OSDs), state.Truncated)
+	}
+	if len(state.PGStates) != 1 || !strings.Contains(state.PGStates[0].State, "[cut ") || len(state.PGStates[0].State) > radosLateTextLimit+32 {
+		t.Fatalf("pg state: %+v", state.PGStates)
+	}
+	// Notes are bounded both in number and in length.
+	notes := &radosLateClusterState{}
+	for i := 0; i < 3*radosLateNoteLimit; i++ {
+		notes.Notes = append(notes.Notes, strings.Repeat("n", 3*radosLateErrorLimit))
+	}
+	if !capRadosLateFields(notes) || len(notes.Notes) != radosLateNoteLimit || !strings.Contains(notes.Notes[0], "[cut ") || len(notes.Notes[0]) > radosLateErrorLimit+32 {
+		t.Fatalf("notes: %d, first %d bytes", len(notes.Notes), len(notes.Notes[0]))
+	}
+	// A multi-byte rune is never split by the cut.
+	text, cut := radosLateText(strings.Repeat("é", 100), 5)
+	if !cut || !utf8.ValidString(text) {
+		t.Fatalf("cut text %q valid=%v", text, utf8.ValidString(text))
 	}
 }

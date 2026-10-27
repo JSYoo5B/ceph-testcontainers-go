@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"regexp"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
@@ -173,7 +175,11 @@ func radosLateDecode(raw []byte) (map[string]json.RawMessage, error) {
 	if top == nil {
 		return nil, errors.New("JSON null, not an object")
 	}
-	if decoder.More() {
+	// More() only reports whether another element of an enclosing array or
+	// object follows, so a stray "}" or "]" would pass it. Require that the
+	// next read finds the end of the input; whitespace alone is fine.
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return nil, errors.New("trailing data after the JSON object")
 	}
 	return top, nil
@@ -625,6 +631,83 @@ func radosLateReady(state *radosLateClusterState) *bool {
 
 // boundRadosLateState keeps the encoded state within radosLateStateLimit by
 // dropping detail in a fixed order and recording that it did.
+const (
+	radosLateErrorLimit = 512
+	radosLateTextLimit  = 128
+	radosLateNoteLimit  = 8
+	radosLateListLimit  = 32
+)
+
+// radosLateText cuts text to at most limit bytes of valid UTF-8 and says how
+// much was cut, so a cut is never mistaken for the whole value.
+func radosLateText(text string, limit int) (string, bool) {
+	if len(text) <= limit {
+		return text, false
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s...[cut %d bytes]", text[:cut], len(text)-cut), true
+}
+
+// capRadosLateFields bounds every retained variable-length field that is not
+// an operation list: probe errors, notes, parsed strings and the PG and OSD
+// lists. It reports whether anything was cut.
+func capRadosLateFields(state *radosLateClusterState) bool {
+	cut := false
+	text := func(field *string, limit int) {
+		var did bool
+		*field, did = radosLateText(*field, limit)
+		cut = cut || did
+	}
+	text(&state.Label, radosLateTextLimit)
+	text(&state.Pool, radosLateTextLimit)
+	text(&state.MonModified, radosLateTextLimit)
+	text(&state.MonFlags, radosLateTextLimit)
+	text(&state.LastUpChange, radosLateTextLimit)
+	text(&state.LastInChange, radosLateTextLimit)
+	text(&state.PoolLastChange, radosLateTextLimit)
+	text(&state.OSDState, radosLateTextLimit)
+	for index := range state.Probes {
+		text(&state.Probes[index].Name, radosLateTextLimit)
+		text(&state.Probes[index].Error, radosLateErrorLimit)
+	}
+	if len(state.Probes) > radosLateListLimit {
+		state.Probes, cut = state.Probes[:radosLateListLimit], true
+	}
+	for index := range state.Notes {
+		text(&state.Notes[index], radosLateErrorLimit)
+	}
+	if len(state.Notes) > radosLateNoteLimit {
+		state.Notes, cut = state.Notes[:radosLateNoteLimit], true
+	}
+	for index := range state.PGStates {
+		text(&state.PGStates[index].State, radosLateTextLimit)
+	}
+	if len(state.PGStates) > radosLateListLimit {
+		state.PGStates, cut = state.PGStates[:radosLateListLimit], true
+	}
+	if len(state.OSDs) > radosLateListLimit {
+		state.OSDs, cut = state.OSDs[:radosLateListLimit], true
+	}
+	for _, list := range [][]radosLateOp{state.Historic, state.InFlight} {
+		for index := range list {
+			text(&list[index].Description, radosLateErrorLimit)
+			text(&list[index].Client, radosLateTextLimit)
+			text(&list[index].FlagPoint, radosLateTextLimit)
+			for event := range list[index].Events {
+				text(&list[index].Events[event].Event, radosLateTextLimit)
+				text(&list[index].Events[event].Time, radosLateTextLimit)
+			}
+		}
+	}
+	return cut
+}
+
+// boundRadosLateState keeps the encoded state within radosLateStateLimit by
+// capping every variable-length field and then dropping detail in a fixed
+// order, recording that it did. The final encoded size is what is bounded.
 func boundRadosLateState(state *radosLateClusterState) {
 	size := func() int {
 		encoded, err := json.Marshal(state)
@@ -632,6 +715,9 @@ func boundRadosLateState(state *radosLateClusterState) {
 			return math.MaxInt
 		}
 		return len(encoded)
+	}
+	if capRadosLateFields(state) {
+		state.Truncated = true
 	}
 	if size() <= radosLateStateLimit {
 		return
@@ -652,6 +738,35 @@ func boundRadosLateState(state *radosLateClusterState) {
 		} else {
 			state.InFlight, state.InFlightDropped = state.InFlight[:len(state.InFlight)-1], state.InFlightDropped+1
 		}
+	}
+	// Escaping can still make capped text larger than its byte count. Drop the
+	// remaining detail in order of least value; the probe table and the
+	// epoch, readiness and lag fields are kept last.
+	steps := []func(){
+		func() { state.Notes = nil },
+		func() { state.PGStates = nil },
+		func() { state.OSDs = nil },
+		func() {
+			state.MonFlags, state.LastUpChange, state.LastInChange, state.PoolLastChange, state.MonModified = "", "", "", "", ""
+		},
+		func() {
+			for index := range state.Probes {
+				state.Probes[index].Error, _ = radosLateText(state.Probes[index].Error, 64)
+			}
+		},
+		func() {
+			for index := range state.Probes {
+				if state.Probes[index].Error != "" {
+					state.Probes[index].Error = "error cut to fit the record budget"
+				}
+			}
+		},
+	}
+	for _, step := range steps {
+		if size() <= radosLateStateLimit {
+			return
+		}
+		step()
 	}
 }
 
