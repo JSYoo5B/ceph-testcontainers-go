@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 412,
+  "count": 414,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -1045,6 +1045,12 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.DebugLevelNotApplied",
+      "kind": "const",
+      "proposed": "ceph.DebugLevelNotApplied",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.DebugLevelOverrideHandle",
       "kind": "type",
       "proposed": "ceph.DebugLevelOverrideHandle",
@@ -1092,6 +1098,12 @@
       "current": "ceph.DebugLevelReceipt",
       "kind": "type",
       "proposed": "ceph.DebugLevelReceipt",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelReceipter",
+      "kind": "type",
+      "proposed": "ceph.DebugLevelReceipter",
       "decision": "baseline"
     },
     {
@@ -1340,7 +1352,7 @@
     {
       "current": "ceph.Finalization.TrackDebugLevel",
       "kind": "method",
-      "signature": "func(handle *DebugLevelOverrideHandle)",
+      "signature": "func(handle DebugLevelReceipter)",
       "receiver": "*Finalization",
       "proposed": "ceph.Finalization.TrackDebugLevel",
       "decision": "baseline"

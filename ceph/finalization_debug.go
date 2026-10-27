@@ -13,13 +13,24 @@ const (
 	maxFinalizationDebugError       = 2048
 )
 
+// DebugLevelReceipter is a source of one debug level window's receipt. A
+// *DebugLevelOverrideHandle implements it. A registration is absent when it
+// is a nil interface or when Receipt returns the zero receipt (State is
+// empty), which is also what a typed nil pointer stored in the interface
+// returns, so absence is decided by the receipt and never by a nil
+// comparison alone.
+type DebugLevelReceipter interface {
+	Receipt() DebugLevelReceipt
+}
+
 // TrackDebugLevel registers a debug level window for the manifest. Every
 // call is a separate window, in registration order, even for the same
 // daemon, option and generation: windows are never merged or deduplicated.
 // Register the handle right after OverrideDebugLevel returns, including the
-// non-nil handle that comes with an apply error. A nil handle, or one that
-// OverrideDebugLevel did not return, is recorded as absent, never as a
-// restored window.
+// non-nil handle that comes with an apply error. A nil handle (an untyped nil
+// or a typed nil pointer), a zero-value handle, or any receipter whose receipt
+// has no State is recorded as absent, never as a restored window. A receipt in
+// state DebugLevelNotApplied is recorded as present, with its Reason.
 //
 // The manifest keeps a copy of the window's receipt when the failure archive
 // is taken, labeled with the archive's phase, and a second copy after the
@@ -27,7 +38,7 @@ const (
 // later record. Taking a copy reads only the handle's local state; it never
 // applies or restores a level and never queries the daemon. Passing runs
 // archive nothing. Registering after finalization started fails the test.
-func (f *Finalization) TrackDebugLevel(handle *DebugLevelOverrideHandle) {
+func (f *Finalization) TrackDebugLevel(handle DebugLevelReceipter) {
 	if f == nil {
 		return
 	}
@@ -68,6 +79,8 @@ type finalizationDebugReceipt struct {
 	Applied    string          `json:"applied,omitempty"`
 	Restored   string          `json:"restored,omitempty"`
 	State      DebugLevelState `json:"state"`
+	// Reason is the redacted, bounded reason of a not-applied window.
+	Reason string `json:"reason,omitempty"`
 	// Transitions keeps the first and last transitions of a long record;
 	// TransitionsOmitted counts the ones between.
 	Transitions        []finalizationDebugTransition `json:"transitions"`
@@ -86,7 +99,7 @@ type finalizationDebugTransition struct {
 // the later copy never replaces the earlier one.
 func (f *Finalization) snapshotDebugWindows(m *finalizationManifest, phase string, final bool) {
 	f.mu.Lock()
-	handles := append([]*DebugLevelOverrideHandle(nil), f.debugWindows...)
+	handles := append([]DebugLevelReceipter(nil), f.debugWindows...)
 	f.mu.Unlock()
 	for i, handle := range handles {
 		if i >= maxFinalizationDebugWindows {
@@ -106,16 +119,19 @@ func (f *Finalization) snapshotDebugWindows(m *finalizationManifest, phase strin
 	}
 }
 
-func (f *Finalization) debugSnapshot(handle *DebugLevelOverrideHandle, phase string) finalizationDebugSnapshot {
+func (f *Finalization) debugSnapshot(handle DebugLevelReceipter, phase string) finalizationDebugSnapshot {
 	snapshot := finalizationDebugSnapshot{Phase: phase}
-	if handle == nil || handle.state == nil {
+	if handle == nil {
 		return snapshot
 	}
 	receipt := handle.Receipt()
+	if receipt.State == "" {
+		return snapshot
+	}
 	field := func(s string) string { return f.debugField(s, maxFinalizationDebugField) }
 	out := &finalizationDebugReceipt{Daemon: field(receipt.Daemon), Name: field(receipt.Name), Generation: field(receipt.Generation),
 		Requested: field(receipt.Requested), Prior: field(receipt.Prior), Applied: field(receipt.Applied), Restored: field(receipt.Restored),
-		State: DebugLevelState(field(string(receipt.State))), Transitions: []finalizationDebugTransition{}}
+		State: DebugLevelState(field(string(receipt.State))), Reason: f.debugField(receipt.Reason, maxFinalizationDebugError), Transitions: []finalizationDebugTransition{}}
 	transitions := receipt.Transitions
 	if len(transitions) > maxFinalizationDebugTransitions {
 		half := maxFinalizationDebugTransitions / 2

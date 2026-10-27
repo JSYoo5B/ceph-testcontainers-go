@@ -54,6 +54,11 @@ const (
 	// DebugLevelUnconfirmed: restoration could not be verified, for example
 	// with a paused daemon or an unavailable socket; Restore may be retried.
 	DebugLevelUnconfirmed DebugLevelState = "unconfirmed"
+	// DebugLevelNotApplied: the request was refused before any native
+	// step, so nothing was applied and there is nothing to restore. Reason
+	// holds the refusal. A window that may have been applied never reports
+	// this state.
+	DebugLevelNotApplied DebugLevelState = "not-applied"
 )
 
 // DebugLevelReceipt is the JSON-serializable record of one window. Requested
@@ -64,12 +69,15 @@ type DebugLevelReceipt struct {
 	Name   string `json:"name"`
 	// Generation is the daemon container's ID and start time that the
 	// window was opened on.
-	Generation  string                 `json:"generation"`
-	Requested   string                 `json:"requested"`
-	Prior       string                 `json:"prior"`
-	Applied     string                 `json:"applied,omitempty"`
-	Restored    string                 `json:"restored,omitempty"`
-	State       DebugLevelState        `json:"state"`
+	Generation string          `json:"generation"`
+	Requested  string          `json:"requested"`
+	Prior      string          `json:"prior"`
+	Applied    string          `json:"applied,omitempty"`
+	Restored   string          `json:"restored,omitempty"`
+	State      DebugLevelState `json:"state"`
+	// Reason is the refusal text of a DebugLevelNotApplied window and is
+	// empty for every other state.
+	Reason      string                 `json:"reason,omitempty"`
 	Transitions []DebugLevelTransition `json:"transitions"`
 }
 
