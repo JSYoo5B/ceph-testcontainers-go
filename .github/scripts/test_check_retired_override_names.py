@@ -30,6 +30,13 @@ RETIRED = (
     "ceph.Container." + "HealthDetails",
     "Tenant." + "Pools lists the pools",
     "Container." + "EssentialImage",
+    "`(*ceph." + "Container).BlocklistEntries`",
+    "`(*ceph." + "Tenant).FullRatios`",
+    "(*ceph." + "Container).Status(ctx)",
+    "`( *ceph." + "Container ).HealthDetails`",
+    "`(* ceph." + "Tenant).Pools`",
+    "(ceph." + "Container).OSDFlags",
+    "[(*ceph." + "Container).Configuration](ceph.md#x)",
 )
 VALID = (
     "override.SetConfig(ctx, cluster, setting)",
@@ -45,6 +52,9 @@ VALID = (
     "observeCluster(s.Container).ManagerStatus(ctx)",
     "Container.Pool returns one pool and Pool.Status reports it",
     "ClusterFacts.NetworkName",
+    "`(*ceph.Observer).BlocklistEntries`",
+    "(*ceph.Tenant).Pool and (*ceph.Container).Pool",
+    "(*ceph.Container).Start",
 )
 
 

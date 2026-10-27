@@ -55,7 +55,8 @@ PATTERNS = (
     # Only receiver-qualified spellings: the bare names are valid on Observer
     # and ClusterFacts (and Status is also a method of Pool).
     ("retired Container or Tenant receiver",
-     re.compile(r"(?:\(\*(?:Container|Tenant)\)|\b(?:Container|Tenant))\.(?:%s)\b" % "|".join(RECEIVER_METHODS))),
+     re.compile(r"(?:\(\s*\*?\s*(?:ceph\.)?(?:Container|Tenant)\s*\)|\b(?:Container|Tenant))\.(?:%s)\b"
+                % "|".join(RECEIVER_METHODS))),
 )
 
 # Historical records and the files that must name the retired spellings to
