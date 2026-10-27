@@ -139,10 +139,8 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	// from being brought up to date by log recovery: its empty copy then lies
 	// behind the log tail, which needs a backfill.
 	for name, value := range map[string]string{"osd_min_pg_log_entries": "10", "osd_max_pg_log_entries": "10", "osd_pg_log_trim_min": "1"} {
-		handle, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
-		if handle != nil {
-			restore(name, handle.Restore)
-		}
+		handle, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
+		restore(name, handle.Restore)
 		if err != nil {
 			t.Fatal(err)
 		}

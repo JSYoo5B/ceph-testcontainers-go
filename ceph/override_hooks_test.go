@@ -8,18 +8,20 @@ import (
 func TestOverrideAdmissionKeepsMethodPolicies(t *testing.T) {
 	// The Container methods are gone, so the policy of each is pinned here.
 	for op, expected := range map[string]sharedPolicy{
-		"override.AddBlocklist":  sharedExclusive, // TemporaryBlocklist
-		"override.SetDebugLevel": sharedExclusive, // OverrideDebugLevel
-		"override.SetMGRModule":  sharedExclusive, // OverrideMGRModule
-		"override.SetFullRatios": sharedExclusive, // OverrideFullRatios
-		"override.SetOSDFlag":    sharedExclusive, // OverrideOSDFlag
+		"override.AddBlocklist":       sharedExclusive, // TemporaryBlocklist
+		"override.SetDebugLevel":      sharedExclusive, // OverrideDebugLevel
+		"override.SetMGRModule":       sharedExclusive, // OverrideMGRModule
+		"override.SetFullRatios":      sharedExclusive, // OverrideFullRatios
+		"override.SetOSDFlag":         sharedExclusive, // OverrideOSDFlag
+		"override.SetConfig":          sharedExclusive, // OverrideConfig
+		"override.SetMessengerPolicy": sharedExclusive, // OverrideMessengerPolicy
 	} {
 		if policy, ok := sharedOverridePolicies[op]; !ok || policy != expected {
 			t.Errorf("%s has policy %v, want %v", op, policy, expected)
 		}
 	}
-	if len(sharedOverridePolicies) != 5 {
-		t.Errorf("sharedOverridePolicies has %d entries, want the five pinned entries", len(sharedOverridePolicies))
+	if len(sharedOverridePolicies) != 7 {
+		t.Errorf("sharedOverridePolicies has %d entries, want the seven pinned entries", len(sharedOverridePolicies))
 	}
 	c := &Container{}
 	if err := c.admitOverride("override.AddBlocklist"); err != nil {

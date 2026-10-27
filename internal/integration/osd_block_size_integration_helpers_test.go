@@ -82,7 +82,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 		t.Fatal("original cluster identity unavailable")
 	}
 	if skipBenchmark {
-		if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
+		if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 			t.Fatal("explicit lightweight preparation failed", err)
 		}
 	}

@@ -23,6 +23,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -1004,16 +1005,14 @@ func testCephFSLateReconnect(t *testing.T) {
 	if daemon == nil {
 		t.Fatalf("active mds.%s is not owned", old.Name)
 	}
-	window, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mds", Name: "mds_reconnect_timeout", Value: "10"})
-	if window != nil {
-		t.Cleanup(func() {
-			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := window.Restore(restoreCtx); err != nil {
-				t.Errorf("restore mds_reconnect_timeout: %v", err)
-			}
-		})
-	}
+	window, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "mds", Name: "mds_reconnect_timeout", Value: "10"})
+	t.Cleanup(func() {
+		restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := window.Restore(restoreCtx); err != nil {
+			t.Errorf("restore mds_reconnect_timeout: %v", err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1813,7 +1812,7 @@ type cephFSUnsafeHold struct {
 	actor    *cephFSActorRun
 	baseline cephFSActorReceipt
 	renamed  cephFSActorReceipt
-	pause    *ceph.ConfigOverrideHandle
+	pause    *override.ConfigHandle
 	held     cephFSUnsafeObservation
 }
 
@@ -1854,21 +1853,19 @@ func startCephFSSingleMDS(t *testing.T, ctx context.Context, opts ...testcontain
 	return m
 }
 
-// pauseJournal sets mds_log_pause through OverrideConfig and waits until the
+// pauseJournal sets mds_log_pause through override.SetConfig and waits until the
 // running MDS applies it. The restoration is registered before it returns, so
 // it is in place before the caller admits an operation.
-func (m *cephFSSingleMDS) pauseJournal(t *testing.T, ctx context.Context) *ceph.ConfigOverrideHandle {
+func (m *cephFSSingleMDS) pauseJournal(t *testing.T, ctx context.Context) *override.ConfigHandle {
 	t.Helper()
-	pause, err := m.cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mds", Name: "mds_log_pause", Value: "true"})
-	if pause != nil {
-		t.Cleanup(func() {
-			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := pause.Restore(restoreCtx); err != nil {
-				t.Errorf("restore mds_log_pause: %v", err)
-			}
-		})
-	}
+	pause, err := override.SetConfig(ctx, m.cluster, ceph.ConfigSetting{Section: "mds", Name: "mds_log_pause", Value: "true"})
+	t.Cleanup(func() {
+		restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := pause.Restore(restoreCtx); err != nil {
+			t.Errorf("restore mds_log_pause: %v", err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1974,7 +1971,7 @@ func (h *cephFSUnsafeHold) historicRename(t *testing.T, ctx context.Context, mds
 
 // holdCephFSUnsafeRename starts a cluster with one filesystem and one active
 // MDS, and an actor with a fsynced file. It sets mds_log_pause through
-// OverrideConfig, reads it back from the running daemon, and lets the actor
+// override.SetConfig, reads it back from the running daemon, and lets the actor
 // rename the file once. The rename must return with the early reply, and
 // twice, 3 s apart, the MDS must list the client's request in flight after
 // "early_replied" and without "journal_committed" while the client's admin

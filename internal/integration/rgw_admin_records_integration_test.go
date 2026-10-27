@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -39,16 +40,14 @@ func TestRGWAdminRecordsAndRateLimit(t *testing.T) {
 				{Section: "client.admin", Name: "rgw_usage_log_tick_interval", Value: "1"},
 				{Section: "client.admin", Name: "rgw_usage_log_flush_threshold", Value: "1"},
 			} {
-				change, err := cluster.OverrideConfig(ctx, setting)
-				if change != nil {
-					t.Cleanup(func() {
-						cleanup, stop := context.WithTimeout(context.Background(), 20*time.Second)
-						defer stop()
-						if err := change.Restore(cleanup); err != nil {
-							t.Error(err)
-						}
-					})
-				}
+				change, err := override.SetConfig(ctx, cluster, setting)
+				t.Cleanup(func() {
+					cleanup, stop := context.WithTimeout(context.Background(), 20*time.Second)
+					defer stop()
+					if err := change.Restore(cleanup); err != nil {
+						t.Error(err)
+					}
+				})
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -14,6 +14,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
@@ -34,7 +35,7 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 			if staticFacts(cluster).MessengerMode != ceph.MessengerV2Secure {
 				t.Fatal("bootstrap mode accessor differs from selected policy")
 			}
-			if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
+			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal(err)
 			}
 			for range 2 {
@@ -99,7 +100,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
 			cluster, client := newServiceClusterWithOptions(t, image, opts...)
-			if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
+			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal(err)
 			}
 			for range 2 {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -242,7 +243,7 @@ func osdUpFrom(t *testing.T, ctx context.Context, cluster *ceph.Container, id in
 // operation waits several times delay before it runs.
 func holdDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Container, osd string, delay time.Duration) func() {
 	t.Helper()
-	var holds []*ceph.ConfigOverrideHandle
+	var holds []*override.ConfigHandle
 	restore := func() {
 		for i := len(holds) - 1; i >= 0; i-- {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -258,10 +259,8 @@ func holdDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Containe
 		{Section: osd, Name: "osd_debug_inject_dispatch_delay_duration", Value: fmt.Sprint(delay.Seconds())},
 		{Section: osd, Name: "osd_debug_inject_dispatch_delay_probability", Value: "1"},
 	} {
-		hold, err := cluster.OverrideConfig(ctx, setting)
-		if hold != nil {
-			holds = append(holds, hold)
-		}
+		hold, err := override.SetConfig(ctx, cluster, setting)
+		holds = append(holds, hold)
 		if err != nil {
 			t.Fatal(err)
 		}

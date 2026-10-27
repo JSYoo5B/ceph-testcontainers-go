@@ -40,7 +40,7 @@ func TestPausedOSDFaults(t *testing.T) {
 				{Section: "mon", Name: "mon_osd_min_down_reporters", Value: "1"},
 				{Section: "osd", Name: "osd_op_complaint_time", Value: "2"},
 			} {
-				if _, err := cluster.OverrideConfig(ctx, setting); err != nil {
+				if _, err := override.SetConfig(ctx, cluster, setting); err != nil {
 					t.Fatal("prepare", setting.Name, err)
 				}
 			}

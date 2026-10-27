@@ -2,7 +2,8 @@
 
 0.x: old names are removed without aliases. The client blocklist override
 moved out of `ceph` into the new package `override`, followed by the full
-ratios and global OSD flag overrides. There is no deprecated alias, wrapper or forwarder in `ceph`,
+ratios, global OSD flag, central configuration and messenger policy overrides.
+There is no deprecated alias, wrapper or forwarder in `ceph`,
 and `Tenant` never had one. Published
 releases keep their original API. Update the calls, the type names and the
 `import` line together.
@@ -20,9 +21,17 @@ import "github.com/JSYoo5B/ceph-testcontainers-go/override"
 | `cluster.OverrideFullRatios(ctx, ratios)` | `override.SetFullRatios(ctx, cluster, ratios)` |
 | `*ceph.FullRatiosOverride` | `*override.FullRatiosHandle` |
 | `(*ceph.FullRatiosOverride).Restore` | `(*override.FullRatiosHandle).Restore` (same tuple and identity rules) |
+| `cluster.OverrideConfig(ctx, setting)` | `override.SetConfig(ctx, cluster, setting)` |
+| `*ceph.ConfigOverrideHandle` | `*override.ConfigHandle` |
+| `(*ceph.ConfigOverrideHandle).Restore`, `String`, `GoString` | `(*override.ConfigHandle).Restore`, `String`, `GoString` (same rules) |
+| `cluster.OverrideMessengerPolicy(ctx, policy)` | `override.SetMessengerPolicy(ctx, cluster, policy)` |
+| `*ceph.MessengerPolicyOverrideHandle` | `*override.MessengerPolicyHandle` |
+| `(*ceph.MessengerPolicyOverrideHandle).Restore` | `(*override.MessengerPolicyHandle).Restore` (same reverse order) |
 
 `ceph.BlocklistEntry`, `Observer.BlocklistEntries`, `ceph.FullRatios`,
-`ceph.FullRatioSnapshot` and `Observer.FullRatios` are unchanged.
+`ceph.FullRatioSnapshot`, `Observer.FullRatios`, `ceph.ConfigSetting`,
+`ceph.ConfigEntry`, `Observer.Configuration`, `ceph.MessengerPolicy` and
+`ceph.MessengerConnectionMode` are unchanged.
 
 The OSD flag override follows the same rules:
 
@@ -133,6 +142,53 @@ if err != nil {
 // after
 hold, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
 defer hold.Restore(cleanupCtx) // a no-op after a refusal
+if err != nil {
+	t.Fatal(err)
+}
+```
+
+## Configuration and messenger policy
+
+`Container.OverrideConfig` became `override.SetConfig` and
+`Container.OverrideMessengerPolicy` became `override.SetMessengerPolicy`; the
+handles became `override.ConfigHandle` and `override.MessengerPolicyHandle`. The
+verb is `Set` because each call replaces a value that may already exist and
+`Restore` puts the previous entry back (or removes an entry that was absent).
+The refusal of an option that the `MessengerV2Secure` or `MessengerV2Only`
+bootstrap fixes (checked before the topology lock, so it does not wait for it),
+the normalized readback, the refusal to adopt an unknown value after a lost
+readback, the overlap refusal, the lost-reply convergence of apply and restore,
+the refusal of a restore after `Terminate`, and the reverse restore order of the
+policy options are the behavior of the former methods. A cluster that a
+`SharedCluster` lends to tenants still refuses the call with
+`ceph.ErrSharedCluster`; `OperationError.Op` now reads `override.SetConfig` or
+`override.SetMessengerPolicy`. The messenger policy is admitted once, under its
+own name; its options are set without a second admission.
+
+What differs is the same as for the other kinds: the handles are never nil, a
+refused or never-applied call returns a handle whose `Restore` does nothing, and
+a nil cluster returns a not-applied handle with `ceph.ErrInvalidRequest` (it was
+a plain error for the configuration and a plain error for the policy). A nil
+cluster is now reported before the context and the input, so a canceled context
+with a nil cluster returns `ErrInvalidRequest`, not the context error. A policy
+whose later option is refused returns the handle of the options made so far,
+without the refused one, together with the error; a first option that is refused
+returns a not-applied handle. A check such as `change == nil` that detected a
+refusal must test `err != nil` instead.
+
+```golang
+// before
+change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_max_backfills", Value: "1"})
+if change != nil {
+	defer change.Restore(cleanupCtx)
+}
+if err != nil {
+	t.Fatal(err)
+}
+
+// after
+change, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_max_backfills", Value: "1"})
+defer change.Restore(cleanupCtx) // a no-op after a refusal
 if err != nil {
 	t.Fatal(err)
 }

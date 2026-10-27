@@ -432,7 +432,7 @@ benchmark that can write about 100 objects of 4 MiB (400 MiB) before deleting
 them. That alone fills a 64 to 256 MiB file, BlueStore aborts the OSD, and `Run`
 times out waiting for it. For small OSDs, start with
 [WithNoInitialOSDs](#withnoinitialosds), set `osd_mclock_skip_benchmark` with
-[OverrideConfig](#overrideconfig), then add OSDs. The option itself never
+[override.SetConfig](override.md#setconfig), then add OSDs. The option itself never
 changes the scheduler or the benchmark. See
 [Run small OSDs](#run-small-osds).
 
@@ -551,14 +551,14 @@ rados_osd_op_timeout = 25
 - The merged file becomes `/etc/ceph/ceph.conf` before the first MON creates its
   store. Every MON, MGR, OSD, MDS and RGW, every `WithClient` container and
   [ConnectionConfig](#connectionconfig) get it, so bootstrap-only settings work.
-  It does not change a running cluster; use [OverrideConfig](#overrideconfig)
+  It does not change a running cluster; use [override.SetConfig](override.md#setconfig)
   for that.
 - An entry replaces the fixture's default for the same section and key. Spaces,
   `-` and `_` in key names are equivalent, as in Ceph. Several files are merged in
   order, later files overriding earlier ones key by key, so a shared base file
   plus a per-test file works.
 - Ceph gives local files precedence over the MON configuration database. A key set
-  in this file cannot be changed later by `OverrideConfig` or `ceph config set`;
+  in this file cannot be changed later by `override.SetConfig` or `ceph config set`;
   leave keys you want to change during the test out of the file.
 - RGW runs as `client.admin`, so RGW settings belong in `[client]` or
   `[client.admin]`. `[client.rgw.*]` sections do not apply.
@@ -609,7 +609,7 @@ immutable for the lifetime of the cluster.
 
 | Mode | Listeners and addresses | Connection modes |
 | --- | --- | --- |
-| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [WithMessengerPolicy](#withmessengerpolicy), [OverrideMessengerPolicy](#overridemessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
+| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [WithMessengerPolicy](#withmessengerpolicy), [override.SetMessengerPolicy](override.md#setmessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
 | `ceph.MessengerV2Only` | v2 only | As with `MessengerDefault`: CRC, secure or a per-daemon-type mix, changeable later. |
 | `ceph.MessengerV2Secure` | v2 only | Fixed to encrypted Messenger v2 (`secure`, AES-GCM) for every connection; no CRC mode. |
 
@@ -638,7 +638,7 @@ describe to these options:
 | All six `ms_*_mode` and `ms_mon_*_mode` options `secure` | `WithMessengerMode(ceph.MessengerV2Secure)` |
 | `ms_mon_service_mode` of the MONs or MGRs, `ms_service_mode` of the OSDs | `WithMessengerMode(ceph.MessengerV2Only)` and the matching fields of `WithMessengerPolicy` |
 | `ms_mon_client_mode` and `ms_client_mode` of a client | `WithClientMessengerPolicy` on that client's container |
-| `ms_cluster_mode` and `ms_mon_cluster_mode` between daemons | Ceph's defaults: the policy options leave them alone; with `MessengerV2Only`, [OverrideConfig](#overrideconfig) can change them |
+| `ms_cluster_mode` and `ms_mon_cluster_mode` between daemons | Ceph's defaults: the policy options leave them alone; with `MessengerV2Only`, [override.SetConfig](override.md#setconfig) can change them |
 | `mon_host` with only v2 addresses, port 3300 | [MonitorBootstrapAddresses](#monitorbootstrapaddresses), or `MappedPort(ctx, "3300/tcp")` in bridge mode; there is no 6789 to map |
 
 With `MessengerV2Secure`, the global `ceph.conf` sets `ms_cluster_mode`,
@@ -655,7 +655,7 @@ In both v2 modes:
 - Later daemons, `WithClient` and `WithClientIdentity` containers and
   [ConnectionConfig](#connectionconfig) inherit the policy. MON refreshes only
   rewrite `mon_host` and keep it.
-- [OverrideConfig](#overrideconfig) refuses `ms_bind_msgr1` and
+- [override.SetConfig](override.md#setconfig) refuses `ms_bind_msgr1` and
   `ms_bind_msgr2` in every section and mask with `ErrInvalidRequest`, because
   the local file would override them anyway. With `MessengerV2Secure` it also
   refuses the six mode options.
@@ -713,7 +713,7 @@ records its type: the first two bytes, little-endian, are 1 for `aes` and 2 for
 - Lifetimes keep fractions of a second and are written to the `[global]` section
   of the bootstrap `ceph.conf`. Every daemon, `WithClient` container and
   [ConnectionConfig](#connectionconfig) gets them, and
-  [OverrideConfig](#overrideconfig) cannot change them later. MONs rotate
+  [override.SetConfig](override.md#setconfig) cannot change them later. MONs rotate
   service secrets on their tick, so lifetimes of a few seconds also need a
   shorter `mon_tick_interval`, which [WithConfigFile](#withconfigfile) can set.
 - Keep `MonTicketTTL` at ten seconds or more. MON clients check their tickets
@@ -769,7 +769,7 @@ daemon accepts, so a daemon cannot force `secure` on a client that prefers
   daemon restarts.
 - Connections between daemons keep their defaults, so the cluster itself and the
   fixture's own CLI keep working under every policy.
-- [OverrideMessengerPolicy](#overridemessengerpolicy) changes the policy on a
+- [override.SetMessengerPolicy](override.md#setmessengerpolicy) changes the policy on a
   running cluster. The daemons apply it to new connections without a restart.
 - It cannot be combined with `MessengerV2Secure`, whose local configuration
   fixes every mode.
@@ -1443,7 +1443,7 @@ leases.
 
 `Exclusive` lends a test the whole shared cluster: the `*ceph.Container`, with
 every method available except `Terminate`. Use it for a test that needs what
-the tenant gate refuses, such as `OverrideConfig`, OSD flags, pool changes,
+the tenant gate refuses, such as `override.SetConfig`, OSD flags, pool changes,
 the raw `Ceph` CLI or `AddOSD`, in a package whose other tests share the
 cluster:
 
@@ -1502,7 +1502,7 @@ methods that only read state stay available, including `Container.Pool`.
 | Methods | Why they are refused |
 | --- | --- |
 | `CreateClient`, `ClientConfig.Delete`, `ClientConfig.UpdateCaps`, `ClientConfig.ReplaceKey`, `ClientConfig.Revoke`, `ClientConfig.Capabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `OverrideConfig`, `override.SetDebugLevel`, `override.SetOSDFlag`, `override.SetMGRModule`, `OverrideMessengerPolicy`, `override.AddBlocklist` and `override.SetFullRatios` (see [override](override.md)), `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
+| `override.SetConfig`, `override.SetDebugLevel`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetMessengerPolicy`, `override.AddBlocklist` and `override.SetFullRatios` (see [override](override.md)), `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `OSDContainer.AdminSocket`, `MonitorContainer.AdminSocket`, `ManagerContainer.AdminSocket`, `OSDContainer.Version`, `MonitorContainer.Version`, `ManagerContainer.Version`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
 | `AddOSD`, `AddOSDWithConfig`, `OSDContainer.Remove`, `OSDContainer.Detach`, `DetachedOSD.Reopen`, `AddMonitor`, `MonitorContainer.Remove`, `AddManager`, `ManagerContainer.Remove` | Change the topology. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
@@ -1573,7 +1573,7 @@ Methods that change cluster state temporarily return a restoration handle:
 
 | Handle | Returned by | Ends with |
 | --- | --- | --- |
-| `*ceph.ConfigOverrideHandle` | [OverrideConfig](#overrideconfig) | `Restore` |
+| `*override.ConfigHandle` | [override.SetConfig](override.md#setconfig) | `Restore` |
 | `*override.DebugLevelHandle` | [override.SetDebugLevel](override.md#setdebuglevel) | `Restore` |
 | `*override.OSDFlagHandle` | [override.SetOSDFlag](override.md#setosdflag) | `Restore` |
 | `*override.MGRModuleHandle` | [override.SetMGRModule](override.md#setmgrmodule) | `Restore` |
@@ -1605,16 +1605,14 @@ Restore in `t.Cleanup` with a context that is still live. `t.Context()` is
 canceled before cleanup functions run:
 
 ```golang
-change, err := cluster.OverrideConfig(ctx, setting)
-if change != nil {
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		if err := change.Restore(ctx); err != nil {
-			t.Error(err)
-		}
-	})
-}
+change, err := override.SetConfig(ctx, cluster, setting)
+t.Cleanup(func() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := change.Restore(ctx); err != nil {
+		t.Error(err)
+	}
+})
 if err != nil {
 	t.Fatal(err)
 }
@@ -2983,7 +2981,7 @@ long-lived cluster can give each test its own pool without reaching PG limits.
   `tc-<pool>-placement-<hash>` rule with `Pool.SetPlacement` is refused; move it
   back to its original placement first. Placement rules are not removed.
 - `mon_allow_pool_delete` is enabled in the central configuration only during the
-  removal and then restored. It is refused while an `OverrideConfig` handle holds
+  removal and then restored. It is refused while an `override.SetConfig` handle holds
   that key, and a config file that sets it to `false` blocks removal.
 - A retry after an error removes whatever owned resources remain. An unknown name
   is an error.
@@ -3478,61 +3476,10 @@ already current. Do not edit the file concurrently.
 
 ### Container Methods: Configuration
 
-#### OverrideConfig
-
-```golang
-func (c *Container) OverrideConfig(ctx context.Context, setting ceph.ConfigSetting) (*ceph.ConfigOverrideHandle, error)
-```
-
-Sets one entry in the MON configuration database (`ceph config set`) and records
-the native normalized value. `ceph.ConfigSetting` has `Section`, `Mask`, `Name`
-and `Value`:
-
-- `Section` is `global`, a daemon type (`mon`, `mgr`, `osd`, `mds`, `client`) or
-  one identity such as `osd.0` or `mds.a`.
-- `Mask` is optional: `class:ssd`, `host:node-a` or `host:node-a/class:ssd`.
-- `Name` can be any option, including MGR module keys such as
-  `mgr/volumes/max_concurrent_clones` or `mgr/prometheus/server_addr`.
-
-`Restore` returns the exact entry to its prior value, or removes it if it was
-absent, instead of pinning the inherited or default value. Overlapping handles for
-the same section, mask and name are refused. See the
-[handle contract](#container-methods) for errors and retries.
-
-```golang
-change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
-	Section: "osd", Name: "osd_max_backfills", Value: "1",
-})
-if change != nil {
-	// A failed apply can still have persisted; keep the handle.
-	defer func() {
-		if err := change.Restore(context.Background()); err != nil {
-			t.Error(err)
-		}
-	}()
-}
-if err != nil {
-	t.Fatal(err)
-}
-```
-
-The helper verifies the stored value, not its effect:
-
-- Local `ceph.conf` entries (including [WithConfigFile](#withconfigfile)),
-  command-line arguments and runtime overrides take precedence over the database.
-- Some options need a daemon restart; for example `osd_op_queue` only applies when
-  an OSD starts.
-- Check the effective value of a running daemon with
-  `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_max_backfills")`.
-- With [MessengerV2Secure](#withmessengermode), the Messenger mode and bind options
-  are refused; with `MessengerV2Only`, the `ms_bind_msgr1` and `ms_bind_msgr2`
-  options.
-
-Configuration output can contain secrets; log only selected fields. Typical uses:
-lowering thresholds such as `osd_op_complaint_time` (when `SLOW_OPS` is
-reported), enabling Messenger fault injection (`ms_blackhole_client`,
-`ms_inject_delay_*`, see [Fault injection](guides/fault-injection.md)), and
-preparing OSDs before they start.
+The override that sets one stored entry for a while is
+[override.SetConfig](override.md#setconfig). It moved out of `ceph` with its
+handle type; `ceph.ConfigSetting`, `ceph.ConfigEntry` and
+`Observer.Configuration` stay here because they describe and read the database.
 
 #### Configuration
 
@@ -3768,37 +3715,11 @@ about health or daemon availability.
 
 ### Container Methods: Messenger mode
 
-#### OverrideMessengerPolicy
-
-```golang
-func (c *Container) OverrideMessengerPolicy(ctx context.Context, policy ceph.MessengerPolicy) (*ceph.MessengerPolicyOverrideHandle, error)
-```
-
-Changes the connection modes that the running daemons accept from clients (see
-[WithMessengerPolicy](#withmessengerpolicy) for the fields). Each non-nil field
-becomes a [OverrideConfig](#overrideconfig) override of its option; nil fields
-stay as they are.
-
-```golang
-override, err := cluster.OverrideMessengerPolicy(ctx, ceph.MessengerPolicy{
-	Monitors: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
-})
-if override != nil {
-	defer override.Restore(ctx)
-}
-```
-
-- The daemons apply the change to new connections without a restart.
-  Established connections keep their mode.
-- `MessengerPolicyOverrideHandle.Restore` returns every option to its previous value,
-  including the bootstrap policy. It is idempotent and can be retried.
-- A non-nil result returned with an error holds the overrides that were made;
-  restore it.
-- A single daemon, such as only `osd.0`, is changed with `OverrideConfig` and
-  the option in the table, with the daemon name as `Section`. It takes
-  precedence over the daemon type's entry.
-- A policy that selects no valid mode, and any policy on a `MessengerV2Secure`
-  cluster, is refused with `ceph.ErrInvalidRequest` before any change.
+The override that changes the policy of a running cluster is
+[override.SetMessengerPolicy](override.md#setmessengerpolicy). It moved out of
+`ceph` with its handle type; `ceph.MessengerPolicy` and
+`ceph.MessengerConnectionMode` stay here because `WithMessengerPolicy` takes them
+at `Run`.
 
 ### Container Methods: Object watchers and client fencing
 
@@ -3910,7 +3831,7 @@ Daemon handles (from `Monitors`, `Managers` and `OSDs`, and the MDS and RGW hand
 of the service packages) support `Stop` and `Start`: the process ends and peers
 see the connection close. The dedicated operations in [`fault`](fault.md) add other failure shapes. For
 Messenger-level delays and dropped messages (`ms_blackhole_*`,
-`ms_inject_delay_*` through `OverrideConfig`), OSD flags, client blocklisting
+`ms_inject_delay_*` through `override.SetConfig`), OSD flags, client blocklisting
 and full ratios, see [Fault injection](guides/fault-injection.md).
 
 #### Container pause faults
@@ -4565,7 +4486,7 @@ The cluster owns the auth database; containers you attach with it are yours.
 
 | Type | Methods | Created by |
 | --- | --- | --- |
-| `ConfigOverrideHandle` | `Restore(ctx) error`; `String()`, `GoString()` for logging | [OverrideConfig](#overrideconfig) |
+| `override.ConfigHandle` | `Restore(ctx) error`; `String()`, `GoString()` for logging | [override.SetConfig](override.md#setconfig) |
 | `override.OSDFlagHandle` | `Restore(ctx) error` | [override.SetOSDFlag](override.md#setosdflag) |
 | `override.MGRModuleHandle` | `Restore(ctx) error` | [override.SetMGRModule](override.md#setmgrmodule) |
 | `override.FullRatiosHandle` | `Restore(ctx) error` | [override.SetFullRatios](override.md#setfullratios) |
@@ -4590,7 +4511,7 @@ See the [handle contract](#container-methods).
 | `PoolPGSnapshot`, `PGState`, `PGStats` | [Pool.PGs](#poolpgs) |
 | `ClientCaps` | [CreateClient](#createclient), [ClientConfig.Capabilities](#clientconfigcapabilities), [ClientConfig.UpdateCaps](#clientconfigupdatecaps) |
 | `ClientOption` | [CreateClient](#createclient), [ClientConfig.ReplaceKey](#clientconfigreplacekey) |
-| `ConfigSetting` | [OverrideConfig](#overrideconfig) |
+| `ConfigSetting` | [override.SetConfig](override.md#setconfig) |
 | `ConfigEntry` | [Configuration](#configuration) |
 | `MGRModuleState` | [MGRModules](#mgrmodules) |
 | `Status` | [Status](#status) |
@@ -4825,7 +4746,7 @@ if err != nil {
 // Keep OSDs from moving themselves into host buckets or setting a device
 // class when they start, so the installed map stays as written.
 for _, name := range []string{"osd_crush_update_on_start", "osd_class_update_on_start"} {
-	if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: "false"}); err != nil {
+	if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: name, Value: "false"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -4905,7 +4826,7 @@ if err != nil {
 	t.Fatal(err)
 }
 // No Restore: Terminate disposes of the configuration database.
-if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
+if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{
 	Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true",
 }); err != nil {
 	t.Fatal(err)
@@ -4951,7 +4872,7 @@ for _, setting := range []ceph.ConfigSetting{
 	{Section: "osd", Name: "osd_recovery_sleep_hdd", Value: "0"},
 	{Section: "osd", Name: "osd_recovery_sleep_degraded_hdd", Value: "0"},
 } {
-	if _, err := cluster.OverrideConfig(ctx, setting); err != nil {
+	if _, err := override.SetConfig(ctx, cluster, setting); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -5253,7 +5174,7 @@ manager's URL.
 
 In host mode all managers share the host network, so give each manager its own
 port and bind the public address before enabling the module (using
-[OverrideConfig](#overrideconfig)). With the default settings and two
+[override.SetConfig](override.md#setconfig)). With the default settings and two
 managers, `ManagerServices` stayed empty and no manager served metrics:
 
 ```golang
@@ -5335,7 +5256,7 @@ cluster's containers:
 | A command with bounded run time and output that must not outlive the call | [RunNativeCommand](#runnativecommand) |
 | Daemon admin socket commands | `cluster.Ceph(ctx, "tell", "osd.0", "dump_ops_in_flight")` |
 | A daemon's effective configuration | `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_op_queue")` |
-| Any central option | [OverrideConfig](#overrideconfig), so it is restored |
+| Any central option | [override.SetConfig](override.md#setconfig), so it is restored |
 | Commands inside one daemon's container | `Exec` on an element of `cluster.OSDs(ctx)` (the daemon image need not contain the `ceph` CLI the control container uses) |
 | `radosgw-admin` | `gateway.Admin(ctx, args...)` from the [rgw](rgw.md) package |
 
@@ -5393,7 +5314,7 @@ examples.
   Poll observations with a deadline rather than asserting immediately.
 - `MGR_DOWN` appears only after `mon_mgr_mkfs_grace` (2 minutes) on a new
   cluster, and `SLOW_OPS` after `osd_op_complaint_time` (30 seconds). Lower such
-  values with `OverrideConfig` when a test needs them sooner.
+  values with `override.SetConfig` when a test needs them sooner.
 - Changed capabilities and revoked identities take effect for new connections;
   existing sessions may keep their tickets.
 - After `Pool.SetPlacement` or `Pool.SetPGCount`, `WaitForClean` can pass before
@@ -5432,7 +5353,7 @@ See [Releases and images](guides/releases-and-images.md) for details.
   clean.
 - Small `WithOSDBlockSize` values with initial OSDs make `Run` time out (see
   [Run small OSDs](#run-small-osds)).
-- A key set with `WithConfigFile` cannot be changed with `OverrideConfig`;
+- A key set with `WithConfigFile` cannot be changed with `override.SetConfig`;
   `mon_allow_pool_delete = false` in a config file blocks `Pool.Remove`.
 - `t.Context()` is canceled before cleanup functions run. Use a fresh context in
   `t.Cleanup` for `Restore`, `Pool.Remove` and `CollectDiagnostics`.

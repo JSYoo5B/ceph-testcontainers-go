@@ -387,18 +387,16 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 			}
 		})
 	}
-	var sleeps []*ceph.ConfigOverrideHandle
+	var sleeps []*override.ConfigHandle
 	for _, setting := range []ceph.ConfigSetting{
 		{Section: "osd", Name: "osd_op_queue", Value: "wpq"},
 		{Section: "osd", Name: "osd_recovery_sleep", Value: "0.5"},
 		{Section: "osd", Name: "osd_recovery_sleep_degraded", Value: "0.5"},
 	} {
-		handle, err := cluster.OverrideConfig(ctx, setting)
-		if handle != nil {
-			restore(setting.Name, handle.Restore)
-			if setting.Name != "osd_op_queue" {
-				sleeps = append(sleeps, handle)
-			}
+		handle, err := override.SetConfig(ctx, cluster, setting)
+		restore(setting.Name, handle.Restore)
+		if setting.Name != "osd_op_queue" {
+			sleeps = append(sleeps, handle)
 		}
 		if err != nil {
 			t.Fatal(err)
@@ -408,10 +406,8 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	// from being brought up to date by log recovery: its empty copy then lies
 	// behind the log tail, which needs a backfill.
 	for name, value := range map[string]string{"osd_min_pg_log_entries": "10", "osd_max_pg_log_entries": "10", "osd_pg_log_trim_min": "1"} {
-		handle, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
-		if handle != nil {
-			restore(name, handle.Restore)
-		}
+		handle, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
+		restore(name, handle.Restore)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -61,18 +62,16 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 		}
 		return nil
 	}
-	apply := func(setting ceph.ConfigSetting) *ceph.ConfigOverrideHandle {
+	apply := func(setting ceph.ConfigSetting) *override.ConfigHandle {
 		t.Helper()
-		change, err := cluster.OverrideConfig(ctx, setting)
+		change, err := override.SetConfig(ctx, cluster, setting)
 		if err != nil {
-			if change != nil {
-				_ = change.Restore(context.WithoutCancel(ctx))
-			}
+			_ = change.Restore(context.WithoutCancel(ctx))
 			t.Fatal(err)
 		}
 		return change
 	}
-	restore := func(change *ceph.ConfigOverrideHandle) {
+	restore := func(change *override.ConfigHandle) {
 		t.Helper()
 		if err := change.Restore(ctx); err != nil {
 			t.Fatal(err)
@@ -108,7 +107,7 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 	if entry := lookup(who, "class:ssd"); entry == nil || !equalSeconds(entry.Value, "7200") {
 		t.Fatalf("native number was not normalized: %+v", entry)
 	}
-	if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: who, Mask: "class:ssd", Name: option, Value: "900"}); err == nil {
+	if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: who, Mask: "class:ssd", Name: option, Value: "900"}); err == nil {
 		t.Fatal("overlapping exact config override accepted")
 	}
 	checkRuntime(osds[0], "7200")

@@ -52,11 +52,13 @@ func exportedFunctions(t *testing.T) []string {
 func zeroArgumentCalls(t *testing.T, c *ceph.Container) map[string]func() error {
 	ctx := t.Context()
 	return map[string]func() error{
-		"AddBlocklist":  func() error { _, err := AddBlocklist(ctx, c, "", time.Duration(0)); return err },
-		"SetDebugLevel": func() error { _, err := SetDebugLevel(ctx, c, ceph.DebugLevelSetting{}); return err },
-		"SetMGRModule":  func() error { _, err := SetMGRModule(ctx, c, "", false); return err },
-		"SetFullRatios": func() error { _, err := SetFullRatios(ctx, c, ceph.FullRatios{}); return err },
-		"SetOSDFlag":    func() error { _, err := SetOSDFlag(ctx, c, "", false); return err },
+		"AddBlocklist":       func() error { _, err := AddBlocklist(ctx, c, "", time.Duration(0)); return err },
+		"SetDebugLevel":      func() error { _, err := SetDebugLevel(ctx, c, ceph.DebugLevelSetting{}); return err },
+		"SetMGRModule":       func() error { _, err := SetMGRModule(ctx, c, "", false); return err },
+		"SetFullRatios":      func() error { _, err := SetFullRatios(ctx, c, ceph.FullRatios{}); return err },
+		"SetOSDFlag":         func() error { _, err := SetOSDFlag(ctx, c, "", false); return err },
+		"SetConfig":          func() error { _, err := SetConfig(ctx, c, ceph.ConfigSetting{}); return err },
+		"SetMessengerPolicy": func() error { _, err := SetMessengerPolicy(ctx, c, ceph.MessengerPolicy{}); return err },
 	}
 }
 

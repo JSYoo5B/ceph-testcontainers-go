@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -38,16 +39,14 @@ func TestCephFSPins(t *testing.T) {
 				{Section: "mds", Name: "mds_export_ephemeral_random", Value: "true"},
 				{Section: "mds", Name: "mds_export_ephemeral_random_max", Value: "1"},
 			} {
-				change, err := cluster.OverrideConfig(ctx, setting)
-				if change != nil {
-					t.Cleanup(func() {
-						cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
-						defer stop()
-						if err := change.Restore(cleanup); err != nil {
-							t.Errorf("restore ephemeral feature configuration: %v", err)
-						}
-					})
-				}
+				change, err := override.SetConfig(ctx, cluster, setting)
+				t.Cleanup(func() {
+					cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
+					defer stop()
+					if err := change.Restore(cleanup); err != nil {
+						t.Errorf("restore ephemeral feature configuration: %v", err)
+					}
+				})
 				if err != nil {
 					t.Fatal(err)
 				}

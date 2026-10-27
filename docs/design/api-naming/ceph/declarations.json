@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 361,
+  "count": 353,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -259,36 +259,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.ConfigOverrideHandle",
-      "kind": "type",
-      "proposed": "ceph.ConfigOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.ConfigOverrideHandle.GoString",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "ConfigOverrideHandle",
-      "proposed": "ceph.ConfigOverrideHandle.GoString",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.ConfigOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*ConfigOverrideHandle",
-      "proposed": "ceph.ConfigOverrideHandle.Restore",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.ConfigOverrideHandle.String",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "ConfigOverrideHandle",
-      "proposed": "ceph.ConfigOverrideHandle.String",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.ConfigSetting",
       "kind": "type",
       "proposed": "ceph.ConfigSetting",
@@ -480,22 +450,6 @@
       "signature": "func(ctx context.Context) ([]*OSDContainer, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.OSDs",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OverrideConfig",
-      "kind": "method",
-      "signature": "func(ctx context.Context, setting ConfigSetting) (*ConfigOverrideHandle, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideConfig",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OverrideMessengerPolicy",
-      "kind": "method",
-      "signature": "func(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverrideHandle, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideMessengerPolicy",
       "decision": "baseline"
     },
     {
@@ -1283,20 +1237,6 @@
       "current": "ceph.MessengerPolicy",
       "kind": "type",
       "proposed": "ceph.MessengerPolicy",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.MessengerPolicyOverrideHandle",
-      "kind": "type",
-      "proposed": "ceph.MessengerPolicyOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.MessengerPolicyOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*MessengerPolicyOverrideHandle",
-      "proposed": "ceph.MessengerPolicyOverrideHandle.Restore",
       "decision": "baseline"
     },
     {

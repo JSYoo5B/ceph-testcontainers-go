@@ -43,6 +43,11 @@ const (
 	// registry only records it for overlap and identity: Terminate does not
 	// undo it.
 	FullRatios Kind = "FullRatios"
+	// Config tracks one central configuration database entry per section,
+	// mask and option. The registry only records it for overlap and
+	// identity: Terminate does not undo it, the database ends with the
+	// cluster.
+	Config Kind = "Config"
 )
 
 // Token identifies one reservation. Only the token that a key still maps to
@@ -78,6 +83,14 @@ type hooks interface {
 	SetMGRModule(ctx context.Context, c *ceph.Container, name string, enabled bool) error
 	ProtectMGRModule(ctx context.Context, c *ceph.Container, name string) error
 	OpenFullRatios(ctx context.Context, c *ceph.Container) (any, error)
+	NormalizeConfigSetting(setting ceph.ConfigSetting) (ceph.ConfigSetting, error)
+	CheckConfigAllowed(c *ceph.Container, setting ceph.ConfigSetting) error
+	ConfigKey(setting ceph.ConfigSetting) string
+	ConfigWho(setting ceph.ConfigSetting) string
+	ConfigEntries(ctx context.Context, c *ceph.Container) ([]ceph.ConfigEntry, error)
+	ConfigSet(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting, value string) error
+	ConfigRemove(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) error
+	MessengerPolicySettings(c *ceph.Container, policy ceph.MessengerPolicy) ([]ceph.ConfigSetting, error)
 }
 
 // fullRatiosSession is what the registered hooks return from OpenFullRatios.
@@ -315,6 +328,52 @@ func OpenFullRatios(ctx context.Context, c *ceph.Container) (FullRatiosSession, 
 		panic("overridehook: package ceph returned a full ratios session of an unexpected type")
 	}
 	return FullRatiosSession{session: session}, nil
+}
+
+// NormalizeConfigSetting validates and canonicalizes one central
+// configuration entry.
+func NormalizeConfigSetting(setting ceph.ConfigSetting) (ceph.ConfigSetting, error) {
+	return get().NormalizeConfigSetting(setting)
+}
+
+// CheckConfigAllowed refuses an option that the bootstrap messenger mode of
+// the cluster fixes for every section and mask, with ceph.ErrInvalidRequest.
+// It needs no lock.
+func CheckConfigAllowed(c *ceph.Container, setting ceph.ConfigSetting) error {
+	return get().CheckConfigAllowed(c, setting)
+}
+
+// ConfigKey returns the registry key of a normalized setting.
+func ConfigKey(setting ceph.ConfigSetting) string { return get().ConfigKey(setting) }
+
+// ConfigWho returns the native target (section and mask) of a normalized
+// setting.
+func ConfigWho(setting ceph.ConfigSetting) string { return get().ConfigWho(setting) }
+
+// ConfigEntries reads the central configuration database. The caller holds
+// the mutex.
+func ConfigEntries(ctx context.Context, c *ceph.Container) ([]ceph.ConfigEntry, error) {
+	return get().ConfigEntries(ctx, c)
+}
+
+// ConfigSet stores value for a normalized setting. The caller holds the
+// mutex.
+func ConfigSet(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting, value string) error {
+	return get().ConfigSet(ctx, c, setting, value)
+}
+
+// ConfigRemove removes the entry of a normalized setting. The caller holds the
+// mutex.
+func ConfigRemove(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) error {
+	return get().ConfigRemove(ctx, c, setting)
+}
+
+// MessengerPolicySettings returns the central configuration entries of a
+// temporary messenger policy, or the refusal (ceph.ErrInvalidRequest) of an
+// invalid mode list, a policy that selects no mode and a cluster whose
+// bootstrap fixes every connection mode. It needs no lock.
+func MessengerPolicySettings(c *ceph.Container, policy ceph.MessengerPolicy) ([]ceph.ConfigSetting, error) {
+	return get().MessengerPolicySettings(c, policy)
 }
 
 // TestHeld snapshots the handles that one kind holds, for unit tests. Call

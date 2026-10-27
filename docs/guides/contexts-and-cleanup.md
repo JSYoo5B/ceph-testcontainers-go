@@ -77,7 +77,7 @@ already did.
 Not every call waits for the gate under your context. Many other methods of
 the same cluster also serialize with topology operations but wait for a running
 one to finish regardless of `ctx`, then apply `ctx` to their native work.
-Examples are `OverrideConfig`, `override.SetOSDFlag`, `override.SetMGRModule`,
+Examples are `override.SetConfig`, `override.SetOSDFlag`, `override.SetMGRModule`,
 `override.AddBlocklist` and their `Restore` methods, `OSDContainer.SetIn`, `Pool.SetQuota`,
 `Pool.SetReplication`, the RBD pool and namespace helpers, the RGW user, account
 and placement helpers, and `rgw.Gateway.Admin`. Some cleanup steps also use their own short context,
@@ -343,7 +343,7 @@ result:
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](../ceph.md#clientconfigreplacekey)) |
-| `OverrideConfig`, `OverrideMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `cephfs` `OverrideSessionTimeouts`, `OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
+| `override.SetConfig`, `override.SetMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `cephfs` `OverrideSessionTimeouts`, `OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
 | `fault.Pause` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
@@ -359,8 +359,8 @@ back. Some wrap several native settings:
 
 | Method | Changes |
 | --- | --- |
-| `OverrideConfig` | One central configuration entry (section, optional mask, name) |
-| `OverrideMessengerPolicy` | The selected MON/MGR/OSD client-facing mode entries; established connections keep their modes |
+| `override.SetConfig` | One central configuration entry (section, optional mask, name) |
+| `override.SetMessengerPolicy` | The selected MON/MGR/OSD client-facing mode entries; established connections keep their modes |
 | `ClientConfig.Revoke` | Removes one owned client identity; `Restore` puts back its exact key and capabilities |
 | `override.SetOSDFlag` | One global OSD map flag; a refused call still returns a handle whose `Restore` does nothing |
 | `override.SetMGRModule` | Whether one MGR module is enabled; a refused call still returns a handle whose `Restore` does nothing |
@@ -374,7 +374,7 @@ They share these rules:
 - **One handle per target.** A second override of the same key, flag, module,
   filesystem or pin field is refused while the first is active, even when it
   would set the same value.
-- **The original state is recorded exactly.** `OverrideConfig` distinguishes
+- **The original state is recorded exactly.** `override.SetConfig` distinguishes
   an absent entry from one that is set, so `Restore` removes an entry that did
   not exist instead of pinning the inherited default. `override.SetOSDFlag`
   remembers whether the flag was already set.
@@ -399,14 +399,14 @@ They share these rules:
 
 Handle-specific details:
 
-- `OverrideConfig` records the value as Ceph normalized it, which can differ
+- `override.SetConfig` records the value as Ceph normalized it, which can differ
   from the string you passed. A key set by `ceph.WithConfigFile` cannot be changed
   this way, because local files take precedence over the configuration
   database. Ticket lifetimes written by `WithAuth` also take precedence over
   later central overrides. `MessengerV2Only` reserves `ms_bind_msgr1` and
   `ms_bind_msgr2`; `MessengerV2Secure` reserves those and its six mode
   settings. Refusals of these Messenger settings match `ErrInvalidRequest`.
-- `OverrideMessengerPolicy` uses `OverrideConfig` overrides, restoring in
+- `override.SetMessengerPolicy` uses `override.SetConfig` overrides, restoring in
   reverse order. Application can partly succeed, so keep a non-nil handle
   returned with an error. An empty policy, an unknown connection mode and any
   use under `MessengerV2Secure` are refused before any change with

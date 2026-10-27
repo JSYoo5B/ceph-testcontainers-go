@@ -349,16 +349,14 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 			// A short log that is trimmed at every write leaves the replica's
 			// last entry behind the log tail.
 			for name, value := range map[string]string{"osd_min_pg_log_entries": "10", "osd_max_pg_log_entries": "10", "osd_pg_log_trim_min": "1"} {
-				override, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
-				if override != nil {
-					t.Cleanup(func() {
-						restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
-						defer stop()
-						if err := override.Restore(restoreCtx); err != nil {
-							t.Errorf("restore %s: %v", name, err)
-						}
-					})
-				}
+				overridden, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
+				t.Cleanup(func() {
+					restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+					defer stop()
+					if err := overridden.Restore(restoreCtx); err != nil {
+						t.Errorf("restore %s: %v", name, err)
+					}
+				})
 				if err != nil {
 					t.Fatal(err)
 				}

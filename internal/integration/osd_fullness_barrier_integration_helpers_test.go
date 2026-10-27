@@ -162,10 +162,8 @@ func testOSDFullnessBarrier(t *testing.T) {
 		{Section: "osd", Name: "osd_max_pg_log_entries", Value: "10"},
 		{Section: "osd", Name: "osd_pg_log_trim_min", Value: "1"},
 	} {
-		handle, err := cluster.OverrideConfig(ctx, setting)
-		if handle != nil {
-			restore(setting.Name, handle.Restore)
-		}
+		handle, err := override.SetConfig(ctx, cluster, setting)
+		restore(setting.Name, handle.Restore)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -198,7 +198,7 @@ returned by `ceph.Run` directly.
 
 Server-side RGW options are read when a gateway starts. When a test needs such
 options (lifecycle clock, usage log, STS key, KMS backend), create the cluster
-with `ceph.Run`, apply the options with `OverrideConfig`, and then call
+with `ceph.Run`, apply the options with `override.SetConfig`, and then call
 `rgw.Start`. Most recipes under [Examples](#examples) follow this pattern.
 
 #### Image
@@ -310,7 +310,7 @@ cluster's only gateway, such as the `default` gateway of a `Run` without
 gateway from `Gateways` instead.
 
 The `Container` also embeds `*ceph.Container`. Its cluster methods
-(`OverrideConfig`, `CreatePool`, `Ceph`, `ControlContainer`, `WithClient`,
+(`override.SetConfig`, `CreatePool`, `Ceph`, `ControlContainer`, `WithClient`,
 `ceph.FactsOf` and so on) are documented in
 [ceph.md](ceph.md).
 
@@ -1064,16 +1064,14 @@ func startCluster(t *testing.T, opts ...testcontainers.ContainerCustomizer) *cep
 func applyConfig(t *testing.T, cluster *ceph.Container, settings ...ceph.ConfigSetting) {
 	t.Helper()
 	for _, setting := range settings {
-		change, err := cluster.OverrideConfig(t.Context(), setting)
-		if change != nil {
-			t.Cleanup(func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				if err := change.Restore(ctx); err != nil {
-					t.Error(err)
-				}
-			})
-		}
+		change, err := override.SetConfig(t.Context(), cluster, setting)
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := change.Restore(ctx); err != nil {
+				t.Error(err)
+			}
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1920,7 +1918,7 @@ The fixture never grants the global `admin` flag.
 
 ### Ceph options for RGW
 
-- `cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "client.admin", Name: "rgw_...", Value: "..."})`
+- `override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "client.admin", Name: "rgw_...", Value: "..."})`
   before `rgw.Start`. Many RGW options take effect only when the gateway
   starts; to apply such a change to a running gateway, restart it
   (`Stop`/`Start`) and resolve `S3Endpoint` again.

@@ -351,3 +351,57 @@ func TestFullRatiosSessionThroughHooks(t *testing.T) {
 		}
 	})
 }
+
+// TestConfigOperationsWithoutNativeCommands calls the pure operations of the
+// configuration seam; the commands themselves run against a fake control
+// container in the tests of package override.
+func TestConfigOperationsWithoutNativeCommands(t *testing.T) {
+	setting, err := overridehook.NormalizeConfigSetting(ceph.ConfigSetting{Section: "osd.0", Mask: "class:ssd/host:a", Name: "debug-ms", Value: "1"})
+	if err != nil || setting.Name != "debug_ms" || setting.Mask != "host:a/class:ssd" {
+		t.Fatalf("normalize: %+v %v", setting, err)
+	}
+	if got := overridehook.ConfigWho(setting); got != "osd.0/host:a/class:ssd" {
+		t.Fatalf("who %q", got)
+	}
+	if got := overridehook.ConfigKey(setting); got != "osd.0/host:a/class:ssd/debug_ms" {
+		t.Fatalf("key %q", got)
+	}
+	if _, err := overridehook.NormalizeConfigSetting(ceph.ConfigSetting{Section: "bad", Name: "debug_ms"}); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Fatalf("an invalid section was accepted: %v", err)
+	}
+	for mode, tc := range map[ceph.MessengerMode]struct {
+		name    string
+		allowed bool
+	}{
+		ceph.MessengerDefault:  {"ms_bind_msgr1", true},
+		ceph.MessengerV2Secure: {"ms_service_mode", false},
+		ceph.MessengerV2Only:   {"ms_service_mode", true},
+	} {
+		c := servicehook.TestCluster(nil, servicehook.TestConfig{MessengerMode: mode})
+		err := overridehook.CheckConfigAllowed(c, ceph.ConfigSetting{Section: "global", Name: tc.name})
+		if tc.allowed != (err == nil) || (err != nil && !errors.Is(err, ceph.ErrInvalidRequest)) {
+			t.Errorf("mode %v option %s: %v", mode, tc.name, err)
+		}
+	}
+	v2only := servicehook.TestCluster(nil, servicehook.TestConfig{MessengerMode: ceph.MessengerV2Only})
+	if err := overridehook.CheckConfigAllowed(v2only, ceph.ConfigSetting{Section: "global", Name: "ms_bind_msgr2"}); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Errorf("a fixed protocol option was allowed: %v", err)
+	}
+	settings, err := overridehook.MessengerPolicySettings(v2only, ceph.MessengerPolicy{OSDs: []ceph.MessengerConnectionMode{ceph.MessengerCRC}})
+	if err != nil || len(settings) != 1 || settings[0].Name != "ms_service_mode" {
+		t.Fatalf("policy settings: %+v %v", settings, err)
+	}
+	secure := servicehook.TestCluster(nil, servicehook.TestConfig{MessengerMode: ceph.MessengerV2Secure})
+	for name, tc := range map[string]struct {
+		c      *ceph.Container
+		policy ceph.MessengerPolicy
+	}{
+		"empty":        {v2only, ceph.MessengerPolicy{}},
+		"unknown mode": {v2only, ceph.MessengerPolicy{OSDs: []ceph.MessengerConnectionMode{"plain"}}},
+		"secure":       {secure, ceph.MessengerPolicy{OSDs: []ceph.MessengerConnectionMode{ceph.MessengerCRC}}},
+	} {
+		if _, err := overridehook.MessengerPolicySettings(tc.c, tc.policy); !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Errorf("%s policy: %v", name, err)
+		}
+	}
+}

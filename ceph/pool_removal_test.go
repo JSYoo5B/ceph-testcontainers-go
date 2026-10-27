@@ -117,12 +117,12 @@ func TestRemovePoolRefusesActivePermissionOverride(t *testing.T) {
 	f := newCephStateFake()
 	f.AddFixturePool("data", false)
 	cluster := removalCluster(f)
-	override, err := cluster.OverrideConfig(t.Context(), ConfigSetting{Section: "mon", Name: "mon_allow_pool_delete", Value: "true"})
-	if override == nil {
-		t.Fatalf("OverrideConfig did not return a tracked handle: %v", err)
-	}
+	// ceph cannot call the override package, so the registry holds the key
+	// that override.SetConfig tracks for the setting.
+	var log []string
+	hold(t, cluster, faultConfigOverride, configOverrideKey(allowPoolDeleteSetting), "", &log)
 	before := f.Snapshot()
-	if err := poolHandle(t, t.Context(), cluster, "data").Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "OverrideConfig override") {
+	if err := poolHandle(t, t.Context(), cluster, "data").Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "override.SetConfig override") {
 		t.Fatalf("RemovePool error = %v", err)
 	}
 	if after := f.Snapshot(); after != before {

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "override",
-  "count": 19,
+  "count": 27,
   "entries": [
     {
       "current": "override.AddBlocklist",
@@ -31,6 +31,36 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*BlocklistHandle",
       "proposed": "override.BlocklistHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.ConfigHandle",
+      "kind": "type",
+      "proposed": "override.ConfigHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.ConfigHandle.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ConfigHandle",
+      "proposed": "override.ConfigHandle.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.ConfigHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ConfigHandle",
+      "proposed": "override.ConfigHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.ConfigHandle.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ConfigHandle",
+      "proposed": "override.ConfigHandle.String",
       "decision": "baseline"
     },
     {
@@ -100,6 +130,20 @@
       "decision": "baseline"
     },
     {
+      "current": "override.MessengerPolicyHandle",
+      "kind": "type",
+      "proposed": "override.MessengerPolicyHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.MessengerPolicyHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*MessengerPolicyHandle",
+      "proposed": "override.MessengerPolicyHandle.Restore",
+      "decision": "baseline"
+    },
+    {
       "current": "override.OSDFlagHandle",
       "kind": "type",
       "proposed": "override.OSDFlagHandle",
@@ -111,6 +155,13 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*OSDFlagHandle",
       "proposed": "override.OSDFlagHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.SetConfig",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) (*ConfigHandle, error)",
+      "proposed": "override.SetConfig",
       "decision": "baseline"
     },
     {
@@ -132,6 +183,13 @@
       "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container, name string, enabled bool) (*MGRModuleHandle, error)",
       "proposed": "override.SetMGRModule",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.SetMessengerPolicy",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, policy ceph.MessengerPolicy) (*MessengerPolicyHandle, error)",
+      "proposed": "override.SetMessengerPolicy",
       "decision": "baseline"
     },
     {

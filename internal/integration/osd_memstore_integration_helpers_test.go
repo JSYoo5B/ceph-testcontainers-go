@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -51,7 +52,7 @@ rule replicated_rule {
 func installCRUSHMap(t *testing.T, ctx context.Context, cluster *ceph.Container, text string) {
 	t.Helper()
 	for _, name := range []string{"osd_crush_update_on_start", "osd_class_update_on_start"} {
-		if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: "false"}); err != nil {
+		if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: name, Value: "false"}); err != nil {
 			t.Fatal(err)
 		}
 	}

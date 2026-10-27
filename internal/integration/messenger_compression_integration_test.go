@@ -16,6 +16,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // compressionPhaseReceipt is what one phase observed.
@@ -96,14 +97,14 @@ func TestMessengerCompressionReceipt(t *testing.T) {
 		// evidence.
 		offsets := make([]int, len(osds))
 		for _, setting := range phase.settings {
-			override, err := cluster.OverrideConfig(ctx, setting)
+			overridden, err := override.SetConfig(ctx, cluster, setting)
 			if err != nil {
 				t.Fatalf("%s: %s: %v", phase.name, setting.Name, err)
 			}
 			t.Cleanup(func() {
 				restore, cancel := context.WithTimeout(context.Background(), time.Minute)
 				defer cancel()
-				if err := override.Restore(restore); err != nil {
+				if err := overridden.Restore(restore); err != nil {
 					t.Error(err)
 				}
 			})

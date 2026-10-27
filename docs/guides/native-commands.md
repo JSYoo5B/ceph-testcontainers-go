@@ -664,22 +664,20 @@ with an independent reader client.
 | Need | Use |
 | --- | --- |
 | Inspect stored central configuration | `Observer.Configuration(ctx)` returns exact entries, including masked ones |
-| Change any option for the duration of a test | `cluster.OverrideConfig(ctx, ceph.ConfigSetting{...})` and `Restore` |
+| Change any option for the duration of a test | `override.SetConfig(ctx, cluster, ceph.ConfigSetting{...})` and `Restore` |
 | Options that must be present at bootstrap | `ceph.WithConfigFile(path)` |
 | A daemon's effective value | `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_op_complaint_time")` or `cluster.Ceph(ctx, "tell", "osd.0", "config", "get", "osd_op_complaint_time")` |
 
-`OverrideConfig` accepts any option, not only those the module knows:
+`override.SetConfig` accepts any option, not only those the module knows:
 
 ```golang
-change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
+change, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{
 	Section: "osd",
 	Mask:    "class:ssd",
 	Name:    "osd_scrub_min_interval",
 	Value:   "7200",
 })
-if change != nil {
-	defer change.Restore(cleanupCtx)
-}
+defer change.Restore(cleanupCtx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -1021,7 +1019,7 @@ cannot even be detected.
 
 | Native change | Conflicts with | Prefer |
 | --- | --- | --- |
-| `config set`/`config rm` on a key held by an `OverrideConfig` handle | That handle's `Restore` | `OverrideConfig` |
+| `config set`/`config rm` on a key held by an `override.SetConfig` handle | That handle's `Restore` | `override.SetConfig` |
 | `osd set`/`osd unset` of a global flag | `override.SetOSDFlag` | `override.SetOSDFlag` |
 | `osd set-nearfull-ratio`, `set-backfillfull-ratio`, `set-full-ratio` | `override.SetFullRatios` | `override.SetFullRatios` |
 | `mgr module enable`/`disable` | `override.SetMGRModule`; disabling `volumes` or `mirroring` breaks CephFS fixtures | `override.SetMGRModule` |
@@ -1036,7 +1034,7 @@ cannot even be detected.
 | `radosgw-admin` changes to fixture-created users, accounts or placement | `UserInfo`, `RemoveUser`, `ApplyPlacement`, which verify keys and identity | The typed RGW helpers |
 | `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `ApplySyncGroup` | Typed topology calls, one at a time |
 | `rbd mirror pool enable`/`peer` changes on a mirrored pool | `rbdmirror.Mirror` operations, which compare captured policies | `rbdmirror.Mirror` methods, `Rebootstrap` |
-| Messenger mode and bind options with `MessengerV2Secure` | The fixed bootstrap policy; `OverrideConfig` refuses them | Choose `WithMessengerMode` at `Run` |
+| Messenger mode and bind options with `MessengerV2Secure` | The fixed bootstrap policy; `override.SetConfig` refuses them | Choose `WithMessengerMode` at `Run` |
 | `docker stop`, `docker pause`, `docker network disconnect` on owned containers | Pause and interruption tracking, `Terminate` order | `Stop`/`Start`, `fault.Pause`, `InterruptNetwork` |
 
 Resources you create natively (pools, images, users, buckets, CRUSH rules)
@@ -1066,7 +1064,7 @@ and refuse to overwrite outside edits.
 ## Related APIs
 
 - [ceph.md](../ceph.md): `Ceph`, `RunNativeCommand`, `RedactSecrets`,
-  `ControlContainer`, `ClientContainer`, `FactsOf`, `Observer.Configuration`, `OverrideConfig`,
+  `ControlContainer`, `ClientContainer`, `FactsOf`, `Observer.Configuration`, `override.SetConfig`,
   `WithConfigFile`, `WithClient`, `WithClientIdentity`, `CreateClient`,
   `ConnectionConfig`, `CollectDiagnostics`.
 - [rbd-mirror.md](../rbd-mirror.md): `Mirror.SourceRBD`, `Mirror.DestinationRBD`,
@@ -1076,6 +1074,6 @@ and refuse to overwrite outside edits.
 - [rgw.md](../rgw.md): `Gateway.Admin`, `Multisite.SourceAdmin`,
   `DestinationAdmin`, `ZoneAdmin`.
 - [Fault injection](fault-injection.md): messenger options and other faults set
-  through `OverrideConfig`.
+  through `override.SetConfig`.
 - [Contexts, ownership and cleanup](contexts-and-cleanup.md): `Restore`
   semantics and partial failures.
