@@ -114,10 +114,10 @@ func TestSharedCluster(t *testing.T) {
 		if osds, err := cluster.OSDs(ctx); osds != nil || !errors.Is(err, ceph.ErrSharedCluster) {
 			t.Errorf("OSDs = %v, %v, want no handles and ErrSharedCluster", osds, err)
 		}
-		if status, err := cluster.Status(ctx); err != nil || status.FSID != fsid {
+		if status, err := observeCluster(cluster).Status(ctx); err != nil || status.FSID != fsid {
 			t.Fatalf("a read-only view failed: %s, %v", status.FSID, err)
 		}
-		if flags, err := tenant.OSDFlags(ctx); err != nil || len(flags) == 0 {
+		if flags, err := observeTenant(tenant).OSDFlags(ctx); err != nil || len(flags) == 0 {
 			t.Fatalf("OSDFlags = %v, %v", flags, err)
 		}
 	})
@@ -220,7 +220,7 @@ func TestSharedClusterExclusive(t *testing.T) {
 	if cluster == nil {
 		t.Fatalf("Exclusive: %s", exclusiveTB.errorText())
 	}
-	status, err := cluster.Status(ctx)
+	status, err := observeCluster(cluster).Status(ctx)
 	if err != nil || status.FSID != fsid {
 		t.Fatalf("the exclusive lease got cluster %s (%v), want the shared %s", status.FSID, err, fsid)
 	}
@@ -258,7 +258,7 @@ func TestSharedClusterExclusive(t *testing.T) {
 	if got := sharedFSID(t, ctx, late); got == fsid {
 		t.Fatalf("the lease after an exclusive lease got its cluster %s", got)
 	}
-	if flags, err := late.OSDFlags(ctx); err != nil || slices.Contains(flags, "noout") || slices.Contains(flags, "noscrub") {
+	if flags, err := observeTenant(late).OSDFlags(ctx); err != nil || slices.Contains(flags, "noout") || slices.Contains(flags, "noscrub") {
 		t.Fatalf("the fresh cluster has OSD flags %v (%v)", flags, err)
 	}
 	lateTB.finish()

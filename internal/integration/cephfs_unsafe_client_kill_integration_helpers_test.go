@@ -172,7 +172,7 @@ func testCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 	if !slices.Equal(states, []string{"open"}) || evicted < short.Timeout || evicted > short.Autoclose+15*time.Second {
 		t.Fatalf("killed client's session: states %q, gone %s after the kill, want only open and gone between %s and %s", states, evicted, short.Timeout, short.Autoclose)
 	}
-	entries, err := h.cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(h.cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

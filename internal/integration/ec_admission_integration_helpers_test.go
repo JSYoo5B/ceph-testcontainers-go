@@ -222,7 +222,7 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	if err := checkECAdmissionStopped(captured, faultInstance); err != nil {
 		t.Fatal(err)
 	}
-	states, err := cluster.OSDStates(ctx)
+	states, err := observeCluster(cluster).OSDStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

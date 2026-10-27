@@ -75,7 +75,7 @@ func TestPausedObjectWatcher(t *testing.T) {
 			}
 			watchers := func() []ceph.ObjectWatcher {
 				t.Helper()
-				list, err := cluster.ObjectWatchers(ctx, pool, "", object)
+				list, err := observeCluster(cluster).ObjectWatchers(ctx, pool, "", object)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -126,7 +126,7 @@ func TestPausedObjectWatcher(t *testing.T) {
 			// Each listing is bounded within the two minutes after the pause.
 			listed, err := observe(ctx, 2*time.Minute-time.Since(paused), 30*time.Second, 2*time.Second,
 				func(probeCtx context.Context) ([]ceph.ObjectWatcher, bool, error) {
-					list, err := cluster.ObjectWatchers(probeCtx, pool, "", object)
+					list, err := observeCluster(cluster).ObjectWatchers(probeCtx, pool, "", object)
 					return list, err == nil && len(list) == 0, err
 				})
 			if err != nil {
@@ -140,7 +140,7 @@ func TestPausedObjectWatcher(t *testing.T) {
 			if errno, seconds := notify(); errno != 0 || seconds > 2 {
 				t.Fatalf("notify after the watch expired errno = %d after %.1fs", errno, seconds)
 			}
-			entries, err := cluster.BlocklistEntries(ctx)
+			entries, err := observeCluster(cluster).BlocklistEntries(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}

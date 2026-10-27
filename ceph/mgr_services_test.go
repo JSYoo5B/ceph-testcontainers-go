@@ -19,7 +19,7 @@ func TestManagerServicesDecodesAdvertisedURLs(t *testing.T) {
 		}
 	}
 	ctr := &poolFixtureContainer{Output: map[string]string{"mgr services --format json": `{"prometheus":"http://mgr:9283/"}`}}
-	services, err = poolFixtureCluster(ctr, 1).ManagerServices(t.Context())
+	services, err = poolFixtureCluster(ctr, 1).managerServices(t.Context())
 	if err != nil || services["prometheus"] != "http://mgr:9283/" {
 		t.Fatalf("native services were not read: %v %v", services, err)
 	}

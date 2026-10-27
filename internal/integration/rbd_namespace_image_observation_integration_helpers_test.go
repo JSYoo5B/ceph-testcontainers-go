@@ -64,11 +64,11 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceStatus, err := source.Status(ctx)
+	sourceStatus, err := observeCluster(source).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationStatus, err := destination.Status(ctx)
+	destinationStatus, err := observeCluster(destination).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

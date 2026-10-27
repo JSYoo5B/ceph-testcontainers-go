@@ -41,7 +41,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			probe("seed")
 			original := clusteraccess.OSDs(t, cluster)[0]
 			containerID := original.GetContainerID()
-			states, err := cluster.OSDStates(ctx)
+			states, err := observeCluster(cluster).OSDStates(ctx)
 			if err != nil || len(states) != 4 {
 				t.Fatalf("initial native OSD states unavailable: %+v %v", states, err)
 			}
@@ -71,7 +71,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 				t.Fatalf("in changed identity or native map reweight: %+v", state)
 			}
 			probe("in")
-			initialFlags, err := cluster.OSDFlags(ctx)
+			initialFlags, err := observeCluster(cluster).OSDFlags(ctx)
 			if err != nil || slices.Contains(initialFlags, "noout") {
 				t.Fatal("fresh noout=false state required for the auto-out positive control", err)
 			}
@@ -173,7 +173,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err != nil {
 				t.Fatal(err)
 			}
-			flags, err := cluster.OSDFlags(ctx)
+			flags, err := observeCluster(cluster).OSDFlags(ctx)
 			if err != nil || slices.Contains(flags, "noout") {
 				t.Fatal("temporary disable not native", err)
 			}
@@ -184,7 +184,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err := disabled.Restore(ctx); err != nil {
 				t.Fatal(err)
 			}
-			flags, err = cluster.OSDFlags(ctx)
+			flags, err = observeCluster(cluster).OSDFlags(ctx)
 			if err != nil || !slices.Contains(flags, "noout") {
 				t.Fatal("original flag wasn't preserved", err)
 			}

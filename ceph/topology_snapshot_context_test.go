@@ -199,11 +199,11 @@ func TestCephStatusQueriesHonorBusyControlWhileOwnerIsHeld(t *testing.T) {
 				case "ceph":
 					_, err = cluster.Ceph(ctx, "status")
 				case "status":
-					_, err = cluster.Status(ctx)
+					_, err = readStatus(ctx, cluster.cephCLI)
 				case "manager-status":
-					_, err = cluster.ManagerStatus(ctx)
+					_, err = readManagerStatus(ctx, cluster.cephCLI)
 				case "quorum":
-					_, err = cluster.QuorumStatus(ctx)
+					_, err = cluster.quorumStatus(ctx)
 				}
 				done <- err
 			}()

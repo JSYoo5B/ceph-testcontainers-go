@@ -123,7 +123,11 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 	if err := validateSnapshotSchedule(schedule); err != nil {
 		return nil, err
 	}
-	modules, err := fs.cluster.MGRModules(ctx)
+	observer, err := ceph.Observe(fs.cluster)
+	if err != nil {
+		return nil, err
+	}
+	modules, err := observer.MGRModules(ctx)
 	if err != nil {
 		return nil, err
 	}

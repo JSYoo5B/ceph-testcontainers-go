@@ -196,7 +196,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=20,check=Tr
 			if err != nil || state != other {
 				t.Fatalf("unrelated policy changed: %+v %v", state, err)
 			}
-			pools, err := cluster.Pools(ctx)
+			pools, err := observeCluster(cluster).Pools(ctx)
 			if err != nil || len(pools) < 2 {
 				t.Fatal("pool listing unavailable", err)
 			}

@@ -70,9 +70,9 @@ func waitProfileTopology(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	var managers ceph.ManagerStatus
 	var err error
 	for deadline := time.Now().Add(3 * time.Minute); ; {
-		quorum, err = cluster.QuorumStatus(ctx)
+		quorum, err = observeCluster(cluster).QuorumStatus(ctx)
 		if err == nil && len(quorum.QuorumNames) == monitors && len(quorum.MonMap.Mons) == monitors {
-			managers, err = cluster.ManagerStatus(ctx)
+			managers, err = observeCluster(cluster).ManagerStatus(ctx)
 			if err == nil && (standbys < 0 || managers.Available && len(managers.Standbys) == standbys) {
 				return
 			}
@@ -198,7 +198,7 @@ func createProfileIdentities(t *testing.T, ctx context.Context, cluster *ceph.Co
 		}
 		identities[name] = identity
 	}
-	status, err := cluster.Status(ctx)
+	status, err := observeCluster(cluster).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func checkProfileClientModes(t *testing.T, ctx context.Context, cluster *ceph.Co
 // advertise addresses of the family: IPv6, or IPv4-mapped IPv6.
 func checkProfileAddressFamily(t *testing.T, ctx context.Context, cluster *ceph.Container, family ceph.AddressFamily) {
 	t.Helper()
-	native, err := cluster.DaemonAddresses(ctx)
+	native, err := observeCluster(cluster).DaemonAddresses(ctx)
 	if err != nil || native.ActiveManager == nil {
 		t.Fatalf("daemon addresses: %+v, %v", native, err)
 	}
@@ -302,7 +302,7 @@ func waitQuorumNames(t *testing.T, ctx context.Context, cluster *ceph.Container,
 	slices.Sort(names)
 	var got []string
 	for deadline := time.Now().Add(3 * time.Minute); ; {
-		quorum, err := cluster.QuorumStatus(ctx)
+		quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 		if err == nil {
 			got = slices.Clone(quorum.QuorumNames)
 			slices.Sort(got)
@@ -320,7 +320,7 @@ func waitQuorumNames(t *testing.T, ctx context.Context, cluster *ceph.Container,
 // profileMonitorAddress returns the advertised v2 address of a MON.
 func profileMonitorAddress(t *testing.T, ctx context.Context, cluster *ceph.Container, name string) string {
 	t.Helper()
-	native, err := cluster.DaemonAddresses(ctx)
+	native, err := observeCluster(cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,11 +368,11 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 	expectClient("before the controls")
 
 	// Pause the active MGR, fail it over, then resume it as the standby.
-	before, err := cluster.ManagerStatus(ctx)
+	before, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil || !before.Available || len(before.Standbys) != 1 {
 		t.Fatalf("managers before the pause: %+v, %v", before, err)
 	}
-	native, err := cluster.DaemonAddresses(ctx)
+	native, err := observeCluster(cluster).DaemonAddresses(ctx)
 	if err != nil || native.ActiveManager == nil || len(native.ActiveManager.Addrs) == 0 {
 		t.Fatalf("active MGR address: %+v, %v", native, err)
 	}
@@ -394,7 +394,7 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 		t.Fatal(err)
 	}
 	for deadline := time.Now().Add(2 * time.Minute); ; {
-		after, err := cluster.ManagerStatus(ctx)
+		after, err := observeCluster(cluster).ManagerStatus(ctx)
 		if err == nil && after.Available && after.ActiveName == before.Standbys[0].Name {
 			break
 		}
@@ -410,7 +410,7 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 	expectClient("MGR failover")
 
 	// Stop the standby MGR and start it again.
-	status, err := cluster.ManagerStatus(ctx)
+	status, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil || len(status.Standbys) != 1 {
 		t.Fatalf("managers: %+v, %v", status, err)
 	}
@@ -569,7 +569,7 @@ func testMessengerClientSecureProfile(t *testing.T) {
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
 	checkProfileTickets(t, ctx, cluster, 12, 12)
-	if osds, err := cluster.DaemonAddresses(ctx); err != nil || len(osds.OSDs) != 0 || len(clusteraccess.OSDs(t, cluster)) != 0 {
+	if osds, err := observeCluster(cluster).DaemonAddresses(ctx); err != nil || len(osds.OSDs) != 0 || len(clusteraccess.OSDs(t, cluster)) != 0 {
 		t.Fatalf("the profile has OSDs: %+v, %v", osds.OSDs, err)
 	}
 	daemons := profileDaemons(t, cluster)
@@ -723,7 +723,7 @@ func testMessengerClientDelayedManagers(t *testing.T) {
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
 	cluster, _ := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, -1)
-	status, err := cluster.ManagerStatus(ctx)
+	status, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil || status.Available || status.ActiveGID != 0 || len(status.Standbys) != 0 || len(clusteraccess.Managers(t, cluster)) != 0 {
 		t.Fatalf("a MGR exists before any was started: %+v, %v", status, err)
 	}
@@ -737,7 +737,7 @@ func testMessengerClientDelayedManagers(t *testing.T) {
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
-	status, err = cluster.ManagerStatus(ctx)
+	status, err = observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil || status.ActiveName != "a" || status.Standbys[0].Name != "b" {
 		t.Fatalf("managers after the delayed starts: %+v, %v", status, err)
 	}
@@ -840,7 +840,7 @@ func testMessengerClientWithoutKeyTypes(t *testing.T, image string) {
 // reads the Messenger v2 banner that the daemon sends first.
 func checkHostProcessReachesDaemons(t *testing.T, ctx context.Context, cluster *ceph.Container) {
 	t.Helper()
-	native, err := cluster.DaemonAddresses(ctx)
+	native, err := observeCluster(cluster).DaemonAddresses(ctx)
 	if err != nil || native.ActiveManager == nil || len(native.ActiveManager.Addrs) == 0 {
 		t.Fatalf("daemon addresses: %+v, %v", native, err)
 	}

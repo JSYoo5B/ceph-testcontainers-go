@@ -50,7 +50,7 @@ func TestOverrideOSDFlagAcceptsEveryConstantAndRefusesOthers(t *testing.T) {
 func TestOSDFlagsReportsFlagsOutsideTheConstantSet(t *testing.T) {
 	ctr := &osdPolicyFixture{flags: []string{"sortbitwise", "noout", "purged_snapdirs", "pglog_hardlimit"}}
 	c := osdPolicyCluster(ctr)
-	flags, err := c.OSDFlags(t.Context())
+	flags, err := c.osdFlags(t.Context())
 	want := []OSDFlag{"noout", "pglog_hardlimit", "purged_snapdirs", "sortbitwise"}
 	if err != nil || !slices.Equal(flags, want) {
 		t.Fatalf("flags %q, want %q: %v", flags, want, err)
@@ -59,16 +59,16 @@ func TestOSDFlagsReportsFlagsOutsideTheConstantSet(t *testing.T) {
 		t.Fatal("a reported flag does not compare equal to its constant")
 	}
 	flags[0] = "changed"
-	again, err := c.OSDFlags(t.Context())
+	again, err := c.osdFlags(t.Context())
 	if err != nil || !slices.Equal(again, want) {
 		t.Fatalf("returned flags alias cluster state: %q %v", again, err)
 	}
 	empty := osdPolicyCluster(&osdPolicyFixture{})
-	if flags, err := empty.OSDFlags(t.Context()); err != nil || len(flags) != 0 {
+	if flags, err := empty.osdFlags(t.Context()); err != nil || len(flags) != 0 {
 		t.Fatalf("no flags: %q %v", flags, err)
 	}
 	failing := osdPolicyCluster(&osdPolicyFixture{raw: `null`})
-	if flags, err := failing.OSDFlags(t.Context()); err == nil || flags != nil {
+	if flags, err := failing.osdFlags(t.Context()); err == nil || flags != nil {
 		t.Fatalf("malformed dump returned flags %q with err %v", flags, err)
 	}
 }
@@ -115,7 +115,7 @@ func TestScrubOperationsRefuseAnInvalidTypedPGIDWithoutANativeCall(t *testing.T)
 		if err := c.RepairPG(t.Context(), pgid); err == nil || !errors.Is(err, ErrInvalidRequest) {
 			t.Fatalf("RepairPG(%q): %v", pgid, err)
 		}
-		if objects, err := c.PGInconsistencies(t.Context(), pgid); err == nil || objects != nil || !errors.Is(err, ErrInvalidRequest) {
+		if objects, err := c.pgInconsistencies(t.Context(), pgid); err == nil || objects != nil || !errors.Is(err, ErrInvalidRequest) {
 			t.Fatalf("PGInconsistencies(%q): %v %v", pgid, objects, err)
 		}
 		if len(ctr.Calls) != 0 {

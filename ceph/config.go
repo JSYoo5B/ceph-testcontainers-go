@@ -59,10 +59,9 @@ func (change ConfigOverrideHandle) String() string {
 // GoString formats the override like String.
 func (change ConfigOverrideHandle) GoString() string { return change.String() }
 
-// Configuration lists exact central database entries, including masked entries.
-// Use native config show/daemon config get to inspect a running daemon's effective
-// value; this method does not claim a stored setting has overridden local config.
-func (c *Container) Configuration(ctx context.Context) ([]ConfigEntry, error) {
+// observedConfiguration implements Observer.Configuration. It takes the topology lock and refuses
+// a cluster without pool policy readiness before it reads.
+func (c *Container) observedConfiguration(ctx context.Context) ([]ConfigEntry, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {

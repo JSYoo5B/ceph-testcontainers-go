@@ -44,15 +44,8 @@ type HealthMute struct {
 	Sticky                   bool
 }
 
-// HealthDetails reads the original cluster's health through one captured
-// control CLI handle, checking the bootstrap FSID before and after the query.
-// It works before storage or MGR readiness, performs no writes or retries and
-// returns a zero snapshot on every failure, including post-query cancellation.
-// Native command output is omitted from errors because it may contain secrets.
-// External native/configuration writers must not race this observation: the
-// three reads are not an atomic transaction. Poll with a caller deadline when
-// asserting eventual health after changing a test topology.
-func (c *Container) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
+// healthDetails implements Observer.HealthDetails.
+func (c *Container) healthDetails(ctx context.Context) (HealthSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return HealthSnapshot{}, err
 	}

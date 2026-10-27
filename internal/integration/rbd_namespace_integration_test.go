@@ -131,7 +131,7 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, c
 			if err != nil {
 				t.Fatal(err)
 			}
-			status, err := cluster.Status(ctx)
+			status, err := observeCluster(cluster).Status(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}

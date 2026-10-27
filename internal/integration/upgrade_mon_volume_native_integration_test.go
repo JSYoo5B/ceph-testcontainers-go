@@ -115,7 +115,11 @@ func monitorStoreVolumeRetention(t *testing.T) {
 	waitQuorumNames(t, ctx, cluster, "a", "b", "c")
 
 	view := func(ctx context.Context) (upgradeMonView, error) {
-		status, err := cluster.QuorumStatus(ctx)
+		observer, err := ceph.Observe(cluster)
+		if err != nil {
+			return upgradeMonView{}, err
+		}
+		status, err := observer.QuorumStatus(ctx)
 		if err != nil {
 			return upgradeMonView{}, err
 		}

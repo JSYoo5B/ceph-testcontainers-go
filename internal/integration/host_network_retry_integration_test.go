@@ -165,7 +165,7 @@ finally:
 	if !foundV2 {
 		t.Fatalf("final monmap lacks a v2 endpoint: %s", data)
 	}
-	status, err := cluster.Status(ctx)
+	status, err := observeCluster(cluster).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

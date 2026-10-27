@@ -195,7 +195,7 @@ func TestMonitorQuorumEOFReaderCancellationReturnsNoStatus(t *testing.T) {
 		}, nil
 	}}
 	cluster := &Container{Container: control}
-	status, err := cluster.QuorumStatus(ctx)
+	status, err := cluster.quorumStatus(ctx)
 	if !errors.Is(err, context.Canceled) || len(status.QuorumNames) != 0 || len(status.MonMap.Mons) != 0 {
 		t.Fatalf("complete native JSON after caller cancellation became a valid observation: %+v, %v", status, err)
 	}

@@ -535,7 +535,7 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 	full := waitPoolFull(t, ctx, m.cluster, pool, true)
 	receipt.FullEpoch = &full
 	receipt.phase("pool-full")
-	health, err := m.cluster.HealthDetails(ctx)
+	health, err := observeCluster(m.cluster).HealthDetails(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,7 +616,7 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 	if retained := cephFSRetainedSession(t, ctx, m.fs, opened.Client, 0); retained.Address != session.Address || retained.PID != session.PID {
 		t.Fatalf("client session %+v, before %+v", retained, session)
 	}
-	entries, err := m.cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(m.cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

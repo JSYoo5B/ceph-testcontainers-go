@@ -31,7 +31,7 @@ func TestManagerLifecycle(t *testing.T) {
 	}
 	checkMap := func(active string, standbys ...string) {
 		t.Helper()
-		status, err := cluster.ManagerStatus(ctx)
+		status, err := observeCluster(cluster).ManagerStatus(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

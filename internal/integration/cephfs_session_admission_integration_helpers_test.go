@@ -326,7 +326,7 @@ func (h *cephFSAdmission) waitSessionGone(t *testing.T, ctx context.Context, a *
 // blocklisted reports whether the attempt's session address is blocklisted.
 func (h *cephFSAdmission) blocklisted(t *testing.T, ctx context.Context, a *admissionAttempt) bool {
 	t.Helper()
-	entries, err := h.cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(h.cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +408,7 @@ func testCephFSSessionAdmission(t *testing.T) {
 	if rank.Name != active.Name || rank.GID != active.GID || rank.FilesystemID != status.FilesystemID || !ok {
 		t.Fatalf("fs dump rank 0 %+v, MDSStatus %+v (filesystem %d)", rank, active, status.FilesystemID)
 	}
-	addresses, err := cluster.DaemonAddresses(ctx)
+	addresses, err := observeCluster(cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

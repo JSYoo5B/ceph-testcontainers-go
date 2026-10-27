@@ -76,7 +76,7 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 	filesystems := make([]string, 2)
 	nativeArgs := make([][]string, 2)
 	for i, cluster := range clusters {
-		status, err := cluster.Status(ctx)
+		status, err := observeCluster(cluster).Status(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -243,7 +243,7 @@ func testCephFSLiveQuota(t *testing.T) {
 	if err != nil || len(current.Active) != 1 || current.Active[0] != m.mds {
 		t.Fatalf("MDS generation changed: %+v, %v", current, err)
 	}
-	status, err := m.cluster.Status(ctx)
+	status, err := observeCluster(m.cluster).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

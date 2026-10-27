@@ -72,7 +72,7 @@ func checkCephFSRemoval(t *testing.T, ctx context.Context, cluster *ceph.Contain
 			t.Fatal("removed filesystem is still owned")
 		}
 	}
-	pools, err := cluster.Pools(ctx)
+	pools, err := observeCluster(cluster).Pools(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

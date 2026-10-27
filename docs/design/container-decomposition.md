@@ -185,6 +185,8 @@ enumerates the exported functions of that group. Entries leave
 
 ### Read-only observation snapshots (16 methods)
 
+> Done: the sixteen methods are on `ceph.Observer` only; the `Container` methods and the eight `Tenant` forwarders are removed, and `Pools` became `Observer.Pools`, which lists `*ceph.Pool` objects. The `Observer` stays in package `ceph` because it needs the captured control handle, the topology and configuration locks and the shared-cluster admission, which are internal. The text below is the design as proposed.
+
 `BlocklistEntries`, `Configuration`, `DaemonAddresses`, `FullRatios`,
 `HealthDetails`, `MGRModules`, `ManagerMetrics`, `ManagerServices`,
 `ManagerStatus`, `MonitorBootstrapAddresses`, `OSDFlags`, `OSDStates`,

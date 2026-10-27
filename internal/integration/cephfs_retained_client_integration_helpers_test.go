@@ -890,7 +890,7 @@ func testCephFSCapabilityHandoff(t *testing.T) {
 	if retained := cephFSRetainedSession(t, ctx, fs, baseline.Client, 0); retained.Address != session.Address || retained.PID != session.PID {
 		t.Fatalf("holder session %+v, before %+v", retained, session)
 	}
-	entries, err := cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1086,7 +1086,7 @@ func testCephFSLateReconnect(t *testing.T) {
 	if slices.ContainsFunc(sessions, func(s cephfs.Session) bool { return s.ID == baseline.Client }) {
 		t.Fatalf("the frozen client.%d kept a session: %+v", baseline.Client, sessions)
 	}
-	entries, err := cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1467,7 +1467,7 @@ func testCephFSLiveRankMigration(t *testing.T) {
 			t.Fatalf("rank %d session = %+v, want the address and PID of %+v", rank, retained, session)
 		}
 	}
-	entries, err := cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -134,7 +134,7 @@ exceptions:
 
 | Command | Output | Typed alternative |
 | --- | --- | --- |
-| `rados listwatchers` | Always text: `watcher=IP:port/nonce client.<id> cookie=<n>` | `cluster.ObjectWatchers` |
+| `rados listwatchers` | Always text: `watcher=IP:port/nonce client.<id> cookie=<n>` | `Observer.ObjectWatchers` |
 | `radosgw-admin bucket sync status` on Squid | Text; `--format json` is ignored | `multisite.Fixture.BucketSyncStatus`, `WaitBucketSyncReady` |
 | `radosgw-admin sync status` | The comparison with remote logs appears only in the human-readable output, even with `--format json` | `multisite.Fixture.SyncStatus`, `WaitSyncReady` |
 | `rbd mirror pool info` on Squid | JSON without `mirror_uuid` and `remote_namespace` | `rbdmirror.Mirror.PolicyStatus` |
@@ -663,7 +663,7 @@ with an independent reader client.
 
 | Need | Use |
 | --- | --- |
-| Inspect stored central configuration | `cluster.Configuration(ctx)` returns exact entries, including masked ones |
+| Inspect stored central configuration | `Observer.Configuration(ctx)` returns exact entries, including masked ones |
 | Change any option for the duration of a test | `cluster.OverrideConfig(ctx, ceph.ConfigSetting{...})` and `Restore` |
 | Options that must be present at bootstrap | `ceph.WithConfigFile(path)` |
 | A daemon's effective value | `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_op_complaint_time")` or `cluster.Ceph(ctx, "tell", "osd.0", "config", "get", "osd_op_complaint_time")` |
@@ -1064,7 +1064,7 @@ and refuse to overwrite outside edits.
 ## Related APIs
 
 - [ceph.md](../ceph.md): `Ceph`, `RunNativeCommand`, `RedactSecrets`,
-  `ControlContainer`, `ClientContainer`, `EssentialImage`, `Configuration`, `OverrideConfig`,
+  `ControlContainer`, `ClientContainer`, `EssentialImage`, `Observer.Configuration`, `OverrideConfig`,
   `WithConfigFile`, `WithClient`, `WithClientIdentity`, `CreateClient`,
   `ConnectionConfig`, `CollectDiagnostics`.
 - [rbd-mirror.md](../rbd-mirror.md): `Mirror.SourceRBD`, `Mirror.DestinationRBD`,
