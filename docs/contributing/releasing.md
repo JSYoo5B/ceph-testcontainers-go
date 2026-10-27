@@ -36,7 +36,12 @@ record the final source and checks.
 1. Freeze the candidate's full commit SHA and confirm the worktree is clean.
    Review the diff from the prior tag, including exported signatures,
    `go.mod`/`go.sum`, bootstrap defaults and failure/cleanup contracts.
-2. Keep `CHANGELOG.md` under `Unreleased` until publication. Update the
+2. Keep `CHANGELOG.md` under `Unreleased` until publication. Unreleased
+   changes are recorded in the legacy `Unreleased` section and in the
+   fragments under `docs/changes/` (see
+   [Release-note fragments](release-fragments.md)); both are part of the
+   release notes until an assembler exists, so review the fragments too and
+   run `python3 .github/scripts/release_fragments.py`. Update the
    upgrade guide, module pages and README links together. State the Go
    minimum separately from this repository's toolchain and native clients'
    platform requirements.
@@ -73,7 +78,7 @@ release automatically.
 Before a separately authorized publication:
 
 - Select the final candidate SHA and prepare release notes from the
-  changelog, including compatibility, support and unresolved native limits.
+  changelog and the unreleased fragments, including compatibility, support and unresolved native limits.
 - When publishing, replace `Unreleased` with the version and actual release
   date, and update the README's development-version notice so it does not
   tell release users to install an older tag.

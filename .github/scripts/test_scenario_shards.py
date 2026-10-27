@@ -652,9 +652,14 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertIn("    needs: changes\n", jobs[name])
         # The weekly schedule runs only the vulnerability check.
         self.assertRegex(workflow, r"(?m)^  schedule:\n    - cron: '[^']+'$")
-        for name in ("unit", "race", "static", "tag-coverage"):
+        for name in ("unit", "race", "tag-coverage"):
             self.assertIn("    if: ${{ github.event_name != 'schedule' && !cancelled() && "
                           "needs.changes.outputs.docs_only != 'true' }}\n", jobs[name])
+        # The static job always runs on a non-schedule event so that the fragment
+        # validator runs on every head; test_docs_only.WorkflowWiringTests checks
+        # that every other step is gated.
+        self.assertIn("    if: ${{ github.event_name != 'schedule' && !cancelled() }}\n",
+                      jobs["static"].split("    steps:", 1)[0])
         # The matrix job always runs (so its expanded check name is always reported)
         # and skips its steps instead.
         self.assertIn("    if: ${{ !cancelled() }}\n", jobs["vulncheck"].split("    steps:", 1)[0])

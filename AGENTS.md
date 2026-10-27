@@ -9,6 +9,18 @@ tags when explaining behavior.
 For changes to Ceph behavioral bug compatibility, follow the
 [compatibility policy](docs/contributing/bug-compatibility.md).
 
+## Release notes
+
+For a release-worthy change (a breaking API or import change, user-visible
+behavior, a compatibility or requirement change, or a supported-scope change),
+add a fragment `docs/changes/<change-id>.md` instead of editing the shared
+`Unreleased` section of `CHANGELOG.md`. Follow
+[Release-note fragments](docs/contributing/release-fragments.md): choose a
+unique change identifier, use `kind: none` with a reason when you decided that
+no note is needed, and link a migration guide for an `api-break`. The legacy
+`Unreleased` section stays editable while open pull requests drain; do not
+rewrite published sections.
+
 ## Privacy review
 
 Before publishing source, documentation, fixtures, commit messages, release notes,
