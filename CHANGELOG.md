@@ -10,6 +10,15 @@ change the API.
 
 ### API naming
 
+- Add `ceph.Observe(cluster)` and `ceph.ObserveTenant(tenant)`, which return
+  one `*ceph.Observer` with `Status`, `ManagerStatus` and `DaemonAddresses`, and
+  no new `Container` method. Construction reads nothing and every query reads
+  the cluster at that moment. A tenant-backed observer validates its lease on
+  every query, so it refuses after release or cluster termination; a nil
+  cluster or tenant returns an error. The `Container` and `Tenant` methods of
+  the same names are unchanged in this step; the other observations and the
+  removal of the `Tenant` forwarders are separate changes.
+
 - Keep one form of each topology accessor: the one that takes `ctx` and
   returns an error. `ceph.Container.ConnectionConfig`, `ControlContainer`,
   `Managers`, `Monitors` and `OSDs`, and `rgw.Gateways`, now take `ctx` and
