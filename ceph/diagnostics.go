@@ -239,7 +239,7 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	if c.manager != nil {
 		add("mgr", "a", c.manager)
 	}
-	for id, osd := range c.osds {
+	for id, osd := range c.osdHandles.each() {
 		if osd != nil {
 			add("osd", strconv.Itoa(id), osd.Container)
 		}

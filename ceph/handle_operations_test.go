@@ -32,7 +32,7 @@ func TestOSDHandleOfARemovedOSDIsRefusedAndNeverReachesASuccessor(t *testing.T) 
 	actions, stops := len(control.actions), daemon.stops
 	// A later OSD that took the ID must not be reached through the old handle.
 	successor := &OSDContainer{ID: 3, owner: cluster, nativeUUID: osdLifecycleUUID}
-	cluster.osds[3] = successor
+	cluster.osdHandles.register(3, successor)
 	ctx := t.Context()
 	for name, call := range map[string]func() error{
 		"Remove": func() error { return removed.Remove(ctx) },
@@ -64,7 +64,7 @@ func TestOSDHandleBecomesStaleWhenDetachedOrReplacedByReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reopened == old || f.cluster.osds[3] != reopened {
+	if reopened == old || f.cluster.osdHandles.get(3) != reopened {
 		t.Fatal("Reopen did not publish a new handle")
 	}
 	actions := len(f.control.actions)
@@ -78,7 +78,7 @@ func TestOSDHandleBecomesStaleWhenDetachedOrReplacedByReopen(t *testing.T) {
 	if _, err := old.Detach(t.Context()); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("Detach through the handle that Reopen replaced: %v", err)
 	}
-	if len(f.control.actions) != actions || reopened.purgeIssued || reopened.detaching || f.cluster.osds[3] != reopened {
+	if len(f.control.actions) != actions || reopened.purgeIssued || reopened.detaching || f.cluster.osdHandles.get(3) != reopened {
 		t.Fatalf("the replaced handle acted on the new instance: %v", f.control.actions)
 	}
 	// The handle that Reopen returned is the one to operate on.

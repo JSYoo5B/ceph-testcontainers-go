@@ -598,6 +598,8 @@ func (c *Container) ownsNativeTarget(id string) bool {
 	return owned
 }
 
+// ownsNativeTargetContext is ownsNativeTarget with a context. The caller holds
+// c.mu.
 func (c *Container) ownsNativeTargetContext(ctx context.Context, id string) (bool, error) {
 	matches := func(ctr testcontainers.Container) bool { return ctr != nil && ctr.GetContainerID() == id }
 	if matches(c.Container) || matches(c.manager) {
@@ -613,7 +615,7 @@ func (c *Container) ownsNativeTargetContext(ctx context.Context, id string) (boo
 			return true, nil
 		}
 	}
-	for _, osd := range c.osds {
+	for _, osd := range c.osdHandles.each() {
 		if osd != nil && matches(osd.Container) {
 			return true, nil
 		}

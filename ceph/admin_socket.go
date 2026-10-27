@@ -197,7 +197,7 @@ func (c *Container) ownsDaemon(kind, id string) bool {
 		if err != nil {
 			return false
 		}
-		osd := c.osds[n]
+		osd := c.osdHandles.get(n)
 		return osd != nil && osd.Container != nil && !osd.purged
 	}
 	return false

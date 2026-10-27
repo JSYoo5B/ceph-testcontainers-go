@@ -63,7 +63,7 @@ func TestReopenCanceledAfterCreationKeepsTheCandidateRecoverable(t *testing.T) {
 	fault := &retainedCancelFault{next: f.cluster.stores.runner, cancel: cancel}
 	f.cluster.stores.runner = fault.run
 	osd, err := detached.Reopen(ctx)
-	if err == nil || ctx.Err() == nil || osd == nil || osd.Container == nil || f.cluster.osds[3] != osd || !detached.reopened || f.cluster.detachedOSDs[3] != nil {
+	if err == nil || ctx.Err() == nil || osd == nil || osd.Container == nil || f.cluster.osdHandles.get(3) != osd || !detached.reopened || f.cluster.osdHandles.detachedOf(3) != nil {
 		t.Fatalf("canceled reopen: %v %+v", err, osd)
 	}
 	if again, err := detached.Reopen(t.Context()); err == nil || again != nil || !strings.Contains(err.Error(), "already reopened") || f.runs != 1 {
@@ -75,12 +75,12 @@ func TestReopenCanceledAfterCreationKeepsTheCandidateRecoverable(t *testing.T) {
 	// A fresh context settles the candidate: it is detached and reopened as a
 	// second distinct instance, with one more dispatch of the ordinary runner.
 	again, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
-	if err != nil || again == nil || f.cluster.osds[3] != nil {
+	if err != nil || again == nil || f.cluster.osdHandles.get(3) != nil {
 		t.Fatalf("detach of the canceled candidate: %v", err)
 	}
 	f.cluster.stores.runner = fault.next
 	second, err := again.Reopen(t.Context())
-	if err != nil || second == nil || second == osd || f.cluster.osds[3] != second || f.runs != 2 {
+	if err != nil || second == nil || second == osd || f.cluster.osdHandles.get(3) != second || f.runs != 2 {
 		t.Fatalf("reopen after the canceled candidate: %v runs=%d", err, f.runs)
 	}
 }

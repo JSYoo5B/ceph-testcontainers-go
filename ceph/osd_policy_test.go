@@ -63,12 +63,12 @@ func TestOSDMembershipRejectsAbsentAndPostMutationReplacement(t *testing.T) {
 	}
 	ctr := &osdPolicyFixture{osds: []OSDState{{ID: 3, UUID: osdPolicyUUID, Up: true, In: true, Weight: 1}}}
 	c := osdPolicyCluster(ctr)
-	c.osds[3].nativeUUID = ""
+	c.osdHandles.get(3).nativeUUID = ""
 	if err := osdHandle(t, t.Context(), c, 3).SetIn(t.Context(), false); err == nil || len(ctr.calls) != 1 {
 		t.Fatal("missing captured UUID adopted from current native state")
 	}
-	c.osds[3].nativeUUID = osdPolicyUUID
-	c.osds[3].purged = true
+	c.osdHandles.get(3).nativeUUID = osdPolicyUUID
+	c.osdHandles.get(3).purged = true
 	if _, err := c.osdStates(t.Context()); err == nil {
 		t.Fatal("purged registration treated as active")
 	}
@@ -115,7 +115,7 @@ func TestWaitForPGCleanRejectsClosedOrUnavailableControlImmediately(t *testing.T
 }
 
 func osdPolicyCluster(ctr *osdPolicyFixture) *Container {
-	return &Container{Container: ctr, settings: options{startupTimeout: time.Second}, osds: map[int]*OSDContainer{3: {ID: 3, nativeUUID: osdPolicyUUID}}}
+	return &Container{Container: ctr, settings: options{startupTimeout: time.Second}, osdHandles: osdRegistry{owned: map[int]*OSDContainer{3: {ID: 3, nativeUUID: osdPolicyUUID}}}}
 }
 
 type osdPolicyFixture struct {

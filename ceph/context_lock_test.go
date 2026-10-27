@@ -21,9 +21,9 @@ func TestSerializedTopologyMutationQueuedDeadline(t *testing.T) {
 	for name, operation := range operations {
 		t.Run(name, func(t *testing.T) {
 			cluster, control, daemon := newOSDLifecycleFixture()
-			owned := cluster.osds[3]
+			owned := cluster.osdHandles.get(3)
 			assertContextLockQueued(t, &cluster.mu, func(ctx context.Context) error { return operation(ctx, cluster) })
-			if control.dumps != 0 || len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 || cluster.closed || cluster.osds[3] != owned || owned.purged || owned.purgeIssued {
+			if control.dumps != 0 || len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 || cluster.closed || cluster.osdHandles.get(3) != owned || owned.purged || owned.purgeIssued {
 				t.Fatal("queued deadline changed native membership, Docker lifecycle or fixture ownership")
 			}
 			// The canceled waiter must not retain the mutex or consume a future
@@ -33,7 +33,7 @@ func TestSerializedTopologyMutationQueuedDeadline(t *testing.T) {
 			if err := osdHandle(t, freshCtx, cluster, 3).Remove(freshCtx); err != nil {
 				t.Fatalf("fresh context could not finish existing OSD removal: %v", err)
 			}
-			if control.purges != 1 || daemon.stops != 1 || daemon.terminations != 1 || cluster.osds[3] != nil || cluster.osds[4] == nil {
+			if control.purges != 1 || daemon.stops != 1 || daemon.terminations != 1 || cluster.osdHandles.get(3) != nil || cluster.osdHandles.get(4) == nil {
 				t.Fatal("fresh operation failed to preserve neighbor identity and remove the owned OSD")
 			}
 		})

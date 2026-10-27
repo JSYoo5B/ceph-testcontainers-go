@@ -277,7 +277,7 @@ func TestNativeStateAddsNoMutex(t *testing.T) {
 			}
 			for _, spec := range gen.Specs {
 				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || (ts.Name.Name != "Container" && ts.Name.Name != "nativeState" && ts.Name.Name != "networkState" && ts.Name.Name != "featureClientState" && ts.Name.Name != "authState" && ts.Name.Name != "osdStorageState" && ts.Name.Name != "runDirState") {
+				if !ok || (ts.Name.Name != "Container" && ts.Name.Name != "nativeState" && ts.Name.Name != "networkState" && ts.Name.Name != "featureClientState" && ts.Name.Name != "authState" && ts.Name.Name != "osdStorageState" && ts.Name.Name != "runDirState" && ts.Name.Name != "osdRegistry") {
 					continue
 				}
 				st, ok := ts.Type.(*ast.StructType)

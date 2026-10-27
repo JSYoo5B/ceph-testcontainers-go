@@ -145,7 +145,7 @@ func TestOSDVolumeReleaseWaitsForOSDsAndRetriesBusyOrFailedCleanup(t *testing.T)
 	s, d, h := osdVolumeFixture()
 	fail := errors.New("synthetic OSD still owns mount")
 	osd := &osdMemoryContainerFake{terminateErr: fail}
-	c := &Container{stores: osdStorageState{volume: s}, osds: map[int]*OSDContainer{7: {Container: osd}}}
+	c := &Container{stores: osdStorageState{volume: s}, osdHandles: osdRegistry{owned: map[int]*OSDContainer{7: {Container: osd}}}}
 	if err := c.Terminate(t.Context()); !errors.Is(err, fail) || c.stores.volume != s || h.terminations != 0 || d.removals != 0 {
 		t.Fatal("storage released before OSD removal")
 	}

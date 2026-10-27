@@ -17,7 +17,7 @@ const initialOSDStarts = 4
 // creates and starts their containers concurrently and waits for all of them
 // to be up and in. It holds c.mu throughout, like AddOSDWithConfig; the
 // concurrent container starts do not take it. Every registered OSD stays in
-// c.osds, with its container when one was created, also when another OSD
+// c.osdHandles, with its container when one was created, also when another OSD
 // fails, so that Terminate removes them all.
 func (c *Container) startInitialOSDs(ctx context.Context) error {
 	if c.settings.osds == 0 {

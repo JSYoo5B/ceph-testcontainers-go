@@ -107,7 +107,7 @@ func TestPoolPGsRetainsReportedOrderIdentityAndNativeIntegers(t *testing.T) {
 	}
 	// A report can mention removed/unowned OSDs, have a seed beyond the
 	// observed PGNum, and differ from the current epoch without being malformed.
-	if cluster.osds != nil || len(result.PGs) != 1 {
+	if cluster.osdHandles.count() != 0 || len(result.PGs) != 1 {
 		t.Fatal("fixture accidentally relied on an owned topology or complete PG count")
 	}
 }

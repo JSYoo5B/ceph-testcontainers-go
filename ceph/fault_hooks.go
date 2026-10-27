@@ -137,7 +137,7 @@ func (faultHooks) CheckPoolID(ctx context.Context, c *Container, expected PoolSt
 // OwnedOSD reports an OSD that the cluster owns and has not purged. The
 // caller holds the mutex.
 func (faultHooks) OwnedOSD(c *Container, id int) bool {
-	osd := c.osds[id]
+	osd := c.osdHandles.get(id)
 	return osd != nil && !osd.purged
 }
 

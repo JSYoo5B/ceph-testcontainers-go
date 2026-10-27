@@ -68,12 +68,11 @@ type Container struct {
 	services      map[string]testcontainers.Container
 	extensionsMu  sync.Mutex
 	extensions    map[string]any
-	osds          map[int]*OSDContainer
 	// nets is the bridge state; see networkState for what guards each part.
 	nets networkState
-	// detachedOSDs are retained stores and registrations without a
-	// container, until DetachedOSD.Reopen or Terminate.
-	detachedOSDs map[int]*DetachedOSD
+	// osdHandles is the OSD handle registry, owned and detached; see
+	// osdRegistry. It has no lock of its own: mu guards it.
+	osdHandles osdRegistry
 	// stores is the OSD memory and volume storage and its test seams; see
 	// osdStorageState. It has no lock of its own: mu guards it.
 	stores osdStorageState
@@ -190,7 +189,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	} else {
 		nw, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily())
 	}
-	c := &Container{settings: settings, nets: networkState{public: nw}, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
+	c := &Container{settings: settings, nets: networkState{public: nw}, services: make(map[string]testcontainers.Container),
 		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), owner: uuid.NewString()}
 	if err != nil {
 		if nw == nil {
@@ -568,14 +567,14 @@ type osdLaunch struct {
 }
 
 // registerOSD allocates the next OSD ID with a new key and records the OSD in
-// c.osds before its container exists, so that Terminate owns it from then on.
+// c.osdHandles before its container exists, so that Terminate owns it from then on.
 // The caller holds c.mu and has normalized config. A nonnil buckets is the
 // set of CRUSH host buckets that the caller created; registerOSD then also
 // creates the OSD's host bucket in its location, so that the bucket IDs
 // follow the registration order although the daemons boot concurrently. The
 // returned launch.osd is nil when the error came before the registration.
 func (c *Container) registerOSD(ctx context.Context, config OSDConfig, image string, buckets map[string]bool) (osdLaunch, error) {
-	for _, osd := range c.osds {
+	for _, osd := range c.osdHandles.each() {
 		if osd.purged || osd.purgeIssued {
 			return osdLaunch{}, fmt.Errorf("finish removing osd.%d before adding another OSD", osd.ID)
 		}
@@ -623,7 +622,7 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, image str
 		config.Host = fmt.Sprintf("osd-%d", id)
 	}
 	osd := &OSDContainer{ID: id, owner: c, nativeUUID: osdUUID, placement: config, image: image}
-	c.osds[id] = osd
+	c.osdHandles.register(id, osd)
 	launch := osdLaunch{osd: osd}
 	// A generated host name is known only after registration. Preserve the
 	// partial OSD descriptor if it conflicts, without moving any CRUSH bucket.
@@ -746,7 +745,7 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 				return err
 			}
 			remaining := 0
-			for otherID, other := range c.osds {
+			for otherID, other := range c.osdHandles.each() {
 				if other == nil || other.purged {
 					continue
 				}
@@ -809,7 +808,7 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 	if err := c.stores.discard(ctx, id); err != nil {
 		return err
 	}
-	delete(c.osds, id)
+	c.osdHandles.forget(id)
 	return nil
 }
 
@@ -827,6 +826,8 @@ func (c *Container) removalOSDDump(ctx context.Context) (osdPolicySnapshot, erro
 	return dump, ctx.Err()
 }
 
+// removalOSDState reads the native state of one OSD of an ongoing removal.
+// The caller holds c.mu.
 func (c *Container) removalOSDState(ctx context.Context, id int) (OSDState, error) {
 	dump, err := c.removalOSDDump(ctx)
 	if err != nil {
@@ -835,6 +836,8 @@ func (c *Container) removalOSDState(ctx context.Context, id int) (OSDState, erro
 	return c.ownedOSDState(dump, id)
 }
 
+// removalOSDMutation runs one mutation of a removal after re-checking the OSD.
+// The caller holds c.mu.
 func (c *Container) removalOSDMutation(ctx context.Context, id int, args ...string) error {
 	if _, err := c.removalOSDState(ctx, id); err != nil {
 		return err
@@ -843,6 +846,8 @@ func (c *Container) removalOSDMutation(ctx context.Context, id int, args ...stri
 	return err
 }
 
+// waitOSDRemoval waits for the drain or the stop of an OSD in removal. The
+// caller holds c.mu.
 func (c *Container) waitOSDRemoval(ctx context.Context, id int, drain bool) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -872,12 +877,7 @@ func (c *Container) waitOSDRemoval(ctx context.Context, id int, drain bool) erro
 
 // osdsLocked lists the owned OSDs. The caller holds c.mu.
 func (c *Container) osdsLocked() []*OSDContainer {
-	result := make([]*OSDContainer, 0, len(c.osds))
-	for _, osd := range c.osds {
-		result = append(result, osd)
-	}
-	slices.SortFunc(result, func(a, b *OSDContainer) int { return a.ID - b.ID })
-	return result
+	return c.osdHandles.sorted()
 }
 
 // ServiceContainers returns owned optional services (such as RGW or MDS),
@@ -985,17 +985,17 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 			delete(c.services, name)
 		}
 	}
-	for id, osd := range c.osds {
+	for id, osd := range c.osdHandles.each() {
 		if osd.Container != nil {
 			if err := osd.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 				errs = append(errs, err)
 				continue
 			}
 		}
-		delete(c.osds, id)
+		c.osdHandles.forget(id)
 	}
-	memoryErr := c.stores.releaseMemory(ctx, len(c.osds) == 0)
-	volumeErr := c.stores.releaseVolume(ctx, len(c.osds) == 0)
+	memoryErr := c.stores.releaseMemory(ctx, c.osdHandles.count() == 0)
+	volumeErr := c.stores.releaseVolume(ctx, c.osdHandles.count() == 0)
 	if c.manager != nil {
 		if err := c.manager.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 			errs = append(errs, err)
@@ -1059,8 +1059,8 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	errs = append(errs, c.removeLabeledContainers(ctx))
 	// The removed containers can include a storage user whose create reply
 	// was lost, such as an OSD or an owned storage helper.
-	memoryErr = c.stores.retryMemory(ctx, memoryErr, len(c.osds) == 0)
-	volumeErr = c.stores.retryVolume(ctx, volumeErr, len(c.osds) == 0)
+	memoryErr = c.stores.retryMemory(ctx, memoryErr, c.osdHandles.count() == 0)
+	volumeErr = c.stores.retryVolume(ctx, volumeErr, c.osdHandles.count() == 0)
 	errs = append(errs, memoryErr, volumeErr)
 	if err := c.runDir.release(ctx); err != nil {
 		errs = append(errs, err)

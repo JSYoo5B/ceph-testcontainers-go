@@ -97,7 +97,7 @@ func TestCephFSContextSetupAdmissionDeadline(t *testing.T) {
 				return err
 			})
 			if result != nil || len(control.Calls) != 0 || len(filesystems(cluster).byName) != 0 ||
-				len(servicehook.Services(cluster)) != 0 || servicehook.Closed(cluster) || len((*servicehook.TestState(cluster).OSDs)) != 2 {
+				len(servicehook.Services(cluster)) != 0 || servicehook.Closed(cluster) || servicehook.TestOSDCount(cluster) != 2 {
 				t.Fatal("queued setup registered an attempt, ran native commands or changed cluster ownership")
 			}
 			assertCephFSContextAdmissionReleased(t, cluster)
