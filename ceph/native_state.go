@@ -32,8 +32,9 @@ const (
 // out or takes another lock while holding it, and every caller invokes
 // cancellations and stops after the method returned. Terminate therefore
 // calls cancelNativeInvocations before it waits for Container.mu, and
-// Container.clientMu is held around the short critical sections of the client
-// startup (ceph/images.go), never the other way round.
+// featureClientState.mu (the former clientMu) is held around the short
+// critical sections of the client startup (ceph/images.go), never the other
+// way round.
 //
 // Every field is read and written only by the methods of this type, which take
 // mu and call nothing else while they hold it. The guards in

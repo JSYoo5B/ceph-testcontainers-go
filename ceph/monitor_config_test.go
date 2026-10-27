@@ -114,7 +114,7 @@ func TestRefreshMonitorConfigUpdatesEveryOwnedRoleWhileStopped(t *testing.T) {
 	caller := newMonitorConfigArchive("caller-owned", "[client.test]\nkeyring = /private/keyring\n")
 	cluster.Container = mon
 	cluster.controlPlane = control
-	cluster.featureClient = client
+	cluster.toolkit.client = client
 	cluster.monitors["b"] = &MonitorContainer{Container: second, DaemonName: "b"}
 	cluster.managers["a"] = &ManagerContainer{Container: mgr, DaemonName: "a"}
 	cluster.manager = mgr
@@ -379,8 +379,8 @@ func TestMonitorConfigInventoryIsDeterministicAndDeduplicated(t *testing.T) {
 
 func TestMonitorConfigInventoryBoundsToolkitPublicationWait(t *testing.T) {
 	cluster, control := newMonitorConfigFixture()
-	cluster.clientPublishMu.Lock()
-	defer cluster.clientPublishMu.Unlock()
+	cluster.toolkit.publishMu.Lock()
+	defer cluster.toolkit.publishMu.Unlock()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
 	if targets, err := cluster.monitorConfigTargets(ctx, control, ""); !errors.Is(err, context.DeadlineExceeded) || len(targets) != 0 {
