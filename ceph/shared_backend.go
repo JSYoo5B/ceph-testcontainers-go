@@ -38,8 +38,9 @@ type sharedBackend interface {
 	// setSharing sets the gate of the cluster's *Container.
 	setSharing(mode sharingMode)
 	terminate(ctx context.Context) error
-	// cluster returns the container, or nil for a model.
-	cluster() *Container
+	// ops returns the cluster operations that a Tenant may use, or nil for a
+	// model that has no cluster.
+	ops() clusterOps
 }
 
 type sharedStarter func(ctx context.Context, image string, opts []testcontainers.ContainerCustomizer) (sharedBackend, error)
@@ -407,12 +408,12 @@ func (b containerBackend) createClient(ctx context.Context, entity string, caps 
 	if created == nil || created.Key == "" {
 		return client, fmt.Errorf("create %s: no key was generated", entity)
 	}
-	c.recordClientSecret(created.Key)
+	c.authRecords.addSecret(created.Key)
 	if created.Ret != 0 {
 		return client, fmt.Errorf("create %s: the MON answered %d", entity, created.Ret)
 	}
 	client.created = true
-	c.setClientKey(entity, created.Key)
+	c.authRecords.confirmKey(entity, created.Key)
 	keyring := []byte(created.Keyring)
 	if clientKey(keyring, entity) != created.Key {
 		return client, fmt.Errorf("cephx keyring for %s does not contain the created key", entity)
@@ -453,7 +454,7 @@ func (b containerBackend) deleteClient(ctx context.Context, client *ClientConfig
 		return fmt.Errorf("remove %s: the MON answered %d", client.name, ret)
 	}
 	client.revoked = true
-	c.setClientKey(client.name, "")
+	c.authRecords.confirmKey(client.name, "")
 	return nil
 }
 
@@ -478,4 +479,4 @@ func (b containerBackend) setSharing(mode sharingMode) { b.c.sharing.Store(int32
 
 func (b containerBackend) terminate(ctx context.Context) error { return b.c.terminate(ctx) }
 
-func (b containerBackend) cluster() *Container { return b.c }
+func (b containerBackend) ops() clusterOps { return containerOps(b) }

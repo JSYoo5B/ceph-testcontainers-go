@@ -57,7 +57,7 @@ func TestOverrideMGRModuleRestoresSharedCopiesAndOriginalMembership(t *testing.T
 		if err := change.Restore(t.Context()); err != nil || len(ctr.calls) != before {
 			t.Fatal("shared restoration is not idempotent")
 		}
-		if ctr.enabled["mirroring"] != prior || len(c.moduleOverrides) != 0 || !ctr.enabled["rbd_support"] {
+		if ctr.enabled["mirroring"] != prior || len(c.faultsOf(faultMGRModule)) != 0 || !ctr.enabled["rbd_support"] {
 			t.Fatal("original or unrelated module state lost")
 		}
 	}
@@ -98,10 +98,10 @@ func TestOverrideMGRModuleInitialSnapshotWaitsForNativeConvergence(t *testing.T)
 				t.Fatal("unrelated module membership changed")
 			}
 			if operation == "apply" {
-				if err := change.Restore(t.Context()); err != nil || len(c.moduleOverrides) != 0 {
+				if err := change.Restore(t.Context()); err != nil || len(c.faultsOf(faultMGRModule)) != 0 {
 					t.Fatal("converged apply did not preserve restoration ownership", err)
 				}
-			} else if len(c.moduleOverrides) != 0 || !change.state.restored {
+			} else if len(c.faultsOf(faultMGRModule)) != 0 || !change.state.restored {
 				t.Fatal("successful restoration retained its lease")
 			}
 		})
@@ -143,12 +143,12 @@ func TestOverrideMGRModuleInitialSnapshotFailurePreservesStateAndOwnership(t *te
 				var err error
 				if operation == "apply" {
 					change, err = c.OverrideMGRModule(ctx, "mirroring", true)
-					if change != nil || len(c.moduleOverrides) != 0 || ctr.enabled["mirroring"] {
+					if change != nil || len(c.faultsOf(faultMGRModule)) != 0 || ctr.enabled["mirroring"] {
 						t.Fatal("failed initial snapshot adopted or changed native membership")
 					}
 				} else {
 					err = change.Restore(ctx)
-					if change.state.restored || c.moduleOverrides["mirroring"] != change || !ctr.enabled["mirroring"] {
+					if change.state.restored || c.heldFault(faultMGRModule, "mirroring") != change || !ctr.enabled["mirroring"] {
 						t.Fatal("failed initial snapshot lost applied membership or restoration ownership")
 					}
 				}
@@ -160,7 +160,7 @@ func TestOverrideMGRModuleInitialSnapshotFailurePreservesStateAndOwnership(t *te
 				}
 				if operation == "restore" {
 					ctr.rawDump, ctr.cancelOnDump = "", nil
-					if err := change.Restore(t.Context()); err != nil || ctr.enabled["mirroring"] || len(c.moduleOverrides) != 0 {
+					if err := change.Restore(t.Context()); err != nil || ctr.enabled["mirroring"] || len(c.faultsOf(faultMGRModule)) != 0 {
 						t.Fatal("retry after failed initial snapshot did not restore original membership", err)
 					}
 				}
@@ -175,7 +175,7 @@ func TestOverrideMGRModuleRejectsMissingCannotRunAndAlwaysOn(t *testing.T) {
 		ctr.enabled["missing"], ctr.enabled["broken"] = false, false
 		ctr.canRun["broken"] = false
 		c := mgrModuleCluster(ctr)
-		if change, err := c.OverrideMGRModule(t.Context(), name, true); err == nil || change != nil || len(c.moduleOverrides) != 0 || ctr.mutations != 0 {
+		if change, err := c.OverrideMGRModule(t.Context(), name, true); err == nil || change != nil || len(c.faultsOf(faultMGRModule)) != 0 || ctr.mutations != 0 {
 			t.Fatal("invalid/unavailable module reached mutation", name)
 		}
 	}
@@ -214,7 +214,7 @@ func TestOverrideMGRModuleProtectsFilesystemsAndNativeMirroringOnRestore(t *test
 	}
 	ctr.mirrored = true
 	before := ctr.mutations
-	if err := change.Restore(t.Context()); err == nil || ctr.mutations != before || !ctr.enabled["mirroring"] || len(c.moduleOverrides) != 1 {
+	if err := change.Restore(t.Context()); err == nil || ctr.mutations != before || !ctr.enabled["mirroring"] || len(c.faultsOf(faultMGRModule)) != 1 {
 		t.Fatal("new mirror policy did not prevent module restoration")
 	}
 	ctr.mirrored = false
@@ -252,7 +252,7 @@ func TestOverrideMGRModuleLostRepliesAndReadbackReconcile(t *testing.T) {
 	ctr.failAfter = "enable"
 	c := mgrModuleCluster(ctr)
 	change, err := c.OverrideMGRModule(t.Context(), "mirroring", true)
-	if err == nil || change == nil || !ctr.enabled["mirroring"] || len(c.moduleOverrides) != 1 {
+	if err == nil || change == nil || !ctr.enabled["mirroring"] || len(c.faultsOf(faultMGRModule)) != 1 {
 		t.Fatal("uncertain apply lost handle")
 	}
 	ctr.failAfter = "disable"
@@ -261,7 +261,7 @@ func TestOverrideMGRModuleLostRepliesAndReadbackReconcile(t *testing.T) {
 	}
 	ctr.failAfter = ""
 	before := ctr.mutations
-	if err := change.Restore(t.Context()); err != nil || ctr.mutations != before || len(c.moduleOverrides) != 0 {
+	if err := change.Restore(t.Context()); err != nil || ctr.mutations != before || len(c.faultsOf(faultMGRModule)) != 0 {
 		t.Fatal("native completed restore wasn't reconciled")
 	}
 	ctr.failDumpAt = ctr.dumps + 2
@@ -274,7 +274,7 @@ func TestOverrideMGRModuleLostRepliesAndReadbackReconcile(t *testing.T) {
 	}
 	ctr.failDumpFrom = ctr.dumps + 2
 	change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)
-	if err == nil || change == nil || len(c.moduleOverrides) != 1 {
+	if err == nil || change == nil || len(c.faultsOf(faultMGRModule)) != 1 {
 		t.Fatal("lost persistent apply readback lost handle")
 	}
 	ctr.failDumpFrom = 0

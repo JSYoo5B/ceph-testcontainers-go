@@ -36,7 +36,11 @@ func (s *SharedCluster) Exclusive(t testing.TB) *Container {
 		return nil
 	}
 	t.Cleanup(func() { s.releaseExclusive(inst, t.Logf) })
-	return inst.backend.cluster()
+	ops := inst.backend.ops()
+	if ops == nil {
+		return nil
+	}
+	return ops.raw()
 }
 
 func (s *SharedCluster) exclusiveLease(ctx context.Context, holder string, logf func(string, ...any)) (*sharedInstance, error) {

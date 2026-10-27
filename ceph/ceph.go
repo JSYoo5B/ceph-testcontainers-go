@@ -40,35 +40,17 @@ var scripts embed.FS
 // cluster networking, rather than changing only the MON's network mode.
 type Container struct {
 	testcontainers.Container
-	mu              sync.Mutex
-	controlMu       sync.RWMutex
-	configMu        sync.RWMutex
-	configOverrides map[string]*ConfigOverrideHandle
-	flagOverrides   map[OSDFlag]*OSDFlagOverrideHandle
-	moduleOverrides map[string]*MGRModuleOverrideHandle
-	controlPlane    testcontainers.Container
+	mu           sync.Mutex
+	controlMu    sync.RWMutex
+	configMu     sync.RWMutex
+	controlPlane testcontainers.Container
 	// toolkit is the feature-client cache; see featureClientState for what
 	// guards each part.
 	toolkit     featureClientState
 	cephVersion string
-	// authFences records, per auth entity, what an earlier RotateKey
-	// or client key change left uncertain; see authFence.
-	authFences map[string]*authFence
-	// clientSecrets holds every client key that the module generated or
-	// confirmed, old and attempted ones included, for diagnostics to redact.
-	clientSecrets map[string]bool
-	// clientKeys holds, per client identity that this cluster created, the
-	// key that the module last confirmed for it. A descriptor with another
-	// key, or of a deleted identity, is stale, also when it is a copy.
-	clientKeys map[string]string
-	// strayAuthInputs holds files with keys in the control container that
-	// earlier auth calls could not remove for sure; later ones remove them.
-	// A file whose copy failed stays listed, as true, because Docker may
-	// still write it.
-	strayAuthInputs map[string]bool
-	// clientRevocations holds, per client entity, the state of the temporary
-	// revocation that has removed it until its Restore.
-	clientRevocations map[string]*clientRevocationState
+	// authRecords holds the records of the calls that change an auth entry; see
+	// authState for what guards them.
+	authRecords authState
 	// keyRotationDocker replaces the Docker client of RotateKey in tests.
 	keyRotationDocker func(context.Context) (keyRotationExecClient, error)
 	// owner labels every container of the cluster; see clusterOwnerLabel.

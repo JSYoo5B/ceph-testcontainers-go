@@ -78,7 +78,7 @@ func TestMessengerSecureBootstrapRejectsCentralShadowInEveryScope(t *testing.T) 
 				cluster.settings.messengerMode = MessengerV2Secure
 				scope.Name, scope.Value = name, "PRIVATE-SETTING-VALUE"
 				change, err := cluster.OverrideConfig(t.Context(), scope)
-				if err == nil || change != nil || len(control.calls) != 0 || len(cluster.configOverrides) != 0 {
+				if err == nil || change != nil || len(control.calls) != 0 || len(cluster.faultsOf(faultConfigOverride)) != 0 {
 					t.Fatalf("secure bootstrap %s/%s/%s acquired an override or ran native commands", scope.Section, scope.Mask, scope.Name)
 				}
 				if !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), canonical) || !strings.Contains(err.Error(), "WithMessengerMode") || strings.Contains(err.Error(), scope.Value) {

@@ -34,6 +34,13 @@ review, not acceptance targets.
 | `admitHandle` / `admitFault` occurrences including their declarations | not listed | not listed | 7 / 2 |
 | Entries of `sharedMethodPolicies` / `sharedHandlePolicies` / `sharedFaultPolicies` | not listed | not listed | 93 / 25 / 4 |
 
+After the override-kind slice of #146 (I-2 of the override package plan), measured
+with the same parser on the base `main` and on the branch: named fields of
+`Container` 45 to 42 (the three override maps are removed), unexported methods
+175 to 176 (`allowPoolDeleteHeld`), exported methods 73 unchanged, `ceph.go`
+1,357 to 1,354 lines. The table above is not rewritten: its absolute numbers
+come from the earlier measurement.
+
 The exported count equals the issue's expected total after #145 (73). The
 unexported count grew by 26. The likely cause is that helpers stayed on
 `Container` while the exported operations moved to handles; this was not
@@ -104,13 +111,16 @@ takes only what its group uses.
   handle receivers through `sharedHandleReceivers`. `sharedFaultPolicies` covers
   the fault entry points. All 16 observations and 10 facts are `sharedOpen`; all
   7 overrides are `sharedExclusive`.
-- **Fault registry.** `TemporaryBlocklist` and `OverrideFullRatios` reserve and
-  settle entries in `Container.faults` (`reserveFault`, `settleFault`), guarded by
-  `mu`. `OverrideDebugLevel` uses `debugLevels`, which has its own lock.
-- **Override state.** `OverrideConfig`, `OverrideOSDFlag` and `OverrideMGRModule`
-  keep their active handles in the maps `configOverrides`, `flagOverrides` and
-  `moduleOverrides`, guarded by `mu`. Handles hold `owner *Container` and run
-  `Restore` against it. The current lifetime of every family is in the table
+- **Fault registry.** `TemporaryBlocklist`, `OverrideFullRatios`, `OverrideConfig`,
+  `OverrideOSDFlag` and `OverrideMGRModule` reserve and settle entries in
+  `Container.faults` (`reserveFault`, `settleFault`), guarded by `mu`. The last
+  three use the kinds `faultConfigOverride`, `faultOSDFlag` and `faultMGRModule`
+  (phase `faultTracked`, keys the configuration key, the flag token and the
+  module name). `OverrideDebugLevel` uses `debugLevels`, which has its own lock.
+- **Override state.** The handles of `OverrideConfig`, `OverrideOSDFlag` and
+  `OverrideMGRModule` hold a registry token in their state, `owner *Container`
+  and run `Restore` against it; the former maps `configOverrides`,
+  `flagOverrides` and `moduleOverrides` no longer exist. The current lifetime of every family is in the table
   under the overrides group below.
 - **Messenger mode.** `OverrideConfig` reads `settings.messengerMode` to refuse
   options fixed by the bootstrap policy. `OverrideMessengerPolicy` builds its
@@ -239,16 +249,16 @@ enumerates the exported functions of that group. Entries leave
 - **Cleanup and restore lifetime (current behavior, preserved unchanged).**
   `Container.terminate` sets `closed` and calls `undoFaults`, which visits only
   the faults in the shaping, endpoint and freeze phases (network delays,
-  interruptions, pauses). It never visits the override maps. The extraction is
+  interruptions, pauses). It never visits the tracked kinds (the five override kinds). The extraction is
   structural only: it adds no automatic restoration and no uncertain-outcome
   reporting, and it creates no second ownership path.
 
   | Family | Who restores | After `Terminate` (read from the code) |
   | --- | --- | --- |
-  | `OverrideConfig` (`configOverrides`) | The caller, through `ConfigOverrideHandle.Restore` | `Restore` calls `poolPolicyReady`, so it returns `errClusterTerminated` on a closed cluster. |
+  | `OverrideConfig` (fault kind `faultConfigOverride`, phase `faultTracked`) | The caller, through `ConfigOverrideHandle.Restore` | `Restore` calls `poolPolicyReady`, so it returns `errClusterTerminated` on a closed cluster. |
   | `OverrideMessengerPolicy` | The caller, through `MessengerPolicyOverrideHandle.Restore`, which restores its `ConfigOverrideHandle` values in reverse order | Same as `OverrideConfig`, because it is built from those handles. |
-  | `OverrideOSDFlag` (`flagOverrides`) | The caller, through `Restore` | `Restore` calls `poolPolicyReady`: `errClusterTerminated`. |
-  | `OverrideMGRModule` (`moduleOverrides`) | The caller, through `Restore` | `Restore` calls `poolPolicyReady`: `errClusterTerminated`. |
+  | `OverrideOSDFlag` (fault kind `faultOSDFlag`, phase `faultTracked`) | The caller, through `Restore` | `Restore` calls `poolPolicyReady`: `errClusterTerminated`. |
+  | `OverrideMGRModule` (fault kind `faultMGRModule`, phase `faultTracked`) | The caller, through `Restore` | `Restore` calls `poolPolicyReady`: `errClusterTerminated`. |
   | `TemporaryBlocklist` (fault kind `faultBlocklist`, phase `faultTracked`) | The caller, through `BlocklistOverride.Restore` | Tracked kinds are bookkeeping only and `terminate` leaves them alone (`fault_registry.go`). `Restore` calls `poolPolicyReady`: `errClusterTerminated`. |
   | `OverrideFullRatios` (fault kind `faultFullRatios`, phase `faultTracked`) | The caller, through `FullRatiosOverride.Restore` | Same bookkeeping rule. `Restore` goes through `fullRatiosSession`, which refuses a closed cluster. |
   | `OverrideDebugLevel` (`debugLevels`) | The caller, typically registered with `Finalization.Cleanup` as the `OverrideDebugLevel` documentation describes | Its `Restore` is driven by the handle's own state and generation checks. Its behavior after `Terminate` was not traced (unconfirmed). |
@@ -300,7 +310,7 @@ component was not verified for every method that touches it.
 | Native commands | `nativeMu`, `nativeInvocations`, `nativeClosed`, `nativeFenced`, `clientStartupCancel` |
 | Networking | `network`, `clusterNetwork`, `publicSubnet`, `clusterSubnet`, `clusterNetworkRemoved`, `networkRemoved` |
 | OSD storage | `osds`, `detachedOSDs`, `osdMemory`, `osdVolume`, `run` |
-| Overrides and faults | `configOverrides`, `flagOverrides`, `moduleOverrides`, `faults`, `debugLevels` |
+| Overrides and faults | `faults`, `debugLevels` |
 | Test seams | `keyRotationDocker`, `ownedContainerDocker`, `osdRunner`, `osdVolumeDocker`, `osdVolumeRunner` |
 | Membership and control | `mu`, `controlMu`, `configMu`, `controlPlane`, `manager`, `monitors`, `managers`, `services`, `extensionsMu`, `extensions`, `config`, `keyring`, `portLeases`, `closed`, `monitorTerminated`, `firstMonitorImageID`, `cephVersion`, `owner`, `keyTypeOption`, `settings`, `sharing` |
 
@@ -559,12 +569,12 @@ and the caller chain was not checked here.
 | --- | --- | --- | --- | --- | --- |
 | Auth records | `authFences`, `clientSecrets`, `clientKeys`, `strayAuthInputs`, `clientRevocations`; seam `keyRotationDocker` | `settleClient` (`ceph/client_key.go:136,140`), `fenceAuth` (`ceph/daemon_key_rotation.go:369,374`), `settleEarlierRotation` (`:439`), `setClientKey` (`ceph/client_key.go:312-318`), `recordClientSecret` (`:330-332`), `strayAuthInput` (`ceph/daemon_key_rotation.go:152-154`), `createClient`/`deleteClient`/`revokeClient`/`ClientRevocationHandle.Restore` (`ceph/auth.go:306`, `ceph/client_revocation.go:59-69,107`) | The same files, plus `diagnosticsSnapshot` for `clientSecrets` (`ceph/diagnostics.go:263`, between the `TryLock` at `:219` and the unlock at `:267`) | `Container.mu`. The revocation code takes it itself (`lockTopology` before every access in `ceph/client_revocation.go` and `ceph/auth.go`). The fence and key helpers rely on a doc comment (`ceph/client_key.go:109,309,324`, `ceph/daemon_key_rotation.go:34,149,159`); `settleClient` alone has eight callers in five files (`ceph/auth.go:162,291`, `ceph/client_key.go:202,273`, `ceph/client_revocation.go:93`, `ceph/shared_backend.go:396,444`, `ceph/service_hooks.go:377`) | Guard by contract across five files and another object (`client.owner.setClientKey`, `ceph/service_hooks.go:368`). `authFences` serves both clients and daemons, so the rotation code moves with it. Needs a per-caller lock audit first. |
 | OSD storage | `osds`, `detachedOSDs`, `osdMemory`, `osdVolume`, `run`; seams `osdRunner`, `osdVolumeDocker`, `osdVolumeRunner` | `osds`: `registerOSD` (`ceph/ceph.go:659`), `removeOSD` (`:863`), `terminate` (`:1046`), `detachOSD` (`ceph/osd_retained.go:274`), `reopenOSD` (`:322`), `serviceHooks.TestCluster` (`ceph/service_hooks.go:429,431`). `osdMemory`/`osdVolume`: `ensureOSDMemory` (`ceph/osd_memory_storage.go:109`), `ensureOSDVolume` (`ceph/osd_volume_storage.go:97`), `terminate` (`ceph/ceph.go:1051,1057,1128,1133`). `run`: once in `Run` (`ceph/ceph.go:234`) | `osds` is read in about twenty files (a name match that also finds the options field of the same name); `osdMemory`/`osdVolume` in `registerOSD`, `removeOSD`, `newOSDLaunchRecipe` (`ceph/osd_launch.go:47-54`) and `detachOSD`/`reopenOSD`; `run` in `ceph/admin_socket.go`, `ceph/debug_level.go:633`, `ceph/osd_retained.go:345`, `terminate` | `Container.mu` for the lifecycle writers (`removeOSD`, `detachOSD`, `reopenOSD`, `terminate` take `lockTopology`); `registerOSD` and `ensureOSD*` take no lock themselves (the caller chain was not checked); `newOSDLaunchRecipe` reads `run`, `osdMemory` and `osdVolume` (`ceph/osd_launch.go:47-54`) after its `configMu` read section and takes no other lock | `terminate` releases memory and volume in two phases around the container and labeled-container removal (`ceph/ceph.go:1049-1057`, `1126-1133`), so the close order of the component has to be reviewed. Largest reader set. Open PR #244 changes `ceph/osd_launch.go` and the `registerOSD` area. |
-| Overrides and faults | `configOverrides`, `flagOverrides`, `moduleOverrides`; `faults`; `debugLevels` | The three maps: `OverrideConfig` (`ceph/config.go:121,123`), `OverrideOSDFlag` (`ceph/osd_policy.go:172,174`), `OverrideMGRModule` (`ceph/mgr_modules.go:100,102`) and each handle's `finish` (`ceph/config.go:212`, `ceph/osd_policy.go:242`, `ceph/mgr_modules.go:182`), reached from `Restore` | The same functions, `Restore` (`ceph/config.go:166`, `ceph/osd_policy.go:208`, `ceph/mgr_modules.go:137`) and `deletePool` (`ceph/pool_removal.go:120`, "called with c.mu held" at `:116`) | The maps: `Container.mu`, taken in every entry point and `Restore` (`ceph/config.go:102,158`, `ceph/osd_policy.go:156,200`, `ceph/mgr_modules.go:67,129`). `faults`: `Container.mu` by contract (`ceph/fault_registry.go:102`); the registry type and its methods already exist (`:116-181`) with two outside users (`ceph/fault_hooks.go:177`, `ceph/osd_retained.go:174`). `debugLevels`: its own mutex (`ceph/debug_level.go:259-262`), one access (`:184`) | The maps are not a settled move: [override-package-boundary.md](override-package-boundary.md) plans to replace their handle element types with an opaque tracking record joined with the fault registry, and leaves the writer and lock of that record to the open lock-order review. `faults` and `debugLevels` are already their own types; moving the field adds nothing. |
+| Overrides and faults | `faults`; `debugLevels` | `OverrideConfig` (`ceph/config.go`), `OverrideOSDFlag` (`ceph/osd_policy.go`) and `OverrideMGRModule` (`ceph/mgr_modules.go`) reserve and settle their kind through `reserveFault` and `settleFault`; each handle's `finish` calls `releaseFault`. The former maps `configOverrides`, `flagOverrides` and `moduleOverrides` are gone | The same functions, `Restore` (`tracksFault`) and `deletePool` through `allowPoolDeleteHeld` (`ceph/pool_removal.go`, "called with c.mu held") | All of it under `Container.mu`, taken in every entry point and `Restore`; the registry guards by `Container.mu` by contract (`ceph/fault_registry.go`) and has outside users (`ceph/fault_hooks.go`, `ceph/osd_retained.go`). `debugLevels`: its own mutex (`ceph/debug_level.go`) | Nothing is left to move out of `Container` for the three override kinds: the registry is the one tracking record, as [override-package-boundary.md](override-package-boundary.md) section 6.1 decided, and it is already its own type. `faults` and `debugLevels` are already their own types; moving the field adds nothing. |
 | Test seams | `keyRotationDocker`, `ownedContainerDocker`, `osdRunner`, `osdVolumeDocker`, `osdVolumeRunner` | None in production code; tests assign them | One read each at the point of use (`ceph/daemon_key_rotation.go:730-731`, `ceph/owned_containers.go:35`, `ceph/ceph.go:713`, `ceph/osd_volume_storage.go:96,101`) | None | The rule above moves a seam with the dependency that uses it: three belong to OSD storage, one to the auth records, and `ownedContainerDocker` serves `terminate`'s labeled-container removal, which has no component yet. Open PR #244 adds a sibling seam (`daemonRunner`) next to `osdRunner`. |
 | Membership and control | `mu`, `controlMu`, `configMu`, `extensionsMu`, `controlPlane`, `manager`, `monitors`, `managers`, `services`, `extensions`, `config`, `keyring`, `portLeases`, `closed`, `monitorTerminated`, `firstMonitorImageID`, `cephVersion`, `owner`, `keyTypeOption`, `settings`, `sharing` | `controlPlane`: `ensureControlPlane` (`ceph/topology.go:75`, `controlMu`), `terminate` (`ceph/ceph.go:1103`, `controlMu` inside the topology lock). `monitors`/`managers`/`manager`: `AddMonitor` (`ceph/topology.go:180,182`), `startManager` (`:768-781`, no lock in the function), `removeMonitor`/`removeManager`, `terminate`. `services`: `startService` (`ceph/ceph.go:979`), `serviceHooks.SetService`/`DeleteService` (`ceph/service_hooks.go:179-187`), `terminate`. `config`: `Run` (`ceph/ceph.go:245`), `configureDefaultCRUSHRoot` (`ceph/placement.go:141`, `configMu`), `refreshMonitorConfigAfterRemoval` (`ceph/topology.go:439`, `configMu`). `closed`: `terminate` (`ceph/ceph.go:1014`). `portLeases`: `trackHostPortLease` (`ceph/ceph.go:475`, `mu`), `reserveTrackedHostPortsWith`, `AddMonitor`. `cephVersion`: `recordCephVersion` (`ceph/version.go:51`). `owner`, `keyTypeOption`, `firstMonitorImageID`: `Run` | `settings` is read in 181 places by name and written only while `Run` builds the cluster; `closed` and `monitors` throughout; `FactsOf` reads `settings` and `cephVersion` without a lock | Four lock domains: `mu`, `controlMu`, `configMu`, `extensionsMu`; some fields are written once before publication | Not one component. Four locks and the lock-free `FactsOf` reads depend on the layout. A split by lock domain is a separate review. |
 
 The components remain in this order of audited risk: auth records (needs the
-caller audit), the override maps (needs the owner's decision), OSD storage
+caller audit; moved in the fourth slice below), the override maps (needs the owner's decision), OSD storage
 (close order and the open per-daemon image PR), membership and control (four
 locks).
 
@@ -577,11 +587,135 @@ callees of `clientContainerContext` never take `Container.mu` (read from the
 source, not enforced by a guard); the `sharedBackend` port that #155 needs; and
 any exported API. No Docker, native Ceph or timing behavior was run.
 
-## Fourth internal slice: OSD storage state
+## Fourth internal slice: auth records
+
+Inspected at `7266eb7` (main after #247); path:line citations in this section
+are at the revision of the change that adds `ceph/auth_state.go`. The fourth
+component moved out of `Container` is the set of auth records, held as
+`Container.authRecords` of the unexported type `authState`
+(`ceph/auth_state.go`): the fences (`fences`, formerly `authFences`), the
+client keys the module confirmed (`keys`, formerly `clientKeys`), every client
+key kept for redaction (`secrets`, formerly `clientSecrets`), the key files
+that earlier calls could not remove (`strays`, formerly `strayAuthInputs`) and
+the temporary client revocations (`revocations`, formerly `clientRevocations`).
+The fences serve clients and daemons alike, so the daemon key rotation uses the
+same type and moved with it. The old field names are gone, with no alias.
+
+Unlike the earlier slices, this component has no lock of its own and gets none:
+`Container.mu` guards every part, as before. The previous slices moved a lock
+together with its fields. Here the lock is the topology lock that guards much
+more, so it stays on `Container` and the component documents "mu held" on every
+method. What the split adds is a structural proof of that contract, which was
+only a doc comment before ("The caller holds c.mu").
+
+### Audit of the callers
+
+Every function that reads or writes the records, and the lock it holds, at the
+revision of this change. "Takes mu" means the function takes `Container.mu`
+itself before the first use and does not release it before the last one.
+
+| Function | Records | Lock |
+| --- | --- | --- |
+| `createClient` (`ceph/auth.go:146`) | `settleClient`, revocation read, secret, key | takes mu (`lockTopology`, `defer c.mu.Unlock()`) |
+| `withClientIdentity` closure (`ceph/auth.go:245`) | `checkCurrentClient` | takes mu (`c.mu.Lock()`) |
+| `deleteClient` (`ceph/auth.go:276`) | `settleClient`, key and revocation reads and writes, `changeClient` | takes mu |
+| `replaceClientKey` (`ceph/client_key.go:190`) | `settleClient`, secrets, key, fence read | takes mu |
+| `clientCapabilities` (`ceph/auth_policy.go:10`), `updateClientCaps` (`:26`) | `ownedClientRecord` and `changeClient` | take mu |
+| `revokeClient` (`ceph/client_revocation.go:46`), `ClientRevocationHandle.Restore` (`:81`) | revocation, fence, `settleClient` | take mu |
+| `containerBackend.createClient` (`ceph/shared_backend.go:384`), `containerBackend.deleteClient` (`:431`) | `settleClient`, secret, key | take mu |
+| `rotateDaemonKey` (`ceph/daemon_key_rotation.go:218`) | fence reads and writes, stray inputs, `authCall`, `daemonExec` | takes mu; its deferred settling runs before the deferred unlock, because it was registered later |
+| `diagnosticsSnapshot` (`ceph/diagnostics.go:218`) | `secretValues` (`:262`) | takes mu with `TryLock` and reads before the explicit unlock |
+| `serviceHooks.SettleClient` (`ceph/service_hooks.go:377`), `SetClientRevoked` (`:368`) | `settleClient`, `confirmKey` | owner-held: "The caller holds the cluster mutex"; the only callers are in `cephfs` and are proved below |
+| `settleClient`, `changeClient`, `ownedClientRecord`, `checkCurrentClient`, `ownedClientCapabilities`, `removeStrayAuthInputs`, `stopEarlierAuthCommands`, `settleEarlierRotation`, `daemonExec`, `writeDaemonKeyrings`, `placeDaemonKeyring`, and the `authCall` methods `send`, `mutate`, `keys`, `settle`, `removeInput` | the records | owner-held helpers; each is reached only from the functions above or from each other |
+
+The eight callers of `settleClient`: `createClient` (`ceph/auth.go:162`),
+`deleteClient` (`:291`), `replaceClientKey` (`ceph/client_key.go:202`),
+`ownedClientRecord` (`:273`), `Restore` (`ceph/client_revocation.go:90`),
+`containerBackend.createClient` (`ceph/shared_backend.go:396`),
+`containerBackend.deleteClient` (`:444`) and `serviceHooks.SettleClient`
+(`ceph/service_hooks.go:377`). Seven are on a path that takes mu first.
+`serviceHooks.SettleClient` and `SetClientRevoked` are called through the hook
+interface from `cephfs` (`cephfs/authorization.go:230`, `436`, `462`): their
+functions are `authorizationClientCaps`, documented "must be called with
+cluster.mu held" (`cephfs/authorization.go:221`), and `DeauthorizeSubvolume`.
+The three functions that call `authorizationClientCaps`, one of them
+`DeauthorizeSubvolume`, take `servicehook.LockTopology` first
+(`cephfs/authorization.go:127`, `422`, `488`).
+
+The audit found no caller that holds another lock or none. No locking was
+changed.
+
+Two things stay outside the component:
+
+- `keyRotationDocker` (`ceph/ceph.go`) is a test seam read once, without a lock
+  (`ceph/daemon_key_rotation.go:707`). It guards no record and no lock
+  covers it, so moving it into a component whose rule is "mu held" would state
+  a protection it does not have. It stays on `Container`.
+- The `authFence` and `clientRevocationState` values are handed out as pointers
+  and changed in place by their callers, under the same mu. The component
+  guards the maps, and the callers' functions are covered by the same guard
+  because they are the ones that hold mu.
+
+### Lock order
+
+Unchanged. The records add no lock and call no lock: `authState` methods only
+read and write maps (`TestAuthStateMethodsMakeOnlyTheirPinnedCalls`). The
+callers take mu first (`ceph/auth.go:146`, `ceph/client_key.go:190`,
+`ceph/daemon_key_rotation.go:218`), then run native commands through the
+control container, which reach `nativeState.mu` (a leaf) as before. Terminate
+neither reads nor writes the records.
+
+### Guards, in `ceph/auth_state_test.go`
+
+- `TestAuthStateFieldsAreOnlyTouchedByItsMethods`: outside the type,
+  `Container.authRecords` appears only as the receiver of an `authState` method
+  and never in a composite literal.
+- `TestAuthStateMethodsMakeOnlyTheirPinnedCalls`: the method set and the field
+  set are pinned, and each method makes exactly its listed calls, so none locks
+  and none calls into `Container`.
+- `TestAuthRecordsAreOnlyUsedWithTheClusterMutexHeld`: every use of
+  `Container.authRecords`, every call of an owner-held helper and every
+  construction of an `authCall` happens in a function that takes `Container.mu`
+  before the use and has not released it, or in a function of the pinned
+  `authOwnerHeld` list. The list is closed under callers, a stale entry fails,
+  and a call by name needs the name to belong to one function.
+- `TestAuthHookCallersInCephFSHoldTheClusterMutex`: the same rule for the
+  `cephfs` callers of the two hooks.
+- `TestNativeStateAddsNoMutex` counts `authState` too and still expects seven.
+- Behavior tests for each method group and a concurrent run under `-race`.
+
+Each guard was broken on purpose and failed: a caller without the lock, an
+unpinned caller of `settleClient`, a field read outside a method, a lock inside
+a method, a record read after the explicit unlock, a `cephfs` caller without
+`LockTopology`, an unpinned helper, and an extra mutex.
+
+The `FactsOf` write-site guard is untouched: no field moved here is read by
+`FactsOf`.
+
+### Limits of the guards
+
+The guards are syntactic. They follow calls by name inside the package and in
+`cephfs`; they do not follow function values, interface calls other than the two
+hooks, or the order of lock operations across branches (the held state is the
+last acquire or explicit release before the use, in source order). Closures are
+judged by the function that contains them, so a closure that outlives its
+function would escape. `applied` and `finish` callbacks run inside
+`changeClient` or `Restore`, which hold mu. Behavior under real Docker or
+native Ceph was not run.
+
+### Not covered by this slice
+
+OSD storage, the override maps, faults and debug levels, the other test seams
+(including `keyRotationDocker`) and membership and control; any change to which
+lock guards what; any new lock; the order in which `Terminate` closes the
+other components; the `sharedBackend` port that #155 needs; and any exported
+API.
+
+## Fifth internal slice: OSD storage state
 
 Inspected at `7266eb7` (main after #247, which includes the per-daemon image
 option #244); path:line citations in this section are at that revision unless
-they name a new file. The fourth component moved out of `Container` is the
+they name a new file. The fifth component moved out of `Container` is the
 owned storage of the OSDs, held as `Container.stores` of the unexported type
 `osdStorageState` (`ceph/osd_storage_state.go`): the tmpfs storage of
 `WithOSDInMemoryStorage` (`osdMemory`, now `memory`), the ordinary volume of

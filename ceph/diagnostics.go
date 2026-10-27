@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"reflect"
 	"regexp"
 	"slices"
@@ -260,7 +259,7 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	}
 	// Every client key the module generated, including replaced, attempted
 	// and revoked ones.
-	snapshot.secrets = append(snapshot.secrets, slices.Sorted(maps.Keys(c.clientSecrets))...)
+	snapshot.secrets = append(snapshot.secrets, c.authRecords.secretValues()...)
 	for _, nw := range c.nets.bridges() {
 		snapshot.networks = append(snapshot.networks, diagnosticNetwork{id: nw.ID, name: nw.Name})
 	}
