@@ -1,0 +1,516 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "rgw",
+  "count": 69,
+  "entries": [
+    {
+      "current": "rgw.Account",
+      "kind": "type",
+      "proposed": "rgw.Account",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Account.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Account",
+      "proposed": "rgw.Account.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Account.ID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Account",
+      "proposed": "rgw.Account.ID",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Account.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Account",
+      "proposed": "rgw.Account.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.AccountConfig",
+      "kind": "type",
+      "proposed": "rgw.AccountConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.AccountInfo",
+      "kind": "type",
+      "proposed": "rgw.AccountInfo",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.AdminCapability",
+      "kind": "type",
+      "proposed": "rgw.AdminCapability",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Config",
+      "kind": "type",
+      "proposed": "rgw.Config",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Container",
+      "kind": "type",
+      "proposed": "rgw.Container",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Container.Gateways",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]*Gateway, error)",
+      "receiver": "*Container",
+      "proposed": "rgw.Container.Gateways",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Container.S3Endpoint",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*Container",
+      "proposed": "rgw.Container.S3Endpoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway",
+      "kind": "type",
+      "proposed": "rgw.Gateway",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.AccountInfo",
+      "kind": "method",
+      "signature": "func(ctx context.Context, a *Account) (AccountInfo, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.AccountInfo",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.Admin",
+      "kind": "method",
+      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.Admin",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.ApplyPlacement",
+      "kind": "method",
+      "signature": "func(ctx context.Context, p *Placement) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.ApplyPlacement",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.CreateAccount",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config AccountConfig) (*Account, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.CreateAccount",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.CreateAccountRootUser",
+      "kind": "method",
+      "signature": "func(ctx context.Context, a *Account, config UserConfig) (*User, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.CreateAccountRootUser",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.CreatePlacement",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config PlacementConfig) (*Placement, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.CreatePlacement",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.CreateUser",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config UserConfig) (*User, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.CreateUser",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.DaemonEndpoint",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.DaemonEndpoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Gateway",
+      "proposed": "rgw.Gateway.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.PlacementStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, p *Placement) (PlacementState, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.PlacementStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.ReloadPlacement",
+      "kind": "method",
+      "signature": "func(ctx context.Context, p *Placement) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.ReloadPlacement",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.RemoveAccount",
+      "kind": "method",
+      "signature": "func(ctx context.Context, a *Account) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.RemoveAccount",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.RemoveUser",
+      "kind": "method",
+      "signature": "func(ctx context.Context, user *User) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.RemoveUser",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.S3Endpoint",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.S3Endpoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.S3SecureEndpoint",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.S3SecureEndpoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.SetAccountBucketQuota",
+      "kind": "method",
+      "signature": "func(ctx context.Context, a *Account, quota Quota) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.SetAccountBucketQuota",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.SetAccountQuota",
+      "kind": "method",
+      "signature": "func(ctx context.Context, a *Account, quota Quota) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.SetAccountQuota",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.SetBucketQuota",
+      "kind": "method",
+      "signature": "func(ctx context.Context, user *User, quota Quota) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.SetBucketQuota",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.SetUserPlacement",
+      "kind": "method",
+      "signature": "func(ctx context.Context, user *User, p *Placement, config UserPlacementConfig) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.SetUserPlacement",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.SetUserQuota",
+      "kind": "method",
+      "signature": "func(ctx context.Context, user *User, quota Quota) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.SetUserQuota",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Gateway",
+      "proposed": "rgw.Gateway.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.SuspendUser",
+      "kind": "method",
+      "signature": "func(ctx context.Context, user *User, suspended bool) error",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.SuspendUser",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.UserInfo",
+      "kind": "method",
+      "signature": "func(ctx context.Context, user *User) (UserInfo, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.UserInfo",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateway.UserUsage",
+      "kind": "method",
+      "signature": "func(ctx context.Context, user *User) (UserUsage, error)",
+      "receiver": "*Gateway",
+      "proposed": "rgw.Gateway.UserUsage",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Gateways",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container) ([]*Gateway, error)",
+      "proposed": "rgw.Gateways",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Lease",
+      "kind": "function",
+      "signature": "func(ctx context.Context, t *ceph.Tenant) (*TenantUser, error)",
+      "proposed": "rgw.Lease",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Placement",
+      "kind": "type",
+      "proposed": "rgw.Placement",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Placement.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Placement",
+      "proposed": "rgw.Placement.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Placement.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Placement",
+      "proposed": "rgw.Placement.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.PlacementConfig",
+      "kind": "type",
+      "proposed": "rgw.PlacementConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.PlacementState",
+      "kind": "type",
+      "proposed": "rgw.PlacementState",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Quota",
+      "kind": "type",
+      "proposed": "rgw.Quota",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Run",
+      "kind": "function",
+      "signature": "func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
+      "proposed": "rgw.Run",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Start",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, config Config, opts ...testcontainers.ContainerCustomizer) (*Gateway, error)",
+      "proposed": "rgw.Start",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.StorageClassConfig",
+      "kind": "type",
+      "proposed": "rgw.StorageClassConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.TLSConfig",
+      "kind": "type",
+      "proposed": "rgw.TLSConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.TLSConfig.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "TLSConfig",
+      "proposed": "rgw.TLSConfig.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.TLSConfig.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "TLSConfig",
+      "proposed": "rgw.TLSConfig.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.TenantUser",
+      "kind": "type",
+      "proposed": "rgw.TenantUser",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.TenantUser.Credentials",
+      "kind": "method",
+      "signature": "func() (accessKey, secretKey string)",
+      "receiver": "*TenantUser",
+      "proposed": "rgw.TenantUser.Credentials",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.TenantUser.DaemonEndpoint",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*TenantUser",
+      "proposed": "rgw.TenantUser.DaemonEndpoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.TenantUser.Region",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantUser",
+      "proposed": "rgw.TenantUser.Region",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.TenantUser.S3Endpoint",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*TenantUser",
+      "proposed": "rgw.TenantUser.S3Endpoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.TenantUser.Tenant",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantUser",
+      "proposed": "rgw.TenantUser.Tenant",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.TenantUser.UserID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantUser",
+      "proposed": "rgw.TenantUser.UserID",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User",
+      "kind": "type",
+      "proposed": "rgw.User",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.Credentials",
+      "kind": "method",
+      "signature": "func() (accessKey, secretKey string, err error)",
+      "receiver": "*User",
+      "proposed": "rgw.User.Credentials",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "User",
+      "proposed": "rgw.User.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.ID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*User",
+      "proposed": "rgw.User.ID",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "User",
+      "proposed": "rgw.User.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.UserConfig",
+      "kind": "type",
+      "proposed": "rgw.UserConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.UserInfo",
+      "kind": "type",
+      "proposed": "rgw.UserInfo",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.UserPlacementConfig",
+      "kind": "type",
+      "proposed": "rgw.UserPlacementConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.UserUsage",
+      "kind": "type",
+      "proposed": "rgw.UserUsage",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.WithGateways",
+      "kind": "function",
+      "signature": "func(configs ...Config) ceph.Option",
+      "proposed": "rgw.WithGateways",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.WithImage",
+      "kind": "function",
+      "signature": "func(image string) ceph.Option",
+      "proposed": "rgw.WithImage",
+      "decision": "baseline"
+    }
+  ]
+}

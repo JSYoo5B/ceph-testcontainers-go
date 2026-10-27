@@ -1,0 +1,406 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "rgw/multisite",
+  "count": 56,
+  "entries": [
+    {
+      "current": "rgw/multisite.BucketSyncPolicyStatus",
+      "kind": "type",
+      "proposed": "rgw/multisite.BucketSyncPolicyStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.BucketSyncStatus",
+      "kind": "type",
+      "proposed": "rgw/multisite.BucketSyncStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Config",
+      "kind": "type",
+      "proposed": "rgw/multisite.Config",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.DataSyncStatus",
+      "kind": "type",
+      "proposed": "rgw/multisite.DataSyncStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture",
+      "kind": "type",
+      "proposed": "rgw/multisite.Fixture",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.AddZone",
+      "kind": "method",
+      "signature": "func(ctx context.Context, image string, config ZoneConfig, opts ...testcontainers.ContainerCustomizer) (*Zone, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.AddZone",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.AddZonegroup",
+      "kind": "method",
+      "signature": "func(ctx context.Context, image string, config ZonegroupConfig, opts ...testcontainers.ContainerCustomizer) (*Zonegroup, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.AddZonegroup",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.ApplySyncGroup",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *SyncGroup) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.ApplySyncGroup",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.ApplyZoneLinkProfile",
+      "kind": "method",
+      "signature": "func(ctx context.Context, zoneName, peerZone string, delay fault.NetworkProfile) (*fault.NetworkProfileLease, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.ApplyZoneLinkProfile",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.BucketSyncStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.BucketSyncStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.CreateSyncFlow",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *SyncGroup, config SyncFlowConfig) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.CreateSyncFlow",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.CreateSyncGroup",
+      "kind": "method",
+      "signature": "func(ctx context.Context, scope SyncPolicyScope, config SyncGroupConfig) (*SyncGroup, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.CreateSyncGroup",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.CreateSyncPipe",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *SyncGroup, config SyncPipeConfig) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.CreateSyncPipe",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.DestinationAdmin",
+      "kind": "method",
+      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.DestinationAdmin",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.InterruptZoneLink",
+      "kind": "method",
+      "signature": "func(ctx context.Context, zoneName string) (*fault.NetworkInterruption, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.InterruptZoneLink",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.PullDestinationPeriod",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.PullDestinationPeriod",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.PullSourcePeriod",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.PullSourcePeriod",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.RemoveSyncFlow",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *SyncGroup, config SyncFlowConfig) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.RemoveSyncFlow",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.RemoveSyncGroup",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *SyncGroup) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.RemoveSyncGroup",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.RemoveSyncPipe",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *SyncGroup, id string) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.RemoveSyncPipe",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.RemoveZone",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.RemoveZone",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.SetSyncGroupStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *SyncGroup, status SyncGroupStatus) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.SetSyncGroupStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.SetSyncPipePrefix",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *SyncGroup, id, prefix string) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.SetSyncPipePrefix",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.SourceAdmin",
+      "kind": "method",
+      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.SourceAdmin",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.SyncStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, zoneName string) (SyncStatus, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.SyncStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.Terminate",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.Terminate",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.WaitBucketSyncPolicyReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *SyncGroup, destinationZone string) (BucketSyncPolicyStatus, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.WaitBucketSyncPolicyReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.WaitBucketSyncReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.WaitBucketSyncReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.WaitSyncReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, zoneName string, sourceZones ...string) (SyncStatus, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.WaitSyncReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.ZoneAdmin",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string, args ...string) ([]byte, error)",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.ZoneAdmin",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.Zonegroups",
+      "kind": "method",
+      "signature": "func() []Zonegroup",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.Zonegroups",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Fixture.Zones",
+      "kind": "method",
+      "signature": "func() []Zone",
+      "receiver": "*Fixture",
+      "proposed": "rgw/multisite.Fixture.Zones",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.MetadataSyncStatus",
+      "kind": "type",
+      "proposed": "rgw/multisite.MetadataSyncStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Run",
+      "kind": "function",
+      "signature": "func(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Fixture, error)",
+      "proposed": "rgw/multisite.Run",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.RunTopology",
+      "kind": "function",
+      "signature": "func(ctx context.Context, image string, config TopologyConfig, opts ...testcontainers.ContainerCustomizer) (*Fixture, error)",
+      "proposed": "rgw/multisite.RunTopology",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncAllowed",
+      "kind": "const",
+      "proposed": "rgw/multisite.SyncAllowed",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncBucketIdentity",
+      "kind": "type",
+      "proposed": "rgw/multisite.SyncBucketIdentity",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncBucketSelector",
+      "kind": "type",
+      "proposed": "rgw/multisite.SyncBucketSelector",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncEnabled",
+      "kind": "const",
+      "proposed": "rgw/multisite.SyncEnabled",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncFlowConfig",
+      "kind": "type",
+      "proposed": "rgw/multisite.SyncFlowConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncForbidden",
+      "kind": "const",
+      "proposed": "rgw/multisite.SyncForbidden",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup",
+      "kind": "type",
+      "proposed": "rgw/multisite.SyncGroup",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.ID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.ID",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroupConfig",
+      "kind": "type",
+      "proposed": "rgw/multisite.SyncGroupConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroupStatus",
+      "kind": "type",
+      "proposed": "rgw/multisite.SyncGroupStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncObjectTag",
+      "kind": "type",
+      "proposed": "rgw/multisite.SyncObjectTag",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncPipeConfig",
+      "kind": "type",
+      "proposed": "rgw/multisite.SyncPipeConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncPolicyScope",
+      "kind": "type",
+      "proposed": "rgw/multisite.SyncPolicyScope",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncStatus",
+      "kind": "type",
+      "proposed": "rgw/multisite.SyncStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.TopologyConfig",
+      "kind": "type",
+      "proposed": "rgw/multisite.TopologyConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Zone",
+      "kind": "type",
+      "proposed": "rgw/multisite.Zone",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.ZoneConfig",
+      "kind": "type",
+      "proposed": "rgw/multisite.ZoneConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Zonegroup",
+      "kind": "type",
+      "proposed": "rgw/multisite.Zonegroup",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.ZonegroupConfig",
+      "kind": "type",
+      "proposed": "rgw/multisite.ZonegroupConfig",
+      "decision": "baseline"
+    }
+  ]
+}

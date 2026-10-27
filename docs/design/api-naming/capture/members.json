@@ -1,0 +1,72 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "capture",
+  "count": 56,
+  "types": {
+    "capture.FileReport": [
+      "FileReport.ByteOrder field string `json:\"byte_order,omitempty\"`",
+      "FileReport.BytesRead field int64 `json:\"bytes_read\"`",
+      "FileReport.Complete field bool `json:\"complete\"`",
+      "FileReport.LinkType field uint32 `json:\"link_type,omitempty\"`",
+      "FileReport.Packets field int `json:\"packets\"`",
+      "FileReport.Reason field string `json:\"reason,omitempty\"`",
+      "FileReport.SHA256 field string `json:\"sha256\"`",
+      "FileReport.SnapLen field uint32 `json:\"snaplen,omitempty\"`",
+      "FileReport.Status field FileStatus `json:\"status\"`",
+      "FileReport.TimestampUnit field string `json:\"timestamp_unit,omitempty\"`",
+      "FileReport.TruncatedPackets field int `json:\"truncated_packets\"`",
+      "FileReport.VersionMajor field uint16 `json:\"version_major,omitempty\"`",
+      "FileReport.VersionMinor field uint16 `json:\"version_minor,omitempty\"`"
+    ],
+    "capture.Report": [
+      "Report.ContainerID field string `json:\"container_id\"`",
+      "Report.End field EndReason `json:\"end\"`",
+      "Report.EndedAt field time.Time `json:\"ended_at\"`",
+      "Report.ExitCode field int `json:\"exit_code\"`",
+      "Report.File field FileReport `json:\"file\"`",
+      "Report.Filter field string `json:\"filter\"`",
+      "Report.HelperImage field string `json:\"helper_image\"`",
+      "Report.HelperImageID field string `json:\"helper_image_id\"`",
+      "Report.HelperPlatform field string `json:\"helper_platform,omitempty\"`",
+      "Report.HelperRemoved field bool `json:\"helper_removed\"`",
+      "Report.Interface field string `json:\"interface\"`",
+      "Report.MACAddress field string `json:\"mac_address\"`",
+      "Report.MaxBytes field int64 `json:\"max_bytes\"`",
+      "Report.MaxPackets field int `json:\"max_packets\"`",
+      "Report.Namespace field string `json:\"namespace,omitempty\"`",
+      "Report.Network field string `json:\"network\"`",
+      "Report.Output field string `json:\"output\"`",
+      "Report.ReadyAt field time.Time `json:\"ready_at\"`",
+      "Report.Retrieved field bool `json:\"retrieved\"`",
+      "Report.RetrievedBytes field int64 `json:\"retrieved_bytes\"`",
+      "Report.RetrievedSHA256 field string `json:\"retrieved_sha256,omitempty\"`",
+      "Report.SandboxID field string `json:\"sandbox_id\"`",
+      "Report.SnapLen field int `json:\"snaplen\"`",
+      "Report.StartedAt field time.Time `json:\"started_at\"`",
+      "Report.Statistics field Statistics `json:\"statistics\"`",
+      "Report.Stderr field string `json:\"stderr,omitempty\"`",
+      "Report.StopRequestedAt field time.Time `json:\"stop_requested_at\"`",
+      "Report.Target field TargetState `json:\"target\"`",
+      "Report.TargetStartedAt field string `json:\"target_started_at\"`",
+      "Report.ToolVersion field string `json:\"tool_version,omitempty\"`"
+    ],
+    "capture.Request": [
+      "Request.Filter field string",
+      "Request.HelperImage field string",
+      "Request.Interface field string",
+      "Request.MaxPackets field int",
+      "Request.Network field string",
+      "Request.Output field string",
+      "Request.ReadyTimeout field time.Duration",
+      "Request.SnapLen field int",
+      "Request.StopGrace field time.Duration"
+    ],
+    "capture.Statistics": [
+      "Statistics.Captured field *uint64 `json:\"captured,omitempty\"`",
+      "Statistics.DroppedByInterface field *uint64 `json:\"dropped_by_interface,omitempty\"`",
+      "Statistics.DroppedByKernel field *uint64 `json:\"dropped_by_kernel,omitempty\"`",
+      "Statistics.ReceivedByFilter field *uint64 `json:\"received_by_filter,omitempty\"`"
+    ]
+  }
+}

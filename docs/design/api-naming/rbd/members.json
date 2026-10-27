@@ -1,0 +1,42 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "rbd",
+  "count": 20,
+  "types": {
+    "rbd.Container": [
+      "Container embed *ceph.Container"
+    ],
+    "rbd.ImageClientStatus": [
+      "ImageClientStatus.Locks field []ImageLock",
+      "ImageClientStatus.Watchers field []ImageWatcher"
+    ],
+    "rbd.ImageLock": [
+      "ImageLock.Address field string",
+      "ImageLock.ID field string",
+      "ImageLock.Locker field string",
+      "ImageLock.Managed field bool"
+    ],
+    "rbd.ImageWatcher": [
+      "ImageWatcher.Address field string",
+      "ImageWatcher.ClientID field uint64",
+      "ImageWatcher.Cookie field uint64"
+    ],
+    "rbd.ImmutableObjectCache": [
+      "ImmutableObjectCache.ID field string",
+      "ImmutableObjectCache.MaxSize field int64",
+      "ImmutableObjectCache.Path field string",
+      "ImmutableObjectCache.Socket field string"
+    ],
+    "rbd.ImmutableObjectCacheLease": [
+      "ImmutableObjectCacheLease.Config field ImmutableObjectCache"
+    ],
+    "rbd.ImmutableObjectCacheStatus": [
+      "ImmutableObjectCacheStatus.CachedBytes field int64",
+      "ImmutableObjectCacheStatus.CachedObjects field int",
+      "ImmutableObjectCacheStatus.PID field int",
+      "ImmutableObjectCacheStatus.RADOSReads field uint64",
+      "ImmutableObjectCacheStatus.Running field bool"
+    ]
+  }
+}

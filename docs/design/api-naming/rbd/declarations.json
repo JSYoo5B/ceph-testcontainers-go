@@ -1,0 +1,259 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "rbd",
+  "count": 36,
+  "entries": [
+    {
+      "current": "rbd.Container",
+      "kind": "type",
+      "proposed": "rbd.Container",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.CreateNamespace",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, pool, name string) (*Namespace, error)",
+      "proposed": "rbd.CreateNamespace",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.DefaultImmutableObjectCacheMaxSize",
+      "kind": "const",
+      "proposed": "rbd.DefaultImmutableObjectCacheMaxSize",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.DefaultImmutableObjectCachePath",
+      "kind": "const",
+      "proposed": "rbd.DefaultImmutableObjectCachePath",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.DefaultImmutableObjectCacheSocket",
+      "kind": "const",
+      "proposed": "rbd.DefaultImmutableObjectCacheSocket",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ExportBackup",
+      "kind": "function",
+      "signature": "func(ctx context.Context, client testcontainers.Container, image string, destination io.Writer) error",
+      "proposed": "rbd.ExportBackup",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ExportIncremental",
+      "kind": "function",
+      "signature": "func(ctx context.Context, client testcontainers.Container, image, fromSnapshot string, destination io.Writer) error",
+      "proposed": "rbd.ExportIncremental",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImageClientStatus",
+      "kind": "type",
+      "proposed": "rbd.ImageClientStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImageClientStatus.ExclusiveOwner",
+      "kind": "method",
+      "signature": "func() *ImageLock",
+      "receiver": "*ImageClientStatus",
+      "proposed": "rbd.ImageClientStatus.ExclusiveOwner",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImageClients",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, pool, namespace, image string) (*ImageClientStatus, error)",
+      "proposed": "rbd.ImageClients",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImageLock",
+      "kind": "type",
+      "proposed": "rbd.ImageLock",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImageWatcher",
+      "kind": "type",
+      "proposed": "rbd.ImageWatcher",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImmutableObjectCache",
+      "kind": "type",
+      "proposed": "rbd.ImmutableObjectCache",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImmutableObjectCacheLease",
+      "kind": "type",
+      "proposed": "rbd.ImmutableObjectCacheLease",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImmutableObjectCacheLease.ClientOptions",
+      "kind": "method",
+      "signature": "func() map[string]string",
+      "receiver": "*ImmutableObjectCacheLease",
+      "proposed": "rbd.ImmutableObjectCacheLease.ClientOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImmutableObjectCacheLease.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ImmutableObjectCacheLease",
+      "proposed": "rbd.ImmutableObjectCacheLease.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImmutableObjectCacheLease.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ImmutableObjectCacheStatus, error)",
+      "receiver": "*ImmutableObjectCacheLease",
+      "proposed": "rbd.ImmutableObjectCacheLease.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImmutableObjectCacheLease.Stop",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ImmutableObjectCacheLease",
+      "proposed": "rbd.ImmutableObjectCacheLease.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ImmutableObjectCacheStatus",
+      "kind": "type",
+      "proposed": "rbd.ImmutableObjectCacheStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.InitPool",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, pool string) error",
+      "proposed": "rbd.InitPool",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.Lease",
+      "kind": "function",
+      "signature": "func(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, error)",
+      "proposed": "rbd.Lease",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.ListNamespaces",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, pool string) ([]string, error)",
+      "proposed": "rbd.ListNamespaces",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.Namespace",
+      "kind": "type",
+      "proposed": "rbd.Namespace",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.Namespace.Name",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Namespace",
+      "proposed": "rbd.Namespace.Name",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.Namespace.PoolName",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Namespace",
+      "proposed": "rbd.Namespace.PoolName",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.RemoveNamespace",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, ns *Namespace) error",
+      "proposed": "rbd.RemoveNamespace",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.RestoreBackup",
+      "kind": "function",
+      "signature": "func(ctx context.Context, client testcontainers.Container, image string, archive io.Reader) error",
+      "proposed": "rbd.RestoreBackup",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.RestoreIncremental",
+      "kind": "function",
+      "signature": "func(ctx context.Context, client testcontainers.Container, image string, archive io.Reader) error",
+      "proposed": "rbd.RestoreIncremental",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.Run",
+      "kind": "function",
+      "signature": "func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
+      "proposed": "rbd.Run",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.StartImmutableObjectCache",
+      "kind": "function",
+      "signature": "func(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (*ImmutableObjectCacheLease, error)",
+      "proposed": "rbd.StartImmutableObjectCache",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.TenantNamespace",
+      "kind": "type",
+      "proposed": "rbd.TenantNamespace",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.TenantNamespace.Client",
+      "kind": "method",
+      "signature": "func() *ceph.ClientConfig",
+      "receiver": "*TenantNamespace",
+      "proposed": "rbd.TenantNamespace.Client",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.TenantNamespace.Namespace",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantNamespace",
+      "proposed": "rbd.TenantNamespace.Namespace",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.TenantNamespace.Pool",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantNamespace",
+      "proposed": "rbd.TenantNamespace.Pool",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.TenantNamespace.WithClient",
+      "kind": "method",
+      "signature": "func(opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption",
+      "receiver": "*TenantNamespace",
+      "proposed": "rbd.TenantNamespace.WithClient",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd.WithPools",
+      "kind": "function",
+      "signature": "func(configs ...ceph.PoolConfig) ceph.Option",
+      "proposed": "rbd.WithPools",
+      "decision": "baseline"
+    }
+  ]
+}

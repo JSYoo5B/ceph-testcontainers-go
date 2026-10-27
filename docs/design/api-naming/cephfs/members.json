@@ -1,0 +1,347 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "cephfs",
+  "count": 247,
+  "types": {
+    "cephfs.CloneConfig": [
+      "CloneConfig.DataPool field string",
+      "CloneConfig.GroupName field string",
+      "CloneConfig.Name field string"
+    ],
+    "cephfs.Config": [
+      "Config.ActiveMDS field int",
+      "Config.AdditionalDataPools field []ceph.PoolConfig",
+      "Config.DataPool field ceph.PoolConfig",
+      "Config.MetadataPool field ceph.PoolConfig",
+      "Config.Name field string",
+      "Config.NoInitialMDS field bool",
+      "Config.StandbyMDS field int",
+      "Config.StandbyReplay field bool"
+    ],
+    "cephfs.Container": [
+      "Container embed *ceph.Container"
+    ],
+    "cephfs.DataPool": [
+      "DataPool.FilesystemName field string",
+      "DataPool.ID field int64",
+      "DataPool.Name field string"
+    ],
+    "cephfs.DataPoolState": [
+      "DataPoolState.Default field bool",
+      "DataPoolState.ID field int64",
+      "DataPoolState.Name field string"
+    ],
+    "cephfs.Filesystem": [
+      "Filesystem embed testcontainers.Container",
+      "Filesystem.AdditionalDataPools field []string",
+      "Filesystem.DataPool field string",
+      "Filesystem.FilesystemName field string",
+      "Filesystem.MetadataPool field string"
+    ],
+    "cephfs.FilesystemStatus": [
+      "FilesystemStatus.Active field []MDSStatus",
+      "FilesystemStatus.FilesystemID field int64",
+      "FilesystemStatus.FilesystemName field string",
+      "FilesystemStatus.MaxMDS field int",
+      "FilesystemStatus.Standby field []MDSStatus",
+      "FilesystemStatus.StandbyReplay field []MDSStatus"
+    ],
+    "cephfs.MDS": [
+      "MDS embed testcontainers.Container",
+      "MDS.FilesystemName field string",
+      "MDS.ID field string"
+    ],
+    "cephfs.MDSStatus": [
+      "MDSStatus.GID field uint64 `json:\"gid\"`",
+      "MDSStatus.Name field string `json:\"name\"`",
+      "MDSStatus.Owned field bool `json:\"owned\"`",
+      "MDSStatus.Rank field int `json:\"rank\"`",
+      "MDSStatus.State field string `json:\"state\"`"
+    ],
+    "cephfs.Mirror": [
+      "Mirror embed testcontainers.Container",
+      "Mirror.DestinationClientEntity field string",
+      "Mirror.DestinationFilesystem field string",
+      "Mirror.Directories field []string",
+      "Mirror.SourceClientEntity field string",
+      "Mirror.SourceFilesystem field string"
+    ],
+    "cephfs.MirrorConfig": [
+      "MirrorConfig.DaemonCount field int",
+      "MirrorConfig.Destination field *ceph.Container",
+      "MirrorConfig.DestinationFilesystem field string",
+      "MirrorConfig.DestinationSite field string",
+      "MirrorConfig.Directories field []string",
+      "MirrorConfig.NoInitialDaemons field bool",
+      "MirrorConfig.OriginalProcessClientFactory field func(context.Context) (*mobycl.Client, error)",
+      "MirrorConfig.Source field *ceph.Container",
+      "MirrorConfig.SourceFilesystem field string"
+    ],
+    "cephfs.MirrorDaemon": [
+      "MirrorDaemon embed testcontainers.Container",
+      "MirrorDaemon.DaemonName field string"
+    ],
+    "cephfs.MirrorDirectoryAdditionStatus": [
+      "MirrorDirectoryAdditionStatus.DestinationFilesystem field string",
+      "MirrorDirectoryAdditionStatus.DestinationFilesystemID field int",
+      "MirrorDirectoryAdditionStatus.Directory field string",
+      "MirrorDirectoryAdditionStatus.PeerID field string",
+      "MirrorDirectoryAdditionStatus.PolicyPresent field bool",
+      "MirrorDirectoryAdditionStatus.Registered field bool",
+      "MirrorDirectoryAdditionStatus.SourceFilesystem field string",
+      "MirrorDirectoryAdditionStatus.SourceFilesystemID field int"
+    ],
+    "cephfs.MirrorDirectoryRemovalDaemonStatus": [
+      "MirrorDirectoryRemovalDaemonStatus.ContainerID field string",
+      "MirrorDirectoryRemovalDaemonStatus.InstanceID field string",
+      "MirrorDirectoryRemovalDaemonStatus.Problem field string",
+      "MirrorDirectoryRemovalDaemonStatus.State field string"
+    ],
+    "cephfs.MirrorDirectoryRemovalStatus": [
+      "MirrorDirectoryRemovalStatus.Daemons field map[string]MirrorDirectoryRemovalDaemonStatus",
+      "MirrorDirectoryRemovalStatus.DestinationFilesystem field string",
+      "MirrorDirectoryRemovalStatus.DestinationFilesystemID field int",
+      "MirrorDirectoryRemovalStatus.Directory field string",
+      "MirrorDirectoryRemovalStatus.PeerID field string",
+      "MirrorDirectoryRemovalStatus.PolicyRemoved field bool",
+      "MirrorDirectoryRemovalStatus.Released field bool",
+      "MirrorDirectoryRemovalStatus.SourceFilesystem field string",
+      "MirrorDirectoryRemovalStatus.SourceFilesystemID field int"
+    ],
+    "cephfs.MirrorDirectoryStatus": [
+      "MirrorDirectoryStatus.CurrentSnapshot field *MirrorSnapshot",
+      "MirrorDirectoryStatus.DaemonName field string",
+      "MirrorDirectoryStatus.DaemonProblems field map[string]string",
+      "MirrorDirectoryStatus.DestinationFilesystem field string",
+      "MirrorDirectoryStatus.DestinationFilesystemID field int",
+      "MirrorDirectoryStatus.Directory field string",
+      "MirrorDirectoryStatus.FailureReason field string",
+      "MirrorDirectoryStatus.InstanceID field string",
+      "MirrorDirectoryStatus.LastSyncedSnapshot field *MirrorSnapshot",
+      "MirrorDirectoryStatus.MappingState field string",
+      "MirrorDirectoryStatus.PeerID field string",
+      "MirrorDirectoryStatus.Ready field bool",
+      "MirrorDirectoryStatus.SnapsRenamed field uint64",
+      "MirrorDirectoryStatus.SnapshotsDeleted field uint64",
+      "MirrorDirectoryStatus.SnapshotsSynced field uint64",
+      "MirrorDirectoryStatus.SourceFilesystem field string",
+      "MirrorDirectoryStatus.SourceFilesystemID field int",
+      "MirrorDirectoryStatus.State field string"
+    ],
+    "cephfs.MirrorOriginalProcessStatus": [
+      "MirrorOriginalProcessStatus.ContainerID field string",
+      "MirrorOriginalProcessStatus.EngineID field string",
+      "MirrorOriginalProcessStatus.Evidence field string",
+      "MirrorOriginalProcessStatus.InstanceID field string",
+      "MirrorOriginalProcessStatus.OriginalQuiescent field bool",
+      "MirrorOriginalProcessStatus.OriginalTaskEnded field bool",
+      "MirrorOriginalProcessStatus.OriginalWatcherRetired field bool",
+      "MirrorOriginalProcessStatus.Problem field string",
+      "MirrorOriginalProcessStatus.StartedAt field string"
+    ],
+    "cephfs.MirrorPeerRemovalDaemonStatus": [
+      "MirrorPeerRemovalDaemonStatus.ContainerID field string",
+      "MirrorPeerRemovalDaemonStatus.InstanceID field string",
+      "MirrorPeerRemovalDaemonStatus.Problem field string",
+      "MirrorPeerRemovalDaemonStatus.State field string"
+    ],
+    "cephfs.MirrorPeerRemovalStatus": [
+      "MirrorPeerRemovalStatus.Daemons field map[string]MirrorPeerRemovalDaemonStatus",
+      "MirrorPeerRemovalStatus.DestinationFilesystem field string",
+      "MirrorPeerRemovalStatus.DestinationFilesystemID field int",
+      "MirrorPeerRemovalStatus.Drained field bool",
+      "MirrorPeerRemovalStatus.PeerID field string",
+      "MirrorPeerRemovalStatus.PolicyRemoved field bool",
+      "MirrorPeerRemovalStatus.SourceFilesystem field string",
+      "MirrorPeerRemovalStatus.SourceFilesystemID field int"
+    ],
+    "cephfs.MirrorProcessBindingStatus": [
+      "MirrorProcessBindingStatus.Available field bool",
+      "MirrorProcessBindingStatus.ContainerID field string",
+      "MirrorProcessBindingStatus.EngineID field string",
+      "MirrorProcessBindingStatus.State field string"
+    ],
+    "cephfs.MirrorProcessQuiescenceAcknowledgment": [
+      "MirrorProcessQuiescenceAcknowledgment.Acknowledged field bool",
+      "MirrorProcessQuiescenceAcknowledgment.Observation field MirrorProcessQuiescenceStatus"
+    ],
+    "cephfs.MirrorProcessQuiescenceStatus": [
+      "MirrorProcessQuiescenceStatus.Daemons field map[string]MirrorOriginalProcessStatus",
+      "MirrorProcessQuiescenceStatus.DestinationFilesystem field string",
+      "MirrorProcessQuiescenceStatus.DestinationFilesystemID field int",
+      "MirrorProcessQuiescenceStatus.Directory field string",
+      "MirrorProcessQuiescenceStatus.OriginalQuiescent field bool",
+      "MirrorProcessQuiescenceStatus.PeerID field string",
+      "MirrorProcessQuiescenceStatus.PolicyRemoved field bool",
+      "MirrorProcessQuiescenceStatus.SourceFilesystem field string",
+      "MirrorProcessQuiescenceStatus.SourceFilesystemID field int"
+    ],
+    "cephfs.MirrorSnapshot": [
+      "MirrorSnapshot.ID field uint64",
+      "MirrorSnapshot.Name field string"
+    ],
+    "cephfs.PinPolicy": [
+      "PinPolicy.Distributed field bool",
+      "PinPolicy.ExportRank field int",
+      "PinPolicy.Inode field uint64",
+      "PinPolicy.Path field string",
+      "PinPolicy.RandomProbability field float64"
+    ],
+    "cephfs.PinSetting": [
+      "PinSetting.Type field PinType",
+      "PinSetting.Value field float64"
+    ],
+    "cephfs.QuiesceConfig": [
+      "QuiesceConfig.Expiration field time.Duration",
+      "QuiesceConfig.Timeout field time.Duration"
+    ],
+    "cephfs.QuiesceState": [
+      "QuiesceState.Expiration field float64",
+      "QuiesceState.ID field string",
+      "QuiesceState.Members field []string",
+      "QuiesceState.State field string",
+      "QuiesceState.Timeout field float64",
+      "QuiesceState.Version field uint64"
+    ],
+    "cephfs.Session": [
+      "Session.Address field string",
+      "Session.Caps field int",
+      "Session.EntityID field string",
+      "Session.Hostname field string",
+      "Session.ID field uint64",
+      "Session.PID field string",
+      "Session.Rank field int",
+      "Session.Root field string",
+      "Session.State field string"
+    ],
+    "cephfs.SessionTimeouts": [
+      "SessionTimeouts.Autoclose field time.Duration",
+      "SessionTimeouts.Timeout field time.Duration"
+    ],
+    "cephfs.SnapshotPendingClone": [
+      "SnapshotPendingClone.GroupName field string `json:\"target_group\"`",
+      "SnapshotPendingClone.Name field string `json:\"name\"`"
+    ],
+    "cephfs.SnapshotSchedule": [
+      "SnapshotSchedule.Path field string",
+      "SnapshotSchedule.Repeat field string",
+      "SnapshotSchedule.Retention field map[string]int",
+      "SnapshotSchedule.Start field time.Time"
+    ],
+    "cephfs.SnapshotScheduleLease": [
+      "SnapshotScheduleLease.Path field string",
+      "SnapshotScheduleLease.Repeat field string",
+      "SnapshotScheduleLease.Retention field map[string]int",
+      "SnapshotScheduleLease.Start field time.Time"
+    ],
+    "cephfs.SnapshotScheduleStatus": [
+      "SnapshotScheduleStatus.Active field bool",
+      "SnapshotScheduleStatus.Added field time.Time",
+      "SnapshotScheduleStatus.Created field int",
+      "SnapshotScheduleStatus.First field time.Time",
+      "SnapshotScheduleStatus.Last field time.Time",
+      "SnapshotScheduleStatus.Path field string",
+      "SnapshotScheduleStatus.Pruned field int",
+      "SnapshotScheduleStatus.Raw field json.RawMessage",
+      "SnapshotScheduleStatus.Retention field map[string]int",
+      "SnapshotScheduleStatus.Schedule field string",
+      "SnapshotScheduleStatus.Start field time.Time"
+    ],
+    "cephfs.Subvolume": [
+      "Subvolume.FilesystemName field string",
+      "Subvolume.GroupName field string",
+      "Subvolume.Name field string",
+      "Subvolume.Path field string"
+    ],
+    "cephfs.SubvolumeAuthorization": [
+      "SubvolumeAuthorization.Access field string",
+      "SubvolumeAuthorization.AuthID field string",
+      "SubvolumeAuthorization.Client field *ceph.ClientConfig",
+      "SubvolumeAuthorization.DataPool field string",
+      "SubvolumeAuthorization.FilesystemName field string",
+      "SubvolumeAuthorization.GroupName field string",
+      "SubvolumeAuthorization.Path field string",
+      "SubvolumeAuthorization.PoolNamespace field string",
+      "SubvolumeAuthorization.SubvolumeName field string"
+    ],
+    "cephfs.SubvolumeAuthorizationConfig": [
+      "SubvolumeAuthorizationConfig.Access field string",
+      "SubvolumeAuthorizationConfig.ClientID field string"
+    ],
+    "cephfs.SubvolumeAuthorizedClient": [
+      "SubvolumeAuthorizedClient.Access field string",
+      "SubvolumeAuthorizedClient.AuthID field string"
+    ],
+    "cephfs.SubvolumeClone": [
+      "SubvolumeClone.FilesystemName field string",
+      "SubvolumeClone.GroupName field string",
+      "SubvolumeClone.Name field string"
+    ],
+    "cephfs.SubvolumeCloneStatus": [
+      "SubvolumeCloneStatus.FailureErrno field int",
+      "SubvolumeCloneStatus.FailureMessage field string",
+      "SubvolumeCloneStatus.Progress field map[string]string",
+      "SubvolumeCloneStatus.SourceFilesystem field string",
+      "SubvolumeCloneStatus.SourceGroup field string",
+      "SubvolumeCloneStatus.SourceSnapshot field string",
+      "SubvolumeCloneStatus.SourceSubvolume field string",
+      "SubvolumeCloneStatus.State field string"
+    ],
+    "cephfs.SubvolumeConfig": [
+      "SubvolumeConfig.DataPool field string",
+      "SubvolumeConfig.GroupName field string",
+      "SubvolumeConfig.Name field string",
+      "SubvolumeConfig.NamespaceIsolated field bool",
+      "SubvolumeConfig.SizeBytes field int64"
+    ],
+    "cephfs.SubvolumeGroup": [
+      "SubvolumeGroup.FilesystemName field string",
+      "SubvolumeGroup.Name field string",
+      "SubvolumeGroup.Path field string"
+    ],
+    "cephfs.SubvolumeGroupConfig": [
+      "SubvolumeGroupConfig.DataPool field string",
+      "SubvolumeGroupConfig.Name field string",
+      "SubvolumeGroupConfig.SizeBytes field int64"
+    ],
+    "cephfs.SubvolumeGroupInfo": [
+      "SubvolumeGroupInfo.BytesUsed field int64",
+      "SubvolumeGroupInfo.CreatedAt field string",
+      "SubvolumeGroupInfo.DataPool field string",
+      "SubvolumeGroupInfo.Name field string",
+      "SubvolumeGroupInfo.Path field string",
+      "SubvolumeGroupInfo.QuotaBytes field int64"
+    ],
+    "cephfs.SubvolumeInfo": [
+      "SubvolumeInfo.BytesUsed field int64",
+      "SubvolumeInfo.CreatedAt field string",
+      "SubvolumeInfo.DataPool field string",
+      "SubvolumeInfo.GroupName field string",
+      "SubvolumeInfo.Name field string",
+      "SubvolumeInfo.Path field string",
+      "SubvolumeInfo.PoolNamespace field string",
+      "SubvolumeInfo.QuotaBytes field int64",
+      "SubvolumeInfo.State field string",
+      "SubvolumeInfo.Type field string"
+    ],
+    "cephfs.SubvolumeSnapshot": [
+      "SubvolumeSnapshot.FilesystemName field string",
+      "SubvolumeSnapshot.GroupName field string",
+      "SubvolumeSnapshot.Name field string",
+      "SubvolumeSnapshot.Path field string",
+      "SubvolumeSnapshot.SubvolumeName field string"
+    ],
+    "cephfs.SubvolumeSnapshotInfo": [
+      "SubvolumeSnapshotInfo.CreatedAt field string",
+      "SubvolumeSnapshotInfo.DataPool field string",
+      "SubvolumeSnapshotInfo.GroupName field string",
+      "SubvolumeSnapshotInfo.HasPendingClones field bool",
+      "SubvolumeSnapshotInfo.Name field string",
+      "SubvolumeSnapshotInfo.OrphanClonesCount field int",
+      "SubvolumeSnapshotInfo.Path field string",
+      "SubvolumeSnapshotInfo.PendingClones field []SnapshotPendingClone",
+      "SubvolumeSnapshotInfo.SubvolumeName field string"
+    ]
+  }
+}

@@ -1,0 +1,300 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "rbd/mirror",
+  "count": 41,
+  "entries": [
+    {
+      "current": "rbd/mirror.Config",
+      "kind": "type",
+      "proposed": "rbd/mirror.Config",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Daemon",
+      "kind": "type",
+      "proposed": "rbd/mirror.Daemon",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Daemon.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*DaemonStatus, error)",
+      "receiver": "*Daemon",
+      "proposed": "rbd/mirror.Daemon.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Daemon.Terminate",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Daemon",
+      "proposed": "rbd/mirror.Daemon.Terminate",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.DaemonStatus",
+      "kind": "type",
+      "proposed": "rbd/mirror.DaemonStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ImageStatus",
+      "kind": "type",
+      "proposed": "rbd/mirror.ImageStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror",
+      "kind": "type",
+      "proposed": "rbd/mirror.Mirror",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.AddDaemon",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string, opts ...testcontainers.ContainerCustomizer) (*Daemon, error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.AddDaemon",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.BindNamespace",
+      "kind": "method",
+      "signature": "func(ctx context.Context, sourceNamespace, destinationNamespace string) (*Namespace, error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.BindNamespace",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.Daemons",
+      "kind": "method",
+      "signature": "func() []*Daemon",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.Daemons",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.DestinationRBD",
+      "kind": "method",
+      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.DestinationRBD",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.EnableImage",
+      "kind": "method",
+      "signature": "func(ctx context.Context, imageName string) error",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.EnableImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.ImageStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, imageName string) (ImageStatus, error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.ImageStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.InterruptPeerLink",
+      "kind": "method",
+      "signature": "func(ctx context.Context, daemonName string) (*fault.NetworkInterruption, error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.InterruptPeerLink",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.PolicyStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (Policies, error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.PolicyStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.Rebootstrap",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (returnErr error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.Rebootstrap",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.ReceiverStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.ReceiverStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.RefreshMonitorConfig",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.RefreshMonitorConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.RemoveDaemon",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.RemoveDaemon",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.SourceRBD",
+      "kind": "method",
+      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.SourceRBD",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.Terminate",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.Terminate",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.WaitReceiverReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.WaitReceiverReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mirror.WaitReplayReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, imageName string) (ImageStatus, error)",
+      "receiver": "*Mirror",
+      "proposed": "rbd/mirror.Mirror.WaitReplayReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Mode",
+      "kind": "type",
+      "proposed": "rbd/mirror.Mode",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ModeJournal",
+      "kind": "const",
+      "proposed": "rbd/mirror.ModeJournal",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ModeSnapshot",
+      "kind": "const",
+      "proposed": "rbd/mirror.ModeSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Namespace",
+      "kind": "type",
+      "proposed": "rbd/mirror.Namespace",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Namespace.ImageStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, imageName string) (ImageStatus, error)",
+      "receiver": "*Namespace",
+      "proposed": "rbd/mirror.Namespace.ImageStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Namespace.ReceiverStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error)",
+      "receiver": "*Namespace",
+      "proposed": "rbd/mirror.Namespace.ReceiverStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Namespace.WaitReceiverReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error)",
+      "receiver": "*Namespace",
+      "proposed": "rbd/mirror.Namespace.WaitReceiverReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Namespace.WaitReplayReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, imageName string) (ImageStatus, error)",
+      "receiver": "*Namespace",
+      "proposed": "rbd/mirror.Namespace.WaitReplayReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.NamespaceState",
+      "kind": "type",
+      "proposed": "rbd/mirror.NamespaceState",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Policies",
+      "kind": "type",
+      "proposed": "rbd/mirror.Policies",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.PoolReplayerStatus",
+      "kind": "type",
+      "proposed": "rbd/mirror.PoolReplayerStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ReceiverDaemonStatus",
+      "kind": "type",
+      "proposed": "rbd/mirror.ReceiverDaemonStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ReceiverStatus",
+      "kind": "type",
+      "proposed": "rbd/mirror.ReceiverStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Run",
+      "kind": "function",
+      "signature": "func(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
+      "proposed": "rbd/mirror.Run",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.RunWithImages",
+      "kind": "function",
+      "signature": "func(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
+      "proposed": "rbd/mirror.RunWithImages",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Scope",
+      "kind": "type",
+      "proposed": "rbd/mirror.Scope",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ScopeImage",
+      "kind": "const",
+      "proposed": "rbd/mirror.ScopeImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ScopePool",
+      "kind": "const",
+      "proposed": "rbd/mirror.ScopePool",
+      "decision": "baseline"
+    }
+  ]
+}

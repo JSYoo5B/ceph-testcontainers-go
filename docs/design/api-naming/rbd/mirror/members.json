@@ -1,0 +1,102 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "rbd/mirror",
+  "count": 74,
+  "types": {
+    "rbd/mirror.Config": [
+      "Config.DaemonCount field int",
+      "Config.Destination field *ceph.Container",
+      "Config.DestinationNamespace field string",
+      "Config.DestinationSite field string",
+      "Config.Mode field Mode",
+      "Config.NoInitialDaemons field bool",
+      "Config.Pool field string",
+      "Config.Scope field Scope",
+      "Config.Source field *ceph.Container",
+      "Config.SourceNamespace field string",
+      "Config.SourceSite field string"
+    ],
+    "rbd/mirror.Daemon": [
+      "Daemon embed testcontainers.Container",
+      "Daemon.ClientName field string",
+      "Daemon.DaemonName field string"
+    ],
+    "rbd/mirror.DaemonStatus": [
+      "DaemonStatus.PoolReplayers field []PoolReplayerStatus `json:\"pool_replayers\"`"
+    ],
+    "rbd/mirror.ImageStatus": [
+      "ImageStatus.DaemonName field string",
+      "ImageStatus.Description field string",
+      "ImageStatus.DestinationImageID field string",
+      "ImageStatus.DestinationMirrorState field string",
+      "ImageStatus.DestinationNamespace field string",
+      "ImageStatus.DestinationPrimary field bool",
+      "ImageStatus.GlobalID field string",
+      "ImageStatus.InstanceID field string",
+      "ImageStatus.LastUpdate field string",
+      "ImageStatus.Mode field Mode",
+      "ImageStatus.Name field string",
+      "ImageStatus.Pool field string",
+      "ImageStatus.ReplayReady field bool",
+      "ImageStatus.SourceImageID field string",
+      "ImageStatus.SourceMirrorState field string",
+      "ImageStatus.SourceNamespace field string",
+      "ImageStatus.SourcePrimary field bool",
+      "ImageStatus.State field string"
+    ],
+    "rbd/mirror.Mirror": [
+      "Mirror embed testcontainers.Container"
+    ],
+    "rbd/mirror.NamespaceState": [
+      "NamespaceState.MirrorUUID field string",
+      "NamespaceState.Mode field string",
+      "NamespaceState.Namespace field string",
+      "NamespaceState.Pool field string",
+      "NamespaceState.PoolID field int64",
+      "NamespaceState.RemoteNamespace field string"
+    ],
+    "rbd/mirror.Policies": [
+      "Policies.Destination field NamespaceState",
+      "Policies.Source field NamespaceState"
+    ],
+    "rbd/mirror.PoolReplayerStatus": [
+      "PoolReplayerStatus.InstanceID field string `json:\"instance_id\"`",
+      "PoolReplayerStatus.Instances field []string `json:\"instances\"`",
+      "PoolReplayerStatus.Leader field bool `json:\"leader\"`",
+      "PoolReplayerStatus.LeaderInstanceID field string `json:\"leader_instance_id\"`",
+      "PoolReplayerStatus.Peer field string `json:\"peer\"`",
+      "PoolReplayerStatus.Pool field string `json:\"pool\"`",
+      "PoolReplayerStatus.State field string `json:\"state\"`"
+    ],
+    "rbd/mirror.ReceiverDaemonStatus": [
+      "ReceiverDaemonStatus.ClientName field string",
+      "ReceiverDaemonStatus.ContainerID field string",
+      "ReceiverDaemonStatus.InstanceID field string",
+      "ReceiverDaemonStatus.Leader field bool",
+      "ReceiverDaemonStatus.LeaderInstanceID field string",
+      "ReceiverDaemonStatus.NamespaceDiscovered field bool",
+      "ReceiverDaemonStatus.PoolState field string",
+      "ReceiverDaemonStatus.Running field bool",
+      "ReceiverDaemonStatus.StartedAt field string"
+    ],
+    "rbd/mirror.ReceiverStatus": [
+      "ReceiverStatus.DaemonProblems field map[string]string",
+      "ReceiverStatus.Daemons field map[string]ReceiverDaemonStatus",
+      "ReceiverStatus.DestinationFSID field string",
+      "ReceiverStatus.DestinationNamespace field string",
+      "ReceiverStatus.DestinationPoolID field int64",
+      "ReceiverStatus.ExpectedDaemons field []string",
+      "ReceiverStatus.ForeignInstances field []string",
+      "ReceiverStatus.Instances field []string",
+      "ReceiverStatus.LeaderDaemonName field string",
+      "ReceiverStatus.LeaderInstanceID field string",
+      "ReceiverStatus.PeerID field string",
+      "ReceiverStatus.Pool field string",
+      "ReceiverStatus.Ready field bool",
+      "ReceiverStatus.SourceFSID field string",
+      "ReceiverStatus.SourceNamespace field string",
+      "ReceiverStatus.SourcePoolID field int64"
+    ]
+  }
+}
