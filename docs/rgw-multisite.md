@@ -1087,7 +1087,7 @@ status, err := ms.DestinationAdmin(ctx, "sync", "status")
 policy, err := ms.ZoneAdmin(ctx, "c", "sync", "group", "get", "--group-id", group.ID())
 ```
 
-These run in the fixture's setup client of each zone (control image), scoped
+These run in the fixture's setup client of each zone (rgw image unless `SetupImage` is set), scoped
 to the realm, zonegroup and zone. Use them for promotion, period inspection and
 explicit `bucket sync run`. Do not edit periods or zones while `AddZone`,
 `AddZonegroup`, `RemoveZone` or `ApplySyncGroup` runs.

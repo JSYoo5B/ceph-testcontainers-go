@@ -223,7 +223,7 @@ packages. The `ceph.Container` methods most RBD tests use are:
 | `CreateClient(ctx, name, ceph.ClientCaps)`, `WithClientIdentity(client)`, `ClientConfig.Delete` | Least-privilege identities such as `profile rbd` or `profile rbd-read-only` scoped to a pool and namespace. |
 | `ConnectionConfig(ctx)` | `ceph.conf` and admin keyring for a native client outside Docker (host network mode). |
 | `CreatePool`, `Pool.Status`, `Pool.Remove`, `WaitForClean` | Pools created after `Run`; wait for `active+clean` before I/O. |
-| `Ceph(ctx, args...)`, `ControlContainer(ctx)`, `ControlImage()` | Run the `ceph` CLI, run `rbd`/`rados` in the control container, reuse the control image. |
+| `Ceph(ctx, args...)`, `ClientContainer(ctx)`, `Images()` | Run the `ceph` CLI, run `rbd`/`rados` in the client toolkit, reuse the client image. |
 | `fault.Pause`, `TemporaryBlocklist`, `BlocklistEntries` | Freeze and fence RBD clients (see [the lock handover example](#hand-over-an-exclusive-lock-from-an-unresponsive-client)). |
 | `OverrideConfig` | Set any Ceph option and restore it. |
 | `CephVersion()` | Branch on the Ceph release (`"20.2.4"`, `"19.2.5"`). |
@@ -749,8 +749,8 @@ The client feature under test decides what the fixture must provide:
 | Live migration (prepare, execute, commit, abort) | Replicated initialized pool, `layering` on source and target, source writers closed. |
 | Group snapshots | Format 2 images; flush and close writers before the snapshot. It is a checkpoint of those images, not an application transaction. |
 | Exclusive lock | `exclusive-lock` feature and two independent RADOS sessions. See the next example. |
-| Encryption format/load (LUKS1, LUKS2) | librbd built with libcryptsetup (included in `control` and `all` images). No `journaling` on the image. |
-| Passphrase change | librbd has no rekey API. Run the external `cryptsetup luksChangeKey` on the exported LUKS header (the `control`/`all` image ships `cryptsetup`) and write the changed header back. |
+| Encryption format/load (LUKS1, LUKS2) | librbd built with libcryptsetup (included in the client role and `all` images). No `journaling` on the image. |
+| Passphrase change | librbd has no rekey API. Run the external `cryptsetup luksChangeKey` on the exported LUKS header (the client role and the `all` image ship `cryptsetup`) and write the changed header back. |
 | Erasure-coded data | Create the EC pool with `AllowOverwrites` and pass it as the image's data pool (see [WithPools](#withpools)). |
 
 The images, the Python bindings and the native libraries live in Linux
@@ -902,7 +902,7 @@ Everything without a typed API is one native command away.
 | Need | How |
 | --- | --- |
 | `ceph` CLI on a cluster | `out, err := cluster.Ceph(ctx, "osd", "pool", "get", "volumes", "all", "--format", "json")` (stdout only) |
-| `rbd` or `rados` on a cluster | `control.Exec(ctx, []string{"rbd", ...}, tcexec.Multiplexed())` with `control` from `cluster.ControlContainer(ctx)` (admin credentials) |
+| `rbd` or `rados` on a cluster | `client.Exec(ctx, []string{"rbd", ...}, tcexec.Multiplexed())` with `client` from `cluster.ClientContainer(ctx)` (admin credentials) |
 | `rbd` on either side of a mirror | `link.SourceRBD(ctx, args...)`, `link.DestinationRBD(ctx, args...)` (stdout only, error on non-zero exit) |
 | `rbd` as a restricted identity | Exec in a container attached with `cluster.WithClientIdentity(id)`, passing `--id id.User()` |
 | `rbd-mirror` admin socket | `daemon.Exec(ctx, []string{"ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status"}, tcexec.Multiplexed())` for a `daemon` from `link.Daemons()` |

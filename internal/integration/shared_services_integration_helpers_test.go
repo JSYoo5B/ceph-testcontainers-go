@@ -59,7 +59,7 @@ func leaseRGW(t *testing.T, ctx context.Context, tenant *ceph.Tenant) *rgw.Tenan
 // tenant's or a service lease's WithClient.
 func startTenantClientWith(t *testing.T, ctx context.Context, attach testcontainers.CustomizeRequestOption) testcontainers.Container {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, controlImage(t)), attach, ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, essentialImage(t)), attach, ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func startTenantClientWith(t *testing.T, ctx context.Context, attach testcontain
 // container ends.
 func startHolder(t *testing.T, ctx context.Context, attach testcontainers.CustomizeRequestOption, ready, script string, args ...string) testcontainers.Container {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, controlImage(t)), attach,
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, essentialImage(t)), attach,
 		testcontainers.WithEntrypoint(append([]string{"python3", "-c", script}, args...)...),
 		testcontainers.WithWaitStrategy(wait.ForLog(ready).WithStartupTimeout(2*time.Minute)))
 	testcontainers.CleanupContainer(t, ctr)

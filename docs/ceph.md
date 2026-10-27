@@ -344,7 +344,7 @@ with [AddManager](#addmanager).
 - Ceph may raise `MGR_DOWN` (only after the new monitor's `mon_mgr_mkfs_grace`,
   2 minutes by default), and it can escalate to `HEALTH_ERR` while client data I/O
   still works.
-- The control image must still contain `ceph-mgr` and its dependencies.
+- The essential image must still contain `ceph-mgr` and its dependencies.
 
 To simulate a manager outage in an already configured cluster, stop the existing
 manager container instead (see [Managers](#managers)).
@@ -457,7 +457,7 @@ the logical sizes.
   benchmark described above. Deleting Ceph objects does not necessarily release
   allocated tmpfs pages.
 - The module creates a uniquely named volume and one idle keeper container (from
-  the control image, without network) before the first OSD. The keeper holds the
+  the essential image, without network) before the first OSD. The keeper holds the
   volume so OSD `Stop`/`Start` keeps data. Purging an OSD with
   [OSDContainer.Remove](#osdcontainerremove) discards its directory.
 - `Terminate` removes the OSDs, the keeper and the volume. Losing the keeper or
@@ -484,7 +484,7 @@ with MemStore or `WithOSDInMemoryStorage`; invalid combinations fail before
 resource allocation.
 
 The first OSD allocates a unique volume and an isolated idle helper from the
-control image. The helper has no network or cluster credentials and manages
+essential image. The helper has no network or cluster credentials and manages
 fresh and purged directories. A stopped or restarted helper refuses further
 storage operations before new OSD registration; it is not automatically replaced.
 Existing OSDs can still stop/start with their original containers.
@@ -802,7 +802,7 @@ the native reference client and the client under test different policies:
 crcOnly := ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{
 	MonitorsAndManagers: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
 })
-native, err := testcontainers.Run(ctx, cluster.ControlImage(),
+native, err := testcontainers.Run(ctx, cluster.Images().Client,
 	cluster.WithClient(crcOnly), ceph.WithIdleEntrypoint())
 ```
 
@@ -2035,8 +2035,8 @@ Runs one command in `target` under a supervisor that bounds its run time and
 each output stream inside the container, and that stops the command when
 `ctx` ends. `target` is the control container, a daemon or service container
 of this cluster, or a container of yours attached to the cluster's network.
-It must be running, not paused, and have `python3`, which OSD, RGW and MDS
-role images need not have.
+It must be running, not paused, and have `python3`. The essential and client
+roles and the rgw setup runtime provide it; the cephfs role does not promise it.
 
 ```golang
 result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
@@ -2138,8 +2138,11 @@ container created by the first [AddMonitor](#addmonitor) (also during `Run`), so
 commands keep working while MON `a` is stopped or removed. The cluster owns it.
 `ctx` bounds the wait for a concurrent control-plane creation or termination.
 The returned handle is a snapshot; it does not promise that the container stays
-alive. A shared cluster refuses the call with an error. Use it to run other
-tools from the control image:
+alive. A shared cluster refuses the call with an error. The container is created
+from the essential image (`EssentialImage`), so it carries the `ceph` CLI and
+the bootstrap tools such as `ceph-authtool`, not the client role's `rados` and
+`rbd` (use [ClientContainer](#clientcontainer)) and not `radosgw-admin` (use
+`Gateway.Admin` or the multisite setup clients):
 
 ```golang
 control, err := cluster.ControlContainer(ctx)
@@ -2147,7 +2150,7 @@ if err != nil {
 	t.Fatal(err)
 }
 code, reader, err := control.Exec(ctx,
-	[]string{"rados", "-p", "app-data", "ls"}, tcexec.Multiplexed())
+	[]string{"ceph", "--connect-timeout", "5", "fsid"}, tcexec.Multiplexed())
 ```
 
 Do not pause or stop it; [fault.Pause](fault.md#pause) refuses it.
@@ -2159,19 +2162,22 @@ func (c *Container) ClientContainer(ctx context.Context) (testcontainers.Contain
 ```
 
 Returns the owned userspace toolkit executor. A separate client image starts it
-lazily; aggregate images reuse the [control container](#controlcontainer).
+lazily; aggregate images reuse the [control container](#controlcontainer). Run
+`rados`, `rbd` and the Python client bindings here.
 `ctx` bounds the wait for a concurrent topology change, and a shared cluster
 refuses the call with an error. The cluster owns the container.
 
-#### ControlImage
+#### EssentialImage
 
 ```golang
-func (c *Container) ControlImage() string
+func (c *Container) EssentialImage() string
 ```
 
-Returns the image passed to `Run`, used for MONs, MGRs and auxiliary CLI, client
-and mirror containers. It stays available after termination. Use it as the image
-of your client containers when they need the Ceph tools.
+Returns the essential image that runs the MONs, MGRs, OSDs and the control
+container. It stays available after termination. It is not a general client
+image: use `Images().Client` for containers that need `rados`, `rbd` or the
+Python bindings, `Images().RBDAux` for `rbd-mirror`, `Images().CephFS` for
+`cephfs-mirror` and `Images().RGW` for gateways and RGW administration.
 
 #### CephVersion
 
@@ -2179,11 +2185,11 @@ of your client containers when they need the Ceph tools.
 func (c *Container) CephVersion() string
 ```
 
-Returns the Ceph release of the control image, such as `"20.2.4"`, read once from
+Returns the Ceph release of the first MON's image, such as `"20.2.4"`, read once from
 `ceph --version` after MON `a` starts. `Run` fails if the output cannot be
 parsed. Role images selected with `WithImages`, `rgw.WithImage` or
 `cephfs.WithMDSImage` may run another release; the value describes only the
-control image. The fixture uses it to choose commands that differ between
+essential image. The fixture uses it to choose commands that differ between
 releases, and tests can use it to choose release-specific assertions:
 
 ```golang
@@ -3021,7 +3027,7 @@ the cluster's public network; in host mode it joins the host network.
 
 - The container must already contain the Ceph clients it uses (CLI, librados,
   go-ceph binary, ...). `WithClient` installs nothing; `ceph.DefaultImage` or
-  [ControlImage](#controlimage) work for CLI and Python clients.
+  the cluster's `Images().Client` work for CLI and Python clients.
 - The admin key has full privileges on this test cluster. Use it only in trusted
   test containers; use [WithClientIdentity](#withclientidentity) for restricted
   clients.
@@ -3103,7 +3109,7 @@ legacy, err := cluster.CreateClient(ctx, "legacy", ceph.ClientCaps{Mon: "allow r
 
 The identity is created whether or not the MONs allow its type; whether it can
 authenticate depends on the MonMap's `auth_allowed_ciphers`. `aes256k` needs a
-control image whose `ceph-authtool` has `--key-type` (see
+essential image whose `ceph-authtool` has `--key-type` (see
 [WithAuth](#withauth)); without it the call fails before any change.
 
 #### ClientConfig.Capabilities
@@ -4126,7 +4132,7 @@ err = json.Unmarshal(out, &status)
 
 Every MON, MGR, OSD and control container shares one run directory, a Docker
 volume mounted at `/var/run/ceph`, and the command runs in the control
-container. It therefore works with OSD role images that have no `ceph` CLI. The
+container. It therefore works whatever CLI the daemon's own image contains. The
 volume belongs to the cluster and `Terminate` removes it.
 
 - The daemon must be running. A stopped or removed daemon returns an error. A
@@ -4330,7 +4336,7 @@ func FactsOf(c *Container) (ClusterFacts, error)
 ```
 
 Returns an independent snapshot of the static facts of a cluster: address
-family, control image, role images, messenger mode, network names, host-network
+family, role images, messenger mode, network names, host-network
 use, advertised public address, whether a separate cluster network exists, and
 the Ceph version. A nil cluster returns an error that matches
 `ErrInvalidRequest` and the zero `ClusterFacts`. A terminated cluster still
@@ -4342,7 +4348,6 @@ identity and need no lock, command or Docker call.
 ```golang
 type ClusterFacts struct {
 	AddressFamily             AddressFamily
-	ControlImage              string
 	Images                    ImageSet
 	MessengerMode             MessengerMode
 	NetworkName               string
@@ -4429,7 +4434,7 @@ also reaps background processes started through `Exec`, such as a test server.
 Pass it to `testcontainers.Run`, not to `ceph.Run`.
 
 ```golang
-client, err := testcontainers.Run(ctx, cluster.ControlImage(),
+client, err := testcontainers.Run(ctx, cluster.Images().Client,
 	cluster.WithClient(),
 	ceph.WithIdleEntrypoint(),
 )
@@ -4532,7 +4537,7 @@ func (e *OperationError) Unwrap() error
 A classified failure with the details that identify it. `Kind` is one of the
 [error categories](#error-categories), and `Is` matches it. `Op` names the
 operation when the cause's text does not, `Target` the container or cluster,
-such as `control`, `destination cluster` or `zone source`, `Version` the Ceph
+such as `control` (the control container), `destination cluster` or `zone source`, `Version` the Ceph
 release observed on it, `Image` its immutable image ID, and `Capability` the
 missing feature, such as `ceph-authtool --key-type` or `python3`. Unset fields
 were not known or do not apply. The text is `Op`, the cause, and `Target`,
@@ -4713,7 +4718,7 @@ reader, err := cluster.CreateClient(ctx, "reader", ceph.ClientCaps{
 if err != nil {
 	t.Fatal(err)
 }
-client, err := testcontainers.Run(ctx, cluster.ControlImage(),
+client, err := testcontainers.Run(ctx, cluster.Images().Client,
 	cluster.WithClientIdentity(reader),
 	ceph.WithIdleEntrypoint(),
 )
@@ -4889,7 +4894,7 @@ A client that implements only the oldest CRUSH and placement features can be
 tested against one MemStore OSD, a legacy CRUSH map and a pool with one PG, one
 replica and no `hashpspool` flag on any pool. The fixture has no option for a
 hand-written CRUSH map; install it with the native tools, as below. `crushtool`
-is in the official image and the published control images.
+is in the official image and the published client and essential images.
 
 ```golang
 // Ceph creates the MGR's .mgr pool with the MON's default flags, so turn
@@ -5407,12 +5412,13 @@ cluster's containers:
 | --- | --- |
 | Any `ceph` command | `cluster.Ceph(ctx, "osd", "pool", "set", "app-data", "nodelete", "true")` |
 | JSON output | `cluster.Ceph(ctx, "osd", "dump", "--format", "json")` and `json.Unmarshal` |
-| `rados`, `rbd`, `ceph-authtool`, Python clients | `control.Exec(ctx, []string{"rados", "-p", "app-data", "ls"}, tcexec.Multiplexed())` with `control` from `cluster.ControlContainer(ctx)` |
+| `rados`, `rbd`, Python clients | `client.Exec(ctx, []string{"rados", "-p", "app-data", "ls"}, tcexec.Multiplexed())` with `client` from `cluster.ClientContainer(ctx)` |
+| `ceph-authtool` and the `ceph` CLI beside a daemon | `control.Exec(ctx, argv, tcexec.Multiplexed())` with `control` from `cluster.ControlContainer(ctx)` (essential image) |
 | A command with bounded run time and output that must not outlive the call | [RunNativeCommand](#runnativecommand) |
 | Daemon admin socket commands | `cluster.Ceph(ctx, "tell", "osd.0", "dump_ops_in_flight")` |
 | A daemon's effective configuration | `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_op_queue")` |
 | Any central option | [OverrideConfig](#overrideconfig), so it is restored |
-| Commands inside one daemon's container | `Exec` on an element of `cluster.OSDs(ctx)` (OSD images may not contain the `ceph` CLI) |
+| Commands inside one daemon's container | `Exec` on an element of `cluster.OSDs(ctx)` (the daemon image need not contain the `ceph` CLI the control container uses) |
 | `radosgw-admin` | `gateway.Admin(ctx, args...)` from the [rgw](rgw.md) package |
 
 Arguments are passed without a shell. `cluster.Ceph` adds `--connect-timeout 5`
@@ -5495,7 +5501,7 @@ a helper applies or restores it.
   [WithMessengerMode](#withmessengermode)).
 - Squid 19.2.6 has an RGW multisite regression; use 19.2.5 for multisite tests
   (see [rgw](rgw.md)).
-- `CephVersion` reflects only the control image. Mixing releases across role
+- `CephVersion` reflects only the first MON's image (essential). Mixing releases across role
   images is not supported.
 
 See [Releases and images](guides/releases-and-images.md) for details.
@@ -5526,7 +5532,9 @@ See [Releases and images](guides/releases-and-images.md) for details.
 All image. `RunWithImages` accepts the set directly; `WithImages` applies it
 to service Run entry points with images.Essential as the image argument.
 `Run` without an explicit set uses its image as the aggregate. `Images()`
-returns the effective selection and `ControlImage()` returns essential.
+returns the effective selection and `EssentialImage()` returns the essential
+image. `cephfs.WithMDSImage` and `rgw.WithImage` replace the cephfs and rgw
+roles of a set whichever option comes first.
 
 `ClientContainer` lazily creates one owned toolkit for a separate
 client image; aggregate selections reuse the control executor. Initial

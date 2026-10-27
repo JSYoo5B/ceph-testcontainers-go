@@ -2,7 +2,7 @@ package ceph
 
 import "github.com/testcontainers/testcontainers-go"
 
-// The static cluster facts (AddressFamily, ControlImage, Images, MessengerMode,
+// The static cluster facts (AddressFamily, Images, MessengerMode,
 // NetworkName, UsesHostNetwork, PublicAddress, ClusterNetworkName and
 // HasSeparateClusterNetwork) are derived here from the immutable run settings
 // and from the bridge networks that the caller passes in. These helpers take no
@@ -20,7 +20,21 @@ func (o options) effectiveImages() ImageSet {
 	if o.imageSet != nil {
 		return *o.imageSet
 	}
-	return ImageSet{Essential: o.controlImage, Client: o.controlImage, CephFS: o.mdsImage, RBDAux: o.controlImage, RGW: o.rgwImage}
+	return o.defaultImages()
+}
+
+// defaultImages is the aggregate selection of a Run without WithImages: the
+// Run image supplies every role, except where a service image option replaced
+// the cephfs or rgw role.
+func (o options) defaultImages() ImageSet {
+	images := ImageSet{Essential: o.essentialImage, Client: o.essentialImage, CephFS: o.essentialImage, RBDAux: o.essentialImage, RGW: o.essentialImage}
+	if o.cephfsOverride != "" {
+		images.CephFS = o.cephfsOverride
+	}
+	if o.rgwOverride != "" {
+		images.RGW = o.rgwOverride
+	}
+	return images
 }
 
 // publicNetworkName returns the bridge's name, or "host" in host mode. A nil

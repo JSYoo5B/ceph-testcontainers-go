@@ -52,14 +52,14 @@ cluster, err := ceph.Run(ctx,
 ## Detecting the release at run time
 
 Right after the first MON starts, `Run` executes `ceph --version` in the
-control image and records the release. `cluster.CephVersion()` returns it, for
+first MON's essential image and records the release. `cluster.CephVersion()` returns it, for
 example `"20.2.4"`. The fixture uses this value to choose commands that differ
 between releases.
 
 Where a tool reveals a feature, the fixture checks the tool instead of the
 release number, so that patched and stripped images behave as they are: the
-control image's `ceph-authtool` decides Cephx key types, and the `rbd` of each
-RBD mirror setup client and each cluster's control image decides namespace
+essential image's `ceph-authtool` decides Cephx key types, and the `rbd` of each
+RBD mirror setup client and each cluster's client toolkit decides namespace
 mapping. A feature that the relevant
 target lacks fails before any change with `ceph.ErrUnsupported`, whose
 `*ceph.OperationError` names the target, its version and the feature. Assert
@@ -72,7 +72,7 @@ that outcome instead of skipping on the version string; see
   `ceph version <major>.<minor>.<patch> ...`. The image requirements demand this
   output.
 - Combine only images of the same release in one cluster. Mixing releases is
-  not supported: the fixture chooses command forms from the control image
+  not supported: the fixture chooses command forms from the essential image and the client toolkit
   alone.
 
 ## Behavioral bug compatibility policy
@@ -127,7 +127,7 @@ These affect commands or client libraries you run yourself, not the typed API:
 - **Tentacle before 20.2.4, Cephx key types.** `ceph-authtool` has no
   `--key-type` and `monmaptool` no cipher options in 20.2.0 to 20.2.3, so these
   releases generate only `aes` keys, as Squid does. `ceph.WithAuth` and
-  `CreateClient` detect the options in the control image: they accept `aes`
+  `CreateClient` detect the options in the essential image: they accept `aes`
   and refuse `aes256k` before any change with `ceph.ErrUnsupported`, naming
   `ceph-authtool --key-type` as the capability. The repository tests this
   with 20.2.3.
@@ -241,7 +241,7 @@ provided.
 
 ## Related APIs
 
-- [ceph.md](../ceph.md): `DefaultImage`, `Run`, `CephVersion`, `ControlImage`,
+- [ceph.md](../ceph.md): `DefaultImage`, `Run`, `CephVersion`, `EssentialImage`,
   `ImageSet`, `WithImages`, the error categories.
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.

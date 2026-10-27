@@ -132,6 +132,9 @@ func prepareRGWTopology(ctx context.Context, image string, config TopologyConfig
 				return nil, fmt.Errorf("RGW zones %s/%s: %w", zones[j].Name, zone.Name, err)
 			}
 		}
+		if err := multicluster.RequireRoleImage(image, multicluster.RoleRGW, zone.Cluster); err != nil {
+			return nil, fmt.Errorf("RGW zone %s gateway image: %w", zone.Name, err)
+		}
 	}
 	return zones, nil
 }
@@ -301,8 +304,8 @@ func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([
 // Refresh S3Endpoint afterwards because bridge-mode published ports may change.
 // A non-nil partial result remains owned on error; terminate the fixture if
 // initialization fails rather than adopting an external zone.
-// image selects the new gateway. Its setup client uses the new cluster's
-// control image unless the fixture was configured with ControlImage.
+// image selects the new gateway. Its setup client uses the new cluster's rgw
+// image unless the fixture was configured with SetupImage.
 func (f *Fixture) AddZone(ctx context.Context, image string, config ZoneConfig, opts ...testcontainers.ContainerCustomizer) (*Zone, error) {
 	if f == nil || !validRGWZoneName(config.Name) {
 		return nil, errors.New("invalid RGW fixture or zone name")

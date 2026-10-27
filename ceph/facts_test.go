@@ -8,9 +8,9 @@ import (
 
 func TestStaticFactsNilContainerKeepsDocumentedDefaults(t *testing.T) {
 	var c *Container
-	if c.AddressFamily() != AddressIPv4 || c.ControlImage() != "" || c.Images() != (ImageSet{}) ||
+	if c.AddressFamily() != AddressIPv4 || c.EssentialImage() != "" || c.Images() != (ImageSet{}) ||
 		c.MessengerMode() != MessengerDefault || c.CephVersion() != "" {
-		t.Fatalf("nil container facts changed: %v %q %v %v %q", c.AddressFamily(), c.ControlImage(), c.Images(), c.MessengerMode(), c.CephVersion())
+		t.Fatalf("nil container facts changed: %v %q %v %v %q", c.AddressFamily(), c.EssentialImage(), c.Images(), c.MessengerMode(), c.CephVersion())
 	}
 	for name, fact := range map[string]func(){
 		"NetworkName":               func() { c.NetworkName() },
@@ -58,12 +58,12 @@ func TestStaticFactsNetworkNames(t *testing.T) {
 }
 
 func TestStaticFactsImagesCopyAndDefaults(t *testing.T) {
-	defaults := &Container{settings: options{controlImage: "ctl", mdsImage: "mds", rgwImage: "rgw"}}
+	defaults := &Container{settings: options{essentialImage: "ctl", cephfsOverride: "mds", rgwOverride: "rgw"}}
 	if got, want := defaults.Images(), (ImageSet{Essential: "ctl", Client: "ctl", CephFS: "mds", RBDAux: "ctl", RGW: "rgw"}); got != want {
 		t.Fatalf("default images = %+v, want %+v", got, want)
 	}
 	selected := &ImageSet{Essential: "e", Client: "c", CephFS: "f", RBDAux: "r", RGW: "g"}
-	c := &Container{settings: options{controlImage: "ctl", imageSet: selected}}
+	c := &Container{settings: options{essentialImage: "ctl", imageSet: selected}}
 	got := c.Images()
 	got.Essential = "changed"
 	if *selected != c.Images() || c.Images().Essential != "e" {

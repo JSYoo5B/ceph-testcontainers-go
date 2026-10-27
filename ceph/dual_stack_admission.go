@@ -36,7 +36,7 @@ func (c *Container) checkDualStackAddresses(ctx context.Context) error {
 	}
 	if err := dualStackAddressProblem(addresses); err != nil {
 		return &OperationError{Kind: ErrUnsupported, Op: "admit dual-stack addresses", Target: "cluster",
-			Version: c.CephVersion(), Image: c.controlImageID, Capability: "concrete dual-stack Messenger addresses", Err: err}
+			Version: c.CephVersion(), Image: c.firstMonitorImageID, Capability: "concrete dual-stack Messenger addresses", Err: err}
 	}
 	return nil
 }

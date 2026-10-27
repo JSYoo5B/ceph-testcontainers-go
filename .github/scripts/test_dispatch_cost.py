@@ -104,7 +104,7 @@ class DispatchCostTest(unittest.TestCase):
             ("source", lambda: self.row["source"].update(checkout_tree="f" * 40)),
             ("compiled source", lambda: self.row["build"].update(sources_sha256="f" * 64)),
             ("native binding", lambda: self.row["build"].update(native_build_key={})),
-            ("image", lambda: self.row["runtime"]["roles"]["control"].update(image_id="sha256:" + "8" * 64)),
+            ("image", lambda: self.row["runtime"]["roles"]["essential"].update(image_id="sha256:" + "8" * 64)),
             ("network", lambda: self.row["execution_key"].update(network="bridge")),
             ("platform", lambda: self.row["runtime"].update(platform="linux/arm64")),
         ):
@@ -290,7 +290,7 @@ class DispatchCostTest(unittest.TestCase):
         self.assertEqual(report["conservation"]["unknown_cost_jobs"], 1)
         self.assertFalse(report["comparison"]["eligible"])
         self.jobs[1]["id"] = 10
-        self.row["runtime"]["roles"]["control"]["image_id"] = "mutable-tag"
+        self.row["runtime"]["roles"]["essential"]["image_id"] = "mutable-tag"
         self.rehash()
         self.assertFalse(self.assess()["comparison"]["eligible"])
 

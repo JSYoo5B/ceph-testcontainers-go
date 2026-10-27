@@ -11,7 +11,7 @@ allocation. No existing volume, host mount, device or driver option is adopted.
 Allocation is lazy, including `WithNoInitialOSDs`. Before the first native OSD
 registration, the cluster records a UUID-derived volume name and ownership token,
 then creates the ordinary local volume without driver options. A partial or
-uncertain create stays owned and is not replayed. An isolated idle control-image
+uncertain create stays owned and is not replayed. An isolated idle essential-image
 helper mounts it with no-copy, receives no Ceph credentials and has no network.
 
 Directory operations inspect exact name, driver, owner label, absence of driver

@@ -140,7 +140,7 @@ func TestRBDMirrorNamespaceProvisionUsesExplicitEmptyRemote(t *testing.T) {
 }
 
 // A mapping between differently named namespaces needs --remote-namespace in
-// the rbd of both setup clients and of both clusters' control images, whatever
+// the rbd of both setup clients and of both clusters' client toolkits, whatever
 // their release numbers say. The refusal names the side that lacks it.
 func TestRBDNamespaceMappingRefusalNamesTheSideThatLacksIt(t *testing.T) {
 	for name, tc := range map[string]struct {

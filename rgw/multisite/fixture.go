@@ -66,6 +66,9 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
 	}
+	if err := multicluster.RequireRoleImage(image, multicluster.RoleRGW, config.Source, config.Destination); err != nil {
+		return nil, fmt.Errorf("configure RGW multisite gateway image: %w", err)
+	}
 	sourceClientImage, err := rgwSetupImage(config.SetupImage, config.Source)
 	if err != nil {
 		return nil, err
