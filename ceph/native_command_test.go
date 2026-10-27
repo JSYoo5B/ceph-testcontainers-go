@@ -510,9 +510,7 @@ func nativeCluster() *Container {
 }
 
 func registered(c *Container) int {
-	c.nativeMu.Lock()
-	defer c.nativeMu.Unlock()
-	return len(c.nativeInvocations)
+	return c.nativeCmds.registered()
 }
 
 func TestNativeCommandRefusesMalformedCommandsBeforeRunning(t *testing.T) {
