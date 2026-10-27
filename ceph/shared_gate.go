@@ -241,6 +241,9 @@ var sharedHandlePolicies = map[string]sharedPolicy{
 	"Observer.MonitorBootstrapAddresses": sharedOpen,
 	"Observer.HealthDetails":             sharedOpen,
 	"Observer.FullRatios":                sharedOpen,
+	"Observer.PGInconsistencies":         sharedOpen,
+	"Observer.ObjectWatchers":            sharedOpen,
+	"Observer.ManagerMetrics":            sharedOpen,
 }
 
 // admitHandle refuses the handle operation op while a SharedCluster shares c,
