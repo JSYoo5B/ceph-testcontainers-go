@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "override",
-  "count": 7,
+  "count": 15,
   "entries": [
     {
       "current": "override.AddBlocklist",
@@ -34,6 +34,36 @@
       "decision": "baseline"
     },
     {
+      "current": "override.ConfigHandle",
+      "kind": "type",
+      "proposed": "override.ConfigHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.ConfigHandle.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ConfigHandle",
+      "proposed": "override.ConfigHandle.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.ConfigHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ConfigHandle",
+      "proposed": "override.ConfigHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.ConfigHandle.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ConfigHandle",
+      "proposed": "override.ConfigHandle.String",
+      "decision": "baseline"
+    },
+    {
       "current": "override.FullRatiosHandle",
       "kind": "type",
       "proposed": "override.FullRatiosHandle",
@@ -48,10 +78,38 @@
       "decision": "baseline"
     },
     {
+      "current": "override.MessengerPolicyHandle",
+      "kind": "type",
+      "proposed": "override.MessengerPolicyHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.MessengerPolicyHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*MessengerPolicyHandle",
+      "proposed": "override.MessengerPolicyHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.SetConfig",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) (*ConfigHandle, error)",
+      "proposed": "override.SetConfig",
+      "decision": "baseline"
+    },
+    {
       "current": "override.SetFullRatios",
       "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container, requested ceph.FullRatios) (*FullRatiosHandle, error)",
       "proposed": "override.SetFullRatios",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.SetMessengerPolicy",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, policy ceph.MessengerPolicy) (*MessengerPolicyHandle, error)",
+      "proposed": "override.SetMessengerPolicy",
       "decision": "baseline"
     }
   ]
