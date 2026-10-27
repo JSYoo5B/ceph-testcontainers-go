@@ -235,3 +235,14 @@ The role overhaul deliberately removes the former broad image accessor and adds
 `ClusterFacts` image member while retaining the three Observer queries merged
 on main. The removal/addition record is historical API accounting only; it
 provides no alias, compatibility mapping or retained runtime behavior.
+
+## 64-per-daemon-image-option
+
+The change adds the `ceph.DaemonOption` type with `ceph.WithDaemonImage`, a
+variadic parameter on `AddMonitor`, `AddManager`, `AddOSD` and
+`AddOSDWithConfig`, an `Image` accessor on the three daemon handles and on
+`DetachedOSD`, and a `Version` query on the MON, MGR and OSD handles. The
+option follows the `With...` idiom of the other options and is not an alias or
+a rename; no existing name, receiver or operation verb changed. `OSDConfig`
+was left as the CRUSH placement descriptor. The record lists the added
+rows as historical API accounting only.

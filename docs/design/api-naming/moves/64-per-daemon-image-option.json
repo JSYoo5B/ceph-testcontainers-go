@@ -1,0 +1,16 @@
+{
+  "schema": "ceph-api-move/v1",
+  "change": "64-per-daemon-image-option",
+  "review": "api-naming-audit.md",
+  "added": [
+    "ceph.DaemonOption",
+    "ceph.DetachedOSD.Image",
+    "ceph.ManagerContainer.Image",
+    "ceph.ManagerContainer.Version",
+    "ceph.MonitorContainer.Image",
+    "ceph.MonitorContainer.Version",
+    "ceph.OSDContainer.Image",
+    "ceph.OSDContainer.Version",
+    "ceph.WithDaemonImage"
+  ]
+}

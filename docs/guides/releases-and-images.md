@@ -239,10 +239,42 @@ u32 classifier in its preflight helper before it selects peers. Packets that a
 container receives, reordering, rate limits and packet inspection are not
 provided.
 
+## One daemon from another image
+
+`WithDaemonImage` starts one new MON, MGR or OSD from an image other than the
+cluster's essential image. It is an option of `AddMonitor`, `AddManager`,
+`AddOSD` and `AddOSDWithConfig`; see
+[Per-daemon images](../ceph.md#per-daemon-images) for the full contract.
+
+```golang
+osd, err := cluster.AddOSD(ctx, ceph.WithDaemonImage("registry.example/ceph:other"))
+// osd.Image() is "registry.example/ceph:other"; cluster.EssentialImage() is unchanged.
+release, err := osd.Version(ctx) // what the running daemon reports, such as "20.2.4"
+```
+
+Read this scope before relying on it:
+
+- It overrides one container. The cluster's images, `ClusterFacts` and the
+  other daemons are untouched, and a shared cluster refuses the call to its
+  tenants.
+- `CephVersion` is recorded once from the first MON and the CLI image. It does
+  not describe an overridden daemon: use the daemon handle's `Version`, which
+  reads the daemon's own admin socket and fails when the reply has no
+  recognizable version. `Image` reports the image the container was started
+  from, not its release.
+- A re-launched OSD keeps its image: `OSDContainer.Detach` and
+  `DetachedOSD.Reopen` start it from the image it ran from, and `Reopen` takes
+  no image option. MON and MGR containers are not recreated.
+- The release check of a separately started client container still compares
+  with `CephVersion` and is unchanged.
+- Nothing checks that the image exists, has the daemon binary, or is
+  compatible with the running cluster. The option is not a supported
+  mixed-version or upgrade path, and no native run of it exists yet.
+
 ## Related APIs
 
 - [ceph.md](../ceph.md): `DefaultImage`, `Run`, `CephVersion`, `EssentialImage`,
-  `ImageSet`, `WithImages`, the error categories.
+  `ImageSet`, `WithImages`, `WithDaemonImage`, the error categories.
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.
 - [cephfs.md](../cephfs.md): `WithMDSImage`.

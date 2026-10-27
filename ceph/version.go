@@ -13,7 +13,9 @@ var cephVersionPattern = regexp.MustCompile(`^ceph version (\d+)\.(\d+)\.(\d+)\S
 // CephVersion reports the release of the image that runs the first MON and
 // the fixture's Ceph CLI, such as "20.2.4". Run records it once from
 // "ceph --version" after the MON starts and fails if the output cannot be
-// parsed. Daemons started from other role images (cephfs, rgw) may run another release.
+// parsed. Daemons started from other role images (cephfs, rgw) may run another
+// release, and so may a MON, MGR or OSD that WithDaemonImage started from another
+// image: use the Version method of its handle for its own report.
 // The fixture uses it to choose commands that differ between releases, and
 // tests can use it to choose assertions for features that a release lacks.
 func (c *Container) CephVersion() string {

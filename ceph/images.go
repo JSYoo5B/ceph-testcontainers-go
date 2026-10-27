@@ -69,6 +69,8 @@ func WithImages(images ImageSet) Option {
 }
 
 // Images returns the effective role images, including aggregate selections.
+// They are the cluster's images: a daemon started with WithDaemonImage is not
+// reflected here; see the Image method of its handle.
 func (c *Container) Images() ImageSet {
 	if c == nil {
 		return ImageSet{}
@@ -179,7 +181,7 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 			version, parseErr := parseCephVersion(string(output))
 			if parseErr != nil {
 				err = parseErr
-			} else if version != c.CephVersion() {
+			} else if version != c.CephVersion() { // Unchanged: daemons with WithDaemonImage do not take part.
 				err = fmt.Errorf("client Ceph release %s differs from core %s", version, c.CephVersion())
 			}
 		}

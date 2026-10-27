@@ -11,7 +11,9 @@ import "errors"
 //
 // The values describe the recorded configuration and identity of the cluster.
 // They do not show that its resources still exist, are reachable or run, and
-// they are not a native observation.
+// they are not a native observation. Images and CephVersion describe the
+// cluster's own settings and first MON; a daemon started with WithDaemonImage
+// is not reflected (see the Image and Version methods of its handle).
 type ClusterFacts struct {
 	AddressFamily             AddressFamily
 	Images                    ImageSet

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 403,
+  "count": 412,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -331,7 +331,7 @@
     {
       "current": "ceph.Container.AddManager",
       "kind": "method",
-      "signature": "func(ctx context.Context, name string) (*ManagerContainer, error)",
+      "signature": "func(ctx context.Context, name string, opts ...DaemonOption) (*ManagerContainer, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.AddManager",
       "decision": "baseline"
@@ -339,7 +339,7 @@
     {
       "current": "ceph.Container.AddMonitor",
       "kind": "method",
-      "signature": "func(ctx context.Context, name string) (*MonitorContainer, error)",
+      "signature": "func(ctx context.Context, name string, opts ...DaemonOption) (*MonitorContainer, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.AddMonitor",
       "decision": "baseline"
@@ -347,7 +347,7 @@
     {
       "current": "ceph.Container.AddOSD",
       "kind": "method",
-      "signature": "func(ctx context.Context) (*OSDContainer, error)",
+      "signature": "func(ctx context.Context, opts ...DaemonOption) (*OSDContainer, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.AddOSD",
       "decision": "baseline"
@@ -355,7 +355,7 @@
     {
       "current": "ceph.Container.AddOSDWithConfig",
       "kind": "method",
-      "signature": "func(ctx context.Context, config OSDConfig) (*OSDContainer, error)",
+      "signature": "func(ctx context.Context, config OSDConfig, opts ...DaemonOption) (*OSDContainer, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.AddOSDWithConfig",
       "decision": "baseline"
@@ -1015,6 +1015,12 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.DaemonOption",
+      "kind": "type",
+      "proposed": "ceph.DaemonOption",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.DebugLevelApplied",
       "kind": "const",
       "proposed": "ceph.DebugLevelApplied",
@@ -1156,6 +1162,14 @@
       "signature": "func() int",
       "receiver": "*DetachedOSD",
       "proposed": "ceph.DetachedOSD.ID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD.Image",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*DetachedOSD",
+      "proposed": "ceph.DetachedOSD.Image",
       "decision": "baseline"
     },
     {
@@ -1490,6 +1504,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.ManagerContainer.Image",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*ManagerContainer",
+      "proposed": "ceph.ManagerContainer.Image",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.ManagerContainer.Remove",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
@@ -1503,6 +1525,14 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*ManagerContainer",
       "proposed": "ceph.ManagerContainer.RotateKey",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerContainer.Version",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*ManagerContainer",
+      "proposed": "ceph.ManagerContainer.Version",
       "decision": "baseline"
     },
     {
@@ -1640,11 +1670,27 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.MonitorContainer.Image",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*MonitorContainer",
+      "proposed": "ceph.MonitorContainer.Image",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.MonitorContainer.Remove",
       "kind": "method",
       "signature": "func(ctx context.Context) error",
       "receiver": "*MonitorContainer",
       "proposed": "ceph.MonitorContainer.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorContainer.Version",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*MonitorContainer",
+      "proposed": "ceph.MonitorContainer.Version",
       "decision": "baseline"
     },
     {
@@ -1808,6 +1854,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.OSDContainer.Image",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.Image",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.OSDContainer.Placement",
       "kind": "method",
       "signature": "func() OSDConfig",
@@ -1837,6 +1891,14 @@
       "signature": "func(ctx context.Context, in bool) error",
       "receiver": "*OSDContainer",
       "proposed": "ceph.OSDContainer.SetIn",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDContainer.Version",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.Version",
       "decision": "baseline"
     },
     {
@@ -2656,6 +2718,13 @@
       "kind": "function",
       "signature": "func(path string) Option",
       "proposed": "ceph.WithConfigFile",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithDaemonImage",
+      "kind": "function",
+      "signature": "func(image string) DaemonOption",
+      "proposed": "ceph.WithDaemonImage",
       "decision": "baseline"
     },
     {

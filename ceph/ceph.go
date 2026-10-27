@@ -115,6 +115,8 @@ type Container struct {
 	debugLevels debugLevelRegistry
 	// osdRunner replaces runContainer for OSD containers in tests.
 	osdRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
+	// daemonRunner replaces runContainer for AddMonitor and AddManager containers in tests.
+	daemonRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 	// osdVolumeDocker and osdVolumeRunner replace owned-volume allocation in tests.
 	osdVolumeDocker func(context.Context) (osdMemoryVolumeClient, error)
 	osdVolumeRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
@@ -142,6 +144,9 @@ type OSDContainer struct {
 	// detaching marks an OSD that OSDContainer.Detach fenced; detachRemoved marks
 	// one whose container it removed. Both keep the OSD owned for retry.
 	detaching, detachRemoved bool
+	// image is the image the container was started from; it never changes, and
+	// DetachedOSD.Reopen reuses it.
+	image string
 }
 
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
@@ -330,7 +335,9 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 }
 
 // EssentialImage returns the essential image that runs the MONs, MGRs, OSDs and
-// the control-plane CLI executor. It remains available after termination. The
+// the control-plane CLI executor, except a daemon that WithDaemonImage started
+// from another image (see the Image method of its handle). It remains
+// available after termination. The
 // essential image does not promise general toolkit, mirror, CephFS or RGW
 // capabilities. Use Images for the client, rbd-aux, cephfs and rgw roles.
 func (c *Container) EssentialImage() string {
@@ -547,24 +554,33 @@ func (c *Container) cephCLI(ctx context.Context, args ...string) ([]byte, error)
 // AddOSD registers, formats and starts a new OSD, then waits for it to be up/in.
 // Topology operations are serialized. An OSD returned with an error is tracked
 // for cleanup and may be inspected; no data is silently purged on failure.
-func (c *Container) AddOSD(ctx context.Context) (*OSDContainer, error) {
+// WithDaemonImage starts this one OSD from another image, which its recipe
+// keeps for DetachedOSD.Reopen.
+func (c *Container) AddOSD(ctx context.Context, opts ...DaemonOption) (*OSDContainer, error) {
 	if gateErr := c.sharedGate("AddOSD"); gateErr != nil {
 		return nil, gateErr
 	}
-	return c.AddOSDWithConfig(ctx, OSDConfig{})
+	return c.AddOSDWithConfig(ctx, OSDConfig{}, opts...)
 }
 
 // AddOSDWithConfig starts an OSD in an explicit logical CRUSH location.
 // Omitted host names resolve to osd-ID; logical hosts/racks are simulated
 // placement domains on the same Docker engine, not physical failure domains.
-func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OSDContainer, error) {
+// WithDaemonImage starts this one OSD from another image. Options are
+// validated before the topology lock is taken, before any OSD is registered
+// and before any container exists.
+func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig, opts ...DaemonOption) (*OSDContainer, error) {
 	if gateErr := c.sharedGate("AddOSDWithConfig"); gateErr != nil {
 		return nil, gateErr
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	config, err := normalizeOSDConfig(resolveOSDDefaults(c.settings, config))
+	daemon, err := resolveDaemonOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	config, err = normalizeOSDConfig(resolveOSDDefaults(c.settings, config))
 	if err != nil {
 		return nil, err
 	}
@@ -580,7 +596,7 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig) (*OS
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	launch, err := c.registerOSD(ctx, config, nil)
+	launch, err := c.registerOSD(ctx, config, c.daemonImage(daemon), nil)
 	if err != nil {
 		return launch.osd, err
 	}
@@ -607,7 +623,7 @@ type osdLaunch struct {
 // creates the OSD's host bucket in its location, so that the bucket IDs
 // follow the registration order although the daemons boot concurrently. The
 // returned launch.osd is nil when the error came before the registration.
-func (c *Container) registerOSD(ctx context.Context, config OSDConfig, buckets map[string]bool) (osdLaunch, error) {
+func (c *Container) registerOSD(ctx context.Context, config OSDConfig, image string, buckets map[string]bool) (osdLaunch, error) {
 	for _, osd := range c.osds {
 		if osd.purged || osd.purgeIssued {
 			return osdLaunch{}, fmt.Errorf("finish removing osd.%d before adding another OSD", osd.ID)
@@ -655,7 +671,7 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, buckets m
 	if config.Host == "" {
 		config.Host = fmt.Sprintf("osd-%d", id)
 	}
-	osd := &OSDContainer{ID: id, owner: c, nativeUUID: osdUUID, placement: config}
+	osd := &OSDContainer{ID: id, owner: c, nativeUUID: osdUUID, placement: config, image: image}
 	c.osds[id] = osd
 	launch := osdLaunch{osd: osd}
 	// A generated host name is known only after registration. Preserve the

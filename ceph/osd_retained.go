@@ -24,6 +24,7 @@ type DetachedOSD struct {
 	osdUUID   string
 	fsid      string
 	placement OSDConfig
+	image     string
 	store     osdStoreIdentity
 	reopened  bool
 	// staleCleanups holds socket cleanups whose end was unconfirmed. A
@@ -266,7 +267,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 	if err := store.matches(id, osd.nativeUUID, fsid); err != nil {
 		return nil, err
 	}
-	detached := &DetachedOSD{cluster: c, id: id, osdUUID: osd.nativeUUID, fsid: fsid, placement: osd.placement, store: store}
+	detached := &DetachedOSD{cluster: c, id: id, osdUUID: osd.nativeUUID, fsid: fsid, placement: osd.placement, image: osd.image, store: store}
 	if c.detachedOSDs == nil {
 		c.detachedOSDs = make(map[int]*DetachedOSD)
 	}
@@ -318,7 +319,7 @@ func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 	}
 	detached.reopened = true
 	delete(c.detachedOSDs, id)
-	osd := &OSDContainer{ID: id, owner: c, nativeUUID: detached.osdUUID, placement: detached.placement}
+	osd := &OSDContainer{ID: id, owner: c, nativeUUID: detached.osdUUID, placement: detached.placement, image: detached.image}
 	c.osds[id] = osd
 	launch := osdLaunch{osd: osd, recipe: c.newOSDLaunchRecipe(osd, []byte(detached.store.keyring))}
 	if err := c.startOSD(ctx, launch); err != nil {
