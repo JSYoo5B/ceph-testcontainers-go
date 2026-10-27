@@ -139,7 +139,7 @@ func TestCephFSPinRankFeasibilityRequiresOwnedActiveNativeRank(t *testing.T) {
 		case "outside topology":
 			rank = 2
 		case "foreign daemon":
-			fs.mdss = fs.mdss[:1]
+			fs.roster.daemons = fs.roster.daemons[:1]
 		case "recovering daemon":
 			control.native.Output["fs dump --format json"] = strings.Replace(control.native.Output["fs dump --format json"], `"name":"b","rank":1,"gid":102,"state":"up:active"`, `"name":"b","rank":1,"gid":102,"state":"up:replay"`, 1)
 		}
@@ -215,7 +215,7 @@ type cephFSPinTestControl struct {
 func cephFSPinFixture() (*Filesystem, *cephFSPinTestControl, *Subvolume, *SubvolumeGroup) {
 	fs, native := subvolumeFixture()
 	native.Output["fs dump --format json"] = `{"filesystems":[{"id":41,"mdsmap":{"fs_name":"fixture","max_mds":2,"metadata_pool":1,"data_pools":[2,3],"info":{"a":{"name":"a","rank":0,"gid":101,"state":"up:active"},"b":{"name":"b","rank":1,"gid":102,"state":"up:active"}}}}],"standbys":[]}`
-	fs.mdss = []*MDS{{ID: "a", FilesystemName: "fixture"}, {ID: "b", FilesystemName: "fixture"}}
+	fs.roster.daemons = []*MDS{{ID: "a", FilesystemName: "fixture"}, {ID: "b", FilesystemName: "fixture"}}
 	control := &cephFSPinTestControl{native: native, policies: map[string]*PinPolicy{
 		"/volumes/group":        {Path: "/volumes/group", Inode: 102, ExportRank: 0},
 		"/volumes/group/volume": {Path: "/volumes/group/volume", Inode: 103, ExportRank: 0},

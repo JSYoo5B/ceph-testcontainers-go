@@ -592,6 +592,155 @@ This section is the recommendation of the note, not a decision.
 5. Do not extract the override registries, add a filesystem observer, or create a
    topology handle until a measured need appears.
 
+## Step 1 as implemented: the MDS roster
+
+Inspected at `7266eb7` (main after #247); path:line citations in this section
+are at that revision unless they name a new file. The first slice of the
+extraction order moved `mdss`, `nextMDSIndex` and `mdsOpts` out of `Filesystem`
+into the unexported `mdsRoster` (`cephfs/mds_roster.go`), held as
+`Filesystem.roster`. The fields are now `mdsRoster.daemons`, `.nextIndex` and
+`.opts`. No exported name, signature, error text or catalogue row changed.
+
+### What was re-verified, and where main differs from the design
+
+Everything below was checked again in the source at `7266eb7` before the move.
+
+- Counts reproduce: 112 methods (40 exported, 72 unexported), 16 fields, 21
+  non-test files and 7,047 non-test lines in `cephfs`. A throwaway `go/ast`
+  program (not committed) also reproduced 17 methods that touch the roster or
+  cold-start fields directly and 3 that touch the handle-registry fields.
+- Not reproduced: the "82 of 112 methods touch no mutable state directly". The
+  same program finds only 3 methods that name `nativeIdentity` directly
+  (`beginSessionOperation`, `beginSubvolumeOperation`, `captureMDSIdentity`),
+  not 10. Counting `config` as mutable (`ScaleMDS` replaces it), 65 methods
+  touch no mutable field. Not counting it, 89 do. The 82 is between the two and
+  could not be derived, so this note does not rely on it. The direction of the
+  argument is unchanged: most methods do not own roster state.
+- Not reproduced: "21 non-test lines in 6 files plus 61 test lines". `mdss`,
+  `nextMDSIndex` and `mdsOpts` occur on 32 non-test lines in 6 files and on 64
+  test lines (41, 23 and none) of 7 test files. The `mdss` match in
+  `internal/integration/monitor_bootstrap_multicluster_integration_test.go` is an
+  unrelated local variable.
+- Line drift only: `ConfigTargets` is called at `ceph/topology.go:557` (the doc
+  cites `:547`). Its caller `monitorConfigTargets` documents that the topology
+  caller holds `c.mu` (`ceph/topology.go:518-519`), and `ConfigTargets` itself
+  takes no lock (`cephfs/entry.go:120-131`). That is unchanged.
+- Writers confirmed, all under `setupMu` and `c.mu`: `startMDSWithAdmission`
+  publishes (`cephfs/filesystem.go:522-532`) and consumes the name index
+  (`:488`, after `LockTopology` at `:446`); `retireMDS` removes (`:578-590`,
+  `servicehook.Lock`, a blocking acquisition); `removeFilesystem` removes
+  (`cephfs/removal.go:67`, locks at `:23` and `:27`); `removeStoppedMDS` removes
+  (`cephfs/stopped_mds.go:179`, locks at `:99` and `:103`). `mdsOpts` is written
+  only by the constructor (`cephfs/filesystem.go:143`).
+- `setupMu` reaches `startMDSWithAdmission` and `retireMDS` from the callers:
+  `startFilesystem` (`:119`, calls `startMDS` at `:213` and `captureColdMDS` at
+  `:205`), `ScaleMDS` (`:268`, calls `scaleColdMDS` at `:275`, `startMDS` at
+  `:368` and `retireMDS` at `:412`) and `addMDSReplacement`
+  (`cephfs/mds_replacement.go:64`, calls `startMDSWithAdmission` at `:160`).
+- Readers confirmed. Under `c.mu` they are `MDSs` (`servicehook.Lock`, `:229`),
+  `mdsSnapshot` (`LockTopology`, `:241`), the `startMDSWithAdmission` reads
+  (`:453-458`), `addMDSReplacement` (`cephfs/mds_replacement.go:108`), the owner
+  and cohort checks (`:211-266`, `cephfs/stopped_mds.go:188-205`, `:398`), and
+  the cold-start admission (`cephfs/no_initial_mds.go:67`, `:87`). Under
+  `setupMu` alone, between the two `c.mu` sections, are the two cold-start
+  reads of the name index (`cephfs/no_initial_mds.go:175`, `:196`); no writer can
+  run then because every writer holds `setupMu`.
+- Two things the design did not list: the cold-start admission (`:67`, `:87`)
+  also reads the roster length, and `removeFilesystem` iterates a clone of the
+  slice while it deletes from the live one (`cephfs/removal.go:54-67`).
+- Interactions kept as they are: the cold-start sequence (`captureColdMDS`,
+  `scaleColdMDS`, the `coldMDS.attempted` flag set before the auth command); the
+  `ScaleMDS` gap between its two `c.mu` sections (`:289`, `:315`); the partial
+  daemon that stays published once a real handle exists (`:518-533`); the
+  replacement cohort checks of length 1 and 2; the stopped-MDS removal that reads
+  `mdss[0].identity.container` after removing the daemon
+  (`cephfs/stopped_mds.go:179-182`); and `Remove`, which keeps `c.mu` across
+  Docker and native calls.
+
+### What moved and how it is protected
+
+| Field | Now | Writers | Readers |
+| --- | --- | --- | --- |
+| `mdss` | `mdsRoster.daemons` | `publish` from `startMDSWithAdmission`; `remove` from `retireMDS`, `removeFilesystem`, `removeStoppedMDS` | `members`, `snapshot`, `count`, `at` |
+| `nextMDSIndex` | `mdsRoster.nextIndex` | `reserveIndex` from `startMDSWithAdmission` | `issued`, `nextID` |
+| `mdsOpts` | `mdsRoster.opts` | `newMDSRoster` only (clone of the caller's slice) | `customizers` (a clone, as before) |
+
+Rules preserved, unchanged from the code they came from:
+
+- A reader holds `c.mu` (`servicehook.Lock` or `LockTopology`), or `setupMu` for
+  the two cold-start reads. A writer holds `setupMu` and `c.mu`. The roster
+  states this on the type (F3) and takes no lock.
+- Order is still `setupMu`, then `c.mu` (R1). `MDSs` still uses the blocking
+  lock and `mdsSnapshot` the context-aware one (R2), so `ScaleMDS` can still
+  call them under `setupMu`. No section changed which locks it holds across
+  I/O (R3). Owner checks still run after every unlocked gap (R6).
+- Creation order, descriptor identity and retained cleanup handles are kept:
+  `remove` matches by pointer, `snapshot` is a copy, and a partial real handle is
+  still published before the start error is judged (R7).
+- The embedded `Container` stays on `Filesystem`. Its four re-seat sites
+  (publication, `retireMDS`, `removeStoppedMDS`, `removeFilesystem`) were not
+  unified (F2). The two that pick the next first daemon now read the roster
+  through `at(0)` where they read `mdss[0]` before, and keep their different
+  sources (`MDS.Container` and `identity.container`).
+- `ConfigTargets` returns the same map and still relies on its caller for the
+  lock.
+
+### Why no new mutex
+
+The fields already had a guard that the roster does not change, and the guard is
+the pair of locks that all writers take. A lock inside the roster would either
+duplicate `c.mu`, which `MDSs` and `ConfigTargets` readers already take, or
+introduce a second order against `setupMu` and `c.mu` that `startMDSWithAdmission`
+(unlocked around auth and container start) and `removeFilesystem` (locked across
+I/O) would have to respect. The package keeps exactly three mutexes
+(`setupMu`, `snapshotScheduleMu`, the schedule lease mutex).
+
+### Guards, in `cephfs/mds_roster_test.go`
+
+- `TestMDSRosterFieldsAreOnlyReachedThroughItsMethods`: outside the type,
+  `Filesystem.roster` appears only as the receiver of a pinned method, a
+  `mdsRoster` literal appears only in `newMDSRoster`, and the `Filesystem`
+  literal takes its roster from that constructor.
+- `TestMDSRosterMethodsMakeOnlyTheirPinnedCalls`: the method set is pinned, each
+  method makes exactly its listed calls (no lock, no call into `Filesystem`),
+  and only the three writer methods assign a field.
+- `TestMDSRosterWritersAreTheFourPinnedFunctionsUnderBothLocks`: the writer
+  methods are called only by the four pinned functions, each after the cluster
+  mutex in the same function, and after `setupMu` unless the function is one
+  whose callers hold it.
+- `TestMDSRosterReadersHoldTheirLock`: every roster read follows a cluster-mutex
+  acquisition, or sits in a pinned "owner held" function (the checks documented
+  that way, `readStoppedMDSScope`, `ConfigTargets`) or a pinned setup-only
+  reader; every reference to such a function follows the lock it relies on.
+- `TestMDSRosterAddsNoMutex`: package `cephfs` declares three mutexes and the
+  roster none.
+- Behavior tests for order and descriptor identity, copies, name reservation, and
+  a `-race` run of the public readers against writers under the cluster lock.
+
+The guards read the source lexically. They do not follow a lock across an
+unlock or into a callee in another package. The existing tests
+(`TestCephFSContextMDSSnapshotPreservesOwnedDescriptors` and
+`TestStoppedMDSWholeClusterCleanupRetainsPartialAndAmbiguousHandles` among them)
+pass with only their field references changed.
+
+### The `config.Name` observation (F5)
+
+This slice does not touch `config`. The unlocked `fs.config.Name` reads of the
+snapshot-schedule methods and the whole-struct assignment in `ScaleMDS`
+(`cephfs/filesystem.go:326`) are exactly as before, and the lines in the moved
+paths that read `config` (for example `cephfs/mds_replacement.go:264` and
+`cephfs/no_initial_mds.go:175`) keep their lock and their order. No race was
+shown or claimed.
+
+### Not covered by this slice
+
+Steps 2 to 5: the shared admission, the decoder boundary, the ownership proofs,
+and public handles; the embedded `Container` and its re-seat sites; the
+`begin*Operation` family and the registry predicates; every lock and every
+exported method; `config` and F1, F5, F6. No Docker, no native Ceph and no native
+MDS scenario was run, so nothing here is native evidence. Native scale and
+stopped-MDS scenarios are for the owner to request on the exact head.
+
 ## Limits of this note
 
 - Source reading and a static parse of method declarations and receiver field

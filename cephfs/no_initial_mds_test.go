@@ -380,12 +380,12 @@ func TestNoInitialMDSFirstScaleCountsPreservePermission(t *testing.T) {
 	fs, n := coldMDSTestConstruct(t, false)
 	before := n.mutationCount()
 	for _, counts := range [][2]int{{0, 0}, {-1, 0}, {1, -1}, {2, 0}, {1, 1}, {256, 0}} {
-		if err := fs.ScaleMDS(t.Context(), counts[0], counts[1]); err == nil || n.mutationCount() != before || fs.coldMDS.attempted || fs.nextMDSIndex != 0 {
+		if err := fs.ScaleMDS(t.Context(), counts[0], counts[1]); err == nil || n.mutationCount() != before || fs.coldMDS.attempted || fs.roster.nextIndex != 0 {
 			t.Fatalf("unsupported first scale consumed or mutated: %v %v", counts, err)
 		}
 	}
 	n.fail = "auth get-or-create mds.cold-target-0 mon allow profile mds mgr allow profile mds osd allow rw tag cephfs *=* mds allow"
-	if err := fs.ScaleMDS(t.Context(), 1, 0); err == nil || !fs.coldMDS.attempted || fs.nextMDSIndex != 1 || n.mutationCount() != before+1 || strings.Contains(err.Error(), "never-log") {
+	if err := fs.ScaleMDS(t.Context(), 1, 0); err == nil || !fs.coldMDS.attempted || fs.roster.nextIndex != 1 || n.mutationCount() != before+1 || strings.Contains(err.Error(), "never-log") {
 		t.Fatalf("first native auth failure was retriable/leaked: %v", err)
 	}
 	before = n.mutationCount()
@@ -464,7 +464,7 @@ func TestNoInitialMDSRealAdmissionGatesAndCancellation(t *testing.T) {
 				case "control":
 					coldMDSTestGate(t, servicehook.TestState(c).ControlMutex.Lock, servicehook.TestState(c).ControlMutex.Unlock, operation)
 				}
-				if n.mutationCount() != before || len(n.calls) != beforeQueries || fs != nil && (fs.coldMDS.attempted || fs.nextMDSIndex != 0) {
+				if n.mutationCount() != before || len(n.calls) != beforeQueries || fs != nil && (fs.coldMDS.attempted || fs.roster.nextIndex != 0) {
 					t.Fatal("failed admission queried, mutated or consumed first permission")
 				}
 				assertCephFSContextAdmissionReleased(t, c)
@@ -546,13 +546,13 @@ func TestNoInitialMDSFirstPublicationAndOrdinaryScaling(t *testing.T) {
 	if err := coldMDSTestScaleWithService(t.Context(), fs, coldMDSTestService(t, fs, n, worker, nil, true)); err != nil {
 		t.Fatalf("first provision: %v", err)
 	}
-	if customizers != 1 || fs.Container != worker || len(fs.MDSs()) != 1 || fs.MDSs()[0].ID != "cold-target-0" || servicehook.Service(c, "mds.cold-target-0") != worker || !fs.coldMDS.attempted || fs.nativeIdentity != identity || fs.nextMDSIndex != 1 || !slices.Equal(n.target()["data_pools"].([]int64), beforeData) {
+	if customizers != 1 || fs.Container != worker || len(fs.MDSs()) != 1 || fs.MDSs()[0].ID != "cold-target-0" || servicehook.Service(c, "mds.cold-target-0") != worker || !fs.coldMDS.attempted || fs.nativeIdentity != identity || fs.roster.nextIndex != 1 || !slices.Equal(n.target()["data_pools"].([]int64), beforeData) {
 		t.Fatal("first native daemon did not retain original resources/publication/customizer")
 	}
 	if err := fs.ScaleMDS(t.Context(), 1, 0); err != nil {
 		t.Fatalf("initialized cold fixture did not enter ordinary scaling: %v", err)
 	}
-	if customizers != 1 || fs.Container != worker || fs.nextMDSIndex != 1 {
+	if customizers != 1 || fs.Container != worker || fs.roster.nextIndex != 1 {
 		t.Fatal("ordinary same-count scale launched replacement")
 	}
 	(*servicehook.TestState(c).OSDs) = nil
@@ -571,7 +571,7 @@ func TestNoInitialMDSPartialDaemonOwnershipAndNoImplicitRetry(t *testing.T) {
 				handle = worker
 			}
 			err := coldMDSTestScaleWithService(t.Context(), fs, coldMDSTestService(t, fs, n, handle, errors.New("never-log-this-service-secret"), false))
-			if err == nil || strings.Contains(err.Error(), "never-log") || !fs.coldMDS.attempted || fs.nextMDSIndex != 1 {
+			if err == nil || strings.Contains(err.Error(), "never-log") || !fs.coldMDS.attempted || fs.roster.nextIndex != 1 {
 				t.Fatalf("partial daemon failure consumed wrongly/leaked: %v", err)
 			}
 			if withHandle {
@@ -632,7 +632,7 @@ func TestNoInitialMDSSelectedControlAndLateAdmissionPreserveAuthority(t *testing
 			t.Error("foreign selected control started daemon")
 			return nil, nil
 		})
-		if err == nil || fs.coldMDS.attempted || fs.nextMDSIndex != 0 || n.mutationCount() != before {
+		if err == nil || fs.coldMDS.attempted || fs.roster.nextIndex != 0 || n.mutationCount() != before {
 			t.Fatalf("selected control guard failed: %v", err)
 		}
 	})
@@ -708,7 +708,7 @@ func TestNoInitialMDSOrdinaryStarterKeepsLegacyPartialError(t *testing.T) {
 	worker := &mdsScaleFixtureContainer{id: "legacy-partial"}
 	cause := errors.New("ordinary native service cause")
 	err := fs.startMDSWithService(t.Context(), coldMDSTestService(t, fs, n, worker, cause, false))
-	if !errors.Is(err, cause) || fs.nextMDSIndex != 1 || fs.Container != worker || len(fs.MDSs()) != 1 || servicehook.Service(fs.cluster, "mds.cold-target-0") != worker {
+	if !errors.Is(err, cause) || fs.roster.nextIndex != 1 || fs.Container != worker || len(fs.MDSs()) != 1 || servicehook.Service(fs.cluster, "mds.cold-target-0") != worker {
 		t.Fatalf("ordinary start contract changed under private service seam: %v", err)
 	}
 }
