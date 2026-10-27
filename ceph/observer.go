@@ -160,3 +160,51 @@ func (o *Observer) ManagerServices(ctx context.Context) (map[string]string, erro
 	}
 	return c.ManagerServices(ctx)
 }
+
+// The queries below resolve the control container or the captured bootstrap
+// identity themselves, with their own lock acquisition and fences, so they too
+// run the Container method of the same name on the resolved cluster.
+// QuorumStatus takes no topology lock and selects the control container for each
+// read; MonitorBootstrapAddresses, HealthDetails and FullRatios wait for the
+// topology lock under the caller's context. HealthDetails and FullRatios choose
+// one control handle under that lock and read the original FSID and keyring
+// presence under configMu, so a replacement control container is never used
+// mid-query; MonitorBootstrapAddresses compares the same original FSID.
+
+// QuorumStatus reads the monitor quorum and monmap; see Container.QuorumStatus.
+func (o *Observer) QuorumStatus(ctx context.Context) (QuorumStatus, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return QuorumStatus{}, err
+	}
+	return c.QuorumStatus(ctx)
+}
+
+// MonitorBootstrapAddresses returns the current monitor bootstrap addresses of
+// the original cluster; see Container.MonitorBootstrapAddresses.
+func (o *Observer) MonitorBootstrapAddresses(ctx context.Context) (string, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return "", err
+	}
+	return c.MonitorBootstrapAddresses(ctx)
+}
+
+// HealthDetails reads the health detail of the original cluster; see
+// Container.HealthDetails.
+func (o *Observer) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return HealthSnapshot{}, err
+	}
+	return c.HealthDetails(ctx)
+}
+
+// FullRatios reads the three global full thresholds; see Container.FullRatios.
+func (o *Observer) FullRatios(ctx context.Context) (FullRatioSnapshot, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return FullRatioSnapshot{}, err
+	}
+	return c.FullRatios(ctx)
+}

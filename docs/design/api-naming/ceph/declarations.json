@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 396,
+  "count": 400,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -2002,6 +2002,22 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Observer.FullRatios",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (FullRatioSnapshot, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.FullRatios",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.HealthDetails",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (HealthSnapshot, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.HealthDetails",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Observer.MGRModules",
       "kind": "method",
       "signature": "func(ctx context.Context) ([]MGRModuleState, error)",
@@ -2026,6 +2042,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Observer.MonitorBootstrapAddresses",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.MonitorBootstrapAddresses",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Observer.OSDFlags",
       "kind": "method",
       "signature": "func(ctx context.Context) ([]OSDFlag, error)",
@@ -2039,6 +2063,14 @@
       "signature": "func(ctx context.Context) ([]OSDState, error)",
       "receiver": "*Observer",
       "proposed": "ceph.Observer.OSDStates",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.QuorumStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (QuorumStatus, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.QuorumStatus",
       "decision": "baseline"
     },
     {
