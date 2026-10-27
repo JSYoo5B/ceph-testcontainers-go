@@ -24,7 +24,7 @@ extension: a separate netem helper image applies it, and only that helper gets
 | Packets that a container sends on one network arrive late | `fault.ApplyNetworkProfile` (opt-in netem helper) | Slow replies from that container, connections stay up | No | `NetworkProfileLease.Restore` |
 | A container sends on one network at a limited bandwidth | `fault.ApplyNetworkProfile` with `NetworkProfile.Rate` (opt-in netem helper) | Large transfers from that container progress at the limit, connections stay up | No | `NetworkProfileLease.Restore` |
 | Packets that a container sends arrive reordered, duplicated or corrupted | `fault.ApplyNetworkProfile` with `NetworkProfile.Reorder`, `Duplicate` or `Corrupt` (opt-in netem helper) | The receiver's TCP reorders, discards duplicates and drops corrupted segments for retransmission; connections stay up | No | `NetworkProfileLease.Restore` |
-| Replication between two clusters stops | `rbdmirror.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `multisite.Fixture.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
+| Replication between two clusters stops | `rbdmirror.Mirror.InterruptPeerLink`, `cephfsmirror.Mirror.InterruptPeerLink`, `multisite.Fixture.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
 | A daemon drops or delays messages from one kind of peer | `OverrideConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverrideHandle.Restore` |
 | An OSD runs a client's write after the client gave up | `OverrideConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverrideHandle.Restore` |
 | One client session is fenced | `TemporaryBlocklist` | The OSDs reject that session | Yes | `BlocklistOverride.Restore` |
@@ -779,7 +779,7 @@ clusters keep serving their local clients.
 | API | Endpoint removed | Kept |
 | --- | --- | --- |
 | `rbdmirror.Mirror.InterruptPeerLink(ctx, daemonName)` | The receiving `rbd-mirror` daemon's endpoint on the source cluster's public bridge | Its destination endpoint, pool leader election, peer and image policies |
-| `cephfs.Mirror.InterruptPeerLink(ctx, daemonName)` | The source `cephfs-mirror` daemon's endpoint on the destination cluster's public bridge | Source filesystem, MGR registration, directory and peer policies |
+| `cephfsmirror.Mirror.InterruptPeerLink(ctx, daemonName)` | The source `cephfs-mirror` daemon's endpoint on the destination cluster's public bridge | Source filesystem, MGR registration, directory and peer policies |
 | `multisite.Fixture.InterruptZoneLink(ctx, zoneName)` | The gateway's endpoint on the private multisite HTTP bridge | The local S3 endpoint, realm and period membership |
 
 The mirror path tests cut one path of a mirror daemon with
@@ -1311,7 +1311,8 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 - [rbd.md](../rbd.md): `ImageClients`.
 - [rbd-mirror.md](../rbd-mirror.md): `Mirror.InterruptPeerLink`.
 - [cephfs.md](../cephfs.md): `Filesystem.OverrideSessionTimeouts`,
-  `Filesystem.Sessions`, `Mirror.InterruptPeerLink`.
+  `Filesystem.Sessions`.
+- [cephfs-mirror.md](../cephfs-mirror.md): `Mirror.InterruptPeerLink`.
 - [rgw.md](../rgw.md): `Multisite.InterruptZoneLink`, `Multisite.ApplyZoneLinkProfile`.
 - [Host network and native clients](host-network.md): which faults are
   available in host mode.

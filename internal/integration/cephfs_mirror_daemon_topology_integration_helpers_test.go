@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -51,10 +52,10 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		}
 	}
 	directories := []string{"/daemon-a", "/daemon-b", "/daemon-c", "/daemon-d"}
-	checkpoint := func(name string) map[string]cephfs.MirrorSnapshot {
+	checkpoint := func(name string) map[string]cephfsmirror.Snapshot {
 		t.Helper()
 		multiClusterExecOutput(t, ctx, sourceClient, "python3", "/tmp/cephfs-mirror-daemons.py", sourceFS.FilesystemName, "checkpoint", name)
-		checkpoints := make(map[string]cephfs.MirrorSnapshot, len(directories))
+		checkpoints := make(map[string]cephfsmirror.Snapshot, len(directories))
 		for _, directory := range directories {
 			checkpoints[directory] = cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, "/tmp/cephfs-mirror-daemons.py", directory, name)
 		}
@@ -62,7 +63,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	}
 	initial := checkpoint("initial")
 	image := source.ControlImage()
-	mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", image), cephfs.MirrorConfig{
+	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", image), cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: directories, DaemonCount: 2,
@@ -108,7 +109,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	}
 	peerID := peers[0]
 	expected.PeerID = peerID
-	waitCheckpoints := func(checkpoints map[string]cephfs.MirrorSnapshot, owners map[string]string, stoppedMember string) {
+	waitCheckpoints := func(checkpoints map[string]cephfsmirror.Snapshot, owners map[string]string, stoppedMember string) {
 		t.Helper()
 		for _, directory := range directories {
 			status := cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, "/tmp/cephfs-mirror-daemons.py", expected, directory, checkpoints[directory])

@@ -211,3 +211,19 @@ alias remains. The reviewed mapping is in
 [the upgrade guide](../guides/upgrading-rbd-mirror-package.md). The receipt was
 refreshed for this deliberate move only. CephFS mirror names are not yet part
 of it.
+
+## CephFS mirror package move
+
+The 50 exported declarations and 94 members of the CephFS mirror family moved
+from `cephfs` to the service-specific package `cephfs/mirror`; `cephfs` keeps
+105 declarations (155 before) and 153 members (247 before), so the two
+packages together equal the previous counts one to one. The catalogues label
+the package by its directory, `cephfs/mirror`. As for the RBD move, the repeated
+`Mirror` prefix was dropped from the types and the `RunMirror` functions
+(`Run`, `RunWithImages`, `Config`, `Daemon`, `DirectoryAddition`,
+`DirectoryRemoval`, `PeerRemoval`, `Snapshot`, `DirectoryStatus` and the status
+types), while `Mirror` and every method name, receiver and signature shape were
+retained. No operation verb, handle or undo name changed and no alias remains.
+The reviewed mapping is in
+[the upgrade guide](../guides/upgrading-cephfs-mirror-package.md). The receipts
+of `cephfs` and `cephfs/mirror` were approved separately for this move only.

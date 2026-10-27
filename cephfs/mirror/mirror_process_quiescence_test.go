@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -132,7 +132,7 @@ func TestCephFSOriginalProcessPositiveBindingAndCandidateOwnership(t *testing.T)
 			case "cancel":
 				cancel()
 			}
-			d := &MirrorDaemon{}
+			d := &Daemon{}
 			b := bindOriginalProcessCandidate(ctx, d, h, candidate, factoryErr)
 			st := d.ProcessObserverBindingStatus()
 			if name == "bound" {
@@ -635,7 +635,7 @@ func TestCephFSOriginalProcessWatcherNumericIdentityAndFinalEvidence(t *testing.
 					}
 				}
 			case "foreignMember":
-				m.daemons = append(m.daemons, &MirrorDaemon{DaemonName: "foreign"})
+				m.daemons = append(m.daemons, &Daemon{DaemonName: "foreign"})
 			case "FSID":
 				r.readClusters = func(context.Context) ([2]string, error) {
 					return [2]string{peerRemovalDestinationFSID, peerRemovalSourceFSID}, nil

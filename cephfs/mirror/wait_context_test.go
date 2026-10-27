@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -189,12 +189,12 @@ func TestMultiClusterWaitAdmittedReportReplacesOlderPartial(t *testing.T) {
 			var err error
 			var result multiClusterWaitRemovalResult
 			if kind == "peer" {
-				status, cause := waitCephFSPeerDrainWithAdmission(ctx, time.Millisecond, func(context.Context) (MirrorPeerRemovalStatus, bool, error) {
+				status, cause := waitCephFSPeerDrainWithAdmission(ctx, time.Millisecond, func(context.Context) (PeerRemovalStatus, bool, error) {
 					calls++
-					current := MirrorPeerRemovalStatus{PeerID: "original", Daemons: map[string]MirrorPeerRemovalDaemonStatus{"a": {State: "unobserved"}}}
+					current := PeerRemovalStatus{PeerID: "original", Daemons: map[string]PeerRemovalDaemonStatus{"a": {State: "unobserved"}}}
 					if calls == 1 {
 						current.PolicyRemoved = true
-						current.Daemons["a"] = MirrorPeerRemovalDaemonStatus{State: "unavailable", Problem: "old native problem"}
+						current.Daemons["a"] = PeerRemovalDaemonStatus{State: "unavailable", Problem: "old native problem"}
 						return current, true, cephFSObserveQuery("native query", errPeerRemovalTransport)
 					}
 					cancel()
@@ -205,12 +205,12 @@ func TestMultiClusterWaitAdmittedReportReplacesOlderPartial(t *testing.T) {
 				err = cause
 				result = multiClusterWaitRemovalResult{status.Daemons["a"].Problem, status.Daemons["a"].State, status.PolicyRemoved, status.Drained, cause}
 			} else {
-				status, cause := waitCephFSDirectoryReleasedWithAdmission(ctx, time.Millisecond, func(context.Context) (MirrorDirectoryRemovalStatus, bool, error) {
+				status, cause := waitCephFSDirectoryReleasedWithAdmission(ctx, time.Millisecond, func(context.Context) (DirectoryRemovalStatus, bool, error) {
 					calls++
-					current := MirrorDirectoryRemovalStatus{Directory: "/owned", Daemons: map[string]MirrorDirectoryRemovalDaemonStatus{"a": {State: "unobserved"}}}
+					current := DirectoryRemovalStatus{Directory: "/owned", Daemons: map[string]DirectoryRemovalDaemonStatus{"a": {State: "unobserved"}}}
 					if calls == 1 {
 						current.PolicyRemoved = true
-						current.Daemons["a"] = MirrorDirectoryRemovalDaemonStatus{State: "unavailable", Problem: "old native problem"}
+						current.Daemons["a"] = DirectoryRemovalDaemonStatus{State: "unavailable", Problem: "old native problem"}
 						return current, true, cephFSObserveQuery("native query", errPeerRemovalTransport)
 					}
 					cancel()
@@ -234,16 +234,16 @@ func TestMultiClusterWaitLegacyRetainsNativeCauseAcrossContextOnlyAttempt(t *tes
 			native := errors.New("private-native-query-marker")
 			calls := 0
 			var err error
-			previous := MirrorDirectoryStatus{SourceFilesystemID: 1, DestinationFilesystemID: 2, PeerID: cephFSObserverDraftPeer, Directory: "/owned", State: "syncing"}
-			var status MirrorDirectoryStatus
-			status, err = waitCephFSObservedDirectory(ctx, time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
+			previous := DirectoryStatus{SourceFilesystemID: 1, DestinationFilesystemID: 2, PeerID: cephFSObserverDraftPeer, Directory: "/owned", State: "syncing"}
+			var status DirectoryStatus
+			status, err = waitCephFSObservedDirectory(ctx, time.Millisecond, func(context.Context) (DirectoryStatus, error) {
 				calls++
 				if calls == 1 {
 					return previous, cephFSObserveQuery("read directory", native)
 				}
 				cancel()
-				return MirrorDirectoryStatus{}, context.Canceled
-			}, func(s MirrorDirectoryStatus) bool { return s.Ready })
+				return DirectoryStatus{}, context.Canceled
+			}, func(s DirectoryStatus) bool { return s.Ready })
 			if status.SourceFilesystemID != previous.SourceFilesystemID || status.State != previous.State || status.Ready {
 				t.Fatalf("directory report changed: %+v", status)
 			}
@@ -285,14 +285,14 @@ func TestMultiClusterWaitLegacyUsesLatestIndependentCause(t *testing.T) {
 					return true, errors.Join(latest, context.Canceled)
 				}
 				var err error
-				_, err = waitCephFSObservedDirectory(ctx, time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
+				_, err = waitCephFSObservedDirectory(ctx, time.Millisecond, func(context.Context) (DirectoryStatus, error) {
 					present, cause := observe()
-					status := MirrorDirectoryStatus{}
+					status := DirectoryStatus{}
 					if present {
 						status.SourceFilesystemID, status.DestinationFilesystemID, status.PeerID, status.Directory = 1, 2, "original", "/owned"
 					}
 					return status, cephFSObserveQuery("native directory query", cause)
-				}, func(s MirrorDirectoryStatus) bool { return s.Ready })
+				}, func(s DirectoryStatus) bool { return s.Ready })
 
 				wantCalls := 2
 				want := latest

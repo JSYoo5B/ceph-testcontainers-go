@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"github.com/containerd/errdefs"
 )
 
-func beginPeerAcknowledgmentFixture(t *testing.T, lostReply bool) (*MirrorPeerRemoval, *Mirror, *peerRemovalControlFake, *peerRemovalControlFake, []*processRawFake) {
+func beginPeerAcknowledgmentFixture(t *testing.T, lostReply bool) (*PeerRemoval, *Mirror, *peerRemovalControlFake, *peerRemovalControlFake, []*processRawFake) {
 	t.Helper()
 	m, s, d, a, b := newPeerRemovalFixture()
 	raws := enableProcessDraftBindings(m, a, b)
@@ -28,7 +28,7 @@ func beginPeerAcknowledgmentFixture(t *testing.T, lostReply bool) (*MirrorPeerRe
 	return r, m, s, d, raws
 }
 
-func beginDirectoryAcknowledgmentFixture(t *testing.T, lostReply bool) (*MirrorDirectoryRemoval, *Mirror, *directoryRemovalControlFake, *peerRemovalControlFake, []*processRawFake) {
+func beginDirectoryAcknowledgmentFixture(t *testing.T, lostReply bool) (*DirectoryRemoval, *Mirror, *directoryRemovalControlFake, *peerRemovalControlFake, []*processRawFake) {
 	t.Helper()
 	m, s, d, a, b := newDirectoryRemovalFixture()
 	raws := enableProcessDraftBindings(m, a.peerRemovalDaemonFake, b.peerRemovalDaemonFake)
@@ -432,7 +432,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentLaterMembershipAndPeerGeneration(t
 		t.Fatal("old legacy intent adopted new peer")
 	}
 	// A new explicit receipt's pending state belongs to that receipt, not fixture.
-	m.peerRemoval = &MirrorPeerRemoval{mirror: m, peerID: peerRemovalNewPeer, generation: m.peerGeneration}
+	m.peerRemoval = &PeerRemoval{mirror: m, peerID: peerRemovalNewPeer, generation: m.peerGeneration}
 	if m.guardPeerRemovalOverlap() == nil {
 		t.Fatal("new receipt inherited historical acknowledgment")
 	}
@@ -468,8 +468,8 @@ func TestCephFSProcessQuiescenceAcknowledgmentFailedFreshRepeatKeepsHistoricalDe
 }
 
 func TestCephFSProcessQuiescenceAcknowledgmentNilGracefulAndCanceled(t *testing.T) {
-	var peer *MirrorPeerRemoval
-	var dir *MirrorDirectoryRemoval
+	var peer *PeerRemoval
+	var dir *DirectoryRemoval
 	if st, err := peer.AcknowledgeProcessQuiescence(t.Context()); st.Acknowledged || !errors.Is(err, errCephFSObservationGuard) {
 		t.Fatal("nil peer admitted acknowledgment")
 	}
@@ -557,7 +557,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentFinalProofRetainsFixtureGate(t *te
 		}
 	}
 	type acknowledgmentResult struct {
-		status MirrorProcessQuiescenceAcknowledgment
+		status ProcessQuiescenceAcknowledgment
 		err    error
 	}
 	done := make(chan acknowledgmentResult, 1)

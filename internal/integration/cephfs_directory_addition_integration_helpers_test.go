@@ -17,6 +17,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -59,12 +60,12 @@ func testCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 	}
-	checkpoint := func(directory, name string) cephfs.MirrorSnapshot {
+	checkpoint := func(directory, name string) cephfsmirror.Snapshot {
 		t.Helper()
 		multiClusterExecOutput(t, ctx, sourceClient, "python3", script, sourceFS.FilesystemName, "checkpoint", directory, name)
 		return cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, directory, name)
 	}
-	verify := func(directory string, snapshot cephfs.MirrorSnapshot, stage string) {
+	verify := func(directory string, snapshot cephfsmirror.Snapshot, stage string) {
 		t.Helper()
 		for _, role := range []string{"source", "destination"} {
 			client, filesystem := sourceClient, sourceFS.FilesystemName
@@ -80,7 +81,7 @@ func testCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	seedCheckpoint := checkpoint(seed, "seed-before-zero-inventory")
 	const site = "directory-addition-target"
 	var customizers atomic.Int32
-	mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{
+	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfsmirror.Config{
 		Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		DestinationSite: site, Directories: []string{seed}, DaemonCount: 1,
 	}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
@@ -301,14 +302,14 @@ func testCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	cephFSDirectoryAdditionLog(t, "unapplied-fresh-retry", status, counter, mirror, policy)
 }
 
-func cephFSDirectoryAdditionAssertStatus(t *testing.T, status cephfs.MirrorDirectoryAdditionStatus, expected cephfs.MirrorDirectoryStatus, directory string, present, registered bool) {
+func cephFSDirectoryAdditionAssertStatus(t *testing.T, status cephfsmirror.DirectoryAdditionStatus, expected cephfsmirror.DirectoryStatus, directory string, present, registered bool) {
 	t.Helper()
 	if status.Directory != directory || status.PeerID != expected.PeerID || status.SourceFilesystem != expected.SourceFilesystem || status.DestinationFilesystem != expected.DestinationFilesystem || status.SourceFilesystemID != expected.SourceFilesystemID || status.DestinationFilesystemID != expected.DestinationFilesystemID || status.PolicyPresent != present || status.Registered != registered {
 		t.Fatalf("retained directory addition changed original identity or state: %+v", status)
 	}
 }
 
-func cephFSDirectoryAdditionAssertPendingGates(t *testing.T, ctx context.Context, mirror *cephfs.Mirror, counter *cephFSDirectoryAdditionCommandCounter, directory, peer string) {
+func cephFSDirectoryAdditionAssertPendingGates(t *testing.T, ctx context.Context, mirror *cephfsmirror.Mirror, counter *cephFSDirectoryAdditionCommandCounter, directory, peer string) {
 	t.Helper()
 	ops := []struct {
 		name string
@@ -338,7 +339,7 @@ func cephFSDirectoryAdditionAssertPendingGates(t *testing.T, ctx context.Context
 	}
 }
 
-func cephFSDirectoryAdditionReconcileRemoval(t *testing.T, ctx context.Context, mirror *cephfs.Mirror, directory string, receipt *cephfs.MirrorDirectoryRemoval, counter *cephFSDirectoryAdditionCommandCounter) {
+func cephFSDirectoryAdditionReconcileRemoval(t *testing.T, ctx context.Context, mirror *cephfsmirror.Mirror, directory string, receipt *cephfsmirror.DirectoryRemoval, counter *cephFSDirectoryAdditionCommandCounter) {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -363,7 +364,7 @@ func cephFSDirectoryAdditionReconcileRemoval(t *testing.T, ctx context.Context, 
 	}
 }
 
-func cephFSDirectoryAdditionReconcile(t *testing.T, ctx context.Context, mirror *cephfs.Mirror, directory string, receipt *cephfs.MirrorDirectoryAddition) {
+func cephFSDirectoryAdditionReconcile(t *testing.T, ctx context.Context, mirror *cephfsmirror.Mirror, directory string, receipt *cephfsmirror.DirectoryAddition) {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -595,11 +596,11 @@ func cephFSDirectoryAdditionPathCount(paths []string, selected string) int {
 	return count
 }
 
-func cephFSDirectoryAdditionLog(t *testing.T, stage string, status cephfs.MirrorDirectoryAdditionStatus, c *cephFSDirectoryAdditionCommandCounter, mirror *cephfs.Mirror, policy cephFSOriginalProcessPolicy) {
+func cephFSDirectoryAdditionLog(t *testing.T, stage string, status cephfsmirror.DirectoryAdditionStatus, c *cephFSDirectoryAdditionCommandCounter, mirror *cephfsmirror.Mirror, policy cephFSOriginalProcessPolicy) {
 	t.Helper()
 	data, err := json.Marshal(struct {
 		Case, Stage                                                                                                                            string
-		Status                                                                                                                                 cephfs.MirrorDirectoryAdditionStatus
+		Status                                                                                                                                 cephfsmirror.DirectoryAdditionStatus
 		OwnedDirectories                                                                                                                       []string
 		OwnedDaemons                                                                                                                           int
 		AddedAttempts, AddedDispatches, AppliedLosses, UnappliedAttempts, UnappliedDispatches, UnappliedFaults, RemoveDispatches, RemoveLosses int32

@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"bytes"
@@ -13,31 +13,31 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 )
 
-// MirrorDirectoryRemoval retains an explicit path removal and its original
+// DirectoryRemoval retains an explicit path removal and its original
 // live daemon/peer cohort. It owns no cluster, container, directory or cleanup.
 // A non-nil receipt returned with an error retains an uncertain native request;
 // retry BeginDirectoryRemoval for the same path with a fresh context.
-type MirrorDirectoryRemoval struct {
-	original                                   *MirrorPeerRemoval
+type DirectoryRemoval struct {
+	original                                   *PeerRemoval
 	directory, ownerID                         string
 	generation                                 uint64
 	requestAcknowledged, completed, superseded bool
 	processQuiescenceAcknowledged              bool
 }
 
-// MirrorDirectoryRemovalStatus observes the original path registration.
+// DirectoryRemovalStatus observes the original path registration.
 // Released proves every original replayer has no registered sync cycle for the
 // directory in its original normal session. It does not establish worker thread
 // exit, successful remote unlock, checkpoint completion or unchanged metadata.
-type MirrorDirectoryRemovalStatus struct {
+type DirectoryRemovalStatus struct {
 	Directory, PeerID                           string
 	SourceFilesystem, DestinationFilesystem     string
 	SourceFilesystemID, DestinationFilesystemID int
 	PolicyRemoved, Released                     bool
-	Daemons                                     map[string]MirrorDirectoryRemovalDaemonStatus
+	Daemons                                     map[string]DirectoryRemovalDaemonStatus
 }
 
-type MirrorDirectoryRemovalDaemonStatus struct {
+type DirectoryRemovalDaemonStatus struct {
 	ContainerID, InstanceID string
 	State, Problem          string
 }
@@ -49,14 +49,14 @@ type MirrorDirectoryRemovalDaemonStatus struct {
 // This first version requires the same process/session throughout observation;
 // stopping, restarting or removing the cohort can prevent a release proof.
 // External policy, filesystem and direct container writers must not race it.
-func (mirror *Mirror) BeginDirectoryRemoval(ctx context.Context, directory string) (*MirrorDirectoryRemoval, error) {
+func (mirror *Mirror) BeginDirectoryRemoval(ctx context.Context, directory string) (*DirectoryRemoval, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory removal fixture is unavailable")
 	}
 	return mirror.beginDirectoryRemoval(ctx, directory, mirror.peerRemovalClusterIdentities)
 }
 
-func (mirror *Mirror) beginDirectoryRemoval(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*MirrorDirectoryRemoval, error) {
+func (mirror *Mirror) beginDirectoryRemoval(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*DirectoryRemoval, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory removal fixture is unavailable")
 	}
@@ -101,11 +101,11 @@ func (mirror *Mirror) beginDirectoryRemoval(ctx context.Context, directory strin
 	if !validCephFSRemovalClusters(clusters) {
 		return nil, cephFSObserveGuard("CephFS directory removal original clusters are unavailable or equal")
 	}
-	original := &MirrorPeerRemoval{mirror: mirror, source: mirror.source, destination: mirror.destination,
+	original := &PeerRemoval{mirror: mirror, source: mirror.source, destination: mirror.destination,
 		sourceFilesystem: mirror.SourceFilesystem, destinationFilesystem: mirror.DestinationFilesystem, sourceClient: mirror.SourceClientEntity, metadataPool: mirror.metadataPool,
 		sourceID: mirror.filesystemID, destinationID: mirror.destinationFilesystemID, sourceMetadata: mirror.metadataPoolID, destinationMetadata: mirror.destinationMetadataPoolID,
 		peerID: mirror.peerID, peer: cephFSPeerIdentity{mirror.DestinationClientEntity, mirror.destinationSite, mirror.DestinationFilesystem}, generation: mirror.peerGeneration, clusters: clusters, readClusters: readClusters}
-	r := &MirrorDirectoryRemoval{original: original, directory: directory, generation: mirror.directoryGenerations[directory]}
+	r := &DirectoryRemoval{original: original, directory: directory, generation: mirror.directoryGenerations[directory]}
 	if err := r.peerPolicy(ctx); err != nil {
 		return nil, err
 	}
@@ -173,12 +173,12 @@ func (mirror *Mirror) guardDirectoryRemovalOverlap() error {
 
 // checkHandle is called only under mirror.mu. This composition reuses the peer
 // receipt's attestation/session parsers, never its peer teardown completion.
-func (r *MirrorDirectoryRemoval) checkHandle() error {
+func (r *DirectoryRemoval) checkHandle() error {
 	return r.checkDirectoryRemovalHandle(false)
 }
 
 // allowRetired belongs only to the separate original-process observation.
-func (r *MirrorDirectoryRemoval) checkDirectoryRemovalHandle(allowRetired bool) error {
+func (r *DirectoryRemoval) checkDirectoryRemovalHandle(allowRetired bool) error {
 	if r == nil || r.original == nil || r.original.mirror == nil || r.original.source == nil || r.original.destination == nil || r.original.readClusters == nil || len(r.original.cohort) == 0 {
 		return cephFSObserveGuard("CephFS directory removal original identity is unavailable")
 	}
@@ -192,7 +192,7 @@ func (r *MirrorDirectoryRemoval) checkDirectoryRemovalHandle(allowRetired bool) 
 	if !allowRetired && len(m.daemons) != len(o.cohort) {
 		return cephFSObserveGuard("CephFS directory removal original owned cohort changed")
 	}
-	seen := make(map[*MirrorDaemon]bool)
+	seen := make(map[*Daemon]bool)
 	for _, daemon := range m.daemons {
 		seen[daemon] = true
 	}
@@ -204,7 +204,7 @@ func (r *MirrorDirectoryRemoval) checkDirectoryRemovalHandle(allowRetired bool) 
 	return nil
 }
 
-func (r *MirrorDirectoryRemoval) peerPolicy(ctx context.Context) error {
+func (r *DirectoryRemoval) peerPolicy(ctx context.Context) error {
 	present, fsPresent, err := r.original.policy(ctx)
 	if err != nil {
 		return err
@@ -215,7 +215,7 @@ func (r *MirrorDirectoryRemoval) peerPolicy(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (r *MirrorDirectoryRemoval) policy(ctx context.Context) (bool, error) {
+func (r *DirectoryRemoval) policy(ctx context.Context) (bool, error) {
 	data, err := r.original.source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", r.original.sourceFilesystem)
 	if err != nil {
 		return false, cephFSObserveQuery("read original CephFS directory removal policy", err)
@@ -244,7 +244,7 @@ func decodeCephFSDirectoryPolicy(data []byte) (map[string]bool, error) {
 	return seen, nil
 }
 
-func (r *MirrorDirectoryRemoval) forgetDesiredPolicy() {
+func (r *DirectoryRemoval) forgetDesiredPolicy() {
 	m := r.original.mirror
 	m.Directories = slices.DeleteFunc(m.Directories, func(path string) bool { return path == r.directory })
 	delete(m.ownedDirectories, r.directory)
@@ -254,7 +254,7 @@ func (r *MirrorDirectoryRemoval) forgetDesiredPolicy() {
 // Called under mirror.mu. Only the exact retained original path is retried.
 // Native MGR serializes remove/purging. An uncertain transport may cause more
 // than one CLI attempt; no exactly-once invocation or error-text parsing is used.
-func (r *MirrorDirectoryRemoval) resume(ctx context.Context) error {
+func (r *DirectoryRemoval) resume(ctx context.Context) error {
 	if err := r.checkHandle(); err != nil {
 		return err
 	}
@@ -317,7 +317,7 @@ func (r *MirrorDirectoryRemoval) resume(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (r *MirrorDirectoryRemoval) confirmCohort(ctx context.Context, requireOwnerPath bool) error {
+func (r *DirectoryRemoval) confirmCohort(ctx context.Context, requireOwnerPath bool) error {
 	watchers, err := r.original.watchers(ctx)
 	if err != nil {
 		return err
@@ -355,15 +355,15 @@ func (r *MirrorDirectoryRemoval) confirmCohort(ctx context.Context, requireOwner
 	return errors.Join(r.original.checkWatcherCohort(after), ctx.Err())
 }
 
-func (r *MirrorDirectoryRemoval) initialStatus() MirrorDirectoryRemovalStatus {
-	result := MirrorDirectoryRemovalStatus{}
+func (r *DirectoryRemoval) initialStatus() DirectoryRemovalStatus {
+	result := DirectoryRemovalStatus{}
 	if r == nil || r.original == nil {
 		return result
 	}
 	o := r.original
-	result = MirrorDirectoryRemovalStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.sourceFilesystem, DestinationFilesystem: o.destinationFilesystem, SourceFilesystemID: o.sourceID, DestinationFilesystemID: o.destinationID, Daemons: make(map[string]MirrorDirectoryRemovalDaemonStatus)}
+	result = DirectoryRemovalStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.sourceFilesystem, DestinationFilesystem: o.destinationFilesystem, SourceFilesystemID: o.sourceID, DestinationFilesystemID: o.destinationID, Daemons: make(map[string]DirectoryRemovalDaemonStatus)}
 	for _, w := range o.cohort {
-		result.Daemons[w.name] = MirrorDirectoryRemovalDaemonStatus{ContainerID: w.containerID, InstanceID: w.instanceID, State: "unobserved"}
+		result.Daemons[w.name] = DirectoryRemovalDaemonStatus{ContainerID: w.containerID, InstanceID: w.instanceID, State: "unobserved"}
 	}
 	return result
 }
@@ -373,13 +373,13 @@ func (r *MirrorDirectoryRemoval) initialStatus() MirrorDirectoryRemovalStatus {
 // whole-map path stats observations. Schema/identity changes permanently guard;
 // native query failures remain retryable. Common attestation conservatively
 // guards non-context failures while retaining the intent for fresh-context retry.
-func (r *MirrorDirectoryRemoval) Status(ctx context.Context) (MirrorDirectoryRemovalStatus, error) {
+func (r *DirectoryRemoval) Status(ctx context.Context) (DirectoryRemovalStatus, error) {
 	return r.statusWithAdmission(ctx, nil)
 }
 
 // Admission is private observation metadata, not a public proof field. A fresh
 // admitted policy or daemon observation must never be replaced by stale data.
-func (r *MirrorDirectoryRemoval) statusWithAdmission(ctx context.Context, admitted *bool) (MirrorDirectoryRemovalStatus, error) {
+func (r *DirectoryRemoval) statusWithAdmission(ctx context.Context, admitted *bool) (DirectoryRemovalStatus, error) {
 	result := r.initialStatus()
 	if r == nil || r.original == nil || r.original.mirror == nil {
 		return result, cephFSObserveGuard("CephFS directory removal handle is unavailable")
@@ -479,18 +479,18 @@ func (r *MirrorDirectoryRemoval) statusWithAdmission(ctx context.Context, admitt
 // WaitReleased drops fixture/member locks after each bounded observation and
 // between polls. Deadline/cancel returns the last partial report, Released=false,
 // preserving both the caller cause and last native observation error.
-func (r *MirrorDirectoryRemoval) WaitReleased(ctx context.Context) (MirrorDirectoryRemovalStatus, error) {
+func (r *DirectoryRemoval) WaitReleased(ctx context.Context) (DirectoryRemovalStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	return waitCephFSDirectoryReleasedWithAdmission(ctx, 500*time.Millisecond, func(attempt context.Context) (MirrorDirectoryRemovalStatus, bool, error) {
+	return waitCephFSDirectoryReleasedWithAdmission(ctx, 500*time.Millisecond, func(attempt context.Context) (DirectoryRemovalStatus, bool, error) {
 		admitted := false
 		status, err := r.statusWithAdmission(attempt, &admitted)
 		return status, admitted, err
 	})
 }
 
-func waitCephFSDirectoryReleasedWithAdmission(ctx context.Context, interval time.Duration, observe func(context.Context) (MirrorDirectoryRemovalStatus, bool, error)) (MirrorDirectoryRemovalStatus, error) {
-	var last MirrorDirectoryRemovalStatus
+func waitCephFSDirectoryReleasedWithAdmission(ctx context.Context, interval time.Duration, observe func(context.Context) (DirectoryRemovalStatus, bool, error)) (DirectoryRemovalStatus, error) {
+	var last DirectoryRemovalStatus
 	var lastError error
 	var haveObservation bool
 	for {
@@ -528,7 +528,7 @@ func waitCephFSDirectoryReleasedWithAdmission(ctx context.Context, interval time
 	}
 }
 
-func (r *MirrorDirectoryRemoval) observeDaemon(ctx context.Context, w cephFSPeerRemovalWitness, watchers map[string]string) (string, error) {
+func (r *DirectoryRemoval) observeDaemon(ctx context.Context, w cephFSPeerRemovalWitness, watchers map[string]string) (string, error) {
 	if w.daemon == nil || w.daemon.Container == nil || w.daemon.removed {
 		return "retired", cephFSObserveQuery("CephFS directory release original daemon is unavailable", nil)
 	}

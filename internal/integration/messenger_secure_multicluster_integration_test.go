@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
@@ -134,7 +135,7 @@ func TestCephFSMessengerSecureDefaultMix(t *testing.T) {
 				}
 			}
 			mixedMessengerExec(t, ctx, sourceClient, "python3", script, filesystems[0].FilesystemName, "write", "initial")
-			mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{
+			mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfsmirror.Config{
 				Source: source, Destination: destination, SourceFilesystem: filesystems[0].FilesystemName,
 				DestinationFilesystem: filesystems[1].FilesystemName, DestinationSite: "messenger-destination", Directories: []string{"/messenger"},
 			})

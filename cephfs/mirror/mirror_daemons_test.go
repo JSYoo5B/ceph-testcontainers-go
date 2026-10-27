@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-var _ testcontainers.Container = (*MirrorDaemon)(nil)
+var _ testcontainers.Container = (*Daemon)(nil)
 
 type cephFSMirrorDaemonFake struct {
 	testcontainers.Container
@@ -38,7 +38,7 @@ func (daemon *cephFSMirrorDaemonFake) Terminate(context.Context, ...testcontaine
 }
 
 func TestCephFSMirrorDaemonCountDefaultsAndValidation(t *testing.T) {
-	config := MirrorConfig{SourceFilesystem: "source", DestinationFilesystem: "destination", Directories: []string{"/data"}}
+	config := Config{SourceFilesystem: "source", DestinationFilesystem: "destination", Directories: []string{"/data"}}
 	if normalized, err := normalizeCephFSMirrorConfig(config); err != nil || normalized.DaemonCount != 1 {
 		t.Fatalf("default daemon count: config=%+v error=%v", normalized, err)
 	}
@@ -63,9 +63,9 @@ func TestCephFSMirrorDaemonCountDefaultsAndValidation(t *testing.T) {
 func TestCephFSMirrorDaemonRemovalRetainsFailedResourceAndPolicy(t *testing.T) {
 	aContainer := &cephFSMirrorDaemonFake{id: "daemon-a", terminateErr: errors.New("Docker temporarily unavailable")}
 	bContainer := &cephFSMirrorDaemonFake{id: "daemon-b"}
-	a := &MirrorDaemon{Container: aContainer, DaemonName: "a"}
-	b := &MirrorDaemon{Container: bContainer, DaemonName: "b"}
-	mirror := &Mirror{Container: aContainer, daemons: []*MirrorDaemon{a, b}, initialDaemonAssigned: true,
+	a := &Daemon{Container: aContainer, DaemonName: "a"}
+	b := &Daemon{Container: bContainer, DaemonName: "b"}
+	mirror := &Mirror{Container: aContainer, daemons: []*Daemon{a, b}, initialDaemonAssigned: true,
 		peerID: "owned-peer", SourceClientEntity: "client.owned", DestinationClientEntity: "client.peer", Directories: []string{"/data"}}
 	inventory := mirror.Daemons()
 	inventory[0] = nil
@@ -462,7 +462,7 @@ func TestCephFSMirrorNativeBarrierAndRebalanceUseRealJSONAndPrivateOwnership(t *
 	control := &cephFSMirrorNativeControlFake{directories: map[string]bool{"/owned": true, "/foreign": true}}
 	mirror := &Mirror{
 		source: &ceph.Container{Container: control}, sourceID: "owned-auth", peerID: "owned-peer", SourceFilesystem: "source",
-		daemons:     []*MirrorDaemon{{Container: control, DaemonName: "a"}},
+		daemons:     []*Daemon{{Container: control, DaemonName: "a"}},
 		Directories: []string{"/owned", "/foreign"}, ownedDirectories: map[string]bool{"/owned": true},
 	}
 	if err := mirror.loadFilesystemIdentity(t.Context()); err != nil {

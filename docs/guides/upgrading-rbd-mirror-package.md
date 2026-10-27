@@ -3,8 +3,9 @@
 The RBD mirror fixture moved from package `rbd` to the service-specific package
 `rbd/mirror`. This source break targets the next minor release. Published tags
 keep their original APIs; main adds no deprecated alias and no forwarding layer.
-CephFS mirroring stays in `cephfs` for now and is not a shared type of this
-package.
+CephFS mirroring moved separately to `cephfs/mirror` (see
+[Upgrading CephFS mirror names](upgrading-cephfs-mirror-package.md)) and shares
+no type with this package.
 
 Import the new package with an alias, because the CephFS mirror family is also
 named `mirror`:

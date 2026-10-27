@@ -44,11 +44,11 @@ shorten:
 | --- | --- |
 | `rbdmirror.Mirror.WaitReplayReady`, `WaitReceiverReady` | 4 minutes |
 | `multisite.Fixture.WaitSyncReady`, `WaitBucketSyncReady`, `WaitBucketSyncPolicyReady` | 4 minutes |
-| `cephfs.Mirror.WaitDirectoryReady`, `WaitSnapshotSynced` | 4 minutes |
-| `cephfs.MirrorDirectoryRemoval.WaitReleased`, `cephfs.MirrorPeerRemoval.WaitDrained` | 2 minutes |
+| `cephfsmirror.Mirror.WaitDirectoryReady`, `WaitSnapshotSynced` | 4 minutes |
+| `cephfsmirror.DirectoryRemoval.WaitReleased`, `cephfsmirror.PeerRemoval.WaitDrained` | 2 minutes |
 | `rbdmirror.Mirror.ReceiverStatus`, `BindNamespace` | 30 seconds |
 | `rbdmirror.Mirror.RefreshMonitorConfig` | 2 minutes |
-| `cephfs.RunMirror` waiting for the MGR `mirroring` module | 90 seconds |
+| `cephfsmirror.Run` waiting for the MGR `mirroring` module | 90 seconds |
 | `CollectDiagnostics` | `DiagnosticsConfig.Timeout` (1 minute by default) |
 
 These bounds are upper limits for the fixture, not a budget for your test.
@@ -209,7 +209,7 @@ terminated". `ControlImage()` and the descriptor getters still answer.
 | Resource | How to clean it up |
 | --- | --- |
 | Containers attached with `WithClient` or `WithClientIdentity` | Terminate them before the cluster. The cluster's networks cannot be removed while they are attached. |
-| `rbdmirror.Mirror`, `cephfs.Mirror`, `multisite.Fixture` | `Terminate` before both clusters. They own their daemons, setup clients, the multisite HTTP network and the network attachments they added. Ceph-side peers, auth entities, realms and policies stay in the clusters. |
+| `rbdmirror.Mirror`, `cephfsmirror.Mirror`, `multisite.Fixture` | `Terminate` before both clusters. They own their daemons, setup clients, the multisite HTTP network and the network attachments they added. Ceph-side peers, auth entities, realms and policies stay in the clusters. |
 | Handles from the package function `ceph.InterruptNetwork` | `Restore` them; no fixture tracks them. |
 | Copies from `ConnectionConfig` and `ClientConfig.ConnectionConfig`, and files you write from them | Delete them; they contain credentials. |
 | Diagnostics reports | They may contain log lines with secrets; review before sharing. |
@@ -251,7 +251,7 @@ if err != nil {
 }
 ```
 
-`rbdmirror.Mirror` and `cephfs.Mirror` embed a container handle, so
+`rbdmirror.Mirror` and `cephfsmirror.Mirror` embed a container handle, so
 `testcontainers.CleanupContainer` accepts them. `multisite.Fixture` does not; clean
 it up with `t.Cleanup`:
 
@@ -347,7 +347,7 @@ result:
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
 | `ApplyNetworkProfile`, `ApplyLinkProfile`, `ApplyZoneLinkProfile` | Delay lease (the change may have reached the kernel) | `Restore` |
-| `rbdmirror.Run`, `cephfs.RunMirror`, `multisite.Run`, `multisite.RunTopology` | Partial fixture | `Terminate` it |
+| `rbdmirror.Run`, `cephfsmirror.Run`, `multisite.Run`, `multisite.RunTopology` | Partial fixture | `Terminate` it |
 | `AddDaemon` on a mirror | Partial daemon | `RemoveDaemon` or the fixture's `Terminate` |
 | `Multisite.AddZone`, `AddZonegroup` | Partial zone or zonegroup | `Terminate` the fixture; do not add the same name again |
 

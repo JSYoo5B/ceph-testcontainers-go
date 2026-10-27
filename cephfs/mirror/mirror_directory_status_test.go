@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"bytes"
@@ -114,7 +114,7 @@ func newCephFSObserverDraft() (*Mirror, *cephFSObserverDraftControl, *cephFSObse
 		SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer",
 		filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer,
 		ownedDirectories: map[string]bool{"/owned": true}, Directories: []string{"/owned"},
-		daemons: []*MirrorDaemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}},
+		daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}},
 	}
 	return mirror, source, destination, a, b
 }
@@ -128,7 +128,7 @@ func TestCephFSObserverDraftExactOwnedWatcherAndSnapshotIdentity(t *testing.T) {
 	if len(source.mutations) != 0 || len(a.calls) != 2 {
 		t.Fatal("observer mutated native policy or used wrong daemon")
 	}
-	if status, err := mirror.WaitSnapshotSynced(t.Context(), "/owned", MirrorSnapshot{ID: 120, Name: "checkpoint"}); err != nil || !status.Ready {
+	if status, err := mirror.WaitSnapshotSynced(t.Context(), "/owned", Snapshot{ID: 120, Name: "checkpoint"}); err != nil || !status.Ready {
 		t.Fatalf("exact source checkpoint was not reported: %+v %v", status, err)
 	}
 	// Source/destination IDs must be captured during construction, not inferred
@@ -153,7 +153,7 @@ func TestCephFSObserverDraftFailoverUsesFilesystemGIDAndResetsCounters(t *testin
 	if !errors.As(err, &partial) || !status.Ready || status.DaemonName != "b" || status.SnapshotsSynced != 0 || status.LastSyncedSnapshot == nil || status.LastSyncedSnapshot.ID != 120 || status.DaemonProblems["a"] == "" {
 		t.Fatalf("reassignment/counter reset invalidated checkpoint: %+v %v", status, err)
 	}
-	if status, err := mirror.WaitSnapshotSynced(t.Context(), "/owned", MirrorSnapshot{ID: 120, Name: "checkpoint"}); err != nil || !status.Ready || status.DaemonProblems["a"] == "" {
+	if status, err := mirror.WaitSnapshotSynced(t.Context(), "/owned", Snapshot{ID: 120, Name: "checkpoint"}); err != nil || !status.Ready || status.DaemonProblems["a"] == "" {
 		t.Fatalf("unrelated stopped member blocked selected directory checkpoint or was hidden: %+v %v", status, err)
 	}
 	for _, mapping := range []string{`{"state":"mapping"}`, `{"state":"stalled"}`, `{"state":null,"instance_id":""}`, `{"state":"mapped","instance_id":"4249"}`} {
@@ -301,7 +301,7 @@ func TestCephFSObserverDraftReplaySchemaAndFailureStates(t *testing.T) {
 	// directory caught mid-sync on Squid is a valid status, not a guard error.
 	a.replay = `{"/owned":{"state":"syncing","current_sycning_snap":{"id":7,"name":"checkpoint"},"last_synced_snap":{"id":6,"name":"before"},"snaps_synced":1,"snaps_deleted":0,"snaps_renamed":0}}`
 	status, err = mirror.DirectoryStatus(t.Context(), "/owned")
-	if err != nil || status.State != "syncing" || status.CurrentSnapshot == nil || *status.CurrentSnapshot != (MirrorSnapshot{ID: 7, Name: "checkpoint"}) {
+	if err != nil || status.State != "syncing" || status.CurrentSnapshot == nil || *status.CurrentSnapshot != (Snapshot{ID: 7, Name: "checkpoint"}) {
 		t.Fatalf("Squid syncing status rejected: %+v %v", status, err)
 	}
 	for _, field := range []string{"current_syncing_snap", "current_sycning_snap", "last_synced_snap"} {
@@ -313,24 +313,24 @@ func TestCephFSObserverDraftReplaySchemaAndFailureStates(t *testing.T) {
 }
 
 func TestCephFSObserverDraftWaitCheckpointIdentityAndContext(t *testing.T) {
-	base := MirrorDirectoryStatus{SourceFilesystemID: 1, DestinationFilesystemID: 2, PeerID: cephFSObserverDraftPeer, Directory: "/owned", Ready: true, LastSyncedSnapshot: &MirrorSnapshot{ID: 119, Name: "checkpoint"}}
-	expected := MirrorSnapshot{ID: 120, Name: "checkpoint"}
+	base := DirectoryStatus{SourceFilesystemID: 1, DestinationFilesystemID: 2, PeerID: cephFSObserverDraftPeer, Directory: "/owned", Ready: true, LastSyncedSnapshot: &Snapshot{ID: 119, Name: "checkpoint"}}
+	expected := Snapshot{ID: 120, Name: "checkpoint"}
 	calls := 0
-	status, err := waitCephFSObservedDirectory(t.Context(), time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
+	status, err := waitCephFSObservedDirectory(t.Context(), time.Millisecond, func(context.Context) (DirectoryStatus, error) {
 		calls++
 		s := base
 		if calls > 1 {
 			s.LastSyncedSnapshot = &expected
 		}
 		return s, nil
-	}, func(s MirrorDirectoryStatus) bool {
+	}, func(s DirectoryStatus) bool {
 		return s.Ready && s.LastSyncedSnapshot != nil && *s.LastSyncedSnapshot == expected
 	})
 	if err != nil || calls != 2 || status.LastSyncedSnapshot.ID != 120 {
 		t.Fatalf("same name wrong source ID satisfied checkpoint: %+v %v", status, err)
 	}
 	calls = 0
-	_, err = waitCephFSObservedDirectory(t.Context(), time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
+	_, err = waitCephFSObservedDirectory(t.Context(), time.Millisecond, func(context.Context) (DirectoryStatus, error) {
 		calls++
 		s := base
 		s.Ready = false
@@ -339,12 +339,12 @@ func TestCephFSObserverDraftWaitCheckpointIdentityAndContext(t *testing.T) {
 			s.Ready = true
 		}
 		return s, nil
-	}, func(s MirrorDirectoryStatus) bool { return s.Ready })
+	}, func(s DirectoryStatus) bool { return s.Ready })
 	if err == nil || calls != 2 {
 		t.Fatal("wait adopted a replaced peer")
 	}
 	calls = 0
-	_, err = waitCephFSObservedDirectory(t.Context(), time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
+	_, err = waitCephFSObservedDirectory(t.Context(), time.Millisecond, func(context.Context) (DirectoryStatus, error) {
 		calls++
 		s := base
 		s.Ready = false
@@ -353,16 +353,16 @@ func TestCephFSObserverDraftWaitCheckpointIdentityAndContext(t *testing.T) {
 			s.Ready = true
 		}
 		return s, nil
-	}, func(s MirrorDirectoryStatus) bool { return s.Ready })
+	}, func(s DirectoryStatus) bool { return s.Ready })
 	if err == nil || calls != 2 {
 		t.Fatal("wait adopted a replaced directory policy")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	queryErr := errors.New("private-native-output")
-	status, err = waitCephFSObservedDirectory(ctx, time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
+	status, err = waitCephFSObservedDirectory(ctx, time.Millisecond, func(context.Context) (DirectoryStatus, error) {
 		cancel()
 		return base, cephFSObserveQuery("native query", queryErr)
-	}, func(s MirrorDirectoryStatus) bool { return s.Ready })
+	}, func(s DirectoryStatus) bool { return s.Ready })
 	if !errors.Is(err, context.Canceled) || !errors.Is(err, queryErr) || strings.Contains(err.Error(), queryErr.Error()) || status.SourceFilesystemID != 1 {
 		t.Fatalf("wait lost observation/cancel/error or leaked output: %+v %v", status, err)
 	}
@@ -409,11 +409,11 @@ func TestCephFSObserverDraftWaitCheckpointIdentityAndContext(t *testing.T) {
 }
 
 func TestCephFSObserverDraftPartialMemberExceptionIsNarrow(t *testing.T) {
-	base := MirrorDirectoryStatus{SourceFilesystemID: 1, DestinationFilesystemID: 2, PeerID: cephFSObserverDraftPeer, Directory: "/owned", Ready: true, DaemonProblems: map[string]string{"b": "owned process stopped"}}
+	base := DirectoryStatus{SourceFilesystemID: 1, DestinationFilesystemID: 2, PeerID: cephFSObserverDraftPeer, Directory: "/owned", Ready: true, DaemonProblems: map[string]string{"b": "owned process stopped"}}
 	partial := &cephFSObservationPartialError{problems: []error{cephFSObserveQuery("owned process stopped", nil)}}
-	status, err := waitCephFSObservedDirectory(t.Context(), time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
+	status, err := waitCephFSObservedDirectory(t.Context(), time.Millisecond, func(context.Context) (DirectoryStatus, error) {
 		return base, partial
-	}, func(s MirrorDirectoryStatus) bool { return s.Ready })
+	}, func(s DirectoryStatus) bool { return s.Ready })
 	if err != nil || status.DaemonProblems["b"] == "" {
 		t.Fatal("valid per-directory success hid unrelated partial member issue")
 	}
@@ -422,10 +422,10 @@ func TestCephFSObserverDraftPartialMemberExceptionIsNarrow(t *testing.T) {
 	// slow (race-instrumented) run can spend before the first observation.
 	expiring := clustertest.NewSignalDeadline(t.Context())
 	selectedError := errors.New("private selected native output")
-	status, err = waitCephFSObservedDirectory(expiring, time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
+	status, err = waitCephFSObservedDirectory(expiring, time.Millisecond, func(context.Context) (DirectoryStatus, error) {
 		expiring.Expire()
 		return base, errors.Join(partial, cephFSObserveQuery("selected owner query", selectedError))
-	}, func(s MirrorDirectoryStatus) bool { return s.Ready })
+	}, func(s DirectoryStatus) bool { return s.Ready })
 	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, selectedError) || status.Ready || strings.Contains(err.Error(), selectedError.Error()) {
 		t.Fatalf("broader error was ignored via partial exception: %+v %v", status, err)
 	}
@@ -433,28 +433,28 @@ func TestCephFSObserverDraftPartialMemberExceptionIsNarrow(t *testing.T) {
 	// The deadline passes only if the wait retries the permanent failure, so a
 	// slow (race-instrumented) run cannot expire it before the first observation.
 	guardContext := clustertest.NewSignalDeadline(t.Context())
-	status, err = waitCephFSObservedDirectory(guardContext, time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
+	status, err = waitCephFSObservedDirectory(guardContext, time.Millisecond, func(context.Context) (DirectoryStatus, error) {
 		if calls++; calls > 1 {
 			guardContext.Expire()
 		}
 		return base, errors.Join(partial, cephFSObserveGuard("native schema changed"))
-	}, func(s MirrorDirectoryStatus) bool { return s.Ready })
+	}, func(s DirectoryStatus) bool { return s.Ready })
 	if err == nil || status.Ready || calls != 1 {
 		t.Fatal("permanent native schema failure was retried or ignored")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	status, err = waitCephFSObservedDirectory(ctx, time.Millisecond, func(context.Context) (MirrorDirectoryStatus, error) {
+	status, err = waitCephFSObservedDirectory(ctx, time.Millisecond, func(context.Context) (DirectoryStatus, error) {
 		cancel()
 		return base, partial
-	}, func(s MirrorDirectoryStatus) bool { return s.Ready })
+	}, func(s DirectoryStatus) bool { return s.Ready })
 	if !errors.Is(err, context.Canceled) || status.Ready || status.DaemonProblems["b"] == "" {
 		t.Fatal("partial exception ignored cancel or hid last member problem")
 	}
 }
 
 func TestCephFSObserverDraftPartialHandleAndCheckpointInputsFailClosed(t *testing.T) {
-	for _, checkpoint := range []MirrorSnapshot{
+	for _, checkpoint := range []Snapshot{
 		{ID: 0, Name: "checkpoint"},
 		{ID: cephFSObservationMaxSnapshotID + 1, Name: "checkpoint"},
 		{ID: cephFSObservationMaxSnapshotID + 2, Name: "checkpoint"},
@@ -543,7 +543,7 @@ func TestCephFSObserverDraftWaitPeerSchemaFailsPermanently(t *testing.T) {
 						ctx.Expire()
 					}
 				}
-				status, err := mirror.WaitSnapshotSynced(ctx, "/owned", MirrorSnapshot{ID: 120, Name: "checkpoint"})
+				status, err := mirror.WaitSnapshotSynced(ctx, "/owned", Snapshot{ID: 120, Name: "checkpoint"})
 				if !errors.Is(err, errCephFSObservationGuard) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil || status.Ready || status.SourceFilesystemID != 1 || peerQueries != expectedQueries {
 					t.Fatalf("wait retried/adopted malformed peer policy: %+v err=%v queries=%d", status, err, peerQueries)
 				}

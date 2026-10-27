@@ -1,0 +1,372 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "cephfs/mirror",
+  "count": 50,
+  "entries": [
+    {
+      "current": "cephfs/mirror.Config",
+      "kind": "type",
+      "proposed": "cephfs/mirror.Config",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Daemon",
+      "kind": "type",
+      "proposed": "cephfs/mirror.Daemon",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Daemon.ProcessObserverBindingStatus",
+      "kind": "method",
+      "signature": "func() ProcessBindingStatus",
+      "receiver": "*Daemon",
+      "proposed": "cephfs/mirror.Daemon.ProcessObserverBindingStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Daemon.Terminate",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Daemon",
+      "proposed": "cephfs/mirror.Daemon.Terminate",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryAddition",
+      "kind": "type",
+      "proposed": "cephfs/mirror.DirectoryAddition",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryAddition.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (DirectoryAdditionStatus, error)",
+      "receiver": "*DirectoryAddition",
+      "proposed": "cephfs/mirror.DirectoryAddition.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryAdditionStatus",
+      "kind": "type",
+      "proposed": "cephfs/mirror.DirectoryAdditionStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryRemoval",
+      "kind": "type",
+      "proposed": "cephfs/mirror.DirectoryRemoval",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryRemoval.AcknowledgeProcessQuiescence",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ProcessQuiescenceAcknowledgment, error)",
+      "receiver": "*DirectoryRemoval",
+      "proposed": "cephfs/mirror.DirectoryRemoval.AcknowledgeProcessQuiescence",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryRemoval.ProcessQuiescence",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ProcessQuiescenceStatus, error)",
+      "receiver": "*DirectoryRemoval",
+      "proposed": "cephfs/mirror.DirectoryRemoval.ProcessQuiescence",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryRemoval.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (DirectoryRemovalStatus, error)",
+      "receiver": "*DirectoryRemoval",
+      "proposed": "cephfs/mirror.DirectoryRemoval.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryRemoval.WaitReleased",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (DirectoryRemovalStatus, error)",
+      "receiver": "*DirectoryRemoval",
+      "proposed": "cephfs/mirror.DirectoryRemoval.WaitReleased",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryRemovalDaemonStatus",
+      "kind": "type",
+      "proposed": "cephfs/mirror.DirectoryRemovalDaemonStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryRemovalStatus",
+      "kind": "type",
+      "proposed": "cephfs/mirror.DirectoryRemovalStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.DirectoryStatus",
+      "kind": "type",
+      "proposed": "cephfs/mirror.DirectoryStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror",
+      "kind": "type",
+      "proposed": "cephfs/mirror.Mirror",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.AddDaemon",
+      "kind": "method",
+      "signature": "func(ctx context.Context, daemonName string, opts ...testcontainers.ContainerCustomizer) (*Daemon, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.AddDaemon",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.AddDirectory",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.AddDirectory",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.AttachManagers",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.AttachManagers",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.BeginDirectoryAddition",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string) (*DirectoryAddition, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.BeginDirectoryAddition",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.BeginDirectoryRemoval",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string) (*DirectoryRemoval, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.BeginDirectoryRemoval",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.BeginPeerRemoval",
+      "kind": "method",
+      "signature": "func(ctx context.Context, id string) (*PeerRemoval, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.BeginPeerRemoval",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.Daemons",
+      "kind": "method",
+      "signature": "func() []*Daemon",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.Daemons",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.DirectoryStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string) (DirectoryStatus, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.DirectoryStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.InterruptPeerLink",
+      "kind": "method",
+      "signature": "func(ctx context.Context, daemonName string) (*fault.NetworkInterruption, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.InterruptPeerLink",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.PeerIDs",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]string, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.PeerIDs",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.RebalanceDirectories",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.RebalanceDirectories",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.RebootstrapPeer",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.RebootstrapPeer",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.RefreshMonitorConfig",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.RefreshMonitorConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.RefreshPeerMonitorConfig",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.RefreshPeerMonitorConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.RemoveDaemon",
+      "kind": "method",
+      "signature": "func(ctx context.Context, daemonName string, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.RemoveDaemon",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.RemoveDirectory",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.RemoveDirectory",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.RemovePeer",
+      "kind": "method",
+      "signature": "func(ctx context.Context, id string) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.RemovePeer",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.Terminate",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.Terminate",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.WaitDirectoryReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string) (DirectoryStatus, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.WaitDirectoryReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Mirror.WaitSnapshotSynced",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string, checkpoint Snapshot) (DirectoryStatus, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs/mirror.Mirror.WaitSnapshotSynced",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.OriginalProcessStatus",
+      "kind": "type",
+      "proposed": "cephfs/mirror.OriginalProcessStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.PeerRemoval",
+      "kind": "type",
+      "proposed": "cephfs/mirror.PeerRemoval",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.PeerRemoval.AcknowledgeProcessQuiescence",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ProcessQuiescenceAcknowledgment, error)",
+      "receiver": "*PeerRemoval",
+      "proposed": "cephfs/mirror.PeerRemoval.AcknowledgeProcessQuiescence",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.PeerRemoval.ProcessQuiescence",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ProcessQuiescenceStatus, error)",
+      "receiver": "*PeerRemoval",
+      "proposed": "cephfs/mirror.PeerRemoval.ProcessQuiescence",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.PeerRemoval.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (PeerRemovalStatus, error)",
+      "receiver": "*PeerRemoval",
+      "proposed": "cephfs/mirror.PeerRemoval.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.PeerRemoval.WaitDrained",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (PeerRemovalStatus, error)",
+      "receiver": "*PeerRemoval",
+      "proposed": "cephfs/mirror.PeerRemoval.WaitDrained",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.PeerRemovalDaemonStatus",
+      "kind": "type",
+      "proposed": "cephfs/mirror.PeerRemovalDaemonStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.PeerRemovalStatus",
+      "kind": "type",
+      "proposed": "cephfs/mirror.PeerRemovalStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.ProcessBindingStatus",
+      "kind": "type",
+      "proposed": "cephfs/mirror.ProcessBindingStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.ProcessQuiescenceAcknowledgment",
+      "kind": "type",
+      "proposed": "cephfs/mirror.ProcessQuiescenceAcknowledgment",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.ProcessQuiescenceStatus",
+      "kind": "type",
+      "proposed": "cephfs/mirror.ProcessQuiescenceStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Run",
+      "kind": "function",
+      "signature": "func(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
+      "proposed": "cephfs/mirror.Run",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.RunWithImages",
+      "kind": "function",
+      "signature": "func(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
+      "proposed": "cephfs/mirror.RunWithImages",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Snapshot",
+      "kind": "type",
+      "proposed": "cephfs/mirror.Snapshot",
+      "decision": "baseline"
+    }
+  ]
+}

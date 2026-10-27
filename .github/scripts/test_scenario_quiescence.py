@@ -239,7 +239,7 @@ class QuiescenceCoverageTests(unittest.TestCase):
                   "\tvar s multicluster.CephFSMirrorSnapshot\n}\n")
         rewritten = package_split(source)
         self.assertIn("cephfs.Start(ctx, source, cephfs.Config{})", rewritten)
-        self.assertIn("var s cephfs.MirrorSnapshot", rewritten)
+        self.assertIn("var s cephfsmirror.Snapshot", rewritten)
         # Unrelated bytes, including an unchanged statement, stay significant.
         retained = package_split(SOURCE_FIXTURE.read_text())
         root = Path(__file__).resolve().parents[2] / "internal/integration"

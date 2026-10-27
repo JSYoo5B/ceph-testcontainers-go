@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/testcontainers/testcontainers-go"
@@ -79,7 +80,7 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 	fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
 	first := cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, "/federation", "backup-1")
 	archive("backup-1")
-	mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{
+	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: []string{"/federation"},
@@ -166,7 +167,7 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 	// The daemon saw backup-2 through the MDS and is stuck copying it. Squid's
 	// peer status has no current_syncing_snap; where the daemon reports the
 	// snapshot it copies, it is backup-2.
-	if during.State != "syncing" || (during.Current != (cephfs.MirrorSnapshot{}) && during.Current != second) {
+	if during.State != "syncing" || (during.Current != (cephfsmirror.Snapshot{}) && during.Current != second) {
 		t.Fatalf("the cut daemon is not syncing %s: %+v", second.Name, during)
 	}
 	verify("backup-1")
@@ -221,7 +222,7 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 const cephFSPathCutBytes = 25 * 2048
 
 // cephFSMirrorDaemonAddress returns daemon's address on network.
-func cephFSMirrorDaemonAddress(t *testing.T, ctx context.Context, daemon *cephfs.MirrorDaemon, network string) netip.Addr {
+func cephFSMirrorDaemonAddress(t *testing.T, ctx context.Context, daemon *cephfsmirror.Daemon, network string) netip.Addr {
 	t.Helper()
 	inspect, err := daemon.Inspect(ctx)
 	if err != nil {
@@ -238,14 +239,14 @@ func cephFSMirrorDaemonAddress(t *testing.T, ctx context.Context, daemon *cephfs
 // /federation, with the bytes that its last sync copied.
 type cephFSMirrorReplay struct {
 	State         string
-	Current, Last cephfs.MirrorSnapshot
+	Current, Last cephfsmirror.Snapshot
 	LastBytes     uint64
 	Synced        uint64
 }
 
 // cephFSMirrorPeerReplay reads the daemon's peer status for /federation
 // through its admin socket.
-func cephFSMirrorPeerReplay(ctx context.Context, daemon *cephfs.MirrorDaemon, identity cephfs.MirrorDirectoryStatus) (cephFSMirrorReplay, error) {
+func cephFSMirrorPeerReplay(ctx context.Context, daemon *cephfsmirror.Daemon, identity cephfsmirror.DirectoryStatus) (cephFSMirrorReplay, error) {
 	code, reader, err := daemon.Exec(ctx, []string{"ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", identity.SourceFilesystem, identity.SourceFilesystemID), identity.PeerID}, tcexec.Multiplexed())
 	if err != nil {
 		return cephFSMirrorReplay{}, err
@@ -272,9 +273,9 @@ func cephFSMirrorPeerReplay(ctx context.Context, daemon *cephfs.MirrorDaemon, id
 	if !ok || entry.State == "" || entry.Last == nil || entry.Synced == nil {
 		return cephFSMirrorReplay{}, fmt.Errorf("peer status has no synced /federation: %s", out)
 	}
-	replay := cephFSMirrorReplay{State: entry.State, Last: cephfs.MirrorSnapshot{ID: entry.Last.ID, Name: entry.Last.Name}, LastBytes: entry.Last.Bytes, Synced: *entry.Synced}
+	replay := cephFSMirrorReplay{State: entry.State, Last: cephfsmirror.Snapshot{ID: entry.Last.ID, Name: entry.Last.Name}, LastBytes: entry.Last.Bytes, Synced: *entry.Synced}
 	if entry.Current != nil {
-		replay.Current = cephfs.MirrorSnapshot{ID: entry.Current.ID, Name: entry.Current.Name}
+		replay.Current = cephfsmirror.Snapshot{ID: entry.Current.ID, Name: entry.Current.Name}
 	}
 	return replay, nil
 }

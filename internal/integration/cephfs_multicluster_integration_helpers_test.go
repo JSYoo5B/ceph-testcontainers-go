@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -65,7 +66,7 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 	// Cluster/filesystem setup above stays separate from multicluster setup.
 	// The source control runtime supplies the userspace mirror daemon.
 	mirrorImage := source.ControlImage()
-	mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", mirrorImage), cephfs.MirrorConfig{
+	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", mirrorImage), cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: []string{"/federation"},
@@ -229,17 +230,17 @@ func testMultiClusterCephFSSnapshotMirrorAndBackup(t *testing.T, opts ...testcon
 
 // Read the expected checkpoint from the source native client. Destination snap
 // IDs and mirror-reported last_synced_snap cannot supply this independent value.
-func cephFSReadSourceSnapshot(t *testing.T, ctx context.Context, client testcontainers.Container, filesystem, script, directory, name string) cephfs.MirrorSnapshot {
+func cephFSReadSourceSnapshot(t *testing.T, ctx context.Context, client testcontainers.Container, filesystem, script, directory, name string) cephfsmirror.Snapshot {
 	t.Helper()
 	raw := multiClusterExecOutput(t, ctx, client, "python3", script, filesystem, "snapshot-checkpoint", directory, name)
-	var checkpoint cephfs.MirrorSnapshot
+	var checkpoint cephfsmirror.Snapshot
 	if err := json.Unmarshal(raw, &checkpoint); err != nil || checkpoint.ID == 0 || checkpoint.ID > ^uint64(0)-2 || checkpoint.Name != name {
 		t.Fatalf("invalid independent CephFS source snapshot %s/.snap/%s: data=%s error=%v", directory, name, raw, err)
 	}
 	return checkpoint
 }
 
-func cephFSObservedFilesystemIdentity(t *testing.T, ctx context.Context, source, destination *cephfs.Filesystem) cephfs.MirrorDirectoryStatus {
+func cephFSObservedFilesystemIdentity(t *testing.T, ctx context.Context, source, destination *cephfs.Filesystem) cephfsmirror.DirectoryStatus {
 	t.Helper()
 	sourceStatus, err := source.MDSStatus(ctx)
 	if err != nil || sourceStatus == nil || sourceStatus.FilesystemID <= 0 {
@@ -249,13 +250,13 @@ func cephFSObservedFilesystemIdentity(t *testing.T, ctx context.Context, source,
 	if err != nil || destinationStatus == nil || destinationStatus.FilesystemID <= 0 {
 		t.Fatalf("read independent destination filesystem identity: status=%+v error=%v", destinationStatus, err)
 	}
-	return cephfs.MirrorDirectoryStatus{
+	return cephfsmirror.DirectoryStatus{
 		SourceFilesystem: source.FilesystemName, DestinationFilesystem: destination.FilesystemName,
 		SourceFilesystemID: int(sourceStatus.FilesystemID), DestinationFilesystemID: int(destinationStatus.FilesystemID),
 	}
 }
 
-func cephFSAssertObservedIdentity(t *testing.T, status, expected cephfs.MirrorDirectoryStatus, directory string) {
+func cephFSAssertObservedIdentity(t *testing.T, status, expected cephfsmirror.DirectoryStatus, directory string) {
 	t.Helper()
 	if status.SourceFilesystem != expected.SourceFilesystem || status.DestinationFilesystem != expected.DestinationFilesystem ||
 		status.SourceFilesystemID != expected.SourceFilesystemID || status.DestinationFilesystemID != expected.DestinationFilesystemID ||
@@ -270,7 +271,7 @@ func cephFSAssertObservedIdentity(t *testing.T, status, expected cephfs.MirrorDi
 	}
 }
 
-func cephFSWaitObservedSnapshot(t *testing.T, ctx context.Context, mirror *cephfs.Mirror, sourceClient testcontainers.Container, script string, expected cephfs.MirrorDirectoryStatus, directory string, checkpoint cephfs.MirrorSnapshot) cephfs.MirrorDirectoryStatus {
+func cephFSWaitObservedSnapshot(t *testing.T, ctx context.Context, mirror *cephfsmirror.Mirror, sourceClient testcontainers.Container, script string, expected cephfsmirror.DirectoryStatus, directory string, checkpoint cephfsmirror.Snapshot) cephfsmirror.DirectoryStatus {
 	t.Helper()
 	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
@@ -321,7 +322,7 @@ func cephFSAssertSnapshotRemainsAbsent(t *testing.T, ctx context.Context, client
 	}
 }
 
-func cephFSWaitForDaemonPolicy(t *testing.T, ctx context.Context, source *ceph.Container, mirror *cephfs.Mirror, directoryCount int, removedPeer string) {
+func cephFSWaitForDaemonPolicy(t *testing.T, ctx context.Context, source *ceph.Container, mirror *cephfsmirror.Mirror, directoryCount int, removedPeer string) {
 	t.Helper()
 	data, err := source.Ceph(ctx, "fs", "get", mirror.SourceFilesystem, "--format", "json")
 	if err != nil {

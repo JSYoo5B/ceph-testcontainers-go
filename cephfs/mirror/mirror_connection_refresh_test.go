@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -100,7 +100,7 @@ func newCephFSRefreshFixture() (*Mirror, *cephFSRefreshControl, *cephFSRefreshCo
 	destinationControl := &cephFSRefreshControl{cephFSObserverDraftControl: destination, fsid: cephFSRefreshDestinationFSID}
 	mirror.source = &ceph.Container{Container: sourceControl}
 	mirror.destination = &ceph.Container{Container: destinationControl}
-	mirror.daemons = []*MirrorDaemon{
+	mirror.daemons = []*Daemon{
 		{Container: &cephFSMirrorDaemonFake{id: "a"}, DaemonName: "a"},
 		{Container: &cephFSMirrorDaemonFake{id: "b"}, DaemonName: "b"},
 	}
@@ -116,8 +116,8 @@ func TestCephFSRefreshLocalCurrentOwnershipPartialRetryAndNoRuntimeChanges(t *te
 	a, b := mirror.daemons[0], mirror.daemons[1]
 	removed := &cephFSMirrorDaemonFake{id: "removed"}
 	mirror.daemons = append(mirror.daemons,
-		&MirrorDaemon{Container: removed, DaemonName: "removed", removed: true},
-		&MirrorDaemon{Container: a.Container, DaemonName: "alias"},
+		&Daemon{Container: removed, DaemonName: "removed", removed: true},
+		&Daemon{Container: a.Container, DaemonName: "alias"},
 	)
 	// The callback deliberately exposes no State/Exec/Start/Stop implementation:
 	// a stopped member must reach the archive refresh without any runtime call.

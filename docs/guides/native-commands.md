@@ -837,7 +837,7 @@ out, err = exec(ctx, fsDaemon, "ceph", "--admin-daemon",
 ```
 
 Prefer the typed observers when they cover your case: `rbdmirror.Daemon.Status`,
-`rbdmirror.Mirror.ReceiverStatus`, `ImageStatus`, `cephfs.Mirror.DirectoryStatus`.
+`rbdmirror.Mirror.ReceiverStatus`, `ImageStatus`, `cephfsmirror.Mirror.DirectoryStatus`.
 
 ### Observing Cephx keys from the daemon side
 
@@ -1067,7 +1067,8 @@ and refuse to overwrite outside edits.
   `ConnectionConfig`, `CollectDiagnostics`.
 - [rbd-mirror.md](../rbd-mirror.md): `Mirror.SourceRBD`, `Mirror.DestinationRBD`,
   `Daemon.Status`.
-- [cephfs.md](../cephfs.md): `Filesystem.Sessions`, `Mirror.DirectoryStatus`.
+- [cephfs.md](../cephfs.md): `Filesystem.Sessions`.
+- [cephfs-mirror.md](../cephfs-mirror.md): `Mirror.DirectoryStatus`.
 - [rgw.md](../rgw.md): `Gateway.Admin`, `Multisite.SourceAdmin`,
   `DestinationAdmin`, `ZoneAdmin`.
 - [Fault injection](fault-injection.md): messenger options and other faults set

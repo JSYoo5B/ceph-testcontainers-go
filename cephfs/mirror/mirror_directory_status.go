@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -14,9 +14,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// MirrorSnapshot identifies a source snapshot reported by the native
+// Snapshot identifies a source snapshot reported by the native
 // receiving peer. ID is the original source snap ID, not the destination ID.
-type MirrorSnapshot struct {
+type Snapshot struct {
 	ID   uint64
 	Name string
 }
@@ -24,18 +24,18 @@ type MirrorSnapshot struct {
 // Native CEPH_NOSNAP and CEPH_SNAPDIR occupy the two largest uint64 values.
 const cephFSObservationMaxSnapshotID = ^uint64(0) - 2
 
-// MirrorDirectoryStatus observes one current owned directory policy.
+// DirectoryStatus observes one current owned directory policy.
 // MappingState is MGR assignment state; State is the selected daemon's native
 // idle/syncing/failed replay state. Ready proves a live owned assignment and
 // active peer for this directory, not whole-fixture health, data equivalence or
 // an application checkpoint. DaemonProblems reports other unavailable members.
 // Native counters reset on daemon restart/directory reassignment.
-type MirrorDirectoryStatus struct {
+type DirectoryStatus struct {
 	SourceFilesystem, DestinationFilesystem         string
 	SourceFilesystemID, DestinationFilesystemID     int
 	Directory, PeerID, MappingState, InstanceID     string
 	DaemonName, State, FailureReason                string
-	CurrentSnapshot, LastSyncedSnapshot             *MirrorSnapshot
+	CurrentSnapshot, LastSyncedSnapshot             *Snapshot
 	SnapshotsSynced, SnapshotsDeleted, SnapsRenamed uint64
 	DaemonProblems                                  map[string]string
 	Ready                                           bool
@@ -47,8 +47,8 @@ type MirrorDirectoryStatus struct {
 // a partial error and DaemonProblems even if this directory's owner is ready.
 // This method accepts only currently owned directory policies; removal-drain and
 // peer-removal observation require a separate retained policy handle.
-func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (MirrorDirectoryStatus, error) {
-	var result MirrorDirectoryStatus
+func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (DirectoryStatus, error) {
+	var result DirectoryStatus
 	directory, err := normalizeMirrorDirectory(directory)
 	if err != nil {
 		return result, cephFSObserveGuard("CephFS mirror directory must be an absolute path")
@@ -68,7 +68,7 @@ func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (Mi
 	if !mirror.ownedDirectories[directory] {
 		return result, cephFSObserveGuard("CephFS mirror does not own this current directory policy")
 	}
-	result = MirrorDirectoryStatus{
+	result = DirectoryStatus{
 		SourceFilesystem: mirror.SourceFilesystem, DestinationFilesystem: mirror.DestinationFilesystem,
 		SourceFilesystemID: mirror.filesystemID, DestinationFilesystemID: mirror.destinationFilesystemID,
 		Directory: directory, PeerID: mirror.peerID,
@@ -102,7 +102,7 @@ func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (Mi
 	if err != nil {
 		return result, cephFSObserveGuard("decode CephFS filesystem watchers")
 	}
-	var selected *MirrorDaemon
+	var selected *Daemon
 	var observationErrors []error
 	problem := func(name string, err error) {
 		if result.DaemonProblems == nil {
@@ -201,12 +201,12 @@ func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (Mi
 // live owned process with the captured destination peer. Unrelated stopped
 // members remain in DaemonProblems but do not prevent this directory's readiness.
 // Snapshot completion and payload equivalence are separate conditions.
-func (mirror *Mirror) WaitDirectoryReady(ctx context.Context, directory string) (MirrorDirectoryStatus, error) {
+func (mirror *Mirror) WaitDirectoryReady(ctx context.Context, directory string) (DirectoryStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
-	return waitCephFSObservedDirectory(ctx, time.Second, func(attempt context.Context) (MirrorDirectoryStatus, error) {
+	return waitCephFSObservedDirectory(ctx, time.Second, func(attempt context.Context) (DirectoryStatus, error) {
 		return mirror.DirectoryStatus(attempt, directory)
-	}, func(status MirrorDirectoryStatus) bool { return status.Ready })
+	}, func(status DirectoryStatus) bool { return status.Ready })
 }
 
 // WaitSnapshotSynced waits for the selected live process to report exactly the
@@ -216,21 +216,21 @@ func (mirror *Mirror) WaitDirectoryReady(ctx context.Context, directory string) 
 // or byte equality. If another newer snapshot becomes last before observation,
 // this conservative exact-checkpoint wait can time out. Quiesce checkpoint
 // creation and verify the intended destination snapshot bytes separately.
-func (mirror *Mirror) WaitSnapshotSynced(ctx context.Context, directory string, checkpoint MirrorSnapshot) (MirrorDirectoryStatus, error) {
+func (mirror *Mirror) WaitSnapshotSynced(ctx context.Context, directory string, checkpoint Snapshot) (DirectoryStatus, error) {
 	if checkpoint.ID == 0 || checkpoint.ID > cephFSObservationMaxSnapshotID || checkpoint.Name == "" || checkpoint.Name == "." || checkpoint.Name == ".." || strings.ContainsAny(checkpoint.Name, "/\x00\r\n") {
-		return MirrorDirectoryStatus{}, cephFSObserveGuard("CephFS mirror checkpoint requires a source snapshot ID and valid name")
+		return DirectoryStatus{}, cephFSObserveGuard("CephFS mirror checkpoint requires a source snapshot ID and valid name")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
-	return waitCephFSObservedDirectory(ctx, time.Second, func(attempt context.Context) (MirrorDirectoryStatus, error) {
+	return waitCephFSObservedDirectory(ctx, time.Second, func(attempt context.Context) (DirectoryStatus, error) {
 		return mirror.DirectoryStatus(attempt, directory)
-	}, func(status MirrorDirectoryStatus) bool {
+	}, func(status DirectoryStatus) bool {
 		return status.Ready && status.LastSyncedSnapshot != nil && *status.LastSyncedSnapshot == checkpoint
 	})
 }
 
-func waitCephFSObservedDirectory(ctx context.Context, interval time.Duration, observe func(context.Context) (MirrorDirectoryStatus, error), ready func(MirrorDirectoryStatus) bool) (MirrorDirectoryStatus, error) {
-	var last MirrorDirectoryStatus
+func waitCephFSObservedDirectory(ctx context.Context, interval time.Duration, observe func(context.Context) (DirectoryStatus, error), ready func(DirectoryStatus) bool) (DirectoryStatus, error) {
+	var last DirectoryStatus
 	var lastErr error
 	var sourceID, destinationID int
 	var peerID, directory string
@@ -436,7 +436,7 @@ func decodeCephFSObservedSession(data []byte, peerID string) (string, cephFSPeer
 
 type cephFSObservedReplay struct {
 	State, FailureReason     string
-	Current, Last            *MirrorSnapshot
+	Current, Last            *Snapshot
 	Synced, Deleted, Renamed uint64
 }
 
@@ -495,10 +495,10 @@ func decodeCephFSObservedReplay(data []byte, directory string) (cephFSObservedRe
 	result.State, result.FailureReason = *native.State, native.FailureReason
 	result.Synced, result.Deleted, result.Renamed = *native.Synced, *native.Deleted, *native.Renamed
 	if native.Current != nil {
-		result.Current = &MirrorSnapshot{ID: *native.Current.ID, Name: *native.Current.Name}
+		result.Current = &Snapshot{ID: *native.Current.ID, Name: *native.Current.Name}
 	}
 	if native.Last != nil {
-		result.Last = &MirrorSnapshot{ID: *native.Last.ID, Name: *native.Last.Name}
+		result.Last = &Snapshot{ID: *native.Last.ID, Name: *native.Last.Name}
 	}
 	return result, true, nil
 }
