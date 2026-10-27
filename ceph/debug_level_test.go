@@ -218,7 +218,7 @@ func TestOSDDebugTargetSetAdmission(t *testing.T) {
 		"stopped":    {func(_ *Container, o *debugLevelOSD) { o.state.Running = false }, true},
 		"terminated": {func(c *Container, _ *debugLevelOSD) { c.closed = true }, true},
 		"paused":     {func(_ *Container, o *debugLevelOSD) { o.state.Paused = true }, false},
-		"no run dir": {func(c *Container, _ *debugLevelOSD) { c.run.removed = true }, false},
+		"no run dir": {func(c *Container, _ *debugLevelOSD) { c.runDir.volume.removed = true }, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, control, ctr, target := newTarget()
@@ -256,7 +256,7 @@ func debugLevelNativeCluster(t *testing.T) (*Container, *nativeTarget, *osdDebug
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	c := nativeCluster()
-	c.Container, c.run = control, &runVolume{name: "run"}
+	c.Container, c.runDir.volume = control, &runVolume{name: "run"}
 	osd := &debugLevelOSD{id: "osd-container", state: container.State{Running: true, StartedAt: "start-1"}}
 	c.osds = map[int]*OSDContainer{0: {ID: 0, Container: osd}}
 	return c, control, &osdDebugTarget{c: c, id: 0, daemon: "osd.0", osd: c.osds[0]}, log

@@ -24,7 +24,7 @@ func requireStale(t *testing.T, what string, err error) {
 
 func TestOSDHandleOfARemovedOSDIsRefusedAndNeverReachesASuccessor(t *testing.T) {
 	cluster, control, daemon := newOSDLifecycleFixture()
-	cluster.run = &runVolume{name: "run"}
+	cluster.runDir.volume = &runVolume{name: "run"}
 	removed := osdHandle(t, t.Context(), cluster, 3)
 	if err := removed.Remove(t.Context()); err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestOSDHandleOfAnotherOrATerminatedClusterIsRefused(t *testing.T) {
 func TestMonitorHandleIsMatchedByNameAndContainerNotByPointer(t *testing.T) {
 	control := &monitorLifecycleControl{members: []string{"a", "b", "c"}, quorum: []string{"a", "b", "c"}}
 	cluster := monitorLifecycleFixture(control)
-	cluster.run = &runVolume{name: "run"}
+	cluster.runDir.volume = &runVolume{name: "run"}
 	primary := monitorHandle(t, t.Context(), cluster, "a")
 	// The cluster describes the primary MON by a new descriptor on every
 	// listing, so a second descriptor of the same container is the same MON.
@@ -161,7 +161,7 @@ func TestMonitorHandleIsMatchedByNameAndContainerNotByPointer(t *testing.T) {
 
 func TestManagerHandleOfAReplacedManagerIsRefused(t *testing.T) {
 	cluster, control, target, replacement := managerLifecycleFixture()
-	cluster.run = &runVolume{name: "run"}
+	cluster.runDir.volume = &runVolume{name: "run"}
 	old := managerHandle(t, t.Context(), cluster, "a")
 	successor := &ManagerContainer{Container: replacement, DaemonName: "a", owner: cluster, authOwned: true}
 	cluster.managers["a"] = successor

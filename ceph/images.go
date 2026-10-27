@@ -159,7 +159,7 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 	ctr, err := testcontainers.Run(ctx, images.Client, append([]testcontainers.ContainerCustomizer{
 		c.adminClient(), c.ownedLabel(), WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
-	}, c.runMount()...)...)
+	}, c.runDir.mounts()...)...)
 	c.toolkit.publish(ctr) // A partial start remains owned and is never retried.
 	if err == nil && ctr != nil {
 		output, versionErr := command(ctx, ctr, "ceph", "--version")
