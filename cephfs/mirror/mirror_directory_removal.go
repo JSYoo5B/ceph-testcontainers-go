@@ -490,42 +490,9 @@ func (r *DirectoryRemoval) WaitReleased(ctx context.Context) (DirectoryRemovalSt
 }
 
 func waitCephFSDirectoryReleasedWithAdmission(ctx context.Context, interval time.Duration, observe func(context.Context) (DirectoryRemovalStatus, bool, error)) (DirectoryRemovalStatus, error) {
-	var last DirectoryRemovalStatus
-	var lastError error
-	var haveObservation bool
-	for {
-		if err := ctx.Err(); err != nil {
-			last.Released = false
-			return last, errors.Join(lastError, err)
-		}
-		current, admitted, err := observe(ctx)
-		if admitted || !haveObservation {
-			last = current
-		}
-		haveObservation = haveObservation || admitted
-		if err != nil {
-			lastError = multicluster.RetainWaitQueryCause(ctx, lastError, err)
-		}
-		if canceled := ctx.Err(); canceled != nil {
-			last.Released = false
-			return last, errors.Join(lastError, canceled)
-		}
-		if errors.Is(err, errCephFSObservationGuard) {
-			last.Released = false
-			return last, err
-		}
-		if err == nil && last.Released {
-			return last, nil
-		}
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			last.Released = false
-			return last, errors.Join(lastError, ctx.Err())
-		case <-timer.C:
-		}
-	}
+	return waitCephFSRemovalCompletion(ctx, interval, observe,
+		func(status DirectoryRemovalStatus) bool { return status.Released },
+		func(status *DirectoryRemovalStatus) { status.Released = false })
 }
 
 func (r *DirectoryRemoval) observeDaemon(ctx context.Context, w cephFSPeerRemovalWitness, watchers map[string]string) (string, error) {

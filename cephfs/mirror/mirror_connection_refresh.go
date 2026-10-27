@@ -196,28 +196,8 @@ func (mirror *Mirror) confirmCephFSRefreshHandle(requirePeer bool) error {
 }
 
 func (mirror *Mirror) checkCephFSRefreshFilesystems(ctx context.Context) error {
-	for _, site := range []struct {
-		name   string
-		id     int
-		poolID int64
-		read   func(context.Context, ...string) ([]byte, error)
-	}{
-		{mirror.SourceFilesystem, mirror.filesystemID, mirror.metadataPoolID, mirror.source.Ceph},
-		{mirror.DestinationFilesystem, mirror.destinationFilesystemID, mirror.destinationMetadataPoolID, mirror.destination.Ceph},
-	} {
-		data, err := site.read(ctx, "fs", "get", site.name, "--format", "json")
-		if err != nil {
-			return cephFSObserveQuery("read original CephFS bootstrap filesystem", err)
-		}
-		var current struct {
-			ID     *int `json:"id"`
-			MDSMap *struct {
-				MetadataPool *int64 `json:"metadata_pool"`
-			} `json:"mdsmap"`
-		}
-		if json.Unmarshal(data, &current) != nil || current.ID == nil || *current.ID != site.id || current.MDSMap == nil || current.MDSMap.MetadataPool == nil || *current.MDSMap.MetadataPool != site.poolID {
-			return cephFSObserveGuard("CephFS original bootstrap filesystem or metadata pool identity differs")
-		}
+	if err := mirror.checkCephFSOriginalFilesystemIdentities(ctx, "read original CephFS bootstrap filesystem", "CephFS original bootstrap filesystem or metadata pool identity differs"); err != nil {
+		return err
 	}
 	return ctx.Err()
 }
