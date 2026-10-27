@@ -3,6 +3,7 @@ package override
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -226,7 +227,7 @@ func TestOverrideMGRModuleLostRepliesAndReadbackReconcile(t *testing.T) {
 	ctr.failAfter = "enable"
 	c := mgrModuleCluster(ctr)
 	change, err := SetMGRModule(t.Context(), c, "mirroring", true)
-	if err == nil || change == nil || !ctr.enabled["mirroring"] || len(heldMGR(c)) != 1 {
+	if err == nil || change == nil || !ctr.enabled["mirroring"] || heldMGR(c)["mirroring"] != change {
 		t.Fatal("uncertain apply lost handle")
 	}
 	ctr.failAfter = "disable"
@@ -287,6 +288,20 @@ func TestOverrideMGRModuleCancellationKeepsAppliedHandleWithFreshReadback(t *tes
 	}
 	if ctr.canceledReads != 0 {
 		t.Fatal("apply readback reused canceled context")
+	}
+	if heldMGR(c)["mirroring"] != change {
+		t.Fatal("the canceled apply did not track its handle before the write")
+	}
+	// The readback after the canceled write ran on a fresh context: a native
+	// read follows the enable command.
+	enableAt := -1
+	for i, call := range ctr.calls {
+		if slices.Equal(call, []string{"mgr", "module", "enable", "mirroring"}) {
+			enableAt = i
+		}
+	}
+	if enableAt < 0 || enableAt == len(ctr.calls)-1 {
+		t.Fatalf("no native readback followed the canceled write: %v", ctr.calls)
 	}
 	if err := change.Restore(t.Context()); err != nil {
 		t.Fatal(err)
