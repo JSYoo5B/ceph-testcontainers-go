@@ -408,12 +408,12 @@ func (b containerBackend) createClient(ctx context.Context, entity string, caps 
 	if created == nil || created.Key == "" {
 		return client, fmt.Errorf("create %s: no key was generated", entity)
 	}
-	c.recordClientSecret(created.Key)
+	c.authRecords.addSecret(created.Key)
 	if created.Ret != 0 {
 		return client, fmt.Errorf("create %s: the MON answered %d", entity, created.Ret)
 	}
 	client.created = true
-	c.setClientKey(entity, created.Key)
+	c.authRecords.confirmKey(entity, created.Key)
 	keyring := []byte(created.Keyring)
 	if clientKey(keyring, entity) != created.Key {
 		return client, fmt.Errorf("cephx keyring for %s does not contain the created key", entity)
@@ -454,7 +454,7 @@ func (b containerBackend) deleteClient(ctx context.Context, client *ClientConfig
 		return fmt.Errorf("remove %s: the MON answered %d", client.name, ret)
 	}
 	client.revoked = true
-	c.setClientKey(client.name, "")
+	c.authRecords.confirmKey(client.name, "")
 	return nil
 }
 
