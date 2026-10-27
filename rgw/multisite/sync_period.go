@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 // Unrelated current, locally pending or staging-period edits are refused before
 // period update can overwrite them. Partial publication/reload is not rolled
 // back; retry the same handle after resolving an external failure.
-func (f *Multisite) ApplySyncGroup(ctx context.Context, g *SyncGroup) error {
+func (f *Fixture) ApplySyncGroup(ctx context.Context, g *SyncGroup) error {
 	if f == nil {
 		return errors.New("RGW multisite fixture is required")
 	}
@@ -179,7 +179,7 @@ func syncPeriodPolicyEqual(a, b map[string]any) bool {
 
 // Get the exact native staging object. errno 2 with empty stdout denotes a
 // missing object; malformed output and all other failures remain failures.
-func (f *Multisite) syncStagingPeriod(ctx context.Context, master *rgwZoneState) (map[string]any, error) {
+func (f *Fixture) syncStagingPeriod(ctx context.Context, master *rgwZoneState) (map[string]any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

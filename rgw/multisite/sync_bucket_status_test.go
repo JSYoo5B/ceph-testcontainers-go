@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 const rgwReadyBucketStatus = `{"realm":"realm","zonegroup":"group-id","zone":"dest-id","bucket":"bucket","bucket_instance_id":"bucket-original","sources":[{"source_zone":"source-id","source_name":"source","source_bucket":"bucket","source_bucket_id":"bucket-original","total_shards":1,"behind_shards":[]}]}`
 
-func newRGWSyncBucketStatusFixture(t *testing.T) (*Multisite, *rgwSyncCLI, *SyncGroup) {
+func newRGWSyncBucketStatusFixture(t *testing.T) (*Fixture, *rgwSyncCLI, *SyncGroup) {
 	t.Helper()
 	f, cli, _, _ := newRGWSyncTestFixture()
 	g, err := f.CreateSyncGroup(t.Context(), SyncPolicyScope{Bucket: "bucket"}, SyncGroupConfig{ID: "checkpoint", Status: SyncEnabled})

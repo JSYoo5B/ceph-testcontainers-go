@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"context"
@@ -36,7 +36,7 @@ type BucketSyncPolicyStatus struct {
 // checkpoints, payloads or permissions, or replay objects written before the
 // policy was imported. It does not pull periods, restart gateways or mutate
 // replication state. Use it after creating pipes and before selected writes.
-func (f *Multisite) WaitBucketSyncPolicyReady(ctx context.Context, g *SyncGroup, destinationZone string) (BucketSyncPolicyStatus, error) {
+func (f *Fixture) WaitBucketSyncPolicyReady(ctx context.Context, g *SyncGroup, destinationZone string) (BucketSyncPolicyStatus, error) {
 	if f == nil {
 		return BucketSyncPolicyStatus{}, errors.New("RGW multisite fixture is required")
 	}
@@ -150,7 +150,7 @@ func syncPolicyReadyBuckets(g *SyncGroup, destinationID string) ([]SyncBucketIde
 	return buckets, nil
 }
 
-func (f *Multisite) checkSyncPolicyReadyMaster(ctx context.Context, g *SyncGroup, period map[string]any, buckets []SyncBucketIdentity) error {
+func (f *Fixture) checkSyncPolicyReadyMaster(ctx context.Context, g *SyncGroup, period map[string]any, buckets []SyncBucketIdentity) error {
 	master, current, err := f.syncPolicyMaster(ctx)
 	if err != nil {
 		return err
@@ -173,7 +173,7 @@ func (f *Multisite) checkSyncPolicyReadyMaster(ctx context.Context, g *SyncGroup
 	return nil
 }
 
-func (f *Multisite) syncPolicyReadyStatus(ctx context.Context, g *SyncGroup, master, destination *rgwZoneState, period, wantGroup map[string]any, result BucketSyncPolicyStatus) (BucketSyncPolicyStatus, bool, error) {
+func (f *Fixture) syncPolicyReadyStatus(ctx context.Context, g *SyncGroup, master, destination *rgwZoneState, period, wantGroup map[string]any, result BucketSyncPolicyStatus) (BucketSyncPolicyStatus, bool, error) {
 	result.Buckets = slices.Clone(result.Buckets)
 	result.PeriodImported, result.PolicyImported, result.BucketsImported, result.Imported = false, false, false, false
 	if err := f.checkSyncPolicyReadyMaster(ctx, g, period, result.Buckets); err != nil {
@@ -242,7 +242,7 @@ func (f *Multisite) syncPolicyReadyStatus(ctx context.Context, g *SyncGroup, mas
 	return result, false, nil
 }
 
-func (f *Multisite) syncPolicyReadyBucket(ctx context.Context, zone *rgwZoneState, g *SyncGroup, bucket SyncBucketIdentity) (bool, bool, error) {
+func (f *Fixture) syncPolicyReadyBucket(ctx context.Context, zone *rgwZoneState, g *SyncGroup, bucket SyncBucketIdentity) (bool, bool, error) {
 	data, err := f.syncPolicyAdmin(ctx, zone, g.scope.Zonegroup, "bucket", "stats", "--bucket", syncScopedBucketName(SyncPolicyScope{Bucket: bucket.Name, Tenant: bucket.Tenant}))
 	if err != nil {
 		return false, false, err

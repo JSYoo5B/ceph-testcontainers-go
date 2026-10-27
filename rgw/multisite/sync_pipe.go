@@ -1,9 +1,10 @@
-package rgw
+package multisite
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,7 +27,7 @@ type SyncBucketSelector struct{ Name, Tenant string }
 // cannot represent comma-containing keys/values; '=' is only allowed in values.
 type SyncObjectTag struct{ Key, Value string }
 
-func (f *Multisite) syncPipeConfig(ctx context.Context, master *rgwZoneState, g *SyncGroup, config SyncPipeConfig, source, dest []string) ([]string, map[string]any, error) {
+func (f *Fixture) syncPipeConfig(ctx context.Context, master *rgwZoneState, g *SyncGroup, config SyncPipeConfig, source, dest []string) ([]string, map[string]any, error) {
 	args := []string{"sync", "group", "pipe", "create", "--group-id", g.ID(), "--pipe-id", config.ID, "--source-zone-ids", strings.Join(source, ","), "--dest-zone-ids", strings.Join(dest, ",")}
 	filter := map[string]any{"tags": []any{}}
 	if config.Prefix != "" {
@@ -176,7 +177,7 @@ func normalizeSyncTags(tags []SyncObjectTag) ([]SyncObjectTag, error) {
 	return result, nil
 }
 
-func (f *Multisite) syncSelectedBucket(ctx context.Context, master *rgwZoneState, g *SyncGroup, selector SyncBucketSelector) (string, map[string]any, error) {
+func (f *Fixture) syncSelectedBucket(ctx context.Context, master *rgwZoneState, g *SyncGroup, selector SyncBucketSelector) (string, map[string]any, error) {
 	if !validRGWSyncID(selector.Name) || selector.Name == "*" || (selector.Tenant != "" && !validRGWSyncID(selector.Tenant)) {
 		return "", nil, multisiteInvalid(errors.New("RGW sync bucket selector requires an existing concrete bucket and valid tenant"))
 	}
@@ -190,18 +191,18 @@ func (f *Multisite) syncSelectedBucket(ctx context.Context, master *rgwZoneState
 	return id, info, err
 }
 
-func (f *Multisite) syncOrdinaryPrincipal(ctx context.Context, g *SyncGroup, user *User) (UserInfo, error) {
+func (f *Fixture) syncOrdinaryPrincipal(ctx context.Context, g *SyncGroup, user *rgw.User) (rgw.UserInfo, error) {
 	info, err := f.syncOwnedPrincipal(ctx, g, user)
 	if err != nil {
-		return UserInfo{}, err
+		return rgw.UserInfo{}, err
 	}
 	if info.AccountID != "" || (info.Type != "" && info.Type != "rgw") {
-		return UserInfo{}, multisiteInvalid(errors.New("RGW owner translation requires a confirmed ordinary user; account owner translation is unproven"))
+		return rgw.UserInfo{}, multisiteInvalid(errors.New("RGW owner translation requires a confirmed ordinary user; account owner translation is unproven"))
 	}
 	return info, nil
 }
 
-func (f *Multisite) syncOwnedPrincipal(ctx context.Context, g *SyncGroup, user *User) (UserInfo, error) {
+func (f *Fixture) syncOwnedPrincipal(ctx context.Context, g *SyncGroup, user *rgw.User) (rgw.UserInfo, error) {
 	// UserInfo enforces private creation/key identity and actual gateway scope.
 	// A replicated user handle retains its creating cluster's ownership, so
 	// inspect through the owning attached gateway rather than adopting a remote UID.
@@ -212,19 +213,19 @@ func (f *Multisite) syncOwnedPrincipal(ctx context.Context, g *SyncGroup, user *
 		info, err := zone.Gateway.UserInfo(ctx, user)
 		if err != nil {
 			if ctx.Err() != nil {
-				return UserInfo{}, ctx.Err()
+				return rgw.UserInfo{}, ctx.Err()
 			}
 			continue
 		}
 		if info.ID != user.ID() || info.Namespace != "" || info.Admin || info.System {
-			return UserInfo{}, multisiteInvalid(errors.New("RGW sync principal requires a confirmed local user without global admin or system permissions"))
+			return rgw.UserInfo{}, multisiteInvalid(errors.New("RGW sync principal requires a confirmed local user without global admin or system permissions"))
 		}
 		return info, nil
 	}
-	return UserInfo{}, multisiteInvalid(errors.New("RGW sync principal was not confirmed as created through an attached owned gateway"))
+	return rgw.UserInfo{}, multisiteInvalid(errors.New("RGW sync principal was not confirmed as created through an attached owned gateway"))
 }
 
-func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, info UserInfo, source, destination map[string]any) error {
+func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, info rgw.UserInfo, source, destination map[string]any) error {
 	if err := checkSyncPrincipalTenants(scope, config, info.Tenant); err != nil {
 		return err
 	}
@@ -242,7 +243,7 @@ func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, in
 	return nil
 }
 
-func (f *Multisite) syncDestinationClass(ctx context.Context, g *SyncGroup, config SyncPipeConfig, info map[string]any) error {
+func (f *Fixture) syncDestinationClass(ctx context.Context, g *SyncGroup, config SyncPipeConfig, info map[string]any) error {
 	if info == nil || len(config.DestinationPlacements) != len(config.DestinationZones) || slices.Contains(config.DestinationZones, "*") {
 		return multisiteInvalid(errors.New("RGW storage-class translation requires a concrete bucket and confirmed placements for concrete destination zones"))
 	}
@@ -265,7 +266,7 @@ func (f *Multisite) syncDestinationClass(ctx context.Context, g *SyncGroup, conf
 		if err != nil {
 			return err
 		}
-		if !state.Confirmed || state.RealmID != g.realmID || state.ZonegroupID != g.groupID || state.ZoneID != zone.ID || state.Name != target || !slices.ContainsFunc(state.StorageClasses, func(c StorageClassConfig) bool { return c.Name == config.DestinationStorageClass }) {
+		if !state.Confirmed || state.RealmID != g.realmID || state.ZonegroupID != g.groupID || state.ZoneID != zone.ID || state.Name != target || !slices.ContainsFunc(state.StorageClasses, func(c rgw.StorageClassConfig) bool { return c.Name == config.DestinationStorageClass }) {
 			return multisiteInvalid(errors.New("RGW destination class does not match its confirmed native placement/bucket scope"))
 		}
 		_, period, err := f.syncPolicyMaster(ctx)
@@ -305,7 +306,7 @@ func accountPipeUnsupported(zone *rgwZoneState) error {
 // zoneBefore returns an owned zone whose cluster runs a release older than
 // major, or nil. Any such zone may resolve the pipe, so one is enough to
 // refuse.
-func (f *Multisite) zoneBefore(major int) *rgwZoneState {
+func (f *Fixture) zoneBefore(major int) *rgwZoneState {
 	states := f.zoneStates()
 	index := slices.IndexFunc(states, func(zone *rgwZoneState) bool {
 		return zone.cluster != nil && multicluster.CephBefore(zone.cluster, major)

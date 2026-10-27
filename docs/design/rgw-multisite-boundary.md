@@ -1,8 +1,8 @@
 # RGW multisite package boundary: decision and inventory
 
-Status: design decision and source inventory for #157. No source, API or
-behavior changes in this revision. The package move is a later change that
-follows the migration table below.
+Status: design decision and source inventory for #157, plus the record of the
+package move that implements it (see "Implemented move" at the end). The
+inventory sections describe the source before the move.
 
 Inspected source: `main` at 0a65b75 (includes #151, #160 and #161); the first revision of this note used 3fc29fe and the counts were re-checked unchanged. Counts below are measured
 at that revision and are evidence for the decision, not targets. The
@@ -160,10 +160,11 @@ RBD and CephFS mirroring (#156) and stays in place.
   cancellation, removed-zone settlement and uncertain-outcome behavior are
   internal to the moving files and are moved without edits to their logic.
 
-### Names that need a reviewed decision
+### Names
 
-The new names below are proposals for review in the implementation change. The
-`Multisite` type name would stutter as `multisite.Multisite`.
+The names below were proposals in the first revision and are the names the move
+implements. The `Multisite` type name would stutter as `multisite.Multisite`,
+so it is `multisite.Fixture`.
 
 | Current | Proposed |
 | --- | --- |
@@ -181,7 +182,8 @@ upgrade guide and CHANGELOG, as for earlier moves.
 
 ## Work the implementation change must include
 
-Evidence from this inventory; none of this is done by the current revision.
+Evidence from this inventory; the "Implemented move" section records how each
+item was done.
 
 - Callers: 14 test files under `internal/integration` name a moving type or
   function (`rgw.Multisite`, `rgw.RunMultisite`, `rgw.RunTopology`, `rgw.Zone`,
@@ -207,13 +209,13 @@ Evidence from this inventory; none of this is done by the current revision.
 - `.github/scripts/run_image_matrix.py` hashes `rgw/**/*.go`, so a nested
   directory is already covered (unconfirmed for any other path-based tooling).
 
-## What this revision does not cover
+## What the first revision did not cover
 
 - No code, API, test or CI change, and no native run. The statements above are
   static analysis of one revision.
 - Coordination with #144 (public API moves) and #146 (core state and locks)
-  is not performed here. No `ceph` package declaration is touched.
-- The final destination names are proposals, not decisions.
+  was not performed there. No `ceph` package declaration is touched by this
+  design or by the move.
 
 ## Internal preparation (no public change)
 
@@ -232,8 +234,49 @@ without changing an exported name or behavior:
   single-gateway file refers to a package-level declaration of the family.
   It is a static check on package-level identifiers (not fields or methods).
 
-Still open, and required before the package move: the owner decision on the
-destination names in the table above (`multisite.Fixture` against keeping
-`Multisite`, `multisite.Run`) and on the package label for
-`internal/apiinventory` (`multisite.` against `rgw/multisite.`). Until these
-are recorded no exported declaration moves.
+Both open decisions were recorded before the move: the destination names are
+those in the table above, and the package label for `internal/apiinventory` is
+the directory, `rgw/multisite`.
+
+## Implemented move
+
+The family listed above moved to `rgw/multisite` with `git mv`, so history
+follows the files. The unit tests moved with it. The files lose their
+`multisite_` prefix because the package name carries it (`multisite.go` is
+`fixture.go`, `multisite_errors.go` is `errors.go`).
+
+- Source changes in the moved files are limited to the package clause, the
+  `rgw.` qualifier on the single-gateway declarations listed under
+  "Dependency from the family into the rest of `rgw`", the three renames, and
+  the comment text that named them. No logic, lock order, error text or
+  timeout changed.
+- `TestMultisiteFamilyBoundary` is replaced by the compiler: a moved file can
+  only reach exported `rgw` API, and `TestPackageDoesNotImportMultisite` in
+  `rgw` fails when `rgw` imports the child package. The measured import graph
+  matches the prediction above: `rgw` imports `ceph` and
+  `internal/{clusterutil,naming,servicehook}`; `rgw/multisite` imports `rgw`,
+  `ceph`, `fault` and `internal/{clusterutil,dockerbridge,multicluster,servicehook}`.
+- `multisiteInvalid` stays as the child's own copy of `invalid`.
+- The 14 integration test files that name the moved declarations changed only
+  their qualifiers and imports. Their `Test` function names, build tags and
+  `//ci:` batch lines are unchanged, so scenario planning, batch grouping and
+  Makefile selectors still resolve.
+- `internal/apiinventory` keys packages by directory, so the label is
+  `rgw/multisite`, and the tool needed only a new `packages` entry for
+  `docs/rgw-multisite.md`. The catalogues were regenerated with
+  `-update-api-naming` and the receipt was refreshed by hand after checking that
+  the 56 moved entries map one to one onto the new package (125 `rgw`
+  declarations before; 69 plus 56 after; 204 members before; 91 plus 113 after).
+- `.github/scripts/fixtures/package-split.json` keeps its rewrite keys (the
+  retained producers still use the old `multicluster.*` spellings) and its
+  targets now name `multisite.*`. The scenario quiescence tests that apply the
+  rewrites pass unchanged, so the retained sources are compared as strictly as
+  before.
+- Documentation: `docs/rgw-multisite.md` holds the moved reference, examples,
+  native-command and selective-sync sections; `docs/rgw.md` links to it.
+  `docs/guides/upgrading-rgw-multisite.md` and the CHANGELOG record the
+  old-to-new mapping.
+
+Not covered: no native run of the moved scenarios is claimed beyond what CI
+reports for the exact head of the change that carries this move, and the move
+does not touch #146 core state or the `ceph` package.

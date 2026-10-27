@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"slices"
 	"strings"
 	"time"
@@ -50,7 +51,7 @@ type TopologyConfig struct {
 // Applications obtain their endpoint separately with Gateway.S3Endpoint.
 type Zone struct {
 	Name, ID, Zonegroup, PeerEndpoint string
-	Gateway                           *Gateway
+	Gateway                           *rgw.Gateway
 }
 
 // Zonegroup is an owned region snapshot. MasterZone reflects the last
@@ -73,12 +74,12 @@ type rgwZoneState struct {
 }
 
 // RunTopology creates a multi-zone fixture using the same ownership and
-// cleanup contract as RunMultisite. The initial master becomes Source, and
+// cleanup contract as Run. The initial master becomes Source, and
 // the first remaining zone becomes Destination for compatibility. Zones returns
 // all sites. A non-nil result on error owns partial resources and needs cleanup.
 // image selects RGW gateways; each setup client uses its cluster's RGW
 // image unless SetupImage supplies a shared override.
-func RunTopology(ctx context.Context, image string, config TopologyConfig, opts ...testcontainers.ContainerCustomizer) (*Multisite, error) {
+func RunTopology(ctx context.Context, image string, config TopologyConfig, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
 	zones, err := prepareRGWTopology(ctx, image, config)
 	if err != nil {
 		return nil, err
@@ -88,7 +89,7 @@ func RunTopology(ctx context.Context, image string, config TopologyConfig, opts 
 			return nil, err
 		}
 	}
-	f, err := RunMultisite(ctx, image, MultisiteConfig{
+	f, err := Run(ctx, image, Config{
 		Source: zones[0].Cluster, Destination: zones[1].Cluster,
 		SourceZone: zones[0].Name, DestinationZone: zones[1].Name,
 		Realm: config.Realm, Zonegroup: zones[0].Zonegroup, SetupImage: config.SetupImage,
@@ -239,7 +240,7 @@ func validRGWZoneName(name string) bool {
 
 // Zones returns owned zone descriptors sorted by name, including partial zones
 // returned by a failed AddZone. It does not expose private system credentials.
-func (f *Multisite) Zones() []Zone {
+func (f *Fixture) Zones() []Zone {
 	f.topologyMu.Lock()
 	defer f.topologyMu.Unlock()
 	states := f.zoneStates()
@@ -252,7 +253,7 @@ func (f *Multisite) Zones() []Zone {
 }
 
 // zoneStates is called while topologyMu is held.
-func (f *Multisite) zoneStates() []*rgwZoneState {
+func (f *Fixture) zoneStates() []*rgwZoneState {
 	states := []*rgwZoneState{
 		{Zone: Zone{Name: f.config.SourceZone, ID: f.SourceZoneID, Zonegroup: f.zoneGroupName(f.config.SourceZone), PeerEndpoint: f.sourceURL, Gateway: f.Source}, cluster: f.config.Source, client: f.sourceClient},
 		{Zone: Zone{Name: f.config.DestinationZone, ID: f.DestinationZoneID, Zonegroup: f.zoneGroupName(f.config.DestinationZone), PeerEndpoint: f.destinationURL, Gateway: f.Destination}, cluster: f.config.Destination, client: f.destinationClient},
@@ -269,7 +270,7 @@ func (f *Multisite) zoneStates() []*rgwZoneState {
 // ZoneAdmin runs native radosgw-admin in any owned zone, including a partial
 // zone whose CLI client started successfully. Do not edit period/zone state
 // concurrently with AddZone or external metadata master transitions.
-func (f *Multisite) ZoneAdmin(ctx context.Context, name string, args ...string) ([]byte, error) {
+func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([]byte, error) {
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return nil, err
 	}
@@ -302,7 +303,7 @@ func (f *Multisite) ZoneAdmin(ctx context.Context, name string, args ...string) 
 // initialization fails rather than adopting an external zone.
 // image selects the new gateway. Its setup client uses the new cluster's
 // control image unless the fixture was configured with ControlImage.
-func (f *Multisite) AddZone(ctx context.Context, image string, config ZoneConfig, opts ...testcontainers.ContainerCustomizer) (*Zone, error) {
+func (f *Fixture) AddZone(ctx context.Context, image string, config ZoneConfig, opts ...testcontainers.ContainerCustomizer) (*Zone, error) {
 	if f == nil || !validRGWZoneName(config.Name) {
 		return nil, errors.New("invalid RGW fixture or zone name")
 	}
@@ -313,7 +314,7 @@ func (f *Multisite) AddZone(ctx context.Context, image string, config ZoneConfig
 	return f.addZone(ctx, image, config, false, opts...)
 }
 
-func (f *Multisite) addZone(ctx context.Context, image string, config ZoneConfig, createGroup bool, opts ...testcontainers.ContainerCustomizer) (*Zone, error) {
+func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, createGroup bool, opts ...testcontainers.ContainerCustomizer) (*Zone, error) {
 	if config.Zonegroup == "" {
 		config.Zonegroup = f.config.Zonegroup
 	}
@@ -484,7 +485,7 @@ func (f *Multisite) addZone(ctx context.Context, image string, config ZoneConfig
 	return &state.Zone, nil
 }
 
-func (f *Multisite) reloadZoneGateways(ctx context.Context, states []*rgwZoneState, skip func(*rgwZoneState) bool) error {
+func (f *Fixture) reloadZoneGateways(ctx context.Context, states []*rgwZoneState, skip func(*rgwZoneState) bool) error {
 	for _, zone := range states {
 		// A bridge gateway starts after its endpoint was committed, so the
 		// new zone already loaded the final period. Avoid interrupting its
@@ -544,7 +545,7 @@ func decodeRGWTopologyPeriod(data []byte) (*rgwTopologyPeriod, error) {
 	return &period, nil
 }
 
-func (f *Multisite) checkZonePeriod(period *rgwTopologyPeriod, master *rgwZoneState, states []*rgwZoneState) error {
+func (f *Fixture) checkZonePeriod(period *rgwTopologyPeriod, master *rgwZoneState, states []*rgwZoneState) error {
 	if period.RealmID != f.RealmID || period.MasterZone != master.ID {
 		return errors.New("committed RGW topology realm/master identity mismatch")
 	}
@@ -599,7 +600,7 @@ func (f *Multisite) checkZonePeriod(period *rgwTopologyPeriod, master *rgwZoneSt
 	return nil
 }
 
-func (f *Multisite) waitZonePeriods(ctx context.Context, master *rgwZoneState, states []*rgwZoneState) error {
+func (f *Fixture) waitZonePeriods(ctx context.Context, master *rgwZoneState, states []*rgwZoneState) error {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	var last error
@@ -662,7 +663,7 @@ func (f *Multisite) waitZonePeriods(ctx context.Context, master *rgwZoneState, s
 // HTTP readiness does not imply that a secondary finished creating its local
 // metadata full-sync maps. Wait for every native shard to enter incremental
 // sync before restarting gateways to apply the new topology.
-func (f *Multisite) waitZoneMetadataBootstrap(ctx context.Context, master *rgwZoneState, states []*rgwZoneState) error {
+func (f *Fixture) waitZoneMetadataBootstrap(ctx context.Context, master *rgwZoneState, states []*rgwZoneState) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	for _, zone := range states {

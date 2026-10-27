@@ -1,9 +1,10 @@
-package rgw
+package multisite
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"slices"
 	"strings"
 	"sync"
@@ -18,10 +19,10 @@ import (
 	"github.com/testcontainers/testcontainers-go/network"
 )
 
-// MultisiteConfig describes a two-zone realm in fresh test clusters. The
+// Config describes a two-zone realm in fresh test clusters. The
 // source is the metadata master; both zones accept object writes.
 // Setup clients use each cluster's RGW image unless SetupImage overrides it.
-type MultisiteConfig struct {
+type Config struct {
 	Source, Destination                           *ceph.Container
 	Realm, Zonegroup, SourceZone, DestinationZone string
 	// SetupImage explicitly selects the RGW administration runtime.
@@ -29,13 +30,13 @@ type MultisiteConfig struct {
 	destinationZonegroup string
 }
 
-// Multisite owns two gateways and their CLI clients. Bridge mode adds a
+// Fixture owns two gateways and their CLI clients. Bridge mode adds a
 // private HTTP network; host mode uses allocated gateway ports on the Docker
 // host. Source and Destination expose matching ordinary S3 test credentials.
-type Multisite struct {
-	Source, Destination                      *Gateway
+type Fixture struct {
+	Source, Destination                      *rgw.Gateway
 	RealmID, SourceZoneID, DestinationZoneID string
-	config                                   MultisiteConfig
+	config                                   Config
 	sourceClient, destinationClient          testcontainers.Container
 	sourceURL, destinationURL                string
 	systemAccess, systemSecret               string
@@ -53,7 +54,7 @@ type Multisite struct {
 	closed                                   bool
 }
 
-// RunMultisite configures native RGW multisite on two existing clusters.
+// Run configures native RGW multisite on two existing clusters.
 // opts customize both gateways and are applied last. Do not replace required
 // networking or commands. A non-nil result returned with an error must still
 // be terminated. The clusters must not already serve standalone RGW traffic.
@@ -61,7 +62,7 @@ type Multisite struct {
 // configured daemon-host addresses, which must be mutually reachable.
 // image supplies the gateway runtime; setup clients use each cluster's RGW
 // image unless SetupImage explicitly overrides it.
-func RunMultisite(ctx context.Context, image string, config MultisiteConfig, opts ...testcontainers.ContainerCustomizer) (*Multisite, error) {
+func Run(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
 	}
@@ -104,7 +105,7 @@ func RunMultisite(ctx context.Context, image string, config MultisiteConfig, opt
 	}
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Minute)
 	defer cancel()
-	f := &Multisite{config: config, bootstrapStagingPending: true,
+	f := &Fixture{config: config, bootstrapStagingPending: true,
 		zoneGroups: map[string]string{config.SourceZone: config.Zonegroup, config.DestinationZone: config.destinationZonegroup},
 		groupIDs:   make(map[string]string), groupMasters: map[string]string{config.Zonegroup: config.SourceZone}}
 	if config.destinationZonegroup != config.Zonegroup {
@@ -292,7 +293,7 @@ func RunMultisite(ctx context.Context, image string, config MultisiteConfig, opt
 	if err := json.Unmarshal(user, &credentials); err != nil || len(credentials.Keys) != 1 || credentials.Keys[0].AccessKey == "" || credentials.Keys[0].SecretKey == "" {
 		return f, fmt.Errorf("invalid RGW S3 test credentials")
 	}
-	for _, gateway := range []*Gateway{f.Source, f.Destination} {
+	for _, gateway := range []*rgw.Gateway{f.Source, f.Destination} {
 		gateway.AccessKey = credentials.Keys[0].AccessKey
 		gateway.SecretKey = credentials.Keys[0].SecretKey
 	}
@@ -312,12 +313,12 @@ func rgwSetupImage(override string, cluster interface{ Images() ceph.ImageSet })
 	return image, nil
 }
 
-func (f *Multisite) runGateway(ctx context.Context, image string, cluster *ceph.Container, bridge *testcontainers.DockerNetwork, alias, zone string, opts ...testcontainers.ContainerCustomizer) (*Gateway, error) {
+func (f *Fixture) runGateway(ctx context.Context, image string, cluster *ceph.Container, bridge *testcontainers.DockerNetwork, alias, zone string, opts ...testcontainers.ContainerCustomizer) (*rgw.Gateway, error) {
 	moduleOpts := []testcontainers.ContainerCustomizer{testcontainers.WithImage(image)}
 	if bridge != nil {
 		moduleOpts = append(moduleOpts, network.WithNetwork([]string{alias}, bridge))
 	}
-	gateway, err := Start(ctx, cluster, Config{
+	gateway, err := rgw.Start(ctx, cluster, rgw.Config{
 		Name: alias, Realm: f.config.Realm, Zonegroup: f.zoneGroupName(zone), Zone: zone,
 		Region: f.zoneGroupName(zone), SkipUserCreation: true,
 	}, append(moduleOpts, opts...)...)
@@ -337,7 +338,7 @@ func rgwEndpointArgs(args []string, endpoint string) []string {
 	return args
 }
 
-func (f *Multisite) validatePeriodEndpoints(data []byte) error {
+func (f *Fixture) validatePeriodEndpoints(data []byte) error {
 	var period struct {
 		RealmID    string `json:"realm_id"`
 		MasterZone string `json:"master_zone"`
@@ -391,16 +392,16 @@ func (f *Multisite) validatePeriodEndpoints(data []byte) error {
 	return fmt.Errorf("committed period has no zonegroup %s", f.config.Zonegroup)
 }
 
-func (f *Multisite) admin(ctx context.Context, client testcontainers.Container, zone string, args ...string) ([]byte, error) {
+func (f *Fixture) admin(ctx context.Context, client testcontainers.Container, zone string, args ...string) ([]byte, error) {
 	return f.adminInGroup(ctx, client, f.zoneGroupName(zone), zone, args...)
 }
 
-func (f *Multisite) adminInGroup(ctx context.Context, client testcontainers.Container, group, zone string, args ...string) ([]byte, error) {
+func (f *Fixture) adminInGroup(ctx context.Context, client testcontainers.Container, group, zone string, args ...string) ([]byte, error) {
 	command := []string{"radosgw-admin", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--rgw-realm", f.config.Realm, "--rgw-zonegroup", group, "--rgw-zone", zone, "--osd-pool-default-pg-num", "1", "--osd-pool-default-pgp-num", "0"}
 	return multicluster.Exec(ctx, client, append(command, args...)...)
 }
 
-func (f *Multisite) zoneGroupName(zone string) string {
+func (f *Fixture) zoneGroupName(zone string) string {
 	f.scopeMu.RLock()
 	defer f.scopeMu.RUnlock()
 	if group := f.zoneGroups[zone]; group != "" {
@@ -410,7 +411,7 @@ func (f *Multisite) zoneGroupName(zone string) string {
 }
 
 func ensureFreshRGWCluster(ctx context.Context, cluster *ceph.Container) error {
-	gateways, err := Gateways(ctx, cluster)
+	gateways, err := rgw.Gateways(ctx, cluster)
 	if err != nil {
 		return fmt.Errorf("inspect RGW storage gateways: %w", err)
 	}
@@ -433,13 +434,13 @@ func ensureFreshRGWCluster(ctx context.Context, cluster *ceph.Container) error {
 
 // SourceAdmin executes radosgw-admin in the source cluster's realm and zone.
 // The source starts as metadata master, but a caller can explicitly change it.
-func (f *Multisite) SourceAdmin(ctx context.Context, args ...string) ([]byte, error) {
+func (f *Fixture) SourceAdmin(ctx context.Context, args ...string) ([]byte, error) {
 	return f.admin(ctx, f.sourceClient, f.config.SourceZone, args...)
 }
 
 // DestinationAdmin executes radosgw-admin in the destination cluster's realm
 // and zone, including after the destination has become metadata master.
-func (f *Multisite) DestinationAdmin(ctx context.Context, args ...string) ([]byte, error) {
+func (f *Fixture) DestinationAdmin(ctx context.Context, args ...string) ([]byte, error) {
 	return f.admin(ctx, f.destinationClient, f.config.DestinationZone, args...)
 }
 
@@ -450,7 +451,7 @@ func (f *Multisite) DestinationAdmin(ctx context.Context, args ...string) ([]byt
 // metadata master change, fence the former master before calling this method
 // and restart its gateway afterwards. This does not promote a zone or restart
 // a gateway automatically.
-func (f *Multisite) PullSourcePeriod(ctx context.Context) error {
+func (f *Fixture) PullSourcePeriod(ctx context.Context) error {
 	if f.systemAccess == "" || f.systemSecret == "" || f.destinationURL == "" {
 		return fmt.Errorf("RGW multisite system credentials are unavailable")
 	}
@@ -462,7 +463,7 @@ func (f *Multisite) PullSourcePeriod(ctx context.Context) error {
 // period into the destination cluster, including the current-period pointer
 // and reflected zonegroups. Use it to recover a fenced destination after a
 // planned failback; promotion and gateway restart remain caller decisions.
-func (f *Multisite) PullDestinationPeriod(ctx context.Context) error {
+func (f *Fixture) PullDestinationPeriod(ctx context.Context) error {
 	if f.systemAccess == "" || f.systemSecret == "" || f.sourceURL == "" {
 		return fmt.Errorf("RGW multisite system credentials are unavailable")
 	}
@@ -472,7 +473,7 @@ func (f *Multisite) PullDestinationPeriod(ctx context.Context) error {
 
 // Terminate removes owned gateways, CLI clients and the HTTP bridge. Realm,
 // zone configuration and data remain; neither Ceph cluster is terminated.
-func (f *Multisite) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
+func (f *Fixture) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return err
 	}

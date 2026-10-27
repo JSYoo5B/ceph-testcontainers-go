@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"context"
@@ -8,11 +8,11 @@ import (
 	"time"
 )
 
-// This mutation is only admitted inside fresh RunMultisite initialization,
+// This mutation is only admitted inside fresh Run initialization,
 // after both clusters passed ensureFreshRGWCluster and before exposing the
 // fixture. It must never turn a later foreign staging period into permission
 // to overwrite pending configuration in ApplySyncGroup.
-func (f *Multisite) canonicalizeBootstrapStaging(ctx context.Context) error {
+func (f *Fixture) canonicalizeBootstrapStaging(ctx context.Context) error {
 	if f == nil || f.closed || !f.bootstrapStagingPending {
 		return errors.New("RGW staging canonicalization is restricted to fresh owned bootstrap")
 	}

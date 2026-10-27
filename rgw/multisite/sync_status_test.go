@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"context"
