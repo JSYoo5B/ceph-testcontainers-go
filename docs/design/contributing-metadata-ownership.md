@@ -397,7 +397,7 @@ documentation-only. That was checked against the function, not assumed.
    precedent in the vulnerability matrix: the job always runs and each step is
    gated. The same shape applies to `Vet, compile and CI tooling` (a required
    check): remove the job-level `docs_only` gate and gate each existing step
-   instead, then add the validator as the one ungated step. The required check
+   instead, then add the checkout and the validator as the ungated steps. The required check
    names do not change. Adding a new required context instead would need a
    change to the `main protection` ruleset settings, which is the maintainer's
    decision.
@@ -409,14 +409,35 @@ documentation-only. That was checked against the function, not assumed.
 
 ### Lightweight current-head validation
 
-For a pull request whose net change against the base is only fragments and
-other allowlisted documentation, the disposition of the current head is:
+Today a documentation-only head (this design PR, run 40430609561, head
+`80542f4`) has this disposition, read from the run's jobs and `code.yml`:
 
-| Check | Disposition |
+| Required context | Today with `docs_only=true` |
 | --- | --- |
-| The six required Code checks | skipped by policy: they report success because GitHub reports a skipped job as success; they are not a new native PASS |
-| Fragment and assembly validator | executed on this head |
+| `Unit tests` (121947200709), `Race detector` (121947200168), `Vet, compile and CI tooling` (121947200786), `Compiled tag coverage and helpers` (121947199828) | the job is skipped by its job-level condition and reports success; no step ran |
+| `Vulnerability check (Go 1.26.x)` (121947198335) and `(Go 1.27.x)` (121947198409) | the job executes and reports success in seconds, because every step is gated on `docs_only`; no scan ran |
+| `Detect documentation-only changes` (121947055442, not a required context) | executed: it ran `docs_only.py` |
+| Runtime workflows | not started: only the Code checks run exists for that head |
+
+So today two required contexts execute as jobs but run no scan, four are
+skipped jobs, and no step validates the content of a documentation-only head
+beyond the classifier. None of them is a new native or scan PASS for that head.
+
+The proposed disposition for a head whose net change is only fragments and
+other allowlisted documentation differs in one context:
+
+| Required context | Proposed with `docs_only=true` |
+| --- | --- |
+| `Vet, compile and CI tooling` | the job executes (its job-level `docs_only` gate is replaced by per-step gates, as the vulnerability jobs already do); the checkout and the fragment and assembly validator are the ungated steps, and vet, lint, tag compilation, the Python tooling tests and actionlint stay skipped by policy |
+| `Vulnerability check (Go 1.26.x)` and `(Go 1.27.x)` | unchanged: executed jobs whose steps are skipped |
+| `Unit tests`, `Race detector`, `Compiled tag coverage and helpers` | unchanged: skipped jobs that report success |
+| `Detect documentation-only changes` | executed, unchanged |
 | Runtime workflows | not started (`docs/**` ignored) |
+
+The validator result is a real result for this head, and only that. The
+skipped-by-policy jobs and steps are not reported or described as having
+executed, and a green `Vet, compile and CI tooling` on such a head means the
+validator passed, not that vet or tag compilation ran.
 
 For a change that touches catalogue, receipt or `package-split` files, the Go
 and Python checks that read them run at the current head. No new check
