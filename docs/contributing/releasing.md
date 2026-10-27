@@ -97,7 +97,9 @@ Before a separately authorized publication:
   `python3 .github/scripts/release_assemble.py check --require-tags --candidate vX.Y.Z --base <previous release commit>`.
   `--candidate` must name the newest section of `CHANGELOG.md`, and its tag
   must not exist yet. It exempts only that section, which the report lists as
-  `not yet tagged, verified only against the assembled fragments and digests`.
+  `not yet tag-verified; marker format and uniqueness checked; original fragment
+  bytes and digests NOT verified`; review the section's diff against the draft
+  yourself.
   Every earlier section is still compared with its tag, any other untagged
   section fails, and a changed published section, a left-behind fragment or a
   re-used identifier fails. A `SKIPPED` tag comparison means the clone could not

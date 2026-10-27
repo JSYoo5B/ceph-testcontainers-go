@@ -2,6 +2,7 @@ import contextlib
 import hashlib
 import io
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -505,7 +506,25 @@ class DocumentedSequenceTests(GitBase):
             code = release_assemble.main(["--root", str(self.root), "check", "--require-tags",
                                           "--candidate", "v0.2.0", "--base", "HEAD"])
         self.assertEqual(code, 0)
-        self.assertIn("candidate: v0.2.0 not yet tagged, verified only against the assembled fragments", out.getvalue())
+        self.assertIn("candidate: v0.2.0 not yet tag-verified; marker format and uniqueness checked; "
+                      "original fragment bytes and digests NOT verified\n", out.getvalue())
+        self.assertNotIn("verified only against", out.getvalue())
+        self.assertIn("sections identical to their tag: v0.1.0", out.getvalue())
+
+    def test_invented_candidate_markers_print_only_the_limited_scope(self):
+        self.prepare()
+        text = (self.root / "CHANGELOG.md").read_text()
+        forged = re.sub(r"<!-- change: 1-a sha256:[0-9a-f]{16} -->", "<!-- change: invented-id sha256:0000000000000000 -->",
+                        text).replace("A consumer can now do the thing.", "Arbitrary text.")
+        self.assertNotEqual(forged, text)
+        self.changelog(forged)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = release_assemble.main(["--root", str(self.root), "check", "--require-tags", "--candidate", "v0.2.0"])
+        self.assertEqual(code, 0)  # the exemption is intentional; the report must not oversell it
+        self.assertIn("original fragment bytes and digests NOT verified", out.getvalue())
+        for stronger in ("verified only against", "assembled fragments and digests", "digests verified"):
+            self.assertNotIn(stronger, out.getvalue())
 
     def test_strict_check_without_the_candidate_fails_before_the_tag(self):
         self.prepare()

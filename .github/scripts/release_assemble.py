@@ -35,7 +35,8 @@ revisions cannot verify this: the report says SKIPPED or lists the versions that
 were not verified, and --require-tags turns that into a failure. It is never
 reported as a pass. --candidate vX.Y.Z names the release being prepared: its
 section must be the newest and its tag must not exist yet, and only that section
-is exempt from the tag comparison (reported as not yet tagged).
+is exempt from the tag comparison. Only its marker format and uniqueness are
+checked: the original fragment bytes and digests are not verified.
 """
 import argparse
 import collections
@@ -267,6 +268,12 @@ def release_tags(root):
     return sorted(name for name in names if VERSION.fullmatch(name))
 
 
+# What the candidate exemption does and does not establish. The consumed fragment
+# files are deleted before this check runs, so their bytes and digests cannot be
+# compared with the markers.
+CANDIDATE_SCOPE = ("candidate: %s not yet tag-verified; marker format and uniqueness checked; "
+                   "original fragment bytes and digests NOT verified")
+
 Report = collections.namedtuple("Report", "failures verified drifted unverified bases ledger candidate")
 
 
@@ -444,19 +451,18 @@ def main(argv=None):
         print(problem, file=sys.stderr)
     print("released identifiers: %d recorded" % len(report.ledger))
     if report.verified:
-        print("tag comparison: verified %s" % ", ".join(report.verified))
+        print("tag comparison: sections identical to their tag: %s" % ", ".join(report.verified))
     elif not report.drifted:
         print("tag comparison: SKIPPED (no release tag with a comparable %s in this clone)" % CHANGELOG)
     if report.drifted:
         print("tag comparison: %s differ from their own tag but match the one accepted reviewed correction"
               % ", ".join(report.drifted))
     if (report.verified or report.drifted) and report.unverified:
-        print("tag comparison: NOT verified for %s" % ", ".join(report.unverified))
+        print("tag comparison: NOT compared with a tag for %s" % ", ".join(report.unverified))
     if report.candidate:
-        print("candidate: %s not yet tagged, verified only against the assembled fragments and digests"
-              % report.candidate)
+        print(CANDIDATE_SCOPE % report.candidate)
     for base in report.bases:
-        print("base comparison: verified against %s" % base)
+        print("base comparison: released sections unchanged since %s" % base)
     if report.failures:
         print("%d problem(s)" % len(report.failures), file=sys.stderr)
         return 1

@@ -135,8 +135,11 @@ validator enforces this on the feature pull request.
 The release being prepared has no tag yet. `--candidate vX.Y.Z` names it: the
 section must exist and be newer than every other section and tag, and the tag
 must not exist. Only that section is exempt from the tag comparison, and the
-report says `candidate: vX.Y.Z not yet tagged, verified only against the
-assembled fragments and digests`. Earlier sections are still compared with their
+report says `candidate: vX.Y.Z not yet tag-verified; marker format and
+uniqueness checked; original fragment bytes and digests NOT verified`. The
+consumed fragment files are deleted before the check, so it cannot compare the
+section text or the markers with them: review the assembled draft's diff
+yourself. Earlier sections are still compared with their
 tags and any other untagged section still fails under `--require-tags`. The
 order is: `assemble`, edit, replace the legacy block and delete the consumed
 fragments, run `check --require-tags --candidate vX.Y.Z --base <previous release
