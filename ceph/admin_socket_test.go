@@ -27,7 +27,7 @@ func TestAdminSocketDaemonNames(t *testing.T) {
 // mgr.b terminated. Its control fake records every command it runs.
 func adminSocketCluster() (*Container, *poolFixtureContainer) {
 	control := &poolFixtureContainer{Output: map[string]string{}}
-	c := &Container{Container: control, settings: options{startupTimeout: time.Second}, run: &runVolume{name: "run"},
+	c := &Container{Container: control, settings: options{startupTimeout: time.Second}, runDir: runDirState{volume: &runVolume{name: "run"}},
 		monitors: map[string]*MonitorContainer{},
 		managers: map[string]*ManagerContainer{"a": {Container: control, DaemonName: "a"}, "b": {Container: control, DaemonName: "b", terminated: true}},
 		osds:     map[int]*OSDContainer{0: {ID: 0, Container: control}, 1: {ID: 1, Container: control, purged: true}}}
@@ -49,8 +49,8 @@ func TestAdminSocketRefusesBeforeRunningCommands(t *testing.T) {
 		"terminated MGR":     {nil, "mgr.b", []string{"status"}, "not owned"},
 		"terminated MON a":   {func(c *Container) { c.monitorTerminated = true }, "mon.a", []string{"version"}, "not owned"},
 		"closed cluster":     {func(c *Container) { c.closed = true }, "osd.0", []string{"status"}, "terminated"},
-		"no run volume":      {func(c *Container) { c.run = nil }, "osd.0", []string{"status"}, "shared run directory"},
-		"removed run volume": {func(c *Container) { c.run.removed = true }, "osd.0", []string{"status"}, "shared run directory"},
+		"no run volume":      {func(c *Container) { c.runDir.volume = nil }, "osd.0", []string{"status"}, "shared run directory"},
+		"removed run volume": {func(c *Container) { c.runDir.volume.removed = true }, "osd.0", []string{"status"}, "shared run directory"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, control := adminSocketCluster()

@@ -638,7 +638,7 @@ func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) 
 	if changed, err := checkDebugLevelGeneration(gen, err, identity, t.daemon); err != nil {
 		return nil, &debugLevelRefusal{changed: changed, err: err}
 	}
-	if c.run == nil || c.run.removed {
+	if !c.runDir.shared() {
 		return nil, &debugLevelRefusal{err: errors.New("this cluster has no shared run directory for admin sockets")}
 	}
 	control, err := c.controlContainerContext(ctx)
