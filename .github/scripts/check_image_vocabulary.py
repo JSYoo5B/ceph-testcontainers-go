@@ -36,7 +36,9 @@ ALLOWED = {
     "docs/design/image-role-terminology.md": "design record that quotes the retired names",
     ".github/scripts/fixtures/cephfs-quiescence-native.source.go.txt": "retained producer source",
     ".github/scripts/fixtures/cephfs-recovery-native.source.go.txt": "retained producer source",
-    ".github/scripts/fixtures/package-split.json": "rewrite rule matching the retained producers",
+    ".github/scripts/fixtures/package-split/cephfs-mirror.json": "rewrite rule matching the retained producers",
+    ".github/scripts/fixtures/migration/package-split.single-file-7015c62.json": "preserved record of the former single-file rewrite map",
+    ".github/scripts/test_package_split.py": "synthetic lines of the retained producers",
     ".github/scripts/check_image_vocabulary.py": "this check",
     ".github/scripts/test_check_image_vocabulary.py": "this check's tests",
 }
