@@ -121,7 +121,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"CreatePool":              sharedExclusive,
 	"RefreshMonitorConfig":    sharedExclusive,
 	"RepairPG":                sharedExclusive,
-	"TemporaryBlocklist":      sharedExclusive,
 	"OverrideConfig":          sharedExclusive,
 	"OverrideDebugLevel":      sharedExclusive,
 	"OverrideFullRatios":      sharedExclusive,
