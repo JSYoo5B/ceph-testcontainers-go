@@ -71,12 +71,13 @@ type Pool struct {
 	lease *poolLease
 }
 
-// poolLease is the lease that a tenant-derived Pool comes from. Every Tenant
-// is one lease and is never reused, so the pointer is the lease identity: a
-// later lease of the same shared cluster, exclusive or not, is another value.
-// The Pool checks it on every operation and applies the tenant policy under
-// it, whatever mode the cluster is in then.
-type poolLease struct{ tenant *Tenant }
+// poolLease is the lease that a tenant-derived Pool comes from. live is the
+// admission check of that one lease, which the shared-cluster side hands to
+// the Observer; every lease is a separate value and is never reused, so a later
+// lease of the same shared cluster, exclusive or not, has another check. The
+// Pool calls it on every operation and applies the tenant policy under it,
+// whatever mode the cluster is in then. It names no tenant type.
+type poolLease struct{ live func() error }
 
 // poolIdentity is what the copies of one Pool handle share: the native pool
 // ID once it is known and whether the handle removed the pool. The owner's
