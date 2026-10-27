@@ -101,7 +101,9 @@ jobs:
   static:
     name: Vet, compile and CI tooling
     needs: changes
-    if: ${{ github.event_name != 'schedule' && !cancelled() && needs.changes.outputs.docs_only != 'true' }}
+    # Not gated on docs_only as a whole: the fragment validator below must run
+    # on every head, so each other step skips itself instead.
+    if: ${{ github.event_name != 'schedule' && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -111,36 +113,49 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-go@v7
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
           go-version: '1.26.x'
           check-latest: true
           cache: false
       - name: Restore the Go module cache
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         uses: actions/cache/restore@v6
         with:
           path: ~/go/pkg/mod
           key: go-modules-${{ runner.os }}-${{ hashFiles('go.sum') }}
       - name: Vet Go packages
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: make vet
       - name: Lint Go packages with every build tag
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.14.0
           args: --timeout=15m
       - name: Compile all and explicit optional tags without Docker
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: make tag-compile
       - name: Check CI selection, image, cleanup and completion tooling without Docker
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
       # Parses every workflow as YAML and resolves reusable-workflow calls,
       # which the regex-based tooling tests above cannot. actionlint does not
       # know job.check_run_id yet.
       - name: Lint workflow syntax and reusable-workflow calls
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: >-
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           -shellcheck= -pyflakes=
           -ignore 'property "check_run_id" is not defined'
       - name: Check supplied-image Linux consumer harness without Docker
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
+      # Runs on every head, including a documentation-only one and one on which
+      # an earlier step failed; only a cancelled run skips it.
+      - name: Validate release-note fragments
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/release_fragments.py
 
   tag-coverage:
     name: Compiled tag coverage and helpers
