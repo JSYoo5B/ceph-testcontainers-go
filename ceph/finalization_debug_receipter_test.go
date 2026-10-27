@@ -33,7 +33,7 @@ func TestFinalizationDebugReceipter(t *testing.T) {
 	t.Run("typed nil", func(t *testing.T) {
 		var h *DebugLevelOverrideHandle
 		var r DebugLevelReceipter = h
-		if r == nil {
+		if isNilInterface(r) {
 			t.Fatal("a typed nil must be a non-nil interface for this control")
 		}
 		absent(t, "typed nil", r)
@@ -93,3 +93,7 @@ func manifestText(t *testing.T, directory string) string {
 	}
 	return string(data)
 }
+
+// isNilInterface compares the interface itself, as TrackDebugLevel's first
+// check does; a typed nil pointer stored in it is not nil.
+func isNilInterface(r DebugLevelReceipter) bool { return r == nil }
