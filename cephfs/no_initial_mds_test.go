@@ -210,7 +210,7 @@ func TestNoInitialMDSCompositionAndRuntimeKeepOmittedCounts(t *testing.T) {
 	c, n := newColdMDSFixture()
 	customizers := 0
 	fs, err := startFilesystem(t.Context(), c, retained, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers++; return nil }))
-	if err != nil || fs == nil || fs.Container != nil || len(fs.MDSs()) != 0 || len(servicehook.Services(c)) != 0 || customizers != 0 || fs.config.ActiveMDS != 1 || fs.coldMDS == nil || fs.coldMDS.attempted || fs.coldMDS.fsid != coldMDSFixtureFSID || fs.coldMDS.pools["cold-target-metadata"] != 0 || !slices.Equal(fs.coldMDS.dataPools, []int64{1, 2}) || servicehook.ServiceImage(c, "mds") != "selected-mds-image" {
+	if err != nil || fs == nil || fs.Container != nil || len(fs.MDSs()) != 0 || len(servicehook.Services(c)) != 0 || customizers != 0 || fs.config.ActiveMDS != 1 || fs.coldMDS == nil || fs.coldMDS.attempted || fs.coldMDS.fsid != coldMDSFixtureFSID || fs.coldMDS.pools["cold-target-metadata"] != 0 || !slices.Equal(fs.coldMDS.dataPools, []int64{1, 2}) || servicehook.ServiceImage(c, "cephfs") != "selected-mds-image" {
 		t.Fatalf("cold constructor did not retain exact zero topology/pool0: fs=%+v err=%v customizers=%d", fs, err, customizers)
 	}
 	if got := Filesystems(c); len(got) != 1 || got[0] != fs {
