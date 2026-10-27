@@ -108,6 +108,12 @@ without taking ownership or changing it (it neither restores nor removes the
 window, unlike `Cleanup`); `DebugLevel` names the handle's family. It adds one
 declaration and no member entry, because the manifest records are unexported.
 
+Change `146-debug-level-receipter` makes `TrackDebugLevel` take the interface
+`DebugLevelReceipter` (`Receipt() DebugLevelReceipt`), named for the one method
+it requires and for the existing `Receipt` family, and adds the state
+`DebugLevelNotApplied` for a window refused before any native step. The
+`DebugLevelReceipt.Reason` field is a member of an existing declaration row.
+
 `Finalization.Capture` registers a running packet capture for settlement
 before the failure archive. `Capture` is the retained noun-verb for handing a
 caller-owned resource to the finalization's settlement phase without the

@@ -208,7 +208,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 	if c.closed {
 		return nil, errClusterTerminated
 	}
-	if !c.settings.osdVolumeStorage || c.osdVolume == nil {
+	if !c.settings.osdVolumeStorage || !c.stores.hasVolume() {
 		return nil, invalidRequest("OSDContainer.Detach retains stores only with WithOSDVolumeStorage")
 	}
 	if err := c.currentOSD(handle); err != nil {
@@ -260,7 +260,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 	if _, err := c.removalOSDState(ctx, id); err != nil {
 		return nil, err
 	}
-	store, err := c.osdVolume.retainedStore(ctx, id)
+	store, err := c.stores.retainedStore(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +299,7 @@ func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 	if c.osds[id] != nil {
 		return nil, fmt.Errorf("osd.%d is owned by another handle", id)
 	}
-	if c.osdVolume == nil {
+	if !c.stores.hasVolume() {
 		return nil, errors.New("OSD volume storage is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -378,7 +378,7 @@ func (c *Container) clearStaleOSDSocket(ctx context.Context, detached *DetachedO
 // reopenPreflight reads, without writing, everything that a reopen relies on.
 func (c *Container) reopenPreflight(ctx context.Context, detached *DetachedOSD) error {
 	id := detached.id
-	store, err := c.osdVolume.retainedStore(ctx, id)
+	store, err := c.stores.retainedStore(ctx, id)
 	if err != nil {
 		return err
 	}

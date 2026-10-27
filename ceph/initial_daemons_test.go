@@ -200,7 +200,7 @@ func newInitialOSDCluster(settings options) (*Container, *initialOSDMon, *initia
 	if settings.startupTimeout == 0 {
 		settings.startupTimeout = 5 * time.Second
 	}
-	cluster := &Container{Container: mon, settings: settings, osds: map[int]*OSDContainer{}, osdRunner: runner.run}
+	cluster := &Container{Container: mon, settings: settings, osds: map[int]*OSDContainer{}, stores: osdStorageState{runner: runner.run}}
 	return cluster, mon, runner
 }
 

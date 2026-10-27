@@ -110,9 +110,9 @@ func newRetainedFixture(t *testing.T) *retainedFixture {
 			retainedStoreDir + "/block": "",
 		}}
 	storage.helper, storage.helperStarted = helper, helper.startedAt
-	cluster.osdVolume = storage
+	cluster.stores.volume = storage
 	f := &retainedFixture{cluster: cluster, control: control, daemon: daemon, helper: helper}
-	cluster.osdRunner = func(_ context.Context, _ string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	cluster.stores.runner = func(_ context.Context, _ string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		f.runs++
 		f.request = testcontainers.GenericContainerRequest{}
 		for _, opt := range opts {
