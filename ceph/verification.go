@@ -235,15 +235,17 @@ const (
 // Outcome is unexpected when a check is, else incomplete when a check is,
 // else clean.
 type VerificationReport struct {
-	SchemaVersion int                  `json:"schema_version"`
-	Name          string               `json:"name"`
-	Cluster       string               `json:"cluster"`
-	Outcome       VerificationOutcome  `json:"outcome"`
-	Window        VerificationWindow   `json:"window"`
-	Images        ImageSet             `json:"images"`
-	Sources       []VerificationSource `json:"sources"`
-	Logs          VerificationCheck    `json:"logs"`
-	Crashes       VerificationCheck    `json:"crashes"`
+	SchemaVersion int                 `json:"schema_version"`
+	Name          string              `json:"name"`
+	Cluster       string              `json:"cluster"`
+	Outcome       VerificationOutcome `json:"outcome"`
+	Window        VerificationWindow  `json:"window"`
+	// Images are the cluster's role images; a daemon started with WithDaemonImage
+	// is not reflected.
+	Images  ImageSet             `json:"images"`
+	Sources []VerificationSource `json:"sources"`
+	Logs    VerificationCheck    `json:"logs"`
+	Crashes VerificationCheck    `json:"crashes"`
 	// LogExpectations and CrashExpectations are the effective policy.
 	LogExpectations   []LogExpectation   `json:"log_expectations"`
 	CrashExpectations []CrashExpectation `json:"crash_expectations"`

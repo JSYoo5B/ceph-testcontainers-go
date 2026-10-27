@@ -1495,7 +1495,7 @@ methods that only read state stay available, including `Container.Pool`.
 | --- | --- |
 | `CreateClient`, `ClientConfig.Delete`, `ClientConfig.UpdateCaps`, `ClientConfig.ReplaceKey`, `ClientConfig.Revoke`, `ClientConfig.Capabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
 | `OverrideConfig`, `OverrideDebugLevel`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `TemporaryBlocklist`, `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
-| `Ceph`, `OSDContainer.AdminSocket`, `MonitorContainer.AdminSocket`, `ManagerContainer.AdminSocket`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
+| `Ceph`, `OSDContainer.AdminSocket`, `MonitorContainer.AdminSocket`, `ManagerContainer.AdminSocket`, `OSDContainer.Version`, `MonitorContainer.Version`, `ManagerContainer.Version`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
 | `AddOSD`, `AddOSDWithConfig`, `OSDContainer.Remove`, `OSDContainer.Detach`, `DetachedOSD.Reopen`, `AddMonitor`, `MonitorContainer.Remove`, `AddManager`, `ManagerContainer.Remove` | Change the topology. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
 
@@ -2174,7 +2174,8 @@ func (c *Container) EssentialImage() string
 ```
 
 Returns the essential image that runs the MONs, MGRs, OSDs and the control
-container. It stays available after termination. It is not a general client
+container, except daemons started with [WithDaemonImage](#per-daemon-images);
+use their handles' `Image`. It stays available after termination. It is not a general client
 image: use `Images().Client` for containers that need `rados`, `rbd` or the
 Python bindings, `Images().RBDAux` for `rbd-mirror`, `Images().CephFS` for
 `cephfs-mirror` and `Images().RGW` for gateways and RGW administration.
@@ -2189,7 +2190,9 @@ Returns the Ceph release of the first MON's image, such as `"20.2.4"`, read once
 `ceph --version` after MON `a` starts. `Run` fails if the output cannot be
 parsed. Role images selected with `WithImages`, `rgw.WithImage` or
 `cephfs.WithMDSImage` may run another release; the value describes only the
-essential image. The fixture uses it to choose commands that differ between
+essential image. A daemon started with
+[WithDaemonImage](#per-daemon-images) may run another release; read its handle's
+`Version`. The fixture uses it to choose commands that differ between
 releases, and tests can use it to choose release-specific assertions:
 
 ```golang
@@ -2200,6 +2203,66 @@ if strings.HasPrefix(cluster.CephVersion(), "19.") {
 	assertMessengerDropsFrames(t, ctx, cluster)
 }
 ```
+
+#### Per-daemon images
+
+```golang
+type DaemonOption func(*daemonOptions) error
+func WithDaemonImage(image string) DaemonOption
+
+func (m *MonitorContainer) Image() string
+func (m *ManagerContainer) Image() string
+func (o *OSDContainer) Image() string
+func (d *DetachedOSD) Image() string
+
+func (m *MonitorContainer) Version(ctx context.Context) (string, error)
+func (m *ManagerContainer) Version(ctx context.Context) (string, error)
+func (o *OSDContainer) Version(ctx context.Context) (string, error)
+```
+
+`WithDaemonImage` is an option of [AddMonitor](#addmonitor),
+[AddManager](#addmanager), [AddOSD](#addosd) and
+[AddOSDWithConfig](#addosdwithconfig). It starts that one new daemon from the
+given image instead of the essential image. Nothing else changes: the option
+does not touch the cluster's settings, `EssentialImage`, `Images`, `FactsOf`,
+`CephVersion` or any other daemon.
+
+- Validation. The reference must be non-empty with no whitespace or control
+  characters, and may be given once. A refusal matches `ErrInvalidRequest` and
+  happens before the topology lock, any key or identity, any OSD registration
+  and any container. A shared cluster refuses the topology calls with
+  `ErrSharedCluster` first, so a tenant cannot use the option. Nothing checks
+  that the image exists, that it has the daemon binary and the tools the
+  fixture scripts use, or that its release works with the running cluster;
+  an unusable image fails at start like any other.
+- Re-launch. An OSD's launch recipe records the image. `OSDContainer.Detach` and
+  `DetachedOSD.Reopen` start the OSD from the same image again, and `Stop` and
+  `Start` keep the container. MON and MGR containers are never recreated by the
+  package, so their image does not change for their lifetime. `Reopen` has no
+  image option.
+- Identity. `Image` returns the image a daemon's container was started from: its
+  override, or the essential image. It reads the recorded start request, not
+  Docker, and says nothing about the image's release.
+- Facts that stay cluster-wide. `EssentialImage`, `Images` and
+  `ClusterFacts.Images` report the cluster's images and are not changed by an
+  override, so they do not describe an overridden daemon. The same holds for the
+  `images` field of the finalization manifest and of a verification report. The
+  diagnostics archive records the image ID and reference of every container
+  from Docker, so it shows the override. Read `Image` of each handle for the
+  per-daemon values.
+- Versions. `CephVersion` is recorded once from the first MON and the CLI
+  image, and does not describe an overridden daemon. `Version` reads the
+  release a running daemon reports through its own admin socket (`version`),
+  such as `"20.2.4"`; it works under the conditions of
+  [AdminSocket](#adminsocket) and returns an error for a reply without a
+  recognizable version. The admin socket client is the cluster's CLI, so the
+  reply is the daemon's own but the transport is the control image's.
+- Client releases. A separately started client container is still refused when its
+  release differs from `CephVersion`. That check is unchanged and does not
+  consider overridden daemons.
+
+This option is a building block. It does not claim that any mixed-version or
+upgrade combination works; no native evidence exists for it.
 
 #### ServiceContainers
 
@@ -2260,7 +2323,7 @@ MONs were stopped, start the others first.
 #### AddMonitor
 
 ```golang
-func (c *Container) AddMonitor(ctx context.Context, name string) (*ceph.MonitorContainer, error)
+func (c *Container) AddMonitor(ctx context.Context, name string, opts ...ceph.DaemonOption) (*ceph.MonitorContainer, error)
 ```
 
 Starts a new monitor with the given name and joins it to the live quorum's
@@ -2271,6 +2334,7 @@ owned daemon's `ceph.conf`, including stopped daemons. A partially started membe
 stays owned on error; if only the configuration copy failed, retry
 [RefreshMonitorConfig](#refreshmonitorconfig). Client containers you own are not
 updated (see [RefreshClientMonitorConfig](#refreshclientmonitorconfig)).
+[WithDaemonImage](#per-daemon-images) starts this one MON from another image.
 
 #### MonitorContainer.Remove
 
@@ -2386,7 +2450,7 @@ candidates and the active identity.
 #### AddManager
 
 ```golang
-func (c *Container) AddManager(ctx context.Context, name string) (*ceph.ManagerContainer, error)
+func (c *Container) AddManager(ctx context.Context, name string, opts ...ceph.DaemonOption) (*ceph.ManagerContainer, error)
 ```
 
 Creates a named manager and waits for it to register in the MGR map, as active
@@ -2397,6 +2461,7 @@ not mean that every MGR module is ready; use
 afterwards. A non-nil descriptor returned with an error stays owned. On an
 `AddressDualStack` cluster it then checks the advertised addresses of the
 active MGR; see [Dual-stack clusters](#dual-stack-clusters).
+[WithDaemonImage](#per-daemon-images) starts this one MGR from another image.
 
 #### ManagerContainer.Remove
 
@@ -2529,7 +2594,7 @@ change introduces retained-store detach/reopen support.
 #### AddOSD
 
 ```golang
-func (c *Container) AddOSD(ctx context.Context) (*ceph.OSDContainer, error)
+func (c *Container) AddOSD(ctx context.Context, opts ...ceph.DaemonOption) (*ceph.OSDContainer, error)
 ```
 
 Registers, formats and starts a new OSD with the default CRUSH location and waits
@@ -2538,12 +2603,13 @@ selected at `Run`. An OSD returned with an error is tracked for cleanup and can 
 inspected; nothing is purged automatically. `AddOSD` is refused while an
 earlier [OSDContainer.Remove](#osdcontainerremove) has not finished its cleanup, so a reused numeric
 ID cannot be confused with the old handle. Adding OSDs does not change existing
-pool sizes.
+pool sizes. [WithDaemonImage](#per-daemon-images) starts this one OSD from
+another image.
 
 #### AddOSDWithConfig
 
 ```golang
-func (c *Container) AddOSDWithConfig(ctx context.Context, config ceph.OSDConfig) (*ceph.OSDContainer, error)
+func (c *Container) AddOSDWithConfig(ctx context.Context, config ceph.OSDConfig, opts ...ceph.DaemonOption) (*ceph.OSDContainer, error)
 ```
 
 Like [AddOSD](#addosd), with an explicit logical CRUSH location
@@ -2634,7 +2700,8 @@ func (d *DetachedOSD) Reopen(ctx context.Context) (*ceph.OSDContainer, error)
 Starts a new container on a store that `OSDContainer.Detach` of the cluster
 that detached it retained and waits for the OSD to be up/in. It returns a new
 `*ceph.OSDContainer` with the same ID, UUID and placement and a different
-container.
+container, started from the same image as the detached OSD (see
+[per-daemon images](#per-daemon-images)); `Reopen` takes no image option.
 
 Before anything is written it requires the store's identity files, keyring and
 block inode and size to be unchanged since the detach, the MON registration to
@@ -4341,7 +4408,10 @@ use, advertised public address, whether a separate cluster network exists, and
 the Ceph version. A nil cluster returns an error that matches
 `ErrInvalidRequest` and the zero `ClusterFacts`. A terminated cluster still
 yields a snapshot, because the values come from the recorded configuration and
-identity and need no lock, command or Docker call.
+identity and need no lock, command or Docker call. `Images` and `CephVersion`
+describe the cluster's own settings and first MON only; a daemon started with
+[WithDaemonImage](#per-daemon-images) is not reflected, so read its handle's
+`Image` and `Version`.
 
 #### ClusterFacts
 
