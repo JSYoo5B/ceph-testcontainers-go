@@ -135,6 +135,8 @@ type OSDFlagOverrideHandle struct {
 
 type osdFlagOverrideState struct {
 	previous, applied, restored bool
+	// token is the registry entry of this override; see faultOSDFlag.
+	token *faultEntry
 }
 
 // OverrideOSDFlag changes one reversible global flag while remembering its
@@ -158,20 +160,20 @@ func (c *Container) OverrideOSDFlag(ctx context.Context, flag OSDFlag, enabled b
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	if prior := c.flagOverrides[flag]; prior != nil && !prior.state.restored {
-		return nil, errors.New("restore the existing OSD flag override first")
+	// A restored override has left the registry, so a held one is active.
+	token, _, err := c.reserveFault(ctx, faultOSDFlag, string(flag))
+	if err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	dump, err := c.osdPolicyDump(ctx)
 	if err != nil {
+		c.settleFault(token, "", nil, nil, nil)
 		return nil, err
 	}
-	change := &OSDFlagOverrideHandle{owner: c, flag: flag, state: &osdFlagOverrideState{previous: slices.Contains(dump.flags, string(flag)), applied: enabled}}
-	if c.flagOverrides == nil {
-		c.flagOverrides = make(map[OSDFlag]*OSDFlagOverrideHandle)
-	}
-	c.flagOverrides[flag] = change
+	change := &OSDFlagOverrideHandle{owner: c, flag: flag, state: &osdFlagOverrideState{previous: slices.Contains(dump.flags, string(flag)), applied: enabled, token: token}}
+	c.settleFault(token, "", change, nil, nil)
 	if change.state.previous == enabled {
 		return change, nil
 	}
@@ -205,8 +207,7 @@ func (change *OSDFlagOverrideHandle) Restore(ctx context.Context) error {
 	if err := c.poolPolicyReady(); err != nil {
 		return err
 	}
-	tracked := c.flagOverrides[change.flag]
-	if tracked == nil || tracked.state != change.state {
+	if !c.tracksFault(change.state.token) {
 		return errors.New("OSD flag override is not tracked by this cluster")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -239,7 +240,7 @@ func (change *OSDFlagOverrideHandle) Restore(ctx context.Context) error {
 
 func (change *OSDFlagOverrideHandle) finish() {
 	change.state.restored = true
-	delete(change.owner.flagOverrides, change.flag)
+	change.owner.releaseFault(change.state.token)
 }
 
 var reversibleOSDFlags = []OSDFlag{OSDFlagNoUp, OSDFlagNoDown, OSDFlagNoOut, OSDFlagNoIn, OSDFlagNoBackfill, OSDFlagNoRebalance, OSDFlagNoRecover, OSDFlagNoScrub, OSDFlagNoDeepScrub, OSDFlagNoSnapTrim, OSDFlagNoAutoscale}

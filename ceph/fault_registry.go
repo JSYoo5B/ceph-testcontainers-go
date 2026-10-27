@@ -17,6 +17,9 @@ const (
 	faultContainerPause
 	faultBlocklist
 	faultFullRatios
+	faultConfigOverride
+	faultOSDFlag
+	faultMGRModule
 )
 
 // faultPhase is when, and under which lock mode, terminate undoes a kind.
@@ -69,6 +72,15 @@ var faultKinds = map[faultKind]faultKindSpec{
 	}},
 	faultFullRatios: {phase: faultTracked, refuse: func(bool) error {
 		return errors.New("restore the existing full ratios override first")
+	}},
+	faultConfigOverride: {phase: faultTracked, refuse: func(bool) error {
+		return errors.New("restore the existing configuration override first")
+	}},
+	faultOSDFlag: {phase: faultTracked, refuse: func(bool) error {
+		return errors.New("restore the existing OSD flag override first")
+	}},
+	faultMGRModule: {phase: faultTracked, refuse: func(bool) error {
+		return errors.New("restore the existing MGR module override first")
 	}},
 }
 
