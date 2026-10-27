@@ -241,18 +241,31 @@ var sharedHandlePolicies = map[string]sharedPolicy{
 // as sharedGate refuses a method of *Container. An operation without a policy
 // is refused even on a cluster of its own, so it cannot run unclassified.
 func (c *Container) admitHandle(op string) error {
+	return c.admitHandleAs(op, sharingMode(c.sharing.Load()))
+}
+
+// admitHandleAs admits op as for a cluster in mode. A handle that a tenant
+// obtained passes sharedWithTenants, so a later exclusive lease of the cluster
+// does not widen what the handle may do.
+func (c *Container) admitHandleAs(op string, mode sharingMode) error {
 	policy, ok := sharedHandlePolicies[op]
 	if !ok {
 		return invalidRequest("handle operation %q has no shared-cluster policy", op)
 	}
-	return c.admitShared(op, policy)
+	if c == nil {
+		return nil
+	}
+	return admitSharedIn(mode, op, policy)
 }
 
 func (c *Container) admitShared(method string, policy sharedPolicy) error {
 	if c == nil {
 		return nil
 	}
-	mode := sharingMode(c.sharing.Load())
+	return admitSharedIn(sharingMode(c.sharing.Load()), method, policy)
+}
+
+func admitSharedIn(mode sharingMode, method string, policy sharedPolicy) error {
 	switch {
 	case mode == notShared, policy == sharedOpen:
 		return nil

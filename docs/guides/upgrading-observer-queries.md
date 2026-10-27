@@ -60,7 +60,9 @@ for _, pool := range pools {
   ID, like the one of `Container.Pool`, and carries only what the listing
   reports (`Name`, `PGNum`, `Replicas`, `MinSize`, `ErasureCodeProfile`).
   `Pool.Status` returns the full `PoolState`.
-- The `Observer` of a tenant lists the pools of the shared cluster. The shared
-  cluster policy refuses every operation of those handles that changes a pool.
+- The `Observer` of a tenant lists the pools of the shared cluster. Those
+  handles check the tenant lease on every operation and refuse every operation
+  that changes a pool under the tenant policy, also after a later exclusive
+  lease of the cluster.
 - An interface that listed these `Container` methods needs the `Observer` call
   in an adapter of your own.

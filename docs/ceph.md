@@ -2891,9 +2891,14 @@ what the listing reports: `Name`, `PGNum`, `Replicas` of a replicated pool,
 [Pool.Status](#poolstatus), the usage with [Pool.Usage](#poolusage) and the PGs
 with `Pool.PGs`. The listing is one read of the native pool map, so a failed or
 malformed listing is an error and never an empty list. The `Observer` of a
-tenant lists the pools too; the usage of `SharedPool` includes the objects of
-the other tenants, and the shared-cluster policy refuses every operation of the
-listed handles that changes a pool.
+tenant lists the pools too. Each of its handles remembers the tenant lease and
+checks it on every operation, reads included: after the tenant is released or
+its shared cluster is terminated, every operation returns an error that matches
+`ErrInvalidRequest` without reaching the cluster. Operations that change a pool
+are always refused with `ErrSharedCluster`, also after the cluster has been lent
+to a later exclusive lease. Handles of `Container.Pool` and of a cluster-backed
+`Observer` are unchanged. The usage of `SharedPool` includes the objects of the
+other tenants.
 
 #### Pool.Status
 

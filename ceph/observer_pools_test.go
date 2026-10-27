@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -48,5 +49,115 @@ func TestObserverPoolsRefusesAMalformedListingAndAnUnconstructedObserver(t *test
 	var none *Observer
 	if _, err := none.Pools(t.Context()); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("a nil observer returned %v, want ErrInvalidRequest", err)
+	}
+}
+
+// leasePools leases a tenant of a shared cluster whose cluster is a pool
+// fixture, and returns the pool that the tenant's Observer lists.
+func leasePools(t *testing.T) (*Tenant, *fakeTB, *Container, *poolFixtureContainer, *Pool) {
+	t.Helper()
+	ctr := policyFixture("2", "1", "1")
+	cluster := poolFixtureCluster(ctr, 3)
+	cluster.sharing.Store(int32(sharedWithTenants))
+	shared := newFakeShared(&fakeFleet{})
+	tb := newFakeTB(t)
+	tenant := shared.Lease(tb)
+	tenant.inst.backend = &observerBackend{fakeShared: backendOf(tenant), c: cluster}
+	observer, err := ObserveTenant(tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pools, err := observer.Pools(t.Context())
+	if err != nil || len(pools) != 1 {
+		t.Fatalf("Pools = %v, %v", pools, err)
+	}
+	return tenant, tb, cluster, ctr, pools[0]
+}
+
+// poolOperations runs every operation of a Pool and returns the error of each.
+func poolOperations(ctx context.Context, pool *Pool) map[string]error {
+	errs := map[string]error{}
+	_, errs["Status"] = pool.Status(ctx)
+	_, errs["Usage"] = pool.Usage(ctx)
+	_, errs["PGs"] = pool.PGs(ctx)
+	errs["SetPGCount"] = pool.SetPGCount(ctx, 16)
+	errs["WaitForPGCount"] = pool.WaitForPGCount(ctx, 16)
+	errs["SetPlacement"] = pool.SetPlacement(ctx, PoolPlacement{FailureDomain: "osd"})
+	errs["SetQuota"] = pool.SetQuota(ctx, PoolQuota{MaxBytes: 1})
+	errs["SetReplication"] = pool.SetReplication(ctx, 2, 1)
+	errs["Remove"] = pool.Remove(ctx)
+	return errs
+}
+
+func requireNoPoolOperationRuns(t *testing.T, pool *Pool, ctr *poolFixtureContainer, want error) {
+	t.Helper()
+	before := len(ctr.Calls)
+	for op, err := range poolOperations(t.Context(), pool) {
+		if !errors.Is(err, want) {
+			t.Errorf("Pool.%s returned %v, want %v", op, err, want)
+		}
+	}
+	if len(ctr.Calls) != before {
+		t.Fatalf("a refused operation reached the cluster: %v", ctr.Calls[before:])
+	}
+}
+
+func TestTenantDerivedPoolRefusesEveryOperationAfterRelease(t *testing.T) {
+	_, tb, _, ctr, pool := leasePools(t)
+	tb.finish()
+	requireNoPoolOperationRuns(t, pool, ctr, ErrInvalidRequest)
+}
+
+func TestTenantDerivedPoolRefusesEveryOperationAfterTermination(t *testing.T) {
+	tenant, _, _, ctr, pool := leasePools(t)
+	tenant.owner.mu.Lock()
+	tenant.inst.terminated = true
+	tenant.owner.mu.Unlock()
+	requireNoPoolOperationRuns(t, pool, ctr, ErrInvalidRequest)
+}
+
+func TestTenantDerivedPoolDoesNotInheritALaterExclusiveLease(t *testing.T) {
+	_, tb, cluster, ctr, pool := leasePools(t)
+	tb.finish()
+	// A later Exclusive lease lends the cluster to another holder.
+	cluster.sharing.Store(int32(sharedExclusively))
+	requireNoPoolOperationRuns(t, pool, ctr, ErrInvalidRequest)
+}
+
+func TestTenantDerivedPoolKeepsTheTenantPolicyWhileTheLeaseIsLive(t *testing.T) {
+	_, _, cluster, ctr, pool := leasePools(t)
+	if _, err := pool.Status(t.Context()); err != nil {
+		t.Fatalf("a read through a live tenant's pool failed: %v", err)
+	}
+	// Even if the cluster is switched to exclusive use while the tenant still
+	// holds its lease, a tenant-derived handle keeps the tenant's policy.
+	cluster.sharing.Store(int32(sharedExclusively))
+	before := len(ctr.Calls)
+	for op, err := range map[string]error{
+		"SetPGCount":     pool.SetPGCount(t.Context(), 16),
+		"SetPlacement":   pool.SetPlacement(t.Context(), PoolPlacement{FailureDomain: "osd"}),
+		"SetQuota":       pool.SetQuota(t.Context(), PoolQuota{MaxBytes: 1}),
+		"SetReplication": pool.SetReplication(t.Context(), 2, 1),
+		"Remove":         pool.Remove(t.Context()),
+	} {
+		if !errors.Is(err, ErrSharedCluster) {
+			t.Errorf("Pool.%s returned %v, want ErrSharedCluster", op, err)
+		}
+	}
+	if len(ctr.Calls) != before {
+		t.Fatalf("a refused mutation reached the cluster: %v", ctr.Calls[before:])
+	}
+}
+
+func TestClusterDerivedPoolIsUnchangedByTheTenantGuard(t *testing.T) {
+	ctr := policyFixture("2", "1", "1")
+	cluster := poolFixtureCluster(ctr, 3)
+	pool := poolHandle(t, t.Context(), cluster, "fixture")
+	if pool.lease != nil {
+		t.Fatal("a cluster-derived pool carries a tenant lease")
+	}
+	cluster.sharing.Store(int32(sharedExclusively))
+	if err := pool.SetQuota(t.Context(), PoolQuota{}); err != nil {
+		t.Fatalf("an exclusive holder's pool was refused: %v", err)
 	}
 }

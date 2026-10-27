@@ -30,6 +30,9 @@ type Observer struct {
 	// target resolves the cluster for one query and applies the admission of
 	// the form: the tenant form checks its lease here.
 	target func() (*Container, error)
+	// tenant is the lease of the tenant form, or nil. The Pool values that the
+	// form lists carry it.
+	tenant *Tenant
 }
 
 // Observe returns an Observer for cluster. A nil cluster returns an error and
@@ -48,7 +51,7 @@ func ObserveTenant(tenant *Tenant) (*Observer, error) {
 	if tenant == nil {
 		return nil, invalidRequest("observe: the tenant is nil")
 	}
-	return &Observer{target: tenant.container}, nil
+	return &Observer{target: tenant.container, tenant: tenant}, nil
 }
 
 // query resolves the target for one query and returns the CLI contract bound
@@ -111,17 +114,30 @@ func (o *Observer) DaemonAddresses(ctx context.Context) (DaemonAddresses, error)
 // the native pool map, so the pools of one result are consistent with each
 // other and later reads through them are separate observations.
 //
-// A Pool of a tenant-backed Observer validates the tenant lease when the
-// listing is read, not when the Pool is used afterwards. It is a handle of the
-// shared cluster: the shared-cluster policy refuses its operations that change
-// the pool, and its reads work as long as the cluster runs. The usage of
-// SharedPool includes the objects of the other tenants.
+// A Pool of a tenant-backed Observer remembers the tenant lease that listed it
+// and checks that lease on every operation, reads included: once the tenant is
+// released or its shared cluster is terminated, every operation returns an
+// error that matches ErrInvalidRequest without reaching the cluster. Its
+// operations that change the pool are always refused under the tenant's
+// shared-cluster policy (ErrSharedCluster), also when the cluster has been
+// lent to a later exclusive lease. The usage of SharedPool includes the
+// objects of the other tenants.
 func (o *Observer) Pools(ctx context.Context) ([]*Pool, error) {
 	c, err := o.cluster()
 	if err != nil {
 		return nil, err
 	}
-	return c.pools(ctx)
+	pools, err := c.pools(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if o.tenant != nil {
+		lease := &poolLease{tenant: o.tenant}
+		for _, pool := range pools {
+			pool.lease = lease
+		}
+	}
+	return pools, nil
 }
 
 // The queries below take the topology lock before they read, so they run the
