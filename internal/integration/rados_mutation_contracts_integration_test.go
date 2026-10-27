@@ -48,6 +48,9 @@ func TestRADOSMutationContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkMemStoreLegacyPool(t, ctx, cluster, pool)
+	// preLate is the cluster as it stood just before the dispatch delay was
+	// held; the late phase's failure record is compared with it.
+	var preLate *radosLateClusterState
 	phase := func(out any, args ...string) {
 		t.Helper()
 		path, token := "", ""
@@ -67,6 +70,9 @@ func TestRADOSMutationContracts(t *testing.T) {
 			t.Logf("RADOS_MUTATION_PHASE phase=%s exit=%d complete=%t timed_out=%t stdout_truncated=%t stderr_truncated=%t", args[0], result.ExitCode, result.Complete(), result.TimedOut, result.StdoutTruncated, result.StderrTruncated)
 			if args[0] == "late" {
 				captureRadosMutationFailure(t, ctx, client, pool, namespace, path, token)
+				// The dispatch delay is still held here: read the OSD's queue and
+				// the OSDMap epochs before anything is restored.
+				logRadosLateClusterState(t, collectRadosLateClusterState(context.WithoutCancel(ctx), radosLateCluster{cluster}, "failure", pool, 0, preLate))
 			}
 			t.Fatalf("%s: %v, exit %d: %s %s", args[0], err, result.ExitCode, result.Stdout, result.Stderr)
 		}
@@ -133,6 +139,8 @@ func TestRADOSMutationContracts(t *testing.T) {
 	// while the OSD delays them; the OSD then applies each exactly once.
 	var before, after map[string]contractObject
 	phase(&before, "prepare", pool, namespace)
+	preLate = collectRadosLateClusterState(ctx, radosLateCluster{cluster}, "pre-late", pool, 0, nil)
+	logRadosLateClusterState(t, preLate)
 	restore := holdDispatchDelay(t, ctx, cluster, "osd.0", 2*time.Second)
 	var late struct {
 		Client    string    `json:"client"`
