@@ -38,7 +38,12 @@ var errNilClusterFacts = invalid(errors.New("cannot capture static facts of a ni
 // termination alone must not fail the capture. The recorded settings, version
 // and network records are written before the cluster is returned to the caller
 // and termination does not clear them, so reading them needs no
-// synchronization with a concurrent Terminate.
+// synchronization with a concurrent Terminate. Retained and read are the run
+// settings, the public and replication network records and the Ceph version
+// recorded at startup. A fact never recorded, as in a cluster returned by Run
+// with an error, stays empty and is not replaced by a default.
+// TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup guards that no
+// later code path writes these sources.
 func FactsOf(c *Container) (ClusterFacts, error) {
 	if c == nil {
 		return ClusterFacts{}, errNilClusterFacts
