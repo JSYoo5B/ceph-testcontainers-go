@@ -40,13 +40,10 @@ var scripts embed.FS
 // cluster networking, rather than changing only the MON's network mode.
 type Container struct {
 	testcontainers.Container
-	mu              sync.Mutex
-	controlMu       sync.RWMutex
-	configMu        sync.RWMutex
-	configOverrides map[string]*ConfigOverrideHandle
-	flagOverrides   map[OSDFlag]*OSDFlagOverrideHandle
-	moduleOverrides map[string]*MGRModuleOverrideHandle
-	controlPlane    testcontainers.Container
+	mu           sync.Mutex
+	controlMu    sync.RWMutex
+	configMu     sync.RWMutex
+	controlPlane testcontainers.Container
 	// toolkit is the feature-client cache; see featureClientState for what
 	// guards each part.
 	toolkit     featureClientState

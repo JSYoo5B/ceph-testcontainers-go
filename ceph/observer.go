@@ -48,7 +48,7 @@ func ObserveTenant(tenant *Tenant) (*Observer, error) {
 	if tenant == nil {
 		return nil, invalidRequest("observe: the tenant is nil")
 	}
-	return &Observer{target: tenant.cluster}, nil
+	return &Observer{target: tenant.container}, nil
 }
 
 // query resolves the target for one query and returns the CLI contract bound

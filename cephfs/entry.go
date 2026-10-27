@@ -123,7 +123,7 @@ func (r *filesystemRegistry) ConfigTargets() map[string]testcontainers.Container
 		if fs == nil {
 			continue
 		}
-		for _, mds := range fs.mdss {
+		for _, mds := range fs.roster.members() {
 			if mds != nil && mds.Container != nil {
 				targets["mds."+mds.ID] = mds.Container
 			}

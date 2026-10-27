@@ -182,9 +182,19 @@ func metricsInconclusive(format string, args ...any) clientMetricsOutcome {
 //     and ended by the deadline count. A straddling sample or a late one is not
 //     evidence. Cumulative totals must never decrease for a client across
 //     the series.
+//   - Continuity: both rows were admitted at zero in the baseline, so an
+//     eligible observation sample that lacks the metrics section, the writer
+//     row or the idle row has lost the row identity. That sample is not a
+//     zero and not an observation, and no later or earlier sample restores the
+//     window: the result is inconclusive with a "row identity lost after
+//     workload" reason, even when another sample covered the writer. Samples
+//     outside the acknowledgement-to-deadline window are not part of this
+//     check. This matches the experimental handoff collector, which aborts
+//     when a selected row is not ready after the workload.
 //   - Result: every eligible observation sample is scanned. An idle
 //     row with writes in any of them is a contradiction, even after a sample
-//     that already covered the writer. The writer needs at least one write
+//     that already covered the writer or after a lost row, because that row
+//     is positive evidence. The writer needs at least one write
 //     op and at least the acknowledged bytes. Exact equality is not required,
 //     because the totals are cumulative counters, not message counts.
 func judgeClientMetricsWindow(w clientMetricsWindow) clientMetricsOutcome {
@@ -230,18 +240,32 @@ func judgeClientMetricsWindow(w clientMetricsWindow) clientMetricsOutcome {
 		return metricsInconclusive("no baseline sample before the gate showed both rows at zero")
 	}
 	var attributed *clientMetricsOutcome
-	for _, s := range w.Samples {
+	lost := ""
+	for i, s := range w.Samples {
 		if s.Start.Before(w.Acked) || s.End.After(w.Deadline) {
 			continue
 		}
 		wt, wok := s.Section.Rows[w.Writer]
 		it, iok := s.Section.Rows[w.Idle]
+		if lost == "" {
+			switch {
+			case !s.Section.Section:
+				lost = fmt.Sprintf("row identity lost after workload: sample %d has no metrics section", i)
+			case !wok:
+				lost = fmt.Sprintf("row identity lost after workload: sample %d lacks the writer client.%d row", i, w.Writer)
+			case !iok:
+				lost = fmt.Sprintf("row identity lost after workload: sample %d lacks the idle client.%d row", i, w.Idle)
+			}
+		}
 		if iok && it != (clientWriteTotals{}) {
 			return clientMetricsOutcome{Verdict: clientMetricsContradicted, Reason: "idle client row carries writes", Writer: wt, Idle: it}
 		}
 		if attributed == nil && wok && iok && wt.Ops >= 1 && wt.Bytes >= w.AckedBytes {
 			attributed = &clientMetricsOutcome{Verdict: clientMetricsAttributed, Reason: "writer row covers the acknowledged write", Writer: wt, Idle: it}
 		}
+	}
+	if lost != "" {
+		return metricsInconclusive("%s", lost)
 	}
 	if attributed != nil {
 		return *attributed

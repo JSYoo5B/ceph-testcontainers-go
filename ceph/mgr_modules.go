@@ -46,6 +46,8 @@ type MGRModuleOverrideHandle struct {
 
 type mgrModuleOverrideState struct {
 	previous, applied, alwaysOn, restored bool
+	// token is the registry entry of this override; see faultMGRModule.
+	token *faultEntry
 }
 
 // OverrideMGRModule changes configured membership without forcing unavailable
@@ -68,37 +70,41 @@ func (c *Container) OverrideMGRModule(ctx context.Context, name string, enabled 
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	if prior := c.moduleOverrides[name]; prior != nil && !prior.state.restored {
-		return nil, errors.New("restore the existing MGR module override first")
+	// A restored override has left the registry, so a held one is active.
+	token, _, err := c.reserveFault(ctx, faultMGRModule, name)
+	if err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	modules, err := c.waitMGRModules(ctx)
 	if err != nil {
+		c.settleFault(token, "", nil, nil, nil)
 		return nil, err
 	}
 	module, ok := findMGRModule(modules, name)
 	if !ok {
+		c.settleFault(token, "", nil, nil, nil)
 		return nil, errors.New("MGR module is not configured or advertised by the active manager")
 	}
 	if module.AlwaysOn && (!enabled || !module.Enabled) {
+		c.settleFault(token, "", nil, nil, nil)
 		return nil, errors.New("always-on MGR modules cannot be disabled or temporarily re-enabled after force-disable")
 	}
 	if enabled && (!module.Available || !module.CanRun) {
+		c.settleFault(token, "", nil, nil, nil)
 		return nil, errors.New("MGR module has unavailable or cannot-run dependency metadata")
 	}
 	if !enabled {
 		if err := c.protectMGRModule(ctx, name); err != nil {
+			c.settleFault(token, "", nil, nil, nil)
 			return nil, err
 		}
 	}
 	change := &MGRModuleOverrideHandle{owner: c, name: name, state: &mgrModuleOverrideState{
-		previous: module.Enabled, applied: enabled, alwaysOn: module.AlwaysOn,
+		previous: module.Enabled, applied: enabled, alwaysOn: module.AlwaysOn, token: token,
 	}}
-	if c.moduleOverrides == nil {
-		c.moduleOverrides = make(map[string]*MGRModuleOverrideHandle)
-	}
-	c.moduleOverrides[name] = change
+	c.settleFault(token, "", change, nil, nil)
 	if module.Enabled == enabled {
 		return change, nil
 	}
@@ -133,8 +139,7 @@ func (change *MGRModuleOverrideHandle) Restore(ctx context.Context) error {
 	if err := c.poolPolicyReady(); err != nil {
 		return err
 	}
-	tracked := c.moduleOverrides[change.name]
-	if tracked == nil || tracked.state != change.state {
+	if !c.tracksFault(change.state.token) {
 		return errors.New("MGR module override is not tracked by this cluster")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -178,7 +183,7 @@ func (change *MGRModuleOverrideHandle) Restore(ctx context.Context) error {
 
 func (change *MGRModuleOverrideHandle) finish() {
 	change.state.restored = true
-	delete(change.owner.moduleOverrides, change.name)
+	change.owner.releaseFault(change.state.token)
 }
 
 // WaitMGRModuleReady waits for enabled/can-run metadata and successful native

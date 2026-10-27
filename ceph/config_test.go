@@ -34,7 +34,7 @@ func TestOverrideConfigRestoresAbsenceAndKeepsMaskedInheritedValues(t *testing.T
 	if err := change.Restore(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(ctr.entries) != 2 || ctr.entries[0].Value != "3" || ctr.entries[1].Value != "4" || len(c.configOverrides) != 0 {
+	if len(ctr.entries) != 2 || ctr.entries[0].Value != "3" || ctr.entries[1].Value != "4" || len(c.faultsOf(faultConfigOverride)) != 0 {
 		t.Fatal("restoration changed inherited/masked state")
 	}
 }
@@ -118,7 +118,7 @@ func TestOverrideConfigLostApplyAndRestoreRepliesConverge(t *testing.T) {
 	}
 	ctr.failAfter = ""
 	before := len(ctr.calls)
-	if err := change.Restore(t.Context()); err != nil || len(ctr.calls) != before+1 || len(c.configOverrides) != 0 {
+	if err := change.Restore(t.Context()); err != nil || len(ctr.calls) != before+1 || len(c.faultsOf(faultConfigOverride)) != 0 {
 		t.Fatal("applied restoration was not reconciled")
 	}
 }
@@ -135,7 +135,7 @@ func TestOverrideConfigLostNormalizedReadbackRequiresInspection(t *testing.T) {
 	}
 	// Explicit outside cleanup can resolve an uncertain lease without another set.
 	ctr.entries = nil
-	if err := change.Restore(t.Context()); err != nil || len(c.configOverrides) != 0 {
+	if err := change.Restore(t.Context()); err != nil || len(c.faultsOf(faultConfigOverride)) != 0 {
 		t.Fatal("previous native state was not reconciled")
 	}
 }

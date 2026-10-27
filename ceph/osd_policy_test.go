@@ -93,7 +93,7 @@ func TestOverrideOSDFlagRestoresOriginalAndLeavesOtherTokens(t *testing.T) {
 			t.Fatal(err)
 		}
 		before := len(ctr.calls)
-		if err := change.Restore(t.Context()); err != nil || len(ctr.calls) != before || len(c.flagOverrides) != 0 {
+		if err := change.Restore(t.Context()); err != nil || len(ctr.calls) != before || len(c.faultsOf(faultOSDFlag)) != 0 {
 			t.Fatal("copies did not share restored state")
 		}
 		if slices.Contains(ctr.flags, "noout") != original || !slices.Contains(ctr.flags, "noscrub") || !slices.Contains(ctr.flags, "noout-unrelated") {
@@ -115,7 +115,7 @@ func TestOverrideOSDFlagLostApplyAndRestoreRepliesReconcile(t *testing.T) {
 	}
 	ctr.failAfter = ""
 	before := len(ctr.calls)
-	if err := change.Restore(t.Context()); err != nil || len(ctr.calls) != before+1 || len(c.flagOverrides) != 0 {
+	if err := change.Restore(t.Context()); err != nil || len(ctr.calls) != before+1 || len(c.faultsOf(faultOSDFlag)) != 0 {
 		t.Fatal("lost restore was not reconciled without another mutation")
 	}
 }

@@ -220,11 +220,11 @@ func (t *Tenant) takeScopes() []tenantScope {
 	return slices.Clone(t.scopes)
 }
 
-func (t *Tenant) cluster() (*Container, error) {
+func (t *Tenant) cluster() (clusterOps, error) {
 	if err := t.check(); err != nil {
 		return nil, err
 	}
-	c := t.inst.backend.cluster()
+	c := t.inst.backend.ops()
 	if c == nil {
 		return nil, invalidRequest("tenant %s has no container", t.id)
 	}

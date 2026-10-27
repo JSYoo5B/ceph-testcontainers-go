@@ -105,7 +105,7 @@ func (fs *Filesystem) addMDSReplacement(parent context.Context, stopped *MDS, st
 		servicehook.Unlock(c)
 		return nil, clusterutil.OperationError(ctx, "inspect original MDS before replacement", err)
 	}
-	r := &cephFSMDSReplacement{name: cephFSMDSID(fs.FilesystemName, fs.nextMDSIndex)}
+	r := &cephFSMDSReplacement{name: fs.roster.nextID(fs.FilesystemName)}
 	r.scope, _, err = fs.readMDSReplacementScope(ctx, i, r)
 	if err == nil {
 		err = fs.checkMDSReplacementAuth(ctx, control, r.name)
@@ -209,7 +209,7 @@ func completedMDSReplacementAuthority(i *cephFSMDSIdentity) error {
 
 // Owner held. Untouched ordinary/cold publications have no replacement receipt.
 func (fs *Filesystem) completedMDSReplacementCohort() error {
-	for _, daemon := range fs.mdss {
+	for _, daemon := range fs.roster.members() {
 		if daemon != nil {
 			if err := completedMDSReplacementAuthority(daemon.identity); err != nil {
 				return err
@@ -228,7 +228,7 @@ func (fs *Filesystem) checkMDSReplacementOwner(stopped *MDS, i *cephFSMDSIdentit
 		return invalid(errors.New("MDS replacement requires one active, zero standby and original stopped ownership"))
 	}
 	if r == nil {
-		if i.removed || len(fs.mdss) != 1 || fs.mdss[0] != i.descriptor {
+		if i.removed || fs.roster.count() != 1 || fs.roster.at(0) != i.descriptor {
 			return invalid(errors.New("MDS replacement requires the sole original member"))
 		}
 		return nil
@@ -246,7 +246,7 @@ func (fs *Filesystem) checkMDSReplacementOwner(stopped *MDS, i *cephFSMDSIdentit
 	if i.removed {
 		wanted = 1
 	}
-	if len(fs.mdss) != wanted {
+	if fs.roster.count() != wanted {
 		return errors.New("MDS replacement owned cohort changed")
 	}
 	return nil
@@ -255,13 +255,13 @@ func (fs *Filesystem) checkMDSReplacementOwner(stopped *MDS, i *cephFSMDSIdentit
 // A failed receipt validates retained handles, never startup confirmation.
 func (fs *Filesystem) checkMDSReplacementPartial(old *cephFSMDSIdentity, r *cephFSMDSReplacement) error {
 	if r.daemon == nil {
-		if len(fs.mdss) != 1 || fs.mdss[0] != old.descriptor {
+		if fs.roster.count() != 1 || fs.roster.at(0) != old.descriptor {
 			return errors.New("cleanup-only MDS replacement cohort changed")
 		}
 		return nil
 	}
 	i := r.identity
-	if i == nil || r.daemon.identity != i || i.createdByReplacement != r || i.descriptor != r.daemon || i.filesystem != fs || i.native != old.native || i.name != r.name || r.daemon.ID != r.name || r.daemon.FilesystemName != fs.config.Name || r.daemon.Container != i.container || i.container == nil || i.container.GetContainerID() != i.cid || servicehook.Service(fs.cluster, "mds."+r.name) != i.container || len(fs.mdss) != 2 || fs.mdss[0] != old.descriptor || fs.mdss[1] != r.daemon {
+	if i == nil || r.daemon.identity != i || i.createdByReplacement != r || i.descriptor != r.daemon || i.filesystem != fs || i.native != old.native || i.name != r.name || r.daemon.ID != r.name || r.daemon.FilesystemName != fs.config.Name || r.daemon.Container != i.container || i.container == nil || i.container.GetContainerID() != i.cid || servicehook.Service(fs.cluster, "mds."+r.name) != i.container || fs.roster.count() != 2 || fs.roster.at(0) != old.descriptor || fs.roster.at(1) != r.daemon {
 		return errors.New("cleanup-only original MDS replacement handle changed")
 	}
 	return nil

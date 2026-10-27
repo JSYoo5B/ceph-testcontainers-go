@@ -66,7 +66,7 @@ type observerBackend struct {
 	c *Container
 }
 
-func (b *observerBackend) cluster() *Container { return b.c }
+func (b *observerBackend) ops() clusterOps { return containerOps{c: b.c} }
 
 func leaseObservable(t *testing.T) (*SharedCluster, *Tenant, *fakeTB, *observerControl) {
 	t.Helper()
