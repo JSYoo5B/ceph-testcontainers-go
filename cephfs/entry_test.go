@@ -138,7 +138,7 @@ func TestFilesystemRegistryReportsOwnedState(t *testing.T) {
 		t.Fatal("an empty registry reported owned filesystems")
 	}
 	mds := &MDS{Container: &poolFixtureContainer{}, ID: "alpha-0"}
-	registry.byName["alpha"] = &Filesystem{FilesystemName: "alpha", mdss: []*MDS{mds, nil, {ID: "uncreated"}}}
+	registry.byName["alpha"] = &Filesystem{FilesystemName: "alpha", roster: mdsRoster{daemons: []*MDS{mds, nil, {ID: "uncreated"}}}}
 	if !registry.RequiresMGRModule("volumes") || registry.RequiresMGRModule("mirroring") {
 		t.Fatal("owned filesystems did not protect exactly the volumes module")
 	}

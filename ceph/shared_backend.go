@@ -38,8 +38,9 @@ type sharedBackend interface {
 	// setSharing sets the gate of the cluster's *Container.
 	setSharing(mode sharingMode)
 	terminate(ctx context.Context) error
-	// cluster returns the container, or nil for a model.
-	cluster() *Container
+	// ops returns the cluster operations that a Tenant may use, or nil for a
+	// model that has no cluster.
+	ops() clusterOps
 }
 
 type sharedStarter func(ctx context.Context, image string, opts []testcontainers.ContainerCustomizer) (sharedBackend, error)
@@ -478,4 +479,4 @@ func (b containerBackend) setSharing(mode sharingMode) { b.c.sharing.Store(int32
 
 func (b containerBackend) terminate(ctx context.Context) error { return b.c.terminate(ctx) }
 
-func (b containerBackend) cluster() *Container { return b.c }
+func (b containerBackend) ops() clusterOps { return containerOps(b) }

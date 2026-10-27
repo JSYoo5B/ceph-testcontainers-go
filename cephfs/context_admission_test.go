@@ -58,7 +58,7 @@ func TestCephFSContextPublicAdmissionDeadline(t *testing.T) {
 				cluster := fs.cluster
 				originalIdentity := fs.nativeIdentity
 				originalConfig := fs.config
-				originalMDSS := slices.Clone(fs.mdss)
+				originalMDSS := slices.Clone(fs.roster.daemons)
 				attempt := attachment.identity
 				assertCephFSContextAdmissionGate(t, cluster, gate, func(ctx context.Context) error {
 					return operation(ctx, fs, attachment)
@@ -68,7 +68,7 @@ func TestCephFSContextPublicAdmissionDeadline(t *testing.T) {
 				}
 				if servicehook.Closed(cluster) || len(filesystems(cluster).byName) != 1 || filesystems(cluster).byName["fixture"] != fs ||
 					len(servicehook.Services(cluster)) != 1 || servicehook.Service(cluster, "mds.a") != daemon ||
-					fs.Container != daemon || !slices.Equal(fs.mdss, originalMDSS) ||
+					fs.Container != daemon || !slices.Equal(fs.roster.daemons, originalMDSS) ||
 					!reflect.DeepEqual(fs.config, originalConfig) || fs.nativeIdentity != originalIdentity ||
 					len(originalIdentity.attachments) != 1 || originalIdentity.attachments["additional"] != attempt ||
 					!attempt.confirmed || attempt.used || attempt.removed || attempt.removalAttempted {
@@ -190,12 +190,12 @@ func TestCephFSContextMDSSnapshotPreservesOwnedDescriptors(t *testing.T) {
 	fs, control, _, _ := cephFSContextAdmissionFixture()
 	first := &MDS{ID: "z", FilesystemName: "fixture"}
 	second := &MDS{ID: "a", FilesystemName: "fixture"}
-	fs.mdss = []*MDS{first, second}
+	fs.roster.daemons = []*MDS{first, second}
 	assertContextLockQueued(t, servicehook.TestState(fs.cluster).Mutex, func(ctx context.Context) error {
 		_, err := fs.mdsSnapshot(ctx)
 		return err
 	})
-	if len(control.Calls) != 0 || fs.mdss[0] != first || fs.mdss[1] != second {
+	if len(control.Calls) != 0 || fs.roster.daemons[0] != first || fs.roster.daemons[1] != second {
 		t.Fatal("queued snapshot queried native state or altered the owned creation order")
 	}
 	for _, closed := range []bool{false, true} {
@@ -205,7 +205,7 @@ func TestCephFSContextMDSSnapshotPreservesOwnedDescriptors(t *testing.T) {
 			t.Fatalf("snapshot lost pointers, creation order or terminated-fixture inspection: %+v %v", snapshot, err)
 		}
 		snapshot[0] = nil
-		if fs.mdss[0] != first {
+		if fs.roster.daemons[0] != first {
 			t.Fatal("returned MDS slice aliases the owned inventory")
 		}
 	}
@@ -266,7 +266,7 @@ func TestCephFSContextScaleDesiredConfigAdmissionCancellation(t *testing.T) {
 		return fs.ScaleMDS(ctx, 1, 1)
 	})
 	if daemon.states != 1 || !reflect.DeepEqual(fs.config, originalConfig) ||
-		fs.nativeIdentity != originalIdentity || len(fs.mdss) != 1 ||
+		fs.nativeIdentity != originalIdentity || len(fs.roster.daemons) != 1 ||
 		servicehook.Service(fs.cluster, "mds.a") != daemon || len(filesystems(fs.cluster).byName) != 1 {
 		t.Fatal("expired scale intent admission changed configuration or native ownership")
 	}
@@ -287,7 +287,7 @@ func TestCephFSContextScaleStateRetainsCausalError(t *testing.T) {
 		t.Fatalf("scale masked its causal daemon State failure: %v", err)
 	}
 	if daemon.states != 1 || !reflect.DeepEqual(fs.config, originalConfig) ||
-		len(fs.mdss) != 1 || servicehook.Service(fs.cluster, "mds.a") != daemon {
+		len(fs.roster.daemons) != 1 || servicehook.Service(fs.cluster, "mds.a") != daemon {
 		t.Fatal("failed daemon inspection published desired counts or changed ownership")
 	}
 	assertCephFSContextOnlyReadQueries(t, control.Calls)
@@ -324,7 +324,7 @@ func cephFSContextAdmissionFixture() (*Filesystem, *poolFixtureContainer, *cephF
 	fs.config.ActiveMDS, fs.config.StandbyMDS = 1, 0
 	daemon := &cephFSContextAdmissionDaemon{id: "fixture-mds-a"}
 	fs.Container = daemon
-	fs.mdss = []*MDS{{Container: daemon, ID: "a", FilesystemName: "fixture"}}
+	fs.roster.daemons = []*MDS{{Container: daemon, ID: "a", FilesystemName: "fixture"}}
 	setServices(fs.cluster, map[string]testcontainers.Container{"mds.a": daemon})
 	identity := &cephFSDataPoolIdentity{filesystem: fs, name: "additional", id: 3, confirmed: true}
 	fs.nativeIdentity.attachments["additional"] = identity

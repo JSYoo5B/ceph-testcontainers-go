@@ -47,6 +47,8 @@ type configOverrideState struct {
 	applied  string
 	known    bool
 	restored bool
+	// token is the registry entry of this override; see faultConfigOverride.
+	token *faultEntry
 }
 
 // String names the override's section and option without its values.
@@ -107,20 +109,20 @@ func (c *Container) OverrideConfig(ctx context.Context, setting ConfigSetting) (
 		return nil, err
 	}
 	key := configOverrideKey(setting)
-	if previous := c.configOverrides[key]; previous != nil && !previous.state.restored {
-		return nil, errors.New("restore the existing configuration override first")
+	// A restored override has left the registry, so a held one is active.
+	token, _, err := c.reserveFault(ctx, faultConfigOverride, key)
+	if err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	entries, err := c.configuration(ctx)
 	if err != nil {
+		c.settleFault(token, "", nil, nil, nil)
 		return nil, err
 	}
-	change := &ConfigOverrideHandle{owner: c, setting: setting, state: &configOverrideState{previous: findConfigEntry(entries, setting)}}
-	if c.configOverrides == nil {
-		c.configOverrides = make(map[string]*ConfigOverrideHandle)
-	}
-	c.configOverrides[key] = change
+	change := &ConfigOverrideHandle{owner: c, setting: setting, state: &configOverrideState{previous: findConfigEntry(entries, setting), token: token}}
+	c.settleFault(token, "", change, nil, nil)
 	if change.state.previous != nil && change.state.previous.Value == setting.Value {
 		change.state.applied, change.state.known = setting.Value, true
 		return change, nil
@@ -163,7 +165,7 @@ func (change *ConfigOverrideHandle) Restore(ctx context.Context) error {
 	if err := c.poolPolicyReady(); err != nil {
 		return err
 	}
-	if c.configOverrides[configOverrideKey(change.setting)] == nil || c.configOverrides[configOverrideKey(change.setting)].state != change.state {
+	if !c.tracksFault(change.state.token) {
 		return errors.New("configuration override is not tracked by this cluster")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -209,7 +211,7 @@ func (change *ConfigOverrideHandle) Restore(ctx context.Context) error {
 
 func (change *ConfigOverrideHandle) finish() {
 	change.state.restored = true
-	delete(change.owner.configOverrides, configOverrideKey(change.setting))
+	change.owner.releaseFault(change.state.token)
 }
 
 var configNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,127}(/[a-z][a-z0-9_]{0,127})*$`)
