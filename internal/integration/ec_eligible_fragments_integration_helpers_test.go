@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -314,16 +315,14 @@ func testECEligibleFragments(t *testing.T) {
 	head, _ := ecClassify(t, baseline, written.Writer, written.Snap, false)
 	ecExpect(t, "clean", head, ecSufficient, ecEligible, []int{0, 1, 2})
 
-	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-	if noout != nil {
-		t.Cleanup(func() {
-			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := noout.Restore(cleanup); err != nil {
-				t.Errorf("restore noout: %v", err)
-			}
-		})
-	}
+	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := noout.Restore(cleanup); err != nil {
+			t.Errorf("restore noout: %v", err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,16 +355,14 @@ func testECEligibleFragments(t *testing.T) {
 		t.Fatalf("degraded list_unfound: %+v", degraded.Unfound)
 	}
 
-	hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoRecover, true)
-	if hold != nil {
-		t.Cleanup(func() {
-			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := hold.Restore(cleanup); err != nil {
-				t.Errorf("restore norecover: %v", err)
-			}
-		})
-	}
+	hold, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoRecover, true)
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := hold.Restore(cleanup); err != nil {
+			t.Errorf("restore norecover: %v", err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

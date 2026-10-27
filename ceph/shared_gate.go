@@ -97,7 +97,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"OverrideConfig":          sharedExclusive,
 	"OverrideDebugLevel":      sharedExclusive,
 	"OverrideMessengerPolicy": sharedExclusive,
-	"OverrideOSDFlag":         sharedExclusive,
 	// Raw access: the admin CLI and keyring, and daemon container handles.
 	"Ceph":              sharedExclusive,
 	"ConnectionConfig":  sharedExclusive,
@@ -177,6 +176,7 @@ var sharedOverridePolicies = map[string]sharedPolicy{
 	"override.AddBlocklist":  sharedExclusive,
 	"override.SetMGRModule":  sharedExclusive,
 	"override.SetFullRatios": sharedExclusive,
+	"override.SetOSDFlag":    sharedExclusive,
 }
 
 // admitOverride refuses the override operation op while a SharedCluster

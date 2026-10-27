@@ -11,13 +11,14 @@ func TestOverrideAdmissionKeepsMethodPolicies(t *testing.T) {
 		"override.AddBlocklist":  sharedExclusive, // TemporaryBlocklist
 		"override.SetMGRModule":  sharedExclusive, // OverrideMGRModule
 		"override.SetFullRatios": sharedExclusive, // OverrideFullRatios
+		"override.SetOSDFlag":    sharedExclusive, // OverrideOSDFlag
 	} {
 		if policy, ok := sharedOverridePolicies[op]; !ok || policy != expected {
 			t.Errorf("%s has policy %v, want %v", op, policy, expected)
 		}
 	}
-	if len(sharedOverridePolicies) != 3 {
-		t.Errorf("sharedOverridePolicies has %d entries, want the three pinned entries", len(sharedOverridePolicies))
+	if len(sharedOverridePolicies) != 4 {
+		t.Errorf("sharedOverridePolicies has %d entries, want the four pinned entries", len(sharedOverridePolicies))
 	}
 	c := &Container{}
 	if err := c.admitOverride("override.AddBlocklist"); err != nil {

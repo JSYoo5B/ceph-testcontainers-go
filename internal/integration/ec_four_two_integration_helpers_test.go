@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 func ecFourTwoFacts(t *testing.T, ctx context.Context, cluster *ceph.Container, pool *ceph.Pool) int {
@@ -142,7 +143,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 			t.Fatal(err)
 		}
 	}
-	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
+	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
 	var actor *ecFourTwoActor
 	requested := map[int]bool{}
 	var order []int
@@ -169,7 +170,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 				}
 			}
 		}
-		if !restoredPolicy && noout != nil {
+		if !restoredPolicy {
 			if err := noout.Restore(cleanup); err != nil {
 				t.Error("restore noout:", err)
 			}

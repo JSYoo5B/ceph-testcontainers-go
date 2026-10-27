@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "override",
-  "count": 10,
+  "count": 13,
   "entries": [
     {
       "current": "override.AddBlocklist",
@@ -62,6 +62,20 @@
       "decision": "baseline"
     },
     {
+      "current": "override.OSDFlagHandle",
+      "kind": "type",
+      "proposed": "override.OSDFlagHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.OSDFlagHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*OSDFlagHandle",
+      "proposed": "override.OSDFlagHandle.Restore",
+      "decision": "baseline"
+    },
+    {
       "current": "override.SetFullRatios",
       "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container, requested ceph.FullRatios) (*FullRatiosHandle, error)",
@@ -73,6 +87,13 @@
       "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container, name string, enabled bool) (*MGRModuleHandle, error)",
       "proposed": "override.SetMGRModule",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.SetOSDFlag",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) (*OSDFlagHandle, error)",
+      "proposed": "override.SetOSDFlag",
       "decision": "baseline"
     }
   ]

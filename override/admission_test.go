@@ -55,6 +55,7 @@ func zeroArgumentCalls(t *testing.T, c *ceph.Container) map[string]func() error 
 		"AddBlocklist":  func() error { _, err := AddBlocklist(ctx, c, "", time.Duration(0)); return err },
 		"SetMGRModule":  func() error { _, err := SetMGRModule(ctx, c, "", false); return err },
 		"SetFullRatios": func() error { _, err := SetFullRatios(ctx, c, ceph.FullRatios{}); return err },
+		"SetOSDFlag":    func() error { _, err := SetOSDFlag(ctx, c, "", false); return err },
 	}
 }
 

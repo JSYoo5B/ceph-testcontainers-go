@@ -96,25 +96,6 @@ func TestOverrideConfigEarlyReturnsLeaveNoReservation(t *testing.T) {
 	}
 }
 
-func TestOverrideOSDFlagEarlyReturnsLeaveNoReservation(t *testing.T) {
-	ctr := &osdPolicyFixture{raw: "not json"}
-	c := osdPolicyCluster(ctr)
-	if change, err := c.OverrideOSDFlag(t.Context(), OSDFlagNoOut, true); err == nil || change != nil || settled(t, c, faultOSDFlag, "a failed dump") != 0 {
-		t.Fatalf("failed dump: %v %v", change, err)
-	}
-	ctr.raw = ""
-	change, err := c.OverrideOSDFlag(t.Context(), OSDFlagNoOut, true)
-	if err != nil || settled(t, c, faultOSDFlag, "a retry") != 1 {
-		t.Fatalf("a freed key stayed refused: %v", err)
-	}
-	if _, err := c.OverrideOSDFlag(t.Context(), OSDFlagNoOut, false); err == nil || err.Error() != overrideKinds[1].overlap {
-		t.Fatalf("overlap: %v", err)
-	}
-	if err := change.Restore(t.Context()); err != nil || len(c.faultsOf(faultOSDFlag)) != 0 {
-		t.Fatalf("restore: %v", err)
-	}
-}
-
 // A handle whose state is a copy of a restored predecessor's is stale: its
 // key now maps to the successor, and Restore must refuse it without a native
 // call or a change to the successor.
@@ -137,26 +118,6 @@ func TestOverrideRestoreRefusesStaleTokens(t *testing.T) {
 		}
 		before := len(ctr.calls)
 		if err := stale.Restore(t.Context()); err == nil || err.Error() != "configuration override is not tracked by this cluster" || len(ctr.calls) != before || c.heldFault(faultConfigOverride, configOverrideKey(setting)) != second {
-			t.Fatalf("a stale handle was not refused: %v", err)
-		}
-	})
-	t.Run("OSD flag", func(t *testing.T) {
-		ctr := &osdPolicyFixture{}
-		c := osdPolicyCluster(ctr)
-		first, err := c.OverrideOSDFlag(t.Context(), OSDFlagNoOut, true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		stale := &OSDFlagOverrideHandle{owner: c, flag: first.flag, state: &osdFlagOverrideState{applied: true, token: first.state.token}}
-		if err := first.Restore(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		second, err := c.OverrideOSDFlag(t.Context(), OSDFlagNoOut, true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		before := len(ctr.calls)
-		if err := stale.Restore(t.Context()); err == nil || err.Error() != "OSD flag override is not tracked by this cluster" || len(ctr.calls) != before || c.heldFault(faultOSDFlag, string(OSDFlagNoOut)) != second {
 			t.Fatalf("a stale handle was not refused: %v", err)
 		}
 	})

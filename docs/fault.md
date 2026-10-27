@@ -65,7 +65,7 @@ container through Docker's cgroup freezer, as `docker pause` does. Unlike `Stop`
 the process keeps its memory, sockets and Ceph identity, and peers see silence
 instead of a closed connection: a frozen OSD stops answering client operations
 and heartbeats until its peers report it down after the heartbeat grace. Hold
-`nodown` with [OverrideOSDFlag](ceph.md#overrideosdflag) to keep it up, so that client
+`nodown` with [override.SetOSDFlag](override.md#setosdflag) to keep it up, so that client
 operations hit their own timeouts (`rados_osd_op_timeout`) or are reported as
 `SLOW_OPS` (after `osd_op_complaint_time`, 30 seconds by default). Works in host
 mode.
@@ -80,10 +80,9 @@ container teardown; resume a
 caller-owned container yourself before removing it.
 
 ```golang
-hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoDown, true)
-if hold != nil {
-	defer hold.Restore(context.Background())
-}
+hold, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoDown, true)
+// hold is never nil: after a refusal its Restore does nothing.
+defer hold.Restore(context.Background())
 if err != nil {
 	t.Fatal(err)
 }
