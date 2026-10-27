@@ -50,7 +50,7 @@ func TestFinalizationDebugReceipter(t *testing.T) {
 	}
 	t.Run("nil interface", func(t *testing.T) { absent(t, "nil interface", nil) })
 	t.Run("typed nil", func(t *testing.T) {
-		var h *DebugLevelOverrideHandle
+		var h *fakeDebugWindow
 		var r DebugLevelReceipter = h
 		if isNilInterface(r) {
 			t.Fatal("a typed nil must be a non-nil interface for this control")
@@ -73,7 +73,7 @@ func TestFinalizationDebugReceipter(t *testing.T) {
 			t.Fatalf("snapshot %+v", snap)
 		}
 	})
-	t.Run("zero-value handle", func(t *testing.T) { absent(t, "zero-value handle", &DebugLevelOverrideHandle{}) })
+	t.Run("zero-value handle", func(t *testing.T) { absent(t, "zero-value handle", &fakeDebugWindow{}) })
 	t.Run("zero receipt from a foreign receipter", func(t *testing.T) {
 		absent(t, "foreign", &staticReceipter{})
 	})
@@ -103,9 +103,7 @@ func TestFinalizationDebugReceipter(t *testing.T) {
 	})
 	t.Run("real window has no reason", func(t *testing.T) {
 		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
-		var registry debugLevelRegistry
-		fake := newDebugLevelFake("1/5")
-		h := trackedDebugWindow(t, fx, &registry, fake, "20")
+		h := trackedDebugWindow(fx, "20")
 		restoreStep(fx, h, "restore")
 		fx.tb.Errorf("workload failed")
 		fx.run()

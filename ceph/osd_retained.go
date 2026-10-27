@@ -343,7 +343,7 @@ func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 // proves that no cleanup command can still run, and only then may the caller
 // retry. The caller holds c.mu.
 func (c *Container) clearStaleOSDSocket(ctx context.Context, detached *DetachedOSD) error {
-	if c.run == nil {
+	if !c.runDir.published() {
 		return nil
 	}
 	daemon := fmt.Sprintf("osd.%d", detached.id)

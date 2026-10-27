@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -86,12 +87,12 @@ func TestSharedCluster(t *testing.T) {
 		}
 		for name, call := range map[string]func() error{
 			"Ceph": func() error { _, err := cluster.Ceph(ctx, "status"); return err },
-			"OverrideConfig": func() error {
-				_, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "global", Name: "mon_max_pg_per_osd", Value: "500"})
+			"override.SetConfig": func() error {
+				_, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "global", Name: "mon_max_pg_per_osd", Value: "500"})
 				return err
 			},
-			"OverrideOSDFlag": func() error { _, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true); return err },
-			"CreatePool":      func() error { _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "gated"}); return err },
+			"override.SetOSDFlag": func() error { _, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true); return err },
+			"CreatePool":          func() error { _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "gated"}); return err },
 			"CreateClient": func() error {
 				_, err := cluster.CreateClient(ctx, "gated", ceph.ClientCaps{Mon: "allow *"})
 				return err
@@ -224,8 +225,8 @@ func TestSharedClusterExclusive(t *testing.T) {
 	if err != nil || status.FSID != fsid {
 		t.Fatalf("the exclusive lease got cluster %s (%v), want the shared %s", status.FSID, err, fsid)
 	}
-	if _, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true); err != nil {
-		t.Fatalf("OverrideOSDFlag under an exclusive lease: %v", err)
+	if _, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true); err != nil {
+		t.Fatalf("override.SetOSDFlag under an exclusive lease: %v", err)
 	}
 	if _, err := cluster.Ceph(ctx, "osd", "set", "noscrub"); err != nil {
 		t.Fatalf("Ceph under an exclusive lease: %v", err)

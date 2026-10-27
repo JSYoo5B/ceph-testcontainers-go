@@ -7,46 +7,6 @@ import (
 	"testing"
 )
 
-func TestOSDFlagConstantsAreExactlyTheReversibleSet(t *testing.T) {
-	want := map[OSDFlag]string{
-		OSDFlagNoUp: "noup", OSDFlagNoDown: "nodown", OSDFlagNoOut: "noout", OSDFlagNoIn: "noin",
-		OSDFlagNoBackfill: "nobackfill", OSDFlagNoRebalance: "norebalance", OSDFlagNoRecover: "norecover",
-		OSDFlagNoScrub: "noscrub", OSDFlagNoDeepScrub: "nodeep-scrub", OSDFlagNoSnapTrim: "nosnaptrim",
-		OSDFlagNoAutoscale: "noautoscale",
-	}
-	if len(want) != 11 || len(reversibleOSDFlags) != 11 {
-		t.Fatalf("flag set sizes: %d constants, %d accepted", len(want), len(reversibleOSDFlags))
-	}
-	for flag, token := range want {
-		if string(flag) != token || flag.String() != token || !slices.Contains(reversibleOSDFlags, flag) {
-			t.Fatalf("constant %q is not the accepted token %q", flag, token)
-		}
-	}
-}
-
-func TestOverrideOSDFlagAcceptsEveryConstantAndRefusesOthers(t *testing.T) {
-	for _, flag := range reversibleOSDFlags {
-		ctr := &osdPolicyFixture{}
-		c := osdPolicyCluster(ctr)
-		change, err := c.OverrideOSDFlag(t.Context(), flag, true)
-		if err != nil || !slices.Contains(ctr.flags, flag.String()) {
-			t.Fatalf("%s was not applied: %v", flag, err)
-		}
-		if err := change.Restore(t.Context()); err != nil || slices.Contains(ctr.flags, flag.String()) {
-			t.Fatalf("%s was not restored: %v", flag, err)
-		}
-	}
-	// A value outside the constants is representable in the open type and is
-	// refused before any native command, even a token the cluster reports.
-	for _, flag := range []OSDFlag{"sortbitwise", "pause", "NOOUT", ""} {
-		ctr := &osdPolicyFixture{flags: []string{"sortbitwise"}}
-		handle, err := osdPolicyCluster(ctr).OverrideOSDFlag(t.Context(), flag, false)
-		if err == nil || handle != nil || len(ctr.calls) != 0 {
-			t.Fatalf("flag %q: handle %v, err %v, %d native calls", flag, handle, err, len(ctr.calls))
-		}
-	}
-}
-
 func TestOSDFlagsReportsFlagsOutsideTheConstantSet(t *testing.T) {
 	ctr := &osdPolicyFixture{flags: []string{"sortbitwise", "noout", "purged_snapdirs", "pglog_hardlimit"}}
 	c := osdPolicyCluster(ctr)

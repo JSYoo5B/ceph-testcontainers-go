@@ -4,27 +4,39 @@ Import `github.com/JSYoo5B/ceph-testcontainers-go/override` alongside `ceph`.
 The package changes cluster-wide state of a cluster created by `ceph.Run` for a
 while and puts it back. Each operation is a function that takes the cluster and
 returns a handle; the handle owns the change and its `Restore` undoes only what
-the call did. This page documents the kinds that have moved: the client
-blocklist entry, the OSDMap full ratios and the MGR module state. The other override kinds are still
-methods of `ceph.Container` and move here in separate changes (see the
-[design](design/override-package-boundary.md)).
+the call did. This page documents seven operations: the client blocklist entry,
+OSDMap full ratios, MGR module state, global OSD flags, runtime debug levels,
+central configuration entries and messenger policy. The package and restoration
+boundary follow the [design](design/override-package-boundary.md).
 
 0.x: old names are removed without aliases. `Container.TemporaryBlocklist`,
 `ceph.BlocklistOverride`, `Container.OverrideMGRModule` and
 `ceph.MGRModuleOverrideHandle`, `Container.OverrideFullRatios` and
-`ceph.FullRatiosOverride` no longer exist in `ceph`:
+`ceph.FullRatiosOverride`, `Container.OverrideOSDFlag` and
+`ceph.OSDFlagOverrideHandle`, `Container.OverrideConfig`,
+`ceph.ConfigOverrideHandle`, `Container.OverrideMessengerPolicy` and
+`ceph.MessengerPolicyOverrideHandle` no longer exist in `ceph`:
 
 | Previous call or type | New call or type |
 | --- | --- |
 | `cluster.TemporaryBlocklist(ctx, address, duration)` | `override.AddBlocklist(ctx, cluster, address, duration)` |
 | `*ceph.BlocklistOverride` | `*override.BlocklistHandle` (same `Address` and `Restore`) |
+| `cluster.OverrideOSDFlag(ctx, flag, enabled)` | `override.SetOSDFlag(ctx, cluster, flag, enabled)` |
+| `*ceph.OSDFlagOverrideHandle` | `*override.OSDFlagHandle` (same `Restore`) |
 | `cluster.OverrideMGRModule(ctx, name, enabled)` | `override.SetMGRModule(ctx, cluster, name, enabled)` |
 | `*ceph.MGRModuleOverrideHandle` | `*override.MGRModuleHandle` (same `Restore`) |
 | `cluster.OverrideFullRatios(ctx, ratios)` | `override.SetFullRatios(ctx, cluster, ratios)` |
 | `*ceph.FullRatiosOverride` | `*override.FullRatiosHandle` (same `Restore`) |
+| `cluster.OverrideConfig(ctx, setting)` | `override.SetConfig(ctx, cluster, setting)` |
+| `*ceph.ConfigOverrideHandle` | `*override.ConfigHandle` (same `Restore`, `String` and `GoString`) |
+| `cluster.OverrideMessengerPolicy(ctx, policy)` | `override.SetMessengerPolicy(ctx, cluster, policy)` |
+| `*ceph.MessengerPolicyOverrideHandle` | `*override.MessengerPolicyHandle` (same `Restore`) |
 
-`ceph.BlocklistEntry`, `Observer.BlocklistEntries`, `ceph.FullRatios`,
-`ceph.FullRatioSnapshot`, `Observer.FullRatios`, `ceph.MGRModuleState`,
+`ceph.BlocklistEntry`, `Observer.BlocklistEntries`, `ceph.OSDFlag`,
+its constants, `Observer.OSDFlags`, `ceph.FullRatios`,
+`ceph.FullRatioSnapshot`, `Observer.FullRatios`, `ceph.ConfigSetting`,
+`ceph.ConfigEntry`, `Observer.Configuration`, `ceph.MessengerPolicy`,
+`ceph.MessengerConnectionMode`, `ceph.MGRModuleState`,
 `Observer.MGRModules` and `Container.WaitMGRModuleReady` stay in `ceph`: they
 only read cluster state. The package imports `ceph`; `ceph` never imports it. See
 the migration guides for the [blocklist](guides/upgrading-override-package.md)
@@ -52,7 +64,9 @@ and the [MGR module](guides/upgrading-override-mgr-module.md).
 Every function admits the cluster as a method of `ceph.Container` does. A
 cluster that a `SharedCluster` lends to tenants refuses the call with
 `ceph.ErrSharedCluster` and `OperationError.Op` set to the function name, such as
-`override.AddBlocklist`, `override.SetFullRatios` or `override.SetMGRModule`; a cluster lent to one exclusive lease accepts it.
+`override.AddBlocklist`, `override.SetFullRatios`, `override.SetMGRModule`,
+`override.SetOSDFlag`, `override.SetDebugLevel`, `override.SetConfig` or
+`override.SetMessengerPolicy`; a cluster lent to one exclusive lease accepts it.
 `Tenant` has no forwarder. A nil cluster returns a not-applied handle and an
 error classified `ceph.ErrInvalidRequest`.
 
@@ -125,6 +139,59 @@ if err := fence.Restore(ctx); err != nil {
 `ceph.Observer.BlocklistEntries` shows the entry and its expiry. For RBD
 exclusive-lock handover, the lock owner's address comes from `rbd.ImageClients`
 (see [rbd](rbd.md)).
+
+## SetOSDFlag
+
+```golang
+func SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) (*override.OSDFlagHandle, error)
+```
+
+Sets or clears one global OSDMap flag and remembers its prior state. Supported
+flags are the eleven `ceph.OSDFlag` constants: `OSDFlagNoUp`, `OSDFlagNoDown`,
+`OSDFlagNoOut`, `OSDFlagNoIn`, `OSDFlagNoBackfill`, `OSDFlagNoRebalance`,
+`OSDFlagNoRecover`, `OSDFlagNoScrub`, `OSDFlagNoDeepScrub`, `OSDFlagNoSnapTrim`
+and `OSDFlagNoAutoscale`. Any other value, including an untyped string constant
+that names another flag, is refused with an error before Ceph is contacted. The
+composite `pause` flag and irreversible compatibility flags are not supported.
+Overlapping handles for one flag are refused. External edits to the same flag
+must not race the helper: a boolean flag has no generation and Ceph provides no
+compare-and-set. While set, flags such as `noout` raise the `OSDMAP_FLAGS`
+health warning (per-OSD flags raise `OSD_FLAGS` instead).
+
+| Outcome | Handle | Error |
+| --- | --- | --- |
+| Flag set or cleared and read back | Real | nil |
+| Flag already in the requested state | Real, a lease without a write | nil |
+| Nil cluster | Not applied | `ErrInvalidRequest`, `Op` `override.SetOSDFlag` |
+| Shared cluster | Not applied | `ErrSharedCluster`, `Op` `override.SetOSDFlag` |
+| Unsupported flag | Not applied | plain error |
+| Terminated cluster or no control container | Not applied | the cluster's own error |
+| This flag is already held by another handle | Not applied | plain error |
+| The native OSDMap cannot be read before the write | Not applied, reservation released | the native error |
+| The write or the readback after it fails | Real, uncertain | the error |
+
+## OSDFlagHandle
+
+| Method | Meaning |
+| --- | --- |
+| `Restore(ctx) error` | Returns only this flag to its original state. |
+
+`Restore` never touches other flags. A flag that was already set stays set. It
+is idempotent and reconciles a lost restoration reply before another native
+mutation. A lease without a write refuses an outside change instead of
+overwriting it: when the flag no longer has the state the call left, the restore
+fails with `ErrInvalidRequest`. Outside writes that are indistinguishable from the
+applied or prior state cannot be detected. A restore after `Terminate` is refused
+with the error of an operation on a terminated cluster.
+
+```golang
+hold, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+// hold is never nil: after a refusal its Restore does nothing.
+defer hold.Restore(context.Background())
+if err != nil {
+	t.Fatal(err)
+}
+```
 
 ## SetMGRModule
 
@@ -261,6 +328,252 @@ if err != nil {
 }
 // Wait for OSD_FULL in HealthDetails, exercise the client, then:
 if err := change.Restore(ctx); err != nil {
+	t.Fatal(err)
+}
+```
+
+## SetDebugLevel
+
+```golang
+func SetDebugLevel(ctx context.Context, c *ceph.Container, setting ceph.DebugLevelSetting) (*override.DebugLevelHandle, error)
+```
+
+0.x: old names are removed without aliases. `Container.OverrideDebugLevel` and
+`ceph.DebugLevelOverrideHandle` no longer exist in `ceph`:
+
+| Previous call or type | New call or type |
+| --- | --- |
+| `cluster.OverrideDebugLevel(ctx, setting)` | `override.SetDebugLevel(ctx, cluster, setting)` |
+| `*ceph.DebugLevelOverrideHandle` | `*override.DebugLevelHandle` (same `Receipt`, `Restore`, `String`, `GoString`) |
+
+`ceph.DebugLevelSetting`, `ceph.DebugLevelReceipt`, `ceph.DebugLevelState` and
+`ceph.DebugLevelTransition` stay in `ceph` because the failure manifest copies
+the receipt; see [Debug level types](ceph.md#debug-level-types) and the
+[migration guide](guides/upgrading-override-debug-level.md).
+
+Opens one runtime debug level window on one running OSD that the cluster owns.
+`ceph.DebugLevelSetting` has `Daemon` (such as `osd.0`), `Name` (`debug_ms` or
+`debug_osd`) and `Level` (`N` or `N/M`, from 0 to 99). Other roles and options
+are refused; neither verbose levels nor all daemons are ever selected
+automatically.
+
+The window changes the daemon's runtime value through its admin socket, as
+[AdminSocket](ceph.md#adminsocket) reaches it, and never the central
+configuration database; `override.SetConfig` is
+the stored-entry model. A daemon restart drops a runtime value. The call reads
+the effective prior level, sets the requested level and verifies the normalized
+readback, so `20` reads back as `20/20`. The window is bound to the OSD
+container's generation (container ID and start time). Only one window per daemon
+and option is admitted at a time; the registry that admits it stays in the
+cluster and has a lock of its own, so a restoration does not wait behind a long
+topology operation. Each set is issued only while the OSD still runs that
+generation, and the cluster's own topology operations, such as
+`OSDContainer.Remove`, `OSDContainer.Detach` and `DetachedOSD.Reopen`, wait until
+the set has ended.
+
+| Outcome | Handle | Error |
+| --- | --- | --- |
+| Window applied and read back | Real, `applied-verified` | nil |
+| Nil cluster | Not applied | `ErrInvalidRequest`, `Op` `override.SetDebugLevel` |
+| Shared cluster | Not applied | `ErrSharedCluster`, `Op` `override.SetDebugLevel` |
+| Context already ended | Not applied | the context error |
+| Option or level not supported | Not applied | `ErrInvalidRequest` |
+| Daemon is not an OSD such as `osd.0` | Not applied | `ErrInvalidRequest` |
+| OSD unknown, purged, being purged or detaching | Not applied | `ErrInvalidRequest` |
+| Terminated cluster | Not applied | the error of an operation on a terminated cluster |
+| A window for this daemon and option is open | Not applied | `ErrInvalidRequest` |
+| The daemon is not an owned running one, or the prior level cannot be read | Not applied | the native or inspection error |
+| The generation changed before the set was issued | Not applied | the refusal |
+| The set, its settling or its readback fails or differs | Real, `apply-uncertain` | the joined errors |
+| The generation changed during the set | Real, `target-changed` | the joined errors |
+
+A refused or never-applied call releases its registry slot and returns a handle
+whose `Receipt` has the state `not-applied`, the request as given and the
+refusal as `Reason`; a real handle never reports `not-applied`. A set or readback
+that fails returns a real handle with the error, because a lost reply can still
+have applied. Readbacks after a set use a fresh context bounded by
+[WithStartupTimeout](ceph.md#withstartuptimeout).
+
+## DebugLevelHandle
+
+| Method | Meaning |
+| --- | --- |
+| `Receipt() ceph.DebugLevelReceipt` | A copy of the window's record; it reads only local state and never queries the daemon. A nil or zero-value handle returns a receipt without a state. |
+| `Restore(ctx) error` | Restores the prior level as described below. A not-applied handle returns nil without taking a lock. |
+| `String() string`, `GoString() string` | The daemon and option without their values. |
+
+`Restore` first checks the same generation and that the daemon still shows the
+window's own value, then sets the prior level and verifies it:
+
+- A prior level that is already in place counts as restored.
+- Any other value is an outside edit; it is preserved, not overwritten.
+- A stopped, restarted, replaced or removed OSD, or a terminated cluster, is not
+  restored: the window's process is gone, and the window ends as
+  `target-changed`.
+- A paused OSD, an unavailable socket or an unverified readback leaves the
+  window open; a later `Restore` reconciles it first.
+- A set of the window whose end could not be confirmed may still apply. The
+  window keeps it open as unconfirmed, and a later `Restore` first confirms that
+  the set has stopped before it reads, sets or releases anything. Until then
+  `OSDContainer.Remove` and `OSDContainer.Detach` first stop that set or refuse,
+  so it cannot reach a replacement OSD through the shared socket path.
+
+The generation is checked again after each read, so a replacement during a read
+is reported as a changed target instead of a level to restore. Restored, conflict
+and target-changed are terminal and release the admission; `Restore` then
+returns nil or the same error again.
+
+With [TerminateOnCleanup](ceph.md#terminateoncleanup), register the removal of
+clients first and the restoration afterward. The cleanups run in reverse order
+after the failure archive, so a known failure is archived while the level is
+still raised, and the level is restored before the clients are removed. A
+restoration that is the first failure triggers the `after-cleanup` archive, and
+Terminate still runs:
+
+```golang
+window, err := override.SetDebugLevel(ctx, cluster, ceph.DebugLevelSetting{
+	Daemon: "osd.0", Name: "debug_osd", Level: "20",
+})
+// window is never nil, whatever err says.
+finalization.TrackDebugLevel(window) // optional: receipts in the failure manifest
+finalization.Cleanup("restore osd.0 debug_osd", window.Restore)
+if err != nil {
+	t.Fatal(err)
+}
+```
+
+The readbacks around each set are not an atomic compare-and-swap. Do not change
+the same daemon and option elsewhere while a window is open; an outside write of
+the window's own value cannot be told apart from it. A restart of the OSD
+container from outside the cluster after the last check is not held off. Verbose
+levels cost log volume and can change timing; levels and durations for
+particular investigations are not established yet.
+
+## SetConfig
+
+```golang
+func SetConfig(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) (*override.ConfigHandle, error)
+```
+
+Sets one entry in the MON configuration database (`ceph config set`) and records
+the native normalized value. `ceph.ConfigSetting` has `Section`, `Mask`, `Name`
+and `Value`:
+
+- `Section` is `global`, a daemon type (`mon`, `mgr`, `osd`, `mds`, `client`) or
+  one identity such as `osd.0` or `mds.a`.
+- `Mask` is optional: `class:ssd`, `host:node-a` or `host:node-a/class:ssd`.
+- `Name` can be any option, including MGR module keys such as
+  `mgr/volumes/max_concurrent_clones` or `mgr/prometheus/server_addr`.
+
+The verb is `Set` because the call replaces a value that may already exist and
+`Restore` puts the previous entry back, or removes the entry if it was absent,
+instead of pinning the inherited or default value. Overlapping handles for the
+same section, mask and name are refused. Never race external writes to the key
+with the apply or the restore: Ceph has no compare-and-set for configuration.
+
+The helper verifies the stored value, not its effect:
+
+- Local `ceph.conf` entries (including
+  [WithConfigFile](ceph.md#withconfigfile)), command-line arguments and runtime
+  overrides take precedence over the database.
+- Some options need a daemon restart; for example `osd_op_queue` only applies when
+  an OSD starts.
+- Check the effective value of a running daemon with
+  `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_max_backfills")`.
+- With [MessengerV2Secure](ceph.md#withmessengermode), the Messenger mode and bind
+  options are refused; with `MessengerV2Only`, the `ms_bind_msgr1` and
+  `ms_bind_msgr2` options. The refusal does not depend on the section or mask.
+
+Configuration output can contain secrets; log only selected fields. Typical uses:
+lowering thresholds such as `osd_op_complaint_time` (when `SLOW_OPS` is
+reported), enabling Messenger fault injection (`ms_blackhole_client`,
+`ms_inject_delay_*`, see [Fault injection](guides/fault-injection.md)), and
+preparing OSDs before they start.
+
+| Outcome | Handle | Error |
+| --- | --- | --- |
+| Entry written and read back | Real | nil |
+| The stored value already equals the request | Real, a lease with no write | nil |
+| Nil cluster | Not applied | `ErrInvalidRequest`, `Op` `override.SetConfig` |
+| Shared cluster | Not applied | `ErrSharedCluster`, `Op` `override.SetConfig` |
+| Context already ended, or ended while waiting for the topology lock | Not applied | the context error |
+| Invalid section, mask, name or value | Not applied | `ErrInvalidRequest` |
+| Option fixed by the `MessengerV2Secure` or `MessengerV2Only` bootstrap | Not applied | `ErrInvalidRequest` |
+| Terminated cluster or no control container | Not applied | the cluster's own error |
+| This cluster already holds an override of the same section, mask and name | Not applied | plain error |
+| The configuration cannot be read before the write | Not applied, reservation released | the native error |
+| `config set` or the readback fails | Real, uncertain | the joined errors |
+| Success without a stored entry | Real | plain error |
+
+## ConfigHandle
+
+| Method | Meaning |
+| --- | --- |
+| `Restore(ctx) error` | Returns the exact entry to its prior value, or removes it if it was absent. |
+| `String() string`, `GoString() string` | The section and option, never the value, for logging. |
+
+`Restore` refuses a different current value to preserve outside edits, and after
+an uncertain reply a retry reconciles the native state first. If the readback of
+the apply was unavailable, `Restore` refuses to adopt an unknown normalized value
+and asks for an inspection of the native state. A copy shares the state of its
+handle. A handle of a call that was not applied returns nil without taking a
+lock. A `Restore` after `Terminate` is refused and the override stays registered.
+
+```golang
+change, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{
+	Section: "osd", Name: "osd_max_backfills", Value: "1",
+})
+// change is never nil, and a failed apply can still have persisted: schedule
+// the restore before looking at the error.
+defer func() {
+	if err := change.Restore(context.Background()); err != nil {
+		t.Error(err)
+	}
+}()
+if err != nil {
+	t.Fatal(err)
+}
+```
+
+## SetMessengerPolicy
+
+```golang
+func SetMessengerPolicy(ctx context.Context, c *ceph.Container, policy ceph.MessengerPolicy) (*override.MessengerPolicyHandle, error)
+```
+
+Changes the connection modes that the running daemons accept from clients (see
+[WithMessengerPolicy](ceph.md#withmessengerpolicy) for the fields). Each non-nil
+field becomes a [SetConfig](#setconfig) override of its option; nil fields stay as
+they are. The call is admitted once under its own name and then sets the options
+in the order monitors, managers, OSDs.
+
+- The daemons apply the change to new connections without a restart.
+  Established connections keep their mode.
+- A policy that selects no valid mode, and any policy on a `MessengerV2Secure`
+  cluster, is refused with `ceph.ErrInvalidRequest` before any change.
+- When the first option is refused, the handle is not applied and holds no
+  option. When a later option is refused, or an option's outcome is uncertain,
+  the handle holds the options that were made (a refused option is not among
+  them) together with the error, and must be restored.
+- A single daemon, such as only `osd.0`, is changed with [SetConfig](#setconfig)
+  and the option of the policy, with the daemon name as `Section`. It takes
+  precedence over the daemon type's entry.
+
+## MessengerPolicyHandle
+
+| Method | Meaning |
+| --- | --- |
+| `Restore(ctx) error` | Returns every option to its previous value, in reverse order. |
+
+`Restore` is idempotent and can be retried after a failure; the errors of the
+options are joined. A handle of a call that was not applied returns nil.
+
+```golang
+policy, err := override.SetMessengerPolicy(ctx, cluster, ceph.MessengerPolicy{
+	Monitors: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
+})
+defer policy.Restore(ctx) // a no-op after a refusal
+if err != nil {
 	t.Fatal(err)
 }
 ```

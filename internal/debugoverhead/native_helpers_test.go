@@ -17,6 +17,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -160,11 +161,9 @@ func runDebugOverhead(t *testing.T, option string) {
 		for position := range 3 {
 			level := levels[(trial+position)%len(levels)]
 			arm := debugOverheadArm{Trial: trial + 1, Position: position + 1, Level: level}
-			window, applyErr := cluster.OverrideDebugLevel(ctx, ceph.DebugLevelSetting{Daemon: "osd.0", Name: option, Level: level})
-			if window != nil {
-				finalization.TrackDebugLevel(window)
-				finalization.Cleanup(fmt.Sprintf("restore trial %d position %d", trial+1, position+1), window.Restore)
-			}
+			window, applyErr := override.SetDebugLevel(ctx, cluster, ceph.DebugLevelSetting{Daemon: "osd.0", Name: option, Level: level})
+			finalization.TrackDebugLevel(window)
+			finalization.Cleanup(fmt.Sprintf("restore trial %d position %d", trial+1, position+1), window.Restore)
 			if applyErr != nil {
 				t.Fatal(applyErr)
 			}

@@ -15,6 +15,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -195,11 +196,11 @@ type messengerFaultMount struct {
 // them; cleanup also restores them if the test stops first.
 func messengerFaultConfig(t *testing.T, ctx context.Context, cluster *ceph.Container, settings ...ceph.ConfigSetting) func() {
 	t.Helper()
-	var overrides []*ceph.ConfigOverrideHandle
+	var overrides []*override.ConfigHandle
 	restore := func() {
-		for _, override := range overrides {
+		for _, overridden := range overrides {
 			cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-			err := override.Restore(cleanup)
+			err := overridden.Restore(cleanup)
 			stop()
 			if err != nil {
 				t.Error("restore messenger fault option", err)
@@ -208,10 +209,8 @@ func messengerFaultConfig(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	}
 	t.Cleanup(restore)
 	for _, setting := range settings {
-		override, err := cluster.OverrideConfig(ctx, setting)
-		if override != nil {
-			overrides = append(overrides, override)
-		}
+		overridden, err := override.SetConfig(ctx, cluster, setting)
+		overrides = append(overrides, overridden)
 		if err != nil {
 			t.Fatal("apply", setting.Section, setting.Name, err)
 		}

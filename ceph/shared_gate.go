@@ -90,14 +90,10 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"WithClientIdentity":         sharedTenant,
 
 	// Cluster-wide changes.
-	"DeepScrubPG":             sharedExclusive,
-	"CreatePool":              sharedExclusive,
-	"RefreshMonitorConfig":    sharedExclusive,
-	"RepairPG":                sharedExclusive,
-	"OverrideConfig":          sharedExclusive,
-	"OverrideDebugLevel":      sharedExclusive,
-	"OverrideMessengerPolicy": sharedExclusive,
-	"OverrideOSDFlag":         sharedExclusive,
+	"DeepScrubPG":          sharedExclusive,
+	"CreatePool":           sharedExclusive,
+	"RefreshMonitorConfig": sharedExclusive,
+	"RepairPG":             sharedExclusive,
 	// Raw access: the admin CLI and keyring, and daemon container handles.
 	"Ceph":              sharedExclusive,
 	"ConnectionConfig":  sharedExclusive,
@@ -174,9 +170,13 @@ func (c *Container) admitFault(op string) error {
 // *Container method that it replaced. The override package has a test that
 // requires an entry here for every exported function of the package.
 var sharedOverridePolicies = map[string]sharedPolicy{
-	"override.AddBlocklist":  sharedExclusive,
-	"override.SetMGRModule":  sharedExclusive,
-	"override.SetFullRatios": sharedExclusive,
+	"override.AddBlocklist":       sharedExclusive,
+	"override.SetDebugLevel":      sharedExclusive,
+	"override.SetMGRModule":       sharedExclusive,
+	"override.SetFullRatios":      sharedExclusive,
+	"override.SetOSDFlag":         sharedExclusive,
+	"override.SetConfig":          sharedExclusive,
+	"override.SetMessengerPolicy": sharedExclusive,
 }
 
 // admitOverride refuses the override operation op while a SharedCluster

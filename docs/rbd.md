@@ -225,7 +225,7 @@ packages. The `ceph.Container` methods most RBD tests use are:
 | `CreatePool`, `Pool.Status`, `Pool.Remove`, `WaitForClean` | Pools created after `Run`; wait for `active+clean` before I/O. |
 | `Ceph(ctx, args...)`, `ClientContainer(ctx)`, `ceph.FactsOf(cluster)` | Run the `ceph` CLI, run `rbd`/`rados` in the client toolkit, read the client image from `ClusterFacts.Images`. |
 | `fault.Pause`, `override.AddBlocklist`, `Observer.BlocklistEntries` | Freeze and fence RBD clients (see [the lock handover example](#hand-over-an-exclusive-lock-from-an-unresponsive-client)). |
-| `OverrideConfig` | Set any Ceph option and restore it. |
+| `override.SetConfig` | Set any Ceph option and restore it. |
 | `ceph.FactsOf(cluster)` | Branch on `ClusterFacts.CephVersion`, the Ceph release (`"20.2.4"`, `"19.2.5"`). |
 
 ### Pool and namespace functions
@@ -906,7 +906,7 @@ Everything without a typed API is one native command away.
 | `rbd` on either side of a mirror | `link.SourceRBD(ctx, args...)`, `link.DestinationRBD(ctx, args...)` (stdout only, error on non-zero exit) |
 | `rbd` as a restricted identity | Exec in a container attached with `cluster.WithClientIdentity(id)`, passing `--id id.User()` |
 | `rbd-mirror` admin socket | `daemon.Exec(ctx, []string{"ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status"}, tcexec.Multiplexed())` for a `daemon` from `link.Daemons()` |
-| Ceph options | `cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: ..., Value: ...})`, restored with `Restore` |
+| Ceph options | `override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: ..., Value: ...})`, restored with `Restore` |
 | Daemon logs | `daemon.Logs(ctx)`; `rbd-mirror` logs to stderr |
 
 Commands that RBD tests commonly need:
@@ -938,7 +938,7 @@ ceph --admin-daemon /tmp/rbd-mirror.asok rbd mirror status
 
 `rbd-mirror` reads its options from the destination cluster's central
 configuration (`client` section) when it starts. You can set them with
-`destination.OverrideConfig` before `AddDaemon`; this module does not test any
+`override.SetConfig` on the destination cluster before `AddDaemon`; this module does not test any
 particular `rbd-mirror` tuning.
 
 More patterns (exec helpers, JSON parsing, attaching clients) are in

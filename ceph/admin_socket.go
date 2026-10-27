@@ -112,15 +112,6 @@ func (v *runVolume) remove(ctx context.Context) (err error) {
 	return nil
 }
 
-// runMount returns the run volume mount for a new daemon or control
-// container, or nothing for a cluster value without a run volume.
-func (c *Container) runMount() []testcontainers.ContainerCustomizer {
-	if c.run == nil {
-		return nil
-	}
-	return []testcontainers.ContainerCustomizer{c.run.mount()}
-}
-
 // adminSocket implements the AdminSocket method of the daemon handles.
 // handle must be owned by c now; the checks run under the topology lock.
 func (c *Container) adminSocket(ctx context.Context, handle daemonHandle, args ...string) ([]byte, error) {
@@ -139,7 +130,7 @@ func (c *Container) adminSocket(ctx context.Context, handle daemonHandle, args .
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
 	}
-	closed, shared, owned := c.closed, c.run != nil && !c.run.removed, handle.ownedBy(c)
+	closed, shared, owned := c.closed, c.runDir.shared(), handle.ownedBy(c)
 	c.mu.Unlock()
 	switch {
 	case closed:
@@ -216,7 +207,7 @@ func (c *Container) ownsDaemon(kind, id string) bool {
 // name left in the shared run directory, so the readiness check of a new
 // daemon cannot pass on the old file. The caller holds c.mu.
 func (c *Container) clearAdminSocket(ctx context.Context, daemon string) error {
-	if c.run == nil {
+	if !c.runDir.published() {
 		return nil
 	}
 	control := c.cliContainer()

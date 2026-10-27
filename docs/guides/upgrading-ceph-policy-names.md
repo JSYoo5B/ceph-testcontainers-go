@@ -12,6 +12,12 @@ keep their original APIs; no compatibility aliases are added on main.
 | `cluster.TemporaryMessengerPolicy(ctx, policy)` | `cluster.OverrideMessengerPolicy(ctx, policy)` | `*ceph.MessengerPolicyOverrideHandle` / `Restore(ctx)` |
 | `cluster.TemporaryClientRevocation(ctx, client)` | `cluster.RevokeClient(ctx, client)` | `*ceph.ClientRevocationHandle` / `Restore(ctx)` |
 
+`OverrideConfig` and `OverrideMessengerPolicy`, with their handle types, later
+moved out of `ceph` and became `override.SetConfig` and
+`override.SetMessengerPolicy` (see
+[the override package guide](upgrading-override-package.md)); the current-call
+column describes the checkpoint of this guide.
+
 Explicit return-type declarations, slices, interfaces and wrappers must also
 migrate these management objects:
 
@@ -22,6 +28,10 @@ migrate these management objects:
 | `ceph.MGRModuleOverride` | `ceph.MGRModuleOverrideHandle` |
 | `ceph.MessengerPolicyOverride` | `ceph.MessengerPolicyOverrideHandle` |
 | `ceph.ClientRevocation` | `ceph.ClientRevocationHandle` |
+
+`OverrideOSDFlag` and `OSDFlagOverrideHandle` named in the tables above were kept in
+`ceph` at this checkpoint and later became `override.SetOSDFlag` and
+`override.OSDFlagHandle` (see [the override package guide](upgrading-override-package.md)).
 
 Each handle retains prior state, ownership and possibly partial or uncertain
 application for explicit restoration. The suffix distinguishes the management

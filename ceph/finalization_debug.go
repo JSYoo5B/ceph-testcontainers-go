@@ -17,7 +17,7 @@ const (
 )
 
 // DebugLevelReceipter is a source of one debug level window's receipt. A
-// *DebugLevelOverrideHandle implements it. A registration is absent when it
+// *override.DebugLevelHandle implements it. A registration is absent when it
 // is a nil interface, when its dynamic value is a nil pointer, map, slice,
 // func, chan or interface (Receipt is then never called, so a method that is
 // not nil-safe, including a value-receiver method reached through a nil
@@ -30,7 +30,7 @@ type DebugLevelReceipter interface {
 // TrackDebugLevel registers a debug level window for the manifest. Every
 // call is a separate window, in registration order, even for the same
 // daemon, option and generation: windows are never merged or deduplicated.
-// Register the handle right after OverrideDebugLevel returns, including the
+// Register the handle right after override.SetDebugLevel returns, including the
 // non-nil handle that comes with an apply error. A nil interface, a typed nil
 // (a nil pointer, map, slice, func, chan or interface dynamic value), a
 // zero-value handle, or any receipter whose receipt has no State is recorded

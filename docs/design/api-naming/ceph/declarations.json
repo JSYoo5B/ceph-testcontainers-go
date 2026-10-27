@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 370,
+  "count": 353,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -259,36 +259,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.ConfigOverrideHandle",
-      "kind": "type",
-      "proposed": "ceph.ConfigOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.ConfigOverrideHandle.GoString",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "ConfigOverrideHandle",
-      "proposed": "ceph.ConfigOverrideHandle.GoString",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.ConfigOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*ConfigOverrideHandle",
-      "proposed": "ceph.ConfigOverrideHandle.Restore",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.ConfigOverrideHandle.String",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "ConfigOverrideHandle",
-      "proposed": "ceph.ConfigOverrideHandle.String",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.ConfigSetting",
       "kind": "type",
       "proposed": "ceph.ConfigSetting",
@@ -480,38 +450,6 @@
       "signature": "func(ctx context.Context) ([]*OSDContainer, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.OSDs",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OverrideConfig",
-      "kind": "method",
-      "signature": "func(ctx context.Context, setting ConfigSetting) (*ConfigOverrideHandle, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideConfig",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OverrideDebugLevel",
-      "kind": "method",
-      "signature": "func(ctx context.Context, setting DebugLevelSetting) (*DebugLevelOverrideHandle, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideDebugLevel",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OverrideMessengerPolicy",
-      "kind": "method",
-      "signature": "func(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverrideHandle, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideMessengerPolicy",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OverrideOSDFlag",
-      "kind": "method",
-      "signature": "func(ctx context.Context, flag OSDFlag, enabled bool) (*OSDFlagOverrideHandle, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideOSDFlag",
       "decision": "baseline"
     },
     {
@@ -786,44 +724,6 @@
       "current": "ceph.DebugLevelNotApplied",
       "kind": "const",
       "proposed": "ceph.DebugLevelNotApplied",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelOverrideHandle",
-      "kind": "type",
-      "proposed": "ceph.DebugLevelOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelOverrideHandle.GoString",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "DebugLevelOverrideHandle",
-      "proposed": "ceph.DebugLevelOverrideHandle.GoString",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelOverrideHandle.Receipt",
-      "kind": "method",
-      "signature": "func() DebugLevelReceipt",
-      "receiver": "*DebugLevelOverrideHandle",
-      "proposed": "ceph.DebugLevelOverrideHandle.Receipt",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*DebugLevelOverrideHandle",
-      "proposed": "ceph.DebugLevelOverrideHandle.Restore",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelOverrideHandle.String",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "DebugLevelOverrideHandle",
-      "proposed": "ceph.DebugLevelOverrideHandle.String",
       "decision": "baseline"
     },
     {
@@ -1340,20 +1240,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.MessengerPolicyOverrideHandle",
-      "kind": "type",
-      "proposed": "ceph.MessengerPolicyOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.MessengerPolicyOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*MessengerPolicyOverrideHandle",
-      "proposed": "ceph.MessengerPolicyOverrideHandle.Restore",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.MessengerSecure",
       "kind": "const",
       "proposed": "ceph.MessengerSecure",
@@ -1701,20 +1587,6 @@
       "current": "ceph.OSDFlagNoUp",
       "kind": "const",
       "proposed": "ceph.OSDFlagNoUp",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDFlagOverrideHandle",
-      "kind": "type",
-      "proposed": "ceph.OSDFlagOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDFlagOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*OSDFlagOverrideHandle",
-      "proposed": "ceph.OSDFlagOverrideHandle.Restore",
       "decision": "baseline"
     },
     {

@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -320,16 +321,14 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 	if victim == nil {
 		t.Fatalf("no replica besides primary osd.%d: %+v", primary, clean)
 	}
-	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-	if noout != nil {
-		t.Cleanup(func() {
-			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := noout.Restore(restoreCtx); err != nil {
-				t.Errorf("restore noout: %v", err)
-			}
-		})
-	}
+	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+	t.Cleanup(func() {
+		restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := noout.Restore(restoreCtx); err != nil {
+			t.Errorf("restore noout: %v", err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,16 +349,14 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 			// A short log that is trimmed at every write leaves the replica's
 			// last entry behind the log tail.
 			for name, value := range map[string]string{"osd_min_pg_log_entries": "10", "osd_max_pg_log_entries": "10", "osd_pg_log_trim_min": "1"} {
-				override, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
-				if override != nil {
-					t.Cleanup(func() {
-						restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
-						defer stop()
-						if err := override.Restore(restoreCtx); err != nil {
-							t.Errorf("restore %s: %v", name, err)
-						}
-					})
-				}
+				overridden, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
+				t.Cleanup(func() {
+					restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+					defer stop()
+					if err := overridden.Restore(restoreCtx); err != nil {
+						t.Errorf("restore %s: %v", name, err)
+					}
+				})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -379,16 +376,14 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 		spec := fmt.Sprintf("%s:%d", phase.prefix, phase.count)
 		recoveryRun(t, ctx, cluster, client, "write", spec)
 		prefixes = append(prefixes, spec)
-		hold, err := cluster.OverrideOSDFlag(ctx, phase.flag, true)
-		if hold != nil {
-			t.Cleanup(func() {
-				restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
-				defer stop()
-				if err := hold.Restore(restoreCtx); err != nil {
-					t.Errorf("restore %s: %v", phase.flag, err)
-				}
-			})
-		}
+		hold, err := override.SetOSDFlag(ctx, cluster, phase.flag, true)
+		t.Cleanup(func() {
+			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+			defer stop()
+			if err := hold.Restore(restoreCtx); err != nil {
+				t.Errorf("restore %s: %v", phase.flag, err)
+			}
+		})
 		if err != nil {
 			t.Fatal(err)
 		}

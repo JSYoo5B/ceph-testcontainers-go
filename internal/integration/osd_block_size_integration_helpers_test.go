@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
@@ -81,7 +82,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 		t.Fatal("original cluster identity unavailable")
 	}
 	if skipBenchmark {
-		if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
+		if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 			t.Fatal("explicit lightweight preparation failed", err)
 		}
 	}
@@ -126,7 +127,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 		t.Fatal("original pool identity unavailable", err)
 	}
 	smallOSDData(t, ctx, cluster, fsid, pool.Name, poolState.ID, "seed")
-	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
+	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
 	if err != nil {
 		t.Fatal(err)
 	}

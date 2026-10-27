@@ -76,8 +76,10 @@ type Container struct {
 	detachedOSDs map[int]*DetachedOSD
 	// stores is the OSD memory and volume storage and its test seams; see
 	// osdStorageState. It has no lock of its own: mu guards it.
-	stores            osdStorageState
-	run               *runVolume
+	stores osdStorageState
+	// runDir is the shared admin-socket run directory; see runDirState for
+	// what guards each part.
+	runDir            runDirState
 	config            []byte
 	keyring           []byte
 	portLeases        []*hostPortLease
@@ -91,7 +93,7 @@ type Container struct {
 	// overrides and full ratios override, reserved or held; see
 	// faultRegistry. It is guarded by mu.
 	faults faultRegistry
-	// debugLevels admits one OverrideDebugLevel window per daemon and
+	// debugLevels admits one override.SetDebugLevel window per daemon and
 	// option; it has its own lock.
 	debugLevels debugLevelRegistry
 	// daemonRunner replaces runContainer for AddMonitor and AddManager containers in tests.
@@ -210,10 +212,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 			return c, err
 		}
 	}
-	// Publish before creation: an interrupted create may have committed, and the
-	// generated volume name stays owned for removal by Terminate.
-	c.run = newRunVolume()
-	if err := c.run.create(ctx); err != nil {
+	// create publishes before creating: an interrupted create may have committed,
+	// and the generated volume name stays owned for removal by Terminate.
+	if err := c.runDir.create(ctx); err != nil {
 		return c, err
 	}
 	mon, err := c.runMonitor(ctx, settings.essentialImage, uuid.NewString(), opts...)
@@ -344,7 +345,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 			testcontainers.WithFiles(scriptFile("mon")),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status", "--format", "json"}).WithStartupTimeout(c.settings.startupTimeout)),
 		}
-		moduleOpts = append(moduleOpts, c.runMount()...)
+		moduleOpts = append(moduleOpts, c.runDir.mounts()...)
 		if lease == nil {
 			moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts(c.settings.monitorExposedPorts()...), network.WithNetwork([]string{"ceph-mon"}, c.nets.public),
 				keepMonitorAddress(c.nets.public.Name))
@@ -1061,10 +1062,8 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	memoryErr = c.stores.retryMemory(ctx, memoryErr, len(c.osds) == 0)
 	volumeErr = c.stores.retryVolume(ctx, volumeErr, len(c.osds) == 0)
 	errs = append(errs, memoryErr, volumeErr)
-	if c.run != nil {
-		if err := c.run.remove(ctx); err != nil {
-			errs = append(errs, err)
-		}
+	if err := c.runDir.release(ctx); err != nil {
+		errs = append(errs, err)
 	}
 	errs = append(errs, c.nets.removeBridges(ctx, blockedNetworks)...)
 	errs = append(errs, c.stopNativeInvocations(ctx)...)

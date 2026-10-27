@@ -71,7 +71,7 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 	ctr, err := testcontainers.Run(ctx, c.settings.essentialImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.ownedLabel(),
 		WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"}))},
-		c.runMount()...)...)
+		c.runDir.mounts()...)...)
 	if ctr != nil {
 		c.controlMu.Lock()
 		c.controlPlane = ctr
@@ -224,7 +224,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 		if err := c.clearAdminSocket(ctx, "mon."+name); err != nil {
 			return mon, err
 		}
-		opts = append(opts, c.runMount()...)
+		opts = append(opts, c.runDir.mounts()...)
 		mon.Container, err = c.runDaemon(ctx, mon.image, append(opts, c.ownedLabel())...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
@@ -793,7 +793,7 @@ func (c *Container) startManager(ctx context.Context, name, image string) (*Mana
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mgr." + name + ".asok"}).WithStartupTimeout(c.settings.startupTimeout))},
-		c.runMount()...)...)
+		c.runDir.mounts()...)...)
 	if name == "a" {
 		c.manager = mgr.Container
 	}

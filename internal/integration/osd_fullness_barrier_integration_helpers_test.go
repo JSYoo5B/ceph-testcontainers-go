@@ -162,10 +162,8 @@ func testOSDFullnessBarrier(t *testing.T) {
 		{Section: "osd", Name: "osd_max_pg_log_entries", Value: "10"},
 		{Section: "osd", Name: "osd_pg_log_trim_min", Value: "1"},
 	} {
-		handle, err := cluster.OverrideConfig(ctx, setting)
-		if handle != nil {
-			restore(setting.Name, handle.Restore)
-		}
+		handle, err := override.SetConfig(ctx, cluster, setting)
+		restore(setting.Name, handle.Restore)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,10 +211,8 @@ func testOSDFullnessBarrier(t *testing.T) {
 		return nil
 	})
 	captured := secondFaultInstanceOf(t, ctx, victim)
-	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-	if noout != nil {
-		restore("noout", noout.Restore)
-	}
+	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+	restore("noout", noout.Restore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +257,7 @@ func testOSDFullnessBarrier(t *testing.T) {
 		recoveryRun(t, ctx, cluster, client, "write", spec)
 		prefixes = append(prefixes, spec)
 
-		var hold *ceph.OSDFlagOverrideHandle
+		var hold *override.OSDFlagHandle
 		applyPolicy := func() *override.FullRatiosHandle {
 			handle, err := override.SetFullRatios(ctx, cluster, receipt.Ratios)
 			// A failed application may own a partial override: register its
@@ -277,10 +273,8 @@ func testOSDFullnessBarrier(t *testing.T) {
 		var baseRaw []byte
 		haveBase := false
 		if phase.revoke {
-			hold, err = cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoBackfill, true)
-			if hold != nil {
-				restore("nobackfill "+phase.name, hold.Restore)
-			}
+			hold, err = override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoBackfill, true)
+			restore("nobackfill "+phase.name, hold.Restore)
 			if err != nil {
 				t.Fatal(err)
 			}

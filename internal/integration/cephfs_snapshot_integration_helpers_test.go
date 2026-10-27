@@ -11,6 +11,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -67,18 +68,16 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 	// Delay the native worker so even a small clone exposes source protection
 	// and caller timeout behavior. The first job captures this delay before
 	// the setting is restored for subsequent jobs.
-	temporaryConfig := func(name, value string) *ceph.ConfigOverrideHandle {
+	temporaryConfig := func(name, value string) *override.ConfigHandle {
 		t.Helper()
-		change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mgr", Name: name, Value: value})
-		if change != nil {
-			t.Cleanup(func() {
-				restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 15*time.Second)
-				defer restoreCancel()
-				if err := change.Restore(restoreCtx); err != nil {
-					t.Errorf("restore clone setting %s: %v", name, err)
-				}
-			})
-		}
+		change, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "mgr", Name: name, Value: value})
+		t.Cleanup(func() {
+			restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer restoreCancel()
+			if err := change.Restore(restoreCtx); err != nil {
+				t.Errorf("restore clone setting %s: %v", name, err)
+			}
+		})
 		if err != nil {
 			t.Fatal(err)
 		}

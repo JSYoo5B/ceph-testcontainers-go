@@ -12,6 +12,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // TestFailureArchiveProof deliberately fails real tests, not recorder stand-ins.
@@ -61,11 +62,9 @@ func TestFailureArchiveProof(t *testing.T) {
 			if err := json.Unmarshal(out, &nativeOSDs); err != nil || len(nativeOSDs) != 1 || nativeOSDs[0] != 0 {
 				t.Fatalf("native one-OSD control: %q %v", out, err)
 			}
-			window, applyErr := cluster.OverrideDebugLevel(ctx, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "1/1"})
+			window, applyErr := override.SetDebugLevel(ctx, cluster, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "1/1"})
 			finalization.TrackDebugLevel(window)
-			if window != nil {
-				finalization.Cleanup("restore controlled debug window", window.Restore)
-			}
+			finalization.Cleanup("restore controlled debug window", window.Restore)
 			if applyErr != nil {
 				t.Fatal(applyErr)
 			}

@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -801,7 +802,7 @@ func targetedCancellation(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	}()
 	turn := func(script string) { execOutput(t, ctx, control, "sh", "-c", script, "sh", work) }
 	turn(`cat "$1/ready"`)
-	nodown, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoDown, true)
+	nodown, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoDown, true)
 	if err != nil {
 		t.Fatal(err)
 	}

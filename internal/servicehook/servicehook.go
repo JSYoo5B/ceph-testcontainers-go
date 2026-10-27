@@ -358,6 +358,8 @@ type TestConfig = struct {
 	OSDPlacement ceph.OSDConfig
 	// MemStore selects the OSDMemStore object store instead of BlueStore.
 	MemStore bool
+	// MessengerMode selects the bootstrap messenger mode.
+	MessengerMode ceph.MessengerMode
 	// Images selects the role images; nil means one aggregate image.
 	Images *ceph.ImageSet
 }

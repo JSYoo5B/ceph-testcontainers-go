@@ -322,3 +322,53 @@ captured tuple back. The names follow the decisions D7 to D9 of
 `override-package-boundary.md`. The reviewed mapping is in
 [the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
 The receipts of `ceph` and `override` were approved separately for this move.
+
+## 146-override-osdflag-package
+
+The change moves the second override kind into the public package `override`.
+The handle type `ceph.OSDFlagOverrideHandle` and its `Restore` move to
+`override.OSDFlagHandle` under the decided suffix `Handle`. The method
+`Container.OverrideOSDFlag` becomes the package function `override.SetOSDFlag`:
+it changes kind (method to function) and verb, so the record lists it as removed
+and the function as added instead of pairing them. `Set` names what the call does
+(it replaces the state of an existing flag) and what `Restore` undoes (it puts the
+previous state back); `Override` is dropped because the package name carries the
+meaning. The names follow the decisions D7 to D9 of
+`override-package-boundary.md`. `ceph.OSDFlag` and its eleven constants stay in
+`ceph` because `Observer.OSDFlags` returns them. The reviewed mapping is in
+[the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
+The receipts of `ceph` and `override` were approved separately for this move.
+
+## 146-override-debug-level-package
+
+The change moves the runtime debug level window into the package `override`.
+The handle type `ceph.DebugLevelOverrideHandle` and its `GoString`, `Receipt`,
+`Restore` and `String` move to `override.DebugLevelHandle` under the decided
+suffix `Handle`. The method `Container.OverrideDebugLevel` becomes the package
+function `override.SetDebugLevel`: it changes kind (method to function) and
+verb, so the record lists it as removed and the function as added instead of
+pairing them. `Set` names what the call does (it replaces one runtime value and
+`Restore` puts the prior value back); `Override` is dropped because the package
+name carries the meaning. The names follow the decisions D7 to D9 of
+`override-package-boundary.md`. The reviewed mapping is in
+[the upgrade guide](../guides/upgrading-override-debug-level.md). No alias
+remains. The receipts of `ceph` and `override` were approved separately for this
+move.
+
+## 146-override-config-package
+
+The change moves the central configuration override and the messenger policy
+override into the package `override`. The handle types
+`ceph.ConfigOverrideHandle` and `ceph.MessengerPolicyOverrideHandle` and their
+methods move to `override.ConfigHandle` and `override.MessengerPolicyHandle`
+under the decided suffix `Handle`. The methods `Container.OverrideConfig` and
+`Container.OverrideMessengerPolicy` become the package functions
+`override.SetConfig` and `override.SetMessengerPolicy`: they change kind (method
+to function) and drop the `Override` prefix because the package name carries it,
+so the record lists them as removed and the functions as added instead of
+pairing them. `Set` names what the calls do: each replaces a value that may
+already exist and `Restore` puts the previous entry back or removes the entry
+that was absent. The names follow the decisions D7 to D9 of
+`override-package-boundary.md`. The reviewed mapping is in
+[the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
+The receipts of `ceph` and `override` were approved separately for this move.

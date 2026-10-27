@@ -48,9 +48,7 @@ func (c *Container) newOSDLaunchRecipe(osd *OSDContainer, keyring []byte) *osdLa
 	if c.nets.cluster != nil {
 		r.clusterNetwork = c.nets.cluster.Name
 	}
-	if c.run != nil {
-		r.runVolume = c.run.name
-	}
+	r.runVolume = c.runDir.volumeName()
 	r.memoryVolume, r.dataVolume = c.stores.launchVolumes()
 	return r
 }

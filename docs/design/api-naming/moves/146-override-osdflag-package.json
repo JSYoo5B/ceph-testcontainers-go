@@ -1,0 +1,15 @@
+{
+  "schema": "ceph-api-move/v1",
+  "change": "146-override-osdflag-package",
+  "review": "api-naming-audit.md",
+  "moves": [
+    {"from": "ceph.OSDFlagOverrideHandle", "to": "override.OSDFlagHandle"},
+    {"from": "ceph.OSDFlagOverrideHandle.Restore", "to": "override.OSDFlagHandle.Restore"}
+  ],
+  "removed": [
+    "ceph.Container.OverrideOSDFlag"
+  ],
+  "added": [
+    "override.SetOSDFlag"
+  ]
+}

@@ -10,6 +10,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -56,18 +57,16 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	// The native delay leaves a deterministic pending window. pause_cloning is
 	// unsuitable here: Tentacle's idle worker can consume the pause cancellation
 	// event when a new clone wakes its inner condition-variable loop.
-	temporaryConfig := func(name, value string) *ceph.ConfigOverrideHandle {
+	temporaryConfig := func(name, value string) *override.ConfigHandle {
 		t.Helper()
-		change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mgr", Name: name, Value: value})
-		if change != nil {
-			t.Cleanup(func() {
-				restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 15*time.Second)
-				defer restoreCancel()
-				if err := change.Restore(restoreCtx); err != nil {
-					t.Errorf("restore clone setting %s: %v", name, err)
-				}
-			})
-		}
+		change, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "mgr", Name: name, Value: value})
+		t.Cleanup(func() {
+			restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer restoreCancel()
+			if err := change.Restore(restoreCtx); err != nil {
+				t.Errorf("restore clone setting %s: %v", name, err)
+			}
+		})
 		if err != nil {
 			t.Fatal(err)
 		}

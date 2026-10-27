@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -138,10 +139,8 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	// from being brought up to date by log recovery: its empty copy then lies
 	// behind the log tail, which needs a backfill.
 	for name, value := range map[string]string{"osd_min_pg_log_entries": "10", "osd_max_pg_log_entries": "10", "osd_pg_log_trim_min": "1"} {
-		handle, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
-		if handle != nil {
-			restore(name, handle.Restore)
-		}
+		handle, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: name, Value: value})
+		restore(name, handle.Restore)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -224,17 +223,13 @@ func testOSDMinSizeBoundary(t *testing.T) {
 		}
 		t.Logf("OSD_MIN_SIZE_STOP osd=%d requested_from=%+v resulting=%+v", osd.ID, now, after)
 	}
-	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-	if noout != nil {
-		restore("noout", noout.Restore)
-	}
+	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+	restore("noout", noout.Restore)
 	if err != nil {
 		t.Fatal(err)
 	}
-	hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoBackfill, true)
-	if hold != nil {
-		restore("nobackfill", hold.Restore)
-	}
+	hold, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoBackfill, true)
+	restore("nobackfill", hold.Restore)
 	if err != nil {
 		t.Fatal(err)
 	}

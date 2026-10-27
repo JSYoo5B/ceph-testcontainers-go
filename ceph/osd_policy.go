@@ -83,13 +83,13 @@ func (c *Container) setOSDIn(ctx context.Context, handle *OSDContainer, in bool)
 }
 
 // OSDFlag is a global OSDMap flag token such as "noout". The constants name
-// the flags that OverrideOSDFlag can change. OSDFlags returns the flags that the
-// cluster reports, which can include other tokens, so the type stays open: a
-// value outside the constants is representable and OverrideOSDFlag refuses it
-// at run time.
+// the flags that override.SetOSDFlag can change. OSDFlags returns the flags that
+// the cluster reports, which can include other tokens, so the type stays open: a
+// value outside the constants is representable and override.SetOSDFlag refuses
+// it at run time.
 type OSDFlag string
 
-// The reversible global OSD flags that OverrideOSDFlag accepts. Composite
+// The reversible global OSD flags that override.SetOSDFlag accepts. Composite
 // pause and irreversible compatibility flags are not among them.
 const (
 	OSDFlagNoUp        OSDFlag = "noup"
@@ -117,130 +117,6 @@ func (c *Container) osdFlags(ctx context.Context) ([]OSDFlag, error) {
 	}
 	return readOSDFlags(ctx, c.cephCLI)
 }
-
-// OSDFlagOverrideHandle manages restoration of one global OSDMap flag, retaining
-// prior state and ownership even when application is uncertain. Copies share
-// lifecycle state.
-// Restore explicitly when the condition should end; termination disposes of
-// the entire OSDMap. A non-nil handle returned with an error remains tracked and
-// must be restored or the cluster terminated. Unrelated flags are never changed.
-type OSDFlagOverrideHandle struct {
-	owner *Container
-	flag  OSDFlag
-	state *osdFlagOverrideState
-}
-
-type osdFlagOverrideState struct {
-	previous, applied, restored bool
-	// token is the registry entry of this override; see faultOSDFlag.
-	token *faultEntry
-}
-
-// OverrideOSDFlag changes one reversible global flag while remembering its
-// prior state. Supported flags are the OSDFlag constants: OSDFlagNoUp,
-// OSDFlagNoDown, OSDFlagNoOut, OSDFlagNoIn, OSDFlagNoBackfill,
-// OSDFlagNoRebalance, OSDFlagNoRecover, OSDFlagNoScrub, OSDFlagNoDeepScrub,
-// OSDFlagNoSnapTrim and OSDFlagNoAutoscale. Any other value, including an
-// untyped string constant that names another flag, is refused with an error.
-// Composite pause and irreversible compatibility flags are excluded. Overlapping
-// handles for a flag are refused. External edits to the same flag must not race
-// apply/restore: a boolean flag has no generation and Ceph provides no CAS.
-func (c *Container) OverrideOSDFlag(ctx context.Context, flag OSDFlag, enabled bool) (*OSDFlagOverrideHandle, error) {
-	if gateErr := c.sharedGate("OverrideOSDFlag"); gateErr != nil {
-		return nil, gateErr
-	}
-	if !slices.Contains(reversibleOSDFlags, flag) {
-		return nil, errors.New("unsupported reversible global OSD flag")
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return nil, err
-	}
-	// A restored override has left the registry, so a held one is active.
-	token, _, err := c.reserveFault(ctx, faultOSDFlag, string(flag))
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	dump, err := c.osdPolicyDump(ctx)
-	if err != nil {
-		c.settleFault(token, "", nil, nil, nil)
-		return nil, err
-	}
-	change := &OSDFlagOverrideHandle{owner: c, flag: flag, state: &osdFlagOverrideState{previous: slices.Contains(dump.flags, string(flag)), applied: enabled, token: token}}
-	c.settleFault(token, "", change, nil, nil)
-	if change.state.previous == enabled {
-		return change, nil
-	}
-	if err := c.setOSDFlag(ctx, flag, enabled); err != nil {
-		return change, err
-	}
-	dump, err = c.osdPolicyDump(ctx)
-	if err != nil {
-		return change, err
-	}
-	if slices.Contains(dump.flags, string(flag)) != enabled {
-		return change, errors.New("OSD flag readback differs from requested state")
-	}
-	return change, nil
-}
-
-// Restore returns only this flag to its original state. It is idempotent and
-// reconciles a lost restoration reply before another native mutation. A no-op
-// lease refuses an outside change rather than overwriting it. Outside writes
-// indistinguishable from applied/prior boolean states cannot be detected.
-func (change *OSDFlagOverrideHandle) Restore(ctx context.Context) error {
-	if change == nil || change.owner == nil || change.state == nil {
-		return errors.New("OSD flag override is unavailable")
-	}
-	c := change.owner
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if change.state.restored {
-		return nil
-	}
-	if err := c.poolPolicyReady(); err != nil {
-		return err
-	}
-	if !c.tracksFault(change.state.token) {
-		return errors.New("OSD flag override is not tracked by this cluster")
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	dump, err := c.osdPolicyDump(ctx)
-	if err != nil {
-		return err
-	}
-	current := slices.Contains(dump.flags, string(change.flag))
-	if current == change.state.previous {
-		change.finish()
-		return nil
-	}
-	if current != change.state.applied {
-		return invalid(errors.New("OSD flag changed outside this override; refusing restoration"))
-	}
-	if err := c.setOSDFlag(ctx, change.flag, change.state.previous); err != nil {
-		return err
-	}
-	dump, err = c.osdPolicyDump(ctx)
-	if err != nil {
-		return err
-	}
-	if slices.Contains(dump.flags, string(change.flag)) != change.state.previous {
-		return errors.New("OSD flag restoration readback differs from original state")
-	}
-	change.finish()
-	return nil
-}
-
-func (change *OSDFlagOverrideHandle) finish() {
-	change.state.restored = true
-	change.owner.releaseFault(change.state.token)
-}
-
-var reversibleOSDFlags = []OSDFlag{OSDFlagNoUp, OSDFlagNoDown, OSDFlagNoOut, OSDFlagNoIn, OSDFlagNoBackfill, OSDFlagNoRebalance, OSDFlagNoRecover, OSDFlagNoScrub, OSDFlagNoDeepScrub, OSDFlagNoSnapTrim, OSDFlagNoAutoscale}
 
 func (c *Container) setOSDFlag(ctx context.Context, flag OSDFlag, enabled bool) error {
 	op := "unset"

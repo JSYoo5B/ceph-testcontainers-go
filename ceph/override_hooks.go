@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -27,7 +28,9 @@ func init() {
 var overrideKindNames = map[string]faultKind{
 	"Blocklist":  faultBlocklist,
 	"FullRatios": faultFullRatios,
+	"Config":     faultConfigOverride,
 	"MGRModule":  faultMGRModule,
+	"OSDFlag":    faultOSDFlag,
 }
 
 // Admit refuses the override operation op while a SharedCluster shares c,
@@ -131,6 +134,46 @@ func (overrideHooks) BlocklistRemove(ctx context.Context, c *Container, address 
 	return err
 }
 
+// OpenDebugTarget checks that daemon is an OSD that this cluster owns and can
+// run, and returns the target of its admin socket. It waits for the topology
+// lock under ctx and holds no lock when it returns. A terminated cluster
+// returns the error of Terminated.
+func (overrideHooks) OpenDebugTarget(ctx context.Context, c *Container, daemon string) (any, error) {
+	target, err := c.openDebugTarget(ctx, daemon)
+	if err != nil {
+		return nil, err
+	}
+	return target, nil
+}
+
+// DebugWindows returns the cluster's registry of open debug level windows.
+// It has its own leaf lock and needs no cluster mutex.
+func (overrideHooks) DebugWindows(c *Container) any { return &c.debugLevels }
+
+// CheckDebugGeneration compares a daemon's reported generation with the one
+// that a window is bound to. It is the check that the target's own Set makes
+// before it issues a command, so that both agree on the texts and on which
+// mismatch is terminal.
+func (overrideHooks) CheckDebugGeneration(owned bool, identity string, running, paused bool, err error, wantIdentity, daemon string) (changed bool, _ error) {
+	return checkDebugLevelGeneration(debugLevelGeneration{owned: owned, identity: identity, running: running, paused: paused}, err, wantIdentity, daemon)
+}
+
+// OSDMapFlags reads the flag tokens of the native OSDMap, sorted, with the
+// decode checks of the OSD policy dump. The caller holds the mutex.
+func (overrideHooks) OSDMapFlags(ctx context.Context, c *Container) ([]string, error) {
+	dump, err := c.osdPolicyDump(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return dump.flags, nil
+}
+
+// SetOSDFlag sets or unsets one global OSDMap flag. The caller holds the
+// mutex.
+func (overrideHooks) SetOSDFlag(ctx context.Context, c *Container, flag OSDFlag, enabled bool) error {
+	return c.setOSDFlag(ctx, flag, enabled)
+}
+
 // ValidMGRModuleName reports whether name can be a Ceph manager module name.
 func (overrideHooks) ValidMGRModuleName(name string) bool {
 	return mgrModuleNamePattern.MatchString(name)
@@ -216,4 +259,66 @@ func (overrideHooks) TestHeld(c *Container, kind string) map[string]any {
 		}
 	}
 	return result
+}
+
+// NormalizeConfigSetting validates and canonicalizes one central
+// configuration entry, with the errors of the former OverrideConfig.
+func (overrideHooks) NormalizeConfigSetting(setting ConfigSetting) (ConfigSetting, error) {
+	return normalizeConfigSetting(setting)
+}
+
+// CheckConfigAllowed refuses an option that the bootstrap messenger mode of c
+// fixes for every section and mask. It reads settings that are immutable after
+// construction and needs no lock.
+func (overrideHooks) CheckConfigAllowed(c *Container, setting ConfigSetting) error {
+	if c.settings.messengerMode == MessengerV2Secure && messengerBootstrapSetting(setting.Name) {
+		return invalid(fmt.Errorf("%s is fixed in the MessengerV2Secure bootstrap configuration for every section and mask; choose WithMessengerMode when creating a new cluster", setting.Name))
+	}
+	if c.settings.messengerMode == MessengerV2Only && messengerProtocolSetting(setting.Name) {
+		return invalid(fmt.Errorf("%s is fixed in the MessengerV2Only bootstrap configuration for every section and mask; choose WithMessengerMode when creating a new cluster", setting.Name))
+	}
+	return nil
+}
+
+// ConfigKey returns the registry key of a normalized setting.
+func (overrideHooks) ConfigKey(setting ConfigSetting) string { return configOverrideKey(setting) }
+
+// ConfigWho returns the native target of a normalized setting.
+func (overrideHooks) ConfigWho(setting ConfigSetting) string { return configWho(setting) }
+
+// ConfigEntries reads the central configuration database. The caller holds
+// the mutex.
+func (overrideHooks) ConfigEntries(ctx context.Context, c *Container) ([]ConfigEntry, error) {
+	return c.configuration(ctx)
+}
+
+// ConfigSet stores value for a normalized setting. The caller holds the mutex.
+func (overrideHooks) ConfigSet(ctx context.Context, c *Container, setting ConfigSetting, value string) error {
+	_, err := c.configCommand(ctx, "set", configWho(setting), setting.Name, value)
+	return err
+}
+
+// ConfigRemove removes the entry of a normalized setting. The caller holds the
+// mutex.
+func (overrideHooks) ConfigRemove(ctx context.Context, c *Container, setting ConfigSetting) error {
+	_, err := c.configCommand(ctx, "rm", configWho(setting), setting.Name)
+	return err
+}
+
+// MessengerPolicySettings returns the central configuration entries of a
+// temporary messenger policy for c, with the refusals of the former
+// OverrideMessengerPolicy in their order: an invalid mode list, a policy that
+// selects no mode, and a cluster whose bootstrap fixes every mode.
+func (overrideHooks) MessengerPolicySettings(c *Container, policy MessengerPolicy) ([]ConfigSetting, error) {
+	settings, err := policy.settings()
+	if err != nil {
+		return nil, invalid(fmt.Errorf("messenger policy: %w", err))
+	}
+	if len(settings) == 0 {
+		return nil, invalidRequest("messenger policy selects no mode")
+	}
+	if c.settings.messengerMode == MessengerV2Secure {
+		return nil, invalidRequest("MessengerV2Secure fixes every connection mode in the local configuration")
+	}
+	return settings, nil
 }

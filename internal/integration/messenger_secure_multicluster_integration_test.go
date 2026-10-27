@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/google/uuid"
@@ -203,7 +204,7 @@ func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool)
 		if staticFacts(cluster).MessengerMode != mode {
 			t.Fatal("cluster bootstrap mode changed")
 		}
-		if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
+		if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := cluster.AddOSD(ctx); err != nil {

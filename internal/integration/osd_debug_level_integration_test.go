@@ -15,6 +15,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // TestOSDDebugLevel opens runtime debug level windows on one surviving OSD
@@ -49,7 +50,7 @@ func TestOSDDebugLevel(t *testing.T) {
 		}
 		return value[name]
 	}
-	logReceipt := func(h *ceph.DebugLevelOverrideHandle) {
+	logReceipt := func(h *override.DebugLevelHandle) {
 		t.Helper()
 		data, _ := json.Marshal(h.Receipt())
 		t.Logf("receipt: %s", data)
@@ -57,7 +58,7 @@ func TestOSDDebugLevel(t *testing.T) {
 
 	// A verified window: the normalized readback, then the prior value.
 	priorOSD := get("debug_osd")
-	window, err := cluster.OverrideDebugLevel(ctx, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "20"})
+	window, err := override.SetDebugLevel(ctx, cluster, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "20"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func TestOSDDebugLevel(t *testing.T) {
 	if receipt.State != ceph.DebugLevelApplied || receipt.Prior != priorOSD || receipt.Applied != "20/20" || get("debug_osd") != "20/20" {
 		t.Fatalf("applied receipt %+v", receipt)
 	}
-	if _, err := cluster.OverrideDebugLevel(ctx, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "5"}); !errors.Is(err, ceph.ErrInvalidRequest) {
+	if _, err := override.SetDebugLevel(ctx, cluster, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "5"}); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("overlapping window: %v", err)
 	}
 	// Some OSD I/O while the level is raised.
@@ -82,7 +83,7 @@ func TestOSDDebugLevel(t *testing.T) {
 
 	// An outside edit is preserved, then put back by the test itself.
 	priorMS := get("debug_ms")
-	edited, err := cluster.OverrideDebugLevel(ctx, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_ms", Level: "1"})
+	edited, err := override.SetDebugLevel(ctx, cluster, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_ms", Level: "1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestOSDDebugLevel(t *testing.T) {
 	}
 
 	// A paused OSD is not restored; after it resumes, the retry is.
-	paused, err := cluster.OverrideDebugLevel(ctx, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_ms", Level: "1/1"})
+	paused, err := override.SetDebugLevel(ctx, cluster, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_ms", Level: "1/1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +125,7 @@ func TestOSDDebugLevel(t *testing.T) {
 
 	// The finalization restores the last window before Terminate; a failure
 	// would fail this test.
-	last, err := cluster.OverrideDebugLevel(ctx, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "10/10"})
+	last, err := override.SetDebugLevel(ctx, cluster, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "10/10"})
 	if err != nil {
 		t.Fatal(err)
 	}

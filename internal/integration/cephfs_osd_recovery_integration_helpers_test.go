@@ -15,6 +15,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // cephFSRecoveryWriter keeps one mount with an admin socket and one O_RDWR
@@ -64,20 +65,18 @@ fs.shutdown()
 publish(2 + len(chunks), closed=True, **closing)
 `
 
-// holdOSDFlag sets a global OSD flag through OverrideOSDFlag and registers
+// holdOSDFlag sets a global OSD flag through override.SetOSDFlag and registers
 // its restoration before it returns.
-func holdOSDFlag(t *testing.T, ctx context.Context, cluster *ceph.Container, flag ceph.OSDFlag) *ceph.OSDFlagOverrideHandle {
+func holdOSDFlag(t *testing.T, ctx context.Context, cluster *ceph.Container, flag ceph.OSDFlag) *override.OSDFlagHandle {
 	t.Helper()
-	hold, err := cluster.OverrideOSDFlag(ctx, flag, true)
-	if hold != nil {
-		t.Cleanup(func() {
-			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := hold.Restore(restoreCtx); err != nil {
-				t.Errorf("restore %s: %v", flag, err)
-			}
-		})
-	}
+	hold, err := override.SetOSDFlag(ctx, cluster, flag, true)
+	t.Cleanup(func() {
+		restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := hold.Restore(restoreCtx); err != nil {
+			t.Errorf("restore %s: %v", flag, err)
+		}
+	})
 	if err != nil {
 		t.Fatalf("hold %s: %v", flag, err)
 	}

@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -162,16 +163,14 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if original, err := poolHandle(t, ctx, cluster, replaced).Status(ctx); err != nil || original.ID != stale.ID {
 		t.Fatal("empty candidate pool changed before the owned native replacement", err)
 	}
-	permission, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mon", Name: "mon_allow_pool_delete", Value: "true"})
-	if permission != nil {
-		t.Cleanup(func() {
-			cleanup, stop := context.WithTimeout(context.Background(), 20*time.Second)
-			defer stop()
-			if err := permission.Restore(cleanup); err != nil {
-				t.Error(err)
-			}
-		})
-	}
+	permission, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "mon", Name: "mon_allow_pool_delete", Value: "true"})
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), 20*time.Second)
+		defer stop()
+		if err := permission.Restore(cleanup); err != nil {
+			t.Error(err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

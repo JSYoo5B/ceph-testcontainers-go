@@ -1191,7 +1191,7 @@ health returns to `HEALTH_OK`; Ceph evicts before it would raise
 `MDS_CLIENT_LATE_RELEASE`. The blocklist entry expires by itself (one hour by
 default) and is not removed by `Restore`. To test eviction
 without blocklisting, set `mds_session_blocklist_on_timeout` to `false` with
-`cluster.OverrideConfig` (section `mds`).
+`override.SetConfig` (section `mds`).
 
 ### Keep an MDS active while it drops client messages
 
@@ -1221,12 +1221,10 @@ if err != nil {
 	t.Fatal(err)
 }
 active := status.Active[0]
-hold, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
+hold, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{
 	Section: "mds." + active.Name, Name: "ms_blackhole_client", Value: "true",
 })
-if hold != nil {
-	t.Cleanup(func() { _ = hold.Restore(context.Background()) })
-}
+t.Cleanup(func() { _ = hold.Restore(context.Background()) })
 if err != nil {
 	t.Fatal(err)
 }
@@ -1250,7 +1248,7 @@ Notes:
 - Use a new client process for each phase. The effect on sessions that were
   already open is not covered by this recipe.
 - Never set `ms_blackhole_client` on the MON, the MGR or the `client` section:
-  the fixture's own CLI is a client, so `OverrideConfig` and `Restore` would
+  the fixture's own CLI is a client, so `override.SetConfig` and `Restore` would
   hang.
 - `ms_inject_delay_type`, `ms_inject_delay_probability` and
   `ms_inject_delay_max` add random delays instead of dropping messages.
