@@ -91,11 +91,20 @@ Before a separately authorized publication:
   for the published tag, including its introduction, compatibility table and
   installation instructions. Identify the release by its tag and keep the
   final SHA's validation evidence in the release notes.
-- Fetch the release tags and run `python3 .github/scripts/release_assemble.py
-  check --require-tags --base <previous release commit>`. The check fails when
-  a published section changed, or when a fragment was left behind or re-used
-  an assembled identifier. A `SKIPPED` tag comparison means the clone could not
-  verify published history. Do not tag until it passes.
+- Fetch the release tags, commit the release pull request's content (the
+  assembled section in place of the legacy block, the consumed fragments
+  deleted) and run the pre-tag check, naming the release you are preparing:
+  `python3 .github/scripts/release_assemble.py check --require-tags --candidate vX.Y.Z --base <previous release commit>`.
+  `--candidate` must name the newest section of `CHANGELOG.md`, and its tag
+  must not exist yet. It exempts only that section, which the report lists as
+  `not yet tagged, verified only against the assembled fragments and digests`.
+  Every earlier section is still compared with its tag, any other untagged
+  section fails, and a changed published section, a left-behind fragment or a
+  re-used identifier fails. A `SKIPPED` tag comparison means the clone could not
+  verify published history. Do not tag until this passes.
+- After the tag exists, run the strict check again without `--candidate`:
+  `python3 .github/scripts/release_assemble.py check --require-tags`. It now
+  compares the candidate's section with its own tag as well, and it must pass.
 - Point the tag and GitHub Release at the reviewed commit, then verify that
   the Go module proxy resolves that tag and that an external integration
   module builds with it. Do not claim published-tag consumption before this

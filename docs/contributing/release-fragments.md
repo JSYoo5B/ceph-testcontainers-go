@@ -132,6 +132,16 @@ validator enforces this on the feature pull request.
   `vX.Y.Z` of the clone, or from a `--base REV` revision you pass. A changed,
   removed or deleted entry and a missing section all fail.
 
+The release being prepared has no tag yet. `--candidate vX.Y.Z` names it: the
+section must exist and be newer than every other section and tag, and the tag
+must not exist. Only that section is exempt from the tag comparison, and the
+report says `candidate: vX.Y.Z not yet tagged, verified only against the
+assembled fragments and digests`. Earlier sections are still compared with their
+tags and any other untagged section still fails under `--require-tags`. The
+order is: `assemble`, edit, replace the legacy block and delete the consumed
+fragments, run `check --require-tags --candidate vX.Y.Z --base <previous release
+commit>`, create the tag, then run `check --require-tags` without `--candidate`.
+
 Without git, without release tags or without the base revision the comparison
 cannot run. The report then says `tag comparison: SKIPPED`, or lists the
 versions it did not verify, and exits successfully; that is a skip, not a pass.

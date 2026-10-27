@@ -4,7 +4,7 @@
 Two subcommands, both Docker-free and offline:
 
     release_assemble.py assemble --version v0.4.0 --date 2026-11-01 [--output FILE]
-    release_assemble.py check [--base REV]... [--require-tags]
+    release_assemble.py check [--base REV]... [--require-tags] [--candidate vX.Y.Z]
 
 assemble reads docs/changes (validated by release_fragments.py) and CHANGELOG.md,
 and prints one release section. It never edits CHANGELOG.md, never deletes a
@@ -33,7 +33,9 @@ tag's CHANGELOG.md, and of each --base revision, to be byte for byte unchanged
 (an edited, removed or deleted entry fails). A clone without those tags or
 revisions cannot verify this: the report says SKIPPED or lists the versions that
 were not verified, and --require-tags turns that into a failure. It is never
-reported as a pass.
+reported as a pass. --candidate vX.Y.Z names the release being prepared: its
+section must be the newest and its tag must not exist yet, and only that section
+is exempt from the tag comparison (reported as not yet tagged).
 """
 import argparse
 import collections
@@ -265,11 +267,21 @@ def release_tags(root):
     return sorted(name for name in names if VERSION.fullmatch(name))
 
 
-Report = collections.namedtuple("Report", "failures verified drifted unverified bases ledger")
+Report = collections.namedtuple("Report", "failures verified drifted unverified bases ledger candidate")
 
 
-def check(root, bases=(), require_tags=False):
-    """Run the released-range checks and return a Report."""
+def version_key(version):
+    return tuple(int(part) for part in version[1:].split("."))
+
+
+def check(root, bases=(), require_tags=False, candidate=None):
+    """Run the released-range checks and return a Report.
+
+    candidate names the release being prepared: a section that must already be in
+    CHANGELOG.md but whose tag does not exist yet. It is exempt from the tag
+    comparison for itself only; every other released section is still compared with
+    its tag and, under require_tags, an untagged one still fails.
+    """
     failures = []
     text = read_changelog(root)
     _, released, problems = split_sections(text)
@@ -280,7 +292,22 @@ def check(root, bases=(), require_tags=False):
 
     verified, drifted, unverified = [], [], []
     tags = set(release_tags(root))
+    candidate_ok = None
+    if candidate is not None:
+        if not VERSION.fullmatch(candidate):
+            failures.append("candidate %r must look like v1.2.3" % candidate)
+        elif candidate not in released:
+            failures.append("candidate %s has no released section in %s" % (candidate, CHANGELOG))
+        elif candidate in tags:
+            failures.append("candidate %s already has a tag; run the check without --candidate" % candidate)
+        elif any(version_key(other) >= version_key(candidate) for other in released if other != candidate) or \
+                any(version_key(tag) >= version_key(candidate) for tag in tags):
+            failures.append("candidate %s must be newer than every other released section and every tag" % candidate)
+        else:
+            candidate_ok = candidate
     for version in sorted(released):
+        if version == candidate_ok:
+            continue
         if version not in tags:
             unverified.append(version)
             continue
@@ -315,7 +342,7 @@ def check(root, bases=(), require_tags=False):
     if require_tags and (unverified or not tags):
         failures.append("--require-tags: released versions not verified against a tag: %s"
                         % (", ".join(unverified) or "none have a tag"))
-    return Report(failures, verified, drifted, unverified, checked_bases, ledger)
+    return Report(failures, verified, drifted, unverified, checked_bases, ledger, candidate_ok)
 
 
 def render_entry(fragment):
@@ -387,6 +414,8 @@ def main(argv=None):
     verify = commands.add_parser("check", help="check the released range of CHANGELOG.md")
     verify.add_argument("--base", action="append", default=[], help="revision whose released sections must "
                         "be unchanged (repeatable)")
+    verify.add_argument("--candidate", help="the release being prepared (vX.Y.Z): its section must be the "
+                        "newest in CHANGELOG.md and its tag must not exist yet; exempts only that section")
     verify.add_argument("--require-tags", action="store_true", help="fail when a released version has no tag "
                         "to compare with")
     args = parser.parse_args(argv)
@@ -401,7 +430,7 @@ def main(argv=None):
             else:
                 sys.stdout.write(draft)
             return 0
-        report = check(args.root, args.base, args.require_tags)
+        report = check(args.root, args.base, args.require_tags, args.candidate)
     except AssembleError as error:
         for problem in error.problems:
             print(problem, file=sys.stderr)
@@ -423,6 +452,9 @@ def main(argv=None):
               % ", ".join(report.drifted))
     if (report.verified or report.drifted) and report.unverified:
         print("tag comparison: NOT verified for %s" % ", ".join(report.unverified))
+    if report.candidate:
+        print("candidate: %s not yet tagged, verified only against the assembled fragments and digests"
+              % report.candidate)
     for base in report.bases:
         print("base comparison: verified against %s" % base)
     if report.failures:

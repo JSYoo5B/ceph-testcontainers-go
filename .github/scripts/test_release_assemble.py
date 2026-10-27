@@ -374,7 +374,7 @@ class CheckTests(Base):
 
 
 @unittest.skipUnless(GIT, "git is not installed")
-class GitTests(Base):
+class GitBase(Base):
     def git(self, *args):
         env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
         subprocess.run(["git", "-C", str(self.root), "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
@@ -392,6 +392,10 @@ class GitTests(Base):
         self.commit_all("release 0.1.0")
         self.git("tag", "v0.1.0")
 
+
+
+@unittest.skipUnless(GIT, "git is not installed")
+class GitTests(GitBase):
     def test_matching_tag_is_verified(self):
         report = release_assemble.check(str(self.root))
         self.assertEqual((report.failures, report.verified, report.unverified), ([], ["v0.1.0"], []))
@@ -473,6 +477,99 @@ class GitTests(Base):
         self.assertTrue(release_assemble.compare_released(CHANGELOG, reworded, "tag", {}))
         # The repository's own accepted digests only match the exact text they were taken from.
         self.assertEqual(set(release_assemble.ACCEPTED_DRIFT), {"v0.2.0", "v0.3.0"})
+
+
+@unittest.skipUnless(GIT, "git is not installed")
+class DocumentedSequenceTests(GitBase):
+    """The release flow of docs/contributing/releasing.md with prior tags and no candidate tag."""
+
+    def prepare(self, version="v0.2.0", fragments=("1-a",)):
+        for change in fragments:
+            self.add(change)
+        draft = self.assemble(version)
+        for change in fragments:
+            (self.root / "docs/changes" / (change + ".md")).unlink()
+        self.changelog((self.root / "CHANGELOG.md").read_text().replace("## v0.1.0", draft + "\n## v0.1.0", 1))
+        return draft
+
+    def strict(self, **kwargs):
+        return release_assemble.check(str(self.root), require_tags=True, **kwargs)
+
+    def test_pre_tag_check_with_the_candidate_passes_and_reports_it(self):
+        self.prepare()
+        report = self.strict(candidate="v0.2.0", bases=["HEAD"])
+        self.assertEqual(report.failures, [])
+        self.assertEqual((report.verified, report.unverified, report.candidate), (["v0.1.0"], [], "v0.2.0"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = release_assemble.main(["--root", str(self.root), "check", "--require-tags",
+                                          "--candidate", "v0.2.0", "--base", "HEAD"])
+        self.assertEqual(code, 0)
+        self.assertIn("candidate: v0.2.0 not yet tagged, verified only against the assembled fragments", out.getvalue())
+
+    def test_strict_check_without_the_candidate_fails_before_the_tag(self):
+        self.prepare()
+        found = self.strict().failures
+        self.assertTrue(any("--require-tags" in item and "v0.2.0" in item for item in found), found)
+
+    def test_after_tagging_strict_passes_without_a_candidate(self):
+        self.prepare()
+        self.commit_all("release 0.2.0")
+        self.git("tag", "v0.2.0")
+        report = self.strict()
+        self.assertEqual((report.failures, report.verified, report.candidate), ([], ["v0.1.0", "v0.2.0"], None))
+
+    def test_candidate_that_is_tagged_is_refused(self):
+        self.prepare()
+        self.commit_all("release 0.2.0")
+        self.git("tag", "v0.2.0")
+        self.assertTrue(any("already has a tag" in item for item in self.strict(candidate="v0.2.0").failures))
+
+    def test_candidate_equal_to_a_prior_version_is_refused(self):
+        self.prepare()
+        found = self.strict(candidate="v0.1.0").failures
+        self.assertTrue(any("already has a tag" in item for item in found), found)
+
+    def test_unknown_or_malformed_candidate_is_refused(self):
+        self.prepare()
+        for value in ("v0.9.0", "0.2.0", "v0.2.0\n", ""):
+            with self.subTest(value):
+                self.assertTrue(self.strict(candidate=value).failures)
+        self.assertTrue(any("no released section" in item for item in self.strict(candidate="v0.9.0").failures))
+
+    def test_candidate_must_be_the_newest_section(self):
+        self.prepare("v0.3.0")
+        # A published, untagged v0.2.0 section sits below the candidate; it is not exempt.
+        text = (self.root / "CHANGELOG.md").read_text().replace("## v0.1.0", "## v0.2.0 (2026-10-20)\n\n- Middle.\n\n## v0.1.0", 1)
+        self.changelog(text)
+        found = self.strict(candidate="v0.2.0").failures
+        self.assertTrue(any("must be newer than every other" in item for item in found), found)
+
+    def test_a_second_untagged_section_beside_the_candidate_fails(self):
+        self.prepare("v0.3.0")
+        self.changelog((self.root / "CHANGELOG.md").read_text().replace(
+            "## v0.1.0", "## v0.2.0 (2026-10-20)\n\n- Middle.\n\n## v0.1.0", 1))
+        found = self.strict(candidate="v0.3.0").failures
+        self.assertTrue(any("--require-tags" in item and "v0.2.0" in item for item in found), found)
+        self.assertFalse(any("v0.3.0" in item and "--require-tags" in item for item in found))
+
+    def test_edited_prior_section_still_fails_with_the_candidate(self):
+        self.prepare()
+        self.changelog((self.root / "CHANGELOG.md").read_text().replace("- First release.", "- First, reworded."))
+        found = self.strict(candidate="v0.2.0").failures
+        self.assertTrue(any("differs from tag v0.1.0" in item for item in found), found)
+
+    def test_deleted_prior_section_still_fails_with_the_candidate(self):
+        self.prepare()
+        text = (self.root / "CHANGELOG.md").read_text()
+        self.changelog(text[:text.index("## v0.1.0")])
+        self.assertTrue(any("tag v0.1.0 has no released section" in item
+                            for item in self.strict(candidate="v0.2.0").failures))
+
+    def test_left_behind_fragment_still_fails_with_the_candidate(self):
+        self.prepare()
+        self.add("1-a")
+        self.assertTrue(any("already assembled" in item for item in self.strict(candidate="v0.2.0").failures))
 
 
 class RepositoryTests(unittest.TestCase):
