@@ -23,8 +23,9 @@ type BlocklistEntry struct {
 	Until   time.Time
 }
 
-// BlocklistEntries lists exact entries and CIDR ranges without mutating them.
-func (c *Container) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, error) {
+// observedBlocklistEntries implements Observer.BlocklistEntries. It takes the topology lock and refuses
+// a cluster without pool policy readiness before it reads.
+func (c *Container) observedBlocklistEntries(ctx context.Context) ([]BlocklistEntry, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.poolPolicyReady(); err != nil {

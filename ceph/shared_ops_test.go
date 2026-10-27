@@ -57,46 +57,6 @@ func (r *recordingOps) extension(kind string, create func() any) any {
 	return create()
 }
 
-func (r *recordingOps) status(context.Context) (Status, error) {
-	r.record("status")
-	return Status{}, nil
-}
-
-func (r *recordingOps) healthDetails(context.Context) (HealthSnapshot, error) {
-	r.record("healthDetails")
-	return HealthSnapshot{}, nil
-}
-
-func (r *recordingOps) pools(context.Context) ([]PoolState, error) {
-	r.record("pools")
-	return nil, nil
-}
-
-func (r *recordingOps) poolStatus(_ context.Context, name string) (PoolState, error) {
-	r.record("poolStatus " + name)
-	return PoolState{}, nil
-}
-
-func (r *recordingOps) poolUsage(_ context.Context, name string) (PoolUsageSnapshot, error) {
-	r.record("poolUsage " + name)
-	return PoolUsageSnapshot{}, nil
-}
-
-func (r *recordingOps) objectWatchers(_ context.Context, pool, namespace, object string) ([]ObjectWatcher, error) {
-	r.record("objectWatchers " + pool + "/" + namespace + "/" + object)
-	return nil, nil
-}
-
-func (r *recordingOps) osdFlags(context.Context) ([]OSDFlag, error) {
-	r.record("osdFlags")
-	return nil, nil
-}
-
-func (r *recordingOps) blocklistEntries(context.Context) ([]BlocklistEntry, error) {
-	r.record("blocklistEntries")
-	return nil, nil
-}
-
 func (r *recordingOps) raw() *Container { r.record("raw"); return r.rawValue }
 
 // opsShared is a fakeShared whose cluster operations are a recordingOps, as a
@@ -130,18 +90,16 @@ func TestTenantReachesTheClusterOnlyThroughItsOps(t *testing.T) {
 	tenant := shared.Lease(tb)
 	ctx := t.Context()
 
-	if _, err := tenant.Status(ctx); err != nil {
+	// The tenant's observations go through the Observer, which takes the
+	// gated cluster from the ops once for each query.
+	observer, err := ObserveTenant(tenant)
+	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = tenant.HealthDetails(ctx)
-	_, _ = tenant.Pools(ctx)
-	_, _ = tenant.PoolStatus(ctx, "p1")
-	_, _ = tenant.PoolUsage(ctx, "p2")
-	_, _ = tenant.ObjectWatchers(ctx, "p", "ns", "obj")
-	_, _ = tenant.OSDFlags(ctx)
-	_, _ = tenant.BlocklistEntries(ctx)
-	want := []string{"status", "healthDetails", "pools", "poolStatus p1", "poolUsage p2",
-		"objectWatchers p/ns/obj", "osdFlags", "blocklistEntries"}
+	if _, err := observer.cluster(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"raw"}
 	if got := ops.recorded(); !slices.Equal(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
@@ -169,11 +127,11 @@ func TestTenantReachesTheClusterOnlyThroughItsOps(t *testing.T) {
 	// afterwards reaches the cluster.
 	tb.finish()
 	before := len(ops.recorded())
-	if _, err := tenant.Status(ctx); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("Status after release returned %v", err)
+	if _, err := observer.cluster(); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("a query after release returned %v", err)
 	}
-	if _, err := tenant.PoolUsage(ctx, "p"); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("PoolUsage after release returned %v", err)
+	if _, err := observer.Pools(ctx); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("Pools after release returned %v", err)
 	}
 	if _, err := (serviceHooks{}).TenantPort(tenant); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("TenantPort after release returned %v", err)
@@ -188,10 +146,10 @@ func TestTenantOfAModelWithoutOpsRefusesClusterViews(t *testing.T) {
 	tenant := shared.Lease(newFakeTB(t))
 	ctx := t.Context()
 	checks := map[string]error{}
-	_, checks["Status"] = tenant.Status(ctx)
-	_, checks["Pools"] = tenant.Pools(ctx)
-	_, checks["OSDFlags"] = tenant.OSDFlags(ctx)
-	_, checks["PoolStatus"] = tenant.PoolStatus(ctx, "p")
+	observer, _ := ObserveTenant(tenant)
+	_, checks["Status"] = observer.Status(ctx)
+	_, checks["Pools"] = observer.Pools(ctx)
+	_, checks["OSDFlags"] = observer.OSDFlags(ctx)
 	_, checks["TenantPort"] = (serviceHooks{}).TenantPort(tenant)
 	for name, err := range checks {
 		if !errors.Is(err, ErrInvalidRequest) {

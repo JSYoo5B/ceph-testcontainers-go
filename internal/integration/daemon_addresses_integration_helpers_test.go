@@ -24,7 +24,7 @@ func testDaemonAddresses(t *testing.T, opts ...testcontainers.ContainerCustomize
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	addresses, err := cluster.DaemonAddresses(ctx)
+	addresses, err := observeCluster(cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func testDaemonAddresses(t *testing.T, opts ...testcontainers.ContainerCustomize
 	}
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		addresses, err = cluster.DaemonAddresses(ctx)
+		addresses, err = observeCluster(cluster).DaemonAddresses(ctx)
 		if err == nil && addresses.ActiveManager != nil && addresses.ActiveManager.Name != previous && addresses.ManagerAvailable {
 			break
 		}

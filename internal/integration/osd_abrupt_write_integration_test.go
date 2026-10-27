@@ -80,7 +80,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	}
 	volume, _ := osdVolumeBacking(t, ctx, docker.Client, cluster)
 	registered := osdMemoryIdentities(t, ctx, cluster)
-	quorum, err := cluster.QuorumStatus(ctx)
+	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	// With one OSD no peer reports it failed, so the MONs keep it "up" in the
 	// map until their report timeout. The dead process is the observation here,
 	// and the restart is told apart by a newer boot epoch below.
-	if status, err := cluster.Status(ctx); err == nil {
+	if status, err := observeCluster(cluster).Status(ctx); err == nil {
 		t.Logf("OSD_ABRUPT_RECOVERY phase=after-kill status=%+v", status)
 	} else {
 		t.Fatal(err)
@@ -298,7 +298,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	if got := osdMemoryExec(t, ctx, osd, "sh", "-c", `cat "$1/whoami" "$1/fsid" "$1/ceph_fsid"; stat -c '%i:%s' "$1/block"`, "identity", storePath); string(got) != string(store) {
 		t.Fatal("recovery changed store identity or block inode/size")
 	}
-	q, err := cluster.QuorumStatus(ctx)
+	q, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil || q.MonMap.FSID != quorum.MonMap.FSID {
 		t.Fatal("recovery changed cluster FSID", err)
 	}

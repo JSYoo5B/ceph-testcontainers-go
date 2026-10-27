@@ -245,7 +245,7 @@ func (p cephFSPausedHolderPhase) run(t *testing.T, workdir, path string, contend
 	}
 	evicted := time.Since(paused)
 	t.Logf("CEPHFS_SESSION evicted after %s, states while frozen %q", evicted.Round(time.Second), states)
-	entries, err := p.cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(p.cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

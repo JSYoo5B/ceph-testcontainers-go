@@ -97,7 +97,7 @@ func runDebugOverhead(t *testing.T, option string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	quorum, err := cluster.QuorumStatus(ctx)
+	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,4 +274,11 @@ func execOutput(t *testing.T, parent context.Context, ctr testcontainers.Contain
 		t.Fatalf("measurement command %s exited %d: %s (%v)", args[0], code, data, err)
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// observeCluster returns the Observer of cluster; a nil cluster yields a nil
+// Observer whose queries return an error.
+func observeCluster(cluster *ceph.Container) *ceph.Observer {
+	observer, _ := ceph.Observe(cluster)
+	return observer
 }

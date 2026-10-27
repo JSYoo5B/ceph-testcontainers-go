@@ -318,7 +318,7 @@ func testDualStackReplacement(t *testing.T) {
 		ceph.WithConfigFile(dualStackOrderConfig(t, "osd.2", "mds."+replacementMDS, "mgr.b")),
 		cephfs.WithFilesystems(cephfs.Config{Name: filesystem, ActiveMDS: 1}))
 	cluster, client := newServiceClusterRun(t, cephfsRun, image, opts...)
-	quorum, err := cluster.QuorumStatus(ctx)
+	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -525,7 +525,7 @@ func testDualStackReplacement(t *testing.T) {
 	if afterMon.addresses.MonMapEpoch <= initial.addresses.MonMapEpoch {
 		t.Fatalf("monmap epoch %d after the replacement, %d before", afterMon.addresses.MonMapEpoch, initial.addresses.MonMapEpoch)
 	}
-	bootstrap, err := cluster.MonitorBootstrapAddresses(ctx)
+	bootstrap, err := observeCluster(cluster).MonitorBootstrapAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,7 +661,7 @@ func testDualStackReplacement(t *testing.T) {
 	// MGR: add mgr.b as a standby, then remove the active mgr.a. Its
 	// admission check reads every MON, MGR and OSD vector.
 	oldMgr := *afterMDS.addresses.ActiveManager
-	statusBefore, err := cluster.ManagerStatus(ctx)
+	statusBefore, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -677,7 +677,7 @@ func testDualStackReplacement(t *testing.T) {
 		t.Fatalf("mds.%s changed from gid %d incarnation %d to gid %d incarnation %d during the MGR replacement",
 			replacementMDS, afterMDS.mds.GID, afterMDS.mds.Incarnation, afterMgr.mds.GID, afterMgr.mds.Incarnation)
 	}
-	statusAfter, err := cluster.ManagerStatus(ctx)
+	statusAfter, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

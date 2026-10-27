@@ -31,7 +31,7 @@ func testRBDLifecycle(t *testing.T, opts ...testcontainers.ContainerCustomizer) 
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	nativeStatus, err := cluster.Status(ctx)
+	nativeStatus, err := observeCluster(cluster).Status(ctx)
 	if err != nil || nativeStatus.FSID == "" {
 		t.Fatalf("read original pool usage cluster identity: status=%+v error=%v", nativeStatus, err)
 	}

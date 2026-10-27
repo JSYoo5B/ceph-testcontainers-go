@@ -39,7 +39,7 @@ func verifyObjects(t *testing.T, ctx context.Context, client testcontainers.Cont
 
 func logStatus(t *testing.T, ctx context.Context, cluster *ceph.Container, stage string) {
 	t.Helper()
-	s, err := cluster.Status(ctx)
+	s, err := observeCluster(cluster).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

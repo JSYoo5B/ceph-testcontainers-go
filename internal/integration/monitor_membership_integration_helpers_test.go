@@ -129,7 +129,7 @@ func testMessengerClientUnreachableMonitor(t *testing.T) {
 	before, _ := waitMonitorMembership(t, ctx, cluster, running, running)
 
 	// Nothing listens on this port: with Messenger v2 only, MON a binds 3300.
-	addresses, err := cluster.DaemonAddresses(ctx)
+	addresses, err := observeCluster(cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

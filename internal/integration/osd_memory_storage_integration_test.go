@@ -72,7 +72,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	if err != nil {
 		t.Fatal("memory-storage control bootstrap failed", err)
 	}
-	q, err := cluster.QuorumStatus(ctx)
+	q, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -222,7 +222,7 @@ func testClientPolicyOverridesSecureOnly(t *testing.T, opts ...testcontainers.Co
 // published ports and its listening sockets.
 func checkMessengerV2Only(t *testing.T, ctx context.Context, cluster *ceph.Container) {
 	t.Helper()
-	bootstrap, err := cluster.MonitorBootstrapAddresses(ctx)
+	bootstrap, err := observeCluster(cluster).MonitorBootstrapAddresses(ctx)
 	if err != nil || !strings.Contains(bootstrap, "v2:") || strings.Contains(bootstrap, "v1:") {
 		t.Fatalf("MON bootstrap addresses are not v2-only: %q, %v", bootstrap, err)
 	}
@@ -231,7 +231,7 @@ func checkMessengerV2Only(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	if err != nil || strings.Contains(string(config), "v1:") {
 		t.Fatalf("the connection configuration names a v1 address: %v", err)
 	}
-	native, err := cluster.DaemonAddresses(ctx)
+	native, err := observeCluster(cluster).DaemonAddresses(ctx)
 	if err != nil || native.ActiveManager == nil {
 		t.Fatalf("daemon addresses: %+v, %v", native, err)
 	}
@@ -548,7 +548,7 @@ func testMessengerV2OnlyCRC(t *testing.T) {
 	}
 	for deadline := time.Now().Add(2 * time.Minute); ; {
 		// The former active MGR respawns; wait until it is a standby again.
-		native, err := cluster.DaemonAddresses(ctx)
+		native, err := observeCluster(cluster).DaemonAddresses(ctx)
 		if err == nil && native.ActiveManager != nil && native.ActiveManager.Name == "b" && native.ManagerAvailable && slices.Contains(native.StandbyManagers, "a") {
 			break
 		}
