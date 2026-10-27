@@ -47,7 +47,7 @@ func testRBDMirrorPeerPathCut(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
+	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", source.Images().RBDAux), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

@@ -41,7 +41,8 @@ func (s ImageSet) normalized() (ImageSet, error) {
 }
 
 // RunWithImages starts a cluster with explicit role images. Service image options
-// in opts override the corresponding role in images.
+// in opts (cephfs.WithMDSImage, rgw.WithImage) replace the corresponding role of
+// images, whatever the order of the options.
 func RunWithImages(ctx context.Context, images ImageSet, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	images, err := images.normalized()
 	if err != nil {
@@ -51,7 +52,8 @@ func RunWithImages(ctx context.Context, images ImageSet, opts ...testcontainers.
 	return Run(ctx, images.Essential, append([]testcontainers.ContainerCustomizer{WithImages(images)}, opts...)...)
 }
 
-// WithImages selects role images. Essential must equal the Run image.
+// WithImages selects role images. Essential must equal the Run image. A service
+// image option replaces its role of the set whichever came first.
 func WithImages(images ImageSet) Option {
 	return func(o *options) error {
 		normalized, err := images.normalized()
@@ -76,14 +78,21 @@ func (c *Container) Images() ImageSet {
 
 func configureImages(o *options) error {
 	if o.imageSet == nil {
-		images := ImageSet{Essential: o.controlImage, Client: o.controlImage, CephFS: o.mdsImage, RBDAux: o.controlImage, RGW: o.rgwImage}
+		images := o.defaultImages()
 		o.imageSet = &images
 	}
 	s := o.imageSet
-	if o.controlImage != s.Essential {
+	if o.essentialImage != s.Essential {
 		return fmt.Errorf("Run image must equal the essential image with WithImages")
 	}
-	o.controlImage, o.osdImage, o.mdsImage, o.rgwImage = s.Essential, s.Essential, s.CephFS, s.RGW
+	// A service image option replaces its role whichever of it and WithImages
+	// came first.
+	if o.cephfsOverride != "" {
+		s.CephFS = o.cephfsOverride
+	}
+	if o.rgwOverride != "" {
+		s.RGW = o.rgwOverride
+	}
 	for _, service := range o.services {
 		switch service.Kind() {
 		case "rbd":
@@ -104,7 +113,7 @@ func configureImages(o *options) error {
 }
 
 // ClientContainer returns the owned userspace toolkit executor. It starts
-// lazily for a separate client image; aggregate images reuse the control executor.
+// lazily for a separate client image; aggregate images reuse the control-plane executor.
 func (c *Container) ClientContainer(ctx context.Context) (testcontainers.Container, error) {
 	if c == nil {
 		return nil, fmt.Errorf("ceph cluster is unavailable")

@@ -122,7 +122,7 @@ func TestClusterFactsUnrecordedStaysUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.CephVersion != "" || got.NetworkName != "" || got.ClusterNetworkName != "" || got.HasSeparateClusterNetwork ||
-		got.Images != (ImageSet{}) || got.ControlImage != "" {
+		got.Images != (ImageSet{}) {
 		t.Fatalf("unrecorded facts were filled in: %+v", got)
 	}
 }
@@ -160,7 +160,7 @@ func TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup(t *testing.T) 
 // options fields it reads through c.settings.
 var recordedContainerFields = map[string]bool{"cephVersion": true, "network": true, "clusterNetwork": true, "settings": true}
 var recordedSettingsFields = map[string]bool{
-	"addressFamily": true, "controlImage": true, "imageSet": true, "mdsImage": true, "rgwImage": true,
+	"addressFamily": true, "essentialImage": true, "imageSet": true, "cephfsOverride": true, "rgwOverride": true,
 	"messengerMode": true, "hostNetwork": true, "publicAddress": true,
 }
 

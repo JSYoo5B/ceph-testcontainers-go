@@ -383,7 +383,8 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 	})
 
 	t.Run("admission", func(t *testing.T) {
-		// OSD images need not have python3.
+		// An OSD runs the essential image, which lists python3. A custom image
+		// without it is refused with a classified error; either outcome passes.
 		osd := clusteraccess.OSDs(t, cluster)[0]
 		result, err := cluster.RunNativeCommand(ctx, osd, ceph.NativeCommand{Argv: []string{"ceph-osd", "--version"},
 			Timeout: time.Minute, MaxStdout: 4096, MaxStderr: 4096})
@@ -584,7 +585,7 @@ func startNative(ctx context.Context, cluster *ceph.Container, target testcontai
 // startNativeHelper starts a caller-owned container attached to the cluster.
 func startNativeHelper(t *testing.T, ctx context.Context, cluster *ceph.Container) testcontainers.Container {
 	t.Helper()
-	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, helper)
 	if err != nil {
 		t.Fatal(err)

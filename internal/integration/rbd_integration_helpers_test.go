@@ -291,7 +291,7 @@ func rbdClientExec(ctx context.Context, client testcontainers.Container, args ..
 	return stdout.Bytes(), nil
 }
 
-// rbdNamespaceMappingUnsupported reports whether cluster's control image
+// rbdNamespaceMappingUnsupported reports whether cluster's client toolkit
 // cannot map differently named namespaces: its rbd has no
 // --remote-namespace, as in Ceph 19 (see releaseCapabilities).
 func rbdNamespaceMappingUnsupported(t *testing.T, ctx context.Context, cluster *ceph.Container) bool {

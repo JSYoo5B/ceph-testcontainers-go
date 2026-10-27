@@ -38,7 +38,7 @@
   ],
   [
    "\\bcephfsmirror\\.Run\\(ctx, source\\.ControlImage\\(\\), ",
-   "cephfsmirror.Run(ctx, nativeMirrorImage(t, \"cephfs\", source.ControlImage()), "
+   "cephfsmirror.Run(ctx, nativeMirrorImage(t, \"cephfs\", source.Images().CephFS), "
   ]
  ],
  "description": "API move from the ceph and multicluster packages to the ceph, cephfs, rgw, rgw/multisite and rbd packages (the RGW multisite family lives in rgw/multisite). Retained producer sources predate the move; comparisons apply these exact qualified identifier and former Container method rewrites, then gofmt, and keep every other byte significant.",

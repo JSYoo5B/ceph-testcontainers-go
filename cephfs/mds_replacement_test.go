@@ -85,7 +85,7 @@ func newReplacementMDSFixture(t *testing.T) *replacementMDSFixture {
 	c.Container = r.n
 	setServices(c, map[string]testcontainers.Container{})
 	*servicehook.TestState(c).StartupTimeout = 2 * time.Second
-	*servicehook.TestState(c).MDSImage = "selected-existing-mds-image"
+	*servicehook.TestState(c).CephFSImage = "selected-existing-mds-image"
 	config, err := normalizeCephFSConfig(Config{Name: "target"})
 	if err != nil {
 		t.Fatal(err)

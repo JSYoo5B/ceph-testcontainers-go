@@ -33,10 +33,10 @@ func waitRGWScenarioBucketPolicyImport(t *testing.T, ctx context.Context, link *
 func newRGWScenario(t *testing.T, ctx context.Context, realm string) (*multisite.Fixture, s3HTTPClient, s3HTTPClient) {
 	t.Helper()
 	source, destination, _, _ := newMultiClusterPair(t)
-	controlImage, _ := integrationImages(t)
+	essentialImage, _ := integrationImages(t)
 	image := os.Getenv("CEPH_TEST_RGW_IMAGE")
 	if image == "" {
-		image = controlImage
+		image = essentialImage
 	}
 	link, err := multisite.Run(ctx, image, multisite.Config{Source: source, Destination: destination, Realm: realm, SourceZone: "source", DestinationZone: "destination"})
 	if link != nil {

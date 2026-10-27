@@ -164,6 +164,11 @@ jobs:
       - name: Check the released changelog range
         if: ${{ !cancelled() }}
         run: python3 .github/scripts/release_assemble.py check
+      # Reads tracked text files, documentation included, so it also runs on a
+      # documentation-only head.
+      - name: Check the image role vocabulary
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/check_image_vocabulary.py
       # Pull requests only. The checkout of a pull request is its merge commit,
       # whose first parent is the base, so the comparison covers the pull
       # request's net change. Any other event, or a checkout that is not a merge

@@ -79,7 +79,7 @@ func TestCPUPressureScratchMechanism(t *testing.T) {
 	t.Logf("CPU_PRESSURE_CONTROLLER euid=%d engine=%s arch=%s ncpu=%d", os.Geteuid(), info.Info.ServerVersion, runtime.GOARCH, info.Info.NCPU)
 
 	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
-		Image: controlImage(t), Entrypoint: []string{"sleep"}, Cmd: []string{"infinity"},
+		Image: essentialImage(t), Entrypoint: []string{"sleep"}, Cmd: []string{"infinity"},
 		HostConfigModifier: func(h *container.HostConfig) {
 			h.NetworkMode = "none"
 			h.NanoCPUs = cpuPressureBaseline

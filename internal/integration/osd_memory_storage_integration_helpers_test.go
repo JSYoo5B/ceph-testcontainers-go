@@ -164,7 +164,7 @@ func osdMemoryBacking(t *testing.T, ctx context.Context, docker *mobycl.Client, 
 	keeper := osdMemoryInspect(t, ctx, docker, listed.Items[0].ID)
 	control := osdMemoryInspect(t, ctx, docker, cluster.GetContainerID())
 	if !keeper.State.Running || keeper.State.StartedAt == "" || keeper.Image != control.Image || !slices.Equal(keeper.Config.Entrypoint, []string{"sleep"}) || !slices.Equal(keeper.Config.Cmd, []string{"infinity"}) || string(keeper.HostConfig.NetworkMode) != "none" || keeper.Config.Labels[osdMemoryLabel] != owner {
-		t.Fatal("sleep-only control-image keeper identity differs")
+		t.Fatal("sleep-only essential-image keeper identity differs")
 	}
 	validMount := 0
 	for _, mounted := range keeper.Mounts {

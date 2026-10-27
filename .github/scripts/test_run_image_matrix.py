@@ -249,7 +249,7 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(set(self.summary()["prepared_environment"]), set(runner.ROLE_ENV.values()))
         self.assertFalse((self.output / "integration.log").exists())
 
-    def test_declared_control_role_never_touches_other_roles(self):
+    def test_essential_only_batch_never_touches_other_roles(self):
         # An RGW pull that the registry refuses fails a four-role
         # preparation, but a batch that declares only the essential role never
         # asks for that image.
@@ -605,6 +605,7 @@ class RoleSelectionTests(unittest.TestCase):
 
     def test_unknown_role_and_missing_essential_are_refused(self):
         self.assertEqual(runner.parse_arguments([]).roles, tuple(runner.ROLE_ENV))
+        # Retired and incomplete selections: control and osd are not roles now.
         for roles in ("control", "client", "essential,osd", "essential,client,client"):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 runner.parse_arguments(["--layout","roles","--prepare-only","--roles",roles])

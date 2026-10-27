@@ -61,7 +61,7 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"Configuration":             sharedOpen,
 	"Images":                    sharedOpen,
 	"ClientContainer":           sharedExclusive,
-	"ControlImage":              sharedOpen,
+	"EssentialImage":            sharedOpen,
 	"DaemonAddresses":           sharedOpen,
 	"FullRatios":                sharedOpen,
 	"HasSeparateClusterNetwork": sharedOpen,

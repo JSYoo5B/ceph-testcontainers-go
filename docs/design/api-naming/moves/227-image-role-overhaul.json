@@ -1,0 +1,11 @@
+{
+  "schema": "ceph-api-move/v1",
+  "change": "227-image-role-overhaul",
+  "review": "api-naming-audit.md",
+  "removed": [
+    "ceph.Container.ControlImage"
+  ],
+  "added": [
+    "ceph.Container.EssentialImage"
+  ]
+}

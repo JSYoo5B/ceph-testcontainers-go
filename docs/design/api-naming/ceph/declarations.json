@@ -449,14 +449,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.ControlImage",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ControlImage",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.CopyDirToContainer",
       "kind": "method",
       "signature": "func(ctx context.Context, hostDirPath string, containerParentPath string, fileMode int64) error",
@@ -518,6 +510,14 @@
       "signature": "func(ctx context.Context, pgid PGID) error",
       "receiver": "*Container",
       "proposed": "ceph.Container.DeepScrubPG",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.EssentialImage",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.EssentialImage",
       "decision": "baseline"
     },
     {

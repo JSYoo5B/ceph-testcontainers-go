@@ -199,7 +199,7 @@ func signalContainer(t *testing.T, ctx context.Context, ctr testcontainers.Conta
 
 // rotateKeyProcessScript prints every other process whose arguments include
 // rotate-key, which matches both the supervisor and its ceph child. It reads
-// /proc with the Python that the control image already provides, and fails
+// /proc with the Python that the control container (essential image) already provides, and fails
 // when it could read no process at all.
 const rotateKeyProcessScript = `import os,sys
 seen=0

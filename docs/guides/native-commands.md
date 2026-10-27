@@ -15,7 +15,8 @@ native changes conflict with what the fixture tracks.
 | You want to run | Use | Runs in |
 | --- | --- | --- |
 | The `ceph` CLI as `client.admin` | `cluster.Ceph(ctx, args...)` | The control container |
-| `rados`, `rbd`, `radosgw-admin`, `ceph-authtool`, Python bindings | `control.Exec(ctx, argv, ...)` with `control` from `cluster.ControlContainer(ctx)` | The control container |
+| `rados`, `rbd`, Python bindings | `client.Exec(ctx, argv, ...)` with `client` from `cluster.ClientContainer(ctx)` | The client toolkit (client role) |
+| `ceph-authtool` | `control.Exec(ctx, argv, ...)` with `control` from `cluster.ControlContainer(ctx)` | The control container (essential image) |
 | A command with bounded run time and output whose process must not outlive the test | `cluster.RunNativeCommand(ctx, target, command)` | The control container, a daemon container, or your attached container |
 | A workload, a restricted identity or your own client software | A container attached with `WithClient` or `WithClientIdentity` | Your container |
 | A native client in the test process | `cluster.ConnectionConfig(ctx)` with host networking | Your process |
@@ -188,11 +189,11 @@ The target is one of:
 
 Any other container is refused. The call never adopts, stops or removes your
 container. The target must be running and not paused, and it needs `python3`,
-which runs the supervisor. The official Ceph images and every control image
-have it. OSD, RGW and MDS role images need not (see
-[Ceph releases and images](releases-and-images.md)); for a container without
-it the error says so, and the control container or a client container can
-run the command instead.
+which runs the supervisor. The official Ceph images and the essential and
+client roles have it, and so does the rgw setup runtime; the cephfs role does
+not promise it (see [Ceph releases and images](releases-and-images.md)). For a
+container without it the error says so, and the control container or a client
+container can run the command instead.
 
 ### Reading the result
 
@@ -717,11 +718,12 @@ so RGW settings belong in `[client]` or `[client.admin]`. See
 ## Running your own client container
 
 `WithClient` attaches a container to the cluster network and copies
-`/etc/ceph/ceph.conf` and the admin keyring into it. The control image is a
-convenient client image because it has every Ceph CLI and the Python bindings:
+`/etc/ceph/ceph.conf` and the admin keyring into it. The client role
+(`cluster.Images().Client`) is the matching client image: it has `ceph`, `rados`,
+`rbd` and the Python bindings. The essential image is not a client image:
 
 ```golang
-client, err := testcontainers.Run(ctx, cluster.ControlImage(),
+client, err := testcontainers.Run(ctx, cluster.Images().Client,
 	cluster.WithClient(),
 	ceph.WithIdleEntrypoint(),
 )
@@ -753,7 +755,7 @@ reader, err := cluster.CreateClient(ctx, "reader", ceph.ClientCaps{
 if err != nil {
 	t.Fatal(err)
 }
-restricted, err := testcontainers.Run(ctx, cluster.ControlImage(),
+restricted, err := testcontainers.Run(ctx, cluster.Images().Client,
 	cluster.WithClientIdentity(reader),
 	ceph.WithIdleEntrypoint(),
 )
@@ -821,8 +823,8 @@ images always have it; OSD, MDS and RGW role images are not required to (see
 | `rbd-mirror` | the local validation artifact | `rbdMirror.Daemons()[i]` |
 | `cephfs-mirror` | `/var/run/ceph/cephfs-mirror.asok` | `cephfsMirror.Daemons()[i]` |
 
-Mirror daemons run from the control image, so `--admin-daemon` always works
-there:
+Mirror daemons run from the rbd-aux or cephfs image, which contain a local `ceph`
+CLI, so `--admin-daemon` works there:
 
 ```golang
 daemon := rbdMirror.Daemons()[0]
@@ -1062,7 +1064,7 @@ and refuse to overwrite outside edits.
 ## Related APIs
 
 - [ceph.md](../ceph.md): `Ceph`, `RunNativeCommand`, `RedactSecrets`,
-  `ControlContainer`, `ControlImage`, `Configuration`, `OverrideConfig`,
+  `ControlContainer`, `ClientContainer`, `EssentialImage`, `Configuration`, `OverrideConfig`,
   `WithConfigFile`, `WithClient`, `WithClientIdentity`, `CreateClient`,
   `ConnectionConfig`, `CollectDiagnostics`.
 - [rbd-mirror.md](../rbd-mirror.md): `Mirror.SourceRBD`, `Mirror.DestinationRBD`,

@@ -9,39 +9,41 @@ import (
 )
 
 type options struct {
-	imageSet               *ImageSet
-	osds                   int
-	initialOSDs            []OSDConfig
-	initialOSDsExplicit    bool
-	noInitialOSDs          bool
-	poolReplicas           int
-	poolMinSize            int
-	poolDefaultsSet        bool
-	defaultCRUSHRoot       string
-	pools                  []PoolConfig
-	services               []serviceBootstrap
-	monitors               int
-	managers               int
-	managerCountExplicit   bool
-	noInitialManagers      bool
-	blockSize              int64
-	osdMemorySize          int64
-	osdVolumeStorage       bool
-	auth                   AuthConfig
-	osdObjectStore         OSDObjectStore
-	startupTimeout         time.Duration
-	osdImage               string
-	rgwImage               string
-	mdsImage               string
-	controlImage           string
-	hostNetwork            bool
-	separateClusterNetwork bool
-	publicAddress          string
-	hostAddressSet         bool
-	messengerMode          MessengerMode
-	messengerPolicy        MessengerPolicy
-	addressFamily          AddressFamily
-	userConfig             []userConfigSection
+	imageSet             *ImageSet
+	osds                 int
+	initialOSDs          []OSDConfig
+	initialOSDsExplicit  bool
+	noInitialOSDs        bool
+	poolReplicas         int
+	poolMinSize          int
+	poolDefaultsSet      bool
+	defaultCRUSHRoot     string
+	pools                []PoolConfig
+	services             []serviceBootstrap
+	monitors             int
+	managers             int
+	managerCountExplicit bool
+	noInitialManagers    bool
+	blockSize            int64
+	osdMemorySize        int64
+	osdVolumeStorage     bool
+	auth                 AuthConfig
+	osdObjectStore       OSDObjectStore
+	startupTimeout       time.Duration
+	// essentialImage is the Run image. It starts every MON, MGR and OSD and the
+	// control-plane CLI executor. Role images come from imageSet.
+	essentialImage string
+	// cephfsOverride and rgwOverride hold the images of cephfs.WithMDSImage and
+	// rgw.WithImage. They replace the role of imageSet whatever the option order.
+	cephfsOverride, rgwOverride string
+	hostNetwork                 bool
+	separateClusterNetwork      bool
+	publicAddress               string
+	hostAddressSet              bool
+	messengerMode               MessengerMode
+	messengerPolicy             MessengerPolicy
+	addressFamily               AddressFamily
+	userConfig                  []userConfigSection
 }
 
 // WithMessengerMode selects the Messenger policy at bootstrap. MessengerDefault
@@ -90,7 +92,7 @@ func WithManagerCount(count int) Option {
 // or MGR module readiness. Initial CephFS/RGW services and an explicit manager
 // count are rejected before allocation; positive-OSD initial pools are allowed.
 // The ordinary default is one MGR and WithManagerCount(0) remains invalid.
-// The control image must still contain the MGR and its required dependencies.
+// The essential image must still contain the MGR and its required dependencies.
 func WithNoInitialManagers() Option {
 	return func(o *options) error {
 		o.noInitialManagers = true
@@ -275,7 +277,7 @@ func WithOSDObjectStore(store OSDObjectStore) Option {
 // volume. maxBytes is a positive cluster-wide filesystem allocation ceiling,
 // independent of each sparse file's logical WithOSDBlockSize. It does not
 // reserve RAM or limit daemon RSS; tmpfs may swap, and a full volume fails I/O.
-// An owned helper using the control image preserves data across OSD Stop/Start.
+// An owned helper using the essential image preserves data across OSD Stop/Start.
 // Cluster termination discards the volume. Helper loss or Docker host/VM
 // restart can lose data. Requires a Linux Docker engine with local tmpfs
 // volume support, including compatible Docker Desktop engines. No host mount,
@@ -294,7 +296,7 @@ func WithOSDInMemoryStorage(maxBytes int64) Option {
 // WithOSDVolumeStorage keeps classic BlueStore OSD directories in one ordinary
 // Docker-managed local named volume owned by the cluster. Allocation is lazy
 // until the first OSD registration. Unlike tmpfs it needs no live keeper to
-// preserve bytes; an isolated control-image helper manages fresh/purged paths.
+// preserve bytes; an isolated essential-image helper manages fresh/purged paths.
 // Terminate removes the volume after its users; a busy/failed removal is retryable.
 // It cannot be combined with MemStore or WithOSDInMemoryStorage. No caller-owned
 // volumes, host mounts or devices are adopted. This does not provide retained

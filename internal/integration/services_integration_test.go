@@ -35,7 +35,7 @@ func integrationImage(getenv func(string) string, name string) (string, error) {
 	return ceph.DefaultImage, nil
 }
 
-func controlImage(t *testing.T) string {
+func essentialImage(t *testing.T) string {
 	t.Helper()
 	image, err := integrationImage(os.Getenv, "CEPH_TEST_ESSENTIAL_IMAGE")
 	if err != nil {
@@ -47,7 +47,7 @@ func controlImage(t *testing.T) string {
 func integrationImages(t *testing.T) (string, []testcontainers.ContainerCustomizer) {
 	t.Helper()
 	if os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE") == "" && os.Getenv("SCENARIO_IMAGE_LAYOUT") != "roles" {
-		image := controlImage(t)
+		image := essentialImage(t)
 		return image, []testcontainers.ContainerCustomizer{ceph.WithImages(ceph.ImageSet{All: image})}
 	}
 	images := ceph.ImageSet{Essential: os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE"), Client: os.Getenv("CEPH_TEST_CLIENT_IMAGE"), CephFS: os.Getenv("CEPH_TEST_CEPHFS_IMAGE"), RBDAux: os.Getenv("CEPH_TEST_RBD_AUX_IMAGE"), RGW: os.Getenv("CEPH_TEST_RGW_IMAGE")}

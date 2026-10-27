@@ -14,11 +14,11 @@ func factsFixture() *Container {
 		clusterNetwork: &testcontainers.DockerNetwork{Name: "cluster-net"},
 		cephVersion:    "20.2.4",
 		settings: options{
-			addressFamily: AddressDualStack,
-			controlImage:  "control:1",
-			mdsImage:      "mds:1",
-			rgwImage:      "rgw:1",
-			messengerMode: MessengerV2Only,
+			addressFamily:  AddressDualStack,
+			essentialImage: "essential:1",
+			cephfsOverride: "mds:1",
+			rgwOverride:    "rgw:1",
+			messengerMode:  MessengerV2Only,
 		},
 	}
 }
@@ -30,7 +30,7 @@ func TestClusterFactsMatchPublicAccessors(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := ClusterFacts{
-		AddressFamily: c.AddressFamily(), ControlImage: c.ControlImage(), Images: c.Images(),
+		AddressFamily: c.AddressFamily(), Images: c.Images(),
 		MessengerMode: c.MessengerMode(), NetworkName: c.NetworkName(), UsesHostNetwork: c.UsesHostNetwork(),
 		PublicAddress: c.PublicAddress(), ClusterNetworkName: c.ClusterNetworkName(),
 		HasSeparateClusterNetwork: c.HasSeparateClusterNetwork(), CephVersion: c.CephVersion(),
@@ -95,13 +95,13 @@ func TestClusterFactsAreIndependentCopies(t *testing.T) {
 	first, _ := FactsOf(c)
 	second, _ := FactsOf(c)
 
-	first.ControlImage, first.NetworkName, first.CephVersion = "changed", "changed", "changed"
+	first.Images.Essential, first.NetworkName, first.CephVersion = "changed", "changed", "changed"
 	first.Images.RGW = "changed"
 	first.UsesHostNetwork = true
-	if second.ControlImage != "control:1" || second.NetworkName != "public-net" || second.Images.RGW != "rgw:1" || second.UsesHostNetwork {
+	if second.Images.Essential != "essential:1" || second.NetworkName != "public-net" || second.Images.RGW != "rgw:1" || second.UsesHostNetwork {
 		t.Fatalf("snapshots share state: %+v", second)
 	}
-	if c.settings.controlImage != "control:1" || c.network.Name != "public-net" || c.cephVersion != "20.2.4" || c.settings.hostNetwork {
+	if c.settings.essentialImage != "essential:1" || c.network.Name != "public-net" || c.cephVersion != "20.2.4" || c.settings.hostNetwork {
 		t.Fatal("mutating a snapshot changed the cluster")
 	}
 

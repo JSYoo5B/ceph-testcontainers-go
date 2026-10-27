@@ -79,7 +79,7 @@ func authEntityKeyType(t *testing.T, ctx context.Context, cluster *ceph.Containe
 // client's keyring can authenticate and read the monmap.
 func clientAuthenticates(t *testing.T, ctx context.Context, cluster *ceph.Container, client *ceph.ClientConfig) bool {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClientIdentity(client), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClientIdentity(client), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func runningOption(t *testing.T, ctx context.Context, cluster *ceph.Container, d
 	return value
 }
 
-// keyTypeOption reports whether the cluster's control image has
+// keyTypeOption reports whether the cluster's essential image has
 // ceph-authtool --key-type, which Squid and Tentacle before 20.2.4 lack.
 func keyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) bool {
 	t.Helper()
