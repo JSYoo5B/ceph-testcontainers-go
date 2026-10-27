@@ -7,11 +7,11 @@ aliases; use the names below.
 
 | You need | Use |
 | --- | --- |
-| The image that runs the MONs, MGRs and OSDs | `cluster.EssentialImage()` or `cluster.Images().Essential` |
-| An image for your own container that runs `ceph`, `rados`, `rbd` or Python bindings | `cluster.Images().Client` |
-| The `rbd-mirror` daemon image | `destination.Images().RBDAux`, or `rbdmirror.RunWithImages` |
-| The `cephfs-mirror` daemon image | `source.Images().CephFS`, or `cephfsmirror.RunWithImages` |
-| The RGW gateway image of `multisite.Run` and `multisite.RunTopology` | `cluster.Images().RGW` |
+| The image that runs the MONs, MGRs and OSDs | `FactsOf(cluster).Images.Essential` |
+| An image for your own container that runs `ceph`, `rados`, `rbd` or Python bindings | `FactsOf(cluster).Images.Client` |
+| The `rbd-mirror` daemon image | `FactsOf(destination).Images.RBDAux`, or `rbdmirror.RunWithImages` |
+| The `cephfs-mirror` daemon image | `FactsOf(source).Images.CephFS`, or `cephfsmirror.RunWithImages` |
+| The RGW gateway image of `multisite.Run` and `multisite.RunTopology` | `FactsOf(cluster).Images.RGW` |
 | `rados` or `rbd` inside the cluster | `cluster.ClientContainer(ctx)` |
 | `ceph` and `ceph-authtool` inside the cluster | `cluster.Ceph(ctx, ...)` or `cluster.ControlContainer(ctx)` |
 
@@ -25,5 +25,4 @@ role, for example its essential image as the `rbd-mirror` daemon image, when
 that cluster has a separate rbd-aux image. An aggregate selection, where one
 image serves every role, is accepted.
 
-`ClusterFacts` no longer has a separate essential-image field: read
-`Images.Essential`.
+`ClusterFacts` has no separate essential-image field: read `Images.Essential`.

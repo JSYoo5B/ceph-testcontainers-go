@@ -23,20 +23,23 @@ func factsFixture() *Container {
 	}
 }
 
-func TestClusterFactsMatchPublicAccessors(t *testing.T) {
+func TestClusterFactsMatchRecordedSettings(t *testing.T) {
 	c := factsFixture()
 	f, err := FactsOf(c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := ClusterFacts{
-		AddressFamily: c.AddressFamily(), Images: c.Images(),
-		MessengerMode: c.MessengerMode(), NetworkName: c.NetworkName(), UsesHostNetwork: c.UsesHostNetwork(),
-		PublicAddress: c.PublicAddress(), ClusterNetworkName: c.ClusterNetworkName(),
-		HasSeparateClusterNetwork: c.HasSeparateClusterNetwork(), CephVersion: c.CephVersion(),
+		AddressFamily: AddressDualStack,
+		Images:        ImageSet{Essential: "essential:1", Client: "essential:1", CephFS: "mds:1", RBDAux: "essential:1", RGW: "rgw:1"},
+		MessengerMode: MessengerV2Only, NetworkName: "public-net", ClusterNetworkName: "cluster-net",
+		HasSeparateClusterNetwork: true, CephVersion: "20.2.4",
 	}
 	if f != want {
-		t.Fatalf("snapshot %+v differs from accessors %+v", f, want)
+		t.Fatalf("snapshot %+v differs from the recorded settings %+v", f, want)
+	}
+	if f != c.staticFacts() {
+		t.Fatal("FactsOf and the in-package read differ")
 	}
 	if f.NetworkName != "public-net" || f.ClusterNetworkName != "cluster-net" || !f.HasSeparateClusterNetwork || f.CephVersion != "20.2.4" {
 		t.Fatalf("fixture values not captured: %+v", f)

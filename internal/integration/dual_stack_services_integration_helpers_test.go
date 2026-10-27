@@ -514,9 +514,9 @@ func bridgeAddresses(t *testing.T, ctx context.Context, cluster *ceph.Container,
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := inspection.NetworkSettings.Networks[cluster.NetworkName()]
+	endpoint := inspection.NetworkSettings.Networks[staticFacts(cluster).NetworkName]
 	if endpoint == nil || !endpoint.IPAddress.Is4() || !endpoint.GlobalIPv6Address.Is6() {
-		t.Fatalf("endpoint of %s on %s: %+v", ctr.GetContainerID(), cluster.NetworkName(), endpoint)
+		t.Fatalf("endpoint of %s on %s: %+v", ctr.GetContainerID(), staticFacts(cluster).NetworkName, endpoint)
 	}
 	return endpoint.IPAddress, endpoint.GlobalIPv6Address
 }
@@ -713,5 +713,5 @@ func testDualStackServices(t *testing.T) {
 		t.Fatalf("host S3 read %d bytes that differ from the %d written over IPv6", len(body), len(written))
 	}
 	t.Logf("DUAL_STACK_SERVICES_RECEIPT image=%s ceph=%s sessions=%v rgw_listeners=%v s3=%v rgw_access=%q host_s3=%s",
-		cluster.EssentialImage(), cluster.CephVersion(), receipts, listeners, s3, accessLog, endpoint)
+		staticFacts(cluster).Images.Essential, staticFacts(cluster).CephVersion, receipts, listeners, s3, accessLog, endpoint)
 }

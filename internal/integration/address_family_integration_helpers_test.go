@@ -49,8 +49,8 @@ func testAddressFamily(t *testing.T, family ceph.AddressFamily, opts ...testcont
 	defer cancel()
 	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
 		ceph.WithMonitorCount(3), ceph.WithAddressFamily(family), cephfs.WithFilesystems(cephfs.Config{Name: "tc-family-fs"})}, opts...)...)
-	if cluster.AddressFamily() != family {
-		t.Fatalf("cluster reports %s", cluster.AddressFamily())
+	if staticFacts(cluster).AddressFamily != family {
+		t.Fatalf("cluster reports %s", staticFacts(cluster).AddressFamily)
 	}
 
 	var addresses ceph.DaemonAddresses
@@ -126,7 +126,7 @@ func testAddressFamily(t *testing.T, family ceph.AddressFamily, opts ...testcont
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-family", Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	client, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, client)
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +253,7 @@ func osdEndpoint(t *testing.T, ctx context.Context, cluster *ceph.Container, ctr
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := inspection.NetworkSettings.Networks[cluster.NetworkName()]
+	endpoint := inspection.NetworkSettings.Networks[staticFacts(cluster).NetworkName]
 	if endpoint == nil {
 		t.Fatal("the OSD is not attached to the public network")
 	}

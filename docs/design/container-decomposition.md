@@ -179,6 +179,13 @@ enumerates the exported functions of that group. Entries leave
   Whether the facts value should be a struct with fields or keep method form on the
   value (`facts.NetworkName()`) affects the 262 textual call-site lines that mention
   these names (an upper bound: the search is by method name, not receiver type).
+- **Status.** `ceph.FactsOf` and `ClusterFacts` serve the ten facts, and the
+  change `146-static-facts-accessors` deleted the ten `Container` accessors and
+  moved every caller to `FactsOf`. The 0.x line keeps no alias. All ten were
+  purely static (no lock, command or Docker call), so none stayed. Code inside
+  package `ceph` reads the same recorded sources through the unexported
+  `staticFacts`, because it holds a cluster that may still be starting and has
+  no use for the nil-cluster error.
 - **Size effect.** `Container` exported methods 73 to 63. First extraction
   recommended, because it has no lock, no gate and no cleanup, and it clarifies
   which `settings` fields are public facts before the networking fields move.

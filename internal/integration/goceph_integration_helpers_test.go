@@ -66,7 +66,7 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 	if len(failures) != 0 {
 		t.Fatal(strings.Join(failures, "; "))
 	}
-	if mode == "bridge" && clusters[0].NetworkName() == clusters[1].NetworkName() {
+	if mode == "bridge" && staticFacts(clusters[0]).NetworkName == staticFacts(clusters[1]).NetworkName {
 		t.Fatal("bridge clusters share a network")
 	}
 	const pool = "tc-goceph"

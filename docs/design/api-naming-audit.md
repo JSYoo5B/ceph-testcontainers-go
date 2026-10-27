@@ -265,3 +265,14 @@ objects instead of the `PoolState` slice of `Container.Pools`; the per-pool
 reads stay the methods of `Pool`. The record is historical API accounting only;
 no alias or compatibility mapping remains. The mapping is in
 [the upgrade guide](../guides/upgrading-observer-queries.md).
+
+## 146-static-facts-accessors
+
+The change deletes the ten `Container` accessors that returned static cluster
+facts: `AddressFamily`, `CephVersion`, `ClusterNetworkName`, `EssentialImage`,
+`HasSeparateClusterNetwork`, `Images`, `MessengerMode`, `NetworkName`,
+`PublicAddress` and `UsesHostNetwork`. `FactsOf` and `ClusterFacts`, merged
+earlier, serve every one of them, so no name is added and none is renamed. The
+essential image is read as `ClusterFacts.Images.Essential`. No alias, shim or
+mapping remains. The record lists the removed rows as historical API accounting
+only.

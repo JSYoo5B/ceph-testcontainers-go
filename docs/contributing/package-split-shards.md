@@ -88,15 +88,11 @@ Code checks, so no workflow or CI configuration refers to this directory.
 
 The layout replaces `.github/scripts/fixtures/package-split.json`, which every
 package move used to edit (#210, #212 and #224 all did). The shards were
-produced from that file as it stood at `7015c62`, which is kept as
-`.github/scripts/fixtures/migration/package-split.single-file-7015c62.json`.
-`MigrationFromTheSingleFile` in `test_package_split.py` proves that the
-effective identifiers are the same 131 entries in the same application order,
-that the ten calls are the same calls with the same relative order inside each
-shard, and that the whole rewrite equals the old algorithm on the retained
-producers and on synthetic lines for every call. That test is a one-time pin:
-the first change that deliberately retargets an existing key deletes the
-baseline file and the `MigrationFromTheSingleFile` class together.
+produced from that file as it stood at `7015c62`, and a one-time pin test proved
+that they lost and added nothing. The change `146-static-facts-accessors`
+deliberately retargeted the replacement of an existing call in
+`cephfs-mirror.json`, as the rule above prescribes, and so deleted the baseline
+file and the pin test together.
 
 An open pull request that still edits `package-split.json` has to move its
 entries into a shard of its own after rebasing: take the entries it added or

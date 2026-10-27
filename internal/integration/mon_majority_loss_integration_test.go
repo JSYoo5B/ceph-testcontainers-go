@@ -41,7 +41,7 @@ func TestMonMajorityLossLocalOracle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("MON_MAJORITY_BASELINE ceph=%s fsid=%s members=%v monmap_epoch=%d election_epoch=%d", cluster.CephVersion(), baseline.FSID, baseline.Members, baseline.MonMapEpoch, baseline.ElectionEpoch)
+	t.Logf("MON_MAJORITY_BASELINE ceph=%s fsid=%s members=%v monmap_epoch=%d election_epoch=%d", staticFacts(cluster).CephVersion, baseline.FSID, baseline.Members, baseline.MonMapEpoch, baseline.ElectionEpoch)
 	for _, name := range baseline.Members {
 		m := baseline.Mons[name]
 		t.Logf("MON_MAJORITY_BASELINE mon.%s container=%.12s started=%s address=%s uptime_ms=%d", name, m.ContainerID, m.StartedAt, m.Address, m.UptimeMS)

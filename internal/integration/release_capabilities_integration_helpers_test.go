@@ -88,14 +88,14 @@ func capabilitySupported(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	requireUniformRelease(t, ctx, cluster, id)
 	if row.detect != nil {
 		supported := row.detect(t, ctx, cluster)
-		t.Logf("capability %q detected=%v on Ceph %s (%s)", id, supported, cluster.CephVersion(), cluster.EssentialImage())
+		t.Logf("capability %q detected=%v on Ceph %s (%s)", id, supported, staticFacts(cluster).CephVersion, staticFacts(cluster).Images.Essential)
 		return supported
 	}
-	supported, err := classifyRelease(row, cluster.CephVersion())
+	supported, err := classifyRelease(row, staticFacts(cluster).CephVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("capability %q supported=%v by the release row of Ceph %s", id, supported, cluster.CephVersion())
+	t.Logf("capability %q supported=%v by the release row of Ceph %s", id, supported, staticFacts(cluster).CephVersion)
 	return supported
 }
 
@@ -136,10 +136,10 @@ func requireCapabilityRefused(t *testing.T, err error, cluster *ceph.Container, 
 	row := releaseCapabilities[id]
 	var refusal *ceph.OperationError
 	if !errors.As(err, &refusal) || !errors.Is(err, ceph.ErrUnsupported) || refusal.Kind != ceph.ErrUnsupported ||
-		refusal.Capability != string(id) || refusal.Version != cluster.CephVersion() ||
+		refusal.Capability != string(id) || refusal.Version != staticFacts(cluster).CephVersion ||
 		!strings.Contains(err.Error(), row.refusal) || !strings.Contains(err.Error(), detail) {
 		t.Fatalf("%s error = %v, want ErrUnsupported %q for capability %q from Ceph %s",
-			detail, err, row.refusal, id, cluster.CephVersion())
+			detail, err, row.refusal, id, staticFacts(cluster).CephVersion)
 	}
 	t.Logf("%s (Ceph %s) refused %s before any change", refusal.Target, refusal.Version, detail)
 	return refusal
@@ -172,7 +172,7 @@ func requireUniformRelease(t *testing.T, ctx context.Context, cluster *ceph.Cont
 	if err != nil {
 		t.Fatalf("read daemon releases for capability %q: %v", id, err)
 	}
-	err = uniformRelease(data, cluster.CephVersion())
+	err = uniformRelease(data, staticFacts(cluster).CephVersion)
 	if err != nil {
 		err = errors.New("capability " + string(id) + ": " + err.Error())
 	}

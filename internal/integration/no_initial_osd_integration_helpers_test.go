@@ -122,10 +122,10 @@ func (o *noInitialOSDOracle) assertOnlyControl(t *testing.T, ctx context.Context
 		t.Fatal("construction lost an original MON/MGR container")
 	}
 	o.owned = []string{cluster.GetContainerID(), managers[0].GetContainerID()}
-	if len(o.networks) == 0 && !cluster.UsesHostNetwork() {
-		names := []string{cluster.NetworkName()}
-		if cluster.HasSeparateClusterNetwork() {
-			names = append(names, cluster.ClusterNetworkName())
+	if len(o.networks) == 0 && !staticFacts(cluster).UsesHostNetwork {
+		names := []string{staticFacts(cluster).NetworkName}
+		if staticFacts(cluster).HasSeparateClusterNetwork {
+			names = append(names, staticFacts(cluster).ClusterNetworkName)
 		}
 		for _, name := range names {
 			native, err := o.client.NetworkInspect(ctx, name, mobycl.NetworkInspectOptions{})

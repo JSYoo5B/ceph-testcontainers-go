@@ -237,7 +237,7 @@ print('ready')`, strconv.Itoa(id), nativeUUID, q.MonMap.FSID)
 		t.Error("owned volume remains", err)
 	}
 	if !host {
-		if _, err := docker.Client.NetworkInspect(ctx, cluster.NetworkName(), mobycl.NetworkInspectOptions{}); !errdefs.IsNotFound(err) {
+		if _, err := docker.Client.NetworkInspect(ctx, staticFacts(cluster).NetworkName, mobycl.NetworkInspectOptions{}); !errdefs.IsNotFound(err) {
 			t.Error("owned network remains", err)
 		}
 	}

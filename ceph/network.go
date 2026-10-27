@@ -20,15 +20,6 @@ const (
 	ClusterNetworkPlane NetworkPlane = "cluster"
 )
 
-// ClusterNetworkName returns the replication bridge. With a single bridge it
-// returns NetworkName; in host mode both traffic planes share "host".
-func (c *Container) ClusterNetworkName() string {
-	return c.settings.clusterNetworkName(c.nets.public, c.nets.cluster)
-}
-
-// HasSeparateClusterNetwork reports whether OSDs have a dedicated second bridge.
-func (c *Container) HasSeparateClusterNetwork() bool { return c.nets.cluster != nil }
-
 // inspectNetworkSubnets returns the subnets of the public and cluster bridges
 // that Ceph's public and cluster networks select, as Ceph network lists: the
 // IPv6 subnets of the dual-stack bridges for AddressIPv6, both the IPv4 and

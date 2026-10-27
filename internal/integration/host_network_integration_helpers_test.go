@@ -188,12 +188,12 @@ func hostNetworkAssertDistinctAddresses(t *testing.T, ctx context.Context, clust
 			if err := json.Unmarshal(data, &dump); err != nil {
 				t.Fatal(err)
 			}
-			endpoints, err := hostNetworkNormalizeEndpoints(dump, cluster.PublicAddress())
+			endpoints, err := hostNetworkNormalizeEndpoints(dump, staticFacts(cluster).PublicAddress)
 			if err != nil {
 				t.Fatalf("cluster %d %s advertised endpoints: %v", i, daemon, err)
 			}
 			if len(endpoints) == 0 {
-				t.Fatalf("cluster %d %s dump does not advertise any %s endpoints: %s", i, daemon, cluster.PublicAddress(), data)
+				t.Fatalf("cluster %d %s dump does not advertise any %s endpoints: %s", i, daemon, staticFacts(cluster).PublicAddress, data)
 			}
 			for _, endpoint := range endpoints {
 				if owner, exists := seen[endpoint]; exists && owner != i {

@@ -24,7 +24,11 @@ func RequireRoleImage(image, role string, clusters ...*ceph.Container) error {
 		if cluster == nil {
 			continue
 		}
-		images := cluster.Images()
+		facts, err := ceph.FactsOf(cluster)
+		if err != nil {
+			return err
+		}
+		images := facts.Images
 		var wanted string
 		switch role {
 		case RoleRBDAux:

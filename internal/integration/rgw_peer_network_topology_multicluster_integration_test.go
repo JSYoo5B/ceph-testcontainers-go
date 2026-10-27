@@ -61,7 +61,7 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	local := before.Container.NetworkSettings.Networks[clusters[1].NetworkName()]
+	local := before.Container.NetworkSettings.Networks[staticFacts(clusters[1]).NetworkName]
 	if local == nil || !local.IPAddress.IsValid() || !before.Container.State.Running {
 		t.Fatal("gateway local Ceph endpoint/process unavailable")
 	}
@@ -79,14 +79,14 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 		t.Fatal(err)
 	}
 	peer := before.Container.NetworkSettings.Networks[cut.NetworkName]
-	if peer == nil || peer.IPAddress != cut.OriginalAddress || len(peer.Aliases) == 0 || cut.NetworkName == clusters[1].NetworkName() {
+	if peer == nil || peer.IPAddress != cut.OriginalAddress || len(peer.Aliases) == 0 || cut.NetworkName == staticFacts(clusters[1]).NetworkName {
 		t.Fatal("interruption did not identify the original peer-only endpoint")
 	}
 	isolated, err := docker.ContainerInspect(ctx, gateway.GetContainerID(), mobycl.ContainerInspectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	kept := isolated.Container.NetworkSettings.Networks[clusters[1].NetworkName()]
+	kept := isolated.Container.NetworkSettings.Networks[staticFacts(clusters[1]).NetworkName]
 	if isolated.Container.NetworkSettings.Networks[cut.NetworkName] != nil || kept == nil || kept.IPAddress != local.IPAddress || !isolated.Container.State.Running || isolated.Container.State.Pid != before.Container.State.Pid {
 		t.Fatal("peer cut did not retain the local endpoint and running process")
 	}
@@ -203,7 +203,7 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	cutAt := time.Now()
 	status, err := lease.Status(ctx)
 	if err != nil || !status.Applied || status.Loss != 100 || len(lease.Peers) != 1 || lease.Peers[0].Port != 7480 ||
-		lease.ContainerID != zones[1].Gateway.GetContainerID() || lease.NetworkName == clusters[1].NetworkName() {
+		lease.ContainerID != zones[1].Gateway.GetContainerID() || lease.NetworkName == staticFacts(clusters[1]).NetworkName {
 		t.Fatalf("zone link delay %+v: status %+v, %v", lease, status, err)
 	}
 	fromA, fromB := []byte("written in zone a while b cannot read from a"), []byte("written in zone b while a still reads from b")

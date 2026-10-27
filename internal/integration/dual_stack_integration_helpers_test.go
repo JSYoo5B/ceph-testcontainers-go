@@ -225,15 +225,15 @@ func testDualStackAddressFamily(t *testing.T) {
 	defer cancel()
 	cluster, _ := newServiceCluster(t, ceph.WithOSDCount(2), ceph.WithMonitorCount(2), ceph.WithManagerCount(2),
 		ceph.WithAddressFamily(ceph.AddressDualStack))
-	if cluster.AddressFamily() != ceph.AddressDualStack {
-		t.Fatalf("cluster reports %s", cluster.AddressFamily())
+	if staticFacts(cluster).AddressFamily != ceph.AddressDualStack {
+		t.Fatalf("cluster reports %s", staticFacts(cluster).AddressFamily)
 	}
 	addresses, endpoints := waitDualStackAddresses(t, ctx, cluster, 2, 2)
 
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-dual-stack", Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	client, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, client)
 	if err != nil {
 		t.Fatal(err)
@@ -283,7 +283,7 @@ func testDualStackAddressFamily(t *testing.T) {
 
 	mgr := addresses.ActiveManager
 	t.Logf("DUAL_STACK_RECEIPT layout=single image=%s ceph=%s mons=%v first_mgr=%s active_mgr=%s:%v osds=%d ipv4_client=%s ipv6_client=%s after_failover=%s banners=%d/%d",
-		cluster.EssentialImage(), cluster.CephVersion(), addresses.Monitors, first, mgr.Name, mgr.Addrs, len(addresses.OSDs),
+		staticFacts(cluster).Images.Essential, staticFacts(cluster).CephVersion, addresses.Monitors, first, mgr.Name, mgr.Addrs, len(addresses.OSDs),
 		ipv4Paths, ipv6Paths, failoverPaths, len(answered), len(all))
 }
 
@@ -298,7 +298,7 @@ func testDualStackSeparateClusterNetwork(t *testing.T) {
 	defer cancel()
 	cluster, _ := newServiceCluster(t, ceph.WithOSDCount(2), ceph.WithPoolDefaults(2, 2), ceph.WithSeparateClusterNetwork(),
 		ceph.WithAddressFamily(ceph.AddressDualStack))
-	if !cluster.HasSeparateClusterNetwork() {
+	if !staticFacts(cluster).HasSeparateClusterNetwork {
 		t.Fatal("no replication bridge")
 	}
 	addresses, endpoints := waitDualStackAddresses(t, ctx, cluster, 1, 2)
@@ -308,7 +308,7 @@ func testDualStackSeparateClusterNetwork(t *testing.T) {
 	}
 	defer func() { _ = docker.Close() }()
 	subnets := map[string][]netip.Prefix{}
-	for plane, name := range map[string]string{"public": cluster.NetworkName(), "cluster": cluster.ClusterNetworkName()} {
+	for plane, name := range map[string]string{"public": staticFacts(cluster).NetworkName, "cluster": staticFacts(cluster).ClusterNetworkName} {
 		inspection, err := docker.NetworkInspect(ctx, name, mobycl.NetworkInspectOptions{})
 		if err != nil {
 			t.Fatal(err)
@@ -347,7 +347,7 @@ func testDualStackSeparateClusterNetwork(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-dual-stack", Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	client, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, client)
 	if err != nil {
 		t.Fatal(err)
@@ -355,5 +355,5 @@ func testDualStackSeparateClusterNetwork(t *testing.T) {
 	mon := endpoints["mon."+addresses.Monitors[0].Name]
 	paths := runDualStackClient(t, ctx, client, "[v2:"+mon.v6+"]", "ipv6", "tc-dual-stack", endpoints)
 	t.Logf("DUAL_STACK_RECEIPT layout=separate image=%s ceph=%s public=%v cluster=%v osd.0=%v/%v ipv6_client=%s",
-		cluster.EssentialImage(), cluster.CephVersion(), subnets["public"], subnets["cluster"], addresses.OSDs[0].Public, addresses.OSDs[0].Cluster, paths)
+		staticFacts(cluster).Images.Essential, staticFacts(cluster).CephVersion, subnets["public"], subnets["cluster"], addresses.OSDs[0].Public, addresses.OSDs[0].Cluster, paths)
 }

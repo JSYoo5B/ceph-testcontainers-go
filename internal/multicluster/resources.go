@@ -125,10 +125,18 @@ func ValidatePair(ctx context.Context, image string, source, destination *ceph.C
 	if source == nil || destination == nil || source.Container == nil || destination.Container == nil {
 		return invalid(errors.New("multicluster requires two initialized Ceph clusters"))
 	}
-	if source.UsesHostNetwork() != destination.UsesHostNetwork() {
+	sourceFacts, err := ceph.FactsOf(source)
+	if err != nil {
+		return err
+	}
+	destinationFacts, err := ceph.FactsOf(destination)
+	if err != nil {
+		return err
+	}
+	if sourceFacts.UsesHostNetwork != destinationFacts.UsesHostNetwork {
 		return invalid(errors.New("multicluster requires both Ceph clusters to use the same network mode"))
 	}
-	if source == destination || source.GetContainerID() == destination.GetContainerID() || (!source.UsesHostNetwork() && source.NetworkName() == destination.NetworkName()) {
+	if source == destination || source.GetContainerID() == destination.GetContainerID() || (!sourceFacts.UsesHostNetwork && sourceFacts.NetworkName == destinationFacts.NetworkName) {
 		return invalid(errors.New("multicluster requires independent Ceph clusters"))
 	}
 	// A multi-MON fixture can remain live after its embedded primary MON was
@@ -142,7 +150,7 @@ func ValidatePair(ctx context.Context, image string, source, destination *ceph.C
 	if err != nil {
 		return fmt.Errorf("inspect destination Ceph control handle: %w", err)
 	}
-	if source.NetworkName() == "" || destination.NetworkName() == "" ||
+	if sourceFacts.NetworkName == "" || destinationFacts.NetworkName == "" ||
 		sourceControl == nil || destinationControl == nil ||
 		!sourceControl.IsRunning() || !destinationControl.IsRunning() {
 		return invalid(errors.New("multicluster requires two running Ceph clusters"))
@@ -164,8 +172,12 @@ func invalid(err error) error { return &ceph.OperationError{Kind: ceph.ErrInvali
 // RunClient starts an idle CLI client attached to cluster and, on bridge
 // networks, to peerNetwork. owned records it for cleanup.
 func RunClient(ctx context.Context, image string, cluster *ceph.Container, peerNetwork string, owned *Resources) (testcontainers.Container, error) {
+	facts, err := ceph.FactsOf(cluster)
+	if err != nil {
+		return nil, err
+	}
 	opts := []testcontainers.ContainerCustomizer{cluster.WithClient(), ceph.WithIdleEntrypoint()}
-	if peerNetwork != "" && !cluster.UsesHostNetwork() {
+	if peerNetwork != "" && !facts.UsesHostNetwork {
 		opts = append(opts, network.WithNetworkName(nil, peerNetwork))
 	}
 	ctr, err := testcontainers.Run(ctx, image, opts...)
@@ -192,7 +204,11 @@ func Exec(ctx context.Context, ctr testcontainers.Container, args ...string) ([]
 // CephBefore reports whether cluster's recorded release is older than major.
 // An unknown version keeps the default image's command forms.
 func CephBefore(cluster *ceph.Container, major int) bool {
-	recorded, _, _ := strings.Cut(cluster.CephVersion(), ".")
+	facts, err := ceph.FactsOf(cluster)
+	if err != nil {
+		return false
+	}
+	recorded, _, _ := strings.Cut(facts.CephVersion, ".")
 	value, err := strconv.Atoi(recorded)
 	return err == nil && value < major
 }

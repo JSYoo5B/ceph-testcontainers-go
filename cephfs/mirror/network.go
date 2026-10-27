@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 )
@@ -21,12 +22,19 @@ func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*fau
 		return nil, err
 	}
 	defer m.mu.Unlock()
-	if m.closed || m.destination == nil || m.destination.UsesHostNetwork() {
+	if m.closed || m.destination == nil {
+		return nil, errors.New("peer interruption requires a live bridge CephFS mirror")
+	}
+	facts, err := ceph.FactsOf(m.destination)
+	if err != nil {
+		return nil, err
+	}
+	if facts.UsesHostNetwork {
 		return nil, errors.New("peer interruption requires a live bridge CephFS mirror")
 	}
 	for _, daemon := range m.daemons {
 		if daemon.DaemonName == daemonName && daemon.Container != nil {
-			return multicluster.InterruptOwnedPeerLink(ctx, &m.owned, daemon, m.destination.NetworkName())
+			return multicluster.InterruptOwnedPeerLink(ctx, &m.owned, daemon, facts.NetworkName)
 		}
 	}
 	return nil, invalid(fmt.Errorf("CephFS mirror daemon %s is not owned", daemonName))

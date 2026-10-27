@@ -79,7 +79,7 @@ func TestFailureArchiveProof(t *testing.T) {
 			}
 			ready, err := json.Marshal(map[string]any{
 				"mode": mode, "fsid": identity.FSID, "osds": nativeOSDs,
-				"osd_container": clusteraccess.OSDs(t, cluster)[0].GetContainerID(), "ceph_version": cluster.CephVersion(),
+				"osd_container": clusteraccess.OSDs(t, cluster)[0].GetContainerID(), "ceph_version": staticFacts(cluster).CephVersion,
 				"debug_state": window.Receipt().State,
 			})
 			if err != nil {

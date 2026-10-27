@@ -47,7 +47,7 @@ func testRBDMirrorPeerPathCut(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", source.Images().RBDAux), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
+	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", staticFacts(source).Images.RBDAux), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -75,9 +75,9 @@ func testRBDMirrorPeerPathCut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := inspect.NetworkSettings.Networks[source.NetworkName()]
+	endpoint := inspect.NetworkSettings.Networks[staticFacts(source).NetworkName]
 	if endpoint == nil || !endpoint.IPAddress.IsValid() {
-		t.Fatalf("daemon %s has no endpoint on %s", daemon.DaemonName, source.NetworkName())
+		t.Fatalf("daemon %s has no endpoint on %s", daemon.DaemonName, staticFacts(source).NetworkName)
 	}
 	peer := endpoint.IPAddress
 	osd := clusteraccess.OSDs(t, source)[0]

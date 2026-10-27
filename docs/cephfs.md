@@ -163,10 +163,10 @@ executes the fixture's `ceph` commands. Other roles can use separate images:
 | MON, MGR, control CLI | `Run` image | `ceph` CLI, MGR modules (`volumes`, `mirroring`), Python `cephfs` binding (pin policy reads and clone identity checks run libcephfs in the control container) |
 | OSD | `ImageSet.Essential` | `ceph-osd` |
 | MDS | `cephfs.WithMDSImage`, otherwise the `Run` image | `ceph-mds` |
-| CephFS mirror daemon | `image` argument of `cephfsmirror.Run` | `cephfs-mirror` and the `ceph` CLI used to query its admin socket; usually `cluster.Images().CephFS` |
+| CephFS mirror daemon | `image` argument of `cephfsmirror.Run` | `cephfs-mirror` and the `ceph` CLI used to query its admin socket; usually `FactsOf(cluster).Images.CephFS` |
 | Client containers | chosen by the test | the client under test; `ceph.DefaultImage` provides Python libcephfs |
 
-Use the same Ceph release for every role. `cluster.CephVersion()` reports the
+Use the same Ceph release for every role. `FactsOf(cluster).CephVersion` reports the
 release of the `Run` image, which the fixture uses to pick release-specific
 commands. Squid 19.2.5 is supported (see
 [Limitations and release differences](#limitations-and-release-differences)).
@@ -314,9 +314,9 @@ documented in [Ceph](ceph.md). The ones CephFS tests use most are:
 | `fault.Pause(ctx, cluster, ctr)` | Freeze a client or MDS container without stopping its process. |
 | `Observer.BlocklistEntries(ctx)` | List OSDMap blocklist entries, for example after a client eviction. |
 | `CreatePool`, `Pool.Remove`, `WaitForClean` | Create a pool to attach with `AddDataPool`, delete it afterwards, wait for clean PGs. |
-| `ControlContainer(ctx)`, `ClientContainer(ctx)`, `EssentialImage()` | The control container (`ceph` CLI, essential image), the client toolkit and the essential image. Mirror daemons use `Images().CephFS` or `Images().RBDAux`. |
+| `ControlContainer(ctx)`, `ClientContainer(ctx)` | The control container (`ceph` CLI, essential image) and the client toolkit. Mirror daemons use `ClusterFacts.Images.CephFS` or `ClusterFacts.Images.RBDAux`. |
 | `ServiceContainers()` | Owned MDS (and RGW) containers. |
-| `CephVersion()` | The Ceph release of the `Run` image. |
+| `ceph.FactsOf(cluster)` | The static facts, including `CephVersion`, the Ceph release of the `Run` image. |
 
 ### Filesystem functions and types
 
@@ -2088,7 +2088,7 @@ resources at the same time. More escape hatches are listed in
 
 Tentacle 20.2.4 is the default and fully tested release. Squid 19.2.5 is
 supported: the fixture reads the release of the `Run` image after the first MON
-starts (`cluster.CephVersion()`) and adapts its commands.
+starts (`FactsOf(cluster).CephVersion`) and adapts its commands.
 
 | Area | Tentacle 20.2.x | Squid 19.2.x |
 | --- | --- | --- |
@@ -2103,7 +2103,7 @@ describe Tentacle behaviour.
 Other release-dependent behaviour lives in the cluster and the RBD and RGW
 packages; see [Ceph](ceph.md), [RBD](rbd.md), [RGW](rgw.md) and
 [Releases and images](guides/releases-and-images.md). Keep MDS and mirror images
-on the same release as the `Run` image: `CephVersion()` reflects only the `Run`
+on the same release as the `Run` image: `ClusterFacts.CephVersion` reflects only the `Run`
 image.
 
 ```golang
@@ -2112,7 +2112,8 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-if strings.HasPrefix(cluster.CephVersion(), "19.") {
+facts, err := ceph.FactsOf(cluster)
+if strings.HasPrefix(facts.CephVersion, "19.") {
 	t.Log("running against Squid")
 }
 ```

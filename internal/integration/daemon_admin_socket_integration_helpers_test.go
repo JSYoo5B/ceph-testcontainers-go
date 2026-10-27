@@ -32,8 +32,8 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 		var version struct {
 			Version string `json:"version"`
 		}
-		if err != nil || json.Unmarshal(out, &version) != nil || !strings.HasPrefix(version.Version, cluster.CephVersion()) {
-			t.Fatalf("%s admin socket version %q, err=%v, cluster release %s", daemon, out, err, cluster.CephVersion())
+		if err != nil || json.Unmarshal(out, &version) != nil || !strings.HasPrefix(version.Version, staticFacts(cluster).CephVersion) {
+			t.Fatalf("%s admin socket version %q, err=%v, cluster release %s", daemon, out, err, staticFacts(cluster).CephVersion)
 		}
 	}
 	out, err := monitorHandle(t, ctx, cluster, "a").AdminSocket(ctx, "mon_status")

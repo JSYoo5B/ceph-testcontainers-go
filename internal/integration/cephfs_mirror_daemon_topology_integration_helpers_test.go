@@ -62,7 +62,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		return checkpoints
 	}
 	initial := checkpoint("initial")
-	image := source.Images().CephFS
+	image := staticFacts(source).Images.CephFS
 	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", image), cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
@@ -234,8 +234,8 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		if err != nil {
 			t.Fatal(err)
 		}
-		local := before.Container.NetworkSettings.Networks[source.NetworkName()]
-		peer := before.Container.NetworkSettings.Networks[destination.NetworkName()]
+		local := before.Container.NetworkSettings.Networks[staticFacts(source).NetworkName]
+		peer := before.Container.NetworkSettings.Networks[staticFacts(destination).NetworkName]
 		if local == nil || peer == nil || !local.IPAddress.IsValid() || !peer.IPAddress.IsValid() || !before.Container.State.Running || before.Container.State.Pid <= 0 {
 			t.Fatal("resumed mirror process and both source/destination endpoints are not live")
 		}
@@ -253,15 +253,15 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		if err != nil {
 			t.Fatal(err)
 		}
-		if link.NetworkName != destination.NetworkName() || link.OriginalAddress != peer.IPAddress {
+		if link.NetworkName != staticFacts(destination).NetworkName || link.OriginalAddress != peer.IPAddress {
 			t.Fatal("interruption did not identify the original destination-only endpoint")
 		}
 		isolated, err := docker.ContainerInspect(ctx, daemon.GetContainerID(), mobycl.ContainerInspectOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		kept := isolated.Container.NetworkSettings.Networks[source.NetworkName()]
-		if isolated.Container.NetworkSettings.Networks[destination.NetworkName()] != nil || kept == nil || kept.IPAddress != local.IPAddress || !slices.Equal(kept.Aliases, local.Aliases) || !isolated.Container.State.Running || isolated.Container.State.Pid != before.Container.State.Pid {
+		kept := isolated.Container.NetworkSettings.Networks[staticFacts(source).NetworkName]
+		if isolated.Container.NetworkSettings.Networks[staticFacts(destination).NetworkName] != nil || kept == nil || kept.IPAddress != local.IPAddress || !slices.Equal(kept.Aliases, local.Aliases) || !isolated.Container.State.Running || isolated.Container.State.Pid != before.Container.State.Pid {
 			t.Fatal("peer cut did not preserve the original source endpoint and same running process")
 		}
 		peerIsolated := checkpoint("peer-isolated")
@@ -285,8 +285,8 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		if err != nil {
 			t.Fatal(err)
 		}
-		restoredPeer := restored.Container.NetworkSettings.Networks[destination.NetworkName()]
-		restoredSource := restored.Container.NetworkSettings.Networks[source.NetworkName()]
+		restoredPeer := restored.Container.NetworkSettings.Networks[staticFacts(destination).NetworkName]
+		restoredSource := restored.Container.NetworkSettings.Networks[staticFacts(source).NetworkName]
 		if restoredPeer == nil || restoredPeer.IPAddress != peer.IPAddress || !slices.Equal(restoredPeer.Aliases, peer.Aliases) || restoredPeer.GwPriority != peer.GwPriority || restoredSource == nil || restoredSource.IPAddress != local.IPAddress || !restored.Container.State.Running || restored.Container.State.Pid != before.Container.State.Pid {
 			t.Fatal("peer restoration changed endpoint IP/aliases/priority, source endpoint, or mirror PID")
 		}
