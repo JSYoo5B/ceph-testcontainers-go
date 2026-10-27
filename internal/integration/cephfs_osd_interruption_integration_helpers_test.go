@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -220,7 +221,7 @@ func objecterRequests(ctx context.Context, cluster *ceph.Container, ctr testcont
 }
 
 // testCephFSOSDInterruption freezes, with fault.Pause and nodown held
-// through OverrideOSDFlag, the acting primary OSD of the first object of a
+// through override.SetOSDFlag, the acting primary OSD of the first object of a
 // live client's file, while a second live client in another container waits
 // to make a directory. Every PG of the two-OSD cluster includes that OSD, so
 // both the file's data and the MDS's journal stall at it. The writer's
@@ -276,16 +277,14 @@ func testCephFSOSDInterruption(t *testing.T) {
 		t.Fatalf("writer has data ops in flight before the pause: %v: %s", err, raw)
 	}
 
-	hold, err := m.cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoDown, true)
-	if hold != nil {
-		t.Cleanup(func() {
-			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := hold.Restore(restoreCtx); err != nil {
-				t.Errorf("restore nodown: %v", err)
-			}
-		})
-	}
+	hold, err := override.SetOSDFlag(ctx, m.cluster, ceph.OSDFlagNoDown, true)
+	t.Cleanup(func() {
+		restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := hold.Restore(restoreCtx); err != nil {
+			t.Errorf("restore nodown: %v", err)
+		}
+	})
 	if err != nil {
 		t.Fatal("hold nodown:", err)
 	}

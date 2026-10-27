@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
@@ -135,7 +136,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	stats.sample(ctx, owned)
 	osdMemoryPhase(t, "seed-128MiB", started)
 	started = time.Now()
-	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
+	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
 	if err != nil {
 		t.Fatal(err)
 	}

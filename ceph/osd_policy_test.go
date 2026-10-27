@@ -74,86 +74,12 @@ func TestOSDMembershipRejectsAbsentAndPostMutationReplacement(t *testing.T) {
 	}
 }
 
-func TestOverrideOSDFlagRestoresOriginalAndLeavesOtherTokens(t *testing.T) {
-	for _, original := range []bool{false, true} {
-		ctr := &osdPolicyFixture{flags: []string{"sortbitwise", "noscrub", "noout-unrelated"}}
-		if original {
-			ctr.flags = append(ctr.flags, "noout")
-		}
-		c := osdPolicyCluster(ctr)
-		change, err := c.OverrideOSDFlag(t.Context(), "noout", !original)
-		if err != nil || slices.Contains(ctr.flags, "noout") != !original {
-			t.Fatal("temporary flag was not applied", err)
-		}
-		if _, err := c.OverrideOSDFlag(t.Context(), "noout", original); err == nil {
-			t.Fatal("overlapping flag lease accepted")
-		}
-		copy := *change
-		if err := copy.Restore(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		before := len(ctr.calls)
-		if err := change.Restore(t.Context()); err != nil || len(ctr.calls) != before || len(c.faultsOf(faultOSDFlag)) != 0 {
-			t.Fatal("copies did not share restored state")
-		}
-		if slices.Contains(ctr.flags, "noout") != original || !slices.Contains(ctr.flags, "noscrub") || !slices.Contains(ctr.flags, "noout-unrelated") {
-			t.Fatal("flag restore changed unrelated tokens or original state")
-		}
-	}
-}
-
-func TestOverrideOSDFlagLostApplyAndRestoreRepliesReconcile(t *testing.T) {
-	ctr := &osdPolicyFixture{failAfter: "set"}
-	c := osdPolicyCluster(ctr)
-	change, err := c.OverrideOSDFlag(t.Context(), "norecover", true)
-	if change == nil || err == nil || !slices.Contains(ctr.flags, "norecover") {
-		t.Fatal("uncertain apply lost restoration handle")
-	}
-	ctr.failAfter = "unset"
-	if err := change.Restore(t.Context()); err == nil || slices.Contains(ctr.flags, "norecover") {
-		t.Fatal("uncertain restore reply unexpectedly hidden")
-	}
-	ctr.failAfter = ""
-	before := len(ctr.calls)
-	if err := change.Restore(t.Context()); err != nil || len(ctr.calls) != before+1 || len(c.faultsOf(faultOSDFlag)) != 0 {
-		t.Fatal("lost restore was not reconciled without another mutation")
-	}
-}
-
-func TestOverrideOSDFlagRejectsOutsideChangesToNoopLease(t *testing.T) {
-	ctr := &osdPolicyFixture{flags: []string{"noout"}}
-	c := osdPolicyCluster(ctr)
-	change, err := c.OverrideOSDFlag(t.Context(), "noout", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctr.flags = nil
-	before := len(ctr.calls)
-	if err := change.Restore(t.Context()); err == nil || len(ctr.calls) != before+1 || slices.Contains(ctr.flags, "noout") {
-		t.Fatal("outside flag clear overwritten by a no-op lease")
-	}
-	ctr.flags = []string{"noout"}
-	if err := change.Restore(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestOSDFlagValidationAndMalformedDump(t *testing.T) {
-	for _, flag := range []OSDFlag{"pause", "pauserd", "full", "pglog_hardlimit", "norecover,noout", "noout ", "--noout", ""} {
-		ctr := &osdPolicyFixture{}
-		if _, err := osdPolicyCluster(ctr).OverrideOSDFlag(t.Context(), flag, true); err == nil || len(ctr.calls) != 0 {
-			t.Fatal("unsupported/composite flag reached Ceph", flag)
-		}
-	}
+func TestOSDFlagMalformedDump(t *testing.T) {
 	for _, raw := range []string{`null`, `{}`, `{"flags":[],"osds":[]}`, `{"flags":"noout,noout","osds":[]}`, `{"flags":"noout,","osds":[]}`, `{"flags":"","osds":[{"osd":3,"up":1,"in":2,"weight":1}]}`, `{"flags":"","osds":[{"osd":3,"up":1,"in":1,"weight":1},{"osd":3,"up":1,"in":1,"weight":1}]}`} {
 		ctr := &osdPolicyFixture{raw: raw}
 		if _, err := osdPolicyCluster(ctr).osdFlags(t.Context()); err == nil {
 			t.Fatal("malformed native dump accepted", raw)
 		}
-	}
-	var unavailable *OSDFlagOverrideHandle
-	if err := unavailable.Restore(t.Context()); err == nil {
-		t.Fatal("nil override accepted")
 	}
 }
 

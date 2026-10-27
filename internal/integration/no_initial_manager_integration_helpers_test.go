@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
@@ -257,8 +258,8 @@ func noInitialManagerHealthMutes(t *testing.T, ctx context.Context, cluster *cep
 	if err != nil || slices.Contains(flags, "noout") {
 		t.Fatal("fresh fixture has no exact unmodified noout baseline", err)
 	}
-	flag, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-	flagActive := flag != nil
+	flag, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+	flagActive := true
 	restoreCondition := func() {
 		if !flagActive {
 			return
@@ -272,7 +273,7 @@ func noInitialManagerHealthMutes(t *testing.T, ctx context.Context, cluster *cep
 		flagActive = false
 	}
 	t.Cleanup(restoreCondition)
-	if err != nil || flag == nil {
+	if err != nil {
 		t.Fatal("prepare owned health warning", err)
 	}
 	active := false

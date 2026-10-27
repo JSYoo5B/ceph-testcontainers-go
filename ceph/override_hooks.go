@@ -27,6 +27,8 @@ func init() {
 var overrideKindNames = map[string]faultKind{
 	"Blocklist":  faultBlocklist,
 	"FullRatios": faultFullRatios,
+	"MGRModule":  faultMGRModule,
+	"OSDFlag":    faultOSDFlag,
 }
 
 // Admit refuses the override operation op while a SharedCluster shares c,
@@ -128,6 +130,78 @@ func (overrideHooks) BlocklistAdd(ctx context.Context, c *Container, address str
 func (overrideHooks) BlocklistRemove(ctx context.Context, c *Container, address string) error {
 	_, err := c.cephCLI(ctx, "osd", "blocklist", "rm", address)
 	return err
+}
+
+// OpenDebugTarget checks that daemon is an OSD that this cluster owns and can
+// run, and returns the target of its admin socket. It waits for the topology
+// lock under ctx and holds no lock when it returns. A terminated cluster
+// returns the error of Terminated.
+func (overrideHooks) OpenDebugTarget(ctx context.Context, c *Container, daemon string) (any, error) {
+	target, err := c.openDebugTarget(ctx, daemon)
+	if err != nil {
+		return nil, err
+	}
+	return target, nil
+}
+
+// DebugWindows returns the cluster's registry of open debug level windows.
+// It has its own leaf lock and needs no cluster mutex.
+func (overrideHooks) DebugWindows(c *Container) any { return &c.debugLevels }
+
+// CheckDebugGeneration compares a daemon's reported generation with the one
+// that a window is bound to. It is the check that the target's own Set makes
+// before it issues a command, so that both agree on the texts and on which
+// mismatch is terminal.
+func (overrideHooks) CheckDebugGeneration(owned bool, identity string, running, paused bool, err error, wantIdentity, daemon string) (changed bool, _ error) {
+	return checkDebugLevelGeneration(debugLevelGeneration{owned: owned, identity: identity, running: running, paused: paused}, err, wantIdentity, daemon)
+}
+
+// OSDMapFlags reads the flag tokens of the native OSDMap, sorted, with the
+// decode checks of the OSD policy dump. The caller holds the mutex.
+func (overrideHooks) OSDMapFlags(ctx context.Context, c *Container) ([]string, error) {
+	dump, err := c.osdPolicyDump(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return dump.flags, nil
+}
+
+// SetOSDFlag sets or unsets one global OSDMap flag. The caller holds the
+// mutex.
+func (overrideHooks) SetOSDFlag(ctx context.Context, c *Container, flag OSDFlag, enabled bool) error {
+	return c.setOSDFlag(ctx, flag, enabled)
+}
+
+// ValidMGRModuleName reports whether name can be a Ceph manager module name.
+func (overrideHooks) ValidMGRModuleName(name string) bool {
+	return mgrModuleNamePattern.MatchString(name)
+}
+
+// MGRModulesSnapshot waits for a coherent active-MGR snapshot of the modules
+// and returns it. ctx carries the operation deadline. The caller holds the
+// mutex.
+func (overrideHooks) MGRModulesSnapshot(ctx context.Context, c *Container) ([]MGRModuleState, error) {
+	return c.waitMGRModules(ctx)
+}
+
+// WaitMGRModuleMembership waits until the native listing shows name in the
+// requested state with the given always-on property. The caller holds the
+// mutex.
+func (overrideHooks) WaitMGRModuleMembership(ctx context.Context, c *Container, name string, enabled, alwaysOn bool) error {
+	return c.waitMGRModuleMembership(ctx, name, enabled, alwaysOn)
+}
+
+// SetMGRModule enables or disables one module with the native command. The
+// caller holds the mutex.
+func (overrideHooks) SetMGRModule(ctx context.Context, c *Container, name string, enabled bool) error {
+	return c.setMGRModule(ctx, name, enabled)
+}
+
+// ProtectMGRModule refuses to disable a module that configured or owned
+// CephFS filesystems, or native filesystems and mirror policies, still need.
+// The caller holds the mutex.
+func (overrideHooks) ProtectMGRModule(ctx context.Context, c *Container, name string) error {
+	return c.protectMGRModule(ctx, name)
 }
 
 // OpenFullRatios captures the control container and the original bootstrap

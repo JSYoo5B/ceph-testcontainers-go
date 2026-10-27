@@ -17,6 +17,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -76,10 +77,8 @@ func TestManagerPrometheusExporter(t *testing.T) {
 					t.Fatal(setting.Name, err)
 				}
 			}
-			module, err := cluster.OverrideMGRModule(ctx, "prometheus", true)
-			if module != nil {
-				restores = append(restores, module.Restore)
-			}
+			module, err := override.SetMGRModule(ctx, cluster, "prometheus", true)
+			restores = append(restores, module.Restore)
 			if err != nil {
 				t.Fatal("enable prometheus", err)
 			}
@@ -194,16 +193,14 @@ func TestManagerMetrics(t *testing.T) {
 			t.Fatal("ManagerMetrics enabled the prometheus module")
 		}
 	}
-	module, err := cluster.OverrideMGRModule(ctx, "prometheus", true)
-	if module != nil {
-		t.Cleanup(func() {
-			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := module.Restore(cleanup); err != nil {
-				t.Errorf("restore prometheus: %v", err)
-			}
-		})
-	}
+	module, err := override.SetMGRModule(ctx, cluster, "prometheus", true)
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := module.Restore(cleanup); err != nil {
+			t.Errorf("restore prometheus: %v", err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

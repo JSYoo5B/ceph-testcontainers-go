@@ -23,6 +23,10 @@ migrate these management objects:
 | `ceph.MessengerPolicyOverride` | `ceph.MessengerPolicyOverrideHandle` |
 | `ceph.ClientRevocation` | `ceph.ClientRevocationHandle` |
 
+`OverrideOSDFlag` and `OSDFlagOverrideHandle` named in the tables above were kept in
+`ceph` at this checkpoint and later became `override.SetOSDFlag` and
+`override.OSDFlagHandle` (see [the override package guide](upgrading-override-package.md)).
+
 Each handle retains prior state, ownership and possibly partial or uncertain
 application for explicit restoration. The suffix distinguishes the management
 object from input configuration or observed values; it guarantees neither a
@@ -70,7 +74,10 @@ Service containers inherit the renamed ceph methods through their embedded
 
 `TemporaryBlocklist` still has a real native duration/expiry; it was kept in `ceph` at
 this checkpoint and later became `override.AddBlocklist` (see
-[the override package guide](upgrading-override-package.md)).
+[the override package guide](upgrading-override-package.md)). Likewise
+`OverrideMGRModule` and `MGRModuleOverrideHandle` of the table above later became
+`override.SetMGRModule` and `override.MGRModuleHandle` (see
+[the MGR module guide](upgrading-override-mgr-module.md)).
 `OverrideFullRatios` (it later became `override.SetFullRatios`, see
 [the override package guide](upgrading-override-package.md)), Pause/Resume
 and native input Close are unchanged by this checkpoint. Later service/network/cache stages and the

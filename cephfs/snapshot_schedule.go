@@ -112,7 +112,7 @@ const snapshotScheduleTime = "2006-01-02T15:04:05"
 // AddSnapshotSchedule adds a snapshot schedule, and its retention, to a
 // directory of the filesystem through the MGR snap_schedule module, which
 // takes "scheduled-…" snapshots in the directory's .snap. It never enables the
-// module: enable it with ceph.Container.OverrideMGRModule first, and wait
+// module: enable it with override.SetMGRModule first, and wait
 // until the active MGR, which restarts to load it, answers again. A disabled
 // module is ceph.ErrInvalidRequest, and so is a directory that already has a
 // schedule or another lease. The module keeps retention per directory, and a
@@ -138,7 +138,7 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 		}
 	}
 	if !enabled {
-		return nil, invalid(errors.New("the MGR snap_schedule module is not enabled: enable it with OverrideMGRModule"))
+		return nil, invalid(errors.New("the MGR snap_schedule module is not enabled: enable it with override.SetMGRModule"))
 	}
 	if strings.HasSuffix(schedule.Repeat, "m") {
 		data, err := fs.cluster.Ceph(ctx, "config", "get", "mgr", "mgr/snap_schedule/allow_m_granularity")

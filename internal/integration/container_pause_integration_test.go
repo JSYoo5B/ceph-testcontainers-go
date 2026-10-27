@@ -13,6 +13,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // A paused OSD keeps its process and sockets but answers nothing. With nodown
@@ -69,10 +70,8 @@ func TestPausedOSDFaults(t *testing.T) {
 			}
 
 			t.Run("frozen_up", func(t *testing.T) {
-				hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoDown, true)
-				if hold != nil {
-					t.Cleanup(func() { restoreFlag(t, hold) })
-				}
+				hold, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoDown, true)
+				t.Cleanup(func() { restoreFlag(t, hold) })
 				if err != nil {
 					t.Fatal("hold nodown", err)
 				}
@@ -132,7 +131,7 @@ func TestPausedOSDFaults(t *testing.T) {
 	}
 }
 
-func restoreFlag(t *testing.T, hold *ceph.OSDFlagOverrideHandle) {
+func restoreFlag(t *testing.T, hold *override.OSDFlagHandle) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if err := hold.Restore(ctx); err != nil {

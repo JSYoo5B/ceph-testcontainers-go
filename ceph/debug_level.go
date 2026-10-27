@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"sync"
 	"time"
@@ -21,7 +20,7 @@ type DebugLevelSetting struct {
 	Daemon, Name, Level string
 }
 
-// DebugLevelState is the progress of a DebugLevelOverrideHandle. A window
+// DebugLevelState is the progress of an override.DebugLevelHandle. A window
 // moves from DebugLevelPriorRead through DebugLevelApplyAttempted to
 // DebugLevelApplied or DebugLevelApplyUncertain, and Restore moves it through
 // DebugLevelRestoreAttempted to DebugLevelRestored, DebugLevelConflict,
@@ -89,160 +88,6 @@ type DebugLevelTransition struct {
 	Error    string          `json:"error,omitempty"`
 }
 
-// DebugLevelOverrideHandle manages one runtime debug level window and its
-// restoration. Copies share state. A non-nil handle returned with an error
-// may still own a changed level: Restore it as well.
-type DebugLevelOverrideHandle struct {
-	state *debugLevelState
-}
-
-// String names the window's daemon and option without its values.
-func (h DebugLevelOverrideHandle) String() string {
-	if h.state == nil {
-		return "Ceph debug level override"
-	}
-	return "Ceph debug level override " + h.state.setting.Daemon + " " + h.state.setting.Name
-}
-
-// GoString formats the window like String.
-func (h DebugLevelOverrideHandle) GoString() string { return h.String() }
-
-// Receipt returns a copy of the window's record.
-func (h *DebugLevelOverrideHandle) Receipt() DebugLevelReceipt {
-	if h == nil || h.state == nil {
-		return DebugLevelReceipt{Transitions: []DebugLevelTransition{}}
-	}
-	s := h.state
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	receipt := s.receipt
-	receipt.Transitions = append([]DebugLevelTransition{}, s.receipt.Transitions...)
-	return receipt
-}
-
-// OverrideDebugLevel changes one runtime debug level of one running owned
-// OSD through its admin socket, as AdminSocket reaches it, until Restore. It
-// reads the daemon's effective prior level, sets the requested level and
-// verifies the normalized effective readback, so "20" reads back as
-// "20/20". It changes the daemon's runtime value, never the central
-// configuration database, and a daemon restart drops it; see OverrideConfig
-// for stored entries. The window is bound to the daemon container's
-// generation. Only one window per daemon and option may be open; a second
-// one is refused until the first is restored or reaches a terminal state.
-//
-// When the set or its readback fails, the returned non-nil handle keeps the
-// prior level for Restore, which reconciles first: a lost reply is not
-// evidence that nothing changed. The readback after a set uses a fresh
-// context bounded by the cluster's startup timeout, as does every call.
-//
-// Restore with a context of its own, not the workload's, so that an ended
-// workload still restores. With TerminateOnCleanup, register the removal of
-// clients first and then Finalization.Cleanup with Restore: the cleanups run
-// in reverse order after the failure archive, so a known failure is archived
-// while the level is still raised, the restoration runs before the clients
-// are removed, and a failed restoration triggers an after-cleanup archive and
-// still lets Terminate run.
-//
-// Each set is admitted only while the daemon still runs the window's
-// generation, and the cluster's own topology operations, such as OSDContainer.Remove,
-// OSDContainer.Detach and DetachedOSD.Reopen, wait until the set has ended. A set whose end
-// cannot be confirmed may still run: the window keeps it, and no later set or
-// terminal state is taken until it is confirmed stopped. Until then OSDContainer.Remove
-// and OSDContainer.Detach first stop it, or refuse to replace the OSD.
-//
-// The readbacks around each set are not an atomic compare-and-swap: another
-// writer of the same daemon and option must not race the window, and an
-// outside write of the window's own value cannot be told apart from it. A
-// restart of the daemon's container from outside the cluster after the last
-// check is not held off either.
-func (c *Container) OverrideDebugLevel(ctx context.Context, setting DebugLevelSetting) (*DebugLevelOverrideHandle, error) {
-	if gateErr := c.sharedGate("OverrideDebugLevel"); gateErr != nil {
-		return nil, gateErr
-	}
-	if c == nil {
-		return nil, errors.New("ceph cluster is unavailable")
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	setting, owned, err := normalizeDebugLevelSetting(setting)
-	if err != nil {
-		return nil, err
-	}
-	kind, id, err := parseAdminSocketDaemon(setting.Daemon)
-	if err != nil || kind != "osd" {
-		return nil, invalid(fmt.Errorf("debug level daemon %q must be an OSD such as osd.0", setting.Daemon))
-	}
-	n, _ := strconv.Atoi(id)
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	if err := c.lockTopology(ctx); err != nil {
-		return nil, err
-	}
-	closed, osd := c.closed, c.osds[n]
-	owns := c.ownsDaemon(kind, id) && osd != nil && !osd.purgeIssued && !osd.detaching
-	c.mu.Unlock()
-	switch {
-	case closed:
-		return nil, errClusterTerminated
-	case !owns:
-		return nil, invalid(fmt.Errorf("daemon %s is not a running-capable OSD owned by this cluster", setting.Daemon))
-	}
-	target := &osdDebugTarget{c: c, id: n, daemon: setting.Daemon, osd: osd}
-	return openDebugLevel(ctx, &c.debugLevels, target, setting, owned, c.settings.startupTimeout, time.Now)
-}
-
-var debugLevelPattern = regexp.MustCompile(`^([0-9]{1,2})(?:/([0-9]{1,2}))?$`)
-
-// normalizeDebugLevel returns Ceph's effective form "N/M" of a level; a
-// single number sets both the log and the memory level.
-func normalizeDebugLevel(level string) (string, bool) {
-	match := debugLevelPattern.FindStringSubmatch(level)
-	if match == nil {
-		return "", false
-	}
-	log, _ := strconv.Atoi(match[1])
-	gather := log
-	if match[2] != "" {
-		gather, _ = strconv.Atoi(match[2])
-	}
-	return strconv.Itoa(log) + "/" + strconv.Itoa(gather), true
-}
-
-// sameDebugLevel compares two readbacks by their normalized form, and
-// unparseable ones exactly.
-func sameDebugLevel(a, b string) bool {
-	na, okA := normalizeDebugLevel(a)
-	nb, okB := normalizeDebugLevel(b)
-	if okA && okB {
-		return na == nb
-	}
-	return a == b
-}
-
-func normalizeDebugLevelSetting(setting DebugLevelSetting) (DebugLevelSetting, string, error) {
-	if setting.Name != "debug_ms" && setting.Name != "debug_osd" {
-		return setting, "", invalid(fmt.Errorf("debug level option %q is not supported; select debug_ms or debug_osd", setting.Name))
-	}
-	owned, ok := normalizeDebugLevel(setting.Level)
-	if !ok {
-		return setting, "", invalid(fmt.Errorf("debug level %q must be N or N/M with numbers from 0 to 99", setting.Level))
-	}
-	return setting, owned, nil
-}
-
-// debugLevelTarget is the access to one daemon generation's runtime level.
-type debugLevelTarget interface {
-	// generation reports the target's current container generation.
-	generation(ctx context.Context) (debugLevelGeneration, error)
-	get(ctx context.Context, name string) (string, error)
-	// set issues the set only while the target runs generation identity,
-	// and a *debugLevelRefusal means that it issued nothing. A non-nil
-	// settle means that the set may still run; settle returns nil once it
-	// can no longer.
-	set(ctx context.Context, identity, name, value string) (settle func(context.Context) error, err error)
-}
-
 // debugLevelRefusal is a set that was not issued because the target was not
 // the window's running generation; changed marks a terminal mismatch.
 type debugLevelRefusal struct {
@@ -254,6 +99,10 @@ func (e *debugLevelRefusal) Error() string { return e.err.Error() }
 
 func (e *debugLevelRefusal) Unwrap() error { return e.err }
 
+// Changed reports a terminal mismatch. The override package reads it through
+// an interface, because it cannot name this type.
+func (e *debugLevelRefusal) Changed() bool { return e.changed }
+
 type debugLevelGeneration struct {
 	// owned is false when the cluster no longer owns the same daemon
 	// descriptor, or has terminated.
@@ -261,90 +110,6 @@ type debugLevelGeneration struct {
 	// identity is the container ID and start time.
 	identity        string
 	running, paused bool
-}
-
-// debugLevelRegistry admits one window per daemon and option.
-type debugLevelRegistry struct {
-	mu     sync.Mutex
-	active map[string]*debugLevelState
-}
-
-func (r *debugLevelRegistry) reserve(key string, s *debugLevelState) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.active[key] != nil {
-		return invalid(errors.New("a debug level window for this daemon and option is open; restore it first"))
-	}
-	if r.active == nil {
-		r.active = make(map[string]*debugLevelState)
-	}
-	r.active[key] = s
-	return nil
-}
-
-func (r *debugLevelRegistry) release(key string, s *debugLevelState) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.active[key] == s {
-		delete(r.active, key)
-	}
-}
-
-type debugLevelState struct {
-	registry *debugLevelRegistry
-	key      string
-	target   debugLevelTarget
-	setting  DebugLevelSetting
-	// owned is the normalized requested level, the only value the window
-	// restores from.
-	owned    string
-	identity string
-	bound    time.Duration
-	now      func() time.Time
-	// lock serializes the window's operations and honors contexts.
-	lock chan struct{}
-	// pending settles a set whose end was not confirmed; lock guards it.
-	pending func(context.Context) error
-
-	mu      sync.Mutex
-	receipt DebugLevelReceipt
-	// terminal is the error that a terminal state other than restored
-	// returns again.
-	terminal error
-}
-
-func (s *debugLevelState) record(state DebugLevelState, readback string, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.receipt.State = state
-	transition := DebugLevelTransition{State: state, At: s.now(), Readback: readback}
-	if err != nil {
-		transition.Error = err.Error()
-	}
-	s.receipt.Transitions = append(s.receipt.Transitions, transition)
-}
-
-func (s *debugLevelState) current() DebugLevelState {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.receipt.State
-}
-
-// finish records a terminal state and releases the admission.
-func (s *debugLevelState) finish(state DebugLevelState, readback string, err error) error {
-	s.record(state, readback, err)
-	s.mu.Lock()
-	s.terminal = err
-	s.mu.Unlock()
-	s.registry.release(s.key, s)
-	return err
-}
-
-// sameGeneration checks the target against the window's generation: changed
-// is a terminal mismatch, and err is a check that could not be completed.
-func (s *debugLevelState) sameGeneration(ctx context.Context) (changed bool, err error) {
-	gen, err := s.target.generation(ctx)
-	return checkDebugLevelGeneration(gen, err, s.identity, s.setting.Daemon)
 }
 
 func checkDebugLevelGeneration(gen debugLevelGeneration, err error, identity, daemon string) (changed bool, _ error) {
@@ -363,223 +128,60 @@ func checkDebugLevelGeneration(gen debugLevelGeneration, err error, identity, da
 	return false, nil
 }
 
-// settle confirms under a fresh bound that the window's unconfirmed set can
-// no longer run, and forgets it then.
-func (s *debugLevelState) settle(ctx context.Context) error {
-	if s.pending == nil {
-		return nil
+// debugLevelRegistry admits one window per daemon and option. It has its own
+// leaf lock on purpose: releasing a window must not wait behind a long
+// topology operation that holds the cluster mutex. The owner of a slot is
+// opaque; the override package passes its window state.
+type debugLevelRegistry struct {
+	mu     sync.Mutex
+	active map[string]any
+}
+
+// Reserve admits the window owner for key, or refuses an open window.
+func (r *debugLevelRegistry) Reserve(key string, owner any) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.active[key] != nil {
+		return invalid(errors.New("a debug level window for this daemon and option is open; restore it first"))
 	}
-	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.bound)
-	defer cancel()
-	if err := s.pending(settleCtx); err != nil {
-		return fmt.Errorf("an earlier set of %s of %s may still run: %w", s.setting.Name, s.setting.Daemon, err)
+	if r.active == nil {
+		r.active = make(map[string]any)
 	}
-	s.pending = nil
+	r.active[key] = owner
 	return nil
 }
 
-// confirmTarget checks the generation during Restore: a changed target ends
-// the window, and a check that could not be completed leaves it unconfirmed.
-func (s *debugLevelState) confirmTarget(ctx context.Context) error {
-	changed, err := s.sameGeneration(ctx)
-	switch {
-	case changed:
-		return s.finish(DebugLevelTargetChanged, "", err)
-	case err != nil:
-		s.record(DebugLevelUnconfirmed, "", err)
+// Release frees key while owner still holds it.
+func (r *debugLevelRegistry) Release(key string, owner any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.active[key] == owner {
+		delete(r.active, key)
 	}
-	return err
 }
 
-func openDebugLevel(ctx context.Context, registry *debugLevelRegistry, target debugLevelTarget, setting DebugLevelSetting, owned string, bound time.Duration, now func() time.Time) (*DebugLevelOverrideHandle, error) {
-	s := &debugLevelState{registry: registry, key: setting.Daemon + "/" + setting.Name, target: target, setting: setting,
-		owned: owned, bound: bound, now: now, lock: make(chan struct{}, 1),
-		receipt: DebugLevelReceipt{Daemon: setting.Daemon, Name: setting.Name, Requested: setting.Level, Transitions: []DebugLevelTransition{}}}
-	if err := registry.reserve(s.key, s); err != nil {
+// openDebugTarget checks that daemon is an OSD that this cluster owns and can
+// run, and returns the target of its admin socket. It waits for the topology
+// lock under ctx and releases it before it returns.
+func (c *Container) openDebugTarget(ctx context.Context, daemon string) (*osdDebugTarget, error) {
+	kind, id, err := parseAdminSocketDaemon(daemon)
+	if err != nil || kind != "osd" {
+		return nil, invalid(fmt.Errorf("debug level daemon %q must be an OSD such as osd.0", daemon))
+	}
+	n, _ := strconv.Atoi(id)
+	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
 	}
-	s.lock <- struct{}{}
-	defer func() { <-s.lock }()
-	gen, err := target.generation(ctx)
-	if err == nil && (!gen.owned || !gen.running || gen.paused || gen.identity == "") {
-		err = fmt.Errorf("%s must be an owned running daemon", setting.Daemon)
-	}
-	if err != nil {
-		registry.release(s.key, s)
-		return nil, err
-	}
-	s.identity, s.receipt.Generation = gen.identity, gen.identity
-	prior, err := target.get(ctx, setting.Name)
-	if err != nil {
-		// Nothing was set: no handle is needed.
-		registry.release(s.key, s)
-		return nil, fmt.Errorf("read the prior %s of %s: %w", setting.Name, setting.Daemon, err)
-	}
-	s.receipt.Prior = prior
-	s.record(DebugLevelPriorRead, prior, nil)
-	handle := &DebugLevelOverrideHandle{state: s}
-
-	s.record(DebugLevelApplyAttempted, "", nil)
-	settle, setErr := target.set(ctx, s.identity, setting.Name, setting.Level)
-	if setErr != nil {
-		setErr = fmt.Errorf("set %s of %s: %w", setting.Name, setting.Daemon, setErr)
-	}
-	if refusal := (*debugLevelRefusal)(nil); errors.As(setErr, &refusal) {
-		// The target changed during the prior read and nothing was set.
-		registry.release(s.key, s)
-		return nil, setErr
-	}
-	s.pending = settle
-	// A lost reply or cancellation does not prove that the set did not
-	// apply; read back with a fresh bounded context, after a set that may
-	// still run is stopped.
-	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bound)
-	defer cancel()
-	settleErr := s.settle(readCtx)
-	value, readErr := target.get(readCtx, setting.Name)
-	changed, genErr := s.sameGeneration(readCtx)
-	if readErr != nil {
-		readErr = fmt.Errorf("read back %s of %s: %w", setting.Name, setting.Daemon, readErr)
-		value = ""
-	}
-	if value != "" {
-		s.mu.Lock()
-		s.receipt.Applied = value
-		s.mu.Unlock()
-	}
+	closed, osd := c.closed, c.osds[n]
+	owns := c.ownsDaemon(kind, id) && osd != nil && !osd.purgeIssued && !osd.detaching
+	c.mu.Unlock()
 	switch {
-	case settleErr != nil:
-		// The window keeps the set, which Restore settles first.
-		err = errors.Join(setErr, settleErr, readErr, genErr)
-		s.record(DebugLevelApplyUncertain, value, err)
-		return handle, err
-	case changed:
-		return handle, s.finish(DebugLevelTargetChanged, value, errors.Join(setErr, genErr))
-	case setErr == nil && readErr == nil && genErr == nil && sameDebugLevel(value, owned):
-		s.record(DebugLevelApplied, value, nil)
-		return handle, nil
+	case closed:
+		return nil, errClusterTerminated
+	case !owns:
+		return nil, invalid(fmt.Errorf("daemon %s is not a running-capable OSD owned by this cluster", daemon))
 	}
-	err = errors.Join(setErr, readErr, genErr)
-	if readErr == nil && !sameDebugLevel(value, owned) {
-		err = errors.Join(err, fmt.Errorf("%s of %s reads back %q, not the requested %q", setting.Name, setting.Daemon, value, setting.Level))
-	}
-	s.record(DebugLevelApplyUncertain, value, err)
-	return handle, err
-}
-
-// Restore returns the daemon's runtime level to the prior value after it
-// confirms the same container generation and that the daemon still shows
-// the window's own value; it then verifies the restored readback. A prior
-// value already in place counts as restored. Another value is an outside
-// edit, which Restore leaves as it is. A stopped, restarted or replaced
-// daemon is not restored. These outcomes are terminal: Restore returns nil
-// once restored and the same error again otherwise. A paused daemon, an
-// unavailable socket, an unverified readback or an earlier set of the window
-// that may still run leave the window open, and a later Restore settles and
-// reconciles it first. The generation is checked again after each read. The
-// readback after the set and the settling of a set use fresh contexts bounded
-// by the cluster's startup timeout.
-func (h *DebugLevelOverrideHandle) Restore(ctx context.Context) error {
-	if h == nil || h.state == nil {
-		return errors.New("debug level override is unavailable")
-	}
-	s := h.state
-	select {
-	case s.lock <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	defer func() { <-s.lock }()
-	switch s.current() {
-	case DebugLevelRestored:
-		return nil
-	case DebugLevelConflict, DebugLevelTargetChanged:
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		return s.terminal
-	}
-	ctx, cancel := context.WithTimeout(ctx, s.bound)
-	defer cancel()
-	name, daemon := s.setting.Name, s.setting.Daemon
-	s.record(DebugLevelRestoreAttempted, "", nil)
-	// A set that may still run could change the level after any check.
-	if err := s.settle(ctx); err != nil {
-		s.record(DebugLevelUnconfirmed, "", err)
-		return err
-	}
-	if err := s.confirmTarget(ctx); err != nil {
-		return err
-	}
-	current, err := s.target.get(ctx, name)
-	if err != nil {
-		err = fmt.Errorf("read the current %s of %s: %w", name, daemon, err)
-		s.record(DebugLevelUnconfirmed, "", err)
-		return err
-	}
-	// A replacement during the read would make current another generation's.
-	if err := s.confirmTarget(ctx); err != nil {
-		return err
-	}
-	prior := s.receipt.Prior
-	if sameDebugLevel(current, prior) {
-		s.setRestored(current)
-		return s.finish(DebugLevelRestored, current, nil)
-	}
-	if !sameDebugLevel(current, s.owned) {
-		return s.finish(DebugLevelConflict, current, fmt.Errorf("%s of %s changed outside this window to %q; it was not restored", name, daemon, current))
-	}
-	settle, setErr := s.target.set(ctx, s.identity, name, prior)
-	if setErr != nil {
-		setErr = fmt.Errorf("restore %s of %s: %w", name, daemon, setErr)
-	}
-	if refusal := (*debugLevelRefusal)(nil); errors.As(setErr, &refusal) {
-		if refusal.changed {
-			return s.finish(DebugLevelTargetChanged, "", setErr)
-		}
-		s.record(DebugLevelUnconfirmed, "", setErr)
-		return setErr
-	}
-	s.pending = settle
-	readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), s.bound)
-	defer readCancel()
-	settleErr := s.settle(readCtx)
-	value, readErr := s.target.get(readCtx, name)
-	changed, genErr := s.sameGeneration(readCtx)
-	if readErr != nil {
-		readErr = fmt.Errorf("read back %s of %s: %w", name, daemon, readErr)
-		value = ""
-	}
-	switch {
-	case settleErr != nil:
-		// No terminal state releases the window while its set may run.
-		err := errors.Join(setErr, settleErr, readErr, genErr)
-		s.record(DebugLevelUnconfirmed, value, err)
-		return err
-	case changed:
-		return s.finish(DebugLevelTargetChanged, value, errors.Join(setErr, genErr))
-	case readErr != nil || genErr != nil:
-		err := errors.Join(setErr, readErr, genErr)
-		s.record(DebugLevelUnconfirmed, value, err)
-		return err
-	case sameDebugLevel(value, prior):
-		// The readback proves restoration even after a lost reply, whose
-		// error the transition keeps.
-		s.setRestored(value)
-		s.record(DebugLevelRestored, value, setErr)
-		s.registry.release(s.key, s)
-		return nil
-	case sameDebugLevel(value, s.owned):
-		err := errors.Join(setErr, fmt.Errorf("%s of %s still reads back the window's %q", name, daemon, value))
-		s.record(DebugLevelUnconfirmed, value, err)
-		return err
-	}
-	return s.finish(DebugLevelConflict, value, errors.Join(setErr, fmt.Errorf("%s of %s reads back %q, neither the prior nor the window's value; it was not restored", name, daemon, value)))
-}
-
-func (s *debugLevelState) setRestored(value string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.receipt.Restored = value
+	return &osdDebugTarget{c: c, id: n, daemon: daemon, osd: osd}, nil
 }
 
 // osdDebugTarget reaches one OSD descriptor's admin socket.
@@ -672,6 +274,24 @@ func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) 
 		c.nativeCmds.forget(inv)
 		return nil
 	}, err
+}
+
+// Generation reports the target's current container generation as plain
+// values, for the override package.
+func (t *osdDebugTarget) Generation(ctx context.Context) (owned bool, identity string, running, paused bool, err error) {
+	gen, err := t.generation(ctx)
+	return gen.owned, gen.identity, gen.running, gen.paused, err
+}
+
+// Get reads the daemon's effective level of option name.
+func (t *osdDebugTarget) Get(ctx context.Context, name string) (string, error) {
+	return t.get(ctx, name)
+}
+
+// Set issues the set of option name only while the daemon runs generation
+// identity. A refusal reports Changed() and issued nothing.
+func (t *osdDebugTarget) Set(ctx context.Context, identity, name, value string) (func(context.Context) error, error) {
+	return t.set(ctx, identity, name, value)
 }
 
 // decodeDebugLevel reads the reply of config get, {"<name>": "<value>"}.

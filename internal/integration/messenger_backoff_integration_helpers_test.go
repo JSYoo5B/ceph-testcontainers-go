@@ -21,6 +21,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -611,10 +612,8 @@ func testOSDBackoffReceipt(t *testing.T) {
 		t.Fatalf("reader ready mark %v", ready)
 	}
 
-	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-	if noout != nil {
-		t.Cleanup(func() { restore("noout", noout.Restore) })
-	}
+	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+	t.Cleanup(func() { restore("noout", noout.Restore) })
 	if err != nil {
 		t.Fatal(err)
 	}
