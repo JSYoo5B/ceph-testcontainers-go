@@ -1816,10 +1816,12 @@ reads only the handle's local state; it never sets, restores or rereads a
 daemon, and a generic cleanup success does not stand in for `restored-verified`.
 `TrackDebugLevel` takes a `ceph.DebugLevelReceipter` (an interface with
 `Receipt() DebugLevelReceipt`), which `*DebugLevelOverrideHandle` implements.
-A nil interface, a typed nil pointer, a zero-value handle and any receipter
-whose receipt has an empty `State` are recorded with `present: false` and no
+A nil interface, a typed nil (an interface whose dynamic value is a nil
+pointer, map, slice, func, chan or interface; `Receipt` is never called on it,
+so a method that is not nil-safe cannot panic), a zero-value handle and any
+receipter whose receipt has an empty `State` are recorded with `present: false` and no
 receipt, never as a restored window: absence is decided by the receipt, not by
-a nil comparison. A receipt in state `not-applied` (`DebugLevelNotApplied`) is
+a nil comparison of the interface. A panic raised by a foreign `Receipt` on a non-nil value is not recovered. A receipt in state `not-applied` (`DebugLevelNotApplied`) is
 recorded with `present: true` and its `reason`, redacted and bounded to 2048
 bytes like a transition error; the field is omitted for every other state. The records are
 bounded: 32 windows (`debug_windows_omitted` counts the rest), the first 16

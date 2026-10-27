@@ -1,6 +1,9 @@
 package ceph
 
-import "time"
+import (
+	"reflect"
+	"time"
+)
 
 const (
 	// maxFinalizationDebugWindows bounds the registrations that the manifest
@@ -15,10 +18,11 @@ const (
 
 // DebugLevelReceipter is a source of one debug level window's receipt. A
 // *DebugLevelOverrideHandle implements it. A registration is absent when it
-// is a nil interface or when Receipt returns the zero receipt (State is
-// empty), which is also what a typed nil pointer stored in the interface
-// returns, so absence is decided by the receipt and never by a nil
-// comparison alone.
+// is a nil interface, when its dynamic value is a nil pointer, map, slice,
+// func, chan or interface (Receipt is then never called, so a method that is
+// not nil-safe, including a value-receiver method reached through a nil
+// pointer, cannot panic), or when Receipt returns the zero receipt (State is
+// empty). Absence is not decided by a nil comparison of the interface alone.
 type DebugLevelReceipter interface {
 	Receipt() DebugLevelReceipt
 }
@@ -27,9 +31,11 @@ type DebugLevelReceipter interface {
 // call is a separate window, in registration order, even for the same
 // daemon, option and generation: windows are never merged or deduplicated.
 // Register the handle right after OverrideDebugLevel returns, including the
-// non-nil handle that comes with an apply error. A nil handle (an untyped nil
-// or a typed nil pointer), a zero-value handle, or any receipter whose receipt
-// has no State is recorded as absent, never as a restored window. A receipt in
+// non-nil handle that comes with an apply error. A nil interface, a typed nil
+// (a nil pointer, map, slice, func, chan or interface dynamic value), a
+// zero-value handle, or any receipter whose receipt has no State is recorded
+// as absent; Receipt is not called on a typed nil. Other panics in a foreign
+// Receipt are not recovered, never as a restored window. A receipt in
 // state DebugLevelNotApplied is recorded as present, with its Reason.
 //
 // The manifest keeps a copy of the window's receipt when the failure archive
@@ -47,6 +53,9 @@ func (f *Finalization) TrackDebugLevel(handle DebugLevelReceipter) {
 	if f.started {
 		f.t.Errorf("ceph finalization: a debug level window was registered after finalization started")
 		return
+	}
+	if isNilReceipter(handle) {
+		handle = nil
 	}
 	f.debugWindows = append(f.debugWindows, handle)
 }
@@ -121,7 +130,7 @@ func (f *Finalization) snapshotDebugWindows(m *finalizationManifest, phase strin
 
 func (f *Finalization) debugSnapshot(handle DebugLevelReceipter, phase string) finalizationDebugSnapshot {
 	snapshot := finalizationDebugSnapshot{Phase: phase}
-	if handle == nil {
+	if isNilReceipter(handle) {
 		return snapshot
 	}
 	receipt := handle.Receipt()
@@ -157,4 +166,18 @@ func (f *Finalization) debugField(s string, limit int) string {
 		s += " [truncated]"
 	}
 	return s
+}
+
+// isNilReceipter reports a nil interface or a typed nil: a dynamic value of
+// a nilable kind that is nil. Receipt is never called on such a value.
+func isNilReceipter(r DebugLevelReceipter) bool {
+	if r == nil {
+		return true
+	}
+	v := reflect.ValueOf(r)
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface, reflect.UnsafePointer:
+		return v.IsNil()
+	}
+	return false
 }

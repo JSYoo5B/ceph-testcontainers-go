@@ -12,6 +12,25 @@ type staticReceipter struct{ receipt DebugLevelReceipt }
 
 func (s *staticReceipter) Receipt() DebugLevelReceipt { return s.receipt }
 
+// valueReceipter has a value-receiver Receipt, so a nil *valueReceipter in the
+// interface panics in Go's generated wrapper when Receipt is called.
+type valueReceipter struct{ receipt DebugLevelReceipt }
+
+func (v valueReceipter) Receipt() DebugLevelReceipt { return v.receipt }
+
+// panickyReceipter has a pointer-receiver Receipt that is NOT nil-safe.
+type panickyReceipter struct{ receipt DebugLevelReceipt }
+
+func (p *panickyReceipter) Receipt() DebugLevelReceipt { return p.receipt }
+
+type mapReceipter map[string]DebugLevelReceipt
+
+func (m mapReceipter) Receipt() DebugLevelReceipt { return m["x"] }
+
+type funcReceipter func() DebugLevelReceipt
+
+func (f funcReceipter) Receipt() DebugLevelReceipt { return f() }
+
 func TestFinalizationDebugReceipter(t *testing.T) {
 	absent := func(t *testing.T, name string, handle DebugLevelReceipter) {
 		t.Helper()
@@ -37,6 +56,22 @@ func TestFinalizationDebugReceipter(t *testing.T) {
 			t.Fatal("a typed nil must be a non-nil interface for this control")
 		}
 		absent(t, "typed nil", r)
+	})
+	t.Run("foreign typed nils", func(t *testing.T) {
+		absent(t, "value receiver", (*valueReceipter)(nil))
+		absent(t, "pointer receiver not nil-safe", (*panickyReceipter)(nil))
+		absent(t, "nil map", mapReceipter(nil))
+		absent(t, "nil func", funcReceipter(nil))
+	})
+	t.Run("foreign non-nil receipter is still read", func(t *testing.T) {
+		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
+		fx.TrackDebugLevel(valueReceipter{receipt: DebugLevelReceipt{Daemon: "osd.1", State: DebugLevelNotApplied, Reason: "r"}})
+		fx.tb.Errorf("workload failed")
+		fx.run()
+		snap := readManifest(t, fx.archives(t)[0]).DebugWindows[0].Archive
+		if snap == nil || !snap.Present || snap.Receipt.Reason != "r" {
+			t.Fatalf("snapshot %+v", snap)
+		}
 	})
 	t.Run("zero-value handle", func(t *testing.T) { absent(t, "zero-value handle", &DebugLevelOverrideHandle{}) })
 	t.Run("zero receipt from a foreign receipter", func(t *testing.T) {
