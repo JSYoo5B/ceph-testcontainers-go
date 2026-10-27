@@ -204,7 +204,7 @@ func TestNativeStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 // every method that touches a field takes the state's own mu, and no method
 // calls anything but the lock, the claim hook and builtins or the two
 // collection helpers while it runs, so the lock stays a leaf below
-// Container.mu and clientMu and never nests another lock.
+// Container.mu and the feature-client mu and never nests another lock.
 func TestNativeStateMethodsHoldOnlyTheLeafLock(t *testing.T) {
 	var methods int
 	var problems []string
@@ -261,10 +261,11 @@ func TestNativeStateMethodsHoldOnlyTheLeafLock(t *testing.T) {
 }
 
 // TestNativeStateAddsNoMutex pins the number of mutexes of Container and its
-// state components. The native split moved nativeMu into nativeState and added
-// none; a new one needs its own lock-order review.
+// state components. The native split moved nativeMu into nativeState and the
+// feature-client split moved clientMu and clientPublishMu into
+// featureClientState; neither added one; a new one needs its own lock-order review.
 func TestNativeStateAddsNoMutex(t *testing.T) {
-	const want = 7 // mu, controlMu, configMu, clientMu, clientPublishMu, extensionsMu, native.mu
+	const want = 7 // mu, controlMu, configMu, extensionsMu, native.mu, toolkit.mu, toolkit.publishMu
 	got := 0
 	for _, parsed := range parseProductionFiles(t) {
 		for _, decl := range parsed.Decls {
@@ -274,7 +275,7 @@ func TestNativeStateAddsNoMutex(t *testing.T) {
 			}
 			for _, spec := range gen.Specs {
 				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || (ts.Name.Name != "Container" && ts.Name.Name != "nativeState" && ts.Name.Name != "networkState") {
+				if !ok || (ts.Name.Name != "Container" && ts.Name.Name != "nativeState" && ts.Name.Name != "networkState" && ts.Name.Name != "featureClientState") {
 					continue
 				}
 				st, ok := ts.Type.(*ast.StructType)

@@ -542,22 +542,24 @@ func artifactName(name string) string {
 // finalizationManifest is manifest.json. Missing provenance stays listed in
 // Missing instead of being guessed.
 type finalizationManifest struct {
-	SchemaVersion int                          `json:"schema_version"`
-	Test          string                       `json:"test"`
-	Scenario      string                       `json:"scenario,omitempty"`
-	Cluster       string                       `json:"cluster"`
-	Execution     finalizationExecution        `json:"execution"`
-	Images        ImageSet                     `json:"images"`
-	Missing       []string                     `json:"missing_provenance"`
-	Phase         string                       `json:"phase,omitempty"`
-	Trigger       finalizationTrigger          `json:"trigger"`
-	Checks        []finalizationOutcome        `json:"checks"`
-	Captures      []finalizationCaptureOutcome `json:"captures,omitempty"`
-	Archive       finalizationArchive          `json:"archive"`
-	Collectors    []finalizationCollector      `json:"collectors"`
-	Files         []finalizationFile           `json:"files"`
-	CaptureFiles  []finalizationCaptureFile    `json:"capture_files,omitempty"`
-	Cleanups      []finalizationOutcome        `json:"cleanups"`
+	SchemaVersion int                   `json:"schema_version"`
+	Test          string                `json:"test"`
+	Scenario      string                `json:"scenario,omitempty"`
+	Cluster       string                `json:"cluster"`
+	Execution     finalizationExecution `json:"execution"`
+	// Images are the cluster's role images; a daemon started with WithDaemonImage
+	// is not reflected, the diagnostics archive records each container's image.
+	Images       ImageSet                     `json:"images"`
+	Missing      []string                     `json:"missing_provenance"`
+	Phase        string                       `json:"phase,omitempty"`
+	Trigger      finalizationTrigger          `json:"trigger"`
+	Checks       []finalizationOutcome        `json:"checks"`
+	Captures     []finalizationCaptureOutcome `json:"captures,omitempty"`
+	Archive      finalizationArchive          `json:"archive"`
+	Collectors   []finalizationCollector      `json:"collectors"`
+	Files        []finalizationFile           `json:"files"`
+	CaptureFiles []finalizationCaptureFile    `json:"capture_files,omitempty"`
+	Cleanups     []finalizationOutcome        `json:"cleanups"`
 	// DebugWindows are the registered debug level windows, one per
 	// registration, each with an archive-phase and a final receipt copy.
 	DebugWindows        []finalizationDebugWindow `json:"debug_windows"`

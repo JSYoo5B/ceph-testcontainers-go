@@ -28,6 +28,7 @@ type MonitorContainer struct {
 	testcontainers.Container
 	DaemonName string
 	owner      *Container
+	image      string
 }
 
 // ManagerContainer is an owned active or standby manager.
@@ -37,6 +38,7 @@ type ManagerContainer struct {
 	owner      *Container
 	authOwned  bool
 	terminated bool
+	image      string
 }
 
 var daemonNamePattern = naming.DaemonName
@@ -82,7 +84,7 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 func (c *Container) monitorsLocked() []*MonitorContainer {
 	result := make([]*MonitorContainer, 0, len(c.monitors)+1)
 	if c.Container != nil && !c.monitorTerminated {
-		result = append(result, &MonitorContainer{Container: c.Container, DaemonName: "a", owner: c})
+		result = append(result, &MonitorContainer{Container: c.Container, DaemonName: "a", owner: c, image: c.settings.essentialImage})
 	}
 	for _, mon := range c.monitors {
 		result = append(result, mon)
@@ -129,12 +131,19 @@ func (c *Container) WaitForQuorum(ctx context.Context) error {
 
 // AddMonitor joins a new named MON from the live quorum's map and shared key.
 // Existing daemon data is retained; a partial new member remains owned on error.
-func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContainer, error) {
+// WithDaemonImage starts this one MON from another image; the default is the
+// essential image. Options are validated before the topology lock is taken or
+// anything is created.
+func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonOption) (*MonitorContainer, error) {
 	if gateErr := c.sharedGate("AddMonitor"); gateErr != nil {
 		return nil, gateErr
 	}
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid monitor name")
+	}
+	daemon, err := resolveDaemonOptions(opts)
+	if err != nil {
+		return nil, err
 	}
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
@@ -175,7 +184,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 	if err != nil {
 		return nil, err
 	}
-	mon := &MonitorContainer{DaemonName: name, owner: c}
+	mon := &MonitorContainer{DaemonName: name, owner: c, image: c.daemonImage(daemon)}
 	if c.monitors == nil {
 		c.monitors = make(map[string]*MonitorContainer)
 	}
@@ -215,7 +224,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			return mon, err
 		}
 		opts = append(opts, c.runMount()...)
-		mon.Container, err = runContainer(ctx, c.settings.essentialImage, append(opts, c.ownedLabel())...)
+		mon.Container, err = c.runDaemon(ctx, mon.image, append(opts, c.ownedLabel())...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseErr := lease.Release(cleanupCtx)
@@ -699,12 +708,19 @@ func monitorConfigComment(line string) (int, error) {
 // active ownership away from an existing MGR.
 // With AddressDualStack it then checks the active MGR's advertised addresses
 // and fails with ErrUnsupported when one family has no concrete address.
-func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContainer, error) {
+// WithDaemonImage starts this one MGR from another image; the default is the
+// essential image. Options are validated before the topology lock is taken or
+// any identity is created.
+func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonOption) (*ManagerContainer, error) {
 	if gateErr := c.sharedGate("AddManager"); gateErr != nil {
 		return nil, gateErr
 	}
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid manager name")
+	}
+	daemon, err := resolveDaemonOptions(opts)
+	if err != nil {
+		return nil, err
 	}
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
@@ -715,7 +731,7 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	mgr, err := c.startManager(ctx, name)
+	mgr, err := c.startManager(ctx, name, c.daemonImage(daemon))
 	if err != nil {
 		return mgr, err
 	}
@@ -731,7 +747,7 @@ func (c *Container) AddManager(ctx context.Context, name string) (*ManagerContai
 // startManager creates the identity of a new MGR and starts its container,
 // but does not wait for the MGR to register. The caller holds c.mu. The
 // returned MGR is nil when the error came before it was owned.
-func (c *Container) startManager(ctx context.Context, name string) (*ManagerContainer, error) {
+func (c *Container) startManager(ctx context.Context, name, image string) (*ManagerContainer, error) {
 	if c.managers[name] != nil {
 		return nil, fmt.Errorf("manager %s is already owned", name)
 	}
@@ -763,7 +779,7 @@ func (c *Container) startManager(ctx context.Context, name string) (*ManagerCont
 	if err != nil {
 		return nil, err
 	}
-	mgr := &ManagerContainer{DaemonName: name, owner: c, authOwned: true}
+	mgr := &ManagerContainer{DaemonName: name, owner: c, authOwned: true, image: image}
 	if c.managers == nil {
 		c.managers = make(map[string]*ManagerContainer)
 	}
@@ -771,7 +787,7 @@ func (c *Container) startManager(ctx context.Context, name string) (*ManagerCont
 	if err := c.clearAdminSocket(ctx, "mgr."+name); err != nil {
 		return mgr, err
 	}
-	mgr.Container, err = runContainer(ctx, c.settings.essentialImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.ownedLabel(),
+	mgr.Container, err = c.runDaemon(ctx, image, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.ownedLabel(),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),

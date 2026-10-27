@@ -37,7 +37,11 @@ func (c *Container) newOSDLaunchRecipe(osd *OSDContainer, keyring []byte) *osdLa
 	c.configMu.RLock()
 	config, admin := string(c.config), string(c.keyring)
 	c.configMu.RUnlock()
-	r := &osdLaunchRecipe{image: c.settings.essentialImage, config: config, adminKeyring: admin, osdKeyring: string(keyring),
+	image := osd.image
+	if image == "" {
+		image = c.settings.essentialImage
+	}
+	r := &osdLaunchRecipe{image: image, config: config, adminKeyring: admin, osdKeyring: string(keyring),
 		id: osd.ID, uuid: osd.nativeUUID, placement: osd.placement,
 		hostNetwork: c.settings.hostNetwork, publicAddress: c.settings.publicAddress, publicNetwork: c.NetworkName(),
 		owner: c.owner, timeout: c.settings.startupTimeout}

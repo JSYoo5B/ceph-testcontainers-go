@@ -69,6 +69,8 @@ func WithImages(images ImageSet) Option {
 }
 
 // Images returns the effective role images, including aggregate selections.
+// They are the cluster's images: a daemon started with WithDaemonImage is not
+// reflected here; see the Image method of its handle.
 func (c *Container) Images() ImageSet {
 	if c == nil {
 		return ImageSet{}
@@ -144,18 +146,18 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 	if images.Client == "" {
 		return nil, invalidRequest("client image is required for this operation")
 	}
-	if err := lockTopologyMutex(ctx, &c.clientMu); err != nil {
+	if err := c.toolkit.lock(ctx); err != nil {
 		return nil, err
 	}
-	defer c.clientMu.Unlock()
+	defer c.toolkit.unlock()
 	if c.nativeCmds.isClosed() {
 		return nil, errClusterTerminated
 	}
-	if c.featureClientAttempted {
-		if !c.featureClientReady {
+	if c.toolkit.startupAttempted() {
+		if !c.toolkit.startupReady() {
 			return nil, fmt.Errorf("client startup failed; terminate the partial cluster")
 		}
-		return c.featureClient, nil
+		return c.toolkit.current(), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	if !c.nativeCmds.beginClientStartup(cancel) {
@@ -163,14 +165,12 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 		return nil, errClusterTerminated
 	}
 	defer func() { c.nativeCmds.endClientStartup(); cancel() }()
-	c.featureClientAttempted = true
+	c.toolkit.markAttempted()
 	ctr, err := testcontainers.Run(ctx, images.Client, append([]testcontainers.ContainerCustomizer{
 		c.adminClient(), c.ownedLabel(), WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 	}, c.runMount()...)...)
-	c.clientPublishMu.Lock()
-	c.featureClient = ctr // A partial start remains owned and is never retried.
-	c.clientPublishMu.Unlock()
+	c.toolkit.publish(ctr) // A partial start remains owned and is never retried.
 	if err == nil && ctr != nil {
 		output, versionErr := command(ctx, ctr, "ceph", "--version")
 		if versionErr != nil {
@@ -179,7 +179,7 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 			version, parseErr := parseCephVersion(string(output))
 			if parseErr != nil {
 				err = parseErr
-			} else if version != c.CephVersion() {
+			} else if version != c.CephVersion() { // Unchanged: daemons with WithDaemonImage do not take part.
 				err = fmt.Errorf("client Ceph release %s differs from core %s", version, c.CephVersion())
 			}
 		}
@@ -190,15 +190,11 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 	if err == nil && ctr == nil {
 		err = fmt.Errorf("client startup returned no container")
 	}
-	c.featureClientReady = err == nil && ctr != nil
+	c.toolkit.markReady(err == nil && ctr != nil)
 	return ctr, err
 }
 
 // featureClientSnapshot bounds publication waits during topology/native admission.
 func (c *Container) featureClientSnapshot(ctx context.Context) (testcontainers.Container, error) {
-	if err := lockTopologyReadMutex(ctx, &c.clientPublishMu); err != nil {
-		return nil, err
-	}
-	defer c.clientPublishMu.RUnlock()
-	return c.featureClient, nil
+	return c.toolkit.snapshot(ctx)
 }

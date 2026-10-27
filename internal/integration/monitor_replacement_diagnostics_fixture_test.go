@@ -90,7 +90,7 @@ func (f *fakeMonCluster) lock(ctx context.Context) error {
 
 func (f *fakeMonCluster) unlock() { <-f.topology }
 
-func (f *fakeMonCluster) AddMonitor(ctx context.Context, name string) (*ceph.MonitorContainer, error) {
+func (f *fakeMonCluster) AddMonitor(ctx context.Context, name string, _ ...ceph.DaemonOption) (*ceph.MonitorContainer, error) {
 	if err := f.lock(ctx); err != nil {
 		return nil, err
 	}

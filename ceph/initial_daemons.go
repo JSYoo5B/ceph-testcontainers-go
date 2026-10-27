@@ -43,7 +43,7 @@ func (c *Container) startInitialOSDs(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		launch, err := c.registerOSD(ctx, config, buckets)
+		launch, err := c.registerOSD(ctx, config, c.settings.essentialImage, buckets)
 		if err != nil {
 			return err
 		}
@@ -138,7 +138,7 @@ func (c *Container) startInitialManagers(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	_, err := c.startManager(ctx, daemonName(0))
+	_, err := c.startManager(ctx, daemonName(0), c.settings.essentialImage)
 	return err
 }
 
@@ -162,7 +162,7 @@ func (c *Container) finishInitialManagers(ctx context.Context) error {
 	}
 	for i := 1; i < c.settings.managers; i++ {
 		name := daemonName(i)
-		if _, err := c.startManager(ctx, name); err != nil {
+		if _, err := c.startManager(ctx, name, c.settings.essentialImage); err != nil {
 			return err
 		}
 		if err := c.waitManagerRegistered(ctx, name); err != nil {

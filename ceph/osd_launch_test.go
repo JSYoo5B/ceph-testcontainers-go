@@ -112,7 +112,7 @@ func preparedOSDLaunch(t *testing.T) (*Container, osdLaunch) {
 	t.Helper()
 	c, _, _ := newInitialOSDCluster(options{essentialImage: "synthetic-osd-image"})
 	c.config, c.keyring = []byte("[global]\nfsid = synthetic-cluster\n"), []byte("synthetic-admin-keyring")
-	launch, err := c.registerOSD(t.Context(), OSDConfig{Root: "default", Host: "synthetic-host"}, nil)
+	launch, err := c.registerOSD(t.Context(), OSDConfig{Root: "default", Host: "synthetic-host"}, c.settings.essentialImage, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
