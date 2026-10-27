@@ -417,11 +417,34 @@ func reclaimAttemptString(a resetAttempt) string {
 
 var reclaimVersionRE = regexp.MustCompile(`ceph version (\d+)\.(\d+)\.(\d+) `)
 
-// reclaimExpectedRelease reads the release the MDS reports.
-func reclaimExpectedRelease(version string) (major, minor, patch int64, err error) {
-	match := reclaimVersionRE.FindStringSubmatch(version)
+var reclaimSemver = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)$`)
+
+// reclaimExpectedRelease reads the release the MDS reports. startCephFSSingleMDS
+// keeps the daemon's "tell version" answer, a JSON object whose "version" is a
+// bare semantic version (for example {"version":"20.2.4","release":"tentacle",
+// "release_type":"stable"}), with its whitespace collapsed. The version must be
+// a string of exactly three decimal parts; a missing, null or non-string field
+// is an error. Raw "ceph version X.Y.Z (...)" CLI text is accepted only when
+// the answer is not a JSON object.
+func reclaimExpectedRelease(answer string) (major, minor, patch int64, err error) {
+	version := ""
+	var doc map[string]json.RawMessage
+	if json.Unmarshal([]byte(answer), &doc) == nil && doc != nil {
+		raw, ok := doc["version"]
+		if !ok {
+			return 0, 0, 0, fmt.Errorf("daemon version answer has no version field: %.200q", answer)
+		}
+		if err := json.Unmarshal(raw, &version); err != nil || len(raw) == 0 || raw[0] != '"' {
+			return 0, 0, 0, fmt.Errorf("daemon version field is not a string: %.64s", raw)
+		}
+	} else if match := reclaimVersionRE.FindStringSubmatch(answer); match != nil {
+		version = match[1] + "." + match[2] + "." + match[3]
+	} else {
+		return 0, 0, 0, fmt.Errorf("no ceph version in %.200q", answer)
+	}
+	match := reclaimSemver.FindStringSubmatch(version)
 	if match == nil {
-		return 0, 0, 0, fmt.Errorf("no ceph version in %.200q", version)
+		return 0, 0, 0, fmt.Errorf("version %q is not major.minor.patch", version)
 	}
 	var parts [3]int64
 	for i := range parts {

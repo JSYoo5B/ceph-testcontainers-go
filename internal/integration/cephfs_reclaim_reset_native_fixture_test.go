@@ -259,14 +259,37 @@ func TestReclaimNativeReaders(t *testing.T) {
 			t.Fatalf("%s: %d %d %v", c.out, a, u, err)
 		}
 	}
-	if _, _, _, err := reclaimExpectedRelease(`{ "version": "ceph version 20.2.4 (7f79) tentacle (stable)" }`); err != nil {
-		t.Fatal(err)
+	// The caller path: startCephFSSingleMDS collapses the whitespace of the
+	// daemon's answer before the recipe reads it.
+	normalize := func(answer string) string { return strings.Join(strings.Fields(answer), " ") }
+	daemon := `{"version":"20.2.4","release":"tentacle","release_type":"stable"}`
+	for name, answer := range map[string]string{
+		"compact daemon answer":       daemon,
+		"trailing newline":            daemon + "\n",
+		"pretty printed":              "{\n    \"version\": \"20.2.4\",\n    \"release\": \"tentacle\",\n    \"release_type\": \"stable\"\n}\n",
+		"raw CLI text, still allowed": "ceph version 20.2.4 (7f793731f1b39eb4f465e960113d2363c311b964) tentacle (stable)",
+	} {
+		if maj, min, pat, err := reclaimExpectedRelease(normalize(answer)); err != nil || maj != 20 || min != 2 || pat != 4 {
+			t.Fatalf("%s: %d.%d.%d %v", name, maj, min, pat, err)
+		}
 	}
-	if maj, min, pat, err := reclaimExpectedRelease(`ceph version 19.2.5 (abc) squid`); err != nil || maj != 19 || min != 2 || pat != 5 {
-		t.Fatalf("%d.%d.%d %v", maj, min, pat, err)
+	if maj, min, pat, err := reclaimExpectedRelease(normalize(`{"version":"19.2.5","release":"squid","release_type":"stable"}` + "\n")); err != nil || maj != 19 || min != 2 || pat != 5 {
+		t.Fatalf("squid: %d.%d.%d %v", maj, min, pat, err)
 	}
-	if _, _, _, err := reclaimExpectedRelease(`{}`); err == nil {
-		t.Fatal("accepted a document without a version")
+	for name, answer := range map[string]string{
+		"empty object":    `{}`,
+		"null version":    `{"version":null}`,
+		"numeric version": `{"version":20.2}`,
+		"two parts":       `{"version":"20.2"}`,
+		"four parts":      `{"version":"20.2.4.1"}`,
+		"suffixed":        `{"version":"20.2.4-rc1"}`,
+		"empty":           ``,
+		"unrelated text":  `not a version`,
+		"array":           `["20.2.4"]`,
+	} {
+		if maj, min, pat, err := reclaimExpectedRelease(normalize(answer)); err == nil {
+			t.Fatalf("%s accepted as %d.%d.%d", name, maj, min, pat)
+		}
 	}
 }
 
