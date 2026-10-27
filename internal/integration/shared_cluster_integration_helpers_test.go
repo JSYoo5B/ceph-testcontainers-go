@@ -44,7 +44,7 @@ func sharedFSID(t *testing.T, ctx context.Context, tenant *ceph.Tenant) string {
 // startTenantClient starts a client container with the tenant's client.
 func startTenantClient(t *testing.T, ctx context.Context, tenant *ceph.Tenant) testcontainers.Container {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, controlImage(t)), tenant.WithClient(), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, essentialImage(t)), tenant.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func startTenantClient(t *testing.T, ctx context.Context, tenant *ceph.Tenant) t
 // clients.
 func startTenantClientAs(t *testing.T, ctx context.Context, tenant *ceph.Tenant, client *ceph.ClientConfig) testcontainers.Container {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, controlImage(t)), tenant.WithClientIdentity(client), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, essentialImage(t)), tenant.WithClientIdentity(client), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)

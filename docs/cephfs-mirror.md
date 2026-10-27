@@ -56,8 +56,11 @@ starts the initial daemons. It:
 5. starts the daemons (named `a` through `z`, then `node-27`, ...), waits for
    them to register, then registers `Directories`.
 
-`image` must contain `cephfs-mirror` and the `ceph` CLI; `source.ControlImage()`
-is the usual choice. The customizers apply to every daemon, including daemons
+`image` is the mirror daemon image: it must contain `cephfs-mirror` and the `ceph`
+CLI (the cephfs role or `all`); `source.Images().CephFS` is the usual choice, and
+`RunWithImages` uses it. `Run` refuses an image that a cluster selects for
+another role, such as its essential image, when that cluster has a separate
+cephfs image. The setup commands run in each cluster's client toolkit. The customizers apply to every daemon, including daemons
 added later. Both clusters must use the same network mode. In bridge mode each
 daemon joins the destination network; in host mode no attachment is needed.
 
@@ -66,7 +69,7 @@ mirror leaves Ceph auth entities, the peer and directory policies, and all data
 in the caller's clusters.
 
 ```golang
-mirror, err := cephfsmirror.Run(ctx, source.ControlImage(), cephfsmirror.Config{
+mirror, err := cephfsmirror.Run(ctx, source.Images().CephFS, cephfsmirror.Config{
 	Source:                source.Container,
 	Destination:           destination.Container,
 	SourceFilesystem:      sourceFS.FilesystemName,
@@ -1303,7 +1306,7 @@ func TestCephFSMirror(t *testing.T) {
 	mustExec(t, sourceClient, "python3", "-c", sourceScript, sourceFS.FilesystemName, "seed")
 
 	// Registered after the clusters, so it is terminated before them.
-	mirror, err := cephfsmirror.Run(ctx, sourceCluster.ControlImage(), cephfsmirror.Config{
+	mirror, err := cephfsmirror.Run(ctx, sourceCluster.Images().CephFS, cephfsmirror.Config{
 		Source:                sourceCluster.Container,
 		Destination:           destinationCluster.Container,
 		SourceFilesystem:      sourceFS.FilesystemName,

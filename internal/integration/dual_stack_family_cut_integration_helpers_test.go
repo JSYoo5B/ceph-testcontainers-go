@@ -602,7 +602,7 @@ func testDualStackFamilyCut(t *testing.T) {
 		t.Fatalf("oracle read: exit %d: %s, want %v", code, output, want)
 	}
 	t.Logf("DUAL_STACK_FAMILY_CUT_RECEIPT image=%s ceph=%s netem=%s mon.a=%s osd.0=%s osd.1=%s baseline=%v cuts=%q instances=v6:%d,v4:%d state=%s oracle=%v",
-		cluster.ControlImage(), cluster.CephVersion(), netem, vectorString(mon.Addrs), vectorString(osd0.Public), vectorString(osd1.Public),
+		cluster.EssentialImage(), cluster.CephVersion(), netem, vectorString(mon.Addrs), vectorString(osd0.Public), vectorString(osd1.Public),
 		baseline, receipts, instance6, instance4, state, oracle)
 }
 

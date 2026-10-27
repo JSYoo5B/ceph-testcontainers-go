@@ -590,7 +590,7 @@ func testNetworkDelay(t *testing.T) {
 
 	t.Run("refusals", func(t *testing.T) {
 		// The official Ceph image has neither tc nor ip.
-		if lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, fault.NetworkProfile{HelperImage: cluster.ControlImage(),
+		if lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, fault.NetworkProfile{HelperImage: cluster.EssentialImage(),
 			Plane: ceph.PublicNetworkPlane, Delay: delayAmount}); !errors.Is(err, fault.ErrNetemImageUnsupported) || !errors.Is(err, ceph.ErrImageCapability) || lease != nil {
 			t.Fatalf("a helper without tc: %v", err)
 		}
@@ -605,7 +605,7 @@ func testNetworkDelay(t *testing.T) {
 		}
 		delayExec(t, ctx, owner, "tc", "qdisc", "del", "dev", "eth0", "root", "handle", "8001:")
 		// A container on another network is not admitted.
-		stranger, err := testcontainers.Run(ctx, cluster.ControlImage(), ceph.WithIdleEntrypoint())
+		stranger, err := testcontainers.Run(ctx, cluster.EssentialImage(), ceph.WithIdleEntrypoint())
 		testcontainers.CleanupContainer(t, stranger)
 		if err != nil {
 			t.Fatal(err)

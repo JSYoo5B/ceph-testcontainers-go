@@ -38,7 +38,7 @@ type policyClient struct {
 
 func startPolicyClient(t *testing.T, ctx context.Context, cluster *ceph.Container, name string, attach testcontainers.CustomizeRequestOption, args ...string) policyClient {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), attach, ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), attach, ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)

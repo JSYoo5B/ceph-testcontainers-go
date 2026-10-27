@@ -19,7 +19,7 @@ const (
 )
 
 // managerMetricsScript fetches a URL and writes its body to stdout. The
-// control image's python3 is a baseline requirement; curl is not.
+// essential image's python3 is a baseline requirement; curl is not.
 const managerMetricsScript = `import sys,urllib.request
 with urllib.request.urlopen(sys.argv[1],timeout=20) as r:
  sys.stdout.buffer.write(r.read())

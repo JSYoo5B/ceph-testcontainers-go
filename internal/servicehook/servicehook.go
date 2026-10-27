@@ -242,10 +242,10 @@ func DiagnosticHandle(ctr testcontainers.Container) testcontainers.Container {
 // ScriptFile returns an embedded bootstrap script as a container file.
 func ScriptFile(name string) testcontainers.ContainerFile { return get().ScriptFile(name) }
 
-// ServiceImage returns the image selected for a service role: rgw or mds.
+// ServiceImage returns the image selected for an image role: rgw or cephfs.
 func ServiceImage(c *ceph.Container, role string) string { return get().ServiceImage(c, role) }
 
-// WithServiceImage selects the image for a service role: rgw or mds.
+// WithServiceImage selects the image of an image role: rgw or cephfs.
 func WithServiceImage(role, image string) ceph.Option { return get().WithServiceImage(role, image) }
 
 // Extension returns the per-cluster state a service package keeps under
@@ -358,6 +358,8 @@ type TestConfig = struct {
 	OSDPlacement ceph.OSDConfig
 	// MemStore selects the OSDMemStore object store instead of BlueStore.
 	MemStore bool
+	// Images selects the role images; nil means one aggregate image.
+	Images *ceph.ImageSet
 }
 
 // TestStateView points at a cluster's internals for unit tests. PortLeases is
@@ -376,7 +378,7 @@ type TestStateView = struct {
 	PoolReplicas   *int
 	PoolMinSize    *int
 	StartupTimeout *time.Duration
-	MDSImage       *string
+	CephFSImage    *string
 	RGWImage       *string
 	PortLeases     int
 	NetworkRemoved *bool

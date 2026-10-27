@@ -128,8 +128,11 @@ type cephFSPeerIdentity struct {
 // Run configures one-way directory snapshot mirroring between two
 // existing filesystems and starts each initial cephfs-mirror in a separate
 // container. NoInitialDaemons retains setup without launching a daemon. image
-// must meet the control or all role requirements, including cephfs-mirror and
-// the ceph CLI used to query its local admin socket. MGRs must supply mirroring.
+// is the mirror daemon image: it must meet the cephfs (or all) role
+// requirements, including cephfs-mirror and the ceph CLI used to query its
+// local admin socket, and is refused when it is known to be another role of a
+// cluster. RunWithImages uses the source's Images().CephFS; the setup commands
+// run in each cluster's client toolkit, not in this image. MGRs must supply mirroring.
 // A non-nil result returned with an error must be terminated for partial cleanup.
 // Terminate leaves Ceph auth, peer and directory policies in the caller-owned
 // disposable clusters; it does not undo configuration or delete mirrored data.
@@ -145,6 +148,9 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	}
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
+	}
+	if err := multicluster.RequireRoleImage(image, multicluster.RoleCephFS, config.Source, config.Destination); err != nil {
+		return nil, fmt.Errorf("configure CephFS mirror daemon image: %w", err)
 	}
 	config, err := normalizeCephFSMirrorConfig(config)
 	if err != nil {

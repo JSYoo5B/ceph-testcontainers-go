@@ -239,7 +239,7 @@ func (m *Mirror) legacyClient(client testcontainers.Container) bool {
 }
 
 // legacyCluster reports whether cluster cannot map namespaces: the rbd of its
-// control image, whose release its daemons run, has no --remote-namespace.
+// client toolkit, whose release its daemons run, has no --remote-namespace.
 // A patched image of an older release can have it. Without that evidence,
 // as for a link that Run did not set up, the release decides.
 func (m *Mirror) legacyCluster(cluster *ceph.Container) bool {
@@ -250,7 +250,7 @@ func (m *Mirror) legacyCluster(cluster *ceph.Container) bool {
 }
 
 // detectNamespaceMapping reads whether each setup client and each cluster's
-// control image can map namespaces.
+// client toolkit can map namespaces.
 func (m *Mirror) detectNamespaceMapping(ctx context.Context) error {
 	m.legacyCLI, m.legacyClusters = map[testcontainers.Container]bool{}, map[*ceph.Container]bool{}
 	for _, client := range []testcontainers.Container{m.sourceClient, m.destinationClient} {

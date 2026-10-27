@@ -233,7 +233,8 @@ func (serviceHooks) DiagnosticHandle(ctr testcontainers.Container) testcontainer
 // ScriptFile returns an embedded bootstrap script as a container file.
 func (serviceHooks) ScriptFile(name string) testcontainers.ContainerFile { return scriptFile(name) }
 
-// ServiceImage returns the image selected for a service role.
+// ServiceImage returns the image selected for an image role: client, rbd-aux,
+// essential, rgw or cephfs.
 func (serviceHooks) ServiceImage(c *Container, role string) string {
 	switch role {
 	case "client":
@@ -243,14 +244,15 @@ func (serviceHooks) ServiceImage(c *Container, role string) string {
 	case "essential":
 		return c.Images().Essential
 	case "rgw":
-		return c.settings.rgwImage
-	case "mds":
-		return c.settings.mdsImage
+		return c.Images().RGW
+	case "cephfs":
+		return c.Images().CephFS
 	}
 	return ""
 }
 
-// WithServiceImage selects the image for a service role.
+// WithServiceImage selects the image of the rgw or cephfs role. It replaces
+// that role of any ImageSet, whatever the option order.
 func (serviceHooks) WithServiceImage(role, image string) Option {
 	return func(o *options) error {
 		if strings.TrimSpace(image) == "" {
@@ -258,15 +260,9 @@ func (serviceHooks) WithServiceImage(role, image string) Option {
 		}
 		switch role {
 		case "rgw":
-			o.rgwImage = image
-			if o.imageSet != nil {
-				o.imageSet.RGW = image
-			}
-		case "mds":
-			o.mdsImage = image
-			if o.imageSet != nil {
-				o.imageSet.CephFS = image
-			}
+			o.rgwOverride = image
+		case "cephfs":
+			o.cephfsOverride = image
 		default:
 			return fmt.Errorf("unknown service role %q", role)
 		}
@@ -406,16 +402,22 @@ type testClusterConfig = struct {
 	OSDPlacement OSDConfig
 	// MemStore selects the OSDMemStore object store instead of BlueStore.
 	MemStore bool
+	// Images selects the role images; nil means one aggregate image.
+	Images *ImageSet
 }
 
 // TestCluster builds a cluster value for the service packages' unit tests.
 func (serviceHooks) TestCluster(control testcontainers.Container, config testClusterConfig) *Container {
 	c := &Container{Container: control, closed: config.Closed, settings: options{
 		startupTimeout: config.StartupTimeout, hostNetwork: config.HostNetwork, publicAddress: config.PublicAddress,
-		controlImage: "unit-all", osdImage: "unit-all", mdsImage: "unit-all", rgwImage: "unit-all",
+		essentialImage: "unit-all",
 	}}
 	if config.MemStore {
 		c.settings.osdObjectStore = OSDMemStore
+	}
+	if config.Images != nil {
+		images := *config.Images
+		c.settings.imageSet = &images
 	}
 	if config.Shared {
 		c.sharing.Store(int32(sharedWithTenants))
@@ -448,7 +450,7 @@ type testState = struct {
 	PoolReplicas   *int
 	PoolMinSize    *int
 	StartupTimeout *time.Duration
-	MDSImage       *string
+	CephFSImage    *string
 	RGWImage       *string
 	PortLeases     int
 	NetworkRemoved *bool
@@ -461,7 +463,7 @@ func (serviceHooks) TestState(c *Container) testState {
 		Config: &c.config, Keyring: &c.keyring, CephVersion: &c.cephVersion, ControlPlane: &c.controlPlane,
 		OSDs: &c.osds, InitialOSDs: &c.settings.osds, PoolReplicas: &c.settings.poolReplicas,
 		PoolMinSize: &c.settings.poolMinSize, StartupTimeout: &c.settings.startupTimeout,
-		MDSImage: &c.settings.mdsImage, RGWImage: &c.settings.rgwImage, PortLeases: len(c.portLeases), NetworkRemoved: &c.networkRemoved,
+		CephFSImage: &c.settings.cephfsOverride, RGWImage: &c.settings.rgwOverride, PortLeases: len(c.portLeases), NetworkRemoved: &c.networkRemoved,
 	}
 }
 

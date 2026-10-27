@@ -53,7 +53,7 @@ func TestReleaseCapabilityTable(t *testing.T) {
 	}
 	for data, want := range map[string]string{
 		`{"overall":{"` + tentacle + `":5,"` + squid + `":1}}`: "mixed-release cluster",
-		uniform:                         "mixed-release cluster", // against a 19.2.5 control image below
+		uniform:                         "mixed-release cluster", // against a 19.2.5 essential image below
 		`{"overall":{}}`:                "no daemon releases",
 		`not json`:                      "no daemon releases",
 		`{"overall":{"ceph 20.2.4":1}}`: "unrecognized daemon release",

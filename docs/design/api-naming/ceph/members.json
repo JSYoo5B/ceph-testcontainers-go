@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 436,
+  "count": 435,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -39,7 +39,6 @@
       "ClusterFacts.AddressFamily field AddressFamily",
       "ClusterFacts.CephVersion field string",
       "ClusterFacts.ClusterNetworkName field string",
-      "ClusterFacts.ControlImage field string",
       "ClusterFacts.HasSeparateClusterNetwork field bool",
       "ClusterFacts.Images field ImageSet",
       "ClusterFacts.MessengerMode field MessengerMode",

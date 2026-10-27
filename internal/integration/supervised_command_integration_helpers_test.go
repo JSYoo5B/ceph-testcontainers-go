@@ -18,13 +18,13 @@ import (
 )
 
 // testSupervisedCommandCancellation runs the supervisor and canceler that
-// AdminSocket and the quorum reads use, on Linux in the control image and
+// AdminSocket and the quorum reads use, on Linux in the essential image and
 // without a cluster, and covers the orderings that a live cluster cannot
 // produce on demand.
 func testSupervisedCommandCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
-	ctr, err := testcontainers.Run(ctx, controlImage(t), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, essentialImage(t), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)

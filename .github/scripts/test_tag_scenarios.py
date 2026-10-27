@@ -130,12 +130,13 @@ class TagPlannerTests(unittest.TestCase):
             engine.discover([fixture(), second])
 
     def test_image_roles_are_declared_per_batch_and_default_to_all_five(self):
-        declared = fixture(path="internal/integration/control_test.go", tests=("TestControl",), batch="control")
+        declared = fixture(path="internal/integration/routing_test.go", tests=("TestRouting",), batch="routing")
         declared["metadata"] = ["timeout=10m job-timeout=20 image-roles=cephfs,essential"]
         plan = engine.discover([fixture(), declared])
         roles = {profile["batch"]: profile["image_roles"] for profile in plan["include"]}
-        self.assertEqual(roles, {"basic": "essential,client,cephfs,rbd-aux,rgw", "control": "essential,cephfs"})
+        self.assertEqual(roles, {"basic": "essential,client,cephfs,rbd-aux,rgw", "routing": "essential,cephfs"})
         self.assertEqual(engine.IMAGE_ROLES, ("essential", "client", "cephfs", "rbd-aux", "rgw"))
+        # The values are retired or malformed names and must be refused.
         for value in ("osd", "control,control", "control,client", "control,", "Control"):
             with self.subTest(roles=value), self.assertRaisesRegex(ValueError, "image-roles must list"):
                 declared["metadata"] = ["timeout=10m job-timeout=20 image-roles=" + value]
@@ -143,7 +144,7 @@ class TagPlannerTests(unittest.TestCase):
         # One batch declares one set, like its budget.
         declared["metadata"] = ["timeout=20m job-timeout=35 image-roles=essential"]
         same_batch = fixture(path="internal/integration/second_test.go", tests=("TestSecond",))
-        declared_batch = fixture(path="internal/integration/control_test.go", tests=("TestControl",))
+        declared_batch = fixture(path="internal/integration/routing_test.go", tests=("TestRouting",))
         declared_batch["metadata"] = declared["metadata"]
         with self.assertRaisesRegex(ValueError, "conflicting budgets, checker scope or image roles"):
             engine.discover([same_batch, declared_batch])

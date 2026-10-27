@@ -77,7 +77,7 @@ func osdVolumeBacking(t *testing.T, ctx context.Context, docker *mobycl.Client, 
 	helper := osdMemoryInspect(t, ctx, docker, list.Items[0].ID)
 	control := osdMemoryInspect(t, ctx, docker, cluster.GetContainerID())
 	if helper.Image != control.Image || !helper.State.Running || helper.State.StartedAt == "" || string(helper.HostConfig.NetworkMode) != "none" || !slices.Equal(helper.Config.Entrypoint, []string{"sleep"}) || !slices.Equal(helper.Config.Cmd, []string{"infinity"}) {
-		t.Fatal("isolated idle control-image helper differs")
+		t.Fatal("isolated idle essential-image helper differs")
 	}
 	found := 0
 	for _, m := range helper.HostConfig.Mounts {

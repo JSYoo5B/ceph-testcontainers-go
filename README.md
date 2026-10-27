@@ -193,7 +193,7 @@ For contributors:
 
 [ceph-testcontainers-images](https://github.com/JSYoo5B/ceph-testcontainers-images)
 checks Ceph images against the requirements of these modules and publishes
-smaller role images (control, OSD, MDS, RGW) extracted from the official
+smaller role images (essential, client, cephfs, rbd-aux, rgw, and the aggregate all) extracted from the official
 images.
 
 ## License

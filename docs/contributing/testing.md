@@ -608,12 +608,12 @@ Tentacle 20.2.4 and Squid 19.2.5 images). Where the expected outcome differs,
 the test selects it from one table, `releaseCapabilities` in
 `internal/integration/release_capabilities_integration_helpers_test.go`, and
 never from a release prefix of its own. `capabilitySupported` first checks
-`ceph versions`: every daemon must run the release of the control image.
+`ceph versions`: every daemon must run the release of the essential image.
 It then answers from the row:
 
 | Capability | Decided by | Where unsupported |
 | --- | --- | --- |
-| `rbd mirror pool enable --remote-namespace` | Probe: `rbd help mirror pool enable` in the control image | The fixture refuses a differently named mapping with `ErrUnsupported` naming the cluster; there is no init-only mode |
+| `rbd mirror pool enable --remote-namespace` | Probe: `rbd help mirror pool enable` in the client toolkit | The fixture refuses a differently named mapping with `ErrUnsupported` naming the cluster; there is no init-only mode |
 | `messenger dump` | Probe: `ceph tell mon.<leader> help` | The native probes prove encryption from secure-only service modes and client `debug_ms` READY lines instead |
 | RGW account principals in user-mode sync pipes | Release row: 19 unsupported, 20 supported. No tool reveals it, because Ceph 19 accepts the pipe and replicates nothing | The fixture refuses the pipe with `ErrUnsupported` naming the zone |
 
@@ -622,7 +622,7 @@ Unsupported cases assert the classified error with
 explicit failures of the test configuration rather than guesses:
 
 - A cluster whose daemons run several releases, for example a Squid RGW role
-  image beside a Tentacle control image, fails with `mixed-release cluster`.
+  image beside a Tentacle essential image, fails with `mixed-release cluster`.
 - A version that does not parse fails with `unrecognized Ceph release`.
 - A release-limited row has no entry for a new major release until someone
   observes it and adds the entry; until then it fails with
@@ -758,15 +758,22 @@ a concurrent caller. When you write one:
 
 Features may rely only on what the official `quay.io/ceph/ceph` image ships
 for the release in use, split into the role contract that the
-ceph-testcontainers-images project defines:
+ceph-testcontainers-images project defines (`docs/ROLES.md` there is the
+authority):
 
 | Role | Must provide |
 | --- | --- |
-| `control` | MON, MGR, the `ceph`, `rbd`, `rados` and `radosgw-admin` CLIs, Python `rados`/`rbd`/`cephfs` bindings, `rbd-mirror` and `cephfs-mirror`, librbd encryption with `cryptsetup`, `rados --striper` |
-| `osd` | OSD daemon and object classes including `hello` and `lock` |
-| `rgw` | `radosgw`, `radosgw-admin`, `readlink` |
-| `mds` | MDS daemon |
-| `all` | The union of the four |
+| `essential` | MON, MGR, OSD, the `ceph` CLI, keyring and monmap bootstrap, process inspection, the always-on MGR modules and `volumes`, `rbd_support`, `mirroring` and `snap_schedule`, the OSD classes, compressor and erasure-code plugins |
+| `client` | `ceph`, `rados`, `rbd`, offline CRUSH and OSD map tools, the Python `rados`/`rbd`/`cephfs` bindings, `libradosstriper`, librbd encryption with `cryptsetup` |
+| `cephfs` | MDS and `cephfs-mirror` |
+| `rbd-aux` | `rbd-mirror`, the immutable object cache and the librbd parent cache plugin |
+| `rgw` | `radosgw`, `radosgw-admin`, `readlink` and a `ceph`/Python runtime for per-zone setup containers |
+| `all` | The union of the five, selected explicitly |
+
+The control container is not a role. It is an executor created from the
+essential image, and it runs the `ceph` CLI; `rados` and `rbd` run in the client
+toolkit and `radosgw-admin` in the rgw role. No optional role falls back to
+essential.
 
 Consequences for contributors:
 
@@ -782,8 +789,9 @@ Consequences for contributors:
 - The module supplies the FSID, keys, configuration, daemon IDs, bootstrap
   scripts and entrypoints at run time. Images carry no cluster setup, and the
   code must not depend on a distribution, package names or image labels.
-- RGW images need no Python or `ceph` CLI. Configuration that needs those runs
-  in a control-image container.
+- The rgw role carries the runtime that RGW setup needs; the gateway process
+  itself needs only the shell and core utilities. Configuration that needs the
+  `ceph` CLI or Python runs in the control container or a client-role container.
 
 ## Module conventions
 

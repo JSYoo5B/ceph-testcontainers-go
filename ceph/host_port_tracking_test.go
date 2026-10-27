@@ -10,7 +10,7 @@ import (
 )
 
 func trackedHostPortFixture() *Container {
-	return &Container{settings: options{hostNetwork: true, controlImage: "fixture-control", publicAddress: "127.0.0.1", startupTimeout: time.Second}}
+	return &Container{settings: options{hostNetwork: true, essentialImage: "fixture-control", publicAddress: "127.0.0.1", startupTimeout: time.Second}}
 }
 
 func TestTrackedHostPortsRejectBusyOwnerBeforeAllocation(t *testing.T) {
@@ -67,7 +67,7 @@ func TestTrackedHostPortsRetainNativeErrorAndCanceledPartialLease(t *testing.T) 
 			defer cancel()
 			nativeErr := errors.New("reservation cleanup could not remove allocator")
 			got, err := cluster.reserveTrackedHostPortsWith(ctx, 2, func(_ context.Context, image, address string, count int, timeout time.Duration) (*hostPortLease, error) {
-				if image != cluster.settings.controlImage || address != cluster.PublicAddress() || count != 2 || timeout != cluster.settings.startupTimeout {
+				if image != cluster.settings.essentialImage || address != cluster.PublicAddress() || count != 2 || timeout != cluster.settings.startupTimeout {
 					t.Error("reservation parameters changed")
 				}
 				if cluster.mu.TryLock() {

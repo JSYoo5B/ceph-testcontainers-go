@@ -66,7 +66,7 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 	if exists {
 		return nil
 	}
-	ctr, err := testcontainers.Run(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.ownedLabel(),
+	ctr, err := testcontainers.Run(ctx, c.settings.essentialImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.ownedLabel(),
 		WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"}))},
 		c.runMount()...)...)
@@ -187,7 +187,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 	for attempt := range attempts {
 		var lease *hostPortLease
 		if c.settings.hostNetwork {
-			lease, err = reserveHostPorts(ctx, c.settings.controlImage, c.PublicAddress(), c.settings.monitorPortCount(), c.settings.startupTimeout, c.ownedLabel())
+			lease, err = reserveHostPorts(ctx, c.settings.essentialImage, c.PublicAddress(), c.settings.monitorPortCount(), c.settings.startupTimeout, c.ownedLabel())
 			// c.mu is already held, so register ownership without re-locking it.
 			if lease != nil {
 				c.portLeases = append(c.portLeases, lease)
@@ -215,7 +215,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string) (*MonitorContai
 			return mon, err
 		}
 		opts = append(opts, c.runMount()...)
-		mon.Container, err = runContainer(ctx, c.settings.controlImage, append(opts, c.ownedLabel())...)
+		mon.Container, err = runContainer(ctx, c.settings.essentialImage, append(opts, c.ownedLabel())...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseErr := lease.Release(cleanupCtx)
@@ -771,7 +771,7 @@ func (c *Container) startManager(ctx context.Context, name string) (*ManagerCont
 	if err := c.clearAdminSocket(ctx, "mgr."+name); err != nil {
 		return mgr, err
 	}
-	mgr.Container, err = runContainer(ctx, c.settings.controlImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.ownedLabel(),
+	mgr.Container, err = runContainer(ctx, c.settings.essentialImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.ownedLabel(),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),

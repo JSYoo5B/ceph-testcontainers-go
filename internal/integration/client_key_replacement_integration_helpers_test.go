@@ -325,7 +325,7 @@ func keyOf(t *testing.T, client *ceph.ClientConfig) string {
 
 func startClientContainer(t *testing.T, ctx context.Context, cluster *ceph.Container, client *ceph.ClientConfig) testcontainers.Container {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClientIdentity(client), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClientIdentity(client), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)

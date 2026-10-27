@@ -181,9 +181,9 @@ func (c *Container) generateKeyArgs(keyType CephxCipher) ([]string, error) {
 	case keyType == "":
 		return args, nil
 	case !c.keyTypeOption && keyType != CipherAES:
-		return nil, &OperationError{Kind: ErrUnsupported, Target: "control", Version: c.CephVersion(), Image: c.controlImageID,
+		return nil, &OperationError{Kind: ErrUnsupported, Target: "control", Version: c.CephVersion(), Image: c.firstMonitorImageID,
 			Capability: "ceph-authtool --key-type",
-			Err:        fmt.Errorf("cephx key type %s needs ceph-authtool --key-type, which the control image lacks", keyType)}
+			Err:        fmt.Errorf("cephx key type %s needs ceph-authtool --key-type, which the essential image lacks", keyType)}
 	case !c.keyTypeOption:
 		return args, nil
 	}

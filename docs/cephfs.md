@@ -163,7 +163,7 @@ executes the fixture's `ceph` commands. Other roles can use separate images:
 | MON, MGR, control CLI | `Run` image | `ceph` CLI, MGR modules (`volumes`, `mirroring`), Python `cephfs` binding (pin policy reads and clone identity checks run libcephfs in the control container) |
 | OSD | `ImageSet.Essential` | `ceph-osd` |
 | MDS | `cephfs.WithMDSImage`, otherwise the `Run` image | `ceph-mds` |
-| CephFS mirror daemon | `image` argument of `cephfsmirror.Run` | `cephfs-mirror` and the `ceph` CLI used to query its admin socket; usually `cluster.ControlImage()` |
+| CephFS mirror daemon | `image` argument of `cephfsmirror.Run` | `cephfs-mirror` and the `ceph` CLI used to query its admin socket; usually `cluster.Images().CephFS` |
 | Client containers | chosen by the test | the client under test; `ceph.DefaultImage` provides Python libcephfs |
 
 Use the same Ceph release for every role. `cluster.CephVersion()` reports the
@@ -314,7 +314,7 @@ documented in [Ceph](ceph.md). The ones CephFS tests use most are:
 | `fault.Pause(ctx, cluster, ctr)` | Freeze a client or MDS container without stopping its process. |
 | `BlocklistEntries(ctx)` | List OSDMap blocklist entries, for example after a client eviction. |
 | `CreatePool`, `Pool.Remove`, `WaitForClean` | Create a pool to attach with `AddDataPool`, delete it afterwards, wait for clean PGs. |
-| `ControlContainer(ctx)`, `ControlImage()` | The container that runs fixture commands and its image (mirror daemons usually use `ControlImage()`). |
+| `ControlContainer(ctx)`, `ClientContainer(ctx)`, `EssentialImage()` | The control container (`ceph` CLI, essential image), the client toolkit and the essential image. Mirror daemons use `Images().CephFS` or `Images().RBDAux`. |
 | `ServiceContainers()` | Owned MDS (and RGW) containers. |
 | `CephVersion()` | The Ceph release of the `Run` image. |
 

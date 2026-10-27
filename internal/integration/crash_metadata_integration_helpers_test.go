@@ -73,7 +73,7 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 			adminKey = strings.TrimSpace(value)
 		}
 	}
-	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, helper)
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +245,7 @@ func lostCreate(t *testing.T, ctx context.Context, docker *testcontainers.Docker
 		t.Fatalf("the MON container has the cluster label %q and run volume mounts %v", owner, mounts)
 	}
 	if _, err := docker.ContainerCreate(ctx, mobycl.ContainerCreateOptions{
-		Config:     &container.Config{Image: cluster.ControlImage(), Cmd: []string{"true"}, Labels: map[string]string{"org.testcontainers.ceph.cluster": owner}},
+		Config:     &container.Config{Image: cluster.EssentialImage(), Cmd: []string{"true"}, Labels: map[string]string{"org.testcontainers.ceph.cluster": owner}},
 		HostConfig: &container.HostConfig{Mounts: mounts},
 	}); err != nil {
 		t.Fatal(err)

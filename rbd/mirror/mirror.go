@@ -82,7 +82,7 @@ type Mirror struct {
 	receiverPeerGeneration          uint64
 	receiverSetupConfirmed          bool
 	// legacyCLI marks the setup clients whose rbd has no --remote-namespace,
-	// and legacyClusters the clusters whose control image's rbd has none.
+	// and legacyClusters the clusters whose client toolkit's rbd has none.
 	legacyCLI      map[testcontainers.Container]bool
 	legacyClusters map[*ceph.Container]bool
 }
@@ -156,9 +156,12 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 // to both clusters. NoInitialDaemons retains setup without launching a daemon.
 // A new peer is rx-only; an existing tx-only peer becomes rx-tx so creating a
 // reverse link preserves the transmission already used by the first link.
-// image must meet the control or all role requirements, including the rbd and
-// ceph CLIs, rbd-mirror and the common utilities. It supplies both setup clients
-// and mirror daemon containers. Enable each intended source
+// image is the mirror daemon image: it must meet the rbd-aux (or all) role
+// requirements, including rbd-mirror, the rbd and ceph CLIs and the common
+// utilities, and is refused when it is known to be another role of a cluster
+// (for example its essential image). The daemons run for the destination, so
+// RunWithImages uses the destination's Images().RBDAux. Setup clients are not
+// started from it: each cluster's Images().Client supplies them. Enable each intended source
 // image through EnableImage or the RBD CLI in image scope. Pool scope
 // automatically enrolls journal-enabled images. Snapshot images need subsequent
 // mirror checkpoints; journal images replay writes without mirror snapshots.
@@ -191,6 +194,9 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	}
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
+	}
+	if err := multicluster.RequireRoleImage(image, multicluster.RoleRBDAux, config.Source, config.Destination); err != nil {
+		return nil, fmt.Errorf("configure RBD mirror daemon image: %w", err)
 	}
 	config, err := normalizeRBDMirrorConfig(config)
 	if err != nil {

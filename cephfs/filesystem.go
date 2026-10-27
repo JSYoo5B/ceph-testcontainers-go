@@ -514,7 +514,7 @@ func (fs *Filesystem) startMDSWithAdmission(ctx context.Context, start func(cont
 	}
 	moduleOpts = append(moduleOpts, opts...)
 	var daemon *MDS
-	ctr, err := start(ctx, "mds."+id, servicehook.ServiceImage(c, "mds"), moduleOpts...)
+	ctr, err := start(ctx, "mds."+id, servicehook.ServiceImage(c, "cephfs"), moduleOpts...)
 	// Publish only a real handle: a starter may return a typed nil with its
 	// error when no container was created.
 	ctr = servicehook.DiagnosticHandle(ctr)

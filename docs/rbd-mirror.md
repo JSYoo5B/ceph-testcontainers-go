@@ -21,9 +21,13 @@ Two clusters need the pool and namespaces prepared with `rbd.WithPools`,
 `*ceph.Container`, so it works with a cluster from `ceph.Run` and with any
 other service package's `Run`.
 
-`Run` takes an image. It runs the setup CLI clients and the `rbd-mirror`
-daemons, so it needs the `control` or `all` role. Pass the source cluster's
-`ControlImage()`. See the [image guide](guides/releases-and-images.md).
+`Run` takes the mirror daemon image: the rbd-aux role (or the aggregate `all`
+image). The daemons run for the destination cluster, so
+`RunWithImages` uses the destination's `Images().RBDAux`. The setup CLI clients
+are not started from it: each cluster's `Images().Client` supplies them. `Run`
+refuses an image that a cluster selects for another role, such as its essential
+image, when that cluster has a separate rbd-aux image. See the
+[image guide](guides/releases-and-images.md).
 
 ## Module Reference
 
@@ -34,7 +38,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 ```
 
 - `context.Context`, the Go context.
-- `string`, the image for the setup clients and the `rbd-mirror` daemons (`control` or `all` role; use `source.ControlImage()`).
+- `string`, the image for the `rbd-mirror` daemons (rbd-aux or `all` role; use `destination.Images().RBDAux`). The setup clients use each cluster's `Images().Client`.
 - `Config`, the two clusters and the mirroring policy.
 - `testcontainers.ContainerCustomizer`, options applied to every `rbd-mirror` daemon container (not to the setup clients).
 
@@ -81,7 +85,7 @@ error. Register the clusters' cleanup first and the link's cleanup after, so
 the link is terminated before the clusters:
 
 ```golang
-link, err := rbdmirror.Run(ctx, source.ControlImage(), rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, source.Images().RBDAux, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 })
 testcontainers.CleanupContainer(t, link)
@@ -712,7 +716,7 @@ func TestSnapshotMirroring(t *testing.T) {
 	}
 	source, destination := newCluster(), newCluster()
 
-	link, err := rbdmirror.Run(ctx, source.ControlImage(), rbdmirror.Config{
+	link, err := rbdmirror.Run(ctx, source.Images().RBDAux, rbdmirror.Config{
 		Source: source, Destination: destination, Pool: "volumes",
 	})
 	testcontainers.CleanupContainer(t, link) // runs before the clusters' cleanup
@@ -763,7 +767,7 @@ snapshots make tests deterministic.
 Journal mirroring replays every write. No mirror snapshots are involved.
 
 ```golang
-link, err := rbdmirror.Run(ctx, source.ControlImage(), rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, source.Images().RBDAux, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	Mode: rbdmirror.ModeJournal,
 })
@@ -791,7 +795,7 @@ With pool scope, every image that has the `journaling` feature is mirrored
 without `EnableImage` (which is rejected in pool scope):
 
 ```golang
-link, err := rbdmirror.Run(ctx, source.ControlImage(), rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, source.Images().RBDAux, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	Scope: rbdmirror.ScopePool, // Mode defaults to journal
 })
@@ -815,7 +819,7 @@ Planned failover moves the primary image from A to B and back without
 for the other. Give each cluster one site name and keep it in both links.
 
 ```golang
-forward, err := rbdmirror.Run(ctx, a.ControlImage(), rbdmirror.Config{
+forward, err := rbdmirror.Run(ctx, a.Images().RBDAux, rbdmirror.Config{
 	Source: a, Destination: b, Pool: "volumes",
 	SourceSite: "site-a", DestinationSite: "site-b",
 })
@@ -823,7 +827,7 @@ testcontainers.CleanupContainer(t, forward)
 if err != nil {
 	t.Fatal(err)
 }
-reverse, err := rbdmirror.Run(ctx, b.ControlImage(), rbdmirror.Config{
+reverse, err := rbdmirror.Run(ctx, b.Images().RBDAux, rbdmirror.Config{
 	Source: b, Destination: a, Pool: "volumes",
 	SourceSite: "site-b", DestinationSite: "site-a",
 })
@@ -967,7 +971,7 @@ waitReplicated(ctx, t, link, "volumes/disk", "volumes/disk")
 can prepare data on the source and choose when replication begins.
 
 ```golang
-link, err := rbdmirror.Run(ctx, source.ControlImage(), rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, source.Images().RBDAux, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	NoInitialDaemons: true,
 })
@@ -1011,7 +1015,7 @@ controls only this link's daemons; it does not prove that no other
 ### Run several receivers and survive the loss of one
 
 ```golang
-link, err := rbdmirror.Run(ctx, source.ControlImage(), rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, source.Images().RBDAux, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	DaemonCount: 2, // daemons "a" and "b"
 })
@@ -1056,7 +1060,7 @@ Ceph 20.
 
 ```golang
 // The namespaces exist on both clusters (rbd.CreateNamespace on each).
-owner, err := rbdmirror.Run(ctx, source.ControlImage(), rbdmirror.Config{
+owner, err := rbdmirror.Run(ctx, source.Images().RBDAux, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	SourceNamespace: "app", DestinationNamespace: "app-replica",
 })
@@ -1112,13 +1116,13 @@ times; their results are not one atomic observation.
 
 Tentacle (20.2.x, `ceph.DefaultImage`) is the default release. Squid works
 with these differences, which the fixture handles from the options of `rbd`
-in each setup client and each cluster's control image, and from each
+in each setup client and each cluster's client toolkit, and from each
 cluster's `CephVersion()` where no tool shows the difference:
 
 | Area | Tentacle | Squid |
 | --- | --- | --- |
 | Default namespace while mirroring only a named namespace | Set to `init-only`. | Squid has no `init-only`; the default namespace is set to `image` mode, which mirrors nothing until an image is enabled explicitly. |
-| Namespace mapping | `SourceNamespace` and `DestinationNamespace` may differ. | Squid has no remote namespaces and its `rbd` no `--remote-namespace`, so only namespaces with the same name are mirrored. A different pair makes `Run` fail before any change with `ceph.ErrUnsupported`; the `*ceph.OperationError` names the side whose `rbd` lacks `--remote-namespace`: a cluster, with its `Version` and control image, or a setup client. A backported Squid image that has the option maps namespaces. The `BindNamespace` example above therefore needs Ceph 20 on both sides. |
+| Namespace mapping | `SourceNamespace` and `DestinationNamespace` may differ. | Squid has no remote namespaces and its `rbd` no `--remote-namespace`, so only namespaces with the same name are mirrored. A different pair makes `Run` fail before any change with `ceph.ErrUnsupported`; the `*ceph.OperationError` names the side whose `rbd` lacks `--remote-namespace`: a cluster, with its `Version` and client toolkit, or a setup client. A backported Squid image that has the option maps namespaces. The `BindNamespace` example above therefore needs Ceph 20 on both sides. |
 | Mirror UUID | `rbd mirror pool info` prints `mirror_uuid` and `remote_namespace`. | Neither is printed. The fixture reads the UUID from the `mirror_uuid` omap key of the `rbd_mirroring` object (`rados --pool volumes [--namespace ns] getomapval rbd_mirroring mirror_uuid /dev/stdout`) and fills the remote namespace with the same name. Do the same if your test reads `mirror pool info` directly. |
 | `rbd-mirror` admin socket status | `rbd mirror status` lists each namespace under `namespace_replayers` with its local and remote namespace. | The default namespace's `image_replayers` sit on the pool entry, and named namespaces appear under `namespaces` by name only. `ReceiverStatus` and `WaitReceiverReady` normalize both shapes. `Daemon.Status` decodes only the pool-level fields. |
 
@@ -1130,7 +1134,7 @@ A refused mapping is the contract on Squid, so assert it instead of skipping
 the test:
 
 ```golang
-link, err := rbdmirror.Run(ctx, source.ControlImage(), config)
+link, err := rbdmirror.Run(ctx, source.Images().RBDAux, config)
 if link != nil {
 	t.Cleanup(func() { _ = link.Terminate(context.Background()) })
 }

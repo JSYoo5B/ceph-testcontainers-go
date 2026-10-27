@@ -71,7 +71,9 @@ default privileges; only the FUSE client containers get the three settings.
 
 The official image `quay.io/ceph/ceph` ships `/usr/bin/ceph-fuse`,
 `/usr/bin/fusermount` (setuid) and `fuse-libs` 2.9.9 on both releases. The
-official role images (`official-<release>-control` and the others) do not
+official role images (`official-<release>-control` and the others; the `-control`
+tag belonged to the retired role layout, whose current replacements are
+essential, client, cephfs, rbd-aux, rgw and all) do not
 ship `ceph-fuse` or `fusermount`. Under the role layout the test reports
 that refusal for the control image and starts its FUSE client containers
 from the official image of the cluster's release, `quay.io/ceph/ceph:v<version>`:

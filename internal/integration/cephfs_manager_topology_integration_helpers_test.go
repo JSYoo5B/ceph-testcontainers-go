@@ -97,7 +97,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	}
 	fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
 	archiveSnapshot("backup-1")
-	image := source.ControlImage()
+	image := source.Images().CephFS
 	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", image), cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,

@@ -102,7 +102,7 @@ func (c *Container) ensureOSDVolume(ctx context.Context) error {
 	if run == nil {
 		run = runContainer
 	}
-	helper, err := run(ctx, c.settings.controlImage, WithIdleEntrypoint(),
+	helper, err := run(ctx, c.settings.essentialImage, WithIdleEntrypoint(),
 		testcontainers.WithHostConfigModifier(func(h *container.HostConfig) { h.NetworkMode = "none" }),
 		testcontainers.WithLabels(map[string]string{osdVolumeOwnerLabel: s.owner}), c.ownedLabel(),
 		osdLaunchVolume(s.name, osdVolumeHelperPath, true))

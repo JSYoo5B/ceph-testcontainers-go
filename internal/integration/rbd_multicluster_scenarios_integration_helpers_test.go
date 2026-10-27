@@ -20,7 +20,7 @@ import (
 
 func rbdScenarioRunLink(t *testing.T, ctx context.Context, source, destination *ceph.Container, pool, sourceSite, destinationSite string) *rbdmirror.Mirror {
 	t.Helper()
-	image := source.ControlImage()
+	image := source.Images().RBDAux
 	link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", image), rbdmirror.Config{
 		Source: source, Destination: destination, Pool: pool,
 		SourceSite: sourceSite, DestinationSite: destinationSite,

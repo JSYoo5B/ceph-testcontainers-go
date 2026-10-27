@@ -24,7 +24,7 @@ was run.
 
 | Data | Where | State after a successful `Terminate` |
 | --- | --- | --- |
-| Static facts (address family, control image, image set, messenger mode, network names, host network, public address, Ceph version) | Ten accessors on `Container`; internal helpers in `ceph/facts.go` take no lock, run no command and make no Docker call. No snapshot type exists yet. | Retained. `settings`, `cephVersion` and the network pointers are never cleared by `terminate`; `ControlImage` documents that it stays available. |
+| Static facts (address family, essential image, image set, messenger mode, network names, host network, public address, Ceph version) | Ten accessors on `Container`; internal helpers in `ceph/facts.go` take no lock, run no command and make no Docker call. No snapshot type exists yet. | Retained. `settings`, `cephVersion` and the network pointers are never cleared by `terminate`; `EssentialImage` documents that it stays available. |
 | Tracked container handles | `CollectDiagnostics` (`ceph/diagnostics.go`) reads them under `mu` | Gone. `terminate` deletes each OSD, MON, MGR and service entry once its removal succeeds, so a later report has little to inspect. |
 | Container state, logs, network inspect, Ceph queries | `collectDiagnostics`, Docker inspect and log reads, fixed Ceph CLI queries | Destroyed with the containers and networks. They cannot be re-read. |
 | Crash metadata | `CollectCrashMetadata` (`ceph/crash_metadata.go`) | Destroyed with the container; its own doc says a removed container takes its records along. |

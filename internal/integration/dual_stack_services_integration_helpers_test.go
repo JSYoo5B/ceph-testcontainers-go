@@ -713,5 +713,5 @@ func testDualStackServices(t *testing.T) {
 		t.Fatalf("host S3 read %d bytes that differ from the %d written over IPv6", len(body), len(written))
 	}
 	t.Logf("DUAL_STACK_SERVICES_RECEIPT image=%s ceph=%s sessions=%v rgw_listeners=%v s3=%v rgw_access=%q host_s3=%s",
-		cluster.ControlImage(), cluster.CephVersion(), receipts, listeners, s3, accessLog, endpoint)
+		cluster.EssentialImage(), cluster.CephVersion(), receipts, listeners, s3, accessLog, endpoint)
 }

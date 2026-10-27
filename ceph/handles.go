@@ -176,9 +176,9 @@ func (o *OSDContainer) Detach(ctx context.Context) (*DetachedOSD, error) {
 // The command does not use the Messenger or Cephx: it reaches the daemon
 // through its local socket, so it works while the daemon cannot reach a
 // monitor and reports what the daemon itself has applied, for example the
-// newest OSDMap epoch in an OSD's "status". It runs in the control container,
-// which shares the daemons' run directory, so it also works with OSD images
-// that have no Ceph CLI. The daemon must be running; a stopped or removed
+// newest OSDMap epoch in an OSD's "status". It runs in the control-plane container,
+// which shares the daemons' run directory, so it works whatever the daemon's
+// own image contains. The daemon must be running; a stopped or removed
 // daemon returns an error. A paused daemon accepts the connection but does not
 // answer, so the call waits for ctx or the cluster's startup timeout, which
 // also bounds every call. When the call ends early, AdminSocket stops its CLI
@@ -200,9 +200,9 @@ func (o *OSDContainer) AdminSocket(ctx context.Context, args ...string) ([]byte,
 // The command does not use the Messenger or Cephx: it reaches the daemon
 // through its local socket, so it works while the daemon cannot reach a
 // monitor and reports what the daemon itself has applied, for example the
-// newest OSDMap epoch in an OSD's "status". It runs in the control container,
-// which shares the daemons' run directory, so it also works with OSD images
-// that have no Ceph CLI. The daemon must be running; a stopped or removed
+// newest OSDMap epoch in an OSD's "status". It runs in the control-plane container,
+// which shares the daemons' run directory, so it works whatever the daemon's
+// own image contains. The daemon must be running; a stopped or removed
 // daemon returns an error. A paused daemon accepts the connection but does not
 // answer, so the call waits for ctx or the cluster's startup timeout, which
 // also bounds every call. When the call ends early, AdminSocket stops its CLI
@@ -224,9 +224,9 @@ func (m *MonitorContainer) AdminSocket(ctx context.Context, args ...string) ([]b
 // The command does not use the Messenger or Cephx: it reaches the daemon
 // through its local socket, so it works while the daemon cannot reach a
 // monitor and reports what the daemon itself has applied, for example the
-// newest OSDMap epoch in an OSD's "status". It runs in the control container,
-// which shares the daemons' run directory, so it also works with OSD images
-// that have no Ceph CLI. The daemon must be running; a stopped or removed
+// newest OSDMap epoch in an OSD's "status". It runs in the control-plane container,
+// which shares the daemons' run directory, so it works whatever the daemon's
+// own image contains. The daemon must be running; a stopped or removed
 // daemon returns an error. A paused daemon accepts the connection but does not
 // answer, so the call waits for ctx or the cluster's startup timeout, which
 // also bounds every call. When the call ends early, AdminSocket stops its CLI
