@@ -150,6 +150,24 @@ func TestDebugHooks(t *testing.T) {
 	if err := registry.Reserve("osd.0/debug_osd", second); err != nil {
 		t.Errorf("the slot was not freed: %v", err)
 	}
+	// The registry has a lock of its own: it works while the cluster mutex is
+	// held by a long topology operation.
+	servicehook.Lock(c)
+	locked := make(chan struct{})
+	go func() {
+		defer close(locked)
+		owner := new(int)
+		if err := registry.Reserve("osd.0/debug_ms", owner); err != nil {
+			t.Errorf("reserve under the cluster mutex: %v", err)
+		}
+		registry.Release("osd.0/debug_ms", owner)
+	}()
+	select {
+	case <-locked:
+	case <-time.After(5 * time.Second):
+		t.Error("the registry waited for the cluster mutex")
+	}
+	servicehook.Unlock(c)
 	if overridehook.DebugWindowRegistry(c) == overridehook.DebugWindowRegistry(shared) {
 		t.Error("two clusters share one registry")
 	}

@@ -87,13 +87,13 @@ func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
 			}
 			ended, cancel := context.WithCancel(t.Context())
 			cancel()
-			if err := h.Restore(ended); err != nil {
+			if err := restoreWithin(ended, t, h); err != nil {
 				t.Errorf("Restore of a not-applied window: %v", err)
 			}
 			if h.Receipt().State != ceph.DebugLevelNotApplied || len(h.Receipt().Transitions) != 1 {
 				t.Errorf("Restore changed the receipt: %+v", h.Receipt())
 			}
-			if err := h.Restore(t.Context()); err != nil {
+			if err := restoreWithin(t.Context(), t, h); err != nil {
 				t.Errorf("second Restore: %v", err)
 			}
 		})

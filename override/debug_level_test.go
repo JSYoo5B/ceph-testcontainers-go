@@ -310,6 +310,21 @@ func TestDebugLevelApplyFailuresKeepRestorationState(t *testing.T) {
 	}
 }
 
+// restoreWithin runs Restore and fails the test, instead of hanging it, when
+// the call waits for a lock that a not-applied handle must not take.
+func restoreWithin(ctx context.Context, t *testing.T, h *DebugLevelHandle) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- h.Restore(ctx) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("Restore waited for a lock")
+		return nil
+	}
+}
+
 // wantNotApplied pins the contract of a refused window: a non-nil handle whose
 // receipt says not-applied with the refusal as its reason, no applied or
 // restored value, and a Restore that returns nil without taking the window's
@@ -340,7 +355,7 @@ func wantNotApplied(t *testing.T, h *DebugLevelHandle, err error, fake *debugLev
 	if fake != nil {
 		gets = fake.gets
 	}
-	if restoreErr := h.Restore(ended); restoreErr != nil {
+	if restoreErr := restoreWithin(ended, t, h); restoreErr != nil {
 		t.Fatalf("Restore of a not-applied window: %v", restoreErr)
 	}
 	if fake != nil && (fake.gets != gets || len(fake.setCalls()) != 0) {
