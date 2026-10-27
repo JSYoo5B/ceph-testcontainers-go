@@ -29,9 +29,9 @@ const (
 )
 
 // runVolume is the Docker volume mounted at /var/run/ceph in every MON, MGR,
-// OSD and control container of one cluster. Daemons create their admin
+// OSD and control-plane container of one cluster. Daemons create their admin
 // sockets there, so a container with the Ceph CLI can reach the socket of a
-// daemon whose own image has no CLI, such as an OSD role image.
+// daemon whatever its own image contains.
 type runVolume struct {
 	name      string
 	owner     string

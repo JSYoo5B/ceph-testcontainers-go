@@ -14,7 +14,6 @@ import "errors"
 // they are not a native observation.
 type ClusterFacts struct {
 	AddressFamily             AddressFamily
-	ControlImage              string
 	Images                    ImageSet
 	MessengerMode             MessengerMode
 	NetworkName               string
@@ -46,7 +45,6 @@ func FactsOf(c *Container) (ClusterFacts, error) {
 	}
 	return ClusterFacts{
 		AddressFamily:             c.settings.addressFamily,
-		ControlImage:              c.settings.controlImage,
 		Images:                    c.settings.effectiveImages(),
 		MessengerMode:             c.settings.messengerMode,
 		NetworkName:               c.settings.publicNetworkName(c.network),

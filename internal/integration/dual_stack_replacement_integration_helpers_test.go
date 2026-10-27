@@ -420,7 +420,7 @@ func testDualStackReplacement(t *testing.T) {
 		return dualStackTopology{addresses: addresses, mds: *current, fsEpoch: fsMapEpoch(t, ctx, cluster)}
 	}
 
-	retainedCtr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	retainedCtr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, retainedCtr)
 	if err != nil {
 		t.Fatal(err)
@@ -713,5 +713,5 @@ func testDualStackReplacement(t *testing.T) {
 		t.Fatalf("fresh readback: exit %d: %s", code, output)
 	}
 	t.Logf("DUAL_STACK_REPLACEMENT_RECEIPT image=%s ceph=%s fsid=%s steps=%q fresh_mon_c=%v retained=%q fresh_read=%q listening=%v reused_ip=%v",
-		cluster.ControlImage(), cluster.CephVersion(), fsid, steps, freshMon, rounds, strings.TrimSpace(string(output)), listening, reused)
+		cluster.EssentialImage(), cluster.CephVersion(), fsid, steps, freshMon, rounds, strings.TrimSpace(string(output)), listening, reused)
 }

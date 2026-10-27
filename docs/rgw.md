@@ -209,10 +209,10 @@ example: `rgw.Run(ctx, ceph.DefaultImage)`.
 - The default image is `ceph.DefaultImage`,
   `quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9`
   (Ceph Tentacle 20.2.4).
-- The image passed to `Run` is the control image. It runs the MON and MGR
-  daemons and the Ceph CLIs. Every other role uses the same image unless a role
-  image is selected: `rgw.WithImage` for gateways, `ceph.WithImages` for
-  OSDs.
+- The image passed to `Run` is the essential image. It runs the MON, MGR and OSD
+  daemons and the Ceph CLI. Every other role uses the same image unless a role
+  image is selected: `rgw.WithImage` for gateways, `ceph.WithImages` for the
+  client, cephfs, rbd-aux and rgw roles.
 - A gateway image must contain `radosgw` and `radosgw-admin`, because
   `Gateway.Admin` runs inside the gateway container. Multisite setup clients and
   the `SourceAdmin`/`DestinationAdmin`/`ZoneAdmin` commands use the control
@@ -265,7 +265,7 @@ func WithImage(image string) ceph.Option
 
 Selects the image for every gateway of the cluster, both the ones started by
 `Run` and the ones added later with `Start`. Without it, gateways use the image
-passed to `Run`. Use the same Ceph release as the control image.
+passed to `Run`. Use the same Ceph release as the essential image.
 
 ```golang
 cluster, err := rgw.Run(ctx, "registry.example.com/ceph:20.2.4-all",
@@ -1276,7 +1276,7 @@ user, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: "notifier"})
 accessKey, secretKey, err := user.Credentials()
 endpoint, err := gateway.S3Endpoint(ctx)
 
-// The control image has Python. WithIdleEntrypoint runs under Docker's init,
+// The default image has Python. WithIdleEntrypoint runs under Docker's init,
 // which reaps background processes started with Exec.
 receiver, err := testcontainers.Run(ctx, ceph.DefaultImage,
 	cluster.WithClient(), ceph.WithIdleEntrypoint())
@@ -1835,7 +1835,7 @@ _, err = client.PutObject(ctx, &s3.PutObjectInput{
 ```
 
 To confirm where the data went, list the data pool:
-`control.Exec(ctx, []string{"rados", "-p", "app-cold", "ls"})` with `control` from `cluster.ControlContainer(ctx)`.
+`client.Exec(ctx, []string{"rados", "-p", "app-cold", "ls"})` with `client` from `cluster.ClientContainer(ctx)`.
 RGW object names in the data pool do not always contain the S3 key literally.
 
 With `Tags` on the target, only users with a matching placement tag can create
@@ -1931,7 +1931,7 @@ The fixture never grants the global `admin` flag.
   of 4 (`rgw_thread_pool_size`), a 1-second exit timeout, and for multisite
   gateways a 30-second sync lease (`rgw_sync_lease_period`).
 - `cluster.Ceph(ctx, "df", "--format", "json")` and
-  `control.Exec(ctx, []string{"rados", "-p", pool, "ls"})` with `control` from `cluster.ControlContainer(ctx)`
+  `client.Exec(ctx, []string{"rados", "-p", pool, "ls"})` with `client` from `cluster.ClientContainer(ctx)`
   inspect RGW pools.
 
 ## Limitations and release differences
@@ -1966,7 +1966,7 @@ The fixture never grants the global `admin` flag.
 ### Ceph Squid (19.2.x)
 
 Tentacle 20.2.x is the default. Squid 19.2.5 is supported with the following
-differences; `cluster.CephVersion()` reports the release of the control image.
+differences; `cluster.CephVersion()` reports the release of the essential image.
 
 | Area | Tentacle | Squid |
 | --- | --- | --- |

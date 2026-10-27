@@ -372,7 +372,7 @@ func TestBootstrapRefusalKeepsTheScriptsKind(t *testing.T) {
 	}
 }
 
-func TestKeyTypeSupportFollowsTheControlImage(t *testing.T) {
+func TestKeyTypeSupportFollowsTheFirstMonitorImage(t *testing.T) {
 	for _, tc := range []struct {
 		version string
 		option  bool
@@ -384,14 +384,14 @@ func TestKeyTypeSupportFollowsTheControlImage(t *testing.T) {
 		{"20.2.4", false, nil},
 		{"19.2.5", false, nil},
 	} {
-		c := &Container{cephVersion: tc.version, keyTypeOption: tc.option, controlImageID: "sha256:control"}
+		c := &Container{cephVersion: tc.version, keyTypeOption: tc.option, firstMonitorImageID: "sha256:essential"}
 		args, err := c.generateKeyArgs(CipherAES256K)
 		var unsupported *OperationError
 		switch {
 		case tc.want != nil && (err != nil || strings.Join(args, " ") != strings.Join(tc.want, " ")):
 			t.Fatalf("Ceph %s with the option: %v %v", tc.version, args, err)
 		case tc.want == nil && (!errors.As(err, &unsupported) || unsupported.Kind != ErrUnsupported || unsupported.Version != tc.version ||
-			unsupported.Capability != "ceph-authtool --key-type" || unsupported.Target != "control" || unsupported.Image != "sha256:control"):
+			unsupported.Capability != "ceph-authtool --key-type" || unsupported.Target != "control" || unsupported.Image != "sha256:essential"):
 			t.Fatalf("Ceph %s without the option: %v", tc.version, err)
 		}
 	}

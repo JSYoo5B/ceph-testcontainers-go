@@ -208,8 +208,9 @@ func namedDaemonOptions(c *ceph.Container, port, tlsPort int, config Config) []t
 		return opts
 	}
 	endpoint := net.JoinHostPort(c.PublicAddress(), strconv.Itoa(port))
-	// The control image supplies Python; slim RGW images need only the shell
-	// and core utilities already used by their bootstrap scripts.
+	// The control-plane executor (essential image) supplies Python for the HTTP
+	// probe; the gateway image needs only the shell and core utilities already
+	// used by its bootstrap scripts.
 	opts = append(opts,
 		testcontainers.WithEnv(map[string]string{"CEPH_RGW_ENDPOINT": endpoint}),
 		testcontainers.WithWaitStrategy(hostReadiness(c, port, endpoint)),

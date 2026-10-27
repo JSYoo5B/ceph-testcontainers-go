@@ -105,7 +105,7 @@ class Job:
             "preparation_passed": True, "image_preparation_seconds": 30.0,
             "images": {role: {"reference": "ghcr.io/x/images:official-20.2.4-" + role,
                               "image_id": "sha256:" + str(index) * 64, "repo_digests": [],
-                              "platform": "linux/amd64"} for index, role in enumerate(("control", "osd"))}})
+                              "platform": "linux/amd64"} for index, role in enumerate(("essential", "client"))}})
 
     def passing(self):
         self.phases()
@@ -373,7 +373,7 @@ class NormalizeTest(unittest.TestCase):
         self.assertEqual(row["source"]["requested_head"], "a" * 40)
         self.assertEqual(row["source"]["checkout_commit"], "b" * 40)
         self.assertEqual(row["build"]["native_binary"], "matches_compile")
-        self.assertEqual(row["runtime"]["roles"]["osd"]["image_id"], "sha256:" + "1" * 64)
+        self.assertEqual(row["runtime"]["roles"]["client"]["image_id"], "sha256:" + "1" * 64)
         self.assertEqual(row["comparability"], {"status": "complete", "reasons": []})
         self.assertEqual([(test["name"], test["result"], test["seconds"]) for test in row["tests"]], [
             ("TestRBDRecovery", "PASS", 12.5), ("TestRBDRecovery/primary", "PASS", 10.25),
@@ -551,7 +551,7 @@ class BugCompatibilityProvenanceTest(unittest.TestCase):
     def test_summary_puts_the_selection_beside_the_image_identities(self):
         summary = history.provenance_summary(select_bug(Job(self.root / "job").passing()).row())
         self.assertIn("| Bug compatibility selection | `" + BUG + "` |", summary)
-        self.assertIn("| Image `osd` | sha256:" + "1" * 64 + " |", summary)
+        self.assertIn("| Image `client` | sha256:" + "1" * 64 + " |", summary)
         self.assertIn("| Release | 20.2.4 |", summary)
         ordinary = history.provenance_summary(Job(self.root / "ordinary").passing().row())
         self.assertIn("| Bug compatibility selection | none (ordinary paths) |", ordinary)
@@ -721,7 +721,7 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(config["classification"], "confirmed_pass")
         self.assertIsNone(config["first_failure"])
         self.assertEqual(config["identity"]["checkout_tree"], "c" * 40)
-        self.assertEqual(config["identity"]["images"], {"control": "sha256:" + "0" * 64, "osd": "sha256:" + "1" * 64})
+        self.assertEqual(config["identity"]["images"], {"essential": "sha256:" + "0" * 64, "client": "sha256:" + "1" * 64})
 
     def test_pass_and_fail_in_one_configuration_is_suspected_intermittency_with_the_first_failure_kept(self):
         rows = [self.attempt("passed", "1"), self.attempt("failed", "2"), self.attempt("passed", "3")]
@@ -759,7 +759,7 @@ class ClassifyTest(unittest.TestCase):
         other_tree = self.attempt(checkout_tree="f" * 40, run_id="101")
         job = Job(self.root / "image").passing()
         summary = json.loads((job.images / "summary.json").read_text())
-        summary["images"]["osd"]["image_id"] = "sha256:" + "9" * 64
+        summary["images"]["client"]["image_id"] = "sha256:" + "9" * 64
         write(job.images / "summary.json", summary)
         other_image = job.row(run_id="102")
         incomparable = self.attempt(checkout_commit="", run_id="103")

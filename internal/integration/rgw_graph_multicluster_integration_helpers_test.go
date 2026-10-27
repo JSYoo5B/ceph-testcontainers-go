@@ -20,7 +20,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	controlImage, options := integrationImages(t)
+	essentialImage, options := integrationImages(t)
 	options = append(options, ceph.WithOSDCount(1))
 	if host {
 		options = append(options, ceph.WithHostNetwork())
@@ -32,7 +32,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 		if i == 0 {
 			clusterOptions = append(clusterOptions, ceph.WithMonitorCount(3))
 		}
-		cluster, err := ceph.Run(ctx, controlImage, clusterOptions...)
+		cluster, err := ceph.Run(ctx, essentialImage, clusterOptions...)
 		if cluster != nil {
 			testcontainers.CleanupContainer(t, cluster)
 		}
@@ -57,7 +57,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 	t.Log("source primary MON a removed before multisite construction; surviving quorum b,c and independent CLI remain available")
 	rgwImage := os.Getenv("CEPH_TEST_RGW_IMAGE")
 	if rgwImage == "" {
-		rgwImage = controlImage
+		rgwImage = essentialImage
 	}
 	// Deliberately declare the master last. Run chooses roles by name rather
 	// than assuming that the first caller-provided storage cluster is master.

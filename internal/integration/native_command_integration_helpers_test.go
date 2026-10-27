@@ -584,7 +584,7 @@ func startNative(ctx context.Context, cluster *ceph.Container, target testcontai
 // startNativeHelper starts a caller-owned container attached to the cluster.
 func startNativeHelper(t *testing.T, ctx context.Context, cluster *ceph.Container) testcontainers.Container {
 	t.Helper()
-	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.ControlImage()), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, helper)
 	if err != nil {
 		t.Fatal(err)

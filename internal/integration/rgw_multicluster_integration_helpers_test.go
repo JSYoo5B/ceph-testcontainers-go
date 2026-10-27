@@ -27,13 +27,13 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	source, destination, _, _ := newMultiClusterPair(t, options...)
-	controlImage, _ := integrationImages(t)
+	essentialImage, _ := integrationImages(t)
 	rgwImage := os.Getenv("CEPH_TEST_RGW_IMAGE")
 	if rgwImage == "" {
-		rgwImage = controlImage
+		rgwImage = essentialImage
 	}
 	// The RGW role needs no Python or Ceph CLI. Setup must select the
-	// source and destination control images without an explicit override.
+	// source and destination essential images without an explicit override.
 	multisite, err := multisite.Run(ctx, rgwImage, multisite.Config{
 		Source: source, Destination: destination,
 	})

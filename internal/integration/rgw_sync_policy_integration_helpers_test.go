@@ -24,10 +24,10 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	// selective-sync fixtures; this scenario does not test storage redundancy.
 	opts = append(opts, ceph.WithOSDCount(1))
 	source, destination, _, _ := newMultiClusterPair(t, opts...)
-	controlImage, _ := integrationImages(t)
+	essentialImage, _ := integrationImages(t)
 	image := os.Getenv("CEPH_TEST_RGW_IMAGE")
 	if image == "" {
-		image = controlImage
+		image = essentialImage
 	}
 	link, err := multisite.Run(ctx, image, multisite.Config{Source: source, Destination: destination, Realm: "tc-owned-sync", SourceZone: "source", DestinationZone: "destination"})
 	if link != nil {

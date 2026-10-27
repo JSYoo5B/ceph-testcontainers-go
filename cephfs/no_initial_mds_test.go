@@ -44,7 +44,7 @@ func newColdMDSFixture() (*ceph.Container, *coldMDSFixture) {
 	native := &coldMDSFixture{pools: map[string]int64{}, nextPool: 0, fsid: coldMDSFixtureFSID, auth: `{"auth_dump":[{"entity":"client.admin","key":"never-log-this-auth-key"}]}`, native: map[string]any{"standbys": []any{}, "filesystems": []any{}}}
 	c := poolFixtureCluster(native, 2)
 	(*servicehook.TestState(c).InitialOSDs) = 2
-	*servicehook.TestState(c).MDSImage = "selected-mds-image"
+	*servicehook.TestState(c).CephFSImage = "selected-mds-image"
 	setServices(c, map[string]testcontainers.Container{})
 	return c, native
 }

@@ -37,12 +37,12 @@ port is enough for RADOS, RBD or CephFS.
 - it receives `/etc/ceph/ceph.conf` and `/etc/ceph/ceph.client.admin.keyring`.
 
 It does not install Ceph client software. Use an image that contains the
-clients you need. The cluster's control image always has the `ceph`, `rados`,
-`rbd` and `radosgw-admin` CLIs and the Python `rados`, `rbd` and `cephfs`
-bindings.
+clients you need. The cluster's client role (`Images().Client`) has the `ceph`,
+`rados` and `rbd` CLIs and the Python `rados`, `rbd` and `cephfs` bindings.
+`radosgw-admin` belongs to the rgw role.
 
 ```golang
-client, err := testcontainers.Run(ctx, cluster.ControlImage(),
+client, err := testcontainers.Run(ctx, cluster.Images().Client,
 	cluster.WithClient(),
 	ceph.WithIdleEntrypoint(),
 )
@@ -197,7 +197,7 @@ selection:
 
 MON and RGW ports are reserved in the Docker host's network namespace, which
 may differ from the test process's namespace. A short-lived helper container
-from the control image binds free ports and holds the sockets while the daemon
+from the essential image binds free ports and holds the sockets while the daemon
 container is created, then releases them just before the daemon starts. That
 handover cannot be atomic. If the daemon then fails with an actual
 `EADDRINUSE`, the module retries up to five times; a MON is recreated with a

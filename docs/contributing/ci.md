@@ -168,14 +168,17 @@ file to `READ_DOC_FILES` or `READ_DOC_PREFIXES` in `docs_only.py`.
 
 A head that changes only fragments is documentation-only, but it is still
 validated. `Vet, compile and CI tooling` runs on every head instead of
-skipping the whole job: its checkout and its last step, `Validate
+skipping the whole job: its checkout and its last two steps, `Validate
 release-note fragments` (`.github/scripts/release_fragments.py`, see
-[Release-note fragments](release-fragments.md)), run regardless of
+[Release-note fragments](release-fragments.md)) and `Check the image role
+vocabulary` (`.github/scripts/check_image_vocabulary.py`, which fails when a
+tracked file reintroduces the retired single-broad-role image vocabulary
+outside its list of historical records), run regardless of
 `docs_only`, and vet, lint, tag compilation, the Python tooling tests,
 actionlint and the go-ceph harness test skip themselves on a
 documentation-only head. The job name is unchanged and no required check is
 added. On such a head a green `Vet, compile and CI tooling` means that the
-validator passed; vet and tag compilation did not run, and the skip is by
+validator and the vocabulary check passed; vet and tag compilation did not run, and the skip is by
 policy, not a pass of those steps. Unit tests, Race detector and Compiled tag
 coverage and helpers remain skipped jobs, and the Vulnerability check jobs
 execute with every step skipped.

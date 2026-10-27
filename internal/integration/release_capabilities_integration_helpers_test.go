@@ -76,7 +76,7 @@ var releaseCapabilities = map[capabilityID]releaseCapability{
 }
 
 // capabilitySupported reports whether cluster has capability id, after
-// proving that every daemon runs the release of its control image. A
+// proving that every daemon runs the release of its essential image. A
 // mixed-release cluster, an unparseable version and a release without a row
 // are explicit failures: none is evidence that a release lacks a feature.
 func capabilitySupported(t *testing.T, ctx context.Context, cluster *ceph.Container, id capabilityID) bool {
@@ -88,7 +88,7 @@ func capabilitySupported(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	requireUniformRelease(t, ctx, cluster, id)
 	if row.detect != nil {
 		supported := row.detect(t, ctx, cluster)
-		t.Logf("capability %q detected=%v on Ceph %s (%s)", id, supported, cluster.CephVersion(), cluster.ControlImage())
+		t.Logf("capability %q detected=%v on Ceph %s (%s)", id, supported, cluster.CephVersion(), cluster.EssentialImage())
 		return supported
 	}
 	supported, err := classifyRelease(row, cluster.CephVersion())
@@ -156,7 +156,7 @@ type capabilityKey struct {
 }
 
 // requireUniformRelease fails unless every daemon that "ceph versions"
-// reports runs the release of the control image. A cluster with role images
+// reports runs the release of the essential image. A cluster with role images
 // of several releases has no single expectation.
 func requireUniformRelease(t *testing.T, ctx context.Context, cluster *ceph.Container, id capabilityID) {
 	t.Helper()
@@ -198,7 +198,7 @@ func uniformRelease(data []byte, control string) error {
 			return errors.New("unrecognized daemon release " + strconv.Quote(description))
 		}
 		if match[1] != control {
-			return errors.New("mixed-release cluster: a daemon runs Ceph " + match[1] + " and the control image Ceph " +
+			return errors.New("mixed-release cluster: a daemon runs Ceph " + match[1] + " and the essential image Ceph " +
 				control + "; the contracts have no expectation for mixed role releases")
 		}
 	}

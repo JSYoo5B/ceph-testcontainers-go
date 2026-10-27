@@ -40,7 +40,7 @@ func consumeOSDLaunchFiles(t *testing.T, req testcontainers.GenericContainerRequ
 }
 
 func TestOSDLaunchRecipeRebuildsConsumedFilesAndRequestState(t *testing.T) {
-	c := &Container{settings: options{osdImage: "synthetic-osd-image", startupTimeout: time.Minute},
+	c := &Container{settings: options{essentialImage: "synthetic-osd-image", startupTimeout: time.Minute},
 		config: []byte("[global]\nfsid = synthetic-cluster\n"), keyring: []byte("synthetic-admin-keyring"), owner: "synthetic-owner",
 		network: &testcontainers.DockerNetwork{Name: "synthetic-public"}, clusterNetwork: &testcontainers.DockerNetwork{Name: "synthetic-cluster"},
 		run: &runVolume{name: "synthetic-run"}, osdMemory: &osdMemoryStorage{name: "synthetic-memory"}}
@@ -64,7 +64,7 @@ func TestOSDLaunchRecipeRebuildsConsumedFilesAndRequestState(t *testing.T) {
 	// Change the original inputs and the fully consumed request. A subsequent
 	// request must reflect the captured recipe, not either mutable object.
 	c.config[0], c.keyring[0], key[0] = 'X', 'X', 'X'
-	c.settings.osdImage, c.settings.hostNetwork = "other-image", true
+	c.settings.essentialImage, c.settings.hostNetwork = "other-image", true
 	c.network.Name, c.clusterNetwork.Name = "other-public", "other-cluster"
 	c.run.name, c.osdMemory.name, c.owner = "other-run", "other-memory", "other-owner"
 	first.Env["CEPH_OSD_UUID"], first.Labels[clusterOwnerLabel] = "foreign", "foreign"
@@ -110,7 +110,7 @@ func TestOSDLaunchRecipeHostModeKeepsIndependentModifiers(t *testing.T) {
 
 func preparedOSDLaunch(t *testing.T) (*Container, osdLaunch) {
 	t.Helper()
-	c, _, _ := newInitialOSDCluster(options{osdImage: "synthetic-osd-image"})
+	c, _, _ := newInitialOSDCluster(options{essentialImage: "synthetic-osd-image"})
 	c.config, c.keyring = []byte("[global]\nfsid = synthetic-cluster\n"), []byte("synthetic-admin-keyring")
 	launch, err := c.registerOSD(t.Context(), OSDConfig{Root: "default", Host: "synthetic-host"}, nil)
 	if err != nil {
@@ -127,7 +127,7 @@ func TestOSDLaunchNeverReplaysCreationOrLosesPartialHandle(t *testing.T) {
 			created := &initialOSDDaemon{id: saved.ID}
 			creationErr := errors.New("synthetic uncertain create/readiness failure")
 			calls := 0
-			c.settings.osdImage = "changed-after-preparation"
+			c.settings.essentialImage = "changed-after-preparation"
 			c.osdRunner = func(_ context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 				calls++
 				if image != "synthetic-osd-image" {

@@ -100,7 +100,7 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 					// A plain image in pool scope is intentionally not eligible for
 					// journal enrollment, even while journaling images are mirrored.
 					rbdScopeCreate(t, ctx, sourceClient, pool, tc.sourceNamespace, "plain", false)
-					mirrorImage := source.ControlImage()
+					mirrorImage := source.Images().RBDAux
 					link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", mirrorImage), rbdmirror.Config{
 						Source: source, Destination: destination, Pool: pool, Scope: tc.scope,
 						SourceNamespace: tc.sourceNamespace, DestinationNamespace: tc.destinationNamespace,

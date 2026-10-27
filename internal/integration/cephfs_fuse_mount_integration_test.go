@@ -165,18 +165,19 @@ func admitFuse(t *testing.T, ctx context.Context, ctr testcontainers.Container) 
 }
 
 // fuseClientImage returns the image for the FUSE client containers: the
-// control image when it ships ceph-fuse, otherwise the official image of the
+// cluster's client image when the probed client container m.client (started
+// from the client role) ships ceph-fuse, otherwise the official image of the
 // cluster's release, which does. The official role images keep their scope
 // and do not ship ceph-fuse.
 func fuseClientImage(t *testing.T, ctx context.Context, m *cephFSSingleMDS) (string, *fuseRefusal) {
 	t.Helper()
-	control := m.cluster.ControlImage()
+	clientImage := m.cluster.Images().Client
 	if code, _, err := sessionExec(ctx, m.client, "test", "-x", "/usr/bin/ceph-fuse"); err != nil {
 		t.Fatal(err)
 	} else if code == 0 {
-		return control, nil
+		return clientImage, nil
 	}
-	refused := &fuseRefusal{fuseNeedsBinary, "control image " + control + " has no executable /usr/bin/ceph-fuse"}
+	refused := &fuseRefusal{fuseNeedsBinary, "client image " + clientImage + " has no executable /usr/bin/ceph-fuse"}
 	version := m.cluster.CephVersion()
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(version) {
 		t.Fatalf("%v, and Ceph version %q names no official image", refused, version)

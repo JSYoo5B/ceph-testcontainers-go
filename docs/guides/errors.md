@@ -25,7 +25,7 @@ error.
 | Category | Meaning | Examples |
 | --- | --- | --- |
 | `ceph.ErrInvalidRequest` | Refused before any change: malformed arguments, or an operation that the state of the cluster or of the selected resource forbids | an empty pool name, a terminated cluster, a container that the cluster neither owns nor has attached, an override that is already held, a resource that was replaced outside the fixture |
-| `ceph.ErrUnsupported` | The Ceph of the relevant target lacks the feature | an `aes256k` key on a control image whose `ceph-authtool` has no `--key-type`, RBD namespace mapping to a Squid cluster |
+| `ceph.ErrUnsupported` | The Ceph of the relevant target lacks the feature | an `aes256k` key on an essential image whose `ceph-authtool` has no `--key-type`, RBD namespace mapping to a Squid cluster |
 | `ceph.ErrImageCapability` | The image lacks an executable or runtime, or an optional extension was not selected or does not meet its contract | `RunNativeCommand` on a container without `python3`, a netem helper image without `tc` |
 | `ceph.ErrEnvironmentUnavailable` | The engine, host, kernel or container permissions cannot provide what the operation needs; the image may be valid | host networking disabled on Docker Desktop, a helper without `NET_ADMIN`, a kernel without netem, an engine that cannot be reached |
 | `ceph.ErrNativeFailure` | A native command ran and failed | `ceph osd pool get missing size` exits with `ENOENT` |
@@ -73,7 +73,7 @@ failure:
 | Field | Content |
 | --- | --- |
 | `Op` | The operation, when the cause's text does not already name it |
-| `Target` | The container or cluster, such as `control`, `destination cluster`, `source setup client` or `zone destination` |
+| `Target` | The container or cluster, such as `control` (the control container), `destination cluster`, `source setup client` or `zone destination` |
 | `Version` | The Ceph release observed on `Target`, when it matters |
 | `Image` | The immutable ID of `Target`'s image, when the fixture read it |
 | `Capability` | The missing feature or tool, such as `ceph-authtool --key-type` or `python3` |
@@ -159,7 +159,7 @@ target that the request needs:
   generate `aes256k` keys, whatever its release number says: a patched older
   image with `--key-type` works, and a stripped newer one without it is
   refused. For RBD namespace mapping, `rbd` must list `--remote-namespace`
-  both in each setup client and in each cluster's control image, whose
+  both in each setup client and in each cluster's client toolkit, whose
   release the cluster's daemons run; a backported Squid image maps
   namespaces.
 - **A documented limit of the release** that no tool reveals. Squid RGW
@@ -255,7 +255,7 @@ _, err := cluster.CreateClient(ctx, "modern", ceph.ClientCaps{Mon: "allow r"},
 var unsupported *ceph.OperationError
 switch {
 case errors.As(err, &unsupported) && unsupported.Kind == ceph.ErrUnsupported:
-	// The control image cannot generate the key; nothing was created.
+	// The essential image cannot generate the key; nothing was created.
 	if unsupported.Capability != "ceph-authtool --key-type" {
 		t.Fatalf("unexpected refusal: %v", err)
 	}

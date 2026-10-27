@@ -78,7 +78,7 @@ type Container struct {
 	// ownedContainerDocker replaces the Docker client of Terminate's removal
 	// of labeled containers in tests.
 	ownedContainerDocker func(context.Context) (ownedContainerClient, error)
-	// keyTypeOption records whether the control image's ceph-authtool has
+	// keyTypeOption records whether the first MON image's ceph-authtool has
 	// --key-type; see generateKeyArgs.
 	keyTypeOption         bool
 	settings              options
@@ -128,9 +128,10 @@ type Container struct {
 	// osdVolumeDocker and osdVolumeRunner replace owned-volume allocation in tests.
 	osdVolumeDocker func(context.Context) (osdMemoryVolumeClient, error)
 	osdVolumeRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
-	// controlImageID is the ID of the first MON's image, which errors about
-	// the control image's capabilities name.
-	controlImageID string
+	// firstMonitorImageID is the ID of the image of the first MON container, which
+	// errors about the essential image's capabilities name. It identifies one
+	// container generation, not a role.
+	firstMonitorImageID string
 	// sharing is a sharingMode: whether a SharedCluster shares the cluster
 	// with tenants or lends it to one exclusive lease; see sharedGate.
 	sharing atomic.Int32
@@ -160,7 +161,7 @@ type OSDContainer struct {
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	settings := options{
 		osds: 2, monitors: 1, managers: 1, blockSize: 1 << 30, startupTimeout: 3 * time.Minute,
-		osdImage: img, rgwImage: img, mdsImage: img, controlImage: img, publicAddress: "127.0.0.1",
+		essentialImage: img, publicAddress: "127.0.0.1",
 	}
 	for _, opt := range opts {
 		if opt, ok := opt.(Option); ok {
@@ -244,7 +245,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err := c.run.create(ctx); err != nil {
 		return c, err
 	}
-	mon, err := c.runMonitor(ctx, settings.controlImage, uuid.NewString(), opts...)
+	mon, err := c.runMonitor(ctx, settings.essentialImage, uuid.NewString(), opts...)
 	if mon != nil {
 		c.Container = mon
 	}
@@ -260,7 +261,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if c.keyTypeOption, err = detectKeyTypeOption(ctx, mon); err != nil {
 		return c, err
 	}
-	c.controlImageID = containerImageID(ctx, mon)
+	c.firstMonitorImageID = containerImageID(ctx, mon)
 	if c.keyring, err = readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring"); err != nil {
 		return c, err
 	}
@@ -338,15 +339,15 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 	return nil
 }
 
-// ControlImage returns the essential image
-// in roles. It remains available after termination. The essential image does
-// not promise general toolkit or RGW setup capabilities. Use Images for explicit
-// role selection, including Client and RGW administration runtimes.
-func (c *Container) ControlImage() string {
+// EssentialImage returns the essential image that runs the MONs, MGRs, OSDs and
+// the control-plane CLI executor. It remains available after termination. The
+// essential image does not promise general toolkit, mirror, CephFS or RGW
+// capabilities. Use Images for the client, rbd-aux, cephfs and rgw roles.
+func (c *Container) EssentialImage() string {
 	if c == nil {
 		return ""
 	}
-	return c.settings.controlImage
+	return c.settings.essentialImage
 }
 
 // runContainer is testcontainers.Run returning only a real handle. Run

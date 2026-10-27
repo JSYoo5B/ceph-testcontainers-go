@@ -12,19 +12,19 @@ import (
 )
 
 func TestIntegrationImage(t *testing.T) {
-	const control, osd = "sha256:" + "1111111111111111111111111111111111111111111111111111111111111111", "sha256:" + "2222222222222222222222222222222222222222222222222222222222222222"
+	const essential, client = "sha256:" + "1111111111111111111111111111111111111111111111111111111111111111", "sha256:" + "2222222222222222222222222222222222222222222222222222222222222222"
 	for name, test := range map[string]struct {
 		env      map[string]string
 		variable string
 		want     string
 		err      string
 	}{
-		"essential":         {map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": control}, "CEPH_TEST_ESSENTIAL_IMAGE", control, ""},
-		"missing feature":   {map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": control}, "CEPH_TEST_CEPHFS_IMAGE", "", "CEPH_TEST_CEPHFS_IMAGE is required"},
+		"essential":         {map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": essential}, "CEPH_TEST_ESSENTIAL_IMAGE", essential, ""},
+		"missing feature":   {map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": essential}, "CEPH_TEST_CEPHFS_IMAGE", "", "CEPH_TEST_CEPHFS_IMAGE is required"},
 		"local default":     {map[string]string{}, "CEPH_TEST_CLIENT_IMAGE", ceph.DefaultImage, ""},
-		"aggregate":         {map[string]string{"CEPH_TEST_IMAGE": control}, "CEPH_TEST_CLIENT_IMAGE", control, ""},
-		"selected client":   {map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": control, "CEPH_TEST_CLIENT_IMAGE": osd}, "CEPH_TEST_CLIENT_IMAGE", osd, ""},
-		"undeclared role":   {map[string]string{"SCENARIO_IMAGE_LAYOUT": "roles", "CEPH_TEST_ESSENTIAL_IMAGE": control}, "CEPH_TEST_RGW_IMAGE", "", "CEPH_TEST_RGW_IMAGE is required"},
+		"aggregate":         {map[string]string{"CEPH_TEST_IMAGE": essential}, "CEPH_TEST_CLIENT_IMAGE", essential, ""},
+		"selected client":   {map[string]string{"CEPH_TEST_ESSENTIAL_IMAGE": essential, "CEPH_TEST_CLIENT_IMAGE": client}, "CEPH_TEST_CLIENT_IMAGE", client, ""},
+		"undeclared role":   {map[string]string{"SCENARIO_IMAGE_LAYOUT": "roles", "CEPH_TEST_ESSENTIAL_IMAGE": essential}, "CEPH_TEST_RGW_IMAGE", "", "CEPH_TEST_RGW_IMAGE is required"},
 		"missing essential": {map[string]string{"SCENARIO_IMAGE_LAYOUT": "roles"}, "CEPH_TEST_ESSENTIAL_IMAGE", "", "CEPH_TEST_ESSENTIAL_IMAGE is required"},
 	} {
 		image, err := integrationImage(func(key string) string { return test.env[key] }, test.variable)

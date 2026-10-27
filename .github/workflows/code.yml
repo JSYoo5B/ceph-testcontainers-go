@@ -156,6 +156,11 @@ jobs:
       - name: Validate release-note fragments
         if: ${{ !cancelled() }}
         run: python3 .github/scripts/release_fragments.py
+      # Reads tracked text files, documentation included, so it also runs on a
+      # documentation-only head.
+      - name: Check the image role vocabulary
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/check_image_vocabulary.py
 
   tag-coverage:
     name: Compiled tag coverage and helpers

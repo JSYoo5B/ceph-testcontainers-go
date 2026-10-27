@@ -110,7 +110,7 @@ func (c *Container) ensureOSDMemory(ctx context.Context) error {
 	if err := s.createVolume(ctx); err != nil {
 		return err
 	}
-	keeper, err := testcontainers.Run(ctx, c.settings.controlImage,
+	keeper, err := testcontainers.Run(ctx, c.settings.essentialImage,
 		WithIdleEntrypoint(),
 		testcontainers.WithHostConfigModifier(func(host *container.HostConfig) { host.NetworkMode = "none" }),
 		testcontainers.WithLabels(map[string]string{osdMemoryOwnerLabel: s.owner}),

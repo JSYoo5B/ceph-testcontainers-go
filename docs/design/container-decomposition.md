@@ -75,7 +75,7 @@ takes only what its group uses.
   one that does not), so the move keeps each method's own acquisition. Unifying
   them is a behavior change and a separate decision.
 - **Liveness check.** `poolPolicyReady()` refuses a terminated cluster
-  (`errClusterTerminated`) or one without a control container. `ControlImage`
+  (`errClusterTerminated`) or one without a control container. `EssentialImage`
   documents that it remains available after termination, so facts must not use it.
 - **Command execution.** Observations do not share one execution path. Audit of
   the observation files at `494d3bd`:
@@ -144,22 +144,22 @@ enumerates the exported functions of that group. Entries leave
 
 ### Static cluster facts (10 methods, no I/O)
 
-`AddressFamily`, `CephVersion`, `ClusterNetworkName`, `ControlImage`,
+`AddressFamily`, `CephVersion`, `ClusterNetworkName`, `EssentialImage`,
 `HasSeparateClusterNetwork`, `Images`, `MessengerMode`, `NetworkName`,
 `PublicAddress`, `UsesHostNetwork`.
 
 - **Shape.** An immutable value returned by one package function that takes the
   cluster, for example `ceph.FactsOf(c) ClusterFacts` (name undecided). No
   accessor on `Container`.
-- **Dependencies actually consumed.** `settings` (address family, control image,
+- **Dependencies actually consumed.** `settings` (address family, essential image,
   image set, messenger mode, host network, public address), `network` and
   `clusterNetwork` names, and `cephVersion`. No lock, no command, no Docker call.
 - **Admission.** None: all ten are `sharedOpen`.
 - **State and lock owner.** The value is a copy taken when called. It never aliases
   `Container` state, so a later `Terminate` does not change a value already held.
-- **Cleanup lifetime.** None. `ControlImage` and `Images` must keep working after
+- **Cleanup lifetime.** None. `EssentialImage` and `Images` must keep working after
   termination, as documented today.
-- **Nil handling.** Today `AddressFamily`, `ControlImage`, `Images`, `CephVersion`
+- **Nil handling.** Today `AddressFamily`, `EssentialImage`, `Images`, `CephVersion`
   and `MessengerMode` accept a nil `*Container`; `NetworkName`, `UsesHostNetwork`,
   `PublicAddress`, `ClusterNetworkName` and `HasSeparateClusterNetwork` dereference
   it and would panic (read from the code, not run). The child issue must decide the
@@ -299,7 +299,7 @@ component was not verified for every method that touches it.
 | OSD storage | `osds`, `detachedOSDs`, `osdMemory`, `osdVolume`, `run` |
 | Overrides and faults | `configOverrides`, `flagOverrides`, `moduleOverrides`, `faults`, `debugLevels` |
 | Test seams | `keyRotationDocker`, `ownedContainerDocker`, `osdRunner`, `osdVolumeDocker`, `osdVolumeRunner` |
-| Membership and control | `mu`, `controlMu`, `configMu`, `controlPlane`, `manager`, `monitors`, `managers`, `services`, `extensionsMu`, `extensions`, `config`, `keyring`, `portLeases`, `closed`, `monitorTerminated`, `controlImageID`, `cephVersion`, `owner`, `keyTypeOption`, `settings`, `sharing` |
+| Membership and control | `mu`, `controlMu`, `configMu`, `controlPlane`, `manager`, `monitors`, `managers`, `services`, `extensionsMu`, `extensions`, `config`, `keyring`, `portLeases`, `closed`, `monitorTerminated`, `firstMonitorImageID`, `cephVersion`, `owner`, `keyTypeOption`, `settings`, `sharing` |
 
 Rules for every field move:
 
