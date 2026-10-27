@@ -1,9 +1,10 @@
 # Design: public package for the reversible override operations
 
 Design note for the `ceph.Container` size reduction (Refs #146). It records the
-owner decisions of 2026-10-27 on the override group as decided, and turns the
-items that are still open into one concrete proposal for the owner to approve:
-the package, every exported signature, the "not applied" handle contract, the
+owner decisions of 2026-10-27 on the override group as decided, including the
+owner answers Q1 to Q9 to the first revision of this note (section 12), and
+carries the resulting concrete proposal, whose final spelling of one name is
+still for the owner to approve: the package, every exported signature, the "not applied" handle contract, the
 internal hook seam, the registry and Terminate behavior, the debug-level plan,
 the import graph, and the order of the implementation pull requests. It changes
 no product code, no API catalogue and no caller.
@@ -35,6 +36,14 @@ boundary; override package) are fixed inputs of this note.
 | D3 | `Finalization.TrackDebugLevel` depends on a behavior, not a handle type: a narrow interface whose only behavior is `Receipt() DebugLevelReceipt`. The receipt value types stay in `ceph`. | Section 4.1. |
 | D4 | Absence is an explicit state, not a nil. A call that is refused or never applied returns a non-nil handle that implements the same interface; its receipt states "not applied" with the reason; its `Restore` is a no-op that never reports a restoration. A handle returned with an error for an uncertain outcome stays a real restorable handle, and its receipt distinguishes "never applied" from "applied or uncertain". The implementation must pin, with tests, how the failure manifest records the earlier cases (nil handle, handle with nil state). | Section 4. |
 | D5 | The handles keep their state and their `Restore` or settlement responsibilities. Per-operation shared-cluster admission, context and error behavior, lock ordering, restoration lifetimes and uncertain-outcome ownership are preserved. Do not expose locks, credentials or an unrestricted executor; do not duplicate lifecycle or admission state; do not create a broad abstraction to force the split. | Sections 5 to 7. |
+| D7 | Q1: the not-applied rule applies to all seven kinds and every `override` function returns a non-nil handle. No accessor is added to the six kinds without a receipt; the reason is the returned error. | Sections 4.2 and 4.3. |
+| D8 | Q2: one handle type per kind that carries an extra member (the refused or not-applied state), not a separate type behind an interface. Callers need no type assertion or reflection. | Section 4.2. |
+| D9 | Q3: no `Override` or `Temporary` in function names; functions are verbs `override.Set...` returning `*...Handle`. The blocklist is an addition, so its verb is proposed in this note. | Section 3. Only `AddBlocklist`/`BlocklistHandle` awaits approval. |
+| D10 | Q4: a nil cluster returns a not-applied handle and an `ErrInvalidRequest` error for all seven kinds, with the three deliberate behavior changes. | Section 4.5. |
+| D11 | Q5: typed operations per kind, not the raw CLI hook. | Section 5. |
+| D12 | Q6: the config, OSD flag and MGR module maps join the fault registry. | Section 6.1. |
+| D13 | Q7: the messenger policy and the blocklist both belong to `override`. | Section 3. |
+| D14 | Q8 and Q9 as recommended: the debug-level registry stays a leaf-locked registry in `ceph`; pull request order as in section 9. | Sections 7 and 9. |
 | D6 | Facts (`ceph.FactsOf`, `ceph/cluster_facts.go:47`) and live observations (`ceph.Observe`, `ceph/observer.go:33`) are separate groups with their own decisions. This note does not move them. | Both exist on `main`; nothing here depends on their shape except the read-back reuse noted in section 5.6. |
 
 Two documents record earlier positions that this note leaves in place or
@@ -130,34 +139,40 @@ as the cluster. `Tenant` has no entry point, as today. A cluster lent to one
 exclusive lease is allowed, because `admitShared` allows every policy but
 `sharedRefused` in that mode (`shared_gate.go:260-272`).
 
-Function names drop the `Override` and `Temporary` prefixes because the package
-name carries them. Handle names end in `Change`, matching the owner's example
-(`change, err := override.Config(...)`).
+Function names carry no `Override` or `Temporary` prefix because the package
+name carries it. Settings are verbs, `override.Set...`, and every handle ends in
+`Handle` (owner decision Q3). The blocklist is an addition to the OSDMap, not a
+setting of an existing value, so its verb is `Add`: `override.AddBlocklist`
+returns a `BlocklistHandle`. `Add` says what the call does (it creates one entry
+that did not exist) and what `Restore` undoes (it removes that entry only), which
+`Set` would blur because a set suggests a previous value to put back. The spelling
+`AddBlocklist`/`BlocklistHandle` is a proposal; the owner approves the final
+spelling on this revision.
 
 ### 3.2 Old name to new name
 
 | Today (`ceph`) | New (`override`) | Handle: old to new |
 | --- | --- | --- |
-| `(*Container).OverrideConfig(ctx, ConfigSetting) (*ConfigOverrideHandle, error)` | `Config(ctx, c *ceph.Container, setting ceph.ConfigSetting) (*ConfigChange, error)` | `ceph.ConfigOverrideHandle` to `override.ConfigChange` |
-| `(*Container).OverrideMessengerPolicy(ctx, MessengerPolicy) (*MessengerPolicyOverrideHandle, error)` | `MessengerPolicy(ctx, c *ceph.Container, policy ceph.MessengerPolicy) (*MessengerPolicyChange, error)` | `ceph.MessengerPolicyOverrideHandle` to `override.MessengerPolicyChange` |
-| `(*Container).OverrideOSDFlag(ctx, OSDFlag, bool) (*OSDFlagOverrideHandle, error)` | `OSDFlag(ctx, c *ceph.Container, flag ceph.OSDFlag, enabled bool) (*OSDFlagChange, error)` | `ceph.OSDFlagOverrideHandle` to `override.OSDFlagChange` |
-| `(*Container).OverrideMGRModule(ctx, string, bool) (*MGRModuleOverrideHandle, error)` | `MGRModule(ctx, c *ceph.Container, name string, enabled bool) (*MGRModuleChange, error)` | `ceph.MGRModuleOverrideHandle` to `override.MGRModuleChange` |
-| `(*Container).TemporaryBlocklist(ctx, string, time.Duration) (*BlocklistOverride, error)` | `Blocklist(ctx, c *ceph.Container, address string, duration time.Duration) (*BlocklistChange, error)` | `ceph.BlocklistOverride` to `override.BlocklistChange` |
-| `(*Container).OverrideFullRatios(ctx, FullRatios) (*FullRatiosOverride, error)` | `FullRatios(ctx, c *ceph.Container, ratios ceph.FullRatios) (*FullRatiosChange, error)` | `ceph.FullRatiosOverride` to `override.FullRatiosChange` |
-| `(*Container).OverrideDebugLevel(ctx, DebugLevelSetting) (*DebugLevelOverrideHandle, error)` | `DebugLevel(ctx, c *ceph.Container, setting ceph.DebugLevelSetting) (*DebugLevelChange, error)` | `ceph.DebugLevelOverrideHandle` to `override.DebugLevelChange` |
+| `(*Container).OverrideConfig(ctx, ConfigSetting) (*ConfigOverrideHandle, error)` | `SetConfig(ctx, c *ceph.Container, setting ceph.ConfigSetting) (*ConfigHandle, error)` | `ceph.ConfigOverrideHandle` to `override.ConfigHandle` |
+| `(*Container).OverrideMessengerPolicy(ctx, MessengerPolicy) (*MessengerPolicyOverrideHandle, error)` | `SetMessengerPolicy(ctx, c *ceph.Container, policy ceph.MessengerPolicy) (*MessengerPolicyHandle, error)` | `ceph.MessengerPolicyOverrideHandle` to `override.MessengerPolicyHandle` |
+| `(*Container).OverrideOSDFlag(ctx, OSDFlag, bool) (*OSDFlagOverrideHandle, error)` | `SetOSDFlag(ctx, c *ceph.Container, flag ceph.OSDFlag, enabled bool) (*OSDFlagHandle, error)` | `ceph.OSDFlagOverrideHandle` to `override.OSDFlagHandle` |
+| `(*Container).OverrideMGRModule(ctx, string, bool) (*MGRModuleOverrideHandle, error)` | `SetMGRModule(ctx, c *ceph.Container, name string, enabled bool) (*MGRModuleHandle, error)` | `ceph.MGRModuleOverrideHandle` to `override.MGRModuleHandle` |
+| `(*Container).TemporaryBlocklist(ctx, string, time.Duration) (*BlocklistOverride, error)` | `AddBlocklist(ctx, c *ceph.Container, address string, duration time.Duration) (*BlocklistHandle, error)` | `ceph.BlocklistOverride` to `override.BlocklistHandle` |
+| `(*Container).OverrideFullRatios(ctx, FullRatios) (*FullRatiosOverride, error)` | `SetFullRatios(ctx, c *ceph.Container, ratios ceph.FullRatios) (*FullRatiosHandle, error)` | `ceph.FullRatiosOverride` to `override.FullRatiosHandle` |
+| `(*Container).OverrideDebugLevel(ctx, DebugLevelSetting) (*DebugLevelOverrideHandle, error)` | `SetDebugLevel(ctx, c *ceph.Container, setting ceph.DebugLevelSetting) (*DebugLevelHandle, error)` | `ceph.DebugLevelOverrideHandle` to `override.DebugLevelHandle` |
 
 Handle method sets after the move (everything else on the old handles is
 unexported):
 
 | Handle | Methods |
 | --- | --- |
-| `ConfigChange` | `Restore(ctx) error`, `String() string`, `GoString() string` (value receivers, as today) |
-| `MessengerPolicyChange` | `Restore(ctx) error` |
-| `OSDFlagChange` | `Restore(ctx) error` |
-| `MGRModuleChange` | `Restore(ctx) error` |
-| `BlocklistChange` | `Restore(ctx) error`, `Address() string` |
-| `FullRatiosChange` | `Restore(ctx) error` |
-| `DebugLevelChange` | `Restore(ctx) error`, `Receipt() ceph.DebugLevelReceipt`, `String() string`, `GoString() string` |
+| `ConfigHandle` | `Restore(ctx) error`, `String() string`, `GoString() string` (value receivers, as today) |
+| `MessengerPolicyHandle` | `Restore(ctx) error` |
+| `OSDFlagHandle` | `Restore(ctx) error` |
+| `MGRModuleHandle` | `Restore(ctx) error` |
+| `BlocklistHandle` | `Restore(ctx) error`, `Address() string` |
+| `FullRatiosHandle` | `Restore(ctx) error` |
+| `DebugLevelHandle` | `Restore(ctx) error`, `Receipt() ceph.DebugLevelReceipt`, `String() string`, `GoString() string` |
 
 The shape of each handle is the one it has today: an `owner *ceph.Container`, the
 exact request, and a pointer to a state struct that copies share. The state
@@ -224,7 +239,7 @@ with `maxFinalizationDebugError`).
 The proposal returns the same handle type for every outcome and records the
 outcome in the handle's state. A separate "not applied" type would need each entry
 point to return an interface instead of its concrete pointer, which would hide
-`BlocklistChange.Address` and force one new interface per kind. A handle
+`BlocklistHandle.Address` and force one new interface per kind. A handle
 that carries `refused error` in its state costs one field and keeps the
 concrete signatures in section 3.2. `Restore` on such a handle returns nil
 before it takes any lock, leaves the state and receipt unchanged, never marks
@@ -233,15 +248,20 @@ refusal's `Restore` was rejected: `defer h.Restore(ctx)` and
 `Finalization.Cleanup` steps would then report a failure for every refusal, which
 reintroduces the nil check that D4 removes.
 
-This reads D4's "implements the same interface" as "is the same handle type, so
-it satisfies the same interface". If the owner intended a distinct type, see
-question Q2.
+This is decision D8. One point is worth stating because two answers meet here:
+D8 says callers read the state the handle carries, while D7 adds no accessor to
+the six kinds without a receipt. Those six therefore carry the state internally
+(it makes `Restore` a no-op) and a caller learns the outcome from the returned
+error, whose class `ErrInvalidRequest` or `ErrSharedCluster` promises that nothing
+changed (`errors.go:15-32`). Only `DebugLevelHandle` exposes it, through
+`Receipt().State`. If the owner wants the six to expose it too, that is a new
+decision, not a consequence of D7.
 
 ### 4.3 Which kinds get it
 
 The proposal applies D4 to all seven kinds, so that no `override` function returns
 a nil handle. For the six kinds without a receipt the reason is the returned error,
-and the handle exposes no new accessor (question Q1 asks whether it should).
+and the handle exposes no new accessor (decision D7).
 
 ### 4.4 Every refusal, failure and uncertain path
 
@@ -300,7 +320,7 @@ not-applied handle, and returns an error classified `ErrInvalidRequest` whose
 `Op` is `override.<Function>`. This matches `Observe(nil)`
 (`observer.go:33-37`, `invalidRequest("observe: the cluster is nil")`) and the
 facts decision (error plus zero value). It changes three things on purpose and
-is an owner approval item (Q4):
+is decision D10:
 
 - config, full ratios and debug level return an unclassified plain error today;
   they become `ErrInvalidRequest`.
@@ -343,7 +363,7 @@ otherwise, exactly as in the `faulthook` doc comment
 
 | Operation | Wraps | Lock | Note |
 | --- | --- | --- | --- |
-| `Admit(c, op)` | new `admitOverride` over `sharedOverridePolicies`, modeled on `admitFault` (`shared_gate.go:194-200`) | none | An operation without a policy is refused even on a cluster of its own. Names are `override.Config` and so on. |
+| `Admit(c, op)` | new `admitOverride` over `sharedOverridePolicies`, modeled on `admitFault` (`shared_gate.go:194-200`) | none | An operation without a policy is refused even on a cluster of its own. Names are `override.SetConfig` and so on. |
 | `WithTopology(ctx, c, fn)` | `lockTopology(ctx)` (`topology.go:380`) | takes it | for the paths that wait on the context today |
 | `WithTopologyNoContext(c, fn)` | `c.mu.Lock()` | takes it | for the paths that do not, including every `Restore` except full ratios and the window |
 | `Ready(c)` | `poolPolicyReady` (`pool_policy.go:181`) | held | returns the identical `errClusterTerminated` |
@@ -419,6 +439,13 @@ are the only adapters to touch.
 
 ### 6.1 The three maps join the fault registry
 
+The fault registry is the cluster's internal ledger of the changes it currently
+holds (`faultRegistry` in `ceph/fault_registry.go`). A change is entered with
+`Reserve`, becomes held with `Settle`, is struck out with `Release`, and `Tracks`
+asks whether a given entry is still the live one; the ledger is guarded by the
+cluster mutex. For the tracked kinds, which are all the override kinds,
+`Terminate` does not undo anything: it only ends with the cluster.
+
 `configOverrides`, `flagOverrides` and `moduleOverrides` (`ceph.go:46-48`) have
 the handle types as element types, so under option A they must go. The proposal is
 to replace them by three new kinds in the existing registry,
@@ -484,7 +511,7 @@ window logic is already generic over a target: `openDebugLevel` takes a
 
 | Moves to `override` | Stays in `ceph` |
 | --- | --- |
-| `DebugLevelChange`, `debugLevelState`, `record`, `current`, `finish`, `sameGeneration`, `settle`, `confirmTarget`, `setRestored` (`debug_level.go:285-384,571-575`) | `DebugLevelSetting`, `DebugLevelState` (plus `DebugLevelNotApplied`), `DebugLevelReceipt` (plus `Reason`), `DebugLevelTransition`, `DebugLevelReceipter` |
+| `DebugLevelHandle`, `debugLevelState`, `record`, `current`, `finish`, `sameGeneration`, `settle`, `confirmTarget`, `setRestored` (`debug_level.go:285-384,571-575`) | `DebugLevelSetting`, `DebugLevelState` (plus `DebugLevelNotApplied`), `DebugLevelReceipt` (plus `Reason`), `DebugLevelTransition`, `DebugLevelReceipter` |
 | `openDebugLevel` and `Restore` (`:386-569`) | `osdDebugTarget` and its `generation`, `generationLocked`, `get`, `set` (`:577-667`): they need `lockTopology`, `c.osds`, `c.closed`, `c.run`, `controlContainerContext`, `nativeCmds.admit/finish/forget`, `adminSocketCommand` and `supervised` |
 | `normalizeDebugLevel`, `normalizeDebugLevelSetting`, `sameDebugLevel`, `checkDebugLevelGeneration` (`:189-224,342-356`), all pure and used only here (R) | `decodeDebugLevel` (`:670`), `parseAdminSocketDaemon` (`admin_socket.go:175`), `daemonIdentity`, `ownsDaemon` |
 | the entry point `DebugLevel` | the ownership check of `OverrideDebugLevel` (`:171-182`), exposed as `OpenDebugTarget` |
@@ -576,7 +603,7 @@ deleted. It contained: the `hookreg.Override` slot; the three new registry kinds
 the config operations; `ceph.DebugLevelReceipter`, `DebugLevelNotApplied`,
 `Reason` and the changed `TrackDebugLevel`/`debugSnapshot`; and an `override`
 package with `Config` ported completely, the other six functions and handle types
-as signatures only, and a minimal `DebugLevelChange` with `Receipt` and the
+as signatures only, and a minimal `DebugLevelHandle` with `Receipt` and the
 not-applied constructor. Results:
 
 - `go build ./...` succeeded and `go vet -tags=all` was clean for `override`,
@@ -616,12 +643,12 @@ risky first:
 | --- | --- | --- | --- | --- |
 | I-1 | `DebugLevelReceipter`, `DebugLevelNotApplied`, `Reason`, `TrackDebugLevel(DebugLevelReceipter)`, manifest `reason`. `ceph` only; no move. | The manifest of every existing case is byte-identical; a nil or zero-value handle still records `Present: false`. | New tests pin: nil interface, typed nil, zero-value handle, a zero receipt from a foreign receipter, a not-applied receipt (`Present: true`, reason redacted and bounded), a real window; existing finalization tests unchanged. Catalogue regenerated and approved; fragment (kind `feature`). | None. Docker-free. |
 | I-2 | Three registry kinds replace the three maps; `deletePool` uses the registry. Handles stay in `ceph` and hold a token. No public change. | Overlap texts, `Restore` refusal "not tracked", `Pool.Remove` refusal text, Terminate leaves them alone. | The existing `config_test.go`, `osd_policy_test.go`, `mgr_modules_test.go`, `pool_removal_test.go` pass unchanged; new registry tests for the three kinds (phase tracked, no reservation left after each early return, stale token). | None. |
-| I-3 | Package birth: `hookreg.Override`, `overridehook` (common operations), `sharedOverridePolicies`, `override.Blocklist`/`BlocklistChange`, the `go/parser` coverage test, the import test, new catalogue directory, move record, upgrade guide, fragment (`api-break`). | Blocklist reservation, expiry check, retry after a lost reply, `Restore` refused after `Terminate`. | Tests of `fencing_test.go` that need the handle move to `override` against `servicehook.TestCluster`; negative controls for each. | 4 Go files call it; the planner selects their batches, and the native result of the exact head is the only native claim. |
-| I-4 | `override.FullRatios`. | Session captured once; FSID check; deadline before the lock; ordered steps; tracked before the first step. | `full_ratios_test.go` override tests move; observation tests stay. | 7 files. |
-| I-5 | `override.MGRModule`. | Name check, protect before disable, always-on rules, readiness not claimed. | `mgr_modules_test.go` override tests move. | 4 files. |
-| I-6 | `override.OSDFlag`. | Supported-flag list, overlap, restore refusing outside changes. | `osd_policy_test.go` override tests move. | 32 files; mechanical rewrite. |
-| I-7 | `override.Config` and `override.MessengerPolicy` together (the latter calls the former). | Messenger-fixed refusals, normalized readback, lost-reply convergence, restore order of the policy children. | `config_test.go`, `messenger_test.go` guard tests and `messenger_policy_test.go` refusal test move or stay as classified in section 10. | up to 46 files (43 and 3 callers, overlap not counted); mechanical rewrite. |
-| I-8 | `override.DebugLevel` and the window. | Generation fence, settle before restore, registry leaf lock, native fence, after-`Terminate` result. | the 16 window tests move with their fake target; the 4 `osdDebugTarget` tests stay. | 4 files, one of them in `internal/debugoverhead`. |
+| I-3 | Package birth: `hookreg.Override`, `overridehook` (common operations), `sharedOverridePolicies`, `override.AddBlocklist`/`BlocklistHandle`, the `go/parser` coverage test, the import test, new catalogue directory, move record, upgrade guide, fragment (`api-break`). | Blocklist reservation, expiry check, retry after a lost reply, `Restore` refused after `Terminate`. | Tests of `fencing_test.go` that need the handle move to `override` against `servicehook.TestCluster`; negative controls for each. | 4 Go files call it; the planner selects their batches, and the native result of the exact head is the only native claim. |
+| I-4 | `override.SetFullRatios`. | Session captured once; FSID check; deadline before the lock; ordered steps; tracked before the first step. | `full_ratios_test.go` override tests move; observation tests stay. | 7 files. |
+| I-5 | `override.SetMGRModule`. | Name check, protect before disable, always-on rules, readiness not claimed. | `mgr_modules_test.go` override tests move. | 4 files. |
+| I-6 | `override.SetOSDFlag`. | Supported-flag list, overlap, restore refusing outside changes. | `osd_policy_test.go` override tests move. | 32 files; mechanical rewrite. |
+| I-7 | `override.SetConfig` and `override.SetMessengerPolicy` together (the latter calls the former). | Messenger-fixed refusals, normalized readback, lost-reply convergence, restore order of the policy children. | `config_test.go`, `messenger_test.go` guard tests and `messenger_policy_test.go` refusal test move or stay as classified in section 10. | up to 46 files (43 and 3 callers, overlap not counted); mechanical rewrite. |
+| I-8 | `override.SetDebugLevel` and the window. | Generation fence, settle before restore, registry leaf lock, native fence, after-`Terminate` result. | the 16 window tests move with their fake target; the 4 `osdDebugTarget` tests stay. | 4 files, one of them in `internal/debugoverhead`. |
 | I-9 | Closure: `fault-package.md` D3 amendment, `container-decomposition.md` counts, final `Container` measurement, remove the placeholder text here. | | | |
 
 I-1 and I-2 are independent and can proceed in parallel. I-5 to I-7 need I-2. A
@@ -647,7 +674,7 @@ implementation pull request decides each file (D2).
 | `full_ratios_test.go` (9) | the override tests | the observation test and the strict JSON test |
 | `messenger_policy_test.go`, `messenger_test.go` | the refusal and bootstrap-guard tests that call `OverrideConfig`/`OverrideMessengerPolicy` | policy settings, mode lists, client container config |
 | `debug_level_test.go` (21) | the window tests and normalization (about 16) | decode, `TestOverrideDebugLevelRefusesBeforeCommands` (ownership refusal) and the 4 `osdDebugTarget` tests |
-| `finalization_debug_test.go` (3) | none | stays; rewritten against a fake `DebugLevelReceipter`, because a test in `package ceph` cannot build a real `DebugLevelChange` |
+| `finalization_debug_test.go` (3) | none | stays; rewritten against a fake `DebugLevelReceipter`, because a test in `package ceph` cannot build a real `DebugLevelHandle` |
 | `fault_registry_family_test.go` (1) | the full ratios and blocklist subtests | the registry kind tests |
 | `fault_registry_test.go`, `shared_gate_test.go` | none | stay; gain the three kinds and lose the seven method entries |
 | `pool_removal_test.go` | none | `TestRemovePoolRefusesActivePermissionOverride` stays and holds the key through the registry directly, since it cannot call `override` |
@@ -655,7 +682,7 @@ implementation pull request decides each file (D2).
 Native tests in `internal/integration` and `internal/debugoverhead` only change
 their call syntax and imports. One consequence of the cycle rule: no test in
 `package ceph` can exercise a real `Finalization` with a real
-`override.DebugLevelChange`; that pairing is covered by the native debug-level
+`override.DebugLevelHandle`; that pairing is covered by the native debug-level
 scenario only (U, to be confirmed against the native test source in I-8).
 
 ## 11. Corrections to the previous version of this note (with evidence)
@@ -674,23 +701,32 @@ version.
 | Facts and observations are future groups | Both exist on `main` (`ceph/cluster_facts.go:47`, `ceph/observer.go:33`); the observer's tenant form validates per query. |
 
 No earlier owner decision is contradicted by this proposal. Two places read a
-decision narrowly and are raised as questions (Q1, Q2) instead of being assumed.
+decision narrowly and were raised as questions (Q1, Q2); both are now answered.
 
-## 12. Questions for the owner
+## 12. Owner answers (decided) and what remains open
 
-Recommendation first in each row.
+The owner answered the nine questions of the first revision on 2026-10-27 (issue
+comment "Owner answers to the questions in the override package proposal").
 
-| # | Question | Recommendation | Alternative |
-| --- | --- | --- | --- |
-| Q1 | Does D4 apply to the six kinds that have no receipt, and should their handles expose the reason? | Apply to all seven, return non-nil always, expose no accessor (the reason is the returned error). | Add `NotApplied() error` to each of the six handle types; still no shared interface (fault decision D5). |
-| Q2 | Is "implements the same interface" satisfied by one handle type per kind that carries a refused state? | Yes (section 4.2). | A distinct not-applied type per kind, with an interface return type for every entry point. |
-| Q3 | Package name and every name in section 3.2, including `Change` and the dropped prefixes. | `override`, `Config`, `MessengerPolicy`, `OSDFlag`, `MGRModule`, `Blocklist`, `FullRatios`, `DebugLevel`, handles `...Change`. | Keep `Override` and `Temporary` in the function names; or use `...Handle` for handles. |
-| Q4 | Nil cluster behavior (section 4.5), including the three deliberate changes. | Adopt. | Keep today's behavior per kind and fix only the panics. |
-| Q5 | Hook seam: typed operations per kind (31 methods) or the raw `CLI` hook. | Typed. | Raw `CLI`: 1 method, but an unrestricted executor and duplicated decoders. |
-| Q6 | Do the three map kinds join the fault registry? | Yes (section 6.1). | Three private maps of opaque records. |
-| Q7 | Where do `OverrideMessengerPolicy` and `TemporaryBlocklist` belong? | In `override`: the policy is built from config overrides and shares the handle contract; the blocklist is a reversible cluster-wide change with `Restore`, `sharedExclusive` and the same admission. | Blocklist in `fault` (the kind name already exists in `faulthook`, but decision D3 of the fault note keeps it in `ceph` and `fault` holds injected failures); policy kept with the messenger option. |
-| Q8 | Debug level: registry stays a leaf-locked registry in `ceph` (section 7). | Yes. | Move windows into the fault registry (changes lock waiting). |
-| Q9 | Order of the pull requests in section 9. | As listed. | Config and OSD flag first (largest caller sets) to find rewrite problems early. |
+| # | Question | Decided |
+| --- | --- | --- |
+| Q1 | Does D4 apply to the six kinds without a receipt? | Yes, all seven; every function returns a non-nil handle; no accessor on the six (D7). |
+| Q2 | Is one handle type per kind with a refused state acceptable? | Yes (D8). |
+| Q3 | Names. | Verbs `Set...`, handles `...Handle`, no `Override`/`Temporary` (D9). |
+| Q4 | Nil cluster behavior. | Adopted (D10). |
+| Q5 | Typed operations or raw `CLI`. | Typed operations (D11). |
+| Q6 | Do the three maps join the fault registry? | Yes (D12). |
+| Q7 | Where do the messenger policy and the blocklist belong? | Both in `override` (D13). |
+| Q8, Q9 | Debug-level registry; pull request order. | As recommended (D14). |
+
+Still open for the owner:
+
+- The spelling of the blocklist entry point and handle, proposed as
+  `override.AddBlocklist` returning `*BlocklistHandle` (section 3.1 gives the
+  reason for `Add`). Alternatives are `override.Blocklist`/`BlocklistHandle` or
+  `override.BlockClient`.
+- Approval of the final names in section 3.2 as a whole, since the answer asked for
+  approval on this revision.
 
 ## 13. Not established
 
