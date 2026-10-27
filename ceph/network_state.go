@@ -20,8 +20,13 @@ import (
 //     lock, which FactsOf relies on after termination.
 //     TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup enforces it.
 //   - publicRemoved and clusterRemoved are written only by removeBridges and
-//     read only by it, so they are guarded by Container.mu, which terminate
-//     holds from lockTopology until it returns.
+//     read only by it, so they are guarded by Container.mu. terminate takes
+//     mu with lockTopology and holds it until it returns, with one exception:
+//     undoFaults releases it around each network-shaping restore, while it
+//     runs before any bridge is removed. mu is therefore not held
+//     continuously through teardown. It is held again when removeBridges
+//     runs, which is the only place the flags are touched, and removeBridges
+//     does not release it.
 type networkState struct {
 	public, cluster *testcontainers.DockerNetwork
 	publicSubnet    string
