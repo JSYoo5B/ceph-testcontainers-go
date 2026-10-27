@@ -181,7 +181,7 @@ func (f *fakeShared) terminate(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeShared) cluster() *Container { return nil }
+func (f *fakeShared) ops() clusterOps { return nil }
 
 // put writes an object as a client of the namespace would.
 func (f *fakeShared) put(namespace, name string) {
@@ -849,7 +849,7 @@ func TestSharedFirstLeaseCanBeCanceledWhileTheClusterStarts(t *testing.T) {
 func TestSharedRunResultKeepsAPartialCluster(t *testing.T) {
 	partial := &Container{}
 	backend, err := sharedRunResult(partial, errors.New("bootstrap failed"))
-	if err == nil || backend == nil || backend.cluster() != partial {
+	if err == nil || backend == nil || backend.ops().raw() != partial {
 		t.Fatalf("backend=%v err=%v, want the partial cluster with the error", backend, err)
 	}
 	if backend, err := sharedRunResult(nil, errors.New("create failed")); backend != nil || err == nil {
