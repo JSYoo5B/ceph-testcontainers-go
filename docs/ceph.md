@@ -2449,6 +2449,9 @@ func (o *Observer) QuorumStatus(ctx context.Context) (ceph.QuorumStatus, error)
 func (o *Observer) MonitorBootstrapAddresses(ctx context.Context) (string, error)
 func (o *Observer) HealthDetails(ctx context.Context) (ceph.HealthSnapshot, error)
 func (o *Observer) FullRatios(ctx context.Context) (ceph.FullRatioSnapshot, error)
+func (o *Observer) PGInconsistencies(ctx context.Context, pgid ceph.PGID) ([]ceph.InconsistentObject, error)
+func (o *Observer) ObjectWatchers(ctx context.Context, pool, namespace, object string) ([]ceph.ObjectWatcher, error)
+func (o *Observer) ManagerMetrics(ctx context.Context) (ceph.ManagerMetrics, error)
 ```
 
 Each query reads the cluster when it is called; constructing an `Observer`
@@ -2469,9 +2472,15 @@ container for each read. `MonitorBootstrapAddresses`, `HealthDetails` and
 `FullRatios` wait for the topology lock under `ctx`, refuse a terminated cluster
 before running a command, and keep the control handle and original-FSID checks
 of their `Container` methods. `QuorumStatus` has no liveness check, so on a
-terminated cluster it fails with the error of the command path. The remaining
-observations (`PGInconsistencies`, `ObjectWatchers`, `ManagerMetrics`) stay on
-`Container` and are not yet available through an `Observer`.
+terminated cluster it fails with the error of the command path.
+`PGInconsistencies` and `ObjectWatchers` validate their arguments, wait for the
+topology lock (`PGInconsistencies` under `ctx`, `ObjectWatchers` without a
+context), refuse a terminated cluster and then run `rados` in the client
+container that the client image role selects, as their `Container` methods do.
+`ManagerMetrics` reads `ManagerServices` first and then runs the bounded
+supervised scrape in the control container. A refused or failed collection is an
+error and is never returned as an empty result. All sixteen observations are now
+available through an `Observer`, and the `Container` methods stay.
 
 #### OSDs
 

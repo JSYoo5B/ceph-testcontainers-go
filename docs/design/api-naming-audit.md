@@ -227,3 +227,11 @@ retained. No operation verb, handle or undo name changed and no alias remains.
 The reviewed mapping is in
 [the upgrade guide](../guides/upgrading-cephfs-mirror-package.md). The receipts
 of `cephfs` and `cephfs/mirror` were approved separately for this move only.
+
+## 227-image-role-overhaul
+
+The role overhaul deliberately removes the former broad image accessor and adds
+`Container.EssentialImage`. The package catalogue also removes the obsolete
+`ClusterFacts` image member while retaining the three Observer queries merged
+on main. The removal/addition record is historical API accounting only; it
+provides no alias, compatibility mapping or retained runtime behavior.

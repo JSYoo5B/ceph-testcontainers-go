@@ -22,9 +22,16 @@ about. These are the same four classes the changelog is for:
 - a meaningful change to the supported scope.
 
 Internal refactors, synthetic fixtures and research progress need no release
-note. No check can tell yet whether a change needs a fragment, so a missing
-fragment is not an error. A reviewer may ask for one. To record that a change
-was considered and needs no note, add a fragment of kind `none` with a reason.
+note. Apart from the API catalogue case below, no check can tell whether a
+change needs a fragment, so a missing fragment is not an error. A reviewer may
+ask for one. To record that a change was considered and needs no note, add a
+fragment of kind `none` with a reason.
+
+One case is checked: a pull request that changes a package's API catalogue
+under `docs/design/api-naming/` must add or change a fragment (kind `none`
+with a reason is enough). `go run ./internal/tools/apinaming moves -base
+origin/main` enforces this together with the move-record accounting described
+in [Testing](testing.md#package-layout-and-the-export-inventory), and CI runs it on pull requests only.
 
 ## Format
 

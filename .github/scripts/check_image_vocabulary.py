@@ -29,6 +29,7 @@ PATTERNS = (
 # Historical records and the files that must name the retired spellings to
 # check them. A path ending in "/" is a prefix.
 ALLOWED = {
+    "docs/design/api-naming/moves/227-image-role-overhaul.json": "historical API removal/addition accounting",
     "CHANGELOG.md": "published release history",
     "docs/guides/upgrading-to-v0.2.md": "migration guide of a published release",
     "docs/guides/upgrading-to-v0.3.md": "migration guide of a published release",

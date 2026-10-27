@@ -52,7 +52,12 @@ Public API names are catalogued per package in
 inventory, count or hash file: none exists. After a public API change run
 `go run ./internal/tools/apinaming regenerate <package>` and then, as a
 separate deliberate step, `go run ./internal/tools/apinaming approve <package>`.
-Regeneration never approves a changed API. See
+Regeneration never approves a changed API. A move of API between packages, or
+a deliberate removal or addition of a declaration row, needs a record under
+`docs/design/api-naming/moves/`, and any catalogue change needs a release-note
+fragment under `docs/changes/` (kind `none` with a reason is accepted). Check
+with `go run ./internal/tools/apinaming moves -base origin/main`; `SKIPPED`
+means no base was available and is not a pass. See
 [Testing](docs/contributing/testing.md).
 
 ## Package-split rewrites

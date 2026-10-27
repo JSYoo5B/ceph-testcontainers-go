@@ -1,9 +1,9 @@
 {
   "schema": "ceph-api-naming-review/v2",
   "package": "ceph",
-  "declarations_sha256": "2591e8ece2cf2d2ff7a07e2940017ad266b5f1c90fae1cb2f259b7a1e2795be1",
+  "declarations_sha256": "9b4a9a63707db2dee949815da1cd527f620d3acfae03152e4e90412251a41023",
   "members_sha256": "87600ad6402dd0fec19f718cb7e8f25e7cf53dd9588eeeb714d3dabffa36d610",
-  "declarations": 400,
+  "declarations": 403,
   "members": 435,
   "review": "api-naming-audit.md",
   "page": "docs/ceph.md"

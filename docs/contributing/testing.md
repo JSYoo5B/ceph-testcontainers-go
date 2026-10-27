@@ -887,6 +887,67 @@ refuses a stale catalogue or a pending rename proposal. A change in one package
 makes only that package's receipt stale, so pull requests on different packages
 touch disjoint files. `go run ./internal/tools/apinaming aggregate` prints the
 per-package counts and totals on demand; they are not committed. CI runs
-neither command, only the tests. When a rebase conflicts in these files, take
+neither command, only the tests and the move check below. When a rebase conflicts in these files, take
 the base's version of the package's files, rerun `regenerate` and then
 `approve` for that package, and keep the review note in the receipt.
+
+A change that moves public API from one package to another (or deletes or
+introduces a declaration row) also adds a move record,
+`docs/design/api-naming/moves/<change-id>.json`, in the same pull request. The
+file name is `<change-id>.json` with the lowercase `a-z0-9-` identifier of the
+change; `declarations`, `members` and `review` are reserved.
+
+```json
+{
+  "schema": "ceph-api-move/v1",
+  "change": "156-example-move",
+  "review": "api-naming-audit.md",
+  "moves": [{"from": "cephfs.MirrorConfig", "to": "cephfs/mirror.Config"}],
+  "removed": ["pkg.DroppedName"],
+  "added": ["pkg.NewName"]
+}
+```
+
+`moves` pairs a declaration row (its catalogue `current` value) with the row
+that replaces it in another package. `removed` and `added` list rows that were
+deleted or introduced on purpose. `review` is a note below `docs/design`; it
+must mention the change identifier, and the receipts of every package the
+record names must carry it as their `review`. Run the check:
+
+```sh
+go run ./internal/tools/apinaming moves -base origin/main
+```
+
+It prints `OK`, `FAILED` with one line per problem, or `SKIPPED`. Without
+`-base`, or when the base is not in the clone, or when HEAD has no merge base
+with it, the comparison cannot run: the result is `SKIPPED` with the reason,
+never `OK`, and only the record checks have run (`-require-base` makes it a
+failure). The base is resolved to its merge base with `HEAD` and compared
+with the working tree. Every row removed from a package catalogue since then
+must be the `from` of a move or listed in `removed`, and every added row the
+`to` of a move or listed in `added`. It fails on:
+
+- an unaccounted removal or addition, and a record entry that names a row that
+  was not removed (or still exists), was not in the base, already existed, or is
+  missing from the head catalogue;
+- a partial move: members of a moved type that did not follow it, a different
+  member count, a different declaration kind, or a move inside one package;
+- a name claimed by two records or twice in one record, a record with an
+  unknown field, trailing data, a wrong `change`, or a review note that does
+  not mention it;
+- a changed package whose receipt equals the base's, does not bind the head
+  catalogue bytes, is missing, or names another note than the record;
+- a changed catalogue with no new or changed release-note fragment under
+  `docs/changes` (a fragment of kind `none` with a reason is enough);
+- a record or fragment path that is not exactly the expected name (a trailing
+  newline, a symbolic link) and a base revision that is not a plain revision
+  name.
+
+Only records that are new or changed since the base are compared with the
+catalogue difference. A merged record is history and is not judged against
+later API changes. Member rows inside a type that stays in its package are
+covered by the receipt review, not by this check. In CI the check runs on pull
+requests only, in `Vet, compile and CI tooling`; see
+[CI](ci.md#documentation-only-changes). Its tests build temporary Git
+repositories and need no Docker:
+`go test ./internal/apiinventory/moves/`.

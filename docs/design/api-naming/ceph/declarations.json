@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 400,
+  "count": 403,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -2026,6 +2026,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Observer.ManagerMetrics",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ManagerMetrics, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.ManagerMetrics",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Observer.ManagerServices",
       "kind": "method",
       "signature": "func(ctx context.Context) (map[string]string, error)",
@@ -2063,6 +2071,22 @@
       "signature": "func(ctx context.Context) ([]OSDState, error)",
       "receiver": "*Observer",
       "proposed": "ceph.Observer.OSDStates",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.ObjectWatchers",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.ObjectWatchers",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.PGInconsistencies",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pgid PGID) ([]InconsistentObject, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.PGInconsistencies",
       "decision": "baseline"
     },
     {
