@@ -10,7 +10,7 @@ predates `ceph.FactsOf` and the `Observer`; it said no snapshot type existed.
 The inventory, boundaries and comparison are redone against the revision below.
 
 Source citations use `path:line` at commit
-`ad2ac0a355c515cd82bb2860015c1f480b853366` (the merge of #231 into `main`).
+`146dd9b8bfcd6b2419e1d982ebbd59264b138d62` (the head of this pull request before the correction of the lock and archive-phase statements; its `ceph/` sources are those of `main` at that point).
 Everything is read from source. Nothing was run, and no claim here is native
 evidence.
 
@@ -31,11 +31,11 @@ closed flag is not evidence that owned resources are gone.
 
 | Data | Where | State after a successful `Terminate` |
 | --- | --- | --- |
-| Static facts (address family, image set, messenger mode, network names, host network, public address, Ceph version) | `ClusterFacts` and `FactsOf` (`ceph/cluster_facts.go:15`, `:43`). It takes no lock, runs no command, makes no Docker call and never reads `closed`. | Retained. Works on a terminated non-nil cluster; a nil cluster returns the zero value and an `ErrInvalidRequest` error. |
-| Tracked container handles, network IDs, redaction inputs | Read by `diagnosticsSnapshot` under `mu`, `controlMu`, `clientPublishMu` and `configMu` (`ceph/diagnostics.go:214`) | Mostly gone. `terminate` deletes each service, OSD, manager and monitor entry once its removal succeeds (`ceph/ceph.go:1042-1107`). The primary monitor handle and the network records stay, so a later report names objects that no longer exist. |
+| Static facts (address family, image set, messenger mode, network names, host network, public address, Ceph version) | `ClusterFacts` and `FactsOf` (`ceph/cluster_facts.go:15`, `:42`). It takes no lock, runs no command, makes no Docker call and never reads `closed`. | Retained. Works on a terminated non-nil cluster; a nil cluster returns the zero value and an `ErrInvalidRequest` error. |
+| Tracked container handles, network IDs, redaction inputs | Read by `diagnosticsSnapshot` under `mu`, `controlMu`, `clientPublishMu` and `configMu` (`ceph/diagnostics.go:214`) | Mostly gone. `terminate` deletes each service, OSD, manager and monitor entry once its removal succeeds (`ceph/ceph.go:1043-1108`). The primary monitor handle and the network records stay, so a later report names objects that no longer exist. |
 | Container state, network addresses, log tails, fixed Ceph queries | `CollectDiagnostics` returning `DiagnosticsReport` (`ceph/diagnostics.go:55-85`) | Not retained anywhere. A call after termination runs, but its Docker inspects of removed objects fail per artifact, so the report is incomplete by construction (read from code, not run). |
 | Crash metadata | `CollectCrashMetadata` returning `CrashMetadataReport` (`ceph/crash_metadata.go:74`, `:202`) | Destroyed with the container; its own documentation says a removed container takes its records along. |
-| Failure archive | `Finalization.archive` writes `diagnostics.json`, `crash-metadata.json` and `manifest.json` (`ceph/finalization.go:346`) | Written before cleanups and `Terminate`, and only when `Archive` is set and the test failed. A passing run collects nothing (`ceph/finalization.go:28-33`). |
+| Failure archive | `Finalization.archive` writes `diagnostics.json`, `crash-metadata.json` and `manifest.json` (`ceph/finalization.go:346`) | Written at most once per finalization, and only when `Archive` is set and the test has failed. Two phases exist. `before-cleanup` runs after the checks and before the registered cleanups (`ceph/finalization.go:239-241`). `after-cleanup` runs after the cleanups and before `Terminate`, when the first failure appeared in a cleanup and no archive was attempted yet (`ceph/finalization.go:244-262`). The second sees only resources still present after the cleanups. A failure first reported by `Terminate` creates no archive, so no pre-teardown evidence is made for it. A passing run collects nothing (`ceph/finalization.go:28-33`). |
 | Termination outcome | `finalizationManifest.Termination` is a name, two times and an error string (`ceph/finalization.go:265`, `:607`) | Recorded as one joined string. Which resource family failed is not structured. |
 | Cleanup record of one override | `DebugLevelReceipt` with state, generation and transitions (`ceph/debug_level.go:62`, `:103`) | Per-window only. It is the closest existing per-resource cleanup record. |
 | Shared-cluster outcome | `sharedInstance.poisoned` (a reason string), `SharedStats` counters (`ceph/shared.go:136`, `:267`), release problems logged through `t.Logf` (`ceph/shared.go:565-600`) | Nothing structured survives. The instance is deleted from the registry on a successful termination (`ceph/shared.go:491-530`). |
@@ -65,17 +65,23 @@ Phases of a cluster's life, and what can be captured in each:
 | Phase | Static facts | Runtime and native evidence | Owner of the trigger |
 | --- | --- | --- | --- |
 | Running | Yes | Yes (`CollectDiagnostics`, `CollectCrashMetadata`, `Observer` queries) | The caller, or `Finalization` |
-| During `Terminate` | Yes, lock-free | `terminate` holds `mu` from its first lock until it returns (`ceph/ceph.go:1019-1022`) and `diagnosticsSnapshot` waits for `mu` with `TryLock` polling until its context ends (`ceph/diagnostics.go:198`, `:218`). A concurrent collection therefore stalls or times out, it does not observe a half-removed cluster. | Nobody |
+| During `Terminate` | Yes, lock-free | No transactional boundary. `terminate` takes `mu` first and sets `closed` (`ceph/ceph.go:1020-1024`), but `undoFaults` releases `mu` around each shaping-fault restore (`ceph/fault_registry.go:199-203`), so a collector can enter during that window. `diagnosticsSnapshot` takes `mu` only to copy handles and network IDs and releases it at `ceph/diagnostics.go:269`; `CollectDiagnostics` starts its Docker reads afterward (`ceph/diagnostics.go:101-109`). A collection can therefore copy handles before removal and read them after they are removed, or run in the fault-undo window, or wait for `mu` (`ceph/diagnostics.go:198`, `:219`) while teardown holds it. Which of these happens depends on timing, so a report taken concurrently with teardown is not a consistent view. | Nobody |
 | After a successful `Terminate` | Yes | None survives; Docker objects are removed | Nobody |
-| After a failed `Terminate` | Yes | Whatever failed to be removed may still exist, and `closed` is already true. A retry is possible because `monitorTerminated`, `networkRemoved` and `clusterNetworkRemoved` are set only after their own removal (`ceph/ceph.go:1104`, `:1150-1163`). | The caller |
+| After a failed `Terminate` | Yes | Whatever failed to be removed may still exist, and `closed` is already true. A retry is possible because `monitorTerminated`, `networkRemoved` and `clusterNetworkRemoved` are set only after their own removal (`ceph/ceph.go:1105`, `:1151-1164`). | The caller |
 
 Consequences that no representation changes:
 
-- Runtime and native evidence has to be collected before `terminate` takes
-  `mu`. A diagnostic object created afterward cannot recover it. A separate
+- Runtime and native evidence has to be collected and finished before the caller
+  initiates teardown. This is caller ordering, not something the locks enforce
+  (see the row above). A diagnostic object created afterward cannot recover it. A separate
   object alone guarantees nothing about whether collection happened.
-- `Finalization` is the one existing pre-teardown trigger: it archives before
-  its cleanups and before `Terminate` (`ceph/finalization.go:217-262`). It does so
+- `Finalization` is the one existing pre-teardown trigger. It archives before
+  its cleanups when a check or the test body has already failed, and after the
+  cleanups, still before `Terminate`, when a cleanup produced the first failure
+  (`ceph/finalization.go:217-262`). The second archive can only see what the
+  cleanups left. A failure first reported by `Terminate` does not create
+  pre-teardown evidence; an existing archive only receives the late termination
+  outcome in its manifest (`ceph/finalization.go:265-282`). It archives
   only for a failed test with `Archive` set, and only for clusters registered
   through `TerminateOnCleanup`.
 - A plain `Terminate` call has no capture step. Adding one inside `terminate`
@@ -105,7 +111,7 @@ This applies to every option. Names are placeholders.
    and none is truncated. It does not mean the cluster is healthy or that cleanup
    succeeded.
 5. Two facts that today share one flag stay separate:
-   - object usability (the handle's `closed`, set at `ceph/ceph.go:1023` before any
+   - object usability (the handle's `closed`, set at `ceph/ceph.go:1024` before any
      resource is removed);
    - owned-resource cleanup, per resource family, as `removed`, `failed` (with
      error text), `not-attempted` or `unknown`.
@@ -117,7 +123,7 @@ This applies to every option. Names are placeholders.
    invocations, port leases, services, OSDs, OSD memory and volume helpers,
    managers, monitors, the primary monitor container, the control plane, the
    feature client, the label sweep, the run directory, the cluster network and
-   the public network (`ceph/ceph.go:1030-1165`). Which of these are exposed is a
+   the public network (`ceph/ceph.go:1031-1166`). Which of these are exposed is a
    contract decision.
 7. A cleanup outcome is derived from a recorder inside `terminate`, not from
    leftover state. Leftover maps and flags cannot tell "never attempted" from
@@ -232,8 +238,9 @@ func RecordOf(c *Container, opts ...RecordOption) (ClusterRecord, error)
 ```
 
 - `terminate` writes an unexported teardown record through a small recorder
-  (separate mutex or atomically published copy, so a reader never waits behind
-  `mu`, which `terminate` holds for the whole teardown).
+  (separate mutex or atomically published copy, so a reader does not need `mu`,
+  which `terminate` holds for most of the teardown and releases only around
+  shaping-fault restores).
 - `RecordOf` copies facts, copies the teardown record, and attaches caller
   supplied native evidence as in A. Native evidence stays caller or
   `Finalization` owned until the capture feature is decided.
@@ -357,7 +364,7 @@ a released tenant. C costs one unexported field and an instrumented `terminate`.
 - The record is independent: mutating its slices, maps and nested values changes
   neither the cluster nor another record, and it stays readable after
   `Terminate`.
-- A reader never blocks behind a running `Terminate`, and sees no torn record.
+- A reader of the record does not wait for `mu` or for a running `Terminate`, and sees no torn record.
 - A nil cluster returns an error and the zero value; a terminated non-nil cluster
   returns the recorded facts without claiming that resources exist.
 - Every teardown path writes its record: success, a failed removal, a retry after
