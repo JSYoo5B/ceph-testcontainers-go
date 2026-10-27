@@ -228,6 +228,9 @@ var sharedHandlePolicies = map[string]sharedPolicy{
 	"ClientConfig.ReplaceKey":      sharedTenant,
 	"ClientConfig.Revoke":          sharedTenant,
 	"ClientConfig.Delete":          sharedTenant,
+	"Observer.Status":              sharedOpen,
+	"Observer.ManagerStatus":       sharedOpen,
+	"Observer.DaemonAddresses":     sharedOpen,
 }
 
 // admitHandle refuses the handle operation op while a SharedCluster shares c,
