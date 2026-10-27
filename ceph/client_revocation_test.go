@@ -252,7 +252,7 @@ func TestRevokeClientEndsWithDeleteClient(t *testing.T) {
 			if err := client.Delete(t.Context()); err != nil {
 				t.Fatalf("a repeated DeleteClient returned %v", err)
 			}
-			if c.clientRevocations["client.app"] != nil {
+			if c.authRecords.revocation("client.app") != nil {
 				t.Fatal("the name stays reserved")
 			}
 		})
@@ -291,7 +291,7 @@ func TestClientRevocationCopiesShareState(t *testing.T) {
 	}
 	w.requireClient(t, original.key)
 	requireUsableClient(t, c, client)
-	if c.clientRevocations["client.app"] != nil || revocation.Restore(t.Context()) != nil {
+	if c.authRecords.revocation("client.app") != nil || revocation.Restore(t.Context()) != nil {
 		t.Fatal("the original handle does not see the restoration of its copy")
 	}
 	again, err := client.Revoke(t.Context())
