@@ -1,0 +1,238 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "fault",
+  "count": 35,
+  "entries": [
+    {
+      "current": "fault.ApplyLinkProfile",
+      "kind": "function",
+      "signature": "func(ctx context.Context, ctr testcontainers.Container, network string, delay NetworkProfile) (*NetworkProfileLease, error)",
+      "proposed": "fault.ApplyLinkProfile",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ApplyNetworkProfile",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkProfile) (*NetworkProfileLease, error)",
+      "proposed": "fault.ApplyNetworkProfile",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.BitPerSecond",
+      "kind": "const",
+      "proposed": "fault.BitPerSecond",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.DefaultNetworkQueueLimit",
+      "kind": "const",
+      "proposed": "fault.DefaultNetworkQueueLimit",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ErrNetemImageUnsupported",
+      "kind": "var",
+      "proposed": "fault.ErrNetemImageUnsupported",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ErrNetemKernelUnsupported",
+      "kind": "var",
+      "proposed": "fault.ErrNetemKernelUnsupported",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ErrNetemPermissionDenied",
+      "kind": "var",
+      "proposed": "fault.ErrNetemPermissionDenied",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.GigabitPerSecond",
+      "kind": "const",
+      "proposed": "fault.GigabitPerSecond",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.InjectObjectDataError",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, pool, object string, osdID int) error",
+      "proposed": "fault.InjectObjectDataError",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.InterruptLink",
+      "kind": "function",
+      "signature": "func(ctx context.Context, ctr testcontainers.Container, name string) (*NetworkInterruption, error)",
+      "proposed": "fault.InterruptLink",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.InterruptNetwork",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, plane ceph.NetworkPlane) (link *NetworkInterruption, err error)",
+      "proposed": "fault.InterruptNetwork",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.KilobitPerSecond",
+      "kind": "const",
+      "proposed": "fault.KilobitPerSecond",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.MaxNetworkDelay",
+      "kind": "const",
+      "proposed": "fault.MaxNetworkDelay",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.MaxNetworkPeers",
+      "kind": "const",
+      "proposed": "fault.MaxNetworkPeers",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.MaxNetworkQueueLimit",
+      "kind": "const",
+      "proposed": "fault.MaxNetworkQueueLimit",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.MaxNetworkRate",
+      "kind": "const",
+      "proposed": "fault.MaxNetworkRate",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.MegabitPerSecond",
+      "kind": "const",
+      "proposed": "fault.MegabitPerSecond",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.MinNetworkRate",
+      "kind": "const",
+      "proposed": "fault.MinNetworkRate",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetemHelperImage",
+      "kind": "const",
+      "proposed": "fault.NetemHelperImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkInterruption",
+      "kind": "type",
+      "proposed": "fault.NetworkInterruption",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkInterruption.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*NetworkInterruption",
+      "proposed": "fault.NetworkInterruption.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkPacketFault",
+      "kind": "type",
+      "proposed": "fault.NetworkPacketFault",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkPacketFault.IsZero",
+      "kind": "method",
+      "signature": "func() bool",
+      "receiver": "NetworkPacketFault",
+      "proposed": "fault.NetworkPacketFault.IsZero",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkPacketFault.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "NetworkPacketFault",
+      "proposed": "fault.NetworkPacketFault.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkPeer",
+      "kind": "type",
+      "proposed": "fault.NetworkPeer",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkProfile",
+      "kind": "type",
+      "proposed": "fault.NetworkProfile",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkProfileLease",
+      "kind": "type",
+      "proposed": "fault.NetworkProfileLease",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkProfileLease.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*NetworkProfileLease",
+      "proposed": "fault.NetworkProfileLease.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkProfileLease.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (NetworkProfileStatus, error)",
+      "receiver": "*NetworkProfileLease",
+      "proposed": "fault.NetworkProfileLease.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkProfileStatus",
+      "kind": "type",
+      "proposed": "fault.NetworkProfileStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkRate",
+      "kind": "type",
+      "proposed": "fault.NetworkRate",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkRate.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "NetworkRate",
+      "proposed": "fault.NetworkRate.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.Pause",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, ctr testcontainers.Container) (*PauseLease, error)",
+      "proposed": "fault.Pause",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.PauseLease",
+      "kind": "type",
+      "proposed": "fault.PauseLease",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.PauseLease.Resume",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*PauseLease",
+      "proposed": "fault.PauseLease.Resume",
+      "decision": "baseline"
+    }
+  ]
+}

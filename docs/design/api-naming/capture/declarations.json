@@ -1,0 +1,233 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "capture",
+  "count": 36,
+  "entries": [
+    {
+      "current": "capture.DefaultReadyTimeout",
+      "kind": "const",
+      "proposed": "capture.DefaultReadyTimeout",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.DefaultStopGrace",
+      "kind": "const",
+      "proposed": "capture.DefaultStopGrace",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.EndFailed",
+      "kind": "const",
+      "proposed": "capture.EndFailed",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.EndKilled",
+      "kind": "const",
+      "proposed": "capture.EndKilled",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.EndPacketLimit",
+      "kind": "const",
+      "proposed": "capture.EndPacketLimit",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.EndPremature",
+      "kind": "const",
+      "proposed": "capture.EndPremature",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.EndReason",
+      "kind": "type",
+      "proposed": "capture.EndReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.EndStopped",
+      "kind": "const",
+      "proposed": "capture.EndStopped",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.EndUnknown",
+      "kind": "const",
+      "proposed": "capture.EndUnknown",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.ErrFailed",
+      "kind": "var",
+      "proposed": "capture.ErrFailed",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.ErrImageUnsupported",
+      "kind": "var",
+      "proposed": "capture.ErrImageUnsupported",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.ErrPermissionDenied",
+      "kind": "var",
+      "proposed": "capture.ErrPermissionDenied",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.FileLimitExceeded",
+      "kind": "const",
+      "proposed": "capture.FileLimitExceeded",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.FileMalformed",
+      "kind": "const",
+      "proposed": "capture.FileMalformed",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.FileReport",
+      "kind": "type",
+      "proposed": "capture.FileReport",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.FileStatus",
+      "kind": "type",
+      "proposed": "capture.FileStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.FileUnsupported",
+      "kind": "const",
+      "proposed": "capture.FileUnsupported",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.FileValid",
+      "kind": "const",
+      "proposed": "capture.FileValid",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.MaxFileBytes",
+      "kind": "const",
+      "proposed": "capture.MaxFileBytes",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.MaxFilterBytes",
+      "kind": "const",
+      "proposed": "capture.MaxFilterBytes",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.MaxSnapLen",
+      "kind": "const",
+      "proposed": "capture.MaxSnapLen",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.MaxTimeout",
+      "kind": "const",
+      "proposed": "capture.MaxTimeout",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.Report",
+      "kind": "type",
+      "proposed": "capture.Report",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.Request",
+      "kind": "type",
+      "proposed": "capture.Request",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.Session",
+      "kind": "type",
+      "proposed": "capture.Session",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.Session.CaptureFile",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (io.ReadCloser, int64, string, error)",
+      "receiver": "*Session",
+      "proposed": "capture.Session.CaptureFile",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.Session.Settle",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (any, error)",
+      "receiver": "*Session",
+      "proposed": "capture.Session.Settle",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.Session.SettlementAllowance",
+      "kind": "method",
+      "signature": "func() time.Duration",
+      "receiver": "*Session",
+      "proposed": "capture.Session.SettlementAllowance",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.Session.Stop",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (Report, error)",
+      "receiver": "*Session",
+      "proposed": "capture.Session.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.Start",
+      "kind": "function",
+      "signature": "func(ctx context.Context, target testcontainers.Container, req Request) (*Session, error)",
+      "proposed": "capture.Start",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.Statistics",
+      "kind": "type",
+      "proposed": "capture.Statistics",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.TargetChanged",
+      "kind": "const",
+      "proposed": "capture.TargetChanged",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.TargetGone",
+      "kind": "const",
+      "proposed": "capture.TargetGone",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.TargetState",
+      "kind": "type",
+      "proposed": "capture.TargetState",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.TargetUnchanged",
+      "kind": "const",
+      "proposed": "capture.TargetUnchanged",
+      "decision": "baseline"
+    },
+    {
+      "current": "capture.TargetUnknown",
+      "kind": "const",
+      "proposed": "capture.TargetUnknown",
+      "decision": "baseline"
+    }
+  ]
+}

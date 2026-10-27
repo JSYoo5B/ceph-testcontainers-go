@@ -53,7 +53,7 @@ files, `rbd/tenant.go` 5, `cephfs/tenant.go` 4, `rgw/tenant.go` 4,
 `internal/servicehook/servicehook.go` 6. Documentation that names them:
 `docs/ceph.md`, `docs/rbd.md`, `docs/cephfs.md`, `docs/rgw.md`,
 `docs/design/api-naming.md`, `CHANGELOG.md`, plus the generated
-`docs/design/api-naming-inventory.json` entries for the 35 symbols.
+declaration entries for the 35 symbols in the `docs/design/api-naming/<package>/` catalogues.
 
 ## What the harness consumes from `Container` internals
 
@@ -248,8 +248,10 @@ Callers to migrate: `internal/integration` (30 type references in 5 test
 files), the adapters, `internal/servicehook`, `docs/ceph.md`, `docs/rbd.md`,
 `docs/cephfs.md`, `docs/rgw.md`, `docs/design/api-naming.md`, `CHANGELOG.md`,
 the package examples and `TestMain` snippets, and the v0.4 upgrade mappings.
-The API-naming inventory and `package-split.json` are regenerated with
-`-update-api-naming`, deliberately and in the move's own change.
+The package-scoped API-naming catalogues are regenerated with
+`-update-api-naming` and approved with the separate approve command (see
+`api-naming.md`), and `package-split.json` is updated, deliberately and in the
+move's own change.
 
 ## Preserved behavior to carry
 

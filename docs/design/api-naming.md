@@ -11,8 +11,8 @@ The [package boundary](fault-package.md) remains independent of naming.
 
 ## Source inventory and limits
 
-[api-naming-inventory.json](api-naming-inventory.json) is a source-derived
-catalogue of package-level exports and declared methods on exported receiver
+The `declarations.json` file of each public package in [api-naming/](api-naming/)
+is a source-derived catalogue of package-level exports and declared methods on exported receiver
 types in the public packages. Every row names
 the current identifier, kind, proposed identifier and decision. Functions and
 methods include their **current** Go signature, including returned handles; methods also record their pointer/value receiver.
@@ -36,8 +36,8 @@ and the runtime debug level window of #50, are in the
 The catalogue includes functions, methods on exported receiver types, types,
 constants and variables. It scans all non-test Go source files, including
 build-tag alternatives, and refuses conflicting duplicate declarations.
-The separate [member catalogue](api-naming-members.json) now records 1084
-exported field/nested-record/embedding entries across 179 types. It also scans
+The separate per-package `members.json` catalogues record the
+exported field/nested-record/embedding entries. They also scan
 declared interface methods; this source has no exported declared interfaces.
 Promoted dependency methods are not duplicated: the audit separately records
 embedding boundaries and retains the inherited contracts. It does not rename
@@ -47,9 +47,9 @@ compilation of the resulting method sets and affected callers.
 `baseline` means the current name was recorded, **not** that it has received a
 complete naming review. The [final audit](api-naming-audit.md) records the
 retention decisions for this exact declaration and member surface, including
-query/provisioning, options, values and embeddings. Its separately edited
-[receipt](api-naming-review.json) binds both catalogues; regenerating them cannot
-silently extend that review to future names. `proposal` means a candidate source
+query/provisioning, options, values and embeddings. Each package's separately issued
+receipt (`api-naming/<package>/review.json`) binds that package's two catalogues;
+regenerating them cannot silently extend that review to future names. `proposal` means a candidate source
 rename, not a compatibility alias or approval to change behavior.
 
 The existing API reference inventory test now also checks this catalogue
@@ -58,14 +58,38 @@ proposals that collide with each other or a retained declared name. Regenerate
 only after inspecting a source/proposal change:
 
 ```sh
-go test ./internal/apiinventory -run '^TestPublicNaming(Inventory|Members)$' -update-api-naming
+go run ./internal/tools/apinaming regenerate rgw/multisite
+# equivalent test flag:
+go test ./internal/apiinventory -run '^TestPublicNaming(Inventory|Members)$' -update-api-naming -api-naming-packages=rgw/multisite
 ```
 
+Regeneration rewrites only the `declarations.json` and `members.json` of the
+named packages (all packages when none is named) and never reads or writes a
+receipt. Approval is a separate, explicit command that writes only the named
+packages' `review.json`, and only for a catalogue that matches the source:
+
+```sh
+go run ./internal/tools/apinaming approve rgw/multisite
+```
+
+It refuses a stale catalogue, a pending `proposal` row, and a missing review
+note or reference page. The receipt names the review note
+(`api-naming-audit.md` by default, `-review` selects another) and the API
+reference page of the package (`docs/<package>.md`, with `/` written as `-`).
+The other commands are `check` (what the tests verify) and `aggregate` (the
+per-package counts and totals, computed on demand and never committed).
+
 Normal `go test ./internal/apiinventory` verifies without modifying files. The
-proposal map is in `internal/apiinventory/naming_test.go`; rationale lives here.
+proposal map is `catalogue.Proposals` in
+`internal/apiinventory/catalogue/proposals.go`; rationale lives here.
 Updating the map/catalogues does not implement any runtime rename. A changed
-surface also requires reviewing the names and explicitly updating the receipt;
-the regeneration flag never edits that receipt.
+surface also requires reviewing the names and explicitly approving it; the
+regeneration command never edits a receipt.
+
+The public package list is discovered: every directory outside `internal`,
+`testdata`, `vendor` and hidden directories with a non-test Go source is a
+public package and needs a catalogue directory with all three files. A catalogue
+directory without a package fails as well.
 
 ## Naming convention
 

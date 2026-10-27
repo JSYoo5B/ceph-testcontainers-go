@@ -146,11 +146,16 @@ as `docs/changes/sub/x.md` and a top-level `changes/` directory). A changed
 path whose old or new Git mode is not an ordinary file (a symbolic link, an
 executable or a submodule) also runs them, because the path name alone cannot
 show that `docs/changes/x.md` is a link to a code file:
-- `docs/ceph.md`, `docs/fault.md`, `docs/rbd.md`, `docs/cephfs.md`,
-  `docs/rgw.md` and `docs/capture.md`: the API inventory test requires every
-  exported name on its package page;
-- `docs/design/api-naming*`: the API naming audit, inventory, member and
-  review receipts, which the same package's tests compare with the code;
+- The API reference page of every public package (`docs/ceph.md`,
+  `docs/fault.md`, `docs/rbd.md`, `docs/rbd-mirror.md`, `docs/cephfs.md`,
+  `docs/rgw.md`, `docs/rgw-multisite.md`, `docs/capture.md`, and the page a new
+  package's receipt names): the API inventory test requires every exported name
+  on its package page;
+- `docs/design/api-naming*`: the API naming audit and review notes, and the
+  package-scoped `docs/design/api-naming/<package>/declarations.json`,
+  `members.json` and `review.json` catalogues and receipts, which the
+  `internal/apiinventory` tests compare with the code. The catalogue JSON files
+  are nested non-Markdown files, so they are never on the allowlist;
 - `docs/guides/messenger-client-fixtures.md`: cross-checked against the
   messenger coverage manifest by a test in `internal/integration`;
 - `docs/guides/bug-compatibility-tags.md` and `.json`: the tag registry and

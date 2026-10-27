@@ -1,0 +1,1126 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "cephfs",
+  "count": 155,
+  "entries": [
+    {
+      "current": "cephfs.CloneConfig",
+      "kind": "type",
+      "proposed": "cephfs.CloneConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Config",
+      "kind": "type",
+      "proposed": "cephfs.Config",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Container",
+      "kind": "type",
+      "proposed": "cephfs.Container",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Container.Filesystems",
+      "kind": "method",
+      "signature": "func() []*Filesystem",
+      "receiver": "*Container",
+      "proposed": "cephfs.Container.Filesystems",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.DataPool",
+      "kind": "type",
+      "proposed": "cephfs.DataPool",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.DataPoolState",
+      "kind": "type",
+      "proposed": "cephfs.DataPoolState",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem",
+      "kind": "type",
+      "proposed": "cephfs.Filesystem",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.AddDataPool",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string) (*DataPool, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.AddDataPool",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.AddSnapshotSchedule",
+      "kind": "method",
+      "signature": "func(ctx context.Context, schedule SnapshotSchedule) (*SnapshotScheduleLease, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.AddSnapshotSchedule",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.AuthorizeSubvolume",
+      "kind": "method",
+      "signature": "func(ctx context.Context, volume *Subvolume, config SubvolumeAuthorizationConfig) (*SubvolumeAuthorization, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.AuthorizeSubvolume",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.CancelSubvolumeClone",
+      "kind": "method",
+      "signature": "func(ctx context.Context, clone *SubvolumeClone) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.CancelSubvolumeClone",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.CloneSubvolumeSnapshot",
+      "kind": "method",
+      "signature": "func(ctx context.Context, snapshot *SubvolumeSnapshot, config CloneConfig) (*SubvolumeClone, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.CloneSubvolumeSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.CreateSubvolume",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config SubvolumeConfig) (*Subvolume, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.CreateSubvolume",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.CreateSubvolumeGroup",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config SubvolumeGroupConfig) (*SubvolumeGroup, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.CreateSubvolumeGroup",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.CreateSubvolumeSnapshot",
+      "kind": "method",
+      "signature": "func(ctx context.Context, subvolume *Subvolume, name string) (*SubvolumeSnapshot, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.CreateSubvolumeSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.DataPools",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]DataPoolState, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.DataPools",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.DeauthorizeSubvolume",
+      "kind": "method",
+      "signature": "func(ctx context.Context, grant *SubvolumeAuthorization) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.DeauthorizeSubvolume",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.EvictSubvolumeClients",
+      "kind": "method",
+      "signature": "func(ctx context.Context, grant *SubvolumeAuthorization) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.EvictSubvolumeClients",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.MDSStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*FilesystemStatus, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.MDSStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.MDSs",
+      "kind": "method",
+      "signature": "func() []*MDS",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.MDSs",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.OverrideSessionTimeouts",
+      "kind": "method",
+      "signature": "func(ctx context.Context, requested SessionTimeouts) (*SessionTimeoutsOverrideHandle, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.OverrideSessionTimeouts",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.OverrideSubvolumeGroupPin",
+      "kind": "method",
+      "signature": "func(ctx context.Context, group *SubvolumeGroup, setting PinSetting) (*PinOverrideHandle, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.OverrideSubvolumeGroupPin",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.OverrideSubvolumePin",
+      "kind": "method",
+      "signature": "func(ctx context.Context, volume *Subvolume, setting PinSetting) (*PinOverrideHandle, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.OverrideSubvolumePin",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.QuiesceSubvolumes",
+      "kind": "method",
+      "signature": "func(ctx context.Context, volumes []*Subvolume, config QuiesceConfig) (*Quiesce, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.QuiesceSubvolumes",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.RemovePartialSubvolumeClone",
+      "kind": "method",
+      "signature": "func(ctx context.Context, clone *SubvolumeClone) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.RemovePartialSubvolumeClone",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.RemoveSubvolume",
+      "kind": "method",
+      "signature": "func(ctx context.Context, subvolume *Subvolume) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.RemoveSubvolume",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.RemoveSubvolumeGroup",
+      "kind": "method",
+      "signature": "func(ctx context.Context, group *SubvolumeGroup) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.RemoveSubvolumeGroup",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.RemoveSubvolumeSnapshot",
+      "kind": "method",
+      "signature": "func(ctx context.Context, snapshot *SubvolumeSnapshot) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.RemoveSubvolumeSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.RemoveUnusedDataPool",
+      "kind": "method",
+      "signature": "func(ctx context.Context, attachment *DataPool) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.RemoveUnusedDataPool",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.ResizeSubvolume",
+      "kind": "method",
+      "signature": "func(ctx context.Context, subvolume *Subvolume, sizeBytes int64) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.ResizeSubvolume",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.ResizeSubvolumeGroup",
+      "kind": "method",
+      "signature": "func(ctx context.Context, group *SubvolumeGroup, sizeBytes int64) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.ResizeSubvolumeGroup",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.ScaleMDS",
+      "kind": "method",
+      "signature": "func(ctx context.Context, active, standby int) (returnErr error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.ScaleMDS",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.SessionTimeouts",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (SessionTimeouts, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.SessionTimeouts",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.Sessions",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]Session, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.Sessions",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.SubvolumeAuthorizedClients",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name, group string) ([]SubvolumeAuthorizedClient, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.SubvolumeAuthorizedClients",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.SubvolumeCloneStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, clone *SubvolumeClone) (*SubvolumeCloneStatus, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.SubvolumeCloneStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.SubvolumeGroupInfo",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string) (*SubvolumeGroupInfo, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.SubvolumeGroupInfo",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.SubvolumeGroupPinPolicy",
+      "kind": "method",
+      "signature": "func(ctx context.Context, group *SubvolumeGroup) (*PinPolicy, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.SubvolumeGroupPinPolicy",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.SubvolumeGroups",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]string, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.SubvolumeGroups",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.SubvolumeInfo",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name, groupName string) (*SubvolumeInfo, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.SubvolumeInfo",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.SubvolumePinPolicy",
+      "kind": "method",
+      "signature": "func(ctx context.Context, volume *Subvolume) (*PinPolicy, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.SubvolumePinPolicy",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.SubvolumeSnapshotInfo",
+      "kind": "method",
+      "signature": "func(ctx context.Context, subvolumeName, groupName, snapshotName string) (*SubvolumeSnapshotInfo, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.SubvolumeSnapshotInfo",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.SubvolumeSnapshots",
+      "kind": "method",
+      "signature": "func(ctx context.Context, subvolume *Subvolume) ([]string, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.SubvolumeSnapshots",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.Subvolumes",
+      "kind": "method",
+      "signature": "func(ctx context.Context, groupName string) ([]string, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.Subvolumes",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.WaitForSubvolumeClone",
+      "kind": "method",
+      "signature": "func(ctx context.Context, clone *SubvolumeClone) (*Subvolume, error)",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.WaitForSubvolumeClone",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystem.WaitReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Filesystem",
+      "proposed": "cephfs.Filesystem.WaitReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.FilesystemStatus",
+      "kind": "type",
+      "proposed": "cephfs.FilesystemStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Filesystems",
+      "kind": "function",
+      "signature": "func(c *ceph.Container) []*Filesystem",
+      "proposed": "cephfs.Filesystems",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Lease",
+      "kind": "function",
+      "signature": "func(ctx context.Context, t *ceph.Tenant, fs string) (*TenantGroup, error)",
+      "proposed": "cephfs.Lease",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDS",
+      "kind": "type",
+      "proposed": "cephfs.MDS",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDS.AddReplacement",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*MDS, error)",
+      "receiver": "*MDS",
+      "proposed": "cephfs.MDS.AddReplacement",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDS.RemoveStopped",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*MDS",
+      "proposed": "cephfs.MDS.RemoveStopped",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MDSStatus",
+      "kind": "type",
+      "proposed": "cephfs.MDSStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror",
+      "kind": "type",
+      "proposed": "cephfs.Mirror",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.AddDaemon",
+      "kind": "method",
+      "signature": "func(ctx context.Context, daemonName string, opts ...testcontainers.ContainerCustomizer) (*MirrorDaemon, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.AddDaemon",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.AddDirectory",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.AddDirectory",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.AttachManagers",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.AttachManagers",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.BeginDirectoryAddition",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string) (*MirrorDirectoryAddition, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.BeginDirectoryAddition",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.BeginDirectoryRemoval",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string) (*MirrorDirectoryRemoval, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.BeginDirectoryRemoval",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.BeginPeerRemoval",
+      "kind": "method",
+      "signature": "func(ctx context.Context, id string) (*MirrorPeerRemoval, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.BeginPeerRemoval",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.Daemons",
+      "kind": "method",
+      "signature": "func() []*MirrorDaemon",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.Daemons",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.DirectoryStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string) (MirrorDirectoryStatus, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.DirectoryStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.InterruptPeerLink",
+      "kind": "method",
+      "signature": "func(ctx context.Context, daemonName string) (*fault.NetworkInterruption, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.InterruptPeerLink",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.PeerIDs",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]string, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.PeerIDs",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.RebalanceDirectories",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.RebalanceDirectories",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.RebootstrapPeer",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.RebootstrapPeer",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.RefreshMonitorConfig",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.RefreshMonitorConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.RefreshPeerMonitorConfig",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.RefreshPeerMonitorConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.RemoveDaemon",
+      "kind": "method",
+      "signature": "func(ctx context.Context, daemonName string, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.RemoveDaemon",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.RemoveDirectory",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.RemoveDirectory",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.RemovePeer",
+      "kind": "method",
+      "signature": "func(ctx context.Context, id string) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.RemovePeer",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.Terminate",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.Terminate",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.WaitDirectoryReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string) (MirrorDirectoryStatus, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.WaitDirectoryReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Mirror.WaitSnapshotSynced",
+      "kind": "method",
+      "signature": "func(ctx context.Context, directory string, checkpoint MirrorSnapshot) (MirrorDirectoryStatus, error)",
+      "receiver": "*Mirror",
+      "proposed": "cephfs.Mirror.WaitSnapshotSynced",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorConfig",
+      "kind": "type",
+      "proposed": "cephfs.MirrorConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDaemon",
+      "kind": "type",
+      "proposed": "cephfs.MirrorDaemon",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDaemon.ProcessObserverBindingStatus",
+      "kind": "method",
+      "signature": "func() MirrorProcessBindingStatus",
+      "receiver": "*MirrorDaemon",
+      "proposed": "cephfs.MirrorDaemon.ProcessObserverBindingStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDaemon.Terminate",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*MirrorDaemon",
+      "proposed": "cephfs.MirrorDaemon.Terminate",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDirectoryAddition",
+      "kind": "type",
+      "proposed": "cephfs.MirrorDirectoryAddition",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDirectoryAddition.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (MirrorDirectoryAdditionStatus, error)",
+      "receiver": "*MirrorDirectoryAddition",
+      "proposed": "cephfs.MirrorDirectoryAddition.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDirectoryAdditionStatus",
+      "kind": "type",
+      "proposed": "cephfs.MirrorDirectoryAdditionStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDirectoryRemoval",
+      "kind": "type",
+      "proposed": "cephfs.MirrorDirectoryRemoval",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDirectoryRemoval.AcknowledgeProcessQuiescence",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (MirrorProcessQuiescenceAcknowledgment, error)",
+      "receiver": "*MirrorDirectoryRemoval",
+      "proposed": "cephfs.MirrorDirectoryRemoval.AcknowledgeProcessQuiescence",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDirectoryRemoval.ProcessQuiescence",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (MirrorProcessQuiescenceStatus, error)",
+      "receiver": "*MirrorDirectoryRemoval",
+      "proposed": "cephfs.MirrorDirectoryRemoval.ProcessQuiescence",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDirectoryRemoval.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (MirrorDirectoryRemovalStatus, error)",
+      "receiver": "*MirrorDirectoryRemoval",
+      "proposed": "cephfs.MirrorDirectoryRemoval.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDirectoryRemoval.WaitReleased",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (MirrorDirectoryRemovalStatus, error)",
+      "receiver": "*MirrorDirectoryRemoval",
+      "proposed": "cephfs.MirrorDirectoryRemoval.WaitReleased",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDirectoryRemovalDaemonStatus",
+      "kind": "type",
+      "proposed": "cephfs.MirrorDirectoryRemovalDaemonStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDirectoryRemovalStatus",
+      "kind": "type",
+      "proposed": "cephfs.MirrorDirectoryRemovalStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorDirectoryStatus",
+      "kind": "type",
+      "proposed": "cephfs.MirrorDirectoryStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorOriginalProcessStatus",
+      "kind": "type",
+      "proposed": "cephfs.MirrorOriginalProcessStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorPeerRemoval",
+      "kind": "type",
+      "proposed": "cephfs.MirrorPeerRemoval",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorPeerRemoval.AcknowledgeProcessQuiescence",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (MirrorProcessQuiescenceAcknowledgment, error)",
+      "receiver": "*MirrorPeerRemoval",
+      "proposed": "cephfs.MirrorPeerRemoval.AcknowledgeProcessQuiescence",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorPeerRemoval.ProcessQuiescence",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (MirrorProcessQuiescenceStatus, error)",
+      "receiver": "*MirrorPeerRemoval",
+      "proposed": "cephfs.MirrorPeerRemoval.ProcessQuiescence",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorPeerRemoval.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (MirrorPeerRemovalStatus, error)",
+      "receiver": "*MirrorPeerRemoval",
+      "proposed": "cephfs.MirrorPeerRemoval.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorPeerRemoval.WaitDrained",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (MirrorPeerRemovalStatus, error)",
+      "receiver": "*MirrorPeerRemoval",
+      "proposed": "cephfs.MirrorPeerRemoval.WaitDrained",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorPeerRemovalDaemonStatus",
+      "kind": "type",
+      "proposed": "cephfs.MirrorPeerRemovalDaemonStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorPeerRemovalStatus",
+      "kind": "type",
+      "proposed": "cephfs.MirrorPeerRemovalStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorProcessBindingStatus",
+      "kind": "type",
+      "proposed": "cephfs.MirrorProcessBindingStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorProcessQuiescenceAcknowledgment",
+      "kind": "type",
+      "proposed": "cephfs.MirrorProcessQuiescenceAcknowledgment",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorProcessQuiescenceStatus",
+      "kind": "type",
+      "proposed": "cephfs.MirrorProcessQuiescenceStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.MirrorSnapshot",
+      "kind": "type",
+      "proposed": "cephfs.MirrorSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.PinDistributed",
+      "kind": "const",
+      "proposed": "cephfs.PinDistributed",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.PinExport",
+      "kind": "const",
+      "proposed": "cephfs.PinExport",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.PinOverrideHandle",
+      "kind": "type",
+      "proposed": "cephfs.PinOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.PinOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*PinOverrideHandle",
+      "proposed": "cephfs.PinOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.PinPolicy",
+      "kind": "type",
+      "proposed": "cephfs.PinPolicy",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.PinRandom",
+      "kind": "const",
+      "proposed": "cephfs.PinRandom",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.PinSetting",
+      "kind": "type",
+      "proposed": "cephfs.PinSetting",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.PinType",
+      "kind": "type",
+      "proposed": "cephfs.PinType",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Quiesce",
+      "kind": "type",
+      "proposed": "cephfs.Quiesce",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Quiesce.ID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Quiesce",
+      "proposed": "cephfs.Quiesce.ID",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Quiesce.Release",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Quiesce",
+      "proposed": "cephfs.Quiesce.Release",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Quiesce.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*QuiesceState, error)",
+      "receiver": "*Quiesce",
+      "proposed": "cephfs.Quiesce.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.QuiesceConfig",
+      "kind": "type",
+      "proposed": "cephfs.QuiesceConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.QuiesceState",
+      "kind": "type",
+      "proposed": "cephfs.QuiesceState",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Run",
+      "kind": "function",
+      "signature": "func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
+      "proposed": "cephfs.Run",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.RunMirror",
+      "kind": "function",
+      "signature": "func(ctx context.Context, image string, config MirrorConfig, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
+      "proposed": "cephfs.RunMirror",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.RunMirrorWithImages",
+      "kind": "function",
+      "signature": "func(ctx context.Context, config MirrorConfig, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
+      "proposed": "cephfs.RunMirrorWithImages",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Session",
+      "kind": "type",
+      "proposed": "cephfs.Session",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SessionTimeouts",
+      "kind": "type",
+      "proposed": "cephfs.SessionTimeouts",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SessionTimeoutsOverrideHandle",
+      "kind": "type",
+      "proposed": "cephfs.SessionTimeoutsOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SessionTimeoutsOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*SessionTimeoutsOverrideHandle",
+      "proposed": "cephfs.SessionTimeoutsOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SnapshotPendingClone",
+      "kind": "type",
+      "proposed": "cephfs.SnapshotPendingClone",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SnapshotSchedule",
+      "kind": "type",
+      "proposed": "cephfs.SnapshotSchedule",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SnapshotScheduleLease",
+      "kind": "type",
+      "proposed": "cephfs.SnapshotScheduleLease",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SnapshotScheduleLease.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*SnapshotScheduleLease",
+      "proposed": "cephfs.SnapshotScheduleLease.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SnapshotScheduleLease.Snapshots",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]string, error)",
+      "receiver": "*SnapshotScheduleLease",
+      "proposed": "cephfs.SnapshotScheduleLease.Snapshots",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SnapshotScheduleLease.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (SnapshotScheduleStatus, error)",
+      "receiver": "*SnapshotScheduleLease",
+      "proposed": "cephfs.SnapshotScheduleLease.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SnapshotScheduleStatus",
+      "kind": "type",
+      "proposed": "cephfs.SnapshotScheduleStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Start",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, config Config, opts ...testcontainers.ContainerCustomizer) (*Filesystem, error)",
+      "proposed": "cephfs.Start",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.Subvolume",
+      "kind": "type",
+      "proposed": "cephfs.Subvolume",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SubvolumeAuthorization",
+      "kind": "type",
+      "proposed": "cephfs.SubvolumeAuthorization",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SubvolumeAuthorizationConfig",
+      "kind": "type",
+      "proposed": "cephfs.SubvolumeAuthorizationConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SubvolumeAuthorizedClient",
+      "kind": "type",
+      "proposed": "cephfs.SubvolumeAuthorizedClient",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SubvolumeClone",
+      "kind": "type",
+      "proposed": "cephfs.SubvolumeClone",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SubvolumeCloneStatus",
+      "kind": "type",
+      "proposed": "cephfs.SubvolumeCloneStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SubvolumeConfig",
+      "kind": "type",
+      "proposed": "cephfs.SubvolumeConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SubvolumeGroup",
+      "kind": "type",
+      "proposed": "cephfs.SubvolumeGroup",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SubvolumeGroupConfig",
+      "kind": "type",
+      "proposed": "cephfs.SubvolumeGroupConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SubvolumeGroupInfo",
+      "kind": "type",
+      "proposed": "cephfs.SubvolumeGroupInfo",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SubvolumeInfo",
+      "kind": "type",
+      "proposed": "cephfs.SubvolumeInfo",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SubvolumeSnapshot",
+      "kind": "type",
+      "proposed": "cephfs.SubvolumeSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.SubvolumeSnapshotInfo",
+      "kind": "type",
+      "proposed": "cephfs.SubvolumeSnapshotInfo",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.TenantGroup",
+      "kind": "type",
+      "proposed": "cephfs.TenantGroup",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.TenantGroup.Client",
+      "kind": "method",
+      "signature": "func() *ceph.ClientConfig",
+      "receiver": "*TenantGroup",
+      "proposed": "cephfs.TenantGroup.Client",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.TenantGroup.CreateSubvolume",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string, sizeBytes int64) (string, error)",
+      "receiver": "*TenantGroup",
+      "proposed": "cephfs.TenantGroup.CreateSubvolume",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.TenantGroup.DataPool",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantGroup",
+      "proposed": "cephfs.TenantGroup.DataPool",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.TenantGroup.FilesystemName",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantGroup",
+      "proposed": "cephfs.TenantGroup.FilesystemName",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.TenantGroup.Group",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantGroup",
+      "proposed": "cephfs.TenantGroup.Group",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.TenantGroup.Path",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantGroup",
+      "proposed": "cephfs.TenantGroup.Path",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.TenantGroup.PoolNamespace",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantGroup",
+      "proposed": "cephfs.TenantGroup.PoolNamespace",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.TenantGroup.WithClient",
+      "kind": "method",
+      "signature": "func(opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption",
+      "receiver": "*TenantGroup",
+      "proposed": "cephfs.TenantGroup.WithClient",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.WithFilesystems",
+      "kind": "function",
+      "signature": "func(configs ...Config) ceph.Option",
+      "proposed": "cephfs.WithFilesystems",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs.WithMDSImage",
+      "kind": "function",
+      "signature": "func(image string) ceph.Option",
+      "proposed": "cephfs.WithMDSImage",
+      "decision": "baseline"
+    }
+  ]
+}

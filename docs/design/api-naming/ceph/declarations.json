@@ -1,0 +1,2733 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "ceph",
+  "count": 390,
+  "entries": [
+    {
+      "current": "ceph.AddressDualStack",
+      "kind": "const",
+      "proposed": "ceph.AddressDualStack",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.AddressFamily",
+      "kind": "type",
+      "proposed": "ceph.AddressFamily",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.AddressFamily.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "AddressFamily",
+      "proposed": "ceph.AddressFamily.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.AddressIPv4",
+      "kind": "const",
+      "proposed": "ceph.AddressIPv4",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.AddressIPv4MappedIPv6",
+      "kind": "const",
+      "proposed": "ceph.AddressIPv4MappedIPv6",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.AddressIPv6",
+      "kind": "const",
+      "proposed": "ceph.AddressIPv6",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.AuthConfig",
+      "kind": "type",
+      "proposed": "ceph.AuthConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.BlocklistEntry",
+      "kind": "type",
+      "proposed": "ceph.BlocklistEntry",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.BlocklistOverride",
+      "kind": "type",
+      "proposed": "ceph.BlocklistOverride",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.BlocklistOverride.Address",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*BlocklistOverride",
+      "proposed": "ceph.BlocklistOverride.Address",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.BlocklistOverride.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*BlocklistOverride",
+      "proposed": "ceph.BlocklistOverride.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CaptureFileSource",
+      "kind": "type",
+      "proposed": "ceph.CaptureFileSource",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CaptureSettler",
+      "kind": "type",
+      "proposed": "ceph.CaptureSettler",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CephxCipher",
+      "kind": "type",
+      "proposed": "ceph.CephxCipher",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CipherAES",
+      "kind": "const",
+      "proposed": "ceph.CipherAES",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CipherAES256K",
+      "kind": "const",
+      "proposed": "ceph.CipherAES256K",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientCaps",
+      "kind": "type",
+      "proposed": "ceph.ClientCaps",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig",
+      "kind": "type",
+      "proposed": "ceph.ClientConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.Capabilities",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ClientCaps, error)",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.Capabilities",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.ConnectionConfig",
+      "kind": "method",
+      "signature": "func() (ConnectionConfig, error)",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.ConnectionConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.Delete",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.Delete",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ClientConfig",
+      "proposed": "ceph.ClientConfig.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.KeyringPath",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.KeyringPath",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.Name",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.Name",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.ReplaceKey",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...ClientOption) (*ClientConfig, error)",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.ReplaceKey",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.Revoke",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*ClientRevocationHandle, error)",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.Revoke",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ClientConfig",
+      "proposed": "ceph.ClientConfig.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.UpdateCaps",
+      "kind": "method",
+      "signature": "func(ctx context.Context, caps ClientCaps) error",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.UpdateCaps",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientConfig.User",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.User",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientContainerOption",
+      "kind": "type",
+      "proposed": "ceph.ClientContainerOption",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientMessengerPolicy",
+      "kind": "type",
+      "proposed": "ceph.ClientMessengerPolicy",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientOption",
+      "kind": "type",
+      "proposed": "ceph.ClientOption",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientRevocationHandle",
+      "kind": "type",
+      "proposed": "ceph.ClientRevocationHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientRevocationHandle.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ClientRevocationHandle",
+      "proposed": "ceph.ClientRevocationHandle.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientRevocationHandle.Name",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*ClientRevocationHandle",
+      "proposed": "ceph.ClientRevocationHandle.Name",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientRevocationHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ClientRevocationHandle",
+      "proposed": "ceph.ClientRevocationHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientRevocationHandle.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ClientRevocationHandle",
+      "proposed": "ceph.ClientRevocationHandle.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClusterFacts",
+      "kind": "type",
+      "proposed": "ceph.ClusterFacts",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClusterNetworkPlane",
+      "kind": "const",
+      "proposed": "ceph.ClusterNetworkPlane",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ConfigEntry",
+      "kind": "type",
+      "proposed": "ceph.ConfigEntry",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ConfigOverrideHandle",
+      "kind": "type",
+      "proposed": "ceph.ConfigOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ConfigOverrideHandle.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ConfigOverrideHandle",
+      "proposed": "ceph.ConfigOverrideHandle.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ConfigOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ConfigOverrideHandle",
+      "proposed": "ceph.ConfigOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ConfigOverrideHandle.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "ConfigOverrideHandle",
+      "proposed": "ceph.ConfigOverrideHandle.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ConfigSetting",
+      "kind": "type",
+      "proposed": "ceph.ConfigSetting",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ConnectionConfig",
+      "kind": "type",
+      "proposed": "ceph.ConnectionConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container",
+      "kind": "type",
+      "proposed": "ceph.Container",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.AddManager",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string) (*ManagerContainer, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.AddManager",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.AddMonitor",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string) (*MonitorContainer, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.AddMonitor",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.AddOSD",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*OSDContainer, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.AddOSD",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.AddOSDWithConfig",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config OSDConfig) (*OSDContainer, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.AddOSDWithConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.AddressFamily",
+      "kind": "method",
+      "signature": "func() AddressFamily",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.AddressFamily",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.BlocklistEntries",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]BlocklistEntry, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.BlocklistEntries",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Ceph",
+      "kind": "method",
+      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Ceph",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.CephVersion",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.CephVersion",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.ClientContainer",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (testcontainers.Container, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ClientContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.ClusterNetworkName",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ClusterNetworkName",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.CollectCrashMetadata",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config CrashMetadataConfig) (*CrashMetadataReport, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.CollectCrashMetadata",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.CollectDiagnostics",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config DiagnosticsConfig) (*DiagnosticsReport, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.CollectDiagnostics",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Configuration",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]ConfigEntry, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Configuration",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.ConnectionConfig",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ConnectionConfig, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ConnectionConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.ControlContainer",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (testcontainers.Container, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ControlContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.ControlImage",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ControlImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.CopyDirToContainer",
+      "kind": "method",
+      "signature": "func(ctx context.Context, hostDirPath string, containerParentPath string, fileMode int64) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.CopyDirToContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.CopyFileFromContainer",
+      "kind": "method",
+      "signature": "func(ctx context.Context, filePath string) (io.ReadCloser, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.CopyFileFromContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.CopyFileToContainer",
+      "kind": "method",
+      "signature": "func(ctx context.Context, hostFilePath string, containerFilePath string, fileMode int64) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.CopyFileToContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.CopyToContainer",
+      "kind": "method",
+      "signature": "func(ctx context.Context, fileContent []byte, containerFilePath string, fileMode int64) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.CopyToContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.CreateClient",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string, caps ClientCaps, opts ...ClientOption) (*ClientConfig, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.CreateClient",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.CreatePool",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config PoolConfig) (*Pool, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.CreatePool",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.DaemonAddresses",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (DaemonAddresses, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.DaemonAddresses",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.DeepScrubPG",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pgid PGID) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.DeepScrubPG",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Exec",
+      "kind": "method",
+      "signature": "func(ctx context.Context, cmd []string, options ...tcexec.ProcessOption) (int, io.Reader, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Exec",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.FullRatios",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (FullRatioSnapshot, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.FullRatios",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.HasSeparateClusterNetwork",
+      "kind": "method",
+      "signature": "func() bool",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.HasSeparateClusterNetwork",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.HealthDetails",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (HealthSnapshot, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.HealthDetails",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Images",
+      "kind": "method",
+      "signature": "func() ImageSet",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Images",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.MGRModules",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]MGRModuleState, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.MGRModules",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.ManagerContainer",
+      "kind": "method",
+      "signature": "func() testcontainers.Container",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ManagerContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.ManagerMetrics",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ManagerMetrics, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ManagerMetrics",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.ManagerServices",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (map[string]string, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ManagerServices",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.ManagerStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ManagerStatus, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ManagerStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Managers",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]*ManagerContainer, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Managers",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.MessengerMode",
+      "kind": "method",
+      "signature": "func() MessengerMode",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.MessengerMode",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.MonitorBootstrapAddresses",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.MonitorBootstrapAddresses",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Monitors",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]*MonitorContainer, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Monitors",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.NetworkName",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.NetworkName",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OSDFlags",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]OSDFlag, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OSDFlags",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OSDStates",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]OSDState, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OSDStates",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OSDs",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]*OSDContainer, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OSDs",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.ObjectWatchers",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ObjectWatchers",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OverrideConfig",
+      "kind": "method",
+      "signature": "func(ctx context.Context, setting ConfigSetting) (*ConfigOverrideHandle, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OverrideConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OverrideDebugLevel",
+      "kind": "method",
+      "signature": "func(ctx context.Context, setting DebugLevelSetting) (*DebugLevelOverrideHandle, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OverrideDebugLevel",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OverrideFullRatios",
+      "kind": "method",
+      "signature": "func(ctx context.Context, requested FullRatios) (*FullRatiosOverride, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OverrideFullRatios",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OverrideMGRModule",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string, enabled bool) (*MGRModuleOverrideHandle, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OverrideMGRModule",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OverrideMessengerPolicy",
+      "kind": "method",
+      "signature": "func(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverrideHandle, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OverrideMessengerPolicy",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.OverrideOSDFlag",
+      "kind": "method",
+      "signature": "func(ctx context.Context, flag OSDFlag, enabled bool) (*OSDFlagOverrideHandle, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.OverrideOSDFlag",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.PGInconsistencies",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pgid PGID) ([]InconsistentObject, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.PGInconsistencies",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Pool",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string) (*Pool, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Pool",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Pools",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]PoolState, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Pools",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.PublicAddress",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.PublicAddress",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.QuorumStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (QuorumStatus, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.QuorumStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.RedactSecrets",
+      "kind": "method",
+      "signature": "func(ctx context.Context, data []byte, values ...string) ([]byte, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.RedactSecrets",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.RefreshClientMonitorConfig",
+      "kind": "method",
+      "signature": "func(ctx context.Context, client testcontainers.Container) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.RefreshClientMonitorConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.RefreshMonitorConfig",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.RefreshMonitorConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.RepairPG",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pgid PGID) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.RepairPG",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.RunNativeCommand",
+      "kind": "method",
+      "signature": "func(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.RunNativeCommand",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.ServiceContainers",
+      "kind": "method",
+      "signature": "func() []testcontainers.Container",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.ServiceContainers",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Start",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Start",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (Status, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Stop",
+      "kind": "method",
+      "signature": "func(ctx context.Context, timeout *time.Duration) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.TemporaryBlocklist",
+      "kind": "method",
+      "signature": "func(ctx context.Context, address string, duration time.Duration) (*BlocklistOverride, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.TemporaryBlocklist",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.Terminate",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.Terminate",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.TerminateOnCleanup",
+      "kind": "method",
+      "signature": "func(t testing.TB, config FinalizationConfig) (*Finalization, error)",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.TerminateOnCleanup",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.UsesHostNetwork",
+      "kind": "method",
+      "signature": "func() bool",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.UsesHostNetwork",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.WaitForClean",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.WaitForClean",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.WaitForPGClean",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.WaitForPGClean",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.WaitForQuorum",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.WaitForQuorum",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.WaitMGRModuleReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string) error",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.WaitMGRModuleReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.WithClient",
+      "kind": "method",
+      "signature": "func(opts ...ClientContainerOption) testcontainers.CustomizeRequestOption",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.WithClient",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Container.WithClientIdentity",
+      "kind": "method",
+      "signature": "func(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption",
+      "receiver": "*Container",
+      "proposed": "ceph.Container.WithClientIdentity",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashArchiveIncomplete",
+      "kind": "const",
+      "proposed": "ceph.CrashArchiveIncomplete",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashContainerUnavailable",
+      "kind": "const",
+      "proposed": "ceph.CrashContainerUnavailable",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashDir",
+      "kind": "const",
+      "proposed": "ceph.CrashDir",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashDirectoryAbsent",
+      "kind": "const",
+      "proposed": "ceph.CrashDirectoryAbsent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashDirectoryEmpty",
+      "kind": "const",
+      "proposed": "ceph.CrashDirectoryEmpty",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashEntriesRejected",
+      "kind": "const",
+      "proposed": "ceph.CrashEntriesRejected",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashExpectation",
+      "kind": "type",
+      "proposed": "ceph.CrashExpectation",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashMetadataConfig",
+      "kind": "type",
+      "proposed": "ceph.CrashMetadataConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashMetadataContainer",
+      "kind": "type",
+      "proposed": "ceph.CrashMetadataContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashMetadataReport",
+      "kind": "type",
+      "proposed": "ceph.CrashMetadataReport",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashOmission",
+      "kind": "type",
+      "proposed": "ceph.CrashOmission",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashOutcome",
+      "kind": "type",
+      "proposed": "ceph.CrashOutcome",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashReadFailed",
+      "kind": "const",
+      "proposed": "ceph.CrashReadFailed",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashRecord",
+      "kind": "type",
+      "proposed": "ceph.CrashRecord",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.CrashRecordsFound",
+      "kind": "const",
+      "proposed": "ceph.CrashRecordsFound",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DaemonAddress",
+      "kind": "type",
+      "proposed": "ceph.DaemonAddress",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DaemonAddresses",
+      "kind": "type",
+      "proposed": "ceph.DaemonAddresses",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelApplied",
+      "kind": "const",
+      "proposed": "ceph.DebugLevelApplied",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelApplyAttempted",
+      "kind": "const",
+      "proposed": "ceph.DebugLevelApplyAttempted",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelApplyUncertain",
+      "kind": "const",
+      "proposed": "ceph.DebugLevelApplyUncertain",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelConflict",
+      "kind": "const",
+      "proposed": "ceph.DebugLevelConflict",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelOverrideHandle",
+      "kind": "type",
+      "proposed": "ceph.DebugLevelOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelOverrideHandle.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "DebugLevelOverrideHandle",
+      "proposed": "ceph.DebugLevelOverrideHandle.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelOverrideHandle.Receipt",
+      "kind": "method",
+      "signature": "func() DebugLevelReceipt",
+      "receiver": "*DebugLevelOverrideHandle",
+      "proposed": "ceph.DebugLevelOverrideHandle.Receipt",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*DebugLevelOverrideHandle",
+      "proposed": "ceph.DebugLevelOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelOverrideHandle.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "DebugLevelOverrideHandle",
+      "proposed": "ceph.DebugLevelOverrideHandle.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelPriorRead",
+      "kind": "const",
+      "proposed": "ceph.DebugLevelPriorRead",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelReceipt",
+      "kind": "type",
+      "proposed": "ceph.DebugLevelReceipt",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelRestoreAttempted",
+      "kind": "const",
+      "proposed": "ceph.DebugLevelRestoreAttempted",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelRestored",
+      "kind": "const",
+      "proposed": "ceph.DebugLevelRestored",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelSetting",
+      "kind": "type",
+      "proposed": "ceph.DebugLevelSetting",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelState",
+      "kind": "type",
+      "proposed": "ceph.DebugLevelState",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelTargetChanged",
+      "kind": "const",
+      "proposed": "ceph.DebugLevelTargetChanged",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelTransition",
+      "kind": "type",
+      "proposed": "ceph.DebugLevelTransition",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DebugLevelUnconfirmed",
+      "kind": "const",
+      "proposed": "ceph.DebugLevelUnconfirmed",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DefaultImage",
+      "kind": "const",
+      "proposed": "ceph.DefaultImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD",
+      "kind": "type",
+      "proposed": "ceph.DetachedOSD",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD.ClusterFSID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*DetachedOSD",
+      "proposed": "ceph.DetachedOSD.ClusterFSID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD.ID",
+      "kind": "method",
+      "signature": "func() int",
+      "receiver": "*DetachedOSD",
+      "proposed": "ceph.DetachedOSD.ID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD.Placement",
+      "kind": "method",
+      "signature": "func() OSDConfig",
+      "receiver": "*DetachedOSD",
+      "proposed": "ceph.DetachedOSD.Placement",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD.Reopen",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*OSDContainer, error)",
+      "receiver": "*DetachedOSD",
+      "proposed": "ceph.DetachedOSD.Reopen",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DetachedOSD.UUID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*DetachedOSD",
+      "proposed": "ceph.DetachedOSD.UUID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DiagnosticArtifact",
+      "kind": "type",
+      "proposed": "ceph.DiagnosticArtifact",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DiagnosticsConfig",
+      "kind": "type",
+      "proposed": "ceph.DiagnosticsConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DiagnosticsContainer",
+      "kind": "type",
+      "proposed": "ceph.DiagnosticsContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DiagnosticsReport",
+      "kind": "type",
+      "proposed": "ceph.DiagnosticsReport",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.EntityAddress",
+      "kind": "type",
+      "proposed": "ceph.EntityAddress",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ErasureCodeConfig",
+      "kind": "type",
+      "proposed": "ceph.ErasureCodeConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ErrEnvironmentUnavailable",
+      "kind": "var",
+      "proposed": "ceph.ErrEnvironmentUnavailable",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ErrHostNetworkUnavailable",
+      "kind": "var",
+      "proposed": "ceph.ErrHostNetworkUnavailable",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ErrImageCapability",
+      "kind": "var",
+      "proposed": "ceph.ErrImageCapability",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ErrInvalidRequest",
+      "kind": "var",
+      "proposed": "ceph.ErrInvalidRequest",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ErrNativeCommandIncomplete",
+      "kind": "var",
+      "proposed": "ceph.ErrNativeCommandIncomplete",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ErrNativeFailure",
+      "kind": "var",
+      "proposed": "ceph.ErrNativeFailure",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ErrNativeInputClosed",
+      "kind": "var",
+      "proposed": "ceph.ErrNativeInputClosed",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ErrSharedCluster",
+      "kind": "var",
+      "proposed": "ceph.ErrSharedCluster",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ErrUnsupported",
+      "kind": "var",
+      "proposed": "ceph.ErrUnsupported",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ExpectationResult",
+      "kind": "type",
+      "proposed": "ceph.ExpectationResult",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.FactsOf",
+      "kind": "function",
+      "signature": "func(c *Container) (ClusterFacts, error)",
+      "proposed": "ceph.FactsOf",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization",
+      "kind": "type",
+      "proposed": "ceph.Finalization",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization.Capture",
+      "kind": "method",
+      "signature": "func(name string, session CaptureSettler)",
+      "receiver": "*Finalization",
+      "proposed": "ceph.Finalization.Capture",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization.CaptureWithFile",
+      "kind": "method",
+      "signature": "func(name string, session CaptureFileSource, maxBytes int64)",
+      "receiver": "*Finalization",
+      "proposed": "ceph.Finalization.CaptureWithFile",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization.Check",
+      "kind": "method",
+      "signature": "func(name string, check func(context.Context) error)",
+      "receiver": "*Finalization",
+      "proposed": "ceph.Finalization.Check",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization.Cleanup",
+      "kind": "method",
+      "signature": "func(name string, cleanup func(context.Context) error)",
+      "receiver": "*Finalization",
+      "proposed": "ceph.Finalization.Cleanup",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization.TrackDebugLevel",
+      "kind": "method",
+      "signature": "func(handle *DebugLevelOverrideHandle)",
+      "receiver": "*Finalization",
+      "proposed": "ceph.Finalization.TrackDebugLevel",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Finalization.Verify",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config VerificationConfig) (*Verification, error)",
+      "receiver": "*Finalization",
+      "proposed": "ceph.Finalization.Verify",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.FinalizationConfig",
+      "kind": "type",
+      "proposed": "ceph.FinalizationConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.FullRatioSnapshot",
+      "kind": "type",
+      "proposed": "ceph.FullRatioSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.FullRatios",
+      "kind": "type",
+      "proposed": "ceph.FullRatios",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.FullRatiosOverride",
+      "kind": "type",
+      "proposed": "ceph.FullRatiosOverride",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.FullRatiosOverride.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*FullRatiosOverride",
+      "proposed": "ceph.FullRatiosOverride.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.HealthCheck",
+      "kind": "type",
+      "proposed": "ceph.HealthCheck",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.HealthMute",
+      "kind": "type",
+      "proposed": "ceph.HealthMute",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.HealthSnapshot",
+      "kind": "type",
+      "proposed": "ceph.HealthSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ImageSet",
+      "kind": "type",
+      "proposed": "ceph.ImageSet",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.InconsistentObject",
+      "kind": "type",
+      "proposed": "ceph.InconsistentObject",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.InconsistentShard",
+      "kind": "type",
+      "proposed": "ceph.InconsistentShard",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.LeaseOption",
+      "kind": "type",
+      "proposed": "ceph.LeaseOption",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.LogAssertion",
+      "kind": "const",
+      "proposed": "ceph.LogAssertion",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.LogClusterError",
+      "kind": "const",
+      "proposed": "ceph.LogClusterError",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.LogClusterSecurity",
+      "kind": "const",
+      "proposed": "ceph.LogClusterSecurity",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.LogClusterWarning",
+      "kind": "const",
+      "proposed": "ceph.LogClusterWarning",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.LogEvent",
+      "kind": "type",
+      "proposed": "ceph.LogEvent",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.LogExpectation",
+      "kind": "type",
+      "proposed": "ceph.LogExpectation",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.LogFatalSignal",
+      "kind": "const",
+      "proposed": "ceph.LogFatalSignal",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MGRModuleOverrideHandle",
+      "kind": "type",
+      "proposed": "ceph.MGRModuleOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MGRModuleOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*MGRModuleOverrideHandle",
+      "proposed": "ceph.MGRModuleOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MGRModuleState",
+      "kind": "type",
+      "proposed": "ceph.MGRModuleState",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerContainer",
+      "kind": "type",
+      "proposed": "ceph.ManagerContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerContainer.AdminSocket",
+      "kind": "method",
+      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
+      "receiver": "*ManagerContainer",
+      "proposed": "ceph.ManagerContainer.AdminSocket",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerContainer.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ManagerContainer",
+      "proposed": "ceph.ManagerContainer.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerContainer.RotateKey",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*ManagerContainer",
+      "proposed": "ceph.ManagerContainer.RotateKey",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerMetrics",
+      "kind": "type",
+      "proposed": "ceph.ManagerMetrics",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerMetrics.Select",
+      "kind": "method",
+      "signature": "func(name string, labels map[string]string) []MetricSample",
+      "receiver": "ManagerMetrics",
+      "proposed": "ceph.ManagerMetrics.Select",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerMetrics.Value",
+      "kind": "method",
+      "signature": "func(name string, labels map[string]string) (float64, error)",
+      "receiver": "ManagerMetrics",
+      "proposed": "ceph.ManagerMetrics.Value",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ManagerStatus",
+      "kind": "type",
+      "proposed": "ceph.ManagerStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MaxNativeCommandInput",
+      "kind": "const",
+      "proposed": "ceph.MaxNativeCommandInput",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MaxNativeCommandOutput",
+      "kind": "const",
+      "proposed": "ceph.MaxNativeCommandOutput",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MaxNativeCommandTimeout",
+      "kind": "const",
+      "proposed": "ceph.MaxNativeCommandTimeout",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MaxNativeFailureReason",
+      "kind": "const",
+      "proposed": "ceph.MaxNativeFailureReason",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MessengerCRC",
+      "kind": "const",
+      "proposed": "ceph.MessengerCRC",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MessengerConnectionMode",
+      "kind": "type",
+      "proposed": "ceph.MessengerConnectionMode",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MessengerDefault",
+      "kind": "const",
+      "proposed": "ceph.MessengerDefault",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MessengerMode",
+      "kind": "type",
+      "proposed": "ceph.MessengerMode",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MessengerPolicy",
+      "kind": "type",
+      "proposed": "ceph.MessengerPolicy",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MessengerPolicyOverrideHandle",
+      "kind": "type",
+      "proposed": "ceph.MessengerPolicyOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MessengerPolicyOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*MessengerPolicyOverrideHandle",
+      "proposed": "ceph.MessengerPolicyOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MessengerSecure",
+      "kind": "const",
+      "proposed": "ceph.MessengerSecure",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MessengerV2Only",
+      "kind": "const",
+      "proposed": "ceph.MessengerV2Only",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MessengerV2Secure",
+      "kind": "const",
+      "proposed": "ceph.MessengerV2Secure",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MetricSample",
+      "kind": "type",
+      "proposed": "ceph.MetricSample",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorContainer",
+      "kind": "type",
+      "proposed": "ceph.MonitorContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorContainer.AdminSocket",
+      "kind": "method",
+      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
+      "receiver": "*MonitorContainer",
+      "proposed": "ceph.MonitorContainer.AdminSocket",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorContainer.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*MonitorContainer",
+      "proposed": "ceph.MonitorContainer.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeCommand",
+      "kind": "type",
+      "proposed": "ceph.NativeCommand",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeCommandResult",
+      "kind": "type",
+      "proposed": "ceph.NativeCommandResult",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeCommandResult.Complete",
+      "kind": "method",
+      "signature": "func() bool",
+      "receiver": "NativeCommandResult",
+      "proposed": "ceph.NativeCommandResult.Complete",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeCommandStopTimeout",
+      "kind": "const",
+      "proposed": "ceph.NativeCommandStopTimeout",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeCommandUnstoppedError",
+      "kind": "type",
+      "proposed": "ceph.NativeCommandUnstoppedError",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeCommandUnstoppedError.Error",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*NativeCommandUnstoppedError",
+      "proposed": "ceph.NativeCommandUnstoppedError.Error",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeCommandUnstoppedError.Stop",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*NativeCommandUnstoppedError",
+      "proposed": "ceph.NativeCommandUnstoppedError.Stop",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeCommandUnstoppedError.Unwrap",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*NativeCommandUnstoppedError",
+      "proposed": "ceph.NativeCommandUnstoppedError.Unwrap",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeFailure",
+      "kind": "type",
+      "proposed": "ceph.NativeFailure",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeFailure.Error",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*NativeFailure",
+      "proposed": "ceph.NativeFailure.Error",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeFailure.Is",
+      "kind": "method",
+      "signature": "func(target error) bool",
+      "receiver": "*NativeFailure",
+      "proposed": "ceph.NativeFailure.Is",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeInput",
+      "kind": "type",
+      "proposed": "ceph.NativeInput",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeInput.Close",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*NativeInput",
+      "proposed": "ceph.NativeInput.Close",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NativeInput.Write",
+      "kind": "method",
+      "signature": "func(ctx context.Context, data []byte) error",
+      "receiver": "*NativeInput",
+      "proposed": "ceph.NativeInput.Write",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NetworkPlane",
+      "kind": "type",
+      "proposed": "ceph.NetworkPlane",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NewNativeInput",
+      "kind": "function",
+      "signature": "func() *NativeInput",
+      "proposed": "ceph.NewNativeInput",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NewShared",
+      "kind": "function",
+      "signature": "func(image string, opts ...SharedOption) *SharedCluster",
+      "proposed": "ceph.NewShared",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDAddress",
+      "kind": "type",
+      "proposed": "ceph.OSDAddress",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDBlueStore",
+      "kind": "const",
+      "proposed": "ceph.OSDBlueStore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDConfig",
+      "kind": "type",
+      "proposed": "ceph.OSDConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDContainer",
+      "kind": "type",
+      "proposed": "ceph.OSDContainer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDContainer.AdminSocket",
+      "kind": "method",
+      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.AdminSocket",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDContainer.Detach",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*DetachedOSD, error)",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.Detach",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDContainer.Placement",
+      "kind": "method",
+      "signature": "func() OSDConfig",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.Placement",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDContainer.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDContainer.RotateKey",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.RotateKey",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDContainer.SetIn",
+      "kind": "method",
+      "signature": "func(ctx context.Context, in bool) error",
+      "receiver": "*OSDContainer",
+      "proposed": "ceph.OSDContainer.SetIn",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlag",
+      "kind": "type",
+      "proposed": "ceph.OSDFlag",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlag.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "OSDFlag",
+      "proposed": "ceph.OSDFlag.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagNoAutoscale",
+      "kind": "const",
+      "proposed": "ceph.OSDFlagNoAutoscale",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagNoBackfill",
+      "kind": "const",
+      "proposed": "ceph.OSDFlagNoBackfill",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagNoDeepScrub",
+      "kind": "const",
+      "proposed": "ceph.OSDFlagNoDeepScrub",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagNoDown",
+      "kind": "const",
+      "proposed": "ceph.OSDFlagNoDown",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagNoIn",
+      "kind": "const",
+      "proposed": "ceph.OSDFlagNoIn",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagNoOut",
+      "kind": "const",
+      "proposed": "ceph.OSDFlagNoOut",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagNoRebalance",
+      "kind": "const",
+      "proposed": "ceph.OSDFlagNoRebalance",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagNoRecover",
+      "kind": "const",
+      "proposed": "ceph.OSDFlagNoRecover",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagNoScrub",
+      "kind": "const",
+      "proposed": "ceph.OSDFlagNoScrub",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagNoSnapTrim",
+      "kind": "const",
+      "proposed": "ceph.OSDFlagNoSnapTrim",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagNoUp",
+      "kind": "const",
+      "proposed": "ceph.OSDFlagNoUp",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagOverrideHandle",
+      "kind": "type",
+      "proposed": "ceph.OSDFlagOverrideHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDFlagOverrideHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*OSDFlagOverrideHandle",
+      "proposed": "ceph.OSDFlagOverrideHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDMemStore",
+      "kind": "const",
+      "proposed": "ceph.OSDMemStore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDObjectStore",
+      "kind": "type",
+      "proposed": "ceph.OSDObjectStore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDState",
+      "kind": "type",
+      "proposed": "ceph.OSDState",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ObjectWatcher",
+      "kind": "type",
+      "proposed": "ceph.ObjectWatcher",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observe",
+      "kind": "function",
+      "signature": "func(cluster *Container) (*Observer, error)",
+      "proposed": "ceph.Observe",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ObserveTenant",
+      "kind": "function",
+      "signature": "func(tenant *Tenant) (*Observer, error)",
+      "proposed": "ceph.ObserveTenant",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer",
+      "kind": "type",
+      "proposed": "ceph.Observer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.DaemonAddresses",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (DaemonAddresses, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.DaemonAddresses",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.ManagerStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ManagerStatus, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.ManagerStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (Status, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OperationError",
+      "kind": "type",
+      "proposed": "ceph.OperationError",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OperationError.Error",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*OperationError",
+      "proposed": "ceph.OperationError.Error",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OperationError.Is",
+      "kind": "method",
+      "signature": "func(target error) bool",
+      "receiver": "*OperationError",
+      "proposed": "ceph.OperationError.Is",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OperationError.Unwrap",
+      "kind": "method",
+      "signature": "func() error",
+      "receiver": "*OperationError",
+      "proposed": "ceph.OperationError.Unwrap",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Option",
+      "kind": "type",
+      "proposed": "ceph.Option",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Option.Customize",
+      "kind": "method",
+      "signature": "func(*testcontainers.GenericContainerRequest) error",
+      "receiver": "Option",
+      "proposed": "ceph.Option.Customize",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PGID",
+      "kind": "type",
+      "proposed": "ceph.PGID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PGID.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "PGID",
+      "proposed": "ceph.PGID.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PGState",
+      "kind": "type",
+      "proposed": "ceph.PGState",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PGStats",
+      "kind": "type",
+      "proposed": "ceph.PGStats",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ParsePGID",
+      "kind": "function",
+      "signature": "func(s string) (PGID, error)",
+      "proposed": "ceph.ParsePGID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool",
+      "kind": "type",
+      "proposed": "ceph.Pool",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.PGs",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (PoolPGSnapshot, error)",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.PGs",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.SetPGCount",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pgNum int) error",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.SetPGCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.SetPlacement",
+      "kind": "method",
+      "signature": "func(ctx context.Context, placement PoolPlacement) error",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.SetPlacement",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.SetQuota",
+      "kind": "method",
+      "signature": "func(ctx context.Context, quota PoolQuota) error",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.SetQuota",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.SetReplication",
+      "kind": "method",
+      "signature": "func(ctx context.Context, replicas, minSize int) error",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.SetReplication",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (PoolState, error)",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.Usage",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (PoolUsageSnapshot, error)",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.Usage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Pool.WaitForPGCount",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pgNum int) error",
+      "receiver": "*Pool",
+      "proposed": "ceph.Pool.WaitForPGCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolConfig",
+      "kind": "type",
+      "proposed": "ceph.PoolConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolPGSnapshot",
+      "kind": "type",
+      "proposed": "ceph.PoolPGSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolPlacement",
+      "kind": "type",
+      "proposed": "ceph.PoolPlacement",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolQuota",
+      "kind": "type",
+      "proposed": "ceph.PoolQuota",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolState",
+      "kind": "type",
+      "proposed": "ceph.PoolState",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PoolUsageSnapshot",
+      "kind": "type",
+      "proposed": "ceph.PoolUsageSnapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.PublicNetworkPlane",
+      "kind": "const",
+      "proposed": "ceph.PublicNetworkPlane",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.QuorumStatus",
+      "kind": "type",
+      "proposed": "ceph.QuorumStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Run",
+      "kind": "function",
+      "signature": "func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
+      "proposed": "ceph.Run",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.RunTests",
+      "kind": "function",
+      "signature": "func(m *testing.M, s ...*SharedCluster) int",
+      "proposed": "ceph.RunTests",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.RunWithImages",
+      "kind": "function",
+      "signature": "func(ctx context.Context, images ImageSet, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
+      "proposed": "ceph.RunWithImages",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.SharedCluster",
+      "kind": "type",
+      "proposed": "ceph.SharedCluster",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.SharedCluster.Close",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*SharedCluster",
+      "proposed": "ceph.SharedCluster.Close",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.SharedCluster.Exclusive",
+      "kind": "method",
+      "signature": "func(t testing.TB) *Container",
+      "receiver": "*SharedCluster",
+      "proposed": "ceph.SharedCluster.Exclusive",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.SharedCluster.Lease",
+      "kind": "method",
+      "signature": "func(t testing.TB, opts ...LeaseOption) *Tenant",
+      "receiver": "*SharedCluster",
+      "proposed": "ceph.SharedCluster.Lease",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.SharedCluster.Stats",
+      "kind": "method",
+      "signature": "func() SharedStats",
+      "receiver": "*SharedCluster",
+      "proposed": "ceph.SharedCluster.Stats",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.SharedOption",
+      "kind": "type",
+      "proposed": "ceph.SharedOption",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.SharedPool",
+      "kind": "const",
+      "proposed": "ceph.SharedPool",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.SharedStats",
+      "kind": "type",
+      "proposed": "ceph.SharedStats",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Status",
+      "kind": "type",
+      "proposed": "ceph.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant",
+      "kind": "type",
+      "proposed": "ceph.Tenant",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.BlocklistEntries",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]BlocklistEntry, error)",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.BlocklistEntries",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.Client",
+      "kind": "method",
+      "signature": "func() *ClientConfig",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.Client",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.CreateClient",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string, access TenantAccess) (*ClientConfig, error)",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.CreateClient",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.HealthDetails",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (HealthSnapshot, error)",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.HealthDetails",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.ID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.ID",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.Namespace",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.Namespace",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.OSDFlags",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]OSDFlag, error)",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.OSDFlags",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.ObjectWatchers",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error)",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.ObjectWatchers",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.Pool",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.Pool",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.PoolStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string) (PoolState, error)",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.PoolStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.PoolUsage",
+      "kind": "method",
+      "signature": "func(ctx context.Context, name string) (PoolUsageSnapshot, error)",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.PoolUsage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.Pools",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]PoolState, error)",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.Pools",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.RunNativeCommand",
+      "kind": "method",
+      "signature": "func(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error)",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.RunNativeCommand",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (Status, error)",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.WithClient",
+      "kind": "method",
+      "signature": "func(opts ...ClientContainerOption) testcontainers.CustomizeRequestOption",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.WithClient",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Tenant.WithClientIdentity",
+      "kind": "method",
+      "signature": "func(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption",
+      "receiver": "*Tenant",
+      "proposed": "ceph.Tenant.WithClientIdentity",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.TenantAccess",
+      "kind": "type",
+      "proposed": "ceph.TenantAccess",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.TenantReadOnly",
+      "kind": "const",
+      "proposed": "ceph.TenantReadOnly",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.TenantReadWrite",
+      "kind": "const",
+      "proposed": "ceph.TenantReadWrite",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Verification",
+      "kind": "type",
+      "proposed": "ceph.Verification",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Verification.Evaluate",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*VerificationReport, error)",
+      "receiver": "*Verification",
+      "proposed": "ceph.Verification.Evaluate",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.VerificationCheck",
+      "kind": "type",
+      "proposed": "ceph.VerificationCheck",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.VerificationClean",
+      "kind": "const",
+      "proposed": "ceph.VerificationClean",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.VerificationConfig",
+      "kind": "type",
+      "proposed": "ceph.VerificationConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.VerificationFinding",
+      "kind": "type",
+      "proposed": "ceph.VerificationFinding",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.VerificationGap",
+      "kind": "type",
+      "proposed": "ceph.VerificationGap",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.VerificationIncomplete",
+      "kind": "const",
+      "proposed": "ceph.VerificationIncomplete",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.VerificationOutcome",
+      "kind": "type",
+      "proposed": "ceph.VerificationOutcome",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.VerificationReport",
+      "kind": "type",
+      "proposed": "ceph.VerificationReport",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.VerificationSource",
+      "kind": "type",
+      "proposed": "ceph.VerificationSource",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.VerificationUnexpected",
+      "kind": "const",
+      "proposed": "ceph.VerificationUnexpected",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.VerificationWindow",
+      "kind": "type",
+      "proposed": "ceph.VerificationWindow",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithAddressFamily",
+      "kind": "function",
+      "signature": "func(family AddressFamily) Option",
+      "proposed": "ceph.WithAddressFamily",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithAuth",
+      "kind": "function",
+      "signature": "func(config AuthConfig) Option",
+      "proposed": "ceph.WithAuth",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithClientKeyType",
+      "kind": "function",
+      "signature": "func(cipher CephxCipher) ClientOption",
+      "proposed": "ceph.WithClientKeyType",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithClientMessengerPolicy",
+      "kind": "function",
+      "signature": "func(policy ClientMessengerPolicy) ClientContainerOption",
+      "proposed": "ceph.WithClientMessengerPolicy",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithConfigFile",
+      "kind": "function",
+      "signature": "func(path string) Option",
+      "proposed": "ceph.WithConfigFile",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithDefaultCRUSHRoot",
+      "kind": "function",
+      "signature": "func(root string) Option",
+      "proposed": "ceph.WithDefaultCRUSHRoot",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithHostAddress",
+      "kind": "function",
+      "signature": "func(address string) Option",
+      "proposed": "ceph.WithHostAddress",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithHostNetwork",
+      "kind": "function",
+      "signature": "func() Option",
+      "proposed": "ceph.WithHostNetwork",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithIdleEntrypoint",
+      "kind": "function",
+      "signature": "func() testcontainers.CustomizeRequestOption",
+      "proposed": "ceph.WithIdleEntrypoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithImages",
+      "kind": "function",
+      "signature": "func(images ImageSet) Option",
+      "proposed": "ceph.WithImages",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithInitialOSDs",
+      "kind": "function",
+      "signature": "func(configs ...OSDConfig) Option",
+      "proposed": "ceph.WithInitialOSDs",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithKeepOnTenantFailure",
+      "kind": "function",
+      "signature": "func() LeaseOption",
+      "proposed": "ceph.WithKeepOnTenantFailure",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithManagerCount",
+      "kind": "function",
+      "signature": "func(count int) Option",
+      "proposed": "ceph.WithManagerCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithMaxRecycles",
+      "kind": "function",
+      "signature": "func(n int) SharedOption",
+      "proposed": "ceph.WithMaxRecycles",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithMaxTenants",
+      "kind": "function",
+      "signature": "func(n int) SharedOption",
+      "proposed": "ceph.WithMaxTenants",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithMessengerMode",
+      "kind": "function",
+      "signature": "func(mode MessengerMode) Option",
+      "proposed": "ceph.WithMessengerMode",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithMessengerPolicy",
+      "kind": "function",
+      "signature": "func(policy MessengerPolicy) Option",
+      "proposed": "ceph.WithMessengerPolicy",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithMonitorCount",
+      "kind": "function",
+      "signature": "func(count int) Option",
+      "proposed": "ceph.WithMonitorCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithNoInitialManagers",
+      "kind": "function",
+      "signature": "func() Option",
+      "proposed": "ceph.WithNoInitialManagers",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithNoInitialOSDs",
+      "kind": "function",
+      "signature": "func() Option",
+      "proposed": "ceph.WithNoInitialOSDs",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithOSDBlockSize",
+      "kind": "function",
+      "signature": "func(size int64) Option",
+      "proposed": "ceph.WithOSDBlockSize",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithOSDCount",
+      "kind": "function",
+      "signature": "func(count int) Option",
+      "proposed": "ceph.WithOSDCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithOSDInMemoryStorage",
+      "kind": "function",
+      "signature": "func(maxBytes int64) Option",
+      "proposed": "ceph.WithOSDInMemoryStorage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithOSDObjectStore",
+      "kind": "function",
+      "signature": "func(store OSDObjectStore) Option",
+      "proposed": "ceph.WithOSDObjectStore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithOSDVolumeStorage",
+      "kind": "function",
+      "signature": "func() Option",
+      "proposed": "ceph.WithOSDVolumeStorage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithPoolDefaults",
+      "kind": "function",
+      "signature": "func(replicas, minSize int) Option",
+      "proposed": "ceph.WithPoolDefaults",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithPools",
+      "kind": "function",
+      "signature": "func(configs ...PoolConfig) Option",
+      "proposed": "ceph.WithPools",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithSeparateClusterNetwork",
+      "kind": "function",
+      "signature": "func() Option",
+      "proposed": "ceph.WithSeparateClusterNetwork",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithSharedRunOptions",
+      "kind": "function",
+      "signature": "func(opts ...testcontainers.ContainerCustomizer) SharedOption",
+      "proposed": "ceph.WithSharedRunOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithStartupTimeout",
+      "kind": "function",
+      "signature": "func(timeout time.Duration) Option",
+      "proposed": "ceph.WithStartupTimeout",
+      "decision": "baseline"
+    }
+  ]
+}

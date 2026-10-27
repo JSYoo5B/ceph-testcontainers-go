@@ -30,8 +30,8 @@ READ_DOC_FILES = frozenset((
 ))
 # Git file modes of an ordinary file and of an absent side (added or deleted).
 REGULAR_MODES = frozenset(("100644", "000000"))
-# internal/apiinventory reads the audit and the inventory, member and review
-# receipts of the API naming review.
+# internal/apiinventory reads the audit, the review notes and the package-scoped
+# declaration, member and review files below docs/design/api-naming/.
 READ_DOC_PREFIXES = ("docs/design/api-naming",)
 
 

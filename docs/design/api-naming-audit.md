@@ -1,31 +1,25 @@
 # Public naming retention audit
 
 This finishes #14's staged naming pass at the source captured by
-[api-naming-review.json](api-naming-review.json). The last selected operation is
+the per-package receipts in [api-naming/](api-naming/) (one `review.json` per
+public package). The last selected operation is
 `rbd.StartImmutableObjectCache`; its [migration](../guides/upgrading-rbd-cache-name.md)
 retains the existing lease and runtime contract. No further rename is selected
 for the remaining names in this snapshot.
 
 ## Scope and evidence
 
-The declaration catalogue contains **810** functions, declared methods on
+The declaration catalogues contain functions, declared methods on
 exported receivers, types, constants and variables. The separate member
-catalogue contains **1091** exported field/nested-record/embedding entries in
-**182** types. It scans exported declared interfaces as well; the current public packages declare `ceph.CaptureSettler` (two methods) and
+catalogues contain exported field/nested-record/embedding entries. They scan exported declared interfaces as well; the current public packages declare `ceph.CaptureSettler` (two methods) and
 `ceph.CaptureFileSource` (that embedding plus one read-only file method). Its synthetic scope test includes interface
 methods/embeddings, grouped fields, pointer/private embeddings and nested
 anonymous array/map records, and refuses to expose ordinary private fields.
 
-| Package | Declaration entries | Member/embedding entries |
-| --- | ---: | ---: |
-| `ceph` | 382 | 426 |
-| `fault` | 35 | 64 |
-| `rbd` | 77 | 94 |
-| `cephfs` | 155 | 247 |
-| `rgw` | 69 | 91 |
-| `rgw/multisite` | 56 | 113 |
-| `capture` | 36 | 56 |
-| Total | 810 | 1091 |
+The per-package counts and the totals are no longer kept in this note by hand.
+Print them from the committed per-package files with
+`go run ./internal/tools/apinaming aggregate`; the view is computed on demand
+and never committed.
 
 This includes the dependency-role migration through #32: `ImageSet`,
 `RunWithImages`, `WithImages`, `Images`, `ClientContainer` and the
@@ -157,8 +151,8 @@ contracts and remain outside this source-only naming completion.
 
 ## Validation and future changes
 
-Normal API tests verify declarations, members and receipt binding without
-writing files. The member-scope fixture checks that interface and nested fields
+Normal API tests verify the per-package declarations, members and receipt
+binding without writing files. The member-scope fixture checks that interface and nested fields
 are captured while ordinary private fields are excluded. Unit/race tests and
 all tag combinations check the maintained method/caller sets. The focused RBD
 cache native recipe separately checks cache promotion/counters, repeated read,
@@ -167,8 +161,11 @@ Compilation, digest agreement and zero remaining proposals are not native proof.
 
 Future additions do not inherit an approval merely by matching a prefix. Review
 their role at the call site, ownership, undo/lifetime meaning and affected
-consumers, regenerate the inventories, then explicitly refresh the receipt and
-this assessment as needed. Keep published tags immutable; the selected source
+consumers, regenerate the affected package's catalogues
+(`go run ./internal/tools/apinaming regenerate <package>`), then approve that
+package explicitly (`go run ./internal/tools/apinaming approve <package>`, a
+separate step that writes only its `review.json`) and refresh this assessment as
+needed. Keep published tags immutable; the selected source
 breaks target the next minor release without automatic permanent aliases.
 
 ## Explicit raw capture archive addition
