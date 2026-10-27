@@ -220,7 +220,8 @@ func TestObserverRadosQueriesKeepTheirOwnTopologyLockAcquisition(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- queries["ObjectWatchers"](t.Context()) }()
 	select {
-	case <-done:
+	case early := <-done:
+		_ = early
 		cluster.mu.Unlock()
 		t.Fatal("ObjectWatchers ran while the topology lock was held")
 	case <-time.After(50 * time.Millisecond):
