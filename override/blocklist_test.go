@@ -263,7 +263,9 @@ func TestNotAppliedBlocklistRestoreIsANoOpThatTakesNoLock(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		servicehook.Unlock(c)
-		<-done
+		if err := <-done; err != nil {
+			t.Fatalf("the late restore returned %v", err)
+		}
 		t.Fatal("a not-applied restore waited for the cluster lock")
 	}
 	copy := *handle
