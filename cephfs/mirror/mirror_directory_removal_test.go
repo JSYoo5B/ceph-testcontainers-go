@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -131,7 +131,7 @@ func newDirectoryRemovalFixture() (*Mirror, *directoryRemovalControlFake, *peerR
 	return m, s, destination, da, db
 }
 
-func beginDirectoryRemovalFixture(t *testing.T) (*MirrorDirectoryRemoval, *Mirror, *directoryRemovalControlFake, *peerRemovalControlFake, *directoryRemovalDaemonFake, *directoryRemovalDaemonFake) {
+func beginDirectoryRemovalFixture(t *testing.T) (*DirectoryRemoval, *Mirror, *directoryRemovalControlFake, *peerRemovalControlFake, *directoryRemovalDaemonFake, *directoryRemovalDaemonFake) {
 	t.Helper()
 	m, s, d, a, b := newDirectoryRemovalFixture()
 	r, err := m.beginDirectoryRemoval(t.Context(), "/owned", peerRemovalClusterReader)
@@ -217,7 +217,7 @@ func TestCephFSDirectoryRemovalProductionPreflightNeverMutatesInvalidOwnership(t
 			case "peer-command-missing":
 				a.catalogPeer = false
 			}
-			var r *MirrorDirectoryRemoval
+			var r *DirectoryRemoval
 			var err error
 			if name == "public-missing-template" {
 				r, err = m.BeginDirectoryRemoval(t.Context(), "/owned")
@@ -512,7 +512,7 @@ func TestCephFSDirectoryRemovalProductionSchemaIdentityAndCohortFailClosed(t *te
 			case "metadata":
 				d.pool++
 			case "cohort-expansion":
-				m.daemons = append(m.daemons, &MirrorDaemon{Container: b, DaemonName: "new"})
+				m.daemons = append(m.daemons, &Daemon{Container: b, DaemonName: "new"})
 			case "cohort-retirement":
 				m.daemons = m.daemons[:1]
 			}
@@ -550,7 +550,7 @@ func TestCephFSDirectoryRemovalProductionTransientQueriesFreshRetryAndCausalCanc
 		}
 	}
 	type observed struct {
-		status MirrorDirectoryRemovalStatus
+		status DirectoryRemovalStatus
 		err    error
 	}
 	done := make(chan observed, 1)
@@ -608,7 +608,7 @@ func TestCephFSDirectoryRemovalProductionBeginQueuedBeforeMutation(t *testing.T)
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 			defer cancel()
 			type result struct {
-				receipt *MirrorDirectoryRemoval
+				receipt *DirectoryRemoval
 				err     error
 			}
 			done := make(chan result, 1)
@@ -649,8 +649,8 @@ func TestCephFSDirectoryRemovalProductionBeginQueuedBeforeMutation(t *testing.T)
 func TestCephFSDirectoryRemovalProductionBusyLocksAndPollRelease(t *testing.T) {
 	r, m, s, _, a, b := beginDirectoryRemovalFixture(t)
 	type observation struct {
-		status  MirrorDirectoryRemovalStatus
-		receipt *MirrorDirectoryRemoval
+		status  DirectoryRemovalStatus
+		receipt *DirectoryRemoval
 		err     error
 	}
 	for _, name := range []string{"fixture", "daemon", "expired-Begin"} {

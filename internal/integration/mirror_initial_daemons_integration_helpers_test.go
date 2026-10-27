@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	mobycl "github.com/moby/moby/client"
@@ -290,7 +291,7 @@ func testMirrorInitialCephFS(t *testing.T, host bool) {
 			t.Fatal(err)
 		}
 	}
-	checkpoint := func(directory, name string) cephfs.MirrorSnapshot {
+	checkpoint := func(directory, name string) cephfsmirror.Snapshot {
 		t.Helper()
 		multiClusterExecOutput(t, ctx, sourceClient, "python3", script, sourceFS.FilesystemName, "checkpoint", directory, name)
 		return cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, directory, name)
@@ -299,7 +300,7 @@ func testMirrorInitialCephFS(t *testing.T, host bool) {
 	expected := cephFSObservedFilesystemIdentity(t, ctx, sourceFS, destinationFS)
 	oracle := mirrorInitialNewDockerOracle(t, ctx)
 	var customizers, factoryCalls atomic.Int32
-	mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, DestinationSite: site, Directories: []string{seed}, NoInitialDaemons: true, OriginalProcessClientFactory: func(ctx context.Context) (*mobycl.Client, error) {
+	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfsmirror.Config{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, DestinationSite: site, Directories: []string{seed}, NoInitialDaemons: true, OriginalProcessClientFactory: func(ctx context.Context) (*mobycl.Client, error) {
 		factoryCalls.Add(1)
 		client, err := testcontainers.NewDockerClientWithOpts(ctx)
 		if err != nil {
@@ -358,7 +359,7 @@ func testMirrorInitialCephFS(t *testing.T, host bool) {
 	if err != nil || receiver == nil || mirror.Container != receiver || len(mirror.Daemons()) != 1 || customizers.Load() != 1 || factoryCalls.Load() != 1 || !receiver.ProcessObserverBindingStatus().Available {
 		t.Fatal("normal first explicit Add lost process/binding", err)
 	}
-	verify := func(directory string, snapshot cephfs.MirrorSnapshot, stage string) {
+	verify := func(directory string, snapshot cephfsmirror.Snapshot, stage string) {
 		t.Helper()
 		cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, directory, snapshot)
 		for _, role := range []string{"source", "destination"} {

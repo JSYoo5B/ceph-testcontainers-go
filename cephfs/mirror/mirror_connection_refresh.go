@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"bytes"

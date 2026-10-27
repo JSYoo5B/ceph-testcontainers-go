@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"bytes"
@@ -23,9 +23,9 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// MirrorConfig connects existing CephFS filesystems. The caller creates
+// Config connects existing CephFS filesystems. The caller creates
 // both clusters and their MDS/filesystems before starting snapshot mirroring.
-type MirrorConfig struct {
+type Config struct {
 	Source, Destination                     *ceph.Container
 	SourceFilesystem, DestinationFilesystem string
 	DestinationSite                         string
@@ -44,16 +44,16 @@ type MirrorConfig struct {
 	// daemons, such as the Client field of testcontainers.NewDockerClientWithOpts;
 	// the fixture owns and closes it. The factory must honor ctx; a non-nil
 	// client returned with an error is closed. A failed binding does not fail
-	// RunMirror; MirrorDaemon.ProcessObserverBindingStatus reports it. Nil disables
+	// Run; Daemon.ProcessObserverBindingStatus reports it. Nil disables
 	// the observer, and an interrupted removal then stays blocked until the
 	// fixture is terminated.
 	OriginalProcessClientFactory func(context.Context) (*mobycl.Client, error)
 }
 
-// MirrorDaemon is one owned mirror process. DaemonName is a stable fixture
+// Daemon is one owned mirror process. DaemonName is a stable fixture
 // identity; the native instance identity is its authenticated client GID.
 // All daemons in a fixture share SourceClientEntity and the same peer policy.
-type MirrorDaemon struct {
+type Daemon struct {
 	testcontainers.Container
 	DaemonName          string
 	mu                  sync.Mutex
@@ -65,7 +65,7 @@ type MirrorDaemon struct {
 // Terminate removes this process without modifying cluster policy. Successful
 // cleanup is remembered so fixture cleanup does not run container hooks twice;
 // a failed removal remains retryable. RemoveDaemon also removes its membership.
-func (daemon *MirrorDaemon) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
+func (daemon *Daemon) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	if daemon == nil {
 		return nil
 	}
@@ -85,7 +85,7 @@ type Mirror struct {
 	// that the fixture created on each side for the daemons and the peer.
 	SourceClientEntity, DestinationClientEntity string
 	// Directories lists the paths registered through this fixture:
-	// MirrorConfig.Directories, then later additions, without removed paths.
+	// Config.Directories, then later additions, without removed paths.
 	// The directory methods update it, so read it while none of them runs.
 	// Paths registered directly with the Ceph CLI are not included.
 	Directories []string
@@ -99,14 +99,14 @@ type Mirror struct {
 	metadataPoolID, destinationMetadataPoolID int64
 	destinationFilesystemID                   int
 	pendingPeerImport                         *cephFSPeerIdentity
-	peerRemoval                               *MirrorPeerRemoval
-	directoryRemoval                          *MirrorDirectoryRemoval
-	directoryAddition                         *MirrorDirectoryAddition
+	peerRemoval                               *PeerRemoval
+	directoryRemoval                          *DirectoryRemoval
+	directoryAddition                         *DirectoryAddition
 	directoryGenerations                      map[string]uint64
 	peerGeneration                            uint64
 	managerNetworking                         *cephFSManagerNetworking
 	closed                                    bool
-	daemons                                   []*MirrorDaemon
+	daemons                                   []*Daemon
 	daemonImage, sourceID                     string
 	daemonKeyring                             []byte
 	daemonOptions                             []testcontainers.ContainerCustomizer
@@ -125,7 +125,7 @@ type cephFSPeerIdentity struct {
 	FilesystemName string `json:"fs_name"`
 }
 
-// RunMirror configures one-way directory snapshot mirroring between two
+// Run configures one-way directory snapshot mirroring between two
 // existing filesystems and starts each initial cephfs-mirror in a separate
 // container. NoInitialDaemons retains setup without launching a daemon. image
 // must meet the control or all role requirements, including cephfs-mirror and
@@ -136,7 +136,7 @@ type cephFSPeerIdentity struct {
 // Both clusters must use the same network mode. Host mode requires no extra
 // daemon or manager attachment; bridge mode joins the peer cluster network.
 // Initial daemon names are a through z, then node-27 and onward.
-func RunMirror(ctx context.Context, image string, config MirrorConfig, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
+func Run(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("configure CephFS mirror: %w", err)
 	}
@@ -472,14 +472,14 @@ func countCephFSMirrorRegistrations(data []byte, filesystem, peerID string, owne
 // Daemons returns the owned daemon inventory sorted by DaemonName, including
 // stopped and partially started processes. The returned slice is a copy.
 // Native assignment convergence is asynchronous.
-func (mirror *Mirror) Daemons() []*MirrorDaemon {
+func (mirror *Mirror) Daemons() []*Daemon {
 	if mirror == nil {
 		return nil
 	}
 	mirror.mu.Lock()
 	defer mirror.mu.Unlock()
-	daemons := append([]*MirrorDaemon(nil), mirror.daemons...)
-	slices.SortFunc(daemons, func(a, b *MirrorDaemon) int { return strings.Compare(a.DaemonName, b.DaemonName) })
+	daemons := append([]*Daemon(nil), mirror.daemons...)
+	slices.SortFunc(daemons, func(a, b *Daemon) int { return strings.Compare(a.DaemonName, b.DaemonName) })
 	return daemons
 }
 
@@ -493,7 +493,7 @@ func (mirror *Mirror) Daemons() []*MirrorDaemon {
 // this fixture's directory assignments after adding a process.
 // Ceph's Tentacle documentation describes native assignment and failover but
 // also notes that deploying multiple CephFS mirror daemons is untested upstream.
-func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...testcontainers.ContainerCustomizer) (*MirrorDaemon, error) {
+func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...testcontainers.ContainerCustomizer) (*Daemon, error) {
 	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
 		return nil, err
 	}
@@ -531,7 +531,7 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 	moduleOpts = append(moduleOpts, mirror.daemonOptions...)
 	moduleOpts = append(moduleOpts, opts...)
 	container, err := testcontainers.Run(ctx, mirror.daemonImage, moduleOpts...)
-	var daemon *MirrorDaemon
+	var daemon *Daemon
 	if container != nil {
 		daemon = mirror.registerDaemonContainer(container, daemonName)
 		if mirror.originalProcessClientFactory != nil {
@@ -550,8 +550,8 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 
 // Called under mirror.mu. Register partial startup results before propagating
 // an error so either RemoveDaemon or Terminate can release them later.
-func (mirror *Mirror) registerDaemonContainer(container testcontainers.Container, daemonName string) *MirrorDaemon {
-	daemon := &MirrorDaemon{Container: container, DaemonName: daemonName}
+func (mirror *Mirror) registerDaemonContainer(container testcontainers.Container, daemonName string) *Daemon {
+	daemon := &Daemon{Container: container, DaemonName: daemonName}
 	if !mirror.initialDaemonAssigned {
 		mirror.Container = daemon
 		mirror.initialDaemonAssigned = true
@@ -1301,7 +1301,7 @@ func normalizeMirrorDirectory(directory string) (string, error) {
 	return path.Clean(directory), nil
 }
 
-func normalizeCephFSMirrorConfig(config MirrorConfig) (MirrorConfig, error) {
+func normalizeCephFSMirrorConfig(config Config) (Config, error) {
 	count, err := multicluster.NormalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons)
 	if err != nil {
 		return config, fmt.Errorf("CephFS %w", err)
@@ -1351,8 +1351,8 @@ func validCephFSMirrorFilesystemName(name string) bool {
 	return true
 }
 
-// RunMirrorWithImages selects the source cluster's CephFS daemon runtime.
-func RunMirrorWithImages(ctx context.Context, config MirrorConfig, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
+// RunWithImages selects the source cluster's CephFS daemon runtime.
+func RunWithImages(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
 	if config.Source == nil || config.Destination == nil {
 		return nil, invalid(fmt.Errorf("roles clusters are required"))
 	}
@@ -1360,5 +1360,5 @@ func RunMirrorWithImages(ctx context.Context, config MirrorConfig, opts ...testc
 	if image == "" {
 		return nil, invalid(fmt.Errorf("cephfs image is required"))
 	}
-	return RunMirror(ctx, image, config, opts...)
+	return Run(ctx, image, config, opts...)
 }

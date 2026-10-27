@@ -149,7 +149,7 @@ rbd/mirror --> rbd ----------> ceph
 rbd/mirror --> internal/multicluster --> ceph, fault, internal/servicehook
 rbd/mirror --> internal/clusterutil, ceph, fault
 rbd ----------> ceph, internal/multicluster (no import of rbd/mirror)
-cephfs -------> internal/multicluster (unchanged, not yet moved)
+cephfs -------> internal/multicluster (no import of cephfs/mirror)
 ```
 
 `rbd` does not import `rbd/mirror` (checked with `go list -deps ./rbd`), so the
@@ -163,8 +163,49 @@ independent native data checks are byte for byte as before except for the
 renamed identifiers and the package clause. The unit tests moved with their
 assertions unchanged. This change adds no native evidence of its own.
 
-### Remaining
+### Remaining (after the RBD move)
 
-`cephfs/mirror` (17 exported types and 32 functions and methods at the
-inventory above, 13 caller files, 3 Markdown pages) is not moved here, and no
-CephFS name is renamed.
+The CephFS family followed in a separate change, recorded below.
+
+## CephFS move
+
+`cephfs/mirror` now holds the CephFS family, with the same rules as RBD: no
+common public Mirror abstraction, no alias or forwarding layer, mechanics shared
+through `internal/multicluster`.
+
+### Old to new (CephFS)
+
+Moved files: `cephfs/mirror*.go`, `cephfs/network.go` (`InterruptPeerLink`),
+`cephfs/context_lock_test.go`, `cephfs/wait_context_test.go` and the mirror unit
+tests to `cephfs/mirror/`. All test names are unchanged. Exported names:
+`RunMirror` becomes `Run`, `RunMirrorWithImages` becomes `RunWithImages`,
+`Mirror` is kept, and the `Mirror` prefix is dropped from the other 16 types:
+`MirrorConfig`, `MirrorDaemon`, `MirrorDirectoryAddition`
+(`...Status`), `MirrorDirectoryRemoval` (`...Status`, `...DaemonStatus`),
+`MirrorPeerRemoval` (`...Status`, `...DaemonStatus`), `MirrorSnapshot`,
+`MirrorDirectoryStatus`, `MirrorProcessBindingStatus`,
+`MirrorProcessQuiescenceStatus`, `MirrorOriginalProcessStatus` and
+`MirrorProcessQuiescenceAcknowledgment`. Methods keep their names, receivers and
+signature shapes. The table is in
+[the upgrade guide](../guides/upgrading-cephfs-mirror-package.md). Callers: 13
+Go files under `internal/integration`. Docs: the mirror reference, example,
+limitations moved from `docs/cephfs.md` to `docs/cephfs-mirror.md`.
+
+### Parent-owned declarations and bridges
+
+Only the three-line `invalid` helper was needed from the parent; it is an
+unexported copy in `cephfs/mirror/errors.go` with the same error kind. No
+exported or unexported parent state is shared and no method is added to a
+parent-owned type.
+
+### Import graph (CephFS)
+
+```
+cephfs/mirror --> internal/multicluster --> ceph, fault, internal/servicehook
+cephfs/mirror --> ceph, fault
+cephfs ---------> internal/multicluster (no import of cephfs/mirror)
+```
+
+`cephfs/mirror` does not import `cephfs`, so the move adds no edge to the
+graph. Behavior is preserved as for the RBD move: only identifiers and the
+package clause differ in the moved bodies.

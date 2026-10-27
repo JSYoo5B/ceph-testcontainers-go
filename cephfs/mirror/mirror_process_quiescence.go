@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -34,18 +34,18 @@ type cephFSBoundOriginalProcess struct {
 	closed                                   bool
 }
 
-// MirrorProcessBindingStatus is a local snapshot of optional capability.
+// ProcessBindingStatus is a local snapshot of optional capability.
 // State contains a finite reason; factory errors and endpoint bodies are omitted.
-type MirrorProcessBindingStatus struct {
+type ProcessBindingStatus struct {
 	Available                    bool
 	State, EngineID, ContainerID string
 }
 
 // ProcessObserverBindingStatus reports local optional binding availability.
 // It does not query Docker or establish task cessation.
-func (d *MirrorDaemon) ProcessObserverBindingStatus() MirrorProcessBindingStatus {
+func (d *Daemon) ProcessObserverBindingStatus() ProcessBindingStatus {
 	if d == nil {
-		return MirrorProcessBindingStatus{State: "unavailable"}
+		return ProcessBindingStatus{State: "unavailable"}
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -53,7 +53,7 @@ func (d *MirrorDaemon) ProcessObserverBindingStatus() MirrorProcessBindingStatus
 	if state == "" {
 		state = "disabled"
 	}
-	result := MirrorProcessBindingStatus{State: state}
+	result := ProcessBindingStatus{State: state}
 	if b := d.originalProcess; b != nil {
 		b.mu.Lock()
 		defer b.mu.Unlock()
@@ -70,7 +70,7 @@ func (d *MirrorDaemon) ProcessObserverBindingStatus() MirrorProcessBindingStatus
 // Failure is finite observable capability state; ordinary Run's result survives.
 // The configured public factory returns a raw *moby.Client, so TC cached Info
 // cannot accidentally be selected as the production identity implementation.
-func (m *Mirror) bindOriginalProcessClient(ctx context.Context, d *MirrorDaemon, c *testcontainers.DockerContainer) {
+func (m *Mirror) bindOriginalProcessClient(ctx context.Context, d *Daemon, c *testcontainers.DockerContainer) {
 	d.processBindingState = "positive-binding-failed"
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -91,7 +91,7 @@ func (m *Mirror) bindOriginalProcessClient(ctx context.Context, d *MirrorDaemon,
 	m.owned.AddCleanup("close original CephFS process observer", b.close)
 }
 
-func bindOriginalProcessCandidate(ctx context.Context, d *MirrorDaemon, h cephFSOriginalProcessHandle, raw cephFSOriginalProcessDocker, factoryErr error) *cephFSBoundOriginalProcess {
+func bindOriginalProcessCandidate(ctx context.Context, d *Daemon, h cephFSOriginalProcessHandle, raw cephFSOriginalProcessDocker, factoryErr error) *cephFSBoundOriginalProcess {
 	d.processBindingState = "positive-binding-failed"
 	if factoryErr != nil {
 		if raw != nil {
@@ -265,28 +265,28 @@ func confirmCephFSOriginalRun(ctx context.Context, w cephFSPeerRemovalWitness) e
 	return ctx.Err()
 }
 
-// MirrorProcessQuiescenceStatus is original-cohort evidence only.
+// ProcessQuiescenceStatus is original-cohort evidence only.
 // It does not assert graceful teardown, current fixture silence, successful
 // remote unlock, irreversibility against checkpoint restore, Drained or Released.
-type MirrorProcessQuiescenceStatus struct {
+type ProcessQuiescenceStatus struct {
 	PeerID, Directory, SourceFilesystem, DestinationFilesystem string
 	SourceFilesystemID, DestinationFilesystemID                int
 	PolicyRemoved, OriginalQuiescent                           bool
-	Daemons                                                    map[string]MirrorOriginalProcessStatus
+	Daemons                                                    map[string]OriginalProcessStatus
 }
 
-// MirrorOriginalProcessStatus retains one original run and watcher.
+// OriginalProcessStatus retains one original run and watcher.
 // New runs and unrelated watchers never replace these receipt identities.
-type MirrorOriginalProcessStatus struct {
+type OriginalProcessStatus struct {
 	EngineID, ContainerID, StartedAt, InstanceID                 string
 	OriginalTaskEnded, OriginalWatcherRetired, OriginalQuiescent bool
 	Evidence, Problem                                            string
 }
 
 // ProcessQuiescence does not mutate completed or relax existing overlap gates.
-func (r *MirrorPeerRemoval) ProcessQuiescence(ctx context.Context) (MirrorProcessQuiescenceStatus, error) {
+func (r *PeerRemoval) ProcessQuiescence(ctx context.Context) (ProcessQuiescenceStatus, error) {
 	if r == nil {
-		return MirrorProcessQuiescenceStatus{}, cephFSObserveGuard("original peer process receipt is unavailable")
+		return ProcessQuiescenceStatus{}, cephFSObserveGuard("original peer process receipt is unavailable")
 	}
 	return observeCephFSReceiptProcessQuiescence(ctx, r, "", r.checkHandle, func(ctx context.Context) (bool, error) {
 		present, fsPresent, err := r.policy(ctx)
@@ -296,9 +296,9 @@ func (r *MirrorPeerRemoval) ProcessQuiescence(ctx context.Context) (MirrorProces
 
 // ProcessQuiescence retains the peer tuple and original path generation.
 // Path policy absence is the existing exact native mirror ls observation.
-func (r *MirrorDirectoryRemoval) ProcessQuiescence(ctx context.Context) (MirrorProcessQuiescenceStatus, error) {
+func (r *DirectoryRemoval) ProcessQuiescence(ctx context.Context) (ProcessQuiescenceStatus, error) {
 	if r == nil || r.original == nil {
-		return MirrorProcessQuiescenceStatus{}, cephFSObserveGuard("original directory process receipt is unavailable")
+		return ProcessQuiescenceStatus{}, cephFSObserveGuard("original directory process receipt is unavailable")
 	}
 	return observeCephFSReceiptProcessQuiescence(ctx, r.original, r.directory, func() error { return r.checkDirectoryRemovalHandle(true) }, func(ctx context.Context) (bool, error) {
 		if err := r.peerPolicy(ctx); err != nil {
@@ -309,7 +309,7 @@ func (r *MirrorDirectoryRemoval) ProcessQuiescence(ctx context.Context) (MirrorP
 	})
 }
 
-func observeCephFSReceiptProcessQuiescence(ctx context.Context, o *MirrorPeerRemoval, directory string, owner func() error, authority func(context.Context) (bool, error)) (MirrorProcessQuiescenceStatus, error) {
+func observeCephFSReceiptProcessQuiescence(ctx context.Context, o *PeerRemoval, directory string, owner func() error, authority func(context.Context) (bool, error)) (ProcessQuiescenceStatus, error) {
 	result := initialCephFSProcessQuiescenceStatus(o, directory)
 	if o == nil || o.mirror == nil || owner == nil || authority == nil {
 		return result, cephFSObserveGuard("original process receipt owner is unavailable")
@@ -323,15 +323,15 @@ func observeCephFSReceiptProcessQuiescence(ctx context.Context, o *MirrorPeerRem
 	return observeCephFSReceiptProcessQuiescenceLocked(ctx, o, directory, owner, authority)
 }
 
-func initialCephFSProcessQuiescenceStatus(o *MirrorPeerRemoval, directory string) MirrorProcessQuiescenceStatus {
-	result := MirrorProcessQuiescenceStatus{Directory: directory, Daemons: make(map[string]MirrorOriginalProcessStatus)}
+func initialCephFSProcessQuiescenceStatus(o *PeerRemoval, directory string) ProcessQuiescenceStatus {
+	result := ProcessQuiescenceStatus{Directory: directory, Daemons: make(map[string]OriginalProcessStatus)}
 	if o == nil {
 		return result
 	}
 	result.PeerID, result.SourceFilesystem, result.DestinationFilesystem = o.peerID, o.sourceFilesystem, o.destinationFilesystem
 	result.SourceFilesystemID, result.DestinationFilesystemID = o.sourceID, o.destinationID
 	for _, w := range o.cohort {
-		entry := MirrorOriginalProcessStatus{ContainerID: w.containerID, StartedAt: w.startedAt, InstanceID: w.instanceID, Evidence: "unobserved"}
+		entry := OriginalProcessStatus{ContainerID: w.containerID, StartedAt: w.startedAt, InstanceID: w.instanceID, Evidence: "unobserved"}
 		if w.originalProcess != nil {
 			entry.EngineID = w.originalProcess.engineID
 		}
@@ -342,7 +342,7 @@ func initialCephFSProcessQuiescenceStatus(o *MirrorPeerRemoval, directory string
 
 // Called with mirror.mu held. Proof and an explicit acknowledgment decision can
 // share one fixture gate without admitting a local generation change between.
-func observeCephFSReceiptProcessQuiescenceLocked(ctx context.Context, o *MirrorPeerRemoval, directory string, owner func() error, authority func(context.Context) (bool, error)) (MirrorProcessQuiescenceStatus, error) {
+func observeCephFSReceiptProcessQuiescenceLocked(ctx context.Context, o *PeerRemoval, directory string, owner func() error, authority func(context.Context) (bool, error)) (ProcessQuiescenceStatus, error) {
 	result := initialCephFSProcessQuiescenceStatus(o, directory)
 	if o == nil || o.mirror == nil || owner == nil || authority == nil {
 		return result, cephFSObserveGuard("original process receipt owner is unavailable")
@@ -428,7 +428,7 @@ func observeCephFSReceiptProcessQuiescenceLocked(ctx context.Context, o *MirrorP
 	return result, nil
 }
 
-func annotateProcessProblem(result *MirrorProcessQuiescenceStatus, name string, err error) error {
+func annotateProcessProblem(result *ProcessQuiescenceStatus, name string, err error) error {
 	entry := result.Daemons[name]
 	entry.Problem = "original process evidence unavailable"
 	if errors.Is(err, errCephFSObservationGuard) {
@@ -438,11 +438,11 @@ func annotateProcessProblem(result *MirrorProcessQuiescenceStatus, name string, 
 	return err
 }
 
-func validateCephFSProcessCohort(ctx context.Context, o *MirrorPeerRemoval) error {
+func validateCephFSProcessCohort(ctx context.Context, o *PeerRemoval) error {
 	if o == nil || o.mirror == nil || len(o.cohort) == 0 {
 		return cephFSObserveGuard("original process cohort is empty")
 	}
-	owned := make(map[*MirrorDaemon]bool)
+	owned := make(map[*Daemon]bool)
 	names, ids, gids := make(map[string]bool), make(map[string]bool), make(map[uint64]bool)
 	for _, w := range o.cohort {
 		gid, err := strconv.ParseUint(w.instanceID, 10, 64)

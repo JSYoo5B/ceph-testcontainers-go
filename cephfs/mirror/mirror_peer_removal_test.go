@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -175,13 +175,13 @@ func newPeerRemovalFixture() (*Mirror, *peerRemovalControlFake, *peerRemovalCont
 	}
 	a := makeDaemon(strings.Repeat("a", 64), "172.20.0.8:0/1234")
 	b := makeDaemon(strings.Repeat("b", 64), "172.20.0.9:0/5678")
-	mirror := &Mirror{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer, Directories: []string{"/owned"}, ownedDirectories: map[string]bool{"/owned": true}, daemonImage: "unchanged", daemonKeyring: []byte("private-fixture-secret"), daemons: []*MirrorDaemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}
+	mirror := &Mirror{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer, Directories: []string{"/owned"}, ownedDirectories: map[string]bool{"/owned": true}, daemonImage: "unchanged", daemonKeyring: []byte("private-fixture-secret"), daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}
 	for _, d := range mirror.daemons {
 		mirror.owned.AddContainer(d)
 	}
 	return mirror, source, destination, a, b
 }
-func beginPeerRemovalFixture(t *testing.T) (*MirrorPeerRemoval, *Mirror, *peerRemovalControlFake, *peerRemovalControlFake, *peerRemovalDaemonFake, *peerRemovalDaemonFake) {
+func beginPeerRemovalFixture(t *testing.T) (*PeerRemoval, *Mirror, *peerRemovalControlFake, *peerRemovalControlFake, *peerRemovalDaemonFake, *peerRemovalDaemonFake) {
 	t.Helper()
 	m, s, d, a, b := newPeerRemovalFixture()
 	r, err := m.beginPeerRemoval(t.Context(), cephFSObserverDraftPeer, peerRemovalClusterReader)
@@ -446,7 +446,7 @@ func TestCephFSPeerRemovalProductionKnownNativeFailureAndCancellationPreserveLas
 	// Complete the actual native-error observation before triggering cancellation.
 	// A short wall-clock deadline can expire before the first observation under
 	// compiler/native-suite load, which cannot legitimately retain an unseen cause.
-	status, err := waitCephFSPeerDrain(ctx, time.Millisecond, func(queryCtx context.Context) (MirrorPeerRemovalStatus, error) {
+	status, err := waitCephFSPeerDrain(ctx, time.Millisecond, func(queryCtx context.Context) (PeerRemovalStatus, error) {
 		observed, observationErr := r.Status(queryCtx)
 		cancel()
 		return observed, observationErr
@@ -462,15 +462,15 @@ func TestCephFSPeerRemovalProductionKnownNativeFailureAndCancellationPreserveLas
 	}
 	a.sessionOverride = ""
 	cancelCtx, stop := context.WithCancel(t.Context())
-	status, err = waitCephFSPeerDrain(cancelCtx, time.Millisecond, func(context.Context) (MirrorPeerRemovalStatus, error) {
+	status, err = waitCephFSPeerDrain(cancelCtx, time.Millisecond, func(context.Context) (PeerRemovalStatus, error) {
 		stop()
-		return MirrorPeerRemovalStatus{PeerID: "last", Drained: true}, errPeerRemovalTransport
+		return PeerRemovalStatus{PeerID: "last", Drained: true}, errPeerRemovalTransport
 	})
 	if status.Drained || status.PeerID != "last" || !errors.Is(err, context.Canceled) || !errors.Is(err, errPeerRemovalTransport) {
 		t.Fatalf("cancel after ready lost report/cause: %+v %v", status, err)
 	}
-	status, err = waitCephFSPeerDrain(t.Context(), time.Millisecond, func(context.Context) (MirrorPeerRemovalStatus, error) {
-		return MirrorPeerRemovalStatus{Drained: true}, errors.Join(errPeerRemovalTransport, cephFSObserveGuard("permanent"))
+	status, err = waitCephFSPeerDrain(t.Context(), time.Millisecond, func(context.Context) (PeerRemovalStatus, error) {
+		return PeerRemovalStatus{Drained: true}, errors.Join(errPeerRemovalTransport, cephFSObserveGuard("permanent"))
 	})
 	if status.Drained || !errors.Is(err, errCephFSObservationGuard) || !errors.Is(err, errPeerRemovalTransport) {
 		t.Fatalf("joined guard hidden by transport failure: %+v %v", status, err)

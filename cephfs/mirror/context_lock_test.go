@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -10,8 +10,8 @@ import (
 
 func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
 	probe := &clustertest.ContextLockRuntime{}
-	daemon := &MirrorDaemon{Container: probe, DaemonName: "a"}
-	m := &Mirror{Container: daemon, daemons: []*MirrorDaemon{daemon}, source: nil}
+	daemon := &Daemon{Container: probe, DaemonName: "a"}
+	m := &Mirror{Container: daemon, daemons: []*Daemon{daemon}, source: nil}
 	operations := map[string]func(context.Context) error{
 		"AddDaemon":            func(ctx context.Context) error { _, err := m.AddDaemon(ctx, "queued"); return err },
 		"RemoveDaemon":         func(ctx context.Context) error { return m.RemoveDaemon(ctx, "a") },
@@ -46,8 +46,8 @@ func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
 
 func TestSerializedDaemonCleanupNestedGateDeadlinePreservesRetry(t *testing.T) {
 	probe := &clustertest.ContextLockRuntime{}
-	daemon := &MirrorDaemon{Container: probe, DaemonName: "a"}
-	m := &Mirror{daemons: []*MirrorDaemon{daemon}}
+	daemon := &Daemon{Container: probe, DaemonName: "a"}
+	m := &Mirror{daemons: []*Daemon{daemon}}
 	operation := func(ctx context.Context) error { return m.RemoveDaemon(ctx, "a") }
 	clustertest.AssertContextLockQueued(t, &daemon.mu, operation)
 	if probe.Terminations.Load() != 0 || daemon.removed || len(m.daemons) != 1 {

@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 var _ testcontainers.Container = (*Mirror)(nil)
 
 func TestCephFSMirrorDirectoryPolicyValidation(t *testing.T) {
-	base := MirrorConfig{SourceFilesystem: "source-fs", DestinationFilesystem: "backup-fs"}
+	base := Config{SourceFilesystem: "source-fs", DestinationFilesystem: "backup-fs"}
 	for _, directories := range [][]string{
 		nil,
 		{"relative"},
@@ -42,13 +42,13 @@ func TestCephFSMirrorDirectoryPolicyValidation(t *testing.T) {
 }
 
 func TestCephFSMirrorIdentityValidation(t *testing.T) {
-	valid := MirrorConfig{SourceFilesystem: "source-fs", DestinationFilesystem: "backup-fs", Directories: []string{"/"}}
-	for name, configure := range map[string]func(*MirrorConfig){
-		"empty source filesystem": func(c *MirrorConfig) { c.SourceFilesystem = "" },
-		"filesystem slash":        func(c *MirrorConfig) { c.DestinationFilesystem = "backup/fs" },
-		"filesystem whitespace":   func(c *MirrorConfig) { c.SourceFilesystem = "source fs" },
-		"site separator":          func(c *MirrorConfig) { c.DestinationSite = "peer@site" },
-		"site newline":            func(c *MirrorConfig) { c.DestinationSite = "site\n" },
+	valid := Config{SourceFilesystem: "source-fs", DestinationFilesystem: "backup-fs", Directories: []string{"/"}}
+	for name, configure := range map[string]func(*Config){
+		"empty source filesystem": func(c *Config) { c.SourceFilesystem = "" },
+		"filesystem slash":        func(c *Config) { c.DestinationFilesystem = "backup/fs" },
+		"filesystem whitespace":   func(c *Config) { c.SourceFilesystem = "source fs" },
+		"site separator":          func(c *Config) { c.DestinationSite = "peer@site" },
+		"site newline":            func(c *Config) { c.DestinationSite = "site\n" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			config := valid

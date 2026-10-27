@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -49,7 +50,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 			t.Fatal(err)
 		}
 	}
-	checkpoint := func(name string) cephfs.MirrorSnapshot {
+	checkpoint := func(name string) cephfsmirror.Snapshot {
 		t.Helper()
 		multiClusterExecOutput(t, ctx, sourceClient, "python3", script, sourceFS.FilesystemName, "checkpoint", directory, name)
 		return cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, directory, name)
@@ -62,7 +63,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 		customizerCalls.Add(1)
 		return nil
 	})
-	mirror, err := cephfs.RunMirror(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{
+	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		DestinationSite: site, Directories: []string{directory}, DaemonCount: 1,
@@ -177,8 +178,8 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	counter := &cephFSProcessRecoveryCommandCounter{Container: originalControl, filesystem: sourceFS.FilesystemName, peerID: originalPeer, directory: directory, kind: kind}
 	source.Container = counter
 	t.Cleanup(func() { source.Container = originalControl })
-	var observe func(context.Context) (cephfs.MirrorProcessQuiescenceStatus, error)
-	var acknowledge func(context.Context) (cephfs.MirrorProcessQuiescenceAcknowledgment, error)
+	var observe func(context.Context) (cephfsmirror.ProcessQuiescenceStatus, error)
+	var acknowledge func(context.Context) (cephfsmirror.ProcessQuiescenceAcknowledgment, error)
 	var legacyStatus func(context.Context) (bool, error)
 	var retryBegin, legacyRemove func(context.Context) error
 	if kind == "peer" {
@@ -242,7 +243,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	// legitimately complete the separate graceful contract and release the gate.
 	// Do not retry Begin now: G observes the uncertain applied native policy and
 	// explicit Ack must reconcile stale peerID/desired path only after removal.
-	var backlog cephfs.MirrorSnapshot
+	var backlog cephfsmirror.Snapshot
 	if err := daemon.Stop(ctx, &stopTimeout); err != nil {
 		t.Fatal("normal stop before recovery acknowledgment", err)
 	}
@@ -393,7 +394,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	if backlogStatus.DaemonName != newDaemon.DaemonName || backlogStatus.InstanceID != newSession.gid {
 		t.Fatal("recovery backlog public checkpoint did not belong to new daemon")
 	}
-	var fresh cephfs.MirrorSnapshot
+	var fresh cephfsmirror.Snapshot
 	for _, stage := range []string{"recovered-backlog", "recovered-new", "retained-original"} {
 		snapshot := backlog
 		if stage == "recovered-new" {
@@ -441,9 +442,9 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 		OriginalRemovals        int32                 `json:"original_removals"`
 		ReplyLosses             int32                 `json:"reply_losses"`
 		OriginalIntentLostReply bool                  `json:"original_intent_lost_reply"`
-		Initial                 cephfs.MirrorSnapshot `json:"initial"`
-		Backlog                 cephfs.MirrorSnapshot `json:"backlog"`
-		Fresh                   cephfs.MirrorSnapshot `json:"fresh"`
+		Initial                 cephfsmirror.Snapshot `json:"initial"`
+		Backlog                 cephfsmirror.Snapshot `json:"backlog"`
+		Fresh                   cephfsmirror.Snapshot `json:"fresh"`
 	}{t.Name(), kind, originalPeer, expected.PeerID, binding.ContainerID, newBinding.ContainerID, baseline.instanceID, newSession.gid, counter.originalRemovals(kind), counter.replyLosses.Load(), originalIntentLostReply, initial, backlog, fresh})
 	if err != nil {
 		t.Fatal("encode explicit process recovery native proof", err)
@@ -451,7 +452,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 	t.Logf("CEPHFS_PROCESS_QUIESCENCE_RECOVERED %s", log)
 }
 
-func cephFSAssertProcessRecoveryAcknowledgment(t *testing.T, observation cephfs.MirrorProcessQuiescenceStatus, kind string, daemon *cephfs.MirrorDaemon, binding cephfs.MirrorProcessBindingStatus, baseline cephFSOriginalProcessBaseline, expected cephfs.MirrorDirectoryStatus, directory string) {
+func cephFSAssertProcessRecoveryAcknowledgment(t *testing.T, observation cephfsmirror.ProcessQuiescenceStatus, kind string, daemon *cephfsmirror.Daemon, binding cephfsmirror.ProcessBindingStatus, baseline cephFSOriginalProcessBaseline, expected cephfsmirror.DirectoryStatus, directory string) {
 	t.Helper()
 	wantDirectory := ""
 	if kind == "directory" {
@@ -465,14 +466,14 @@ func cephFSAssertProcessRecoveryAcknowledgment(t *testing.T, observation cephfs.
 	}
 }
 
-func cephFSLogProcessRecoveryAcknowledgment(t *testing.T, stage string, acknowledged bool, observation cephfs.MirrorProcessQuiescenceStatus, counter *cephFSProcessRecoveryCommandCounter, nativeCommands int32) {
+func cephFSLogProcessRecoveryAcknowledgment(t *testing.T, stage string, acknowledged bool, observation cephfsmirror.ProcessQuiescenceStatus, counter *cephFSProcessRecoveryCommandCounter, nativeCommands int32) {
 	t.Helper()
 	log, err := json.Marshal(struct {
 		Case              string                               `json:"case"`
 		Stage             string                               `json:"stage"`
 		Acknowledged      bool                                 `json:"acknowledged"`
 		NativeCommands    int32                                `json:"native_commands"`
-		Observation       cephfs.MirrorProcessQuiescenceStatus `json:"observation"`
+		Observation       cephfsmirror.ProcessQuiescenceStatus `json:"observation"`
 		PeerRemovals      int32                                `json:"peer_removals"`
 		DirectoryRemovals int32                                `json:"directory_removals"`
 		ReplyLosses       int32                                `json:"reply_losses"`

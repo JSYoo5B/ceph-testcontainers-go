@@ -14,7 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
@@ -75,7 +75,7 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 							}
 							return result, err
 						case "cephfs":
-							result, err := cephfs.RunMirror(callCtx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfs.MirrorConfig{Source: source, Destination: destination, SourceFilesystem: "fs", DestinationFilesystem: "fs", Directories: []string{"/owned"}})
+							result, err := cephfsmirror.Run(callCtx, nativeMirrorImage(t, "cephfs", source.ControlImage()), cephfsmirror.Config{Source: source, Destination: destination, SourceFilesystem: "fs", DestinationFilesystem: "fs", Directories: []string{"/owned"}})
 							if result == nil {
 								return nil, err
 							}

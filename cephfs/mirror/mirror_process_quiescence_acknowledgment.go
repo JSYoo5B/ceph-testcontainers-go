@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -6,23 +6,23 @@ import (
 	"time"
 )
 
-// MirrorProcessQuiescenceAcknowledgment is the result of one explicit
+// ProcessQuiescenceAcknowledgment is the result of one explicit
 // acceptance attempt. Acknowledged is true only when this invocation freshly
 // proved every original container removed and committed the separate terminal
 // decision. Observation is never cached evidence. A failed retry does not undo
 // an earlier private decision, but returns Acknowledged=false for that attempt.
-type MirrorProcessQuiescenceAcknowledgment struct {
+type ProcessQuiescenceAcknowledgment struct {
 	Acknowledged bool
-	Observation  MirrorProcessQuiescenceStatus
+	Observation  ProcessQuiescenceStatus
 }
 
 // AcknowledgeProcessQuiescence accepts interrupted removal only after callers
 // explicitly RemoveDaemon every owned original member. It requires fresh bound
 // full-CID absence and native original watcher retirement, and opens continued
 // fixture-use gates without claiming native Drained or replaying peer deletion.
-func (r *MirrorPeerRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (MirrorProcessQuiescenceAcknowledgment, error) {
+func (r *PeerRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (ProcessQuiescenceAcknowledgment, error) {
 	if r == nil {
-		return MirrorProcessQuiescenceAcknowledgment{}, cephFSObserveGuard("original peer acknowledgment receipt is unavailable")
+		return ProcessQuiescenceAcknowledgment{}, cephFSObserveGuard("original peer acknowledgment receipt is unavailable")
 	}
 	return acknowledgeCephFSProcessQuiescence(ctx, r, "", r.checkHandle, func(ctx context.Context) (bool, error) {
 		present, fsPresent, err := r.policy(ctx)
@@ -36,9 +36,9 @@ func (r *MirrorPeerRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (M
 // AcknowledgeProcessQuiescence accepts the exact interrupted path removal after
 // explicit owned-daemon removal and fresh original process proof. It reconciles
 // only that path's desired policy and never claims native Released.
-func (r *MirrorDirectoryRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (MirrorProcessQuiescenceAcknowledgment, error) {
+func (r *DirectoryRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (ProcessQuiescenceAcknowledgment, error) {
 	if r == nil || r.original == nil {
-		return MirrorProcessQuiescenceAcknowledgment{}, cephFSObserveGuard("original directory acknowledgment receipt is unavailable")
+		return ProcessQuiescenceAcknowledgment{}, cephFSObserveGuard("original directory acknowledgment receipt is unavailable")
 	}
 	return acknowledgeCephFSProcessQuiescence(ctx, r.original, r.directory, func() error { return r.checkDirectoryRemovalHandle(true) }, func(ctx context.Context) (bool, error) {
 		if err := r.peerPolicy(ctx); err != nil {
@@ -52,8 +52,8 @@ func (r *MirrorDirectoryRemoval) AcknowledgeProcessQuiescence(ctx context.Contex
 	})
 }
 
-func acknowledgeCephFSProcessQuiescence(ctx context.Context, o *MirrorPeerRemoval, directory string, owner func() error, authority func(context.Context) (bool, error), completed func() bool, commit func()) (MirrorProcessQuiescenceAcknowledgment, error) {
-	result := MirrorProcessQuiescenceAcknowledgment{Observation: initialCephFSProcessQuiescenceStatus(o, directory)}
+func acknowledgeCephFSProcessQuiescence(ctx context.Context, o *PeerRemoval, directory string, owner func() error, authority func(context.Context) (bool, error), completed func() bool, commit func()) (ProcessQuiescenceAcknowledgment, error) {
+	result := ProcessQuiescenceAcknowledgment{Observation: initialCephFSProcessQuiescenceStatus(o, directory)}
 	if o == nil || o.mirror == nil || owner == nil || authority == nil || completed == nil || commit == nil {
 		return result, cephFSObserveGuard("original process acknowledgment owner is unavailable")
 	}
@@ -100,7 +100,7 @@ func acknowledgeCephFSProcessQuiescence(ctx context.Context, o *MirrorPeerRemova
 	return result, nil
 }
 
-func confirmCephFSAcknowledgmentRetiredInventory(ctx context.Context, o *MirrorPeerRemoval) error {
+func confirmCephFSAcknowledgmentRetiredInventory(ctx context.Context, o *PeerRemoval) error {
 	if len(o.mirror.daemons) != 0 {
 		return cephFSObserveQuery("original process acknowledgment requires explicit owned daemon removal", nil)
 	}
@@ -122,17 +122,17 @@ func confirmCephFSAcknowledgmentRetiredInventory(ctx context.Context, o *MirrorP
 
 // terminal belongs only to overlap bookkeeping. completed continues to mean
 // native graceful teardown and is never derived from process acknowledgment.
-func (r *MirrorPeerRemoval) terminal() bool {
+func (r *PeerRemoval) terminal() bool {
 	return r != nil && (r.completed || r.processQuiescenceAcknowledged)
 }
 
-func (r *MirrorDirectoryRemoval) terminal() bool {
+func (r *DirectoryRemoval) terminal() bool {
 	return r != nil && (r.completed || r.processQuiescenceAcknowledged)
 }
 
 // Called under mirror.mu for a same-generation accepted receipt. Re-attest
 // original native authority, without process adoption, cleanup or delete replay.
-func (r *MirrorPeerRemoval) confirmAcknowledgedProcessPolicy(ctx context.Context) error {
+func (r *PeerRemoval) confirmAcknowledgedProcessPolicy(ctx context.Context) error {
 	if err := r.checkHandle(); err != nil {
 		return err
 	}
@@ -152,7 +152,7 @@ func (r *MirrorPeerRemoval) confirmAcknowledgedProcessPolicy(ctx context.Context
 	return ctx.Err()
 }
 
-func (r *MirrorDirectoryRemoval) confirmAcknowledgedProcessPolicy(ctx context.Context) error {
+func (r *DirectoryRemoval) confirmAcknowledgedProcessPolicy(ctx context.Context) error {
 	if err := r.checkDirectoryRemovalHandle(true); err != nil {
 		return err
 	}

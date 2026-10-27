@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -23,7 +23,7 @@ func newDirectoryAdditionFixture(t *testing.T) (*Mirror, *directoryRemovalContro
 	return m, s, d
 }
 
-func beginDirectoryAdditionFixture(t *testing.T, m *Mirror, path string) (*MirrorDirectoryAddition, error) {
+func beginDirectoryAdditionFixture(t *testing.T, m *Mirror, path string) (*DirectoryAddition, error) {
 	t.Helper()
 	return m.beginDirectoryAddition(t.Context(), path, peerRemovalClusterReader)
 }
@@ -148,7 +148,7 @@ func TestCephFSDirectoryAdditionPreflightRejectsForeignOwnedAndMalformedPolicy(t
 			if fault == "ancestor" {
 				path = "/added/child"
 			}
-			var r *MirrorDirectoryAddition
+			var r *DirectoryAddition
 			var err error
 			if fault == "no-private-template" {
 				r, err = m.BeginDirectoryAddition(t.Context(), path)
@@ -184,8 +184,8 @@ func TestCephFSDirectoryAdditionPendingOverlapIncludesRemovalRetryShortcuts(t *t
 				t.Fatal("missing pending intent")
 			}
 			// Terminal receipts make only the pre-shortcut addition gate refuse.
-			m.peerRemoval = &MirrorPeerRemoval{mirror: m, peerID: m.peerID, completed: true}
-			m.directoryRemoval = &MirrorDirectoryRemoval{directory: "/owned", generation: 1, processQuiescenceAcknowledged: true}
+			m.peerRemoval = &PeerRemoval{mirror: m, peerID: m.peerID, completed: true}
+			m.directoryRemoval = &DirectoryRemoval{directory: "/owned", generation: 1, processQuiescenceAcknowledged: true}
 			beforeCalls := len(s.calls)
 			beforeAdds, beforeRemovals := s.adds, s.removals
 			switch operation {
@@ -288,7 +288,7 @@ func TestCephFSDirectoryAdditionFinalNativePathDriftNeverPublishes(t *testing.T)
 	for _, phase := range []string{"preflight", "publish", "overlap"} {
 		t.Run(phase, func(t *testing.T) {
 			m, s, _ := newDirectoryAdditionFixture(t)
-			var r *MirrorDirectoryAddition
+			var r *DirectoryAddition
 			if phase != "preflight" {
 				s.addError = errPeerRemovalTransport
 				r, _ = beginDirectoryAdditionFixture(t, m, "/added")
@@ -339,7 +339,7 @@ func TestCephFSDirectoryAdditionSupersedesOldRemovalBeforeUncertainAdd(t *testin
 	m, s, _ := newDirectoryAdditionFixture(t)
 	delete(m.ownedDirectories, "/owned")
 	m.Directories, s.directories = nil, nil
-	old := &MirrorDirectoryRemoval{directory: "/owned", generation: 1, processQuiescenceAcknowledged: true}
+	old := &DirectoryRemoval{directory: "/owned", generation: 1, processQuiescenceAcknowledged: true}
 	m.directoryRemoval = old
 	s.addError = errPeerRemovalTransport
 	s.hook = func(_ *directoryRemovalControlFake, args []string) {
@@ -375,7 +375,7 @@ func TestCephFSDirectoryAdditionSupersessionPrecedesLaterMutation(t *testing.T) 
 			case "rebalance-remove-error", "rebalance-add-error":
 				// Restore existing fake running topology, without real construction.
 				_, _, _, a, b := newDirectoryRemovalFixture()
-				m.daemons = []*MirrorDaemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}
+				m.daemons = []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}
 				m.ownedDirectories = map[string]bool{"/added": true}
 				if operation == "rebalance-remove-error" {
 					s.removeError = errPeerRemovalTransport
@@ -414,7 +414,7 @@ func TestCephFSDirectoryAdditionSupersessionPrecedesLaterMutation(t *testing.T) 
 
 func TestCephFSDirectoryAdditionNilCanceledQueryAndFinalOwnerDrift(t *testing.T) {
 	var mirror *Mirror
-	var receipt *MirrorDirectoryAddition
+	var receipt *DirectoryAddition
 	if _, err := mirror.BeginDirectoryAddition(t.Context(), "/added"); !errors.Is(err, errCephFSObservationGuard) {
 		t.Fatal("nil mirror")
 	}
@@ -642,7 +642,7 @@ func TestCephFSDirectoryAdditionPeerRemovalSupersedesBeforeUnappliedAttempt(t *t
 			if operation == "legacy" {
 				err = m.RemovePeer(t.Context(), originalPeer)
 			} else {
-				var receipt *MirrorPeerRemoval
+				var receipt *PeerRemoval
 				receipt, err = m.beginPeerRemoval(t.Context(), originalPeer, peerRemovalClusterReader)
 				if receipt == nil {
 					t.Fatal("typed failed request lost original intent")
@@ -667,13 +667,13 @@ func TestCephFSDirectoryAdditionStalePeerRemovalRetryPreservesNewAddition(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			old := &MirrorPeerRemoval{mirror: m, source: m.source, destination: m.destination, peerID: peerRemovalNewPeer, generation: 0, readClusters: peerRemovalClusterReader, cohort: []cephFSPeerRemovalWitness{{}}}
+			old := &PeerRemoval{mirror: m, source: m.source, destination: m.destination, peerID: peerRemovalNewPeer, generation: 0, readClusters: peerRemovalClusterReader, cohort: []cephFSPeerRemovalWitness{{}}}
 			m.peerRemoval = old
 			before := len(s.calls)
 			if operation == "legacy" {
 				err = m.RemovePeer(t.Context(), old.peerID)
 			} else {
-				var same *MirrorPeerRemoval
+				var same *PeerRemoval
 				same, err = m.BeginPeerRemoval(t.Context(), old.peerID)
 				if same != old {
 					t.Fatal("stale retry replaced retained old receipt")

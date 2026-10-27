@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -16,11 +16,11 @@ import (
 	"github.com/moby/moby/api/types/container"
 )
 
-// MirrorPeerRemoval retains one explicit removal and its original live
+// PeerRemoval retains one explicit removal and its original live
 // daemon cohort. It owns no clusters, containers, policy, data or cleanup hooks.
 // A non-nil handle returned with an error retains an uncertain native request;
 // retry BeginPeerRemoval with the same UUID and a fresh context to reconcile it.
-type MirrorPeerRemoval struct {
+type PeerRemoval struct {
 	mirror                                                              *Mirror
 	source, destination                                                 *ceph.Container
 	sourceFilesystem, destinationFilesystem, sourceClient, metadataPool string
@@ -37,25 +37,25 @@ type MirrorPeerRemoval struct {
 	processQuiescenceAcknowledged                                       bool
 }
 
-// MirrorPeerRemovalStatus describes one observation of the original UUID.
+// PeerRemovalStatus describes one observation of the original UUID.
 // Drained means every witnessed original live replayer finished native teardown
 // in the same process/filesystem session. It does not establish snapshot
 // completion, remote lock release, or unchanged destination metadata.
-type MirrorPeerRemovalStatus struct {
+type PeerRemovalStatus struct {
 	PeerID                                      string
 	SourceFilesystem, DestinationFilesystem     string
 	SourceFilesystemID, DestinationFilesystemID int
 	PolicyRemoved, Drained                      bool
-	Daemons                                     map[string]MirrorPeerRemovalDaemonStatus
+	Daemons                                     map[string]PeerRemovalDaemonStatus
 }
 
-type MirrorPeerRemovalDaemonStatus struct {
+type PeerRemovalDaemonStatus struct {
 	ContainerID, InstanceID string
 	State, Problem          string
 }
 
 type cephFSPeerRemovalWitness struct {
-	daemon                                            *MirrorDaemon
+	daemon                                            *Daemon
 	name, containerID, startedAt, address, instanceID string
 	originalProcess                                   *cephFSBoundOriginalProcess
 }
@@ -74,11 +74,11 @@ type cephFSPeerRemovalSession struct {
 // External native policy and direct container lifecycle writers must not race
 // this operation or its observers. The first version requires the same session;
 // stopping/restarting/removing its cohort later can prevent a drain observation.
-func (mirror *Mirror) BeginPeerRemoval(ctx context.Context, id string) (*MirrorPeerRemoval, error) {
+func (mirror *Mirror) BeginPeerRemoval(ctx context.Context, id string) (*PeerRemoval, error) {
 	return mirror.beginPeerRemoval(ctx, id, mirror.peerRemovalClusterIdentities)
 }
 
-func (mirror *Mirror) beginPeerRemoval(ctx context.Context, id string, readClusters func(context.Context) ([2]string, error)) (*MirrorPeerRemoval, error) {
+func (mirror *Mirror) beginPeerRemoval(ctx context.Context, id string, readClusters func(context.Context) ([2]string, error)) (*PeerRemoval, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS mirror fixture is unavailable")
 	}
@@ -127,7 +127,7 @@ func (mirror *Mirror) beginPeerRemoval(ctx context.Context, id string, readClust
 	if !validCephFSRemovalClusters(clusters) {
 		return nil, cephFSObserveGuard("CephFS original cluster identities are unavailable or equal")
 	}
-	r := &MirrorPeerRemoval{mirror: mirror, source: mirror.source, destination: mirror.destination,
+	r := &PeerRemoval{mirror: mirror, source: mirror.source, destination: mirror.destination,
 		sourceFilesystem: mirror.SourceFilesystem, destinationFilesystem: mirror.DestinationFilesystem, sourceClient: mirror.SourceClientEntity, metadataPool: mirror.metadataPool,
 		sourceID: mirror.filesystemID, destinationID: mirror.destinationFilesystemID, sourceMetadata: mirror.metadataPoolID, destinationMetadata: mirror.destinationMetadataPoolID,
 		peerID: id, peer: cephFSPeerIdentity{mirror.DestinationClientEntity, mirror.destinationSite, mirror.DestinationFilesystem}, generation: mirror.peerGeneration, clusters: clusters, readClusters: readClusters}
@@ -173,7 +173,7 @@ func (mirror *Mirror) guardCephFSRemovalOverlap() error {
 	return mirror.guardDirectoryRemovalOverlap()
 }
 
-func (r *MirrorPeerRemoval) checkHandle() error {
+func (r *PeerRemoval) checkHandle() error {
 	if r == nil || r.mirror == nil || r.source == nil || r.destination == nil || r.readClusters == nil || len(r.cohort) == 0 {
 		return cephFSObserveGuard("CephFS peer removal original identity is unavailable")
 	}
@@ -189,7 +189,7 @@ func (r *MirrorPeerRemoval) checkHandle() error {
 
 // Called under mirror.mu; may mutate only the original owned UUID, never a
 // substituted native peer. A retry observes authoritative MON absence first.
-func (r *MirrorPeerRemoval) resume(ctx context.Context) error {
+func (r *PeerRemoval) resume(ctx context.Context) error {
 	present, fsPresent, err := r.policy(ctx)
 	if err != nil {
 		return err
@@ -218,14 +218,14 @@ func (r *MirrorPeerRemoval) resume(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (r *MirrorPeerRemoval) initialStatus() MirrorPeerRemovalStatus {
-	result := MirrorPeerRemovalStatus{}
+func (r *PeerRemoval) initialStatus() PeerRemovalStatus {
+	result := PeerRemovalStatus{}
 	if r == nil {
 		return result
 	}
-	result = MirrorPeerRemovalStatus{PeerID: r.peerID, SourceFilesystem: r.sourceFilesystem, DestinationFilesystem: r.destinationFilesystem, SourceFilesystemID: r.sourceID, DestinationFilesystemID: r.destinationID, Daemons: make(map[string]MirrorPeerRemovalDaemonStatus)}
+	result = PeerRemovalStatus{PeerID: r.peerID, SourceFilesystem: r.sourceFilesystem, DestinationFilesystem: r.destinationFilesystem, SourceFilesystemID: r.sourceID, DestinationFilesystemID: r.destinationID, Daemons: make(map[string]PeerRemovalDaemonStatus)}
 	for _, w := range r.cohort {
-		result.Daemons[w.name] = MirrorPeerRemovalDaemonStatus{ContainerID: w.containerID, InstanceID: w.instanceID, State: "unobserved"}
+		result.Daemons[w.name] = PeerRemovalDaemonStatus{ContainerID: w.containerID, InstanceID: w.instanceID, State: "unobserved"}
 	}
 	return result
 }
@@ -236,13 +236,13 @@ func (r *MirrorPeerRemoval) initialStatus() MirrorPeerRemovalStatus {
 // retryable; schema/identity/generation changes are permanent guard failures.
 // Common MON attestation has no typed error categories: its non-context errors
 // conservatively guard this observation, retaining the intent for a fresh retry.
-func (r *MirrorPeerRemoval) Status(ctx context.Context) (MirrorPeerRemovalStatus, error) {
+func (r *PeerRemoval) Status(ctx context.Context) (PeerRemovalStatus, error) {
 	return r.statusWithAdmission(ctx, nil)
 }
 
 // Private wait metadata distinguishes a queued attempt from a newer native
 // observation while leaving public Status values and error contracts unchanged.
-func (r *MirrorPeerRemoval) statusWithAdmission(ctx context.Context, admitted *bool) (MirrorPeerRemovalStatus, error) {
+func (r *PeerRemoval) statusWithAdmission(ctx context.Context, admitted *bool) (PeerRemovalStatus, error) {
 	result := r.initialStatus()
 	if r == nil || r.mirror == nil {
 		return result, cephFSObserveGuard("CephFS peer removal handle is unavailable")
@@ -329,25 +329,25 @@ func (r *MirrorPeerRemoval) statusWithAdmission(ctx context.Context, admitted *b
 
 // WaitDrained releases the fixture lock between observations. Deadline/cancel
 // returns the last report with Drained=false and preserves the last query cause.
-func (r *MirrorPeerRemoval) WaitDrained(ctx context.Context) (MirrorPeerRemovalStatus, error) {
+func (r *PeerRemoval) WaitDrained(ctx context.Context) (PeerRemovalStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	return waitCephFSPeerDrainWithAdmission(ctx, 500*time.Millisecond, func(attempt context.Context) (MirrorPeerRemovalStatus, bool, error) {
+	return waitCephFSPeerDrainWithAdmission(ctx, 500*time.Millisecond, func(attempt context.Context) (PeerRemovalStatus, bool, error) {
 		admitted := false
 		status, err := r.statusWithAdmission(attempt, &admitted)
 		return status, admitted, err
 	})
 }
 
-func waitCephFSPeerDrain(ctx context.Context, interval time.Duration, observe func(context.Context) (MirrorPeerRemovalStatus, error)) (MirrorPeerRemovalStatus, error) {
-	return waitCephFSPeerDrainWithAdmission(ctx, interval, func(attempt context.Context) (MirrorPeerRemovalStatus, bool, error) {
+func waitCephFSPeerDrain(ctx context.Context, interval time.Duration, observe func(context.Context) (PeerRemovalStatus, error)) (PeerRemovalStatus, error) {
+	return waitCephFSPeerDrainWithAdmission(ctx, interval, func(attempt context.Context) (PeerRemovalStatus, bool, error) {
 		status, err := observe(attempt)
 		return status, true, err
 	})
 }
 
-func waitCephFSPeerDrainWithAdmission(ctx context.Context, interval time.Duration, observe func(context.Context) (MirrorPeerRemovalStatus, bool, error)) (MirrorPeerRemovalStatus, error) {
-	var last MirrorPeerRemovalStatus
+func waitCephFSPeerDrainWithAdmission(ctx context.Context, interval time.Duration, observe func(context.Context) (PeerRemovalStatus, bool, error)) (PeerRemovalStatus, error) {
+	var last PeerRemovalStatus
 	var lastError error
 	var haveObservation bool
 	for {
@@ -385,7 +385,7 @@ func waitCephFSPeerDrainWithAdmission(ctx context.Context, interval time.Duratio
 	}
 }
 
-func (r *MirrorPeerRemoval) captureCohort(ctx context.Context) error {
+func (r *PeerRemoval) captureCohort(ctx context.Context) error {
 	watchers, err := r.watchers(ctx)
 	if err != nil {
 		return err
@@ -427,7 +427,7 @@ func (r *MirrorPeerRemoval) captureCohort(ctx context.Context) error {
 	return r.checkWatcherCohort(after)
 }
 
-func (r *MirrorPeerRemoval) captureDaemon(ctx context.Context, daemon *MirrorDaemon, watchers map[string]string) (cephFSPeerRemovalWitness, error) {
+func (r *PeerRemoval) captureDaemon(ctx context.Context, daemon *Daemon, watchers map[string]string) (cephFSPeerRemovalWitness, error) {
 	w := cephFSPeerRemovalWitness{daemon: daemon, name: daemon.DaemonName}
 	if daemon.removed || daemon.Container == nil || !validCephFSRemovalContainerID(daemon.GetContainerID()) || w.name == "" {
 		return w, cephFSObserveGuard("original CephFS daemon ownership is unavailable")
@@ -488,7 +488,7 @@ func (r *MirrorPeerRemoval) captureDaemon(ctx context.Context, daemon *MirrorDae
 	return w, ctx.Err()
 }
 
-func (r *MirrorPeerRemoval) observeDaemon(ctx context.Context, w cephFSPeerRemovalWitness, watchers map[string]string) (string, error) {
+func (r *PeerRemoval) observeDaemon(ctx context.Context, w cephFSPeerRemovalWitness, watchers map[string]string) (string, error) {
 	if w.daemon == nil || w.daemon.Container == nil || w.daemon.removed {
 		return "retired", cephFSObserveQuery("original CephFS daemon no longer has a live drain witness", nil)
 	}
@@ -570,7 +570,7 @@ func normalCephFSRemovalProcess(s *container.State) bool {
 	return s != nil && s.Running && !s.Paused && !s.Restarting && !s.Dead
 }
 
-func (r *MirrorPeerRemoval) watchers(ctx context.Context) (map[string]string, error) {
+func (r *PeerRemoval) watchers(ctx context.Context) (map[string]string, error) {
 	control, err := r.source.ClientContainer(ctx)
 	if err != nil {
 		return nil, cephFSObserveQuery("select CephFS peer drain control container", err)
@@ -589,7 +589,7 @@ func (r *MirrorPeerRemoval) watchers(ctx context.Context) (map[string]string, er
 	return value, ctx.Err()
 }
 
-func (r *MirrorPeerRemoval) checkWatcherCohort(watchers map[string]string) error {
+func (r *PeerRemoval) checkWatcherCohort(watchers map[string]string) error {
 	if len(watchers) != len(r.cohort) {
 		return cephFSObserveGuard("CephFS peer drain has foreign or retired filesystem watchers")
 	}
@@ -615,7 +615,7 @@ func equalCephFSRemovalWatchers(a, b map[string]string) bool {
 	return true
 }
 
-func (r *MirrorPeerRemoval) session(ctx context.Context, daemon *MirrorDaemon) (cephFSPeerRemovalSession, error) {
+func (r *PeerRemoval) session(ctx context.Context, daemon *Daemon) (cephFSPeerRemovalSession, error) {
 	data, err := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", r.sourceFilesystem, r.sourceID))
 	if err != nil {
 		return cephFSPeerRemovalSession{}, cephFSObserveQuery("read original CephFS peer drain filesystem session", err)
@@ -623,7 +623,7 @@ func (r *MirrorPeerRemoval) session(ctx context.Context, daemon *MirrorDaemon) (
 	return decodeCephFSRemovalSession(data, r.peerID, r.peer)
 }
 
-func (r *MirrorPeerRemoval) catalog(ctx context.Context, daemon *MirrorDaemon) (bool, error) {
+func (r *PeerRemoval) catalog(ctx context.Context, daemon *Daemon) (bool, error) {
 	data, err := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "help")
 	if err != nil {
 		return false, cephFSObserveQuery("read original CephFS peer drain command catalog", err)
@@ -731,7 +731,7 @@ func decodeCephFSRemovalPeers(peers map[string]json.RawMessage, id string, expec
 
 // Validates immutable names/FS/metadata/cluster identities before and after every
 // observer operation. Source FSMap is a MON view; peer_list is MGR's cached view.
-func (r *MirrorPeerRemoval) policy(ctx context.Context) (bool, bool, error) {
+func (r *PeerRemoval) policy(ctx context.Context) (bool, bool, error) {
 	clusters, err := r.readClusters(ctx)
 	if err != nil {
 		return false, false, err

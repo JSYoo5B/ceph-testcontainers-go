@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -10,22 +10,22 @@ import (
 	"github.com/google/uuid"
 )
 
-// MirrorDirectoryAddition retains one explicit addition intent. It owns
+// DirectoryAddition retains one explicit addition intent. It owns
 // no cluster, daemon, directory, data or cleanup hook. A nonnil receipt returned
 // with an error retains an uncertain request; repeat BeginDirectoryAddition with
 // the same path and a fresh context. Only one pending intent is admitted.
-type MirrorDirectoryAddition struct {
-	original                              *MirrorPeerRemoval
+type DirectoryAddition struct {
+	original                              *PeerRemoval
 	directory                             string
 	baseGeneration, generation            uint64
 	requestAttempted, requestAcknowledged bool
 	registered, superseded                bool
 }
 
-// MirrorDirectoryAdditionStatus reports native policy presence in the
+// DirectoryAdditionStatus reports native policy presence in the
 // retained original scope. Registered also requires this receipt's published
 // owned generation. Neither flag proves daemon assignment or snapshot replay.
-type MirrorDirectoryAdditionStatus struct {
+type DirectoryAdditionStatus struct {
 	Directory, PeerID                           string
 	SourceFilesystem, DestinationFilesystem     string
 	SourceFilesystemID, DestinationFilesystemID int
@@ -41,14 +41,14 @@ type MirrorDirectoryAdditionStatus struct {
 // AddDirectory keep their existing contracts. A new completed-other-path intent
 // supersedes the previous addition receipt. Add/reconcile is bounded to two
 // minutes, or the caller's earlier deadline.
-func (mirror *Mirror) BeginDirectoryAddition(ctx context.Context, directory string) (*MirrorDirectoryAddition, error) {
+func (mirror *Mirror) BeginDirectoryAddition(ctx context.Context, directory string) (*DirectoryAddition, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory addition fixture is unavailable")
 	}
 	return mirror.beginDirectoryAddition(ctx, directory, mirror.peerRemovalClusterIdentities)
 }
 
-func (mirror *Mirror) beginDirectoryAddition(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*MirrorDirectoryAddition, error) {
+func (mirror *Mirror) beginDirectoryAddition(ctx context.Context, directory string, readClusters func(context.Context) ([2]string, error)) (*DirectoryAddition, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory addition fixture is unavailable")
 	}
@@ -88,11 +88,11 @@ func (mirror *Mirror) beginDirectoryAddition(ctx context.Context, directory stri
 	if !validCephFSRemovalClusters(clusters) {
 		return nil, cephFSObserveGuard("CephFS directory addition original clusters are unavailable or equal")
 	}
-	original := &MirrorPeerRemoval{mirror: mirror, source: mirror.source, destination: mirror.destination,
+	original := &PeerRemoval{mirror: mirror, source: mirror.source, destination: mirror.destination,
 		sourceFilesystem: mirror.SourceFilesystem, destinationFilesystem: mirror.DestinationFilesystem, sourceClient: mirror.SourceClientEntity, metadataPool: mirror.metadataPool,
 		sourceID: mirror.filesystemID, destinationID: mirror.destinationFilesystemID, sourceMetadata: mirror.metadataPoolID, destinationMetadata: mirror.destinationMetadataPoolID,
 		peerID: mirror.peerID, peer: cephFSPeerIdentity{mirror.DestinationClientEntity, mirror.destinationSite, mirror.DestinationFilesystem}, generation: mirror.peerGeneration, clusters: clusters, readClusters: readClusters}
-	r := &MirrorDirectoryAddition{original: original, directory: directory, baseGeneration: mirror.directoryGenerations[directory]}
+	r := &DirectoryAddition{original: original, directory: directory, baseGeneration: mirror.directoryGenerations[directory]}
 	present, err := r.observe(ctx, false)
 	if err != nil {
 		return nil, err
@@ -130,7 +130,7 @@ func (mirror *Mirror) supersedePeerDirectoryAddition(id string) {
 	}
 }
 
-func (r *MirrorDirectoryAddition) checkHandle(retained bool) error {
+func (r *DirectoryAddition) checkHandle(retained bool) error {
 	if r == nil || r.original == nil || r.original.mirror == nil || r.original.source == nil || r.original.destination == nil || r.original.readClusters == nil {
 		return cephFSObserveGuard("CephFS directory addition original identity is unavailable")
 	}
@@ -153,7 +153,7 @@ func (r *MirrorDirectoryAddition) checkHandle(retained bool) error {
 
 // Observe only one strict native ls authority, bracketed with original peer/FS
 // identities. No watcher or daemon cohort is needed for policy registration.
-func (r *MirrorDirectoryAddition) observe(ctx context.Context, retained bool) (bool, error) {
+func (r *DirectoryAddition) observe(ctx context.Context, retained bool) (bool, error) {
 	var before bool
 	for pass := 0; pass < 2; pass++ {
 		if err := r.checkHandle(retained); err != nil {
@@ -201,7 +201,7 @@ func (r *MirrorDirectoryAddition) observe(ctx context.Context, retained bool) (b
 	return before, ctx.Err()
 }
 
-func (r *MirrorDirectoryAddition) pathPolicy(ctx context.Context) (bool, error) {
+func (r *DirectoryAddition) pathPolicy(ctx context.Context) (bool, error) {
 	data, err := r.original.source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", r.original.sourceFilesystem)
 	if err != nil {
 		return false, cephFSObserveQuery("read original CephFS directory addition policy", err)
@@ -218,7 +218,7 @@ func (r *MirrorDirectoryAddition) pathPolicy(ctx context.Context) (bool, error) 
 	return paths[r.directory], ctx.Err()
 }
 
-func (r *MirrorDirectoryAddition) resume(ctx context.Context) error {
+func (r *DirectoryAddition) resume(ctx context.Context) error {
 	present, err := r.observe(ctx, true)
 	if err != nil {
 		return err
@@ -241,7 +241,7 @@ func (r *MirrorDirectoryAddition) resume(ctx context.Context) error {
 	return r.attempt(ctx)
 }
 
-func (r *MirrorDirectoryAddition) attempt(ctx context.Context) error {
+func (r *DirectoryAddition) attempt(ctx context.Context) error {
 	if err := r.checkHandle(true); err != nil {
 		return err
 	}
@@ -260,7 +260,7 @@ func (r *MirrorDirectoryAddition) attempt(ctx context.Context) error {
 	return r.resume(ctx)
 }
 
-func (r *MirrorDirectoryAddition) publish(ctx context.Context) error {
+func (r *DirectoryAddition) publish(ctx context.Context) error {
 	if err := r.checkHandle(true); err != nil {
 		return err
 	}
@@ -287,13 +287,13 @@ func (r *MirrorDirectoryAddition) publish(ctx context.Context) error {
 // Status is read-only. A visible policy after a lost reply can be reported while
 // Registered remains false until an explicit fresh Begin reconciles the intent.
 // Each observation is bounded to 30 seconds, or the caller's earlier deadline.
-func (r *MirrorDirectoryAddition) Status(ctx context.Context) (MirrorDirectoryAdditionStatus, error) {
-	result := MirrorDirectoryAdditionStatus{}
+func (r *DirectoryAddition) Status(ctx context.Context) (DirectoryAdditionStatus, error) {
+	result := DirectoryAdditionStatus{}
 	if r == nil || r.original == nil || r.original.mirror == nil {
 		return result, cephFSObserveGuard("CephFS directory addition handle is unavailable")
 	}
 	o := r.original
-	result = MirrorDirectoryAdditionStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.sourceFilesystem, DestinationFilesystem: o.destinationFilesystem, SourceFilesystemID: o.sourceID, DestinationFilesystemID: o.destinationID}
+	result = DirectoryAdditionStatus{Directory: r.directory, PeerID: o.peerID, SourceFilesystem: o.sourceFilesystem, DestinationFilesystem: o.destinationFilesystem, SourceFilesystemID: o.sourceID, DestinationFilesystemID: o.destinationID}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := multicluster.LockObservation(ctx, &o.mirror.mu); err != nil {

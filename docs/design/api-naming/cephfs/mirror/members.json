@@ -1,0 +1,130 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "cephfs/mirror",
+  "count": 94,
+  "types": {
+    "cephfs/mirror.Config": [
+      "Config.DaemonCount field int",
+      "Config.Destination field *ceph.Container",
+      "Config.DestinationFilesystem field string",
+      "Config.DestinationSite field string",
+      "Config.Directories field []string",
+      "Config.NoInitialDaemons field bool",
+      "Config.OriginalProcessClientFactory field func(context.Context) (*mobycl.Client, error)",
+      "Config.Source field *ceph.Container",
+      "Config.SourceFilesystem field string"
+    ],
+    "cephfs/mirror.Daemon": [
+      "Daemon embed testcontainers.Container",
+      "Daemon.DaemonName field string"
+    ],
+    "cephfs/mirror.DirectoryAdditionStatus": [
+      "DirectoryAdditionStatus.DestinationFilesystem field string",
+      "DirectoryAdditionStatus.DestinationFilesystemID field int",
+      "DirectoryAdditionStatus.Directory field string",
+      "DirectoryAdditionStatus.PeerID field string",
+      "DirectoryAdditionStatus.PolicyPresent field bool",
+      "DirectoryAdditionStatus.Registered field bool",
+      "DirectoryAdditionStatus.SourceFilesystem field string",
+      "DirectoryAdditionStatus.SourceFilesystemID field int"
+    ],
+    "cephfs/mirror.DirectoryRemovalDaemonStatus": [
+      "DirectoryRemovalDaemonStatus.ContainerID field string",
+      "DirectoryRemovalDaemonStatus.InstanceID field string",
+      "DirectoryRemovalDaemonStatus.Problem field string",
+      "DirectoryRemovalDaemonStatus.State field string"
+    ],
+    "cephfs/mirror.DirectoryRemovalStatus": [
+      "DirectoryRemovalStatus.Daemons field map[string]DirectoryRemovalDaemonStatus",
+      "DirectoryRemovalStatus.DestinationFilesystem field string",
+      "DirectoryRemovalStatus.DestinationFilesystemID field int",
+      "DirectoryRemovalStatus.Directory field string",
+      "DirectoryRemovalStatus.PeerID field string",
+      "DirectoryRemovalStatus.PolicyRemoved field bool",
+      "DirectoryRemovalStatus.Released field bool",
+      "DirectoryRemovalStatus.SourceFilesystem field string",
+      "DirectoryRemovalStatus.SourceFilesystemID field int"
+    ],
+    "cephfs/mirror.DirectoryStatus": [
+      "DirectoryStatus.CurrentSnapshot field *Snapshot",
+      "DirectoryStatus.DaemonName field string",
+      "DirectoryStatus.DaemonProblems field map[string]string",
+      "DirectoryStatus.DestinationFilesystem field string",
+      "DirectoryStatus.DestinationFilesystemID field int",
+      "DirectoryStatus.Directory field string",
+      "DirectoryStatus.FailureReason field string",
+      "DirectoryStatus.InstanceID field string",
+      "DirectoryStatus.LastSyncedSnapshot field *Snapshot",
+      "DirectoryStatus.MappingState field string",
+      "DirectoryStatus.PeerID field string",
+      "DirectoryStatus.Ready field bool",
+      "DirectoryStatus.SnapsRenamed field uint64",
+      "DirectoryStatus.SnapshotsDeleted field uint64",
+      "DirectoryStatus.SnapshotsSynced field uint64",
+      "DirectoryStatus.SourceFilesystem field string",
+      "DirectoryStatus.SourceFilesystemID field int",
+      "DirectoryStatus.State field string"
+    ],
+    "cephfs/mirror.Mirror": [
+      "Mirror embed testcontainers.Container",
+      "Mirror.DestinationClientEntity field string",
+      "Mirror.DestinationFilesystem field string",
+      "Mirror.Directories field []string",
+      "Mirror.SourceClientEntity field string",
+      "Mirror.SourceFilesystem field string"
+    ],
+    "cephfs/mirror.OriginalProcessStatus": [
+      "OriginalProcessStatus.ContainerID field string",
+      "OriginalProcessStatus.EngineID field string",
+      "OriginalProcessStatus.Evidence field string",
+      "OriginalProcessStatus.InstanceID field string",
+      "OriginalProcessStatus.OriginalQuiescent field bool",
+      "OriginalProcessStatus.OriginalTaskEnded field bool",
+      "OriginalProcessStatus.OriginalWatcherRetired field bool",
+      "OriginalProcessStatus.Problem field string",
+      "OriginalProcessStatus.StartedAt field string"
+    ],
+    "cephfs/mirror.PeerRemovalDaemonStatus": [
+      "PeerRemovalDaemonStatus.ContainerID field string",
+      "PeerRemovalDaemonStatus.InstanceID field string",
+      "PeerRemovalDaemonStatus.Problem field string",
+      "PeerRemovalDaemonStatus.State field string"
+    ],
+    "cephfs/mirror.PeerRemovalStatus": [
+      "PeerRemovalStatus.Daemons field map[string]PeerRemovalDaemonStatus",
+      "PeerRemovalStatus.DestinationFilesystem field string",
+      "PeerRemovalStatus.DestinationFilesystemID field int",
+      "PeerRemovalStatus.Drained field bool",
+      "PeerRemovalStatus.PeerID field string",
+      "PeerRemovalStatus.PolicyRemoved field bool",
+      "PeerRemovalStatus.SourceFilesystem field string",
+      "PeerRemovalStatus.SourceFilesystemID field int"
+    ],
+    "cephfs/mirror.ProcessBindingStatus": [
+      "ProcessBindingStatus.Available field bool",
+      "ProcessBindingStatus.ContainerID field string",
+      "ProcessBindingStatus.EngineID field string",
+      "ProcessBindingStatus.State field string"
+    ],
+    "cephfs/mirror.ProcessQuiescenceAcknowledgment": [
+      "ProcessQuiescenceAcknowledgment.Acknowledged field bool",
+      "ProcessQuiescenceAcknowledgment.Observation field ProcessQuiescenceStatus"
+    ],
+    "cephfs/mirror.ProcessQuiescenceStatus": [
+      "ProcessQuiescenceStatus.Daemons field map[string]OriginalProcessStatus",
+      "ProcessQuiescenceStatus.DestinationFilesystem field string",
+      "ProcessQuiescenceStatus.DestinationFilesystemID field int",
+      "ProcessQuiescenceStatus.Directory field string",
+      "ProcessQuiescenceStatus.OriginalQuiescent field bool",
+      "ProcessQuiescenceStatus.PeerID field string",
+      "ProcessQuiescenceStatus.PolicyRemoved field bool",
+      "ProcessQuiescenceStatus.SourceFilesystem field string",
+      "ProcessQuiescenceStatus.SourceFilesystemID field int"
+    ],
+    "cephfs/mirror.Snapshot": [
+      "Snapshot.ID field uint64",
+      "Snapshot.Name field string"
+    ]
+  }
+}

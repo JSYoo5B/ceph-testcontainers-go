@@ -1,4 +1,4 @@
-package cephfs
+package mirror
 
 import (
 	"context"
@@ -35,9 +35,9 @@ func TestMirrorInitialDaemonCountContracts(t *testing.T) {
 			t.Run(protocol+"/"+tc.name, func(t *testing.T) {
 				var count int
 				var err error
-				var normalized MirrorConfig
+				var normalized Config
 				original := []string{"/data"}
-				normalized, err = normalizeCephFSMirrorConfig(MirrorConfig{SourceFilesystem: "source", DestinationFilesystem: "destination", Directories: original, DaemonCount: tc.count, NoInitialDaemons: tc.zero})
+				normalized, err = normalizeCephFSMirrorConfig(Config{SourceFilesystem: "source", DestinationFilesystem: "destination", Directories: original, DaemonCount: tc.count, NoInitialDaemons: tc.zero})
 				count = normalized.DaemonCount
 				if err == nil && (normalized.DestinationSite != "destination" || len(normalized.Directories) != 1 || normalized.Directories[0] != "/data" || normalized.NoInitialDaemons != tc.zero) {
 					t.Fatal("count option changed existing CephFS directory/site defaults")
@@ -75,7 +75,7 @@ func TestMirrorInitialDaemonRejectionPrecedesRuntimeAndCustomization(t *testing.
 				})
 				var nonnil bool
 				var err error
-				fixture, e := RunMirror(t.Context(), "example/ceph:version", MirrorConfig{Source: source, Destination: destination, SourceFilesystem: "source", DestinationFilesystem: "destination", Directories: []string{"/data"}, DaemonCount: count, NoInitialDaemons: zero, OriginalProcessClientFactory: func(context.Context) (*mobycl.Client, error) {
+				fixture, e := Run(t.Context(), "example/ceph:version", Config{Source: source, Destination: destination, SourceFilesystem: "source", DestinationFilesystem: "destination", Directories: []string{"/data"}, DaemonCount: count, NoInitialDaemons: zero, OriginalProcessClientFactory: func(context.Context) (*mobycl.Client, error) {
 					factoryCalls.Add(1)
 					return nil, errors.New("unexpected factory")
 				}}, customizer)
@@ -113,7 +113,7 @@ func TestMirrorInitialDaemonCanceledAdmissionHasNoRuntimeEffects(t *testing.T) {
 				customizer := testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customized.Add(1); return nil })
 				var err error
 				var nonnil bool
-				result, e := RunMirror(ctx, "example/ceph:version", MirrorConfig{Source: source, Destination: destination, SourceFilesystem: "source", DestinationFilesystem: "destination", Directories: []string{"/data"}, NoInitialDaemons: zero, OriginalProcessClientFactory: func(context.Context) (*mobycl.Client, error) {
+				result, e := Run(ctx, "example/ceph:version", Config{Source: source, Destination: destination, SourceFilesystem: "source", DestinationFilesystem: "destination", Directories: []string{"/data"}, NoInitialDaemons: zero, OriginalProcessClientFactory: func(context.Context) (*mobycl.Client, error) {
 					factory.Add(1)
 					return nil, errors.New("unexpected factory")
 				}}, customizer)
