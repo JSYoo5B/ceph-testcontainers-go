@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "override",
-  "count": 4,
+  "count": 7,
   "entries": [
     {
       "current": "override.AddBlocklist",
@@ -31,6 +31,27 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*BlocklistHandle",
       "proposed": "override.BlocklistHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.FullRatiosHandle",
+      "kind": "type",
+      "proposed": "override.FullRatiosHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.FullRatiosHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*FullRatiosHandle",
+      "proposed": "override.FullRatiosHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.SetFullRatios",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, requested ceph.FullRatios) (*FullRatiosHandle, error)",
+      "proposed": "override.SetFullRatios",
       "decision": "baseline"
     }
   ]
