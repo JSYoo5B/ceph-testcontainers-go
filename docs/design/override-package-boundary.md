@@ -38,7 +38,7 @@ boundary; override package) are fixed inputs of this note.
 | D5 | The handles keep their state and their `Restore` or settlement responsibilities. Per-operation shared-cluster admission, context and error behavior, lock ordering, restoration lifetimes and uncertain-outcome ownership are preserved. Do not expose locks, credentials or an unrestricted executor; do not duplicate lifecycle or admission state; do not create a broad abstraction to force the split. | Sections 5 to 7. |
 | D7 | Q1: the not-applied rule applies to all seven kinds and every `override` function returns a non-nil handle. No accessor is added to the six kinds without a receipt; the reason is the returned error. | Sections 4.2 and 4.3. |
 | D8 | Q2: one handle type per kind that carries an extra member (the refused or not-applied state), not a separate type behind an interface. Callers need no type assertion or reflection. | Section 4.2. |
-| D9 | Q3: no `Override` or `Temporary` in function names; functions are verbs `override.Set...` returning `*...Handle`. The blocklist is an addition, so its verb is proposed in this note. | Section 3. Only `AddBlocklist`/`BlocklistHandle` awaits approval. |
+| D9 | Q3: no `Override` or `Temporary` in function names; the verb follows the behavior of each operation: `Set...` for the six settings, `AddBlocklist` for the addition, handles `*...Handle`. Confirmed by the owner. | Section 3.1. The final spelling is approved on this revised document. |
 | D10 | Q4: a nil cluster returns a not-applied handle and an `ErrInvalidRequest` error for all seven kinds, with the three deliberate behavior changes. | Section 4.5. |
 | D11 | Q5: typed operations per kind, not the raw CLI hook. | Section 5. |
 | D12 | Q6: the config, OSD flag and MGR module maps join the fault registry. | Section 6.1. |
@@ -145,9 +145,24 @@ name carries it. Settings are verbs, `override.Set...`, and every handle ends in
 setting of an existing value, so its verb is `Add`: `override.AddBlocklist`
 returns a `BlocklistHandle`. `Add` says what the call does (it creates one entry
 that did not exist) and what `Restore` undoes (it removes that entry only), which
-`Set` would blur because a set suggests a previous value to put back. The spelling
-`AddBlocklist`/`BlocklistHandle` is a proposal; the owner approves the final
-spelling on this revision.
+`Set` would blur because a set suggests a previous value to put back. The owner
+accepted choosing the verb by the behavior of each operation, and accepted
+`AddBlocklist`/`BlocklistHandle`; the final spelling is approved on this revised
+document.
+
+Verb rule: `Set` for an operation that replaces an existing value and later puts
+the previous value back; `Add` for an operation that creates an entry that did
+not exist and later removes only that entry.
+
+| Function | Verb | Why |
+| --- | --- | --- |
+| `SetConfig` | Set | writes one central database entry; `Restore` returns the previous value or removes the entry if it was absent |
+| `SetMessengerPolicy` | Set | sets the connection modes through config entries; `Restore` returns each to its previous value |
+| `SetOSDFlag` | Set | sets or unsets one global flag; `Restore` returns the previous state |
+| `SetMGRModule` | Set | sets one module's enabled state; `Restore` returns the previous state |
+| `SetFullRatios` | Set | replaces the three thresholds; `Restore` returns the captured tuple |
+| `SetDebugLevel` | Set | replaces one runtime level; `Restore` returns the prior level |
+| `AddBlocklist` | Add | creates one blocklist entry that did not exist (an existing entry is refused); `Restore` removes only that entry |
 
 ### 3.2 Old name to new name
 
@@ -712,21 +727,18 @@ comment "Owner answers to the questions in the override package proposal").
 | --- | --- | --- |
 | Q1 | Does D4 apply to the six kinds without a receipt? | Yes, all seven; every function returns a non-nil handle; no accessor on the six (D7). |
 | Q2 | Is one handle type per kind with a refused state acceptable? | Yes (D8). |
-| Q3 | Names. | Verbs `Set...`, handles `...Handle`, no `Override`/`Temporary` (D9). |
+| Q3 | Names. | Verb by behavior: `Set...` for settings, `AddBlocklist` for the addition, handles `...Handle`, no `Override`/`Temporary` (D9). |
 | Q4 | Nil cluster behavior. | Adopted (D10). |
 | Q5 | Typed operations or raw `CLI`. | Typed operations (D11). |
-| Q6 | Do the three maps join the fault registry? | Yes (D12). |
+| Q6 | Do the three maps join the fault registry? | Yes, confirmed (D12). |
 | Q7 | Where do the messenger policy and the blocklist belong? | Both in `override` (D13). |
 | Q8, Q9 | Debug-level registry; pull request order. | As recommended (D14). |
 
 Still open for the owner:
 
-- The spelling of the blocklist entry point and handle, proposed as
-  `override.AddBlocklist` returning `*BlocklistHandle` (section 3.1 gives the
-  reason for `Add`). Alternatives are `override.Blocklist`/`BlocklistHandle` or
-  `override.BlockClient`.
-- Approval of the final names in section 3.2 as a whole, since the answer asked for
-  approval on this revision.
+- Approval of the final spelling of all names in sections 3.1 and 3.2 on this revised
+  document. The blocklist spelling `AddBlocklist`/`BlocklistHandle` is accepted as
+  proposed; alternatives were `override.Blocklist` and `override.BlockClient`.
 
 ## 13. Not established
 
