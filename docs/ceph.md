@@ -2256,7 +2256,7 @@ does not touch the cluster's settings, `EssentialImage`, `Images`, `FactsOf`,
   such as `"20.2.4"`; it works under the conditions of
   [AdminSocket](#adminsocket) and returns an error for a reply without a
   recognizable version. The admin socket client is the cluster's CLI, so the
-  reply is the daemon's own but the transport is the control image's.
+  reply is the daemon's own but the transport is the cluster's CLI executor, which runs from the essential image unless a separate CLI executor image was selected.
 - Client releases. A separately started client container is still refused when its
   release differs from `CephVersion`. That check is unchanged and does not
   consider overridden daemons.

@@ -249,10 +249,11 @@ func TestParseDaemonVersion(t *testing.T) {
 	for name, test := range map[string]struct {
 		in, want string
 	}{
-		"release":     {`{"version":"20.2.4","release":"tentacle","release_type":"stable"}`, "20.2.4"},
-		"squid":       {`{"version":"19.2.5","release":"squid","release_type":"stable"}` + "\n", "19.2.5"},
-		"dev suffix":  {`{"version":"20.3.0-123-gabcdef","release":"tentacle","release_type":"dev"}`, "20.3.0"},
-		"only fields": {`{"version":"18.2.7"}`, "18.2.7"},
+		"release":         {`{"version":"20.2.4","release":"tentacle","release_type":"stable"}`, "20.2.4"},
+		"squid":           {`{"version":"19.2.5","release":"squid","release_type":"stable"}` + "\n", "19.2.5"},
+		"dev suffix":      {`{"version":"20.3.0-123-gabcdef","release":"tentacle","release_type":"dev"}`, "20.3.0"},
+		"only fields":     {`{"version":"18.2.7"}`, "18.2.7"},
+		"whitespace tail": {"{\"version\":\"20.2.4\"} \n\t ", "20.2.4"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := parseDaemonVersion([]byte(test.in))
@@ -274,6 +275,10 @@ func TestParseDaemonVersion(t *testing.T) {
 		"padded version":    `{"version":" 20.2.4"}`,
 		"object version":    `{"version":{"v":"20.2.4"}}`,
 		"trailing document": `{"version":"20.2.4"}{"version":"19.2.5"}`,
+		"closing bracket":   `{"version":"20.2.4"}]`,
+		"extra brace":       `{"version":"20.2.4"}}`,
+		"trailing garbage":  `{"version":"20.2.4"} x`,
+		"trailing scalar":   `{"version":"20.2.4"} 1`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got, err := parseDaemonVersion([]byte(in)); err == nil || got != "" {

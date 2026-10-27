@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 )
 
@@ -22,7 +23,9 @@ func parseDaemonVersion(output []byte) (string, error) {
 	if err := decoder.Decode(&reply); err != nil || reply == nil {
 		return "", errors.New("daemon version reply is not a JSON object")
 	}
-	if decoder.More() {
+	// Require end of input: More would accept a stray closing delimiter.
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return "", errors.New("daemon version reply has trailing data")
 	}
 	raw, ok := reply["version"]
