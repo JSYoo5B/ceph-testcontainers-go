@@ -4263,6 +4263,46 @@ records. Its `Outcome` (a `ceph.CrashOutcome`) is one of:
 
 ### Other module functions and types
 
+#### FactsOf
+
+```golang
+func FactsOf(c *Container) (ClusterFacts, error)
+```
+
+Returns an independent snapshot of the static facts of a cluster: address
+family, control image, role images, messenger mode, network names, host-network
+use, advertised public address, whether a separate cluster network exists, and
+the Ceph version. A nil cluster returns an error that matches
+`ErrInvalidRequest` and the zero `ClusterFacts`. A terminated cluster still
+yields a snapshot, because the values come from the recorded configuration and
+identity and need no lock, command or Docker call.
+
+#### ClusterFacts
+
+```golang
+type ClusterFacts struct {
+	AddressFamily             AddressFamily
+	ControlImage              string
+	Images                    ImageSet
+	MessengerMode             MessengerMode
+	NetworkName               string
+	UsesHostNetwork           bool
+	PublicAddress             string
+	ClusterNetworkName        string
+	HasSeparateClusterNetwork bool
+	CephVersion               string
+}
+```
+
+A copy of the recorded information, not of the cluster. It holds no cluster
+handle, resource or cleanup state, so it cannot control or reactivate the
+cluster. Changing a snapshot changes neither the cluster nor another snapshot,
+and a later cluster change does not update a snapshot already obtained. The
+values describe the recorded configuration. They do not show that the Docker
+resources still exist, are reachable or run, and they are not a fresh native
+observation. The existing `Container` accessors for the same facts are
+unchanged.
+
 #### OSDFlag
 
 ```golang
