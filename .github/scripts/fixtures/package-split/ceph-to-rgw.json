@@ -1,0 +1,46 @@
+{
+ "calls": [
+  [
+   "\\b([A-Za-z_]\\w*)\\.StartRGW\\(ctx\\)",
+   "rgw.Start(ctx, \\1, rgw.Config{})"
+  ],
+  [
+   "\\b([A-Za-z_]\\w*)\\.StartRGWWithConfig\\(ctx, ",
+   "rgw.Start(ctx, \\1, "
+  ],
+  [
+   "\\b([A-Za-z_]\\w*)\\.RemoveRGW\\(ctx, ",
+   "rgw.Remove(ctx, \\1, "
+  ],
+  [
+   "\\b([A-Za-z_]\\w*)\\.Gateways\\(\\)",
+   "rgw.Gateways(\\1)"
+  ]
+ ],
+ "description": "API move of the RGW fixture surface (accounts, users, quotas, placement, gateways, StartRGW, RemoveRGW, WithRGW and WithRGWImage) from the ceph package to rgw, with the former Container methods rewritten to rgw.Start, rgw.Remove and rgw.Gateways.",
+ "identifiers": {
+  "ceph.Gateways": "rgw.Gateways",
+  "ceph.GatewaysContext": "rgw.Gateways",
+  "ceph.RGWAccount": "rgw.Account",
+  "ceph.RGWAccountConfig": "rgw.AccountConfig",
+  "ceph.RGWAccountInfo": "rgw.AccountInfo",
+  "ceph.RGWAdminCapability": "rgw.AdminCapability",
+  "ceph.RGWConfig": "rgw.Config",
+  "ceph.RGWContainer": "rgw.Gateway",
+  "ceph.RGWPlacement": "rgw.Placement",
+  "ceph.RGWPlacementConfig": "rgw.PlacementConfig",
+  "ceph.RGWPlacementState": "rgw.PlacementState",
+  "ceph.RGWQuota": "rgw.Quota",
+  "ceph.RGWStorageClassConfig": "rgw.StorageClassConfig",
+  "ceph.RGWTLSConfig": "rgw.TLSConfig",
+  "ceph.RGWUser": "rgw.User",
+  "ceph.RGWUserConfig": "rgw.UserConfig",
+  "ceph.RGWUserInfo": "rgw.UserInfo",
+  "ceph.RGWUserPlacementConfig": "rgw.UserPlacementConfig",
+  "ceph.RGWUserUsage": "rgw.UserUsage",
+  "ceph.RemoveRGW": "rgw.Remove",
+  "ceph.StartRGW": "rgw.Start",
+  "ceph.WithRGW": "rgw.WithGateways",
+  "ceph.WithRGWImage": "rgw.WithImage"
+ }
+}

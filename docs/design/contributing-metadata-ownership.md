@@ -602,6 +602,25 @@ three files, so the `moves/` directory of step 4 and a review note next to it
 need no change to the layout rules, and `package-split.json` shards (step 5)
 are independent of it.
 
+Step 5 as implemented: `.github/scripts/package_split.py` loads and validates
+`.github/scripts/fixtures/package-split/*.json`, one shard per move
+(`ceph-to-cephfs`, `ceph-to-rgw`, `ceph-to-rbd`, `ceph-container-context`,
+`multicluster-rbd-backup`, `rgw-multisite`, `rbd-mirror`, `cephfs-mirror`),
+replacing the single `package-split.json`. The sequence stays identifiers, then
+calls, then `gofmt`. Identifiers are applied as a set (longest key first, then
+key order); calls are concatenated in shard-name order. The loader refuses
+duplicate keys and call patterns, chains (a target containing any key), a call
+whose output another shard's call matches, and a call set whose result on the
+retained producer sources changes with the shard order. The migration pin in
+`test_package_split.py` proves the 131 identifiers and ten calls equal the
+single file at `7015c62`. Only the cross-shard position of the ten calls
+changed, and the test shows the old and new orders rewrite identically.
+The shards keep the original key and the current target, so a later move that
+retargets a name edits the earlier shard in its own pull request. The
+documentation is `docs/contributing/package-split-shards.md`. The sentence in
+`shared-harness-boundary.md` that said `-update-api-naming` regenerates the
+file is corrected: no code regenerates it.
+
 Start with 1. Fragments are the most edited file (42 of 175 entries against 23
 for the inventory), the change is additive with no data migration, it does not
 require waiting for #212 and #214, and it introduces the validator step and the
