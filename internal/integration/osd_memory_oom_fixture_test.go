@@ -103,7 +103,23 @@ func TestOSDOOMStepVerdicts(t *testing.T) {
 		{"the daemon was not the member", func(s *osdOOMStep) { s.ProcsBefore.PIDs = []int{8} }, osdOOMOther},
 		{"no memory reading", func(s *osdOOMStep) { s.Before = nil }, osdOOMUnsupported},
 		{"controller not listed", func(s *osdOOMStep) { s.Before.ControllerListed = false }, osdOOMUnsupported},
-		{"stopped without a counted kill", func(s *osdOOMStep) { s.Final.Events = memoryEvents{} }, osdOOMIncomplete},
+		// The native shape of a memory.max write: oom is raised on every retry
+		// of OOM handling, max stays 0 and one process is killed.
+		{"native shape: oom 66681, oom_kill 1, max 0, exit 137", func(s *osdOOMStep) {
+			s.Final.Events = memoryEvents{Max: 0, OOM: 66681, OOMKill: 1}
+		}, osdOOMKilled},
+		{"native shape read after the stop", func(s *osdOOMStep) {
+			s.Final.Source, s.Final.At = osdOOMFinalPostStop, oomAt(7)
+			s.Final.Events = memoryEvents{Max: 0, OOM: 66681, OOMKill: 1}
+		}, osdOOMKilled},
+		{"engine OOM exit but oom_kill did not advance (last sample)", func(s *osdOOMStep) { s.Final.Events = memoryEvents{} }, osdOOMCountersDisagree},
+		{"engine OOM exit but oom_kill did not advance (post-stop)", func(s *osdOOMStep) {
+			s.Final.Source, s.Final.At, s.Final.Events = osdOOMFinalPostStop, oomAt(7), memoryEvents{OOM: 5}
+		}, osdOOMCountersDisagree},
+		{"stopped, no OOM exit flag and no kill", func(s *osdOOMStep) { s.Final.Events = memoryEvents{}; s.Exit.OOMKilled = false }, osdOOMIncomplete},
+		{"oom decreased", func(s *osdOOMStep) { s.Before.Events.OOM = 70000 }, osdOOMIncomplete},
+		{"max decreased", func(s *osdOOMStep) { s.Before.Events.Max = 3; s.Final.Events.Max = 2 }, osdOOMIncomplete},
+		{"oom_kill decreased", func(s *osdOOMStep) { s.Before.Events.OOMKill = 2 }, osdOOMIncomplete},
 		{"running with an OOM exit flag", func(s *osdOOMStep) {
 			s.Final.Events, s.Exit = memoryEvents{}, &memoryDaemonExit{Generation: oomGen, Running: true, OOMKilled: true}
 		}, osdOOMIncomplete},
@@ -163,7 +179,7 @@ func TestOSDOOMStepRulesEachHaveANegativeControl(t *testing.T) {
 			s.Before.Events = memoryEvents{Max: 50, OOM: 3, OOMKill: 2}
 		}, skip: func(c *osdOOMStepChecks) { c.skipRollback = true; c.skipKillCount = true; c.skipConsist = true }},
 		{name: "kill counted without OOM handling", mutate: func(s *osdOOMStep) { s.Final.Events = memoryEvents{Max: 44, OOM: 0, OOMKill: 1} }, skip: func(c *osdOOMStepChecks) { c.skipConsist = true }},
-		{name: "OOM handling without a limit hit", mutate: func(s *osdOOMStep) { s.Final.Events = memoryEvents{Max: 0, OOM: 1, OOMKill: 1} }, skip: func(c *osdOOMStepChecks) { c.skipConsist = true }},
+		{name: "engine OOM exit with no counted kill", mutate: func(s *osdOOMStep) { s.Final.Events = memoryEvents{} }, skip: func(c *osdOOMStepChecks) { c.skipDisagree = true }, want: osdOOMIncomplete, def: osdOOMCountersDisagree},
 		{name: "exit before the window", mutate: func(s *osdOOMStep) { s.Exit.FinishedAt = oomAt(3.5) }, skip: func(c *osdOOMStepChecks) { c.skipExitWindow = true }},
 		{name: "exit after the window", mutate: func(s *osdOOMStep) { s.Exit.FinishedAt = oomAt(6.5) }, skip: func(c *osdOOMStepChecks) { c.skipExitWindow = true }},
 		{name: "exit without a time", mutate: func(s *osdOOMStep) { s.Exit.FinishedAt = time.Time{} }, skip: func(c *osdOOMStepChecks) { c.skipExitWindow = true }},
@@ -893,5 +909,100 @@ func TestOSDOOMProgressControlsRejectForTheirOwnRule(t *testing.T) {
 	r.Effects.OutageLater.Acked = r.Effects.OutageFloor.Acked + 3
 	if got := osdOOMEffectReasons(r); len(got) != 0 {
 		t.Errorf("genuine advance after the floor refused: %q", got)
+	}
+}
+
+func TestOSDOOMPressureTransitionDoesNotNeedAKernelReading(t *testing.T) {
+	// Native shape: the update reply arrived, the engine recorded the request
+	// and the kernel reading after it failed because the process was gone.
+	tr := goodOOMTransition(oomCeiling, 5, true)
+	tr.Kernel = nil
+	if err := osdOOMPressureTransition(tr); err != nil {
+		t.Fatalf("a reply-received update without a kernel reading is refused: %v", err)
+	}
+	if osdOOMPressureKernelVerified(tr) {
+		t.Fatal("a missing kernel reading counted as kernel-verified")
+	}
+	if got := osdOOMReceiptTransition(tr)["kernel_verified"]; got != false {
+		t.Fatalf("receipt claims kernel verification: %v", got)
+	}
+	tr = goodOOMTransition(oomCeiling, 5, true)
+	if !osdOOMPressureKernelVerified(tr) {
+		t.Fatal("a matching kernel reading is not verified")
+	}
+	lost := goodOOMTransition(oomCeiling, 5, false)
+	lost.ReplyReceived, lost.Kernel = false, nil
+	if err := osdOOMPressureTransition(lost); err != nil {
+		t.Fatalf("a lost reply with the engine's record is refused: %v", err)
+	}
+	cases := map[string]func(*osdMemTransition){
+		"no time":              func(tr *osdMemTransition) { tr.At = time.Time{} },
+		"no request":           func(tr *osdMemTransition) { tr.Requested = 0 },
+		"another generation":   func(tr *osdMemTransition) { tr.AfterState.StartedAt = oomNew.StartedAt },
+		"kernel of another":    func(tr *osdMemTransition) { tr.Kernel.Generation = oomNew },
+		"warnings":             func(tr *osdMemTransition) { tr.Warnings = []string{"x"} },
+		"engine lacks request": func(tr *osdMemTransition) { tr.AfterLimits.Memory = oomBaseline },
+		"container swap":       func(tr *osdMemTransition) { tr.AfterLimits.Swap = 2 * tr.Requested },
+	}
+	for name, mutate := range cases {
+		tr := goodOOMTransition(oomCeiling, 5, true)
+		mutate(&tr)
+		if osdOOMPressureTransition(tr) == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestOSDOOMRunKeepsCountersDisagreementDistinct(t *testing.T) {
+	r := goodOOMRun()
+	r.Step.Final.Events = memoryEvents{}
+	if v, _ := classifyOSDOOMRun(r); v != osdOOMRunCountersDisagree {
+		t.Fatalf("verdict %s", v)
+	}
+	r = goodOOMRun()
+	r.Step.Final.Events = memoryEvents{Max: 0, OOM: 66681, OOMKill: 1}
+	r.Pressure.Kernel = nil
+	if v, reasons := classifyOSDOOMRun(r); v != osdOOMRunOOMKilled || len(reasons) != 0 {
+		t.Fatalf("native shape with recovery: %s %v", v, reasons)
+	}
+}
+
+func TestOSDOOMPressureEffectIsSettledNarrowly(t *testing.T) {
+	// No kernel reading after the update (native shape): settled by the
+	// retained recorder observation, and not counted as kernel-verified.
+	r := goodOOMRun()
+	r.Pressure.Kernel = nil
+	if err := osdOOMPressureSettled(r); err != nil || osdOOMPressureKernelVerified(r.Pressure) {
+		t.Fatalf("recorder-settled update: %v", err)
+	}
+	// A matching kernel reading settles it by itself.
+	r.Pressure = goodOOMTransition(oomCeiling, 5, true)
+	r.Step.EffectiveAt = time.Time{}
+	if err := osdOOMPressureSettled(r); err != nil {
+		t.Fatalf("kernel-settled update: %v", err)
+	}
+	cases := map[string]func(*osdOOMRun){
+		"no recorder observation":  func(r *osdOOMRun) { r.Step.EffectiveAt = time.Time{} },
+		"observed before dispatch": func(r *osdOOMRun) { r.Step.EffectiveAt = oomAt(3.5) },
+		"observed after window":    func(r *osdOOMRun) { r.Step.EffectiveAt = oomAt(6.5) },
+		"another ceiling":          func(r *osdOOMRun) { r.Step.Ceiling = memoryLimit{Bytes: oomCeiling + 1<<20} },
+		"another generation":       func(r *osdOOMRun) { r.Step.Generation = oomNew },
+		"kernel contradicts the request even with a recorder observation": func(r *osdOOMRun) {
+			r.Pressure.Kernel = oomWitness(oomGen, oomAt(5.5), oomBaseline, 1, memoryEvents{})
+		},
+	}
+	for name, mutate := range cases {
+		r := goodOOMRun()
+		r.Pressure.Kernel = nil
+		mutate(&r)
+		if osdOOMPressureSettled(r) == nil {
+			t.Errorf("%s: settled", name)
+		}
+	}
+	// The run keeps the update unfinished, not killed, when it is unsettled.
+	r = goodOOMRun()
+	r.Step.EffectiveAt = oomAt(6.5)
+	if v, _ := classifyOSDOOMRun(r); v == osdOOMRunOOMKilled {
+		t.Fatalf("an unsettled pressure update still gave %s", v)
 	}
 }

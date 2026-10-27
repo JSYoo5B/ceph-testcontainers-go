@@ -239,9 +239,14 @@ const (
 	// survived. It is the only survivable outcome of this step.
 	osdOOMHitSurvived osdOOMVerdict = "limit-hit-osd-survived"
 	// osdOOMOther: a kill was counted but the OSD is not the proven victim.
-	osdOOMOther       osdOOMVerdict = "other-or-unknown-victim"
-	osdOOMUnsupported osdOOMVerdict = "unsupported"
-	osdOOMIncomplete  osdOOMVerdict = "incomplete"
+	osdOOMOther osdOOMVerdict = "other-or-unknown-victim"
+	// osdOOMCountersDisagree: the engine reports an OOM exit of the stopped
+	// daemon but the target-local counters show no kill. Neither source is
+	// trusted over the other; with a last-in-window sample the kill may simply
+	// have followed the last readable sample.
+	osdOOMCountersDisagree osdOOMVerdict = "engine-oom-counters-disagree"
+	osdOOMUnsupported      osdOOMVerdict = "unsupported"
+	osdOOMIncomplete       osdOOMVerdict = "incomplete"
 )
 
 // osdOOMStepChecks disables one rule per negative control.
@@ -259,6 +264,7 @@ type osdOOMStepChecks struct {
 	skipFinalTime  bool
 	skipRollback   bool
 	skipConsist    bool
+	skipDisagree   bool
 	skipExitWindow bool
 	skipOOMFlag    bool
 	skipKillCount  bool
@@ -350,8 +356,14 @@ func classifyOSDOOMStep(s osdOOMStep, checks osdOOMStepChecks) (osdOOMVerdict, e
 		return osdOOMIncompleteStep("a local counter decreased")
 	}
 	dMax, dOOM, dKill := a.Max-b.Max, a.OOM-b.OOM, a.OOMKill-b.OOMKill
-	if !checks.skipConsist && ((dKill > 0 && dOOM == 0) || (dOOM > 0 && dMax == 0)) {
-		return osdOOMIncompleteStep("local counters advanced inconsistently")
+	// oom counts every time the cgroup reached OOM handling and is NOT bounded
+	// by oom_kill: lowering memory.max by a write retries OOM handling in a
+	// loop and raises oom on every pass (tens of thousands of times in one
+	// native run) while max, which only the charge path raises, stays 0 and
+	// oom_kill counts the single process killed. Only a kill without any OOM
+	// handling is inconsistent; oom and max are required to be non-decreasing.
+	if !checks.skipConsist && dKill > 0 && dOOM == 0 {
+		return osdOOMIncompleteStep("a kill was counted without any OOM handling")
 	}
 	running := s.Exit.Running
 	if running && s.Exit.OOMKilled && !checks.skipOOMFlag {
@@ -364,9 +376,11 @@ func classifyOSDOOMStep(s osdOOMStep, checks osdOOMStepChecks) (osdOOMVerdict, e
 		case running && dOOM == 0:
 			return osdOOMHitSurvived, nil
 		}
+		if !running && s.Exit.OOMKilled && !checks.skipDisagree {
+			return osdOOMCountersDisagree, fmt.Errorf("%w: the engine reports an OOM exit but oom_kill did not advance (final reading source %s)", errOSDOOM, f.Source)
+		}
 		// A stopped daemon, or OOM handling without a counted kill, is not a
-		// classified outcome of this step; the last readable sample may simply
-		// precede the kill.
+		// classified outcome of this step.
 		return osdOOMIncompleteStep("the daemon stopped or OOM handling ran without a counted kill")
 	}
 	if running {
@@ -542,6 +556,7 @@ const (
 	osdOOMRunNotReached          osdOOMRunVerdict = "limit-not-reached"
 	osdOOMRunHitSurvived         osdOOMRunVerdict = "limit-hit-osd-survived"
 	osdOOMRunOther               osdOOMRunVerdict = "other-or-unknown-victim"
+	osdOOMRunCountersDisagree    osdOOMRunVerdict = "engine-oom-counters-disagree"
 	osdOOMRunUnsupported         osdOOMRunVerdict = "unsupported"
 	osdOOMRunInconclusive        osdOOMRunVerdict = "inconclusive"
 )
@@ -734,6 +749,8 @@ func classifyOSDOOMRun(r osdOOMRun) (osdOOMRunVerdict, []string) {
 		return osdOOMRunHitSurvived, reasons
 	case osdOOMOther:
 		return osdOOMRunOther, reasons
+	case osdOOMCountersDisagree:
+		return osdOOMRunCountersDisagree, reasons
 	case osdOOMUnsupported:
 		return osdOOMRunUnsupported, reasons
 	case osdOOMIncomplete:
@@ -743,8 +760,10 @@ func classifyOSDOOMRun(r osdOOMRun) (osdOOMRunVerdict, []string) {
 	if v, err := classifyOSDMemTransition(r.Admit, osdMemChecks{}); v != osdMemApplied {
 		reasons = append(reasons, fmt.Sprintf("admission is %s: %v", v, err))
 	}
-	if v, err := classifyOSDMemTransition(r.Pressure, osdMemChecks{}); v != osdMemApplied && v != osdMemAppliedUncertainRply && v != osdMemConfiguredOnly {
-		reasons = append(reasons, fmt.Sprintf("pressure update is %s: %v", v, err))
+	if err := osdOOMPressureTransition(r.Pressure); err != nil {
+		reasons = append(reasons, "pressure update: "+err.Error())
+	} else if err := osdOOMPressureSettled(r); err != nil {
+		reasons = append(reasons, "pressure update: "+err.Error())
 	}
 	if v, err := classifyOSDMemTransition(r.Restore, osdMemChecks{}); v != osdMemConfiguredOnly {
 		reasons = append(reasons, fmt.Sprintf("restoration of the stopped container is %s, not saved configuration: %v", v, err))
@@ -974,6 +993,7 @@ func osdOOMReceiptTransition(tr osdMemTransition) map[string]any {
 	if tr.Kernel != nil {
 		out["kernel_max"], out["kernel_swap_max"] = tr.Kernel.Max, tr.Kernel.SwapMax
 	}
+	out["kernel_verified"] = osdOOMPressureKernelVerified(tr)
 	return out
 }
 
@@ -1061,4 +1081,57 @@ func readOSDOOMUsage(group string) (osdOOMUsage, error) {
 		return osdOOMUsage{}, fmt.Errorf("%w: memory.stat unavailable", errOSDOOM)
 	}
 	return parseOSDOOMUsage(string(data))
+}
+
+// osdOOMPressureTransition judges the pressure update's own record. The update
+// can kill the daemon during the call, so a kernel reading after it may be
+// unavailable and the reply may be lost; neither is a failure and neither is
+// counted as a kernel-verified effect (see osdOOMPressureKernelVerified). The
+// effective ceiling comes from the recorder inside the step window, which the
+// step judge requires. Here the engine's account must record the request on
+// the frozen generation with no warnings and no container swap.
+func osdOOMPressureTransition(tr osdMemTransition) error {
+	switch {
+	case tr.Requested <= 0 || tr.At.IsZero():
+		return fmt.Errorf("%w: request or reply time is not recorded", errOSDOOM)
+	case !tr.Generation.valid() || tr.AfterState.ID != tr.Generation.ID || tr.AfterState.StartedAt != tr.Generation.StartedAt:
+		return fmt.Errorf("%w: generation changed or incomplete", errOSDOOM)
+	case tr.Kernel != nil && tr.Kernel.Generation != tr.Generation:
+		return fmt.Errorf("%w: kernel reading belongs to another generation", errOSDOOM)
+	case len(tr.Warnings) > 0:
+		return fmt.Errorf("%w: update returned warnings", errOSDOOM)
+	case tr.AfterLimits.Memory != tr.Requested || tr.AfterLimits.Swap != tr.Requested:
+		return fmt.Errorf("%w: the engine does not record the request with zero swap", errOSDOOM)
+	}
+	return nil
+}
+
+// osdOOMPressureKernelVerified reports whether a kernel reading of the same
+// generation after the update shows the request. A missing reading is false,
+// never an implied success.
+func osdOOMPressureKernelVerified(tr osdMemTransition) bool {
+	k := tr.Kernel
+	return k != nil && k.ControllerListed && !k.At.IsZero() && k.Generation == tr.Generation &&
+		k.Max == (memoryLimit{Bytes: uint64(tr.Requested)}) && k.SwapMax == (memoryLimit{})
+}
+
+// osdOOMPressureSettled settles the pressure update's effect narrowly. A
+// kernel reading after the update that shows the request settles it. A missing
+// reading (the process was already gone) is settled only by the recorder's
+// own observation of the same ceiling and zero swap in the target's cgroup
+// inside the step window, on the frozen generation, for the run's one
+// ceiling. A kernel reading that contradicts the request is never overridden.
+func osdOOMPressureSettled(r osdOOMRun) error {
+	tr, s := r.Pressure, r.Step
+	switch {
+	case osdOOMPressureKernelVerified(tr):
+		return nil
+	case tr.Kernel != nil:
+		return fmt.Errorf("%w: the post-update kernel reading does not show the request", errOSDOOM)
+	case s.Generation != tr.Generation || s.Ceiling != (memoryLimit{Bytes: uint64(tr.Requested)}):
+		return fmt.Errorf("%w: the recorded effect is not for this update", errOSDOOM)
+	case s.EffectiveAt.IsZero() || s.ExecStart.IsZero() || s.EffectiveAt.Before(s.ExecStart) || s.EffectiveAt.After(s.ExecEnd):
+		return fmt.Errorf("%w: no recorder observation of the ceiling in force inside the window", errOSDOOM)
+	}
+	return nil
 }

@@ -473,8 +473,15 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	run.Step.Exit = exit
 	stepVerdict, stepErr := classifyOSDOOMStep(run.Step, osdOOMStepChecks{})
 	t.Logf("OSD_OOM_STEP verdict=%s error=%v reads=%d final=%+v exit=%+v", stepVerdict, stepErr, len(obs.Reads), run.Step.Final, run.Step.Exit)
+	// A daemon that is stopped on the frozen generation still gets the outage,
+	// restoration and recovery path, whatever the step verdict, so one run
+	// gives the whole outcome; the verdict stays what the step said. A daemon
+	// that kept running is restored by cleanup and the run ends here.
+	if run.Step.Exit == nil || run.Step.Exit.Running || run.Step.Exit.Generation != gen {
+		t.Fatalf("the OSD did not stop on the frozen generation: step %s: %v (the admitted baseline is restored by cleanup)", stepVerdict, stepErr)
+	}
 	if stepVerdict != osdOOMKilled {
-		t.Fatalf("the step is not an OSD OOM kill: %s: %v (the admitted baseline is restored by cleanup)", stepVerdict, stepErr)
+		t.Logf("OSD_OOM_STEP_NOT_ESTABLISHED %s: %v; continuing with the outage and recovery observations of the stopped daemon", stepVerdict, stepErr)
 	}
 
 	// The engine must leave the daemon stopped on its own, and the cluster and
