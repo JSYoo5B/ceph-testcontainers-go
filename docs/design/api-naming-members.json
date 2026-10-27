@@ -3,7 +3,7 @@
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in public types; dependency and promoted method sets are not expanded",
   "counts": {
     "capture": 56,
-    "ceph": 426,
+    "ceph": 436,
     "cephfs": 247,
     "fault": 64,
     "rbd": 20,
@@ -106,6 +106,18 @@
     "ceph.ClientMessengerPolicy": [
       "ClientMessengerPolicy.MonitorsAndManagers field []MessengerConnectionMode",
       "ClientMessengerPolicy.OtherDaemons field []MessengerConnectionMode"
+    ],
+    "ceph.ClusterFacts": [
+      "ClusterFacts.AddressFamily field AddressFamily",
+      "ClusterFacts.CephVersion field string",
+      "ClusterFacts.ClusterNetworkName field string",
+      "ClusterFacts.ControlImage field string",
+      "ClusterFacts.HasSeparateClusterNetwork field bool",
+      "ClusterFacts.Images field ImageSet",
+      "ClusterFacts.MessengerMode field MessengerMode",
+      "ClusterFacts.NetworkName field string",
+      "ClusterFacts.PublicAddress field string",
+      "ClusterFacts.UsesHostNetwork field bool"
     ],
     "ceph.ConfigEntry": [
       "ConfigEntry.CanUpdateAtRuntime field bool `json:\"can_update_at_runtime\"`",

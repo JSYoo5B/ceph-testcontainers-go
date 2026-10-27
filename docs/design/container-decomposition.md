@@ -255,6 +255,10 @@ enumerates the exported functions of that group. Entries leave
 
   In every family the handle is the only restoration path, and the cluster's
   termination ends the native state with the cluster rather than restoring it.
+- **Package boundary design.** The owner preference for a public `override`
+  package, its package map, import graph and dependency analysis are in
+  [override-package-boundary.md](override-package-boundary.md). The shape above
+  (functions in `ceph`) is the fallback, not the current direction.
 - **Open questions.** `OverrideMessengerPolicy` delegates to `OverrideConfig`
   and takes no lock of its own, unlike the other six; it may be better placed with
   the messenger fixtures than with this group. `TemporaryBlocklist` is a time-bounded fence
