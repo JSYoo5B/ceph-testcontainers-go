@@ -40,19 +40,17 @@ var scripts embed.FS
 // cluster networking, rather than changing only the MON's network mode.
 type Container struct {
 	testcontainers.Container
-	mu                     sync.Mutex
-	controlMu              sync.RWMutex
-	configMu               sync.RWMutex
-	configOverrides        map[string]*ConfigOverrideHandle
-	flagOverrides          map[OSDFlag]*OSDFlagOverrideHandle
-	moduleOverrides        map[string]*MGRModuleOverrideHandle
-	controlPlane           testcontainers.Container
-	clientMu               sync.Mutex
-	clientPublishMu        sync.RWMutex
-	featureClient          testcontainers.Container
-	featureClientReady     bool
-	featureClientAttempted bool
-	cephVersion            string
+	mu              sync.Mutex
+	controlMu       sync.RWMutex
+	configMu        sync.RWMutex
+	configOverrides map[string]*ConfigOverrideHandle
+	flagOverrides   map[OSDFlag]*OSDFlagOverrideHandle
+	moduleOverrides map[string]*MGRModuleOverrideHandle
+	controlPlane    testcontainers.Container
+	// toolkit is the feature-client cache; see featureClientState for what
+	// guards each part.
+	toolkit     featureClientState
+	cephVersion string
 	// authFences records, per auth entity, what an earlier RotateKey
 	// or client key change left uncertain; see authFence.
 	authFences map[string]*authFence
@@ -1104,20 +1102,17 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 		}
 	}
 	c.controlMu.Unlock()
-	if err := lockTopologyMutex(ctx, &c.clientMu); err != nil {
+	if err := c.toolkit.lock(ctx); err != nil {
 		errs = append(errs, err)
 	} else {
-		if c.featureClient != nil {
-			if err := c.featureClient.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+		if client := c.toolkit.current(); client != nil {
+			if err := client.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 				errs = append(errs, err)
 			} else {
-				c.clientPublishMu.Lock()
-				c.featureClient = nil
-				c.clientPublishMu.Unlock()
-				c.featureClientReady = false
+				c.toolkit.clear()
 			}
 		}
-		c.clientMu.Unlock()
+		c.toolkit.unlock()
 	}
 
 	errs = append(errs, c.removeLabeledContainers(ctx))

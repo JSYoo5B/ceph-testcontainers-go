@@ -114,7 +114,7 @@ func TestSingleImageToolkitReusesCoreWithoutAllocation(t *testing.T) {
 	mon := &monitorLifecycleDaemon{}
 	c := &Container{Container: mon, settings: options{imageSet: &ImageSet{Essential: "complete", Client: "complete"}}}
 	got, err := c.ClientContainer(t.Context())
-	if err != nil || got != mon || c.featureClient != nil {
+	if err != nil || got != mon || c.toolkit.client != nil {
 		t.Fatalf("unnecessary all-image executor: %v %v", got, err)
 	}
 }
@@ -132,7 +132,7 @@ func TestTerminationCancelsToolkitStartup(t *testing.T) {
 }
 
 func TestUnconfirmedToolkitStartIsNotRepeated(t *testing.T) {
-	c := &Container{settings: options{imageSet: &ImageSet{Essential: "core", Client: "toolkit"}}, featureClientAttempted: true}
+	c := &Container{settings: options{imageSet: &ImageSet{Essential: "core", Client: "toolkit"}}, toolkit: featureClientState{attempted: true}}
 	if ctr, err := c.ClientContainer(t.Context()); ctr != nil || err == nil {
 		t.Fatalf("unconfirmed startup retried: %v %v", ctr, err)
 	}
@@ -140,8 +140,8 @@ func TestUnconfirmedToolkitStartIsNotRepeated(t *testing.T) {
 
 func TestToolkitPublicationWaitHonorsCancellation(t *testing.T) {
 	c := &Container{}
-	c.clientPublishMu.Lock()
-	defer c.clientPublishMu.Unlock()
+	c.toolkit.publishMu.Lock()
+	defer c.toolkit.publishMu.Unlock()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if _, err := c.featureClientSnapshot(ctx); !errors.Is(err, context.Canceled) {
@@ -155,7 +155,7 @@ func TestManualToolkitAttachmentWaitsForMonitorTopology(t *testing.T) {
 	defer c.mu.Unlock()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
-	if ctr, err := c.ClientContainer(ctx); ctr != nil || !errors.Is(err, context.DeadlineExceeded) || c.featureClientAttempted {
+	if ctr, err := c.ClientContainer(ctx); ctr != nil || !errors.Is(err, context.DeadlineExceeded) || c.toolkit.attempted {
 		t.Fatalf("attachment raced a topology change or ignored its deadline: %v %v", ctr, err)
 	}
 }
