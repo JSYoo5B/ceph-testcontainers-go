@@ -73,7 +73,7 @@ func TestScrubInconsistency(t *testing.T) {
 				if strings.Contains(snapshot.PGs[0].State, "inconsistent") != inconsistent {
 					t.Fatalf("%s: PG state %s, want inconsistent=%v", phase, snapshot.PGs[0].State, inconsistent)
 				}
-				objects, err := cluster.PGInconsistencies(ctx, mapping.PGID)
+				objects, err := observeCluster(cluster).PGInconsistencies(ctx, mapping.PGID)
 				if err != nil {
 					t.Fatal("inconsistency check", err)
 				}

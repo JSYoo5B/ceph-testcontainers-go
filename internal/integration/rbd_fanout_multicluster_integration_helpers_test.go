@@ -46,11 +46,11 @@ func rbdFanoutThirdCluster(t *testing.T, ctx context.Context, a, b *ceph.Contain
 		if cluster.NetworkName() == other.NetworkName() {
 			t.Fatal("third fanout cluster shares an isolated Ceph network")
 		}
-		current, err := cluster.Status(ctx)
+		current, err := observeCluster(cluster).Status(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		previous, err := other.Status(ctx)
+		previous, err := observeCluster(other).Status(ctx)
 		if err != nil || current.FSID == "" || current.FSID == previous.FSID {
 			t.Fatalf("third fanout cluster is not independent: FSID=%s other=%s error=%v", current.FSID, previous.FSID, err)
 		}

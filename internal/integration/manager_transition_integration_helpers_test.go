@@ -594,7 +594,7 @@ func testManagerTransitionReceipt(t *testing.T) {
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	receipt := mgrTransitionReceipt{Schema: mgrReceiptSchema, Source: "ceph-testcontainers-go internal/integration", Run: t.Name(),
 		Images: map[string]string{"control": image}}
-	quorum, err := cluster.QuorumStatus(ctx)
+	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

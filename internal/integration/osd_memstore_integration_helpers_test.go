@@ -143,7 +143,7 @@ func checkMemStoreLegacyPool(t *testing.T, ctx context.Context, cluster *ceph.Co
 	}
 	var pools []ceph.PoolState
 	for deadline := time.Now().Add(2 * time.Minute); ; {
-		pools, err = cluster.Pools(ctx)
+		pools, err = observedPoolStates(ctx, cluster)
 		if err != nil {
 			t.Fatal(err)
 		}

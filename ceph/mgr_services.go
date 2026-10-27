@@ -7,14 +7,8 @@ import (
 	"net/url"
 )
 
-// ManagerServices returns the service URLs, keyed by module name such as
-// prometheus or dashboard, that the active manager advertises in the MGR map.
-// A module appears only after it has started its listener, and a failover
-// replaces the URLs with the new active manager's. The URLs carry the address
-// the module bound: a container address reachable from WithClient containers
-// in bridge mode, or the configured address in host mode. They are not mapped
-// to Docker host ports. An empty map means no module advertises a service.
-func (c *Container) ManagerServices(ctx context.Context) (map[string]string, error) {
+// managerServices implements Observer.ManagerServices.
+func (c *Container) managerServices(ctx context.Context) (map[string]string, error) {
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
 	}

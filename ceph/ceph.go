@@ -286,7 +286,7 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 		// MON OSDMap state is available before the first MGR. Its captured UUIDs
 		// and up/in flags do not rely on MGR-produced PG or health statistics.
 		if err := c.poll(ctx, func() (bool, error) {
-			states, err := c.OSDStates(ctx)
+			states, err := c.osdStates(ctx)
 			if err != nil {
 				return false, err
 			}
@@ -302,7 +302,7 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 		return ctx.Err()
 	}
 	if err := c.poll(ctx, func() (bool, error) {
-		s, err := c.Status(ctx)
+		s, err := readStatus(ctx, c.cephCLI)
 		return s.MgrMap.Available, err
 	}); err != nil {
 		return fmt.Errorf("wait for ceph manager: %w", err)

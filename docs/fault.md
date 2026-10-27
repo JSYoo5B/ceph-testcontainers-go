@@ -347,7 +347,11 @@ To fault a container's paths to several peers, list them in `Peers`, for
 example every OSD's address from [DaemonAddresses](ceph.md#daemonaddresses):
 
 ```golang
-addresses, err := cluster.DaemonAddresses(ctx)
+observer, err := ceph.Observe(cluster)
+if err != nil {
+	t.Fatal(err)
+}
+addresses, err := observer.DaemonAddresses(ctx)
 if err != nil {
 	t.Fatal(err)
 }

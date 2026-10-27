@@ -17,7 +17,7 @@ import "github.com/JSYoo5B/ceph-testcontainers-go/override"
 | `(*ceph.BlocklistOverride).Address` | `(*override.BlocklistHandle).Address` (same value) |
 | `(*ceph.BlocklistOverride).Restore` | `(*override.BlocklistHandle).Restore` (same removal rules) |
 
-`ceph.BlocklistEntry` and `Container.BlocklistEntries` are unchanged.
+`ceph.BlocklistEntry` and `Observer.BlocklistEntries` are unchanged.
 
 ## What is the same
 

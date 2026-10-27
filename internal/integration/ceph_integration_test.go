@@ -52,7 +52,7 @@ func TestClusterLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	logStatus(t, ctx, cluster, "initial")
-	quorum, err := cluster.QuorumStatus(ctx)
+	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil || quorum.MonMap.FSID == "" {
 		t.Fatal("original health oracle FSID unavailable", err)
 	}

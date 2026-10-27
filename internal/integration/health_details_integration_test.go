@@ -20,7 +20,7 @@ func integrationHealthDetails(t *testing.T, ctx context.Context, cluster *ceph.C
 	t.Helper()
 	for {
 		before := integrationNativeHealth(t, ctx, cluster, fsid)
-		actual, err := cluster.HealthDetails(ctx)
+		actual, err := observeCluster(cluster).HealthDetails(ctx)
 		if err != nil {
 			t.Fatal("HealthDetails failed", phase, err)
 		}

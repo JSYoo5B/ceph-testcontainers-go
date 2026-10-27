@@ -47,7 +47,7 @@ func TestPGInconsistenciesDecodesNativeShards(t *testing.T) {
 		}
 	}
 	ctr := scrubFixture()
-	if _, err := poolFixtureCluster(ctr, 2).PGInconsistencies(t.Context(), "7.0; rm"); err == nil || len(ctr.Calls) != 0 {
+	if _, err := poolFixtureCluster(ctr, 2).pgInconsistencies(t.Context(), "7.0; rm"); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("invalid PG ID reached native CLI")
 	}
 }

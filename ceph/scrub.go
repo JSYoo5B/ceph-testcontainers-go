@@ -171,10 +171,8 @@ func (c *Container) pgScrubReport(ctx context.Context, pgid PGID) (time.Time, st
 	return time.Time{}, "", fmt.Errorf("PG %s is not reported", pgid)
 }
 
-// PGInconsistencies lists the objects that the last deep scrub of a PG found
-// inconsistent. An empty result means that scrub found none; it is not a new
-// scrub. A PG whose results are no longer available returns an error.
-func (c *Container) PGInconsistencies(ctx context.Context, pgid PGID) ([]InconsistentObject, error) {
+// pgInconsistencies implements Observer.PGInconsistencies.
+func (c *Container) pgInconsistencies(ctx context.Context, pgid PGID) ([]InconsistentObject, error) {
 	if err := validatePGID(string(pgid)); err != nil {
 		return nil, err
 	}

@@ -16,7 +16,7 @@ separate changes (see the [design](design/override-package-boundary.md)).
 | `cluster.TemporaryBlocklist(ctx, address, duration)` | `override.AddBlocklist(ctx, cluster, address, duration)` |
 | `*ceph.BlocklistOverride` | `*override.BlocklistHandle` (same `Address` and `Restore`) |
 
-`ceph.BlocklistEntry` and `Container.BlocklistEntries` stay in `ceph`: they only
+`ceph.BlocklistEntry` and `Observer.BlocklistEntries` stay in `ceph`: they only
 read the OSDMap. The package imports `ceph`; `ceph` never imports it. See the
 [migration guide](guides/upgrading-override-package.md).
 
@@ -112,6 +112,6 @@ if err := fence.Restore(ctx); err != nil {
 }
 ```
 
-`ceph.Container.BlocklistEntries` shows the entry and its expiry. For RBD
+`ceph.Observer.BlocklistEntries` shows the entry and its expiry. For RBD
 exclusive-lock handover, the lock owner's address comes from `rbd.ImageClients`
 (see [rbd](rbd.md)).

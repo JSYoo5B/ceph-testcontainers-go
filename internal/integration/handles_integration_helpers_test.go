@@ -186,3 +186,13 @@ func (s socketCluster) RemoveMonitor(ctx context.Context, name string) error {
 	}
 	return mon.Remove(ctx)
 }
+
+// ManagerStatus reads the manager map through the cluster's Observer.
+func (s socketCluster) ManagerStatus(ctx context.Context) (ceph.ManagerStatus, error) {
+	return observeCluster(s.Container).ManagerStatus(ctx)
+}
+
+// QuorumStatus reads the monitor quorum through the cluster's Observer.
+func (s socketCluster) QuorumStatus(ctx context.Context) (ceph.QuorumStatus, error) {
+	return observeCluster(s.Container).QuorumStatus(ctx)
+}

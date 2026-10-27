@@ -85,7 +85,7 @@ func (m *cephFSStandbyFailover) failToStandby(t *testing.T, ctx context.Context)
 // blocklist entry names its address.
 func (m *cephFSStandbyFailover) noEviction(t *testing.T, ctx context.Context, before map[uint64]cephfs.Session) {
 	t.Helper()
-	entries, err := m.cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(m.cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

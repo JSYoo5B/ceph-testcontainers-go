@@ -71,7 +71,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	if len(osds) != 3 || len(clusteraccess.Monitors(t, cluster)) != 3 || len(clusteraccess.Managers(t, cluster)) != 2 {
 		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(clusteraccess.Monitors(t, cluster)), len(clusteraccess.Managers(t, cluster)))
 	}
-	states, err := cluster.OSDStates(ctx)
+	states, err := observeCluster(cluster).OSDStates(ctx)
 	if err != nil || len(states) != 3 {
 		t.Fatalf("initial OSD identities: %v %+v", err, states)
 	}
@@ -105,7 +105,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		Names  []string `json:"quorum_names"`
 	}
 	outageJSON(t, ctx, cluster, &quorum, "quorum_status")
-	managerBefore, err := cluster.ManagerStatus(ctx)
+	managerBefore, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil || !managerBefore.Available || len(managerBefore.Standbys) != 1 || len(quorum.Names) != 3 {
 		t.Fatalf("initial MON/MGR identities: %+v %+v %v", quorum, managerBefore, err)
 	}
@@ -295,13 +295,13 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 			}
 		}
 		if !observed["mgr"] {
-			if m, err := cluster.ManagerStatus(ctx); err == nil && m.Available && m.ActiveName == standbyName && m.ActiveGID != managerBefore.ActiveGID {
+			if m, err := observeCluster(cluster).ManagerStatus(ctx); err == nil && m.Available && m.ActiveName == standbyName && m.ActiveGID != managerBefore.ActiveGID {
 				observed["mgr"], managerDuring = true, m
 				plan.Observe("mgr", mgrA.Name)
 			}
 		}
 		if !observed["osd"] {
-			if current, err := cluster.OSDStates(ctx); err == nil {
+			if current, err := observeCluster(cluster).OSDStates(ctx); err == nil {
 				for _, state := range current {
 					if state.ID == osdAID && !state.Up && state.In {
 						observed["osd"] = true
@@ -331,9 +331,9 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	topologyWait(t, ctx, func() bool {
-		q, qerr := cluster.QuorumStatus(ctx)
-		m, merr := cluster.ManagerStatus(ctx)
-		s, serr := cluster.OSDStates(ctx)
+		q, qerr := observeCluster(cluster).QuorumStatus(ctx)
+		m, merr := observeCluster(cluster).ManagerStatus(ctx)
+		s, serr := observeCluster(cluster).OSDStates(ctx)
 		return qerr == nil && merr == nil && serr == nil && len(q.QuorumNames) == 3 && m.Available && len(m.Standbys) == 1 &&
 			slices.EqualFunc(states, s, func(a, b ceph.OSDState) bool { return a.ID == b.ID && a.UUID == b.UUID && b.Up && b.In })
 	})

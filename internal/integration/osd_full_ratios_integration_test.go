@@ -113,7 +113,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=Tr
 // native epoch must include the checked map.
 func integrationFullRatios(t *testing.T, ctx context.Context, cluster *ceph.Container) ceph.FullRatioSnapshot {
 	t.Helper()
-	actual, err := cluster.FullRatios(ctx)
+	actual, err := observeCluster(cluster).FullRatios(ctx)
 	if err != nil {
 		t.Fatal("full-ratio check", err)
 	}

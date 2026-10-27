@@ -72,7 +72,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "seed")
 	volume, _ := osdVolumeBacking(t, ctx, docker.Client, cluster)
-	quorum, err := cluster.QuorumStatus(ctx)
+	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

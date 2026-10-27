@@ -96,7 +96,7 @@ func TestPoolQuotaZeroClearsBothLimitsAndStatusIncludesNativeIDs(t *testing.T) {
 		t.Fatal("zero quota did not clear both settings")
 	}
 	ctr.Output["osd pool ls detail --format json"] = "null"
-	if _, err := cluster.Pools(t.Context()); err == nil {
+	if _, err := cluster.pools(t.Context()); err == nil {
 		t.Fatal("malformed listing accepted")
 	}
 }
@@ -113,7 +113,7 @@ func TestPoolNativeIdentityRequiresPoolIDField(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctr := policyFixture("2", "1", "1")
 			ctr.Output["osd pool ls detail --format json"] = data
-			if _, err := poolFixtureCluster(ctr, 3).Pools(t.Context()); err == nil {
+			if _, err := poolFixtureCluster(ctr, 3).pools(t.Context()); err == nil {
 				t.Fatal("unknown or ambiguous native pool identity accepted")
 			}
 		})

@@ -69,7 +69,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	execCommand(t, ctx, sourceClient, "rbd", "create", image, "--size", "8M", "--object-size", "1M", "--image-feature", "layering,exclusive-lock")
 	var sourceFSID, destinationFSID string
 	for cluster, fsid := range map[*ceph.Container]*string{source: &sourceFSID, destination: &destinationFSID} {
-		status, err := cluster.Status(ctx)
+		status, err := observeCluster(cluster).Status(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -182,7 +182,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 		t.Fatal(err)
 	}
 	for _, cluster := range []*ceph.Container{source, destination} {
-		if _, err := cluster.Status(ctx); err != nil {
+		if _, err := observeCluster(cluster).Status(ctx); err != nil {
 			t.Fatalf("mirror cleanup terminated caller-owned Ceph cluster: %v", err)
 		}
 	}

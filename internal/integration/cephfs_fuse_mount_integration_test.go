@@ -531,7 +531,7 @@ finally:
 // blocklisted reports whether address is in the OSDMap blocklist.
 func blocklisted(t *testing.T, ctx context.Context, cluster *ceph.Container, address string) bool {
 	t.Helper()
-	entries, err := cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

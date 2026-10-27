@@ -131,7 +131,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			if actual := s3.request(t, ctx, http.MethodGet, "/tc-secure/payload", nil, http.StatusOK); !bytes.Equal(actual, payload) {
 				t.Fatal("secure RGW retained bytes differ")
 			}
-			quorum, err := cluster.QuorumStatus(ctx)
+			quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
