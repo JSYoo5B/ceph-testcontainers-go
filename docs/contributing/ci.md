@@ -125,21 +125,27 @@ status checks of the `main` protection ruleset. A workflow-level
 `paths-ignore` would never start the workflow for a documentation-only
 change and leave those checks pending, which blocks merging. The workflow
 therefore always starts, and its `Detect documentation-only changes` job runs
-`.github/scripts/docs_only.py`. When that reports `docs_only=true`, the six
+`.github/scripts/docs_only.py`. When that reports `docs_only=true`, three
 checks skip themselves and report success; GitHub documents that a job
 skipped by a condition reports success. The Vulnerability check matrix jobs
-skip their steps instead of the whole job, so that each keeps its expanded
-check name. The job names are unchanged.
+and `Vet, compile and CI tooling` skip their steps instead of the whole job:
+the matrix so that each keeps its expanded check name, and the vet job so
+that the fragment validator below still runs. The job names are unchanged.
 
 A pull request is documentation-only when every changed file is on this
 allowlist, and the allowlist contains only files that no check reads:
 - `README.md`, `CHANGELOG.md`, any other top-level `*.md` file and `LICENSE`;
-- Markdown files directly inside `docs/contributing/`, `docs/design/`,
-  `docs/guides/` and `docs/research/`, except the files below.
+- Markdown files directly inside `docs/changes/` (release-note fragments),
+  `docs/contributing/`, `docs/design/`, `docs/guides/` and `docs/research/`,
+  except the files below.
 
 These documentation files are read by a check and always run the full Code
 checks, as does every other path (including any non-Markdown file under
-`docs/`, a new top-level `docs/` page and a nested path):
+`docs/` or `docs/changes/`, a new top-level `docs/` page, a nested path such
+as `docs/changes/sub/x.md` and a top-level `changes/` directory). A changed
+path whose old or new Git mode is not an ordinary file (a symbolic link, an
+executable or a submodule) also runs them, because the path name alone cannot
+show that `docs/changes/x.md` is a link to a code file:
 - `docs/ceph.md`, `docs/fault.md`, `docs/rbd.md`, `docs/cephfs.md`,
   `docs/rgw.md` and `docs/capture.md`: the API inventory test requires every
   exported name on its package page;
@@ -154,6 +160,20 @@ checks, as does every other path (including any non-Markdown file under
 paths they name and fails when one of them is on the allowlist, so a new
 reader of a documentation file has to remove that file from it. Add the
 file to `READ_DOC_FILES` or `READ_DOC_PREFIXES` in `docs_only.py`.
+
+A head that changes only fragments is documentation-only, but it is still
+validated. `Vet, compile and CI tooling` runs on every head instead of
+skipping the whole job: its checkout and its last step, `Validate
+release-note fragments` (`.github/scripts/release_fragments.py`, see
+[Release-note fragments](release-fragments.md)), run regardless of
+`docs_only`, and vet, lint, tag compilation, the Python tooling tests,
+actionlint and the go-ceph harness test skip themselves on a
+documentation-only head. The job name is unchanged and no required check is
+added. On such a head a green `Vet, compile and CI tooling` means that the
+validator passed; vet and tag compilation did not run, and the skip is by
+policy, not a pass of those steps. Unit tests, Race detector and Compiled tag
+coverage and helpers remain skipped jobs, and the Vulnerability check jobs
+execute with every step skipped.
 
 The detection fails open. Every push to `main`, the weekly schedule and
 manual runs always run every check. A pull request from a fork, a missing
@@ -223,7 +243,7 @@ Practical consequences:
 | --- | --- | --- |
 | Unit tests | 15 min | `make test` |
 | Race detector | 15 min | `make race` |
-| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint (`make lint`), `make tag-compile`, the Python tests in `.github/scripts` (`test_*.py`) and the go-ceph harness test |
+| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint (`make lint`), `make tag-compile`, the Python tests in `.github/scripts` (`test_*.py`), actionlint and the go-ceph harness test; the release-note fragment validator on every head |
 | Compiled tag coverage and helpers | 25 min | `tag_scenarios.py plan --verify`, then `tag_scenarios.py code` (the Docker-free `code` batch) |
 | Vulnerability check (Go 1.26.x and 1.27.x) | 20 min | `make vulncheck` |
 
