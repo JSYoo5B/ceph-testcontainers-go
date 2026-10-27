@@ -31,6 +31,10 @@ const (
 	// registry only records it for overlap and identity: Terminate does not
 	// undo it, the entry ends with the cluster.
 	Blocklist Kind = "Blocklist"
+	// FullRatios tracks the one override of the three OSDMap thresholds. The
+	// registry only records it for overlap and identity: Terminate does not
+	// undo it.
+	FullRatios Kind = "FullRatios"
 )
 
 // Token identifies one reservation. Only the token that a key still maps to
@@ -55,6 +59,41 @@ type hooks interface {
 	BlocklistEntries(ctx context.Context, c *ceph.Container) ([]ceph.BlocklistEntry, error)
 	BlocklistAdd(ctx context.Context, c *ceph.Container, address string, duration time.Duration) error
 	BlocklistRemove(ctx context.Context, c *ceph.Container, address string) error
+	OpenFullRatios(ctx context.Context, c *ceph.Container) (any, error)
+}
+
+// fullRatiosSession is what the registered hooks return from OpenFullRatios.
+type fullRatiosSession interface {
+	FSID() string
+	Read(ctx context.Context) (ceph.FullRatioSnapshot, error)
+	SetRatio(ctx context.Context, name string, value float64) error
+	CheckIdentity(ctx context.Context, fsid string) error
+}
+
+// FullRatiosSession is one captured control and bootstrap identity for the
+// native steps of a full ratios override. Its methods run native commands; the
+// caller holds the cluster mutex, taken through WithTopology, for the whole
+// life of the session and never keeps it afterwards.
+type FullRatiosSession struct{ session fullRatiosSession }
+
+// FSID returns the bootstrap identity that the session captured.
+func (s FullRatiosSession) FSID() string { return s.session.FSID() }
+
+// Read reads the three thresholds and the map epoch, guarded by the captured
+// identity before and after the read.
+func (s FullRatiosSession) Read(ctx context.Context) (ceph.FullRatioSnapshot, error) {
+	return s.session.Read(ctx)
+}
+
+// SetRatio sets one threshold: name is "nearfull", "backfillfull" or "full".
+func (s FullRatiosSession) SetRatio(ctx context.Context, name string, value float64) error {
+	return s.session.SetRatio(ctx, name, value)
+}
+
+// CheckIdentity refuses a cluster whose captured bootstrap identity is not
+// fsid.
+func (s FullRatiosSession) CheckIdentity(ctx context.Context, fsid string) error {
+	return s.session.CheckIdentity(ctx, fsid)
 }
 
 func get() hooks {
@@ -141,6 +180,21 @@ func BlocklistAdd(ctx context.Context, c *ceph.Container, address string, durati
 // caller holds the mutex.
 func BlocklistRemove(ctx context.Context, c *ceph.Container, address string) error {
 	return get().BlocklistRemove(ctx, c, address)
+}
+
+// OpenFullRatios captures the control container and the original bootstrap
+// identity once. It refuses a terminated cluster, a missing control container
+// and an unconfirmed identity. The caller holds the mutex.
+func OpenFullRatios(ctx context.Context, c *ceph.Container) (FullRatiosSession, error) {
+	opened, err := get().OpenFullRatios(ctx, c)
+	if err != nil {
+		return FullRatiosSession{}, err
+	}
+	session, ok := opened.(fullRatiosSession)
+	if !ok {
+		panic("overridehook: package ceph returned a full ratios session of an unexpected type")
+	}
+	return FullRatiosSession{session: session}, nil
 }
 
 // TestHeld snapshots the handles that one kind holds, for unit tests. Call

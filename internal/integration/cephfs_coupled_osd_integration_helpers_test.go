@@ -17,6 +17,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -474,7 +475,7 @@ func waitPoolFull(t *testing.T, ctx context.Context, cluster *ceph.Container, po
 
 // testCephFSOSDFullRetainedClient fills the OSDs of a live client's file
 // while the client keeps its mount and fd. Full ratios of 0.0001, 0.0002
-// and 0.0003, through OverrideFullRatios, make the OSDs report themselves
+// and 0.0003, through override.SetFullRatios, make the OSDs report themselves
 // full, and the MON flags the file's data pool full in OSDMap epoch F. Once
 // the client holds epoch F (it reads a file that another client wrote, and
 // the OSD shares the map with it), its write returns ENOSPC (28) and its
@@ -518,16 +519,14 @@ func testCephFSOSDFullRetainedClient(t *testing.T) {
 		t.Fatalf("probe writer: exit=%d err=%v stderr=%.2048s", written.ExitCode, err, written.Stderr)
 	}
 
-	fill, err := m.cluster.OverrideFullRatios(ctx, ceph.FullRatios{NearFull: .0001, BackfillFull: .0002, Full: .0003})
-	if fill != nil {
-		t.Cleanup(func() {
-			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := fill.Restore(restoreCtx); err != nil {
-				t.Errorf("restore full ratios: %v", err)
-			}
-		})
-	}
+	fill, err := override.SetFullRatios(ctx, m.cluster, ceph.FullRatios{NearFull: .0001, BackfillFull: .0002, Full: .0003})
+	t.Cleanup(func() {
+		restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := fill.Restore(restoreCtx); err != nil {
+			t.Errorf("restore full ratios: %v", err)
+		}
+	})
 	if err != nil {
 		t.Fatal("apply full ratios:", err)
 	}

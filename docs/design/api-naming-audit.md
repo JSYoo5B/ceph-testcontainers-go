@@ -291,3 +291,18 @@ because the package name carries the meaning. The names follow the decisions
 D7 to D9 of `override-package-boundary.md`. The reviewed mapping is in
 [the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
 The receipts of `ceph` and `override` were approved separately for this move.
+
+## 146-override-fullratios-package
+
+The change moves the full ratios override into the package `override`. The
+handle type `ceph.FullRatiosOverride` and its `Restore` move to
+`override.FullRatiosHandle` under the decided suffix `Handle`. The method
+`Container.OverrideFullRatios` becomes the package function
+`override.SetFullRatios`: it changes kind (method to function) and drops the
+`Override` prefix because the package name carries it, so the record lists it as
+removed and the function as added instead of pairing them. `Set` names what the
+call does: it replaces the three existing thresholds and `Restore` puts the
+captured tuple back. The names follow the decisions D7 to D9 of
+`override-package-boundary.md`. The reviewed mapping is in
+[the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
+The receipts of `ceph` and `override` were approved separately for this move.

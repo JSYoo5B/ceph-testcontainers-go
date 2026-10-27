@@ -81,25 +81,3 @@ func ExampleContainer_OverrideConfig() {
 	// Exercise the native client, then Restore removes an originally absent
 	// entry instead of pinning the daemon's inherited/default value.
 }
-
-func ExampleContainer_OverrideFullRatios() {
-	ctx := context.Background()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage)
-	if cluster != nil {
-		defer func() { _ = cluster.Terminate(context.Background()) }()
-	}
-	if err != nil {
-		panic(err)
-	}
-	change, err := cluster.OverrideFullRatios(ctx, ceph.FullRatios{
-		NearFull: .01, BackfillFull: .02, Full: .03,
-	})
-	if change != nil {
-		// The caller schedules restoration; the override itself has no expiry.
-		defer func() { _ = change.Restore(context.Background()) }()
-	}
-	if err != nil {
-		panic(err)
-	}
-	// The OSDMap policy is confirmed; observe HealthDetails for actual OSD reports.
-}
