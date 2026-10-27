@@ -602,6 +602,31 @@ three files, so the `moves/` directory of step 4 and a review note next to it
 need no change to the layout rules, and `package-split.json` shards (step 5)
 are independent of it.
 
+Step 4 as implemented: `internal/apiinventory/moves` and
+`apinaming moves [-base rev] [-require-base]`. Differences from the proposal
+above, each deliberate:
+
+- A record holds `moves`, `removed` and `added` lists. The reviewed removals
+  and additions live in the record, where they can be checked, and the record's
+  `review` note must mention the change identifier, instead of the note listing
+  them in prose. Both receipts of a move must name that note.
+- The presence checks (a `from` that no longer exists, a `to` that does) run
+  for records that are new or changed since the base. A merged record is
+  history and is not re-judged against later API changes; its structure and its
+  names stay checked, and one name is claimed by at most one record.
+- The row identity is the declaration `current` value. A moved type must keep
+  its members and its member count, and its declaration kind must not change.
+  Member rows inside a type that stays in its package remain covered by the
+  receipt review only.
+- A package whose catalogue changed must carry a receipt that differs from the
+  base's and binds the head catalogue bytes, and the change must add or change
+  a release-note fragment (kind `none` is accepted).
+- Without a base (no revision, a revision the clone lacks, no merge base) the
+  result is `SKIPPED`, never `OK`; `-require-base` fails it. A revision that is
+  not a plain revision name is an error.
+- CI runs the command in `Vet, compile and CI tooling` on pull requests only,
+  with the first parent of the merge commit as the base.
+
 Start with 1. Fragments are the most edited file (42 of 175 entries against 23
 for the inventory), the change is additive with no data migration, it does not
 require waiting for #212 and #214, and it introduces the validator step and the

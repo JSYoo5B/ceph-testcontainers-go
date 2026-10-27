@@ -5,11 +5,14 @@
 //	apinaming approve [-review note] package...   write review.json only
 //	apinaming aggregate                  print the computed totals (nothing is committed)
 //	apinaming check                      verify layout, catalogues and receipts like the tests
+//	apinaming moves [-base rev] [-require-base]   check move records and account for removed/added rows against the merge base
 //	apinaming migrate-split -base rev    one-time split of the global catalogues
 //	apinaming migrate-verify -base rev   one-time byte-equality proof against the global files
 //
 // Regenerate never touches review.json and approve never touches the
-// catalogues. CI runs neither: it only runs the tests.
+// catalogues. CI runs neither: it only runs the tests and the moves check. The
+// moves check prints OK, SKIPPED (no base available: the comparison did not
+// run) or FAILED; SKIPPED is never a pass, and -require-base fails it.
 package main
 
 import (
@@ -21,6 +24,7 @@ import (
 	"path/filepath"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/apiinventory/catalogue"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/apiinventory/moves"
 )
 
 const legacyDir = "docs/design/"
@@ -59,7 +63,7 @@ func gitShow(root, rev, path string) ([]byte, error) {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: apinaming regenerate|approve|aggregate|check|migrate-split|migrate-verify")
+		return errors.New("usage: apinaming regenerate|approve|aggregate|check|moves|migrate-split|migrate-verify")
 	}
 	root, err := moduleRoot()
 	if err != nil {
@@ -68,7 +72,8 @@ func run(args []string) error {
 	cfg := catalogue.Config{Root: root, Proposals: catalogue.Proposals}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	review := flags.String("review", catalogue.DefaultReview, "approve: review note below docs/design")
-	base := flags.String("base", "", "migrate-*: Git revision that holds the global catalogues")
+	base := flags.String("base", "", "migrate-*: Git revision that holds the global catalogues; moves: revision to compare with (its merge base with HEAD is used)")
+	requireBase := flags.Bool("require-base", false, "moves: fail instead of reporting SKIPPED when no base is available")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -94,6 +99,11 @@ func run(args []string) error {
 		return nil
 	case "check":
 		return check(cfg)
+	case "moves":
+		if flags.NArg() != 0 {
+			return errors.New("moves takes no arguments")
+		}
+		return checkMoves(root, *base, *requireBase)
 	case "migrate-split", "migrate-verify":
 		if *base == "" {
 			return errors.New("-base is required")
@@ -153,4 +163,23 @@ func check(cfg catalogue.Config) error {
 		problems = append(problems, catalogue.CheckCatalogue(cfg.Root, pkg, surfaces[pkg]), catalogue.CheckReceipt(cfg.Root, pkg, surfaces[pkg]))
 	}
 	return errors.Join(problems...)
+}
+
+// checkMoves prints the outcome of the moves check on stdout. A skipped
+// comparison is reported as SKIPPED with its reason and is not an error
+// unless requireBase is set.
+func checkMoves(root, base string, requireBase bool) error {
+	result := moves.Check(moves.Options{Root: root, Base: base, RequireBase: requireBase})
+	for _, problem := range result.Problems {
+		fmt.Println("problem:", problem)
+	}
+	switch result.Status() {
+	case "FAILED":
+		return fmt.Errorf("moves: FAILED with %d problem(s)", len(result.Problems))
+	case "SKIPPED":
+		fmt.Printf("moves: SKIPPED (%s); record checks ran, the base comparison did not\n", result.Reason)
+	default:
+		fmt.Printf("moves: OK (compared with merge base %s)\n", result.Base)
+	}
+	return nil
 }
