@@ -198,7 +198,8 @@ func collectMembers(expr ast.Expr, prefix string, result *[]string) error {
 }
 
 // MembersInFile returns the member rows of the exported types of one file,
-// keyed by the package-qualified type name.
+// keyed by the package-qualified type name. A type without members maps to an
+// empty slice so that alternatives with and without members can conflict.
 func MembersInFile(pkg string, file *ast.File) (map[string][]string, error) {
 	result := map[string][]string{}
 	for _, decl := range file.Decls {
@@ -215,9 +216,8 @@ func MembersInFile(pkg string, file *ast.File) (map[string][]string, error) {
 			if err := collectMembers(typ.Type, typ.Name.Name, &members); err != nil {
 				return nil, err
 			}
-			if len(members) == 0 {
-				continue
-			}
+			// An empty member set is kept: build-tag alternatives are compared
+			// by it, and the catalogue writer omits it.
 			slices.Sort(members)
 			result[pkg+"."+typ.Name.Name] = members
 		}
@@ -227,16 +227,22 @@ func MembersInFile(pkg string, file *ast.File) (map[string][]string, error) {
 
 func membersFromSource(c Config, pkg string) (Members, error) {
 	members := Members{Schema: MembersSchema, Scope: membersScope, Package: pkg, Types: map[string][]string{}}
+	// seen keeps empty member sets too; the catalogue lists only nonempty ones.
+	seen := map[string][]string{}
 	err := parseDir(c.Root, pkg, func(file *ast.File) error {
 		found, err := MembersInFile(pkg, file)
 		if err != nil {
 			return err
 		}
 		for typ, rows := range found {
-			if prior, exists := members.Types[typ]; exists {
+			if prior, exists := seen[typ]; exists {
 				if !slices.Equal(prior, rows) {
 					return fmt.Errorf("conflicting public member declarations: %s", typ)
 				}
+				continue
+			}
+			seen[typ] = rows
+			if len(rows) == 0 {
 				continue
 			}
 			members.Types[typ] = rows

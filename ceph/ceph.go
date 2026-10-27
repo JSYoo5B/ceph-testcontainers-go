@@ -103,15 +103,9 @@ type Container struct {
 	closed            bool
 	monitorTerminated bool
 
-	// nativeMu guards the RunNativeCommand calls that run or whose command
-	// is not confirmed as stopped, and whether Terminate refuses new ones.
-	nativeMu            sync.Mutex
-	nativeInvocations   map[*nativeInvocation]bool
-	nativeClosed        bool
-	clientStartupCancel context.CancelFunc // guarded by nativeMu
-	// nativeFenced permanently refuses commands for an OSD instance once removal
-	// starts; a failed removal retains its fence until cleanup is retried.
-	nativeFenced map[string]bool
+	// native is the native-command state; see nativeState. It has its own
+	// leaf lock, the former nativeMu.
+	nativeCmds nativeState
 	// faults holds the network delays, interruptions, pauses, blocklist
 	// overrides and full ratios override, reserved or held; see
 	// faultRegistry. It is guarded by mu.

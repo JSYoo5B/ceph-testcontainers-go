@@ -32,7 +32,7 @@ func TestNativeTargetFenceDrainsOnlySelectedInstance(t *testing.T) {
 	if err := <-removed; !errors.Is(err, errNativeTargetRemoved) || classified(err) {
 		t.Fatalf("selected cancellation: %v", err)
 	}
-	if processAlive(pid) || !processAlive(other) || registered(c) != 1 || c.nativeClosed {
+	if processAlive(pid) || !processAlive(other) || registered(c) != 1 || c.nativeCmds.closed {
 		t.Fatal("fence killed a neighbor or failed to drain its selected command")
 	}
 	before := target.execCount()
@@ -63,7 +63,7 @@ func TestNativeTargetFenceCancellationKeepsAdmission(t *testing.T) {
 	c := nativeCluster()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := c.fenceNativeTarget(ctx, "untouched"); !errors.Is(err, context.Canceled) || len(c.nativeFenced) != 0 || c.nativeClosed {
+	if err := c.fenceNativeTarget(ctx, "untouched"); !errors.Is(err, context.Canceled) || len(c.nativeCmds.fenced) != 0 || c.nativeCmds.closed {
 		t.Fatalf("canceled fence changed admission: %v", err)
 	}
 }
@@ -79,11 +79,11 @@ func TestOSDRemovalKeepsUnconfirmedCommandAndRetriesBeforePurge(t *testing.T) {
 	inv.stopCommand = func(context.Context, testcontainers.Container, string, string) error { return blocked }
 	// The stop failure's fallback inspection must see a still-existing instance.
 	inv.target = newNativeTarget(t, daemon.GetContainerID(), "tc-public")
-	c.nativeInvocations = map[*nativeInvocation]bool{inv: true}
+	c.nativeCmds.invocations = map[*nativeInvocation]bool{inv: true}
 	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); !errors.Is(err, blocked) {
 		t.Fatalf("unconfirmed stop: %v", err)
 	}
-	if len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 || c.osds[3] == nil || registered(c) != 1 || !c.nativeFenced[daemon.GetContainerID()] || c.nativeClosed {
+	if len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 || c.osds[3] == nil || registered(c) != 1 || !c.nativeCmds.fenced[daemon.GetContainerID()] || c.nativeCmds.closed {
 		t.Fatal("failed drain lost ownership, purged, or closed unrelated admission")
 	}
 	inv.stopCommand = func(context.Context, testcontainers.Container, string, string) error { return nil }
@@ -99,8 +99,8 @@ func TestNativeTargetFenceCanceledDrainRetainsInvocation(t *testing.T) {
 	done := make(chan struct{})
 	defer close(done)
 	inv := &nativeInvocation{owner: c, targetID: "pending", label: "pending probe", done: done, cancel: func(error) { cancel() }}
-	c.nativeInvocations = map[*nativeInvocation]bool{inv: true}
-	if err := c.fenceNativeTarget(ctx, "pending"); !errors.Is(err, context.Canceled) || registered(c) != 1 || !c.nativeFenced["pending"] || c.nativeClosed {
+	c.nativeCmds.invocations = map[*nativeInvocation]bool{inv: true}
+	if err := c.fenceNativeTarget(ctx, "pending"); !errors.Is(err, context.Canceled) || registered(c) != 1 || !c.nativeCmds.fenced["pending"] || c.nativeCmds.closed {
 		t.Fatalf("canceled drain lost retry state: %v", err)
 	}
 }
@@ -110,12 +110,12 @@ func TestOSDRemovalRefusalDoesNotFenceAnInstance(t *testing.T) {
 	state := control.native[3]
 	state.UUID = osdLifecycleForeignUUID
 	control.native[3] = state
-	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); err == nil || len(c.nativeFenced) != 0 {
+	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); err == nil || len(c.nativeCmds.fenced) != 0 {
 		t.Fatalf("foreign identity changed admission: %v", err)
 	}
 	c, _, _ = newOSDLifecycleFixture()
 	delete(c.osds, 4)
-	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); err == nil || len(c.nativeFenced) != 0 {
+	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); err == nil || len(c.nativeCmds.fenced) != 0 {
 		t.Fatalf("last OSD refusal changed admission: %v", err)
 	}
 }

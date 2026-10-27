@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -213,9 +212,7 @@ func (e *NativeCommandUnstoppedError) Stop(ctx context.Context) error {
 	if err := inv.stop(ctx); err != nil {
 		return err
 	}
-	inv.owner.nativeMu.Lock()
-	delete(inv.owner.nativeInvocations, inv)
-	inv.owner.nativeMu.Unlock()
+	inv.owner.nativeCmds.forget(inv)
 	return nil
 }
 
@@ -427,24 +424,18 @@ func (c *Container) runNativeCommand(ctx context.Context, target testcontainers.
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	inv := &nativeInvocation{owner: c, target: target, targetID: target.GetContainerID(), label: label, cancel: cancel, stopCommand: supervised.Cancel, done: make(chan struct{})}
-	c.nativeMu.Lock()
-	if c.nativeClosed {
-		c.nativeMu.Unlock()
+	var claim func() bool
+	if command.Input != nil {
+		claim = func() bool { return command.Input.claimed.CompareAndSwap(false, true) }
+	}
+	switch c.nativeCmds.admit(inv, claim) {
+	case nativeRefusedClosed:
 		return NativeCommandResult{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
-	}
-	if c.nativeFenced[inv.targetID] {
-		c.nativeMu.Unlock()
+	case nativeRefusedFenced:
 		return NativeCommandResult{}, invalidRequest("%s target is fenced for OSD removal", label)
-	}
-	if command.Input != nil && !command.Input.claimed.CompareAndSwap(false, true) {
-		c.nativeMu.Unlock()
+	case nativeRefusedClaim:
 		return NativeCommandResult{}, invalidRequest("%s input serves another command", label)
 	}
-	if c.nativeInvocations == nil {
-		c.nativeInvocations = make(map[*nativeInvocation]bool)
-	}
-	c.nativeInvocations[inv] = true
-	c.nativeMu.Unlock()
 
 	var report supervised.Report
 	if in := command.Input; in != nil {
@@ -466,13 +457,7 @@ func (c *Container) runNativeCommand(ctx context.Context, target testcontainers.
 		}
 	}
 	var exit *supervised.ExitError
-	c.nativeMu.Lock()
-	if unstopped != "" {
-		inv.marker = unstopped
-	} else {
-		delete(c.nativeInvocations, inv)
-	}
-	c.nativeMu.Unlock()
+	c.nativeCmds.finish(inv, unstopped, unstopped != "")
 	close(inv.done)
 	if cause := context.Cause(runCtx); err != nil && ctx.Err() == nil &&
 		(errors.Is(cause, errNativeTerminated) || errors.Is(cause, errNativeTargetRemoved)) {
@@ -519,25 +504,14 @@ func (c *Container) runOwnedShell(ctx context.Context, target testcontainers.Con
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, stopCommand: supervised.CancelShell, done: make(chan struct{})}
-	c.nativeMu.Lock()
-	if c.nativeClosed {
-		c.nativeMu.Unlock()
+	// An owned shell has no target instance, which no fence can name, so the
+	// fence check of admit never refuses it.
+	if c.nativeCmds.admit(inv, nil) == nativeRefusedClosed {
 		return supervised.ShellReport{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
 	}
-	if c.nativeInvocations == nil {
-		c.nativeInvocations = make(map[*nativeInvocation]bool)
-	}
-	c.nativeInvocations[inv] = true
-	c.nativeMu.Unlock()
 	report, err := supervised.RunShell(runCtx, target, label, limit, argv...)
 	unstopped, _ := supervised.Unconfirmed(err)
-	c.nativeMu.Lock()
-	if unstopped != "" {
-		inv.marker = unstopped
-	} else {
-		delete(c.nativeInvocations, inv)
-	}
-	c.nativeMu.Unlock()
+	c.nativeCmds.finish(inv, unstopped, unstopped != "")
 	close(inv.done)
 	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(runCtx), errNativeTerminated) {
 		err = fmt.Errorf("%s: %w: %w", label, errNativeTerminated, err)
@@ -657,15 +631,11 @@ func (c *Container) ownsNativeTargetContext(ctx context.Context, id string) (boo
 }
 
 // cancelNativeInvocations refuses new native commands, cancels the running
-// ones and returns every tracked invocation. It takes only nativeMu, so
+// ones and returns every tracked invocation. It takes only the native lock, so
 // Terminate calls it before it waits for the cluster mutex, which an
 // invocation's caller may hold.
 func (c *Container) cancelNativeInvocations() []*nativeInvocation {
-	c.nativeMu.Lock()
-	c.nativeClosed = true
-	pending := slices.Collect(maps.Keys(c.nativeInvocations))
-	clientCancel := c.clientStartupCancel
-	c.nativeMu.Unlock()
+	pending, clientCancel := c.nativeCmds.close()
 	if clientCancel != nil {
 		clientCancel()
 	}
@@ -684,7 +654,7 @@ func (c *Container) stopNativeInvocations(ctx context.Context) []error {
 }
 
 // fenceNativeTarget closes admission and drains exactly one Docker instance.
-// It never sets nativeClosed: unrelated targets and later distinct instances
+// It never closes native admission: unrelated targets and later distinct instances
 // remain usable. An unconfirmed stop stays tracked and the fence remains for
 // retry. The caller serializes the removal under the cluster topology lock.
 func (c *Container) fenceNativeTarget(ctx context.Context, id string) error {
@@ -694,18 +664,7 @@ func (c *Container) fenceNativeTarget(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	c.nativeMu.Lock()
-	if c.nativeFenced == nil {
-		c.nativeFenced = make(map[string]bool)
-	}
-	c.nativeFenced[id] = true
-	var pending []*nativeInvocation
-	for inv := range c.nativeInvocations {
-		if inv.targetID == id {
-			pending = append(pending, inv)
-		}
-	}
-	c.nativeMu.Unlock()
+	pending := c.nativeCmds.fence(id)
 	for _, inv := range pending {
 		inv.cancel(errNativeTargetRemoved)
 	}
@@ -735,9 +694,7 @@ func (c *Container) stopNativeCalls(ctx context.Context, pending []*nativeInvoca
 			errs = append(errs, err)
 			continue
 		}
-		c.nativeMu.Lock()
-		delete(c.nativeInvocations, inv)
-		c.nativeMu.Unlock()
+		c.nativeCmds.forget(inv)
 	}
 	return errs
 }

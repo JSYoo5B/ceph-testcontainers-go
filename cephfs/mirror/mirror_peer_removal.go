@@ -347,42 +347,9 @@ func waitCephFSPeerDrain(ctx context.Context, interval time.Duration, observe fu
 }
 
 func waitCephFSPeerDrainWithAdmission(ctx context.Context, interval time.Duration, observe func(context.Context) (PeerRemovalStatus, bool, error)) (PeerRemovalStatus, error) {
-	var last PeerRemovalStatus
-	var lastError error
-	var haveObservation bool
-	for {
-		if err := ctx.Err(); err != nil {
-			last.Drained = false
-			return last, errors.Join(lastError, err)
-		}
-		current, admitted, err := observe(ctx)
-		if admitted || !haveObservation {
-			last = current
-		}
-		haveObservation = haveObservation || admitted
-		if err != nil {
-			lastError = multicluster.RetainWaitQueryCause(ctx, lastError, err)
-		}
-		if canceled := ctx.Err(); canceled != nil {
-			last.Drained = false
-			return last, errors.Join(lastError, canceled)
-		}
-		if errors.Is(err, errCephFSObservationGuard) {
-			last.Drained = false
-			return last, err
-		}
-		if err == nil && last.Drained {
-			return last, nil
-		}
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			last.Drained = false
-			return last, errors.Join(lastError, ctx.Err())
-		case <-timer.C:
-		}
-	}
+	return waitCephFSRemovalCompletion(ctx, interval, observe,
+		func(status PeerRemovalStatus) bool { return status.Drained },
+		func(status *PeerRemovalStatus) { status.Drained = false })
 }
 
 func (r *PeerRemoval) captureCohort(ctx context.Context) error {

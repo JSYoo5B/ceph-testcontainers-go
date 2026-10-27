@@ -302,28 +302,8 @@ func cephFSObserveQuery(operation string, cause error) error {
 }
 
 func (mirror *Mirror) checkCephFSObservedIdentities(ctx context.Context) error {
-	for _, site := range []struct {
-		name   string
-		id     int
-		poolID int64
-		read   func(context.Context, ...string) ([]byte, error)
-	}{
-		{mirror.SourceFilesystem, mirror.filesystemID, mirror.metadataPoolID, mirror.source.Ceph},
-		{mirror.DestinationFilesystem, mirror.destinationFilesystemID, mirror.destinationMetadataPoolID, mirror.destination.Ceph},
-	} {
-		data, err := site.read(ctx, "fs", "get", site.name, "--format", "json")
-		if err != nil {
-			return cephFSObserveQuery("read CephFS filesystem identity", err)
-		}
-		var native struct {
-			ID     *int `json:"id"`
-			MDSMap *struct {
-				MetadataPool *int64 `json:"metadata_pool"`
-			} `json:"mdsmap"`
-		}
-		if json.Unmarshal(data, &native) != nil || native.ID == nil || *native.ID != site.id || native.MDSMap == nil || native.MDSMap.MetadataPool == nil || *native.MDSMap.MetadataPool != site.poolID {
-			return cephFSObserveGuard("CephFS original filesystem or metadata pool identity differs")
-		}
+	if err := mirror.checkCephFSOriginalFilesystemIdentities(ctx, "read CephFS filesystem identity", "CephFS original filesystem or metadata pool identity differs"); err != nil {
+		return err
 	}
 	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_list", mirror.SourceFilesystem)
 	if err != nil {
@@ -501,4 +481,38 @@ func decodeCephFSObservedReplay(data []byte, directory string) (cephFSObservedRe
 		result.Last = &Snapshot{ID: *native.Last.ID, Name: *native.Last.Name}
 	}
 	return result, true, nil
+}
+
+// checkCephFSOriginalFilesystemIdentities reads the source and then the
+// destination filesystem and requires the recorded filesystem ID and metadata
+// pool ID of each. A failed read is a transient query error named by
+// readOperation and wraps the cause. A missing, null, mistyped or different
+// identity is a permanent guard error with the exact mismatch text. Callers
+// own both texts so each caller's diagnostics stay its own; the source is
+// always checked first and a failure stops before the destination is read.
+func (mirror *Mirror) checkCephFSOriginalFilesystemIdentities(ctx context.Context, readOperation, mismatch string) error {
+	for _, site := range []struct {
+		name   string
+		id     int
+		poolID int64
+		read   func(context.Context, ...string) ([]byte, error)
+	}{
+		{mirror.SourceFilesystem, mirror.filesystemID, mirror.metadataPoolID, mirror.source.Ceph},
+		{mirror.DestinationFilesystem, mirror.destinationFilesystemID, mirror.destinationMetadataPoolID, mirror.destination.Ceph},
+	} {
+		data, err := site.read(ctx, "fs", "get", site.name, "--format", "json")
+		if err != nil {
+			return cephFSObserveQuery(readOperation, err)
+		}
+		var native struct {
+			ID     *int `json:"id"`
+			MDSMap *struct {
+				MetadataPool *int64 `json:"metadata_pool"`
+			} `json:"mdsmap"`
+		}
+		if json.Unmarshal(data, &native) != nil || native.ID == nil || *native.ID != site.id || native.MDSMap == nil || native.MDSMap.MetadataPool == nil || *native.MDSMap.MetadataPool != site.poolID {
+			return cephFSObserveGuard(mismatch)
+		}
+	}
+	return nil
 }

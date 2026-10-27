@@ -157,3 +157,21 @@ func TestLegacySplitRefusesInconsistentInput(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeStrictRequiresEndOfInput(t *testing.T) {
+	type doc struct {
+		A int `json:"a"`
+	}
+	for _, good := range []string{`{"a":1}`, " \n{\"a\":1}\n\t "} {
+		var d doc
+		if err := catalogue.DecodeStrict([]byte(good), &d); err != nil || d.A != 1 {
+			t.Fatalf("%q: %v %+v", good, err, d)
+		}
+	}
+	for _, bad := range []string{`{"a":1}]`, `{"a":1}}`, `{"a":1} x`, `{"a":1}{"a":2}`, `{"a":1},`} {
+		var d doc
+		if err := catalogue.DecodeStrict([]byte(bad), &d); err == nil {
+			t.Fatalf("%q was accepted", bad)
+		}
+	}
+}

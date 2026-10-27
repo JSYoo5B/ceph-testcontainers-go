@@ -209,3 +209,85 @@ cephfs ---------> internal/multicluster (no import of cephfs/mirror)
 `cephfs/mirror` does not import `cephfs`, so the move adds no edge to the
 graph. Behavior is preserved as for the RBD move: only identifiers and the
 package clause differ in the moved bodies.
+
+## Duplication review inside `cephfs/mirror` (issue #233)
+
+The structural baseline in issue #233 listed two duplicate pairs inside
+`cephfs/mirror`. Each pair was compared statement by statement, with the error
+text, wrapped cause, short-circuit order, cancellation handling and lock use
+written down before deciding. Line numbers are those of the tree before this
+change.
+
+### Pair 1: original filesystem and metadata-pool identity checks
+
+`checkCephFSRefreshFilesystems` (`mirror_connection_refresh.go`, line 198) and
+the first loop of `checkCephFSObservedIdentities` (`mirror_directory_status.go`,
+line 304).
+
+Identical: the source-then-destination order, the `fs get <name> --format json`
+read, the decoded shape (`id` and `mdsmap.metadata_pool` as pointers so a
+missing, null or mistyped field is a mismatch), the comparison against the
+recorded filesystem ID and metadata pool ID, the stop at the first failing site
+(the destination is not read after a source failure or mismatch), the
+transient `cephFSObserveQuery` class for a failed read (wrapping the cause) and
+the permanent `cephFSObserveGuard` class for a mismatch.
+
+Different: the read-failure operation text (`read original CephFS bootstrap
+filesystem` versus `read CephFS filesystem identity`) and the mismatch text
+(`CephFS original bootstrap filesystem or metadata pool identity differs`
+versus `CephFS original filesystem or metadata pool identity differs`). The
+refresh variant ends with `ctx.Err()`; the observed variant continues with the
+mirror peer policy checks, which have their own guards and are not shared.
+
+Decision: extract. `checkCephFSOriginalFilesystemIdentities` holds the loop and
+takes both texts from the caller, so every message is the same string as
+before. The trailing `ctx.Err()` stays in the refresh wrapper and the peer
+policy checks stay in the observed check.
+
+### Pair 2: directory release and peer drain wait loops
+
+`waitCephFSDirectoryReleasedWithAdmission` (`mirror_directory_removal.go`,
+line 492) and `waitCephFSPeerDrainWithAdmission` (`mirror_peer_removal.go`,
+line 349).
+
+Identical: the pre-observation context check, the rule that a non-admitted
+report only fills the result until the first admitted one, the retention of the
+last native query cause through `multicluster.RetainWaitQueryCause`, the join of
+the context error after that cause, the immediate return of a permanent guard
+error without the join, the requirement that a success is both error-free and
+complete, and the timer wait between polls with its own context exit.
+
+Different: the status type (`DirectoryRemovalStatus` versus
+`PeerRemovalStatus`) and the completion field that is read and cleared
+(`Released` versus `Drained`). The observation functions, lock order and
+cleanup of `DirectoryRemoval.Status` and `PeerRemoval.Status` are outside the
+loop and are not touched.
+
+Decision: extract the loop as the generic `waitCephFSRemovalCompletion`, with
+the completion read and clear passed in as two small functions. Both wrappers
+keep their names, signatures and intervals, so every caller and the existing
+tests are unchanged.
+
+### Not extracted
+
+The removal status paths themselves (`DirectoryRemoval.Status` and
+`PeerRemoval.Status`, `observeDaemon` and the peer counterparts) were not
+merged. They differ in guard texts, in what counts as a witness (the owned
+directory versus the owned peer), in the completion side effects
+(`forgetDesiredPolicy` versus clearing `peerID`) and in the order of the policy
+reads, so a shared body would need so many parameters that it would hide the
+ownership difference instead of naming it.
+
+### Evidence
+
+Docker-free fixtures in `cephfs/mirror/mirror_shared_observation_test.go`
+(`TestCephFSOriginalFilesystemIdentityDiagnostics`,
+`TestCephFSRefreshFilesystemsReportsCancellationAfterMatch`,
+`TestCephFSRemovalWaitCompletionContract`,
+`TestCephFSRemovalWaitsClearTheirOwnFlag`) pin the exact error text, error
+class, wrapped cause, read order and completion-flag handling. They pass
+unchanged against the tree before the extraction and after it. Each was also
+shown to fail when the extracted code was deliberately broken (a changed text,
+a dropped comparison, a skipped destination, a lost trailing cancellation check,
+a flag left set, ignored admission, a dropped cause). No native mirror scenario
+was run for this change and no native evidence is claimed.
