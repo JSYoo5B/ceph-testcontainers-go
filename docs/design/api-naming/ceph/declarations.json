@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 412,
+  "count": 408,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -52,28 +52,6 @@
       "current": "ceph.BlocklistEntry",
       "kind": "type",
       "proposed": "ceph.BlocklistEntry",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.BlocklistOverride",
-      "kind": "type",
-      "proposed": "ceph.BlocklistOverride",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.BlocklistOverride.Address",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*BlocklistOverride",
-      "proposed": "ceph.BlocklistOverride.Address",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.BlocklistOverride.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*BlocklistOverride",
-      "proposed": "ceph.BlocklistOverride.Restore",
       "decision": "baseline"
     },
     {
@@ -830,14 +808,6 @@
       "signature": "func(ctx context.Context, timeout *time.Duration) error",
       "receiver": "*Container",
       "proposed": "ceph.Container.Stop",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.TemporaryBlocklist",
-      "kind": "method",
-      "signature": "func(ctx context.Context, address string, duration time.Duration) (*BlocklistOverride, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.TemporaryBlocklist",
       "decision": "baseline"
     },
     {

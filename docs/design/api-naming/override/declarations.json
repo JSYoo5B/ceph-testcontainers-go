@@ -1,0 +1,37 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "override",
+  "count": 4,
+  "entries": [
+    {
+      "current": "override.AddBlocklist",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, address string, duration time.Duration) (*BlocklistHandle, error)",
+      "proposed": "override.AddBlocklist",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.BlocklistHandle",
+      "kind": "type",
+      "proposed": "override.BlocklistHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.BlocklistHandle.Address",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*BlocklistHandle",
+      "proposed": "override.BlocklistHandle.Address",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.BlocklistHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*BlocklistHandle",
+      "proposed": "override.BlocklistHandle.Restore",
+      "decision": "baseline"
+    }
+  ]
+}
