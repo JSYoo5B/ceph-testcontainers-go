@@ -44,7 +44,9 @@ TABLE = [
     ("changes/x.md", False), ("changes/x.json", False), ("docs/change/x.md", False),
     ("docs/changes.md", False), ("docs/changes", False), ("docs/changes/", False),
     ("docs/changes/x.md/y", False), ("docs/changes/../ceph/ceph.go", False),
-    ("docs/changes//x.md", False), ("docs/changes/x.md\n", False),
+    ("docs/changes//x.md", False), ("docs/changes/x.md\n", False), ("\ndocs/changes/x.md", False),
+    ("docs/changes/\nx.md", False), ("docs/changes/x.md ", False), ("docs/changes/ x.md", False),
+    ("docs/changes/x.md\r", False), ("docs/changes/x.md\x00", False), ("docs/changes\n/x.md", False),
     # Malformed or escaping paths.
     ("", False), ("/docs/guides/errors.md", False), ("docs/../ceph/ceph.go", False),
     ("docs//guides/errors.md", False), ("docs/guides/errors.md\n", False), (" README.md", False),

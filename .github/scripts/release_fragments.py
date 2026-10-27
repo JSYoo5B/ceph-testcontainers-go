@@ -33,15 +33,21 @@ CHANGES_DIR = "docs/changes"
 GUIDES_DIR = "docs/guides"
 KINDS = ("api-break", "feature", "behavior", "compatibility", "scope", "none")
 KEYS = ("change", "kind", "migration", "supersedes", "reason")
-CHANGE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
-FILE_NAME = re.compile(r"^([a-z0-9][a-z0-9-]{0,63})\.md$")
-MIGRATION = re.compile(r"^(docs/guides/[A-Za-z0-9_.-]+\.md)(#[A-Za-z0-9_-]+)?$")
+CHANGE_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+FILE_NAME = re.compile(r"([a-z0-9][a-z0-9-]{0,63})\.md")
+MIGRATION = re.compile(r"(docs/guides/[A-Za-z0-9_.-]+\.md)(#[A-Za-z0-9_-]+)?")
 MAX_BYTES = 64 * 1024
 MAX_VALUE = 500
 
 
 class FragmentError(Exception):
     pass
+
+
+def fragment_stem(name):
+    """The change identifier of a file name, or None unless it is exactly <change-id>.md."""
+    match = FILE_NAME.fullmatch(name)
+    return match.group(1) if match else None
 
 
 def parse(text):
@@ -57,7 +63,7 @@ def parse(text):
         raise FragmentError("front matter is not closed by a '---' line") from None
     fields = {}
     for number, line in enumerate(lines[1:end], 2):
-        match = re.match(r"^([a-z]+): (\S.*)$", line)
+        match = re.fullmatch(r"([a-z]+): (\S.*)", line)
         if not match:
             raise FragmentError("line %d is not 'key: value': %r" % (number, line[:60]))
         key, value = match.group(1), match.group(2)
@@ -73,11 +79,11 @@ def parse(text):
 
 
 def parse_supersedes(value):
-    match = re.match(r"^\[(.*)\]$", value)
+    match = re.fullmatch(r"\[(.*)\]", value)
     if not match:
         raise FragmentError("supersedes must be a list such as [a-change, b-change]")
     items = [item.strip() for item in match.group(1).split(",")]
-    if any(not CHANGE_ID.match(item) for item in items):
+    if any(not CHANGE_ID.fullmatch(item) for item in items):
         raise FragmentError("supersedes holds an item that is not a valid change identifier")
     return items
 
@@ -86,13 +92,13 @@ def check_fields(name, fields, body, root, problems):
     def bad(message):
         problems.append("%s: %s" % (name, message))
 
-    stem = FILE_NAME.match(name).group(1)
+    stem = fragment_stem(name)
     for key in ("change", "kind"):
         if key not in fields:
             bad("missing required field %r" % key)
     change = fields.get("change")
     if change is not None:
-        if not CHANGE_ID.match(change):
+        if not CHANGE_ID.fullmatch(change):
             bad("change %r must be lowercase [a-z0-9-], start with a letter or digit, at most 64 characters" % change)
         elif change != stem:
             bad("change %r does not match the file name %r" % (change, stem))
@@ -110,7 +116,7 @@ def check_fields(name, fields, body, root, problems):
     if kind == "api-break" and migration is None:
         bad("kind api-break requires a migration link")
     if migration is not None:
-        match = MIGRATION.match(migration)
+        match = MIGRATION.fullmatch(migration)
         if not match:
             bad("migration %r must be docs/guides/<file>.md with an optional #anchor" % migration)
         else:
@@ -170,7 +176,7 @@ def validate(root="."):
         if not stat.S_ISREG(mode):
             problems.append("%s: not a regular file" % name)
             continue
-        if not FILE_NAME.match(name):
+        if fragment_stem(name) is None:
             problems.append("%s: only <change-id>.md files are allowed (lowercase [a-z0-9-], at most 64 "
                             "characters before .md)" % name)
             continue
@@ -190,14 +196,14 @@ def validate(root="."):
         except FragmentError as error:
             problems.append("%s: %s" % (name, error))
             continue
-        supersedes[name[:-3]] = check_fields(name, fields, body, root, problems)
+        supersedes[fragment_stem(name)] = check_fields(name, fields, body, root, problems)
         if "change" in fields:
             claimed.setdefault(fields["change"].lower(), []).append(name)
 
     for change, files in sorted(claimed.items()):
         if len(files) > 1:
             problems.append("duplicate change identifier %r in %s" % (change, ", ".join(files)))
-    known = {name[:-3] for name in names if FILE_NAME.match(name)}
+    known = {fragment_stem(name) for name in names if fragment_stem(name)}
     for stem, items in sorted(supersedes.items()):
         for item in items:
             if item not in known:

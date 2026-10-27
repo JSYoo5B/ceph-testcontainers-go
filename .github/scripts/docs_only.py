@@ -13,6 +13,7 @@ only when the changed files were computed and every one is on the allowlist.
 """
 import argparse
 import os
+import re
 import subprocess
 import sys
 
@@ -34,6 +35,11 @@ REGULAR_MODES = frozenset(("100644", "000000"))
 READ_DOC_PREFIXES = ("docs/design/api-naming",)
 
 
+# A fragment name: <change-id>.md, matched in full (never with a "$" anchor,
+# which also matches before a final newline).
+FRAGMENT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\.md")
+
+
 def is_unread_doc(path):
     """True when path is documentation that no check reads."""
     if not isinstance(path, str) or not path or path != path.strip():
@@ -49,6 +55,8 @@ def is_unread_doc(path):
     if not path.endswith(".md"):
         return False
     if path in READ_DOC_FILES or path.startswith(READ_DOC_PREFIXES):
+        return False
+    if parts[:-1] == ["docs", "changes"] and not FRAGMENT_NAME.fullmatch(parts[-1]):
         return False
     return "/".join(parts[:-1]) in UNREAD_DOC_DIRS
 

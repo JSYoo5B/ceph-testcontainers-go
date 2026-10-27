@@ -151,6 +151,22 @@ class RejectTests(Base):
                 self.assertTrue(self.problems(), name)
                 (self.root / "docs/changes" / name).unlink()
 
+    def test_names_with_odd_characters(self):
+        for name in ("1-a.md\n", "\n1-a.md", "1-\na.md", "1-a.md ", " 1-a.md", "1-a .md", "1-a.md\t",
+                     "1-a.md\r", "1-\u00e4.md", "1-a.md\u200b"):
+            with self.subTest(repr(name)):
+                try:
+                    self.write(name, fragment("1-a"))
+                except (OSError, ValueError):
+                    self.skipTest("file system cannot hold this name")
+                self.assertProblem("only <change-id>.md files are allowed")
+                (self.root / "docs/changes" / name).unlink()
+
+    def test_stem_requires_an_exact_name(self):
+        self.assertEqual(release_fragments.fragment_stem("1-a.md"), "1-a")
+        for name in ("1-a.md\n", "1-a.md ", "1-a.mdx", "1-a."):
+            self.assertIsNone(release_fragments.fragment_stem(name), repr(name))
+
     def test_non_markdown_files(self):
         for name in ("1-a.json", "1-a.txt", "1-a", ".gitkeep", "1-a.md.orig", "1-a.go"):
             with self.subTest(name):
