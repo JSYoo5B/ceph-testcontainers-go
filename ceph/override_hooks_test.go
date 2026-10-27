@@ -6,15 +6,15 @@ import (
 )
 
 func TestOverrideAdmissionKeepsMethodPolicies(t *testing.T) {
-	// The Container methods are gone, so the policy of each is pinned here.
+	// Every override operation is exclusive; the table is pinned entry by entry.
 	for op, expected := range map[string]sharedPolicy{
-		"override.AddBlocklist":       sharedExclusive, // TemporaryBlocklist
-		"override.SetDebugLevel":      sharedExclusive, // OverrideDebugLevel
-		"override.SetMGRModule":       sharedExclusive, // OverrideMGRModule
-		"override.SetFullRatios":      sharedExclusive, // OverrideFullRatios
-		"override.SetOSDFlag":         sharedExclusive, // OverrideOSDFlag
-		"override.SetConfig":          sharedExclusive, // OverrideConfig
-		"override.SetMessengerPolicy": sharedExclusive, // OverrideMessengerPolicy
+		"override.AddBlocklist":       sharedExclusive,
+		"override.SetDebugLevel":      sharedExclusive,
+		"override.SetMGRModule":       sharedExclusive,
+		"override.SetFullRatios":      sharedExclusive,
+		"override.SetOSDFlag":         sharedExclusive,
+		"override.SetConfig":          sharedExclusive,
+		"override.SetMessengerPolicy": sharedExclusive,
 	} {
 		if policy, ok := sharedOverridePolicies[op]; !ok || policy != expected {
 			t.Errorf("%s has policy %v, want %v", op, policy, expected)

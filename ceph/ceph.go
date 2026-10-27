@@ -89,9 +89,10 @@ type Container struct {
 	// native is the native-command state; see nativeState. It has its own
 	// leaf lock, the former nativeMu.
 	nativeCmds nativeState
-	// faults holds the network delays, interruptions, pauses, blocklist
-	// overrides and full ratios override, reserved or held; see
-	// faultRegistry. It is guarded by mu.
+	// faults holds the network delays, interruptions and pauses, and the
+	// bookkeeping entries of the blocklist, full ratios, configuration, OSD
+	// flag and MGR module overrides, reserved or held; see faultRegistry. It
+	// is guarded by mu.
 	faults faultRegistry
 	// debugLevels admits one override.SetDebugLevel window per daemon and
 	// option; it has its own lock.

@@ -430,17 +430,21 @@ class WorkflowWiringTests(unittest.TestCase):
             if self.GATE not in step:
                 ungated.append(step.splitlines()[0])
         # Checkout stays ungated (the checks need the tree); nothing else but the
-        # fragment validator, the released-range check and the image role vocabulary
-        # check, which read text.
+        # fragment validator, the released-range check, the image role vocabulary
+        # check and the retired override names check, which read text.
         self.assertEqual(ungated, ["uses: actions/checkout@v7", "name: Validate release-note fragments",
                                    "name: Check the released changelog range",
-                                   "name: Check the image role vocabulary"])
+                                   "name: Check the image role vocabulary",
+                                   "name: Check the retired override names"])
         validator = [step for step in steps if "release_fragments.py" in step]
         self.assertEqual(len(validator), 1)
         self.assertIn("if: ${{ !cancelled() }}", validator[0])
         vocabulary = [step for step in steps if "check_image_vocabulary.py" in step]
         self.assertEqual(len(vocabulary), 1)
         self.assertIn("if: ${{ !cancelled() }}", vocabulary[0])
+        retired = [step for step in steps if "check_retired_override_names.py" in step]
+        self.assertEqual(len(retired), 1)
+        self.assertIn("if: ${{ !cancelled() }}", retired[0])
         self.assertIn("python3 .github/scripts/release_fragments.py", validator[0])
         released = [step for step in steps if "release_assemble.py" in step]
         self.assertEqual(len(released), 1)

@@ -232,7 +232,7 @@ func WithPoolDefaults(replicas, minSize int) Option {
 // WithOSDBlockSize sets each sparse BlueStore file's logical size in bytes.
 // The minimum is 64 MiB and the default remains 1 GiB. These are disposable
 // files, not real disks. Small functional fixtures can use WithNoInitialOSDs
-// and OverrideConfig to skip mClock's startup capacity benchmark before
+// and override.SetConfig to skip mClock's startup capacity benchmark before
 // AddOSD; the benchmark can exhaust a small file even without client data.
 func WithOSDBlockSize(size int64) Option {
 	return func(o *options) error {

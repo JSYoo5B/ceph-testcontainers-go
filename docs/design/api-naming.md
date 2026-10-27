@@ -6,7 +6,11 @@ the final RBD helper change and [retention audit](api-naming-audit.md) complete
 the remaining scope. This is a naming assessment of the captured source, not
 approval of future APIs or a new runtime-support claim.
 Per the maintainer decision recorded on #9, dedicated object-error injection
-is `fault.InjectObjectDataError`; session fencing and fullness stay in `ceph`.
+is `fault.InjectObjectDataError`. Session fencing, fullness and the other
+reversible overrides were first kept in `ceph` and later moved to the package
+`override` under #146 ([design](override-package-boundary.md)); the
+`ceph.Container.Temporary*` and `Override*` names and handle types that this
+note inventories are the historical record of the naming pass, not current API.
 The [package boundary](fault-package.md) remains independent of naming.
 
 ## Source inventory and limits

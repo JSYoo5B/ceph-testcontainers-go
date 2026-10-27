@@ -9,28 +9,11 @@ OSDMap full ratios, MGR module state, global OSD flags, runtime debug levels,
 central configuration entries and messenger policy. The package and restoration
 boundary follow the [design](design/override-package-boundary.md).
 
-0.x: old names are removed without aliases. `Container.TemporaryBlocklist`,
-`ceph.BlocklistOverride`, `Container.OverrideMGRModule` and
-`ceph.MGRModuleOverrideHandle`, `Container.OverrideFullRatios` and
-`ceph.FullRatiosOverride`, `Container.OverrideOSDFlag` and
-`ceph.OSDFlagOverrideHandle`, `Container.OverrideConfig`,
-`ceph.ConfigOverrideHandle`, `Container.OverrideMessengerPolicy` and
-`ceph.MessengerPolicyOverrideHandle` no longer exist in `ceph`:
-
-| Previous call or type | New call or type |
-| --- | --- |
-| `cluster.TemporaryBlocklist(ctx, address, duration)` | `override.AddBlocklist(ctx, cluster, address, duration)` |
-| `*ceph.BlocklistOverride` | `*override.BlocklistHandle` (same `Address` and `Restore`) |
-| `cluster.OverrideOSDFlag(ctx, flag, enabled)` | `override.SetOSDFlag(ctx, cluster, flag, enabled)` |
-| `*ceph.OSDFlagOverrideHandle` | `*override.OSDFlagHandle` (same `Restore`) |
-| `cluster.OverrideMGRModule(ctx, name, enabled)` | `override.SetMGRModule(ctx, cluster, name, enabled)` |
-| `*ceph.MGRModuleOverrideHandle` | `*override.MGRModuleHandle` (same `Restore`) |
-| `cluster.OverrideFullRatios(ctx, ratios)` | `override.SetFullRatios(ctx, cluster, ratios)` |
-| `*ceph.FullRatiosOverride` | `*override.FullRatiosHandle` (same `Restore`) |
-| `cluster.OverrideConfig(ctx, setting)` | `override.SetConfig(ctx, cluster, setting)` |
-| `*ceph.ConfigOverrideHandle` | `*override.ConfigHandle` (same `Restore`, `String` and `GoString`) |
-| `cluster.OverrideMessengerPolicy(ctx, policy)` | `override.SetMessengerPolicy(ctx, cluster, policy)` |
-| `*ceph.MessengerPolicyOverrideHandle` | `*override.MessengerPolicyHandle` (same `Restore`) |
+0.x: old names are removed without aliases. The seven `Container` methods and
+their handle types no longer exist in `ceph`; the
+[package migration guide](guides/upgrading-override-package.md) and the
+[debug level guide](guides/upgrading-override-debug-level.md) map each previous
+call and type to its `override` function and handle.
 
 `ceph.BlocklistEntry`, `Observer.BlocklistEntries`, `ceph.OSDFlag`,
 its constants, `Observer.OSDFlags`, `ceph.FullRatios`,
@@ -338,13 +321,9 @@ if err := change.Restore(ctx); err != nil {
 func SetDebugLevel(ctx context.Context, c *ceph.Container, setting ceph.DebugLevelSetting) (*override.DebugLevelHandle, error)
 ```
 
-0.x: old names are removed without aliases. `Container.OverrideDebugLevel` and
-`ceph.DebugLevelOverrideHandle` no longer exist in `ceph`:
-
-| Previous call or type | New call or type |
-| --- | --- |
-| `cluster.OverrideDebugLevel(ctx, setting)` | `override.SetDebugLevel(ctx, cluster, setting)` |
-| `*ceph.DebugLevelOverrideHandle` | `*override.DebugLevelHandle` (same `Receipt`, `Restore`, `String`, `GoString`) |
+0.x: old names are removed without aliases; the
+[migration guide](guides/upgrading-override-debug-level.md) maps the previous
+call and handle type to `override.SetDebugLevel` and `*override.DebugLevelHandle`.
 
 `ceph.DebugLevelSetting`, `ceph.DebugLevelReceipt`, `ceph.DebugLevelState` and
 `ceph.DebugLevelTransition` stay in `ceph` because the failure manifest copies

@@ -169,6 +169,10 @@ jobs:
       - name: Check the image role vocabulary
         if: ${{ !cancelled() }}
         run: python3 .github/scripts/check_image_vocabulary.py
+      # Same rule: reads tracked text files only, so it runs on every head.
+      - name: Check the retired override names
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/check_retired_override_names.py
       # Pull requests only. The checkout of a pull request is its merge commit,
       # whose first parent is the base, so the comparison covers the pull
       # request's net change. Any other event, or a checkout that is not a merge

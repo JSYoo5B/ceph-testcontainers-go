@@ -3,12 +3,14 @@
 Status: stage 2's registry and internal hooks and stage 3's network extraction
 are implemented, including container pause as `fault.Pause`, returning
 `*fault.PauseLease`. Admission and phase-3 `Resume` cleanup are preserved.
-Fullness uses `Container.OverrideFullRatios`, returning
-`*ceph.FullRatiosOverride`, with explicit caller-managed Restore. It has no
+Fullness uses `override.SetFullRatios`, returning
+`*override.FullRatiosHandle`, with explicit caller-managed Restore. It has no
 expiry or automatic context/scope restoration. The rejected extraction adds
-no public `fault` API or extra full-ratio session hooks. The broader naming
-pass remains #14, after #9. Session blocklist and fullness policy remain in
-`ceph`; the blocklist extraction in PR #12 is reverted. The maintainer decided
+no public `fault` API or extra full-ratio session hooks. Session blocklist and
+fullness policy are not fault APIs: they were first kept in `ceph` (the
+blocklist extraction in PR #12 was reverted) and later moved, with the other
+reversible overrides, to the package `override` under #146 (see
+[override-package-boundary.md](override-package-boundary.md)). The maintainer decided
 that dedicated object-error injection belongs in `fault`: it is implemented as
 `fault.InjectObjectDataError(ctx, cluster, pool, object, osdID)`, a one-shot
 operation with no handle, no registry kind and no Restore. See the
@@ -35,7 +37,7 @@ not change the package decisions or fault contracts recorded here.
 | --- | --- |
 | D1 | A new public package `github.com/JSYoo5B/ceph-testcontainers-go/fault`, in the same module and release stream. `fault` imports `ceph`; `ceph` never imports `fault`. There is no `fault.Run` and no second fixture lifetime: every cluster-bound fault takes the existing `*ceph.Container`. |
 | D2 | Six entry points are in the extraction inventory: `TemporaryNetworkDelay`, `TemporaryLinkDelay`, both `InterruptNetwork` forms, `PauseContainer` and `InjectObjectDataError`, with their request, status and handle types, constants and netem sentinel errors (35 exported identifiers in all, see [Moves to `fault`](#moves-to-fault)). |
-| D3 | Queries, topology, lifecycle, normal scrub and recovery and every general `Temporary*` control stay in `ceph`, including `TemporaryBlocklist`, `BlocklistOverride`, `OverrideFullRatios`, `FullRatiosOverride`, `OverrideConfig`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `OverrideOSDFlag` and `ClientConfig.Revoke` (see [Ambiguous `Temporary*` APIs](#ambiguous-temporary-apis)). |
+| D3 | Queries, topology, lifecycle, normal scrub and recovery and every general reversible control are not fault APIs and do not move to `fault`. The general controls (blocklist entry, full ratios, central configuration, messenger policy, OSD flag, MGR module and runtime debug level) are implemented in the package `override` as `AddBlocklist`, `SetFullRatios`, `SetConfig`, `SetMessengerPolicy`, `SetOSDFlag`, `SetMGRModule` and `SetDebugLevel`, with `override.*Handle` types, so none of them is a `ceph.Container` method any more. The queries and value types they use, the read-only `BlocklistEntry`, `FullRatios` and `OSDFlag` observations among them, and `ClientConfig.Revoke` stay in `ceph` (see [Ambiguous `Temporary*` APIs](#ambiguous-temporary-apis)). |
 | D4 | Service-package fault helpers (`rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink`, `rgw.Multisite.TemporaryZoneLinkDelay`) stay methods of their fixtures, because they select fixture-owned endpoints and register cleanup with the fixture. Only their return and parameter types change to `fault` types. |
 | D5 | Reversible leases keep their own undo (`Restore` or `Resume`). The one-shot `InjectObjectDataError` keeps returning no handle: its recovery is a rewrite (`RepairPG`) or an OSD restart. No universal `Restore`, `Close` or cleanup interface is introduced. |
 | D6 | Stage 2 adds a ceph-owned fault registry inside `*ceph.Container` and an internal typed facade `internal/faulthook`, registered through `internal/hookreg` the way `internal/servicehook` is. Terminate keeps calling the registered undo functions in today's fixed phase order. No mutex, map or general cleanup registration becomes public. |
@@ -60,12 +62,13 @@ rbd, cephfs, rgw, internal/multicluster ──imports──▶ fault, ceph
   packet faults; endpoint interruption; container pause; dedicated object-error
   injection subject to its own reviewed checkpoint.
 - Session blocklisting changes Ceph admission state, and full ratios change
-  Ceph OSDMap policy. Their mutation APIs and restoration handles stay in `ceph`,
-  alongside their queries. A test using these controls to induce failure does
-  not make them external fault APIs. Shared internal tracking does not determine
-  the public package. Full-ratio override naming is a separate bounded task.
-- `fault` may reuse `ceph` controls (for example a fault recipe built on
-  `TemporaryConfig`), but a `Temporary` prefix alone does not move an API.
+  Ceph OSDMap policy. Their mutation APIs and restoration handles are in
+  `override` (`AddBlocklist`, `SetFullRatios`), while their queries stay in
+  `ceph`. A test using these controls to induce failure does not make them
+  external fault APIs. Shared internal tracking does not determine the public
+  package.
+- `fault` may reuse `override` controls (for example a fault recipe built on
+  `override.SetConfig`), but a `Temporary` prefix alone does not move an API.
 
 ## API inventory
 
@@ -113,21 +116,22 @@ defines its own unexported category error type with the same `Is` rule as
 | Identifier | Reason |
 | --- | --- |
 | `NetworkPlane`, `PublicNetworkPlane`, `ClusterNetworkPlane`, `NetworkName`, `ClusterNetworkName`, `HasSeparateClusterNetwork` | Topology of the cluster's bridges. `fault` request types refer to `ceph.NetworkPlane`. |
-| `(*Container).TemporaryBlocklist`, `BlocklistOverride`, `BlocklistEntry`, `(*Container).BlocklistEntries`, `(*Tenant).BlocklistEntries` | Ceph session-admission control and ownership, plus read-only queries (`sharedOpen` for the tenant query). |
-| `(*Container).OverrideFullRatios`, `FullRatiosOverride`, `FullRatios`, `FullRatioSnapshot`, `(*Container).FullRatios` | Global OSDMap policy mutation, explicit restoration and read-only query. The explicit override name is implemented in `ceph`. |
+| `BlocklistEntry`, `(*Container).BlocklistEntries`, `(*Tenant).BlocklistEntries` | Read-only queries (`sharedOpen` for the tenant query). The session-admission control is `override.AddBlocklist` with `*override.BlocklistHandle`, not a `ceph` member. |
+| `FullRatios`, `FullRatioSnapshot`, `(*Container).FullRatios` | Read-only OSDMap policy query. The mutation and its explicit restoration are `override.SetFullRatios` with `*override.FullRatiosHandle`. |
 | `DeepScrubPG`, `RepairPG`, `PGInconsistencies`, `InconsistentObject`, `InconsistentShard`, `WaitForPGClean`, `WaitForClean` | Normal scrub, repair and recovery. `RepairPG` is also the documented recovery of an injected error. |
 | `OSDContainer.SetIn`, `OSDContainer.Remove`, `AddOSD`, daemon `Stop`/`Start` | Topology and lifecycle. The fault guide lists them as techniques, which does not move them. |
 | `DaemonAddresses`, `HealthDetails`, `Pool.PGs`, `OSDFlags`, `OSDStates` | Observation used by fault tests. |
-| `TemporaryConfig`, `TemporaryMGRModule`, `TemporaryMessengerPolicy`, `TemporaryOSDFlag`, `TemporaryClientRevocation` and their handles | See the next section. |
+| `TemporaryClientRevocation` and its handle | See the next section. The other general controls are in `override`. |
 
 ### Ambiguous `Temporary*` APIs
 
 | API | Decision | Reason |
 | --- | --- | --- |
-| `TemporaryConfig` / `ConfigOverride` (`ceph/config.go`) | Stays | General central configuration. The fault guide's `ms_blackhole_*`, `ms_inject_delay_*` and `osd_debug_inject_dispatch_delay_*` recipes are uses of it, not a fault API. `TemporaryMessengerPolicy` and `pool_removal.go:Pool.Remove` (its `mon_allow_pool_delete` check) depend on `c.configOverrides`. |
-| `TemporaryMGRModule` / `MGRModuleOverride` (`ceph/mgr_modules.go`) | Stays | Module membership, coupled to service bootstrap requirements through `extensionsWith[serviceModules]`. Not a failure condition. |
-| `TemporaryMessengerPolicy` / `MessengerPolicyOverride` (`ceph/messenger_policy.go`) | Stays | Connection-mode policy composed from `TemporaryConfig` overrides; it changes which modes daemons accept, it does not inject a failure. |
-| `TemporaryOSDFlag` / `OSDFlagOverride` (`ceph/osd_policy.go`) | Stays | Ordinary operational OSDMap flags (`noout`, `noscrub`, `norebalance` ...) also used for maintenance and recovery control. Pairing it with `PauseContainer` (`nodown`) is a recipe. |
+| `override.SetConfig` / `*override.ConfigHandle` | Not `fault`; in `override` | General central configuration. The fault guide's `ms_blackhole_*`, `ms_inject_delay_*` and `osd_debug_inject_dispatch_delay_*` recipes are uses of it, not a fault API. `override.SetMessengerPolicy` and `Pool.Remove` (its `mon_allow_pool_delete` check, a registry lookup) depend on the configuration entries it tracks. |
+| `override.SetMGRModule` / `*override.MGRModuleHandle` | Not `fault`; in `override` | Module membership, coupled to service bootstrap requirements through `extensionsWith[serviceModules]`. Not a failure condition. |
+| `override.SetMessengerPolicy` / `*override.MessengerPolicyHandle` | Not `fault`; in `override` | Connection-mode policy composed from `override.SetConfig` entries; it changes which modes daemons accept, it does not inject a failure. |
+| `override.SetOSDFlag` / `*override.OSDFlagHandle` | Not `fault`; in `override` | Ordinary operational OSDMap flags (`noout`, `noscrub`, `norebalance` ...) also used for maintenance and recovery control. Pairing it with `fault.Pause` (`nodown`) is a recipe. |
+| `override.SetDebugLevel` / `*override.DebugLevelHandle` | Not `fault`; in `override` | Runtime debug level window of one daemon; a diagnostic control, not a failure condition. |
 | `TemporaryClientRevocation` / `ClientRevocation` (`ceph/client_revocation.go`) | Stays | Client identity lifecycle. It depends on `authFences`, `clientKeys` and `clientRevocations` and the fencing of `ClientConfig.ReplaceKey`, and it is `sharedTenant`. Moving it means designing an auth boundary, which is outside this refactor. |
 | `cephfs.Filesystem.TemporarySessionTimeouts`, `TemporarySnapshotSchedule`, `TemporarySubvolumePin`, `TemporarySubvolumeGroupPin` | Stay in `cephfs` | MDS and file system configuration. |
 | `rbd.StartImmutableObjectCache` | Stays in `rbd` | Client feature lease, not a fault. |
@@ -199,20 +203,24 @@ is retired after the exclusive lease in either case
 
 ### Blocklist fencing
 
-| Aspect | Current behavior (`ceph/fencing.go`) |
+The behavior below is the inventory taken before the move. `override.AddBlocklist` preserves it.
+
+| Aspect | Behavior at the inventory (`ceph/fencing.go`) |
 | --- | --- |
 | Apply | `sharedGate`, `normalizeBlocklistSession` (exact `IP:port/nonce`, nonzero nonce, one address of a v1/v2 vector), duration of at least one second, `c.mu.Lock()` (not context-aware) for the whole call, `poolPolicyReady`, refuses an existing native entry for the session, records the handle in `c.blocklistOverrides` before `osd blocklist add`, then reads back with a 5 s context detached from cancellation and captures `Until`. |
-| Undo | `BlocklistOverride.Restore`: refuses an untracked copy (`tracked.state != change.state`), treats a missing entry as natural expiry, refuses when the apply readback was unknown, refuses an entry whose `Until` changed (outside renewal), removes, and checks absence. Copies share state. |
+| Undo | `override.BlocklistHandle.Restore`: refuses an untracked copy (`tracked.state != change.state`), treats a missing entry as natural expiry, refuses when the apply readback was unknown, refuses an entry whose `Until` changed (outside renewal), removes, and checks absence. Copies share state. |
 | Shared policy | `sharedExclusive`. |
 | Errors with a non-nil handle | Command or readback failure, or success without a stored entry. |
 | Terminate | Not restored: the entry dies with the cluster. The map entry is bookkeeping for overlap and identity. |
 
-### Temporary full ratios
+### Full ratios override
 
-| Aspect | Current behavior (`ceph/full_ratios.go`) |
+The behavior below is the inventory taken before the move. `override.SetFullRatios` preserves it.
+
+| Aspect | Behavior at the inventory (`ceph/full_ratios.go`) |
 | --- | --- |
 | Apply | `sharedGate`, `normalizeFullRatios` (float32, ordered, `<= 1`), deadline from `startupTimeout`, `lockTopology` for the whole call, refuses an unrestored previous override, opens `fullRatiosSession` (control container captured once, FSID from `c.config` under `configMu`), requires ordered original ratios, records the handle in `c.fullRatiosOverride`, then `transition` in ordered single-threshold steps. |
-| Undo | `FullRatiosOverride.Restore`: identity by shared state pointer and bootstrap FSID; `reconcile` accepts only the expected tuple or either side of one uncertain step (`pending`), refuses outside edits and older prefixes. |
+| Undo | `override.FullRatiosHandle.Restore`: identity by shared state pointer and bootstrap FSID; `reconcile` accepts only the expected tuple or either side of one uncertain step (`pending`), refuses outside edits and older prefixes. |
 | Shared policy | `sharedExclusive`. |
 | Errors with a non-nil handle | Any failure inside `transition`, including canceled contexts and lost readbacks; the journaled `pending` tuple lets `Restore` reconcile. |
 | Terminate | Not restored: map policy dies with the cluster. |
@@ -231,13 +239,13 @@ is retired after the exclusive lease in either case
 
 | State or helper (`ceph/ceph.go:Container` unless noted) | Used by | Guarded by |
 | --- | --- | --- |
-| `mu` via `lockTopology` (`topology.go`) / `lockTopologyMutex` (`context_lock.go`, `internal/clusterutil.LockMutex`) | all cluster-bound families; `TemporaryBlocklist` and `BlocklistOverride.Restore` use plain `c.mu.Lock()` | itself |
+| `mu` via `lockTopology` (`topology.go`) / `lockTopologyMutex` (`context_lock.go`, `internal/clusterutil.LockMutex`) | all cluster-bound families; `override.AddBlocklist` and `override.BlocklistHandle.Restore` use plain `c.mu.Lock()` | itself |
 | `closed` | delay reservation and settlement, interruption, pause, full ratios session; set by `terminate` | `mu` |
 | `delays map[string]*NetworkDelayLease` (nil value = reservation) | `reserveNetworkDelay`, `settleNetworkDelay`, lease `release`, `terminate` | `mu` |
 | `interruptions map[string]*NetworkInterruption` | `InterruptNetwork`, `terminate` | `mu` |
 | `pauses map[string]*ContainerPause` | `PauseContainer`, `terminate` | `mu` |
-| `blocklistOverrides map[string]*BlocklistOverride` | `TemporaryBlocklist`, `Restore`, `finish` | `mu` |
-| `fullRatiosOverride *FullRatiosOverride` | `TemporaryFullRatios`, `Restore` | `mu` |
+| `faults` entries of kind `faultBlocklist` | `override.AddBlocklist`, `Restore`, `finish` through `internal/overridehook` | `mu` |
+| `faults` entry of kind `faultFullRatios` | `override.SetFullRatios`, `Restore` through `internal/overridehook` | `mu` |
 | `ownsNativeTarget` (`native_command.go`) | delay reservation (skips the attachment check for owned daemons) | caller holds `mu` |
 | `ownedLabel` (`owned_containers.go`), `newNetemBackend`, `netemBackend()` | helper labeling and the unit-test seam | none |
 | `controlContainerContext` (`topology_snapshot_context.go`) / `controlMu` | pause refusal, full ratios session, `cephCLI` | `controlMu` (read) |
@@ -289,8 +297,8 @@ not undone; they end with the cluster.
 | `InterruptNetwork` (cluster) | reversible lease | `NetworkInterruption.Restore` | yes, phase 2 |
 | `InterruptNetwork` (standalone) | reversible lease, caller-owned | `NetworkInterruption.Restore` | no |
 | `PauseContainer` | reversible lease | `ContainerPause.Resume` | yes, phase 3 |
-| `TemporaryBlocklist` | reversible override, may also expire | `BlocklistOverride.Restore` | no, dies with the cluster |
-| `TemporaryFullRatios` | reversible override | `FullRatiosOverride.Restore` | no, dies with the cluster |
+| `override.AddBlocklist` | reversible override, may also expire | `override.BlocklistHandle.Restore` | no, dies with the cluster |
+| `override.SetFullRatios` | reversible override | `override.FullRatiosHandle.Restore` | no, dies with the cluster |
 | `InjectObjectDataError` | one-shot injection (`fault`, no handle) | none: `RepairPG` rewrites the replica, or an OSD restart clears it and the debug setting | no |
 
 ## Proposed stage 2 boundary
@@ -302,7 +310,7 @@ how it reaches cluster state.
 ### Fault registry inside `ceph`
 
 A new `ceph/fault_registry.go` replaces `delays`, `interruptions`, `pauses`,
-`blocklistOverrides` and `fullRatiosOverride` with one table guarded by
+the former blocklist and full ratios fields with one table guarded by
 `c.mu`:
 
 ```go
@@ -440,6 +448,8 @@ cluster (`servicehook.TestCluster`-style constructor) to check
 
 ## Consumer migration
 
+The blocklist and full ratios controls are not `fault` APIs; their migration to `override` is in the [override upgrade guide](../guides/upgrading-override-package.md).
+
 | Before | After |
 | --- | --- |
 | `lease, err := cluster.TemporaryNetworkDelay(ctx, osd, ceph.NetworkDelay{HelperImage: ceph.NetemHelperImage, Delay: 50 * time.Millisecond})` | `lease, err := fault.TemporaryNetworkDelay(ctx, cluster, osd, fault.NetworkDelay{HelperImage: fault.NetemHelperImage, Delay: 50 * time.Millisecond})` |
@@ -449,19 +459,17 @@ cluster (`servicehook.TestCluster`-style constructor) to check
 | `cluster.InterruptNetwork(ctx, ctr, ceph.PublicNetworkPlane)` | `fault.InterruptNetwork(ctx, cluster, ctr, ceph.PublicNetworkPlane)` |
 | `ceph.InterruptNetwork(ctx, ctr, name)` | `fault.InterruptLink(ctx, ctr, name)` |
 | `cluster.PauseContainer(ctx, osd)` | `fault.Pause(ctx, cluster, osd)` |
-| `cluster.TemporaryBlocklist(ctx, addr, time.Minute)` | Unchanged in `ceph` (session admission) |
-| `cluster.TemporaryFullRatios(ctx, ceph.FullRatios{...})` | `cluster.OverrideFullRatios(ctx, ceph.FullRatios{...})` (OSDMap policy in `ceph`) |
 | `cluster.InjectObjectDataError(ctx, pool, obj, 1)` | `fault.InjectObjectDataError(ctx, cluster, pool, obj, 1)` (implemented; no wrapper) |
 | `errors.Is(err, ceph.ErrNetemKernelUnsupported)` | `errors.Is(err, fault.ErrNetemKernelUnsupported)`; `errors.Is(err, ceph.ErrEnvironmentUnavailable)` unchanged |
 | `var l *ceph.NetworkInterruption = mirror.InterruptPeerLink(...)` | `var l *fault.NetworkInterruption = mirror.InterruptPeerLink(...)` |
 | `multisite.TemporaryZoneLinkDelay(ctx, a, b, ceph.NetworkDelay{...})` | `multisite.TemporaryZoneLinkDelay(ctx, a, b, fault.NetworkDelay{...})` |
 
 Call sites in the pre-extraction inventory (`.Method(` occurrences): `ceph` unit tests 101
-(`TemporaryNetworkDelay` 67, `TemporaryFullRatios` 13, `InjectObjectDataError`
-9, `TemporaryBlocklist` 7, `PauseContainer` 3, `InterruptNetwork` 2),
-`internal/integration` 59 in 34 files (`TemporaryNetworkDelay` 25,
-`PauseContainer` 17, `InterruptNetwork` 7, `TemporaryBlocklist` 4,
-`TemporaryFullRatios` 3, `InjectObjectDataError` 3), `internal/dockerbridge`
+(`TemporaryNetworkDelay` 67, `InjectObjectDataError` 9, `PauseContainer` 3,
+`InterruptNetwork` 2, and 20 of the blocklist and full-ratio controls that are
+now in `override`), `internal/integration` 59 in 34 files
+(`TemporaryNetworkDelay` 25, `PauseContainer` 17, `InterruptNetwork` 7,
+`InjectObjectDataError` 3, and 7 of those controls), `internal/dockerbridge`
 2, `internal/multicluster` 1, `rgw` 1. Documentation: `docs/ceph.md`,
 `docs/rbd.md`, `docs/cephfs.md`, `docs/rgw.md`, `docs/guides/fault-injection.md`,
 `contexts-and-cleanup.md`, `errors.md`, `host-network.md`,
@@ -526,7 +534,7 @@ above. Stage 5 confirms or overturns this explicitly.
 - Final names, in particular `InterruptLink` for the standalone
   interruption and whether `NetworkDelay` keeps that name now that it also
   carries rate and packet faults.
-- Whether `TemporaryOSDFlag` should be re-exported from `fault` for
+- Whether `override.SetOSDFlag` should be re-exported from `fault` for
   discoverability (decision here: no, documentation links suffice).
-- A future `ceph.TemporaryBlocklist` lock change requires its own review;
+- A future `override.AddBlocklist` lock change requires its own review;
   reverting the package extraction preserves the current plain mutex wait.
