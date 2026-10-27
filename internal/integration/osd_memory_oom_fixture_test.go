@@ -34,11 +34,18 @@ var (
 	oomT0  = time.Date(2026, 10, 27, 0, 0, 10, 0, time.UTC)
 )
 
+// The native run measured memory.current = 34160640 for the selected OSD with
+// zero local counters. The anon/file split below is an assumed shape of that
+// total (memory.stat was not recorded), a fixture value and not an observation.
+const oomObservedCurrent = 34160640
+
+var oomUsage = osdOOMUsage{Observed: true, Anon: 30 << 20, File: 4 << 20}
+
 const (
 	oomPID      = 7
 	oomProcess  = "12345"
 	oomBaseline = 2 << 30
-	oomCeiling  = 64 << 20
+	oomCeiling  = 15 << 20
 )
 
 func oomAt(seconds float64) time.Time {
@@ -61,7 +68,8 @@ func goodOOMStep() osdOOMStep {
 		Generation: oomGen, PID: oomPID, ProcessStart: oomProcess, OSD: 1, Process: oomProc(),
 		ProcsBefore: memoryProcs{Observed: true, PIDs: []int{oomPID}},
 		Baseline:    memoryLimit{Bytes: oomBaseline}, Ceiling: memoryLimit{Bytes: oomCeiling},
-		Before:    oomWitness(oomGen, oomAt(3), oomBaseline, 300<<20, memoryEvents{Max: 0, OOM: 0, OOMKill: 0}),
+		Before:    oomWitness(oomGen, oomAt(3), oomBaseline, oomObservedCurrent, memoryEvents{Max: 0, OOM: 0, OOMKill: 0}),
+		Usage:     oomUsage,
 		ExecStart: oomAt(4), ExecEnd: oomAt(6), EffectiveAt: oomAt(4.5),
 		Final: &osdOOMFinal{Source: osdOOMFinalLastSample, At: oomAt(5.2), Events: memoryEvents{Max: 44, OOM: 1, OOMKill: 1}},
 		Exit:  &memoryDaemonExit{Generation: oomGen, OOMKilled: true, ExitCode: 137, FinishedAt: oomAt(5.1)},
@@ -132,6 +140,7 @@ func TestOSDOOMStepRulesEachHaveANegativeControl(t *testing.T) {
 		want   osdOOMVerdict // verdict with the rule disabled; killed unless set
 		def    osdOOMVerdict // verdict with every rule; incomplete unless set
 	}{
+		{name: "usage unobserved", mutate: func(s *osdOOMStep) { s.Usage = osdOOMUsage{} }, skip: func(c *osdOOMStepChecks) { c.skipHeadroom = true }},
 		{name: "process is not ceph-osd", mutate: func(s *osdOOMStep) { s.Process.Comm, s.Process.Argv0 = "sh", "sh" }, skip: func(c *osdOOMStepChecks) { c.skipProcess = true }},
 		{name: "process serves another osd", mutate: func(s *osdOOMStep) { s.Process.OSD = 2 }, skip: func(c *osdOOMStepChecks) { c.skipProcess = true }},
 		{name: "process has no osd id", mutate: func(s *osdOOMStep) { s.Process.HasOSD = false }, skip: func(c *osdOOMStepChecks) { c.skipProcess = true }},
@@ -143,7 +152,7 @@ func TestOSDOOMStepRulesEachHaveANegativeControl(t *testing.T) {
 		{name: "window not ordered", mutate: func(s *osdOOMStep) { s.ExecEnd = s.ExecStart }, skip: func(c *osdOOMStepChecks) { c.skipBracket = true }, want: osdOOMIncomplete},
 		{name: "baseline differs from the installed limit", mutate: func(s *osdOOMStep) { s.Before.Max = memoryLimit{Bytes: 1 << 30} }, skip: func(c *osdOOMStepChecks) { c.skipLimit = true }},
 		{name: "swap is not zero", mutate: func(s *osdOOMStep) { s.Before.SwapMax = memoryLimit{Unlimited: true} }, skip: func(c *osdOOMStepChecks) { c.skipSwap = true }},
-		{name: "resident memory below the headroom", mutate: func(s *osdOOMStep) { s.Before.Current = 100 << 20 }, skip: func(c *osdOOMStepChecks) { c.skipHeadroom = true }},
+		{name: "anonymous usage below the headroom", mutate: func(s *osdOOMStep) { s.Usage.Anon = 29 << 20 }, skip: func(c *osdOOMStepChecks) { c.skipHeadroom = true }},
 		{name: "another member before the step", mutate: func(s *osdOOMStep) { s.ProcsBefore.PIDs = []int{oomPID, 9} }, skip: func(c *osdOOMStepChecks) { c.skipSingleton = true }, def: osdOOMOther},
 		{name: "outcome from another generation", mutate: func(s *osdOOMStep) { s.Exit.Generation = oomNew }, skip: func(c *osdOOMStepChecks) { c.skipExitJoin = true }},
 		{name: "ceiling never observed in force", mutate: func(s *osdOOMStep) { s.EffectiveAt = time.Time{} }, skip: func(c *osdOOMStepChecks) { c.skipEffective = true }},
@@ -323,6 +332,12 @@ func TestOSDOOMRunShortfallsKeepTheKilledVerdictDistinct(t *testing.T) {
 		mutate func(*osdOOMRun)
 		reason string
 	}{
+		{"ceiling is not the derived one", func(r *osdOOMRun) {
+			r.Ceiling = 14 << 20
+			r.Pressure.Requested = 14 << 20
+			r.Pressure.AfterLimits = osdMemLimits{Memory: 14 << 20, Swap: 14 << 20}
+			r.Step.Ceiling = memoryLimit{Bytes: 14 << 20}
+		}, "not the one derived from the observed anonymous usage"},
 		{"admission names another generation", func(r *osdOOMRun) { r.Admit.AfterState.StartedAt = oomNew.StartedAt }, "admit transition does not name the frozen generation"},
 		{"pressure transition of another container", func(r *osdOOMRun) {
 			r.Pressure.Generation = containerGeneration{ID: "osd2", StartedAt: oomGen.StartedAt}
@@ -432,31 +447,101 @@ func TestOSDOOMRunOtherStepOutcomesKeepTheirOwnVerdict(t *testing.T) {
 }
 
 func TestOSDOOMEligibilityRefusesBeforeDispatch(t *testing.T) {
-	good := func() (*memoryWitness, memoryProcs) {
-		return oomWitness(oomGen, oomAt(3), oomBaseline, 300<<20, memoryEvents{}), memoryProcs{Observed: true, PIDs: []int{oomPID}}
+	good := func() (*memoryWitness, memoryProcs, osdOOMUsage) {
+		return oomWitness(oomGen, oomAt(3), oomBaseline, oomObservedCurrent, memoryEvents{}), memoryProcs{Observed: true, PIDs: []int{oomPID}}, oomUsage
 	}
-	if w, p := good(); osdOOMEligible(w, p, oomPID, oomBaseline, oomCeiling) != nil {
+	if w, p, u := good(); osdOOMEligible(w, p, u, oomPID, oomBaseline, oomCeiling) != nil {
 		t.Fatal("eligible target refused")
 	}
-	cases := map[string]func(*memoryWitness, *memoryProcs){
-		"controller":     func(w *memoryWitness, p *memoryProcs) { w.ControllerListed = false },
-		"baseline":       func(w *memoryWitness, p *memoryProcs) { w.Max = memoryLimit{Unlimited: true} },
-		"swap":           func(w *memoryWitness, p *memoryProcs) { w.SwapMax = memoryLimit{Unlimited: true} },
-		"members":        func(w *memoryWitness, p *memoryProcs) { p.PIDs = []int{oomPID, 3} },
-		"members unread": func(w *memoryWitness, p *memoryProcs) { *p = memoryProcs{} },
-		"not the member": func(w *memoryWitness, p *memoryProcs) { p.PIDs = []int{3} },
-		"usage":          func(w *memoryWitness, p *memoryProcs) { w.Current = 100 << 20 },
-		"headroom":       func(w *memoryWitness, p *memoryProcs) { w.Current = oomBaseline },
+	cases := map[string]func(*memoryWitness, *memoryProcs, *osdOOMUsage){
+		"controller":     func(w *memoryWitness, p *memoryProcs, u *osdOOMUsage) { w.ControllerListed = false },
+		"baseline":       func(w *memoryWitness, p *memoryProcs, u *osdOOMUsage) { w.Max = memoryLimit{Unlimited: true} },
+		"swap":           func(w *memoryWitness, p *memoryProcs, u *osdOOMUsage) { w.SwapMax = memoryLimit{Unlimited: true} },
+		"members":        func(w *memoryWitness, p *memoryProcs, u *osdOOMUsage) { p.PIDs = []int{oomPID, 3} },
+		"members unread": func(w *memoryWitness, p *memoryProcs, u *osdOOMUsage) { *p = memoryProcs{} },
+		"not the member": func(w *memoryWitness, p *memoryProcs, u *osdOOMUsage) { p.PIDs = []int{3} },
+		"usage":          func(w *memoryWitness, p *memoryProcs, u *osdOOMUsage) { u.Anon = 29 << 20 },
+		"usage unread":   func(w *memoryWitness, p *memoryProcs, u *osdOOMUsage) { *u = osdOOMUsage{} },
+		"headroom":       func(w *memoryWitness, p *memoryProcs, u *osdOOMUsage) { w.Current = oomBaseline },
 	}
 	for name, mutate := range cases {
-		w, p := good()
-		mutate(w, &p)
-		if osdOOMEligible(w, p, oomPID, oomBaseline, oomCeiling) == nil {
+		w, p, u := good()
+		mutate(w, &p, &u)
+		if osdOOMEligible(w, p, u, oomPID, oomBaseline, oomCeiling) == nil {
 			t.Errorf("%s: step admitted", name)
 		}
 	}
-	if osdOOMEligible(nil, memoryProcs{}, oomPID, oomBaseline, oomCeiling) == nil {
+	w, p, u := good()
+	for name, ceiling := range map[string]int64{"below the floor": osdOOMCeilingFloor - 1<<20, "not below the baseline": oomBaseline} {
+		if osdOOMEligible(w, p, u, oomPID, oomBaseline, ceiling) == nil {
+			t.Errorf("%s: step admitted", name)
+		}
+	}
+	if osdOOMEligible(nil, memoryProcs{}, osdOOMUsage{}, oomPID, oomBaseline, oomCeiling) == nil {
 		t.Error("missing reading admitted")
+	}
+}
+
+// TestOSDOOMObservedShapeWasIneligibleForTheFixedCeiling pins the native
+// finding: 34160640 bytes of memory.current never reach two times 64 MiB, and
+// the previous fixed ceiling could not have been eligible for any split of
+// that total.
+func TestOSDOOMObservedShapeWasIneligibleForTheFixedCeiling(t *testing.T) {
+	const fixed = 64 << 20
+	w := oomWitness(oomGen, oomAt(3), oomBaseline, oomObservedCurrent, memoryEvents{})
+	p := memoryProcs{Observed: true, PIDs: []int{oomPID}}
+	upper := osdOOMUsage{Observed: true, Anon: oomObservedCurrent} // the most anon the total allows
+	if osdOOMEligible(w, p, upper, oomPID, oomBaseline, fixed) == nil {
+		t.Fatal("the fixed 64 MiB ceiling is eligible for the observed total")
+	}
+	if osdOOMEligible(w, p, oomUsage, oomPID, oomBaseline, oomCeiling) != nil {
+		t.Fatal("the derived ceiling is ineligible for the assumed split")
+	}
+}
+
+func TestOSDOOMCeilingDerivation(t *testing.T) {
+	cases := []struct {
+		name string
+		anon uint64
+		want int64
+		bad  bool
+	}{
+		{"assumed split of the observed total", 30 << 20, 15 << 20, false},
+		{"rounds down to a MiB", 31<<20 + 5, 15 << 20, false},
+		{"exactly the floor", 16 << 20, 8 << 20, false},
+		{"just below the floor", 16<<20 - 1, 0, true},
+		{"unobserved", 0, 0, true},
+		{"above the baseline", uint64(osdOOMBaseline) * 3, 0, true},
+	}
+	for _, c := range cases {
+		got, err := deriveOSDOOMCeiling(osdOOMUsage{Observed: c.anon != 0, Anon: c.anon}, osdOOMBaseline)
+		if (err != nil) != c.bad || got != c.want {
+			t.Errorf("%s: %d %v", c.name, got, err)
+		}
+		if err == nil && osdOOMEligible(oomWitness(oomGen, oomAt(3), oomBaseline, c.anon+(1<<20), memoryEvents{}), memoryProcs{Observed: true, PIDs: []int{oomPID}}, osdOOMUsage{Observed: true, Anon: c.anon}, oomPID, oomBaseline, got) != nil {
+			t.Errorf("%s: the derived ceiling %d is not eligible", c.name, got)
+		}
+	}
+	if _, err := deriveOSDOOMCeiling(osdOOMUsage{Anon: 30 << 20}, osdOOMBaseline); err == nil {
+		t.Error("an unobserved usage derived a ceiling")
+	}
+}
+
+func TestOSDOOMUsageParserRequiresAnonAndFile(t *testing.T) {
+	u, err := parseOSDOOMUsage("anon 31457280\nfile 4194304\nkernel 100\n")
+	if err != nil || !u.Observed || u.Anon != 31457280 || u.File != 4194304 {
+		t.Fatalf("good: %+v %v", u, err)
+	}
+	for name, in := range map[string]string{
+		"empty": "", "no anon": "file 1\n", "no file": "anon 1\n", "duplicate": "anon 1\nanon 2\nfile 1\n",
+		"negative": "anon -1\nfile 1\n", "text": "anon x\nfile 1\n", "leading zero": "anon 01\nfile 1\n", "one field": "anon\nfile 1\n",
+	} {
+		if u, err := parseOSDOOMUsage(in); err == nil {
+			t.Errorf("%s: accepted as %+v", name, u)
+		}
+	}
+	if _, err := readOSDOOMUsage(t.TempDir()); err == nil {
+		t.Error("a missing memory.stat decoded")
 	}
 }
 
@@ -734,8 +819,11 @@ func TestOSDOOMReceiptsAreSerializableAndPathFree(t *testing.T) {
 }
 
 func TestOSDOOMFixtureLimitsMatchThePredeclaredScenario(t *testing.T) {
-	if osdOOMBaseline != oomBaseline || osdOOMCeiling != oomCeiling || osdOOMCeiling >= osdOOMBaseline {
-		t.Fatalf("fixture limits %d/%d differ from the scenario's %d/%d", oomBaseline, oomCeiling, osdOOMBaseline, osdOOMCeiling)
+	if osdOOMBaseline != oomBaseline || oomCeiling < osdOOMCeilingFloor || oomCeiling >= osdOOMBaseline {
+		t.Fatalf("fixture limits %d/%d differ from the scenario's %d (floor %d)", oomBaseline, oomCeiling, osdOOMBaseline, osdOOMCeilingFloor)
+	}
+	if d, err := deriveOSDOOMCeiling(oomUsage, osdOOMBaseline); err != nil || d != oomCeiling {
+		t.Fatalf("fixture ceiling %d is not the derivation of the fixture usage: %d %v", oomCeiling, d, err)
 	}
 }
 

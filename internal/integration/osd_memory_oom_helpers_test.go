@@ -47,15 +47,21 @@ const (
 	// Provisional experiment values, not supported Ceph defaults. There is one
 	// pressure step and never a search for the limit at which something dies.
 	osdOOMBaseline int64 = 2 << 30
-	osdOOMCeiling  int64 = 64 << 20
+	// osdOOMCeilingFloor is the smallest ceiling the derivation may produce: it
+	// stays above the engine's own 6 MiB minimum and leaves room for a
+	// daemon that is already running. A derivation below it is ineligible, not
+	// clamped up.
+	osdOOMCeilingFloor int64 = 8 << 20
 
 	osdOOMExecutable = "ceph-osd"
 	// osdOOMHoldMin is the shortest time the stopped container must be seen
 	// staying stopped before any explicit start.
 	osdOOMHoldMin = 5 * time.Second
 	// osdOOMHeadroom: the ceiling must be this many times below the daemon's
-	// resident memory for the step to be eligible, so that reclaim of page
-	// cache alone does not decide the outcome.
+	// observed anonymous memory for the step to be eligible. Anonymous pages
+	// cannot be reclaimed without swap, so reclaim of page cache alone cannot
+	// satisfy the ceiling. Whether the kernel then kills the daemon is a
+	// hypothesis for the native run, not something the model asserts.
 	osdOOMHeadroom = 2
 )
 
@@ -207,6 +213,9 @@ type osdOOMStep struct {
 	// and Ceiling the predeclared lower one.
 	Baseline, Ceiling memoryLimit
 	Before            *memoryWitness
+	// Usage is the memory.stat split read with Before; the Ceiling must be
+	// the one derived from it.
+	Usage osdOOMUsage
 
 	// ExecStart is taken immediately before the update is dispatched and
 	// ExecEnd after the reply was handled and the stop (or its deadline) was
@@ -303,8 +312,8 @@ func classifyOSDOOMStep(s osdOOMStep, checks osdOOMStepChecks) (osdOOMVerdict, e
 	if !checks.skipSwap && s.Before.SwapMax != (memoryLimit{}) {
 		return osdOOMIncompleteStep("swap is not bounded to zero before the step")
 	}
-	if !checks.skipHeadroom && s.Before.Current < osdOOMHeadroom*s.Ceiling.Bytes {
-		return osdOOMIncompleteStep("resident memory %d is below %d times the ceiling %d", s.Before.Current, osdOOMHeadroom, s.Ceiling.Bytes)
+	if !checks.skipHeadroom && (!s.Usage.Observed || s.Usage.Anon < osdOOMHeadroom*s.Ceiling.Bytes) {
+		return osdOOMIncompleteStep("anonymous usage %d (observed %t) is below %d times the ceiling %d", s.Usage.Anon, s.Usage.Observed, osdOOMHeadroom, s.Ceiling.Bytes)
 	}
 	if s.Exit == nil {
 		return osdOOMIncompleteStep("the daemon outcome is unobserved")
@@ -580,6 +589,9 @@ func osdOOMJoin(r osdOOMRun) []string {
 		out = append(out, "restoration did not request the admitted baseline")
 	}
 	s := r.Step
+	if derived, err := deriveOSDOOMCeiling(s.Usage, r.Baseline); err != nil || derived != r.Ceiling {
+		out = append(out, "the ceiling is not the one derived from the observed anonymous usage")
+	}
 	if s.Generation != id.Generation || s.PID != id.PID || s.ProcessStart != id.ProcessStart {
 		out = append(out, "the pressure window does not name the frozen process")
 	}
@@ -918,7 +930,7 @@ func readOSDOOMHandle(handle *os.File) (memoryEvents, error) {
 }
 
 // osdOOMEligible refuses the step before any update is dispatched.
-func osdOOMEligible(before *memoryWitness, procs memoryProcs, pid int, baseline, ceiling int64) error {
+func osdOOMEligible(before *memoryWitness, procs memoryProcs, usage osdOOMUsage, pid int, baseline, ceiling int64) error {
 	switch {
 	case before == nil || !before.ControllerListed:
 		return errors.New("no memory controller reading")
@@ -926,8 +938,10 @@ func osdOOMEligible(before *memoryWitness, procs memoryProcs, pid int, baseline,
 		return errors.New("the admitted finite baseline with zero swap is not installed")
 	case !procs.Observed || len(procs.PIDs) != 1 || procs.PIDs[0] != pid:
 		return errors.New("the daemon is not the cgroup's only process")
-	case before.Current < osdOOMHeadroom*uint64(ceiling):
-		return fmt.Errorf("resident memory %d does not exceed %d times the ceiling %d", before.Current, osdOOMHeadroom, ceiling)
+	case !usage.Observed || usage.Anon < osdOOMHeadroom*uint64(ceiling):
+		return fmt.Errorf("anonymous usage %d (observed %t) does not reach %d times the ceiling %d; memory.current is %d", usage.Anon, usage.Observed, osdOOMHeadroom, ceiling, before.Current)
+	case ceiling < osdOOMCeilingFloor || ceiling >= baseline:
+		return fmt.Errorf("ceiling %d is outside the floor %d and the baseline %d", ceiling, osdOOMCeilingFloor, baseline)
 	case before.Current >= uint64(baseline)/2:
 		return errors.New("the baseline leaves too little headroom for the daemon")
 	}
@@ -939,6 +953,7 @@ func osdOOMReceiptStep(s osdOOMStep) map[string]any {
 	if s.Before != nil {
 		out["before_events"], out["before_current"] = s.Before.Events, s.Before.Current
 	}
+	out["usage_observed"], out["usage_anon"], out["usage_file"] = s.Usage.Observed, s.Usage.Anon, s.Usage.File
 	if s.Final != nil {
 		out["final_source"], out["final_events"] = s.Final.Source, s.Final.Events
 	}
@@ -981,4 +996,69 @@ func osdOOMViewSummary(v osdSlowLiveView) string {
 		parts = append(parts, "errors="+strings.Join(v.Errs, "; "))
 	}
 	return strings.Join(parts, " ")
+}
+
+// osdOOMUsage is the observed memory.stat split of the selected OSD's cgroup
+// before the step: anonymous pages (not reclaimable without swap) and file
+// pages (reclaimable page cache). Observed is false when it was not read.
+type osdOOMUsage struct {
+	Observed   bool
+	Anon, File uint64
+}
+
+// parseOSDOOMUsage decodes memory.stat. anon and file are required, unique,
+// plain unsigned integers; other keys are ignored. A missing key is a refusal,
+// never a zero.
+func parseOSDOOMUsage(data string) (osdOOMUsage, error) {
+	seen := map[string]uint64{}
+	for _, line := range strings.Split(strings.TrimSuffix(data, "\n"), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			return osdOOMUsage{}, fmt.Errorf("%w: memory.stat line", errOSDOOM)
+		}
+		if f[0] != "anon" && f[0] != "file" {
+			continue
+		}
+		n, err := strconv.ParseUint(f[1], 10, 64)
+		if err != nil || strconv.FormatUint(n, 10) != f[1] {
+			return osdOOMUsage{}, fmt.Errorf("%w: memory.stat %s value", errOSDOOM, f[0])
+		}
+		if _, dup := seen[f[0]]; dup {
+			return osdOOMUsage{}, fmt.Errorf("%w: duplicate memory.stat %s", errOSDOOM, f[0])
+		}
+		seen[f[0]] = n
+	}
+	anon, okA := seen["anon"]
+	file, okF := seen["file"]
+	if !okA || !okF {
+		return osdOOMUsage{}, fmt.Errorf("%w: memory.stat lacks anon or file", errOSDOOM)
+	}
+	return osdOOMUsage{Observed: true, Anon: anon, File: file}, nil
+}
+
+// deriveOSDOOMCeiling derives the one predeclared pressure ceiling from the
+// observed anonymous usage: half of it, rounded down to a MiB. Below the floor
+// or not below the baseline, the step is ineligible and nothing is dispatched;
+// the ceiling is never raised to the floor or searched for.
+func deriveOSDOOMCeiling(u osdOOMUsage, baseline int64) (int64, error) {
+	if !u.Observed || u.Anon == 0 {
+		return 0, fmt.Errorf("%w: anonymous usage is unobserved", errOSDOOM)
+	}
+	ceiling := int64(u.Anon/osdOOMHeadroom) &^ (1<<20 - 1)
+	switch {
+	case ceiling < osdOOMCeilingFloor:
+		return 0, fmt.Errorf("%w: anonymous usage %d derives a ceiling of %d, below the floor %d", errOSDOOM, u.Anon, ceiling, osdOOMCeilingFloor)
+	case ceiling >= baseline:
+		return 0, fmt.Errorf("%w: derived ceiling %d is not below the baseline %d", errOSDOOM, ceiling, baseline)
+	}
+	return ceiling, nil
+}
+
+// readOSDOOMUsage reads memory.stat from the target's cgroup directory.
+func readOSDOOMUsage(group string) (osdOOMUsage, error) {
+	data, err := os.ReadFile(filepath.Join(group, "memory.stat"))
+	if err != nil {
+		return osdOOMUsage{}, fmt.Errorf("%w: memory.stat unavailable", errOSDOOM)
+	}
+	return parseOSDOOMUsage(string(data))
 }

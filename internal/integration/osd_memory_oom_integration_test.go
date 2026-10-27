@@ -31,7 +31,7 @@ const osdOOMPool = "tc-oom"
 // acting primary of a single-PG replicated pool, is moved by one explicit
 // update from its unlimited creation state to a finite memory ceiling with no
 // container swap, observed there, and then given ONE predeclared lower
-// ceiling that its resident memory exceeds. There is no search for the
+// ceiling derived once from the OSD's observed anonymous memory in this run (half of it, rounded down to a MiB, never below a documented floor, ineligible otherwise). Whether the kernel then kills the daemon or reclaims enough file pages is a hypothesis of the native run, not an assumption. There is no search for the
 // smallest limit that kills something and no second pressure step.
 //
 // The observer, the event handle and the client stay outside the OSD's
@@ -172,11 +172,11 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 
 	// The receipt is registered first so that it is emitted after the
 	// restoration and writer cleanups and before the cluster is destroyed.
-	run := osdOOMRun{Baseline: osdOOMBaseline, Ceiling: osdOOMCeiling, Identity: osdOOMIdentity{Generation: gen, PID: target.PID, ProcessStart: target.ProcessStart}}
+	run := osdOOMRun{Baseline: osdOOMBaseline, Identity: osdOOMIdentity{Generation: gen, PID: target.PID, ProcessStart: target.ProcessStart}}
 	details := map[string]any{
 		"osd": osd.ID, "pg": pg.PGID.String(), "acting": pg.Acting, "container": id, "started_at": gen.StartedAt,
 		"pid": target.PID, "process_start": target.ProcessStart, "comm": process.Comm, "exe_state": process.ExeState, "engine": info.Info.ServerVersion,
-		"baseline": osdOOMBaseline, "ceiling": osdOOMCeiling,
+		"baseline": osdOOMBaseline,
 	}
 	var viewSummaries []string
 	var recorderErrors []string
@@ -399,13 +399,30 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pre-step witness: %v", err)
 	}
-	details["pre_step"] = map[string]any{"current": before.Current, "events": before.Events, "members": procs.PIDs}
-	if err := osdOOMEligible(before, procs, target.PID, osdOOMBaseline, osdOOMCeiling); err != nil {
+	// The ceiling is derived from this run's observed anonymous usage, once.
+	usage, usageErr := readOSDOOMUsage(target.group)
+	pre := map[string]any{"memory_current": before.Current, "events": before.Events, "members": procs.PIDs, "usage_observed": usage.Observed, "anon": usage.Anon, "file": usage.File}
+	if peak, err := os.ReadFile(filepath.Join(target.group, "memory.peak")); err == nil {
+		pre["memory_peak"] = strings.TrimSpace(string(peak))
+	} else {
+		pre["memory_peak"] = "unavailable"
+	}
+	details["pre_step"] = pre
+	if usageErr != nil {
+		t.Fatalf("anonymous usage unreadable; nothing was dispatched: %v", usageErr)
+	}
+	ceiling, derr := deriveOSDOOMCeiling(usage, osdOOMBaseline)
+	pre["derived_ceiling"] = ceiling
+	if derr != nil {
+		t.Fatalf("no eligible ceiling can be derived; nothing was dispatched: %v", derr)
+	}
+	details["ceiling"], run.Ceiling = ceiling, ceiling
+	if err := osdOOMEligible(before, procs, usage, target.PID, osdOOMBaseline, ceiling); err != nil {
 		t.Fatalf("the pressure step is not eligible; nothing was dispatched: %v", err)
 	}
 	run.Step = osdOOMStep{
 		Generation: gen, PID: target.PID, ProcessStart: target.ProcessStart, OSD: osd.ID, Process: process, ProcsBefore: procs,
-		Baseline: memoryLimit{Bytes: uint64(osdOOMBaseline)}, Ceiling: memoryLimit{Bytes: uint64(osdOOMCeiling)}, Before: before,
+		Baseline: memoryLimit{Bytes: uint64(osdOOMBaseline)}, Ceiling: memoryLimit{Bytes: uint64(ceiling)}, Before: before, Usage: usage,
 	}
 	run.Effects.PreStep = ledgerMark()
 
@@ -418,11 +435,11 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	t.Cleanup(func() { _ = handle.Close() })
 	recording, stopRecording := context.WithCancel(ctx)
 	defer stopRecording()
-	observed := recordOSDOOM(recording, target.group, handle, uint64(osdOOMCeiling), target.PID, 2*time.Millisecond, time.Now)
+	observed := recordOSDOOM(recording, target.group, handle, uint64(ceiling), target.PID, 2*time.Millisecond, time.Now)
 
 	// The one pressure step.
 	run.Step.ExecStart = time.Now()
-	pressure, dispatched, perr := update(osdOOMCeiling, false)
+	pressure, dispatched, perr := update(ceiling, false)
 	if dispatched {
 		run.Pressure = pressure
 		dispatchedSteps["pressure"] = true
