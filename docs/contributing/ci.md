@@ -179,7 +179,18 @@ needs no network; the shallow checkout has no release tags, so it prints
 `CHANGELOG.md` against `docs/changes`. Vet, lint, tag compilation, the Python tooling tests,
 actionlint and the go-ceph harness test skip themselves on a
 documentation-only head. The job name is unchanged and no required check is
-added. On such a head a green `Vet, compile and CI tooling` means that the
+added. The job's checkout fetches two commits (`fetch-depth: 2`), and a pull
+request head also runs `Check move records against the merge base`
+(`go run ./internal/tools/apinaming moves`, see
+[Testing](testing.md#package-layout-and-the-export-inventory)): the checkout of a pull request is its
+merge commit, whose first parent is the base, so the step passes `HEAD^1` and
+compares the pull request's net change. A checkout that is not a merge commit
+passes no base, and the step prints `SKIPPED` and a warning annotation instead
+of `OK`; the record checks still run, and a skip is never a pass. The step does
+not run on a documentation-only head, which cannot touch a catalogue or a move
+record, and it does not run on pushes or scheduled runs. The step runs under
+`shell: bash` (pipefail) and exits with the checker's status; a workflow control
+in `.github/scripts/test_moves_step.py` runs the step as written. On such a head a green `Vet, compile and CI tooling` means that the
 validator and the identifier check passed (not the tag comparison); vet and tag compilation did not run, and the skip is by
 policy, not a pass of those steps. Unit tests, Race detector and Compiled tag
 coverage and helpers remain skipped jobs, and the Vulnerability check jobs
@@ -253,7 +264,7 @@ Practical consequences:
 | --- | --- | --- |
 | Unit tests | 15 min | `make test` |
 | Race detector | 15 min | `make race` |
-| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint (`make lint`), `make tag-compile`, the Python tests in `.github/scripts` (`test_*.py`), actionlint and the go-ceph harness test; the release-note fragment validator on every head |
+| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint (`make lint`), `make tag-compile`, the Python tests in `.github/scripts` (`test_*.py`), actionlint and the go-ceph harness test; the release-note fragment validator on every head; on pull requests, `apinaming moves` against the merge base |
 | Compiled tag coverage and helpers | 25 min | `tag_scenarios.py plan --verify`, then `tag_scenarios.py code` (the Docker-free `code` batch) |
 | Vulnerability check (Go 1.26.x and 1.27.x) | 20 min | `make vulncheck` |
 

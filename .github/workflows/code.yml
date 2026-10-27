@@ -112,6 +112,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          # Two commits, so that a pull request's merge commit still knows its
+          # first parent (the base) for the move-record check below.
+          fetch-depth: 2
       - uses: actions/setup-go@v7
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
         with:
@@ -161,6 +164,30 @@ jobs:
       - name: Check the released changelog range
         if: ${{ !cancelled() }}
         run: python3 .github/scripts/release_assemble.py check
+      # Pull requests only. The checkout of a pull request is its merge commit,
+      # whose first parent is the base, so the comparison covers the pull
+      # request's net change. Any other event, or a checkout that is not a merge
+      # commit, passes no base: the command then prints SKIPPED (the base
+      # comparison did not run, which is not a pass) and checks the records only.
+      # A documentation-only head touches no catalogue or move record, so the
+      # Go toolchain is not set up for it. The step's status is the checker's:
+      # shell bash runs with pipefail and the status is also kept explicitly.
+      # .github/scripts/test_moves_step.py runs this exact step.
+      - name: Check move records against the merge base
+        if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.docs_only != 'true' && !cancelled() }}
+        shell: bash
+        run: |
+          base=
+          if [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 3 ]; then
+            base=$(git rev-parse HEAD^1)
+          fi
+          status=0
+          go run ./internal/tools/apinaming moves -base "$base" > "$RUNNER_TEMP/moves.out" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/moves.out"
+          if grep -q '^moves: SKIPPED' "$RUNNER_TEMP/moves.out"; then
+            echo "::warning::The move-record base comparison was SKIPPED and is not a pass"
+          fi
+          exit "$status"
 
   tag-coverage:
     name: Compiled tag coverage and helpers
