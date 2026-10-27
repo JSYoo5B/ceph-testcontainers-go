@@ -37,12 +37,13 @@ port is enough for RADOS, RBD or CephFS.
 - it receives `/etc/ceph/ceph.conf` and `/etc/ceph/ceph.client.admin.keyring`.
 
 It does not install Ceph client software. Use an image that contains the
-clients you need. The cluster's client role (`Images().Client`) has the `ceph`,
+clients you need. The cluster's client role (`Images.Client`) has the `ceph`,
 `rados` and `rbd` CLIs and the Python `rados`, `rbd` and `cephfs` bindings.
 `radosgw-admin` belongs to the rgw role.
 
 ```golang
-client, err := testcontainers.Run(ctx, cluster.Images().Client,
+facts, err := ceph.FactsOf(cluster)
+client, err := testcontainers.Run(ctx, facts.Images.Client,
 	cluster.WithClient(),
 	ceph.WithIdleEntrypoint(),
 )
@@ -89,7 +90,7 @@ so they are terminated first (see [Contexts, ownership and cleanup](contexts-and
 
 Other bridge-mode endpoints:
 
-- `cluster.NetworkName()` returns the bridge name, for containers you attach
+- `FactsOf(cluster).NetworkName` returns the bridge name, for containers you attach
   yourself.
 - `rgw.Gateway.S3Endpoint(ctx)` returns a mapped host port for host S3 clients.
   `DaemonEndpoint(ctx)` returns the gateway's address on the cluster network
@@ -131,9 +132,9 @@ _ = cfg
 | --- | --- |
 | `ceph.WithHostNetwork()` | Selects host networking for the whole cluster. |
 | `ceph.WithHostAddress(address)` | IPv4 address to bind and advertise. Defaults to `127.0.0.1`. The address must be assigned on the Docker host and reachable from the test process. Requires `WithHostNetwork`. |
-| `cluster.UsesHostNetwork()` | Reports the selected mode. |
-| `cluster.PublicAddress()` | The advertised address; empty in bridge mode. |
-| `cluster.NetworkName()` | Returns `"host"` in host mode. |
+| `FactsOf(cluster).UsesHostNetwork` | Reports the selected mode. |
+| `FactsOf(cluster).PublicAddress` | The advertised address; empty in bridge mode. |
+| `FactsOf(cluster).NetworkName` | Returns `"host"` in host mode. |
 
 The default `127.0.0.1` suits a test process on the same machine as the Docker
 engine (a local Linux engine, or Docker Desktop with host networking). With a
@@ -318,9 +319,10 @@ if cluster != nil {
 if err != nil {
 	t.Fatal(err)
 }
-public := cluster.NetworkName()         // MON, MGR, MDS, RGW, clients and OSDs
-backend := cluster.ClusterNetworkName() // OSDs only
-_ = cluster.HasSeparateClusterNetwork() // true
+facts, err := ceph.FactsOf(cluster)
+public := facts.NetworkName         // MON, MGR, MDS, RGW, clients and OSDs
+backend := facts.ClusterNetworkName // OSDs only
+_ = facts.HasSeparateClusterNetwork // true
 _, _ = public, backend
 ```
 
@@ -328,8 +330,8 @@ _, _ = public, backend
   `WithClient` containers use the public bridge only.
 - Ceph's `public network` and `cluster network` settings make OSDs choose the
   right address for each kind of traffic.
-- The option requires bridge mode. In host mode `ClusterNetworkName()` returns
-  `"host"`; with a single bridge it returns the same name as `NetworkName()`.
+- The option requires bridge mode. In host mode `ClusterFacts.ClusterNetworkName` is
+  `"host"`; with a single bridge it is the same name as `ClusterFacts.NetworkName`.
 - `fault.InterruptNetwork(ctx, cluster, osd, ceph.ClusterNetworkPlane)` cuts only the
   backend of one OSD while its public listener keeps serving clients.
 

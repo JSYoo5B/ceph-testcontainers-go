@@ -311,7 +311,7 @@ gateway from `Gateways` instead.
 
 The `Container` also embeds `*ceph.Container`. Its cluster methods
 (`OverrideConfig`, `CreatePool`, `Ceph`, `ControlContainer`, `WithClient`,
-`PublicAddress`, `UsesHostNetwork`, `CephVersion` and so on) are documented in
+`ceph.FactsOf` and so on) are documented in
 [ceph.md](ceph.md).
 
 The RGW-specific methods live on each gateway. A gateway is a `*rgw.Gateway`,
@@ -371,7 +371,7 @@ func (g *Gateway) DaemonEndpoint(ctx context.Context) (string, error)
 
 Returns the HTTP address used by peers inside the gateway's network. In bridge
 mode it is the gateway's IP in the cluster's Docker network
-(`cluster.NetworkName()`) with port 7480; in host mode it is the advertised
+(`FactsOf(cluster).NetworkName`) with port 7480; in host mode it is the advertised
 address and port. Use it from containers attached to the
 cluster (for example a `cluster.WithClient()` container), not from the test
 process, which uses `S3Endpoint`.
@@ -1293,8 +1293,9 @@ if _, _, err := receiver.Exec(ctx, []string{"sh", "-c",
 }
 
 // The address the gateway uses to reach the receiver.
-host := cluster.PublicAddress() // host mode
-if !cluster.UsesHostNetwork() {
+facts, err := ceph.FactsOf(cluster)
+host := facts.PublicAddress // host mode
+if !facts.UsesHostNetwork {
 	if host, err = receiver.ContainerIP(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -1509,7 +1510,7 @@ file.
 
 1. Start Vault with `vault.Run(ctx, "hashicorp/vault:1.21.4", vault.WithToken(rootToken), ...)`.
    In bridge mode attach it to the cluster network with
-   `network.WithNetworkName(nil, cluster.NetworkName())`. In host mode keep it
+   `network.WithNetworkName(nil, FactsOf(cluster).NetworkName)`. In host mode keep it
    on a Docker bridge (`network.WithBridgeNetwork()`); the host-network gateway
    reaches the container IP on the same Docker host. Register
    `testcontainers.CleanupContainer` for it.
@@ -1966,7 +1967,7 @@ The fixture never grants the global `admin` flag.
 ### Ceph Squid (19.2.x)
 
 Tentacle 20.2.x is the default. Squid 19.2.5 is supported with the following
-differences; `cluster.CephVersion()` reports the release of the essential image.
+differences; `FactsOf(cluster).CephVersion` reports the release of the essential image.
 
 | Area | Tentacle | Squid |
 | --- | --- | --- |

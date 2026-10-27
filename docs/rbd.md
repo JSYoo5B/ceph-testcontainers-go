@@ -223,10 +223,10 @@ packages. The `ceph.Container` methods most RBD tests use are:
 | `CreateClient(ctx, name, ceph.ClientCaps)`, `WithClientIdentity(client)`, `ClientConfig.Delete` | Least-privilege identities such as `profile rbd` or `profile rbd-read-only` scoped to a pool and namespace. |
 | `ConnectionConfig(ctx)` | `ceph.conf` and admin keyring for a native client outside Docker (host network mode). |
 | `CreatePool`, `Pool.Status`, `Pool.Remove`, `WaitForClean` | Pools created after `Run`; wait for `active+clean` before I/O. |
-| `Ceph(ctx, args...)`, `ClientContainer(ctx)`, `Images()` | Run the `ceph` CLI, run `rbd`/`rados` in the client toolkit, reuse the client image. |
+| `Ceph(ctx, args...)`, `ClientContainer(ctx)`, `ceph.FactsOf(cluster)` | Run the `ceph` CLI, run `rbd`/`rados` in the client toolkit, read the client image from `ClusterFacts.Images`. |
 | `fault.Pause`, `TemporaryBlocklist`, `BlocklistEntries` | Freeze and fence RBD clients (see [the lock handover example](#hand-over-an-exclusive-lock-from-an-unresponsive-client)). |
 | `OverrideConfig` | Set any Ceph option and restore it. |
-| `CephVersion()` | Branch on the Ceph release (`"20.2.4"`, `"19.2.5"`). |
+| `ceph.FactsOf(cluster)` | Branch on `ClusterFacts.CephVersion`, the Ceph release (`"20.2.4"`, `"19.2.5"`). |
 
 ### Pool and namespace functions
 
@@ -442,7 +442,7 @@ consumer: both use the same socket and cache directory. The container needs
 plugin in its plugin directory. The official Ceph image has both, and so do
 the current `rbd-aux` role images of
 [ceph-testcontainers-images](https://github.com/JSYoo5B/ceph-testcontainers-images).
-Select `cluster.Images().RBDAux` for the caller-owned cache client container. A container without them is refused with
+Select `FactsOf(cluster).Images.RBDAux` for the caller-owned cache client container. A container without them is refused with
 `ceph.ErrImageCapability`; nothing is installed at runtime.
 
 #### StartImmutableObjectCache

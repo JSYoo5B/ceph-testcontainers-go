@@ -52,7 +52,7 @@ cluster, err := ceph.Run(ctx,
 ## Detecting the release at run time
 
 Right after the first MON starts, `Run` executes `ceph --version` in the
-first MON's essential image and records the release. `cluster.CephVersion()` returns it, for
+first MON's essential image and records the release. `FactsOf(cluster).CephVersion` returns it, for
 example `"20.2.4"`. The fixture uses this value to choose commands that differ
 between releases.
 
@@ -248,7 +248,7 @@ cluster's essential image. It is an option of `AddMonitor`, `AddManager`,
 
 ```golang
 osd, err := cluster.AddOSD(ctx, ceph.WithDaemonImage("registry.example/ceph:other"))
-// osd.Image() is "registry.example/ceph:other"; cluster.EssentialImage() is unchanged.
+// osd.Image() is "registry.example/ceph:other"; FactsOf(cluster).Images.Essential is unchanged.
 release, err := osd.Version(ctx) // what the running daemon reports, such as "20.2.4"
 ```
 
@@ -273,7 +273,7 @@ Read this scope before relying on it:
 
 ## Related APIs
 
-- [ceph.md](../ceph.md): `DefaultImage`, `Run`, `CephVersion`, `EssentialImage`,
+- [ceph.md](../ceph.md): `DefaultImage`, `Run`, `FactsOf`,
   `ImageSet`, `WithImages`, `WithDaemonImage`, the error categories.
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.

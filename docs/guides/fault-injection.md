@@ -584,7 +584,8 @@ inspect, err := daemon.Inspect(ctx) // mirror.Daemons()[0]
 if err != nil {
 	return err
 }
-peer := inspect.NetworkSettings.Networks[source.NetworkName()].IPAddress
+sourceFacts, err := ceph.FactsOf(source)
+peer := inspect.NetworkSettings.Networks[sourceFacts.NetworkName].IPAddress
 sourceOSDs, err := source.OSDs(ctx)
 if err != nil {
 	t.Fatal(err)

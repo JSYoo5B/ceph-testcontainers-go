@@ -719,11 +719,12 @@ so RGW settings belong in `[client]` or `[client.admin]`. See
 
 `WithClient` attaches a container to the cluster network and copies
 `/etc/ceph/ceph.conf` and the admin keyring into it. The client role
-(`cluster.Images().Client`) is the matching client image: it has `ceph`, `rados`,
+(`FactsOf(cluster).Images.Client`) is the matching client image: it has `ceph`, `rados`,
 `rbd` and the Python bindings. The essential image is not a client image:
 
 ```golang
-client, err := testcontainers.Run(ctx, cluster.Images().Client,
+facts, err := ceph.FactsOf(cluster)
+client, err := testcontainers.Run(ctx, facts.Images.Client,
 	cluster.WithClient(),
 	ceph.WithIdleEntrypoint(),
 )
@@ -755,7 +756,8 @@ reader, err := cluster.CreateClient(ctx, "reader", ceph.ClientCaps{
 if err != nil {
 	t.Fatal(err)
 }
-restricted, err := testcontainers.Run(ctx, cluster.Images().Client,
+facts, err := ceph.FactsOf(cluster)
+restricted, err := testcontainers.Run(ctx, facts.Images.Client,
 	cluster.WithClientIdentity(reader),
 	ceph.WithIdleEntrypoint(),
 )
@@ -1064,7 +1066,7 @@ and refuse to overwrite outside edits.
 ## Related APIs
 
 - [ceph.md](../ceph.md): `Ceph`, `RunNativeCommand`, `RedactSecrets`,
-  `ControlContainer`, `ClientContainer`, `EssentialImage`, `Configuration`, `OverrideConfig`,
+  `ControlContainer`, `ClientContainer`, `FactsOf`, `Configuration`, `OverrideConfig`,
   `WithConfigFile`, `WithClient`, `WithClientIdentity`, `CreateClient`,
   `ConnectionConfig`, `CollectDiagnostics`.
 - [rbd-mirror.md](../rbd-mirror.md): `Mirror.SourceRBD`, `Mirror.DestinationRBD`,
