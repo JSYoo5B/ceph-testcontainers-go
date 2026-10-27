@@ -338,3 +338,19 @@ meaning. The names follow the decisions D7 to D9 of
 `ceph` because `Observer.OSDFlags` returns them. The reviewed mapping is in
 [the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
 The receipts of `ceph` and `override` were approved separately for this move.
+
+## 146-override-debug-level-package
+
+The change moves the runtime debug level window into the package `override`.
+The handle type `ceph.DebugLevelOverrideHandle` and its `GoString`, `Receipt`,
+`Restore` and `String` move to `override.DebugLevelHandle` under the decided
+suffix `Handle`. The method `Container.OverrideDebugLevel` becomes the package
+function `override.SetDebugLevel`: it changes kind (method to function) and
+verb, so the record lists it as removed and the function as added instead of
+pairing them. `Set` names what the call does (it replaces one runtime value and
+`Restore` puts the prior value back); `Override` is dropped because the package
+name carries the meaning. The names follow the decisions D7 to D9 of
+`override-package-boundary.md`. The reviewed mapping is in
+[the upgrade guide](../guides/upgrading-override-debug-level.md). No alias
+remains. The receipts of `ceph` and `override` were approved separately for this
+move.

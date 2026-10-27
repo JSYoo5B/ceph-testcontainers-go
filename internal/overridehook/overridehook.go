@@ -17,6 +17,7 @@ package overridehook
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -66,6 +67,9 @@ type hooks interface {
 	BlocklistEntries(ctx context.Context, c *ceph.Container) ([]ceph.BlocklistEntry, error)
 	BlocklistAdd(ctx context.Context, c *ceph.Container, address string, duration time.Duration) error
 	BlocklistRemove(ctx context.Context, c *ceph.Container, address string) error
+	OpenDebugTarget(ctx context.Context, c *ceph.Container, daemon string) (any, error)
+	DebugWindows(c *ceph.Container) any
+	CheckDebugGeneration(owned bool, identity string, running, paused bool, err error, wantIdentity, daemon string) (changed bool, _ error)
 	OSDMapFlags(ctx context.Context, c *ceph.Container) ([]string, error)
 	SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) error
 	ValidMGRModuleName(name string) bool
@@ -194,6 +198,66 @@ func BlocklistAdd(ctx context.Context, c *ceph.Container, address string, durati
 // caller holds the mutex.
 func BlocklistRemove(ctx context.Context, c *ceph.Container, address string) error {
 	return get().BlocklistRemove(ctx, c, address)
+}
+
+// DebugTarget reaches the admin socket of one owned OSD generation. A Set
+// that issued nothing returns an error that has a Changed() bool method:
+// Changed reports a terminal mismatch of the generation.
+type DebugTarget interface {
+	// Generation reports the daemon's current container generation: owned is
+	// false when the cluster no longer owns the same descriptor or has
+	// terminated, and identity is the container ID and start time.
+	Generation(ctx context.Context) (owned bool, identity string, running, paused bool, err error)
+	// Get reads the daemon's effective level of option name.
+	Get(ctx context.Context, name string) (string, error)
+	// Set issues the set only while the daemon runs generation identity. A
+	// non-nil settle means that the set may still run; settle returns nil
+	// once it can no longer.
+	Set(ctx context.Context, identity, name, value string) (settle func(context.Context) error, err error)
+}
+
+// DebugWindows admits one debug level window per key. It has a lock of its
+// own, so Release never waits behind the cluster mutex.
+type DebugWindows interface {
+	// Reserve admits owner for key, or refuses an open window with
+	// ceph.ErrInvalidRequest.
+	Reserve(key string, owner any) error
+	// Release frees key while owner still holds it.
+	Release(key string, owner any)
+}
+
+// OpenDebugTarget checks that daemon is an OSD that the cluster owns and can
+// run, and returns the target of its admin socket. It waits for the topology
+// lock under ctx and holds no lock when it returns. A terminated cluster
+// returns the error of Terminated.
+func OpenDebugTarget(ctx context.Context, c *ceph.Container, daemon string) (DebugTarget, error) {
+	target, err := get().OpenDebugTarget(ctx, c, daemon)
+	if err != nil {
+		return nil, err
+	}
+	t, ok := target.(DebugTarget)
+	if !ok {
+		return nil, errors.New("overridehook: the debug target of package ceph has an unexpected shape")
+	}
+	return t, nil
+}
+
+// DebugWindowRegistry returns the cluster's registry of open debug level
+// windows.
+func DebugWindowRegistry(c *ceph.Container) DebugWindows {
+	registry, ok := get().DebugWindows(c).(DebugWindows)
+	if !ok {
+		panic("overridehook: the debug window registry of package ceph has an unexpected shape")
+	}
+	return registry
+}
+
+// CheckDebugGeneration compares a daemon's reported generation with the one
+// that a window is bound to, as the target's own Set does before it issues a
+// command. changed is a terminal mismatch, and a non-nil error with changed
+// false is a check that could not be completed or a paused daemon.
+func CheckDebugGeneration(owned bool, identity string, running, paused bool, err error, wantIdentity, daemon string) (changed bool, _ error) {
+	return get().CheckDebugGeneration(owned, identity, running, paused, err, wantIdentity, daemon)
 }
 
 // OSDMapFlags reads the flag tokens of the native OSDMap, sorted. A dump that

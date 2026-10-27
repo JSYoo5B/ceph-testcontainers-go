@@ -132,6 +132,30 @@ func (overrideHooks) BlocklistRemove(ctx context.Context, c *Container, address 
 	return err
 }
 
+// OpenDebugTarget checks that daemon is an OSD that this cluster owns and can
+// run, and returns the target of its admin socket. It waits for the topology
+// lock under ctx and holds no lock when it returns. A terminated cluster
+// returns the error of Terminated.
+func (overrideHooks) OpenDebugTarget(ctx context.Context, c *Container, daemon string) (any, error) {
+	target, err := c.openDebugTarget(ctx, daemon)
+	if err != nil {
+		return nil, err
+	}
+	return target, nil
+}
+
+// DebugWindows returns the cluster's registry of open debug level windows.
+// It has its own leaf lock and needs no cluster mutex.
+func (overrideHooks) DebugWindows(c *Container) any { return &c.debugLevels }
+
+// CheckDebugGeneration compares a daemon's reported generation with the one
+// that a window is bound to. It is the check that the target's own Set makes
+// before it issues a command, so that both agree on the texts and on which
+// mismatch is terminal.
+func (overrideHooks) CheckDebugGeneration(owned bool, identity string, running, paused bool, err error, wantIdentity, daemon string) (changed bool, _ error) {
+	return checkDebugLevelGeneration(debugLevelGeneration{owned: owned, identity: identity, running: running, paused: paused}, err, wantIdentity, daemon)
+}
+
 // OSDMapFlags reads the flag tokens of the native OSDMap, sorted, with the
 // decode checks of the OSD policy dump. The caller holds the mutex.
 func (overrideHooks) OSDMapFlags(ctx context.Context, c *Container) ([]string, error) {

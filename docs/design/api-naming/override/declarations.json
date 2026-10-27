@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "override",
-  "count": 13,
+  "count": 19,
   "entries": [
     {
       "current": "override.AddBlocklist",
@@ -31,6 +31,44 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*BlocklistHandle",
       "proposed": "override.BlocklistHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelHandle",
+      "kind": "type",
+      "proposed": "override.DebugLevelHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelHandle.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "DebugLevelHandle",
+      "proposed": "override.DebugLevelHandle.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelHandle.Receipt",
+      "kind": "method",
+      "signature": "func() ceph.DebugLevelReceipt",
+      "receiver": "*DebugLevelHandle",
+      "proposed": "override.DebugLevelHandle.Receipt",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*DebugLevelHandle",
+      "proposed": "override.DebugLevelHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.DebugLevelHandle.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "DebugLevelHandle",
+      "proposed": "override.DebugLevelHandle.String",
       "decision": "baseline"
     },
     {
@@ -73,6 +111,13 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*OSDFlagHandle",
       "proposed": "override.OSDFlagHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.SetDebugLevel",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, setting ceph.DebugLevelSetting) (*DebugLevelHandle, error)",
+      "proposed": "override.SetDebugLevel",
       "decision": "baseline"
     },
     {

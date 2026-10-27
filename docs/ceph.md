@@ -1502,7 +1502,7 @@ methods that only read state stay available, including `Container.Pool`.
 | Methods | Why they are refused |
 | --- | --- |
 | `CreateClient`, `ClientConfig.Delete`, `ClientConfig.UpdateCaps`, `ClientConfig.ReplaceKey`, `ClientConfig.Revoke`, `ClientConfig.Capabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `OverrideConfig`, `OverrideDebugLevel`, `override.SetOSDFlag`, `override.SetMGRModule`, `OverrideMessengerPolicy`, `override.AddBlocklist` and `override.SetFullRatios` (see [override](override.md)), `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
+| `OverrideConfig`, `override.SetDebugLevel`, `override.SetOSDFlag`, `override.SetMGRModule`, `OverrideMessengerPolicy`, `override.AddBlocklist` and `override.SetFullRatios` (see [override](override.md)), `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `OSDContainer.AdminSocket`, `MonitorContainer.AdminSocket`, `ManagerContainer.AdminSocket`, `OSDContainer.Version`, `MonitorContainer.Version`, `ManagerContainer.Version`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
 | `AddOSD`, `AddOSDWithConfig`, `OSDContainer.Remove`, `OSDContainer.Detach`, `DetachedOSD.Reopen`, `AddMonitor`, `MonitorContainer.Remove`, `AddManager`, `ManagerContainer.Remove` | Change the topology. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
@@ -1574,7 +1574,7 @@ Methods that change cluster state temporarily return a restoration handle:
 | Handle | Returned by | Ends with |
 | --- | --- | --- |
 | `*ceph.ConfigOverrideHandle` | [OverrideConfig](#overrideconfig) | `Restore` |
-| `*ceph.DebugLevelOverrideHandle` | [OverrideDebugLevel](#overridedebuglevel) | `Restore` |
+| `*override.DebugLevelHandle` | [override.SetDebugLevel](override.md#setdebuglevel) | `Restore` |
 | `*override.OSDFlagHandle` | [override.SetOSDFlag](override.md#setosdflag) | `Restore` |
 | `*override.MGRModuleHandle` | [override.SetMGRModule](override.md#setmgrmodule) | `Restore` |
 | `*override.FullRatiosHandle` | [override.SetFullRatios](override.md#setfullratios) | `Restore` |
@@ -1812,7 +1812,7 @@ or writing a file are logged and recorded, never retried in a loop, and do
 not stop the later phases. If `ArtifactDir` itself cannot be created, Go
 fails the test, and the cleanups and `Terminate` still run.
 
-`Finalization.TrackDebugLevel` registers an [OverrideDebugLevel](#overridedebuglevel)
+`Finalization.TrackDebugLevel` registers an [override.SetDebugLevel](override.md#setdebuglevel)
 handle, including the non-nil handle that comes with an apply error. Each call
 is one window in registration order (`debug_windows[].sequence`); windows on the
 same daemon, option and generation are never merged or deduplicated. The
@@ -1823,7 +1823,7 @@ separate record and the earlier copy still shows the raised level. The copy
 reads only the handle's local state; it never sets, restores or rereads a
 daemon, and a generic cleanup success does not stand in for `restored-verified`.
 `TrackDebugLevel` takes a `ceph.DebugLevelReceipter` (an interface with
-`Receipt() DebugLevelReceipt`), which `*DebugLevelOverrideHandle` implements.
+`Receipt() DebugLevelReceipt`), which `*override.DebugLevelHandle` implements.
 A nil interface, a typed nil (an interface whose dynamic value is a nil
 pointer, map, slice, func, chan or interface; `Receipt` is never called on it,
 so a method that is not nil-safe cannot panic), a zero-value handle and any
@@ -3546,93 +3546,28 @@ masked entries. Each `ceph.ConfigEntry` has `Section`, `Mask`, `Name`, `Value`,
 effective values; use `ceph config show <daemon> <option>` for a daemon's
 effective value. Entries can contain sensitive values.
 
-#### OverrideDebugLevel
+#### Debug level types
 
-```golang
-func (c *Container) OverrideDebugLevel(ctx context.Context, setting ceph.DebugLevelSetting) (*ceph.DebugLevelOverrideHandle, error)
-```
+The runtime debug level window is the package function
+[override.SetDebugLevel](override.md#setdebuglevel) and its
+`*override.DebugLevelHandle`; the call and its restoration rules are documented
+there. 0.x: old names are removed without aliases, so `Container.OverrideDebugLevel`
+and `ceph.DebugLevelOverrideHandle` no longer exist. These types stay in `ceph`
+because the failure manifest copies the receipt:
 
-Opens one runtime debug level window on one running OSD that the cluster owns.
-`ceph.DebugLevelSetting` has `Daemon` (such as `osd.0`), `Name` (`debug_ms` or
-`debug_osd`) and `Level` (`N` or `N/M`, from 0 to 99). Other roles and options
-are refused; neither verbose levels nor all daemons are ever selected
-automatically.
-
-The window changes the daemon's runtime value through its admin socket, as
-[AdminSocket](#adminsocket) reaches it, and never the central configuration
-database; [OverrideConfig](#overrideconfig) is the stored-entry model. A daemon
-restart drops a runtime value. The call reads the effective prior level, sets
-the requested level and verifies the normalized readback, so `20` reads back as
-`20/20`. The window is bound to the OSD container's generation (container ID and
-start time). Only one window per daemon and option is admitted at a time. Each
-set is issued only while the OSD still runs that generation, and the cluster's
-own topology operations, such as `OSDContainer.Remove`, `OSDContainer.Detach` and `DetachedOSD.Reopen`, wait
-until the set has ended.
-
-`DebugLevelOverrideHandle.Restore` first checks the same generation and that
-the daemon still shows the window's own value, then sets the prior level and
-verifies it:
-
-- A prior level that is already in place counts as restored.
-- Any other value is an outside edit; it is preserved, not overwritten.
-- A stopped, restarted, replaced or removed OSD, or a terminated cluster, is not
-  restored: the window's process is gone.
-- A paused OSD, an unavailable socket or an unverified readback leaves the
-  window open; a later `Restore` reconciles it first.
-- A set of the window whose end could not be confirmed may still apply. The
-  window keeps it open as unconfirmed, and a later `Restore` first confirms that
-  the set has stopped before it reads, sets or releases anything. Until then
-  `OSDContainer.Remove` and `OSDContainer.Detach` first stop that set or refuse, so it cannot reach
-  a replacement OSD through the shared socket path.
-
-The generation is checked again after each read, so a replacement during a read
-is reported as a changed target instead of a level to restore.
-
-A set or readback that fails returns a non-nil handle with the error, because a
-lost reply can still have applied. Readbacks after a set use a fresh context
-bounded by [WithStartupTimeout](#withstartuptimeout).
-
-`DebugLevelOverrideHandle.Receipt` returns a JSON-serializable
-`ceph.DebugLevelReceipt`: daemon, option, generation, requested text, prior,
-applied and restored readbacks, the current `ceph.DebugLevelState` and every
-`ceph.DebugLevelTransition` with its time, readback and error. The states are
-`DebugLevelPriorRead`, `DebugLevelApplyAttempted`, then `DebugLevelApplied` or
-`DebugLevelApplyUncertain`; `Restore` records `DebugLevelRestoreAttempted`,
-then `DebugLevelRestored`, `DebugLevelConflict`, `DebugLevelTargetChanged` or
-`DebugLevelUnconfirmed`. Restored, conflict and target-changed are terminal and
-release the admission; `Restore` then returns nil or the same error again.
-`DebugLevelNotApplied` (`not-applied`) and the receipt's `Reason` are for a window
-that was refused before any native step; `OverrideDebugLevel` itself still
-returns a nil handle for a refusal, and a real window never reports
-`not-applied`.
-
-With [TerminateOnCleanup](#terminateoncleanup), register the removal of clients
-first and the restoration afterward. The cleanups run in reverse order after the
-failure archive, so a known failure is archived while the level is still raised,
-and the level is restored before the clients are removed. A restoration that is
-the first failure triggers the `after-cleanup` archive, and Terminate still
-runs:
-
-```golang
-window, err := cluster.OverrideDebugLevel(ctx, ceph.DebugLevelSetting{
-	Daemon: "osd.0", Name: "debug_osd", Level: "20",
-})
-if window != nil {
-	finalization.TrackDebugLevel(window) // optional: receipts in the failure manifest
-	finalization.Cleanup("restore osd.0 debug_osd", window.Restore)
-}
-if err != nil {
-	t.Fatal(err)
-}
-```
-
-The readbacks around each set are not an atomic compare-and-swap. Do not change
-the same daemon and option elsewhere while a window is open; an outside write of
-the window's own value cannot be told apart from it. A restart of the OSD
-container from outside the cluster after the last check is not held off.
-Verbose levels cost log
-volume and can change timing; levels and durations for particular investigations
-are not established yet.
+- `ceph.DebugLevelSetting` has `Daemon` (such as `osd.0`), `Name` (`debug_ms` or
+  `debug_osd`) and `Level` (`N` or `N/M`, from 0 to 99).
+- `ceph.DebugLevelReceipt` is the JSON-serializable record of one window: daemon,
+  option, generation, requested text, prior, applied and restored readbacks, the
+  current `ceph.DebugLevelState`, the `Reason` of a not-applied window and every
+  `ceph.DebugLevelTransition` with its time, readback and error.
+- `ceph.DebugLevelState` is `DebugLevelPriorRead`, `DebugLevelApplyAttempted`,
+  then `DebugLevelApplied` or `DebugLevelApplyUncertain`; a restoration records
+  `DebugLevelRestoreAttempted`, then `DebugLevelRestored`, `DebugLevelConflict`,
+  `DebugLevelTargetChanged` or `DebugLevelUnconfirmed`. `DebugLevelNotApplied`
+  (`not-applied`) is a window that was refused before any native step.
+- `ceph.DebugLevelReceipter` is the interface that `Finalization.TrackDebugLevel`
+  takes; see [TerminateOnCleanup](#terminateoncleanup).
 
 ### Container Methods: MGR modules and services
 
