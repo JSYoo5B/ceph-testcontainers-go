@@ -12,21 +12,17 @@ import (
 	"time"
 )
 
-// trackedDebugWindow opens a window on a fake with a fixed clock, so that two
+// trackedDebugWindow registers a fake window with a fixed clock, so that two
 // windows on the same daemon, option and generation have identical receipts
 // apart from their registration order.
-func trackedDebugWindow(t *testing.T, fx *finalizationFixture, registry *debugLevelRegistry, fake *debugLevelFake, level string) *DebugLevelOverrideHandle {
-	t.Helper()
-	h, err := openDebugLevelFake(t.Context(), registry, fake, level)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fx.TrackDebugLevel(h)
-	return h
+func trackedDebugWindow(fx *finalizationFixture, level string) *fakeDebugWindow {
+	w := newFakeDebugWindow(level)
+	fx.TrackDebugLevel(w)
+	return w
 }
 
-func restoreStep(fx *finalizationFixture, h *DebugLevelOverrideHandle, name string) {
-	fx.Cleanup(name, func(ctx context.Context) error { return h.Restore(ctx) })
+func restoreStep(fx *finalizationFixture, w *fakeDebugWindow, name string) {
+	fx.Cleanup(name, w.restore)
 }
 
 // debugWindowProblems is the oracle of the controls: it lists every rule
@@ -69,12 +65,9 @@ func debugWindowProblems(m finalizationManifest, want []wantedDebugWindow) []str
 func TestFinalizationSnapshotsDebugWindowsAroundCleanup(t *testing.T) {
 	t.Run("workload failure then successful restore", func(t *testing.T) {
 		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
-		var registry debugLevelRegistry
-		fake := newDebugLevelFake("1/5")
-		h := trackedDebugWindow(t, fx, &registry, fake, "20")
+		h := trackedDebugWindow(fx, "20")
 		restoreStep(fx, h, "restore debug_osd")
 		fx.tb.Errorf("workload failed")
-		getsBefore := fake.gets
 		fx.run()
 		manifest := readManifest(t, fx.archives(t)[0])
 		if problems := debugWindowProblems(manifest, []wantedDebugWindow{{DebugLevelApplied, DebugLevelRestored, false}}); len(problems) != 0 {
@@ -91,38 +84,34 @@ func TestFinalizationSnapshotsDebugWindowsAroundCleanup(t *testing.T) {
 		if after.Restored != "1/5" || after.Applied != "20/20" || len(after.Transitions) <= len(before.Transitions) || h.Receipt().State != DebugLevelRestored {
 			t.Fatalf("final copy %+v", after)
 		}
-		// The copy only reads local state: the restore's own reads are the
-		// only ones, and the snapshot issued no set.
-		if fake.setCalls()[0] != "debug_osd=20" || len(fake.setCalls()) != 2 {
-			t.Fatalf("sets %v (gets %d -> %d)", fake.setCalls(), getsBefore, fake.gets)
+		// The copy only reads local state: the cleanup's restore is the only
+		// one, and taking the snapshots restored nothing.
+		if h.restoreCalls() != 1 {
+			t.Fatalf("%d restores", h.restoreCalls())
 		}
 	})
 	t.Run("restoration as the first failure", func(t *testing.T) {
 		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
-		var registry debugLevelRegistry
-		fake := newDebugLevelFake("1/5")
-		h := trackedDebugWindow(t, fx, &registry, fake, "20")
+		h := trackedDebugWindow(fx, "20")
 		restoreStep(fx, h, "restore debug_osd")
-		fake.edit(func(f *debugLevelFake) { f.gen.paused = true })
+		h.paused = true
 		fx.run()
 		manifest := readManifest(t, fx.archives(t)[0])
 		if problems := debugWindowProblems(manifest, []wantedDebugWindow{{DebugLevelUnconfirmed, DebugLevelUnconfirmed, false}}); len(problems) != 0 {
 			t.Fatalf("%v", problems)
 		}
 		w := manifest.DebugWindows[0]
-		if manifest.Phase != "after-cleanup" || w.Archive.Phase != "after-cleanup" || w.Final.Receipt.Restored != "" || fake.current() != "20/20" {
-			t.Fatalf("manifest %q window %+v value %q", manifest.Phase, w, fake.current())
+		if manifest.Phase != "after-cleanup" || w.Archive.Phase != "after-cleanup" || w.Final.Receipt.Restored != "" || h.Receipt().Restored != "" {
+			t.Fatalf("manifest %q window %+v", manifest.Phase, w)
 		}
 	})
 	t.Run("two sequential windows on one daemon option and generation", func(t *testing.T) {
 		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
-		var registry debugLevelRegistry
-		fake := newDebugLevelFake("1/5")
-		first := trackedDebugWindow(t, fx, &registry, fake, "20")
-		if err := first.Restore(t.Context()); err != nil {
+		first := trackedDebugWindow(fx, "20")
+		if err := first.restore(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		second := trackedDebugWindow(t, fx, &registry, fake, "20")
+		second := trackedDebugWindow(fx, "20")
 		restoreStep(fx, second, "restore second")
 		fx.tb.Errorf("workload failed")
 		fx.run()
@@ -141,15 +130,9 @@ func TestFinalizationSnapshotsDebugWindowsAroundCleanup(t *testing.T) {
 	})
 	t.Run("missing and apply-error handles", func(t *testing.T) {
 		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
-		var registry debugLevelRegistry
-		fake := newDebugLevelFake("1/5")
-		fake.setFaults = []debugLevelSetFault{{applies: true, err: errors.New("reply lost")}}
-		uncertain, err := openDebugLevelFake(t.Context(), &registry, fake, "20")
-		if err == nil || uncertain == nil {
-			t.Fatalf("handle %v err %v", uncertain, err)
-		}
+		uncertain := newUncertainFakeDebugWindow(errors.New("reply lost"))
 		fx.TrackDebugLevel(nil)
-		fx.TrackDebugLevel(&DebugLevelOverrideHandle{})
+		fx.TrackDebugLevel(&fakeDebugWindow{})
 		fx.TrackDebugLevel(uncertain)
 		fx.tb.Errorf("workload failed")
 		fx.run()
@@ -166,13 +149,11 @@ func TestFinalizationSnapshotsDebugWindowsAroundCleanup(t *testing.T) {
 	})
 	t.Run("passing run archives nothing and registration is local", func(t *testing.T) {
 		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
-		var registry debugLevelRegistry
-		fake := newDebugLevelFake("1/5")
-		h := trackedDebugWindow(t, fx, &registry, fake, "20")
+		h := trackedDebugWindow(fx, "20")
 		restoreStep(fx, h, "restore")
 		fx.run()
-		if len(fx.archives(t)) != 0 || fake.current() != "1/5" {
-			t.Fatalf("archives %v value %q", fx.archives(t), fake.current())
+		if len(fx.archives(t)) != 0 || h.Receipt().Restored != "1/5" {
+			t.Fatalf("archives %v receipt %+v", fx.archives(t), h.Receipt())
 		}
 	})
 	t.Run("no registration leaves an empty list", func(t *testing.T) {
@@ -198,12 +179,10 @@ func TestFinalizationSnapshotsDebugWindowsAroundCleanup(t *testing.T) {
 func TestFinalizationDebugWindowBoundsAndRedaction(t *testing.T) {
 	t.Run("transitions are bounded and keep the last", func(t *testing.T) {
 		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
-		var registry debugLevelRegistry
-		fake := newDebugLevelFake("1/5")
-		h := trackedDebugWindow(t, fx, &registry, fake, "20")
-		fake.edit(func(f *debugLevelFake) { f.gen.paused = true })
+		h := trackedDebugWindow(fx, "20")
+		h.paused = true
 		for range 60 {
-			_ = h.Restore(t.Context())
+			_ = h.restore(t.Context())
 		}
 		total := len(h.Receipt().Transitions)
 		fx.tb.Errorf("workload failed")
@@ -228,10 +207,7 @@ func TestFinalizationDebugWindowBoundsAndRedaction(t *testing.T) {
 	})
 	t.Run("errors are redacted and clipped", func(t *testing.T) {
 		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true, Diagnostics: DiagnosticsConfig{RedactValues: []string{"s3cr3t"}}})
-		var registry debugLevelRegistry
-		fake := newDebugLevelFake("1/5")
-		fake.setFaults = []debugLevelSetFault{{err: errors.New("token s3cr3t rejected " + strings.Repeat("x", 4*maxFinalizationDebugError))}}
-		h, _ := openDebugLevelFake(t.Context(), &registry, fake, "20")
+		h := newUncertainFakeDebugWindow(errors.New("token s3cr3t rejected " + strings.Repeat("x", 4*maxFinalizationDebugError)))
 		fx.TrackDebugLevel(h)
 		fx.tb.Errorf("workload failed")
 		fx.run()
@@ -252,9 +228,7 @@ func TestFinalizationDebugWindowBoundsAndRedaction(t *testing.T) {
 // about from the same inputs.
 func TestFinalizationDebugWindowNegativeControls(t *testing.T) {
 	fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
-	var registry debugLevelRegistry
-	fake := newDebugLevelFake("1/5")
-	first := trackedDebugWindow(t, fx, &registry, fake, "20")
+	first := trackedDebugWindow(fx, "20")
 	restoreStep(fx, first, "restore first")
 	fx.TrackDebugLevel(nil)
 	fx.tb.Errorf("workload failed")
@@ -308,18 +282,16 @@ func TestFinalizationDebugWindowNegativeControls(t *testing.T) {
 	}
 	t.Run("a map keyed by target and time keeps one of two sequential windows", func(t *testing.T) {
 		fx2 := newFinalizationFixture(t, FinalizationConfig{})
-		var registry debugLevelRegistry
-		fake := newDebugLevelFake("1/5")
-		a := trackedDebugWindow(t, fx2, &registry, fake, "20")
-		if err := a.Restore(t.Context()); err != nil {
+		a := trackedDebugWindow(fx2, "20")
+		if err := a.restore(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		b := trackedDebugWindow(t, fx2, &registry, fake, "20")
-		if err := b.Restore(t.Context()); err != nil {
+		b := trackedDebugWindow(fx2, "20")
+		if err := b.restore(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		byTarget := map[string]DebugLevelReceipt{}
-		for _, h := range []*DebugLevelOverrideHandle{a, b} {
+		for _, h := range []*fakeDebugWindow{a, b} {
 			r := h.Receipt()
 			byTarget[r.Daemon+"/"+r.Name+"/"+r.Generation+"/"+r.Transitions[0].At.Format(time.RFC3339Nano)] = r
 		}
@@ -330,4 +302,62 @@ func TestFinalizationDebugWindowNegativeControls(t *testing.T) {
 			t.Fatalf("the registration list has %d entries", len(fx2.debugWindows))
 		}
 	})
+}
+
+// TestFinalizationRestoreOrder pins the order in which Finalization runs a
+// window's restore among the other cleanups and the failure archive.
+func TestFinalizationRestoreOrder(t *testing.T) {
+	t.Run("known failure is archived before restoration", func(t *testing.T) {
+		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
+		w := trackedDebugWindow(fx, "20")
+		fx.Cleanup("remove client", func(context.Context) error { fx.event("remove client"); return nil })
+		fx.Cleanup("restore debug_osd", func(ctx context.Context) error {
+			fx.event("restore at " + w.Receipt().Applied)
+			return w.restore(ctx)
+		})
+		fx.tb.Errorf("workload failed")
+		fx.run()
+		want := []string{"diagnostics", "crash", "restore at 20/20", "remove client", "terminate"}
+		if events := debugLevelFinalizationEvents(fx); !slices.Equal(events, want) {
+			t.Fatalf("events %v, want %v", events, want)
+		}
+		manifest := readManifest(t, fx.archives(t)[0])
+		if manifest.Phase != "before-cleanup" || manifest.Cleanups[0].Name != "restore debug_osd" || manifest.Cleanups[0].Error != "" || w.Receipt().State != DebugLevelRestored {
+			t.Fatalf("manifest %+v receipt %+v", manifest.Cleanups, w.Receipt())
+		}
+	})
+	t.Run("restoration as the first failure", func(t *testing.T) {
+		fx := newFinalizationFixture(t, FinalizationConfig{Archive: true})
+		w := trackedDebugWindow(fx, "20")
+		fx.Cleanup("remove client", func(context.Context) error { fx.event("remove client"); return nil })
+		fx.Cleanup("restore debug_osd", func(ctx context.Context) error {
+			fx.event("restore")
+			return w.restore(ctx)
+		})
+		w.paused = true
+		fx.run()
+		want := []string{"restore", "remove client", "diagnostics", "crash", "terminate"}
+		if events := debugLevelFinalizationEvents(fx); !slices.Equal(events, want) {
+			t.Fatalf("events %v, want %v", events, want)
+		}
+		manifest := readManifest(t, fx.archives(t)[0])
+		if manifest.Phase != "after-cleanup" || !manifest.Trigger.CleanupFailed || !strings.Contains(manifest.Cleanups[0].Error, "paused") ||
+			manifest.Termination == nil || !manifest.Final || w.Receipt().State != DebugLevelUnconfirmed {
+			t.Fatalf("manifest %+v", manifest)
+		}
+	})
+}
+
+// debugLevelFinalizationEvents merges the two collectors' events, which run
+// concurrently, into a fixed order.
+func debugLevelFinalizationEvents(fx *finalizationFixture) []string {
+	fx.mu.Lock()
+	defer fx.mu.Unlock()
+	events := slices.Clone(fx.events)
+	for i := 0; i+1 < len(events); i++ {
+		if events[i] == "crash" && events[i+1] == "diagnostics" {
+			events[i], events[i+1] = events[i+1], events[i]
+		}
+	}
+	return events
 }

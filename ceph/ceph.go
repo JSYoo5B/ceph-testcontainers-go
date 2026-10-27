@@ -91,7 +91,7 @@ type Container struct {
 	// overrides and full ratios override, reserved or held; see
 	// faultRegistry. It is guarded by mu.
 	faults faultRegistry
-	// debugLevels admits one OverrideDebugLevel window per daemon and
+	// debugLevels admits one override.SetDebugLevel window per daemon and
 	// option; it has its own lock.
 	debugLevels debugLevelRegistry
 	// daemonRunner replaces runContainer for AddMonitor and AddManager containers in tests.

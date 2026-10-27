@@ -95,7 +95,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"RefreshMonitorConfig":    sharedExclusive,
 	"RepairPG":                sharedExclusive,
 	"OverrideConfig":          sharedExclusive,
-	"OverrideDebugLevel":      sharedExclusive,
 	"OverrideFullRatios":      sharedExclusive,
 	"OverrideMGRModule":       sharedExclusive,
 	"OverrideMessengerPolicy": sharedExclusive,
@@ -176,7 +175,8 @@ func (c *Container) admitFault(op string) error {
 // *Container method that it replaced. The override package has a test that
 // requires an entry here for every exported function of the package.
 var sharedOverridePolicies = map[string]sharedPolicy{
-	"override.AddBlocklist": sharedExclusive,
+	"override.AddBlocklist":  sharedExclusive,
+	"override.SetDebugLevel": sharedExclusive,
 }
 
 // admitOverride refuses the override operation op while a SharedCluster

@@ -3,12 +3,14 @@ package overridehook_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/overridehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // TestRegistryThroughHooks calls every method of the seam that needs no
@@ -99,5 +101,75 @@ func TestRegistryThroughHooks(t *testing.T) {
 	servicehook.Unlock(c)
 	if err := c.Terminate(ctx); err != nil {
 		t.Fatalf("Terminate undid a released override: %v", err)
+	}
+}
+
+// inertControl stands for a control container that no test command reaches.
+type inertControl struct{ testcontainers.Container }
+
+// TestDebugHooks calls the debug level operations of the seam that need no
+// native command. The window logic runs against a fake target in the tests of
+// package override.
+func TestDebugHooks(t *testing.T) {
+	ctx := t.Context()
+	c := servicehook.TestCluster(inertControl{}, servicehook.TestConfig{StartupTimeout: time.Second, OSDs: 1})
+	if err := overridehook.Admit(c, "override.SetDebugLevel"); err != nil {
+		t.Fatalf("a cluster of its own refused SetDebugLevel: %v", err)
+	}
+	shared := servicehook.TestCluster(nil, servicehook.TestConfig{Shared: true})
+	if err := overridehook.Admit(shared, "override.SetDebugLevel"); !errors.Is(err, ceph.ErrSharedCluster) {
+		t.Fatalf("a shared cluster admitted SetDebugLevel: %v", err)
+	}
+	if target, err := overridehook.OpenDebugTarget(ctx, c, "osd.0"); err != nil || target == nil {
+		t.Fatalf("an owned OSD: %v %v", target, err)
+	}
+	for _, daemon := range []string{"osd.5", "mon.a", "osd.01"} {
+		if target, err := overridehook.OpenDebugTarget(ctx, c, daemon); target != nil || !errors.Is(err, ceph.ErrInvalidRequest) {
+			t.Errorf("%s: target %v err %v", daemon, target, err)
+		}
+	}
+	closed := servicehook.TestCluster(inertControl{}, servicehook.TestConfig{Closed: true, OSDs: 1})
+	if _, err := overridehook.OpenDebugTarget(ctx, closed, "osd.0"); !errors.Is(err, overridehook.Terminated()) {
+		t.Errorf("a terminated cluster: %v", err)
+	}
+	// The lock is released again: the cluster mutex can be taken.
+	overridehook.WithTopologyNoContext(c, func() {})
+	registry := overridehook.DebugWindowRegistry(c)
+	first, second := new(int), new(int)
+	if err := registry.Reserve("osd.0/debug_osd", first); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Reserve("osd.0/debug_osd", second); !errors.Is(err, ceph.ErrInvalidRequest) {
+		t.Errorf("a second window was admitted: %v", err)
+	}
+	registry.Release("osd.0/debug_osd", second)
+	if err := registry.Reserve("osd.0/debug_osd", second); err == nil {
+		t.Error("a release by a non-owner freed the slot")
+	}
+	registry.Release("osd.0/debug_osd", first)
+	if err := registry.Reserve("osd.0/debug_osd", second); err != nil {
+		t.Errorf("the slot was not freed: %v", err)
+	}
+	if overridehook.DebugWindowRegistry(c) == overridehook.DebugWindowRegistry(shared) {
+		t.Error("two clusters share one registry")
+	}
+	for name, test := range map[string]struct {
+		owned, running, paused bool
+		identity               string
+		err                    error
+		changed                bool
+		want                   string
+	}{
+		"same":      {true, true, false, "id", nil, false, ""},
+		"inspect":   {true, true, false, "id", errors.New("boom"), false, "inspect osd.0"},
+		"not owned": {false, true, false, "id", nil, true, "no longer owned"},
+		"other":     {true, true, false, "id2", nil, true, "another container generation"},
+		"stopped":   {true, false, false, "id", nil, true, "is stopped"},
+		"paused":    {true, true, true, "id", nil, false, "is paused"},
+	} {
+		changed, err := overridehook.CheckDebugGeneration(test.owned, test.identity, test.running, test.paused, test.err, "id", "osd.0")
+		if changed != test.changed || (test.want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), test.want)) {
+			t.Errorf("%s: changed %v err %v", name, changed, err)
+		}
 	}
 }
