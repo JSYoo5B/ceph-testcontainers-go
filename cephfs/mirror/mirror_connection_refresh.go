@@ -87,7 +87,11 @@ func (mirror *Mirror) refreshMonitorConfig(ctx context.Context, refresh func(con
 // must not race this operation; Ceph provides no value compare-and-swap here.
 func (mirror *Mirror) RefreshPeerMonitorConfig(ctx context.Context) error {
 	return mirror.refreshPeerMonitorConfig(ctx, func(ctx context.Context) (string, error) {
-		return mirror.destination.MonitorBootstrapAddresses(ctx)
+		observer, err := ceph.Observe(mirror.destination)
+		if err != nil {
+			return "", err
+		}
+		return observer.MonitorBootstrapAddresses(ctx)
 	})
 }
 
@@ -234,7 +238,11 @@ func (mirror *Mirror) normalizeCephFSPeerBootstrap(ctx context.Context, token st
 	if err := mirror.checkCephFSRefreshFilesystems(ctx); err != nil {
 		return "", err
 	}
-	identity, err := mirror.readCephFSRemoteMonitorIdentity(ctx, mirror.destination.MonitorBootstrapAddresses)
+	destination, err := ceph.Observe(mirror.destination)
+	if err != nil {
+		return "", err
+	}
+	identity, err := mirror.readCephFSRemoteMonitorIdentity(ctx, destination.MonitorBootstrapAddresses)
 	if err != nil {
 		return "", err
 	}

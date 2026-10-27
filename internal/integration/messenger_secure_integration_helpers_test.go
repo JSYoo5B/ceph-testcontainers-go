@@ -16,7 +16,7 @@ import (
 
 func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ceph.Container) {
 	t.Helper()
-	addresses, err := cluster.MonitorBootstrapAddresses(ctx)
+	addresses, err := observeCluster(cluster).MonitorBootstrapAddresses(ctx)
 	if err != nil || !strings.Contains(addresses, "v2:") || strings.Contains(addresses, "v1:") {
 		t.Fatal("secure MON bootstrap is not v2-only", err)
 	}

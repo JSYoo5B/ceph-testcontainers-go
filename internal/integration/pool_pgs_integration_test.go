@@ -42,7 +42,7 @@ func TestPoolPGReportedBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	quorum, err := cluster.QuorumStatus(ctx)
+	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil || quorum.MonMap.FSID == "" || len(clusteraccess.OSDs(t, cluster)) != 0 {
 		t.Fatal("cold PG original fixture identity unavailable", err)
 	}

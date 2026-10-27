@@ -692,7 +692,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 	if _, err := monitorHandle(t, ctx, cluster, monitors[0]).AdminSocket(ctx, "quorum_status"); err == nil || authQueryStatus(err) != authQueryUnsupported {
 		t.Fatalf("an unknown admin socket command gave %v, status %s", err, authQueryStatus(err))
 	}
-	status, err := cluster.ManagerStatus(ctx)
+	status, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil || !status.Available {
 		t.Fatalf("no active MGR: %+v, %v", status, err)
 	}

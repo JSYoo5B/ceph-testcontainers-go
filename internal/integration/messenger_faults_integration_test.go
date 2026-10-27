@@ -101,7 +101,7 @@ func TestMessengerFaultInjection(t *testing.T) {
 						t.Fatalf("object %s with primary osd.%d: %+v", result.Name, primaries[result.Name], result)
 					}
 				}
-				states, err := cluster.OSDStates(ctx)
+				states, err := observeCluster(cluster).OSDStates(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}

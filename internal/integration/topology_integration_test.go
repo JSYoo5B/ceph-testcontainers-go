@@ -68,7 +68,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 				t.Fatal(err)
 			}
 			topologyWait(t, ctx, func() bool {
-				q, err := cluster.QuorumStatus(ctx)
+				q, err := observeCluster(cluster).QuorumStatus(ctx)
 				return err == nil && len(q.QuorumNames) == 2
 			})
 			if err := cluster.WaitForQuorum(ctx); err != nil {
@@ -81,7 +81,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 				t.Fatal(err)
 			}
 			topologyWait(t, ctx, func() bool {
-				q, err := cluster.QuorumStatus(ctx)
+				q, err := observeCluster(cluster).QuorumStatus(ctx)
 				return err == nil && len(q.QuorumNames) == 3
 			})
 			session.check(t, ctx, client, "one-monitor-restarted")
@@ -111,7 +111,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 				}
 			}
 			topologyWait(t, ctx, func() bool {
-				q, err := cluster.QuorumStatus(ctx)
+				q, err := observeCluster(cluster).QuorumStatus(ctx)
 				return err == nil && len(q.QuorumNames) == 3
 			})
 			topologyFreshConnection(t, ctx, client, false)
@@ -143,7 +143,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 			if _, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "before-failover"}); err != nil {
 				t.Fatal(err)
 			}
-			mgrStatus, err := cluster.ManagerStatus(ctx)
+			mgrStatus, err := observeCluster(cluster).ManagerStatus(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -156,7 +156,7 @@ func TestMonitorManagerTopology(t *testing.T) {
 				}
 			}
 			topologyWait(t, ctx, func() bool {
-				status, err := cluster.ManagerStatus(ctx)
+				status, err := observeCluster(cluster).ManagerStatus(ctx)
 				return err == nil && status.Available && status.ActiveName != previous
 			})
 			if _, err := fs.CreateSubvolumeGroup(ctx, cephfs.SubvolumeGroupConfig{Name: "after-failover"}); err != nil {

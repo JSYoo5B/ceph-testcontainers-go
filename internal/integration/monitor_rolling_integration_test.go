@@ -53,7 +53,7 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			}
 			mds := filesystem.MDSs()[0]
 			managerID, gatewayID, mdsID := manager.GetContainerID(), gateway.GetContainerID(), mds.GetContainerID()
-			initialManager, err := cluster.ManagerStatus(ctx)
+			initialManager, err := observeCluster(cluster).ManagerStatus(ctx)
 			if err != nil || !initialManager.Available || initialManager.ActiveName != manager.DaemonName || initialManager.ActiveGID == 0 {
 				t.Fatalf("initial native MGR identity is unavailable: %v", err)
 			}
@@ -127,7 +127,7 @@ func TestMonitorRollingReplacement(t *testing.T) {
 					monitorRollingS3(t, ctx, s3, bucket+"/retained", payload)
 				}
 			}
-			quorum, err := cluster.QuorumStatus(ctx)
+			quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -199,7 +199,7 @@ func TestMonitorRollingReplacement(t *testing.T) {
 				t.Fatal("cold restart replaced an original daemon container")
 			}
 			topologyWait(t, ctx, func() bool {
-				status, err := cluster.ManagerStatus(ctx)
+				status, err := observeCluster(cluster).ManagerStatus(ctx)
 				return err == nil && status.Available && status.ActiveName == manager.DaemonName && status.ActiveGID != 0 && status.ActiveGID != initialManager.ActiveGID
 			})
 			topologyWait(t, ctx, func() bool {

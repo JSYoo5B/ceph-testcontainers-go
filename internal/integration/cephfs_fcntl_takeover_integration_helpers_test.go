@@ -354,7 +354,7 @@ finally:
 		}
 		cleaned[i] = true
 	}
-	status, err := m.cluster.Status(ctx)
+	status, err := observeCluster(m.cluster).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

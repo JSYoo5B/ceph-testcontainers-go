@@ -30,7 +30,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 		}
 		for index, cluster := range []*ceph.Container{source, destination} {
 			statusCtx, statusCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			status, err := cluster.ManagerStatus(statusCtx)
+			status, err := observeCluster(cluster).ManagerStatus(statusCtx)
 			statusCancel()
 			t.Logf("cluster %d final native MGR map: %+v error=%v", index, status, err)
 			for _, manager := range clusteraccess.Managers(t, cluster) {
@@ -56,7 +56,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	if _, err := source.AddManager(ctx, "c"); err != nil {
 		t.Fatal(err)
 	}
-	status, err := source.ManagerStatus(ctx)
+	status, err := observeCluster(source).ManagerStatus(ctx)
 	if err != nil || !status.Available || status.ActiveName != "b" || len(status.Standbys) != 1 {
 		t.Fatalf("source surviving manager topology: %+v error=%v", status, err)
 	}
@@ -132,7 +132,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	if err := managerHandle(t, ctx, source, "b").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	status, err = source.ManagerStatus(ctx)
+	status, err = observeCluster(source).ManagerStatus(ctx)
 	if err != nil || !status.Available || (status.ActiveName != "c" && status.ActiveName != "d") {
 		t.Fatalf("source manager replacement was not a prepared standby: %+v error=%v", status, err)
 	}
@@ -163,10 +163,10 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	cephFSAssertManagerPeerNetworks(t, ctx, source, destination.NetworkName(), false)
-	if _, err := source.Status(ctx); err != nil {
+	if _, err := observeCluster(source).Status(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := destination.Status(ctx); err != nil {
+	if _, err := observeCluster(destination).Status(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if host {

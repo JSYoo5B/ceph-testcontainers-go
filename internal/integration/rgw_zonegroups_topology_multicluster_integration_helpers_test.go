@@ -37,7 +37,7 @@ func rgwTopologyClusters(t *testing.T, ctx context.Context, count int, host bool
 			t.Fatal(err)
 		}
 		clusters[i] = cluster
-		status, err := cluster.Status(ctx)
+		status, err := observeCluster(cluster).Status(ctx)
 		if err != nil || status.FSID == "" || identities[status.FSID] {
 			t.Fatalf("independent storage cluster missing: %+v %v", status, err)
 		}
@@ -279,7 +279,7 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 		t.Fatal("eu group data changed")
 	}
 	for _, cluster := range clusters {
-		if _, err := cluster.Status(ctx); err != nil {
+		if _, err := observeCluster(cluster).Status(ctx); err != nil {
 			t.Fatalf("fixture mutation terminated storage cluster: %v", err)
 		}
 	}

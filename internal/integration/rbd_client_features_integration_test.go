@@ -49,7 +49,7 @@ func TestRBDClientFeatures(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			status, err := cluster.Status(ctx)
+			status, err := observeCluster(cluster).Status(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}

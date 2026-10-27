@@ -348,7 +348,7 @@ func TestMonMajorityLossClientCalls(t *testing.T) {
 			t.Fatalf("the recovered quorum changed while continuity was re-observed: %v", reasons)
 		}
 	}
-	status, err := cluster.QuorumStatus(ctx)
+	status, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

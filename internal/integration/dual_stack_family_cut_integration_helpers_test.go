@@ -287,11 +287,11 @@ type familyCutState struct {
 
 func readFamilyCutState(t *testing.T, ctx context.Context, cluster *ceph.Container) familyCutState {
 	t.Helper()
-	quorum, err := cluster.QuorumStatus(ctx)
+	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	addresses, err := cluster.DaemonAddresses(ctx)
+	addresses, err := observeCluster(cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func readFamilyCutState(t *testing.T, ctx context.Context, cluster *ceph.Contain
 			up = append(up, osd.ID)
 		}
 	}
-	status, err := cluster.ManagerStatus(ctx)
+	status, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -563,7 +563,7 @@ func testDualStackFamilyCut(t *testing.T) {
 	var restarted ceph.OSDAddress
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
-		current, err := cluster.DaemonAddresses(ctx)
+		current, err := observeCluster(cluster).DaemonAddresses(ctx)
 		if err == nil && len(current.OSDs) == 2 && current.OSDs[1].Up && current.OSDs[1].Public[0].Nonce != osd1.Public[0].Nonce {
 			restarted = current.OSDs[1]
 			break

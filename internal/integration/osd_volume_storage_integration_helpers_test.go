@@ -126,7 +126,7 @@ func osdVolumeWaitState(t *testing.T, parent context.Context, cluster *ceph.Cont
 				}
 			}
 		}
-		states, err := cluster.OSDStates(ctx)
+		states, err := observeCluster(cluster).OSDStates(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

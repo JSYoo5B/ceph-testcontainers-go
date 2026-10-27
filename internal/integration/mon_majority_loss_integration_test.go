@@ -147,7 +147,7 @@ func TestMonMajorityLossLocalOracle(t *testing.T) {
 	}
 	// A fresh quorum-dependent management query works again, on the same
 	// monmap and the original public addresses.
-	status, err := cluster.QuorumStatus(ctx)
+	status, err := observeCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

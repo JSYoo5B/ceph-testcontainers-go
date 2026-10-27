@@ -202,7 +202,7 @@ func testOSDReplicationPeerPathCut(t *testing.T) {
 		t.Fatalf("control mapping %s: %v", out, err)
 	}
 	receipt.Control.Pool, receipt.Control.PGID, receipt.Control.Acting = "peer-control", control.PGID, control.Acting
-	native, err := cluster.DaemonAddresses(ctx)
+	native, err := observeCluster(cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

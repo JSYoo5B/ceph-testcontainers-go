@@ -84,7 +84,7 @@ func testECBelowK(t *testing.T) {
 		t.Fatalf("unsupported bounded K2 stripe %d", stripe)
 	}
 	size := int(2*stripe + 31)
-	initial, err := c.OSDStates(ctx)
+	initial, err := observeCluster(c).OSDStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func testECBelowK(t *testing.T) {
 			}
 		}
 	}
-	final, err := c.OSDStates(ctx)
+	final, err := observeCluster(c).OSDStates(ctx)
 	if err != nil || len(final) != len(initial) {
 		t.Fatal("OSD registrations unavailable", err)
 	}

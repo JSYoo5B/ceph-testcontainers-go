@@ -131,7 +131,7 @@ func checkPoolRemoval(t *testing.T, ctx context.Context, cluster *ceph.Container
 			t.Fatalf("pool %s left rule/profile behind: %v", pool.Name, names)
 		}
 	}
-	entries, err := cluster.Configuration(ctx)
+	entries, err := observeCluster(cluster).Configuration(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

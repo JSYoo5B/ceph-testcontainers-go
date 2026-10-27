@@ -33,7 +33,7 @@ func TestHostNetworkMultiCluster(t *testing.T) {
 		if !cluster.UsesHostNetwork() || cluster.PublicAddress() != "127.0.0.1" {
 			t.Fatalf("cluster %d has unexpected networking: host=%t address=%q", i, cluster.UsesHostNetwork(), cluster.PublicAddress())
 		}
-		status, err := cluster.Status(ctx)
+		status, err := observeCluster(cluster).Status(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

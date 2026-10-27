@@ -295,7 +295,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	if ip := containerIP(t, ctx, client, network); ip != clientIP {
 		t.Fatalf("client.%d's session is from %s but its container has %s", baseline.Client, clientIP, ip)
 	}
-	daemons, err := cluster.DaemonAddresses(ctx)
+	daemons, err := observeCluster(cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +451,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	if err != nil {
 		t.Fatalf("client.%d's session is not open after the restore: %s, %v", baseline.Client, reopened.Value, err)
 	}
-	entries, err := cluster.BlocklistEntries(ctx)
+	entries, err := observeCluster(cluster).BlocklistEntries(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
