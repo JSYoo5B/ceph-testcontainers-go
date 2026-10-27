@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"time"
 
-	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/volume"
@@ -87,22 +85,16 @@ func (c *Container) ensureOSDVolume(ctx context.Context) error {
 	if !c.settings.osdVolumeStorage {
 		return nil
 	}
-	if c.osdVolume != nil {
-		return c.osdVolume.check(ctx)
+	if s := c.stores.volumeStorage(); s != nil {
+		return s.check(ctx)
 	}
 	// Publish before creation, including a lost create response. Neither a
 	// later Add nor cleanup may allocate a replacement to resolve uncertainty.
-	s := newOSDVolumeStorage()
-	s.newClient = c.osdVolumeDocker
-	c.osdVolume = s
+	s := c.stores.beginVolume()
 	if err := s.create(ctx); err != nil {
 		return err
 	}
-	run := c.osdVolumeRunner
-	if run == nil {
-		run = runContainer
-	}
-	helper, err := run(ctx, c.settings.essentialImage, WithIdleEntrypoint(),
+	helper, err := c.stores.runVolumeHelper(ctx, c.settings.essentialImage, WithIdleEntrypoint(),
 		testcontainers.WithHostConfigModifier(func(h *container.HostConfig) { h.NetworkMode = "none" }),
 		testcontainers.WithLabels(map[string]string{osdVolumeOwnerLabel: s.owner}), c.ownedLabel(),
 		osdLaunchVolume(s.name, osdVolumeHelperPath, true))
@@ -175,35 +167,10 @@ func (s *osdVolumeStorage) discardOSD(ctx context.Context, id int) error {
 
 // All tracked OSDs must have been removed. Busy/uncertain removal stays owned
 // for retry; never force removal or delete a changed/foreign volume.
-func (s *osdVolumeStorage) release(ctx context.Context) (err error) {
-	if s.helper != nil {
-		if err := s.helper.Terminate(ctx, testcontainers.StopTimeout(time.Second)); !onlyMissingHostResource(err) {
-			return fmt.Errorf("terminate OSD volume helper: %w", err)
-		}
-		s.helper = nil
-	}
-	if s.removed {
-		return nil
-	}
-	docker, err := s.client(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, docker.Close()) }()
-	result, err := docker.VolumeInspect(ctx, s.name, mobycl.VolumeInspectOptions{})
-	if errdefs.IsNotFound(err) {
-		s.removed = true
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect owned OSD volume: %w", err)
-	}
-	if err := s.validate(result.Volume); err != nil {
-		return err
-	}
-	if _, err := docker.VolumeRemove(ctx, s.name, mobycl.VolumeRemoveOptions{}); err != nil && !errdefs.IsNotFound(err) {
-		return fmt.Errorf("remove owned OSD volume: %w", err)
-	}
-	s.removed = true
-	return nil
+func (s *osdVolumeStorage) release(ctx context.Context) error {
+	return ownedStorageRelease{
+		helperName: "OSD volume helper", volumeName: "OSD volume",
+		helper: &s.helper, removed: &s.removed, name: s.name,
+		client: s.client, validate: s.validate,
+	}.run(ctx)
 }
