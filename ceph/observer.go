@@ -30,9 +30,11 @@ type Observer struct {
 	// target resolves the cluster for one query and applies the admission of
 	// the form: the tenant form checks its lease here.
 	target func() (*Container, error)
-	// tenant is the lease of the tenant form, or nil. The Pool values that the
-	// form lists carry it.
-	tenant *Tenant
+	// live re-checks the lease of the tenant form, or is nil for the cluster
+	// form. The Pool values that the form lists carry it. The Observer does
+	// not know what the lease is: the shared-cluster side hands it over
+	// through newLeasedObserver.
+	live func() error
 }
 
 // Observe returns an Observer for cluster. A nil cluster returns an error and
@@ -44,14 +46,13 @@ func Observe(cluster *Container) (*Observer, error) {
 	return &Observer{target: func() (*Container, error) { return cluster, nil }}, nil
 }
 
-// ObserveTenant returns an Observer for tenant's shared cluster. A nil tenant
-// returns an error and a nil Observer. The tenant is not validated or read
-// here; every query validates it.
-func ObserveTenant(tenant *Tenant) (*Observer, error) {
-	if tenant == nil {
-		return nil, invalidRequest("observe: the tenant is nil")
-	}
-	return &Observer{target: tenant.container, tenant: tenant}, nil
+// newLeasedObserver returns the tenant form of an Observer. target resolves
+// the leased cluster and refuses an expired lease; live re-checks the same
+// lease and is also what the Pool values of Pools check on every operation.
+// This is the one seam from the shared-cluster side: the Observer names no
+// tenant type, so it can stay in package ceph when the tenant moves out.
+func newLeasedObserver(target func() (*Container, error), live func() error) *Observer {
+	return &Observer{target: target, live: live}
 }
 
 // query resolves the target for one query and returns the CLI contract bound
@@ -131,8 +132,8 @@ func (o *Observer) Pools(ctx context.Context) ([]*Pool, error) {
 	if err != nil {
 		return nil, err
 	}
-	if o.tenant != nil {
-		lease := &poolLease{tenant: o.tenant}
+	if o.live != nil {
+		lease := &poolLease{live: o.live}
 		for _, pool := range pools {
 			pool.lease = lease
 		}
