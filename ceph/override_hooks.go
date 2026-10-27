@@ -25,8 +25,9 @@ func init() {
 // The phase, overlap refusal and Terminate behavior of each stay fixed in
 // faultKinds.
 var overrideKindNames = map[string]faultKind{
-	"Blocklist": faultBlocklist,
-	"MGRModule": faultMGRModule,
+	"Blocklist":  faultBlocklist,
+	"FullRatios": faultFullRatios,
+	"MGRModule":  faultMGRModule,
 }
 
 // Admit refuses the override operation op while a SharedCluster shares c,
@@ -160,6 +161,46 @@ func (overrideHooks) SetMGRModule(ctx context.Context, c *Container, name string
 // The caller holds the mutex.
 func (overrideHooks) ProtectMGRModule(ctx context.Context, c *Container, name string) error {
 	return c.protectMGRModule(ctx, name)
+}
+
+// OpenFullRatios captures the control container and the original bootstrap
+// identity once and returns the session that every later native step of one
+// full ratios override uses. It refuses a terminated cluster, a missing control
+// container and an unconfirmed identity. The caller holds the mutex.
+func (overrideHooks) OpenFullRatios(ctx context.Context, c *Container) (any, error) {
+	session, err := c.fullRatiosSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+// FSID returns the cluster identity that the session captured.
+func (session fullRatiosCLISession) FSID() string { return session.fsid }
+
+// Read reads the three thresholds and the map epoch, guarded by the captured
+// identity before and after the read.
+func (session fullRatiosCLISession) Read(ctx context.Context) (FullRatioSnapshot, error) {
+	return session.read(ctx)
+}
+
+// SetRatio sets one of the thresholds "nearfull", "backfillfull" or "full".
+func (session fullRatiosCLISession) SetRatio(ctx context.Context, name string, value float64) error {
+	switch name {
+	case "nearfull", "backfillfull", "full":
+	default:
+		return invalidRequest("unknown full ratio %q", name)
+	}
+	_, err := session.command(ctx, "osd", "set-"+name+"-ratio", strconv.FormatFloat(value, 'g', -1, 64))
+	return err
+}
+
+// CheckIdentity refuses a cluster whose original bootstrap identity is not fsid.
+func (session fullRatiosCLISession) CheckIdentity(ctx context.Context, fsid string) error {
+	if session.fsid != fsid {
+		return clientOperationError(ctx, "full ratios override original bootstrap identity changed", nil)
+	}
+	return nil
 }
 
 // TestHeld snapshots the handles that one kind holds, for unit tests.

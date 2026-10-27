@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 func TestOSDFullRatios(t *testing.T) {
@@ -59,19 +60,18 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=Tr
 				{"full", "OSD_FULL", ceph.FullRatios{NearFull: .0001, BackfillFull: .0002, Full: .0003}},
 			} {
 				t.Run(fault.name, func(t *testing.T) {
-					handle, err := cluster.OverrideFullRatios(ctx, fault.ratios)
+					handle, err := override.SetFullRatios(ctx, cluster, fault.ratios)
 					// A failed multi-command application may still own a partial
-					// override. Register its restoration before checking the error.
-					if handle != nil {
-						t.Cleanup(func() {
-							restoreCtx, restoreCancel := context.WithTimeout(context.Background(), time.Minute)
-							defer restoreCancel()
-							if err := handle.Restore(restoreCtx); err != nil {
-								t.Errorf("restore full ratios: %v", err)
-							}
-						})
-					}
-					if err != nil || handle == nil {
+					// override. The handle is never nil and a refused call returns a
+					// no-op one, so register its restoration before checking the error.
+					t.Cleanup(func() {
+						restoreCtx, restoreCancel := context.WithTimeout(context.Background(), time.Minute)
+						defer restoreCancel()
+						if err := handle.Restore(restoreCtx); err != nil {
+							t.Errorf("restore full ratios: %v", err)
+						}
+					})
+					if err != nil {
 						t.Fatal("apply full ratios", err)
 					}
 					applied := integrationFullRatios(t, ctx, cluster)
@@ -79,8 +79,10 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=Tr
 					if applied.FSID != original.FSID || applied.Epoch <= original.Epoch || applied.Ratios != expected {
 						t.Fatalf("native OSDMap ratios differ: %+v expected=%+v", applied, expected)
 					}
-					if overlap, err := cluster.OverrideFullRatios(ctx, fault.ratios); err == nil || overlap != nil {
-						t.Fatal("overlapping full-ratio lease was admitted")
+					if overlap, err := override.SetFullRatios(ctx, cluster, fault.ratios); err == nil || overlap == nil {
+						t.Fatal("overlapping full-ratio lease was admitted or returned a nil handle")
+					} else if err := overlap.Restore(ctx); err != nil {
+						t.Fatal("restoring the refused handle failed", err)
 					}
 					waitFullRatioHealth(t, ctx, cluster, original.FSID, fault.code, true)
 					probe(t, fault.name)

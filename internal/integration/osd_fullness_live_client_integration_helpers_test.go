@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -281,21 +282,19 @@ func testOSDFullnessLiveClient(t *testing.T) {
 		out.WriterReplicaDown = &replicaDown
 
 		var hold *ceph.OSDFlagOverrideHandle
-		applyPolicy := func() *ceph.FullRatiosOverride {
+		applyPolicy := func() *override.FullRatiosHandle {
 			mark, _ := secondFaultMarkNow(t, ctx, cluster, client, fullnessLiveLedger)
 			out.WriterAtPolicy = &mark
-			handle, err := cluster.OverrideFullRatios(ctx, receipt.Ratios)
+			handle, err := override.SetFullRatios(ctx, cluster, receipt.Ratios)
 			// A failed application may own a partial override: register its
 			// restoration before looking at the error.
-			if handle != nil {
-				restore("full ratios "+phase.name, handle.Restore)
-			}
-			if err != nil || handle == nil {
+			restore("full ratios "+phase.name, handle.Restore)
+			if err != nil {
 				fail("apply full ratios: %v", err)
 			}
 			return handle
 		}
-		var policy *ceph.FullRatiosOverride
+		var policy *override.FullRatiosHandle
 		var base backfillBaseline
 		var baseRaw []byte
 		haveBase := false

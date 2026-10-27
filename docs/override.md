@@ -5,13 +5,14 @@ The package changes cluster-wide state of a cluster created by `ceph.Run` for a
 while and puts it back. Each operation is a function that takes the cluster and
 returns a handle; the handle owns the change and its `Restore` undoes only what
 the call did. This page documents the kinds that have moved: the client
-blocklist entry and the MGR module state. The other override kinds are still
+blocklist entry, the OSDMap full ratios and the MGR module state. The other override kinds are still
 methods of `ceph.Container` and move here in separate changes (see the
 [design](design/override-package-boundary.md)).
 
 0.x: old names are removed without aliases. `Container.TemporaryBlocklist`,
 `ceph.BlocklistOverride`, `Container.OverrideMGRModule` and
-`ceph.MGRModuleOverrideHandle` no longer exist in `ceph`:
+`ceph.MGRModuleOverrideHandle`, `Container.OverrideFullRatios` and
+`ceph.FullRatiosOverride` no longer exist in `ceph`:
 
 | Previous call or type | New call or type |
 | --- | --- |
@@ -19,8 +20,11 @@ methods of `ceph.Container` and move here in separate changes (see the
 | `*ceph.BlocklistOverride` | `*override.BlocklistHandle` (same `Address` and `Restore`) |
 | `cluster.OverrideMGRModule(ctx, name, enabled)` | `override.SetMGRModule(ctx, cluster, name, enabled)` |
 | `*ceph.MGRModuleOverrideHandle` | `*override.MGRModuleHandle` (same `Restore`) |
+| `cluster.OverrideFullRatios(ctx, ratios)` | `override.SetFullRatios(ctx, cluster, ratios)` |
+| `*ceph.FullRatiosOverride` | `*override.FullRatiosHandle` (same `Restore`) |
 
-`ceph.BlocklistEntry`, `Observer.BlocklistEntries`, `ceph.MGRModuleState`,
+`ceph.BlocklistEntry`, `Observer.BlocklistEntries`, `ceph.FullRatios`,
+`ceph.FullRatioSnapshot`, `Observer.FullRatios`, `ceph.MGRModuleState`,
 `Observer.MGRModules` and `Container.WaitMGRModuleReady` stay in `ceph`: they
 only read cluster state. The package imports `ceph`; `ceph` never imports it. See
 the migration guides for the [blocklist](guides/upgrading-override-package.md)
@@ -48,7 +52,7 @@ and the [MGR module](guides/upgrading-override-mgr-module.md).
 Every function admits the cluster as a method of `ceph.Container` does. A
 cluster that a `SharedCluster` lends to tenants refuses the call with
 `ceph.ErrSharedCluster` and `OperationError.Op` set to the function name, such as
-`override.AddBlocklist` or `override.SetMGRModule`; a cluster lent to one exclusive lease accepts it.
+`override.AddBlocklist`, `override.SetFullRatios` or `override.SetMGRModule`; a cluster lent to one exclusive lease accepts it.
 `Tenant` has no forwarder. A nil cluster returns a not-applied handle and an
 error classified `ceph.ErrInvalidRequest`.
 
@@ -187,4 +191,76 @@ if err != nil {
 }
 // Membership is verified, not readiness: wait for the module's own service
 // (for prometheus, Observer.ManagerServices) before you use it.
+```
+
+## SetFullRatios
+
+```golang
+func SetFullRatios(ctx context.Context, c *ceph.Container, requested ceph.FullRatios) (*override.FullRatiosHandle, error)
+```
+
+Sets the global `nearfull`, `backfillfull` and `full` ratios of the OSDMap and
+restores all three with `Restore`. The verb is `Set` because the call replaces
+existing values and `Restore` puts the captured tuple back. This is a cluster
+policy override, even when low thresholds are used to induce FULL or ENOSPC in a
+test. It has no expiry, timer or implicit scope-exit restoration. Cancelling the
+apply context does not undo committed changes, and `Terminate` does not reset
+individual thresholds.
+
+Requested values must be finite and satisfy `0 < NearFull < BackfillFull < Full
+<= 1` after float32 normalization (inputs that collapse to equal values are
+refused), and the current map must also be ordered. The CLI changes one ratio per
+command; the helper orders the commands so that every intermediate state stays
+ordered, so apply and restore are not atomic. Only one handle per cluster is
+allowed, including no-op requests. The control container and the original
+bootstrap identity are captured once per apply or restore; the request deadline
+is the cluster's startup timeout and is set before the wait for the topology lock.
+
+Low ratios reproduce full conditions with a small amount of existing data; the
+module does not fill real devices. Success verifies the map, not OSD reports:
+wait for `OSD_NEARFULL`, `OSD_BACKFILLFULL` or `OSD_FULL` with
+[HealthDetails](ceph.md#healthdetails). See
+[Fill the cluster with low full ratios](ceph.md#fill-the-cluster-with-low-full-ratios).
+
+| Outcome | Handle | Error |
+| --- | --- | --- |
+| All three thresholds applied and read back | Real | nil |
+| Nil cluster | Not applied | `ErrInvalidRequest`, `Op` `override.SetFullRatios` |
+| Shared cluster | Not applied | `ErrSharedCluster`, `Op` `override.SetFullRatios` |
+| Context already ended, or ended while waiting for the topology lock | Not applied | the context error |
+| Invalid, unordered or float32-collapsed ratios | Not applied | `ErrInvalidRequest` |
+| This cluster already holds a full ratios override | Not applied | plain error |
+| Terminated cluster, no control container or unconfirmed bootstrap identity | Not applied, reservation released | the cluster's own error |
+| The native map cannot be read, or the original is not ordered | Not applied, reservation released | the native error or a plain error |
+| Any failure from the first native step on (command, readback, canceled context) | Real, uncertain, tracked before the first step | the error |
+
+## FullRatiosHandle
+
+| Method | Meaning |
+| --- | --- |
+| `Restore(ctx) error` | Returns all three thresholds to their captured values. |
+
+`Restore` is idempotent and reconciles uncertain native replies before another
+mutation. A different current tuple is refused rather than overwriting outside
+edits: only the latest owned tuple, or the two sides of one uncertain command,
+are accepted, and older apply prefixes do not authorize restoration. A changed
+bootstrap identity or a map epoch that went backwards is refused too. Unrelated
+flags, pool policies and central configuration are not changed. A copy shares the
+state of its handle and a lost reply can be retried with a fresh context. A
+handle of a call that was not applied returns nil without taking a lock. A
+`Restore` after `Terminate` is refused and the override stays registered.
+
+```golang
+change, err := override.SetFullRatios(ctx, cluster, ceph.FullRatios{
+	NearFull: 0.0001, BackfillFull: 0.0002, Full: 0.0003,
+})
+// change is never nil: after a refusal its Restore does nothing.
+defer change.Restore(context.Background())
+if err != nil {
+	t.Fatal(err)
+}
+// Wait for OSD_FULL in HealthDetails, exercise the client, then:
+if err := change.Restore(ctx); err != nil {
+	t.Fatal(err)
+}
 ```
