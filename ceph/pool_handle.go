@@ -77,7 +77,7 @@ func (p *Pool) cluster(op string) (*Container, error) {
 		return nil, invalidRequest("%s: the pool does not come from a cluster; obtain it from Container.CreatePool or Container.Pool", op)
 	}
 	if p.lease != nil {
-		if err := p.lease.tenant.check(); err != nil {
+		if err := p.lease.live(); err != nil {
 			return nil, err
 		}
 		if err := p.owner.admitHandleAs(op, sharedWithTenants); err != nil {
