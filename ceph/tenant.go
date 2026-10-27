@@ -178,36 +178,6 @@ func (t *Tenant) RunNativeCommand(ctx context.Context, target testcontainers.Con
 	return c.runNativeCommand(ctx, target, command)
 }
 
-// Pools lists the cluster's pools; see Container.Pools.
-func (t *Tenant) Pools(ctx context.Context) ([]PoolState, error) {
-	c, err := t.cluster()
-	if err != nil {
-		return nil, err
-	}
-	return c.Pools(ctx)
-}
-
-// PoolStatus returns one pool's state by its exact native name; see
-// Pool.Status.
-func (t *Tenant) PoolStatus(ctx context.Context, name string) (PoolState, error) {
-	c, err := t.cluster()
-	if err != nil {
-		return PoolState{}, err
-	}
-	return c.poolStatus(ctx, name, nil)
-}
-
-// PoolUsage returns one pool's usage by its exact native name; see
-// Pool.Usage. Usage of
-// SharedPool includes the other tenants' objects.
-func (t *Tenant) PoolUsage(ctx context.Context, name string) (PoolUsageSnapshot, error) {
-	c, err := t.cluster()
-	if err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	return c.poolUsage(ctx, name, nil)
-}
-
 func (t *Tenant) check() error {
 	t.owner.mu.Lock()
 	gone := t.released || t.inst.terminated

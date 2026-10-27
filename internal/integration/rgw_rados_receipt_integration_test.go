@@ -102,7 +102,7 @@ func TestRGWRadosReceipt(t *testing.T) {
 		small[i] = byte(i*13 + 7)
 	}
 	client.request(t, ctx, http.MethodPut, "/tc-rados/small", small, http.StatusOK)
-	pools, err := cluster.Pools(ctx)
+	pools, err := observeCluster(cluster.Container).Pools(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

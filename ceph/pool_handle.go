@@ -33,6 +33,31 @@ func (c *Container) Pool(ctx context.Context, name string) (*Pool, error) {
 	if err != nil {
 		return nil, err
 	}
+	return c.poolOf(state), nil
+}
+
+// pools lists the native pools as handles, as Container.Pool returns one. It
+// implements Observer.Pools.
+func (c *Container) pools(ctx context.Context) ([]*Pool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return nil, err
+	}
+	states, err := c.poolStates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pools := make([]*Pool, len(states))
+	for i, state := range states {
+		pools[i] = c.poolOf(state)
+	}
+	return pools, nil
+}
+
+// poolOf returns a handle that identifies the native pool that state
+// describes, by name and native ID.
+func (c *Container) poolOf(state PoolState) *Pool {
 	config := PoolConfig{Name: state.Name, PGNum: state.PGNum, MinSize: state.MinSize}
 	if state.Type == "replicated" {
 		config.Replicas = state.Size
@@ -42,7 +67,7 @@ func (c *Container) Pool(ctx context.Context, name string) (*Pool, error) {
 		ErasureCodeProfile: state.ErasureCodeProfile,
 		owner:              c,
 		ident:              &poolIdentity{bound: true, id: state.ID},
-	}, nil
+	}
 }
 
 // cluster admits op for the shared-cluster policy and returns the cluster

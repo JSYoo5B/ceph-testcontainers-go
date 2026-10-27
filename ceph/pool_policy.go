@@ -40,17 +40,6 @@ type PoolState struct {
 	Quota                PoolQuota
 }
 
-// Pools lists native pool policies. Creation descriptors returned by CreatePool
-// describe requested settings; this method reports the current cluster state.
-func (c *Container) Pools(ctx context.Context) ([]PoolState, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return nil, err
-	}
-	return c.poolStates(ctx)
-}
-
 // poolStatus looks up a pool by its exact native name. A non-nil handle must
 // identify that pool.
 func (c *Container) poolStatus(ctx context.Context, name string, handle *Pool) (PoolState, error) {

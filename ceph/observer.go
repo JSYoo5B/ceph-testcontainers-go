@@ -102,6 +102,28 @@ func (o *Observer) DaemonAddresses(ctx context.Context) (DaemonAddresses, error)
 	return readDaemonAddresses(ctx, run)
 }
 
+// Pools lists the pools that the cluster has, including pools that services or
+// Ceph created, as one Pool for each. Every Pool identifies its native pool by
+// name and native ID, as the Pool of Container.Pool does, and describes only
+// what the listing reports (Name, PGNum, Replicas of a replicated pool,
+// MinSize and ErasureCodeProfile); Pool.Status reads the full native state
+// and Pool.Usage and Pool.PGs the usage and the PGs. The listing is one read of
+// the native pool map, so the pools of one result are consistent with each
+// other and later reads through them are separate observations.
+//
+// A Pool of a tenant-backed Observer validates the tenant lease when the
+// listing is read, not when the Pool is used afterwards. It is a handle of the
+// shared cluster: the shared-cluster policy refuses its operations that change
+// the pool, and its reads work as long as the cluster runs. The usage of
+// SharedPool includes the objects of the other tenants.
+func (o *Observer) Pools(ctx context.Context) ([]*Pool, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return nil, err
+	}
+	return c.pools(ctx)
+}
+
 // The queries below take the topology lock before they read, so they run the
 // locked read of the resolved cluster instead of the bare cliQuery. Each keeps
 // its own acquisition: Configuration, BlocklistEntries,

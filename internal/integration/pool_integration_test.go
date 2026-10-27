@@ -105,7 +105,7 @@ func checkPoolRemoval(t *testing.T, ctx context.Context, cluster *ceph.Container
 			t.Fatalf("second removal of %s succeeded", pool.Name)
 		}
 	}
-	states, err := cluster.Pools(ctx)
+	states, err := observeCluster(cluster).Pools(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
