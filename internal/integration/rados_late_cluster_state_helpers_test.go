@@ -12,6 +12,7 @@ import (
 	"math"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -93,8 +94,9 @@ type radosLateOp struct {
 	// the pinned source emits when an op is parked, so that they survive the
 	// shedding of the full timeline. WaitsForMap is true for the two events
 	// that mean the PG's map is older than the epoch the client stamped.
-	Waits       []radosLateEvent `json:"waits,omitempty"`
-	WaitsForMap bool             `json:"waits_for_map,omitempty"`
+	Waits        []radosLateEvent `json:"waits,omitempty"`
+	WaitsDropped int              `json:"waits_dropped,omitempty"`
+	WaitsForMap  bool             `json:"waits_for_map,omitempty"`
 	// EpochLead is the op's stamped epoch minus the newest map osd.0 had
 	// stored when it was dumped; EpochAtInitiated is the newest epoch among
 	// the timeline observations (the baseline and the epochs read) that was
@@ -179,7 +181,15 @@ type radosLateClusterState struct {
 	// changes that were read and then shed.
 	TimelineOmitted        int `json:"epoch_timeline_omitted,omitempty"`
 	TimelineChangesOmitted int `json:"epoch_timeline_changes_omitted,omitempty"`
-	fallbackStages         int
+	// Items read and then cut by a list cap or by the whole-record fallback.
+	// Each counter covers every cut of its list, so kept plus dropped equals
+	// read. DroppedFields names the scalar fields the fallback cleared.
+	ProbesDropped   int      `json:"probes_dropped,omitempty"`
+	NotesDropped    int      `json:"notes_dropped,omitempty"`
+	PGStatesDropped int      `json:"pg_states_dropped,omitempty"`
+	OSDsDropped     int      `json:"osds_dropped,omitempty"`
+	DroppedFields   []string `json:"dropped_fields,omitempty"`
+	fallbackStages  int
 
 	OSDState     string `json:"osd_state,omitempty"`
 	OSDNewestMap *int   `json:"osd_newest_map,omitempty"`
@@ -548,6 +558,8 @@ func parseRadosLateOp(entry map[string]json.RawMessage) (radosLateOp, error) {
 		if wait, forMap := radosLateWaitEvent(event.Event); wait {
 			if len(op.Waits) < radosLateEventLimit {
 				op.Waits = append(op.Waits, event)
+			} else {
+				op.WaitsDropped++
 			}
 			op.WaitsForMap = op.WaitsForMap || forMap
 		}
@@ -666,7 +678,10 @@ func radosLateRelevant(op radosLateOp) bool {
 	if len(op.Waits) > 0 {
 		return true
 	}
-	return (op.Duration != nil && *op.Duration >= 1) || (op.Age != nil && *op.Age >= 1)
+	// Duration, not Age: Age is how long ago a finished op was initiated, which
+	// says nothing about how long it took. For an op still in flight Duration
+	// is the time so far.
+	return op.Duration != nil && *op.Duration >= 1
 }
 
 // radosLateCap keeps the relevant operations first (each group in the order
@@ -774,12 +789,14 @@ func capRadosLateFields(state *radosLateClusterState) bool {
 		text(&state.Probes[index].Error, radosLateErrorLimit)
 	}
 	if len(state.Probes) > radosLateListLimit {
+		state.ProbesDropped += len(state.Probes) - radosLateListLimit
 		state.Probes, cut = state.Probes[:radosLateListLimit], true
 	}
 	for index := range state.Notes {
 		text(&state.Notes[index], radosLateErrorLimit)
 	}
 	if len(state.Notes) > radosLateNoteLimit {
+		state.NotesDropped += len(state.Notes) - radosLateNoteLimit
 		state.Notes, cut = state.Notes[:radosLateNoteLimit], true
 	}
 	for index := range state.PGStates {
@@ -791,16 +808,23 @@ func capRadosLateFields(state *radosLateClusterState) bool {
 			text(&state.Timeline[index].Changes[change], radosLateTextLimit)
 		}
 		if len(state.Timeline[index].Changes) > radosLateListLimit {
+			state.TimelineChangesOmitted += len(state.Timeline[index].Changes) - radosLateListLimit
 			state.Timeline[index].Changes, cut = state.Timeline[index].Changes[:radosLateListLimit], true
 		}
 	}
 	if len(state.Timeline) > radosLateEpochLimit {
+		for _, entry := range state.Timeline[radosLateEpochLimit:] {
+			state.TimelineChangesOmitted += len(entry.Changes)
+			state.TimelineOmitted++
+		}
 		state.Timeline, cut = state.Timeline[:radosLateEpochLimit], true
 	}
 	if len(state.PGStates) > radosLateListLimit {
+		state.PGStatesDropped += len(state.PGStates) - radosLateListLimit
 		state.PGStates, cut = state.PGStates[:radosLateListLimit], true
 	}
 	if len(state.OSDs) > radosLateListLimit {
+		state.OSDsDropped += len(state.OSDs) - radosLateListLimit
 		state.OSDs, cut = state.OSDs[:radosLateListLimit], true
 	}
 	for _, list := range [][]radosLateOp{state.Historic, state.InFlight} {
@@ -912,11 +936,17 @@ func boundRadosLateState(state *radosLateClusterState) {
 // and lag fields are kept last.
 func radosLateFallbackSteps(state *radosLateClusterState, size func() int) []func() {
 	return []func(){
-		func() { state.Notes = nil },
-		func() { state.PGStates = nil },
-		func() { state.OSDs = nil },
+		func() { state.NotesDropped += len(state.Notes); state.Notes = nil },
+		func() { state.PGStatesDropped += len(state.PGStates); state.PGStates = nil },
+		func() { state.OSDsDropped += len(state.OSDs); state.OSDs = nil },
 		func() {
-			state.MonFlags, state.LastUpChange, state.LastInChange, state.PoolLastChange, state.MonModified = "", "", "", "", ""
+			for name, field := range map[string]*string{"mon_flags": &state.MonFlags, "last_up_change": &state.LastUpChange, "last_in_change": &state.LastInChange, "pool_last_change": &state.PoolLastChange, "mon_modified": &state.MonModified} {
+				if *field != "" {
+					state.DroppedFields = append(state.DroppedFields, name)
+					*field = ""
+				}
+			}
+			sort.Strings(state.DroppedFields)
 		},
 		// The epoch timeline is shed after the other detail and before the
 		// probe table, in three steps, each counted.

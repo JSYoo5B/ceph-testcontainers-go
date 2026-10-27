@@ -592,3 +592,161 @@ func TestRadosLateTimelineGapIsNotedNextToTheJoin(t *testing.T) {
 		t.Fatalf("a complete timeline needs no note: %v", whole.Notes)
 	}
 }
+
+// ownerOSDDumps serves a baseline and one following epoch for osds OSDs whose
+// up_from and up_thru both change, so the epoch has two changes per OSD.
+func changeCapReader(osds int) (*fakeRadosLateReader, *radosLateClusterState) {
+	dump := func(epoch, shift int, at time.Duration) string {
+		var entries []string
+		for id := 0; id < osds; id++ {
+			entries = append(entries, fmt.Sprintf(`{"osd":%d,"up":1,"in":1,"up_from":%d,"up_thru":%d}`, id, 6+shift, 11+shift))
+		}
+		return fmt.Sprintf(`{"epoch":%d,"modified":%q,"flags":"sortbitwise","osds":[%s]}`, epoch, radosLateStamp(radosLateBase, at), strings.Join(entries, ","))
+	}
+	base := healthyRadosLateReader(15, 15)
+	base.answers[radosLateKeyDump] = fixedRadosLateAnswer(dump(15, 0, 15*time.Second))
+	baseline := collectFixture(base, "pre-late", nil)
+	reader := healthyRadosLateReader(16, 16)
+	reader.answers[radosLateKeyDump] = fixedRadosLateAnswer(dump(16, 1, 41*time.Second))
+	reader.answers[radosLateEpochDumpKey(16)] = fixedRadosLateAnswer(dump(16, 1, 41*time.Second))
+	return reader, baseline
+}
+
+// Changes cut by the per-epoch list cap are counted, so that kept plus
+// omitted always equals the changes read, well below the byte budget.
+func TestRadosLateEpochChangesCutByTheListCapAreCounted(t *testing.T) {
+	for _, tc := range []struct{ osds, read, kept, omitted int }{
+		{16, 32, 32, 0}, {17, 34, 32, 2}, {20, 40, 32, 8},
+	} {
+		reader, baseline := changeCapReader(tc.osds)
+		state := collectFixture(reader, "failure", baseline)
+		if len(state.Timeline) != 1 {
+			t.Fatalf("osds=%d: timeline %+v", tc.osds, state.Timeline)
+		}
+		kept := len(state.Timeline[0].Changes)
+		if kept != tc.kept || state.TimelineChangesOmitted != tc.omitted || kept+state.TimelineChangesOmitted != tc.read {
+			t.Fatalf("osds=%d: kept %d omitted %d, want %d and %d of %d read", tc.osds, kept, state.TimelineChangesOmitted, tc.kept, tc.omitted, tc.read)
+		}
+		if size := encodedRadosLateSize(t, state); size > radosLateStateLimit {
+			t.Fatalf("osds=%d: %d bytes", tc.osds, size)
+		}
+		if (tc.omitted > 0) != state.Truncated {
+			t.Fatalf("osds=%d: truncated=%v", tc.osds, state.Truncated)
+		}
+	}
+}
+
+// Every list cap counts what it cuts: read equals kept plus dropped for the
+// probes, notes, PG states, OSDs, wait events and timeline.
+func TestRadosLateEveryListCapCountsWhatItCuts(t *testing.T) {
+	var osds, states []string
+	for i := 0; i < radosLateListLimit+8; i++ {
+		osds = append(osds, fmt.Sprintf(`{"osd":%d,"up":1,"in":1}`, i))
+		states = append(states, fmt.Sprintf(`{"state_name":"s%d","count":1}`, i))
+	}
+	reader := healthyRadosLateReader(15, 15)
+	reader.answers[radosLateKeyDump] = fixedRadosLateAnswer(`{"epoch":15,"osds":[` + strings.Join(osds, ",") + `]}`)
+	reader.answers[radosLateKeyStatus] = fixedRadosLateAnswer(fmt.Sprintf(`{"osdmap":{},"pgmap":{"num_pgs":%d,"pgs_by_state":[%s]}}`, len(states), strings.Join(states, ",")))
+	state := collectFixture(reader, "pre-late", nil)
+	if len(state.OSDs)+state.OSDsDropped != radosLateListLimit+8 || state.OSDsDropped != 8 {
+		t.Fatalf("osds: kept %d dropped %d", len(state.OSDs), state.OSDsDropped)
+	}
+	if len(state.PGStates)+state.PGStatesDropped != radosLateListLimit+8 || state.PGStatesDropped != 8 {
+		t.Fatalf("pg states: kept %d dropped %d", len(state.PGStates), state.PGStatesDropped)
+	}
+
+	direct := &radosLateClusterState{}
+	for i := 0; i < radosLateListLimit+5; i++ {
+		direct.Probes = append(direct.Probes, radosLateProbe{Name: "p"})
+	}
+	for i := 0; i < radosLateNoteLimit+3; i++ {
+		direct.Notes = append(direct.Notes, "n")
+	}
+	for index := 0; index < radosLateEpochLimit+2; index++ {
+		entry := radosLateEpoch{Epoch: 16 + index, ModifiedUnix: 1}
+		for c := 0; c < 3+index; c++ {
+			entry.Changes = append(entry.Changes, "c")
+		}
+		direct.Timeline = append(direct.Timeline, entry)
+	}
+	read := 0
+	for _, entry := range direct.Timeline {
+		read += len(entry.Changes)
+	}
+	capRadosLateFields(direct)
+	kept := 0
+	for _, entry := range direct.Timeline {
+		kept += len(entry.Changes)
+	}
+	if len(direct.Probes)+direct.ProbesDropped != radosLateListLimit+5 || len(direct.Notes)+direct.NotesDropped != radosLateNoteLimit+3 {
+		t.Fatalf("probes %d+%d notes %d+%d", len(direct.Probes), direct.ProbesDropped, len(direct.Notes), direct.NotesDropped)
+	}
+	if len(direct.Timeline)+direct.TimelineOmitted != radosLateEpochLimit+2 || kept+direct.TimelineChangesOmitted != read {
+		t.Fatalf("timeline: epochs %d+%d, changes %d+%d of %d", len(direct.Timeline), direct.TimelineOmitted, kept, direct.TimelineChangesOmitted, read)
+	}
+
+	// Wait events beyond the cap are counted on the operation.
+	var events []string
+	for i := 0; i < radosLateEventLimit+4; i++ {
+		events = append(events, "op must wait for map")
+	}
+	parked := radosLateParkedOp("client.4222", "x", 16, radosLateStamp(radosLateBase, 42*time.Second), 10, events...)
+	reader = healthyRadosLateReader(16, 16)
+	reader.answers[radosLateKeyInFlight] = fixedRadosLateAnswer(`{"ops":[` + parked + `]}`)
+	op := collectFixture(reader, "failure", nil).InFlight[0]
+	if len(op.Waits)+op.WaitsDropped != radosLateEventLimit+4 || op.WaitsDropped != 4 || !op.WaitsForMap {
+		t.Fatalf("waits: kept %d dropped %d", len(op.Waits), op.WaitsDropped)
+	}
+}
+
+// The whole-record fallback counts the lists it clears and names the scalar
+// fields it empties.
+func TestRadosLateFallbackCountsWhatItClears(t *testing.T) {
+	up := 1
+	state := &radosLateClusterState{
+		Notes: []string{"a", "b"}, PGStates: []radosLatePGState{{State: "x", Count: 1}}, OSDs: []radosLateOSDInfo{{ID: 0}, {ID: 1, UpFrom: &up}, {ID: 2}},
+		MonFlags: "f", LastInChange: "i", MonModified: "m",
+	}
+	steps := radosLateFallbackSteps(state, func() int { return 0 })
+	for _, step := range steps[:4] {
+		step()
+	}
+	if state.NotesDropped != 2 || state.PGStatesDropped != 1 || state.OSDsDropped != 3 || state.Notes != nil || state.PGStates != nil || state.OSDs != nil {
+		t.Fatalf("counters: %+v", state)
+	}
+	if strings.Join(state.DroppedFields, ",") != "last_in_change,mon_flags,mon_modified" || state.MonFlags != "" || state.LastInChange != "" {
+		t.Fatalf("dropped fields: %v", state.DroppedFields)
+	}
+}
+
+// Age is how long ago a finished op was initiated, not how long it took, so
+// many old but fast operations must not outrank a slow one or keep their
+// events at its expense.
+func TestRadosLateRelevanceUsesDurationNotAge(t *testing.T) {
+	age, fast, slow := 52.0, 0.0003, 7.8
+	if radosLateRelevant(radosLateOp{Age: &age, Duration: &fast}) {
+		t.Fatalf("an old, fast operation is relevant")
+	}
+	if !radosLateRelevant(radosLateOp{Age: &fast, Duration: &slow}) || !radosLateRelevant(radosLateOp{Waits: []radosLateEvent{{Event: "op must wait for map"}}}) {
+		t.Fatalf("a slow or parked operation is not relevant")
+	}
+	reader := healthyRadosLateReader(16, 16)
+	var ops []string
+	for i := 0; i < 20; i++ {
+		filler := make([]string, 14)
+		for j := range filler {
+			filler[j] = fmt.Sprintf("short-%02d-%s", j, strings.Repeat("e", 110))
+		}
+		ops = append(ops, strings.Replace(radosLateParkedOp(fmt.Sprintf("client.%d", 4118), "x", 8, radosLateStamp(radosLateBase, 31*time.Second), 52.0, filler...), `"duration":52`, `"duration":0.0003`, 1))
+	}
+	inFlight := radosLateParkedOp("client.4222", "late-compound", 16, radosLateStamp(radosLateBase, 53*time.Second), 10.1, "initiated", "op must wait for map")
+	reader.answers[radosLateKeyHistoric] = fixedRadosLateAnswer(`{"ops":[` + strings.Join(ops, ",") + `]}`)
+	reader.answers[radosLateKeyInFlight] = fixedRadosLateAnswer(`{"ops":[` + inFlight + `]}`)
+	state := collectFixture(reader, "failure", nil)
+	if size := encodedRadosLateSize(t, state); size > radosLateStateLimit {
+		t.Fatalf("%d bytes", size)
+	}
+	if len(state.InFlight) != 1 || len(state.InFlight[0].Events) != 2 || state.InFlight[0].EventsDropped != 0 {
+		t.Fatalf("the parked in-flight op lost its timeline to old fast operations: %+v", state.InFlight)
+	}
+}
