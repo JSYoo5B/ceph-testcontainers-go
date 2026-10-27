@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // One PG with two replicas makes every object share the same primary and
@@ -32,7 +33,7 @@ func TestScrubInconsistency(t *testing.T) {
 			}
 			cluster, client := newServiceClusterWithOptions(t, image, opts...)
 			fsid := strings.TrimSpace(string(mustCeph(t, ctx, cluster, "fsid")))
-			if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
+			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal(err)
 			}
 			for range 2 {

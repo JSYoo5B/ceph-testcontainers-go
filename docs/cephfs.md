@@ -310,7 +310,7 @@ documented in [Ceph](ceph.md). The ones CephFS tests use most are:
 | `WithClientIdentity(client)` | Attach a client container with only one principal's keyring, for example `SubvolumeAuthorization.Client`. |
 | `CreateClient`, `ClientConfig.Delete` | Create or revoke a principal with hand-written caps (`ceph.ClientCaps{MDS: "allow rw fsname=app-fs path=/app", ...}`). |
 | `ConnectionConfig(ctx)` | `ceph.conf` and admin keyring bytes for a native client in the test process (host networking). |
-| `OverrideConfig(ctx, setting)` | Change a central option for MDS daemons or clients and restore it. |
+| `override.SetConfig(ctx, cluster, setting)` | Change a central option for MDS daemons or clients and restore it. |
 | `fault.Pause(ctx, cluster, ctr)` | Freeze a client or MDS container without stopping its process. |
 | `Observer.BlocklistEntries(ctx)` | List OSDMap blocklist entries, for example after a client eviction. |
 | `CreatePool`, `Pool.Remove`, `WaitForClean` | Create a pool to attach with `AddDataPool`, delete it afterwards, wait for clean PGs. |
@@ -968,7 +968,7 @@ The call sets nothing up by itself, and refuses with `ErrInvalidRequest`:
   MGR, which restarts to load the module, answers again;
 - a minute `Repeat` while `mgr/snap_schedule/allow_m_granularity` is not
   `true`. The module refuses minutes otherwise; set it with
-  [OverrideConfig](ceph.md#overrideconfig) for a test;
+  [override.SetConfig](override.md#setconfig) for a test;
 - a directory that already has a schedule, which the lease would not own,
   or another lease from this filesystem value.
 
@@ -1156,7 +1156,7 @@ Only one handle per directory and field may be active; different fields can be
 changed independently. Setting a policy does not prove its effect: ephemeral
 pinning is controlled by MDS options such as
 `mds_export_ephemeral_distributed`, which you can change with
-`cluster.OverrideConfig`. Keep a non-nil handle even when an error is
+`override.SetConfig`. Keep a non-nil handle even when an error is
 returned, because a canceled call or lost reply can leave the field changed.
 
 ```golang
@@ -1301,7 +1301,7 @@ tested in seconds. `SessionTimeouts` has two fields:
 | `Autoclose` | `session_autoclose` | When nobody wants its capabilities, the session stays `open` (Ceph's default `mds_defer_session_stale=true` does not even mark it stale) and is evicted after `Autoclose`. |
 
 Both values must be whole seconds and at least 30 seconds (Ceph's minimum). They
-are filesystem settings in the MDSMap, so `OverrideConfig` cannot change them.
+are filesystem settings in the MDSMap, so `override.SetConfig` cannot change them.
 Only one handle per filesystem may be active. Ceph changes one value per
 command, so applying and restoring are not atomic; keep a non-nil handle
 returned with an error and restore it.
@@ -1876,7 +1876,7 @@ health returns to `HEALTH_OK`; Ceph evicts before it would raise
 `MDS_CLIENT_LATE_RELEASE`. The blocklist entry expires by itself (one hour by
 default) and is not removed by `Restore`. To test eviction
 without blocklisting, set `mds_session_blocklist_on_timeout` to `false` with
-`cluster.OverrideConfig` (section `mds`).
+`override.SetConfig` (section `mds`).
 
 ### Keep an MDS active while it drops client messages
 
@@ -1906,12 +1906,10 @@ if err != nil {
 	t.Fatal(err)
 }
 active := status.Active[0]
-hold, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
+hold, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{
 	Section: "mds." + active.Name, Name: "ms_blackhole_client", Value: "true",
 })
-if hold != nil {
-	t.Cleanup(func() { _ = hold.Restore(context.Background()) })
-}
+t.Cleanup(func() { _ = hold.Restore(context.Background()) })
 if err != nil {
 	t.Fatal(err)
 }
@@ -1935,7 +1933,7 @@ Notes:
 - Use a new client process for each phase. The effect on sessions that were
   already open is not covered by this recipe.
 - Never set `ms_blackhole_client` on the MON, the MGR or the `client` section:
-  the fixture's own CLI is a client, so `OverrideConfig` and `Restore` would
+  the fixture's own CLI is a client, so `override.SetConfig` and `Restore` would
   hang.
 - `ms_inject_delay_type`, `ms_inject_delay_probability` and
   `ms_inject_delay_max` add random delays instead of dropping messages.
@@ -1970,7 +1968,7 @@ out, err = cluster.Ceph(ctx, "tell", "mds."+fs.FilesystemName+":0", "dump_ops_in
 _, err = cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(gid, 10))
 
 // Central configuration for every MDS, restored by the handle
-hold, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
+hold, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{
 	Section: "mds", Name: "mds_session_blocklist_on_timeout", Value: "false",
 })
 ```

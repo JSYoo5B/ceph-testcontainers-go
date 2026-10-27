@@ -12,6 +12,12 @@ keep their original APIs; no compatibility aliases are added on main.
 | `cluster.TemporaryMessengerPolicy(ctx, policy)` | `cluster.OverrideMessengerPolicy(ctx, policy)` | `*ceph.MessengerPolicyOverrideHandle` / `Restore(ctx)` |
 | `cluster.TemporaryClientRevocation(ctx, client)` | `cluster.RevokeClient(ctx, client)` | `*ceph.ClientRevocationHandle` / `Restore(ctx)` |
 
+`OverrideConfig` and `OverrideMessengerPolicy`, with their handle types, later
+moved out of `ceph` and became `override.SetConfig` and
+`override.SetMessengerPolicy` (see
+[the override package guide](upgrading-override-package.md)); the current-call
+column describes the checkpoint of this guide.
+
 Explicit return-type declarations, slices, interfaces and wrappers must also
 migrate these management objects:
 

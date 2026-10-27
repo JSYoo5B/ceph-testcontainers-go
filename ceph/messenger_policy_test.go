@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestMessengerPolicySettings(t *testing.T) {
@@ -66,20 +65,6 @@ func TestMessengerPolicyRefusesMessengerV2Secure(t *testing.T) {
 		WithMessengerPolicy(MessengerPolicy{Monitors: []MessengerConnectionMode{MessengerSecure}}))
 	if err == nil || cluster != nil || !strings.Contains(err.Error(), "MessengerV2Secure") {
 		t.Fatalf("Run accepted a policy with MessengerV2Secure: %v", err)
-	}
-	control := &poolFixtureContainer{Output: map[string]string{}}
-	c := &Container{Container: control, settings: options{startupTimeout: time.Second, messengerMode: MessengerV2Secure}}
-	if _, err := c.OverrideMessengerPolicy(t.Context(), MessengerPolicy{OSDs: []MessengerConnectionMode{MessengerCRC}}); !errors.Is(err, ErrInvalidRequest) || len(control.Calls) != 0 {
-		t.Fatalf("temporary policy under MessengerV2Secure: %v, calls %v", err, control.Calls)
-	}
-	c.settings.messengerMode = MessengerV2Only
-	for name, policy := range map[string]MessengerPolicy{
-		"empty":        {},
-		"unknown mode": {OSDs: []MessengerConnectionMode{"plain"}},
-	} {
-		if _, err := c.OverrideMessengerPolicy(t.Context(), policy); !errors.Is(err, ErrInvalidRequest) || len(control.Calls) != 0 {
-			t.Fatalf("%s temporary policy: %v, calls %v", name, err, control.Calls)
-		}
 	}
 }
 

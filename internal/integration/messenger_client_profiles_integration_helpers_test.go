@@ -21,6 +21,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -641,16 +642,14 @@ func testMessengerClientModeRejection(t *testing.T, monitors, managers []ceph.Me
 		return
 	}
 	// Make the MGRs secure, restart both and check that they kept the mode.
-	override, err := cluster.OverrideMessengerPolicy(ctx, ceph.MessengerPolicy{Managers: modeSecure})
-	if override != nil {
-		t.Cleanup(func() {
-			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancel()
-			if err := override.Restore(cleanup); err != nil {
-				t.Error(err)
-			}
-		})
-	}
+	overridden, err := override.SetMessengerPolicy(ctx, cluster, ceph.MessengerPolicy{Managers: modeSecure})
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := overridden.Restore(cleanup); err != nil {
+			t.Error(err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +666,7 @@ func testMessengerClientModeRejection(t *testing.T, monitors, managers []ceph.Me
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	waitEffectiveMode(t, ctx, cluster, "ms_mon_service_mode", "secure", mgrs...)
 	check("MGRs secure after their restart", monitors, modeSecure)
-	if err := override.Restore(ctx); err != nil {
+	if err := overridden.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
 	waitEffectiveMode(t, ctx, cluster, "ms_mon_service_mode", "crc", mgrs...)

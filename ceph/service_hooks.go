@@ -411,6 +411,8 @@ type testClusterConfig = struct {
 	OSDPlacement OSDConfig
 	// MemStore selects the OSDMemStore object store instead of BlueStore.
 	MemStore bool
+	// MessengerMode selects the bootstrap messenger mode.
+	MessengerMode MessengerMode
 	// Images selects the role images; nil means one aggregate image.
 	Images *ImageSet
 }
@@ -419,7 +421,7 @@ type testClusterConfig = struct {
 func (serviceHooks) TestCluster(control testcontainers.Container, config testClusterConfig) *Container {
 	c := &Container{Container: control, closed: config.Closed, settings: options{
 		startupTimeout: config.StartupTimeout, hostNetwork: config.HostNetwork, publicAddress: config.PublicAddress,
-		essentialImage: "unit-all",
+		essentialImage: "unit-all", messengerMode: config.MessengerMode,
 	}}
 	if config.MemStore {
 		c.settings.osdObjectStore = OSDMemStore

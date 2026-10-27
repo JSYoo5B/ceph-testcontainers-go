@@ -12,6 +12,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -75,33 +76,29 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err != nil || slices.Contains(initialFlags, "noout") {
 				t.Fatal("fresh noout=false state required for the auto-out positive control", err)
 			}
-			interval, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mon", Name: "mon_osd_down_out_interval", Value: "3"})
-			if interval != nil {
-				t.Cleanup(func() {
-					if err := interval.Restore(context.Background()); err != nil {
-						t.Errorf("restore down/out interval: %v", err)
-					}
-				})
-			}
+			interval, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "mon", Name: "mon_osd_down_out_interval", Value: "3"})
+			t.Cleanup(func() {
+				if err := interval.Restore(context.Background()); err != nil {
+					t.Errorf("restore down/out interval: %v", err)
+				}
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			// Keep the other auto-out guards fixed across noout=true/false, so the
 			// same down OSD is the positive control for the flag's native effect.
-			var controlSettings []*ceph.ConfigOverrideHandle
+			var controlSettings []*override.ConfigHandle
 			for _, setting := range []ceph.ConfigSetting{
 				{Section: "mon", Name: "mon_osd_down_out_subtree_limit", Value: ""},
 				{Section: "mon", Name: "mon_osd_adjust_down_out_interval", Value: "false"},
 			} {
-				change, err := cluster.OverrideConfig(ctx, setting)
-				if change != nil {
-					controlSettings = append(controlSettings, change)
-					t.Cleanup(func() {
-						if err := change.Restore(context.Background()); err != nil {
-							t.Errorf("restore auto-out control setting: %v", err)
-						}
-					})
-				}
+				change, err := override.SetConfig(ctx, cluster, setting)
+				controlSettings = append(controlSettings, change)
+				t.Cleanup(func() {
+					if err := change.Restore(context.Background()); err != nil {
+						t.Errorf("restore auto-out control setting: %v", err)
+					}
+				})
 				if err != nil {
 					t.Fatal(err)
 				}

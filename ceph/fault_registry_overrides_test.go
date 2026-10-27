@@ -78,25 +78,6 @@ func settled(t *testing.T, c *Container, kind faultKind, what string) int {
 	return held
 }
 
-func TestOverrideConfigEarlyReturnsLeaveNoReservation(t *testing.T) {
-	setting := ConfigSetting{Section: "osd", Name: "osd_max_backfills", Value: "2"}
-	ctr := &configFixture{failDumpAt: 1}
-	c := configCluster(ctr)
-	if change, err := c.OverrideConfig(t.Context(), setting); err == nil || change != nil || settled(t, c, faultConfigOverride, "a failed configuration read") != 0 {
-		t.Fatalf("failed read: %v %v", change, err)
-	}
-	change, err := c.OverrideConfig(t.Context(), setting)
-	if err != nil || settled(t, c, faultConfigOverride, "a retry") != 1 {
-		t.Fatalf("a freed key stayed refused: %v", err)
-	}
-	if _, err := c.OverrideConfig(t.Context(), setting); err == nil || err.Error() != overrideKinds[0].overlap {
-		t.Fatalf("overlap: %v", err)
-	}
-	if err := change.Restore(t.Context()); err != nil || len(c.faultsOf(faultConfigOverride)) != 0 {
-		t.Fatalf("restore: %v", err)
-	}
-}
-
 func TestOverrideOSDFlagEarlyReturnsLeaveNoReservation(t *testing.T) {
 	ctr := &osdPolicyFixture{raw: "not json"}
 	c := osdPolicyCluster(ctr)
@@ -161,27 +142,6 @@ func TestOverrideMGRModuleEarlyReturnsLeaveNoReservation(t *testing.T) {
 // key now maps to the successor, and Restore must refuse it without a native
 // call or a change to the successor.
 func TestOverrideRestoreRefusesStaleTokens(t *testing.T) {
-	t.Run("config", func(t *testing.T) {
-		ctr := &configFixture{}
-		c := configCluster(ctr)
-		setting := ConfigSetting{Section: "osd", Name: "osd_max_backfills", Value: "2"}
-		first, err := c.OverrideConfig(t.Context(), setting)
-		if err != nil {
-			t.Fatal(err)
-		}
-		stale := &ConfigOverrideHandle{owner: c, setting: first.setting, state: &configOverrideState{previous: first.state.previous, applied: "2", known: true, token: first.state.token}}
-		if err := first.Restore(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		second, err := c.OverrideConfig(t.Context(), setting)
-		if err != nil {
-			t.Fatal(err)
-		}
-		before := len(ctr.calls)
-		if err := stale.Restore(t.Context()); err == nil || err.Error() != "configuration override is not tracked by this cluster" || len(ctr.calls) != before || c.heldFault(faultConfigOverride, configOverrideKey(setting)) != second {
-			t.Fatalf("a stale handle was not refused: %v", err)
-		}
-	})
 	t.Run("OSD flag", func(t *testing.T) {
 		ctr := &osdPolicyFixture{}
 		c := osdPolicyCluster(ctr)
@@ -225,21 +185,27 @@ func TestOverrideRestoreRefusesStaleTokens(t *testing.T) {
 }
 
 func TestAllowPoolDeleteHeldFollowsTheRegistry(t *testing.T) {
-	ctr := &configFixture{}
-	c := configCluster(ctr)
+	c := &Container{}
+	var log []string
 	if c.allowPoolDeleteHeld() {
 		t.Fatal("an empty registry holds the key")
 	}
-	_, err := c.OverrideConfig(t.Context(), ConfigSetting{Section: "osd", Name: "osd_max_backfills", Value: "2"})
-	if err != nil || c.allowPoolDeleteHeld() {
-		t.Fatalf("an unrelated key counted as held: %v", err)
+	hold(t, c, faultConfigOverride, configOverrideKey(ConfigSetting{Section: "osd", Name: "osd_max_backfills"}), "", &log)
+	if c.allowPoolDeleteHeld() {
+		t.Fatal("an unrelated key counted as held")
 	}
-	change, err := c.OverrideConfig(t.Context(), allowPoolDeleteSetting)
-	if err != nil || !c.allowPoolDeleteHeld() {
-		t.Fatalf("the held key was not seen: %v", err)
+	hold(t, c, faultConfigOverride, configOverrideKey(allowPoolDeleteSetting), "", &log)
+	if !c.allowPoolDeleteHeld() {
+		t.Fatal("the held key was not seen")
 	}
-	if err := change.Restore(t.Context()); err != nil || c.allowPoolDeleteHeld() {
-		t.Fatalf("a restored key stayed held: %v", err)
+	c.mu.Lock()
+	for id, entry := range c.faults.entries {
+		if id.key == configOverrideKey(allowPoolDeleteSetting) {
+			c.releaseFault(entry)
+		}
 	}
-
+	c.mu.Unlock()
+	if c.allowPoolDeleteHeld() {
+		t.Fatal("a released key stayed held")
+	}
 }

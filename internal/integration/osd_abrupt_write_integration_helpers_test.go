@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -328,7 +329,7 @@ func abruptDescriptions(data []byte) []string {
 
 func abruptDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Container, osd string) func() {
 	t.Helper()
-	var handles []*ceph.ConfigOverrideHandle
+	var handles []*override.ConfigHandle
 	restore := func() {
 		for i := len(handles) - 1; i >= 0; i-- {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -344,10 +345,8 @@ func abruptDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Contai
 		{Section: osd, Name: "osd_debug_inject_dispatch_delay_duration", Value: "30"},
 		{Section: osd, Name: "osd_debug_inject_dispatch_delay_probability", Value: "1"},
 	} {
-		handle, err := cluster.OverrideConfig(ctx, setting)
-		if handle != nil {
-			handles = append(handles, handle)
-		}
+		handle, err := override.SetConfig(ctx, cluster, setting)
+		handles = append(handles, handle)
 		if err != nil {
 			t.Fatal(err)
 		}

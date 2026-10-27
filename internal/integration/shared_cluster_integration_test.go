@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -86,8 +87,8 @@ func TestSharedCluster(t *testing.T) {
 		}
 		for name, call := range map[string]func() error{
 			"Ceph": func() error { _, err := cluster.Ceph(ctx, "status"); return err },
-			"OverrideConfig": func() error {
-				_, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "global", Name: "mon_max_pg_per_osd", Value: "500"})
+			"override.SetConfig": func() error {
+				_, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "global", Name: "mon_max_pg_per_osd", Value: "500"})
 				return err
 			},
 			"OverrideOSDFlag": func() error { _, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true); return err },

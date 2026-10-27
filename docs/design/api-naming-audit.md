@@ -306,3 +306,21 @@ captured tuple back. The names follow the decisions D7 to D9 of
 `override-package-boundary.md`. The reviewed mapping is in
 [the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
 The receipts of `ceph` and `override` were approved separately for this move.
+
+## 146-override-config-package
+
+The change moves the central configuration override and the messenger policy
+override into the package `override`. The handle types
+`ceph.ConfigOverrideHandle` and `ceph.MessengerPolicyOverrideHandle` and their
+methods move to `override.ConfigHandle` and `override.MessengerPolicyHandle`
+under the decided suffix `Handle`. The methods `Container.OverrideConfig` and
+`Container.OverrideMessengerPolicy` become the package functions
+`override.SetConfig` and `override.SetMessengerPolicy`: they change kind (method
+to function) and drop the `Override` prefix because the package name carries it,
+so the record lists them as removed and the functions as added instead of
+pairing them. `Set` names what the calls do: each replaces a value that may
+already exist and `Restore` puts the previous entry back or removes the entry
+that was absent. The names follow the decisions D7 to D9 of
+`override-package-boundary.md`. The reviewed mapping is in
+[the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
+The receipts of `ceph` and `override` were approved separately for this move.

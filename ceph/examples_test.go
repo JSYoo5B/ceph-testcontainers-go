@@ -52,32 +52,3 @@ func ExampleRun_services() {
 	_ = cephfs.Filesystems(cluster)
 	_, _ = rgw.Gateways(context.Background(), cluster)
 }
-
-func ExampleContainer_OverrideConfig() {
-	ctx := context.Background()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage)
-	defer func() {
-		if err := testcontainers.TerminateContainer(cluster); err != nil {
-			log.Printf("failed to terminate container: %s", err)
-		}
-	}()
-	if err != nil {
-		panic(err)
-	}
-	change, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{
-		Section: "osd", Name: "osd_max_backfills", Value: "1",
-	})
-	if change != nil {
-		// A failed apply can still have persisted; retain its restoration handle.
-		defer func() {
-			if err := change.Restore(ctx); err != nil {
-				panic(err)
-			}
-		}()
-	}
-	if err != nil {
-		panic(err)
-	}
-	// Exercise the native client, then Restore removes an originally absent
-	// entry instead of pinning the daemon's inherited/default value.
-}

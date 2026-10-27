@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // A one-minute snapshot schedule on the filesystem's root takes scheduled
@@ -66,16 +67,14 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	if lease, err := fs.AddSnapshotSchedule(ctx, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 		t.Fatalf("a minute schedule without allow_m_granularity: %v, %v", lease, err)
 	}
-	granularity, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mgr", Name: "mgr/snap_schedule/allow_m_granularity", Value: "true"})
-	if granularity != nil {
-		t.Cleanup(func() {
-			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := granularity.Restore(cleanup); err != nil {
-				t.Errorf("restore allow_m_granularity: %v", err)
-			}
-		})
-	}
+	granularity, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "mgr", Name: "mgr/snap_schedule/allow_m_granularity", Value: "true"})
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := granularity.Restore(cleanup); err != nil {
+			t.Errorf("restore allow_m_granularity: %v", err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

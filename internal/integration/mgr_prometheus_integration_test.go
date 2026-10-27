@@ -17,6 +17,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -68,10 +69,8 @@ func TestManagerPrometheusExporter(t *testing.T) {
 				}
 			})
 			for _, setting := range settings {
-				change, err := cluster.OverrideConfig(ctx, setting)
-				if change != nil {
-					restores = append(restores, change.Restore)
-				}
+				change, err := override.SetConfig(ctx, cluster, setting)
+				restores = append(restores, change.Restore)
 				if err != nil {
 					t.Fatal(setting.Name, err)
 				}

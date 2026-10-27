@@ -2,7 +2,6 @@ package ceph
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -81,7 +80,7 @@ func (policy MessengerPolicy) settings() ([]ConfigSetting, error) {
 // WithMessengerPolicy selects the connection modes that MONs, MGRs and OSDs
 // accept from clients. Run stores the policy in the central configuration
 // right after the first MON starts, before any other daemon, so every daemon
-// starts with it. OverrideMessengerPolicy changes it on a running cluster.
+// starts with it. override.SetMessengerPolicy changes it on a running cluster.
 // It cannot be combined with MessengerV2Secure, whose local configuration
 // fixes every mode.
 func WithMessengerPolicy(policy MessengerPolicy) Option {
@@ -107,65 +106,6 @@ func (c *Container) applyMessengerPolicy(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// MessengerPolicyOverrideHandle manages the configuration restoration handles
-// of one OverrideMessengerPolicy call, including partial or uncertain application.
-// Retain a non-nil handle returned with an error for explicit Restore; it does
-// not promise successful application or automatic cleanup.
-type MessengerPolicyOverrideHandle struct {
-	overrides []*ConfigOverrideHandle
-}
-
-// OverrideMessengerPolicy changes the connection modes that the running
-// daemons accept from clients. Each non-nil field becomes an OverrideConfig
-// override of the policy's option; nil fields stay as they are. The daemons
-// apply the change to new connections without a restart, and established
-// connections keep their mode. A non-nil result returned with an error holds
-// the overrides that were made and must be restored. A policy that selects no
-// valid mode, and any policy with MessengerV2Secure, is refused with
-// ErrInvalidRequest before any change.
-func (c *Container) OverrideMessengerPolicy(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverrideHandle, error) {
-	if gateErr := c.sharedGate("OverrideMessengerPolicy"); gateErr != nil {
-		return nil, gateErr
-	}
-	settings, err := policy.settings()
-	if err != nil {
-		return nil, invalid(fmt.Errorf("messenger policy: %w", err))
-	}
-	if len(settings) == 0 {
-		return nil, invalidRequest("messenger policy selects no mode")
-	}
-	if c != nil && c.settings.messengerMode == MessengerV2Secure {
-		return nil, invalidRequest("MessengerV2Secure fixes every connection mode in the local configuration")
-	}
-	result := &MessengerPolicyOverrideHandle{}
-	for _, setting := range settings {
-		override, err := c.OverrideConfig(ctx, setting)
-		if override != nil {
-			result.overrides = append(result.overrides, override)
-		}
-		if err != nil {
-			if len(result.overrides) == 0 {
-				return nil, err
-			}
-			return result, err
-		}
-	}
-	return result, nil
-}
-
-// Restore returns every option of the policy to its previous value, in
-// reverse order. It is idempotent and can be retried after a failure.
-func (override *MessengerPolicyOverrideHandle) Restore(ctx context.Context) error {
-	if override == nil {
-		return errors.New("messenger policy override is unavailable")
-	}
-	var errs []error
-	for _, change := range slices.Backward(override.overrides) {
-		errs = append(errs, change.Restore(ctx))
-	}
-	return errors.Join(errs...)
 }
 
 // ClientMessengerPolicy selects the Messenger v2 connection modes that a

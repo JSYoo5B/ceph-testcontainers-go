@@ -20,6 +20,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -38,16 +39,14 @@ func testRGWS3ClientFeatures(t *testing.T, host bool) {
 		{Section: "client.admin", Name: "rgw_lc_debug_interval", Value: "2"},
 		{Section: "client.admin", Name: "rgw_enable_lc_threads", Value: "false"},
 	} {
-		change, err := cluster.OverrideConfig(ctx, setting)
-		if change != nil {
-			t.Cleanup(func() {
-				cleanup, stop := context.WithTimeout(context.Background(), 20*time.Second)
-				defer stop()
-				if err := change.Restore(cleanup); err != nil {
-					t.Error(err)
-				}
-			})
-		}
+		change, err := override.SetConfig(ctx, cluster, setting)
+		t.Cleanup(func() {
+			cleanup, stop := context.WithTimeout(context.Background(), 20*time.Second)
+			defer stop()
+			if err := change.Restore(cleanup); err != nil {
+				t.Error(err)
+			}
+		})
 		if err != nil {
 			t.Fatal(err)
 		}

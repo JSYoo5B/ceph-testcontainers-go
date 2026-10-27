@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // cephFSMetadataRecipeActor is an actor that runs a fixed sequence of
@@ -371,7 +372,7 @@ func cephFSMDSInodeLinks(ctx context.Context, cluster *ceph.Container, mds strin
 // testCephFSMetadataRecipe runs one native client through a fixed sequence
 // of metadata operations and keeps every operation's errno and native values
 // as a receipt. The MDS's mds_bal_split_size is lowered through
-// OverrideConfig so that the listed directory is split into several
+// override.SetConfig so that the listed directory is split into several
 // fragments, which libcephfs, having no readdir size option of its own,
 // fetches with one MDS readdir request each; the MDS's readdir counter shows
 // how many requests the listing took. A client in another container then
@@ -387,16 +388,14 @@ func testCephFSMetadataRecipe(t *testing.T) {
 	// fragment. 1000 splits it once (into 2^mds_bal_split_bits fragments)
 	// and its fragments stay above mds_bal_merge_size.
 	const entries, splitSize = 1500, "1000"
-	split, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "mds", Name: "mds_bal_split_size", Value: splitSize})
-	if split != nil {
-		t.Cleanup(func() {
-			restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := split.Restore(restoreCtx); err != nil {
-				t.Errorf("restore mds_bal_split_size: %v", err)
-			}
-		})
-	}
+	split, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "mds", Name: "mds_bal_split_size", Value: splitSize})
+	t.Cleanup(func() {
+		restoreCtx, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := split.Restore(restoreCtx); err != nil {
+			t.Errorf("restore mds_bal_split_size: %v", err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

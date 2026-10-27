@@ -21,6 +21,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -570,10 +571,8 @@ func testOSDBackoffReceipt(t *testing.T) {
 		}
 		receipt.Cleanup = append(receipt.Cleanup, what+": "+outcome)
 	}
-	debug, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: receipt.Target.Primary, Name: "debug_ms", Value: "1"})
-	if debug != nil {
-		t.Cleanup(func() { restore("debug_ms of "+receipt.Target.Primary, debug.Restore) })
-	}
+	debug, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: receipt.Target.Primary, Name: "debug_ms", Value: "1"})
+	t.Cleanup(func() { restore("debug_ms of "+receipt.Target.Primary, debug.Restore) })
 	if err != nil {
 		t.Fatal(err)
 	}
