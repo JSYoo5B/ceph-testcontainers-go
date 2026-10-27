@@ -115,8 +115,8 @@ func TestTerminateReleasesTheMemoryVolumeAfterTheLabeledContainers(t *testing.T)
 		}
 	}
 	cluster := ownedCluster("c", docker)
-	cluster.osdMemory = storage
-	if err := cluster.Terminate(t.Context()); err != nil || cluster.osdMemory != nil || !storage.volumeRemoved || volumes.removals != 2 {
-		t.Fatalf("Terminate returned %v; memory %+v, removals %d", err, cluster.osdMemory, volumes.removals)
+	cluster.stores.memory = storage
+	if err := cluster.Terminate(t.Context()); err != nil || cluster.stores.memory != nil || !storage.volumeRemoved || volumes.removals != 2 {
+		t.Fatalf("Terminate returned %v; memory %+v, removals %d", err, cluster.stores.memory, volumes.removals)
 	}
 }

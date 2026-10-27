@@ -176,9 +176,9 @@ func (fs *Filesystem) removeStoppedMDS(parent context.Context, daemon *MDS) erro
 		return nil
 	}
 	servicehook.DeleteService(c, "mds."+i.name)
-	fs.mdss = slices.DeleteFunc(fs.mdss, func(owned *MDS) bool { return owned == i.descriptor })
+	fs.roster.remove(i.descriptor)
 	if fs.Container == i.container {
-		fs.Container = fs.mdss[0].identity.container
+		fs.Container = fs.roster.at(0).identity.container
 	}
 	i.removed = true
 	return nil
@@ -194,7 +194,7 @@ func (fs *Filesystem) checkStoppedMDSOwner(handle *MDS, i *cephFSMDSIdentity) er
 		return invalid(errors.New("original stopped MDS descriptor was edited"))
 	}
 	count, embedded := 0, false
-	for _, owned := range fs.mdss {
+	for _, owned := range fs.roster.members() {
 		if owned == i.descriptor {
 			count++
 		}
@@ -395,7 +395,7 @@ func (fs *Filesystem) decodeStoppedMDSScope(ctx context.Context, target *cephFSM
 	}
 	remaining := 0
 	seenNames, seenCIDs := map[string]bool{}, map[string]bool{}
-	for _, daemon := range fs.mdss {
+	for _, daemon := range fs.roster.members() {
 		if daemon == target.descriptor {
 			continue
 		}

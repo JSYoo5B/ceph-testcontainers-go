@@ -25,7 +25,7 @@ func clientWorld() (*rotationWorld, *Container, *ClientConfig) {
 	c.keyTypeOption = true
 	client := &ClientConfig{owner: c, name: "client.app", config: []byte("[global]\n"),
 		keyring: []byte(fakeClientKeyring("client.app", w.clients["client.app"])), created: true, ready: true}
-	c.setClientKey("client.app", w.clients["client.app"].key)
+	c.authRecords.confirmKey("client.app", w.clients["client.app"].key)
 	return w, c, client
 }
 

@@ -56,7 +56,7 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldID := original.GetContainerID()
-	volume := c.osdVolume.name
+	volume := c.stores.volume.name
 	pool, err := c.CreatePool(ctx, PoolConfig{Name: "cancel-after-admission", Application: "rados", Replicas: 1, MinSize: 1, PGNum: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -84,9 +84,9 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 	reopenCtx, cancelReopen := context.WithCancel(ctx)
 	defer cancelReopen()
 	fault := &retainedCancelFault{next: runContainer, cancel: cancelReopen}
-	previous := c.osdRunner
-	c.osdRunner = fault.run
-	t.Cleanup(func() { c.osdRunner = previous })
+	previous := c.stores.runner
+	c.stores.runner = fault.run
+	t.Cleanup(func() { c.stores.runner = previous })
 	candidate, reopenErr := c.ReopenOSD(reopenCtx, detached)
 	if reopenErr == nil || reopenCtx.Err() == nil || ctx.Err() != nil {
 		t.Fatalf("reopen did not observe the post-creation cancellation: err=%v caller=%v test=%v", reopenErr, reopenCtx.Err(), ctx.Err())
@@ -132,7 +132,7 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 	if _, err := docker.Client.ContainerInspect(ctx, firstID, mobycl.ContainerInspectOptions{}); !errdefs.IsNotFound(err) {
 		t.Fatal("canceled candidate container remains after detach", err)
 	}
-	c.osdRunner = previous
+	c.stores.runner = previous
 	replacement, err := c.ReopenOSD(ctx, second)
 	if err != nil || replacement == nil || replacement.Container == nil {
 		t.Fatal("reopen after the canceled candidate", err)

@@ -12,6 +12,7 @@ import (
 	"math"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -81,14 +82,55 @@ type radosLateEvent struct {
 // Epoch are read from the description ("osd_op(client.4218.0:51 2.0 ... e15)")
 // and stay absent when the description does not have that form.
 type radosLateOp struct {
-	Description   string           `json:"description"`
-	Client        string           `json:"client,omitempty"`
-	Epoch         *int             `json:"epoch,omitempty"`
-	Age           *float64         `json:"age,omitempty"`
-	Duration      *float64         `json:"duration,omitempty"`
-	FlagPoint     string           `json:"flag_point,omitempty"`
-	Events        []radosLateEvent `json:"events,omitempty"`
-	EventsDropped int              `json:"events_dropped,omitempty"`
+	Description string `json:"description"`
+	Client      string `json:"client,omitempty"`
+	Epoch       *int   `json:"epoch,omitempty"`
+	// Initiated is the tracker's initiated_at text and InitiatedUnix its Unix
+	// seconds; the latter is absent when the text is not in the tracker's
+	// timestamp form.
+	Initiated     string   `json:"initiated_at,omitempty"`
+	InitiatedUnix *float64 `json:"initiated_unix,omitempty"`
+	// Waits lists every event of the operation (before the event cap) that
+	// the pinned source emits when an op is parked, so that they survive the
+	// shedding of the full timeline. WaitsForMap is true for the two events
+	// that mean the PG's map is older than the epoch the client stamped.
+	Waits        []radosLateEvent `json:"waits,omitempty"`
+	WaitsDropped int              `json:"waits_dropped,omitempty"`
+	WaitsForMap  bool             `json:"waits_for_map,omitempty"`
+	// EpochLead is the op's stamped epoch minus the newest map osd.0 had
+	// stored when it was dumped; EpochAtInitiated is the newest epoch among
+	// the timeline observations (the baseline and the epochs read) that was
+	// already committed when the op was initiated. When epochs were skipped or
+	// later omitted it is the newest observation, not proof of the globally
+	// exact epoch at that moment. Both are absent unless every input was read.
+	EpochLead        *int             `json:"epoch_lead_over_osd,omitempty"`
+	EpochAtInitiated *int             `json:"epoch_committed_at_initiated,omitempty"`
+	Age              *float64         `json:"age,omitempty"`
+	Duration         *float64         `json:"duration,omitempty"`
+	FlagPoint        string           `json:"flag_point,omitempty"`
+	Events           []radosLateEvent `json:"events,omitempty"`
+	EventsDropped    int              `json:"events_dropped,omitempty"`
+}
+
+// radosLateWaitEvent reports whether an operation event is one that the
+// pinned source emits for a parked op: every PrimaryLogPG mark_delayed
+// reason begins with "waiting" except the two map waits.
+func radosLateWaitEvent(event string) (wait, forMap bool) {
+	switch event {
+	case "op must wait for map", "waiting_for_map not empty":
+		return true, true
+	}
+	return strings.HasPrefix(event, "waiting "), false
+}
+
+// radosLateTime parses the timestamp form of the OSD op tracker and the
+// OSDMap "modified" field. A zero or pre-epoch time is not a timestamp.
+func radosLateTime(text string) (float64, bool) {
+	at, err := time.Parse("2006-01-02T15:04:05.999999-0700", text)
+	if err != nil || at.Unix() <= 0 {
+		return 0, false
+	}
+	return float64(at.UnixNano()) / 1e9, true
 }
 
 // radosLateOSDInfo is one "osd dump" entry. UpThru and UpFrom are absent when
@@ -115,9 +157,10 @@ type radosLateClusterState struct {
 	Probes []radosLateProbe `json:"probes"`
 	Notes  []string         `json:"notes,omitempty"`
 
-	MonEpoch    *int   `json:"mon_epoch,omitempty"`
-	MonModified string `json:"mon_modified,omitempty"`
-	PoolID      *int   `json:"pool_id,omitempty"`
+	MonEpoch        *int     `json:"mon_epoch,omitempty"`
+	MonModified     string   `json:"mon_modified,omitempty"`
+	MonModifiedUnix *float64 `json:"mon_modified_unix,omitempty"`
+	PoolID          *int     `json:"pool_id,omitempty"`
 	// What a MON epoch bump can be traced to: the flags and change stamps of
 	// the map, the pool's last_change epoch and each OSD's up_from/up_thru.
 	// Comparing the failure state with the pre-late state shows which changed.
@@ -129,6 +172,24 @@ type radosLateClusterState struct {
 	OSDsUpAndIn    *bool              `json:"osds_up_and_in,omitempty"`
 	PGsActiveClean *bool              `json:"pgs_active_clean,omitempty"`
 	PGStates       []radosLatePGState `json:"pg_states,omitempty"`
+	// Timeline holds one entry per epoch committed after the baseline, read
+	// from "osd dump <epoch>" (see radosLateEpoch).
+	Timeline        []radosLateEpoch `json:"epoch_timeline,omitempty"`
+	TimelineSkipped int              `json:"epoch_timeline_skipped,omitempty"`
+	// Epochs and changes that were read but dropped to fit the record budget.
+	// TimelineSkipped counts epochs never read; these count epochs and
+	// changes that were read and then shed.
+	TimelineOmitted        int `json:"epoch_timeline_omitted,omitempty"`
+	TimelineChangesOmitted int `json:"epoch_timeline_changes_omitted,omitempty"`
+	// Items read and then cut by a list cap or by the whole-record fallback.
+	// Each counter covers every cut of its list, so kept plus dropped equals
+	// read. DroppedFields names the scalar fields the fallback cleared.
+	ProbesDropped   int      `json:"probes_dropped,omitempty"`
+	NotesDropped    int      `json:"notes_dropped,omitempty"`
+	PGStatesDropped int      `json:"pg_states_dropped,omitempty"`
+	OSDsDropped     int      `json:"osds_dropped,omitempty"`
+	DroppedFields   []string `json:"dropped_fields,omitempty"`
+	fallbackStages  int
 
 	OSDState     string `json:"osd_state,omitempty"`
 	OSDNewestMap *int   `json:"osd_newest_map,omitempty"`
@@ -328,6 +389,9 @@ func parseRadosLateOSDDump(raw []byte, pool string, state *radosLateClusterState
 		}
 	}
 	state.MonEpoch, state.MonModified, state.PoolID, state.OSDsUpAndIn = &epoch, modified, poolID, &allUpAndIn
+	if unix, ok := radosLateTime(modified); ok {
+		state.MonModifiedUnix = &unix
+	}
 	state.MonFlags, state.LastUpChange, state.LastInChange, state.PoolLastChange, state.OSDs = flags, lastUp, lastIn, poolChange, infos
 	if poolID == nil {
 		state.Notes = append(state.Notes, "pool "+strconv.Quote(pool)+" is not in the OSDMap that was read")
@@ -454,6 +518,14 @@ func parseRadosLateOp(entry map[string]json.RawMessage) (radosLateOp, error) {
 		}
 	}
 	var err error
+	if _, err := radosLateOptional(entry, "initiated_at", &op.Initiated); err != nil {
+		return op, err
+	}
+	if op.Initiated != "" {
+		if unix, ok := radosLateTime(op.Initiated); ok {
+			op.InitiatedUnix = &unix
+		}
+	}
 	if op.Age, err = radosLateFloatPointer(entry, "age"); err != nil {
 		return op, err
 	}
@@ -482,6 +554,14 @@ func parseRadosLateOp(entry map[string]json.RawMessage) (radosLateOp, error) {
 		}
 		if event.Duration, err = radosLateFloatPointer(entry, "duration"); err != nil {
 			return op, fmt.Errorf("events[%d]: %w", index, err)
+		}
+		if wait, forMap := radosLateWaitEvent(event.Event); wait {
+			if len(op.Waits) < radosLateEventLimit {
+				op.Waits = append(op.Waits, event)
+			} else {
+				op.WaitsDropped++
+			}
+			op.WaitsForMap = op.WaitsForMap || forMap
 		}
 		if len(op.Events) == radosLateEventLimit {
 			op.EventsDropped++
@@ -584,16 +664,44 @@ func collectRadosLateClusterState(parent context.Context, reader radosLateReader
 		advance := *state.MonEpoch - *baseline.MonEpoch
 		state.EpochAdvance = &advance
 	}
+	collectRadosLateEpochTimeline(overall, reader, pool, state, baseline)
+	joinRadosLateOps(state, baseline)
+	noteRadosLateTimelineGap(state)
 	state.Ready = radosLateReady(state)
 	boundRadosLateState(state)
 	return state
 }
 
-func radosLateCap(ops []radosLateOp) ([]radosLateOp, int) {
-	if len(ops) <= radosLateOpLimit {
-		return slices.Clone(ops), 0
+// radosLateRelevant marks the operations that can explain a stall: one that
+// was parked, or one that took or has so far taken a second or more.
+func radosLateRelevant(op radosLateOp) bool {
+	if len(op.Waits) > 0 {
+		return true
 	}
-	return slices.Clone(ops[:radosLateOpLimit]), len(ops) - radosLateOpLimit
+	// Duration, not Age: Age is how long ago a finished op was initiated, which
+	// says nothing about how long it took. For an op still in flight Duration
+	// is the time so far.
+	return op.Duration != nil && *op.Duration >= 1
+}
+
+// radosLateCap keeps the relevant operations first (each group in the order
+// the OSD reported it) and caps the list, so that the cap drops the
+// uninformative short operations before it drops a parked or slow one.
+func radosLateCap(ops []radosLateOp) ([]radosLateOp, int) {
+	ranked := slices.Clone(ops)
+	slices.SortStableFunc(ranked, func(a, b radosLateOp) int {
+		switch ra, rb := radosLateRelevant(a), radosLateRelevant(b); {
+		case ra && !rb:
+			return -1
+		case !ra && rb:
+			return 1
+		}
+		return 0
+	})
+	if len(ranked) <= radosLateOpLimit {
+		return ranked, 0
+	}
+	return ranked[:radosLateOpLimit], len(ranked) - radosLateOpLimit
 }
 
 // radosLateReady is a three-valued conjunction: a conclusive "no" wins over an
@@ -631,6 +739,13 @@ func radosLateReady(state *radosLateClusterState) *bool {
 
 // boundRadosLateState keeps the encoded state within radosLateStateLimit by
 // dropping detail in a fixed order and recording that it did.
+// radosLateFallbackStages is the number of whole-record shedding stages that
+// follow the per-field caps and the operation shedding.
+const radosLateFallbackStages = 9
+
+// radosLateProbeNameLimit bounds a probe name; the real names are shorter.
+const radosLateProbeNameLimit = 48
+
 const (
 	radosLateErrorLimit = 512
 	radosLateTextLimit  = 128
@@ -670,25 +785,46 @@ func capRadosLateFields(state *radosLateClusterState) bool {
 	text(&state.PoolLastChange, radosLateTextLimit)
 	text(&state.OSDState, radosLateTextLimit)
 	for index := range state.Probes {
-		text(&state.Probes[index].Name, radosLateTextLimit)
+		text(&state.Probes[index].Name, radosLateProbeNameLimit)
 		text(&state.Probes[index].Error, radosLateErrorLimit)
 	}
 	if len(state.Probes) > radosLateListLimit {
+		state.ProbesDropped += len(state.Probes) - radosLateListLimit
 		state.Probes, cut = state.Probes[:radosLateListLimit], true
 	}
 	for index := range state.Notes {
 		text(&state.Notes[index], radosLateErrorLimit)
 	}
 	if len(state.Notes) > radosLateNoteLimit {
+		state.NotesDropped += len(state.Notes) - radosLateNoteLimit
 		state.Notes, cut = state.Notes[:radosLateNoteLimit], true
 	}
 	for index := range state.PGStates {
 		text(&state.PGStates[index].State, radosLateTextLimit)
 	}
+	for index := range state.Timeline {
+		text(&state.Timeline[index].Modified, radosLateTextLimit)
+		for change := range state.Timeline[index].Changes {
+			text(&state.Timeline[index].Changes[change], radosLateTextLimit)
+		}
+		if len(state.Timeline[index].Changes) > radosLateListLimit {
+			state.TimelineChangesOmitted += len(state.Timeline[index].Changes) - radosLateListLimit
+			state.Timeline[index].Changes, cut = state.Timeline[index].Changes[:radosLateListLimit], true
+		}
+	}
+	if len(state.Timeline) > radosLateEpochLimit {
+		for _, entry := range state.Timeline[radosLateEpochLimit:] {
+			state.TimelineChangesOmitted += len(entry.Changes)
+			state.TimelineOmitted++
+		}
+		state.Timeline, cut = state.Timeline[:radosLateEpochLimit], true
+	}
 	if len(state.PGStates) > radosLateListLimit {
+		state.PGStatesDropped += len(state.PGStates) - radosLateListLimit
 		state.PGStates, cut = state.PGStates[:radosLateListLimit], true
 	}
 	if len(state.OSDs) > radosLateListLimit {
+		state.OSDsDropped += len(state.OSDs) - radosLateListLimit
 		state.OSDs, cut = state.OSDs[:radosLateListLimit], true
 	}
 	for _, list := range [][]radosLateOp{state.Historic, state.InFlight} {
@@ -696,6 +832,11 @@ func capRadosLateFields(state *radosLateClusterState) bool {
 			text(&list[index].Description, radosLateErrorLimit)
 			text(&list[index].Client, radosLateTextLimit)
 			text(&list[index].FlagPoint, radosLateTextLimit)
+			text(&list[index].Initiated, radosLateTextLimit)
+			for wait := range list[index].Waits {
+				text(&list[index].Waits[wait].Event, radosLateTextLimit)
+				text(&list[index].Waits[wait].Time, radosLateTextLimit)
+			}
 			for event := range list[index].Events {
 				text(&list[index].Events[event].Event, radosLateTextLimit)
 				text(&list[index].Events[event].Time, radosLateTextLimit)
@@ -719,18 +860,58 @@ func boundRadosLateState(state *radosLateClusterState) {
 	if capRadosLateFields(state) {
 		state.Truncated = true
 	}
+	boundRadosLateTimelineShare(state)
 	if size() <= radosLateStateLimit {
 		return
 	}
 	state.Truncated = true
-	for _, list := range []*[]radosLateOp{&state.Historic, &state.InFlight} {
-		for index := range *list {
-			(*list)[index].EventsDropped += len((*list)[index].Events)
-			(*list)[index].Events = nil
+	// Shed the timeline of the uninformative operations first, then those
+	// operations, and only then the events of the relevant ones (their
+	// parked-op events stay in Waits regardless).
+	lists := []*[]radosLateOp{&state.Historic, &state.InFlight}
+	dropEvents := func(only func(radosLateOp) bool) {
+		for _, list := range lists {
+			for index := range *list {
+				if only((*list)[index]) {
+					(*list)[index].EventsDropped += len((*list)[index].Events)
+					(*list)[index].Events = nil
+				}
+			}
 		}
-		if size() <= radosLateStateLimit {
-			return
+	}
+	dropEvents(func(op radosLateOp) bool { return !radosLateRelevant(op) })
+	if size() <= radosLateStateLimit {
+		return
+	}
+	for size() > radosLateStateLimit {
+		dropped := false
+		for _, list := range lists {
+			for index := len(*list) - 1; index >= 0; index-- {
+				if !radosLateRelevant((*list)[index]) {
+					*list = slices.Delete(*list, index, index+1)
+					if list == &state.Historic {
+						state.HistoricDropped++
+					} else {
+						state.InFlightDropped++
+					}
+					dropped = true
+					break
+				}
+			}
+			if dropped {
+				break
+			}
 		}
+		if !dropped {
+			break
+		}
+	}
+	if size() <= radosLateStateLimit {
+		return
+	}
+	dropEvents(func(radosLateOp) bool { return true })
+	if size() <= radosLateStateLimit {
+		return
 	}
 	for size() > radosLateStateLimit && (len(state.Historic) > 0 || len(state.InFlight) > 0) {
 		if len(state.Historic) > 0 {
@@ -739,15 +920,40 @@ func boundRadosLateState(state *radosLateClusterState) {
 			state.InFlight, state.InFlightDropped = state.InFlight[:len(state.InFlight)-1], state.InFlightDropped+1
 		}
 	}
-	// Escaping can still make capped text larger than its byte count. Drop the
-	// remaining detail in order of least value; the probe table and the
-	// epoch, readiness and lag fields are kept last.
-	steps := []func(){
-		func() { state.Notes = nil },
-		func() { state.PGStates = nil },
-		func() { state.OSDs = nil },
+	for _, step := range radosLateFallbackSteps(state, size) {
+		if size() <= radosLateStateLimit {
+			return
+		}
+		step()
+		state.fallbackStages++
+	}
+}
+
+// radosLateFallbackSteps are the whole-record shedding stages that follow the
+// per-field caps and the operation shedding, in order of least value first.
+// Escaping can still make capped text larger than its byte count, so these
+// run until the encoded record fits; the probe table and the epoch, readiness
+// and lag fields are kept last.
+func radosLateFallbackSteps(state *radosLateClusterState, size func() int) []func() {
+	return []func(){
+		func() { state.NotesDropped += len(state.Notes); state.Notes = nil },
+		func() { state.PGStatesDropped += len(state.PGStates); state.PGStates = nil },
+		func() { state.OSDsDropped += len(state.OSDs); state.OSDs = nil },
 		func() {
-			state.MonFlags, state.LastUpChange, state.LastInChange, state.PoolLastChange, state.MonModified = "", "", "", "", ""
+			for name, field := range map[string]*string{"mon_flags": &state.MonFlags, "last_up_change": &state.LastUpChange, "last_in_change": &state.LastInChange, "pool_last_change": &state.PoolLastChange, "mon_modified": &state.MonModified} {
+				if *field != "" {
+					state.DroppedFields = append(state.DroppedFields, name)
+					*field = ""
+				}
+			}
+			sort.Strings(state.DroppedFields)
+		},
+		// The epoch timeline is shed after the other detail and before the
+		// probe table, in three steps, each counted.
+		func() { shedRadosLateTimelineChanges(state, 1) },
+		func() { shedRadosLateTimelineChanges(state, 0) },
+		func() {
+			shedRadosLateTimelineEpochs(state, func() bool { return size() <= radosLateStateLimit })
 		},
 		func() {
 			for index := range state.Probes {
@@ -761,12 +967,6 @@ func boundRadosLateState(state *radosLateClusterState) {
 				}
 			}
 		},
-	}
-	for _, step := range steps {
-		if size() <= radosLateStateLimit {
-			return
-		}
-		step()
 	}
 }
 

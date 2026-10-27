@@ -109,7 +109,7 @@ func keyCipher(key string) (CephxCipher, error) {
 // caller holds c.mu.
 func (c *Container) settleClient(ctx context.Context, entity string) error {
 	c.removeStrayAuthInputs(ctx)
-	fence := c.authFences[entity]
+	fence := c.authRecords.fence(entity)
 	if fence == nil {
 		return nil
 	}
@@ -133,11 +133,11 @@ func (c *Container) settleClient(ctx context.Context, entity string) error {
 		case record.equal(transition.to):
 			transition.applied()
 		case !record.equal(transition.from):
-			delete(c.authFences, entity)
+			c.authRecords.dropFence(entity)
 			return fmt.Errorf("the auth entry of %s changed outside this module while an earlier change was uncertain; inspect ceph auth get %s", entity, entity)
 		}
 	}
-	delete(c.authFences, entity)
+	c.authRecords.dropFence(entity)
 	return nil
 }
 
@@ -164,7 +164,7 @@ func (c *Container) changeClient(ctx context.Context, entity string, command map
 		record, err = c.readClientRecord(settleCtx, entity)
 	}
 	if err != nil {
-		c.fenceAuth(entity).transition = &clientTransition{from: from, to: to, applied: applied}
+		c.authRecords.fenceFor(entity).transition = &clientTransition{from: from, to: to, applied: applied}
 		return false, errors.Join(cause, fmt.Errorf("whether it applied is not known yet; the next operation on %s settles that first: %w", entity, err))
 	}
 	switch {
@@ -233,8 +233,8 @@ func (c *Container) replaceClientKey(ctx context.Context, client *ClientConfig, 
 	if err != nil || key == "" {
 		return nil, clientOperationError(ctx, "generate fresh Cephx key: command failed", err)
 	}
-	c.recordClientSecret(current.key)
-	c.recordClientSecret(key)
+	c.authRecords.addSecret(current.key)
+	c.authRecords.addSecret(key)
 	keyring, err := current.withKey(client.name, key)
 	if err != nil {
 		return nil, err
@@ -246,12 +246,12 @@ func (c *Container) replaceClientKey(ctx context.Context, client *ClientConfig, 
 		// ConnectionConfig reads it without the cluster's lock.
 		client.replacedBy = &ClientConfig{owner: c, name: client.name, config: bytes.Clone(client.config),
 			keyring: bytes.Clone(keyring), created: true, ready: true}
-		c.setClientKey(client.name, key)
+		c.authRecords.confirmKey(client.name, key)
 	})
 	switch {
 	case err == nil:
 		return client.replacedBy, nil
-	case c.authFences[client.name] != nil:
+	case c.authRecords.fence(client.name) != nil:
 		// The attempted key, which ConnectionConfig does not return, and
 		// which no operation accepts.
 		return &ClientConfig{owner: c, name: client.name, config: bytes.Clone(client.config),
@@ -293,41 +293,14 @@ func (c *Container) checkCurrentClient(client *ClientConfig) error {
 	if client.replacedBy != nil {
 		return invalid(fmt.Errorf("cephx client %s has a new key; ClientConfig.ReplaceKey with this descriptor returns the current one", client.name))
 	}
-	if c.authFences[client.name] != nil {
+	if c.authRecords.fence(client.name) != nil {
 		return invalid(fmt.Errorf("an earlier change of cephx client %s is not resolved yet; a call that can run commands, such as ClientConfig.Capabilities, resolves it", client.name))
 	}
-	if c.clientRevocations[client.name] != nil {
+	if c.authRecords.revocation(client.name) != nil {
 		return invalid(fmt.Errorf("cephx client %s is revoked temporarily; Restore its revocation first", client.name))
 	}
-	if key, ok := c.clientKeys[client.name]; !ok || key != clientKey(client.keyring, client.name) {
+	if key, ok := c.authRecords.confirmedKey(client.name); !ok || key != clientKey(client.keyring, client.name) {
 		return invalid(fmt.Errorf("cephx client %s is stale: the identity has another key or was deleted", client.name))
 	}
 	return nil
-}
-
-// setClientKey records the key that the module confirmed for a client
-// identity, or "" for a deleted one. The caller holds c.mu.
-func (c *Container) setClientKey(entity, key string) {
-	if key == "" {
-		delete(c.clientKeys, entity)
-		return
-	}
-	if c.clientKeys == nil {
-		c.clientKeys = make(map[string]string)
-	}
-	c.clientKeys[entity] = key
-	c.recordClientSecret(key)
-}
-
-// recordClientSecret keeps a client key for diagnostics to redact, also
-// after the key was replaced or deleted, since copies of it may remain. The
-// caller holds c.mu.
-func (c *Container) recordClientSecret(key string) {
-	if key == "" {
-		return
-	}
-	if c.clientSecrets == nil {
-		c.clientSecrets = make(map[string]bool)
-	}
-	c.clientSecrets[key] = true
 }

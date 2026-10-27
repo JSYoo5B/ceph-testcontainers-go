@@ -7,7 +7,7 @@ import (
 
 func TestTenantPortTopologyHoldsTheClusterMutex(t *testing.T) {
 	c := &Container{}
-	port := tenantPort(tenantLease{t: &Tenant{}, c: c})
+	port := tenantPort(tenantLease{t: &Tenant{}, c: containerOps{c: c}})
 	sentinel := errors.New("fn failed")
 
 	var heldInside bool
@@ -29,7 +29,7 @@ func TestTenantPortTopologyHoldsTheClusterMutex(t *testing.T) {
 
 func TestTenantPortExtensionIsKeyedByTheCluster(t *testing.T) {
 	c, other := &Container{}, &Container{}
-	port := tenantPort(tenantLease{t: &Tenant{}, c: c})
+	port := tenantPort(tenantLease{t: &Tenant{}, c: containerOps{c: c}})
 	created := 0
 	create := func() any { created++; return &struct{ n int }{} }
 
@@ -40,7 +40,7 @@ func TestTenantPortExtensionIsKeyedByTheCluster(t *testing.T) {
 	if viaHook := (serviceHooks{}).Extension(c, "kind", create); viaHook != first {
 		t.Fatal("the port and the hook see different state for one cluster")
 	}
-	if tenantPort(tenantLease{t: &Tenant{}, c: other}).Extension("kind", create) == first {
+	if tenantPort(tenantLease{t: &Tenant{}, c: containerOps{c: other}}).Extension("kind", create) == first {
 		t.Fatal("two clusters share one state")
 	}
 	if port.Extension("other-kind", create) == first {
