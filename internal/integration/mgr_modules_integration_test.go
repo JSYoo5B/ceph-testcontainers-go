@@ -11,6 +11,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -50,18 +51,16 @@ func TestMGRModules(t *testing.T) {
 					}
 				}
 			}
-			apply := func(name string, enabled bool) *ceph.MGRModuleOverrideHandle {
+			apply := func(name string, enabled bool) *override.MGRModuleHandle {
 				t.Helper()
-				change, err := cluster.OverrideMGRModule(ctx, name, enabled)
-				if change != nil {
-					t.Cleanup(func() {
-						cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
-						defer cleanupCancel()
-						if err := change.Restore(cleanupCtx); err != nil {
-							t.Errorf("restore manager module: %v", err)
-						}
-					})
-				}
+				change, err := override.SetMGRModule(ctx, cluster, name, enabled)
+				t.Cleanup(func() {
+					cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
+					defer cleanupCancel()
+					if err := change.Restore(cleanupCtx); err != nil {
+						t.Errorf("restore manager module: %v", err)
+					}
+				})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -74,7 +73,7 @@ func TestMGRModules(t *testing.T) {
 				t.Fatalf("native rbd_support prerequisites missing: %+v", rbdModule)
 			}
 			rbdLease := apply("rbd_support", true)
-			if _, err := cluster.OverrideMGRModule(ctx, "rbd_support", false); err == nil {
+			if _, err := override.SetMGRModule(ctx, cluster, "rbd_support", false); err == nil {
 				t.Fatal("always-on disable accepted")
 			}
 			if err := cluster.WaitMGRModuleReady(ctx, "rbd_support"); err != nil {
@@ -110,7 +109,7 @@ func TestMGRModules(t *testing.T) {
 			if !lookup("mirroring").Enabled {
 				t.Fatal("mirroring membership was not enabled")
 			}
-			if _, err := cluster.OverrideMGRModule(ctx, "mirroring", true); err == nil {
+			if _, err := override.SetMGRModule(ctx, cluster, "mirroring", true); err == nil {
 				t.Fatal("overlap accepted")
 			}
 			fs, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "tc-mgr-module-fs"})
@@ -128,7 +127,7 @@ func TestMGRModules(t *testing.T) {
 			if err := mirrorLease.Restore(ctx); err == nil || !lookup("mirroring").Enabled {
 				t.Fatal("native mirroring policy was not protected")
 			}
-			if _, err := cluster.OverrideMGRModule(ctx, "volumes", false); err == nil {
+			if _, err := override.SetMGRModule(ctx, cluster, "volumes", false); err == nil {
 				t.Fatal("CephFS volumes module disable accepted")
 			}
 			cephCommand(t, ctx, cluster, "fs", "mirror", "disable", fs.FilesystemName)

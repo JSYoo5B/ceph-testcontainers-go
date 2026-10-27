@@ -176,7 +176,7 @@ func validatePoolPGCount(pgNum int) error {
 // back. Success means the pool references the rule; data moves asynchronously.
 // Until PG reports reflect the new map, WaitForClean can pass on the previous
 // placement, so poll Pool.PGs for the expected up/acting sets. Holding both
-// nobackfill and norecover with OverrideOSDFlag keeps the move incomplete;
+// nobackfill and norecover with override.SetOSDFlag keeps the move incomplete;
 // nobackfill alone does not stop log-based recovery of small PGs. EC rules are
 // bound to their profile and are refused. External pool/CRUSH edits must not
 // race this call.

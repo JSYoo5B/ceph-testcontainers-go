@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 	"slices"
 	"strconv"
@@ -97,7 +98,7 @@ func testECBelowK(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	noout, err := c.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
+	noout, err := override.SetOSDFlag(ctx, c, ceph.OSDFlagNoOut, true)
 	var actor *ecFourTwoActor
 	requested := map[int]bool{}
 	stopped := map[int]bool{}
@@ -120,7 +121,7 @@ func testECBelowK(t *testing.T) {
 				}
 			}
 		}
-		if noout != nil && !policyRestored {
+		if !policyRestored {
 			if err := noout.Restore(cleanup); err != nil {
 				t.Error(err)
 			}

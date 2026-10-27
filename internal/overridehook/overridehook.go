@@ -32,6 +32,17 @@ const (
 	// registry only records it for overlap and identity: Terminate does not
 	// undo it, the entry ends with the cluster.
 	Blocklist Kind = "Blocklist"
+	// OSDFlag tracks one global OSDMap flag per token. Terminate does not
+	// undo it: the OSDMap ends with the cluster.
+	OSDFlag Kind = "OSDFlag"
+	// MGRModule tracks the override of one MGR module per module name. The
+	// registry only records it for overlap and identity: Terminate does not
+	// undo it, the module state ends with the cluster.
+	MGRModule Kind = "MGRModule"
+	// FullRatios tracks the one override of the three OSDMap thresholds. The
+	// registry only records it for overlap and identity: Terminate does not
+	// undo it.
+	FullRatios Kind = "FullRatios"
 )
 
 // Token identifies one reservation. Only the token that a key still maps to
@@ -59,6 +70,48 @@ type hooks interface {
 	OpenDebugTarget(ctx context.Context, c *ceph.Container, daemon string) (any, error)
 	DebugWindows(c *ceph.Container) any
 	CheckDebugGeneration(owned bool, identity string, running, paused bool, err error, wantIdentity, daemon string) (changed bool, _ error)
+	OSDMapFlags(ctx context.Context, c *ceph.Container) ([]string, error)
+	SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) error
+	ValidMGRModuleName(name string) bool
+	MGRModulesSnapshot(ctx context.Context, c *ceph.Container) ([]ceph.MGRModuleState, error)
+	WaitMGRModuleMembership(ctx context.Context, c *ceph.Container, name string, enabled, alwaysOn bool) error
+	SetMGRModule(ctx context.Context, c *ceph.Container, name string, enabled bool) error
+	ProtectMGRModule(ctx context.Context, c *ceph.Container, name string) error
+	OpenFullRatios(ctx context.Context, c *ceph.Container) (any, error)
+}
+
+// fullRatiosSession is what the registered hooks return from OpenFullRatios.
+type fullRatiosSession interface {
+	FSID() string
+	Read(ctx context.Context) (ceph.FullRatioSnapshot, error)
+	SetRatio(ctx context.Context, name string, value float64) error
+	CheckIdentity(ctx context.Context, fsid string) error
+}
+
+// FullRatiosSession is one captured control and bootstrap identity for the
+// native steps of a full ratios override. Its methods run native commands; the
+// caller holds the cluster mutex, taken through WithTopology, for the whole
+// life of the session and never keeps it afterwards.
+type FullRatiosSession struct{ session fullRatiosSession }
+
+// FSID returns the bootstrap identity that the session captured.
+func (s FullRatiosSession) FSID() string { return s.session.FSID() }
+
+// Read reads the three thresholds and the map epoch, guarded by the captured
+// identity before and after the read.
+func (s FullRatiosSession) Read(ctx context.Context) (ceph.FullRatioSnapshot, error) {
+	return s.session.Read(ctx)
+}
+
+// SetRatio sets one threshold: name is "nearfull", "backfillfull" or "full".
+func (s FullRatiosSession) SetRatio(ctx context.Context, name string, value float64) error {
+	return s.session.SetRatio(ctx, name, value)
+}
+
+// CheckIdentity refuses a cluster whose captured bootstrap identity is not
+// fsid.
+func (s FullRatiosSession) CheckIdentity(ctx context.Context, fsid string) error {
+	return s.session.CheckIdentity(ctx, fsid)
 }
 
 func get() hooks {
@@ -205,6 +258,63 @@ func DebugWindowRegistry(c *ceph.Container) DebugWindows {
 // false is a check that could not be completed or a paused daemon.
 func CheckDebugGeneration(owned bool, identity string, running, paused bool, err error, wantIdentity, daemon string) (changed bool, _ error) {
 	return get().CheckDebugGeneration(owned, identity, running, paused, err, wantIdentity, daemon)
+}
+
+// OSDMapFlags reads the flag tokens of the native OSDMap, sorted. A dump that
+// does not decode is an error. The caller holds the mutex.
+func OSDMapFlags(ctx context.Context, c *ceph.Container) ([]string, error) {
+	return get().OSDMapFlags(ctx, c)
+}
+
+// SetOSDFlag sets or unsets one global OSDMap flag. The caller holds the
+// mutex.
+func SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) error {
+	return get().SetOSDFlag(ctx, c, flag, enabled)
+}
+
+// ValidMGRModuleName reports whether name can be a Ceph manager module name.
+func ValidMGRModuleName(name string) bool { return get().ValidMGRModuleName(name) }
+
+// MGRModulesSnapshot waits for a coherent active-MGR snapshot of the modules
+// and returns it. ctx carries the operation deadline. The caller holds the
+// mutex.
+func MGRModulesSnapshot(ctx context.Context, c *ceph.Container) ([]ceph.MGRModuleState, error) {
+	return get().MGRModulesSnapshot(ctx, c)
+}
+
+// WaitMGRModuleMembership waits until the native listing shows the module in
+// the requested state with the given always-on property. The caller holds the
+// mutex.
+func WaitMGRModuleMembership(ctx context.Context, c *ceph.Container, name string, enabled, alwaysOn bool) error {
+	return get().WaitMGRModuleMembership(ctx, c, name, enabled, alwaysOn)
+}
+
+// SetMGRModule enables or disables one module with the native command. The
+// caller holds the mutex.
+func SetMGRModule(ctx context.Context, c *ceph.Container, name string, enabled bool) error {
+	return get().SetMGRModule(ctx, c, name, enabled)
+}
+
+// ProtectMGRModule refuses to disable a module that configured or owned
+// CephFS filesystems, or native filesystems and mirror policies, still need.
+// The caller holds the mutex.
+func ProtectMGRModule(ctx context.Context, c *ceph.Container, name string) error {
+	return get().ProtectMGRModule(ctx, c, name)
+}
+
+// OpenFullRatios captures the control container and the original bootstrap
+// identity once. It refuses a terminated cluster, a missing control container
+// and an unconfirmed identity. The caller holds the mutex.
+func OpenFullRatios(ctx context.Context, c *ceph.Container) (FullRatiosSession, error) {
+	opened, err := get().OpenFullRatios(ctx, c)
+	if err != nil {
+		return FullRatiosSession{}, err
+	}
+	session, ok := opened.(fullRatiosSession)
+	if !ok {
+		panic("overridehook: package ceph returned a full ratios session of an unexpected type")
+	}
+	return FullRatiosSession{session: session}, nil
 }
 
 // TestHeld snapshots the handles that one kind holds, for unit tests. Call

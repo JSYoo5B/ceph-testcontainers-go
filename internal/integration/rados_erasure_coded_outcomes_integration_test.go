@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // crushItemNone marks a missing shard in an EC PG's up and acting sets.
@@ -62,16 +63,14 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	if osd == nil || victim == clean.ActingPrimary {
 		t.Fatalf("shard 1 is on osd.%d, which is not an owned non-primary OSD: %+v", victim, clean)
 	}
-	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-	if noout != nil {
-		t.Cleanup(func() {
-			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancel()
-			if err := noout.Restore(cleanup); err != nil {
-				t.Error(err)
-			}
-		})
-	}
+	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := noout.Restore(cleanup); err != nil {
+			t.Error(err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

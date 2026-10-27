@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "override",
-  "count": 10,
+  "count": 19,
   "entries": [
     {
       "current": "override.AddBlocklist",
@@ -72,10 +72,73 @@
       "decision": "baseline"
     },
     {
+      "current": "override.FullRatiosHandle",
+      "kind": "type",
+      "proposed": "override.FullRatiosHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.FullRatiosHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*FullRatiosHandle",
+      "proposed": "override.FullRatiosHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.MGRModuleHandle",
+      "kind": "type",
+      "proposed": "override.MGRModuleHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.MGRModuleHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*MGRModuleHandle",
+      "proposed": "override.MGRModuleHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.OSDFlagHandle",
+      "kind": "type",
+      "proposed": "override.OSDFlagHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.OSDFlagHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*OSDFlagHandle",
+      "proposed": "override.OSDFlagHandle.Restore",
+      "decision": "baseline"
+    },
+    {
       "current": "override.SetDebugLevel",
       "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container, setting ceph.DebugLevelSetting) (*DebugLevelHandle, error)",
       "proposed": "override.SetDebugLevel",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.SetFullRatios",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, requested ceph.FullRatios) (*FullRatiosHandle, error)",
+      "proposed": "override.SetFullRatios",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.SetMGRModule",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, name string, enabled bool) (*MGRModuleHandle, error)",
+      "proposed": "override.SetMGRModule",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.SetOSDFlag",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) (*OSDFlagHandle, error)",
+      "proposed": "override.SetOSDFlag",
       "decision": "baseline"
     }
   ]

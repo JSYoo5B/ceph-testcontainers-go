@@ -1450,7 +1450,7 @@ cluster:
 ```golang
 func TestRecoversWithNoout(t *testing.T) {
 	cluster := shared.Exclusive(t)
-	if _, err := cluster.OverrideOSDFlag(t.Context(), ceph.OSDFlagNoOut, true); err != nil {
+	if _, err := override.SetOSDFlag(t.Context(), cluster, ceph.OSDFlagNoOut, true); err != nil {
 		t.Fatal(err)
 	}
 	osd, err := cluster.AddOSD(t.Context())
@@ -1502,7 +1502,7 @@ methods that only read state stay available, including `Container.Pool`.
 | Methods | Why they are refused |
 | --- | --- |
 | `CreateClient`, `ClientConfig.Delete`, `ClientConfig.UpdateCaps`, `ClientConfig.ReplaceKey`, `ClientConfig.Revoke`, `ClientConfig.Capabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `OverrideConfig`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `override.AddBlocklist` and `override.SetDebugLevel` (see [override](override.md)), `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
+| `OverrideConfig`, `override.SetDebugLevel`, `override.SetOSDFlag`, `override.SetMGRModule`, `OverrideMessengerPolicy`, `override.AddBlocklist` and `override.SetFullRatios` (see [override](override.md)), `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `OSDContainer.AdminSocket`, `MonitorContainer.AdminSocket`, `ManagerContainer.AdminSocket`, `OSDContainer.Version`, `MonitorContainer.Version`, `ManagerContainer.Version`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
 | `AddOSD`, `AddOSDWithConfig`, `OSDContainer.Remove`, `OSDContainer.Detach`, `DetachedOSD.Reopen`, `AddMonitor`, `MonitorContainer.Remove`, `AddManager`, `ManagerContainer.Remove` | Change the topology. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
@@ -1575,9 +1575,9 @@ Methods that change cluster state temporarily return a restoration handle:
 | --- | --- | --- |
 | `*ceph.ConfigOverrideHandle` | [OverrideConfig](#overrideconfig) | `Restore` |
 | `*override.DebugLevelHandle` | [override.SetDebugLevel](override.md#setdebuglevel) | `Restore` |
-| `*ceph.OSDFlagOverrideHandle` | [OverrideOSDFlag](#overrideosdflag) | `Restore` |
-| `*ceph.MGRModuleOverrideHandle` | [OverrideMGRModule](#overridemgrmodule) | `Restore` |
-| `*ceph.FullRatiosOverride` | [OverrideFullRatios](#overridefullratios) | `Restore` |
+| `*override.OSDFlagHandle` | [override.SetOSDFlag](override.md#setosdflag) | `Restore` |
+| `*override.MGRModuleHandle` | [override.SetMGRModule](override.md#setmgrmodule) | `Restore` |
+| `*override.FullRatiosHandle` | [override.SetFullRatios](override.md#setfullratios) | `Restore` |
 | `*override.BlocklistHandle` | [override.AddBlocklist](override.md#addblocklist) | `Restore` |
 | `*fault.PauseLease` | [fault.Pause](fault.md#pause) | `Resume` |
 | `*fault.NetworkInterruption` | [fault.InterruptNetwork](fault.md#interruptnetwork) | `Restore` |
@@ -2661,7 +2661,7 @@ Stops and removes an owned OSD's container but keeps its store in the owned
 volume and its MON registration, so that [DetachedOSD.Reopen](#detachedosdreopen) can start a
 new container on them. It needs [WithOSDVolumeStorage](#withosdvolumestorage);
 other storage is an invalid request. The OSD is down while it is detached, not
-out or purged: hold `noout` with [OverrideOSDFlag](#overrideosdflag) if Ceph
+out or purged: hold `noout` with [override.SetOSDFlag](override.md#setosdflag) if Ceph
 must not mark it out.
 
 Detach checks the registration UUID, refuses an OSD whose container a held
@@ -2698,7 +2698,7 @@ the cluster. The OSD bootstrap checks the stored identity again and never
 formats a store that has its ready marker.
 
 ```golang
-noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
+noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
 if err != nil {
 	t.Fatal(err)
 }
@@ -2759,27 +2759,6 @@ Lists the exact global OSDMap flag tokens as [OSDFlag](#osdflag) values,
 including Ceph's internal compatibility flags (for example `sortbitwise`) that
 are not among the `OSDFlag` constants. Per-OSD, CRUSH-node and
 device-class flags are separate native state.
-
-#### OverrideOSDFlag
-
-```golang
-func (c *Container) OverrideOSDFlag(ctx context.Context, flag ceph.OSDFlag, enabled bool) (*ceph.OSDFlagOverrideHandle, error)
-```
-
-Sets or clears one global OSDMap flag and remembers its prior state. Supported
-flags are the eleven [OSDFlag](#osdflag) constants: `OSDFlagNoUp`,
-`OSDFlagNoDown`, `OSDFlagNoOut`, `OSDFlagNoIn`, `OSDFlagNoBackfill`,
-`OSDFlagNoRebalance`, `OSDFlagNoRecover`, `OSDFlagNoScrub`,
-`OSDFlagNoDeepScrub`, `OSDFlagNoSnapTrim` and `OSDFlagNoAutoscale`. Any other
-value is refused with an error before Ceph is contacted. The
-composite `pause` flag and irreversible compatibility flags are not supported.
-`Restore` returns only this flag to its prior state (a flag that was already set
-stays set) and never touches other flags. While set, flags such as `noout` raise
-the `OSDMAP_FLAGS` health warning (per-OSD flags raise `OSD_FLAGS` instead).
-
-```golang
-hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-```
 
 ### Container Methods: Pools
 
@@ -2942,7 +2921,7 @@ Success means the pool references the rule; data moves asynchronously. Until PG
 reports reflect the new map, [WaitForClean](#waitforclean) can succeed on the old
 placement, so poll [Pool.PGs](#poolpgs) for the expected up/acting sets. To hold
 the move incomplete, set both `nobackfill` and `norecover` with
-[OverrideOSDFlag](#overrideosdflag): small PGs recover through the PG log
+[override.SetOSDFlag](override.md#setosdflag): small PGs recover through the PG log
 instead of backfill, so `nobackfill` alone does not stop them. EC pools are
 refused because their rule is bound to the EC profile.
 
@@ -3605,20 +3584,10 @@ module metadata: `Name`, `Enabled`, `AlwaysOn`, `ForceDisabled`, `Available`
 (Ceph's dependency or load diagnostic). `Enabled` and `CanRun` do not prove that
 a module's commands are ready.
 
-#### OverrideMGRModule
-
-```golang
-func (c *Container) OverrideMGRModule(ctx context.Context, name string, enabled bool) (*ceph.MGRModuleOverrideHandle, error)
-```
-
-Enables or disables one module and restores its original membership with
-`Restore`. It refuses to enable a module whose metadata is missing or reports
-that it cannot run (it never forces dependencies), to disable an always-on module,
-and to disable `volumes` or `mirroring` while filesystems or mirror policies use
-them. An enabled always-on module accepts only a no-op `true` request. A module
-change can restart the active manager; the call waits for the module state to be
-readable again. It verifies membership, not command readiness; probe the module
-afterwards.
+The module membership override that enables or disables one manager module is
+[override.SetMGRModule](override.md#setmgrmodule). It moved out of `ceph` with
+its handle type; `Observer.MGRModules`, `ceph.MGRModuleState` and
+`WaitMGRModuleReady` stay here.
 
 #### WaitMGRModuleReady
 
@@ -3654,7 +3623,7 @@ func (o *Observer) ManagerMetrics(ctx context.Context) (ceph.ManagerMetrics, err
 
 Scrapes the active manager's `prometheus` module once and returns its
 samples parsed from the Prometheus text exposition format. It never enables
-the module: enable it with [OverrideMGRModule](#overridemgrmodule) and wait
+the module: enable it with [override.SetMGRModule](override.md#setmgrmodule) and wait
 until [ManagerServices](#managerservices) lists `prometheus`; until then the
 call fails with `ErrInvalidRequest`. The scrape runs with `python3` in the
 control container, at the address that `ManagerServices` advertises, and is
@@ -3883,37 +3852,11 @@ reported as they are. These ratios are OSDMap policy, separate from central
 configuration and pool quotas, and do not say whether any OSD has reported
 fullness.
 
-#### OverrideFullRatios
-
-For the next minor release, rename
-`cluster.TemporaryFullRatios(ctx, ratios)` to
-`cluster.OverrideFullRatios(ctx, ratios)`. The return type remains
-`*ceph.FullRatiosOverride`; `Restore` and its ownership/retry semantics are
-unchanged. There is no compatibility alias. Published releases keep their APIs.
-
-```golang
-func (c *Container) OverrideFullRatios(ctx context.Context, requested ceph.FullRatios) (*ceph.FullRatiosOverride, error)
-```
-
-This is a cluster policy override in `ceph`, even when lower thresholds are
-used to induce FULL or ENOSPC in a test. It has no expiry, timer or implicit
-scope-exit restoration. Cancelling the apply context does not undo committed
-changes. Keep a non-nil handle even when apply returns an error, and explicitly
-call `FullRatiosOverride.Restore` with a fresh context as needed, or terminate
-the disposable cluster. `Terminate` does not reset individual thresholds.
-
-Applies the three ratios and restores all three with `Restore`. Requested values
-must be finite and satisfy `0 < NearFull < BackfillFull < Full <= 1` after float32
-normalization (inputs that collapse to equal values are refused), and the current
-map must also be ordered. The CLI changes one ratio per command; the helper orders
-the commands so that every intermediate state stays ordered, so apply and restore
-are not atomic. Only one handle per cluster is allowed, including no-op requests.
-
-Low ratios reproduce full conditions with a small amount of existing data; the
-module does not fill real devices. Success verifies the map, not OSD reports:
-wait for `OSD_NEARFULL`, `OSD_BACKFILLFULL` or `OSD_FULL` with
-[HealthDetails](#healthdetails). See
-[Fill the cluster with low full ratios](#fill-the-cluster-with-low-full-ratios).
+The override that lowers or raises these thresholds is
+[override.SetFullRatios](override.md#setfullratios). It moved out of `ceph` with
+its handle type; `Observer.FullRatios`, `ceph.FullRatios` and
+`ceph.FullRatioSnapshot` stay here because they describe and read the OSDMap.
+See [Fill the cluster with low full ratios](#fill-the-cluster-with-low-full-ratios).
 
 ### Container Methods: Scrub inconsistencies
 
@@ -4337,7 +4280,7 @@ type OSDFlag string
 ```
 
 A global OSDMap flag token. The constants name the eleven flags that
-[OverrideOSDFlag](#overrideosdflag) can change: `OSDFlagNoUp` (`noup`),
+[override.SetOSDFlag](override.md#setosdflag) can change: `OSDFlagNoUp` (`noup`),
 `OSDFlagNoDown` (`nodown`), `OSDFlagNoOut` (`noout`), `OSDFlagNoIn` (`noin`),
 `OSDFlagNoBackfill` (`nobackfill`), `OSDFlagNoRebalance` (`norebalance`),
 `OSDFlagNoRecover` (`norecover`), `OSDFlagNoScrub` (`noscrub`),
@@ -4345,7 +4288,7 @@ A global OSDMap flag token. The constants name the eleven flags that
 `OSDFlagNoAutoscale` (`noautoscale`). [OSDFlags](#osdflags) returns every flag
 the cluster reports, including native compatibility flags that have no
 constant, so the type stays open: a value outside the constants is
-representable and `OverrideOSDFlag` refuses it at run time. `String()` returns
+representable and `override.SetOSDFlag` refuses it at run time. `String()` returns
 the token. An untyped string constant such as `"noout"` still converts to
 `OSDFlag`; a value held in a `string` variable needs an explicit conversion.
 
@@ -4623,9 +4566,9 @@ The cluster owns the auth database; containers you attach with it are yours.
 | Type | Methods | Created by |
 | --- | --- | --- |
 | `ConfigOverrideHandle` | `Restore(ctx) error`; `String()`, `GoString()` for logging | [OverrideConfig](#overrideconfig) |
-| `OSDFlagOverrideHandle` | `Restore(ctx) error` | [OverrideOSDFlag](#overrideosdflag) |
-| `MGRModuleOverrideHandle` | `Restore(ctx) error` | [OverrideMGRModule](#overridemgrmodule) |
-| `FullRatiosOverride` | `Restore(ctx) error` | [OverrideFullRatios](#overridefullratios) |
+| `override.OSDFlagHandle` | `Restore(ctx) error` | [override.SetOSDFlag](override.md#setosdflag) |
+| `override.MGRModuleHandle` | `Restore(ctx) error` | [override.SetMGRModule](override.md#setmgrmodule) |
+| `override.FullRatiosHandle` | `Restore(ctx) error` | [override.SetFullRatios](override.md#setfullratios) |
 | `override.BlocklistHandle` | `Address() string`, `Restore(ctx) error` | [override.AddBlocklist](override.md#addblocklist) |
 | `fault.PauseLease` | `ContainerID`; `Resume(ctx) error` | [fault.Pause](fault.md#pause) |
 | `fault.NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [fault.InterruptNetwork](fault.md#interruptnetwork) (cluster-bound or standalone) |
@@ -4656,7 +4599,7 @@ See the [handle contract](#container-methods).
 | `HealthSnapshot`, `HealthCheck`, `HealthMute` | [HealthDetails](#healthdetails) |
 | `ObjectWatcher` | [ObjectWatchers](#objectwatchers) |
 | `BlocklistEntry` | [BlocklistEntries](#blocklistentries) |
-| `FullRatios`, `FullRatioSnapshot` | [FullRatios](#fullratios), [OverrideFullRatios](#overridefullratios) |
+| `FullRatios`, `FullRatioSnapshot` | [FullRatios](#fullratios), [override.SetFullRatios](override.md#setfullratios) |
 | `InconsistentObject`, `InconsistentShard` | [PGInconsistencies](#pginconsistencies) |
 | `DiagnosticsConfig`, `DiagnosticsContainer`, `DiagnosticsReport`, `DiagnosticArtifact` | [CollectDiagnostics](#collectdiagnostics) |
 | `FinalizationConfig`, `Finalization` | [TerminateOnCleanup](#terminateoncleanup) |
@@ -5074,10 +5017,9 @@ in [rbd](rbd.md) and [cephfs](cephfs.md).
 ### Keep an OSD down without data movement
 
 ```golang
-hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-if hold != nil {
-	defer hold.Restore(context.Background())
-}
+hold, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+// hold is never nil: after a refusal its Restore does nothing.
+defer hold.Restore(context.Background())
 if err != nil {
 	t.Fatal(err)
 }
@@ -5130,10 +5072,8 @@ if err := cluster.WaitForClean(ctx); err != nil {
 }
 // ... write objects with the client
 for _, flag := range []ceph.OSDFlag{ceph.OSDFlagNoBackfill, ceph.OSDFlagNoRecover} {
-	hold, err := cluster.OverrideOSDFlag(ctx, flag, true)
-	if hold != nil {
-		defer hold.Restore(context.Background())
-	}
+	hold, err := override.SetOSDFlag(ctx, cluster, flag, true)
+	defer hold.Restore(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5154,12 +5094,11 @@ reuses its original rule, which also makes it removable with `Pool.Remove` again
 ### Fill the cluster with low full ratios
 
 ```golang
-change, err := cluster.OverrideFullRatios(ctx, ceph.FullRatios{
+change, err := override.SetFullRatios(ctx, cluster, ceph.FullRatios{
 	NearFull: 0.0001, BackfillFull: 0.0002, Full: 0.0003,
 })
-if change != nil {
-	defer change.Restore(context.Background())
-}
+// change is never nil: after a refusal its Restore does nothing.
+defer change.Restore(context.Background())
 if err != nil {
 	t.Fatal(err)
 }
@@ -5283,10 +5222,9 @@ unchanged.
 ### Scrape the MGR Prometheus exporter
 
 ```golang
-module, err := cluster.OverrideMGRModule(ctx, "prometheus", true)
-if module != nil {
-	defer module.Restore(context.Background())
-}
+module, err := override.SetMGRModule(ctx, cluster, "prometheus", true)
+// module is never nil: after a refusal its Restore does nothing.
+defer module.Restore(context.Background())
 if err != nil {
 	t.Fatal(err)
 }
