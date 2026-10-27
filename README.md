@@ -28,7 +28,7 @@ from v0.1.0, see [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md).
 | --- | --- | --- | --- |
 | `ceph` | `github.com/JSYoo5B/ceph-testcontainers-go/ceph` | The cluster: MON, MGR and OSD topology, pools, Cephx identities, configuration, health, fault injection and diagnostics | [docs/ceph.md](docs/ceph.md) |
 | `fault` | `github.com/JSYoo5B/ceph-testcontainers-go/fault` | Container pause, network delay, loss, rate, packet faults and endpoint interruption on existing fixtures | [docs/fault.md](docs/fault.md) |
-| `override` | `github.com/JSYoo5B/ceph-testcontainers-go/override` | Reversible cluster-wide overrides with restoration handles; the client blocklist entry and the global OSD flag | [docs/override.md](docs/override.md) |
+| `override` | `github.com/JSYoo5B/ceph-testcontainers-go/override` | Reversible cluster-wide overrides with restoration handles; the client blocklist entry, the OSDMap full ratios, the MGR module state and the global OSD flag | [docs/override.md](docs/override.md) |
 | `rbd` | `github.com/JSYoo5B/ceph-testcontainers-go/rbd` | RBD pools and namespaces, image watchers and locks, mirroring between clusters, backup and restore | [docs/rbd.md](docs/rbd.md) |
 | `cephfs` | `github.com/JSYoo5B/ceph-testcontainers-go/cephfs` | Filesystems and MDS topology, subvolumes, snapshots and clones, client authorization and sessions, snapshot mirroring | [docs/cephfs.md](docs/cephfs.md) |
 | `rgw` | `github.com/JSYoo5B/ceph-testcontainers-go/rgw` | S3 and Swift gateways, users, accounts and quotas, placement and storage classes | [docs/rgw.md](docs/rgw.md) |

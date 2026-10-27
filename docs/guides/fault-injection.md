@@ -29,7 +29,7 @@ extension: a separate netem helper image applies it, and only that helper gets
 | An OSD runs a client's write after the client gave up | `OverrideConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverrideHandle.Restore` |
 | One client session is fenced | `override.AddBlocklist` | The OSDs reject that session | Yes | `override.BlocklistHandle.Restore` |
 | A failed OSD stays up or in | `override.SetOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `override.OSDFlagHandle.Restore` |
-| The cluster reports nearfull, backfillfull or full | `OverrideFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosOverride.Restore` |
+| The cluster reports nearfull, backfillfull or full | `override.SetFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `override.FullRatiosHandle.Restore` |
 | A replica is damaged | `fault.InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `OSDContainer.Remove`, `OSDContainer.SetIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `OSDContainer.SetIn(..., true)` |
 | The MDS evicts a silent CephFS client quickly | `cephfs.Filesystem.OverrideSessionTimeouts` with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `SessionTimeoutsOverrideHandle.Restore` |
@@ -1057,18 +1057,17 @@ are separate native state; set them with `cluster.Ceph` (for example
 
 ## Making the cluster full
 
-`OverrideFullRatios` changes the global nearfull, backfillfull and full
+`override.SetFullRatios` changes the global nearfull, backfillfull and full
 thresholds of the OSD map. Very low ratios make a cluster with a little data
 report the corresponding health states, without filling a device.
 
 ```golang
-change, err := cluster.OverrideFullRatios(ctx, ceph.FullRatios{
+change, err := override.SetFullRatios(ctx, cluster, ceph.FullRatios{
 	NearFull: .0001, BackfillFull: .0002, Full: .0003,
 })
-// Several native commands run in sequence; some may have succeeded.
-if change != nil {
-	defer change.Restore(cleanupCtx)
-}
+// Several native commands run in sequence; some may have succeeded. change
+// is never nil: after a refusal its Restore does nothing.
+defer change.Restore(cleanupCtx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -1309,8 +1308,8 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 
 - [fault.md](../fault.md): `fault.Pause`, `InterruptNetwork` and network profiles.
 - [ceph.md](../ceph.md):
-  `OverrideConfig`, `OverrideFullRatios`, scrub helpers, `OSDContainer.Remove`, `OSDContainer.SetIn`.
-- [override.md](../override.md): `override.AddBlocklist`, `override.SetOSDFlag`.
+  `OverrideConfig`, scrub helpers, `OSDContainer.Remove`, `OSDContainer.SetIn`.
+- [override.md](../override.md): `override.AddBlocklist`, `override.SetFullRatios`, `override.SetOSDFlag`.
 - [rbd.md](../rbd.md): `ImageClients`.
 - [rbd-mirror.md](../rbd-mirror.md): `Mirror.InterruptPeerLink`.
 - [cephfs.md](../cephfs.md): `Filesystem.OverrideSessionTimeouts`,

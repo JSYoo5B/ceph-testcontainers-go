@@ -40,10 +40,9 @@ The error categories remain in `ceph`; the moved sentinels still match them
 with `errors.Is`.
 
 Fullness policy uses
-[`Container.OverrideFullRatios`](ceph.md#overridefullratios), returning
-`*ceph.FullRatiosOverride`, with explicit caller-managed `Restore` and no
-expiry or context/scope-exit undo. Full-ratio policy belongs to `ceph`,
-including its mutation API and restoration handle. The session blocklist is
+[`override.SetFullRatios`](override.md#setfullratios), returning
+`*override.FullRatiosHandle`, with explicit caller-managed `Restore` and no
+expiry or context/scope-exit undo. The session blocklist is
 added by [`override.AddBlocklist`](override.md#addblocklist). These controls
 use Ceph control-plane operations to change admission or policy; testing
 failure outcomes does not move them into `fault`.

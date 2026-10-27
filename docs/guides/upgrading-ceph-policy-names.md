@@ -34,7 +34,8 @@ successful apply nor automatic cleanup. Copies retain their existing shared
 state. No legacy type aliases are added.
 
 The first four names describe saved policy with explicit restoration, matching
-`OverrideFullRatios`. RevokeClient describes the actual auth removal; its handle
+`OverrideFullRatios` (later `override.SetFullRatios`, see
+[the override package guide](upgrading-override-package.md)). RevokeClient describes the actual auth removal; its handle
 can restore the same owned key/capabilities. `DeleteClient` remains permanent
 deletion. RevokeClient has no new Tenant counterpart and does not immediately
 kill every authenticated MON/MGR/OSD session; native ticket renewal and existing
@@ -73,8 +74,12 @@ Service containers inherit the renamed ceph methods through their embedded
 
 `TemporaryBlocklist` still has a real native duration/expiry; it was kept in `ceph` at
 this checkpoint and later became `override.AddBlocklist` (see
-[the override package guide](upgrading-override-package.md)).
-`OverrideFullRatios`, Pause/Resume and native input Close are unchanged by
-this checkpoint. Later service/network/cache stages and the
+[the override package guide](upgrading-override-package.md)). Likewise
+`OverrideMGRModule` and `MGRModuleOverrideHandle` of the table above later became
+`override.SetMGRModule` and `override.MGRModuleHandle` (see
+[the MGR module guide](upgrading-override-mgr-module.md)).
+`OverrideFullRatios` (it later became `override.SetFullRatios`, see
+[the override package guide](upgrading-override-package.md)), Pause/Resume
+and native input Close are unchanged by this checkpoint. Later service/network/cache stages and the
 [final naming audit](../design/api-naming-audit.md) complete the staged pass;
 regenerating a baseline inventory alone still does not approve names.

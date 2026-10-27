@@ -77,7 +77,7 @@ already did.
 Not every call waits for the gate under your context. Many other methods of
 the same cluster also serialize with topology operations but wait for a running
 one to finish regardless of `ctx`, then apply `ctx` to their native work.
-Examples are `OverrideConfig`, `override.SetOSDFlag`, `OverrideMGRModule`,
+Examples are `OverrideConfig`, `override.SetOSDFlag`, `override.SetMGRModule`,
 `override.AddBlocklist` and their `Restore` methods, `OSDContainer.SetIn`, `Pool.SetQuota`,
 `Pool.SetReplication`, the RBD pool and namespace helpers, the RGW user, account
 and placement helpers, and `rgw.Gateway.Admin`. Some cleanup steps also use their own short context,
@@ -343,7 +343,7 @@ result:
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](../ceph.md#clientconfigreplacekey)) |
-| `OverrideConfig`, `OverrideMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `OverrideMGRModule`, `OverrideFullRatios`, `override.AddBlocklist`, `cephfs` `OverrideSessionTimeouts`, `OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
+| `OverrideConfig`, `OverrideMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `cephfs` `OverrideSessionTimeouts`, `OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
 | `fault.Pause` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
@@ -363,8 +363,8 @@ back. Some wrap several native settings:
 | `OverrideMessengerPolicy` | The selected MON/MGR/OSD client-facing mode entries; established connections keep their modes |
 | `ClientConfig.Revoke` | Removes one owned client identity; `Restore` puts back its exact key and capabilities |
 | `override.SetOSDFlag` | One global OSD map flag; a refused call still returns a handle whose `Restore` does nothing |
-| `OverrideMGRModule` | Whether one MGR module is enabled |
-| `OverrideFullRatios` | The nearfull, backfillfull and full ratios |
+| `override.SetMGRModule` | Whether one MGR module is enabled; a refused call still returns a handle whose `Restore` does nothing |
+| `override.SetFullRatios` | The nearfull, backfillfull and full ratios; a refused call still returns a handle whose `Restore` does nothing |
 | `override.AddBlocklist` | Adds one exact client-session blocklist entry; a refused call still returns a handle whose `Restore` does nothing |
 | `cephfs.Filesystem.OverrideSessionTimeouts` | A filesystem's `session_timeout` and `session_autoclose` |
 | `cephfs.Filesystem.OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | One pin policy field of a subvolume or group |
@@ -417,7 +417,7 @@ Handle-specific details:
 - `override.BlocklistHandle.Restore` removes only the entry it created. An entry
   that expired on its own counts as removed; an entry whose expiry someone
   renewed is refused.
-- `FullRatiosOverride.Restore` accepts only the last tuple it applied, or
+- `override.FullRatiosHandle.Restore` accepts only the last tuple it applied, or
   either side of one uncertain command. The native CLI changes one ratio per
   command, so apply and restore are not atomic.
 - `OverrideSessionTimeouts.Restore` refuses a filesystem that was recreated

@@ -2,7 +2,6 @@ package ceph
 
 import (
 	"testing"
-	"time"
 )
 
 var overrideKinds = []struct {
@@ -97,47 +96,6 @@ func TestOverrideConfigEarlyReturnsLeaveNoReservation(t *testing.T) {
 	}
 }
 
-func TestOverrideMGRModuleEarlyReturnsLeaveNoReservation(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		module  string
-		enabled bool
-		arrange func(*mgrModuleFixture)
-	}{
-		{"listing fails", "mirroring", true, func(ctr *mgrModuleFixture) { ctr.failDumpFrom = 1 }},
-		{"module missing", "missing", true, func(*mgrModuleFixture) {}},
-		{"always-on disable", "rbd_support", false, func(*mgrModuleFixture) {}},
-		{"cannot run", "mirroring", true, func(ctr *mgrModuleFixture) { ctr.canRun["mirroring"] = false }},
-		{"protection refuses", "mirroring", false, func(ctr *mgrModuleFixture) { ctr.enabled["mirroring"], ctr.mirrored = true, true }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctr := newMGRModuleFixture()
-			c := mgrModuleCluster(ctr)
-			c.settings.startupTimeout = 200 * time.Millisecond
-			tc.arrange(ctr)
-			if change, err := c.OverrideMGRModule(t.Context(), tc.module, tc.enabled); err == nil || change != nil || ctr.mutations != 0 {
-				t.Fatalf("the attempt did not fail before mutation: %v %v", change, err)
-			}
-			settled(t, c, faultMGRModule, tc.name)
-			if len(c.faultsOf(faultMGRModule)) != 0 {
-				t.Fatalf("%s kept a registry entry", tc.name)
-			}
-		})
-	}
-	ctr := newMGRModuleFixture()
-	c := mgrModuleCluster(ctr)
-	change, err := c.OverrideMGRModule(t.Context(), "mirroring", true)
-	if err != nil || settled(t, c, faultMGRModule, "a success") != 1 {
-		t.Fatal(err)
-	}
-	if _, err := c.OverrideMGRModule(t.Context(), "mirroring", false); err == nil || err.Error() != overrideKinds[2].overlap {
-		t.Fatalf("overlap: %v", err)
-	}
-	if err := change.Restore(t.Context()); err != nil || len(c.faultsOf(faultMGRModule)) != 0 {
-		t.Fatalf("restore: %v", err)
-	}
-}
-
 // A handle whose state is a copy of a restored predecessor's is stale: its
 // key now maps to the successor, and Restore must refuse it without a native
 // call or a change to the successor.
@@ -160,26 +118,6 @@ func TestOverrideRestoreRefusesStaleTokens(t *testing.T) {
 		}
 		before := len(ctr.calls)
 		if err := stale.Restore(t.Context()); err == nil || err.Error() != "configuration override is not tracked by this cluster" || len(ctr.calls) != before || c.heldFault(faultConfigOverride, configOverrideKey(setting)) != second {
-			t.Fatalf("a stale handle was not refused: %v", err)
-		}
-	})
-	t.Run("MGR module", func(t *testing.T) {
-		ctr := newMGRModuleFixture()
-		c := mgrModuleCluster(ctr)
-		first, err := c.OverrideMGRModule(t.Context(), "mirroring", true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		stale := &MGRModuleOverrideHandle{owner: c, name: "mirroring", state: &mgrModuleOverrideState{applied: true, token: first.state.token}}
-		if err := first.Restore(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		second, err := c.OverrideMGRModule(t.Context(), "mirroring", true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		before := len(ctr.calls)
-		if err := stale.Restore(t.Context()); err == nil || err.Error() != "MGR module override is not tracked by this cluster" || len(ctr.calls) != before || c.heldFault(faultMGRModule, "mirroring") != second {
 			t.Fatalf("a stale handle was not refused: %v", err)
 		}
 	})

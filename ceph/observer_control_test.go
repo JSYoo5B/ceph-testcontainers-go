@@ -89,7 +89,7 @@ func TestObserverFullRatiosReturnsTheCurrentThresholds(t *testing.T) {
 	cluster, ctr := newFullRatiosFixture()
 	observer, _ := Observe(cluster)
 	want1 := ctr.ratios
-	want2, _ := normalizeFullRatios(FullRatios{NearFull: .8, BackfillFull: .85, Full: .9})
+	want2 := float32Ratios(FullRatios{NearFull: .8, BackfillFull: .85, Full: .9})
 	first, err := observer.FullRatios(t.Context())
 	if err != nil || first.Ratios != want1 {
 		t.Fatalf("first = %+v, %v", first, err)

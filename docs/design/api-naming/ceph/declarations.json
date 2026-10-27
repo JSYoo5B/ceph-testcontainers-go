@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 373,
+  "count": 367,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -496,22 +496,6 @@
       "signature": "func(ctx context.Context, setting DebugLevelSetting) (*DebugLevelOverrideHandle, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.OverrideDebugLevel",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OverrideFullRatios",
-      "kind": "method",
-      "signature": "func(ctx context.Context, requested FullRatios) (*FullRatiosOverride, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideFullRatios",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OverrideMGRModule",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string, enabled bool) (*MGRModuleOverrideHandle, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideMGRModule",
       "decision": "baseline"
     },
     {
@@ -1130,20 +1114,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.FullRatiosOverride",
-      "kind": "type",
-      "proposed": "ceph.FullRatiosOverride",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.FullRatiosOverride.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*FullRatiosOverride",
-      "proposed": "ceph.FullRatiosOverride.Restore",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.HealthCheck",
       "kind": "type",
       "proposed": "ceph.HealthCheck",
@@ -1225,20 +1195,6 @@
       "current": "ceph.LogFatalSignal",
       "kind": "const",
       "proposed": "ceph.LogFatalSignal",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.MGRModuleOverrideHandle",
-      "kind": "type",
-      "proposed": "ceph.MGRModuleOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.MGRModuleOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*MGRModuleOverrideHandle",
-      "proposed": "ceph.MGRModuleOverrideHandle.Restore",
       "decision": "baseline"
     },
     {
