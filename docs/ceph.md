@@ -1656,7 +1656,7 @@ afterwards.
 func (c *Container) TerminateOnCleanup(t testing.TB, config ceph.FinalizationConfig) (*ceph.Finalization, error)
 func (f *Finalization) Check(name string, check func(context.Context) error)
 func (f *Finalization) Cleanup(name string, cleanup func(context.Context) error)
-func (f *Finalization) TrackDebugLevel(handle *ceph.DebugLevelOverrideHandle)
+func (f *Finalization) TrackDebugLevel(handle ceph.DebugLevelReceipter)
 func (f *Finalization) Capture(name string, session ceph.CaptureSettler)
 ```
 
@@ -1815,8 +1815,16 @@ cleanups (`final`), so a restoration run by `Finalization.Cleanup` is a later,
 separate record and the earlier copy still shows the raised level. The copy
 reads only the handle's local state; it never sets, restores or rereads a
 daemon, and a generic cleanup success does not stand in for `restored-verified`.
-A nil handle, or one that is not from `OverrideDebugLevel`, is recorded with
-`present: false` and no receipt, never as a restored window. The records are
+`TrackDebugLevel` takes a `ceph.DebugLevelReceipter` (an interface with
+`Receipt() DebugLevelReceipt`), which `*DebugLevelOverrideHandle` implements.
+A nil interface, a typed nil (an interface whose dynamic value is a nil
+pointer, map, slice, func, chan or interface; `Receipt` is never called on it,
+so a method that is not nil-safe cannot panic), a zero-value handle and any
+receipter whose receipt has an empty `State` are recorded with `present: false` and no
+receipt, never as a restored window: absence is decided by the receipt, not by
+a nil comparison of the interface. A panic raised by a foreign `Receipt` on a non-nil value is not recovered. A receipt in state `not-applied` (`DebugLevelNotApplied`) is
+recorded with `present: true` and its `reason`, redacted and bounded to 2048
+bytes like a transition error; the field is omitted for every other state. The records are
 bounded: 32 windows (`debug_windows_omitted` counts the rest), the first 16
 and last 16 transitions of a window (`transitions_omitted` counts the middle),
 256-byte fields and 2048-byte transition errors, all redacted like the other
@@ -3585,6 +3593,10 @@ applied and restored readbacks, the current `ceph.DebugLevelState` and every
 then `DebugLevelRestored`, `DebugLevelConflict`, `DebugLevelTargetChanged` or
 `DebugLevelUnconfirmed`. Restored, conflict and target-changed are terminal and
 release the admission; `Restore` then returns nil or the same error again.
+`DebugLevelNotApplied` (`not-applied`) and the receipt's `Reason` are for a window
+that was refused before any native step; `OverrideDebugLevel` itself still
+returns a nil handle for a refusal, and a real window never reports
+`not-applied`.
 
 With [TerminateOnCleanup](#terminateoncleanup), register the removal of clients
 first and the restoration afterward. The cleanups run in reverse order after the

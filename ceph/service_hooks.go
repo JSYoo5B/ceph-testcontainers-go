@@ -58,7 +58,18 @@ func (serviceHooks) TenantCluster(t *Tenant) *Container {
 	if err != nil {
 		return nil
 	}
-	return c
+	return c.raw()
+}
+
+// container returns the gated shared cluster of a live tenant for the
+// Observer, which stays in package ceph and reads through the cluster's own
+// gate and locks. It is the only non-test path from a Tenant to a *Container.
+func (t *Tenant) container() (*Container, error) {
+	ops, err := t.cluster()
+	if err != nil {
+		return nil, err
+	}
+	return ops.raw(), nil
 }
 
 // tenantPort is what the service adapters may do for one tenant: check that
@@ -97,17 +108,17 @@ type tenantPort = interface {
 // adapter used before the port existed.
 type tenantLease struct {
 	t *Tenant
-	c *Container
+	c clusterOps
 }
 
 func (l tenantLease) ID() string { return l.t.id }
 
 func (l tenantLease) Live() error { return l.t.check() }
 
-func (l tenantLease) StartupTimeout() time.Duration { return l.c.settings.startupTimeout }
+func (l tenantLease) StartupTimeout() time.Duration { return l.c.startupTimeout() }
 
 func (l tenantLease) Command(ctx context.Context, args ...string) ([]byte, error) {
-	return serviceHooks{}.ClientCommand(ctx, l.c, args...)
+	return l.c.command(ctx, args...)
 }
 
 func (l tenantLease) CreateClient(ctx context.Context, suffix string, caps ClientCaps) (*ClientConfig, error) {
@@ -123,13 +134,11 @@ func (l tenantLease) WithClientIdentity(client *ClientConfig, opts ...ClientCont
 }
 
 func (l tenantLease) WithTopology(fn func() error) error {
-	l.c.mu.Lock()
-	defer l.c.mu.Unlock()
-	return fn()
+	return l.c.withTopology(fn)
 }
 
 func (l tenantLease) Extension(kind string, create func() any) any {
-	return serviceHooks{}.Extension(l.c, kind, create)
+	return l.c.extension(kind, create)
 }
 
 // TenantPort returns the port of a live tenant, or the error that says it is
@@ -365,7 +374,7 @@ func (serviceHooks) ClientRevoked(client *ClientConfig) bool { return client.rev
 func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) {
 	client.revoked = revoked
 	if revoked {
-		client.owner.setClientKey(client.name, "")
+		client.owner.authRecords.confirmKey(client.name, "")
 	}
 }
 

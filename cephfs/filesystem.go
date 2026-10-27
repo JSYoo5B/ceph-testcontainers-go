@@ -62,9 +62,7 @@ type Filesystem struct {
 	AdditionalDataPools []string
 	cluster             *ceph.Container
 	config              Config
-	mdss                []*MDS
-	mdsOpts             []testcontainers.ContainerCustomizer
-	nextMDSIndex        int
+	roster              mdsRoster
 	nativeIdentity      *cephFSNativeIdentity
 	coldMDS             *cephFSColdMDS
 	pinOverrides        map[string]*PinOverrideHandle
@@ -144,7 +142,7 @@ func startFilesystem(ctx context.Context, c *ceph.Container, config Config, opts
 	}
 	fs := &Filesystem{
 		FilesystemName: config.Name, MetadataPool: config.MetadataPool.Name,
-		DataPool: config.DataPool.Name, cluster: c, config: config, mdsOpts: slices.Clone(opts),
+		DataPool: config.DataPool.Name, cluster: c, config: config, roster: newMDSRoster(opts),
 	}
 	for _, pool := range config.AdditionalDataPools {
 		fs.AdditionalDataPools = append(fs.AdditionalDataPools, pool.Name)
@@ -233,7 +231,7 @@ func (fs *Filesystem) MDSs() []*MDS {
 		servicehook.Lock(fs.cluster)
 		defer servicehook.Unlock(fs.cluster)
 	}
-	return slices.Clone(fs.mdss)
+	return fs.roster.snapshot()
 }
 
 // mdsSnapshot bounds topology admission for context-taking operations. It keeps
@@ -246,7 +244,7 @@ func (fs *Filesystem) mdsSnapshot(ctx context.Context) ([]*MDS, error) {
 		return nil, err
 	}
 	defer servicehook.Unlock(fs.cluster)
-	return slices.Clone(fs.mdss), nil
+	return fs.roster.snapshot(), nil
 }
 
 // ScaleMDS changes the active/standby daemon counts of this existing filesystem
@@ -454,12 +452,12 @@ func (fs *Filesystem) startMDSWithAdmission(ctx context.Context, start func(cont
 		servicehook.Unlock(c)
 		return nil, invalid(errors.New("cephfs cluster is terminated or filesystem ownership changed"))
 	}
-	id := cephFSMDSID(fs.FilesystemName, fs.nextMDSIndex)
-	opts := slices.Clone(fs.mdsOpts)
+	id := fs.roster.nextID(fs.FilesystemName)
+	opts := fs.roster.customizers()
 	cold := fs.coldMDS != nil && !fs.coldMDS.attempted
 	var control testcontainers.Container
 	if cold {
-		if fs.nativeIdentity != fs.coldMDS.identity || fs.Container != nil || len(fs.mdss) != 0 || fs.nextMDSIndex != 0 {
+		if fs.nativeIdentity != fs.coldMDS.identity || fs.Container != nil || fs.roster.count() != 0 || fs.roster.issued() != 0 {
 			servicehook.Unlock(c)
 			return nil, errors.New("original cold MDS ownership changed before startup")
 		}
@@ -489,7 +487,7 @@ func (fs *Filesystem) startMDSWithAdmission(ctx context.Context, start func(cont
 			return nil, clusterutil.OperationError(ctx, "admit replacement MDS startup", err)
 		}
 	}
-	fs.nextMDSIndex++
+	fs.roster.reserveIndex()
 	servicehook.Unlock(c)
 	args := []string{"auth", "get-or-create", "mds." + id,
 		"mon", "allow profile mds", "mgr", "allow profile mds",
@@ -526,7 +524,7 @@ func (fs *Filesystem) startMDSWithAdmission(ctx context.Context, start func(cont
 		servicehook.Lock(c)
 		daemon = &MDS{Container: ctr, ID: id, FilesystemName: fs.FilesystemName}
 		daemon.identity = fs.captureMDSIdentity(ctx, daemon, ctr, err)
-		fs.mdss = append(fs.mdss, daemon)
+		fs.roster.publish(daemon)
 		if fs.Container == nil {
 			fs.Container = ctr
 		}
@@ -584,11 +582,11 @@ func (fs *Filesystem) retireMDS(ctx context.Context, candidate MDSStatus) error 
 	if owned := servicehook.Service(c, service); owned != nil && owned.GetContainerID() == daemon.GetContainerID() {
 		servicehook.DeleteService(c, service)
 	}
-	fs.mdss = slices.DeleteFunc(fs.mdss, func(owned *MDS) bool { return owned == daemon })
+	fs.roster.remove(daemon)
 	if fs.Container != nil && fs.Container.GetContainerID() == daemon.GetContainerID() {
 		fs.Container = nil
-		if len(fs.mdss) > 0 {
-			fs.Container = fs.mdss[0].Container
+		if fs.roster.count() > 0 {
+			fs.Container = fs.roster.at(0).Container
 		}
 	}
 	servicehook.Unlock(c)

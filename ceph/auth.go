@@ -162,7 +162,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	if err := c.settleClient(ctx, entity); err != nil {
 		return nil, err
 	}
-	if c.clientRevocations[entity] != nil {
+	if c.authRecords.revocation(entity) != nil {
 		return nil, fmt.Errorf("cephx identity %q is revoked temporarily; restore it or delete it first", entity)
 	}
 	data, err := c.clientAuthCommand(ctx, "check existing identity", "auth", "ls", "--format", "json")
@@ -192,7 +192,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	if err != nil || len(bytes.TrimSpace(secret)) == 0 {
 		return client, clientOperationError(ctx, "generate fresh Cephx key: command failed", err)
 	}
-	c.recordClientSecret(string(bytes.TrimSpace(secret)))
+	c.authRecords.addSecret(string(bytes.TrimSpace(secret)))
 	client.keyring = []byte("[" + entity + "]\nkey = " + string(bytes.TrimSpace(secret)) + "\n")
 	keyringPath := "/tmp/tc-client-" + uuid.NewString() + ".keyring"
 	defer func() {
@@ -210,7 +210,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 		return client, err
 	}
 	client.created = true
-	c.setClientKey(entity, clientKey(client.keyring, entity))
+	c.authRecords.confirmKey(entity, clientKey(client.keyring, entity))
 	keyring, err := c.clientAuthCommand(ctx, "retrieve "+entity, "auth", "get", entity)
 	if err != nil {
 		return client, err
@@ -291,7 +291,7 @@ func (c *Container) deleteClient(ctx context.Context, client *ClientConfig) erro
 	if err := c.settleClient(ctx, client.name); err != nil {
 		return err
 	}
-	if _, ok := c.clientKeys[client.name]; client.revoked || !ok {
+	if _, ok := c.authRecords.confirmedKey(client.name); client.revoked || !ok {
 		// An earlier removal, maybe through a copy of the descriptor,
 		// turned out to have applied.
 		client.revoked = true
@@ -299,12 +299,12 @@ func (c *Container) deleteClient(ctx context.Context, client *ClientConfig) erro
 	}
 	// The revocation belongs to the identity, whichever descriptor of the
 	// revoked key ClientConfig.Delete gets.
-	if revocation := c.clientRevocations[client.name]; revocation != nil && client.replacedBy == nil && clientKey(client.keyring, client.name) == revocation.original.key {
+	if revocation := c.authRecords.revocation(client.name); revocation != nil && client.replacedBy == nil && clientKey(client.keyring, client.name) == revocation.original.key {
 		// A temporary revocation becomes permanent.
 		deleted := func() {
 			client.revoked, revocation.deleted = true, true
-			delete(c.clientRevocations, client.name)
-			c.setClientKey(client.name, "")
+			c.authRecords.dropRevocation(client.name)
+			c.authRecords.confirmKey(client.name, "")
 		}
 		current, err := c.readClientRecord(ctx, client.name)
 		switch {
@@ -332,7 +332,7 @@ func (c *Container) deleteClient(ctx context.Context, client *ClientConfig) erro
 	}
 	_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, func() {
 		client.revoked = true
-		c.setClientKey(client.name, "")
+		c.authRecords.confirmKey(client.name, "")
 	})
 	return err
 }

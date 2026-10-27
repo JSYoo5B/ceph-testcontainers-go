@@ -16,7 +16,7 @@ func TestTenantPortFollowsTheTenantLifetime(t *testing.T) {
 		t.Fatalf("a tenant without a cluster returned a port: %v", err)
 	}
 
-	port := tenantPort(tenantLease{t: tenant, c: &Container{}})
+	port := tenantPort(tenantLease{t: tenant, c: containerOps{c: &Container{}}})
 	if port.ID() != tenant.ID() || port.Live() != nil {
 		t.Fatalf("live port: id %q, live %v", port.ID(), port.Live())
 	}

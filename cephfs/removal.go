@@ -51,7 +51,7 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 			return fmt.Errorf("remove cephfs %q: %w", name, err)
 		}
 	}
-	for _, daemon := range slices.Clone(fs.mdss) {
+	for _, daemon := range fs.roster.snapshot() {
 		if daemon.Container != nil {
 			if err := daemon.Terminate(ctx); err != nil && !servicehook.OnlyMissingHostResource(err) {
 				return fmt.Errorf("terminate mds.%s of removed cephfs %q: %w", daemon.ID, name, err)
@@ -64,7 +64,7 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 		if _, err := c.Ceph(ctx, "auth", "del", "mds."+daemon.ID); err != nil && !errors.Is(err, iofs.ErrNotExist) && !strings.Contains(err.Error(), "does not exist") {
 			return fmt.Errorf("remove key of mds.%s: %w", daemon.ID, err)
 		}
-		fs.mdss = slices.DeleteFunc(fs.mdss, func(owned *MDS) bool { return owned == daemon })
+		fs.roster.remove(daemon)
 	}
 	fs.Container = nil
 	for _, pool := range cephFSConfiguredPools(fs.config) {

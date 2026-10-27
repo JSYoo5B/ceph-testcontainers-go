@@ -70,7 +70,7 @@ type Finalization struct {
 	verificationReports []*VerificationReport
 	// debugWindows are the registered debug level handles in registration
 	// order; a nil entry is a registration without a handle.
-	debugWindows []*DebugLevelOverrideHandle
+	debugWindows []DebugLevelReceipter
 
 	// The cluster's operations, replaced in tests.
 	cluster            string

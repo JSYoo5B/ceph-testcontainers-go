@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 435,
+  "count": 437,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -148,10 +148,14 @@
       "DebugLevelReceipt.Generation field string `json:\"generation\"`",
       "DebugLevelReceipt.Name field string `json:\"name\"`",
       "DebugLevelReceipt.Prior field string `json:\"prior\"`",
+      "DebugLevelReceipt.Reason field string `json:\"reason,omitempty\"`",
       "DebugLevelReceipt.Requested field string `json:\"requested\"`",
       "DebugLevelReceipt.Restored field string `json:\"restored,omitempty\"`",
       "DebugLevelReceipt.State field DebugLevelState `json:\"state\"`",
       "DebugLevelReceipt.Transitions field []DebugLevelTransition `json:\"transitions\"`"
+    ],
+    "ceph.DebugLevelReceipter": [
+      "DebugLevelReceipter.Receipt method func() DebugLevelReceipt"
     ],
     "ceph.DebugLevelSetting": [
       "DebugLevelSetting.Daemon field string",

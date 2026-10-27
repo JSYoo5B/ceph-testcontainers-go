@@ -16,6 +16,9 @@ design work.
 - Source snapshot: the inventory counts below were measured at `1d4c937`
   (merge of #166). The adapter and caller sections were re-measured at
   `e22b728` (after the tenant port, #200, and `internal/sharedinvariants`).
+  The "Refresh at `7266eb7`" section below re-measures everything against the
+  merge of #247 plus the cluster-operations port of this change; where it
+  differs from an older number the refresh wins.
 - Container members used by the harness were measured with a throwaway
   `go/types` program over the non-test files of package `ceph` (type check
   without errors, selector expressions whose receiver is `Container` or
@@ -28,11 +31,12 @@ design work.
 
 ## Harness surface at the snapshot
 
-Files (non-test lines): `shared.go` 668, `shared_backend.go` 603,
-`shared_exclusive.go` 290, `shared_services.go` 112, `tenant.go` 307, and the
-gate `shared_gate.go` 319 (which stays in core, see below). Four test files
-(`shared_test.go`, `shared_exclusive_test.go`, `shared_services_test.go`,
-`shared_gate_test.go`) hold 1,642 lines.
+Files (non-test lines) at the first snapshot: `shared.go` 668,
+`shared_backend.go` 603, `shared_exclusive.go` 290, `shared_services.go` 112,
+`tenant.go` 307, and the gate `shared_gate.go` 319 (which stays in core, see
+below). Four test files (`shared_test.go`, `shared_exclusive_test.go`,
+`shared_services_test.go`, `shared_gate_test.go`) hold 1,642 lines. The
+current numbers are in the refresh section.
 
 Exported symbols that would move (35):
 
@@ -268,7 +272,8 @@ change (see `docs/contributing/package-split-shards.md`).
 
 ## Blocking prerequisites
 
-Status of the safe extraction order at `e22b728`:
+Status of the safe extraction order at `e22b728` (superseded by the refresh
+section below, which keeps this table for history):
 
 | Step | State |
 | --- | --- |
@@ -283,6 +288,125 @@ Status of the safe extraction order at `e22b728`:
 complete (remaining: facts extraction, the observation object, overrides, the
 internal state and lock split, final measurement), and #155 keeps that as its
 gate. Neither the backend port nor the exported move is started here.
+
+## Refresh at `7266eb7` plus the cluster-operations port
+
+Measured against `7266eb7` (merge of #247) with the change that adds
+`ceph/shared_ops.go` applied. Source reading, `go/types` measurement and
+`grep` only; no Docker, no native Ceph, nothing here is native evidence.
+
+### Counts
+
+| Item | Earlier | Now |
+| --- | --- | --- |
+| `shared.go` / `shared_backend.go` / `shared_exclusive.go` / `shared_services.go` / `tenant.go` / `shared_gate.go` / `shared_ops.go` (non-test lines) | 668 / 603 / 290 / 112 / 307 / 319 / not present | 668 / 482 / 294 / 90 / 307 / 342 / 93 |
+| Exported symbols that would move | 35 | 35 (unchanged; the 35 are still all declared in `ceph/shared.go`, `ceph/tenant.go`) |
+| `sharedBackend` methods | 12 | 12 (`cluster() *Container` replaced by `ops() clusterOps`, `ceph/shared_backend.go:21`) |
+| Container members named by `shared.go`, `shared_exclusive.go`, `shared_services.go` | 0 | 0 |
+| Container members named by `tenant.go` | 12 (8 exported views, 4 private paths) | 0 (all reached through `clusterOps`, `ceph/shared_ops.go:18`) |
+| Container members named by `shared_backend.go` (`containerBackend`) | 24 | 23 (the embedded `Container` type, `CreatePool`, `WaitForPGClean`, `WaitForQuorum`, `closed`, `config`, `controlContainerContext`, `controlMu`, `controlPlane`, `generateKeyArgs`, `lockTopology`, `managers`, `monitorTerminated`, `monitors`, `mu`, `osds`, `recordClientSecret`, `services`, `setClientKey`, `settings`, `settleClient`, `sharing`, `terminate`) |
+| Container members named by `shared_ops.go` (`containerOps`) | not present | 12 (`BlocklistEntries`, `HealthDetails`, `OSDFlags`, `ObjectWatchers`, `Pools`, `Status`, `mu`, `poolStatus`, `poolUsage`, `runNativeCommand`, `settings`, `withClientIdentity`) |
+| Union of Container members used by the harness files | 36 | 33 in two files, of which the 12 of `shared_ops.go` disappear when the Tenant forwarders move to the observation object |
+| `sharedGate(` lines / files / `sharedGate("` call sites | 39 / 18 / 38 | 39 / 18 / 38 |
+| `admitHandle(` / `admitFault(` call expressions | 6 / not counted | 6 / 0 outside declarations |
+| References to the 16 moved package-level names as `ceph.X` outside `ceph/` (regexp over the tree) | `internal/integration` 30 in 5 files; `rbd/tenant.go` 5; `cephfs/tenant.go` 4; `rgw/tenant.go` 4; `internal/servicehook/servicehook.go` 6 | `internal/integration` 30 in 5 files; `rbd/tenant.go` 4; `cephfs/tenant.go` 3; `rgw/tenant.go` 4; `internal/servicehook/servicehook.go` 4 (the regexp counts qualified `ceph.Tenant`-style names only, so it is lower than the earlier textual count for the three adapters and the hook package; the files and the 30 integration references agree) |
+| `TenantCluster` call sites | 3 in 2 files | 4 in 2 files (`internal/integration/shared_cluster_integration_test.go:83,146`, `internal/integration/shared_services_integration_test.go:165,198`) plus the hook (`ceph/service_hooks.go:56`) and its declaration (`internal/servicehook/servicehook.go:42`) |
+
+The earlier "3 call sites" figure undercounted by one: the integration
+helpers call it in four places. No adapter calls it.
+
+### Import graph check
+
+Measured with `go list` at the commit above (internal imports only):
+
+```
+ceph             -> internal/clusterutil, dockerbridge, hookreg, naming, sharedinvariants, supervised
+rbd              -> ceph, internal/multicluster, naming, servicehook
+cephfs           -> ceph, internal/clusterutil, naming, servicehook
+rgw              -> ceph, internal/clusterutil, naming, servicehook
+internal/servicehook -> ceph, internal/hookreg, supervised
+internal/hookreg, internal/sharedinvariants -> (nothing)
+```
+
+Cycle check for the planned graph: `ceph/harness` imports `ceph`,
+`internal/hookreg` and `internal/sharedinvariants`; none of them imports a
+harness package. `internal/servicehook` is the one package that imports `ceph`
+and names `*ceph.Tenant` and `*ceph.Container` in its hook interface
+(`internal/servicehook/servicehook.go:42-43`). After the move its tenant half
+has to import `ceph/harness`, so `ceph/harness` must not import
+`internal/servicehook`. It does not need to: it registers through
+`internal/hookreg` only. The service harnesses import `internal/servicehook`
+and `ceph/harness`, which is acyclic. The check that must hold after the move:
+`go list -deps ./ceph` and `go list -deps ./ceph/harness` list no `rbd`, `cephfs`,
+`rgw`, `servicehook` or any `.../harness` package other than itself.
+
+One reverse dependency remains in core and is new in this refresh:
+`ObserveTenant(tenant *Tenant)` (`ceph/observer.go:43`) names the harness
+`Tenant`. The owner decided that the `Observer` stays in `ceph` (#146, decision
+1 of 2026-10-27), so after the move core cannot name `Tenant`. The move has to
+turn the tenant form into a harness-side constructor that hands the `Observer`
+a target function through an internal seam (the same shape as `override`), or
+into an `Observe` overload on a narrow interface. This is a decision of the
+move, not of the port.
+
+### What the cluster-operations port changes
+
+The note's item 1 of "Ports between `ceph/harness` and core" describes the
+future cross-package registration. The part of it that is internal and
+behavior preserving is done: the orchestration no longer holds a `*Container`.
+
+- `sharedBackend` no longer has `cluster() *Container`; it has `ops()
+  clusterOps` (`ceph/shared_backend.go:21`, `ceph/shared_backend.go:482`),
+  nil for a model.
+- `clusterOps` (`ceph/shared_ops.go:18`) carries exactly what `Tenant` and
+  `tenantLease` used: the startup timeout, a CLI command, `WithTopology`, the
+  service-extension slot, the eight read-only views, the two private
+  pass-throughs (`runNativeCommand`, `withClientIdentity`) and
+  `poolStatus`/`poolUsage`. It exposes no lock, field or executor.
+- `Tenant` reaches the cluster only through it (`ceph/tenant.go:298`) and
+  `tenantLease` holds it instead of a `*Container` (`ceph/service_hooks.go:109`).
+  The admission check (`Tenant.check`, `ceph/tenant.go:256`) is unchanged and
+  runs before `ops()`.
+- Two places still obtain the gated `*Container` from `clusterOps.raw()`:
+  `SharedCluster.Exclusive` (`ceph/shared_exclusive.go:31`, the deliberate raw
+  handle of the open question below) and `Tenant.container` (`ceph/service_hooks.go:67`),
+  used by the `Observer` and the test-only `TenantCluster` hook
+  (`ceph/service_hooks.go:56`). `TestLeaseOrchestrationNamesNoContainerBeyondTheAllowList`
+  pins that `shared.go`, `shared_exclusive.go`, `shared_services.go` and
+  `tenant.go` name `Container` only in `Exclusive` and in the registered
+  service hook types (`sharedService.prepare` and `probe`,
+  `ceph/shared_services.go:21,26`), and that `tenantLease` holds no `Container`.
+
+What the port does not do: it does not yet have the cross-package form (a
+`hookreg` slot, a start factory returning the partial cluster, the invariants
+decoders behind it). That form freezes the shape of `containerBackend`'s 13
+fields and 11 private methods, which the remaining internal state and lock
+split is still moving.
+
+### Which prerequisites are met
+
+| Prerequisite | State at `7266eb7` | Evidence |
+| --- | --- | --- |
+| Pure invariant logic outside `ceph` | Met | `internal/sharedinvariants` (imported by `ceph/shared_backend.go`) |
+| Tenant port and adapters off `TenantCluster` | Met (#200) | no call in `rbd/`, `cephfs/`, `rgw/`; port at `ceph/service_hooks.go:80` |
+| Orchestration and `Tenant` free of `*Container` | Met by this change | `ceph/shared_ops.go:18`, guard test in `ceph/shared_ops_test.go` |
+| Networking, native-command and feature-client state split from `Container` | Met (#239, #241, #246) | `ceph/network_state.go`, `ceph/native_state.go`, `ceph/feature_client_state.go` |
+| Static facts extraction | Partly met: `FactsOf` exists (`ceph/cluster_facts.go:49`) but the old exported fact accessors are still on `Container` | owner decision 1 of 2026-10-27 says to delete them; in flight |
+| Observation object and removal of the Tenant forwarders | Not met: `Observe` and `ObserveTenant` exist (`ceph/observer.go:33,43`), but the eight views are still `Container` methods (`ceph/status.go:30`, `ceph/health_details.go:55`, `ceph/pool_policy.go:45`, `ceph/object_watchers.go:26`, `ceph/osd_policy.go:115`, `ceph/fencing.go:47`) and still forwarded by `Tenant` (`ceph/tenant.go:181-253`); the forwarders go through `clusterOps` now, and are deleted when the views move | #146 decision 1, in flight |
+| Auth records split (`authFences`, `clientKeys`, `clientSecrets`, `strayAuthInputs`, `clientRevocations`) | Not met | `containerBackend` calls `generateKeyArgs`, `settleClient`, `recordClientSecret` and `setClientKey` (`ceph/shared_backend.go:377,397,411,416,445,457`); audit in `docs/design/container-decomposition.md`, "Components not picked" |
+| OSD storage state split (`osds`, `detachedOSDs`, `osdMemory`, `osdVolume`) | Not met | `containerBackend.daemonsRunning` walks the daemon containers (`ceph/shared_backend.go:323`; `monitors` at `:331`, OSDs through `osds`) |
+| Override maps and fault registry | Not met | the three maps are guarded by `Container.mu`; the `override` package is designed (`docs/design/override-package-boundary.md`, owner answers of 2026-10-27) and not implemented |
+| Membership and control (`mu`, `controlMu`, `controlPlane`, `monitors`, `managers`, `services`, `sharing`, `closed`) | Not met, and not a single component | `containerBackend` uses all of these (`ceph/shared_backend.go`); split by lock domain is a separate review |
+| `ObserveTenant` independent of the harness `Tenant` | Not met | `ceph/observer.go:43` |
+
+Conclusion: the internal sharing orchestration is now independent of
+`Container`, which was the part of the backend port that could be done without
+moving state. The public move is still blocked by #146 slices that are in
+flight or not started: the auth records, OSD storage, the override registry,
+and facts/observation removal (with the `ObserveTenant` seam). The
+cross-package backend registration (second `hookreg` slot) waits for the
+membership and control split because `containerBackend` would otherwise freeze
+13 fields and 11 private methods in its port.
 
 ## Open questions
 
@@ -300,6 +424,9 @@ gate. Neither the backend port nor the exported move is started here.
 
 ## Not covered
 
-No code was extracted, no signature was added, no import changed and no test
-was run. The counts of the first half are from the older snapshot and are
-superseded by the re-measurement that the move requires after #146.
+No exported symbol was moved, no public signature was added and no package
+import changed. The only code change tied to this note is the unexported
+`clusterOps` port, covered by Docker-free unit tests and a structural guard;
+no Docker or native Ceph test was run. The counts of the first half are from the
+older snapshot; the refresh section holds the current ones and must be
+re-measured after the remaining #146 slices.

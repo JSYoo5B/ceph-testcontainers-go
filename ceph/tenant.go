@@ -184,7 +184,7 @@ func (t *Tenant) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	return c.Status(ctx)
+	return c.status(ctx)
 }
 
 // HealthDetails returns the cluster's health; see Container.HealthDetails.
@@ -193,7 +193,7 @@ func (t *Tenant) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
 	if err != nil {
 		return HealthSnapshot{}, err
 	}
-	return c.HealthDetails(ctx)
+	return c.healthDetails(ctx)
 }
 
 // Pools lists the cluster's pools; see Container.Pools.
@@ -202,7 +202,7 @@ func (t *Tenant) Pools(ctx context.Context) ([]PoolState, error) {
 	if err != nil {
 		return nil, err
 	}
-	return c.Pools(ctx)
+	return c.pools(ctx)
 }
 
 // PoolStatus returns one pool's state by its exact native name; see
@@ -212,7 +212,7 @@ func (t *Tenant) PoolStatus(ctx context.Context, name string) (PoolState, error)
 	if err != nil {
 		return PoolState{}, err
 	}
-	return c.poolStatus(ctx, name, nil)
+	return c.poolStatus(ctx, name)
 }
 
 // PoolUsage returns one pool's usage by its exact native name; see
@@ -223,7 +223,7 @@ func (t *Tenant) PoolUsage(ctx context.Context, name string) (PoolUsageSnapshot,
 	if err != nil {
 		return PoolUsageSnapshot{}, err
 	}
-	return c.poolUsage(ctx, name, nil)
+	return c.poolUsage(ctx, name)
 }
 
 // ObjectWatchers lists an object's watchers; see Container.ObjectWatchers.
@@ -232,7 +232,7 @@ func (t *Tenant) ObjectWatchers(ctx context.Context, pool, namespace, object str
 	if err != nil {
 		return nil, err
 	}
-	return c.ObjectWatchers(ctx, pool, namespace, object)
+	return c.objectWatchers(ctx, pool, namespace, object)
 }
 
 // OSDFlags lists the global OSD flags; see Container.OSDFlags.
@@ -241,7 +241,7 @@ func (t *Tenant) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
 	if err != nil {
 		return nil, err
 	}
-	return c.OSDFlags(ctx)
+	return c.osdFlags(ctx)
 }
 
 // BlocklistEntries lists the blocklist; see Container.BlocklistEntries.
@@ -250,7 +250,7 @@ func (t *Tenant) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, error)
 	if err != nil {
 		return nil, err
 	}
-	return c.BlocklistEntries(ctx)
+	return c.blocklistEntries(ctx)
 }
 
 func (t *Tenant) check() error {
@@ -295,11 +295,11 @@ func (t *Tenant) takeScopes() []tenantScope {
 	return slices.Clone(t.scopes)
 }
 
-func (t *Tenant) cluster() (*Container, error) {
+func (t *Tenant) cluster() (clusterOps, error) {
 	if err := t.check(); err != nil {
 		return nil, err
 	}
-	c := t.inst.backend.cluster()
+	c := t.inst.backend.ops()
 	if c == nil {
 		return nil, invalidRequest("tenant %s has no container", t.id)
 	}

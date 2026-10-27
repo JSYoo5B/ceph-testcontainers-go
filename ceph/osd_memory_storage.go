@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"strconv"
-	"time"
 
-	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -100,13 +98,12 @@ func (c *Container) ensureOSDMemory(ctx context.Context) error {
 	if c.settings.osdMemorySize == 0 {
 		return nil
 	}
-	if c.osdMemory != nil {
-		return c.osdMemory.checkKeeper(ctx)
+	if s := c.stores.memoryStorage(); s != nil {
+		return s.checkKeeper(ctx)
 	}
 	// Publish before allocation: an interrupted create may have committed and
 	// the generated volume name remains owned for explicit cleanup.
-	s := newOSDMemoryStorage(c.settings.osdMemorySize)
-	c.osdMemory = s
+	s := c.stores.beginMemory(c.settings.osdMemorySize)
 	if err := s.createVolume(ctx); err != nil {
 		return err
 	}
@@ -185,35 +182,10 @@ func (s *osdMemoryStorage) discardOSD(ctx context.Context, id int) error {
 
 // Called only after all owned OSD containers have been removed. Failed keeper
 // or volume removal remains retryable; never force-delete a referenced volume.
-func (s *osdMemoryStorage) release(ctx context.Context) (err error) {
-	if s.keeper != nil {
-		if err := s.keeper.Terminate(ctx, testcontainers.StopTimeout(time.Second)); !onlyMissingHostResource(err) {
-			return fmt.Errorf("terminate OSD memory keeper: %w", err)
-		}
-		s.keeper = nil
-	}
-	if s.volumeRemoved {
-		return nil
-	}
-	docker, err := s.client(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, docker.Close()) }()
-	inspected, err := docker.VolumeInspect(ctx, s.name, mobycl.VolumeInspectOptions{})
-	if errdefs.IsNotFound(err) {
-		s.volumeRemoved = true
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect owned OSD memory volume: %w", err)
-	}
-	if err := s.validateVolume(inspected.Volume); err != nil {
-		return err
-	}
-	if _, err := docker.VolumeRemove(ctx, s.name, mobycl.VolumeRemoveOptions{}); err != nil && !errdefs.IsNotFound(err) {
-		return fmt.Errorf("remove owned OSD memory volume: %w", err)
-	}
-	s.volumeRemoved = true
-	return nil
+func (s *osdMemoryStorage) release(ctx context.Context) error {
+	return ownedStorageRelease{
+		helperName: "OSD memory keeper", volumeName: "OSD memory volume",
+		helper: &s.keeper, removed: &s.volumeRemoved, name: s.name,
+		client: s.client, validate: s.validateVolume,
+	}.run(ctx)
 }

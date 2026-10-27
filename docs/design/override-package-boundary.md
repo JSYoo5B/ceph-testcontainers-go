@@ -95,8 +95,8 @@ and debug-level handles complete the surface. In
 
 | Consumer | What it reads | Where |
 | --- | --- | --- |
-| three maps typed with the handle types | `configOverrides`, `flagOverrides`, `moduleOverrides` | `ceph.go:46-48`; used at `config.go:110,123,212`, `osd_policy.go:161,174,242`, `mgr_modules.go:72,102,182` |
-| `deletePool` | "is an override of `mon_allow_pool_delete` held", through the map and the handle's `state.restored` | `pool_removal.go:120` |
+| three maps typed with the handle types (replaced by registry kinds in I-2; the line numbers are those before it) | `configOverrides`, `flagOverrides`, `moduleOverrides` | `ceph.go:46-48`; used at `config.go:110,123,212`, `osd_policy.go:161,174,242`, `mgr_modules.go:72,102,182` |
+| `deletePool` | "is an override of `mon_allow_pool_delete` held", through the map and the handle's `state.restored` (after I-2: `allowPoolDeleteHeld`, a registry lookup) | `pool_removal.go:120` |
 | `Finalization.TrackDebugLevel` and the manifest | `*DebugLevelOverrideHandle`, its `state`, `Receipt()` | `finalization.go:73`, `finalization_debug.go:30,89,109-131` |
 | fault registry | kinds `faultBlocklist` and `faultFullRatios`, phase tracked; `terminate` never visits them | `fault_registry.go:67-72,178-187,193-216`, `ceph.go:1014-1021` |
 | debug-level registry | `Container.debugLevels`, own leaf lock | `ceph.go:113-115`, `debug_level.go:258-283` |

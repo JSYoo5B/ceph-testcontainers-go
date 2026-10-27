@@ -185,7 +185,7 @@ func stoppedMDSFixture(t *testing.T) (*Filesystem, *stoppedMDSControl, *MDS, *st
 	m["info"] = map[string]any{"gid_12": coldMDSTestRow("target-1", "up:active", 12, 0, 7)}
 	m["up"], m["in"] = map[string]any{"mds_0": uint64(12)}, []int{0}
 	n.calls = nil
-	return fs, n, fs.mdss[0], first, second
+	return fs, n, fs.roster.daemons[0], first, second
 }
 
 // A starter that fails before any container exists may return a typed nil
@@ -193,7 +193,7 @@ func stoppedMDSFixture(t *testing.T) (*Filesystem, *stoppedMDSControl, *MDS, *st
 // daemon, and leave the topology lock free for cleanup.
 func TestFailedMDSCreationReturnsTheStarterErrorWithoutPublishing(t *testing.T) {
 	fs, _, _, _, _ := stoppedMDSFixture(t)
-	published := len(fs.mdss)
+	published := len(fs.roster.daemons)
 	cause := errors.New("create failed before a container exists")
 	var returned error
 	var panicValue any
@@ -210,8 +210,8 @@ func TestFailedMDSCreationReturnsTheStarterErrorWithoutPublishing(t *testing.T) 
 	if !errors.Is(returned, cause) {
 		t.Fatalf("starter error lost: %v", returned)
 	}
-	if len(fs.mdss) != published {
-		t.Fatalf("a daemon without a container was published: %d -> %d", published, len(fs.mdss))
+	if len(fs.roster.daemons) != published {
+		t.Fatalf("a daemon without a container was published: %d -> %d", published, len(fs.roster.daemons))
 	}
 	// The start has returned, so the topology lock is free now or never. Check
 	// it directly instead of giving cleanup a wall-clock deadline that a slow
@@ -259,9 +259,9 @@ func TestStoppedMDSPublicationRetainsOriginalAndPartialIdentity(t *testing.T) {
 			}
 			d := &stoppedMDSDaemon{cid: cid}
 			stoppedMDSPublish(t, fs, d, cause)
-			owned := fs.mdss[2]
+			owned := fs.roster.daemons[2]
 			i := owned.identity
-			if i == nil || i.descriptor != owned || i.container != d || i.cid != cid || i.name != "target-2" || i.native != fs.nativeIdentity || i.filesystem != fs || i.confirmed != (kind == "success") || servicehook.Service(fs.cluster, "mds.target-2") != d || fs.nextMDSIndex != 3 {
+			if i == nil || i.descriptor != owned || i.container != d || i.cid != cid || i.name != "target-2" || i.native != fs.nativeIdentity || i.filesystem != fs || i.confirmed != (kind == "success") || servicehook.Service(fs.cluster, "mds.target-2") != d || fs.roster.nextIndex != 3 {
 				t.Fatal("actual publication lost original or partial ownership")
 			}
 		})
@@ -283,13 +283,13 @@ func TestStoppedMDSNilAndCanceledPublicationPreservesOldReceipt(t *testing.T) {
 				cancel()
 				return daemon, nil
 			})
-			if err != nil || fs.nextMDSIndex != 3 {
+			if err != nil || fs.roster.nextIndex != 3 {
 				t.Fatalf("additive metadata changed old starter receipt: %v", err)
 			}
-			if !canceled && len(fs.mdss) != 2 {
+			if !canceled && len(fs.roster.daemons) != 2 {
 				t.Fatal("nil starter gained descriptor")
 			}
-			if canceled && (len(fs.mdss) != 3 || fs.mdss[2].Container != daemon || fs.mdss[2].identity.confirmed || servicehook.Service(fs.cluster, "mds.target-2") != daemon) {
+			if canceled && (len(fs.roster.daemons) != 3 || fs.roster.daemons[2].Container != daemon || fs.roster.daemons[2].identity.confirmed || servicehook.Service(fs.cluster, "mds.target-2") != daemon) {
 				t.Fatal("canceled metadata capture lost partial owned handle or adopted authority")
 			}
 		})
@@ -299,12 +299,12 @@ func TestStoppedMDSNilAndCanceledPublicationPreservesOldReceipt(t *testing.T) {
 func TestStoppedMDSRemovalPreservesPolicyAuthAndOriginalSurvivor(t *testing.T) {
 	fs, native, handle, old, survivor := stoppedMDSFixture(t)
 	before := coldMDSTestJSON(native.native)
-	desired, identity, next := fs.config, fs.nativeIdentity, fs.nextMDSIndex
+	desired, identity, next := fs.config, fs.nativeIdentity, fs.roster.nextIndex
 	copy := *handle
 	if err := (&copy).RemoveStopped(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if old.removes != 1 || !old.missing || survivor.removes != 0 || handle.identity != copy.identity || !handle.identity.removed || !handle.identity.removalAttempted || len(fs.MDSs()) != 1 || fs.mdss[0].Container != survivor || fs.Container != survivor || servicehook.Service(fs.cluster, "mds.target-0") != nil || servicehook.Service(fs.cluster, "mds.target-1") != survivor || !reflect.DeepEqual(fs.config, desired) || fs.nativeIdentity != identity || fs.nextMDSIndex != next || before != coldMDSTestJSON(native.native) {
+	if old.removes != 1 || !old.missing || survivor.removes != 0 || handle.identity != copy.identity || !handle.identity.removed || !handle.identity.removalAttempted || len(fs.MDSs()) != 1 || fs.roster.daemons[0].Container != survivor || fs.Container != survivor || servicehook.Service(fs.cluster, "mds.target-0") != nil || servicehook.Service(fs.cluster, "mds.target-1") != survivor || !reflect.DeepEqual(fs.config, desired) || fs.nativeIdentity != identity || fs.roster.nextIndex != next || before != coldMDSTestJSON(native.native) {
 		t.Fatal("retirement changed policy/native auth/survivor or lost exact ownership")
 	}
 	native.readsOnly(t)
@@ -328,11 +328,11 @@ func TestStoppedMDSRemovalPreservesEveryDesiredActiveRank(t *testing.T) {
 	m["info"].(map[string]any)["gid_13"] = coldMDSTestRow("target-2", "up:active", 13, 1, 7)
 	m["up"], m["in"] = map[string]any{"mds_0": uint64(12), "mds_1": uint64(13)}, []int{0, 1}
 	native.calls = nil
-	before, desired, identity, next := coldMDSTestJSON(native.native), fs.config, fs.nativeIdentity, fs.nextMDSIndex
+	before, desired, identity, next := coldMDSTestJSON(native.native), fs.config, fs.nativeIdentity, fs.roster.nextIndex
 	if err := target.RemoveStopped(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if old.removes != 1 || !old.missing || first.removes != 0 || second.removes != 0 || first.inspects == 0 || second.inspects == 0 || len(fs.MDSs()) != 2 || fs.mdss[0].Container != first || fs.mdss[1].Container != second || fs.Container != first || servicehook.Service(fs.cluster, "mds.target-0") != nil || servicehook.Service(fs.cluster, "mds.target-1") != first || servicehook.Service(fs.cluster, "mds.target-2") != second || !reflect.DeepEqual(fs.config, desired) || fs.nativeIdentity != identity || fs.nextMDSIndex != next || before != coldMDSTestJSON(native.native) {
+	if old.removes != 1 || !old.missing || first.removes != 0 || second.removes != 0 || first.inspects == 0 || second.inspects == 0 || len(fs.MDSs()) != 2 || fs.roster.daemons[0].Container != first || fs.roster.daemons[1].Container != second || fs.Container != first || servicehook.Service(fs.cluster, "mds.target-0") != nil || servicehook.Service(fs.cluster, "mds.target-1") != first || servicehook.Service(fs.cluster, "mds.target-2") != second || !reflect.DeepEqual(fs.config, desired) || fs.nativeIdentity != identity || fs.roster.nextIndex != next || before != coldMDSTestJSON(native.native) {
 		t.Fatal("retirement changed desired ranks, original survivors or native policy")
 	}
 	native.readsOnly(t)
@@ -369,7 +369,7 @@ func TestStoppedMDSOwnerGuardsCannotRedirectRemoval(t *testing.T) {
 			case "closed":
 				*servicehook.TestState(fs.cluster).Closed = true
 			case "duplicate-target":
-				fs.mdss = append(fs.mdss, target)
+				fs.roster.daemons = append(fs.roster.daemons, target)
 			case "unconfirmed":
 				target.identity.confirmed = false
 			}
@@ -468,7 +468,7 @@ func TestStoppedMDSNativeNameAndHealthySurvivorGuards(t *testing.T) {
 			case "survivor-wrong-cid":
 				survivor.returnedCID = strings.Repeat("c", 64)
 			case "last-member":
-				fs.mdss = fs.mdss[:1]
+				fs.roster.daemons = fs.roster.daemons[:1]
 			}
 			err := target.RemoveStopped(t.Context())
 			if err == nil || old.removes != 0 || target.identity.removalAttempted || strings.Contains(err.Error(), "never-log") {
@@ -620,7 +620,7 @@ func TestStoppedMDSAmbiguousTerminationRetainsExactRetryAuthority(t *testing.T) 
 				old.termErr = errors.Join(errdefs.ErrNotFound, errors.New("never-log-stopped-mds-hook"))
 			}
 			err := target.RemoveStopped(t.Context())
-			if err == nil || strings.Contains(err.Error(), "never-log") || !target.identity.removalAttempted || target.identity.removed || old.removes != 1 || len(fs.mdss) != 2 || fs.Container != old || servicehook.Service(fs.cluster, "mds.target-0") != old {
+			if err == nil || strings.Contains(err.Error(), "never-log") || !target.identity.removalAttempted || target.identity.removed || old.removes != 1 || len(fs.roster.daemons) != 2 || fs.Container != old || servicehook.Service(fs.cluster, "mds.target-0") != old {
 				t.Fatalf("ambiguous receipt discarded authority or leaked: %v", err)
 			}
 			if outcome != "joined-notfound-hook-error" && !errors.Is(err, context.DeadlineExceeded) {
@@ -628,7 +628,7 @@ func TestStoppedMDSAmbiguousTerminationRetainsExactRetryAuthority(t *testing.T) 
 			}
 			old.termErr = nil
 			copy := *target
-			if err := (&copy).RemoveStopped(t.Context()); err != nil || !target.identity.removed || fs.Container != survivor || len(fs.mdss) != 1 || old.removes != map[bool]int{true: 1, false: 2}[outcome == "lost-reply-removed"] {
+			if err := (&copy).RemoveStopped(t.Context()); err != nil || !target.identity.removed || fs.Container != survivor || len(fs.roster.daemons) != 1 || old.removes != map[bool]int{true: 1, false: 2}[outcome == "lost-reply-removed"] {
 				t.Fatalf("explicit exact-CID retry failed: %v", err)
 			}
 			native.readsOnly(t)
@@ -673,7 +673,7 @@ func TestStoppedMDSLatenessPreservesPendingOwnership(t *testing.T) {
 			}
 			err := target.RemoveStopped(ctx)
 			wantAttempt := !strings.HasPrefix(when, "preflight")
-			if err == nil || target.identity.removed || target.identity.removalAttempted != wantAttempt || old.removes != map[bool]int{true: 1, false: 0}[wantAttempt] || len(fs.mdss) != 2 || fs.Container != old {
+			if err == nil || target.identity.removed || target.identity.removalAttempted != wantAttempt || old.removes != map[bool]int{true: 1, false: 0}[wantAttempt] || len(fs.roster.daemons) != 2 || fs.Container != old {
 				t.Fatalf("late change lost original/pending ownership: %s %v", when, err)
 			}
 			if strings.Contains(when, "canceled") && !errors.Is(err, context.Canceled) {
@@ -692,7 +692,7 @@ func TestStoppedMDSReplacementPublicationAndCompletedHandleRemainSeparate(t *tes
 	stoppedMDSPublish(t, fs, replacement, nil)
 	native.native["standbys"] = []any{coldMDSTestRow("target-2", "up:standby", 14, -1, 7)}
 	native.calls = nil
-	if err := target.RemoveStopped(t.Context()); err != nil || old.removes != 1 || replacement.removes != 0 || len(fs.mdss) != 2 || fs.mdss[1].ID != "target-2" || fs.mdss[1].identity.cid == target.identity.cid || servicehook.Service(fs.cluster, "mds.target-2") != replacement {
+	if err := target.RemoveStopped(t.Context()); err != nil || old.removes != 1 || replacement.removes != 0 || len(fs.roster.daemons) != 2 || fs.roster.daemons[1].ID != "target-2" || fs.roster.daemons[1].identity.cid == target.identity.cid || servicehook.Service(fs.cluster, "mds.target-2") != replacement {
 		t.Fatalf("old completed identity adopted or removed replacement: %v", err)
 	}
 	native.readsOnly(t)
@@ -706,13 +706,13 @@ func TestStoppedMDSWholeClusterCleanupRetainsPartialAndAmbiguousHandles(t *testi
 	fs, _, target, old, survivor := stoppedMDSFixture(t)
 	partial := &stoppedMDSDaemon{cid: strings.Repeat("c", 64), state: container.State{Status: "exited"}}
 	stoppedMDSPublish(t, fs, partial, errors.New("partial startup"))
-	if err := fs.mdss[2].RemoveStopped(t.Context()); err == nil || partial.removes != 0 {
+	if err := fs.roster.daemons[2].RemoveStopped(t.Context()); err == nil || partial.removes != 0 {
 		t.Fatal("partial startup adopted removal authority")
 	}
 	old.termErr = errors.New("response unavailable")
 	// Remove the partial from this temporary topology solely to exercise a
 	// real pending attempt; it remains independently in the cleanup registry.
-	fs.mdss = fs.mdss[:2]
+	fs.roster.daemons = fs.roster.daemons[:2]
 	if err := target.RemoveStopped(t.Context()); err == nil || !target.identity.removalAttempted {
 		t.Fatal("missing pending attempt")
 	}

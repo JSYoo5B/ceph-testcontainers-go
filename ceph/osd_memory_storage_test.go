@@ -198,12 +198,12 @@ func TestOSDMemoryTerminatePreservesKeeperUntilOSDsAreGone(t *testing.T) {
 	s, docker, keeper := newOSDMemoryUnitFixture()
 	osdError := errors.New("OSD container removal failed")
 	osd := &osdMemoryContainerFake{terminateErr: osdError}
-	cluster := &Container{osdMemory: s, osds: map[int]*OSDContainer{4: {Container: osd}}}
-	if err := cluster.Terminate(t.Context()); !errors.Is(err, osdError) || len(cluster.osds) != 1 || cluster.osdMemory != s || keeper.terminations != 0 || docker.removals != 0 {
+	cluster := &Container{stores: osdStorageState{memory: s}, osds: map[int]*OSDContainer{4: {Container: osd}}}
+	if err := cluster.Terminate(t.Context()); !errors.Is(err, osdError) || len(cluster.osds) != 1 || cluster.stores.memory != s || keeper.terminations != 0 || docker.removals != 0 {
 		t.Fatalf("unfinished OSD cleanup released its memory store: err=%v", err)
 	}
 	osd.terminateErr = nil
-	if err := cluster.Terminate(t.Context()); err != nil || len(cluster.osds) != 0 || cluster.osdMemory != nil || keeper.terminations != 1 || docker.removals != 1 || docker.removeOptions.Force {
+	if err := cluster.Terminate(t.Context()); err != nil || len(cluster.osds) != 0 || cluster.stores.memory != nil || keeper.terminations != 1 || docker.removals != 1 || docker.removeOptions.Force {
 		t.Fatalf("retry did not release storage after the original OSD was removed: err=%v", err)
 	}
 }
@@ -212,7 +212,7 @@ func TestOSDMemoryReuseRequiresTheOriginalLiveKeeper(t *testing.T) {
 	for _, condition := range []string{"live", "stopped", "restarted", "inspection-error", "partial", "released"} {
 		t.Run(condition, func(t *testing.T) {
 			s, docker, keeper := newOSDMemoryUnitFixture()
-			cluster := &Container{settings: options{osdMemorySize: 1 << 30}, osdMemory: s}
+			cluster := &Container{settings: options{osdMemorySize: 1 << 30}, stores: osdStorageState{memory: s}}
 			nativeError := errors.New("keeper inspect failed")
 			switch condition {
 			case "stopped":
@@ -227,7 +227,7 @@ func TestOSDMemoryReuseRequiresTheOriginalLiveKeeper(t *testing.T) {
 				s.volumeRemoved = true
 			}
 			err := cluster.ensureOSDMemory(t.Context())
-			if (err == nil) != (condition == "live") || cluster.osdMemory != s || s.keeper != keeper || docker.creates != 0 || docker.removals != 0 {
+			if (err == nil) != (condition == "live") || cluster.stores.memory != s || s.keeper != keeper || docker.creates != 0 || docker.removals != 0 {
 				t.Fatalf("keeper failure reallocated/released storage: condition=%s storage=%+v err=%v", condition, s, err)
 			}
 			if condition == "inspection-error" && !errors.Is(err, nativeError) {

@@ -147,8 +147,8 @@ func TestOverriddenOSDRecordsItsImageWithoutChangingTheClusterOrOtherOSDs(t *tes
 	c, _, runner := newInitialOSDCluster(options{essentialImage: "example.invalid/ceph:cluster", osds: 2})
 	c.config, c.keyring = []byte("[global]\nfsid = synthetic-cluster\n"), []byte("synthetic-admin-keyring")
 	var images []string
-	inner := c.osdRunner
-	c.osdRunner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	inner := c.stores.runner
+	c.stores.runner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		images = append(images, image)
 		return inner(ctx, image, opts...)
 	}
@@ -210,8 +210,8 @@ func TestReopenKeepsTheOverriddenImage(t *testing.T) {
 	f.cluster.osds[3].image = "example.invalid/ceph:new"
 	otherBefore := f.cluster.osds[4].image
 	var images []string
-	inner := f.cluster.osdRunner
-	f.cluster.osdRunner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	inner := f.cluster.stores.runner
+	f.cluster.stores.runner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		images = append(images, image)
 		return inner(ctx, image, opts...)
 	}
