@@ -26,16 +26,6 @@ const (
 	MessengerV2Only
 )
 
-// MessengerMode returns the selected bootstrap policy. It does not inspect
-// effective native settings or prove the mode negotiated by a live connection.
-// A nil Container reports MessengerDefault.
-func (c *Container) MessengerMode() MessengerMode {
-	if c == nil {
-		return MessengerDefault
-	}
-	return c.settings.messengerMode
-}
-
 // messengerV2Only reports a mode without Messenger v1 listeners.
 func (o options) messengerV2Only() bool {
 	return o.messengerMode == MessengerV2Secure || o.messengerMode == MessengerV2Only

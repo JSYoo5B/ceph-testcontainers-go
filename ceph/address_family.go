@@ -74,15 +74,6 @@ func WithAddressFamily(family AddressFamily) Option {
 	}
 }
 
-// AddressFamily returns the family that the cluster was created with. A nil
-// Container reports AddressIPv4.
-func (c *Container) AddressFamily() AddressFamily {
-	if c == nil {
-		return AddressIPv4
-	}
-	return c.settings.addressFamily
-}
-
 func (o options) bridgeFamily() dockerbridge.Family {
 	if o.addressFamily == AddressIPv6 || o.addressFamily == AddressDualStack {
 		return dockerbridge.DualStack

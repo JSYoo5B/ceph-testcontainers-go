@@ -68,16 +68,6 @@ func WithImages(images ImageSet) Option {
 	}
 }
 
-// Images returns the effective role images, including aggregate selections.
-// They are the cluster's images: a daemon started with WithDaemonImage is not
-// reflected here; see the Image method of its handle.
-func (c *Container) Images() ImageSet {
-	if c == nil {
-		return ImageSet{}
-	}
-	return c.settings.effectiveImages()
-}
-
 func configureImages(o *options) error {
 	if o.imageSet == nil {
 		images := o.defaultImages()
