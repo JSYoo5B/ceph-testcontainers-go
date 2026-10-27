@@ -60,6 +60,12 @@ with `go run ./internal/tools/apinaming moves -base origin/main`; `SKIPPED`
 means no base was available and is not a pass. See
 [Testing](docs/contributing/testing.md).
 
+## Package-split rewrites
+
+A package move that renames API used by a retained native producer adds its own
+shard under `.github/scripts/fixtures/package-split/`; it does not edit a shared
+file. See [Package-split rewrite shards](docs/contributing/package-split-shards.md).
+
 ## Validation
 
 Use [Testing](docs/contributing/testing.md) and the Makefile for commands.

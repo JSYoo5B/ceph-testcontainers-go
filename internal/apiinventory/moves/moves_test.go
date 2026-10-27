@@ -370,6 +370,12 @@ func TestParseRecord(t *testing.T) {
 		{"unqualified name", changeID, strings.Replace(good(), `"alpha.MirrorConfig"`, `"MirrorConfig"`, 1), "not a qualified declaration name"},
 		{"name with a newline", changeID, strings.Replace(good(), `"alpha.RunMirror"`, `"alpha.RunMirror\n"`, 1), "not a qualified declaration name"},
 		{"trailing data", changeID, good() + "{}", "trailing data"},
+		{"trailing closing brace", changeID, good() + "}", "trailing data"},
+		{"trailing closing bracket", changeID, good() + "]", "trailing data"},
+		{"trailing closing brace and text", changeID, good() + "} arbitrary", "trailing data"},
+		{"trailing garbage", changeID, good() + "garbage", "trailing data"},
+		{"trailing second object after spaces", changeID, good() + "  \n {\"a\":1}", "trailing data"},
+		{"trailing whitespace only is valid", changeID, good() + " \n\t\n", ""},
 		{"source listed as removal too", changeID, strings.Replace(good(), `"moves"`, `"removed": ["alpha.RunMirror"], "moves"`, 1), "listed more than once"},
 	}
 	for _, tc := range cases {
@@ -395,5 +401,16 @@ func TestMovesMembersAppearForTypeWithoutMembers(t *testing.T) {
 	result := r.check("main")
 	if result.Status() != "FAILED" || !contains(result.Problems, "had none at the base") {
 		t.Fatalf("members that appear from nowhere must fail: %+v", result)
+	}
+}
+
+func TestMovesCheckRejectsTrailingDelimiterRecord(t *testing.T) {
+	for _, tail := range []string{"}", "]", "} arbitrary"} {
+		r := baseRepo(t)
+		legitHead(r)
+		r.write(moves.RecordsDir+"/"+changeID+".json", legitRecord+tail)
+		if result := r.check("main"); result.Status() != "FAILED" || !contains(result.Problems, "trailing data") {
+			t.Errorf("tail %q: a record with trailing input must fail Check: %+v", tail, result)
+		}
 	}
 }

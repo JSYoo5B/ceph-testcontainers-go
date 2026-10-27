@@ -14,7 +14,9 @@ package moves
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -125,8 +127,11 @@ func decodeStrict(data []byte, into any) error {
 	if err := dec.Decode(into); err != nil {
 		return err
 	}
-	if dec.More() {
-		return fmt.Errorf("trailing data")
+	// More does not establish the end of input: a stray closing delimiter
+	// makes it report false. Decoding again must hit io.EOF exactly, which
+	// rejects a second value and any trailing syntax error alike.
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("trailing data after the JSON value")
 	}
 	return nil
 }

@@ -1,5 +1,6 @@
 """Exercise the quiescence gate with retained native output; never start Docker."""
 
+import functools
 import hashlib
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ import tempfile
 import unittest
 
 import check_scenario_quiescence as checker
+import package_split as split_shards
 
 
 FIXTURE = Path(__file__).with_name("fixtures") / "cephfs-quiescence-native.log"
@@ -29,21 +31,22 @@ def retained_declaration_layout(source):
     return source.replace(before + "\n" + after, before + after, 1)
 
 
-PACKAGE_SPLIT = FIXTURE.with_name("package-split.json")
+@functools.cache
+def split_rules():
+    """The validated shards, loaded once per process."""
+    return split_shards.load_effective()
 
 
 def package_split(source):
     """Rewrite a retained producer to the current public package names.
     The retained producers were recorded before the ceph/multicluster API moved
     to ceph, cephfs, rgw and rbd. Apply only the recorded qualified identifier
-    and former Container method rewrites, then gofmt the whole file so that
-    column alignment matches; every other byte remains significant.
+    and former Container method rewrites (one shard per move under
+    fixtures/package-split, loaded and validated by package_split.py), then
+    gofmt the whole file so that column alignment matches; every other byte
+    remains significant.
     """
-    split = json.loads(PACKAGE_SPLIT.read_text())
-    for old, new in sorted(split["identifiers"].items(), key=lambda item: -len(item[0])):
-        source = re.sub(r"(?<![\w.])" + re.escape(old) + r"\b", new, source)
-    for pattern, replacement in split["calls"]:
-        source = re.sub(pattern, replacement, source)
+    source = split_shards.apply_shards(source, split_rules())
     formatted = subprocess.run(["gofmt"], input=source, capture_output=True, text=True, check=True)
     return formatted.stdout
 

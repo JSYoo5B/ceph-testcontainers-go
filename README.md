@@ -182,6 +182,8 @@ For contributors:
   integration tests.
 - [CI](docs/contributing/ci.md): the GitHub Actions workflows and how to read a
   failing batch.
+- [Package-split rewrite shards](docs/contributing/package-split-shards.md): add
+  one shard per package move for the retained producer rewrites.
 - [Behavioral bug compatibility](docs/contributing/bug-compatibility.md): explicit
   bug-ID selection policy and the planned supported-tag catalogue.
 - [Preparing a release](docs/contributing/releasing.md): the scope, evidence

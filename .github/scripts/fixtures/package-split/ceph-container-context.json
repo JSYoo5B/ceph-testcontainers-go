@@ -1,0 +1,9 @@
+{
+ "calls": [
+  [
+   "\\b([A-Za-z_]\\w*)\\.(ControlContainer|ClientContainer)Context\\(ctx\\)",
+   "\\1.\\2(ctx)"
+  ]
+ ],
+ "description": "Retained producers call the former ControlContainerContext and ClientContainerContext methods. The current names are ControlContainer and ClientContainer, so each call is rewritten to the current name with the pinned originals unchanged."
+}

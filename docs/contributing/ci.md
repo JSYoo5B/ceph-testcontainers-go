@@ -168,10 +168,15 @@ file to `READ_DOC_FILES` or `READ_DOC_PREFIXES` in `docs_only.py`.
 
 A head that changes only fragments is documentation-only, but it is still
 validated. `Vet, compile and CI tooling` runs on every head instead of
-skipping the whole job: its checkout and its last step, `Validate
-release-note fragments` (`.github/scripts/release_fragments.py`, see
-[Release-note fragments](release-fragments.md)), run regardless of
-`docs_only`, and vet, lint, tag compilation, the Python tooling tests,
+skipping the whole job: its checkout and its last two steps run regardless
+of `docs_only`. They are `Validate release-note fragments`
+(`.github/scripts/release_fragments.py`, see
+[Release-note fragments](release-fragments.md)) and `Check the released
+changelog range` (`.github/scripts/release_assemble.py check`, see
+[Release assembly](release-fragments.md#release-assembly)). The second step
+needs no network; the shallow checkout has no release tags, so it prints
+`tag comparison: SKIPPED` and checks only the identifiers recorded in
+`CHANGELOG.md` against `docs/changes`. Vet, lint, tag compilation, the Python tooling tests,
 actionlint and the go-ceph harness test skip themselves on a
 documentation-only head. The job name is unchanged and no required check is
 added. The job's checkout fetches two commits (`fetch-depth: 2`), and a pull
@@ -183,8 +188,10 @@ compares the pull request's net change. A checkout that is not a merge commit
 passes no base, and the step prints `SKIPPED` and a warning annotation instead
 of `OK`; the record checks still run, and a skip is never a pass. The step does
 not run on a documentation-only head, which cannot touch a catalogue or a move
-record, and it does not run on pushes or scheduled runs. On such a head a green `Vet, compile and CI tooling` means that the
-validator passed; vet and tag compilation did not run, and the skip is by
+record, and it does not run on pushes or scheduled runs. The step runs under
+`shell: bash` (pipefail) and exits with the checker's status; a workflow control
+in `.github/scripts/test_moves_step.py` runs the step as written. On such a head a green `Vet, compile and CI tooling` means that the
+validator and the identifier check passed (not the tag comparison); vet and tag compilation did not run, and the skip is by
 policy, not a pass of those steps. Unit tests, Race detector and Compiled tag
 coverage and helpers remain skipped jobs, and the Vulnerability check jobs
 execute with every step skipped.

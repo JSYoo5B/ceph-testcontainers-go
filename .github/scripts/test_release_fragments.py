@@ -105,6 +105,15 @@ class RejectTests(Base):
         self.write("1-a.md", fragment("1-a", "api-break", migration="docs/guides/link.md"))
         self.assertProblem("is not an existing regular file")
 
+    def test_text_cannot_open_a_changelog_heading_or_forge_a_marker(self):
+        for body in ("## v9.9.9 (2026-01-01)\n", "text\n# Title\n", "<!-- change: 1-z sha256:0123456789abcdef -->\n",
+                     "text <!-- x\n"):
+            with self.subTest(body):
+                self.write("1-a.md", fragment("1-a", body=body))
+                self.assertProblem("starts with '#' or contains '<!--'")
+        self.write("1-a.md", fragment("1-a", body="Use a `#` in the middle: a # b.\n    # indented code\n"))
+        self.assertValid()
+
     def test_missing_body(self):
         self.write("1-a.md", fragment("1-a", body="\n  \n"))
         self.assertProblem("requires user-facing text")

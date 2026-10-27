@@ -112,6 +112,13 @@ def check_fields(name, fields, body, root, problems):
         bad("reason is only allowed with kind none")
     if kind in KINDS and kind != "none" and not body.strip():
         bad("kind %s requires user-facing text after the front matter" % kind)
+    for line in body.split("\n"):
+        # The assembler copies the text into a CHANGELOG section. A line that starts
+        # a heading would open a section of its own, and a comment could forge the
+        # identifier markers that the released-range check reads.
+        if line.startswith("#") or "<!--" in line:
+            bad("the text must not hold a line that starts with '#' or contains '<!--'")
+            break
     migration = fields.get("migration")
     if kind == "api-break" and migration is None:
         bad("kind api-break requires a migration link")
