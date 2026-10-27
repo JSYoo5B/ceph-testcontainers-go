@@ -276,3 +276,18 @@ earlier, serve every one of them, so no name is added and none is renamed. The
 essential image is read as `ClusterFacts.Images.Essential`. No alias, shim or
 mapping remains. The record lists the removed rows as historical API accounting
 only.
+
+## 146-override-blocklist-package
+
+The change creates the public package `override` with its first kind. The
+handle type `ceph.BlocklistOverride` and its `Address` and `Restore` move to
+`override.BlocklistHandle` under the decided suffix `Handle`. The method
+`Container.TemporaryBlocklist` becomes the package function
+`override.AddBlocklist`: it changes kind (method to function) and verb, so the
+record lists it as removed and the function as added instead of pairing them.
+`Add` names what the call does (it creates one entry that did not exist) and
+what `Restore` undoes (it removes only that entry); `Temporary` is dropped
+because the package name carries the meaning. The names follow the decisions
+D7 to D9 of `override-package-boundary.md`. The reviewed mapping is in
+[the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
+The receipts of `ceph` and `override` were approved separately for this move.

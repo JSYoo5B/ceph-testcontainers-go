@@ -27,13 +27,13 @@ extension: a separate netem helper image applies it, and only that helper gets
 | Replication between two clusters stops | `rbdmirror.Mirror.InterruptPeerLink`, `cephfsmirror.Mirror.InterruptPeerLink`, `multisite.Fixture.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
 | A daemon drops or delays messages from one kind of peer | `OverrideConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverrideHandle.Restore` |
 | An OSD runs a client's write after the client gave up | `OverrideConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverrideHandle.Restore` |
-| One client session is fenced | `TemporaryBlocklist` | The OSDs reject that session | Yes | `BlocklistOverride.Restore` |
+| One client session is fenced | `override.AddBlocklist` | The OSDs reject that session | Yes | `override.BlocklistHandle.Restore` |
 | A failed OSD stays up or in | `OverrideOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `OSDFlagOverrideHandle.Restore` |
 | The cluster reports nearfull, backfillfull or full | `OverrideFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `FullRatiosOverride.Restore` |
 | A replica is damaged | `fault.InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `OSDContainer.Remove`, `OSDContainer.SetIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `OSDContainer.SetIn(..., true)` |
 | The MDS evicts a silent CephFS client quickly | `cephfs.Filesystem.OverrideSessionTimeouts` with `fault.Pause` | Eviction and blocklisting after 30 s or more | Yes | `SessionTimeoutsOverrideHandle.Restore` |
-| An RBD exclusive lock moves to another client | `rbd.ImageClients` with `fault.Pause` and `TemporaryBlocklist` | Lock break and fencing | Yes | Resume, then restore the blocklist |
+| An RBD exclusive lock moves to another client | `rbd.ImageClients` with `fault.Pause` and `override.AddBlocklist` | Lock break and fencing | Yes | Resume, then restore the blocklist |
 
 Each of these conditions ends with the cluster: when the test terminates the
 cluster afterwards, the undo step is optional. See [Contexts, ownership and cleanup](contexts-and-cleanup.md)
@@ -200,7 +200,7 @@ reclaims those resources on its own timers:
 
 `ObjectWatchers` parses `rados listwatchers`, which ignores `--format json`.
 Each `Address` has the form `IP:port/nonce`, the same form used by
-`BlocklistEntries` and accepted by `TemporaryBlocklist`.
+`BlocklistEntries` and accepted by `override.AddBlocklist`.
 
 ## Interrupting a network endpoint
 
@@ -998,14 +998,13 @@ if err != nil {
 
 ## Fencing a client session
 
-`TemporaryBlocklist` adds one exact client session to the OSD map blocklist.
+`override.AddBlocklist` adds one exact client session to the OSD map blocklist.
 The OSDs then reject that session, which reproduces fencing.
 
 ```golang
-fence, err := cluster.TemporaryBlocklist(ctx, address, 10*time.Minute)
-if fence != nil {
-	defer fence.Restore(cleanupCtx)
-}
+fence, err := override.AddBlocklist(ctx, cluster, address, 10*time.Minute)
+// fence is never nil: after a refusal its Restore does nothing.
+defer fence.Restore(cleanupCtx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -1227,7 +1226,7 @@ if err != nil {
 ## Handing over an RBD exclusive lock
 
 `rbd.ImageClients` reads the watchers and locks of an image. Together with
-`fault.Pause` and `TemporaryBlocklist` it reproduces an unresponsive RBD
+`fault.Pause` and `override.AddBlocklist` it reproduces an unresponsive RBD
 client that holds the exclusive lock.
 
 ```golang
@@ -1243,10 +1242,8 @@ if pause != nil {
 if err != nil {
 	t.Fatal(err)
 }
-fence, err := cluster.TemporaryBlocklist(ctx, owner.Address, 10*time.Minute)
-if fence != nil {
-	defer fence.Restore(cleanupCtx)
-}
+fence, err := override.AddBlocklist(ctx, cluster, owner.Address, 10*time.Minute)
+defer fence.Restore(cleanupCtx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -1256,7 +1253,7 @@ if err != nil {
 
 - Without fencing, another client's write waits until the frozen owner's
   watch expires (`osd_client_watch_timeout`, 30 s by default), then breaks the
-  lock and blocklists the old owner. With `TemporaryBlocklist` the handover
+  lock and blocklists the old owner. With `override.AddBlocklist` the handover
   takes about a second.
 - After `Resume`, the old owner's writes fail with ESHUTDOWN (errno 108).
 - Keep the fence until the old owner has observed the blocklist. The exclusive
@@ -1315,8 +1312,8 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 
 - [fault.md](../fault.md): `fault.Pause`, `InterruptNetwork` and network profiles.
 - [ceph.md](../ceph.md):
-  `OverrideConfig`, `OverrideOSDFlag`, `TemporaryBlocklist`,
-  `OverrideFullRatios`, scrub helpers, `OSDContainer.Remove`, `OSDContainer.SetIn`.
+  `OverrideConfig`, `OverrideOSDFlag`, `OverrideFullRatios`, scrub helpers, `OSDContainer.Remove`, `OSDContainer.SetIn`.
+- [override.md](../override.md): `override.AddBlocklist`.
 - [rbd.md](../rbd.md): `ImageClients`.
 - [rbd-mirror.md](../rbd-mirror.md): `Mirror.InterruptPeerLink`.
 - [cephfs.md](../cephfs.md): `Filesystem.OverrideSessionTimeouts`,

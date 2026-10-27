@@ -1025,7 +1025,7 @@ cannot even be detected.
 | `osd set`/`osd unset` of a global flag | `OverrideOSDFlag` | `OverrideOSDFlag` |
 | `osd set-nearfull-ratio`, `set-backfillfull-ratio`, `set-full-ratio` | `OverrideFullRatios` | `OverrideFullRatios` |
 | `mgr module enable`/`disable` | `OverrideMGRModule`; disabling `volumes` or `mirroring` breaks CephFS fixtures | `OverrideMGRModule` |
-| `osd blocklist add`/`rm` of an entry a handle owns | `TemporaryBlocklist` | `TemporaryBlocklist` |
+| `osd blocklist add`/`rm` of an entry a handle owns | `override.AddBlocklist` | `override.AddBlocklist` |
 | Deleting, renaming or changing owned pools, their CRUSH rules or EC profiles | `CreatePool` descriptors, `Pool.Remove`, `Pool.Set*`, which check the native pool ID | `Pool.SetReplication`, `Pool.SetQuota`, `Pool.SetPGCount`, `Pool.SetPlacement`, `Pool.Remove` |
 | `osd out`/`in`/`destroy`/`purge`, CRUSH edits for owned OSDs | `OSDContainer.SetIn`, `OSDContainer.Remove`, which check the OSD's UUID | `OSDContainer.SetIn`, `OSDContainer.Remove` |
 | `auth` changes to identities created by `CreateClient`, or to daemon identities | `ClientConfig.UpdateCaps`, `ClientConfig.Delete`, daemon restarts | `ClientConfig.UpdateCaps`, `ClientConfig.Delete` |

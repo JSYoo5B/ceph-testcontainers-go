@@ -78,7 +78,7 @@ Not every call waits for the gate under your context. Many other methods of
 the same cluster also serialize with topology operations but wait for a running
 one to finish regardless of `ctx`, then apply `ctx` to their native work.
 Examples are `OverrideConfig`, `OverrideOSDFlag`, `OverrideMGRModule`,
-`TemporaryBlocklist` and their `Restore` methods, `OSDContainer.SetIn`, `Pool.SetQuota`,
+`override.AddBlocklist` and their `Restore` methods, `OSDContainer.SetIn`, `Pool.SetQuota`,
 `Pool.SetReplication`, the RBD pool and namespace helpers, the RGW user, account
 and placement helpers, and `rgw.Gateway.Admin`. Some cleanup steps also use their own short context,
 for example removing temporary keyring files. So a deadline bounds how long
@@ -343,7 +343,7 @@ result:
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](../ceph.md#clientconfigreplacekey)) |
-| `OverrideConfig`, `OverrideMessengerPolicy`, `ClientConfig.Revoke`, `OverrideOSDFlag`, `OverrideMGRModule`, `OverrideFullRatios`, `TemporaryBlocklist`, `cephfs` `OverrideSessionTimeouts`, `OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
+| `OverrideConfig`, `OverrideMessengerPolicy`, `ClientConfig.Revoke`, `OverrideOSDFlag`, `OverrideMGRModule`, `OverrideFullRatios`, `override.AddBlocklist`, `cephfs` `OverrideSessionTimeouts`, `OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
 | `fault.Pause` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
@@ -365,7 +365,7 @@ back. Some wrap several native settings:
 | `OverrideOSDFlag` | One global OSD map flag |
 | `OverrideMGRModule` | Whether one MGR module is enabled |
 | `OverrideFullRatios` | The nearfull, backfillfull and full ratios |
-| `TemporaryBlocklist` | Adds one exact client-session blocklist entry |
+| `override.AddBlocklist` | Adds one exact client-session blocklist entry; a refused call still returns a handle whose `Restore` does nothing |
 | `cephfs.Filesystem.OverrideSessionTimeouts` | A filesystem's `session_timeout` and `session_autoclose` |
 | `cephfs.Filesystem.OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | One pin policy field of a subvolume or group |
 
@@ -414,7 +414,7 @@ Handle-specific details:
 - `Restore` of a `ClientConfig.Revoke` handle refuses an identity recreated outside
   the fixture with another key or capabilities. `ClientConfig.Delete` makes the
   removal permanent instead of restoring it.
-- `TemporaryBlocklist.Restore` removes only the entry it created. An entry
+- `override.BlocklistHandle.Restore` removes only the entry it created. An entry
   that expired on its own counts as removed; an entry whose expiry someone
   renewed is refused.
 - `FullRatiosOverride.Restore` accepts only the last tuple it applied, or

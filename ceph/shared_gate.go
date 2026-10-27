@@ -94,7 +94,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"CreatePool":              sharedExclusive,
 	"RefreshMonitorConfig":    sharedExclusive,
 	"RepairPG":                sharedExclusive,
-	"TemporaryBlocklist":      sharedExclusive,
 	"OverrideConfig":          sharedExclusive,
 	"OverrideDebugLevel":      sharedExclusive,
 	"OverrideFullRatios":      sharedExclusive,
@@ -168,6 +167,25 @@ func (c *Container) admitFault(op string) error {
 	policy, ok := sharedFaultPolicies[op]
 	if !ok {
 		return invalidRequest("fault operation %q has no shared-cluster policy", op)
+	}
+	return c.admitShared(op, policy)
+}
+
+// sharedOverridePolicies classifies the override operations by the name that
+// internal/overridehook admits them with. Each keeps the policy of the
+// *Container method that it replaced. The override package has a test that
+// requires an entry here for every exported function of the package.
+var sharedOverridePolicies = map[string]sharedPolicy{
+	"override.AddBlocklist": sharedExclusive,
+}
+
+// admitOverride refuses the override operation op while a SharedCluster
+// shares c, as sharedGate refuses its method. An operation without a policy
+// is refused even on a cluster of its own, so it cannot run unclassified.
+func (c *Container) admitOverride(op string) error {
+	policy, ok := sharedOverridePolicies[op]
+	if !ok {
+		return invalidRequest("override operation %q has no shared-cluster policy", op)
 	}
 	return c.admitShared(op, policy)
 }

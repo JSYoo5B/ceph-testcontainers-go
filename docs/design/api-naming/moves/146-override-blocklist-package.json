@@ -1,0 +1,16 @@
+{
+  "schema": "ceph-api-move/v1",
+  "change": "146-override-blocklist-package",
+  "review": "api-naming-audit.md",
+  "moves": [
+    {"from": "ceph.BlocklistOverride", "to": "override.BlocklistHandle"},
+    {"from": "ceph.BlocklistOverride.Address", "to": "override.BlocklistHandle.Address"},
+    {"from": "ceph.BlocklistOverride.Restore", "to": "override.BlocklistHandle.Restore"}
+  ],
+  "removed": [
+    "ceph.Container.TemporaryBlocklist"
+  ],
+  "added": [
+    "override.AddBlocklist"
+  ]
+}

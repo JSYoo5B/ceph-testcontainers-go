@@ -147,7 +147,7 @@ path whose old or new Git mode is not an ordinary file (a symbolic link, an
 executable or a submodule) also runs them, because the path name alone cannot
 show that `docs/changes/x.md` is a link to a code file:
 - The API reference page of every public package (`docs/ceph.md`,
-  `docs/fault.md`, `docs/rbd.md`, `docs/rbd-mirror.md`, `docs/cephfs.md`,
+  `docs/fault.md`, `docs/override.md`, `docs/rbd.md`, `docs/rbd-mirror.md`, `docs/cephfs.md`,
   `docs/rgw.md`, `docs/rgw-multisite.md`, `docs/capture.md`, and the page a new
   package's receipt names): the API inventory test requires every exported name
   on its package page;

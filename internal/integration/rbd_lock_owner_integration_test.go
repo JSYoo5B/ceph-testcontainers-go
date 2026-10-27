@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -190,7 +191,7 @@ func TestRBDPausedLockOwner(t *testing.T) {
 
 			// Fencing the frozen second owner removes its watch at once.
 			pausedB := pause(second)
-			fence, err := cluster.TemporaryBlocklist(ctx, bLock.Address, 10*time.Minute)
+			fence, err := override.AddBlocklist(ctx, cluster, bLock.Address, 10*time.Minute)
 			if err != nil {
 				t.Fatal("fence frozen owner:", err)
 			}

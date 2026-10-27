@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -37,8 +38,13 @@ func testClientFencing(t *testing.T, host bool) {
 	if err != nil || len(prior) != 2 {
 		t.Fatalf("native entries and ranges: %+v %v", prior, err)
 	}
-	if existing, err := cluster.TemporaryBlocklist(ctx, other, time.Minute); err == nil || existing != nil {
+	existing, err := override.AddBlocklist(ctx, cluster, other, time.Minute)
+	if err == nil || existing == nil {
 		t.Fatal("outside entry was adopted")
+	}
+	// A refused call returns a not-applied handle whose Restore is a no-op.
+	if err := existing.Restore(ctx); err != nil {
+		t.Fatal("restore of a not-applied handle:", err)
 	}
 	if err := client.CopyToContainer(ctx, []byte(clientFencingScript), "/tmp/tc-fencing.py", 0o600); err != nil {
 		t.Fatal(err)
@@ -48,16 +54,14 @@ func testClientFencing(t *testing.T, host bool) {
 	if len(status.Addresses) != 2 || status.Addresses[0] == status.Addresses[1] {
 		t.Fatal("native clients did not have distinct session addresses")
 	}
-	change, err := cluster.TemporaryBlocklist(ctx, status.Addresses[0], time.Minute)
-	if change != nil {
-		t.Cleanup(func() {
-			cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			if err := change.Restore(cleanup); err != nil {
-				t.Error(err)
-			}
-		})
-	}
+	change, err := override.AddBlocklist(ctx, cluster, status.Addresses[0], time.Minute)
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := change.Restore(cleanup); err != nil {
+			t.Error(err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,16 +86,14 @@ func testClientFencing(t *testing.T, host bool) {
 	if status.ReturnCode != 0 || !status.OtherClientOK || !status.FreshClientOK {
 		t.Fatalf("restored session/reconnect proof: %+v", status)
 	}
-	expires, err := cluster.TemporaryBlocklist(ctx, status.Addresses[0], 12*time.Second)
-	if expires != nil {
-		t.Cleanup(func() {
-			cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			if err := expires.Restore(cleanup); err != nil {
-				t.Error(err)
-			}
-		})
-	}
+	expires, err := override.AddBlocklist(ctx, cluster, status.Addresses[0], 12*time.Second)
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := expires.Restore(cleanup); err != nil {
+			t.Error(err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
