@@ -250,8 +250,9 @@ files), the adapters, `internal/servicehook`, `docs/ceph.md`, `docs/rbd.md`,
 the package examples and `TestMain` snippets, and the v0.4 upgrade mappings.
 The package-scoped API-naming catalogues are regenerated with
 `-update-api-naming` and approved with the separate approve command (see
-`api-naming.md`), and `package-split.json` is updated, deliberately and in the
-move's own change.
+`api-naming.md`), and the move adds its own shard under
+`.github/scripts/fixtures/package-split/`, deliberately and in the move's own
+change (see `docs/contributing/package-split-shards.md`).
 
 ## Preserved behavior to carry
 
