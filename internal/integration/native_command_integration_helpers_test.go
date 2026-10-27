@@ -383,7 +383,8 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 	})
 
 	t.Run("admission", func(t *testing.T) {
-		// OSD images need not have python3.
+		// An OSD runs the essential image, which lists python3. A custom image
+		// without it is refused with a classified error; either outcome passes.
 		osd := clusteraccess.OSDs(t, cluster)[0]
 		result, err := cluster.RunNativeCommand(ctx, osd, ceph.NativeCommand{Argv: []string{"ceph-osd", "--version"},
 			Timeout: time.Minute, MaxStdout: 4096, MaxStderr: 4096})
