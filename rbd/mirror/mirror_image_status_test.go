@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"bytes"
@@ -97,25 +97,25 @@ func (d *rbdImageStatusDaemon) Exec(context.Context, []string, ...tcexec.Process
 	return 0, rbdImageStatusStream(d.status), d.statusErr
 }
 
-func newRBDImageStatusFixture(t *testing.T, mode MirrorMode, sourceNS, destinationNS string) (*Mirror, *rbdImageStatusFixture, *rbdImageStatusFixture, *rbdImageStatusDaemon) {
+func newRBDImageStatusFixture(t *testing.T, mode Mode, sourceNS, destinationNS string) (*Mirror, *rbdImageStatusFixture, *rbdImageStatusFixture, *rbdImageStatusDaemon) {
 	t.Helper()
 	source := &rbdImageStatusFixture{rbdNamespacePolicyFixture: newRBDNamespacePolicyFixture(), imageInfo: rbdImageStatusInfo("source-local", string(mode), "global-image", true)}
 	destination := &rbdImageStatusFixture{rbdNamespacePolicyFixture: newRBDNamespacePolicyFixture(), imageInfo: rbdImageStatusInfo("destination-local", string(mode), "global-image", false), imageStatus: `{"name":"volume","global_id":"global-image","state":"up+replaying","description":"replaying","last_update":"2026-10-07 00:00:00","daemon_service":{"service_id":"22","instance_id":"123","daemon_id":"tc-owned"}}`}
 	link := &Mirror{
 		sourceClient: source, destinationClient: destination,
-		config:         MirrorConfig{Pool: "images", SourceNamespace: sourceNS, DestinationNamespace: destinationNS, Mode: mode, Scope: MirrorScopeImage, SourceSite: "source", DestinationSite: "destination", Source: &ceph.Container{Container: source}, Destination: &ceph.Container{Container: destination}},
+		config:         Config{Pool: "images", SourceNamespace: sourceNS, DestinationNamespace: destinationNS, Mode: mode, Scope: ScopeImage, SourceSite: "source", DestinationSite: "destination", Source: &ceph.Container{Container: source}, Destination: &ceph.Container{Container: destination}},
 		poolIdentities: &rbdMirrorPoolIdentities{source: 42, destination: 42},
 	}
 	if err := link.provisionRBDMirrorPolicies(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	daemon := &rbdImageStatusDaemon{running: true, status: `{"pool_replayers":[{"pool":"images","peer":"peer","state":"running","instance_id":"123"}]}`}
-	link.daemons = []*MirrorDaemon{{Container: daemon, DaemonName: "a", ClientName: "client.rbd-mirror.tc-owned"}}
+	link.daemons = []*Daemon{{Container: daemon, DaemonName: "a", ClientName: "client.rbd-mirror.tc-owned"}}
 	return link, source, destination, daemon
 }
 
 func TestRBDMirrorImageStatusScopedIdentityReadiness(t *testing.T) {
-	for _, mode := range []MirrorMode{MirrorModeSnapshot, MirrorModeJournal} {
+	for _, mode := range []Mode{ModeSnapshot, ModeJournal} {
 		t.Run(string(mode), func(t *testing.T) {
 			link, source, destination, _ := newRBDImageStatusFixture(t, mode, "ns-a", "ns-b")
 			sourceMutations, destinationMutations := len(source.mutations), len(destination.mutations)
@@ -132,7 +132,7 @@ func TestRBDMirrorImageStatusScopedIdentityReadiness(t *testing.T) {
 
 func TestRBDMirrorImageStatusPreservesDefaultAndMappedNamespaceScopes(t *testing.T) {
 	for _, namespaces := range [][2]string{{"", ""}, {"", "ns-b"}, {"ns-a", ""}, {"ns-a", "ns-a"}} {
-		link, source, destination, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, namespaces[0], namespaces[1])
+		link, source, destination, _ := newRBDImageStatusFixture(t, ModeSnapshot, namespaces[0], namespaces[1])
 		status, err := link.ImageStatus(t.Context(), "volume")
 		if err != nil || !status.ReplayReady || status.SourceNamespace != namespaces[0] || status.DestinationNamespace != namespaces[1] {
 			t.Fatalf("namespace pair %v was not retained: %+v %v", namespaces, status, err)
@@ -145,14 +145,14 @@ func TestRBDMirrorImageStatusPreservesDefaultAndMappedNamespaceScopes(t *testing
 
 func TestRBDMirrorImageStatusRejectsUnsafeNameAndNativeIdentityDrift(t *testing.T) {
 	for _, name := range []string{"", "--force", " volume", "images/volume", "volume@snap", "volume\x00", "volume\n"} {
-		link, source, _, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+		link, source, _, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 		if _, err := link.ImageStatus(t.Context(), name); err == nil || len(source.imageCalls) != 0 {
 			t.Fatalf("ambiguous name %q reached image CLI", name)
 		}
 	}
 	for _, fault := range []string{"pool", "policy", "global", "status-name", "status-global", "second-info"} {
 		t.Run(fault, func(t *testing.T) {
-			link, _, destination, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+			link, _, destination, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 			switch fault {
 			case "pool":
 				destination.poolID++
@@ -182,7 +182,7 @@ func TestRBDMirrorImageStatusRejectsUnsafeNameAndNativeIdentityDrift(t *testing.
 }
 
 func TestRBDMirrorImageStatusSchemaFailsClosed(t *testing.T) {
-	link, source, destination, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+	link, source, destination, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 	goodInfo, goodStatus := source.imageInfo, destination.imageStatus
 	for _, field := range []string{"name", "id", "mirroring.mode", "mirroring.state", "mirroring.global_id", "mirroring.primary"} {
 		for _, null := range []bool{false, true} {
@@ -227,7 +227,7 @@ func TestRBDMirrorImageStatusSchemaFailsClosed(t *testing.T) {
 func TestRBDMirrorImageStatusStaleNativeUpDoesNotImplyLiveReceiver(t *testing.T) {
 	for _, fault := range []string{"stopped", "missing-service", "foreign-service", "wrong-instance", "not-running", "destination-primary", "creating"} {
 		t.Run(fault, func(t *testing.T) {
-			link, _, destination, daemon := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+			link, _, destination, daemon := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 			switch fault {
 			case "stopped":
 				daemon.running = false
@@ -253,10 +253,10 @@ func TestRBDMirrorImageStatusStaleNativeUpDoesNotImplyLiveReceiver(t *testing.T)
 }
 
 func TestRBDMirrorImageStatusWaitPinsIdentitiesAndPreservesCancellation(t *testing.T) {
-	base := MirrorImageStatus{SourceImageID: "source", DestinationImageID: "destination", GlobalID: "global", State: "down+unknown"}
+	base := ImageStatus{SourceImageID: "source", DestinationImageID: "destination", GlobalID: "global", State: "down+unknown"}
 	for _, source := range []bool{true, false} {
 		calls := 0
-		status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(context.Context) (MirrorImageStatus, error) {
+		status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(context.Context) (ImageStatus, error) {
 			calls++
 			s := base
 			if calls > 1 {
@@ -275,14 +275,14 @@ func TestRBDMirrorImageStatusWaitPinsIdentitiesAndPreservesCancellation(t *testi
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	queryErr := errors.New("private-native-output")
-	status, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(context.Context) (MirrorImageStatus, error) {
+	status, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(context.Context) (ImageStatus, error) {
 		cancel()
 		return base, rbdImageQueryError("native query", queryErr)
 	})
 	if !errors.Is(err, context.Canceled) || !errors.Is(err, queryErr) || strings.Contains(err.Error(), queryErr.Error()) || status.SourceImageID != base.SourceImageID {
 		t.Fatalf("wait lost cancellation/observation or leaked native stderr: %+v %v", status, err)
 	}
-	link, source, _, daemon := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+	link, source, _, daemon := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 	link.mu.Lock()
 	deadline, stop := context.WithTimeout(t.Context(), 15*time.Millisecond)
 	_, err = link.WaitReplayReady(deadline, "volume")
@@ -332,7 +332,7 @@ func TestRBDMirrorImageStatusRejectsMalformedJSONAndWrongTypes(t *testing.T) {
 		"status unsupported state", "status service type", "status service ID type", "status service missing ID", "status all local null",
 	} {
 		t.Run(fault, func(t *testing.T) {
-			link, source, destination, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+			link, source, destination, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 			switch fault {
 			case "info malformed":
 				source.imageInfo = "{"
@@ -381,7 +381,7 @@ func TestRBDMirrorImageStatusRejectsMalformedJSONAndWrongTypes(t *testing.T) {
 func TestRBDMirrorImageStatusRejectsUnavailableFixtureBeforeImageReads(t *testing.T) {
 	for _, fault := range []string{"nil", "closed", "missing source client", "missing destination client", "missing pools", "missing policies", "missing source cluster", "missing destination cluster", "invalid mode"} {
 		t.Run(fault, func(t *testing.T) {
-			link, source, destination, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+			link, source, destination, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 			switch fault {
 			case "nil":
 				link = nil
@@ -412,7 +412,7 @@ func TestRBDMirrorImageStatusRejectsUnavailableFixtureBeforeImageReads(t *testin
 }
 
 func TestRBDMirrorImageStatusAcceptsMissingLocalReportAndRecognizedTransitions(t *testing.T) {
-	link, _, destination, daemon := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+	link, _, destination, daemon := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 	destination.imageStatus = "{\"name\":\"volume\",\"global_id\":\"global-image\"}"
 	status, err := link.ImageStatus(t.Context(), "volume")
 	if err != nil || status.ReplayReady || status.State != "" || status.DestinationImageID != "destination-local" {
@@ -439,7 +439,7 @@ func TestRBDMirrorImageStatusAcceptsMissingLocalReportAndRecognizedTransitions(t
 func TestRBDMirrorImageStatusRechecksNativePoliciesAfterImageStatus(t *testing.T) {
 	for _, fault := range []string{"source pool", "destination pool", "source default UUID", "source selected UUID", "destination selected mapping", "destination site", "source primary", "destination primary", "creating policy drift"} {
 		t.Run(fault, func(t *testing.T) {
-			link, source, destination, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, "ns-a", "ns-b")
+			link, source, destination, _ := newRBDImageStatusFixture(t, ModeSnapshot, "ns-a", "ns-b")
 			mutate := func() {
 				switch fault {
 				case "source pool":
@@ -486,7 +486,7 @@ func TestRBDMirrorImageStatusRechecksNativePoliciesAfterImageStatus(t *testing.T
 
 func TestRBDMirrorWaitReplayReadyRetriesTransientNativeGuardQueries(t *testing.T) {
 	for _, policy := range []bool{false, true} {
-		link, source, _, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, "ns-a", "ns-b")
+		link, source, _, _ := newRBDImageStatusFixture(t, ModeSnapshot, "ns-a", "ns-b")
 		queryErr := errors.New("private-native-query-detail")
 		failures, observations := 0, 0
 		source.execError = func(args []string) error {
@@ -498,7 +498,7 @@ func TestRBDMirrorWaitReplayReadyRetriesTransientNativeGuardQueries(t *testing.T
 			}
 			return nil
 		}
-		status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+		status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(ctx context.Context) (ImageStatus, error) {
 			observations++
 			current, err := link.ImageStatus(ctx, "volume")
 			if observations == 1 {
@@ -517,12 +517,12 @@ func TestRBDMirrorWaitReplayReadyRetriesTransientNativeGuardQueries(t *testing.T
 
 func TestRBDMirrorWaitReplayReadyStopsOnMalformedOrChangedGuard(t *testing.T) {
 	for _, data := range []string{"{", "null", "{}", "[]", "[{\"pool_id\":42,\"pool_name\":\"images\"}]", "[{\"pool_id\":42,\"pool_name\":\"images\",\"type\":3}]", "[{\"pool_id\":99,\"pool_name\":\"images\",\"type\":1}]", "[{\"pool_id\":42,\"pool_name\":\"images\",\"type\":1},{\"pool_id\":42,\"pool_name\":\"other\",\"type\":1}]"} {
-		link, source, _, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+		link, source, _, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 		source.execOutput = func(args []string) (string, bool) {
 			return data, slices.Equal(args, []string{"ceph", "--connect-timeout", "5", "osd", "pool", "ls", "detail", "--format", "json"})
 		}
 		calls := 0
-		status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+		status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(ctx context.Context) (ImageStatus, error) {
 			calls++
 			return link.ImageStatus(ctx, "volume")
 		})
@@ -536,7 +536,7 @@ func TestRBDMirrorWaitReplayReadyStopsOnMalformedOrChangedGuard(t *testing.T) {
 func TestRBDMirrorImageStatusDistinguishesPolicyAndDaemonQueryFromSchemaErrors(t *testing.T) {
 	for _, fault := range []string{"policy malformed", "policy UUID type", "policy null mapping", "daemon malformed", "daemon missing list", "daemon list type", "daemon instance type", "daemon query", "daemon inspect"} {
 		t.Run(fault, func(t *testing.T) {
-			link, source, _, daemon := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+			link, source, _, daemon := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 			queryErr := errors.New("private-native-daemon-query-detail")
 			switch fault {
 			case "policy malformed", "policy UUID type", "policy null mapping":
@@ -577,10 +577,10 @@ func TestRBDMirrorImageStatusDistinguishesPolicyAndDaemonQueryFromSchemaErrors(t
 }
 
 func TestRBDMirrorImageStatusDoesNotSubstituteAnotherHealthyOwnedReceiver(t *testing.T) {
-	link, _, destination, daemon := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+	link, _, destination, daemon := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 	daemon.running = false
 	second := &rbdImageStatusDaemon{running: true, status: daemon.status}
-	link.daemons = append(link.daemons, &MirrorDaemon{Container: second, DaemonName: "b", ClientName: "client.rbd-mirror.tc-other"})
+	link.daemons = append(link.daemons, &Daemon{Container: second, DaemonName: "b", ClientName: "client.rbd-mirror.tc-other"})
 	status, err := link.ImageStatus(t.Context(), "volume")
 	if err != nil || status.ReplayReady || status.DaemonName != "a" {
 		t.Fatalf("healthy receiver b was substituted for stopped report owner a: %+v %v", status, err)
@@ -610,7 +610,7 @@ func TestRBDMirrorImageStatusMatchesExactNativeOwnedDaemonIdentity(t *testing.T)
 		{"empty registered owned ID", "client.rbd-mirror.", "tc-owned", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			link, _, destination, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+			link, _, destination, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 			link.daemons[0].ClientName = tc.clientName
 			destination.imageStatus = strings.Replace(destination.imageStatus, "\"daemon_id\":\"tc-owned\"", fmt.Sprintf("\"daemon_id\":%q", tc.nativeID), 1)
 			status, err := link.ImageStatus(t.Context(), "volume")
@@ -625,17 +625,17 @@ func TestRBDMirrorImageStatusMatchesExactNativeOwnedDaemonIdentity(t *testing.T)
 }
 
 func TestRBDMirrorWaitReplayReadyPreservesLastReportBeforeQueryFailure(t *testing.T) {
-	previous := MirrorImageStatus{Pool: "images", Name: "volume", SourceImageID: "source", DestinationImageID: "destination", GlobalID: "global", State: "down+unknown", Description: "known earlier observation"}
+	previous := ImageStatus{Pool: "images", Name: "volume", SourceImageID: "source", DestinationImageID: "destination", GlobalID: "global", State: "down+unknown", Description: "known earlier observation"}
 	calls := 0
 	ctx, cancel := context.WithCancel(t.Context())
 	queryErr := errors.New("private-native-failure")
-	status, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(context.Context) (MirrorImageStatus, error) {
+	status, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(context.Context) (ImageStatus, error) {
 		calls++
 		if calls == 1 {
 			return previous, nil
 		}
 		cancel()
-		return MirrorImageStatus{}, rbdImageQueryError("native image query", queryErr)
+		return ImageStatus{}, rbdImageQueryError("native image query", queryErr)
 	})
 	if calls != 2 || status != previous || !errors.Is(err, context.Canceled) || !errors.Is(err, queryErr) || strings.Contains(err.Error(), queryErr.Error()) {
 		t.Fatalf("query failure erased a useful report or error causes: %+v %v calls=%d", status, err, calls)
@@ -643,7 +643,7 @@ func TestRBDMirrorWaitReplayReadyPreservesLastReportBeforeQueryFailure(t *testin
 }
 
 func TestRBDMirrorWaitReplayReadyPinsSourceWhileDestinationAppears(t *testing.T) {
-	link, _, destination, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, "ns-a", "ns-b")
+	link, _, destination, _ := newRBDImageStatusFixture(t, ModeSnapshot, "ns-a", "ns-b")
 	absent := errors.New("destination not present yet")
 	attempt := 0
 	destination.execError = func(args []string) error {
@@ -652,7 +652,7 @@ func TestRBDMirrorWaitReplayReadyPinsSourceWhileDestinationAppears(t *testing.T)
 		}
 		return nil
 	}
-	status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+	status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(ctx context.Context) (ImageStatus, error) {
 		attempt++
 		destination.imageInfo = rbdImageStatusInfo("destination-local", "snapshot", "global-image", false)
 		if attempt == 2 {
@@ -670,9 +670,9 @@ func TestRBDMirrorWaitReplayReadyPinsSourceWhileDestinationAppears(t *testing.T)
 }
 
 func TestRBDMirrorWaitReplayReadyDoesNotSucceedAfterCallerExpires(t *testing.T) {
-	ready := MirrorImageStatus{SourceImageID: "source", DestinationImageID: "destination", GlobalID: "global", ReplayReady: true}
+	ready := ImageStatus{SourceImageID: "source", DestinationImageID: "destination", GlobalID: "global", ReplayReady: true}
 	ctx, cancel := context.WithCancel(t.Context())
-	status, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(context.Context) (MirrorImageStatus, error) { cancel(); return ready, nil })
+	status, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(context.Context) (ImageStatus, error) { cancel(); return ready, nil })
 	if !errors.Is(err, context.Canceled) || status.ReplayReady || status.SourceImageID != "source" {
 		t.Fatalf("ready observation bypassed caller cancellation: %+v %v", status, err)
 	}
@@ -680,7 +680,7 @@ func TestRBDMirrorWaitReplayReadyDoesNotSucceedAfterCallerExpires(t *testing.T) 
 	// wall-clock millisecond that a slow (race-instrumented) run can spend
 	// before observing at all.
 	deadline := clustertest.NewSignalDeadline(t.Context())
-	status, err = waitRBDMirrorReplay(deadline, time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+	status, err = waitRBDMirrorReplay(deadline, time.Millisecond, func(ctx context.Context) (ImageStatus, error) {
 		deadline.Expire()
 		<-ctx.Done()
 		return ready, nil
@@ -688,7 +688,7 @@ func TestRBDMirrorWaitReplayReadyDoesNotSucceedAfterCallerExpires(t *testing.T) 
 	if !errors.Is(err, context.DeadlineExceeded) || status.ReplayReady || status.SourceImageID != "source" {
 		t.Fatalf("ready observation bypassed caller deadline: %+v %v", status, err)
 	}
-	link, _, destination, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+	link, _, destination, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 	ctx, cancel = context.WithCancel(t.Context())
 	defer cancel()
 	destination.statusHook = func(*rbdImageStatusFixture) { cancel() }
@@ -703,19 +703,19 @@ func TestRBDMirrorWaitReplayReadyDoesNotSucceedAfterCallerExpires(t *testing.T) 
 // without it, no mirroring at all. rbd-mirror creates a destination image in
 // that state and enables mirroring on it right after; Squid 19.2.5 reported
 // the journal form for about 50 ms in 2 of 8 creations.
-func rbdImageEnrolling(id string, mode MirrorMode) string {
-	if mode == MirrorModeJournal {
+func rbdImageEnrolling(id string, mode Mode) string {
+	if mode == ModeJournal {
 		return fmt.Sprintf(`{"name":"volume","id":%q,"mirroring":{"mode":"journal","state":"disabled"}}`, id)
 	}
 	return fmt.Sprintf(`{"name":"volume","id":%q}`, id)
 }
 
 func TestRBDMirrorWaitReplayReadyWaitsForDestinationEnrollment(t *testing.T) {
-	for _, mode := range []MirrorMode{MirrorModeJournal, MirrorModeSnapshot} {
+	for _, mode := range []Mode{ModeJournal, ModeSnapshot} {
 		t.Run(string(mode), func(t *testing.T) {
 			link, _, destination, _ := newRBDImageStatusFixture(t, mode, "ns-a", "ns-a")
 			attempt := 0
-			status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+			status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(ctx context.Context) (ImageStatus, error) {
 				attempt++
 				destination.imageInfo = rbdImageStatusInfo("destination-local", string(mode), "global-image", false)
 				if attempt == 1 {
@@ -738,17 +738,17 @@ func TestRBDMirrorWaitReplayReadyWaitsForDestinationEnrollment(t *testing.T) {
 // that was enrolled is never disabled by rbd-mirror while it replays.
 func TestRBDMirrorWaitReplayReadyStopsOnDestinationChangesAroundEnrollment(t *testing.T) {
 	for name, sequence := range map[string][]string{
-		"replaced during enrollment": {rbdImageEnrolling("destination-old", MirrorModeJournal), rbdImageStatusInfo("destination-local", "journal", "global-image", false)},
-		"disabled after enrollment":  {rbdImageStatusInfo("destination-local", "journal", "global-image", false), rbdImageEnrolling("destination-local", MirrorModeJournal), rbdImageStatusInfo("destination-local", "journal", "global-image", false)},
+		"replaced during enrollment": {rbdImageEnrolling("destination-old", ModeJournal), rbdImageStatusInfo("destination-local", "journal", "global-image", false)},
+		"disabled after enrollment":  {rbdImageStatusInfo("destination-local", "journal", "global-image", false), rbdImageEnrolling("destination-local", ModeJournal), rbdImageStatusInfo("destination-local", "journal", "global-image", false)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			link, _, destination, _ := newRBDImageStatusFixture(t, MirrorModeJournal, "ns-a", "ns-a")
+			link, _, destination, _ := newRBDImageStatusFixture(t, ModeJournal, "ns-a", "ns-a")
 			// Not replaying yet, so that only the destination decides.
 			destination.imageStatus = `{"name":"volume","global_id":"global-image","state":"up+syncing","description":"","last_update":""}`
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 			defer cancel()
 			attempt := 0
-			_, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+			_, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(ctx context.Context) (ImageStatus, error) {
 				destination.imageInfo = sequence[min(attempt, len(sequence)-1)]
 				attempt++
 				return link.ImageStatus(ctx, "volume")
@@ -771,7 +771,7 @@ func TestRBDMirrorImageStatusRejectsOtherDisabledForms(t *testing.T) {
 		`{"state":"disabled"}`,
 		`{}`,
 	} {
-		link, _, destination, _ := newRBDImageStatusFixture(t, MirrorModeJournal, "", "")
+		link, _, destination, _ := newRBDImageStatusFixture(t, ModeJournal, "", "")
 		destination.imageInfo = `{"name":"volume","id":"destination-local","mirroring":` + mirroring + `}`
 		_, err := link.ImageStatus(t.Context(), "volume")
 		var observation *rbdImageObservationError
@@ -788,11 +788,11 @@ func TestRBDNamespaceWaitReplayReadyWaitsForDestinationEnrollment(t *testing.T) 
 	spec := rbdMirrorImageSpec("images", "ns-f", "volume")
 	enrolled := h.destinationInfo[spec]
 	attempt := 0
-	status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+	status, err := waitRBDMirrorReplay(t.Context(), time.Millisecond, func(ctx context.Context) (ImageStatus, error) {
 		attempt++
 		h.destinationInfo[spec] = enrolled
 		if attempt == 1 {
-			h.destinationInfo[spec] = rbdImageEnrolling("destination-2", MirrorModeJournal)
+			h.destinationInfo[spec] = rbdImageEnrolling("destination-2", ModeJournal)
 		}
 		return view.ImageStatus(ctx, "volume")
 	})
@@ -804,12 +804,12 @@ func TestRBDNamespaceWaitReplayReadyWaitsForDestinationEnrollment(t *testing.T) 
 // A source image whose mirroring is disabled is not a transition: the wait
 // fails at once, as for any other identity guard.
 func TestRBDMirrorWaitReplayReadyStopsOnDisabledSource(t *testing.T) {
-	link, source, _, _ := newRBDImageStatusFixture(t, MirrorModeJournal, "", "")
+	link, source, _, _ := newRBDImageStatusFixture(t, ModeJournal, "", "")
 	source.imageInfo = `{"name":"volume","id":"source-local","mirroring":{"mode":"journal","state":"disabled"}}`
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	attempt := 0
-	_, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(ctx context.Context) (MirrorImageStatus, error) {
+	_, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(ctx context.Context) (ImageStatus, error) {
 		attempt++
 		return link.ImageStatus(ctx, "volume")
 	})

@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -45,7 +46,7 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			mirror, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbd.MirrorConfig{
+			mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbdmirror.Config{
 				Source: source, Destination: destination, Pool: pool,
 			})
 			if mirror != nil {
@@ -69,7 +70,7 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 			if err := mirror.EnableImage(ctx, name); err != nil {
 				t.Fatal(err)
 			}
-			rbdMirrorReplayReady(t, ctx, mirror, name, rbd.MirrorModeSnapshot, "", "")
+			rbdMirrorReplayReady(t, ctx, mirror, name, rbdmirror.ModeSnapshot, "", "")
 			rbdMultiClusterWaitMirror(t, ctx, destinationClient, image, payload)
 			// Native bootstrap names the remote CephX user separately from the
 			// destination-owned daemon. Observe those exact authenticated users.
@@ -95,7 +96,7 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 			if _, err := mirror.SourceRBD(ctx, "mirror", "image", "snapshot", image); err != nil {
 				t.Fatal(err)
 			}
-			rbdMirrorReplayReady(t, ctx, mirror, name, rbd.MirrorModeSnapshot, "", "")
+			rbdMirrorReplayReady(t, ctx, mirror, name, rbdmirror.ModeSnapshot, "", "")
 			rbdMultiClusterWaitMirror(t, ctx, destinationClient, image, payload)
 			checkMixedMessengerPeers(t, ctx, source, policy.Peers[0].ClientName, daemons[0], nil)
 			checkMixedMessengerPeers(t, ctx, destination, daemons[0].ClientName, daemons[0], nil)

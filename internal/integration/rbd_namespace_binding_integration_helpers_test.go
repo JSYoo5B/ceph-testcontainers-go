@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -113,7 +114,7 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 	}
 	oracle := mirrorInitialNewDockerOracle(t, ctx)
 	var customizers atomic.Int32
-	owner, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool, SourceNamespace: mappings[0][0], DestinationNamespace: mappings[0][1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+	owner, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbdmirror.Config{Source: source, Destination: destination, Pool: pool, SourceNamespace: mappings[0][0], DestinationNamespace: mappings[0][1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 	if owner != nil {
 		t.Cleanup(func() {
 			cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -154,7 +155,7 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 			}
 		}
 	}
-	views := make([]*rbd.MirrorNamespace, len(mappings))
+	views := make([]*rbdmirror.Namespace, len(mappings))
 	policies := make([][2]rbdReceiverIndependentPolicy, len(mappings))
 	for index, mapping := range mappings {
 		views[index], err = owner.BindNamespace(ctx, mapping[0], mapping[1])
@@ -193,10 +194,10 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 		rbdReceiverNativeOriginalClusterPool(t, ctx, destinationClient, pool, destinationStatus.FSID, destinationPool.ID)
 		rbdReceiverNativePeerMatches(t, rbdReceiverNativeIdentity(t, ctx, destinationClient, pool), identity, base[0].mirrorUUID)
 	}
-	check := func(phase string) []rbd.MirrorReceiverStatus {
+	check := func(phase string) []rbdmirror.ReceiverStatus {
 		t.Helper()
 		checkPolicies()
-		statuses := make([]rbd.MirrorReceiverStatus, len(views))
+		statuses := make([]rbdmirror.ReceiverStatus, len(views))
 		for index, view := range views {
 			status, err := view.WaitReceiverReady(ctx)
 			if err != nil || !status.Ready || status.SourceNamespace != mappings[index][0] || status.DestinationNamespace != mappings[index][1] || status.PeerID != identity.peerUUID || status.SourceFSID != sourceStatus.FSID || status.DestinationFSID != destinationStatus.FSID || status.SourcePoolID != sourcePool.ID || status.DestinationPoolID != destinationPool.ID {

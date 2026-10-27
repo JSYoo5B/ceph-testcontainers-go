@@ -24,7 +24,7 @@ extension: a separate netem helper image applies it, and only that helper gets
 | Packets that a container sends on one network arrive late | `fault.ApplyNetworkProfile` (opt-in netem helper) | Slow replies from that container, connections stay up | No | `NetworkProfileLease.Restore` |
 | A container sends on one network at a limited bandwidth | `fault.ApplyNetworkProfile` with `NetworkProfile.Rate` (opt-in netem helper) | Large transfers from that container progress at the limit, connections stay up | No | `NetworkProfileLease.Restore` |
 | Packets that a container sends arrive reordered, duplicated or corrupted | `fault.ApplyNetworkProfile` with `NetworkProfile.Reorder`, `Duplicate` or `Corrupt` (opt-in netem helper) | The receiver's TCP reorders, discards duplicates and drops corrupted segments for retransmission; connections stay up | No | `NetworkProfileLease.Restore` |
-| Replication between two clusters stops | `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `multisite.Fixture.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
+| Replication between two clusters stops | `rbdmirror.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `multisite.Fixture.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
 | A daemon drops or delays messages from one kind of peer | `OverrideConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverrideHandle.Restore` |
 | An OSD runs a client's write after the client gave up | `OverrideConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverrideHandle.Restore` |
 | One client session is fenced | `TemporaryBlocklist` | The OSDs reject that session | Yes | `BlocklistOverride.Restore` |
@@ -102,7 +102,7 @@ if err := cluster.WaitForClean(ctx); err != nil {
 | OSD | element `i` of `cluster.OSDs(ctx)` | Ceph marks a down OSD out after `mon_osd_down_out_interval` (600 s by default). Hold `noout` with `OverrideOSDFlag` to avoid data movement during long outages. |
 | MDS | `fs.MDSs()[i]` | Configure `StandbyMDS` so a standby takes the rank. Use `fs.MDSStatus` to see who holds each rank; `fs.WaitReady` also waits for the requested standby capacity, so restart the stopped daemon before calling it. |
 | RGW | element `i` of `rgw.Gateways(ctx, cluster)` | In bridge mode Docker can assign a new mapped port on restart. Call `S3Endpoint` again after `Start`. |
-| RBD and CephFS mirror daemons | `mirror.Daemons()[i]` | `rbd.MirrorDaemon.Status` reports the native leader election. |
+| RBD and CephFS mirror daemons | `mirror.Daemons()[i]` | `rbdmirror.Daemon.Status` reports the native leader election. |
 
 `Start` does not wait for an OSD to be up and in again. Wait with `WaitForClean`, `OSDStates` or `HealthDetails`
 before asserting recovery.
@@ -599,7 +599,7 @@ lease, err := fault.ApplyNetworkProfile(ctx, source, sourceOSDs[0].Container, fa
 
 Read the backlog and the progress from the mirror's own status, not from the
 daemon's readiness. While rbd-mirror syncs a snapshot, the description of
-`rbd.Mirror.ImageStatus` carries `replay_state` `syncing`, the
+`rbdmirror.Mirror.ImageStatus` carries `replay_state` `syncing`, the
 `syncing_snapshot_timestamp`, a `syncing_percent` of the image's objects and
 the measured `bytes_per_second`. The daemon writes its status to the cluster
 only every 30 seconds, so poll it read-only over windows longer than that.
@@ -778,7 +778,7 @@ clusters keep serving their local clients.
 
 | API | Endpoint removed | Kept |
 | --- | --- | --- |
-| `rbd.Mirror.InterruptPeerLink(ctx, daemonName)` | The receiving `rbd-mirror` daemon's endpoint on the source cluster's public bridge | Its destination endpoint, pool leader election, peer and image policies |
+| `rbdmirror.Mirror.InterruptPeerLink(ctx, daemonName)` | The receiving `rbd-mirror` daemon's endpoint on the source cluster's public bridge | Its destination endpoint, pool leader election, peer and image policies |
 | `cephfs.Mirror.InterruptPeerLink(ctx, daemonName)` | The source `cephfs-mirror` daemon's endpoint on the destination cluster's public bridge | Source filesystem, MGR registration, directory and peer policies |
 | `multisite.Fixture.InterruptZoneLink(ctx, zoneName)` | The gateway's endpoint on the private multisite HTTP bridge | The local S3 endpoint, realm and period membership |
 
@@ -1308,7 +1308,8 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 - [ceph.md](../ceph.md):
   `OverrideConfig`, `OverrideOSDFlag`, `TemporaryBlocklist`,
   `OverrideFullRatios`, scrub helpers, `OSDContainer.Remove`, `OSDContainer.SetIn`.
-- [rbd.md](../rbd.md): `ImageClients`, `Mirror.InterruptPeerLink`.
+- [rbd.md](../rbd.md): `ImageClients`.
+- [rbd-mirror.md](../rbd-mirror.md): `Mirror.InterruptPeerLink`.
 - [cephfs.md](../cephfs.md): `Filesystem.OverrideSessionTimeouts`,
   `Filesystem.Sessions`, `Mirror.InterruptPeerLink`.
 - [rgw.md](../rgw.md): `Multisite.InterruptZoneLink`, `Multisite.ApplyZoneLinkProfile`.

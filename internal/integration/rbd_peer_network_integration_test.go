@@ -11,7 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -25,7 +25,7 @@ func TestMultiClusterRBDPeerNetworkInterruption(t *testing.T) {
 	rbdMultiClusterPool(t, ctx, source, a, pool)
 	rbdMultiClusterPool(t, ctx, destination, b, pool)
 	image := source.ControlImage()
-	mirror, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", image), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool})
+	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", image), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
 	if mirror != nil {
 		testcontainers.CleanupContainer(t, mirror)
 	}

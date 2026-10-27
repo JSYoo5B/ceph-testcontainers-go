@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -91,7 +92,7 @@ func rbdReceiverNativePolicy(t *testing.T, ctx context.Context, client testconta
 	return rbdReceiverIndependentPolicy{*native.Mode, *native.MirrorUUID, *native.Remote, site}
 }
 
-func rbdReceiverNativeElection(t *testing.T, ctx context.Context, link *rbd.Mirror, status rbd.MirrorReceiverStatus, identity rbdReceiverIndependentIdentity, mapping [2]string) {
+func rbdReceiverNativeElection(t *testing.T, ctx context.Context, link *rbdmirror.Mirror, status rbdmirror.ReceiverStatus, identity rbdReceiverIndependentIdentity, mapping [2]string) {
 	t.Helper()
 	peer := "uuid: " + identity.peerUUID + " cluster: " + identity.site + " client: " + identity.client
 	var actualIDs, leaderMembers []string
@@ -247,10 +248,10 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 			ctx, cancel := context.WithTimeout(ctx, 8*time.Minute)
 			defer cancel()
 			pool := fmt.Sprintf("tc-rbd-receiver-%d", index)
-			scope := rbd.MirrorScopeImage
+			scope := rbdmirror.ScopeImage
 			mode := "snapshot"
 			if index == 4 {
-				scope, mode = rbd.MirrorScopePool, "journal"
+				scope, mode = rbdmirror.ScopePool, "journal"
 			}
 			for _, cluster := range []*ceph.Container{source, destination} {
 				if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 8, Replicas: 1, MinSize: 1}); err != nil {
@@ -284,7 +285,7 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			link, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool, Scope: scope, SourceNamespace: mapping[0], DestinationNamespace: mapping[1], DaemonCount: 2})
+			link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbdmirror.Config{Source: source, Destination: destination, Pool: pool, Scope: scope, SourceNamespace: mapping[0], DestinationNamespace: mapping[1], DaemonCount: 2})
 			if link != nil {
 				t.Cleanup(func() {
 					cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -312,7 +313,7 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 				t.Fatal("independent original native selected policy differs from configured scope/mapping")
 			}
 			rbdReceiverNativePeerMatches(t, identity, identity, originalPolicies[0].mirrorUUID)
-			check := func(phase string, names ...string) rbd.MirrorReceiverStatus {
+			check := func(phase string, names ...string) rbdmirror.ReceiverStatus {
 				t.Helper()
 				status, err := link.WaitReceiverReady(ctx, names...)
 				if err != nil || !status.Ready {
@@ -348,7 +349,7 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 					t.Fatalf("initial readiness used nonempty image namespace: %v %v", images, err)
 				}
 			}
-			var leader, survivor *rbd.MirrorDaemon
+			var leader, survivor *rbdmirror.Daemon
 			for _, daemon := range link.Daemons() {
 				if daemon.DaemonName == initial.LeaderDaemonName {
 					leader = daemon
@@ -403,15 +404,15 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 				t.Fatalf("zero receiver deadline: %+v %v", zero, err)
 			}
 			payload := rbdMultiClusterPayload(2<<20, 43+index)
-			rbdScopeCreate(t, ctx, sourceClient, pool, mapping[0], "backlog", scope == rbd.MirrorScopePool)
-			if scope == rbd.MirrorScopeImage {
+			rbdScopeCreate(t, ctx, sourceClient, pool, mapping[0], "backlog", scope == rbdmirror.ScopePool)
+			if scope == rbdmirror.ScopeImage {
 				if err := link.EnableImage(ctx, "backlog"); err != nil {
 					t.Fatal(err)
 				}
 			}
 			rbdScopeIO(t, ctx, sourceClient, "write", sourceStatus.FSID, pool, mapping[0], "backlog", 0, payload)
 			var checkpointID uint64
-			if scope == rbd.MirrorScopeImage {
+			if scope == rbdmirror.ScopeImage {
 				// Enrollment's initial snapshot predates payload; this explicit
 				// checkpoint causally includes the write made with zero receivers.
 				checkpointID = rbdReceiverNativeSnapshot(t, ctx, sourceClient, pool, mapping[0], "backlog")

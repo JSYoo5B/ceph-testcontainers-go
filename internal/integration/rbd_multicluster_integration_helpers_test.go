@@ -14,7 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -31,7 +31,7 @@ func testMultiClusterRBDSnapshotMirror(t *testing.T, opts ...testcontainers.Cont
 	rbdMultiClusterPool(t, ctx, destination, destinationClient, pool)
 	mirrorImage := source.ControlImage()
 	t.Logf("native RBD multicluster runtime image=%s", mirrorImage)
-	mirror, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", mirrorImage), rbd.MirrorConfig{
+	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", mirrorImage), rbdmirror.Config{
 		Source: source, Destination: destination, Pool: pool,
 	})
 	if mirror != nil {
@@ -56,7 +56,7 @@ func testMultiClusterRBDSnapshotMirror(t *testing.T, opts ...testcontainers.Cont
 	execCommand(t, ctx, sourceClient, "rbd", "import", "/tmp/rbd-mirror-original", image,
 		"--object-size", "1M", "--image-feature", "layering,exclusive-lock", "--no-progress")
 	execCommand(t, ctx, sourceClient, "rbd", "mirror", "image", "enable", image, "snapshot")
-	rbdMirrorReplayReady(t, ctx, mirror, "replicated", rbd.MirrorModeSnapshot, "", "")
+	rbdMirrorReplayReady(t, ctx, mirror, "replicated", rbdmirror.ModeSnapshot, "", "")
 	rbdMultiClusterWaitMirror(t, ctx, destinationClient, image, before)
 	rbdMultiClusterAssertPrimary(t, ctx, sourceClient, image, true)
 	rbdMultiClusterAssertPrimary(t, ctx, destinationClient, image, false)
@@ -65,7 +65,7 @@ func testMultiClusterRBDSnapshotMirror(t *testing.T, opts ...testcontainers.Cont
 	copy(after[4<<20:], patch)
 	rbdMultiClusterWriteRange(t, ctx, sourceClient, image, imageSize, 4<<20, patch)
 	execCommand(t, ctx, sourceClient, "rbd", "mirror", "image", "snapshot", image)
-	rbdMirrorReplayReady(t, ctx, mirror, "replicated", rbd.MirrorModeSnapshot, "", "")
+	rbdMirrorReplayReady(t, ctx, mirror, "replicated", rbdmirror.ModeSnapshot, "", "")
 	rbdMultiClusterWaitMirror(t, ctx, destinationClient, image, after)
 	t.Log("RBD native snapshot mirroring: initial and changed checkpoints reached an independent non-primary destination with exact 8 MiB bytes")
 
@@ -92,7 +92,7 @@ func testMultiClusterRBDSnapshotMirror(t *testing.T, opts ...testcontainers.Cont
 }
 
 // Receiver readiness and native bytes/checkpoints are separate assertions.
-func rbdMirrorReplayReady(t *testing.T, ctx context.Context, link *rbd.Mirror, name string, mode rbd.MirrorMode, sourceNamespace, destinationNamespace string) rbd.MirrorImageStatus {
+func rbdMirrorReplayReady(t *testing.T, ctx context.Context, link *rbdmirror.Mirror, name string, mode rbdmirror.Mode, sourceNamespace, destinationNamespace string) rbdmirror.ImageStatus {
 	t.Helper()
 	status, err := link.WaitReplayReady(ctx, name)
 	if err != nil || !status.ReplayReady || status.State != "up+replaying" || status.Mode != mode || !status.SourcePrimary || status.DestinationPrimary || status.SourceNamespace != sourceNamespace || status.DestinationNamespace != destinationNamespace || status.SourceImageID == "" || status.DestinationImageID == "" || status.GlobalID == "" || status.DaemonName == "" || status.InstanceID == "" {
@@ -234,7 +234,7 @@ func rbdMultiClusterExec(ctx context.Context, ctr testcontainers.Container, args
 
 // logRBDMirrorImageState records both sites' native view of an image that
 // did not become replay-ready.
-func logRBDMirrorImageState(t *testing.T, ctx context.Context, link *rbd.Mirror, pool, sourceNamespace, destinationNamespace, name string) {
+func logRBDMirrorImageState(t *testing.T, ctx context.Context, link *rbdmirror.Mirror, pool, sourceNamespace, destinationNamespace, name string) {
 	t.Helper()
 	for _, site := range []struct {
 		name, spec string

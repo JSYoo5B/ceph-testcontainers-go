@@ -300,7 +300,7 @@ Linux processes. When the setting is off, `Run` fails with
 - Every host-network container shares the host's hostname. Identify CephFS
   sessions by `ID` rather than `Hostname`, and do not rely on `hostname` to
   tell containers apart.
-- Multicluster fixtures (`rbd.RunMirror`, `cephfs.RunMirror`,
+- Multicluster fixtures (`rbdmirror.Run`, `cephfs.RunMirror`,
   `multisite.Run`, `multisite.RunTopology`) require both clusters to use the same
   network mode. In host mode the advertised addresses of each cluster must be
   reachable from the other.

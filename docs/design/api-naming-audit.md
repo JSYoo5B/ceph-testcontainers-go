@@ -198,3 +198,19 @@ declaration and no member: the combined `rgw` and `rgw/multisite` counts equal
 the previous `rgw` counts (125 declarations, 204 members). No alias remains in
 `rgw`. The receipt was refreshed by hand after checking this one-to-one
 mapping.
+
+## RBD mirror package move
+
+The 41 exported declarations and 74 members of the RBD mirror family moved from
+`rbd` to the service-specific package `rbd/mirror` (the declaration count of
+`rbd` and `rbd/mirror` together is the previous 77, the member count the
+previous 94). The inventory labels the package by its directory,
+`rbd/mirror.`. The package name is `mirror`, so the repeated `Mirror` prefix was
+dropped from the types, constants and `RunMirror` functions (`Config`, `Mode`,
+`Scope`, `Daemon`, `ImageStatus`, `Namespace`, `Run`, `RunWithImages` and so
+on), while `Mirror` itself and every method name, receiver and signature
+shape were retained. No operation verb, handle or undo name changed, and no
+alias remains. The reviewed mapping is in
+[the upgrade guide](../guides/upgrading-rbd-mirror-package.md). The receipt was
+refreshed for this deliberate move only. CephFS mirror names are not yet part
+of it.

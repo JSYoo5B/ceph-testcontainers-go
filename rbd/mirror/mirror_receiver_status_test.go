@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"context"
@@ -174,7 +174,7 @@ func newReceiverHarness(t *testing.T, sourceNS, destinationNS string, count int)
 			site.client.policies["images/"+site.ns] = nativeRBDMirrorPolicy{Mode: "image", MirrorUUID: receiverReplacementUUID, RemoteNamespace: stringPointer(site.remote)}
 		}
 	}
-	m := &Mirror{sourceClient: h.source, destinationClient: h.destination, config: MirrorConfig{Pool: "images", SourceSite: "source", DestinationSite: "destination", SourceNamespace: sourceNS, DestinationNamespace: destinationNS, Scope: MirrorScopeImage, Mode: MirrorModeSnapshot, Source: &ceph.Container{Container: h.source}, Destination: &ceph.Container{Container: h.destination}}, poolIdentities: &rbdMirrorPoolIdentities{source: 42, destination: 84}, receiverSetupConfirmed: true, receiverPeerGeneration: 1}
+	m := &Mirror{sourceClient: h.source, destinationClient: h.destination, config: Config{Pool: "images", SourceSite: "source", DestinationSite: "destination", SourceNamespace: sourceNS, DestinationNamespace: destinationNS, Scope: ScopeImage, Mode: ModeSnapshot, Source: &ceph.Container{Container: h.source}, Destination: &ceph.Container{Container: h.destination}}, poolIdentities: &rbdMirrorPoolIdentities{source: 42, destination: 84}, receiverSetupConfirmed: true, receiverPeerGeneration: 1}
 	m.policyIdentities = &rbdMirrorPolicyIdentities{source: rbdMirrorSitePolicyIdentity{base: h.source.policies["images"], selected: h.source.policies[rbdMirrorNamespaceSpec("images", sourceNS)]}, destination: rbdMirrorSitePolicyIdentity{base: h.destination.policies["images"], selected: h.destination.policies[rbdMirrorNamespaceSpec("images", destinationNS)]}}
 	m.receiverClusters = &rbdReceiverClusterIdentities{source: receiverSourceFSID, destination: receiverDestinationFSID, sourceCluster: m.config.Source, destinationCluster: m.config.Destination}
 	m.receiverPeer = &rbdReceiverPeerIdentity{generation: 1, uuid: receiverPeerUUID, site: "source", client: receiverPeerClient, sourceMirrorUUID: receiverSourceUUID}
@@ -188,7 +188,7 @@ func newReceiverHarness(t *testing.T, sourceNS, destinationNS string, count int)
 		d := &receiverTestDaemon{cid: strings.Repeat(name, 64), state: container.State{Running: true, Status: container.StateRunning, Pid: 40 + i, StartedAt: "2026-10-07T09:00:00Z"}}
 		d.status = receiverTestStatus(destinationNS, sourceNS, members[i], "100", i == 0, members)
 		client := "client.rbd-mirror.tc-" + name
-		m.daemons = append(m.daemons, &MirrorDaemon{Container: d, DaemonName: name, ClientName: client, receiverHandle: d, receiverContainerID: d.cid, receiverClientName: client, receiverDaemonName: name, receiverStartupConfirmed: true})
+		m.daemons = append(m.daemons, &Daemon{Container: d, DaemonName: name, ClientName: client, receiverHandle: d, receiverContainerID: d.cid, receiverClientName: client, receiverDaemonName: name, receiverStartupConfirmed: true})
 		h.daemons = append(h.daemons, d)
 	}
 	return h
@@ -501,7 +501,7 @@ func TestRBDReceiverWaitPinsScopeAndAllowsSameContainerRestart(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			attempts := 0
-			status, err := waitRBDReceiverReady(ctx, time.Millisecond, func(ctx context.Context, w *rbdReceiverWitness) (MirrorReceiverStatus, *rbdReceiverWitness, error) {
+			status, err := waitRBDReceiverReady(ctx, time.Millisecond, func(ctx context.Context, w *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
 				attempts++
 				report, captured, err := h.m.receiverStatus(ctx, nil, w)
 				if attempts == 1 {
@@ -512,7 +512,7 @@ func TestRBDReceiverWaitPinsScopeAndAllowsSameContainerRestart(t *testing.T) {
 					switch change {
 					case "replacement":
 						original := h.m.daemons[0]
-						h.m.daemons[0] = &MirrorDaemon{Container: original.Container, DaemonName: original.DaemonName, ClientName: original.ClientName, receiverHandle: original.receiverHandle, receiverContainerID: original.receiverContainerID, receiverClientName: original.receiverClientName, receiverDaemonName: original.receiverDaemonName, receiverStartupConfirmed: original.receiverStartupConfirmed}
+						h.m.daemons[0] = &Daemon{Container: original.Container, DaemonName: original.DaemonName, ClientName: original.ClientName, receiverHandle: original.receiverHandle, receiverContainerID: original.receiverContainerID, receiverClientName: original.receiverClientName, receiverDaemonName: original.receiverDaemonName, receiverStartupConfirmed: original.receiverStartupConfirmed}
 					case "peer-generation":
 						sub := *h.m.receiverPeer
 						sub.generation++
@@ -592,12 +592,12 @@ func TestRBDReceiverActualOwnerAndMemberDeadline(t *testing.T) {
 			cancel := func() { cancellation.Do(rawCancel) }
 			start := time.Now()
 			got := receiverTestBoundedCall(t, cancel, unlock, func() struct {
-				status MirrorReceiverStatus
+				status ReceiverStatus
 				err    error
 			} {
 				status, err := h.m.ReceiverStatus(ctx)
 				return struct {
-					status MirrorReceiverStatus
+					status ReceiverStatus
 					err    error
 				}{status, err}
 			})
@@ -681,19 +681,19 @@ func TestRBDReceiverSecretSafeCanonicalCausesAndLateCancellation(t *testing.T) {
 	if status.Ready || !errors.Is(err, context.Canceled) {
 		t.Fatal("Ready returned after final cancellation")
 	}
-	before := MirrorReceiverStatus{PeerID: receiverPeerUUID, Ready: false, Pool: "images"}
+	before := ReceiverStatus{PeerID: receiverPeerUUID, Ready: false, Pool: "images"}
 	// The deadline passes in the second, failing attempt, after the first one
 	// was observed, rather than after a wall-clock interval that a slow
 	// (race-instrumented) run can spend before the first attempt.
 	expiring := clustertest.NewSignalDeadline(t.Context())
 	attempt := 0
-	status, err = waitRBDReceiverReady(expiring, time.Millisecond, func(context.Context, *rbdReceiverWitness) (MirrorReceiverStatus, *rbdReceiverWitness, error) {
+	status, err = waitRBDReceiverReady(expiring, time.Millisecond, func(context.Context, *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
 		attempt++
 		if attempt == 1 {
 			return before, nil, nil
 		}
 		expiring.Expire()
-		return MirrorReceiverStatus{}, nil, rbdReceiverQuery(expiring, "query", errors.New("private"))
+		return ReceiverStatus{}, nil, rbdReceiverQuery(expiring, "query", errors.New("private"))
 	})
 	if !errors.Is(err, context.DeadlineExceeded) || status.PeerID != receiverPeerUUID || status.Ready {
 		t.Fatal("wait erased last useful observation")
@@ -853,7 +853,7 @@ func TestRBDReceiverRejectedRebootstrapPreservesCapability(t *testing.T) {
 }
 
 func TestRBDReceiverCapabilityDoesNotChangeExistingImageContract(t *testing.T) {
-	link, _, _, _ := newRBDImageStatusFixture(t, MirrorModeSnapshot, "", "")
+	link, _, _, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 	if link.receiverClusters != nil || link.receiverPeer != nil || link.receiverSetupConfirmed {
 		t.Fatal("old fixture unexpectedly has new capability")
 	}
@@ -896,9 +896,9 @@ func TestRBDReceiverMixedTransientAndPermanentErrorStopsWait(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	calls := 0
-	status, err := waitRBDReceiverReady(ctx, time.Millisecond, func(context.Context, *rbdReceiverWitness) (MirrorReceiverStatus, *rbdReceiverWitness, error) {
+	status, err := waitRBDReceiverReady(ctx, time.Millisecond, func(context.Context, *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
 		calls++
-		return MirrorReceiverStatus{PeerID: receiverPeerUUID}, nil, errors.Join(rbdReceiverQuery(ctx, "transport", errors.New("private")), rbdReceiverGuard("original receiver identity changed"))
+		return ReceiverStatus{PeerID: receiverPeerUUID}, nil, errors.Join(rbdReceiverQuery(ctx, "transport", errors.New("private")), rbdReceiverGuard("original receiver identity changed"))
 	})
 	if calls != 1 || err == nil || status.Ready || !rbdReceiverPermanent(err) {
 		t.Fatal("earlier transient error hid permanent guard")
@@ -938,7 +938,7 @@ func TestRBDReceiverSanitizerSingleContextSnapshot(t *testing.T) {
 func TestRBDReceiverPoolScopeEnrollmentNeedsNoImage(t *testing.T) {
 	for _, mapping := range [][2]string{{"", ""}, {"ns-a", "ns-b"}, {"ns-a", ""}, {"", "ns-b"}} {
 		h := newReceiverHarness(t, mapping[0], mapping[1], 2)
-		h.m.config.Scope, h.m.config.Mode = MirrorScopePool, MirrorModeJournal
+		h.m.config.Scope, h.m.config.Mode = ScopePool, ModeJournal
 		for _, site := range []struct {
 			client   *receiverTestClient
 			ns       string

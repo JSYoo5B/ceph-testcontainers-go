@@ -16,6 +16,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -115,9 +116,9 @@ func testMirrorInitialRBD(t *testing.T, host, journal bool) {
 	source, destination, sourceClient, destinationClient := mirrorInitialPair(t, host)
 	const pool = "tc-zero-rbd"
 	mapping := [2]string{}
-	scope, mode := rbd.MirrorScopeImage, "snapshot"
+	scope, mode := rbdmirror.ScopeImage, "snapshot"
 	if journal {
-		mapping, scope, mode = [2]string{"ns-a", "ns-b"}, rbd.MirrorScopePool, "journal"
+		mapping, scope, mode = [2]string{"ns-a", "ns-b"}, rbdmirror.ScopePool, "journal"
 		if rbdNamespaceMappingUnsupported(t, ctx, source) {
 			mapping[1] = mapping[0] // Ceph 19 pairs only same-named namespaces.
 		}
@@ -158,7 +159,7 @@ func testMirrorInitialRBD(t *testing.T, host, journal bool) {
 	}
 	oracle := mirrorInitialNewDockerOracle(t, ctx)
 	var customizers atomic.Int32
-	link, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool, Scope: scope, SourceNamespace: mapping[0], DestinationNamespace: mapping[1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+	link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", source.ControlImage()), rbdmirror.Config{Source: source, Destination: destination, Pool: pool, Scope: scope, SourceNamespace: mapping[0], DestinationNamespace: mapping[1], NoInitialDaemons: true}, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 	if link != nil {
 		t.Cleanup(func() {
 			cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)

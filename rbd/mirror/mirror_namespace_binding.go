@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"context"
@@ -10,12 +10,12 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// MirrorNamespace is a retained read-only binding of already configured
+// Namespace is a retained read-only binding of already configured
 // namespace policies to one Mirror's original pool, peer and owned cohort.
 // It owns no resources and has no independent daemon or cleanup lifecycle.
 // An actual owner Rebootstrap attempt invalidates this binding permanently;
 // after successful Rebootstrap explicitly BindNamespace again for a new view.
-type MirrorNamespace struct {
+type Namespace struct {
 	owner *Mirror
 	scope rbdReceiverScope
 }
@@ -59,7 +59,7 @@ func (scope *rbdReceiverScope) guard(m *Mirror) error {
 // The original successful owner setup and captured base policies remain required.
 // Binding takes at most 30 seconds, bounded by ctx, including owner admission.
 // Repeated calls produce separate immutable views, not resource owners or retries.
-func (m *Mirror) BindNamespace(ctx context.Context, sourceNamespace, destinationNamespace string) (*MirrorNamespace, error) {
+func (m *Mirror) BindNamespace(ctx context.Context, sourceNamespace, destinationNamespace string) (*Namespace, error) {
 	if m == nil {
 		return nil, rbdReceiverGuard("RBD namespace binding owner is unavailable")
 	}
@@ -80,7 +80,7 @@ func (m *Mirror) BindNamespace(ctx context.Context, sourceNamespace, destination
 	if err := m.checkRBDReceiverIdentities(ctx); err != nil {
 		return nil, err
 	}
-	view := &MirrorNamespace{owner: m, scope: rbdReceiverScope{selection: [3]string{m.config.Pool, sourceNamespace, destinationNamespace}, binding: &rbdNamespaceBindingIdentity{owner: m, peer: m.receiverPeer, clusters: m.receiverClusters, pools: m.poolIdentities, originalPolicies: m.policyIdentities, sourceClient: m.sourceClient, destinationClient: m.destinationClient}}}
+	view := &Namespace{owner: m, scope: rbdReceiverScope{selection: [3]string{m.config.Pool, sourceNamespace, destinationNamespace}, binding: &rbdNamespaceBindingIdentity{owner: m, peer: m.receiverPeer, clusters: m.receiverClusters, pools: m.poolIdentities, originalPolicies: m.policyIdentities, sourceClient: m.sourceClient, destinationClient: m.destinationClient}}}
 	policies, err := m.readRBDNamespaceBindingPolicies(ctx, &view.scope)
 	if err != nil {
 		return nil, err
@@ -98,9 +98,9 @@ func (m *Mirror) BindNamespace(ctx context.Context, sourceNamespace, destination
 // ReceiverStatus observes this bound namespace pair using the original owner's
 // exact current owned cohort. Zero owned daemons is non-ready. It shares the
 // owner's 30-second admission/process deadline and never creates a receiver.
-func (v *MirrorNamespace) ReceiverStatus(ctx context.Context, expectedDaemons ...string) (MirrorReceiverStatus, error) {
+func (v *Namespace) ReceiverStatus(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
 	if v == nil || v.owner == nil || v.scope.binding == nil {
-		return MirrorReceiverStatus{}, rbdReceiverGuard("RBD namespace binding is unavailable")
+		return ReceiverStatus{}, rbdReceiverGuard("RBD namespace binding is unavailable")
 	}
 	status, _, err := v.owner.receiverStatusForScope(ctx, &v.scope, expectedDaemons, nil)
 	return status, err
@@ -111,13 +111,13 @@ func (v *MirrorNamespace) ReceiverStatus(ctx context.Context, expectedDaemons ..
 // admitted cohort; replacement handles and new peer generations are not adopted.
 // Same-container restart may change its native instance. Polls release the owner
 // gate. Ready does not prove replay or delivery of any image/write/checkpoint.
-func (v *MirrorNamespace) WaitReceiverReady(ctx context.Context, expectedDaemons ...string) (MirrorReceiverStatus, error) {
+func (v *Namespace) WaitReceiverReady(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
 	if v == nil || v.owner == nil || v.scope.binding == nil {
-		return MirrorReceiverStatus{}, rbdReceiverGuard("RBD namespace binding is unavailable")
+		return ReceiverStatus{}, rbdReceiverGuard("RBD namespace binding is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
-	return waitRBDReceiverReady(ctx, time.Second, func(ctx context.Context, previous *rbdReceiverWitness) (MirrorReceiverStatus, *rbdReceiverWitness, error) {
+	return waitRBDReceiverReady(ctx, time.Second, func(ctx context.Context, previous *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
 		return v.owner.receiverStatusForScope(ctx, &v.scope, expectedDaemons, previous)
 	})
 }

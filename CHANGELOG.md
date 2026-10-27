@@ -95,6 +95,16 @@ change the API.
   unchanged. There is no deprecated phase and no alias in `rgw`. Callers,
   examples and documentation moved, with behavior unchanged. See
   `docs/guides/upgrading-rgw-multisite.md` for the migration table.
+- Move the RBD mirror fixture from `rbd` to the service-specific package
+  `rbd/mirror`: `rbd.RunMirror` and `rbd.RunMirrorWithImages` become
+  `Run` and `RunWithImages`, `rbd.Mirror` keeps its name, and the `Mirror`
+  prefix is dropped from `Config`, `Mode`, `Scope`, `Daemon`, `DaemonStatus`,
+  `PoolReplayerStatus`, `ImageStatus`, `Namespace`, `NamespaceState`,
+  `Policies`, `ReceiverStatus` and `ReceiverDaemonStatus` (and the mode and
+  scope constants). Methods, embedded container, error kinds, image admission,
+  locking, cancellation and cleanup are unchanged; there is no deprecated alias
+  or forwarding layer. CephFS mirroring is not part of this move yet. See
+  `docs/guides/upgrading-rbd-mirror-package.md`.
 
 ### Added
 

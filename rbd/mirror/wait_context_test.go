@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"context"
@@ -16,15 +16,15 @@ func TestMultiClusterWaitLegacyRetainsNativeCauseAcrossContextOnlyAttempt(t *tes
 			native := errors.New("private-native-query-marker")
 			calls := 0
 			var err error
-			previous := MirrorImageStatus{SourceImageID: "source", GlobalID: "global", State: "down+unknown"}
-			var status MirrorImageStatus
-			status, err = waitRBDMirrorReplay(ctx, time.Millisecond, func(context.Context) (MirrorImageStatus, error) {
+			previous := ImageStatus{SourceImageID: "source", GlobalID: "global", State: "down+unknown"}
+			var status ImageStatus
+			status, err = waitRBDMirrorReplay(ctx, time.Millisecond, func(context.Context) (ImageStatus, error) {
 				calls++
 				if calls == 1 {
 					return previous, rbdImageQueryError("read source image", native)
 				}
 				cancel()
-				return MirrorImageStatus{}, context.Canceled
+				return ImageStatus{}, context.Canceled
 			})
 			if status.SourceImageID != previous.SourceImageID || status.State != previous.State || status.ReplayReady {
 				t.Fatalf("image report changed: %+v", status)
@@ -67,9 +67,9 @@ func TestMultiClusterWaitLegacyUsesLatestIndependentCause(t *testing.T) {
 					return true, errors.Join(latest, context.Canceled)
 				}
 				var err error
-				_, err = waitRBDMirrorReplay(ctx, time.Millisecond, func(context.Context) (MirrorImageStatus, error) {
+				_, err = waitRBDMirrorReplay(ctx, time.Millisecond, func(context.Context) (ImageStatus, error) {
 					present, cause := observe()
-					status := MirrorImageStatus{}
+					status := ImageStatus{}
 					if present {
 						status.SourceImageID, status.GlobalID = "source", "global"
 					}
@@ -94,13 +94,13 @@ func TestMultiClusterWaitScopedCauseRemainsCanonicalOnly(t *testing.T) {
 	defer cancel()
 	private := errors.New("private-native-credential-marker")
 	calls := 0
-	status, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(context.Context) (MirrorImageStatus, error) {
+	status, err := waitRBDMirrorReplay(ctx, time.Millisecond, func(context.Context) (ImageStatus, error) {
 		calls++
 		if calls == 1 {
-			return MirrorImageStatus{SourceImageID: "source", GlobalID: "global"}, scopedRBDImageError(ctx, rbdImageQueryError("native read", private))
+			return ImageStatus{SourceImageID: "source", GlobalID: "global"}, scopedRBDImageError(ctx, rbdImageQueryError("native read", private))
 		}
 		cancel()
-		return MirrorImageStatus{}, scopedRBDImageError(ctx, context.Canceled)
+		return ImageStatus{}, scopedRBDImageError(ctx, context.Canceled)
 	})
 	err = scopedRBDImageError(ctx, err)
 	if calls != 2 || status.SourceImageID != "source" || status.ReplayReady || !errors.Is(err, context.Canceled) || errors.Is(err, private) || strings.Contains(err.Error(), private.Error()) {

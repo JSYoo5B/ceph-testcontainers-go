@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
+	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -46,7 +47,7 @@ func TestRBDAutomaticSnapshotSchedule(t *testing.T) {
 				t.Fatal(err)
 			}
 			runtimeImage := source.ControlImage()
-			mirror, err := rbd.RunMirror(ctx, nativeMirrorImage(t, "rbd-aux", runtimeImage), rbd.MirrorConfig{Source: source, Destination: destination, Pool: pool})
+			mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", runtimeImage), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
 			if mirror != nil {
 				t.Cleanup(func() {
 					cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

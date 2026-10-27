@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"context"
@@ -64,7 +64,7 @@ func namespaceBindingSocket(t *testing.T, data string, mappings [][2]string) str
 	})
 }
 
-func namespaceBindingMustBind(t *testing.T, h *receiverHarness, sourceNS, destinationNS string) *MirrorNamespace {
+func namespaceBindingMustBind(t *testing.T, h *receiverHarness, sourceNS, destinationNS string) *Namespace {
 	t.Helper()
 	view, err := h.m.BindNamespace(t.Context(), sourceNS, destinationNS)
 	if err != nil || view == nil {
@@ -316,7 +316,7 @@ func TestRBDNamespaceBindingLateSelectedPolicyDrift(t *testing.T) {
 			h := newNamespaceBindingHarness(t, 1)
 			originalOwnerPolicies, originalPeer := h.m.policyIdentities, h.m.receiverPeer
 			originalBase, originalOwnerSelected := h.source.policies["images"], h.source.policies["images/ns-a"]
-			var view *MirrorNamespace
+			var view *Namespace
 			if operation == "status-process-read" {
 				view = namespaceBindingMustBind(t, h, "ns-c", "ns-d")
 				h.daemons[0].hook = func(_ context.Context, number int) {
@@ -372,7 +372,7 @@ func TestRBDNamespaceBindingSharedCohortTopologyAndWaitWitness(t *testing.T) {
 				old := h.m.daemons[0]
 				d := *h.daemons[0]
 				d.cid = strings.Repeat("f", 64)
-				h.m.daemons[0] = &MirrorDaemon{Container: &d, DaemonName: old.DaemonName, ClientName: old.ClientName, receiverHandle: &d, receiverContainerID: d.cid, receiverClientName: old.receiverClientName, receiverDaemonName: old.receiverDaemonName, receiverStartupConfirmed: true}
+				h.m.daemons[0] = &Daemon{Container: &d, DaemonName: old.DaemonName, ClientName: old.ClientName, receiverHandle: &d, receiverContainerID: d.cid, receiverClientName: old.receiverClientName, receiverDaemonName: old.receiverDaemonName, receiverStartupConfirmed: true}
 			case "add":
 				other := newNamespaceBindingHarness(t, 2)
 				h.m.daemons = append(h.m.daemons, other.m.daemons[1])
@@ -466,17 +466,17 @@ func TestRBDNamespaceBindingOwnerAndMemberGateDeadline(t *testing.T) {
 				got := receiverTestBoundedCall(t, cancel, unlock, func() struct {
 					err   error
 					ready bool
-					view  *MirrorNamespace
+					view  *Namespace
 				} {
 					if operation == "bind" {
 						bound, err := h.m.BindNamespace(ctx, "ns-c", "ns-d")
 						return struct {
 							err   error
 							ready bool
-							view  *MirrorNamespace
+							view  *Namespace
 						}{err, false, bound}
 					}
-					var status MirrorReceiverStatus
+					var status ReceiverStatus
 					var err error
 					if operation == "status" {
 						status, err = view.ReceiverStatus(ctx)
@@ -486,7 +486,7 @@ func TestRBDNamespaceBindingOwnerAndMemberGateDeadline(t *testing.T) {
 					return struct {
 						err   error
 						ready bool
-						view  *MirrorNamespace
+						view  *Namespace
 					}{err, status.Ready, nil}
 				})
 				if !errors.Is(got.err, context.DeadlineExceeded) || got.ready || got.view != nil || h.daemons[0].statusCalls != 0 {
@@ -501,7 +501,7 @@ func TestRBDNamespaceBindingFinalContextAndSecretSafeErrors(t *testing.T) {
 	for _, operation := range []string{"bind", "status"} {
 		t.Run(operation, func(t *testing.T) {
 			h := newNamespaceBindingHarness(t, 1)
-			var view *MirrorNamespace
+			var view *Namespace
 			if operation == "status" {
 				view = namespaceBindingMustBind(t, h, "ns-c", "ns-d")
 			}
@@ -549,7 +549,7 @@ func TestRBDNamespaceBindingWaitPollReleasesOriginalOwner(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	attempts := 0
-	status, err := waitRBDReceiverReady(ctx, time.Millisecond, func(ctx context.Context, previous *rbdReceiverWitness) (MirrorReceiverStatus, *rbdReceiverWitness, error) {
+	status, err := waitRBDReceiverReady(ctx, time.Millisecond, func(ctx context.Context, previous *rbdReceiverWitness) (ReceiverStatus, *rbdReceiverWitness, error) {
 		attempts++
 		status, witness, err := h.m.receiverStatusForScope(ctx, &view.scope, nil, previous)
 		if attempts == 1 {
@@ -652,7 +652,7 @@ func TestRBDNamespaceBindingRebootstrapAttemptInvalidatesAndFreshBind(t *testing
 }
 
 func TestRBDNamespaceBindingUnavailableAndClosedOwner(t *testing.T) {
-	for _, view := range []*MirrorNamespace{nil, {}, {owner: &Mirror{}}} {
+	for _, view := range []*Namespace{nil, {}, {owner: &Mirror{}}} {
 		if status, err := view.ReceiverStatus(t.Context()); err == nil || status.Ready {
 			t.Fatal("zero view provided readiness")
 		}

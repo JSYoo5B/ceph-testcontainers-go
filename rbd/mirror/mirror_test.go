@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"bytes"
@@ -18,34 +18,34 @@ import (
 )
 
 func TestRunRBDMirrorRejectsMissingClusters(t *testing.T) {
-	mirror, err := RunMirror(context.Background(), "example/ceph:version", MirrorConfig{Pool: "rbd"})
+	mirror, err := Run(context.Background(), "example/ceph:version", Config{Pool: "rbd"})
 	if err == nil || mirror != nil {
 		t.Fatalf("missing cluster pair must fail before resource allocation: mirror=%v error=%v", mirror, err)
 	}
 }
 
 func TestRBDMirrorConfigDefaultsAndRejectsAmbiguousPool(t *testing.T) {
-	config, err := normalizeRBDMirrorConfig(MirrorConfig{Pool: " rbd "})
-	if err != nil || config.Pool != "rbd" || config.SourceSite != "source" || config.DestinationSite != "destination" || config.Mode != MirrorModeSnapshot || config.DaemonCount != 1 {
+	config, err := normalizeRBDMirrorConfig(Config{Pool: " rbd "})
+	if err != nil || config.Pool != "rbd" || config.SourceSite != "source" || config.DestinationSite != "destination" || config.Mode != ModeSnapshot || config.DaemonCount != 1 {
 		t.Fatalf("unexpected normalized configuration: %+v error=%v", config, err)
 	}
 	for _, pool := range []string{"", " ", "-rbd", "rbd/namespace", "rbd images"} {
 		t.Run(pool, func(t *testing.T) {
-			if _, err := normalizeRBDMirrorConfig(MirrorConfig{Pool: pool}); err == nil {
+			if _, err := normalizeRBDMirrorConfig(Config{Pool: pool}); err == nil {
 				t.Fatalf("ambiguous pool %q accepted", pool)
 			}
 		})
 	}
-	if _, err := normalizeRBDMirrorConfig(MirrorConfig{Pool: "rbd", SourceSite: "same", DestinationSite: "same"}); err == nil {
+	if _, err := normalizeRBDMirrorConfig(Config{Pool: "rbd", SourceSite: "same", DestinationSite: "same"}); err == nil {
 		t.Fatal("identical source and destination site names accepted")
 	}
 }
 
 func TestRBDMirrorDaemonConfigurationRejectsInvalidTopologyBeforeAllocation(t *testing.T) {
-	if _, err := normalizeRBDMirrorConfig(MirrorConfig{Pool: "rbd", DaemonCount: -1}); err == nil {
+	if _, err := normalizeRBDMirrorConfig(Config{Pool: "rbd", DaemonCount: -1}); err == nil {
 		t.Fatal("negative daemon count accepted")
 	}
-	config, err := normalizeRBDMirrorConfig(MirrorConfig{Pool: "rbd", DaemonCount: 3})
+	config, err := normalizeRBDMirrorConfig(Config{Pool: "rbd", DaemonCount: 3})
 	if err != nil || config.DaemonCount != 3 {
 		t.Fatalf("explicit daemon count was not preserved: %+v error=%v", config, err)
 	}
@@ -63,10 +63,10 @@ func TestRBDMirrorDaemonConfigurationRejectsInvalidTopologyBeforeAllocation(t *t
 
 func TestRBDMirrorDaemonRemovalOwnsMembershipAndRetriesFailedCleanup(t *testing.T) {
 	initialContainer := &clustertest.CleanupContainer{}
-	initial := &MirrorDaemon{Container: initialContainer, DaemonName: "a"}
+	initial := &Daemon{Container: initialContainer, DaemonName: "a"}
 	failedContainer := &clustertest.CleanupContainer{Err: errors.New("temporary cleanup failure")}
-	standby := &MirrorDaemon{Container: failedContainer, DaemonName: "b"}
-	link := &Mirror{Container: initial, daemons: []*MirrorDaemon{standby, initial}, initialDaemonName: "a"}
+	standby := &Daemon{Container: failedContainer, DaemonName: "b"}
+	link := &Mirror{Container: initial, daemons: []*Daemon{standby, initial}, initialDaemonName: "a"}
 	link.owned.AddContainer(initial)
 	link.owned.AddContainer(standby)
 	members := link.Daemons()
@@ -100,8 +100,8 @@ func TestRBDMirrorDaemonRemovalOwnsMembershipAndRetriesFailedCleanup(t *testing.
 
 func TestRBDMirrorTerminateClosesAdditionsButAllowsCleanupRetry(t *testing.T) {
 	ctr := &clustertest.CleanupContainer{Err: errors.New("temporary cleanup failure")}
-	daemon := &MirrorDaemon{Container: ctr, DaemonName: "a"}
-	link := &Mirror{Container: daemon, initialDaemonName: "a", daemons: []*MirrorDaemon{daemon}}
+	daemon := &Daemon{Container: ctr, DaemonName: "a"}
+	link := &Mirror{Container: daemon, initialDaemonName: "a", daemons: []*Daemon{daemon}}
 	link.owned.AddContainer(daemon)
 	if err := link.Terminate(t.Context()); err == nil || len(link.Daemons()) != 1 {
 		t.Fatal("failed fixture cleanup lost retained membership")
@@ -116,12 +116,12 @@ func TestRBDMirrorTerminateClosesAdditionsButAllowsCleanupRetry(t *testing.T) {
 }
 
 func TestRBDMirrorModeRejectsAmbiguousValues(t *testing.T) {
-	config, err := normalizeRBDMirrorConfig(MirrorConfig{Pool: "rbd", Mode: MirrorModeJournal})
-	if err != nil || config.Mode != MirrorModeJournal {
+	config, err := normalizeRBDMirrorConfig(Config{Pool: "rbd", Mode: ModeJournal})
+	if err != nil || config.Mode != ModeJournal {
 		t.Fatalf("journal mode was not retained: %+v %v", config, err)
 	}
-	for _, mode := range []MirrorMode{"pool", "image", "snapshot ", " journal", "--force", "unknown"} {
-		if _, err := normalizeRBDMirrorConfig(MirrorConfig{Pool: "rbd", Mode: mode}); err == nil {
+	for _, mode := range []Mode{"pool", "image", "snapshot ", " journal", "--force", "unknown"} {
+		if _, err := normalizeRBDMirrorConfig(Config{Pool: "rbd", Mode: mode}); err == nil {
 			t.Errorf("unsupported per-image mode %q accepted", mode)
 		}
 	}
@@ -154,7 +154,7 @@ func (c *rbdEnableFixture) Exec(_ context.Context, args []string, _ ...tcexec.Pr
 
 func TestRBDMirrorDaemonStatusUsesNativeElectionFields(t *testing.T) {
 	ctr := &rbdEnableFixture{status: `{"pool_replayers":[{"pool":"rbd","peer":"native-peer","state":"running","instance_id":"123","leader_instance_id":"123","leader":true,"instances":["123","456"]}]}`}
-	daemon := &MirrorDaemon{Container: ctr, DaemonName: "a"}
+	daemon := &Daemon{Container: ctr, DaemonName: "a"}
 	status, err := daemon.Status(t.Context())
 	if err != nil || len(status.PoolReplayers) != 1 {
 		t.Fatalf("native daemon status unavailable: %+v %v", status, err)
@@ -180,7 +180,7 @@ func TestRBDMirrorDaemonStatusUsesNativeElectionFields(t *testing.T) {
 
 func TestEnableRBDJournalImageRequiresExplicitExclusiveLock(t *testing.T) {
 	client := &rbdEnableFixture{info: `{"features":["layering"]}`}
-	link := &Mirror{sourceClient: client, config: MirrorConfig{Pool: "rbd", Mode: MirrorModeJournal}}
+	link := &Mirror{sourceClient: client, config: Config{Pool: "rbd", Mode: ModeJournal}}
 	if err := link.EnableImage(t.Context(), "volume"); err == nil || !strings.Contains(err.Error(), "exclusive-lock") || len(client.calls) != 1 {
 		t.Fatalf("journal setup changed an image without exclusive-lock: calls=%v error=%v", client.calls, err)
 	}
@@ -196,11 +196,11 @@ func TestEnableRBDJournalImageRequiresExplicitExclusiveLock(t *testing.T) {
 
 func TestEnableRBDImagePreservesExistingModeAndRejectsAmbiguousSpec(t *testing.T) {
 	client := &rbdEnableFixture{info: `{"features":["exclusive-lock","journaling"],"mirroring":{"mode":"journal","state":"enabled"}}`}
-	link := &Mirror{sourceClient: client, config: MirrorConfig{Pool: "rbd", Mode: MirrorModeJournal}}
+	link := &Mirror{sourceClient: client, config: Config{Pool: "rbd", Mode: ModeJournal}}
 	if err := link.EnableImage(t.Context(), "volume"); err != nil || len(client.calls) != 1 {
 		t.Fatalf("already enabled image should remain unchanged: calls=%v error=%v", client.calls, err)
 	}
-	link.config.Mode = MirrorModeSnapshot
+	link.config.Mode = ModeSnapshot
 	client.calls = nil
 	if err := link.EnableImage(t.Context(), "volume"); err == nil || !strings.Contains(err.Error(), "already uses journal") || len(client.calls) != 1 {
 		t.Fatalf("existing journal mode was implicitly changed: calls=%v error=%v", client.calls, err)

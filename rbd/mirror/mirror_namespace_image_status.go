@@ -1,4 +1,4 @@
-package rbd
+package mirror
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 // the whole cohort's election readiness or proving write/checkpoint delivery.
 // It creates no resources or checkpoints. Admission and native/process reads
 // take at most 30 seconds, bounded by ctx; a partial report can accompany an error.
-func (v *MirrorNamespace) ImageStatus(ctx context.Context, imageName string) (MirrorImageStatus, error) {
+func (v *Namespace) ImageStatus(ctx context.Context, imageName string) (ImageStatus, error) {
 	status, _, err := v.imageStatus(ctx, imageName, nil)
 	return status, err
 }
@@ -28,22 +28,22 @@ func (v *MirrorNamespace) ImageStatus(ctx context.Context, imageName string) (Mi
 // same-container restart may change its native instance. Polls release the owner
 // and member gates. It does not wait for bytes or snapshot completion, rebind a
 // stale bootstrap generation, or expose native private data through error causes.
-func (v *MirrorNamespace) WaitReplayReady(ctx context.Context, imageName string) (MirrorImageStatus, error) {
+func (v *Namespace) WaitReplayReady(ctx context.Context, imageName string) (ImageStatus, error) {
 	if err := validateRBDMirrorObservedImage(imageName); err != nil {
-		return MirrorImageStatus{}, scopedRBDImageError(ctx, err)
+		return ImageStatus{}, scopedRBDImageError(ctx, err)
 	}
 	if v == nil || v.owner == nil || v.scope.binding == nil {
-		return MirrorImageStatus{}, rbdImageGuardError("RBD namespace binding is unavailable")
+		return ImageStatus{}, rbdImageGuardError("RBD namespace binding is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
 	return v.waitReplayReady(ctx, time.Second, imageName)
 }
 
-func (v *MirrorNamespace) waitReplayReady(ctx context.Context, interval time.Duration, imageName string) (MirrorImageStatus, error) {
+func (v *Namespace) waitReplayReady(ctx context.Context, interval time.Duration, imageName string) (ImageStatus, error) {
 	var witness *rbdReceiverWitness
-	var mode MirrorMode
-	status, err := waitRBDMirrorReplay(ctx, interval, func(attempt context.Context) (MirrorImageStatus, error) {
+	var mode Mode
+	status, err := waitRBDMirrorReplay(ctx, interval, func(attempt context.Context) (ImageStatus, error) {
 		current, captured, err := v.imageStatus(attempt, imageName, witness)
 		if witness == nil && captured != nil {
 			witness = captured
@@ -64,8 +64,8 @@ func (v *MirrorNamespace) waitReplayReady(ctx context.Context, interval time.Dur
 	return status, nil
 }
 
-func (v *MirrorNamespace) imageStatus(ctx context.Context, imageName string, previous *rbdReceiverWitness) (MirrorImageStatus, *rbdReceiverWitness, error) {
-	var result MirrorImageStatus
+func (v *Namespace) imageStatus(ctx context.Context, imageName string, previous *rbdReceiverWitness) (ImageStatus, *rbdReceiverWitness, error) {
+	var result ImageStatus
 	if err := validateRBDMirrorObservedImage(imageName); err != nil {
 		return result, previous, scopedRBDImageError(ctx, err)
 	}
@@ -128,7 +128,7 @@ func scopedRBDImagePermanent(err error) bool {
 	return false
 }
 
-func readRBDMirrorImageInfoForScope(ctx context.Context, client testcontainers.Container, spec, name string, mode MirrorMode, scoped bool) (rbdObservedInfo, error) {
+func readRBDMirrorImageInfoForScope(ctx context.Context, client testcontainers.Container, spec, name string, mode Mode, scoped bool) (rbdObservedInfo, error) {
 	if !scoped {
 		return readRBDMirrorObservedInfo(ctx, client, spec, name, mode)
 	}
