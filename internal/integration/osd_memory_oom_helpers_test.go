@@ -196,9 +196,10 @@ type osdOOMStep struct {
 	Generation   containerGeneration
 	PID          int
 	ProcessStart string
-	// Executable is the base name of the frozen process's executable as read
-	// outside the target before the step.
-	Executable    string
+	// OSD and Process identify the frozen process as the daemon of the
+	// selected OSD, as read outside the target before the step.
+	OSD           int
+	Process       osdOOMProcess
 	ProcsBefore   memoryProcs
 	OtherProcSeen bool
 
@@ -236,7 +237,7 @@ const (
 
 // osdOOMStepChecks disables one rule per negative control.
 type osdOOMStepChecks struct {
-	skipExecutable bool
+	skipProcess    bool
 	skipJoin       bool
 	skipStamp      bool
 	skipBracket    bool
@@ -266,8 +267,10 @@ func classifyOSDOOMStep(s osdOOMStep, checks osdOOMStepChecks) (osdOOMVerdict, e
 	if !s.Generation.valid() || s.PID <= 0 || s.ProcessStart == "" {
 		return osdOOMIncompleteStep("frozen generation or process identity is incomplete")
 	}
-	if !checks.skipExecutable && s.Executable != osdOOMExecutable {
-		return osdOOMIncompleteStep("the frozen process is not observed to be %s", osdOOMExecutable)
+	if !checks.skipProcess {
+		if err := osdOOMProcessIsOSD(s.Process, s.OSD); err != nil {
+			return osdOOMIncompleteStep("the frozen process is not shown to be the selected OSD: %v", err)
+		}
 	}
 	if s.Before == nil {
 		return osdOOMUnsupported, nil
@@ -743,17 +746,82 @@ func classifyOSDOOMRun(r osdOOMRun) (osdOOMRunVerdict, []string) {
 	return osdOOMRunOOMKilledUnfinished, reasons
 }
 
-// osdOOMExecutableOf reads the executable base name of a process from a proc
-// root. Permission and absence stay distinct from a wrong executable.
-func osdOOMExecutableOf(procRoot string, pid int) (string, error) {
-	exe, err := os.Readlink(filepath.Join(procRoot, strconv.Itoa(pid), "exe"))
-	switch {
-	case errors.Is(err, os.ErrPermission):
-		return "", fmt.Errorf("%w: the controller may not read the executable", errOSDOOM)
-	case err != nil:
-		return "", fmt.Errorf("%w: executable unavailable", errOSDOOM)
+// Process identity states of the executable link.
+const (
+	osdOOMExeReadable    = "readable"
+	osdOOMExeDenied      = "permission-denied"
+	osdOOMExeUnavailable = "unavailable"
+)
+
+// osdOOMReadlink is the executable-link reader; fixtures replace it to drive
+// the permission-denied shape a non-root controller observes natively.
+var osdOOMReadlink = os.Readlink
+
+var errOSDOOMIdentityUnsupported = errors.New("the daemon identity cannot be established by this controller")
+
+// osdOOMProcess is the identity of the frozen process as a controller without
+// ptrace rights can obtain it. /proc/PID/exe needs ptrace access and is
+// refused to a non-root controller for a root-owned daemon, while comm and
+// cmdline stay world-readable. The link is read when it can be, and then it
+// must agree; a denied link is recorded, not decoded as a wrong executable.
+type osdOOMProcess struct {
+	Comm, Argv0 string
+	OSD         int
+	HasOSD      bool
+	ExeState    string
+	Exe         string // base name, only when ExeState is readable
+}
+
+// osdOOMProcessOf reads the identity from a proc root. An unreadable comm or
+// command line is a distinct unsupported error, never an empty identity.
+func osdOOMProcessOf(procRoot string, pid int) (osdOOMProcess, error) {
+	dir := filepath.Join(procRoot, strconv.Itoa(pid))
+	comm, err := os.ReadFile(filepath.Join(dir, "comm"))
+	if err != nil {
+		return osdOOMProcess{}, fmt.Errorf("%w: comm unreadable", errOSDOOMIdentityUnsupported)
 	}
-	return filepath.Base(exe), nil
+	cmdline, err := os.ReadFile(filepath.Join(dir, "cmdline"))
+	if err != nil || len(cmdline) == 0 {
+		return osdOOMProcess{}, fmt.Errorf("%w: command line unreadable or empty", errOSDOOMIdentityUnsupported)
+	}
+	p := osdOOMProcess{Comm: strings.TrimSuffix(string(comm), "\n")}
+	argv := strings.Split(strings.TrimSuffix(string(cmdline), "\x00"), "\x00")
+	p.Argv0 = filepath.Base(argv[0])
+	for i := 1; i+1 < len(argv); i++ {
+		if argv[i] == "-i" {
+			if n, err := strconv.Atoi(argv[i+1]); err == nil && n >= 0 && strconv.Itoa(n) == argv[i+1] {
+				p.OSD, p.HasOSD = n, true
+			}
+			break
+		}
+	}
+	exe, err := osdOOMReadlink(filepath.Join(dir, "exe"))
+	switch {
+	case err == nil:
+		p.ExeState, p.Exe = osdOOMExeReadable, filepath.Base(exe)
+	case errors.Is(err, os.ErrPermission):
+		p.ExeState = osdOOMExeDenied
+	default:
+		p.ExeState = osdOOMExeUnavailable
+	}
+	return p, nil
+}
+
+// osdOOMProcessIsOSD checks that the frozen process is the ceph-osd daemon of
+// the selected OSD id. Comm, argv[0] and the -i argument must all agree, and a
+// readable executable link must agree too.
+func osdOOMProcessIsOSD(p osdOOMProcess, osd int) error {
+	switch {
+	case p.Comm != osdOOMExecutable || p.Argv0 != osdOOMExecutable:
+		return fmt.Errorf("%w: process is %q/%q, not %s", errOSDOOM, p.Comm, p.Argv0, osdOOMExecutable)
+	case !p.HasOSD || p.OSD != osd:
+		return fmt.Errorf("%w: process does not serve osd.%d", errOSDOOM, osd)
+	case p.ExeState == osdOOMExeReadable && p.Exe != osdOOMExecutable:
+		return fmt.Errorf("%w: executable link is %q", errOSDOOM, p.Exe)
+	case p.ExeState != osdOOMExeReadable && p.ExeState != osdOOMExeDenied:
+		return fmt.Errorf("%w: executable link state %q", errOSDOOM, p.ExeState)
+	}
+	return nil
 }
 
 // osdOOMObservation is what the recorder retained.
@@ -867,7 +935,7 @@ func osdOOMEligible(before *memoryWitness, procs memoryProcs, pid int, baseline,
 }
 
 func osdOOMReceiptStep(s osdOOMStep) map[string]any {
-	out := map[string]any{"pid": s.PID, "process_start": s.ProcessStart, "executable": s.Executable, "other_process_seen": s.OtherProcSeen}
+	out := map[string]any{"pid": s.PID, "process_start": s.ProcessStart, "osd": s.OSD, "comm": s.Process.Comm, "argv0": s.Process.Argv0, "exe_state": s.Process.ExeState, "other_process_seen": s.OtherProcSeen}
 	if s.Before != nil {
 		out["before_events"], out["before_current"] = s.Before.Events, s.Before.Current
 	}

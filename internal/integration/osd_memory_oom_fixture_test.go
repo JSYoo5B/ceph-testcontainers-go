@@ -7,9 +7,11 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -56,7 +58,7 @@ func oomState(gen containerGeneration, pid int, running bool) cpuEngineState {
 // last sample before the stop.
 func goodOOMStep() osdOOMStep {
 	return osdOOMStep{
-		Generation: oomGen, PID: oomPID, ProcessStart: oomProcess, Executable: "ceph-osd",
+		Generation: oomGen, PID: oomPID, ProcessStart: oomProcess, OSD: 1, Process: oomProc(),
 		ProcsBefore: memoryProcs{Observed: true, PIDs: []int{oomPID}},
 		Baseline:    memoryLimit{Bytes: oomBaseline}, Ceiling: memoryLimit{Bytes: oomCeiling},
 		Before:    oomWitness(oomGen, oomAt(3), oomBaseline, 300<<20, memoryEvents{Max: 0, OOM: 0, OOMKill: 0}),
@@ -130,7 +132,11 @@ func TestOSDOOMStepRulesEachHaveANegativeControl(t *testing.T) {
 		want   osdOOMVerdict // verdict with the rule disabled; killed unless set
 		def    osdOOMVerdict // verdict with every rule; incomplete unless set
 	}{
-		{name: "executable is not ceph-osd", mutate: func(s *osdOOMStep) { s.Executable = "sh" }, skip: func(c *osdOOMStepChecks) { c.skipExecutable = true }},
+		{name: "process is not ceph-osd", mutate: func(s *osdOOMStep) { s.Process.Comm, s.Process.Argv0 = "sh", "sh" }, skip: func(c *osdOOMStepChecks) { c.skipProcess = true }},
+		{name: "process serves another osd", mutate: func(s *osdOOMStep) { s.Process.OSD = 2 }, skip: func(c *osdOOMStepChecks) { c.skipProcess = true }},
+		{name: "process has no osd id", mutate: func(s *osdOOMStep) { s.Process.HasOSD = false }, skip: func(c *osdOOMStepChecks) { c.skipProcess = true }},
+		{name: "readable executable link names another program", mutate: func(s *osdOOMStep) { s.Process.ExeState, s.Process.Exe = osdOOMExeReadable, "sh" }, skip: func(c *osdOOMStepChecks) { c.skipProcess = true }},
+		{name: "executable link unavailable", mutate: func(s *osdOOMStep) { s.Process.ExeState = osdOOMExeUnavailable }, skip: func(c *osdOOMStepChecks) { c.skipProcess = true }},
 		{name: "first reading from another generation", mutate: func(s *osdOOMStep) { s.Before.Generation = oomNew }, skip: func(c *osdOOMStepChecks) { c.skipJoin = true }},
 		{name: "unrecorded reading time", mutate: func(s *osdOOMStep) { s.Before.At = time.Time{} }, skip: func(c *osdOOMStepChecks) { c.skipStamp = true }},
 		{name: "first reading after the dispatch", mutate: func(s *osdOOMStep) { s.Before.At = oomAt(4.5) }, skip: func(c *osdOOMStepChecks) { c.skipBracket = true }},
@@ -454,19 +460,127 @@ func TestOSDOOMEligibilityRefusesBeforeDispatch(t *testing.T) {
 	}
 }
 
-func TestOSDOOMExecutableIsReadFromTheProcessRoot(t *testing.T) {
+func oomProc() osdOOMProcess {
+	return osdOOMProcess{Comm: "ceph-osd", Argv0: "ceph-osd", OSD: 1, HasOSD: true, ExeState: osdOOMExeDenied}
+}
+
+// oomProcRoot builds a synthetic proc entry. An empty exe leaves the link out.
+func oomProcRoot(t *testing.T, comm, cmdline string, exe string) string {
+	t.Helper()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "7"), 0o755); err != nil {
+	dir := filepath.Join(root, "7")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("/usr/bin/ceph-osd", filepath.Join(root, "7", "exe")); err != nil {
-		t.Fatal(err)
+	for name, data := range map[string]string{"comm": comm, "cmdline": cmdline} {
+		if data == "-" {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if exe, err := osdOOMExecutableOf(root, 7); err != nil || exe != "ceph-osd" {
-		t.Fatalf("executable: %q %v", exe, err)
+	switch exe {
+	case "":
+	default:
+		if err := os.Symlink(exe, filepath.Join(dir, "exe")); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := osdOOMExecutableOf(root, 8); err == nil {
-		t.Fatal("a missing process has an executable")
+	return root
+}
+
+const oomOSDCmdline = "ceph-osd\x00-f\x00-i\x001\x00--crush-location\x00root=default host=osd-1\x00"
+
+func TestOSDOOMProcessIdentityWithoutPtraceRights(t *testing.T) {
+	root := oomProcRoot(t, "ceph-osd\n", oomOSDCmdline, "")
+	p, err := osdOOMProcessOf(root, 7)
+	if err != nil || p.Comm != "ceph-osd" || p.Argv0 != "ceph-osd" || !p.HasOSD || p.OSD != 1 {
+		t.Fatalf("identity: %+v %v", p, err)
+	}
+	if p.ExeState != osdOOMExeUnavailable || osdOOMProcessIsOSD(p, 1) == nil {
+		t.Fatalf("an absent link must not establish the daemon: %q", p.ExeState)
+	}
+	// The observed native shape: comm and cmdline are readable and the link
+	// is refused with permission denied to the non-root controller. The
+	// previous code skipped the scenario here.
+	saved := osdOOMReadlink
+	osdOOMReadlink = func(name string) (string, error) {
+		return "", &os.PathError{Op: "readlink", Path: name, Err: syscall.EACCES}
+	}
+	t.Cleanup(func() { osdOOMReadlink = saved })
+	p, err = osdOOMProcessOf(root, 7)
+	if err != nil || p.ExeState != osdOOMExeDenied {
+		t.Fatalf("permission-denied link: %+v %v", p, err)
+	}
+	if err := osdOOMProcessIsOSD(p, 1); err != nil {
+		t.Fatalf("the observed permission-denied shape is refused: %v", err)
+	}
+	// Denied link, wrong daemon: still refused.
+	other := oomProcRoot(t, "ceph-mon\n", "ceph-mon\x00-f\x00-i\x00a\x00", "")
+	if p, err := osdOOMProcessOf(other, 7); err != nil || osdOOMProcessIsOSD(p, 1) == nil {
+		t.Fatalf("denied link with another daemon accepted: %+v %v", p, err)
+	}
+	osdOOMReadlink = saved
+	// A readable link agrees or refuses.
+	root = oomProcRoot(t, "ceph-osd\n", oomOSDCmdline, "/usr/bin/ceph-osd")
+	if p, err := osdOOMProcessOf(root, 7); err != nil || p.ExeState != osdOOMExeReadable || osdOOMProcessIsOSD(p, 1) != nil {
+		t.Fatalf("readable link: %+v %v", p, err)
+	}
+}
+
+func TestOSDOOMProcessIdentityStillRefusesTheWrongDaemon(t *testing.T) {
+	good := oomProc()
+	if err := osdOOMProcessIsOSD(good, 1); err != nil {
+		t.Fatalf("good: %v", err)
+	}
+	cases := map[string]func(*osdOOMProcess){
+		"another comm":       func(p *osdOOMProcess) { p.Comm = "ceph-mon" },
+		"another argv0":      func(p *osdOOMProcess) { p.Argv0 = "sh" },
+		"another osd":        func(p *osdOOMProcess) { p.OSD = 2 },
+		"no osd argument":    func(p *osdOOMProcess) { p.HasOSD = false },
+		"link names a shell": func(p *osdOOMProcess) { p.ExeState, p.Exe = osdOOMExeReadable, "sh" },
+		"link state unknown": func(p *osdOOMProcess) { p.ExeState = "" },
+		"link gone":          func(p *osdOOMProcess) { p.ExeState = osdOOMExeUnavailable },
+	}
+	for name, mutate := range cases {
+		p := good
+		mutate(&p)
+		if osdOOMProcessIsOSD(p, 1) == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// Reader refusals are distinct unsupported errors, never an empty identity.
+	for name, root := range map[string]string{
+		"no comm":       oomProcRoot(t, "-", oomOSDCmdline, ""),
+		"no cmdline":    oomProcRoot(t, "ceph-osd\n", "-", ""),
+		"empty cmdline": oomProcRoot(t, "ceph-osd\n", "", ""),
+	} {
+		if p, err := osdOOMProcessOf(root, 7); !errors.Is(err, errOSDOOMIdentityUnsupported) {
+			t.Errorf("%s: %+v %v", name, p, err)
+		}
+	}
+	if _, err := osdOOMProcessOf(t.TempDir(), 9); !errors.Is(err, errOSDOOMIdentityUnsupported) {
+		t.Errorf("missing process: %v", err)
+	}
+	// A shell that has not exec'd yet or another daemon reads as such.
+	root := oomProcRoot(t, "sh\n", "/bin/sh\x00/tc/osd.sh\x00", "")
+	if p, err := osdOOMProcessOf(root, 7); err != nil || osdOOMProcessIsOSD(p, 1) == nil {
+		t.Errorf("shell wrapper accepted: %+v %v", p, err)
+	}
+}
+
+// The multi-process refusal does not depend on how the identity was read: a
+// permission-denied link with extra cgroup members is still refused.
+func TestOSDOOMDeniedLinkStillNeedsTheOnlyProcess(t *testing.T) {
+	s := goodOOMStep()
+	s.Process = oomProc()
+	if v, err := classifyOSDOOMStep(s, osdOOMStepChecks{}); v != osdOOMKilled {
+		t.Fatalf("denied link with a sole daemon: %s %v", v, err)
+	}
+	s.ProcsBefore.PIDs = []int{oomPID, 9}
+	if v, _ := classifyOSDOOMStep(s, osdOOMStepChecks{}); v != osdOOMOther {
+		t.Fatalf("denied link with a second member: %s", v)
 	}
 }
 

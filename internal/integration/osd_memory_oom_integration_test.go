@@ -154,9 +154,12 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 		t.Skipf("eligibility incomplete before any mutation: %v", err)
 	}
 	t.Log(target.receipt())
-	executable, err := osdOOMExecutableOf(roots.Proc, target.PID)
+	process, err := osdOOMProcessOf(roots.Proc, target.PID)
 	if err != nil {
-		t.Skipf("eligibility incomplete before any mutation: %v", err)
+		t.Skipf("unsupported before any mutation, no OOM was attempted: %v", err)
+	}
+	if err := osdOOMProcessIsOSD(process, osd.ID); err != nil {
+		t.Fatalf("the frozen process is not the selected OSD; nothing was dispatched: %v", err)
 	}
 	creation, creationProcs, err := readMemoryScratchWitness(target, inspect, time.Now)
 	if err != nil {
@@ -165,14 +168,14 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	if !creation.ControllerListed {
 		t.Skip("eligibility: the memory controller is not listed on the target cgroup; recorded as unsupported")
 	}
-	t.Logf("OSD_OOM_TARGET osd=%d pg=%s acting=%v executable=%s creation_memory_max_unlimited=%t members=%v", osd.ID, pg.PGID, pg.Acting, executable, creation.Max.Unlimited, creationProcs.PIDs)
+	t.Logf("OSD_OOM_TARGET osd=%d pg=%s acting=%v comm=%s exe_state=%s creation_memory_max_unlimited=%t members=%v", osd.ID, pg.PGID, pg.Acting, process.Comm, process.ExeState, creation.Max.Unlimited, creationProcs.PIDs)
 
 	// The receipt is registered first so that it is emitted after the
 	// restoration and writer cleanups and before the cluster is destroyed.
 	run := osdOOMRun{Baseline: osdOOMBaseline, Ceiling: osdOOMCeiling, Identity: osdOOMIdentity{Generation: gen, PID: target.PID, ProcessStart: target.ProcessStart}}
 	details := map[string]any{
 		"osd": osd.ID, "pg": pg.PGID.String(), "acting": pg.Acting, "container": id, "started_at": gen.StartedAt,
-		"pid": target.PID, "process_start": target.ProcessStart, "executable": executable, "engine": info.Info.ServerVersion,
+		"pid": target.PID, "process_start": target.ProcessStart, "comm": process.Comm, "exe_state": process.ExeState, "engine": info.Info.ServerVersion,
 		"baseline": osdOOMBaseline, "ceiling": osdOOMCeiling,
 	}
 	var viewSummaries []string
@@ -401,7 +404,7 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 		t.Fatalf("the pressure step is not eligible; nothing was dispatched: %v", err)
 	}
 	run.Step = osdOOMStep{
-		Generation: gen, PID: target.PID, ProcessStart: target.ProcessStart, Executable: executable, ProcsBefore: procs,
+		Generation: gen, PID: target.PID, ProcessStart: target.ProcessStart, OSD: osd.ID, Process: process, ProcsBefore: procs,
 		Baseline: memoryLimit{Bytes: uint64(osdOOMBaseline)}, Ceiling: memoryLimit{Bytes: uint64(osdOOMCeiling)}, Before: before,
 	}
 	run.Effects.PreStep = ledgerMark()
