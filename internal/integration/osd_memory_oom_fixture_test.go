@@ -367,28 +367,6 @@ func TestOSDOOMRunShortfallsKeepTheKilledVerdictDistinct(t *testing.T) {
 		{"outage view without a time", func(r *osdOOMRun) { r.Effects.Views[0].At = time.Time{} }, "has no time"},
 		{"outage view before the window end", func(r *osdOOMRun) { r.Effects.Views[0].At = oomAt(5.9) }, "precedes the end of the window"},
 		{"outage view shows a running instance", func(r *osdOOMRun) { r.Effects.Views[0].Instance.Running = true }, "another or running instance"},
-		{"ledger advanced before the kill and stayed constant through the outage", func(r *osdOOMRun) {
-			// The pre-step mark is far below the floor; a cumulative comparison
-			// against it would have passed.
-			r.Effects.PreStep.Acked = 1
-			r.Effects.OutageFloor.Acked, r.Effects.OutageLater.Acked = 15, 15
-		}, "outage progress: the writer was not acknowledged again after the phase floor"},
-		{"outage progress too small", func(r *osdOOMRun) { r.Effects.OutageLater.Acked = 14 }, "outage progress: the writer was not acknowledged again"},
-		{"outage advance only after the restart", func(r *osdOOMRun) {
-			r.Effects.OutageLater.Acked = r.Effects.OutageFloor.Acked
-			r.Recovery.AckedLater.Acked = r.Effects.OutageFloor.Acked + 30
-		}, "outage progress: the writer was not acknowledged again"},
-		{"outage floor taken while the target ran", func(r *osdOOMRun) { r.Effects.OutageFloor.Running = true }, "outage progress: floor ledger mark was taken in another run state"},
-		{"outage floor taken while the map showed it up", func(r *osdOOMRun) { r.Effects.OutageFloor.MapDown = false }, "not down in the map"},
-		{"outage floor of another generation", func(r *osdOOMRun) { r.Effects.OutageFloor.Generation = oomNew }, "names another generation"},
-		{"outage floor without a time", func(r *osdOOMRun) { r.Effects.OutageFloor.At = time.Time{} }, "has no time"},
-		{"outage floor before the window end", func(r *osdOOMRun) { r.Effects.OutageFloor.At = oomAt(5.5) }, "outage ledger floor precedes the end of the window"},
-		{"outage marks unordered", func(r *osdOOMRun) { r.Effects.OutageLater.At = r.Effects.OutageFloor.At }, "ledger marks are not ordered"},
-		{"outage later mark after restoration", func(r *osdOOMRun) { r.Effects.OutageLater.At = oomAt(15) }, "follows the restoration"},
-		{"recovery floor precedes the restart", func(r *osdOOMRun) { r.Recovery.AckedFloor.At = oomAt(15.5) }, "recovery ledger floor precedes the observed restart"},
-		{"recovery no progress after its floor", func(r *osdOOMRun) { r.Recovery.AckedLater.Acked = r.Recovery.AckedFloor.Acked }, "recovery progress: the writer was not acknowledged again"},
-		{"recovery marks of the old generation", func(r *osdOOMRun) { r.Recovery.AckedFloor.Generation = oomGen }, "recovery progress: floor ledger mark names another generation"},
-		{"recovery floor while stopped", func(r *osdOOMRun) { r.Recovery.AckedFloor.Running = false }, "another run state"},
 		{"no explicit restart", func(r *osdOOMRun) { r.Recovery = osdOOMRecovery{} }, "no explicit restart"},
 		{"same generation after the restart", func(r *osdOOMRun) { r.Recovery.New = oomGen }, "not a new generation"},
 		{"another container after the restart", func(r *osdOOMRun) { r.Recovery.New = containerGeneration{ID: "osd9", StartedAt: oomNew.StartedAt} }, "not a new generation"},
@@ -644,5 +622,74 @@ func TestOSDOOMReceiptsAreSerializableAndPathFree(t *testing.T) {
 func TestOSDOOMFixtureLimitsMatchThePredeclaredScenario(t *testing.T) {
 	if osdOOMBaseline != oomBaseline || osdOOMCeiling != oomCeiling || osdOOMCeiling >= osdOOMBaseline {
 		t.Fatalf("fixture limits %d/%d differ from the scenario's %d/%d", oomBaseline, oomCeiling, osdOOMBaseline, osdOOMCeiling)
+	}
+}
+
+// oomOnlyReasons runs the effect or recovery reasons of a run built from the
+// valid baseline with exactly one field mutated.
+func oomOnlyReasons(t *testing.T, mutate func(*osdOOMRun), reasons func(osdOOMRun) []string) []string {
+	t.Helper()
+	r := goodOOMRun()
+	if base := reasons(r); len(base) != 0 {
+		t.Fatalf("the baseline already has reasons: %q", base)
+	}
+	mutate(&r)
+	return reasons(r)
+}
+
+// TestOSDOOMProgressControlsRejectForTheirOwnRule builds every record from the
+// valid baseline, mutates only the field under test and requires exactly the
+// one reason that the rule produces. A control that is refused by some other
+// rule would not pin its own.
+func TestOSDOOMProgressControlsRejectForTheirOwnRule(t *testing.T) {
+	outage := func(r osdOOMRun) []string { return osdOOMEffectReasons(r) }
+	recovery := osdOOMRecoveryReasons
+	const again = "the writer was not acknowledged again after the phase floor"
+	cases := []struct {
+		name    string
+		reasons func(osdOOMRun) []string
+		mutate  func(*osdOOMRun)
+		want    string
+	}{
+		{"ledger advanced before the kill, then constant", outage, func(r *osdOOMRun) {
+			r.Effects.PreStep.Acked = 1 // 14 acknowledgements before the kill alone would satisfy a cumulative comparison
+			r.Effects.OutageLater.Acked = r.Effects.OutageFloor.Acked
+		}, "outage progress: " + again},
+		{"outage progress below the minimum", outage, func(r *osdOOMRun) { r.Effects.OutageLater.Acked = r.Effects.OutageFloor.Acked + 2 }, "outage progress: " + again},
+		{"advance only after the restart", outage, func(r *osdOOMRun) {
+			r.Effects.OutageLater.Acked = r.Effects.OutageFloor.Acked
+			r.Recovery.AckedLater.Acked = r.Recovery.AckedFloor.Acked + 30
+		}, "outage progress: " + again},
+		{"outage floor of another generation", outage, func(r *osdOOMRun) { r.Effects.OutageFloor.Generation = oomNew }, "outage progress: floor ledger mark names another generation"},
+		{"outage later mark of another generation", outage, func(r *osdOOMRun) { r.Effects.OutageLater.Generation = oomNew }, "outage progress: later ledger mark names another generation"},
+		{"outage floor taken while the target ran", outage, func(r *osdOOMRun) { r.Effects.OutageFloor.Running = true }, "outage progress: floor ledger mark was taken in another run state"},
+		{"outage later mark taken while the target ran", outage, func(r *osdOOMRun) { r.Effects.OutageLater.Running = true }, "outage progress: later ledger mark was taken in another run state"},
+		{"outage floor taken while the map showed it up", outage, func(r *osdOOMRun) { r.Effects.OutageFloor.MapDown = false }, "outage progress: floor ledger mark was taken while the OSD was not down in the map"},
+		{"outage later mark while the map showed it up", outage, func(r *osdOOMRun) { r.Effects.OutageLater.MapDown = false }, "outage progress: later ledger mark was taken while the OSD was not down in the map"},
+		{"outage floor without a time", outage, func(r *osdOOMRun) { r.Effects.OutageFloor.At = time.Time{} }, "outage progress: floor ledger mark has no time"},
+		{"outage later mark without a time", outage, func(r *osdOOMRun) { r.Effects.OutageLater.At = time.Time{} }, "outage progress: later ledger mark has no time"},
+		{"outage marks at the same time", outage, func(r *osdOOMRun) { r.Effects.OutageLater.At = r.Effects.OutageFloor.At }, "outage progress: ledger marks are not ordered"},
+		{"outage marks reversed", outage, func(r *osdOOMRun) { r.Effects.OutageLater.At = oomAt(8) }, "outage progress: ledger marks are not ordered"},
+		{"outage floor before the window end", outage, func(r *osdOOMRun) { r.Effects.OutageFloor.At = oomAt(5.5) }, "the outage ledger floor precedes the end of the window"},
+		{"outage later mark after the restoration", outage, func(r *osdOOMRun) { r.Effects.OutageLater.At = oomAt(15) }, "the outage ledger mark follows the restoration"},
+		{"recovery floor before the restart", recovery, func(r *osdOOMRun) { r.Recovery.AckedFloor.At = oomAt(15.5) }, "the recovery ledger floor precedes the observed restart"},
+		{"recovery without progress after its floor", recovery, func(r *osdOOMRun) { r.Recovery.AckedLater.Acked = r.Recovery.AckedFloor.Acked }, "recovery progress: " + again},
+		{"recovery floor of the old generation", recovery, func(r *osdOOMRun) { r.Recovery.AckedFloor.Generation = oomGen }, "recovery progress: floor ledger mark names another generation"},
+		{"recovery floor taken while stopped", recovery, func(r *osdOOMRun) { r.Recovery.AckedFloor.Running = false }, "recovery progress: floor ledger mark was taken in another run state"},
+		{"recovery floor without a time", recovery, func(r *osdOOMRun) { r.Recovery.AckedFloor.At = time.Time{} }, "recovery progress: floor ledger mark has no time"},
+	}
+	for _, c := range cases {
+		got := oomOnlyReasons(t, c.mutate, c.reasons)
+		if len(got) != 1 || got[0] != c.want {
+			t.Errorf("%s: reasons %q, want exactly %q", c.name, got, c.want)
+		}
+	}
+	// The genuine advance after the floor is established with no reason, even
+	// when the writer made no progress before the floor was taken.
+	r := goodOOMRun()
+	r.Effects.PreStep.Acked = r.Effects.OutageFloor.Acked
+	r.Effects.OutageLater.Acked = r.Effects.OutageFloor.Acked + 3
+	if got := osdOOMEffectReasons(r); len(got) != 0 {
+		t.Errorf("genuine advance after the floor refused: %q", got)
 	}
 }
