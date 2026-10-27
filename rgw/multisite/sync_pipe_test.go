@@ -1,7 +1,8 @@
-package rgw
+package multisite
 
 import (
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"reflect"
 	"strings"
 	"testing"
@@ -80,10 +81,10 @@ func TestRGWSyncTenantBucketScopeUsesCanonicalNativeKey(t *testing.T) {
 
 func TestRGWSyncPipeRefusesUnconfirmedPrincipalsAndClassMappings(t *testing.T) {
 	for _, config := range []SyncPipeConfig{
-		{DestinationOwner: &User{}},
-		{User: &User{}},
+		{DestinationOwner: &rgw.User{}},
+		{User: &rgw.User{}},
 		{DestinationStorageClass: "STANDARD_IA"},
-		{DestinationPlacements: map[string]*Placement{"destination": {}}},
+		{DestinationPlacements: map[string]*rgw.Placement{"destination": {}}},
 		{SourceBucket: &SyncBucketSelector{Name: "*"}},
 	} {
 		f, cli, _, _ := newRGWSyncTestFixture()
@@ -135,7 +136,7 @@ func TestRGWAccountPipeRefusalNamesTheSquidZone(t *testing.T) {
 		*servicehook.TestState(c).CephVersion = version
 		return c
 	}
-	f := &Multisite{config: MultisiteConfig{SourceZone: "source", DestinationZone: "destination", Source: cluster("20.2.4"), Destination: cluster("19.2.5")}}
+	f := &Fixture{config: Config{SourceZone: "source", DestinationZone: "destination", Source: cluster("20.2.4"), Destination: cluster("19.2.5")}}
 	var refusal *ceph.OperationError
 	if err := accountPipeUnsupported(f.zoneBefore(20)); !errors.As(err, &refusal) || !errors.Is(err, ceph.ErrUnsupported) ||
 		refusal.Target != "zone destination" || refusal.Version != "19.2.5" || !strings.Contains(err.Error(), "needs Ceph 20 or later") {

@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"bytes"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"net/http"
 	"strings"
 	"testing"
@@ -31,12 +32,12 @@ func (f *rgwSyncTranslationFixture) tag_owner_class(t *testing.T) {
 			a.request(t, ctx, http.MethodPut, bucket, body, http.StatusOK)
 		}
 		b.request(t, ctx, http.MethodPut, output, body, http.StatusOK)
-		selected, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, rgw.SyncGroupConfig{ID: "tags-owner-class", Status: rgw.SyncEnabled})
+		selected, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, multisite.SyncGroupConfig{ID: "tags-owner-class", Status: multisite.SyncEnabled})
 		if err != nil {
 			t.Fatal(err)
 		}
 		cleanupRGWTranslationSyncGroup(t, link, selected, "tag-ia")
-		pipe := rgw.SyncPipeConfig{ID: "tag-ia", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", Tags: []rgw.SyncObjectTag{{Key: "color", Value: "blue"}, {Key: "color", Value: "red"}}, DestinationOwner: ownerB, DestinationStorageClass: "STANDARD_IA", DestinationPlacements: map[string]*rgw.Placement{"destination": secondaryPlacement}}
+		pipe := multisite.SyncPipeConfig{ID: "tag-ia", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", Tags: []multisite.SyncObjectTag{{Key: "color", Value: "blue"}, {Key: "color", Value: "red"}}, DestinationOwner: ownerB, DestinationStorageClass: "STANDARD_IA", DestinationPlacements: map[string]*rgw.Placement{"destination": secondaryPlacement}}
 		if err := link.CreateSyncPipe(ctx, selected, pipe); err != nil {
 			t.Fatal(err)
 		}
@@ -107,12 +108,12 @@ func (f *rgwSyncTranslationFixture) tenant_system_user_isolation(t *testing.T) {
 				tenantSources[i].request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
 			}
 		}
-		tenantGroup, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: "tc-sync-tenant-input", Tenant: "tenant_sync_alpha"}, rgw.SyncGroupConfig{ID: "tenant-selected", Status: rgw.SyncEnabled})
+		tenantGroup, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{Bucket: "tc-sync-tenant-input", Tenant: "tenant_sync_alpha"}, multisite.SyncGroupConfig{ID: "tenant-selected", Status: multisite.SyncEnabled})
 		if err != nil {
 			t.Fatal(err)
 		}
 		cleanupRGWTranslationSyncGroup(t, link, tenantGroup, "tenant-system", "tenant-user")
-		tenantPipe := rgw.SyncPipeConfig{ID: "tenant-system", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: "tc-sync-tenant-input", Tenant: "tenant_sync_alpha"}, DestinationBucket: &rgw.SyncBucketSelector{Name: "tc-sync-tenant-output", Tenant: "tenant_sync_alpha"}, Prefix: "system/", DestinationOwner: tenantUsers[0]}
+		tenantPipe := multisite.SyncPipeConfig{ID: "tenant-system", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: "tc-sync-tenant-input", Tenant: "tenant_sync_alpha"}, DestinationBucket: &multisite.SyncBucketSelector{Name: "tc-sync-tenant-output", Tenant: "tenant_sync_alpha"}, Prefix: "system/", DestinationOwner: tenantUsers[0]}
 		if err := link.CreateSyncPipe(ctx, tenantGroup, tenantPipe); err != nil {
 			t.Fatal(err)
 		}

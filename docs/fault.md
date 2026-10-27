@@ -26,8 +26,8 @@ versions keep their original APIs. Update imports and calls together:
 | Netem constants, rate units and `ErrNetem*` sentinels | Same names in `fault` |
 
 `rbdmirror.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink` and
-`rgw.Multisite.InterruptZoneLink` now return `*fault.NetworkInterruption`.
-`rgw.Multisite.ApplyZoneLinkProfile` takes `fault.NetworkProfile` and returns
+`multisite.Fixture.InterruptZoneLink` now return `*fault.NetworkInterruption`.
+`multisite.Fixture.ApplyZoneLinkProfile` takes `fault.NetworkProfile` and returns
 `*fault.NetworkProfileLease`. These service fixtures still register cleanup.
 
 Cluster-bound operations keep shared-cluster admission and cleanup ordering:

@@ -1,12 +1,13 @@
-package rgw
+package multisite
 
 import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"maps"
 	"testing"
 )
 
 func TestRGWSyncAccountRootRequiresCapturedAccountBucketsWithoutTranslation(t *testing.T) {
-	info := UserInfo{ID: "tenant$root", Tenant: "tenant", LocalID: "root", Type: "root", AccountID: "RGW12345678901234567"}
+	info := rgw.UserInfo{ID: "tenant$root", Tenant: "tenant", LocalID: "root", Type: "root", AccountID: "RGW12345678901234567"}
 	scope := SyncPolicyScope{Bucket: "input", Tenant: "tenant"}
 	config := SyncPipeConfig{SourceBucket: &SyncBucketSelector{Name: "input", Tenant: "tenant"}, DestinationBucket: &SyncBucketSelector{Name: "output", Tenant: "tenant"}}
 	bucket := map[string]any{"owner": info.AccountID}
@@ -27,7 +28,7 @@ func TestRGWSyncAccountRootRequiresCapturedAccountBucketsWithoutTranslation(t *t
 			case "destination-other-account":
 				destination["owner"] = "RGW00000000000000000"
 			case "owner-translation":
-				requested.DestinationOwner = &User{}
+				requested.DestinationOwner = &rgw.User{}
 			case "source-wildcard":
 				requested.SourceBucket = nil
 			case "destination-wildcard":
@@ -46,7 +47,7 @@ func TestRGWSyncAccountRootRequiresCapturedAccountBucketsWithoutTranslation(t *t
 
 func TestRGWSyncOrdinaryUserModePreservesCurrentBucketBehavior(t *testing.T) {
 	for _, kind := range []string{"", "rgw"} {
-		info := UserInfo{ID: "ordinary", Type: kind}
+		info := rgw.UserInfo{ID: "ordinary", Type: kind}
 		if err := checkSyncUserModePrincipal(SyncPolicyScope{Bucket: "bucket"}, SyncPipeConfig{}, info, nil, nil); err != nil {
 			t.Fatal(err)
 		}

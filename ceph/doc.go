@@ -14,7 +14,9 @@
 //   - github.com/JSYoo5B/ceph-testcontainers-go/cephfs: filesystems, MDS
 //     topology, subvolumes and mirroring.
 //   - github.com/JSYoo5B/ceph-testcontainers-go/rgw: gateways, users,
-//     placement and multisite replication.
+//     placement and storage classes.
+//   - github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite: RGW multisite
+//     realms, zones and sync policies across clusters.
 //
 // Each service package has its own Run that starts a cluster with that
 // service's defaults. Options from several service packages can be passed to

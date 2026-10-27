@@ -96,7 +96,7 @@ arguments, raw native output or credentials.
 
 A module command that runs and exits nonzero returns a `*ceph.NativeFailure`:
 `cluster.Ceph`, the RBD, RGW and CephFS operations, `rbdmirror.Mirror.SourceRBD`,
-`rgw.Multisite.SourceAdmin` and the other helpers that run Ceph's tools.
+`multisite.Fixture.SourceAdmin` and the other helpers that run Ceph's tools.
 
 | Field | Content |
 | --- | --- |

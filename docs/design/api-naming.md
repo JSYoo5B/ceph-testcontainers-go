@@ -155,7 +155,7 @@ identity/external-edit checks, retryability and cleanup order are preserved.
 | --- | --- | --- |
 | `fault.TemporaryNetworkDelay` | `fault.ApplyNetworkProfile` | Applies an owned profile to a cluster-plane endpoint; cluster teardown restores held profiles. |
 | `fault.TemporaryLinkDelay` | `fault.ApplyLinkProfile` | Applies the same profile on a caller-owned named bridge; the caller restores before removing the target/bridge. |
-| `rgw.Multisite.TemporaryZoneLinkDelay` | `rgw.Multisite.ApplyZoneLinkProfile` | Selects the owned zone endpoint/peer and preserves multisite-owned cleanup. |
+| `rgw.Multisite.TemporaryZoneLinkDelay` | `rgw/multisite.Fixture.ApplyZoneLinkProfile` | Selects the owned zone endpoint/peer and preserves multisite-owned cleanup. |
 | `fault.NetworkDelay` | `fault.NetworkProfile` | Request with unchanged fields for delay/jitter, loss, rate/queue and packet faults/peers. |
 | `fault.NetworkDelayLease` | `fault.NetworkProfileLease` | Owns the installed profile/helper; retains `Status` and retryable `Restore`, including uncertain results. |
 | `fault.NetworkDelayStatus` | `fault.NetworkProfileStatus` | Observed native state and counters, not achieved throughput or proof that a packet was affected. |
@@ -187,7 +187,7 @@ Baseline alone still means inventory, not naming approval.
 | `ceph.Container.TemporaryBlocklist` / `ceph.BlocklistOverride.Restore` | Retain `ceph` placement and `Temporary`: native TTL and natural expiry are real. Restore checks captured expiration before removing the exact session, and does not infer ownership from a listing. No `fault.TemporaryBlocklist`. |
 | `fault.Pause` / `fault.PauseLease.Resume` | Retain the selected operation/lease pair; Resume thaws without restarting. A non-nil uncertain result still owns a possible pause. |
 | `fault.InterruptNetwork`, `fault.InterruptLink` / `fault.NetworkInterruption.Restore` | Retain the explicit cluster-plane versus standalone named-link call forms for this checkpoint. Restore reconciles an endpoint's identity/address; it is not daemon restart. Do not invent a type suffix change just for uniformity. |
-| `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink` | Retain domain-selected peer/zone names and service-owned restoration. These are not global network-wide cuts. |
+| `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw/multisite.Fixture.InterruptZoneLink` | Retain domain-selected peer/zone names and service-owned restoration. These are not global network-wide cuts. |
 | `fault.InjectObjectDataError` | Record the one-shot debug mutation in `fault` (moved from `ceph.Container` by the #9 checkpoint); retain `Inject` and no universal Restore handle. Recovery by replica rewrite/repair or OSD restart is distinct from removing a policy override. |
 | `ceph.NativeInput.Close` | Retain stream-resource lifetime; not cluster termination or policy rollback. [native_command.go](../../ceph/native_command.go) |
 | `ceph.SharedCluster.Close`, `ceph.SharedCluster.Lease`, `ceph.SharedCluster.Exclusive`, `ceph.Container.Terminate` | Retain distinct owner/tenant/fixture lifetimes. Lease/Exclusive register release with test cleanup; there is no public Tenant.Release method. A tenant cleanup does not mean every shared cluster is immediately terminated. [shared.go](../../ceph/shared.go), [shared_exclusive.go](../../ceph/shared_exclusive.go), [tenant.go](../../ceph/tenant.go) |

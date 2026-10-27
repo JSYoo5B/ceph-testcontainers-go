@@ -43,7 +43,7 @@ shorten:
 | Operation | Bound |
 | --- | --- |
 | `rbdmirror.Mirror.WaitReplayReady`, `WaitReceiverReady` | 4 minutes |
-| `rgw.Multisite.WaitSyncReady`, `WaitBucketSyncReady`, `WaitBucketSyncPolicyReady` | 4 minutes |
+| `multisite.Fixture.WaitSyncReady`, `WaitBucketSyncReady`, `WaitBucketSyncPolicyReady` | 4 minutes |
 | `cephfs.Mirror.WaitDirectoryReady`, `WaitSnapshotSynced` | 4 minutes |
 | `cephfs.MirrorDirectoryRemoval.WaitReleased`, `cephfs.MirrorPeerRemoval.WaitDrained` | 2 minutes |
 | `rbdmirror.Mirror.ReceiverStatus`, `BindNamespace` | 30 seconds |
@@ -209,7 +209,7 @@ terminated". `ControlImage()` and the descriptor getters still answer.
 | Resource | How to clean it up |
 | --- | --- |
 | Containers attached with `WithClient` or `WithClientIdentity` | Terminate them before the cluster. The cluster's networks cannot be removed while they are attached. |
-| `rbdmirror.Mirror`, `cephfs.Mirror`, `rgw.Multisite` | `Terminate` before both clusters. They own their daemons, setup clients, the multisite HTTP network and the network attachments they added. Ceph-side peers, auth entities, realms and policies stay in the clusters. |
+| `rbdmirror.Mirror`, `cephfs.Mirror`, `multisite.Fixture` | `Terminate` before both clusters. They own their daemons, setup clients, the multisite HTTP network and the network attachments they added. Ceph-side peers, auth entities, realms and policies stay in the clusters. |
 | Handles from the package function `ceph.InterruptNetwork` | `Restore` them; no fixture tracks them. |
 | Copies from `ConnectionConfig` and `ClientConfig.ConnectionConfig`, and files you write from them | Delete them; they contain credentials. |
 | Diagnostics reports | They may contain log lines with secrets; review before sharing. |
@@ -252,11 +252,11 @@ if err != nil {
 ```
 
 `rbdmirror.Mirror` and `cephfs.Mirror` embed a container handle, so
-`testcontainers.CleanupContainer` accepts them. `rgw.Multisite` does not; clean
+`testcontainers.CleanupContainer` accepts them. `multisite.Fixture` does not; clean
 it up with `t.Cleanup`:
 
 ```golang
-site, err := rgw.RunMultisite(ctx, ceph.DefaultImage, rgw.MultisiteConfig{
+site, err := multisite.Run(ctx, ceph.DefaultImage, multisite.Config{
 	Source: source, Destination: destination,
 })
 if site != nil {
@@ -347,7 +347,7 @@ result:
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
 | `ApplyNetworkProfile`, `ApplyLinkProfile`, `ApplyZoneLinkProfile` | Delay lease (the change may have reached the kernel) | `Restore` |
-| `rbdmirror.Run`, `cephfs.RunMirror`, `rgw.RunMultisite`, `rgw.RunTopology` | Partial fixture | `Terminate` it |
+| `rbdmirror.Run`, `cephfs.RunMirror`, `multisite.Run`, `multisite.RunTopology` | Partial fixture | `Terminate` it |
 | `AddDaemon` on a mirror | Partial daemon | `RemoveDaemon` or the fixture's `Terminate` |
 | `Multisite.AddZone`, `AddZonegroup` | Partial zone or zonegroup | `Terminate` the fixture; do not add the same name again |
 
@@ -449,7 +449,7 @@ rolls back automatically. Each one keeps enough state to retry or to clean up:
 | `cephfs.Remove` | Retry; it continues with whatever remains. |
 | `cephfs.Filesystem.ScaleMDS` | Desired counts and partial daemons are kept for cleanup; the filesystem and its data are never deleted. |
 | `RefreshMonitorConfig`, `RefreshClientMonitorConfig`, mirror `RefreshMonitorConfig` | Successful copies are kept; retry with a fresh context and up-to-date files are skipped. |
-| `rgw.Multisite.RemoveZone` | Retry with the same name. |
+| `multisite.Fixture.RemoveZone` | Retry with the same name. |
 | `RemoveDaemon` on a mirror | Membership is kept; retry. |
 | Mirror and multisite `Terminate` | Retry; successful removals are not repeated. |
 

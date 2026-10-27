@@ -24,7 +24,7 @@ extension: a separate netem helper image applies it, and only that helper gets
 | Packets that a container sends on one network arrive late | `fault.ApplyNetworkProfile` (opt-in netem helper) | Slow replies from that container, connections stay up | No | `NetworkProfileLease.Restore` |
 | A container sends on one network at a limited bandwidth | `fault.ApplyNetworkProfile` with `NetworkProfile.Rate` (opt-in netem helper) | Large transfers from that container progress at the limit, connections stay up | No | `NetworkProfileLease.Restore` |
 | Packets that a container sends arrive reordered, duplicated or corrupted | `fault.ApplyNetworkProfile` with `NetworkProfile.Reorder`, `Duplicate` or `Corrupt` (opt-in netem helper) | The receiver's TCP reorders, discards duplicates and drops corrupted segments for retransmission; connections stay up | No | `NetworkProfileLease.Restore` |
-| Replication between two clusters stops | `rbdmirror.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw.Multisite.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
+| Replication between two clusters stops | `rbdmirror.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `multisite.Fixture.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
 | A daemon drops or delays messages from one kind of peer | `OverrideConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigOverrideHandle.Restore` |
 | An OSD runs a client's write after the client gave up | `OverrideConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigOverrideHandle.Restore` |
 | One client session is fenced | `TemporaryBlocklist` | The OSDs reject that session | Yes | `BlocklistOverride.Restore` |
@@ -780,11 +780,11 @@ clusters keep serving their local clients.
 | --- | --- | --- |
 | `rbdmirror.Mirror.InterruptPeerLink(ctx, daemonName)` | The receiving `rbd-mirror` daemon's endpoint on the source cluster's public bridge | Its destination endpoint, pool leader election, peer and image policies |
 | `cephfs.Mirror.InterruptPeerLink(ctx, daemonName)` | The source `cephfs-mirror` daemon's endpoint on the destination cluster's public bridge | Source filesystem, MGR registration, directory and peer policies |
-| `rgw.Multisite.InterruptZoneLink(ctx, zoneName)` | The gateway's endpoint on the private multisite HTTP bridge | The local S3 endpoint, realm and period membership |
+| `multisite.Fixture.InterruptZoneLink(ctx, zoneName)` | The gateway's endpoint on the private multisite HTTP bridge | The local S3 endpoint, realm and period membership |
 
 The mirror path tests cut one path of a mirror daemon with
 `ApplyNetworkProfile` and a `Peer` instead of a whole endpoint. For RGW,
-`rgw.Multisite.ApplyZoneLinkProfile(ctx, zoneName, peerZone, delay)` does
+`multisite.Fixture.ApplyZoneLinkProfile(ctx, zoneName, peerZone, delay)` does
 the same on the multisite HTTP network: with the netem helper it drops or
 delays only the packets that one zone's gateway sends to another zone's
 gateway port, so that zone stops reading the peer's changes while the peer

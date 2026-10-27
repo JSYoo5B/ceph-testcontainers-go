@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"io"
 	"net/http"
 	"os"
@@ -30,7 +31,7 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	if rgwImage == "" {
 		rgwImage = image
 	}
-	link, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{Source: source, Destination: destination, Realm: "tc-sync-accounts", SourceZone: "source", DestinationZone: "destination"})
+	link, err := multisite.Run(ctx, rgwImage, multisite.Config{Source: source, Destination: destination, Realm: "tc-sync-accounts", SourceZone: "source", DestinationZone: "destination"})
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {
@@ -49,14 +50,14 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		t.Fatal(err)
 	}
-	permission, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{}, rgw.SyncGroupConfig{ID: "account-permission", Status: rgw.SyncAllowed})
+	permission, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{}, multisite.SyncGroupConfig{ID: "account-permission", Status: multisite.SyncAllowed})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncFlow(ctx, permission, rgw.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
+	if err := link.CreateSyncFlow(ctx, permission, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, permission, rgw.SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+	if err := link.CreateSyncPipe(ctx, permission, multisite.SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := link.ApplySyncGroup(ctx, permission); err != nil {
@@ -91,11 +92,11 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	for _, bucket := range []string{input, output} {
 		primary.request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
 	}
-	selected, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, rgw.SyncGroupConfig{ID: "account-root", Status: rgw.SyncEnabled})
+	selected, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, multisite.SyncGroupConfig{ID: "account-root", Status: multisite.SyncEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipe := rgw.SyncPipeConfig{ID: "same-account-user", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "replica/", User: root}
+	pipe := multisite.SyncPipeConfig{ID: "same-account-user", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "replica/", User: root}
 	err = link.CreateSyncPipe(ctx, selected, pipe)
 	// Ceph 19 drops this pipe from the destination's resolved sources and
 	// replicates nothing, so the fixture refuses it before any change. Any
@@ -246,7 +247,7 @@ func captureRGWSyncAccountBucket(t *testing.T, ctx context.Context, gateway *rgw
 	return native.ID
 }
 
-func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *rgw.Multisite, sourceEndpoint, destinationEndpoint string) {
+func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *multisite.Fixture, sourceEndpoint, destinationEndpoint string) {
 	t.Helper()
 	alpha, err := link.Source.CreateUser(ctx, rgw.UserConfig{ID: "tc-system-cross-tenant", Tenant: "system_alpha"})
 	if err != nil {
@@ -263,11 +264,11 @@ func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *rgw.M
 	const input, output = "/tc-system-tenant-input", "/tc-system-tenant-output"
 	primaryAlpha.request(t, ctx, http.MethodPut, input, nil, http.StatusOK)
 	primaryBeta.request(t, ctx, http.MethodPut, output, nil, http.StatusOK)
-	group, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: strings.TrimPrefix(input, "/"), Tenant: "system_alpha"}, rgw.SyncGroupConfig{ID: "system-cross-tenant", Status: rgw.SyncEnabled})
+	group, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{Bucket: strings.TrimPrefix(input, "/"), Tenant: "system_alpha"}, multisite.SyncGroupConfig{ID: "system-cross-tenant", Status: multisite.SyncEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipe := rgw.SyncPipeConfig{ID: "exact-tenant-instances", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(input, "/"), Tenant: "system_alpha"}, DestinationBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(output, "/"), Tenant: "system_beta"}, Prefix: "system/"}
+	pipe := multisite.SyncPipeConfig{ID: "exact-tenant-instances", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(input, "/"), Tenant: "system_alpha"}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(output, "/"), Tenant: "system_beta"}, Prefix: "system/"}
 	if err := link.CreateSyncPipe(ctx, group, pipe); err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +326,7 @@ func rgwSyncDiagnosticError(err error) string {
 	}
 }
 
-func rgwCrossTenantObjectStatDiagnostic(t *testing.T, ctx context.Context, gateway *rgw.Gateway, identity rgw.SyncBucketIdentity) {
+func rgwCrossTenantObjectStatDiagnostic(t *testing.T, ctx context.Context, gateway *rgw.Gateway, identity multisite.SyncBucketIdentity) {
 	t.Helper()
 	attempt, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()

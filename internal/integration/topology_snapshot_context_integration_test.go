@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"slices"
 	"testing"
 	"time"
@@ -80,13 +81,13 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 							}
 							return result, err
 						case "rgw":
-							result, err := rgw.RunMultisite(callCtx, source.ControlImage(), rgw.MultisiteConfig{Source: source, Destination: destination})
+							result, err := multisite.Run(callCtx, source.ControlImage(), multisite.Config{Source: source, Destination: destination})
 							if result == nil {
 								return nil, err
 							}
 							return result, err
 						default:
-							result, err := rgw.RunTopology(callCtx, source.ControlImage(), rgw.TopologyConfig{Zones: []rgw.ZoneConfig{{Name: "a", Cluster: source}, {Name: "b", Cluster: destination}}})
+							result, err := multisite.RunTopology(callCtx, source.ControlImage(), multisite.TopologyConfig{Zones: []multisite.ZoneConfig{{Name: "a", Cluster: source}, {Name: "b", Cluster: destination}}})
 							if result == nil {
 								return nil, err
 							}

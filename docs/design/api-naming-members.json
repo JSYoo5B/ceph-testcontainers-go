@@ -8,7 +8,8 @@
     "fault": 64,
     "rbd": 20,
     "rbd/mirror": 74,
-    "rgw": 204
+    "rgw": 91,
+    "rgw/multisite": 113
   },
   "types": {
     "capture.FileReport": [
@@ -1216,37 +1217,6 @@
       "AdminCapability.Permission field string `json:\"perm\"`",
       "AdminCapability.Type field string `json:\"type\"`"
     ],
-    "rgw.BucketSyncPolicyStatus": [
-      "BucketSyncPolicyStatus.Bucket field SyncBucketIdentity",
-      "BucketSyncPolicyStatus.Buckets field []SyncBucketIdentity",
-      "BucketSyncPolicyStatus.BucketsImported field bool",
-      "BucketSyncPolicyStatus.GroupID field string",
-      "BucketSyncPolicyStatus.Imported field bool",
-      "BucketSyncPolicyStatus.PeriodID field string",
-      "BucketSyncPolicyStatus.PeriodImported field bool",
-      "BucketSyncPolicyStatus.PolicyImported field bool",
-      "BucketSyncPolicyStatus.RealmEpoch field uint64",
-      "BucketSyncPolicyStatus.RealmID field string",
-      "BucketSyncPolicyStatus.Zone field string",
-      "BucketSyncPolicyStatus.ZoneID field string",
-      "BucketSyncPolicyStatus.ZonegroupID field string"
-    ],
-    "rgw.BucketSyncStatus": [
-      "BucketSyncStatus.BehindShards field int",
-      "BucketSyncStatus.CaughtUp field bool",
-      "BucketSyncStatus.DestinationBucket field SyncBucketIdentity",
-      "BucketSyncStatus.PeriodID field string",
-      "BucketSyncStatus.RealmEpoch field uint64",
-      "BucketSyncStatus.RealmID field string",
-      "BucketSyncStatus.Shards field int",
-      "BucketSyncStatus.SourceBucket field SyncBucketIdentity",
-      "BucketSyncStatus.SourceZone field string",
-      "BucketSyncStatus.SourceZoneID field string",
-      "BucketSyncStatus.State field string",
-      "BucketSyncStatus.Zone field string",
-      "BucketSyncStatus.ZoneID field string",
-      "BucketSyncStatus.ZonegroupID field string"
-    ],
     "rgw.Config": [
       "Config.Name field string",
       "Config.Realm field string",
@@ -1259,47 +1229,12 @@
     "rgw.Container": [
       "Container embed *ceph.Container"
     ],
-    "rgw.DataSyncStatus": [
-      "DataSyncStatus.BehindShards field int",
-      "DataSyncStatus.CaughtUp field bool",
-      "DataSyncStatus.FullShards field int",
-      "DataSyncStatus.IncrementalShards field int",
-      "DataSyncStatus.RecoveringShards field int",
-      "DataSyncStatus.Shards field int",
-      "DataSyncStatus.SourceZone field string",
-      "DataSyncStatus.SourceZoneID field string",
-      "DataSyncStatus.Syncing field bool"
-    ],
     "rgw.Gateway": [
       "Gateway embed testcontainers.Container",
       "Gateway.AccessKey field string",
       "Gateway.GatewayName field string",
       "Gateway.Region field string",
       "Gateway.SecretKey field string"
-    ],
-    "rgw.MetadataSyncStatus": [
-      "MetadataSyncStatus.CaughtUp field bool",
-      "MetadataSyncStatus.IncrementalShards field int",
-      "MetadataSyncStatus.PeriodID field string",
-      "MetadataSyncStatus.RealmEpoch field uint64",
-      "MetadataSyncStatus.Shards field int",
-      "MetadataSyncStatus.State field string"
-    ],
-    "rgw.Multisite": [
-      "Multisite.Destination field *Gateway",
-      "Multisite.DestinationZoneID field string",
-      "Multisite.RealmID field string",
-      "Multisite.Source field *Gateway",
-      "Multisite.SourceZoneID field string"
-    ],
-    "rgw.MultisiteConfig": [
-      "MultisiteConfig.Destination field *ceph.Container",
-      "MultisiteConfig.DestinationZone field string",
-      "MultisiteConfig.Realm field string",
-      "MultisiteConfig.SetupImage field string",
-      "MultisiteConfig.Source field *ceph.Container",
-      "MultisiteConfig.SourceZone field string",
-      "MultisiteConfig.Zonegroup field string"
     ],
     "rgw.Placement": [
       "Placement.LocationConstraint field string",
@@ -1334,71 +1269,9 @@
       "StorageClassConfig.DataPool field string",
       "StorageClassConfig.Name field string"
     ],
-    "rgw.SyncBucketIdentity": [
-      "SyncBucketIdentity.ID field string",
-      "SyncBucketIdentity.Name field string",
-      "SyncBucketIdentity.Tenant field string"
-    ],
-    "rgw.SyncBucketSelector": [
-      "SyncBucketSelector.Name field string",
-      "SyncBucketSelector.Tenant field string"
-    ],
-    "rgw.SyncFlowConfig": [
-      "SyncFlowConfig.DestinationZone field string",
-      "SyncFlowConfig.ID field string",
-      "SyncFlowConfig.SourceZone field string",
-      "SyncFlowConfig.Zones field []string"
-    ],
-    "rgw.SyncGroupConfig": [
-      "SyncGroupConfig.ID field string",
-      "SyncGroupConfig.Status field SyncGroupStatus"
-    ],
-    "rgw.SyncObjectTag": [
-      "SyncObjectTag.Key field string",
-      "SyncObjectTag.Value field string"
-    ],
-    "rgw.SyncPipeConfig": [
-      "SyncPipeConfig.DestinationBucket field *SyncBucketSelector",
-      "SyncPipeConfig.DestinationOwner field *User",
-      "SyncPipeConfig.DestinationPlacements field map[string]*Placement",
-      "SyncPipeConfig.DestinationStorageClass field string",
-      "SyncPipeConfig.DestinationZones field []string",
-      "SyncPipeConfig.ID field string",
-      "SyncPipeConfig.Prefix field string",
-      "SyncPipeConfig.Priority field int32",
-      "SyncPipeConfig.SourceBucket field *SyncBucketSelector",
-      "SyncPipeConfig.SourceZones field []string",
-      "SyncPipeConfig.Tags field []SyncObjectTag",
-      "SyncPipeConfig.User field *User"
-    ],
-    "rgw.SyncPolicyScope": [
-      "SyncPolicyScope.Bucket field string",
-      "SyncPolicyScope.Tenant field string",
-      "SyncPolicyScope.Zonegroup field string"
-    ],
-    "rgw.SyncStatus": [
-      "SyncStatus.DataSources field []DataSyncStatus",
-      "SyncStatus.Metadata field MetadataSyncStatus",
-      "SyncStatus.MetadataMaster field bool",
-      "SyncStatus.PeriodID field string",
-      "SyncStatus.RealmEpoch field uint64",
-      "SyncStatus.RealmID field string",
-      "SyncStatus.Zone field string",
-      "SyncStatus.ZoneID field string",
-      "SyncStatus.ZonegroupID field string"
-    ],
     "rgw.TLSConfig": [
       "TLSConfig.CertificatePEM field []byte",
       "TLSConfig.PrivateKeyPEM field []byte"
-    ],
-    "rgw.TopologyConfig": [
-      "TopologyConfig.MasterZonegroup field string",
-      "TopologyConfig.MetadataMaster field string",
-      "TopologyConfig.Realm field string",
-      "TopologyConfig.SetupImage field string",
-      "TopologyConfig.Zonegroup field string",
-      "TopologyConfig.Zonegroups field []ZonegroupConfig",
-      "TopologyConfig.Zones field []ZoneConfig"
     ],
     "rgw.UserConfig": [
       "UserConfig.AdminCaps field string",
@@ -1443,25 +1316,153 @@
       "UserUsage.Tenant field string",
       "UserUsage.UserID field string"
     ],
-    "rgw.Zone": [
-      "Zone.Gateway field *Gateway",
+    "rgw/multisite.BucketSyncPolicyStatus": [
+      "BucketSyncPolicyStatus.Bucket field SyncBucketIdentity",
+      "BucketSyncPolicyStatus.Buckets field []SyncBucketIdentity",
+      "BucketSyncPolicyStatus.BucketsImported field bool",
+      "BucketSyncPolicyStatus.GroupID field string",
+      "BucketSyncPolicyStatus.Imported field bool",
+      "BucketSyncPolicyStatus.PeriodID field string",
+      "BucketSyncPolicyStatus.PeriodImported field bool",
+      "BucketSyncPolicyStatus.PolicyImported field bool",
+      "BucketSyncPolicyStatus.RealmEpoch field uint64",
+      "BucketSyncPolicyStatus.RealmID field string",
+      "BucketSyncPolicyStatus.Zone field string",
+      "BucketSyncPolicyStatus.ZoneID field string",
+      "BucketSyncPolicyStatus.ZonegroupID field string"
+    ],
+    "rgw/multisite.BucketSyncStatus": [
+      "BucketSyncStatus.BehindShards field int",
+      "BucketSyncStatus.CaughtUp field bool",
+      "BucketSyncStatus.DestinationBucket field SyncBucketIdentity",
+      "BucketSyncStatus.PeriodID field string",
+      "BucketSyncStatus.RealmEpoch field uint64",
+      "BucketSyncStatus.RealmID field string",
+      "BucketSyncStatus.Shards field int",
+      "BucketSyncStatus.SourceBucket field SyncBucketIdentity",
+      "BucketSyncStatus.SourceZone field string",
+      "BucketSyncStatus.SourceZoneID field string",
+      "BucketSyncStatus.State field string",
+      "BucketSyncStatus.Zone field string",
+      "BucketSyncStatus.ZoneID field string",
+      "BucketSyncStatus.ZonegroupID field string"
+    ],
+    "rgw/multisite.Config": [
+      "Config.Destination field *ceph.Container",
+      "Config.DestinationZone field string",
+      "Config.Realm field string",
+      "Config.SetupImage field string",
+      "Config.Source field *ceph.Container",
+      "Config.SourceZone field string",
+      "Config.Zonegroup field string"
+    ],
+    "rgw/multisite.DataSyncStatus": [
+      "DataSyncStatus.BehindShards field int",
+      "DataSyncStatus.CaughtUp field bool",
+      "DataSyncStatus.FullShards field int",
+      "DataSyncStatus.IncrementalShards field int",
+      "DataSyncStatus.RecoveringShards field int",
+      "DataSyncStatus.Shards field int",
+      "DataSyncStatus.SourceZone field string",
+      "DataSyncStatus.SourceZoneID field string",
+      "DataSyncStatus.Syncing field bool"
+    ],
+    "rgw/multisite.Fixture": [
+      "Fixture.Destination field *rgw.Gateway",
+      "Fixture.DestinationZoneID field string",
+      "Fixture.RealmID field string",
+      "Fixture.Source field *rgw.Gateway",
+      "Fixture.SourceZoneID field string"
+    ],
+    "rgw/multisite.MetadataSyncStatus": [
+      "MetadataSyncStatus.CaughtUp field bool",
+      "MetadataSyncStatus.IncrementalShards field int",
+      "MetadataSyncStatus.PeriodID field string",
+      "MetadataSyncStatus.RealmEpoch field uint64",
+      "MetadataSyncStatus.Shards field int",
+      "MetadataSyncStatus.State field string"
+    ],
+    "rgw/multisite.SyncBucketIdentity": [
+      "SyncBucketIdentity.ID field string",
+      "SyncBucketIdentity.Name field string",
+      "SyncBucketIdentity.Tenant field string"
+    ],
+    "rgw/multisite.SyncBucketSelector": [
+      "SyncBucketSelector.Name field string",
+      "SyncBucketSelector.Tenant field string"
+    ],
+    "rgw/multisite.SyncFlowConfig": [
+      "SyncFlowConfig.DestinationZone field string",
+      "SyncFlowConfig.ID field string",
+      "SyncFlowConfig.SourceZone field string",
+      "SyncFlowConfig.Zones field []string"
+    ],
+    "rgw/multisite.SyncGroupConfig": [
+      "SyncGroupConfig.ID field string",
+      "SyncGroupConfig.Status field SyncGroupStatus"
+    ],
+    "rgw/multisite.SyncObjectTag": [
+      "SyncObjectTag.Key field string",
+      "SyncObjectTag.Value field string"
+    ],
+    "rgw/multisite.SyncPipeConfig": [
+      "SyncPipeConfig.DestinationBucket field *SyncBucketSelector",
+      "SyncPipeConfig.DestinationOwner field *rgw.User",
+      "SyncPipeConfig.DestinationPlacements field map[string]*rgw.Placement",
+      "SyncPipeConfig.DestinationStorageClass field string",
+      "SyncPipeConfig.DestinationZones field []string",
+      "SyncPipeConfig.ID field string",
+      "SyncPipeConfig.Prefix field string",
+      "SyncPipeConfig.Priority field int32",
+      "SyncPipeConfig.SourceBucket field *SyncBucketSelector",
+      "SyncPipeConfig.SourceZones field []string",
+      "SyncPipeConfig.Tags field []SyncObjectTag",
+      "SyncPipeConfig.User field *rgw.User"
+    ],
+    "rgw/multisite.SyncPolicyScope": [
+      "SyncPolicyScope.Bucket field string",
+      "SyncPolicyScope.Tenant field string",
+      "SyncPolicyScope.Zonegroup field string"
+    ],
+    "rgw/multisite.SyncStatus": [
+      "SyncStatus.DataSources field []DataSyncStatus",
+      "SyncStatus.Metadata field MetadataSyncStatus",
+      "SyncStatus.MetadataMaster field bool",
+      "SyncStatus.PeriodID field string",
+      "SyncStatus.RealmEpoch field uint64",
+      "SyncStatus.RealmID field string",
+      "SyncStatus.Zone field string",
+      "SyncStatus.ZoneID field string",
+      "SyncStatus.ZonegroupID field string"
+    ],
+    "rgw/multisite.TopologyConfig": [
+      "TopologyConfig.MasterZonegroup field string",
+      "TopologyConfig.MetadataMaster field string",
+      "TopologyConfig.Realm field string",
+      "TopologyConfig.SetupImage field string",
+      "TopologyConfig.Zonegroup field string",
+      "TopologyConfig.Zonegroups field []ZonegroupConfig",
+      "TopologyConfig.Zones field []ZoneConfig"
+    ],
+    "rgw/multisite.Zone": [
+      "Zone.Gateway field *rgw.Gateway",
       "Zone.ID field string",
       "Zone.Name field string",
       "Zone.PeerEndpoint field string",
       "Zone.Zonegroup field string"
     ],
-    "rgw.ZoneConfig": [
+    "rgw/multisite.ZoneConfig": [
       "ZoneConfig.Cluster field *ceph.Container",
       "ZoneConfig.Name field string",
       "ZoneConfig.Zonegroup field string"
     ],
-    "rgw.Zonegroup": [
+    "rgw/multisite.Zonegroup": [
       "Zonegroup.ID field string",
       "Zonegroup.MasterZone field string",
       "Zonegroup.Name field string",
       "Zonegroup.Zones field []Zone"
     ],
-    "rgw.ZonegroupConfig": [
+    "rgw/multisite.ZonegroupConfig": [
       "ZonegroupConfig.MasterZone field string",
       "ZonegroupConfig.Name field string",
       "ZonegroupConfig.Zones field []ZoneConfig"

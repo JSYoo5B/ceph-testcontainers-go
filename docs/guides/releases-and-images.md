@@ -100,7 +100,7 @@ lists every known difference and what you can observe.
 | RBD mirror UUID | `rbd mirror pool info` prints `mirror_uuid` and `remote_namespace`. | Neither field is printed. The fixture reads the UUID from the pool's `rbd_mirroring` object and uses the same namespace name as the remote namespace. | None for the typed API. Your own parsing of `rbd mirror pool info` must tolerate the missing fields. |
 | RBD receiver status | The rbd-mirror admin socket's `rbd mirror status` reports `namespace_replayers` with local and remote namespace names. | The default namespace's `image_replayers` sit in the pool entry and named namespaces appear by name only under `namespaces`. | None. `rbdmirror.Mirror.ReceiverStatus` and `WaitReceiverReady` normalize both forms. |
 | RGW sync pipe records | A system-mode pipe has no `user` in its `params`. | Squid records `"user": ""`. | None. Pipe readback accepts the empty value on Squid. |
-| RGW account root as user-mode pipe principal | Objects replicate between buckets owned by the same account. | Squid resolves no source for such a pipe and replicates nothing. Ordinary-user user-mode pipes work. | `rgw.Multisite.CreateSyncPipe` returns `ceph.ErrUnsupported`, naming the Squid zone, before changing anything when any zone runs Ceph 19. |
+| RGW account root as user-mode pipe principal | Objects replicate between buckets owned by the same account. | Squid resolves no source for such a pipe and replicates nothing. Ordinary-user user-mode pipes work. | `multisite.Fixture.CreateSyncPipe` returns `ceph.ErrUnsupported`, naming the Squid zone, before changing anything when any zone runs Ceph 19. |
 | RGW bucket sync status | `radosgw-admin bucket sync status --format json` prints JSON. | Squid ignores `--format json` and prints text. | None for `BucketSyncStatus` and `WaitBucketSyncReady`, which parse the text into the same structure and fail on unknown lines. Your own calls get text. |
 
 ### Differences you may hit in your own native checks
@@ -121,8 +121,8 @@ These affect commands or client libraries you run yourself, not the typed API:
   pull` is rejected by the master gateway with HTTP 403. The RGW debug log gives
   the reason `'x-amz-content-sha256' supplied, but not in CanonicalHeaders`: the
   release's `radosgw-admin` sends that header without signing it, and its RGW
-  rejects such requests. No setting disables the check. `rgw.RunMultisite` and
-  `rgw.RunTopology` therefore cannot start on 19.2.6. Use 19.2.5 for
+  rejects such requests. No setting disables the check. `multisite.Run` and
+  `multisite.RunTopology` therefore cannot start on 19.2.6. Use 19.2.5 for
   multisite tests on Squid; everything else behaves on 19.2.6 as on 19.2.5.
 - **Tentacle before 20.2.4, Cephx key types.** `ceph-authtool` has no
   `--key-type` and `monmaptool` no cipher options in 20.2.0 to 20.2.3, so these
@@ -247,8 +247,9 @@ provided.
   how to write tests that hold on every release.
 - [cephfs.md](../cephfs.md): `WithMDSImage`, `RunMirror`,
   `Mirror.RebalanceDirectories`.
-- [rgw.md](../rgw.md): `WithImage`, `RunMultisite`, `RunTopology`,
-  `MultisiteConfig.ControlImage`.
+- [rgw.md](../rgw.md): `WithImage`.
+- [rgw-multisite.md](../rgw-multisite.md): `Run`, `RunTopology`,
+  `Config.SetupImage`.
 - [rbd-mirror.md](../rbd-mirror.md): `Run`, namespace mapping.
 - [Testing this repository](../contributing/testing.md): running the module's
   own suites against another image or release.

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"io"
 	"net/http"
 	"os"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -29,7 +29,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if image == "" {
 		image = controlImage
 	}
-	link, err := rgw.RunMultisite(ctx, image, rgw.MultisiteConfig{Source: source, Destination: destination, Realm: "tc-owned-sync", SourceZone: "source", DestinationZone: "destination"})
+	link, err := multisite.Run(ctx, image, multisite.Config{Source: source, Destination: destination, Realm: "tc-owned-sync", SourceZone: "source", DestinationZone: "destination"})
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {
@@ -50,15 +50,15 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		t.Fatal(err)
 	}
-	global, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{}, rgw.SyncGroupConfig{ID: "selective", Status: rgw.SyncAllowed})
+	global, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{}, multisite.SyncGroupConfig{ID: "selective", Status: multisite.SyncAllowed})
 	if err != nil {
 		t.Fatal(err)
 	}
-	symmetric := rgw.SyncFlowConfig{ID: "owned-pair", Zones: []string{"source", "destination"}}
+	symmetric := multisite.SyncFlowConfig{ID: "owned-pair", Zones: []string{"source", "destination"}}
 	if err := link.CreateSyncFlow(ctx, global, symmetric); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, global, rgw.SyncPipeConfig{ID: "permission", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+	if err := link.CreateSyncPipe(ctx, global, multisite.SyncPipeConfig{ID: "permission", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := link.ApplySyncGroup(ctx, global); err != nil {
@@ -84,11 +84,11 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	const selected, localOnly = "/tc-owned-selected", "/tc-owned-local-only"
 	sourceS3.request(t, ctx, http.MethodPut, selected, nil, http.StatusOK)
 	sourceS3.request(t, ctx, http.MethodPut, localOnly, nil, http.StatusOK)
-	bucket, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: "tc-owned-selected"}, rgw.SyncGroupConfig{ID: "selected-prefix", Status: rgw.SyncEnabled})
+	bucket, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{Bucket: "tc-owned-selected"}, multisite.SyncGroupConfig{ID: "selected-prefix", Status: multisite.SyncEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, bucket, rgw.SyncPipeConfig{ID: "prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "published/"}); err != nil {
+	if err := link.CreateSyncPipe(ctx, bucket, multisite.SyncPipeConfig{ID: "prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "published/"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := link.ApplySyncGroup(ctx, bucket); err != nil {
@@ -115,7 +115,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 		rgwAbsentObject{sourceS3, selected + "/published/reverse-excluded"},
 	)
 	t.Log("owned policy replicated matching bucket/prefix bytes and excluded another prefix, another bucket and the reverse direction during 35 seconds")
-	if err := link.SetSyncGroupStatus(ctx, bucket, rgw.SyncForbidden); err != nil {
+	if err := link.SetSyncGroupStatus(ctx, bucket, multisite.SyncForbidden); err != nil {
 		t.Fatal(err)
 	}
 	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
@@ -125,7 +125,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if got := destinationS3.request(t, ctx, http.MethodGet, selected+"/published/selected", nil, http.StatusOK); !bytes.Equal(got, payload) {
 		t.Fatal("forbidden policy changed earlier replicated bytes")
 	}
-	if err := link.SetSyncGroupStatus(ctx, bucket, rgw.SyncEnabled); err != nil {
+	if err := link.SetSyncGroupStatus(ctx, bucket, multisite.SyncEnabled); err != nil {
 		t.Fatal(err)
 	}
 	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
@@ -165,7 +165,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	// handle must refuse removal and leave the replacement's data unchanged.
 	const reused = "/tc-owned-recreated"
 	sourceS3.request(t, ctx, http.MethodPut, reused, nil, http.StatusOK)
-	old, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: "tc-owned-recreated"}, rgw.SyncGroupConfig{ID: "old-instance", Status: rgw.SyncEnabled})
+	old, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{Bucket: "tc-owned-recreated"}, multisite.SyncGroupConfig{ID: "old-instance", Status: multisite.SyncEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	}
 	// Directional native identity is a pair; symmetrical removal uses its
 	// owned name. Exercise both without broadening the directional pipe.
-	if err := link.CreateSyncFlow(ctx, global, rgw.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
+	if err := link.CreateSyncFlow(ctx, global, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := link.RemoveSyncFlow(ctx, global, symmetric); err != nil {
@@ -195,7 +195,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	t.Log("dynamic prefix update/deletion and owned group removal retained old replicas; recreated native bucket instance refused stale-handle removal")
 }
 
-func waitOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *rgw.Multisite, group *rgw.SyncGroup, pipe string) rgw.BucketSyncStatus {
+func waitOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup, pipe string) multisite.BucketSyncStatus {
 	t.Helper()
 	started := time.Now()
 	status, err := link.WaitBucketSyncReady(ctx, group, pipe, "source", "destination")
@@ -209,7 +209,7 @@ func waitOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *rgw.Mult
 	return status
 }
 
-func reconcileOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *rgw.Multisite, group *rgw.SyncGroup, pipe string) {
+func reconcileOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup, pipe string) {
 	t.Helper()
 	before, err := link.BucketSyncStatus(ctx, group, pipe, "source", "destination")
 	if err != nil || before.State != "incremental" || before.Shards <= 0 {
@@ -238,7 +238,7 @@ func reconcileOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *rgw
 	t.Logf("explicit native bucket sync run preserved current policy/identities and caught up previous logs: prior_behind=%d", before.BehindShards)
 }
 
-func waitOwnedBucketDisabled(t *testing.T, ctx context.Context, link *rgw.Multisite, group *rgw.SyncGroup, pipe string) {
+func waitOwnedBucketDisabled(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup, pipe string) {
 	t.Helper()
 	if _, err := link.WaitSyncReady(ctx, "destination"); err != nil {
 		t.Fatal(err)
@@ -246,7 +246,7 @@ func waitOwnedBucketDisabled(t *testing.T, ctx context.Context, link *rgw.Multis
 	wait, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	started := time.Now()
-	var status rgw.BucketSyncStatus
+	var status multisite.BucketSyncStatus
 	var lastErr error
 	for {
 		status, lastErr = link.BucketSyncStatus(wait, group, pipe, "source", "destination")

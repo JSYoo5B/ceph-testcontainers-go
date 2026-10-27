@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"bytes"
@@ -102,7 +102,7 @@ func (c *rgwPolicyImportCLI) Exec(ctx context.Context, args []string, opts ...tc
 	return c.rgwSyncCLI.Exec(ctx, args, opts...)
 }
 
-func newRGWPolicyImportFixture(t *testing.T) (*Multisite, *rgwPolicyImportCLI, *SyncGroup) {
+func newRGWPolicyImportFixture(t *testing.T) (*Fixture, *rgwPolicyImportCLI, *SyncGroup) {
 	t.Helper()
 	f, cli, g := newRGWSyncBucketStatusFixture(t)
 	observer := &rgwPolicyImportCLI{rgwSyncCLI: cli, localPolicy: syncJSONClone(cli.bucketPolicy)}

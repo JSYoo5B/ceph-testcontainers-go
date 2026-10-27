@@ -30,7 +30,8 @@ from v0.1.0, see [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md).
 | `fault` | `github.com/JSYoo5B/ceph-testcontainers-go/fault` | Container pause, network delay, loss, rate, packet faults and endpoint interruption on existing fixtures | [docs/fault.md](docs/fault.md) |
 | `rbd` | `github.com/JSYoo5B/ceph-testcontainers-go/rbd` | RBD pools and namespaces, image watchers and locks, mirroring between clusters, backup and restore | [docs/rbd.md](docs/rbd.md) |
 | `cephfs` | `github.com/JSYoo5B/ceph-testcontainers-go/cephfs` | Filesystems and MDS topology, subvolumes, snapshots and clones, client authorization and sessions, snapshot mirroring | [docs/cephfs.md](docs/cephfs.md) |
-| `rgw` | `github.com/JSYoo5B/ceph-testcontainers-go/rgw` | S3 and Swift gateways, users, accounts and quotas, placement and storage classes, multisite replication and sync policy | [docs/rgw.md](docs/rgw.md) |
+| `rgw` | `github.com/JSYoo5B/ceph-testcontainers-go/rgw` | S3 and Swift gateways, users, accounts and quotas, placement and storage classes | [docs/rgw.md](docs/rgw.md) |
+| `rgw/multisite` | `github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite` | RGW multisite realms, zones and zonegroups, period transfer, sync status and sync policy | [docs/rgw-multisite.md](docs/rgw-multisite.md) |
 | `capture` | `github.com/JSYoo5B/ceph-testcontainers-go/capture` | Opt-in packet capture on one container endpoint, with a caller-selected helper image, delivering a structurally checked classic pcap and a report | [docs/capture.md](docs/capture.md) |
 
 Every fixture package follows the Testcontainers for Go module conventions: a `Run`
@@ -50,7 +51,8 @@ cover [ceph policy names](docs/guides/upgrading-ceph-policy-names.md),
 [network profiles](docs/guides/upgrading-network-profile-names.md) and the
 [RBD cache operation](docs/guides/upgrading-rbd-cache-name.md), the
 [topology accessors](docs/guides/upgrading-context-accessors.md), the
-[operations that moved onto handles](docs/guides/upgrading-handle-operations.md) and the
+[operations that moved onto handles](docs/guides/upgrading-handle-operations.md), the
+[RGW multisite package](docs/guides/upgrading-rgw-multisite.md) and the
 [typed OSD flags, PG IDs and connection config](docs/guides/upgrading-typed-values.md).
 
 ## Requirements
