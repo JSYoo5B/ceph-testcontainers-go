@@ -37,11 +37,15 @@ record the final source and checks.
    Review the diff from the prior tag, including exported signatures,
    `go.mod`/`go.sum`, bootstrap defaults and failure/cleanup contracts.
 2. Keep `CHANGELOG.md` under `Unreleased` until publication. Unreleased
-   changes are recorded in the legacy `Unreleased` section and in the
-   fragments under `docs/changes/` (see
-   [Release-note fragments](release-fragments.md)); both are part of the
-   release notes until an assembler exists, so review the fragments too and
-   run `python3 .github/scripts/release_fragments.py`. Update the
+   changes are recorded in the legacy `Unreleased` section (published
+   history; do not rewrite it) and in the fragments under `docs/changes/`
+   (see [Release-note fragments](release-fragments.md)). Run
+   `python3 .github/scripts/release_fragments.py`, then generate the draft
+   section with `python3 .github/scripts/release_assemble.py assemble
+   --version vX.Y.Z --date YYYY-MM-DD --output <new file>`. The draft is
+   input for review, not an approval: edit it into a compact user-focused
+   section, keep its identifier markers and check that every `api-break`
+   entry links its migration guide. Update the
    upgrade guide, module pages and README links together. State the Go
    minimum separately from this repository's toolchain and native clients'
    platform requirements.
@@ -78,14 +82,31 @@ release automatically.
 Before a separately authorized publication:
 
 - Select the final candidate SHA and prepare release notes from the
-  changelog and the unreleased fragments, including compatibility, support and unresolved native limits.
-- When publishing, replace `Unreleased` with the version and actual release
-  date, and update the README's development-version notice so it does not
+  assembled section, including compatibility, support and unresolved native limits.
+- When publishing, replace the legacy `Unreleased` block with the reviewed
+  assembled section (its heading carries the version and the actual release
+  date), delete the consumed fragments in the same pull request, and update the README's development-version notice so it does not
   tell release users to install an older tag.
 - Rewrite the pre-release wording of the [upgrade guide](../guides/upgrading-to-v0.3.md)
   for the published tag, including its introduction, compatibility table and
   installation instructions. Identify the release by its tag and keep the
   final SHA's validation evidence in the release notes.
+- Fetch the release tags, commit the release pull request's content (the
+  assembled section in place of the legacy block, the consumed fragments
+  deleted) and run the pre-tag check, naming the release you are preparing:
+  `python3 .github/scripts/release_assemble.py check --require-tags --candidate vX.Y.Z --base <previous release commit>`.
+  `--candidate` must name the newest section of `CHANGELOG.md`, and its tag
+  must not exist yet. It exempts only that section, which the report lists as
+  `not yet tag-verified; marker format and uniqueness checked; original fragment
+  bytes and digests NOT verified`; review the section's diff against the draft
+  yourself.
+  Every earlier section is still compared with its tag, any other untagged
+  section fails, and a changed published section, a left-behind fragment or a
+  re-used identifier fails. A `SKIPPED` tag comparison means the clone could not
+  verify published history. Do not tag until this passes.
+- After the tag exists, run the strict check again without `--candidate`:
+  `python3 .github/scripts/release_assemble.py check --require-tags`. It now
+  compares the candidate's section with its own tag as well, and it must pass.
 - Point the tag and GitHub Release at the reviewed commit, then verify that
   the Go module proxy resolves that tag and that an external integration
   module builds with it. Do not claim published-tag consumption before this

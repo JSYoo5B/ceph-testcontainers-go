@@ -1,0 +1,9 @@
+{
+ "description": "API move of the RBD backup and incremental export and restore helpers from the multicluster package to rbd.",
+ "identifiers": {
+  "multicluster.ExportRBDBackup": "rbd.ExportBackup",
+  "multicluster.ExportRBDIncremental": "rbd.ExportIncremental",
+  "multicluster.RestoreRBDBackup": "rbd.RestoreBackup",
+  "multicluster.RestoreRBDIncremental": "rbd.RestoreIncremental"
+ }
+}

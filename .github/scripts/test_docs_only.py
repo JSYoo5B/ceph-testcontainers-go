@@ -423,15 +423,17 @@ class WorkflowWiringTests(unittest.TestCase):
         header = self.job("vulncheck").split("    steps:", 1)[0]
         self.assertIn("    if: ${{ !cancelled() }}\n", header)
 
-    def test_static_job_gates_every_step_except_the_two_text_validators(self):
+    def test_static_job_gates_every_step_except_the_text_checks(self):
         steps = re.split(r"(?m)^      - ", self.job("static").split("    steps:\n", 1)[1])[1:]
         ungated = []
         for step in steps:
             if self.GATE not in step:
                 ungated.append(step.splitlines()[0])
-        # Checkout stays ungated (the validators need the tree); nothing else but the
-        # fragment validator and the image role vocabulary check, which read text.
+        # Checkout stays ungated (the checks need the tree); nothing else but the
+        # fragment validator, the released-range check and the image role vocabulary
+        # check, which read text.
         self.assertEqual(ungated, ["uses: actions/checkout@v7", "name: Validate release-note fragments",
+                                   "name: Check the released changelog range",
                                    "name: Check the image role vocabulary"])
         validator = [step for step in steps if "release_fragments.py" in step]
         self.assertEqual(len(validator), 1)
@@ -440,6 +442,10 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertEqual(len(vocabulary), 1)
         self.assertIn("if: ${{ !cancelled() }}", vocabulary[0])
         self.assertIn("python3 .github/scripts/release_fragments.py", validator[0])
+        released = [step for step in steps if "release_assemble.py" in step]
+        self.assertEqual(len(released), 1)
+        self.assertIn("if: ${{ !cancelled() }}", released[0])
+        self.assertIn("run: python3 .github/scripts/release_assemble.py check", released[0])
 
     def test_required_check_names_are_unchanged(self):
         names = re.findall(r"(?m)^    name: (.*)$", self.text)

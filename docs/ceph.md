@@ -2445,6 +2445,10 @@ func (o *Observer) MGRModules(ctx context.Context) ([]ceph.MGRModuleState, error
 func (o *Observer) OSDFlags(ctx context.Context) ([]ceph.OSDFlag, error)
 func (o *Observer) OSDStates(ctx context.Context) ([]ceph.OSDState, error)
 func (o *Observer) ManagerServices(ctx context.Context) (map[string]string, error)
+func (o *Observer) QuorumStatus(ctx context.Context) (ceph.QuorumStatus, error)
+func (o *Observer) MonitorBootstrapAddresses(ctx context.Context) (string, error)
+func (o *Observer) HealthDetails(ctx context.Context) (ceph.HealthSnapshot, error)
+func (o *Observer) FullRatios(ctx context.Context) (ceph.FullRatioSnapshot, error)
 ```
 
 Each query reads the cluster when it is called; constructing an `Observer`
@@ -2460,8 +2464,14 @@ queries after `Terminate` fail with the error of the command path. An
 `ManagerServices` take the topology lock first, each as its `Container` method
 does, and refuse a terminated cluster before running a command.
 `ManagerServices` waits for the lock under `ctx`; the others wait for it without
-a context. The remaining observations stay on `Container` and are not yet
-available through an `Observer`.
+a context. `QuorumStatus` takes no topology lock and selects the control
+container for each read. `MonitorBootstrapAddresses`, `HealthDetails` and
+`FullRatios` wait for the topology lock under `ctx`, refuse a terminated cluster
+before running a command, and keep the control handle and original-FSID checks
+of their `Container` methods. `QuorumStatus` has no liveness check, so on a
+terminated cluster it fails with the error of the command path. The remaining
+observations (`PGInconsistencies`, `ObjectWatchers`, `ManagerMetrics`) stay on
+`Container` and are not yet available through an `Observer`.
 
 #### OSDs
 
