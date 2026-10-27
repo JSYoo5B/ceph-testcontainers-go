@@ -129,8 +129,8 @@ func newCleanupFixture(t *testing.T) (*retainedFixture, *cleanupControl) {
 	control := &cleanupControl{retainedControl: f.control}
 	f.cluster.Container = control
 	f.cluster.run = &runVolume{name: "synthetic-run"}
-	inner := f.cluster.osdRunner
-	f.cluster.osdRunner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	inner := f.cluster.stores.runner
+	f.cluster.stores.runner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		control.mu.Lock()
 		control.socket = true
 		control.mu.Unlock()
@@ -143,9 +143,9 @@ func newCleanupFixture(t *testing.T) (*retainedFixture, *cleanupControl) {
 // either returns no container with an error or the fixture candidate with one.
 func runnerOutcome(f *retainedFixture, withCandidate bool) *int {
 	dispatches := new(int)
-	inner := f.cluster.osdRunner
+	inner := f.cluster.stores.runner
 	var mu sync.Mutex
-	f.cluster.osdRunner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	f.cluster.stores.runner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		mu.Lock()
 		*dispatches++
 		mu.Unlock()

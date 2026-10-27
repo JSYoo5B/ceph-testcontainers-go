@@ -73,9 +73,10 @@ type Container struct {
 	nets networkState
 	// detachedOSDs are retained stores and registrations without a
 	// container, until DetachedOSD.Reopen or Terminate.
-	detachedOSDs      map[int]*DetachedOSD
-	osdMemory         *osdMemoryStorage
-	osdVolume         *osdVolumeStorage
+	detachedOSDs map[int]*DetachedOSD
+	// stores is the OSD memory and volume storage and its test seams; see
+	// osdStorageState. It has no lock of its own: mu guards it.
+	stores            osdStorageState
 	run               *runVolume
 	config            []byte
 	keyring           []byte
@@ -93,13 +94,8 @@ type Container struct {
 	// debugLevels admits one OverrideDebugLevel window per daemon and
 	// option; it has its own lock.
 	debugLevels debugLevelRegistry
-	// osdRunner replaces runContainer for OSD containers in tests.
-	osdRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 	// daemonRunner replaces runContainer for AddMonitor and AddManager containers in tests.
 	daemonRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
-	// osdVolumeDocker and osdVolumeRunner replace owned-volume allocation in tests.
-	osdVolumeDocker func(context.Context) (osdMemoryVolumeClient, error)
-	osdVolumeRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 	// firstMonitorImageID is the ID of the image of the first MON container, which
 	// errors about the essential image's capabilities name. It identifies one
 	// container generation, not a role.
@@ -672,15 +668,8 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, image str
 		buckets[config.Host] = true
 	}
 	keyring := []byte(fmt.Sprintf("[osd.%d]\n\tkey = %s\n", id, strings.TrimSpace(string(secret))))
-	if c.osdMemory != nil {
-		if err := c.osdMemory.requireFreshOSD(ctx, id); err != nil {
-			return launch, err
-		}
-	}
-	if c.osdVolume != nil {
-		if err := c.osdVolume.requireFreshOSD(ctx, id); err != nil {
-			return launch, err
-		}
+	if err := c.stores.requireFresh(ctx, id); err != nil {
+		return launch, err
 	}
 	if err := c.clearAdminSocket(ctx, fmt.Sprintf("osd.%d", id)); err != nil {
 		return launch, err
@@ -706,11 +695,7 @@ func (c *Container) startOSD(ctx context.Context, launch osdLaunch) error {
 	if launch.osd.Container != nil {
 		return fmt.Errorf("osd.%d already has a container; do not rebind its handle", launch.osd.ID)
 	}
-	run := c.osdRunner
-	if run == nil {
-		run = runContainer
-	}
-	ctr, err := run(ctx, launch.recipe.image, launch.recipe)
+	ctr, err := c.stores.runOSD(ctx, launch.recipe.image, launch.recipe)
 	if ctr != nil {
 		launch.osd.Container = ctr
 	}
@@ -846,15 +831,8 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 			return fmt.Errorf("terminate %s: %w", name, err)
 		}
 	}
-	if c.osdMemory != nil {
-		if err := c.osdMemory.discardOSD(ctx, id); err != nil {
-			return err
-		}
-	}
-	if c.osdVolume != nil {
-		if err := c.osdVolume.discardOSD(ctx, id); err != nil {
-			return err
-		}
+	if err := c.stores.discard(ctx, id); err != nil {
+		return err
 	}
 	delete(c.osds, id)
 	return nil
@@ -1041,18 +1019,8 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 		}
 		delete(c.osds, id)
 	}
-	var memoryErr error
-	if c.osdMemory != nil && len(c.osds) == 0 {
-		if memoryErr = c.osdMemory.release(ctx); memoryErr == nil {
-			c.osdMemory = nil
-		}
-	}
-	var volumeErr error
-	if c.osdVolume != nil && len(c.osds) == 0 {
-		if volumeErr = c.osdVolume.release(ctx); volumeErr == nil {
-			c.osdVolume = nil
-		}
-	}
+	memoryErr := c.stores.releaseMemory(ctx, len(c.osds) == 0)
+	volumeErr := c.stores.releaseVolume(ctx, len(c.osds) == 0)
 	if c.manager != nil {
 		if err := c.manager.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 			errs = append(errs, err)
@@ -1116,16 +1084,8 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	errs = append(errs, c.removeLabeledContainers(ctx))
 	// The removed containers can include a storage user whose create reply
 	// was lost, such as an OSD or an owned storage helper.
-	if memoryErr != nil && c.osdMemory != nil && len(c.osds) == 0 {
-		if memoryErr = c.osdMemory.release(ctx); memoryErr == nil {
-			c.osdMemory = nil
-		}
-	}
-	if volumeErr != nil && c.osdVolume != nil && len(c.osds) == 0 {
-		if volumeErr = c.osdVolume.release(ctx); volumeErr == nil {
-			c.osdVolume = nil
-		}
-	}
+	memoryErr = c.stores.retryMemory(ctx, memoryErr, len(c.osds) == 0)
+	volumeErr = c.stores.retryVolume(ctx, volumeErr, len(c.osds) == 0)
 	errs = append(errs, memoryErr, volumeErr)
 	if c.run != nil {
 		if err := c.run.remove(ctx); err != nil {

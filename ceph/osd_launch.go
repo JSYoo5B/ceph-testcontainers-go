@@ -51,12 +51,7 @@ func (c *Container) newOSDLaunchRecipe(osd *OSDContainer, keyring []byte) *osdLa
 	if c.run != nil {
 		r.runVolume = c.run.name
 	}
-	if c.osdMemory != nil {
-		r.memoryVolume = c.osdMemory.name
-	}
-	if c.osdVolume != nil {
-		r.dataVolume = c.osdVolume.name
-	}
+	r.memoryVolume, r.dataVolume = c.stores.launchVolumes()
 	return r
 }
 
