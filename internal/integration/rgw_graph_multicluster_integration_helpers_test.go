@@ -6,13 +6,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"net/http"
 	"os"
 	"testing"
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -61,8 +61,8 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 	}
 	// Deliberately declare the master last. Run chooses roles by name rather
 	// than assuming that the first caller-provided storage cluster is master.
-	fixture, err := rgw.RunTopology(ctx, rgwImage, rgw.TopologyConfig{
-		Zones:          []rgw.ZoneConfig{{Name: "b", Cluster: clusters[1]}, {Name: "c", Cluster: clusters[2]}, {Name: "a", Cluster: clusters[0]}},
+	fixture, err := multisite.RunTopology(ctx, rgwImage, multisite.TopologyConfig{
+		Zones:          []multisite.ZoneConfig{{Name: "b", Cluster: clusters[1]}, {Name: "c", Cluster: clusters[2]}, {Name: "a", Cluster: clusters[0]}},
 		MetadataMaster: "a",
 	})
 	if fixture != nil {
@@ -167,7 +167,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 	t.Log("three independent Ceph clusters: one realm/zonegroup, named metadata master, three native zone IDs/endpoints, secondary outage/rejoin and retained cross-zone communication passed")
 }
 
-func rgwAssertThreeZonePeriod(t *testing.T, ctx context.Context, fixture *rgw.Multisite, name string, expected []rgw.Zone) {
+func rgwAssertThreeZonePeriod(t *testing.T, ctx context.Context, fixture *multisite.Fixture, name string, expected []multisite.Zone) {
 	t.Helper()
 	data, err := fixture.ZoneAdmin(ctx, name, "period", "get", "--format", "json")
 	if err != nil {

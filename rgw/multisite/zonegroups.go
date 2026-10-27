@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 
 // Zonegroups returns a sorted snapshot of the owned groups and their attached
 // zones. Detached zones are omitted after their removal period is committed.
-func (f *Multisite) Zonegroups() []Zonegroup {
+func (f *Fixture) Zonegroups() []Zonegroup {
 	f.topologyMu.Lock()
 	defer f.topologyMu.Unlock()
 	groups := make(map[string]*Zonegroup)
@@ -45,7 +45,7 @@ func (f *Multisite) Zonegroups() []Zonegroup {
 // On error, any newly created groups/zones/containers remain owned for Terminate.
 // image selects the new gateways. Setup clients use each new cluster's control
 // image unless the fixture was configured with ControlImage.
-func (f *Multisite) AddZonegroup(ctx context.Context, image string, config ZonegroupConfig, opts ...testcontainers.ContainerCustomizer) (*Zonegroup, error) {
+func (f *Fixture) AddZonegroup(ctx context.Context, image string, config ZonegroupConfig, opts ...testcontainers.ContainerCustomizer) (*Zonegroup, error) {
 	if f == nil || !validRGWZoneName(config.Name) || len(config.Zones) == 0 {
 		return nil, errors.New("RGW zonegroup requires a valid name and at least one zone")
 	}
@@ -115,7 +115,7 @@ func (f *Multisite) AddZonegroup(ctx context.Context, image string, config Zoneg
 // Partial period propagation/container cleanup can be retried with the same
 // name. Terminate also removes any remaining owned containers. Remaining gateway
 // application endpoints may change on bridge-mode reload.
-func (f *Multisite) RemoveZone(ctx context.Context, name string) error {
+func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 	if f == nil || !validRGWZoneName(name) {
 		return errors.New("invalid RGW fixture or zone name")
 	}
@@ -254,7 +254,7 @@ func rgwPeriodMaster(period *rgwTopologyPeriod, states []*rgwZoneState) *rgwZone
 	return nil
 }
 
-func (f *Multisite) removableZone(period *rgwTopologyPeriod, master *rgwZoneState, states []*rgwZoneState, name string) (*rgwZoneState, error) {
+func (f *Fixture) removableZone(period *rgwTopologyPeriod, master *rgwZoneState, states []*rgwZoneState, name string) (*rgwZoneState, error) {
 	if err := f.checkZonePeriod(period, master, states); err != nil {
 		return nil, err
 	}

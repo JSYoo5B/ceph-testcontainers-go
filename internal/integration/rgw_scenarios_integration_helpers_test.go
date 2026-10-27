@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"io"
 	"net/http"
 	"os"
@@ -17,7 +18,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
-func waitRGWScenarioBucketPolicyImport(t *testing.T, ctx context.Context, link *rgw.Multisite, group *rgw.SyncGroup) {
+func waitRGWScenarioBucketPolicyImport(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup) {
 	t.Helper()
 	// Import is a prerequisite for future writes. It does not prove effective
 	// discovery hints, data checkpoints, object bytes or permission effects.
@@ -29,7 +30,7 @@ func waitRGWScenarioBucketPolicyImport(t *testing.T, ctx context.Context, link *
 	t.Logf("bucket policy metadata imported before future writes: elapsed=%s group=%s period=%s zone=%s/%s bucket=%s/%s:%s", time.Since(started).Round(time.Millisecond), status.GroupID, status.PeriodID, status.Zone, status.ZoneID, status.Bucket.Tenant, status.Bucket.Name, status.Bucket.ID)
 }
 
-func newRGWScenario(t *testing.T, ctx context.Context, realm string) (*rgw.Multisite, s3HTTPClient, s3HTTPClient) {
+func newRGWScenario(t *testing.T, ctx context.Context, realm string) (*multisite.Fixture, s3HTTPClient, s3HTTPClient) {
 	t.Helper()
 	source, destination, _, _ := newMultiClusterPair(t)
 	controlImage, _ := integrationImages(t)
@@ -37,7 +38,7 @@ func newRGWScenario(t *testing.T, ctx context.Context, realm string) (*rgw.Multi
 	if image == "" {
 		image = controlImage
 	}
-	link, err := rgw.RunMultisite(ctx, image, rgw.MultisiteConfig{Source: source, Destination: destination, Realm: realm, SourceZone: "source", DestinationZone: "destination"})
+	link, err := multisite.Run(ctx, image, multisite.Config{Source: source, Destination: destination, Realm: realm, SourceZone: "source", DestinationZone: "destination"})
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

@@ -1,14 +1,15 @@
 {
   "schema": "ceph-api-naming-review/v1",
-  "declarations_sha256": "46d6bff1cd25a6d3787b5dffe5f1b0caf5565b31474b11afd9ef7d85da10518b",
-  "members_sha256": "cd53970005347013afb1a1871155838d8259afed4de6200729aba983efb35a04",
+  "declarations_sha256": "667762bd1fdf47d71e93a0f728b2b9447ce3988c23acfc5c36101473c395845a",
+  "members_sha256": "69651bf90e0fc39ebfd8e448bb709e1de75fd2384c111852d9ff49b9e6005343",
   "declarations": {
     "capture": 36,
     "ceph": 384,
     "cephfs": 155,
     "fault": 35,
     "rbd": 77,
-    "rgw": 125
+    "rgw": 69,
+    "rgw/multisite": 56
   },
   "members": {
     "capture": 56,
@@ -16,7 +17,8 @@
     "cephfs": 247,
     "fault": 64,
     "rbd": 94,
-    "rgw": 204
+    "rgw": 91,
+    "rgw/multisite": 113
   },
   "review": "api-naming-audit.md"
 }

@@ -76,6 +76,17 @@ change the API.
 - Record the remaining public declaration/member retention decisions, including
   dependency-role APIs, and bind that review to generated source catalogues.
   Inventory regeneration alone cannot approve later API changes.
+- Move RGW multisite orchestration from `rgw` to the new public package
+  `rgw/multisite`, which imports `rgw` and reuses `rgw.Gateway`; `rgw` does not
+  import it. The 56 declarations move (`RunMultisite`, `RunTopology`,
+  `Multisite`, `MultisiteConfig`, `TopologyConfig`, `Zone`, `ZoneConfig`,
+  `Zonegroup`, `ZonegroupConfig`, the `Sync*` and status records, the three
+  `Sync*` constants and the methods of `Multisite` and `SyncGroup`).
+  `Multisite` is now `multisite.Fixture`, `RunMultisite` is `multisite.Run` and
+  `MultisiteConfig` is `multisite.Config`; every other name and every method is
+  unchanged. There is no deprecated phase and no alias in `rgw`. Callers,
+  examples and documentation moved, with behavior unchanged. See
+  `docs/guides/upgrading-rgw-multisite.md` for the migration table.
 
 ### Added
 

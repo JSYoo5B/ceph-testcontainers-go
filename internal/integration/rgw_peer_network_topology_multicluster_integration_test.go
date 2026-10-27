@@ -7,13 +7,13 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"net/http"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -24,9 +24,9 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, false)
-	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{
+	fixture, err := multisite.RunTopology(ctx, rgwGateway, multisite.TopologyConfig{
 		Zonegroup: "us", MetadataMaster: "a",
-		Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
+		Zones: []multisite.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
 	})
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {
@@ -156,9 +156,9 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	defer cancel()
 	netem := netemImage(t)
 	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, false)
-	fixture, err := rgw.RunTopology(ctx, rgwGateway, rgw.TopologyConfig{
+	fixture, err := multisite.RunTopology(ctx, rgwGateway, multisite.TopologyConfig{
 		Zonegroup: "us", MetadataMaster: "a",
-		Zones: []rgw.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
+		Zones: []multisite.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
 	})
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {
@@ -282,15 +282,15 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 
 // zoneLinkSync is one look at both zones' sync status.
 type zoneLinkSync struct {
-	a, b rgw.SyncStatus
+	a, b multisite.SyncStatus
 }
 
 // dataSource returns status's data sync from the zone named source.
-func dataSource(status rgw.SyncStatus, source string) rgw.DataSyncStatus {
+func dataSource(status multisite.SyncStatus, source string) multisite.DataSyncStatus {
 	for _, data := range status.DataSources {
 		if data.SourceZone == source {
 			return data
 		}
 	}
-	return rgw.DataSyncStatus{}
+	return multisite.DataSyncStatus{}
 }

@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"encoding/xml"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"net/http"
 	"os"
 	"testing"
@@ -15,7 +16,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-func waitRGWTranslationPolicyReady(t *testing.T, ctx context.Context, link *rgw.Multisite, group *rgw.SyncGroup) {
+func waitRGWTranslationPolicyReady(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup) {
 	t.Helper()
 	status, err := link.WaitBucketSyncPolicyReady(ctx, group, "destination")
 	if err != nil || !status.Imported || !status.PeriodImported || !status.PolicyImported || !status.BucketsImported || status.Bucket.ID == "" || len(status.Buckets) == 0 {
@@ -27,7 +28,7 @@ func waitRGWTranslationPolicyReady(t *testing.T, ctx context.Context, link *rgw.
 // Child cleanups run before the next sequential t.Run, including after Fatal.
 // The public removal guard verifies the owned bucket instance and unchanged
 // group, and successful explicit removals make this cleanup idempotent.
-func cleanupRGWTranslationSyncGroup(t *testing.T, link *rgw.Multisite, group *rgw.SyncGroup, pipeIDs ...string) {
+func cleanupRGWTranslationSyncGroup(t *testing.T, link *multisite.Fixture, group *multisite.SyncGroup, pipeIDs ...string) {
 	t.Helper()
 	pipeIDs = append([]string(nil), pipeIDs...)
 	t.Cleanup(func() {
@@ -73,7 +74,7 @@ func assertRGWSyncClass(t *testing.T, ctx context.Context, client s3HTTPClient, 
 type rgwSyncTranslationFixture struct {
 	ctx                                  context.Context
 	source, destination                  *ceph.Container
-	link                                 *rgw.Multisite
+	link                                 *multisite.Fixture
 	primaryPlacement, secondaryPlacement *rgw.Placement
 	ownerA, ownerB                       *rgw.User
 	client                               func(t *testing.T, user *rgw.User, endpoint string) s3HTTPClient
@@ -92,7 +93,7 @@ func newRGWSyncTranslationFixture(t *testing.T, ctx context.Context, opts ...tes
 	if rgwImage == "" {
 		rgwImage = image
 	}
-	link, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{Source: source, Destination: destination, Realm: "tc-sync-translation", SourceZone: "source", DestinationZone: "destination"})
+	link, err := multisite.Run(ctx, rgwImage, multisite.Config{Source: source, Destination: destination, Realm: "tc-sync-translation", SourceZone: "source", DestinationZone: "destination"})
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {
@@ -142,14 +143,14 @@ func newRGWSyncTranslationFixture(t *testing.T, ctx context.Context, opts ...tes
 	if err := link.Destination.ReloadPlacement(ctx, secondaryPlacement); err != nil {
 		t.Fatal(err)
 	}
-	global, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{}, rgw.SyncGroupConfig{ID: "permission", Status: rgw.SyncAllowed})
+	global, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{}, multisite.SyncGroupConfig{ID: "permission", Status: multisite.SyncAllowed})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncFlow(ctx, global, rgw.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
+	if err := link.CreateSyncFlow(ctx, global, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, global, rgw.SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+	if err := link.CreateSyncPipe(ctx, global, multisite.SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := link.ApplySyncGroup(ctx, global); err != nil {

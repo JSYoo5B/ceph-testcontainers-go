@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"errors"
@@ -15,7 +15,7 @@ import (
 // before anything runs.
 func TestTemporaryZoneLinkDelayRefusesBeforeAnythingRuns(t *testing.T) {
 	probe := &clustertest.ContextLockRuntime{}
-	f := &Multisite{sourceClient: probe, destinationClient: probe}
+	f := &Fixture{sourceClient: probe, destinationClient: probe}
 	loss := fault.NetworkProfile{HelperImage: "netem-helper:test", Loss: 100}
 	for name, edit := range map[string]func(*fault.NetworkProfile){
 		"a plane": func(d *fault.NetworkProfile) { d.Plane = ceph.PublicNetworkPlane },

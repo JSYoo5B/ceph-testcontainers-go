@@ -22,7 +22,8 @@ anonymous array/map records, and refuses to expose ordinary private fields.
 | `fault` | 35 | 64 |
 | `rbd` | 77 | 94 |
 | `cephfs` | 155 | 247 |
-| `rgw` | 125 | 204 |
+| `rgw` | 69 | 91 |
+| `rgw/multisite` | 56 | 113 |
 | `capture` | 36 | 56 |
 | Total | 810 | 1091 |
 
@@ -182,3 +183,18 @@ adding a second settlement name. `Report.RetrievedSHA256` pairs with
 `File.SHA256`'s possibly incomplete structural-validation prefix. These three
 new declarations, the interface embedding/method and the report member were
 reviewed together; existing `Capture`/`Settle` names and behavior are retained.
+
+## RGW multisite package move
+
+The 56 multisite declarations (2 functions, 21 types, 3 constants and 30
+methods) moved from `rgw` to the new `rgw/multisite` package, following the
+[boundary note](rgw-multisite-boundary.md). The catalogues label the package by
+its directory (`rgw/multisite.Name`), so the label is unambiguous next to
+`rgw`. Names are retained except three that would stutter or collide in the new
+package: `RunMultisite` is `Run`, `MultisiteConfig` is `Config` and `Multisite`
+is `Fixture`. Every method keeps its name, signature and meaning on the renamed
+receiver, and `rgw` keeps 69 declarations (125 before). The move adds no
+declaration and no member: the combined `rgw` and `rgw/multisite` counts equal
+the previous `rgw` counts (125 declarations, 204 members). No alias remains in
+`rgw`. The receipt was refreshed by hand after checking this one-to-one
+mapping.
