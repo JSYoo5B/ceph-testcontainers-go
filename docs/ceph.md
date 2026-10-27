@@ -4363,6 +4363,19 @@ resources still exist, are reachable or run, and they are not a fresh native
 observation. The existing `Container` accessors for the same facts are
 unchanged.
 
+What `FactsOf` reads is the cluster's recorded state: the run settings, the
+bridge network records and the Ceph version recorded when the monitor started.
+`Run` writes them before it returns the cluster, and `Terminate` does not clear
+or rewrite them, so a snapshot can be taken from a terminated cluster, or while
+`Terminate` runs, without a lock, a command or a Docker call. Termination
+alone never fails the capture, and the internal closed flag is not consulted
+because it is set before teardown finishes and is no evidence of cleanup. A
+fact that was never recorded stays empty: a cluster returned by `Run` together
+with an error can have an empty `CephVersion` or network name, and the snapshot
+does not replace them with a default. An empty value therefore does not
+distinguish "not recorded" from "recorded as empty", and it does not report
+whether the resources still exist.
+
 #### OSDFlag
 
 ```golang
