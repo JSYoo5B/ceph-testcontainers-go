@@ -352,6 +352,64 @@ func TestConflictingDuplicateMembersAreRefused(t *testing.T) {
 	}
 }
 
+// Build-tag alternatives of one type must agree on its member set, and an
+// empty set is a member set: a struct without fields conflicts with one that
+// has fields.
+func TestEmptyAndNonemptyMemberAlternativesConflict(t *testing.T) {
+	for name, files := range map[string][2]string{
+		"empty linux, nonempty darwin": {"struct{}", "struct{ Field int }"},
+		"nonempty linux, empty darwin": {"struct{ Field int }", "struct{}"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, cfg := tree(t)
+			before := read(t, root, "docs/design/api-naming/beta/members.json")
+			write(t, root, "beta/record_linux.go", "package beta\n\ntype Record "+files[0]+"\n")
+			write(t, root, "beta/record_darwin.go", "package beta\n\ntype Record "+files[1]+"\n")
+			if _, err := catalogue.Regenerate(cfg, nil); err == nil || !strings.Contains(err.Error(), "conflicting public member declarations: beta.Record") {
+				t.Fatalf("empty and nonempty alternatives must be refused, got %v", err)
+			}
+			if read(t, root, "docs/design/api-naming/beta/members.json") != before {
+				t.Fatal("a refused regeneration wrote a catalogue")
+			}
+		})
+	}
+}
+
+// Removing only one alternative's field must stale an approved catalogue
+// instead of leaving the other alternative's rows accepted.
+func TestRemovingOneAlternativesMembersIsRefusedAfterApproval(t *testing.T) {
+	root, cfg := tree(t)
+	write(t, root, "beta/record_linux.go", "package beta\n\ntype Record struct{ Field int }\n")
+	write(t, root, "beta/record_darwin.go", "package beta\n\ntype Record struct{ Field int }\n")
+	if _, err := catalogue.Regenerate(cfg, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalogue.Approve(cfg, []string{"beta"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := verify(t, cfg); len(got) != 0 {
+		t.Fatalf("identical alternatives must verify: %v", got)
+	}
+	write(t, root, "beta/record_linux.go", "package beta\n\ntype Record struct{}\n")
+	packages, _ := catalogue.Discover(root)
+	if _, err := catalogue.Generate(cfg, packages); err == nil || !strings.Contains(err.Error(), "conflicting public member declarations: beta.Record") {
+		t.Fatalf("the source comparison must refuse the divergent alternatives, got %v", err)
+	}
+}
+
+func TestEmptyMemberSetIsComparedButNotCatalogued(t *testing.T) {
+	root, cfg := tree(t)
+	before := read(t, root, "docs/design/api-naming/beta/members.json")
+	write(t, root, "beta/record_linux.go", "package beta\n\ntype Record struct{}\n")
+	write(t, root, "beta/record_darwin.go", "package beta\n\ntype Record struct{}\n")
+	if _, err := catalogue.Regenerate(cfg, nil); err != nil {
+		t.Fatalf("identical empty alternatives must regenerate: %v", err)
+	}
+	if after := read(t, root, "docs/design/api-naming/beta/members.json"); after != before {
+		t.Fatalf("an empty member set must not add a members row:\n%s", after)
+	}
+}
+
 func TestApprovalRefusesAStaleCatalogue(t *testing.T) {
 	root, cfg := tree(t)
 	before := read(t, root, "docs/design/api-naming/alpha/review.json")
@@ -428,6 +486,11 @@ func TestReceiptIsReadStrictly(t *testing.T) {
 	cases := map[string]string{
 		"unknown field":    strings.Replace(good, `"schema"`, `"extra": 1, "schema"`, 1),
 		"trailing data":    good + "{}\n",
+		"second value":     good + good,
+		"stray bracket":    good + "]",
+		"stray brace":      good + "}",
+		"trailing garbage": good + "garbage",
+		"trailing comma":   good + ",",
 		"wrong package":    strings.Replace(good, `"package": "beta"`, `"package": "alpha"`, 1),
 		"wrong schema":     strings.Replace(good, "review/v2", "review/v1", 1),
 		"empty review":     strings.Replace(good, `"review": "api-naming-audit.md"`, `"review": ""`, 1),
@@ -452,6 +515,42 @@ func TestReceiptIsReadStrictly(t *testing.T) {
 	write(t, root, path, good)
 	if err := catalogue.CheckReceipt(root, "beta", surfaces["beta"]); err != nil {
 		t.Fatalf("restored receipt failed: %v", err)
+	}
+	write(t, root, path, "\n \t"+good+"\n\n \t\n")
+	if err := catalogue.CheckReceipt(root, "beta", surfaces["beta"]); err != nil {
+		t.Fatalf("a whitespace-padded receipt must still be accepted: %v", err)
+	}
+}
+
+func TestLoadReceiptRefusesTrailingDelimiters(t *testing.T) {
+	root, _ := tree(t)
+	path := "docs/design/api-naming/beta/review.json"
+	good := read(t, root, path)
+	if _, err := catalogue.LoadReceipt(root, "beta"); err != nil {
+		t.Fatal(err)
+	}
+	for name, tail := range map[string]string{"bracket": "]", "brace": "}", "garbage": "x", "second value": good} {
+		t.Run(name, func(t *testing.T) {
+			write(t, root, path, good+tail)
+			if _, err := catalogue.LoadReceipt(root, "beta"); err == nil {
+				t.Fatal("trailing input after the receipt was accepted")
+			}
+		})
+	}
+}
+
+func TestCatalogueFilesAreReadToEOF(t *testing.T) {
+	root, _ := tree(t)
+	for _, file := range []string{catalogue.DeclarationsFile, catalogue.MembersFile} {
+		t.Run(file, func(t *testing.T) {
+			path := "docs/design/api-naming/beta/" + file
+			good := read(t, root, path)
+			defer write(t, root, path, good)
+			write(t, root, path, good+"]")
+			if _, _, err := catalogue.Summarize(root); err == nil {
+				t.Fatal("a stray delimiter after a catalogue file was accepted")
+			}
+		})
 	}
 }
 
