@@ -55,18 +55,15 @@ func (c *Container) revokeClient(ctx context.Context, client *ClientConfig) (*Cl
 	}
 	state := &clientRevocationState{client: client, original: current}
 	revocation := &ClientRevocationHandle{owner: c, state: state}
-	if c.clientRevocations == nil {
-		c.clientRevocations = make(map[string]*clientRevocationState)
-	}
-	c.clientRevocations[client.name] = state
+	c.authRecords.setRevocation(client.name, state)
 	_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, func() {})
 	switch {
 	case err == nil:
 		return revocation, nil
-	case c.authFences[client.name] != nil:
+	case c.authRecords.fence(client.name) != nil:
 		return revocation, err
 	}
-	delete(c.clientRevocations, client.name)
+	c.authRecords.dropRevocation(client.name)
 	return nil, err
 }
 
@@ -103,9 +100,7 @@ func (r *ClientRevocationHandle) Restore(ctx context.Context) error {
 	}
 	finish := func() {
 		state.restored = true
-		if c.clientRevocations[state.client.name] == state {
-			delete(c.clientRevocations, state.client.name)
-		}
+		c.authRecords.dropRevocationIf(state.client.name, state)
 	}
 	switch {
 	case current.equal(state.original):

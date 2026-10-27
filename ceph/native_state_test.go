@@ -263,7 +263,8 @@ func TestNativeStateMethodsHoldOnlyTheLeafLock(t *testing.T) {
 // TestNativeStateAddsNoMutex pins the number of mutexes of Container and its
 // state components. The native split moved nativeMu into nativeState and the
 // feature-client split moved clientMu and clientPublishMu into
-// featureClientState; neither added one; a new one needs its own lock-order review.
+// featureClientState, and the auth-records split gave authState no lock at all;
+// none added one; a new one needs its own lock-order review.
 func TestNativeStateAddsNoMutex(t *testing.T) {
 	const want = 7 // mu, controlMu, configMu, extensionsMu, native.mu, toolkit.mu, toolkit.publishMu
 	got := 0
@@ -275,7 +276,7 @@ func TestNativeStateAddsNoMutex(t *testing.T) {
 			}
 			for _, spec := range gen.Specs {
 				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || (ts.Name.Name != "Container" && ts.Name.Name != "nativeState" && ts.Name.Name != "networkState" && ts.Name.Name != "featureClientState") {
+				if !ok || (ts.Name.Name != "Container" && ts.Name.Name != "nativeState" && ts.Name.Name != "networkState" && ts.Name.Name != "featureClientState" && ts.Name.Name != "authState") {
 					continue
 				}
 				st, ok := ts.Type.(*ast.StructType)

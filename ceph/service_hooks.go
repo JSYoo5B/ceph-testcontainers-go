@@ -374,7 +374,7 @@ func (serviceHooks) ClientRevoked(client *ClientConfig) bool { return client.rev
 func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) {
 	client.revoked = revoked
 	if revoked {
-		client.owner.setClientKey(client.name, "")
+		client.owner.authRecords.confirmKey(client.name, "")
 	}
 }
 
