@@ -428,24 +428,71 @@ type osdOOMEffects struct {
 	MapBefore *osdMapEntry
 	// Views were taken after the window ended and before the explicit start.
 	Views []osdSlowLiveView
-	// AckedBefore and AckedDuring are the live writer's acknowledged counts
-	// at the start of the step and after the outage was observed.
-	AckedBefore, AckedDuring int
-	AckedProgressed          bool
+	// PreStep is the writer's mark before the step. It is retained for the
+	// receipt only: acknowledgements made while the OSD was healthy, or while
+	// the update and the death poll ran, are never outage progress.
+	PreStep osdOOMLedgerMark
+	// OutageFloor is taken after the target is established stopped and down,
+	// and OutageLater after it, while it is still stopped and down. Progress
+	// is measured only between these two.
+	OutageFloor, OutageLater osdOOMLedgerMark
+}
+
+// osdOOMLedgerMark is the live writer's cumulative acknowledged count joined
+// to the engine's account of the target at the same moment.
+type osdOOMLedgerMark struct {
+	Acked      int
+	At         time.Time
+	Generation containerGeneration
+	Running    bool
+	MapDown    bool
+}
+
+// osdOOMProgress reports why the writer is not shown to have been
+// acknowledged at least min more times between two marks of the same phase.
+// Both marks must name the expected generation, agree on whether the target
+// runs, carry a time, be strictly ordered, and the cumulative count is only
+// compared between them, never against a mark of an earlier phase.
+func osdOOMProgress(floor, later osdOOMLedgerMark, gen containerGeneration, running bool, mapDown bool, min int) []string {
+	var out []string
+	for name, m := range map[string]osdOOMLedgerMark{"floor": floor, "later": later} {
+		switch {
+		case m.At.IsZero():
+			out = append(out, name+" ledger mark has no time")
+		case m.Generation != gen:
+			out = append(out, name+" ledger mark names another generation")
+		case m.Running != running:
+			out = append(out, name+" ledger mark was taken in another run state")
+		case mapDown && !m.MapDown:
+			out = append(out, name+" ledger mark was taken while the OSD was not down in the map")
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	if !later.At.After(floor.At) {
+		return []string{"ledger marks are not ordered"}
+	}
+	if later.Acked < floor.Acked+min {
+		return []string{"the writer was not acknowledged again after the phase floor"}
+	}
+	return nil
 }
 
 // osdOOMRecovery is the explicit restart and what followed.
 type osdOOMRecovery struct {
-	Started     bool
-	StartedAt   time.Time
-	New         containerGeneration
-	NewPID      int
-	NewProcess  string
-	Kernel      *memoryWitness
-	MapAfter    *osdMapEntry
-	Clean       bool
-	AckedAfter  bool
-	LedgerFinal bool
+	Started    bool
+	StartedAt  time.Time
+	New        containerGeneration
+	NewPID     int
+	NewProcess string
+	Kernel     *memoryWitness
+	MapAfter   *osdMapEntry
+	Clean      bool
+	// AckedFloor and AckedLater are taken on the running new generation after
+	// the restart was observed.
+	AckedFloor, AckedLater osdOOMLedgerMark
+	LedgerFinal            bool
 }
 
 type osdOOMIdentity struct {
@@ -600,8 +647,14 @@ func osdOOMEffectReasons(r osdOOMRun) []string {
 	if !pgSeen || !pgAffected {
 		out = append(out, "the PG was never observed leaving active+clean")
 	}
-	if !e.AckedProgressed || e.AckedDuring < e.AckedBefore+3 {
-		out = append(out, "the live writer was not acknowledged again while the OSD was down")
+	if !e.OutageFloor.At.IsZero() && !e.OutageFloor.At.After(r.Step.ExecEnd) {
+		out = append(out, "the outage ledger floor precedes the end of the window")
+	}
+	if !e.OutageLater.At.IsZero() && !e.OutageLater.At.Before(r.Restore.At) {
+		out = append(out, "the outage ledger mark follows the restoration")
+	}
+	for _, reason := range osdOOMProgress(e.OutageFloor, e.OutageLater, r.Identity.Generation, false, true, 3) {
+		out = append(out, "outage progress: "+reason)
 	}
 	return out
 }
@@ -634,12 +687,17 @@ func osdOOMRecoveryReasons(r osdOOMRun) []string {
 	}
 	for name, ok := range map[string]bool{
 		"cluster clean on every OSD":                 v.Clean,
-		"live writer acknowledged after the restart": v.AckedAfter,
 		"every acknowledged object read back intact": v.LedgerFinal,
 	} {
 		if !ok {
 			out = append(out, "missing: "+name)
 		}
+	}
+	if !v.AckedFloor.At.IsZero() && !v.AckedFloor.At.After(v.StartedAt) {
+		out = append(out, "the recovery ledger floor precedes the observed restart")
+	}
+	for _, reason := range osdOOMProgress(v.AckedFloor, v.AckedLater, v.New, true, false, 3) {
+		out = append(out, "recovery progress: "+reason)
 	}
 	return out
 }

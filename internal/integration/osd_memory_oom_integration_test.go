@@ -184,7 +184,7 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 		details["step"], details["recorder_errors"] = osdOOMReceiptStep(run.Step), recorderErrors
 		details["outage_views"], details["hold_samples"] = viewSummaries, len(run.Hold)
 		details["recovery"] = map[string]any{"started": run.Recovery.Started, "new_started_at": run.Recovery.New.StartedAt, "new_pid": run.Recovery.NewPID,
-			"clean": run.Recovery.Clean, "acked_after": run.Recovery.AckedAfter, "ledger_final": run.Recovery.LedgerFinal}
+			"clean": run.Recovery.Clean, "acked_floor": run.Recovery.AckedFloor.Acked, "acked_later": run.Recovery.AckedLater.Acked, "ledger_final": run.Recovery.LedgerFinal}
 		data, err := json.Marshal(details)
 		if err != nil {
 			t.Errorf("receipt: %v", err)
@@ -347,6 +347,26 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 			time.Sleep(time.Second)
 		}
 	}
+	// ledgerMark joins the cumulative acknowledged count to the engine's state
+	// of the target before and after the ledger read, and to the map.
+	ledgerMark := func() osdOOMLedgerMark {
+		var m osdOOMLedgerMark
+		first, _ := rawInspect(ctx)
+		mark, _ := secondFaultMarkNow(t, ctx, cluster, client, ledger)
+		last, err := rawInspect(ctx)
+		if err != nil || last.State == nil || first.State == nil {
+			return m
+		}
+		v := observe()
+		m.Acked, m.At = mark.Acked, time.Now()
+		m.Generation = containerGeneration{ID: last.ID, StartedAt: last.State.StartedAt}
+		m.Running = first.State.Running || last.State.Running
+		if first.State.StartedAt != last.State.StartedAt || first.State.Running != last.State.Running {
+			m.Generation = containerGeneration{}
+		}
+		m.MapDown = v.Map != nil && !v.Map.Up
+		return m
+	}
 	healthy := secondFaultAcks(t, ctx, cluster, client, ledger, secondFaultMark{}, 3, "while healthy")
 
 	// Admission: one explicit update from the unlimited creation state to the
@@ -384,7 +404,7 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 		Generation: gen, PID: target.PID, ProcessStart: target.ProcessStart, Executable: executable, ProcsBefore: procs,
 		Baseline: memoryLimit{Bytes: uint64(osdOOMBaseline)}, Ceiling: memoryLimit{Bytes: uint64(osdOOMCeiling)}, Before: before,
 	}
-	run.Effects.AckedBefore = secondFaultAcksNow(t, ctx, cluster, client, ledger)
+	run.Effects.PreStep = ledgerMark()
 
 	// The event handle is opened outside the victim before the step so that the
 	// counters can still be read if the cgroup path is removed with the daemon.
@@ -439,7 +459,6 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 
 	// The engine must leave the daemon stopped on its own, and the cluster and
 	// the client are observed while it is down. This is the outage window.
-	ackedFloor := run.Effects.AckedBefore
 	down, affected := false, false
 	for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); time.Sleep(time.Second) {
 		if c, err := rawInspect(ctx); err == nil && c.State != nil {
@@ -457,9 +476,13 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 			break
 		}
 	}
-	during, progressed := ackedWait(secondFaultMark{Acked: ackedFloor}, 3, 2*time.Minute)
-	run.Effects.AckedDuring, run.Effects.AckedProgressed = during.Acked, progressed
-	t.Logf("OSD_OOM_OUTAGE down=%t pg_affected=%t acked_before=%d acked_during=%d healthy=%+v", down, affected, ackedFloor, during.Acked, healthy)
+	// A fresh ledger floor is taken only now, after the target is established
+	// stopped and down. Acknowledgements made before the kill, during the
+	// update or during the death poll are below it and prove nothing.
+	run.Effects.OutageFloor = ledgerMark()
+	_, _ = ackedWait(secondFaultMark{Acked: run.Effects.OutageFloor.Acked}, 3, 2*time.Minute)
+	run.Effects.OutageLater = ledgerMark()
+	t.Logf("OSD_OOM_OUTAGE down=%t pg_affected=%t pre_step=%d floor=%d later=%d healthy=%+v", down, affected, run.Effects.PreStep.Acked, run.Effects.OutageFloor.Acked, run.Effects.OutageLater.Acked, healthy)
 
 	// Restore the admitted finite baseline BEFORE the explicit start. On a
 	// stopped container this is saved configuration, not an effective limit.
@@ -518,8 +541,9 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	} else {
 		run.Recovery.Clean = true
 	}
-	restoredMark, _ := secondFaultMarkNow(t, ctx, cluster, client, ledger)
-	_, run.Recovery.AckedAfter = ackedWait(restoredMark, 3, 2*time.Minute)
+	run.Recovery.AckedFloor = ledgerMark()
+	_, _ = ackedWait(secondFaultMark{Acked: run.Recovery.AckedFloor.Acked}, 3, 2*time.Minute)
+	run.Recovery.AckedLater = ledgerMark()
 
 	// Close the writer and the data oracle: every acknowledged object must read
 	// back byte for byte from an independent client, and unknown outcomes are
@@ -556,8 +580,8 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 		t.Fatalf("independent read %.512s: %v", read.Stdout, err)
 	}
 	verifyErr := secondFaultVerify(ops, objects)
-	run.Recovery.LedgerFinal = verifyErr == nil && final.Acked > 0 && final.Refused == 0
-	details["ledger"] = map[string]any{"healthy": healthy, "during_outage": during, "restored": restoredMark, "final": final}
+	run.Recovery.LedgerFinal = verifyErr == nil && final.Acked >= run.Recovery.AckedLater.Acked && final.Acked > 0 && final.Refused == 0
+	details["ledger"] = map[string]any{"healthy": healthy, "outage_floor": run.Effects.OutageFloor.Acked, "outage_later": run.Effects.OutageLater.Acked, "final": final}
 	if verifyErr != nil {
 		t.Errorf("data oracle: %v", verifyErr)
 	}
@@ -568,11 +592,4 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 		t.Fatalf("not an established OSD OOM kill with recovery: %s: %v", verdict, reasons)
 	}
 	t.Log("OSD_OOM established for one OSD, one engine and one run: after one finite ceiling was admitted, one lower ceiling killed the frozen OSD process once by the cgroup OOM killer, the engine left it stopped, the OSD was marked down and the PG left active+clean, the writer was acknowledged again, the restored configuration and an explicit restart gave a new process generation that rejoined under the restored limit and every acknowledged object read back")
-}
-
-// secondFaultAcksNow reads the ledger's current acknowledged count.
-func secondFaultAcksNow(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, path string) int {
-	t.Helper()
-	mark, _ := secondFaultMarkNow(t, ctx, cluster, client, path)
-	return mark.Acked
 }
