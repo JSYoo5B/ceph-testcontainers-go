@@ -29,7 +29,7 @@ func testMultiClusterRBDSnapshotMirror(t *testing.T, opts ...testcontainers.Cont
 	const imageSize = 8 << 20
 	rbdMultiClusterPool(t, ctx, source, sourceClient, pool)
 	rbdMultiClusterPool(t, ctx, destination, destinationClient, pool)
-	mirrorImage := source.Images().RBDAux
+	mirrorImage := staticFacts(source).Images.RBDAux
 	t.Logf("native RBD multicluster runtime image=%s", mirrorImage)
 	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", mirrorImage), rbdmirror.Config{
 		Source: source, Destination: destination, Pool: pool,

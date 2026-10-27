@@ -80,7 +80,7 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 	fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
 	first := cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, "/federation", "backup-1")
 	archive("backup-1")
-	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", source.Images().CephFS), cephfsmirror.Config{
+	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: []string{"/federation"},
@@ -118,7 +118,7 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 	}
 	baseline := synced.Value
 
-	peer := cephFSMirrorDaemonAddress(t, ctx, daemon, source.NetworkName())
+	peer := cephFSMirrorDaemonAddress(t, ctx, daemon, staticFacts(source).NetworkName)
 	osd := clusteraccess.OSDs(t, source)[0]
 	// osd.0 drops every packet it sends to the daemon's address on the
 	// source network, and only those: the daemon's requests reach the OSD,

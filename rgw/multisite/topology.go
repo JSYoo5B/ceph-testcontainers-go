@@ -353,7 +353,11 @@ func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, 
 			return nil, errors.New("finish initializing existing RGW zones before adding another")
 		}
 	}
-	clientImage, err := rgwSetupImage(f.config.SetupImage, config.Cluster)
+	facts, err := ceph.FactsOf(config.Cluster)
+	if err != nil {
+		return nil, err
+	}
+	clientImage, err := rgwSetupImage(f.config.SetupImage, facts.Images.RGW)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +413,7 @@ func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, 
 		return &state.Zone, err
 	}
 	alias := "rgw-zone-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
-	if !config.Cluster.UsesHostNetwork() {
+	if !facts.UsesHostNetwork {
 		state.PeerEndpoint = "http://" + alias + ":7480"
 	}
 	commands := [][]string{
@@ -433,7 +437,7 @@ func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, 
 	if err != nil {
 		return &state.Zone, err
 	}
-	if config.Cluster.UsesHostNetwork() {
+	if facts.UsesHostNetwork {
 		state.PeerEndpoint, err = state.Gateway.DaemonEndpoint(ctx)
 		if err != nil {
 			return &state.Zone, err
@@ -481,7 +485,7 @@ func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, 
 	if err := f.waitZoneMetadataBootstrap(ctx, master, states); err != nil {
 		return &state.Zone, err
 	}
-	if err := f.reloadZoneGateways(ctx, states, func(zone *rgwZoneState) bool { return zone == state && !config.Cluster.UsesHostNetwork() }); err != nil {
+	if err := f.reloadZoneGateways(ctx, states, func(zone *rgwZoneState) bool { return zone == state && !facts.UsesHostNetwork }); err != nil {
 		return &state.Zone, err
 	}
 	state.Gateway.AccessKey, state.Gateway.SecretKey = f.Source.AccessKey, f.Source.SecretKey

@@ -52,7 +52,7 @@ func TestDaemonImageDefaultsToTheEssentialImageWithoutChangingIt(t *testing.T) {
 	if got := c.daemonImage(daemonOptions{}); got != "example.invalid/ceph:cluster" {
 		t.Fatalf("default image %q", got)
 	}
-	if c.settings.essentialImage != "example.invalid/ceph:cluster" || c.EssentialImage() != "example.invalid/ceph:cluster" {
+	if c.settings.essentialImage != "example.invalid/ceph:cluster" || c.staticFacts().Images.Essential != "example.invalid/ceph:cluster" {
 		t.Fatal("resolving an override changed the cluster image")
 	}
 }
@@ -166,7 +166,7 @@ func TestOverriddenOSDRecordsItsImageWithoutChangingTheClusterOrOtherOSDs(t *tes
 	if overridden.Image() != "example.invalid/ceph:new" || ordinary.Image() != "example.invalid/ceph:cluster" {
 		t.Fatalf("handle images %q %q", overridden.Image(), ordinary.Image())
 	}
-	if c.EssentialImage() != "example.invalid/ceph:cluster" {
+	if c.staticFacts().Images.Essential != "example.invalid/ceph:cluster" {
 		t.Fatal("an override changed the cluster-wide images")
 	}
 	if facts, err := FactsOf(c); err != nil || facts.Images.Essential != "example.invalid/ceph:cluster" || facts.Images.Client != "example.invalid/ceph:cluster" {

@@ -2,7 +2,7 @@
  "calls": [
   [
    "\\bcephfsmirror\\.Run\\(ctx, source\\.ControlImage\\(\\), ",
-   "cephfsmirror.Run(ctx, nativeMirrorImage(t, \"cephfs\", source.Images().CephFS), "
+   "cephfsmirror.Run(ctx, nativeMirrorImage(t, \"cephfs\", staticFacts(source).Images.CephFS), "
   ]
  ],
  "description": "API move of the CephFS mirror fixture from the multicluster package to cephfs/mirror (package cephfsmirror). The retained producer calls the mirror runner through the original image, so its call is rewritten to the native mirror image wrapper.",

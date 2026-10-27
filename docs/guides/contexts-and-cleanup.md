@@ -202,7 +202,7 @@ retries only what is left. A network whose interruption could not be restored
 is kept, because a container may still be attached to it.
 
 After `Terminate`, cluster operations fail, most of them with "ceph cluster is
-terminated". `EssentialImage()`, `Images()` and the descriptor getters still answer.
+terminated". `ceph.FactsOf` and the descriptor getters still answer.
 
 ### What you own
 
@@ -235,14 +235,15 @@ if err != nil {
 	t.Fatal(err)
 }
 
-client, err := testcontainers.Run(ctx, source.Images().Client,
+sourceFacts, err := ceph.FactsOf(source)
+client, err := testcontainers.Run(ctx, sourceFacts.Images.Client,
 	source.WithClient(), ceph.WithIdleEntrypoint())
 testcontainers.CleanupContainer(t, client) // runs before both clusters
 if err != nil {
 	t.Fatal(err)
 }
 
-mirror, err := rbdmirror.Run(ctx, source.Images().RBDAux, rbdmirror.Config{
+mirror, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "images",
 })
 testcontainers.CleanupContainer(t, mirror) // runs first

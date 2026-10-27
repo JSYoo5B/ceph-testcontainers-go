@@ -38,7 +38,7 @@ func TestImmutableObjectCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, cluster.Images().RBDAux, cluster.WithClientIdentity(identity), ceph.WithIdleEntrypoint())
+	client, err := testcontainers.Run(ctx, staticFacts(cluster).Images.RBDAux, cluster.WithClientIdentity(identity), ceph.WithIdleEntrypoint())
 	if client != nil {
 		testcontainers.CleanupContainer(t, client)
 	}

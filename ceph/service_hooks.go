@@ -247,15 +247,15 @@ func (serviceHooks) ScriptFile(name string) testcontainers.ContainerFile { retur
 func (serviceHooks) ServiceImage(c *Container, role string) string {
 	switch role {
 	case "client":
-		return c.Images().Client
+		return c.staticFacts().Images.Client
 	case "rbd-aux":
-		return c.Images().RBDAux
+		return c.staticFacts().Images.RBDAux
 	case "essential":
-		return c.Images().Essential
+		return c.staticFacts().Images.Essential
 	case "rgw":
-		return c.Images().RGW
+		return c.staticFacts().Images.RGW
 	case "cephfs":
-		return c.Images().CephFS
+		return c.staticFacts().Images.CephFS
 	}
 	return ""
 }

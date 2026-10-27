@@ -166,7 +166,7 @@ func testOSDReplicationPeerPathCut(t *testing.T) {
 	defer cancel()
 	image := netemImage(t)
 	cluster, client := newServiceCluster(t, ceph.WithSeparateClusterNetwork())
-	if !cluster.HasSeparateClusterNetwork() {
+	if !staticFacts(cluster).HasSeparateClusterNetwork {
 		t.Fatal("no separate cluster network")
 	}
 	// One PG on both OSDs with min_size 2: every write needs both.

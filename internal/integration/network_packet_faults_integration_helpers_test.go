@@ -300,9 +300,9 @@ func testNetworkPacketFaults(t *testing.T, ipv6 bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := inspection.NetworkSettings.Networks[p.cluster.NetworkName()]
+	endpoint := inspection.NetworkSettings.Networks[staticFacts(p.cluster).NetworkName]
 	if endpoint == nil || !endpoint.IPAddress.Is4() || ipv6 && !endpoint.GlobalIPv6Address.IsValid() {
-		t.Fatalf("no address of the family on %s", p.cluster.NetworkName())
+		t.Fatalf("no address of the family on %s", staticFacts(p.cluster).NetworkName)
 	}
 	p.peer = endpoint.IPAddress
 	if ipv6 {

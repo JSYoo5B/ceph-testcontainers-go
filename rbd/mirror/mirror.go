@@ -202,7 +202,15 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	if err != nil {
 		return nil, invalid(fmt.Errorf("configure RBD mirror: %w", err))
 	}
-	sourceImage, destinationImage := config.Source.Images().Client, config.Destination.Images().Client
+	sourceFacts, err := ceph.FactsOf(config.Source)
+	if err != nil {
+		return nil, err
+	}
+	destinationFacts, err := ceph.FactsOf(config.Destination)
+	if err != nil {
+		return nil, err
+	}
+	sourceImage, destinationImage := sourceFacts.Images.Client, destinationFacts.Images.Client
 	if sourceImage == "" || destinationImage == "" {
 		return nil, invalid(fmt.Errorf("RBD mirror setup requires both client images"))
 	}
@@ -215,12 +223,12 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 		return nil, fmt.Errorf("preflight RBD mirror pools/namespaces: %w", err)
 	}
 	mirror := &Mirror{config: config, image: image, daemonOpts: slices.Clone(opts), poolIdentities: identities, receiverClusters: receiverClusters}
-	sourceClient, err := multicluster.RunClient(ctx, sourceImage, config.Source, config.Destination.NetworkName(), &mirror.owned)
+	sourceClient, err := multicluster.RunClient(ctx, sourceImage, config.Source, destinationFacts.NetworkName, &mirror.owned)
 	if err != nil {
 		return mirror, fmt.Errorf("run source RBD setup client: %w", err)
 	}
 	mirror.sourceClient = sourceClient
-	destinationClient, err := multicluster.RunClient(ctx, destinationImage, config.Destination, config.Source.NetworkName(), &mirror.owned)
+	destinationClient, err := multicluster.RunClient(ctx, destinationImage, config.Destination, sourceFacts.NetworkName, &mirror.owned)
 	if err != nil {
 		return mirror, fmt.Errorf("run destination RBD setup client: %w", err)
 	}
@@ -293,6 +301,10 @@ func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontain
 	if err != nil {
 		return nil, fmt.Errorf("create RBD mirror daemon credentials: %w", err)
 	}
+	sourceFacts, err := ceph.FactsOf(m.config.Source)
+	if err != nil {
+		return nil, err
+	}
 	daemonOpts := []testcontainers.ContainerCustomizer{
 		m.config.Destination.WithClient(),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
@@ -303,8 +315,8 @@ func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontain
 			"--admin-socket", "/tmp/rbd-mirror.asok", "--log-to-stderr=true", "--log-to-file=false"),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/tmp/rbd-mirror.asok"}).WithStartupTimeout(time.Minute)),
 	}
-	if !m.config.Source.UsesHostNetwork() {
-		daemonOpts = append(daemonOpts, network.WithNetworkName(nil, m.config.Source.NetworkName()))
+	if !sourceFacts.UsesHostNetwork {
+		daemonOpts = append(daemonOpts, network.WithNetworkName(nil, sourceFacts.NetworkName))
 	}
 	daemonOpts = append(daemonOpts, m.daemonOpts...)
 	daemonOpts = append(daemonOpts, opts...)
@@ -731,7 +743,11 @@ func RunWithImages(ctx context.Context, config Config, opts ...testcontainers.Co
 	if config.Source == nil || config.Destination == nil {
 		return nil, invalid(fmt.Errorf("roles clusters are required"))
 	}
-	image := config.Destination.Images().RBDAux
+	facts, err := ceph.FactsOf(config.Destination)
+	if err != nil {
+		return nil, err
+	}
+	image := facts.Images.RBDAux
 	if image == "" {
 		return nil, invalid(fmt.Errorf("rbd-aux image is required"))
 	}

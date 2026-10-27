@@ -48,15 +48,19 @@ func InterruptNetwork(ctx context.Context, c *ceph.Container, ctr testcontainers
 		return nil, gateErr
 	}
 	err = faulthook.WithTopology(ctx, c, func() error {
-		if faulthook.Closed(c) || c.UsesHostNetwork() || ctr == nil || ctr.GetContainerID() == "" {
+		facts, factsErr := ceph.FactsOf(c)
+		if factsErr != nil {
+			return factsErr
+		}
+		if faulthook.Closed(c) || facts.UsesHostNetwork || ctr == nil || ctr.GetContainerID() == "" {
 			return errors.New("network interruption requires a live bridge cluster and an attached container")
 		}
 		var name string
 		switch plane {
 		case ceph.PublicNetworkPlane:
-			name = c.NetworkName()
+			name = facts.NetworkName
 		case ceph.ClusterNetworkPlane:
-			name = c.ClusterNetworkName()
+			name = facts.ClusterNetworkName
 		default:
 			return errors.New("invalid Ceph network plane")
 		}

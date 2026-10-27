@@ -51,7 +51,7 @@ func testMonitorAddressAcrossNetworkInterruption(t *testing.T) {
 	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		monitors[mon.DaemonName] = mon
 	}
-	network := cluster.NetworkName()
+	network := staticFacts(cluster).NetworkName
 	type restorer interface{ Restore(context.Context) error }
 	for _, form := range []struct {
 		name, mon string

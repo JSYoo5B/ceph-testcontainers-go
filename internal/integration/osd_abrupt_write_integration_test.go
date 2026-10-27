@@ -89,7 +89,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	initial := osdMemoryInspect(t, ctx, docker.Client, osd.GetContainerID())
 	clientRaw := osdMemoryInspect(t, ctx, docker.Client, client.GetContainerID())
 	platform := osdMemoryExec(t, ctx, client, "uname", "-sm")
-	t.Logf("OSD_ABRUPT_RUNTIME ceph=%s platform=%s essential_image=%s client_image=%s cid=%s fsid=%s osd=%d uuid=%s volume=%s store=%q", cluster.CephVersion(), platform, initial.Image, clientRaw.Image, osd.GetContainerID(), quorum.MonMap.FSID, osd.ID, registered[osd.ID], volume, store)
+	t.Logf("OSD_ABRUPT_RUNTIME ceph=%s platform=%s essential_image=%s client_image=%s cid=%s fsid=%s osd=%d uuid=%s volume=%s store=%q", staticFacts(cluster).CephVersion, platform, initial.Image, clientRaw.Image, osd.GetContainerID(), quorum.MonMap.FSID, osd.ID, registered[osd.ID], volume, store)
 	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
 	if err != nil {
 		t.Fatal(err)

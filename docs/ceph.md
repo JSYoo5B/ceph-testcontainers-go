@@ -152,7 +152,7 @@ and by [WithStartupTimeout](#withstartuptimeout) (3 minutes by default):
 2. Create a dedicated bridge network (two with
    [WithSeparateClusterNetwork](#withseparateclusternetwork)), or verify the
    engine in host mode.
-3. Start MON `a`, record [CephVersion](#cephversion), and read the generated
+3. Start MON `a`, record `ClusterFacts.CephVersion` (see [FactsOf](#factsof)), and read the generated
    `ceph.conf` and the `client.admin` keyring.
 4. Add the remaining monitors (`b`, `c`, ...). With more than one MON, a separate
    CLI control container is started as well (see
@@ -668,7 +668,7 @@ With `MessengerV2Secure`:
   always required.
 - This option does not enable HTTPS for RGW (see [rgw](rgw.md)).
 
-[MessengerMode](#messengermode) reports the selected mode. It does not inspect
+`ClusterFacts.MessengerMode` ([FactsOf](#factsof)) reports the selected mode. It does not inspect
 live connections. To verify encryption on Tentacle, query a daemon's
 `messenger dump` admin command (through `ceph tell`), which reports the mode and
 cipher of each READY connection. Squid has no `messenger dump`; check the
@@ -802,7 +802,8 @@ the native reference client and the client under test different policies:
 crcOnly := ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{
 	MonitorsAndManagers: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
 })
-native, err := testcontainers.Run(ctx, cluster.Images().Client,
+facts, err := ceph.FactsOf(cluster)
+native, err := testcontainers.Run(ctx, facts.Images.Client,
 	cluster.WithClient(crcOnly), ceph.WithIdleEntrypoint())
 ```
 
@@ -850,8 +851,8 @@ Linux) can reach MONs and OSDs directly.
   packet delay ([fault.ApplyNetworkProfile](fault.md#applynetworkprofile)) are not
   available.
 
-[UsesHostNetwork](#useshostnetwork) and [PublicAddress](#publicaddress) report the
-mode and address. See [Host networking](guides/host-network.md) for native
+`ClusterFacts.UsesHostNetwork` and `ClusterFacts.PublicAddress` ([FactsOf](#factsof))
+report the mode and address. See [Host networking](guides/host-network.md) for native
 clients, Docker Desktop, remote engines and port behaviour.
 
 #### WithHostAddress
@@ -876,8 +877,8 @@ Creates a second owned bridge for OSD replication, recovery and heartbeat
 traffic. Docker selects both IPv4 subnets, and Ceph's `public network` and
 `cluster network` settings make OSDs use them. Only OSDs join both bridges;
 MON, MGR, MDS, RGW and `WithClient` containers use only the public bridge.
-[NetworkName](#networkname) and [ClusterNetworkName](#clusternetworkname) return
-the two bridges, and [fault.InterruptNetwork](fault.md#interruptnetwork) with
+`ClusterFacts.NetworkName` and `ClusterFacts.ClusterNetworkName` ([FactsOf](#factsof))
+return the two bridges, and [fault.InterruptNetwork](fault.md#interruptnetwork) with
 `ceph.ClusterNetworkPlane` disconnects one OSD's replication endpoint only.
 Requires bridge mode.
 
@@ -914,7 +915,7 @@ ceph.WithAddressFamily(ceph.AddressIPv6)
 ```
 
 Selects the addresses that the Messenger of every MON, MGR, OSD and MDS binds
-and advertises. `cluster.AddressFamily()` returns the selected value.
+and advertises. [FactsOf](#factsof) returns the selected value as `ClusterFacts.AddressFamily`.
 
 | Family | Bridge | Messenger listeners and advertised addresses |
 | --- | --- | --- |
@@ -2154,7 +2155,7 @@ commands keep working while MON `a` is stopped or removed. The cluster owns it.
 `ctx` bounds the wait for a concurrent control-plane creation or termination.
 The returned handle is a snapshot; it does not promise that the container stays
 alive. A shared cluster refuses the call with an error. The container is created
-from the essential image (`EssentialImage`), so it carries the `ceph` CLI and
+from the essential image (`ClusterFacts.Images.Essential`), so it carries the `ceph` CLI and
 the bootstrap tools such as `ceph-authtool`, not the client role's `rados` and
 `rbd` (use [ClientContainer](#clientcontainer)) and not `radosgw-admin` (use
 `Gateway.Admin` or the multisite setup clients):
@@ -2182,43 +2183,6 @@ lazily; aggregate images reuse the [control container](#controlcontainer). Run
 `ctx` bounds the wait for a concurrent topology change, and a shared cluster
 refuses the call with an error. The cluster owns the container.
 
-#### EssentialImage
-
-```golang
-func (c *Container) EssentialImage() string
-```
-
-Returns the essential image that runs the MONs, MGRs, OSDs and the control
-container, except daemons started with [WithDaemonImage](#per-daemon-images);
-use their handles' `Image`. It stays available after termination. It is not a general client
-image: use `Images().Client` for containers that need `rados`, `rbd` or the
-Python bindings, `Images().RBDAux` for `rbd-mirror`, `Images().CephFS` for
-`cephfs-mirror` and `Images().RGW` for gateways and RGW administration.
-
-#### CephVersion
-
-```golang
-func (c *Container) CephVersion() string
-```
-
-Returns the Ceph release of the first MON's image, such as `"20.2.4"`, read once from
-`ceph --version` after MON `a` starts. `Run` fails if the output cannot be
-parsed. Role images selected with `WithImages`, `rgw.WithImage` or
-`cephfs.WithMDSImage` may run another release; the value describes only the
-essential image. A daemon started with
-[WithDaemonImage](#per-daemon-images) may run another release; read its handle's
-`Version`. The fixture uses it to choose commands that differ between
-releases, and tests can use it to choose release-specific assertions:
-
-```golang
-if strings.HasPrefix(cluster.CephVersion(), "19.") {
-	// Squid has no messenger dump: assert the fault through client errors.
-	assertClientTimesOut(t, ctx, client)
-} else {
-	assertMessengerDropsFrames(t, ctx, cluster)
-}
-```
-
 #### Per-daemon images
 
 ```golang
@@ -2239,8 +2203,7 @@ func (o *OSDContainer) Version(ctx context.Context) (string, error)
 [AddManager](#addmanager), [AddOSD](#addosd) and
 [AddOSDWithConfig](#addosdwithconfig). It starts that one new daemon from the
 given image instead of the essential image. Nothing else changes: the option
-does not touch the cluster's settings, `EssentialImage`, `Images`, `FactsOf`,
-`CephVersion` or any other daemon.
+does not touch the cluster's settings, `ClusterFacts` or any other daemon.
 
 - Validation. The reference must be non-empty with no whitespace or control
   characters, and may be given once. A refusal matches `ErrInvalidRequest` and
@@ -2258,14 +2221,13 @@ does not touch the cluster's settings, `EssentialImage`, `Images`, `FactsOf`,
 - Identity. `Image` returns the image a daemon's container was started from: its
   override, or the essential image. It reads the recorded start request, not
   Docker, and says nothing about the image's release.
-- Facts that stay cluster-wide. `EssentialImage`, `Images` and
-  `ClusterFacts.Images` report the cluster's images and are not changed by an
-  override, so they do not describe an overridden daemon. The same holds for the
+- Facts that stay cluster-wide. `ClusterFacts.Images` reports the cluster's images
+  and is not changed by an override, so it does not describe an overridden daemon. The same holds for the
   `images` field of the finalization manifest and of a verification report. The
   diagnostics archive records the image ID and reference of every container
   from Docker, so it shows the override. Read `Image` of each handle for the
   per-daemon values.
-- Versions. `CephVersion` is recorded once from the first MON and the CLI
+- Versions. `ClusterFacts.CephVersion` is recorded once from the first MON and the CLI
   image, and does not describe an overridden daemon. `Version` reads the
   release a running daemon reports through its own admin socket (`version`),
   such as `"20.2.4"`; it works under the conditions of
@@ -2273,7 +2235,7 @@ does not touch the cluster's settings, `EssentialImage`, `Images`, `FactsOf`,
   recognizable version. The admin socket client is the cluster's CLI, so the
   reply is the daemon's own but the transport is the cluster's CLI executor, which runs from the essential image unless a separate CLI executor image was selected.
 - Client releases. A separately started client container is still refused when its
-  release differs from `CephVersion`. That check is unchanged and does not
+  release differs from `ClusterFacts.CephVersion`. That check is unchanged and does not
   consider overridden daemons.
 
 This option is a building block. It does not claim that any mixed-version or
@@ -3131,7 +3093,7 @@ the cluster's public network; in host mode it joins the host network.
 
 - The container must already contain the Ceph clients it uses (CLI, librados,
   go-ceph binary, ...). `WithClient` installs nothing; `ceph.DefaultImage` or
-  the cluster's `Images().Client` work for CLI and Python clients.
+  the cluster's `Images.Client` work for CLI and Python clients.
 - The admin key has full privileges on this test cluster. Use it only in trusted
   test containers; use [WithClientIdentity](#withclientidentity) for restricted
   clients.
@@ -3902,16 +3864,6 @@ about health or daemon availability.
 
 ### Container Methods: Messenger mode
 
-#### MessengerMode
-
-```golang
-func (c *Container) MessengerMode() ceph.MessengerMode
-```
-
-Returns the bootstrap policy selected with [WithMessengerMode](#withmessengermode)
-(`ceph.MessengerDefault` for a nil container). It does not inspect effective
-settings or live connections.
-
 #### OverrideMessengerPolicy
 
 ```golang
@@ -4108,51 +4060,6 @@ cluster; its `Terminate` restores cluster-bound faults.
 
 See [Host networking](guides/host-network.md) for the networking modes in detail.
 
-#### NetworkName
-
-```golang
-func (c *Container) NetworkName() string
-```
-
-Returns the name of the cluster's public bridge, or `"host"` in host mode. Use it
-to attach containers with other customizers, for example
-`network.WithNetworkName(nil, cluster.NetworkName())`.
-
-#### ClusterNetworkName
-
-```golang
-func (c *Container) ClusterNetworkName() string
-```
-
-Returns the OSD replication bridge created by
-[WithSeparateClusterNetwork](#withseparateclusternetwork). With a single bridge it
-returns `NetworkName()`; in host mode both planes share `"host"`.
-
-#### HasSeparateClusterNetwork
-
-```golang
-func (c *Container) HasSeparateClusterNetwork() bool
-```
-
-Reports whether OSDs have a dedicated replication bridge.
-
-#### UsesHostNetwork
-
-```golang
-func (c *Container) UsesHostNetwork() bool
-```
-
-Reports whether the cluster shares Docker's host network.
-
-#### PublicAddress
-
-```golang
-func (c *Container) PublicAddress() string
-```
-
-Returns the IPv4 address advertised in host mode (`127.0.0.1` unless
-[WithHostAddress](#withhostaddress) selected another); empty in bridge mode.
-
 #### DaemonAddresses
 
 ```golang
@@ -4187,7 +4094,7 @@ for _, mon := range addresses.Monitors {
 ```
 
 - In bridge mode the addresses are the daemon containers' addresses on the
-  fixture network; in host mode they are [PublicAddress](#publicaddress) with
+  fixture network; in host mode they are `ClusterFacts.PublicAddress` with
   the allocated ports.
 - Standby MGRs advertise no address in the MGRMap. A MGR that has just become
   active advertises its address vector only once it is available, so wait for
@@ -4472,8 +4379,8 @@ cluster. Changing a snapshot changes neither the cluster nor another snapshot,
 and a later cluster change does not update a snapshot already obtained. The
 values describe the recorded configuration. They do not show that the Docker
 resources still exist, are reachable or run, and they are not a fresh native
-observation. The existing `Container` accessors for the same facts are
-unchanged.
+observation. `FactsOf` is the only way to read these facts: `Container` has no
+accessor for them. The essential image is `Images.Essential`.
 
 What `FactsOf` reads is the cluster's recorded state: the run settings, the
 bridge network records and the Ceph version recorded when the monitor started.
@@ -4554,7 +4461,8 @@ also reaps background processes started through `Exec`, such as a test server.
 Pass it to `testcontainers.Run`, not to `ceph.Run`.
 
 ```golang
-client, err := testcontainers.Run(ctx, cluster.Images().Client,
+facts, err := ceph.FactsOf(cluster)
+client, err := testcontainers.Run(ctx, facts.Images.Client,
 	cluster.WithClient(),
 	ceph.WithIdleEntrypoint(),
 )
@@ -4838,7 +4746,8 @@ reader, err := cluster.CreateClient(ctx, "reader", ceph.ClientCaps{
 if err != nil {
 	t.Fatal(err)
 }
-client, err := testcontainers.Run(ctx, cluster.Images().Client,
+facts, err := ceph.FactsOf(cluster)
+client, err := testcontainers.Run(ctx, facts.Images.Client,
 	cluster.WithClientIdentity(reader),
 	ceph.WithIdleEntrypoint(),
 )
@@ -5475,8 +5384,9 @@ port and bind the public address before enabling the module (using
 managers, `ManagerServices` stayed empty and no manager served metrics:
 
 ```golang
+facts, err := ceph.FactsOf(cluster)
 settings := []ceph.ConfigSetting{
-	{Section: "mgr", Name: "mgr/prometheus/server_addr", Value: cluster.PublicAddress()},
+	{Section: "mgr", Name: "mgr/prometheus/server_addr", Value: facts.PublicAddress},
 	{Section: "mgr", Name: "mgr/prometheus/a/server_port", Value: "19283"},
 	{Section: "mgr", Name: "mgr/prometheus/b/server_port", Value: "19284"},
 }
@@ -5636,7 +5546,7 @@ a helper applies or restores it.
   [WithMessengerMode](#withmessengermode)).
 - Squid 19.2.6 has an RGW multisite regression; use 19.2.5 for multisite tests
   (see [rgw](rgw.md)).
-- `CephVersion` reflects only the first MON's image (essential). Mixing releases across role
+- `ClusterFacts.CephVersion` reflects only the first MON's image (essential). Mixing releases across role
   images is not supported.
 
 See [Releases and images](guides/releases-and-images.md) for details.
@@ -5666,9 +5576,9 @@ See [Releases and images](guides/releases-and-images.md) for details.
 `ImageSet` selects Essential, Client, CephFS, RBDAux and RGW, or an exclusive
 All image. `RunWithImages` accepts the set directly; `WithImages` applies it
 to service Run entry points with images.Essential as the image argument.
-`Run` without an explicit set uses its image as the aggregate. `Images()`
-returns the effective selection and `EssentialImage()` returns the essential
-image. `cephfs.WithMDSImage` and `rgw.WithImage` replace the cephfs and rgw
+`Run` without an explicit set uses its image as the aggregate.
+`ClusterFacts.Images` returns the effective selection, and its `Essential` field
+is the essential image. `cephfs.WithMDSImage` and `rgw.WithImage` replace the cephfs and rgw
 roles of a set whichever option comes first.
 
 `ClientContainer` lazily creates one owned toolkit for a separate

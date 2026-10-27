@@ -67,7 +67,7 @@ func TestTrackedHostPortsRetainNativeErrorAndCanceledPartialLease(t *testing.T) 
 			defer cancel()
 			nativeErr := errors.New("reservation cleanup could not remove allocator")
 			got, err := cluster.reserveTrackedHostPortsWith(ctx, 2, func(_ context.Context, image, address string, count int, timeout time.Duration) (*hostPortLease, error) {
-				if image != cluster.settings.essentialImage || address != cluster.PublicAddress() || count != 2 || timeout != cluster.settings.startupTimeout {
+				if image != cluster.settings.essentialImage || address != cluster.staticFacts().PublicAddress || count != 2 || timeout != cluster.settings.startupTimeout {
 					t.Error("reservation parameters changed")
 				}
 				if cluster.mu.TryLock() {

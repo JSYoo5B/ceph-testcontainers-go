@@ -523,7 +523,11 @@ func (g *Gateway) placementRuntimeScope(ctx context.Context) (rgwPlacementScope,
 		return rgwPlacementScope{}, errors.New("RGW container hostname is empty")
 	}
 	frontend := "beast port=" + strconv.Itoa(g.port)
-	if g.owner.UsesHostNetwork() {
+	facts, factsErr := ceph.FactsOf(g.owner)
+	if factsErr != nil {
+		return rgwPlacementScope{}, factsErr
+	}
+	if facts.UsesHostNetwork {
 		frontend = "beast endpoint=" + net.JoinHostPort(g.publicAddress, strconv.Itoa(g.port))
 	}
 	// Registering to the service map follows starting the HTTP frontend.

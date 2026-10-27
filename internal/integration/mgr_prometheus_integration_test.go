@@ -43,10 +43,10 @@ func TestManagerPrometheusExporter(t *testing.T) {
 			var settings []ceph.ConfigSetting
 			if host {
 				ports := strings.Fields(execOutput(t, ctx, client, "python3", "-c", freeHostPorts, strconv.Itoa(len(managers))))
-				settings = append(settings, ceph.ConfigSetting{Section: "mgr", Name: "mgr/prometheus/server_addr", Value: cluster.PublicAddress()})
+				settings = append(settings, ceph.ConfigSetting{Section: "mgr", Name: "mgr/prometheus/server_addr", Value: staticFacts(cluster).PublicAddress})
 				for i, manager := range managers {
 					settings = append(settings, ceph.ConfigSetting{Section: "mgr", Name: "mgr/prometheus/" + manager.DaemonName + "/server_port", Value: ports[i]})
-					expected[manager.DaemonName] = cluster.PublicAddress() + ":" + ports[i]
+					expected[manager.DaemonName] = staticFacts(cluster).PublicAddress + ":" + ports[i]
 				}
 			} else {
 				for _, manager := range managers {

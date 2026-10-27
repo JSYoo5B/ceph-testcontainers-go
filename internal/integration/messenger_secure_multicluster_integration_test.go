@@ -47,7 +47,7 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", source.Images().RBDAux), rbdmirror.Config{
+			mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", staticFacts(source).Images.RBDAux), rbdmirror.Config{
 				Source: source, Destination: destination, Pool: pool,
 			})
 			if mirror != nil {
@@ -135,7 +135,7 @@ func TestCephFSMessengerSecureDefaultMix(t *testing.T) {
 				}
 			}
 			mixedMessengerExec(t, ctx, sourceClient, "python3", script, filesystems[0].FilesystemName, "write", "initial")
-			mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", source.Images().CephFS), cephfsmirror.Config{
+			mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.Config{
 				Source: source, Destination: destination, SourceFilesystem: filesystems[0].FilesystemName,
 				DestinationFilesystem: filesystems[1].FilesystemName, DestinationSite: "messenger-destination", Directories: []string{"/messenger"},
 			})
@@ -200,7 +200,7 @@ func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool)
 		options := append([]testcontainers.ContainerCustomizer{}, roleOptions...)
 		options = append(options, ceph.WithNoInitialOSDs(), ceph.WithPoolDefaults(1, 1), ceph.WithOSDBlockSize(512<<20), ceph.WithMessengerMode(mode))
 		cluster, client := newServiceClusterWithOptions(t, image, options...)
-		if cluster.MessengerMode() != mode {
+		if staticFacts(cluster).MessengerMode != mode {
 			t.Fatal("cluster bootstrap mode changed")
 		}
 		if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
@@ -227,10 +227,10 @@ func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool)
 		}
 		clusters[index], clients[index], identities[index], keyrings[index] = cluster, client, status.FSID, keyring
 	}
-	if identities[0] == identities[1] || clusters[0].NetworkName() == clusters[1].NetworkName() || bytes.Equal(keyrings[0], keyrings[1]) {
+	if identities[0] == identities[1] || staticFacts(clusters[0]).NetworkName == staticFacts(clusters[1]).NetworkName || bytes.Equal(keyrings[0], keyrings[1]) {
 		t.Fatal("mixed-policy fixtures do not have independent FSIDs, networks and credentials")
 	}
-	t.Logf("MSGR_MIX_PAIR source_fsid=%s destination_fsid=%s source_mode=%d destination_mode=%d osds_per_cluster=1 block_size=536870912 replicas=1 min_size=1", identities[0], identities[1], clusters[0].MessengerMode(), clusters[1].MessengerMode())
+	t.Logf("MSGR_MIX_PAIR source_fsid=%s destination_fsid=%s source_mode=%d destination_mode=%d osds_per_cluster=1 block_size=536870912 replicas=1 min_size=1", identities[0], identities[1], staticFacts(clusters[0]).MessengerMode, staticFacts(clusters[1]).MessengerMode)
 	return clusters[0], clusters[1], clients[0], clients[1]
 }
 
@@ -273,7 +273,7 @@ func checkMixedMessengerPeers(t *testing.T, ctx context.Context, cluster *ceph.C
 		}
 	}
 	mode := "default"
-	if cluster.MessengerMode() == ceph.MessengerV2Secure {
+	if staticFacts(cluster).MessengerMode == ceph.MessengerV2Secure {
 		mode = "secure"
 	}
 	for _, daemon := range daemons {

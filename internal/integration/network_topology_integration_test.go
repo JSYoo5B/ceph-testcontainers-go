@@ -36,7 +36,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	cluster, client := newServiceCluster(t, ceph.WithSeparateClusterNetwork(), ceph.WithAddressFamily(family))
-	if !cluster.HasSeparateClusterNetwork() || cluster.NetworkName() == cluster.ClusterNetworkName() {
+	if !staticFacts(cluster).HasSeparateClusterNetwork || staticFacts(cluster).NetworkName == staticFacts(cluster).ClusterNetworkName {
 		t.Fatal("fixture did not create independent public/cluster bridges")
 	}
 	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
@@ -48,11 +48,11 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 			t.Error(err)
 		}
 	})
-	public, err := docker.NetworkInspect(ctx, cluster.NetworkName(), mobycl.NetworkInspectOptions{})
+	public, err := docker.NetworkInspect(ctx, staticFacts(cluster).NetworkName, mobycl.NetworkInspectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	private, err := docker.NetworkInspect(ctx, cluster.ClusterNetworkName(), mobycl.NetworkInspectOptions{})
+	private, err := docker.NetworkInspect(ctx, staticFacts(cluster).ClusterNetworkName, mobycl.NetworkInspectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if inspection.Container.NetworkSettings.Networks[cluster.ClusterNetworkName()] != nil || inspection.Container.NetworkSettings.Networks[cluster.NetworkName()] == nil {
+		if inspection.Container.NetworkSettings.Networks[staticFacts(cluster).ClusterNetworkName] != nil || inspection.Container.NetworkSettings.Networks[staticFacts(cluster).NetworkName] == nil {
 			t.Fatal("non-OSD daemon/client joined replication network or lacks public network")
 		}
 	}
@@ -102,8 +102,8 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pub := inspection.Container.NetworkSettings.Networks[cluster.NetworkName()]
-			back := inspection.Container.NetworkSettings.Networks[cluster.ClusterNetworkName()]
+			pub := inspection.Container.NetworkSettings.Networks[staticFacts(cluster).NetworkName]
+			back := inspection.Container.NetworkSettings.Networks[staticFacts(cluster).ClusterNetworkName]
 			if pub == nil || back == nil {
 				t.Fatal("OSD is not attached to both traffic planes")
 			}
@@ -180,7 +180,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !inspection.Container.State.Running || inspection.Container.NetworkSettings.Networks[cluster.ClusterNetworkName()] != nil || inspection.Container.NetworkSettings.Networks[cluster.NetworkName()] == nil {
+	if !inspection.Container.State.Running || inspection.Container.NetworkSettings.Networks[staticFacts(cluster).ClusterNetworkName] != nil || inspection.Container.NetworkSettings.Networks[staticFacts(cluster).NetworkName] == nil {
 		t.Fatal("backend interruption stopped the daemon or removed the public endpoint")
 	}
 	address := before[osd.ID].Public[0].Addr

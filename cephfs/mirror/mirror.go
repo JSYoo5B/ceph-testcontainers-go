@@ -521,6 +521,14 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 			return nil, invalid(fmt.Errorf("CephFS mirror daemon %q already exists", daemonName))
 		}
 	}
+	sourceFacts, err := ceph.FactsOf(mirror.source)
+	if err != nil {
+		return nil, err
+	}
+	destinationFacts, err := ceph.FactsOf(mirror.destination)
+	if err != nil {
+		return nil, err
+	}
 	const socket = "/var/run/ceph/cephfs-mirror.asok"
 	moduleOpts := []testcontainers.ContainerCustomizer{
 		mirror.source.WithClient(),
@@ -531,8 +539,8 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 		testcontainers.WithCmd("--id", mirror.sourceID, "-f", "--admin-socket", socket, "--cephfs-mirror-directory-scan-interval", "1"),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", socket}).WithStartupTimeout(2 * time.Minute)),
 	}
-	if !mirror.source.UsesHostNetwork() {
-		moduleOpts = append(moduleOpts, network.WithNetworkName(nil, mirror.destination.NetworkName()))
+	if !sourceFacts.UsesHostNetwork {
+		moduleOpts = append(moduleOpts, network.WithNetworkName(nil, destinationFacts.NetworkName))
 	}
 	moduleOpts = append(moduleOpts, mirror.daemonOptions...)
 	moduleOpts = append(moduleOpts, opts...)
@@ -644,11 +652,19 @@ func (mirror *Mirror) attachManagers(ctx context.Context) error {
 	if mirror.source == nil || mirror.destination == nil {
 		return errors.New("CephFS mirror is not initialized")
 	}
+	sourceFacts, err := ceph.FactsOf(mirror.source)
+	if err != nil {
+		return err
+	}
+	destinationFacts, err := ceph.FactsOf(mirror.destination)
+	if err != nil {
+		return err
+	}
 	ids, err := cephFSManagerCandidates(ctx, mirror.source)
 	if err != nil {
 		return err
 	}
-	if mirror.source.UsesHostNetwork() {
+	if sourceFacts.UsesHostNetwork {
 		return nil
 	}
 	if mirror.managerNetworking == nil {
@@ -657,7 +673,7 @@ func (mirror *Mirror) attachManagers(ctx context.Context) error {
 			return fmt.Errorf("create Docker client for CephFS manager networking: %w", err)
 		}
 		mirror.managerNetworking = &cephFSManagerNetworking{
-			docker: docker, network: mirror.destination.NetworkName(), owned: make(map[string]bool),
+			docker: docker, network: destinationFacts.NetworkName, owned: make(map[string]bool),
 		}
 		mirror.owned.AddCleanup("disconnect CephFS managers and close Docker client", mirror.managerNetworking.cleanup)
 	}
@@ -1366,7 +1382,11 @@ func RunWithImages(ctx context.Context, config Config, opts ...testcontainers.Co
 	if config.Source == nil || config.Destination == nil {
 		return nil, invalid(fmt.Errorf("roles clusters are required"))
 	}
-	image := config.Source.Images().CephFS
+	facts, err := ceph.FactsOf(config.Source)
+	if err != nil {
+		return nil, err
+	}
+	image := facts.Images.CephFS
 	if image == "" {
 		return nil, invalid(fmt.Errorf("cephfs image is required"))
 	}

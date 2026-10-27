@@ -59,7 +59,7 @@ func testRGWBucketNotifications(t *testing.T, host bool) {
 	}
 	s3 := s3HTTPClient{endpoint: endpoint, accessKey: access, secretKey: secret, region: gateway.Region, http: &http.Client{Timeout: 30 * time.Second}}
 
-	receiverHost := cluster.PublicAddress()
+	receiverHost := staticFacts(cluster).PublicAddress
 	if !host {
 		receiverHost, err = client.ContainerIP(ctx)
 		if err != nil {

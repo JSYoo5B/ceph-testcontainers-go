@@ -974,10 +974,14 @@ func reserveNetworkDelay(ctx context.Context, c *ceph.Container, target testcont
 	var closed, hostNetwork, owned bool
 	var name string
 	err := faulthook.WithTopology(ctx, c, func() error {
-		closed, hostNetwork = faulthook.Closed(c), c.UsesHostNetwork()
-		name = c.NetworkName()
+		facts, factsErr := ceph.FactsOf(c)
+		if factsErr != nil {
+			return factsErr
+		}
+		closed, hostNetwork = faulthook.Closed(c), facts.UsesHostNetwork
+		name = facts.NetworkName
 		if plane == ceph.ClusterNetworkPlane {
-			name = c.ClusterNetworkName()
+			name = facts.ClusterNetworkName
 		}
 		owned = faulthook.Owns(c, target.GetContainerID())
 		return nil

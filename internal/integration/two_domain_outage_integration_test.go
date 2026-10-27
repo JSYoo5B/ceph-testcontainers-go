@@ -209,7 +209,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		order = append(order, m.Role+"."+m.Name)
 	}
 	t.Logf("TWO_DOMAIN_OUTAGE_MANIFEST ceph=%s platform=%s essential_image=%s client_image=%s stop_order=%s survivor_mon=%s survivor_osd=%d election_epoch=%d manifest=%s",
-		cluster.CephVersion(), strings.TrimSpace(string(topologyExecOutput(t, ctx, client, "uname", "-sm"))), imageID(t, ctx, cluster.Container), imageID(t, ctx, client),
+		staticFacts(cluster).CephVersion, strings.TrimSpace(string(topologyExecOutput(t, ctx, client, "uname", "-sm"))), imageID(t, ctx, cluster.Container), imageID(t, ctx, client),
 		strings.Join(order, ","), survivorMON.Name, survivorOSD, baseline.ElectionEpoch, manifestJSON)
 
 	// Baseline: the retained client writes under the baseline token.

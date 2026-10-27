@@ -310,19 +310,6 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 	return nil
 }
 
-// EssentialImage returns the essential image that runs the MONs, MGRs, OSDs and
-// the control-plane CLI executor, except a daemon that WithDaemonImage started
-// from another image (see the Image method of its handle). It remains
-// available after termination. The
-// essential image does not promise general toolkit, mirror, CephFS or RGW
-// capabilities. Use Images for the client, rbd-aux, cephfs and rgw roles.
-func (c *Container) EssentialImage() string {
-	if c == nil {
-		return ""
-	}
-	return c.settings.essentialImage
-}
-
 // runContainer is testcontainers.Run returning only a real handle. Run
 // returns a nil *DockerContainer when it fails before a container exists;
 // as a testcontainers.Container that would be a non-nil interface holding a
@@ -436,19 +423,6 @@ func (c *Container) monitorJoinEnvironment(name string) map[string]string {
 	return env
 }
 
-// NetworkName returns the cluster's bridge name, or "host" in host mode.
-func (c *Container) NetworkName() string {
-	return c.settings.publicNetworkName(c.nets.public)
-}
-
-// UsesHostNetwork reports whether the cluster shares Docker's host network.
-func (c *Container) UsesHostNetwork() bool { return c.settings.hostNetwork }
-
-// PublicAddress returns the advertised host-mode IPv4 address; empty in bridge mode.
-func (c *Container) PublicAddress() string {
-	return c.settings.advertisedPublicAddress()
-}
-
 func (c *Container) trackHostPortLease(lease *hostPortLease) {
 	if lease == nil {
 		return
@@ -497,7 +471,7 @@ func (c *Container) adminClient(opts ...ClientContainerOption) testcontainers.Cu
 				return err
 			}
 		} else {
-			if err := network.WithNetworkName(nil, c.NetworkName())(req); err != nil {
+			if err := network.WithNetworkName(nil, c.staticFacts().NetworkName)(req); err != nil {
 				return err
 			}
 		}

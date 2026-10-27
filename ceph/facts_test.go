@@ -6,30 +6,6 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-func TestStaticFactsNilContainerKeepsDocumentedDefaults(t *testing.T) {
-	var c *Container
-	if c.AddressFamily() != AddressIPv4 || c.EssentialImage() != "" || c.Images() != (ImageSet{}) ||
-		c.MessengerMode() != MessengerDefault || c.CephVersion() != "" {
-		t.Fatalf("nil container facts changed: %v %q %v %v %q", c.AddressFamily(), c.EssentialImage(), c.Images(), c.MessengerMode(), c.CephVersion())
-	}
-	for name, fact := range map[string]func(){
-		"NetworkName":               func() { c.NetworkName() },
-		"UsesHostNetwork":           func() { c.UsesHostNetwork() },
-		"PublicAddress":             func() { c.PublicAddress() },
-		"ClusterNetworkName":        func() { c.ClusterNetworkName() },
-		"HasSeparateClusterNetwork": func() { c.HasSeparateClusterNetwork() },
-	} {
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Fatalf("nil container %s no longer panics", name)
-				}
-			}()
-			fact()
-		}()
-	}
-}
-
 func TestStaticFactsNetworkNames(t *testing.T) {
 	public := &testcontainers.DockerNetwork{Name: "public-net"}
 	cluster := &testcontainers.DockerNetwork{Name: "cluster-net"}
@@ -48,10 +24,13 @@ func TestStaticFactsNetworkNames(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := tc.c
-			if c.NetworkName() != tc.network || c.ClusterNetworkName() != tc.clusterName || c.PublicAddress() != tc.publicIP ||
-				c.HasSeparateClusterNetwork() != tc.separate || c.UsesHostNetwork() != tc.host {
-				t.Fatalf("got %q %q %q %v %v", c.NetworkName(), c.ClusterNetworkName(), c.PublicAddress(), c.HasSeparateClusterNetwork(), c.UsesHostNetwork())
+			facts, err := FactsOf(tc.c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if facts.NetworkName != tc.network || facts.ClusterNetworkName != tc.clusterName || facts.PublicAddress != tc.publicIP ||
+				facts.HasSeparateClusterNetwork != tc.separate || facts.UsesHostNetwork != tc.host {
+				t.Fatalf("got %q %q %q %v %v", facts.NetworkName, facts.ClusterNetworkName, facts.PublicAddress, facts.HasSeparateClusterNetwork, facts.UsesHostNetwork)
 			}
 		})
 	}
@@ -59,14 +38,25 @@ func TestStaticFactsNetworkNames(t *testing.T) {
 
 func TestStaticFactsImagesCopyAndDefaults(t *testing.T) {
 	defaults := &Container{settings: options{essentialImage: "ctl", cephfsOverride: "mds", rgwOverride: "rgw"}}
-	if got, want := defaults.Images(), (ImageSet{Essential: "ctl", Client: "ctl", CephFS: "mds", RBDAux: "ctl", RGW: "rgw"}); got != want {
+	defaultFacts, err := FactsOf(defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := defaultFacts.Images, (ImageSet{Essential: "ctl", Client: "ctl", CephFS: "mds", RBDAux: "ctl", RGW: "rgw"}); got != want {
 		t.Fatalf("default images = %+v, want %+v", got, want)
 	}
 	selected := &ImageSet{Essential: "e", Client: "c", CephFS: "f", RBDAux: "r", RGW: "g"}
 	c := &Container{settings: options{essentialImage: "ctl", imageSet: selected}}
-	got := c.Images()
-	got.Essential = "changed"
-	if *selected != c.Images() || c.Images().Essential != "e" {
-		t.Fatalf("Images aliases the selected set: %+v", c.Images())
+	facts, err := FactsOf(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts.Images.Essential = "changed"
+	again, err := FactsOf(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *selected != again.Images || again.Images.Essential != "e" {
+		t.Fatalf("Images aliases the selected set: %+v", again.Images)
 	}
 }

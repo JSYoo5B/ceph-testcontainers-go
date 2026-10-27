@@ -590,7 +590,7 @@ func testNetworkDelay(t *testing.T) {
 
 	t.Run("refusals", func(t *testing.T) {
 		// The official Ceph image has neither tc nor ip.
-		if lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, fault.NetworkProfile{HelperImage: cluster.EssentialImage(),
+		if lease, err := fault.ApplyNetworkProfile(ctx, cluster, delayed.Container, fault.NetworkProfile{HelperImage: staticFacts(cluster).Images.Essential,
 			Plane: ceph.PublicNetworkPlane, Delay: delayAmount}); !errors.Is(err, fault.ErrNetemImageUnsupported) || !errors.Is(err, ceph.ErrImageCapability) || lease != nil {
 			t.Fatalf("a helper without tc: %v", err)
 		}
@@ -605,7 +605,7 @@ func testNetworkDelay(t *testing.T) {
 		}
 		delayExec(t, ctx, owner, "tc", "qdisc", "del", "dev", "eth0", "root", "handle", "8001:")
 		// A container on another network is not admitted.
-		stranger, err := testcontainers.Run(ctx, cluster.EssentialImage(), ceph.WithIdleEntrypoint())
+		stranger, err := testcontainers.Run(ctx, staticFacts(cluster).Images.Essential, ceph.WithIdleEntrypoint())
 		testcontainers.CleanupContainer(t, stranger)
 		if err != nil {
 			t.Fatal(err)
@@ -726,9 +726,9 @@ func testNetworkDelayPeerIPv6(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		endpoint := inspection.NetworkSettings.Networks[cluster.NetworkName()]
+		endpoint := inspection.NetworkSettings.Networks[staticFacts(cluster).NetworkName]
 		if endpoint == nil || !endpoint.GlobalIPv6Address.IsValid() {
-			t.Fatalf("no IPv6 address on %s", cluster.NetworkName())
+			t.Fatalf("no IPv6 address on %s", staticFacts(cluster).NetworkName)
 		}
 		return endpoint.GlobalIPv6Address
 	}
@@ -808,9 +808,9 @@ func testNetworkDelayMixedPeers(t *testing.T, ctx context.Context, image string,
 		if err != nil {
 			t.Fatal(err)
 		}
-		settings := inspection.NetworkSettings.Networks[cluster.NetworkName()]
+		settings := inspection.NetworkSettings.Networks[staticFacts(cluster).NetworkName]
 		if settings == nil || !settings.IPAddress.Is4() || !settings.GlobalIPv6Address.IsValid() {
-			t.Fatalf("no IPv4 and IPv6 address on %s", cluster.NetworkName())
+			t.Fatalf("no IPv4 and IPv6 address on %s", staticFacts(cluster).NetworkName)
 		}
 		return settings.IPAddress, settings.GlobalIPv6Address
 	}

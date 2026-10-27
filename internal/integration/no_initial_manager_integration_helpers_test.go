@@ -516,9 +516,9 @@ func noInitialManagerResources(t *testing.T, ctx context.Context, o *noInitialOS
 	if len(seen) != len(expected) {
 		t.Fatal("construction lost an original owned container")
 	}
-	if len(o.networks) == 0 && !cluster.UsesHostNetwork() {
-		network, err := o.client.NetworkInspect(ctx, cluster.NetworkName(), mobycl.NetworkInspectOptions{})
-		if err != nil || network.Network.ID == "" || network.Network.Name != cluster.NetworkName() {
+	if len(o.networks) == 0 && !staticFacts(cluster).UsesHostNetwork {
+		network, err := o.client.NetworkInspect(ctx, staticFacts(cluster).NetworkName, mobycl.NetworkInspectOptions{})
+		if err != nil || network.Network.ID == "" || network.Network.Name != staticFacts(cluster).NetworkName {
 			t.Fatal("original owned bridge identity unavailable", err)
 		}
 		o.networks = append(o.networks, network.Network.ID)
