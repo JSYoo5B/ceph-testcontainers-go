@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 390,
+  "count": 396,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -1978,6 +1978,22 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Observer.BlocklistEntries",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]BlocklistEntry, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.BlocklistEntries",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.Configuration",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]ConfigEntry, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.Configuration",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Observer.DaemonAddresses",
       "kind": "method",
       "signature": "func(ctx context.Context) (DaemonAddresses, error)",
@@ -1986,11 +2002,43 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.Observer.MGRModules",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]MGRModuleState, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.MGRModules",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.ManagerServices",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (map[string]string, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.ManagerServices",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.Observer.ManagerStatus",
       "kind": "method",
       "signature": "func(ctx context.Context) (ManagerStatus, error)",
       "receiver": "*Observer",
       "proposed": "ceph.Observer.ManagerStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.OSDFlags",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]OSDFlag, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.OSDFlags",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.OSDStates",
+      "kind": "method",
+      "signature": "func(ctx context.Context) ([]OSDState, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.OSDStates",
       "decision": "baseline"
     },
     {

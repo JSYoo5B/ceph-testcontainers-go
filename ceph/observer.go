@@ -50,14 +50,20 @@ func ObserveTenant(tenant *Tenant) (*Observer, error) {
 // query resolves the target for one query and returns the CLI contract bound
 // to it. The control container is still selected on every command.
 func (o *Observer) query() (cliQuery, error) {
-	if o == nil || o.target == nil {
-		return nil, invalidRequest("observe: the observer is not constructed by Observe or ObserveTenant")
-	}
-	c, err := o.target()
+	c, err := o.cluster()
 	if err != nil {
 		return nil, err
 	}
 	return c.cephCLI, nil
+}
+
+// cluster resolves the target for one query. The tenant form checks its lease
+// here, so every query of every group validates it.
+func (o *Observer) cluster() (*Container, error) {
+	if o == nil || o.target == nil {
+		return nil, invalidRequest("observe: the observer is not constructed by Observe or ObserveTenant")
+	}
+	return o.target()
 }
 
 // Status reads the monitor's JSON status; see Container.Status.
@@ -87,4 +93,70 @@ func (o *Observer) DaemonAddresses(ctx context.Context) (DaemonAddresses, error)
 		return DaemonAddresses{}, err
 	}
 	return readDaemonAddresses(ctx, run)
+}
+
+// The queries below take the topology lock before they read, so they run the
+// Container method of the same name on the resolved cluster instead of the bare
+// cliQuery. Each keeps its own acquisition: Configuration, BlocklistEntries,
+// MGRModules, OSDFlags and OSDStates take the topology mutex without a context,
+// and ManagerServices waits for it under the caller's context. All of them
+// refuse a terminated cluster or one without a control container before they
+// run a command.
+
+// Configuration lists the central configuration database entries; see
+// Container.Configuration.
+func (o *Observer) Configuration(ctx context.Context) ([]ConfigEntry, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return nil, err
+	}
+	return c.Configuration(ctx)
+}
+
+// BlocklistEntries lists the exact entries and CIDR ranges of the blocklist;
+// see Container.BlocklistEntries.
+func (o *Observer) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return nil, err
+	}
+	return c.BlocklistEntries(ctx)
+}
+
+// MGRModules lists the configured and available manager modules; see
+// Container.MGRModules.
+func (o *Observer) MGRModules(ctx context.Context) ([]MGRModuleState, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return nil, err
+	}
+	return c.MGRModules(ctx)
+}
+
+// OSDFlags lists the global OSDMap flags; see Container.OSDFlags.
+func (o *Observer) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return nil, err
+	}
+	return c.OSDFlags(ctx)
+}
+
+// OSDStates returns the states of the owned OSDs; see Container.OSDStates.
+func (o *Observer) OSDStates(ctx context.Context) ([]OSDState, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return nil, err
+	}
+	return c.OSDStates(ctx)
+}
+
+// ManagerServices lists the service URLs that manager modules advertise; see
+// Container.ManagerServices.
+func (o *Observer) ManagerServices(ctx context.Context) (map[string]string, error) {
+	c, err := o.cluster()
+	if err != nil {
+		return nil, err
+	}
+	return c.ManagerServices(ctx)
 }

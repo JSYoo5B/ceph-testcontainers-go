@@ -2433,6 +2433,12 @@ accessor for it. A nil cluster or tenant returns an error and a nil `Observer`.
 func (o *Observer) Status(ctx context.Context) (ceph.Status, error)
 func (o *Observer) ManagerStatus(ctx context.Context) (ceph.ManagerStatus, error)
 func (o *Observer) DaemonAddresses(ctx context.Context) (ceph.DaemonAddresses, error)
+func (o *Observer) Configuration(ctx context.Context) ([]ceph.ConfigEntry, error)
+func (o *Observer) BlocklistEntries(ctx context.Context) ([]ceph.BlocklistEntry, error)
+func (o *Observer) MGRModules(ctx context.Context) ([]ceph.MGRModuleState, error)
+func (o *Observer) OSDFlags(ctx context.Context) ([]ceph.OSDFlag, error)
+func (o *Observer) OSDStates(ctx context.Context) ([]ceph.OSDState, error)
+func (o *Observer) ManagerServices(ctx context.Context) (map[string]string, error)
 ```
 
 Each query reads the cluster when it is called; constructing an `Observer`
@@ -2444,8 +2450,12 @@ released or the shared cluster is terminated every query returns an error that
 matches `ErrInvalidRequest`. A cluster-backed `Observer` has no lease, and its
 queries after `Terminate` fail with the error of the command path. An
 `Observer` exposes only its queries, owns no resource and needs no cleanup.
-Only these three observations are available; the other observations stay on
-`Container`.
+`Configuration`, `BlocklistEntries`, `MGRModules`, `OSDFlags`, `OSDStates` and
+`ManagerServices` take the topology lock first, each as its `Container` method
+does, and refuse a terminated cluster before running a command.
+`ManagerServices` waits for the lock under `ctx`; the others wait for it without
+a context. The remaining observations stay on `Container` and are not yet
+available through an `Observer`.
 
 #### OSDs
 
