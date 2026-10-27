@@ -6,7 +6,8 @@ package `override`: AddBlocklist, SetFullRatios, SetMGRModule, SetOSDFlag,
 SetConfig, SetMessengerPolicy and SetDebugLevel, each returning a
 `*override.*Handle`. 0.x: the old `Container` methods and the `ceph` handle types
 were removed without aliases. This check fails when a tracked text file names
-one of them again, except in the paths of ALLOWED and PREFIXES, which are
+one of them again (or a removed observation receiver such as
+`(*Container).BlocklistEntries`), except in the paths of ALLOWED and PREFIXES, which are
 historical records (published release notes, upgrade guides, move records, the
 design records that quote the old names) and the files that must spell the
 names to check them.
@@ -37,11 +38,24 @@ HANDLES = (
     "FullRatiosOverride",
     "BlocklistOverride",
 )
+# Observation methods and static-fact accessors that left Container and Tenant
+# (they are methods of ceph.Observer or fields of ceph.ClusterFacts now).
+RECEIVER_METHODS = (
+    "AddressFamily", "BlocklistEntries", "CephVersion", "ClusterNetworkName", "Configuration",
+    "DaemonAddresses", "EssentialImage", "FullRatios", "HasSeparateClusterNetwork", "HealthDetails",
+    "Images", "MGRModules", "ManagerMetrics", "ManagerServices", "ManagerStatus", "MessengerMode",
+    "MonitorBootstrapAddresses", "NetworkName", "OSDFlags", "OSDStates", "ObjectWatchers",
+    "PGInconsistencies", "Pools", "PublicAddress", "QuorumStatus", "Status", "UsesHostNetwork",
+)
 # Word boundaries keep unrelated identifiers (such as the registry kind
 # faultConfigOverride or a test named TestOverrideConfigX) from matching.
 PATTERNS = (
     ("retired Container method", re.compile(r"\b(?:%s)\b" % "|".join(METHODS))),
     ("retired ceph handle type", re.compile(r"\b(?:%s)\b" % "|".join(HANDLES))),
+    # Only receiver-qualified spellings: the bare names are valid on Observer
+    # and ClusterFacts (and Status is also a method of Pool).
+    ("retired Container or Tenant receiver",
+     re.compile(r"(?:\(\*(?:Container|Tenant)\)|\b(?:Container|Tenant))\.(?:%s)\b" % "|".join(RECEIVER_METHODS))),
 )
 
 # Historical records and the files that must name the retired spellings to

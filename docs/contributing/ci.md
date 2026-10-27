@@ -178,8 +178,8 @@ role vocabulary` (`.github/scripts/check_image_vocabulary.py`, which fails when 
 tracked file reintroduces the retired single-broad-role image vocabulary outside
 its list of historical records) and `Check the retired override names`
 (`.github/scripts/check_retired_override_names.py`, which fails when a tracked
-file names a removed `ceph.Container` override method or `ceph` handle type
-outside its list of historical records). The changelog step needs no network; the shallow checkout has no release tags, so it prints
+file names a removed `ceph.Container` override method, `ceph` handle type or
+observation method receiver (these are `ceph.Observer` methods now) outside its list of historical records). The changelog step needs no network; the shallow checkout has no release tags, so it prints
 `tag comparison: SKIPPED` and checks only the identifiers recorded in
 `CHANGELOG.md` against `docs/changes`. Vet, lint, tag compilation, the Python tooling tests,
 actionlint and the go-ceph harness test skip themselves on a

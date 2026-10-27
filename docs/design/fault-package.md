@@ -57,7 +57,7 @@ rbd, cephfs, rgw, internal/multicluster ──imports──▶ fault, ceph
 - `ceph` keeps `Run`, `Terminate`, topology changes (`AddOSD`, `OSDContainer.Remove`,
   `OSDContainer.SetIn`, daemon `Stop`/`Start`), general configuration, status and
   query APIs, and normal scrub and recovery (`DeepScrubPG`, `RepairPG`,
-  `PGInconsistencies`, `WaitForPGClean`).
+  `Observer.PGInconsistencies`, `WaitForPGClean`).
 - `fault` owns dedicated fault operations: netem delay, loss, rate and
   packet faults; endpoint interruption; container pause; dedicated object-error
   injection subject to its own reviewed checkpoint.
@@ -115,12 +115,12 @@ defines its own unexported category error type with the same `Is` rule as
 
 | Identifier | Reason |
 | --- | --- |
-| `NetworkPlane`, `PublicNetworkPlane`, `ClusterNetworkPlane`, `NetworkName`, `ClusterNetworkName`, `HasSeparateClusterNetwork` | Topology of the cluster's bridges. `fault` request types refer to `ceph.NetworkPlane`. |
-| `BlocklistEntry`, `(*Container).BlocklistEntries`, `(*Tenant).BlocklistEntries` | Read-only queries (`sharedOpen` for the tenant query). The session-admission control is `override.AddBlocklist` with `*override.BlocklistHandle`, not a `ceph` member. |
-| `FullRatios`, `FullRatioSnapshot`, `(*Container).FullRatios` | Read-only OSDMap policy query. The mutation and its explicit restoration are `override.SetFullRatios` with `*override.FullRatiosHandle`. |
-| `DeepScrubPG`, `RepairPG`, `PGInconsistencies`, `InconsistentObject`, `InconsistentShard`, `WaitForPGClean`, `WaitForClean` | Normal scrub, repair and recovery. `RepairPG` is also the documented recovery of an injected error. |
+| `NetworkPlane`, `PublicNetworkPlane`, `ClusterNetworkPlane`, and the `ClusterFacts` fields `NetworkName`, `ClusterNetworkName`, `HasSeparateClusterNetwork` (read with `ceph.FactsOf`) | Topology of the cluster's bridges. `fault` request types refer to `ceph.NetworkPlane`. |
+| `BlocklistEntry`, `(*Observer).BlocklistEntries` | Read-only query on the observer, obtained with `ceph.Observe` or `ceph.ObserveTenant` (the tenant form validates per query). The session-admission control is `override.AddBlocklist` with `*override.BlocklistHandle`, not a `ceph` member. |
+| `FullRatios`, `FullRatioSnapshot`, `(*Observer).FullRatios` | Read-only OSDMap policy query on the observer (`ceph.Observe`, `ceph.ObserveTenant`). The mutation and its explicit restoration are `override.SetFullRatios` with `*override.FullRatiosHandle`. |
+| `DeepScrubPG`, `RepairPG`, `(*Observer).PGInconsistencies`, `InconsistentObject`, `InconsistentShard`, `WaitForPGClean`, `WaitForClean` | Normal scrub, repair and recovery. `RepairPG` is also the documented recovery of an injected error. |
 | `OSDContainer.SetIn`, `OSDContainer.Remove`, `AddOSD`, daemon `Stop`/`Start` | Topology and lifecycle. The fault guide lists them as techniques, which does not move them. |
-| `DaemonAddresses`, `HealthDetails`, `Pool.PGs`, `OSDFlags`, `OSDStates` | Observation used by fault tests. |
+| `(*Observer).DaemonAddresses`, `(*Observer).HealthDetails`, `Pool.PGs`, `(*Observer).OSDFlags`, `(*Observer).OSDStates` | Observation used by fault tests. |
 | `TemporaryClientRevocation` and its handle | See the next section. The other general controls are in `override`. |
 
 ### Ambiguous `Temporary*` APIs
@@ -232,7 +232,7 @@ The behavior below is the inventory taken before the move. `override.SetFullRati
 | Apply | `faulthook.Admit("fault.InjectObjectDataError")`, requires BlueStore, validates the pool name and the object name (no slash, see #94), `WithTopology` for the whole call, `PoolPolicyReady`, requires an owned, unpurged OSD, a replicated pool, the OSD in the object's acting set, then `tell osd.N config set bluestore_debug_inject_read_err true`, `CheckPoolID`, and `tell osd.N injectdataerr`. It reaches the cluster only through hooks that already existed (`CLI`, `PoolState`, `CheckPoolID`, `OwnedOSD`, `BlueStore`, `StartupTimeout`, `PoolPolicyReady`); no hook, registry kind or cleanup phase was added. |
 | Recovery | No handle and no `Restore`. The injection lasts until the replica is rewritten (`RepairPG`) or the OSD restarts. The runtime setting `bluestore_debug_inject_read_err` stays true until the OSD restarts, also after `RepairPG`. |
 | Shared policy | `sharedRecycle`. |
-| Uncertainty | A failed command returns an error only; the caller observes with `DeepScrubPG`, `PGInconsistencies` and `HealthDetails`. Nothing is replayed, and a failure after the debug setting was enabled does not disarm it. |
+| Uncertainty | A failed command returns an error only; the caller observes with `DeepScrubPG`, `Observer.PGInconsistencies` and `Observer.HealthDetails`. Nothing is replayed, and a failure after the debug setting was enabled does not disarm it. |
 | Terminate | Nothing to do. |
 
 ## Dependencies on `*ceph.Container` private state

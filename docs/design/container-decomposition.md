@@ -48,20 +48,20 @@ come from the earlier measurement.
 
 After the override package migrations (the seven kinds of the override group left
 `Container` for the package `override`) and the sixth internal slice, measured at
-`922f403` with the same parser (method declarations whose receiver is `Container`
+`ba709ff` with the same parser (method declarations whose receiver is `Container`
 or `*Container` in the non-test files of package `ceph`; fields of the struct;
 `wc -l`; the embedded `testcontainers.Container` and the methods it promotes
 are not counted). This is information only: there is no numeric target, and the
 exported count falls for more than one reason (the facts and observation
 extractions are included), so none of the change is attributed to a single group.
 
-| Item | At `922f403` |
+| Item | At `ba709ff` |
 | --- | --- |
 | Exported methods declared on `*Container` | 39 |
 | Unexported methods on `*Container` | 189 |
 | Named struct fields | 34 |
-| Non-test files in `ceph` | 98 |
-| Non-test lines in `ceph` | 23,543 |
+| Non-test files in `ceph` | 99 |
+| Non-test lines in `ceph` | 23,561 |
 | `sharedGate("...")` call sites | 31 |
 | `admitHandle` / `admitFault` call expressions together | 9 |
 | Entries of `sharedMethodPolicies` / `sharedHandlePolicies` / `sharedFaultPolicies` / `sharedOverridePolicies` | 59 / 49 / 4 / 7 |
@@ -115,7 +115,7 @@ takes only what its group uses.
   (`errClusterTerminated`) or one without a control container. `EssentialImage`
   documents that it remains available after termination, so facts must not use it.
 - **Command execution.** Observations do not share one execution path. Audit of
-  the observation files at `494d3bd`:
+  the observation files at `494d3bd` (the method names are those of that revision; the sixteen are now methods of `ceph.Observer`, obtained with `ceph.Observe` or `ceph.ObserveTenant`):
 
   | Path | Methods | What it needs |
   | --- | --- | --- |
@@ -292,10 +292,12 @@ reference is [override.md](../override.md).
   (`override.SetDebugLevel`), `settings` (messenger mode, startup timeout) and
   `cephCLI`, each through a hook method.
 - **Admission.** All `sharedExclusive`, checked before any effect through
-  `sharedOverridePolicies`. A `go/parser` test in `ceph` lists every exported
-  function of `override` that takes a `*ceph.Container` and requires a policy for
-  it, so a new override cannot skip the gate; an import test pins that `override`
-  imports only the permitted packages.
+  `sharedOverridePolicies`. `override/admission_test.go` parses the package
+  source with `go/parser`, enumerates every exported top-level function and
+  requires a policy for it (`TestEveryExportedFunctionIsClassified`), and calls
+  each with zero arguments on a shared cluster to require `ErrSharedCluster`
+  before any effect, so a new override cannot skip the gate; an import test
+  pins that `override` imports only the permitted packages.
 - **State and lock owner.** The registry kinds and `debugLevels` stay on
   `Container`; the three former maps are registry kinds.
 - **Cleanup and restore lifetime (preserved unchanged by the move).**

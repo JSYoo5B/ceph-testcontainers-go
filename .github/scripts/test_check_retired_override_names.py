@@ -24,6 +24,12 @@ RETIRED = (
     "var h *ceph." + "DebugLevelOverride" + "Handle",
     "var h *ceph." + "FullRatios" + "Override",
     "var h *ceph." + "Blocklist" + "Override",
+    "`(*Container)." + "BlocklistEntries`",
+    "`(*Tenant)." + "BlocklistEntries`",
+    "`(*Container)." + "FullRatios`",
+    "ceph.Container." + "HealthDetails",
+    "Tenant." + "Pools lists the pools",
+    "Container." + "EssentialImage",
 )
 VALID = (
     "override.SetConfig(ctx, cluster, setting)",
@@ -34,6 +40,11 @@ VALID = (
     "allowPoolDeleteHeld asks the registry",
     "BlocklistEntry and Observer.BlocklistEntries stay in ceph",
     "DebugLevelReceipter has Receipt",
+    "`(*Observer).BlocklistEntries` and `(*Observer).FullRatios`",
+    "ceph.Observer.HealthDetails",
+    "observeCluster(s.Container).ManagerStatus(ctx)",
+    "Container.Pool returns one pool and Pool.Status reports it",
+    "ClusterFacts.NetworkName",
 )
 
 

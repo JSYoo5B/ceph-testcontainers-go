@@ -11,8 +11,8 @@ import (
 
 // ManagerMetrics is the observation that runs a supervised command in the
 // control container. Its implementation is here against two narrow contracts.
-// The exported method keeps its place on Container and passes
-// Container.ManagerServices and a control lookup bound to this container. Each
+// The exported method keeps its place on Observer and passes
+// Observer.ManagerServices and a control lookup bound to this container. Each
 // call advertises and selects the control container again, in the order the
 // inline code did: services first, then the endpoint check, then the lookup.
 
