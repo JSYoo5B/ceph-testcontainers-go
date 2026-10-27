@@ -1,159 +1,161 @@
 package apiinventory_test
 
 import (
-	"bytes"
-	"encoding/json"
 	"flag"
-	"go/ast"
-	"go/format"
+	"go/parser"
 	"go/token"
-	"maps"
-	"os"
-	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/apiinventory/catalogue"
 )
 
-var updateNaming = flag.Bool("update-api-naming", false, "refresh the source-derived public naming inventory")
+var (
+	updateNaming   = flag.Bool("update-api-naming", false, "regenerate the source-derived declaration and member catalogues; never writes a review receipt")
+	namingPackages = flag.String("api-naming-packages", "", "with -update-api-naming: comma-separated packages to regenerate (default all)")
+)
 
-// These are review proposals, not compatibility aliases or an API rewrite.
-// Only inventory rows below change when a proposal is edited.
-var namingProposals = map[string]string{}
+var (
+	surfaceOnce sync.Once
+	surfaceList []string
+	surfaceData map[string]catalogue.Surface
+	surfaceErr  error
+	updateOnce  sync.Once
+	updateErr   error
+)
 
-type namingEntry struct {
-	Current   string `json:"current"`
-	Kind      string `json:"kind"`
-	Signature string `json:"signature,omitempty"`
-	Receiver  string `json:"receiver,omitempty"`
-	Proposed  string `json:"proposed"`
-	Decision  string `json:"decision"`
+func config() catalogue.Config {
+	return catalogue.Config{Root: root, Proposals: catalogue.Proposals}
 }
 
-type namingInventory struct {
-	Schema  string         `json:"schema"`
-	Scope   string         `json:"scope"`
-	Counts  map[string]int `json:"counts"`
-	Entries []namingEntry  `json:"entries"`
-}
-
-func namingInventoryFromSource(t *testing.T) namingInventory {
+func publicPackages(t *testing.T) []string {
 	t.Helper()
-	inventory := namingInventory{
-		Schema: "ceph-api-naming/v1",
-		Scope:  "Declared exports in ceph, fault, rbd, cephfs, rgw, rgw/multisite and capture; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
-		Counts: make(map[string]int),
+	packages, err := catalogue.Discover(root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	seen := make(map[string]bool)
-	for _, pkg := range slices.Sorted(maps.Keys(packages)) {
-		var entries []namingEntry
-		parseDir(t, pkg, func(file *ast.File) {
-			for _, decl := range file.Decls {
-				switch decl := decl.(type) {
-				case *ast.FuncDecl:
-					if !decl.Name.IsExported() {
-						continue
-					}
-					name, kind, receiverType := decl.Name.Name, "function", ""
-					if decl.Recv != nil {
-						receiver := receiverName(decl.Recv.List[0].Type)
-						if !ast.IsExported(receiver) {
-							continue
-						}
-						name, kind = receiver+"."+name, "method"
-						var receiverSyntax bytes.Buffer
-						if err := format.Node(&receiverSyntax, token.NewFileSet(), decl.Recv.List[0].Type); err != nil {
-							t.Fatal(err)
-						}
-						receiverType = receiverSyntax.String()
-					}
-					var signature bytes.Buffer
-					if err := format.Node(&signature, token.NewFileSet(), decl.Type); err != nil {
-						t.Fatal(err)
-					}
-					entries = append(entries, namingEntry{Current: pkg + "." + name, Kind: kind, Signature: signature.String(), Receiver: receiverType})
-				case *ast.GenDecl:
-					for _, spec := range decl.Specs {
-						switch spec := spec.(type) {
-						case *ast.TypeSpec:
-							if spec.Name.IsExported() {
-								entries = append(entries, namingEntry{Current: pkg + "." + spec.Name.Name, Kind: "type"})
-							}
-						case *ast.ValueSpec:
-							for _, name := range spec.Names {
-								if name.IsExported() {
-									entries = append(entries, namingEntry{Current: pkg + "." + name.Name, Kind: decl.Tok.String()})
-								}
-							}
-						}
-					}
-				}
+	if len(packages) == 0 {
+		t.Fatal("no public package found")
+	}
+	return packages
+}
+
+// currentSurfaces regenerates once on request (-update-api-naming), which
+// writes declarations.json and members.json only, and then derives the
+// source surface that every check compares against.
+func currentSurfaces(t *testing.T) ([]string, map[string]catalogue.Surface) {
+	t.Helper()
+	if *updateNaming {
+		updateOnce.Do(func() {
+			var named []string
+			if *namingPackages != "" {
+				named = strings.Split(*namingPackages, ",")
 			}
+			_, updateErr = catalogue.Regenerate(config(), named)
 		})
-		slices.SortFunc(entries, func(a, b namingEntry) int { return strings.Compare(a.Current, b.Current) })
-		// Build-tag alternatives can declare the same public name. Require identical
-		// signatures instead of silently dropping a conflicting declaration.
-		for _, entry := range entries {
-			if seen[entry.Current] {
-				prior := inventory.Entries[len(inventory.Entries)-1]
-				if prior.Current != entry.Current || prior.Kind != entry.Kind || prior.Signature != entry.Signature || prior.Receiver != entry.Receiver {
-					t.Fatalf("conflicting API declarations: %s", entry.Current)
-				}
-				continue
-			}
-			seen[entry.Current] = true
-			entry.Proposed, entry.Decision = entry.Current, "baseline"
-			if proposal, ok := namingProposals[entry.Current]; ok {
-				entry.Proposed, entry.Decision = proposal, "proposal"
-			} else if split := strings.LastIndex(entry.Current, "."); split >= 0 {
-				if receiver, ok := namingProposals[entry.Current[:split]]; ok {
-					entry.Proposed, entry.Decision = receiver+entry.Current[split:], "proposal"
-				}
-			}
-			inventory.Counts[pkg]++
-			inventory.Entries = append(inventory.Entries, entry)
-		}
-		// Keep this audit tied to the same public surface as the reference-page check.
-		if inventory.Counts[pkg] != len(exported(t, pkg)) {
-			t.Fatalf("naming inventory omitted declarations in %s", pkg)
+		if updateErr != nil {
+			t.Fatal(updateErr)
 		}
 	}
-	targets := make(map[string]string)
-	for _, entry := range inventory.Entries {
-		if prior := targets[entry.Proposed]; prior != "" {
-			t.Fatalf("name collision: %s and %s -> %s", prior, entry.Current, entry.Proposed)
+	surfaceOnce.Do(func() {
+		surfaceList, surfaceErr = catalogue.Discover(root)
+		if surfaceErr == nil {
+			surfaceData, surfaceErr = catalogue.Generate(config(), surfaceList)
 		}
-		targets[entry.Proposed] = entry.Current
+	})
+	if surfaceErr != nil {
+		t.Fatal(surfaceErr)
 	}
-	for current := range namingProposals {
-		if !seen[current] {
-			t.Fatalf("stale rename proposal: %s", current)
-		}
+	return surfaceList, surfaceData
+}
+
+// Every public package has a catalogue directory with all three files, and no
+// catalogue directory exists for a package that does not.
+func TestPublicNamingLayout(t *testing.T) {
+	currentSurfaces(t)
+	if err := catalogue.CheckLayout(root); err != nil {
+		t.Fatal(err)
 	}
-	return inventory
 }
 
 // This is a review baseline, not a claim that every baseline name was approved.
 // Missing/stale rows, signature drift, duplicate names and colliding proposals
 // fail the normal suite; refreshing requires an explicit opt-in flag.
 func TestPublicNamingInventory(t *testing.T) {
-	inventory := namingInventoryFromSource(t)
-	data, err := json.MarshalIndent(inventory, "", "  ")
+	packages, surfaces := currentSurfaces(t)
+	for _, pkg := range packages {
+		t.Run(pkg, func(t *testing.T) {
+			if err := catalogue.CheckDeclarations(root, pkg, surfaces[pkg]); err != nil {
+				t.Fatalf("%v; run go test ./internal/apiinventory -run '^TestPublicNaming(Inventory|Members)$' -update-api-naming -api-naming-packages=%s", err, pkg)
+			}
+		})
+	}
+}
+
+func TestPublicNamingMembers(t *testing.T) {
+	packages, surfaces := currentSurfaces(t)
+	for _, pkg := range packages {
+		t.Run(pkg, func(t *testing.T) {
+			if err := catalogue.CheckMembers(root, pkg, surfaces[pkg]); err != nil {
+				t.Fatalf("%v; run go test ./internal/apiinventory -run '^TestPublicNaming(Inventory|Members)$' -update-api-naming -api-naming-packages=%s", err, pkg)
+			}
+		})
+	}
+}
+
+func TestNamingMemberScope(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "synthetic.go", `package synthetic
+ type Record struct {
+  A, B int
+  Hidden struct { UUID string; private int }
+  Rows []struct { Name string }
+  Index map[string]struct { ID int }
+  *external.Container
+  privateEmbedding
+  private struct { Exposed string }
+ }
+ type Endpoint interface { Read([]byte) (int, error); external.Closer }
+ type private struct { Public string }
+ `, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data = append(data, '\n')
-	path := filepath.Join(root, "docs/design/api-naming-inventory.json")
-	if *updateNaming {
-		if err := os.WriteFile(path, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	stored, err := os.ReadFile(path)
+	got, err := catalogue.MembersInFile("synthetic", file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(stored, data) {
-		t.Fatal("public naming inventory is stale; inspect API/proposal changes, then run go test ./internal/apiinventory -run '^TestPublicNamingInventory$' -update-api-naming")
+	want := map[string][]string{
+		"synthetic.Record": {
+			"Record.A field int", "Record.B field int",
+			"Record.Hidden field struct {\n\tUUID    string\n\tprivate int\n}", "Record.Hidden.UUID field string",
+			"Record.Index field map[string]struct{ ID int }", "Record.Index[].ID field int",
+			"Record.Rows field []struct{ Name string }", "Record.Rows[].Name field string",
+			"Record embed *external.Container", "Record embed privateEmbedding",
+		},
+		"synthetic.Endpoint": {"Endpoint.Read method func([]byte) (int, error)", "Endpoint embed external.Closer"},
+	}
+	for _, entries := range want {
+		slices.Sort(entries)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("member scope differs:\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
+// Regenerating the catalogues must never silently approve new names. Each
+// package's separately issued receipt pins the reviewed declaration and member
+// snapshots of that package alone: a source change in package A makes only A's
+// receipt stale.
+func TestNamingReviewBindsCurrentSurface(t *testing.T) {
+	packages, surfaces := currentSurfaces(t)
+	for _, pkg := range packages {
+		t.Run(pkg, func(t *testing.T) {
+			if err := catalogue.CheckReceipt(root, pkg, surfaces[pkg]); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

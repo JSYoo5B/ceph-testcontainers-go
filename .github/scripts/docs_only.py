@@ -25,8 +25,8 @@ READ_DOC_FILES = frozenset((
     # tag_scenarios tests compare the catalogue with the tag registry.
     "docs/guides/bug-compatibility-tags.md",
 ))
-# internal/apiinventory reads the audit and the inventory, member and review
-# receipts of the API naming review.
+# internal/apiinventory reads the audit, the review notes and the package-scoped
+# declaration, member and review files below docs/design/api-naming/.
 READ_DOC_PREFIXES = ("docs/design/api-naming",)
 
 

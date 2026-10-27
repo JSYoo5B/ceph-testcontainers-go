@@ -799,6 +799,18 @@ change the API.
   two by a test that required a log line the `ceph` CLI can lose and
   by an I/O stall of the runner.
 
+- Split the repository-wide API naming catalogues into package-scoped files
+  under `docs/design/api-naming/<package>/` (`declarations.json`,
+  `members.json`, `review.json`). The rows are unchanged: the per-package files
+  reassemble into the previous global catalogues byte for byte, and the new
+  receipts are issued separately by the explicit approve step. The public
+  package list is discovered instead of kept in a map, and `go run
+  ./internal/tools/apinaming` provides `regenerate` (catalogues only, never a
+  receipt), `approve` (one package's receipt only) and `aggregate` (computed
+  totals, not committed). The old `api-naming-inventory.json`,
+  `api-naming-members.json` and `api-naming-review.json` files are removed. No
+  library API changes.
+
 ## v0.3.0 (2026-10-16)
 
 The v0.3.0 release adds bounded native input and protocol observation

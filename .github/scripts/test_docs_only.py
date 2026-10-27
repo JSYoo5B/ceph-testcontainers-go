@@ -1,5 +1,6 @@
 import io
 import contextlib
+import json
 import os
 from pathlib import Path
 import re
@@ -22,9 +23,12 @@ TABLE = [
     # Read by internal/apiinventory (package pages name every export).
     ("docs/ceph.md", False), ("docs/fault.md", False), ("docs/rbd.md", False),
     ("docs/cephfs.md", False), ("docs/rgw.md", False), ("docs/capture.md", False),
-    # Read by internal/apiinventory (naming receipts and the review it stats).
-    ("docs/design/api-naming-inventory.json", False), ("docs/design/api-naming-members.json", False),
-    ("docs/design/api-naming-review.json", False), ("docs/design/api-naming-audit.md", False),
+    # Read by internal/apiinventory (package-scoped naming catalogues, receipts and the review note it stats).
+    ("docs/design/api-naming/rgw/multisite/declarations.json", False),
+    ("docs/design/api-naming/rgw/multisite/members.json", False),
+    ("docs/design/api-naming/rgw/multisite/review.json", False),
+    ("docs/design/api-naming/ceph/declarations.json", False), ("docs/design/api-naming/capture/review.json", False),
+    ("docs/design/api-naming/review-note.md", False), ("docs/design/api-naming-audit.md", False),
     ("docs/design/api-naming.md", False),
     # Read by the messenger coverage fixture test.
     ("docs/guides/messenger-client-fixtures.md", False),
@@ -101,7 +105,7 @@ class DecideTests(unittest.TestCase):
         self.assertTrue(only)
 
     def test_one_code_file_runs_everything(self):
-        for extra in ("ceph/ceph.go", "docs/ceph.md", "docs/design/api-naming-inventory.json",
+        for extra in ("ceph/ceph.go", "docs/ceph.md", "docs/design/api-naming/ceph/declarations.json",
                       ".github/workflows/code.yml"):
             with self.subTest(extra):
                 self.assertFalse(docs_only.decide("pull_request", False, "abc", ["README.md", extra])[0])
@@ -233,7 +237,9 @@ class GitTests(unittest.TestCase):
 class ReaderInventoryTests(unittest.TestCase):
     """A check that starts reading a documentation file must stop it being skipped."""
 
-    REFERENCE = re.compile(r"docs/[A-Za-z0-9_./-]*\.(?:md|json)")
+    # A Go source names a document file, or the whole package-scoped catalogue
+    # directory that internal/apiinventory/catalogue reads.
+    REFERENCE = re.compile(r"docs/[A-Za-z0-9_./-]*\.(?:md|json)|docs/design/api-naming/?")
 
     def sources(self):
         for path in sorted(ROOT.rglob("*.go")):
@@ -252,11 +258,22 @@ class ReaderInventoryTests(unittest.TestCase):
                 for match in self.REFERENCE.findall(line):
                     found.setdefault(match, "%s:%d" % (relative, number))
         # The scan must keep seeing the known readers, or it proves nothing.
-        for known in ("docs/ceph.md", "docs/design/api-naming-inventory.json",
-                      "docs/guides/messenger-client-fixtures.md", "docs/guides/bug-compatibility-tags.json"):
+        for known in ("docs/design/api-naming", "docs/guides/messenger-client-fixtures.md",
+                      "docs/guides/bug-compatibility-tags.json"):
             self.assertIn(known, found)
         for path, where in sorted(found.items()):
             self.assertFalse(docs_only.is_unread_doc(path), "%s is read at %s but is skipped as unread" % (path, where))
+
+    def test_every_file_a_catalogue_receipt_names_runs_the_checks(self):
+        # The package pages and review notes are named by data, not by a Go
+        # literal, so the source scan cannot see them. Read the receipts.
+        receipts = sorted((ROOT / "docs/design/api-naming").rglob("review.json"))
+        self.assertGreaterEqual(len(receipts), 1)
+        for receipt in receipts:
+            data = json.loads(receipt.read_text(encoding="utf-8"))
+            for path in (data["page"], "docs/design/" + data["review"]):
+                self.assertTrue((ROOT / path).is_file(), "%s names a missing file %s" % (receipt.relative_to(ROOT), path))
+                self.assertFalse(docs_only.is_unread_doc(path), "%s names %s, which is skipped as unread" % (receipt.relative_to(ROOT), path))
 
     def test_the_scan_catches_a_reader_of_an_allowlisted_file(self):
         self.assertTrue(docs_only.is_unread_doc("docs/guides/errors.md"))

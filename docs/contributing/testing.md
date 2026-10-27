@@ -861,3 +861,24 @@ mirroring, CephFS mirroring, RGW multisite) share resource tracking from
 `internal/apiinventory` checks that each package page in `docs` names every
 exported identifier and method of its package. Mention a new export on the
 package's page, usually under its own heading, in the same change.
+
+The same tests check the package-scoped API catalogues in
+`docs/design/api-naming/<package>/`. A public package is discovered from the
+source tree and needs `declarations.json`, `members.json` and `review.json`
+there; no shared index, count or hash file exists. After a public API change in
+a package, do two separate things and review each diff on its own:
+
+```sh
+go run ./internal/tools/apinaming regenerate <package>   # writes declarations.json and members.json only
+go run ./internal/tools/apinaming approve <package>      # writes review.json only
+```
+
+Regenerating never approves: a package whose catalogue changed but whose
+receipt was not approved fails `TestNamingReviewBindsCurrentSurface`. Approval
+refuses a stale catalogue or a pending rename proposal. A change in one package
+makes only that package's receipt stale, so pull requests on different packages
+touch disjoint files. `go run ./internal/tools/apinaming aggregate` prints the
+per-package counts and totals on demand; they are not committed. CI runs
+neither command, only the tests. When a rebase conflicts in these files, take
+the base's version of the package's files, rerun `regenerate` and then
+`approve` for that package, and keep the review note in the receipt.

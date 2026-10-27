@@ -589,6 +589,19 @@ Small, independently reviewable pull requests, in order:
    which checks run for metadata-only changes beyond steps 1 to 5, as a
    separately reviewed CI policy change.
 
+Step 3 as implemented (the names below replace the placeholders above):
+`internal/apiinventory/catalogue` holds the discovery, derivation, receipt and
+aggregate logic, and `internal/tools/apinaming` provides `regenerate`,
+`approve`, `aggregate` and `check`; `-update-api-naming` in the apiinventory
+tests is kept as an equivalent of `regenerate` and never writes a receipt. The
+per-package files use schema `v2` (the package name and its own count replace
+the global scope text and count map), each receipt also names its reference
+page, and the old `packages` map is gone. A directory below
+`docs/design/api-naming` counts as a catalogue only when it holds one of the
+three files, so the `moves/` directory of step 4 and a review note next to it
+need no change to the layout rules, and `package-split.json` shards (step 5)
+are independent of it.
+
 Start with 1. Fragments are the most edited file (42 of 175 entries against 23
 for the inventory), the change is additive with no data migration, it does not
 require waiting for #212 and #214, and it introduces the validator step and the

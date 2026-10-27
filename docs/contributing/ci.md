@@ -140,11 +140,16 @@ allowlist, and the allowlist contains only files that no check reads:
 These documentation files are read by a check and always run the full Code
 checks, as does every other path (including any non-Markdown file under
 `docs/`, a new top-level `docs/` page and a nested path):
-- `docs/ceph.md`, `docs/fault.md`, `docs/rbd.md`, `docs/cephfs.md`,
-  `docs/rgw.md` and `docs/capture.md`: the API inventory test requires every
-  exported name on its package page;
-- `docs/design/api-naming*`: the API naming audit, inventory, member and
-  review receipts, which the same package's tests compare with the code;
+- The API reference page of every public package (`docs/ceph.md`,
+  `docs/fault.md`, `docs/rbd.md`, `docs/rbd-mirror.md`, `docs/cephfs.md`,
+  `docs/rgw.md`, `docs/rgw-multisite.md`, `docs/capture.md`, and the page a new
+  package's receipt names): the API inventory test requires every exported name
+  on its package page;
+- `docs/design/api-naming*`: the API naming audit and review notes, and the
+  package-scoped `docs/design/api-naming/<package>/declarations.json`,
+  `members.json` and `review.json` catalogues and receipts, which the
+  `internal/apiinventory` tests compare with the code. The catalogue JSON files
+  are nested non-Markdown files, so they are never on the allowlist;
 - `docs/guides/messenger-client-fixtures.md`: cross-checked against the
   messenger coverage manifest by a test in `internal/integration`;
 - `docs/guides/bug-compatibility-tags.md` and `.json`: the tag registry and
