@@ -156,6 +156,11 @@ jobs:
       - name: Validate release-note fragments
         if: ${{ !cancelled() }}
         run: python3 .github/scripts/release_fragments.py
+      # Same always-run rule. It reads CHANGELOG.md and docs/changes only; without
+      # release tags in the checkout it reports the tag comparison as SKIPPED.
+      - name: Check the released changelog range
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/release_assemble.py check
 
   tag-coverage:
     name: Compiled tag coverage and helpers
