@@ -142,7 +142,7 @@ func TestPoolPGRelocation(t *testing.T) {
 			t.Run("held_relocation", func(t *testing.T) {
 				// Small PG logs make Ceph recover the moved objects through the
 				// log instead of backfill, so norecover must be held as well.
-				var holds []*ceph.OSDFlagOverrideHandle
+				var holds []*override.OSDFlagHandle
 				t.Cleanup(func() {
 					restoreCtx, restoreCancel := context.WithTimeout(context.Background(), time.Minute)
 					defer restoreCancel()
@@ -153,10 +153,8 @@ func TestPoolPGRelocation(t *testing.T) {
 					}
 				})
 				for _, flag := range []ceph.OSDFlag{ceph.OSDFlagNoBackfill, ceph.OSDFlagNoRecover} {
-					hold, err := cluster.OverrideOSDFlag(ctx, flag, true)
-					if hold != nil {
-						holds = append(holds, hold)
-					}
+					hold, err := override.SetOSDFlag(ctx, cluster, flag, true)
+					holds = append(holds, hold)
 					if err != nil {
 						t.Fatal("hold", flag, err)
 					}

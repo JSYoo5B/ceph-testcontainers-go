@@ -964,7 +964,7 @@ directory's `.snap`.
 
 The call sets nothing up by itself, and refuses with `ErrInvalidRequest`:
 - while the `snap_schedule` module is disabled. Enable it with
-  [OverrideMGRModule](ceph.md#overridemgrmodule), and wait until the active
+  [override.SetMGRModule](override.md#setmgrmodule), and wait until the active
   MGR, which restarts to load the module, answers again;
 - a minute `Repeat` while `mgr/snap_schedule/allow_m_granularity` is not
   `true`. The module refuses minutes otherwise; set it with
@@ -1008,7 +1008,7 @@ reply was lost, `Restore` takes the only schedule with the requested repeat
 and start as the lease's.
 
 ```golang
-module, err := cluster.OverrideMGRModule(ctx, "snap_schedule", true)
+module, err := override.SetMGRModule(ctx, cluster, "snap_schedule", true)
 // … wait for the active MGR, and set allow_m_granularity for minutes …
 schedule, err := fs.AddSnapshotSchedule(ctx, cephfs.SnapshotSchedule{
 	Path: "/", Repeat: "1m", Retention: map[string]int{"n": 2},

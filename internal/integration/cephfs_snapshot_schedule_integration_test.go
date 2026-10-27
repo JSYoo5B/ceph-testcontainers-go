@@ -34,16 +34,14 @@ func TestCephFSSnapshotSchedule(t *testing.T) {
 	if lease, err := fs.AddSnapshotSchedule(ctx, request); !errors.Is(err, ceph.ErrInvalidRequest) || lease != nil {
 		t.Fatalf("a schedule without the module: %v, %v", lease, err)
 	}
-	module, err := cluster.OverrideMGRModule(ctx, "snap_schedule", true)
-	if module != nil {
-		t.Cleanup(func() {
-			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := module.Restore(cleanup); err != nil {
-				t.Errorf("restore snap_schedule: %v", err)
-			}
-		})
-	}
+	module, err := override.SetMGRModule(ctx, cluster, "snap_schedule", true)
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := module.Restore(cleanup); err != nil {
+			t.Errorf("restore snap_schedule: %v", err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

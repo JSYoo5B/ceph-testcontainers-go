@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // ecInstance identifies one running incarnation of an OSD container.
@@ -199,16 +200,14 @@ func testECRecoveredContribution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-	if noout != nil {
-		t.Cleanup(func() {
-			cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
-			defer stop()
-			if err := noout.Restore(cleanup); err != nil {
-				t.Errorf("restore noout: %v", err)
-			}
-		})
-	}
+	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+	t.Cleanup(func() {
+		cleanup, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := noout.Restore(cleanup); err != nil {
+			t.Errorf("restore noout: %v", err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,7 +28,7 @@ extension: a separate netem helper image applies it, and only that helper gets
 | A daemon drops or delays messages from one kind of peer | `override.SetConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigHandle.Restore` |
 | An OSD runs a client's write after the client gave up | `override.SetConfig` with `osd_debug_inject_dispatch_delay_*` on that OSD | The client's call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected first | Yes | `ConfigHandle.Restore` |
 | One client session is fenced | `override.AddBlocklist` | The OSDs reject that session | Yes | `override.BlocklistHandle.Restore` |
-| A failed OSD stays up or in | `OverrideOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `OSDFlagOverrideHandle.Restore` |
+| A failed OSD stays up or in | `override.SetOSDFlag` (`nodown`, `noout`, ...) | Map flags hold the OSD state | Yes | `override.OSDFlagHandle.Restore` |
 | The cluster reports nearfull, backfillfull or full | `override.SetFullRatios` | `OSD_NEARFULL`, `OSD_BACKFILLFULL`, `OSD_FULL` | Yes | `override.FullRatiosHandle.Restore` |
 | A replica is damaged | `fault.InjectObjectDataError`, `DeepScrubPG`, `RepairPG` | Scrub errors, `PG_DAMAGED` | Yes | `RepairPG` or OSD restart |
 | An OSD leaves the cluster | `OSDContainer.Remove`, `OSDContainer.SetIn` | Data moves to the remaining OSDs | Yes | `AddOSD`, `OSDContainer.SetIn(..., true)` |
@@ -99,7 +99,7 @@ if err := cluster.WaitForClean(ctx); err != nil {
 | --- | --- | --- |
 | MON | element `i` of `cluster.Monitors(ctx)` | Use `ceph.WithMonitorCount(3)` or more. With one MON, the MON container is also the control container that runs every fixture command, so stopping it makes every fixture call fail until it starts again. `WaitForQuorum` waits for a majority of the current monmap. |
 | MGR | element `i` of `cluster.Managers(ctx)` | Use `ceph.WithManagerCount(2)` so a standby takes over. `ManagerStatus` reports the active name. |
-| OSD | element `i` of `cluster.OSDs(ctx)` | Ceph marks a down OSD out after `mon_osd_down_out_interval` (600 s by default). Hold `noout` with `OverrideOSDFlag` to avoid data movement during long outages. |
+| OSD | element `i` of `cluster.OSDs(ctx)` | Ceph marks a down OSD out after `mon_osd_down_out_interval` (600 s by default). Hold `noout` with `override.SetOSDFlag` to avoid data movement during long outages. |
 | MDS | `fs.MDSs()[i]` | Configure `StandbyMDS` so a standby takes the rank. Use `fs.MDSStatus` to see who holds each rank; `fs.WaitReady` also waits for the requested standby capacity, so restart the stopped daemon before calling it. |
 | RGW | element `i` of `rgw.Gateways(ctx, cluster)` | In bridge mode Docker can assign a new mapped port on restart. Call `S3Endpoint` again after `Start`. |
 | RBD and CephFS mirror daemons | `mirror.Daemons()[i]` | `rbdmirror.Daemon.Status` reports the native leader election. |
@@ -115,10 +115,9 @@ identity. Peers do not see a closed connection; they only stop getting
 replies. Use it to reproduce an unresponsive OSD, MDS or client.
 
 ```golang
-hold, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoDown, true)
-if hold != nil {
-	defer hold.Restore(cleanupCtx)
-}
+hold, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoDown, true)
+// hold is never nil: after a refusal its Restore does nothing.
+defer hold.Restore(cleanupCtx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -1019,7 +1018,7 @@ if err != nil {
 
 ## Holding OSD map flags
 
-`OverrideOSDFlag` sets or clears one global OSD map flag and remembers the
+`override.SetOSDFlag` sets or clears one global OSD map flag and remembers the
 previous state. Supported flags are the `ceph.OSDFlag` constants: `OSDFlagNoUp`,
 `OSDFlagNoDown`, `OSDFlagNoOut`, `OSDFlagNoIn`, `OSDFlagNoBackfill`,
 `OSDFlagNoRebalance`, `OSDFlagNoRecover`, `OSDFlagNoScrub`,
@@ -1027,10 +1026,8 @@ previous state. Supported flags are the `ceph.OSDFlag` constants: `OSDFlagNoUp`,
 compatibility flags are not supported.
 
 ```golang
-flag, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-if flag != nil {
-	defer flag.Restore(cleanupCtx)
-}
+flag, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+defer flag.Restore(cleanupCtx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -1303,8 +1300,8 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 
 - [fault.md](../fault.md): `fault.Pause`, `InterruptNetwork` and network profiles.
 - [ceph.md](../ceph.md):
-  `override.SetConfig`, `OverrideOSDFlag`, scrub helpers, `OSDContainer.Remove`, `OSDContainer.SetIn`.
-- [override.md](../override.md): `override.AddBlocklist`, `override.SetFullRatios`.
+  scrub helpers, `OSDContainer.Remove`, `OSDContainer.SetIn`.
+- [override.md](../override.md): `override.SetConfig`, `override.SetMessengerPolicy`, `override.AddBlocklist`, `override.SetFullRatios`, `override.SetOSDFlag`.
 - [rbd.md](../rbd.md): `ImageClients`.
 - [rbd-mirror.md](../rbd-mirror.md): `Mirror.InterruptPeerLink`.
 - [cephfs.md](../cephfs.md): `Filesystem.OverrideSessionTimeouts`,

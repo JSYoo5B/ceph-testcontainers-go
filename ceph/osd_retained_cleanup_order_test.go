@@ -128,7 +128,7 @@ func newCleanupFixture(t *testing.T) (*retainedFixture, *cleanupControl) {
 	f := newRetainedFixture(t)
 	control := &cleanupControl{retainedControl: f.control}
 	f.cluster.Container = control
-	f.cluster.run = &runVolume{name: "synthetic-run"}
+	f.cluster.runDir.volume = &runVolume{name: "synthetic-run"}
 	inner := f.cluster.stores.runner
 	f.cluster.stores.runner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		control.mu.Lock()

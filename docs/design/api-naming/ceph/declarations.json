@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 365,
+  "count": 353,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -453,30 +453,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.OverrideDebugLevel",
-      "kind": "method",
-      "signature": "func(ctx context.Context, setting DebugLevelSetting) (*DebugLevelOverrideHandle, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideDebugLevel",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OverrideMGRModule",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string, enabled bool) (*MGRModuleOverrideHandle, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideMGRModule",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OverrideOSDFlag",
-      "kind": "method",
-      "signature": "func(ctx context.Context, flag OSDFlag, enabled bool) (*OSDFlagOverrideHandle, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideOSDFlag",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.Pool",
       "kind": "method",
       "signature": "func(ctx context.Context, name string) (*Pool, error)",
@@ -748,44 +724,6 @@
       "current": "ceph.DebugLevelNotApplied",
       "kind": "const",
       "proposed": "ceph.DebugLevelNotApplied",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelOverrideHandle",
-      "kind": "type",
-      "proposed": "ceph.DebugLevelOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelOverrideHandle.GoString",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "DebugLevelOverrideHandle",
-      "proposed": "ceph.DebugLevelOverrideHandle.GoString",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelOverrideHandle.Receipt",
-      "kind": "method",
-      "signature": "func() DebugLevelReceipt",
-      "receiver": "*DebugLevelOverrideHandle",
-      "proposed": "ceph.DebugLevelOverrideHandle.Receipt",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*DebugLevelOverrideHandle",
-      "proposed": "ceph.DebugLevelOverrideHandle.Restore",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.DebugLevelOverrideHandle.String",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "DebugLevelOverrideHandle",
-      "proposed": "ceph.DebugLevelOverrideHandle.String",
       "decision": "baseline"
     },
     {
@@ -1165,20 +1103,6 @@
       "current": "ceph.LogFatalSignal",
       "kind": "const",
       "proposed": "ceph.LogFatalSignal",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.MGRModuleOverrideHandle",
-      "kind": "type",
-      "proposed": "ceph.MGRModuleOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.MGRModuleOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*MGRModuleOverrideHandle",
-      "proposed": "ceph.MGRModuleOverrideHandle.Restore",
       "decision": "baseline"
     },
     {
@@ -1663,20 +1587,6 @@
       "current": "ceph.OSDFlagNoUp",
       "kind": "const",
       "proposed": "ceph.OSDFlagNoUp",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDFlagOverrideHandle",
-      "kind": "type",
-      "proposed": "ceph.OSDFlagOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDFlagOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*OSDFlagOverrideHandle",
-      "proposed": "ceph.OSDFlagOverrideHandle.Restore",
       "decision": "baseline"
     },
     {

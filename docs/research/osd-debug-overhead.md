@@ -1,7 +1,7 @@
 # Measuring OSD debug gathering and output
 
 `TestOSDDebugOverhead` is an opt-in measurement of one surviving owned OSD's
-`debug_osd` runtime setting. It reuses `OverrideDebugLevel`, including uncertain
+`debug_osd` runtime setting. It reuses `override.SetDebugLevel`, including uncertain
 apply ownership and same-generation restoration. It does not expand that API's
 supported daemon roles, choose recommended levels, or diagnose an intermittent
 failure. The first profile uses one OSD, one single-replica pool and the existing

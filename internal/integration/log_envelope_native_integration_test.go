@@ -16,6 +16,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // TestPostTestVerificationLogEnvelope pairs a real WRN cluster log entry of
@@ -69,14 +70,12 @@ func TestPostTestVerificationLogEnvelope(t *testing.T) {
 	quoteCommand := `{"prefix": "log", "logtext": ["` + token + ` quotes \u005bWRN\u005d"]}`
 	t.Logf("quote command accepted: %s", execOutput(t, ctx, cluster.Container, "python3", "-c", envelopeMonCommand, quoteCommand))
 	// The real WRN entry: a set noout flag fails the OSDMAP_FLAGS check.
-	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-	if noout != nil {
-		t.Cleanup(func() {
-			if err := noout.Restore(context.WithoutCancel(ctx)); err != nil {
-				t.Error("restore noout:", err)
-			}
-		})
-	}
+	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+	t.Cleanup(func() {
+		if err := noout.Restore(context.WithoutCancel(ctx)); err != nil {
+			t.Error("restore noout:", err)
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
