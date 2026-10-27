@@ -486,6 +486,8 @@ func TestUpgradeLeaseOutputIsStrict(t *testing.T) {
 		"swapped ports":     upgradeLeasePrefix + `{"address":"10.0.0.1","ports":[6789,3300]}` + "\n",
 		"unknown field":     upgradeLeasePrefix + `{"address":"10.0.0.1","ports":[3300,6789],"x":1}` + "\n",
 		"trailing data":     upgradeLeasePrefix + `{"address":"10.0.0.1","ports":[3300,6789]} {}` + "\n",
+		"closing bracket":   upgradeLeasePrefix + `{"address":"10.0.0.1","ports":[3300,6789]}]` + "\n",
+		"closing brace":     upgradeLeasePrefix + `{"address":"10.0.0.1","ports":[3300,6789]}}` + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, _, err := parseUpgradeLeaseOutput([]byte(out), spec); err == nil {

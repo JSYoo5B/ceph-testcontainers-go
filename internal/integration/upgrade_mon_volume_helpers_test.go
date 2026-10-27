@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"regexp"
 	"slices"
@@ -379,7 +380,8 @@ func parseUpgradeLeaseOutput(output []byte, spec upgradeLeaseSpec) (string, []in
 	if err := dec.Decode(&doc); err != nil {
 		return "", nil, fmt.Errorf("decode lease line: %w", err)
 	}
-	if dec.More() {
+	// More is an iteration check, not an end-of-input check: require EOF.
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return "", nil, errors.New("lease line has trailing data")
 	}
 	switch {
