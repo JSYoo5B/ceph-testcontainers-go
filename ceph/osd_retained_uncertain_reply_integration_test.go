@@ -56,7 +56,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldID := original.GetContainerID()
-	volume := c.osdVolume.name
+	volume := c.stores.volume.name
 	pool, err := c.CreatePool(ctx, PoolConfig{Name: "uncertain-reopen", Application: "rados", Replicas: 1, MinSize: 1, PGNum: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -86,9 +86,9 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 	before := retainedUncertainClock(t, ctx, docker.Client)
 	injected := errors.New("injected client-side completed-runner reply loss")
 	fault := &retainedReplyFault{next: runContainer, lost: injected}
-	previous := c.osdRunner
-	c.osdRunner = fault.run
-	t.Cleanup(func() { c.osdRunner = previous })
+	previous := c.stores.runner
+	c.stores.runner = fault.run
+	t.Cleanup(func() { c.stores.runner = previous })
 	candidate, reopenErr := c.ReopenOSD(ctx, detached)
 	if !errors.Is(reopenErr, injected) || candidate == nil || candidate.Container != nil || c.osds[original.ID] != candidate || !detached.reopened || c.detachedOSDs[original.ID] != nil {
 		t.Fatalf("uncertain result lost consumed ownership: candidate=%v err=%v", candidate != nil, reopenErr)

@@ -60,8 +60,8 @@ func TestReopenCanceledAfterCreationKeepsTheCandidateRecoverable(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	fault := &retainedCancelFault{next: f.cluster.osdRunner, cancel: cancel}
-	f.cluster.osdRunner = fault.run
+	fault := &retainedCancelFault{next: f.cluster.stores.runner, cancel: cancel}
+	f.cluster.stores.runner = fault.run
 	osd, err := detached.Reopen(ctx)
 	if err == nil || ctx.Err() == nil || osd == nil || osd.Container == nil || f.cluster.osds[3] != osd || !detached.reopened || f.cluster.detachedOSDs[3] != nil {
 		t.Fatalf("canceled reopen: %v %+v", err, osd)
@@ -78,7 +78,7 @@ func TestReopenCanceledAfterCreationKeepsTheCandidateRecoverable(t *testing.T) {
 	if err != nil || again == nil || f.cluster.osds[3] != nil {
 		t.Fatalf("detach of the canceled candidate: %v", err)
 	}
-	f.cluster.osdRunner = fault.next
+	f.cluster.stores.runner = fault.next
 	second, err := again.Reopen(t.Context())
 	if err != nil || second == nil || second == osd || f.cluster.osds[3] != second || f.runs != 2 {
 		t.Fatalf("reopen after the canceled candidate: %v runs=%d", err, f.runs)
