@@ -10,9 +10,9 @@ import (
 
 func factsFixture() *Container {
 	return &Container{
-		network:        &testcontainers.DockerNetwork{Name: "public-net"},
-		clusterNetwork: &testcontainers.DockerNetwork{Name: "cluster-net"},
-		cephVersion:    "20.2.4",
+		nets: networkState{public: &testcontainers.DockerNetwork{Name: "public-net"},
+			cluster: &testcontainers.DockerNetwork{Name: "cluster-net"}},
+		cephVersion: "20.2.4",
 		settings: options{
 			addressFamily:  AddressDualStack,
 			essentialImage: "essential:1",
@@ -101,7 +101,7 @@ func TestClusterFactsAreIndependentCopies(t *testing.T) {
 	if second.Images.Essential != "essential:1" || second.NetworkName != "public-net" || second.Images.RGW != "rgw:1" || second.UsesHostNetwork {
 		t.Fatalf("snapshots share state: %+v", second)
 	}
-	if c.settings.essentialImage != "essential:1" || c.network.Name != "public-net" || c.cephVersion != "20.2.4" || c.settings.hostNetwork {
+	if c.settings.essentialImage != "essential:1" || c.nets.public.Name != "public-net" || c.cephVersion != "20.2.4" || c.settings.hostNetwork {
 		t.Fatal("mutating a snapshot changed the cluster")
 	}
 

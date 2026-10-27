@@ -57,7 +57,7 @@ func (d *fakeOwnedDocker) Close() error { return nil }
 
 func ownedCluster(owner string, docker *fakeOwnedDocker) *Container {
 	return &Container{settings: options{startupTimeout: time.Second}, owner: owner,
-		network: &testcontainers.DockerNetwork{Name: "tc-public"}, networkRemoved: true,
+		nets:                 networkState{public: &testcontainers.DockerNetwork{Name: "tc-public"}, publicRemoved: true},
 		ownedContainerDocker: func(context.Context) (ownedContainerClient, error) { return docker, nil }}
 }
 

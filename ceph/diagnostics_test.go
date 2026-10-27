@@ -142,7 +142,7 @@ func TestDiagnosticsSnapshotPartialInventory(t *testing.T) {
 		osds:       map[int]*OSDContainer{0: {ID: 0}, 1: nil},
 		services:   map[string]testcontainers.Container{"rgw:bootstrapping": service, "mds.tenant-0": nil},
 		extensions: map[string]any{"rgw": testExtension{secrets: []string{"access-private", "s3-private"}}},
-		network:    &testcontainers.DockerNetwork{ID: "public-id", Name: "public"},
+		nets:       networkState{public: &testcontainers.DockerNetwork{ID: "public-id", Name: "public"}},
 		keyring:    []byte("[client.admin]\n key = cephx-private\n"),
 	}
 	// The generic service owns the gateway before its public descriptor exists.

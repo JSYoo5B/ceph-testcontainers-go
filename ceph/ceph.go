@@ -80,20 +80,17 @@ type Container struct {
 	ownedContainerDocker func(context.Context) (ownedContainerClient, error)
 	// keyTypeOption records whether the first MON image's ceph-authtool has
 	// --key-type; see generateKeyArgs.
-	keyTypeOption         bool
-	settings              options
-	network               *testcontainers.DockerNetwork
-	clusterNetwork        *testcontainers.DockerNetwork
-	publicSubnet          string
-	clusterSubnet         string
-	clusterNetworkRemoved bool
-	manager               testcontainers.Container
-	monitors              map[string]*MonitorContainer
-	managers              map[string]*ManagerContainer
-	services              map[string]testcontainers.Container
-	extensionsMu          sync.Mutex
-	extensions            map[string]any
-	osds                  map[int]*OSDContainer
+	keyTypeOption bool
+	settings      options
+	manager       testcontainers.Container
+	monitors      map[string]*MonitorContainer
+	managers      map[string]*ManagerContainer
+	services      map[string]testcontainers.Container
+	extensionsMu  sync.Mutex
+	extensions    map[string]any
+	osds          map[int]*OSDContainer
+	// nets is the bridge state; see networkState for what guards each part.
+	nets networkState
 	// detachedOSDs are retained stores and registrations without a
 	// container, until DetachedOSD.Reopen or Terminate.
 	detachedOSDs      map[int]*DetachedOSD
@@ -105,7 +102,6 @@ type Container struct {
 	portLeases        []*hostPortLease
 	closed            bool
 	monitorTerminated bool
-	networkRemoved    bool
 
 	// nativeMu guards the RunNativeCommand calls that run or whose command
 	// is not confirmed as stopped, and whether Terminate refuses new ones.
@@ -217,7 +213,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	} else {
 		nw, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily())
 	}
-	c := &Container{settings: settings, network: nw, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
+	c := &Container{settings: settings, nets: networkState{public: nw}, osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container),
 		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), owner: uuid.NewString()}
 	if err != nil {
 		if nw == nil {
@@ -226,16 +222,16 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		return c, classifyDocker(ctx, fmt.Errorf("create ceph network: %w", err))
 	}
 	if settings.separateClusterNetwork {
-		if c.clusterNetwork, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily()); err != nil {
+		if c.nets.cluster, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily()); err != nil {
 			return c, classifyDocker(ctx, fmt.Errorf("create Ceph replication network: %w", err))
 		}
-		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, c.clusterNetwork.Name, settings.addressFamily); err != nil {
+		if c.nets.publicSubnet, c.nets.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, c.nets.cluster.Name, settings.addressFamily); err != nil {
 			return c, err
 		}
 	} else if settings.addressFamily == AddressDualStack {
 		// Without public_network, a dual-stack daemon cannot pick an address
 		// of each family. The single bridge serves both planes.
-		if c.publicSubnet, c.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, nw.Name, settings.addressFamily); err != nil {
+		if c.nets.publicSubnet, c.nets.clusterSubnet, err = inspectNetworkSubnets(ctx, nw.Name, nw.Name, settings.addressFamily); err != nil {
 			return c, err
 		}
 	}
@@ -386,8 +382,8 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		}
 		moduleOpts = append(moduleOpts, c.runMount()...)
 		if lease == nil {
-			moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts(c.settings.monitorExposedPorts()...), network.WithNetwork([]string{"ceph-mon"}, c.network),
-				keepMonitorAddress(c.network.Name))
+			moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts(c.settings.monitorExposedPorts()...), network.WithNetwork([]string{"ceph-mon"}, c.nets.public),
+				keepMonitorAddress(c.nets.public.Name))
 		} else {
 			monEnv := c.settings.monitorPortEnvironment(lease.Ports)
 			monEnv["CEPH_PUBLIC_ADDRESS"] = c.settings.publicAddress
@@ -449,7 +445,7 @@ func (c *Container) monitorEnvironment(fsid string) map[string]string {
 		"CEPH_FSID": fsid, "CEPH_OSD_BLOCK_SIZE": strconv.FormatInt(c.settings.blockSize, 10),
 		"CEPH_OSD_OBJECTSTORE": string(c.settings.objectStore()),
 		"CEPH_POOL_SIZE":       strconv.Itoa(c.settings.poolReplicas), "CEPH_POOL_MIN_SIZE": strconv.Itoa(c.settings.poolMinSize),
-		"CEPH_PUBLIC_NETWORK": c.publicSubnet, "CEPH_CLUSTER_NETWORK": c.clusterSubnet,
+		"CEPH_PUBLIC_NETWORK": c.nets.publicSubnet, "CEPH_CLUSTER_NETWORK": c.nets.clusterSubnet,
 		addressFamilyEnvironment: c.settings.addressFamily.String(),
 	}
 	maps.Copy(env, c.settings.auth.environment())
@@ -465,7 +461,7 @@ func (c *Container) monitorJoinEnvironment(name string) map[string]string {
 
 // NetworkName returns the cluster's bridge name, or "host" in host mode.
 func (c *Container) NetworkName() string {
-	return c.settings.publicNetworkName(c.network)
+	return c.settings.publicNetworkName(c.nets.public)
 }
 
 // UsesHostNetwork reports whether the cluster shares Docker's host network.
@@ -1149,20 +1145,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 			errs = append(errs, err)
 		}
 	}
-	if c.clusterNetwork != nil && !c.clusterNetworkRemoved && !blockedNetworks[c.clusterNetwork.Name] {
-		if err := c.clusterNetwork.Remove(ctx); !onlyMissingHostResource(err) {
-			errs = append(errs, err)
-		} else {
-			c.clusterNetworkRemoved = true
-		}
-	}
-	if c.network != nil && !c.networkRemoved && !blockedNetworks[c.network.Name] {
-		if err := c.network.Remove(ctx); !onlyMissingHostResource(err) {
-			errs = append(errs, err)
-		} else {
-			c.networkRemoved = true
-		}
-	}
+	errs = append(errs, c.nets.removeBridges(ctx, blockedNetworks)...)
 	errs = append(errs, c.stopNativeInvocations(ctx)...)
 	return errors.Join(errs...)
 }

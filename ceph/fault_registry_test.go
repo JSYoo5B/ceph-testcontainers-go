@@ -288,9 +288,9 @@ func TestTerminateBlocksOnlyNetworksOfFailedInterruptions(t *testing.T) {
 		t.Fatalf("errors %v, blocked %v; want only the failed interruption's network", errs, blocked)
 	}
 	// Through Terminate: the blocked bridge stays, the other is removed.
-	c = &Container{network: &testcontainers.DockerNetwork{Name: "public"}}
+	c = &Container{nets: networkState{public: &testcontainers.DockerNetwork{Name: "public"}}}
 	hold(t, c, faultNetworkInterruption, "public/a", "public", &log).failures = 1
-	if err := c.Terminate(t.Context()); err == nil || c.networkRemoved {
+	if err := c.Terminate(t.Context()); err == nil || c.nets.publicRemoved {
 		t.Fatal("Terminate removed a network that a failed interruption needs")
 	}
 }

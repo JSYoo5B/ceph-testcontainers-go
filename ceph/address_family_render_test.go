@@ -59,7 +59,7 @@ func TestAddressFamilyBootstrapRenderingGolden(t *testing.T) {
 						public = subnets[family][0]
 						cluster = public
 					}
-					c := &Container{settings: settings, publicSubnet: public, clusterSubnet: cluster}
+					c := &Container{settings: settings, nets: networkState{publicSubnet: public, clusterSubnet: cluster}}
 					env := c.monitorEnvironment("fixture-fsid")
 					maps.Copy(env, settings.messengerEnvironment())
 					env["TC_HOSTNAME_I"] = "192.0.2.12 fd00:10::12 fe80::12"

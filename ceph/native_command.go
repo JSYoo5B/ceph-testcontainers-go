@@ -565,13 +565,7 @@ func (c *Container) admitNativeTarget(ctx context.Context, target testcontainers
 		c.mu.Unlock()
 		return err
 	}
-	networks := []string{}
-	if c.network != nil {
-		networks = append(networks, c.network.Name)
-	}
-	if c.clusterNetwork != nil {
-		networks = append(networks, c.clusterNetwork.Name)
-	}
+	networks := c.nets.bridgeNames()
 	hostNetwork := c.settings.hostNetwork
 	c.mu.Unlock()
 	if !owned {
