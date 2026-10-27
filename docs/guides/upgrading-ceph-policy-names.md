@@ -67,7 +67,9 @@ tenant-restricted admission. No method set gains an additional legacy alias.
 Service containers inherit the renamed ceph methods through their embedded
 `*ceph.Container`; their own service APIs are not renamed in this checkpoint.
 
-`TemporaryBlocklist` still has a real native duration/expiry and stays in `ceph`.
+`TemporaryBlocklist` still has a real native duration/expiry; it was kept in `ceph` at
+this checkpoint and later became `override.AddBlocklist` (see
+[the override package guide](upgrading-override-package.md)).
 `OverrideFullRatios`, Pause/Resume and native input Close are unchanged by
 this checkpoint. Later service/network/cache stages and the
 [final naming audit](../design/api-naming-audit.md) complete the staged pass;

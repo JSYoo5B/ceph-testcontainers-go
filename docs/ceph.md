@@ -1494,7 +1494,7 @@ methods that only read state stay available, including `Container.Pool`.
 | Methods | Why they are refused |
 | --- | --- |
 | `CreateClient`, `ClientConfig.Delete`, `ClientConfig.UpdateCaps`, `ClientConfig.ReplaceKey`, `ClientConfig.Revoke`, `ClientConfig.Capabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `OverrideConfig`, `OverrideDebugLevel`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `TemporaryBlocklist`, `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
+| `OverrideConfig`, `OverrideDebugLevel`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `override.AddBlocklist` (see [override](override.md)), `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `OSDContainer.AdminSocket`, `MonitorContainer.AdminSocket`, `ManagerContainer.AdminSocket`, `OSDContainer.Version`, `MonitorContainer.Version`, `ManagerContainer.Version`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
 | `AddOSD`, `AddOSDWithConfig`, `OSDContainer.Remove`, `OSDContainer.Detach`, `DetachedOSD.Reopen`, `AddMonitor`, `MonitorContainer.Remove`, `AddManager`, `ManagerContainer.Remove` | Change the topology. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
@@ -1570,7 +1570,7 @@ Methods that change cluster state temporarily return a restoration handle:
 | `*ceph.OSDFlagOverrideHandle` | [OverrideOSDFlag](#overrideosdflag) | `Restore` |
 | `*ceph.MGRModuleOverrideHandle` | [OverrideMGRModule](#overridemgrmodule) | `Restore` |
 | `*ceph.FullRatiosOverride` | [OverrideFullRatios](#overridefullratios) | `Restore` |
-| `*ceph.BlocklistOverride` | [TemporaryBlocklist](#temporaryblocklist) | `Restore` |
+| `*override.BlocklistHandle` | [override.AddBlocklist](override.md#addblocklist) | `Restore` |
 | `*fault.PauseLease` | [fault.Pause](fault.md#pause) | `Resume` |
 | `*fault.NetworkInterruption` | [fault.InterruptNetwork](fault.md#interruptnetwork) | `Restore` |
 | `*fault.NetworkProfileLease` | [fault.ApplyNetworkProfile](fault.md#applynetworkprofile) | `Restore` |
@@ -3924,26 +3924,10 @@ evicts a client). Each `ceph.BlocklistEntry` has `Address`, `Range` (true for a
 CIDR range) and `Until` (the MON's absolute expiration time). Listing grants no
 ownership to remove an entry.
 
-#### TemporaryBlocklist
-
-```golang
-func (c *Container) TemporaryBlocklist(ctx context.Context, address string, duration time.Duration) (*ceph.BlocklistOverride, error)
-```
-
-Fences one specific client session for `duration` (at least one second). The
-address must be the session's exact `IP:port/nonce` with a nonzero nonce, so
-other clients on the same host are unaffected. Get it from the client after it
-connects (librados `rados_getaddrs`, go-ceph `Conn.GetAddrs`), from
-[ObjectWatchers](#objectwatchers), from an RBD lock owner or from a CephFS
-session. A v1/v2 address vector is accepted only when all entries denote the same
-IP, port and nonce. Bare IPs, CIDR ranges, nonce zero and existing entries are
-refused.
-
-`Restore` removes only this entry (`Address()` returns it), after checking the
-captured expiration; an entry renewed by someone else is refused, and natural
-expiry counts as removed. After removal, OSDs admit the address again, but how the
-session recovers depends on the client library; with librados both the existing
-session and a new connection recover. See [Fence one client session](#fence-one-client-session).
+The blocklist entry that fences a client session is added by
+[override.AddBlocklist](override.md#addblocklist). It moved out of `ceph` with
+its handle type; `BlocklistEntries` and `ceph.BlocklistEntry` stay here because
+they only read the OSDMap.
 
 ### Container Methods: Full ratios
 
@@ -4746,7 +4730,7 @@ The cluster owns the auth database; containers you attach with it are yours.
 | `OSDFlagOverrideHandle` | `Restore(ctx) error` | [OverrideOSDFlag](#overrideosdflag) |
 | `MGRModuleOverrideHandle` | `Restore(ctx) error` | [OverrideMGRModule](#overridemgrmodule) |
 | `FullRatiosOverride` | `Restore(ctx) error` | [OverrideFullRatios](#overridefullratios) |
-| `BlocklistOverride` | `Address() string`, `Restore(ctx) error` | [TemporaryBlocklist](#temporaryblocklist) |
+| `override.BlocklistHandle` | `Address() string`, `Restore(ctx) error` | [override.AddBlocklist](override.md#addblocklist) |
 | `fault.PauseLease` | `ContainerID`; `Resume(ctx) error` | [fault.Pause](fault.md#pause) |
 | `fault.NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [fault.InterruptNetwork](fault.md#interruptnetwork) (cluster-bound or standalone) |
 | `ClientRevocationHandle` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [ClientConfig.Revoke](#clientconfigrevoke) |
@@ -5341,10 +5325,9 @@ inconsistency.
 ```golang
 // address is the client's own session address, e.g. from rados_getaddrs or
 // go-ceph Conn.GetAddrs: "172.19.0.6:0/3461995546".
-fence, err := cluster.TemporaryBlocklist(ctx, address, time.Minute)
-if fence != nil {
-	defer fence.Restore(context.Background())
-}
+fence, err := override.AddBlocklist(ctx, cluster, address, time.Minute)
+// fence is never nil: after a refusal its Restore does nothing.
+defer fence.Restore(context.Background())
 if err != nil {
 	t.Fatal(err)
 }
