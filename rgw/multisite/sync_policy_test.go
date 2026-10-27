@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"io"
 	"reflect"
 	"slices"
@@ -272,12 +273,12 @@ func (c *rgwSyncCLI) Exec(ctx context.Context, args []string, _ ...tcexec.Proces
 	return code, bytes.NewReader(stream.Bytes()), nil
 }
 
-func newRGWSyncTestFixture() (*Multisite, *rgwSyncCLI, *rgwLifecycleContainer, *rgwLifecycleContainer) {
+func newRGWSyncTestFixture() (*Fixture, *rgwSyncCLI, *rgwLifecycleContainer, *rgwLifecycleContainer) {
 	group := map[string]any{"id": "group-id", "name": "group", "realm_id": "realm", "master_zone": "source-id", "is_master": true, "endpoints": []any{"http://source:7480"}, "zones": []any{map[string]any{"id": "source-id", "name": "source", "endpoints": []any{"http://source:7480"}}, map[string]any{"id": "dest-id", "name": "destination", "endpoints": []any{"http://destination:7480"}}}, "sync_policy": map[string]any{"groups": []any{}}}
 	period := map[string]any{"id": "period-original", "epoch": json.Number("1"), "realm_epoch": json.Number("1"), "realm_id": "realm", "master_zone": "source-id", "master_zonegroup": "group-id", "period_map": map[string]any{"id": "period-original", "zonegroups": []any{syncJSONClone(group)}}, "period_config": map[string]any{}}
 	cli := &rgwSyncCLI{group: group, current: period, bucketID: "bucket-original", bucketPolicy: map[string]any{"groups": []any{}}}
 	source, dest := &rgwLifecycleContainer{running: true}, &rgwLifecycleContainer{running: true}
-	f := &Multisite{RealmID: "realm", SourceZoneID: "source-id", DestinationZoneID: "dest-id", config: MultisiteConfig{Zonegroup: "group", SourceZone: "source", DestinationZone: "destination"}, sourceURL: "http://source:7480", destinationURL: "http://destination:7480", sourceClient: cli, destinationClient: cli, groupIDs: map[string]string{"group": "group-id"}, Source: &Gateway{Container: source}, Destination: &Gateway{Container: dest}}
+	f := &Fixture{RealmID: "realm", SourceZoneID: "source-id", DestinationZoneID: "dest-id", config: Config{Zonegroup: "group", SourceZone: "source", DestinationZone: "destination"}, sourceURL: "http://source:7480", destinationURL: "http://destination:7480", sourceClient: cli, destinationClient: cli, groupIDs: map[string]string{"group": "group-id"}, Source: &rgw.Gateway{Container: source}, Destination: &rgw.Gateway{Container: dest}}
 	return f, cli, source, dest
 }
 
@@ -372,7 +373,7 @@ func TestRGWSyncPolicyRefusesForeignPendingStagingAndGroupChanges(t *testing.T) 
 			case "owned-group":
 				syncNativeGroup(cli.group["sync_policy"].(map[string]any), g.ID())["status"] = "enabled"
 			case "foreign-owner":
-				g.owner = &Multisite{}
+				g.owner = &Fixture{}
 			}
 			beforeStage, beforeGroup := syncJSONClone(cli.staging), syncJSONClone(cli.group)
 			if err := f.ApplySyncGroup(t.Context(), g); err == nil {

@@ -1,10 +1,11 @@
-package rgw
+package multisite
 
 import (
 	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"io"
 	"slices"
 	"strings"
@@ -176,13 +177,13 @@ func (c *rgwLifecycleCLI) Terminate(context.Context, ...testcontainers.Terminate
 	return nil
 }
 
-func rgwRemovalFixture() (*Multisite, *rgwLifecycleCLI, *rgwLifecycleContainer, *rgwLifecycleContainer, *rgwLifecycleContainer) {
+func rgwRemovalFixture() (*Fixture, *rgwLifecycleCLI, *rgwLifecycleContainer, *rgwLifecycleContainer, *rgwLifecycleContainer) {
 	cli := &rgwLifecycleCLI{}
 	a, b, c := &rgwLifecycleContainer{running: true}, &rgwLifecycleContainer{running: true}, &rgwLifecycleContainer{}
-	f := &Multisite{RealmID: "realm", SourceZoneID: "a-id", DestinationZoneID: "b-id", config: MultisiteConfig{SourceZone: "a", DestinationZone: "b", Zonegroup: "us"},
-		Source: &Gateway{Container: a}, Destination: &Gateway{Container: b}, sourceClient: cli, destinationClient: cli, sourceURL: "http://a:7480", destinationURL: "http://b:7480",
+	f := &Fixture{RealmID: "realm", SourceZoneID: "a-id", DestinationZoneID: "b-id", config: Config{SourceZone: "a", DestinationZone: "b", Zonegroup: "us"},
+		Source: &rgw.Gateway{Container: a}, Destination: &rgw.Gateway{Container: b}, sourceClient: cli, destinationClient: cli, sourceURL: "http://a:7480", destinationURL: "http://b:7480",
 		zoneGroups: map[string]string{"a": "us", "b": "us", "c": "eu"}, groupIDs: map[string]string{"us": "us-id", "eu": "eu-id"}, groupMasters: map[string]string{"us": "a", "eu": "c"},
-		additionalZones: map[string]*rgwZoneState{"c": {Zone: Zone{Name: "c", ID: "c-id", Zonegroup: "eu", PeerEndpoint: "http://c:7480", Gateway: &Gateway{Container: c}}, client: cli}}}
+		additionalZones: map[string]*rgwZoneState{"c": {Zone: Zone{Name: "c", ID: "c-id", Zonegroup: "eu", PeerEndpoint: "http://c:7480", Gateway: &rgw.Gateway{Container: c}}, client: cli}}}
 	return f, cli, a, b, c
 }
 

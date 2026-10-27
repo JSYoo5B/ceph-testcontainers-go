@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"io"
 	"net/http"
 	"os"
@@ -33,7 +34,7 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 	}
 	// The RGW role needs no Python or Ceph CLI. Setup must select the
 	// source and destination control images without an explicit override.
-	multisite, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{
+	multisite, err := multisite.Run(ctx, rgwImage, multisite.Config{
 		Source: source, Destination: destination,
 	})
 	if multisite != nil {
@@ -188,7 +189,7 @@ const multisiteDiagnosticBucket = "/tc-multicluster-bucket"
 // another zone then stores the bucket's metadata itself, and a second data
 // sync shard may sync the bucket while its index does not exist yet; RGW takes
 // the failed index updates for deleted objects and reports the zone caught up.
-func createMultisiteBucket(t *testing.T, ctx context.Context, multisite *rgw.Multisite, client s3HTTPClient, bucket string, body []byte) {
+func createMultisiteBucket(t *testing.T, ctx context.Context, multisite *multisite.Fixture, client s3HTTPClient, bucket string, body []byte) {
 	t.Helper()
 	client.request(t, ctx, http.MethodPut, bucket, body, http.StatusOK)
 	for _, zone := range multisite.Zones() {
@@ -205,7 +206,7 @@ func createMultisiteBucket(t *testing.T, ctx context.Context, multisite *rgw.Mul
 // report caught up while an object is missing. The bucket and data logs, the
 // sync markers, the zone endpoints and the gateways' sync warnings show which
 // of these happened.
-func logMultisiteReplicationState(t *testing.T, multisite *rgw.Multisite) {
+func logMultisiteReplicationState(t *testing.T, multisite *multisite.Fixture) {
 	t.Helper()
 	bucket := strings.TrimPrefix(multisiteDiagnosticBucket, "/")
 	zones := multisite.Zones()

@@ -41,7 +41,7 @@ func namingInventoryFromSource(t *testing.T) namingInventory {
 	t.Helper()
 	inventory := namingInventory{
 		Schema: "ceph-api-naming/v1",
-		Scope:  "Declared exports in ceph, fault, rbd, cephfs, rgw and capture; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+		Scope:  "Declared exports in ceph, fault, rbd, cephfs, rgw, rgw/multisite and capture; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
 		Counts: make(map[string]int),
 	}
 	seen := make(map[string]bool)

@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 

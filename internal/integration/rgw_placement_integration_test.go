@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"net/http"
 	"os"
 	"reflect"
@@ -60,7 +61,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	if rgwImage == "" {
 		rgwImage = image
 	}
-	fixture, err := rgw.RunMultisite(ctx, rgwImage, rgw.MultisiteConfig{Source: clusters[0], Destination: clusters[1]})
+	fixture, err := multisite.Run(ctx, rgwImage, multisite.Config{Source: clusters[0], Destination: clusters[1]})
 	if fixture != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

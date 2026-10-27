@@ -5,6 +5,7 @@ package integration_test
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"net/http"
 	"strings"
 	"testing"
@@ -30,16 +31,16 @@ func (f *rgwSyncTranslationFixture) priority_tags_owner_class(t *testing.T) {
 			a.request(t, ctx, http.MethodPut, bucket, body, http.StatusOK)
 		}
 		b.request(t, ctx, http.MethodPut, output, body, http.StatusOK)
-		selected, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, rgw.SyncGroupConfig{ID: "translation", Status: rgw.SyncEnabled})
+		selected, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{Bucket: strings.TrimPrefix(input, "/")}, multisite.SyncGroupConfig{ID: "translation", Status: multisite.SyncEnabled})
 		if err != nil {
 			t.Fatal(err)
 		}
 		cleanupRGWTranslationSyncGroup(t, link, selected, "low-standard", "high-ia")
-		base := rgw.SyncPipeConfig{SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", DestinationOwner: ownerB, DestinationPlacements: map[string]*rgw.Placement{"destination": secondaryPlacement}}
+		base := multisite.SyncPipeConfig{SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", DestinationOwner: ownerB, DestinationPlacements: map[string]*rgw.Placement{"destination": secondaryPlacement}}
 		low := base
 		low.ID = "low-standard"
 		low.Priority = 1
-		low.Tags = []rgw.SyncObjectTag{{Key: "color", Value: "blue"}}
+		low.Tags = []multisite.SyncObjectTag{{Key: "color", Value: "blue"}}
 		low.DestinationStorageClass = "STANDARD"
 		if err := link.CreateSyncPipe(ctx, selected, low); err != nil {
 			t.Fatal(err)
@@ -47,7 +48,7 @@ func (f *rgwSyncTranslationFixture) priority_tags_owner_class(t *testing.T) {
 		high := base
 		high.ID = "high-ia"
 		high.Priority = 7
-		high.Tags = []rgw.SyncObjectTag{{Key: "color", Value: "red"}, {Key: "color", Value: "blue"}}
+		high.Tags = []multisite.SyncObjectTag{{Key: "color", Value: "red"}, {Key: "color", Value: "blue"}}
 		high.DestinationStorageClass = "STANDARD_IA"
 		if err := link.CreateSyncPipe(ctx, selected, high); err != nil {
 			t.Fatal(err)
@@ -113,12 +114,12 @@ func (f *rgwSyncTranslationFixture) ordinary_user_denial_grant(t *testing.T) {
 		const modeInput, modeOutput = "/tc-sync-mode-input", "/tc-sync-mode-output"
 		a.request(t, ctx, http.MethodPut, modeInput, body, http.StatusOK)
 		b.request(t, ctx, http.MethodPut, modeOutput, body, http.StatusOK)
-		modeGroup, err := link.CreateSyncGroup(ctx, rgw.SyncPolicyScope{Bucket: strings.TrimPrefix(modeInput, "/")}, rgw.SyncGroupConfig{ID: "user-mode", Status: rgw.SyncEnabled})
+		modeGroup, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{Bucket: strings.TrimPrefix(modeInput, "/")}, multisite.SyncGroupConfig{ID: "user-mode", Status: multisite.SyncEnabled})
 		if err != nil {
 			t.Fatal(err)
 		}
 		cleanupRGWTranslationSyncGroup(t, link, modeGroup, "authorized-principal")
-		modePipe := rgw.SyncPipeConfig{ID: "authorized-principal", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(modeInput, "/")}, DestinationBucket: &rgw.SyncBucketSelector{Name: strings.TrimPrefix(modeOutput, "/")}, Prefix: "auth/", User: ownerB, DestinationOwner: ownerB}
+		modePipe := multisite.SyncPipeConfig{ID: "authorized-principal", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(modeInput, "/")}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(modeOutput, "/")}, Prefix: "auth/", User: ownerB, DestinationOwner: ownerB}
 		if err := link.CreateSyncPipe(ctx, modeGroup, modePipe); err != nil {
 			t.Fatal(err)
 		}

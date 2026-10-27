@@ -1,4 +1,4 @@
-package rgw
+package multisite
 
 import (
 	"context"
@@ -46,7 +46,7 @@ type SyncStatus struct {
 // CLI is passed --format json. The structured metadata state separately guards
 // period/realm epoch and every shard. This is a point-in-time observation;
 // applications should quiesce writes and still verify their own S3 payloads.
-func (f *Multisite) SyncStatus(ctx context.Context, zoneName string) (SyncStatus, error) {
+func (f *Fixture) SyncStatus(ctx context.Context, zoneName string) (SyncStatus, error) {
 	if f == nil {
 		return SyncStatus{}, errors.New("RGW multisite fixture is required")
 	}
@@ -64,7 +64,7 @@ func (f *Multisite) SyncStatus(ctx context.Context, zoneName string) (SyncStatus
 // No sources means metadata-only readiness. Native sync leases survive abrupt
 // gateway restarts until expiration, so this method does not change lease TTLs,
 // unlock objects or restart daemons to shorten normal recovery.
-func (f *Multisite) WaitSyncReady(ctx context.Context, zoneName string, sourceZones ...string) (SyncStatus, error) {
+func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZones ...string) (SyncStatus, error) {
 	if f == nil {
 		return SyncStatus{}, errors.New("RGW multisite fixture is required")
 	}
@@ -98,7 +98,7 @@ func (f *Multisite) WaitSyncReady(ctx context.Context, zoneName string, sourceZo
 	}
 }
 
-func (f *Multisite) syncStatusZones(name string, sources []string) (*rgwZoneState, error) {
+func (f *Fixture) syncStatusZones(name string, sources []string) (*rgwZoneState, error) {
 	if f.closed {
 		return nil, multisiteInvalid(errors.New("RGW multisite is terminated"))
 	}
@@ -122,7 +122,7 @@ func (f *Multisite) syncStatusZones(name string, sources []string) (*rgwZoneStat
 	return target, nil
 }
 
-func (f *Multisite) syncStatus(ctx context.Context, zoneName string) (SyncStatus, error) {
+func (f *Fixture) syncStatus(ctx context.Context, zoneName string) (SyncStatus, error) {
 	zone, err := f.syncStatusZones(zoneName, nil)
 	if err != nil {
 		return SyncStatus{}, err
