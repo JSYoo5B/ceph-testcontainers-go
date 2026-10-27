@@ -253,6 +253,19 @@ a rename; no existing name, receiver or operation verb changed. `OSDConfig`
 was left as the CRUSH placement descriptor. The record lists the added
 rows as historical API accounting only.
 
+## 146-observer-only-queries
+
+The sixteen read-only observations are methods of `ceph.Observer` only, so the
+catalogue removes the sixteen `Container` methods of those names, `Container.Pools`
+and the eight `Tenant` forwarders (`Status`, `HealthDetails`, `Pools`,
+`PoolStatus`, `PoolUsage`, `ObjectWatchers`, `OSDFlags`, `BlocklistEntries`).
+The `Observer` methods keep the removed names, receivers and signature shapes.
+The one addition is `Observer.Pools`, which lists pools as `*ceph.Pool`
+objects instead of the `PoolState` slice of `Container.Pools`; the per-pool
+reads stay the methods of `Pool`. The record is historical API accounting only;
+no alias or compatibility mapping remains. The mapping is in
+[the upgrade guide](../guides/upgrading-observer-queries.md).
+
 ## 146-override-blocklist-package
 
 The change creates the public package `override` with its first kind. The
@@ -267,16 +280,3 @@ because the package name carries the meaning. The names follow the decisions
 D7 to D9 of `override-package-boundary.md`. The reviewed mapping is in
 [the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
 The receipts of `ceph` and `override` were approved separately for this move.
-
-## 146-observer-only-queries
-
-The sixteen read-only observations are methods of `ceph.Observer` only, so the
-catalogue removes the sixteen `Container` methods of those names, `Container.Pools`
-and the eight `Tenant` forwarders (`Status`, `HealthDetails`, `Pools`,
-`PoolStatus`, `PoolUsage`, `ObjectWatchers`, `OSDFlags`, `BlocklistEntries`).
-The `Observer` methods keep the removed names, receivers and signature shapes.
-The one addition is `Observer.Pools`, which lists pools as `*ceph.Pool`
-objects instead of the `PoolState` slice of `Container.Pools`; the per-pool
-reads stay the methods of `Pool`. The record is historical API accounting only;
-no alias or compatibility mapping remains. The mapping is in
-[the upgrade guide](../guides/upgrading-observer-queries.md).
