@@ -435,12 +435,12 @@ func rgwBackendStartVault(t *testing.T, ctx context.Context, cluster *ceph.Conta
 		// readiness check. Preserve the returned error without logging secrets.
 		testcontainers.WithLogger(log.New(io.Discard, "", 0)),
 	}
-	if cluster.UsesHostNetwork() {
+	if staticFacts(cluster).UsesHostNetwork {
 		// Host-network RGW can route to a Docker bridge IP on the same Linux
 		// host/VM. Vault keeps a random mapped host port for the Go orchestrator.
 		opts = append(opts, network.WithBridgeNetwork())
 	} else {
-		opts = append(opts, network.WithNetworkName(nil, cluster.NetworkName()))
+		opts = append(opts, network.WithNetworkName(nil, staticFacts(cluster).NetworkName))
 	}
 	var err error
 	vault.container, err = testcontainers.Run(ctx, image, opts...)

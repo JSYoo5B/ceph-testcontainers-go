@@ -125,7 +125,7 @@ func (c *Container) ClientContainer(ctx context.Context) (testcontainers.Contain
 	}
 	// Initial attachment must observe one MON configuration: a concurrent
 	// topology refresh cannot inventory a toolkit that has not been created yet.
-	if c.Images().Client != "" && c.Images().Client != c.Images().Essential {
+	if images := c.staticFacts().Images; images.Client != "" && images.Client != images.Essential {
 		if err := c.lockTopology(ctx); err != nil {
 			return nil, err
 		}
@@ -139,7 +139,7 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 	if c == nil {
 		return nil, fmt.Errorf("ceph cluster is unavailable")
 	}
-	images := c.Images()
+	images := c.staticFacts().Images
 	if images.Client == images.Essential {
 		return c.controlContainerContext(ctx)
 	}
@@ -179,8 +179,8 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 			version, parseErr := parseCephVersion(string(output))
 			if parseErr != nil {
 				err = parseErr
-			} else if version != c.CephVersion() { // Unchanged: daemons with WithDaemonImage do not take part.
-				err = fmt.Errorf("client Ceph release %s differs from core %s", version, c.CephVersion())
+			} else if version != c.staticFacts().CephVersion { // Unchanged: daemons with WithDaemonImage do not take part.
+				err = fmt.Errorf("client Ceph release %s differs from core %s", version, c.staticFacts().CephVersion)
 			}
 		}
 	}

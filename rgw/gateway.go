@@ -83,19 +83,23 @@ func removeGateway(ctx context.Context, c *ceph.Container, handle *Gateway) erro
 // are applied last; preserve the required command, network and listener settings.
 // A non-nil result returned with an error remains owned by the cluster for cleanup.
 func startGateway(ctx context.Context, c *ceph.Container, config Config, opts ...testcontainers.ContainerCustomizer) (*Gateway, error) {
-	if c.Images().RGW == "" {
+	facts, err := ceph.FactsOf(c)
+	if err != nil {
+		return nil, err
+	}
+	if facts.Images.RGW == "" {
 		return nil, invalid(fmt.Errorf("rgw image is required before gateway setup"))
 	}
-	config, err := normalizeRGWConfig(config)
+	config, err = normalizeRGWConfig(config)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 	defer cancel()
-	ctr, port, tlsPort, err := startNamedDaemon(ctx, c, config, opts...)
+	ctr, port, tlsPort, err := startNamedDaemon(ctx, c, facts, config, opts...)
 	var rgw *Gateway
 	if ctr != nil {
-		rgw = &Gateway{Container: ctr, GatewayName: config.Name, Region: config.Region, port: port, tlsPort: tlsPort, publicAddress: c.PublicAddress(), networkName: c.NetworkName(), owner: c, config: config}
+		rgw = &Gateway{Container: ctr, GatewayName: config.Name, Region: config.Region, port: port, tlsPort: tlsPort, publicAddress: facts.PublicAddress, networkName: facts.NetworkName, owner: c, config: config}
 		// Publish after credential initialization, including partial error
 		// returns. Gateways readers then see an immutable descriptor. The
 		// generic service already owns the container during initialization.
@@ -175,7 +179,7 @@ func rgwServiceName(config Config) string {
 	return "rgw:" + config.Name
 }
 
-func namedDaemonOptions(c *ceph.Container, port, tlsPort int, config Config) []testcontainers.ContainerCustomizer {
+func namedDaemonOptions(c *ceph.Container, facts ceph.ClusterFacts, port, tlsPort int, config Config) []testcontainers.ContainerCustomizer {
 	opts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/rgw.sh"),
 		testcontainers.WithCmd(),
@@ -185,8 +189,8 @@ func namedDaemonOptions(c *ceph.Container, port, tlsPort int, config Config) []t
 	if config.TLS != nil {
 		opts = append(opts, rgwTLSOptions(tlsPort, config.TLS)...)
 	}
-	if !c.UsesHostNetwork() {
-		publicNetwork := c.NetworkName()
+	if !facts.UsesHostNetwork {
+		publicNetwork := facts.NetworkName
 		// Prefer the public bridge for published S3 ports when a gateway's
 		// additional peer endpoint is disconnected. Equal priorities let
 		// Docker select that endpoint by its random network name instead.
@@ -203,11 +207,11 @@ func namedDaemonOptions(c *ceph.Container, port, tlsPort int, config Config) []t
 				WithStatusCodeMatcher(func(status int) bool { return status == http.StatusOK || status == http.StatusForbidden }).
 				WithStartupTimeout(servicehook.StartupTimeout(c))))
 		if config.TLS != nil {
-			opts = append(opts, testcontainers.WithAdditionalWaitStrategy(tlsReadiness(c, tlsPort, config.TLS)))
+			opts = append(opts, testcontainers.WithAdditionalWaitStrategy(tlsReadiness(c, facts, tlsPort, config.TLS)))
 		}
 		return opts
 	}
-	endpoint := net.JoinHostPort(c.PublicAddress(), strconv.Itoa(port))
+	endpoint := net.JoinHostPort(facts.PublicAddress, strconv.Itoa(port))
 	// The control-plane executor (essential image) supplies Python for the HTTP
 	// probe; the gateway image needs only the shell and core utilities already
 	// used by its bootstrap scripts.
@@ -216,8 +220,8 @@ func namedDaemonOptions(c *ceph.Container, port, tlsPort int, config Config) []t
 		testcontainers.WithWaitStrategy(hostReadiness(c, port, endpoint)),
 	)
 	if config.TLS != nil {
-		opts = append(opts, testcontainers.WithEnv(map[string]string{"CEPH_RGW_TLS_ENDPOINT": net.JoinHostPort(c.PublicAddress(), strconv.Itoa(tlsPort))}),
-			testcontainers.WithAdditionalWaitStrategy(tlsReadiness(c, tlsPort, config.TLS)))
+		opts = append(opts, testcontainers.WithEnv(map[string]string{"CEPH_RGW_TLS_ENDPOINT": net.JoinHostPort(facts.PublicAddress, strconv.Itoa(tlsPort))}),
+			testcontainers.WithAdditionalWaitStrategy(tlsReadiness(c, facts, tlsPort, config.TLS)))
 	}
 	return opts
 }
@@ -284,14 +288,14 @@ func hostReadiness(c *ceph.Container, port int, endpoint string) *wait.NopStrate
 	}).WithStartupTimeout(servicehook.StartupTimeout(c))
 }
 
-func startNamedDaemon(ctx context.Context, c *ceph.Container, config Config, customizers ...testcontainers.ContainerCustomizer) (testcontainers.Container, int, int, error) {
+func startNamedDaemon(ctx context.Context, c *ceph.Container, facts ceph.ClusterFacts, config Config, customizers ...testcontainers.ContainerCustomizer) (testcontainers.Container, int, int, error) {
 	serviceName := rgwServiceName(config)
-	if !c.UsesHostNetwork() {
+	if !facts.UsesHostNetwork {
 		tlsPort := 0
 		if config.TLS != nil {
 			tlsPort = 7481
 		}
-		opts := append(namedDaemonOptions(c, 7480, tlsPort, config), customizers...)
+		opts := append(namedDaemonOptions(c, facts, 7480, tlsPort, config), customizers...)
 		ctr, err := servicehook.StartService(ctx, c, serviceName, servicehook.ServiceImage(c, "rgw"), opts...)
 		return ctr, 7480, tlsPort, err
 	}
@@ -311,7 +315,7 @@ func startNamedDaemon(ctx context.Context, c *ceph.Container, config Config, cus
 		}
 		// Create the target while the reservation still holds its socket. Only
 		// release immediately before Start, minimizing the unavoidable bind race.
-		opts := append(namedDaemonOptions(c, port, tlsPort, config), customizers...)
+		opts := append(namedDaemonOptions(c, facts, port, tlsPort, config), customizers...)
 		opts = append(opts, testcontainers.WithNoStart())
 		ctr, createErr := servicehook.StartService(ctx, c, serviceName, servicehook.ServiceImage(c, "rgw"), opts...)
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)

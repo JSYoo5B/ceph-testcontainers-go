@@ -294,7 +294,10 @@ func (m *Mirror) namespaceMappingUnsupported(ctx context.Context, client testcon
 		Err:        fmt.Errorf("mirroring RBD namespace %q to %q needs Ceph 20 or later; Ceph 19 pairs only namespaces with the same name", namespace, remote)}
 	image := client
 	if m.legacyCluster(cluster) {
-		refusal.Target, refusal.Version = site+" cluster", cluster.CephVersion()
+		refusal.Target, refusal.Version = site+" cluster", ""
+		if facts, err := ceph.FactsOf(cluster); err == nil {
+			refusal.Version = facts.CephVersion
+		}
 		image, _ = cluster.ClientContainer(ctx)
 	}
 	if image != nil {

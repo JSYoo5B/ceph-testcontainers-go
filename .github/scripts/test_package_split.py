@@ -3,8 +3,8 @@
 import itertools
 import json
 import os
-from pathlib import Path
 import re
+from pathlib import Path
 import shutil
 import tempfile
 import unittest
@@ -14,22 +14,12 @@ import package_split as ps
 
 SCRIPTS = Path(__file__).resolve().parent
 SHARDS = SCRIPTS / "fixtures" / "package-split"
-BASELINE = SCRIPTS / "fixtures" / "migration" / "package-split.single-file-7015c62.json"
 
 GOOD = {"description": "move one"}
 
 
 def shard(**fields):
     return dict(GOOD, **fields)
-
-
-def legacy_apply(split, source):
-    """The rewrite exactly as the single-file reader applied it (before gofmt)."""
-    for old, new in sorted(split["identifiers"].items(), key=lambda item: -len(item[0])):
-        source = re.sub(r"(?<![\w.])" + re.escape(old) + r"\b", new, source)
-    for pattern, replacement in split["calls"]:
-        source = re.sub(pattern, replacement, source)
-    return source
 
 
 class Layout:
@@ -287,102 +277,6 @@ class RepositoryLayout(unittest.TestCase):
                 found = self.broken(mutate)
                 self.assertTrue(any(fragment in problem for problem in found), found)
         self.assertEqual(self.broken(lambda files: None), [])
-
-
-class MigrationFromTheSingleFile(unittest.TestCase):
-    """Pins the shards to the single file that preceded them.
-
-    The baseline is package-split.json as it stood at 7015c62. This test proves
-    the migration lost and added nothing. Delete it with the baseline file in
-    the first change that deliberately retargets an existing key; adding a
-    shard never needs to touch either.
-    """
-
-    @classmethod
-    def setUpClass(cls):
-        cls.base = json.loads(BASELINE.read_text())
-        cls.shards = ps.load_effective()
-        cls.corpus = ps.load_corpus()
-
-    def test_the_effective_identifiers_are_the_old_ones_in_the_old_order(self):
-        old = sorted(self.base["identifiers"].items(), key=lambda item: -len(item[0]))
-        self.assertEqual(len(old), 131)
-        self.assertEqual(ps.ordered_identifiers(self.shards), old)
-
-    def test_the_effective_calls_are_the_old_calls(self):
-        old = [tuple(call) for call in self.base["calls"]]
-        new = ps.ordered_calls(self.shards)
-        self.assertEqual(len(old), 10)
-        self.assertEqual(sorted(new), sorted(old))
-        # Only the cross-shard order changed. Say so, and prove it harmless
-        # below, rather than leaving the permutation implicit.
-        self.assertNotEqual(new, old)
-
-    def test_each_shard_keeps_the_old_relative_order_of_its_calls(self):
-        old = [tuple(call) for call in self.base["calls"]]
-        for shard_ in self.shards:
-            positions = [old.index(call) for call in shard_.calls]
-            self.assertEqual(positions, sorted(positions), shard_.name)
-
-    def test_the_old_call_order_and_the_new_one_rewrite_identically(self):
-        identifiers = ps.ordered_identifiers(self.shards)
-        old = [tuple(call) for call in self.base["calls"]]
-        new = ps.ordered_calls(self.shards)
-        extra = "\n".join(self.synthetic_call_inputs())
-        for name, text in self.corpus + [("synthetic", extra)]:
-            base = ps.apply_identifiers(text, identifiers)
-            self.assertEqual(ps.apply_calls(base, new), ps.apply_calls(base, old), name)
-        # Swapping any two of the ten calls also leaves the synthetic lines alone.
-        base = ps.apply_identifiers(extra, identifiers)
-        want = ps.apply_calls(base, old)
-        for i, j in itertools.permutations(range(len(old)), 2):
-            swapped = list(old)
-            swapped[i], swapped[j] = swapped[j], swapped[i]
-            self.assertEqual(ps.apply_calls(base, swapped), want, (old[i][0], old[j][0]))
-
-    def synthetic_call_inputs(self):
-        """One line per call that the call matches, plus lines that must not change."""
-        lines = [
-            "fs, err := src.StartCephFS(ctx)",
-            "fs, err := src.StartCephFSWithConfig(ctx, cfg)",
-            "gw, err := src.StartRGW(ctx)",
-            "gw, err := src.StartRGWWithConfig(ctx, cfg)",
-            "err := src.RemoveRGW(ctx, gw)",
-            "c, err := src.ControlContainerContext(ctx)",
-            "c, err := src.ClientContainerContext(ctx)",
-            "names := src.Filesystems()",
-            "names := src.Gateways()",
-            "err := src.InitRBDPool(ctx, pool)",
-            "m, err := multicluster.RunCephFSMirror(ctx, source.ControlImage(), cfg)",
-            "m, err := cephfsmirror.Run(ctx, source.ControlImage(), cfg)",
-            "keep := untouched.Filesystems2()",
-        ]
-        return lines
-
-    def test_the_whole_rewrite_equals_the_old_algorithm(self):
-        extra = "\n".join(self.synthetic_call_inputs()) + "\n" + "\n".join(self.base["identifiers"]) + "\n"
-        for name, text in self.corpus + [("synthetic", extra)]:
-            self.assertEqual(ps.apply_shards(text, self.shards), legacy_apply(self.base, text), name)
-        # The corpus really is rewritten, so equality is not vacuous.
-        for name, text in self.corpus:
-            self.assertNotEqual(legacy_apply(self.base, text), text, name)
-
-    def test_no_entry_is_lost_added_or_moved_between_keys(self):
-        merged = {}
-        for shard_ in self.shards:
-            merged.update(shard_.identifiers)
-        self.assertEqual(merged, self.base["identifiers"])
-        self.assertEqual(sum(len(s.identifiers) for s in self.shards), len(self.base["identifiers"]))
-
-    def test_the_prose_is_kept(self):
-        notes = [s.note for s in self.shards if s.note]
-        self.assertEqual(notes, [self.base["role_image_routing_note"]])
-        self.assertTrue(all(s.description for s in self.shards))
-
-    def test_the_baseline_itself_has_no_chain_or_duplicate(self):
-        # The layout rules would have accepted the single file as one shard.
-        shard_ = ps.Shard("base.json", "d", self.base["identifiers"], [tuple(c) for c in self.base["calls"]], None)
-        self.assertEqual(ps.check_identifiers([shard_]), [])
 
 
 if __name__ == "__main__":

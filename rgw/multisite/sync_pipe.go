@@ -298,7 +298,11 @@ func (f *Fixture) syncDestinationClass(ctx context.Context, g *SyncGroup, config
 // for zone, which runs Ceph 19. That is a documented limit of the release: no
 // tool reveals it.
 func accountPipeUnsupported(zone *rgwZoneState) error {
-	return &ceph.OperationError{Kind: ceph.ErrUnsupported, Target: "zone " + zone.Name, Version: zone.cluster.CephVersion(),
+	facts, err := ceph.FactsOf(zone.cluster)
+	if err != nil {
+		return err
+	}
+	return &ceph.OperationError{Kind: ceph.ErrUnsupported, Target: "zone " + zone.Name, Version: facts.CephVersion,
 		Capability: "RGW account principals in user-mode sync pipes",
 		Err:        errors.New("RGW user-mode sync with an account principal needs Ceph 20 or later; Ceph 19 resolves no source for such a pipe")}
 }

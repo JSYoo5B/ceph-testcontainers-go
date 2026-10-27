@@ -47,18 +47,18 @@ func TestMessengerModeValidationSelectionAndSnapshot(t *testing.T) {
 	}
 	for _, mode := range []MessengerMode{MessengerDefault, MessengerV2Secure, MessengerV2Only} {
 		cluster := &Container{settings: options{messengerMode: mode}}
-		if cluster.MessengerMode() != mode {
-			t.Fatal("accessor did not report the selected bootstrap mode")
+		if facts, err := FactsOf(cluster); err != nil || facts.MessengerMode != mode {
+			t.Fatal("facts did not report the selected bootstrap mode")
 		}
 		cluster.closed = true
 		cluster.config = []byte("[global]\nms client mode = crc\n")
-		if cluster.MessengerMode() != mode {
-			t.Fatal("bootstrap accessor depended on runtime state or termination")
+		if facts, err := FactsOf(cluster); err != nil || facts.MessengerMode != mode {
+			t.Fatal("bootstrap facts depended on runtime state or termination")
 		}
 	}
 	var unavailable *Container
-	if unavailable.MessengerMode() != MessengerDefault {
-		t.Fatal("nil Container did not report the default bootstrap selection")
+	if facts, err := FactsOf(unavailable); err == nil || facts.MessengerMode != MessengerDefault {
+		t.Fatal("nil Container did not return an error and the zero facts")
 	}
 }
 

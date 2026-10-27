@@ -55,7 +55,7 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 			opts: []testcontainers.ContainerCustomizer{ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithConfigFile(configFile)},
 			pool: "tc-combo",
 			check: func(t *testing.T, ctx context.Context, cluster *ceph.Container) {
-				if mode := cluster.MessengerMode(); mode != ceph.MessengerV2Secure {
+				if mode := staticFacts(cluster).MessengerMode; mode != ceph.MessengerV2Secure {
 					t.Fatalf("messenger mode = %v", mode)
 				}
 				if value := strings.TrimSpace(string(mustCeph(t, ctx, cluster, "config", "show", "osd.0", "osd_max_pg_per_osd_hard_ratio"))); value != "7.000000" && value != "7" {

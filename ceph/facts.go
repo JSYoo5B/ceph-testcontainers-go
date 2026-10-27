@@ -7,8 +7,8 @@ import "github.com/testcontainers/testcontainers-go"
 // HasSeparateClusterNetwork) are derived here from the immutable run settings
 // and from the bridge networks that the caller passes in. These helpers take no
 // lock, run no command and make no Docker call, so a fact stays readable after
-// termination. They never see the Container: each exported accessor keeps its
-// own nil handling and reads the fields it needs itself.
+// termination. They never see the Container: FactsOf and the in-package
+// staticFacts read the fields they need and pass them in.
 
 // hostNetworkName is the network name that host mode reports for both traffic
 // planes.

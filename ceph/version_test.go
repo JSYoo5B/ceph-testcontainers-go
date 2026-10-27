@@ -27,7 +27,7 @@ func TestCephBeforeTreatsUnknownAsCurrent(t *testing.T) {
 		}
 	}
 	var missing *Container
-	if missing.CephVersion() != "" {
+	if facts, err := FactsOf(missing); err == nil || facts.CephVersion != "" {
 		t.Fatal("nil cluster reported a version")
 	}
 }

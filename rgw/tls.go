@@ -76,7 +76,7 @@ func (g *Gateway) S3SecureEndpoint(ctx context.Context) (string, error) {
 // The startup probe verifies private socket ownership and the exact configured
 // certificate fingerprint. This is certificate pinning for readiness only;
 // application tests verify the CA and DNS/IP SAN using their ordinary TLS client.
-func tlsReadiness(c *ceph.Container, port int, config *TLSConfig) *wait.NopStrategy {
+func tlsReadiness(c *ceph.Container, facts ceph.ClusterFacts, port int, config *TLSConfig) *wait.NopStrategy {
 	pair, _ := tls.X509KeyPair(config.CertificatePEM, config.PrivateKeyPEM)
 	digest := sha256.Sum256(pair.Certificate[0])
 	fingerprint := hex.EncodeToString(digest[:])
@@ -85,8 +85,8 @@ func tlsReadiness(c *ceph.Container, port int, config *TLSConfig) *wait.NopStrat
 		defer cancel()
 		ticker := time.NewTicker(150 * time.Millisecond)
 		defer ticker.Stop()
-		address := c.PublicAddress()
-		if !c.UsesHostNetwork() {
+		address := facts.PublicAddress
+		if !facts.UsesHostNetwork {
 			info, err := target.Inspect(ctx)
 			if err != nil {
 				return err
@@ -94,7 +94,7 @@ func tlsReadiness(c *ceph.Container, port int, config *TLSConfig) *wait.NopStrat
 			if info == nil || info.NetworkSettings == nil {
 				return errors.New("RGW TLS network is absent")
 			}
-			endpoint := info.NetworkSettings.Networks[c.NetworkName()]
+			endpoint := info.NetworkSettings.Networks[facts.NetworkName]
 			if endpoint == nil || !endpoint.IPAddress.IsValid() {
 				return errors.New("RGW TLS public network address is absent")
 			}

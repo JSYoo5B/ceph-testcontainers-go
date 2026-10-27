@@ -30,8 +30,8 @@ func TestHostNetworkMultiCluster(t *testing.T) {
 	keyrings := make([][]byte, 2)
 	clients := make([]testcontainers.Container, 2)
 	for i, cluster := range clusters {
-		if !cluster.UsesHostNetwork() || cluster.PublicAddress() != "127.0.0.1" {
-			t.Fatalf("cluster %d has unexpected networking: host=%t address=%q", i, cluster.UsesHostNetwork(), cluster.PublicAddress())
+		if !staticFacts(cluster).UsesHostNetwork || staticFacts(cluster).PublicAddress != "127.0.0.1" {
+			t.Fatalf("cluster %d has unexpected networking: host=%t address=%q", i, staticFacts(cluster).UsesHostNetwork, staticFacts(cluster).PublicAddress)
 		}
 		status, err := cluster.Status(ctx)
 		if err != nil {

@@ -28,7 +28,7 @@ func (c *Container) CephVersion() string {
 // cephBefore reports whether the recorded release is older than major. An
 // unknown version keeps the default image's command forms.
 func (c *Container) cephBefore(major int) bool {
-	recorded, _, _ := strings.Cut(c.CephVersion(), ".")
+	recorded, _, _ := strings.Cut(c.staticFacts().CephVersion, ".")
 	value, err := strconv.Atoi(recorded)
 	return err == nil && value < major
 }

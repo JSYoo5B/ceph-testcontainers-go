@@ -69,11 +69,19 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	if err := multicluster.RequireRoleImage(image, multicluster.RoleRGW, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure RGW multisite gateway image: %w", err)
 	}
-	sourceClientImage, err := rgwSetupImage(config.SetupImage, config.Source)
+	sourceFacts, err := ceph.FactsOf(config.Source)
 	if err != nil {
 		return nil, err
 	}
-	destinationClientImage, err := rgwSetupImage(config.SetupImage, config.Destination)
+	destinationFacts, err := ceph.FactsOf(config.Destination)
+	if err != nil {
+		return nil, err
+	}
+	sourceClientImage, err := rgwSetupImage(config.SetupImage, sourceFacts.Images.RGW)
+	if err != nil {
+		return nil, err
+	}
+	destinationClientImage, err := rgwSetupImage(config.SetupImage, destinationFacts.Images.RGW)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +124,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	}
 	var bridge *testcontainers.DockerNetwork
 	peerNetwork := ""
-	if !config.Source.UsesHostNetwork() {
+	if !sourceFacts.UsesHostNetwork {
 		bridge, err = dockerbridge.New(ctx)
 		if bridge != nil {
 			f.httpNetwork = bridge
@@ -139,7 +147,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	}
 	sourceAlias, destinationAlias := "rgw-primary-"+suffix, "rgw-secondary-"+suffix
 	sourceURL, destinationURL := "http://"+sourceAlias+":7480", "http://"+destinationAlias+":7480"
-	if config.Source.UsesHostNetwork() {
+	if sourceFacts.UsesHostNetwork {
 		// A named host gateway chooses its port at startup. Commit the fresh
 		// zone without endpoints first, then publish its actual owned listener.
 		sourceURL, destinationURL = "", ""
@@ -164,7 +172,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	if err != nil {
 		return f, err
 	}
-	if config.Source.UsesHostNetwork() {
+	if sourceFacts.UsesHostNetwork {
 		sourceURL, err = f.Source.DaemonEndpoint(ctx)
 		if err != nil {
 			return f, err
@@ -201,7 +209,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	if err != nil {
 		return f, err
 	}
-	if config.Destination.UsesHostNetwork() {
+	if destinationFacts.UsesHostNetwork {
 		destinationURL, err = f.Destination.DaemonEndpoint(ctx)
 		if err != nil {
 			return f, err
@@ -272,7 +280,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	if err := f.canonicalizeBootstrapStaging(ctx); err != nil {
 		return f, err
 	}
-	if config.Source.UsesHostNetwork() || config.destinationZonegroup != config.Zonegroup {
+	if sourceFacts.UsesHostNetwork || config.destinationZonegroup != config.Zonegroup {
 		// Both gateways started against an earlier bootstrap period before
 		// allocated endpoints were committed. Load the verified final period
 		// before admitting S3 operations instead of racing asynchronous reload.
@@ -305,10 +313,10 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 
 // An empty override lets each zone select its cluster's RGW administration
 // runtime, including zones added after initial setup.
-func rgwSetupImage(override string, cluster interface{ Images() ceph.ImageSet }) (string, error) {
+func rgwSetupImage(override, clusterRGWImage string) (string, error) {
 	image := override
-	if image == "" && cluster != nil {
-		image = cluster.Images().RGW
+	if image == "" {
+		image = clusterRGWImage
 	}
 	if strings.TrimSpace(image) == "" {
 		return "", fmt.Errorf("RGW setup image must not be empty")

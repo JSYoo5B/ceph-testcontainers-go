@@ -70,8 +70,8 @@ func TestAddressFamilyOptions(t *testing.T) {
 	if err := WithAddressFamily(AddressIPv6)(&settings); err != nil || settings.addressFamily != AddressIPv6 || settings.bridgeFamily() == 0 {
 		t.Fatalf("IPv6: %v %+v", err, settings.addressFamily)
 	}
-	if (*Container)(nil).AddressFamily() != AddressIPv4 || AddressIPv4MappedIPv6.String() != "ipv4-mapped" {
-		t.Fatal("defaults or names changed")
+	if AddressIPv4MappedIPv6.String() != "ipv4-mapped" {
+		t.Fatal("names changed")
 	}
 	for name, opts := range map[string][]Option{
 		"host network":                    {WithAddressFamily(AddressIPv6), WithHostNetwork()},

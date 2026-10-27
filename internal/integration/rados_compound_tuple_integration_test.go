@@ -66,7 +66,7 @@ func TestRADOSCompoundTupleNoFault(t *testing.T) {
 	identity := tupleIdentity{Object: tupleObject, Pool: pool, PoolID: int64(poolState.ID), FSID: quorum.MonMap.FSID}
 	osds := osdMemoryIdentities(t, ctx, cluster)
 	platform := osdMemoryExec(t, ctx, client, "uname", "-sm")
-	t.Logf("RADOS_TUPLE_RUNTIME ceph=%s platform=%s fsid=%s pool=%s pool_id=%d osds=%v", cluster.CephVersion(), platform, identity.FSID, pool, identity.PoolID, osds)
+	t.Logf("RADOS_TUPLE_RUNTIME ceph=%s platform=%s fsid=%s pool=%s pool_id=%d osds=%v", staticFacts(cluster).CephVersion, platform, identity.FSID, pool, identity.PoolID, osds)
 
 	// judge records the receipt before it asserts, so that a failed phase keeps
 	// its ledger and observation.

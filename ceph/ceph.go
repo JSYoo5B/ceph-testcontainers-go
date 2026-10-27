@@ -519,7 +519,7 @@ func (c *Container) adminClient(opts ...ClientContainerOption) testcontainers.Cu
 				return err
 			}
 		} else {
-			if err := network.WithNetworkName(nil, c.NetworkName())(req); err != nil {
+			if err := network.WithNetworkName(nil, c.staticFacts().NetworkName)(req); err != nil {
 				return err
 			}
 		}

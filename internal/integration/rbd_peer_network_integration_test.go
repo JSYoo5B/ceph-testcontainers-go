@@ -24,7 +24,7 @@ func TestMultiClusterRBDPeerNetworkInterruption(t *testing.T) {
 	const name = "backlog"
 	rbdMultiClusterPool(t, ctx, source, a, pool)
 	rbdMultiClusterPool(t, ctx, destination, b, pool)
-	image := source.Images().RBDAux
+	image := staticFacts(source).Images.RBDAux
 	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", image), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
 	if mirror != nil {
 		testcontainers.CleanupContainer(t, mirror)
@@ -81,7 +81,7 @@ func TestMultiClusterRBDPeerNetworkInterruption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !inspection.Container.State.Running || inspection.Container.NetworkSettings.Networks[source.NetworkName()] != nil || inspection.Container.NetworkSettings.Networks[destination.NetworkName()] == nil || inspection.Container.NetworkSettings.Networks[destination.ClusterNetworkName()] != nil {
+	if !inspection.Container.State.Running || inspection.Container.NetworkSettings.Networks[staticFacts(source).NetworkName] != nil || inspection.Container.NetworkSettings.Networks[staticFacts(destination).NetworkName] == nil || inspection.Container.NetworkSettings.Networks[staticFacts(destination).ClusterNetworkName] != nil {
 		t.Fatal("peer cut stopped process, removed destination endpoint, or attached daemon to OSD backend")
 	}
 	changed := bytes.Clone(initial)

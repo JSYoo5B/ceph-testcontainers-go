@@ -85,7 +85,7 @@ func newMultiClusterPairWithContext(t *testing.T, ctx context.Context, customize
 	if err != nil {
 		t.Fatal(err)
 	}
-	sharedIsolatedNetwork := source.NetworkName() == destination.NetworkName() && !(source.UsesHostNetwork() && destination.UsesHostNetwork())
+	sharedIsolatedNetwork := staticFacts(source).NetworkName == staticFacts(destination).NetworkName && !(staticFacts(source).UsesHostNetwork && staticFacts(destination).UsesHostNetwork)
 	if a.FSID == "" || b.FSID == "" || a.FSID == b.FSID || sharedIsolatedNetwork {
 		t.Fatal("source and destination are not independent Ceph clusters")
 	}

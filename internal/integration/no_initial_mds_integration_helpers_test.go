@@ -537,8 +537,8 @@ func coldMDSResources(t *testing.T, parent context.Context, o *noInitialOSDOracl
 	if len(seen) != len(expected) {
 		t.Fatal("raw inventory lost exact original returned resources")
 	}
-	if len(o.networks) == 0 && !cluster.UsesHostNetwork() {
-		n, err := o.client.NetworkInspect(ctx, cluster.NetworkName(), mobycl.NetworkInspectOptions{})
+	if len(o.networks) == 0 && !staticFacts(cluster).UsesHostNetwork {
+		n, err := o.client.NetworkInspect(ctx, staticFacts(cluster).NetworkName, mobycl.NetworkInspectOptions{})
 		if err != nil || n.Network.ID == "" {
 			t.Fatal("original bridge unavailable")
 		}

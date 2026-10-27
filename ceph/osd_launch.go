@@ -43,7 +43,7 @@ func (c *Container) newOSDLaunchRecipe(osd *OSDContainer, keyring []byte) *osdLa
 	}
 	r := &osdLaunchRecipe{image: image, config: config, adminKeyring: admin, osdKeyring: string(keyring),
 		id: osd.ID, uuid: osd.nativeUUID, placement: osd.placement,
-		hostNetwork: c.settings.hostNetwork, publicAddress: c.settings.publicAddress, publicNetwork: c.NetworkName(),
+		hostNetwork: c.settings.hostNetwork, publicAddress: c.settings.publicAddress, publicNetwork: c.staticFacts().NetworkName,
 		owner: c.owner, timeout: c.settings.startupTimeout}
 	if c.nets.cluster != nil {
 		r.clusterNetwork = c.nets.cluster.Name

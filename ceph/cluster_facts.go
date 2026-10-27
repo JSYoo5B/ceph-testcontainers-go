@@ -50,6 +50,15 @@ func FactsOf(c *Container) (ClusterFacts, error) {
 	if c == nil {
 		return ClusterFacts{}, errNilClusterFacts
 	}
+	return c.staticFacts(), nil
+}
+
+// staticFacts is the lock-free read behind FactsOf. Code inside the package
+// uses it directly: it holds a non-nil cluster that may still be starting and
+// has no use for the nil-cluster error. It reads the same recorded sources as
+// FactsOf, so TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup
+// guards both.
+func (c *Container) staticFacts() ClusterFacts {
 	return ClusterFacts{
 		AddressFamily:             c.settings.addressFamily,
 		Images:                    c.settings.effectiveImages(),
@@ -60,5 +69,5 @@ func FactsOf(c *Container) (ClusterFacts, error) {
 		ClusterNetworkName:        c.settings.clusterNetworkName(c.nets.public, c.nets.cluster),
 		HasSeparateClusterNetwork: c.nets.cluster != nil,
 		CephVersion:               c.cephVersion,
-	}, nil
+	}
 }

@@ -97,7 +97,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	}
 	fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
 	archiveSnapshot("backup-1")
-	image := source.Images().CephFS
+	image := staticFacts(source).Images.CephFS
 	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", image), cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
@@ -118,7 +118,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cephFSAssertManagerPeerNetworks(t, ctx, source, destination.NetworkName(), true)
+	cephFSAssertManagerPeerNetworks(t, ctx, source, staticFacts(destination).NetworkName, true)
 	verifySnapshot("backup-1")
 	t.Log("CephFS mirror constructed after removing initial manager a; surviving b and standby c have native peer connectivity")
 
@@ -128,7 +128,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	if err := mirror.AttachManagers(ctx); err != nil {
 		t.Fatal(err)
 	}
-	cephFSAssertManagerPeerNetworks(t, ctx, source, destination.NetworkName(), true)
+	cephFSAssertManagerPeerNetworks(t, ctx, source, staticFacts(destination).NetworkName, true)
 	if err := managerHandle(t, ctx, source, "b").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	if err := mirror.Terminate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	cephFSAssertManagerPeerNetworks(t, ctx, source, destination.NetworkName(), false)
+	cephFSAssertManagerPeerNetworks(t, ctx, source, staticFacts(destination).NetworkName, false)
 	if _, err := source.Status(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func cephFSAssertManagerPeerNetworks(t *testing.T, ctx context.Context, source *
 		if inspection.Container.NetworkSettings == nil {
 			t.Fatalf("manager %s has no network settings", manager.DaemonName)
 		}
-		if source.UsesHostNetwork() {
+		if staticFacts(source).UsesHostNetwork {
 			if inspection.Container.HostConfig == nil || inspection.Container.HostConfig.NetworkMode != "host" {
 				t.Fatalf("manager %s is outside the shared host network namespace", manager.DaemonName)
 			}

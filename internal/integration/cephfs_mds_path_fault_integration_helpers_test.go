@@ -288,7 +288,7 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	if mdsContainer == nil {
 		t.Fatalf("mds.%s is not an owned daemon", m.mds.Name)
 	}
-	network := cluster.NetworkName()
+	network := staticFacts(cluster).NetworkName
 	if ip := containerIP(t, ctx, mdsContainer, network); ip != mdsIP {
 		t.Fatalf("mds.%s advertises %s but its container has %s", m.mds.Name, mdsIP, ip)
 	}

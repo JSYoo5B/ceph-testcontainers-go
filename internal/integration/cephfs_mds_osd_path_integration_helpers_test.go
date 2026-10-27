@@ -143,7 +143,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	if len(daemons.OSDs) != osdCount {
 		t.Fatalf("the OSDMap has %d OSDs, want %d: %+v", len(daemons.OSDs), osdCount, daemons.OSDs)
 	}
-	network := m.cluster.NetworkName()
+	network := staticFacts(m.cluster).NetworkName
 	osdIPs := map[int]netip.Addr{}
 	var cutIDs []int
 	var peers []fault.NetworkPeer

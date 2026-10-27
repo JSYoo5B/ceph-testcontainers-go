@@ -28,7 +28,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	const size = 8 << 20
 	rbdMultiClusterPool(t, ctx, source, sourceClient, pool)
 	rbdMultiClusterPool(t, ctx, destination, destinationClient, pool)
-	imageName := source.Images().RBDAux
+	imageName := staticFacts(source).Images.RBDAux
 	link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", imageName), rbdmirror.Config{
 		Source: source, Destination: destination, Pool: pool, DaemonCount: 2,
 	})

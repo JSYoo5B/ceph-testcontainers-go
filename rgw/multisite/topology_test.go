@@ -4,49 +4,32 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
-
-type rgwSetupImageStub struct {
-	image string
-	reads int
-}
-
-func (cluster *rgwSetupImageStub) Images() ceph.ImageSet {
-	cluster.reads++
-	return ceph.ImageSet{Essential: "core", Client: "toolkit", RGW: cluster.image}
-}
 
 func TestRGWSetupImageUsesEachClusterAndRespectsOverride(t *testing.T) {
 	for _, zone := range []string{"source", "destination", "added-zone"} {
 		t.Run(zone, func(t *testing.T) {
-			cluster := &rgwSetupImageStub{image: "ceph-rgw:" + zone}
-			image, err := rgwSetupImage("", cluster)
-			if err != nil || image != cluster.image || cluster.reads != 1 {
-				t.Fatalf("setup client did not select its own cluster's RGW image: image=%q reads=%d error=%v", image, cluster.reads, err)
+			clusterImage := "ceph-rgw:" + zone
+			image, err := rgwSetupImage("", clusterImage)
+			if err != nil || image != clusterImage {
+				t.Fatalf("setup client did not select its own cluster's RGW image: image=%q error=%v", image, err)
 			}
-			cluster.reads = 0
 			const override = "compatible-rgw:explicit"
-			image, err = rgwSetupImage(override, cluster)
-			if err != nil || image != override || cluster.reads != 0 {
-				t.Fatalf("explicit shared RGW image was not preserved: image=%q reads=%d error=%v", image, cluster.reads, err)
+			image, err = rgwSetupImage(override, clusterImage)
+			if err != nil || image != override {
+				t.Fatalf("explicit shared RGW image was not preserved: image=%q error=%v", image, err)
 			}
 		})
 	}
 }
 
 func TestRGWSetupImageRejectsMissingOrBlankSelection(t *testing.T) {
-	if image, err := rgwSetupImage("", nil); err == nil || image != "" {
-		t.Fatal("missing RGW image was accepted")
-	}
 	for _, image := range []string{"", " \t\n"} {
-		if selected, err := rgwSetupImage("", &rgwSetupImageStub{image: image}); err == nil || selected != "" {
+		if selected, err := rgwSetupImage("", image); err == nil || selected != "" {
 			t.Fatal("empty cluster RGW image was accepted")
 		}
 	}
-	cluster := &rgwSetupImageStub{image: "valid-rgw:local"}
-	if image, err := rgwSetupImage(" \t", cluster); err == nil || image != "" || cluster.reads != 0 {
+	if image, err := rgwSetupImage(" \t", "valid-rgw:local"); err == nil || image != "" {
 		t.Fatal("blank explicit override silently fell back to the cluster image")
 	}
 }

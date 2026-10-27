@@ -110,7 +110,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 		volume, keeper = smallOSDRAMBacking(t, ctx, docker.Client, cluster, initial, ramCap)
 		owned[keeper.ID] = true
 	}
-	nativeNetwork, err := docker.Client.NetworkInspect(ctx, cluster.NetworkName(), mobycl.NetworkInspectOptions{})
+	nativeNetwork, err := docker.Client.NetworkInspect(ctx, staticFacts(cluster).NetworkName, mobycl.NetworkInspectOptions{})
 	if err != nil || nativeNetwork.Network.ID == "" {
 		t.Fatal("owned bridge identity unavailable", err)
 	}

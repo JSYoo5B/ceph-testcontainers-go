@@ -257,7 +257,7 @@ func (c *Container) withClientIdentity(client *ClientConfig, opts ...ClientConta
 			if err := hostContainerCustomizer(c.settings.publicAddress).Customize(req); err != nil {
 				return err
 			}
-		} else if err := network.WithNetworkName(nil, c.NetworkName())(req); err != nil {
+		} else if err := network.WithNetworkName(nil, c.staticFacts().NetworkName)(req); err != nil {
 			return err
 		}
 		config, err := clientContainerConfig(clientConfigBytes(c.config, client), opts)

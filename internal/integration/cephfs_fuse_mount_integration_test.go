@@ -171,14 +171,14 @@ func admitFuse(t *testing.T, ctx context.Context, ctr testcontainers.Container) 
 // and do not ship ceph-fuse.
 func fuseClientImage(t *testing.T, ctx context.Context, m *cephFSSingleMDS) (string, *fuseRefusal) {
 	t.Helper()
-	clientImage := m.cluster.Images().Client
+	clientImage := staticFacts(m.cluster).Images.Client
 	if code, _, err := sessionExec(ctx, m.client, "test", "-x", "/usr/bin/ceph-fuse"); err != nil {
 		t.Fatal(err)
 	} else if code == 0 {
 		return clientImage, nil
 	}
 	refused := &fuseRefusal{fuseNeedsBinary, "client image " + clientImage + " has no executable /usr/bin/ceph-fuse"}
-	version := m.cluster.CephVersion()
+	version := staticFacts(m.cluster).CephVersion
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(version) {
 		t.Fatalf("%v, and Ceph version %q names no official image", refused, version)
 	}

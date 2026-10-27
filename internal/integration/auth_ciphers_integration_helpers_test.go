@@ -79,7 +79,7 @@ func authEntityKeyType(t *testing.T, ctx context.Context, cluster *ceph.Containe
 // client's keyring can authenticate and read the monmap.
 func clientAuthenticates(t *testing.T, ctx context.Context, cluster *ceph.Container, client *ceph.ClientConfig) bool {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClientIdentity(client), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClientIdentity(client), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 		_, err := cluster.CreateClient(ctx, "aes256k-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.WithClientKeyType(ceph.CipherAES256K))
 		var refusal *ceph.OperationError
 		if !errors.As(err, &refusal) || refusal.Kind != ceph.ErrUnsupported || refusal.Capability != "ceph-authtool --key-type" ||
-			refusal.Version != cluster.CephVersion() || !strings.HasPrefix(refusal.Image, "sha256:") {
+			refusal.Version != staticFacts(cluster).CephVersion || !strings.HasPrefix(refusal.Image, "sha256:") {
 			t.Fatalf("an image without --key-type created an AES256K client: %v", err)
 		}
 		if _, err := cluster.Ceph(ctx, "auth", "get", "client.aes256k-reader"); err == nil {
@@ -196,7 +196,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 		if !errors.Is(err, ceph.ErrUnsupported) || !strings.Contains(err.Error(), "ceph-authtool --key-type") || time.Since(started) > 2*time.Minute {
 			t.Fatalf("bootstrap with AES256K keys without --key-type: %v after %s", err, time.Since(started))
 		}
-		t.Logf("Ceph %s without --key-type: AES keys, explicit AES clients and fractional ticket lifetimes; AES256K clients and clusters refused before creation", cluster.CephVersion())
+		t.Logf("Ceph %s without --key-type: AES keys, explicit AES clients and fractional ticket lifetimes; AES256K clients and clusters refused before creation", staticFacts(cluster).CephVersion)
 		return
 	}
 
@@ -242,5 +242,5 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 			t.Fatalf("%s client on the mixed cluster: %v", cipher, err)
 		}
 	}
-	t.Logf("Ceph %s with --key-type: AES-only cluster refuses AES256K clients until mon set allows them; AES256K keys with an AES service cipher accept both key types", cluster.CephVersion())
+	t.Logf("Ceph %s with --key-type: AES-only cluster refuses AES256K clients until mon set allows them; AES256K keys with an AES service cipher accept both key types", staticFacts(cluster).CephVersion)
 }

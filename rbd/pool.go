@@ -181,7 +181,11 @@ func controlReady(ctx context.Context, c *ceph.Container) error {
 	}
 	// Callers already hold the topology lock. Actual toolkit startup happens
 	// through ClientCommand under that lock, after read-only pool validation.
-	if c.Images().Client == "" {
+	facts, err := ceph.FactsOf(c)
+	if err != nil {
+		return err
+	}
+	if facts.Images.Client == "" {
 		return invalid(errors.New("client image is required for this operation"))
 	}
 	if servicehook.Closed(c) {

@@ -22,7 +22,8 @@ func (target closingTarget) Networks(context.Context) ([]string, error) {
 	view.Mutex.Lock()
 	*view.Closed = true
 	view.Mutex.Unlock()
-	return []string{target.c.NetworkName()}, nil
+	facts, err := ceph.FactsOf(target.c)
+	return []string{facts.NetworkName}, err
 }
 
 func TestNetworkDelayReservationRefusesClusterClosedDuringAdmission(t *testing.T) {

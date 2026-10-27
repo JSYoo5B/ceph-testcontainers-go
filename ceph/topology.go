@@ -196,7 +196,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	for attempt := range attempts {
 		var lease *hostPortLease
 		if c.settings.hostNetwork {
-			lease, err = reserveHostPorts(ctx, c.settings.essentialImage, c.PublicAddress(), c.settings.monitorPortCount(), c.settings.startupTimeout, c.ownedLabel())
+			lease, err = reserveHostPorts(ctx, c.settings.essentialImage, c.staticFacts().PublicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout, c.ownedLabel())
 			// c.mu is already held, so register ownership without re-locking it.
 			if lease != nil {
 				c.portLeases = append(c.portLeases, lease)
@@ -215,10 +215,10 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mon." + name + ".asok"}).WithStartupTimeout(c.settings.startupTimeout))}
 		if lease != nil {
 			portEnv := c.settings.monitorPortEnvironment(lease.Ports)
-			portEnv["CEPH_PUBLIC_ADDRESS"] = c.PublicAddress()
+			portEnv["CEPH_PUBLIC_ADDRESS"] = c.staticFacts().PublicAddress
 			opts = append(opts, testcontainers.WithNoStart(), testcontainers.WithEnv(portEnv))
 		} else {
-			opts = append(opts, keepMonitorAddress(c.NetworkName()))
+			opts = append(opts, keepMonitorAddress(c.staticFacts().NetworkName))
 		}
 		if err := c.clearAdminSocket(ctx, "mon."+name); err != nil {
 			return mon, err

@@ -73,7 +73,7 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 			adminKey = strings.TrimSpace(value)
 		}
 	}
-	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	helper, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, helper)
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +142,7 @@ os.makedirs(p)
 		started, startErr := time.Parse(time.RFC3339Nano, result.StartedAt)
 		finished, finishErr := time.Parse(time.RFC3339Nano, result.FinishedAt)
 		crashed, crashErr := time.Parse(time.RFC3339Nano, record.Timestamp)
-		if record.Entity != name || record.Process != "ceph-"+strings.Split(name, ".")[0] || !strings.HasPrefix(record.CephVersion, cluster.CephVersion()) ||
+		if record.Entity != name || record.Process != "ceph-"+strings.Split(name, ".")[0] || !strings.HasPrefix(record.CephVersion, staticFacts(cluster).CephVersion) ||
 			!record.Done || record.Posted || errors.Join(startErr, finishErr, crashErr) != nil || crashed.Before(started) || crashed.After(finished) {
 			t.Fatalf("%s record %+v does not match the container from %s to %s", name, record, result.StartedAt, result.FinishedAt)
 		}
@@ -245,7 +245,7 @@ func lostCreate(t *testing.T, ctx context.Context, docker *testcontainers.Docker
 		t.Fatalf("the MON container has the cluster label %q and run volume mounts %v", owner, mounts)
 	}
 	if _, err := docker.ContainerCreate(ctx, mobycl.ContainerCreateOptions{
-		Config:     &container.Config{Image: cluster.EssentialImage(), Cmd: []string{"true"}, Labels: map[string]string{"org.testcontainers.ceph.cluster": owner}},
+		Config:     &container.Config{Image: staticFacts(cluster).Images.Essential, Cmd: []string{"true"}, Labels: map[string]string{"org.testcontainers.ceph.cluster": owner}},
 		HostConfig: &container.HostConfig{Mounts: mounts},
 	}); err != nil {
 		t.Fatal(err)

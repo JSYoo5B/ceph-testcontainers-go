@@ -38,7 +38,7 @@ type policyClient struct {
 
 func startPolicyClient(t *testing.T, ctx context.Context, cluster *ceph.Container, name string, attach testcontainers.CustomizeRequestOption, args ...string) policyClient {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), attach, ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), attach, ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func testMessengerPolicy(t *testing.T, opts ...testcontainers.ContainerCustomize
 	defer cancel()
 	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
 		ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeSecure, Managers: modeCRC, OSDs: modeSecure})}, opts...)...)
-	if cluster.MessengerMode() == ceph.MessengerV2Only {
+	if staticFacts(cluster).MessengerMode == ceph.MessengerV2Only {
 		checkMessengerV2Only(t, ctx, cluster)
 	}
 
@@ -273,7 +273,7 @@ func checkMessengerV2Only(t *testing.T, ctx context.Context, cluster *ceph.Conta
 			}
 		}
 	}
-	if !cluster.UsesHostNetwork() {
+	if !staticFacts(cluster).UsesHostNetwork {
 		if port, err := cluster.MappedPort(ctx, "6789/tcp"); err == nil {
 			t.Fatalf("the MON publishes the v1 port as %s", port)
 		}
@@ -299,7 +299,7 @@ print(json.dumps(sorted(listening)))`)
 		}
 		// In host mode the MON shares the host's sockets, where 6789 can
 		// belong to anything else.
-		if !cluster.UsesHostNetwork() && slices.Contains(ports, 6789) {
+		if !staticFacts(cluster).UsesHostNetwork && slices.Contains(ports, 6789) {
 			t.Fatalf("mon.%s listens on the v1 port: %v", mon.DaemonName, ports)
 		}
 	}
@@ -411,7 +411,7 @@ func testMessengerV2OnlyCRC(t *testing.T) {
 	cluster, _ := newServiceClusterWithOptions(t, image, append(roles, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
 		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithAuth(ceph.AuthConfig{KeyType: keyType}),
 		ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC}))...)
-	if cluster.MessengerMode() != ceph.MessengerV2Only {
+	if staticFacts(cluster).MessengerMode != ceph.MessengerV2Only {
 		t.Fatal("the cluster reports another Messenger mode")
 	}
 	checkMessengerV2Only(t, ctx, cluster)

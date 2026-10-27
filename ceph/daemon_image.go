@@ -26,9 +26,8 @@ type daemonOptions struct {
 //
 // The override belongs to that daemon: DetachedOSD.Reopen starts the same OSD
 // from the same image again, Stop and Start keep the container, and the
-// daemon's handle reports it with Image. It does not change EssentialImage,
-// Images, ClusterFacts or CephVersion, which describe the cluster's own
-// settings and its first MON, and a CLI, client or helper container still
+// daemon's handle reports it with Image. It does not change ClusterFacts, which
+// describes the cluster's own settings and its first MON, and a CLI, client or helper container still
 // uses the cluster's images. A cluster that a SharedCluster shares refuses the
 // calls that take this option, so a tenant cannot use it.
 //

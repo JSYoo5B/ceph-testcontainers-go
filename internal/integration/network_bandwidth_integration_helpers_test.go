@@ -275,9 +275,9 @@ func testNetworkBandwidthIPv6(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := inspection.NetworkSettings.Networks[f.cluster.NetworkName()]
+	endpoint := inspection.NetworkSettings.Networks[staticFacts(f.cluster).NetworkName]
 	if endpoint == nil || !endpoint.GlobalIPv6Address.IsValid() || !endpoint.IPAddress.Is4() {
-		t.Fatalf("no IPv4 and IPv6 address on %s", f.cluster.NetworkName())
+		t.Fatalf("no IPv4 and IPv6 address on %s", staticFacts(f.cluster).NetworkName)
 	}
 	client4, client6 := endpoint.IPAddress, endpoint.GlobalIPv6Address
 

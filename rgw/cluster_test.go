@@ -22,6 +22,16 @@ func testCluster(control testcontainers.Container, config servicehook.TestConfig
 	return c
 }
 
+// testFacts returns the static facts of a fixture cluster.
+func testFacts(t *testing.T, c *ceph.Container) ceph.ClusterFacts {
+	t.Helper()
+	facts, err := ceph.FactsOf(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return facts
+}
+
 // terminationFixtureContainer counts terminations and can fail the first.
 type terminationFixtureContainer struct {
 	testcontainers.Container

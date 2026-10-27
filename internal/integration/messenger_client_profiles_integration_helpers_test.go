@@ -157,7 +157,7 @@ type profileClient struct {
 
 func startProfileClient(t *testing.T, ctx context.Context, cluster *ceph.Container, identity *ceph.ClientConfig, opts ...ceph.ClientContainerOption) profileClient {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClientIdentity(identity, opts...), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClientIdentity(identity, opts...), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
@@ -790,7 +790,7 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 	execCommand(t, ctx, crc.ctr, "sh", "-c", "head -c 10513 /dev/urandom > /tmp/object && rados -p "+pool.Name+" put profile /tmp/object && rados -p "+pool.Name+" stat profile && rados -p "+pool.Name+" get profile /tmp/read")
 	assertContainerFilesEqual(t, ctx, crc.ctr, "/tmp/object", "/tmp/read")
 	checkProfileClientModes(t, ctx, cluster, "mon.a", "crc")
-	if cluster.UsesHostNetwork() {
+	if staticFacts(cluster).UsesHostNetwork {
 		checkHostProcessReachesDaemons(t, ctx, cluster)
 	}
 	t.Logf("CRC profile: v2 only, %s keys, legacy CRUSH and pool %s without hashpspool on a MemStore OSD; a CRC-only client wrote and read an object, a secure-only client was refused", auth.KeyType, pool.Name)
@@ -832,7 +832,7 @@ func testMessengerClientWithoutKeyTypes(t *testing.T, image string) {
 	checkProfileCiphers(t, ctx, cluster, auth)
 	checkProfileTickets(t, ctx, cluster, 12, 12)
 	createProfileIdentities(t, ctx, cluster, ceph.CipherAES)
-	t.Logf("Ceph %s: v2-only secure profile with three MONs, two MGRs and AES keys", cluster.CephVersion())
+	t.Logf("Ceph %s: v2-only secure profile with three MONs, two MGRs and AES keys", staticFacts(cluster).CephVersion)
 }
 
 // checkHostProcessReachesDaemons dials every address that the MON, MGR and

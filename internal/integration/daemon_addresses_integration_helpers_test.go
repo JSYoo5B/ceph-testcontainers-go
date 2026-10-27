@@ -32,8 +32,8 @@ func testDaemonAddresses(t *testing.T, opts ...testcontainers.ContainerCustomize
 	// Each advertised address names the daemon's own container, or the
 	// advertised host address in host mode.
 	expectedIP := func(ctr testcontainers.Container) string {
-		if cluster.UsesHostNetwork() {
-			return cluster.PublicAddress()
+		if staticFacts(cluster).UsesHostNetwork {
+			return staticFacts(cluster).PublicAddress
 		}
 		ip, err := ctr.ContainerIP(ctx)
 		if err != nil {

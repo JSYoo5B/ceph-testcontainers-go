@@ -31,7 +31,7 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 				opts = append(opts, ceph.WithSeparateClusterNetwork())
 			}
 			cluster, client := newServiceClusterWithOptions(t, image, opts...)
-			if cluster.MessengerMode() != ceph.MessengerV2Secure {
+			if staticFacts(cluster).MessengerMode != ceph.MessengerV2Secure {
 				t.Fatal("bootstrap mode accessor differs from selected policy")
 			}
 			if _, err := cluster.OverrideConfig(ctx, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {

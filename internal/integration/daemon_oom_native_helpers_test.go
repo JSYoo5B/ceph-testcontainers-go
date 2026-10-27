@@ -80,7 +80,7 @@ func testDaemonMemoryQualification(t *testing.T, pressure bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("DAEMON_MEMORY_RUNTIME engine=%s arch=%s ceph=%s image=%s container=%s started=%s pid=%d process_start=%s", info.Info.ServerVersion, runtime.GOARCH, cluster.CephVersion(), raw.Container.Image, id, target.Started, target.PID, target.ProcessStart)
+	t.Logf("DAEMON_MEMORY_RUNTIME engine=%s arch=%s ceph=%s image=%s container=%s started=%s pid=%d process_start=%s", info.Info.ServerVersion, runtime.GOARCH, staticFacts(cluster).CephVersion, raw.Container.Image, id, target.Started, target.PID, target.ProcessStart)
 	// Restoration has its own deadline even if the workload is canceled. Do not
 	// apply old settings to an unexpectedly restarted or replaced generation.
 	restored := false

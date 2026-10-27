@@ -206,7 +206,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		defer stop()
 		outageFinish(cleanup, plan, t.Logf, t.Errorf)
 	})
-	version := cluster.CephVersion()
+	version := staticFacts(cluster).CephVersion
 	platform := strings.TrimSpace(string(topologyExecOutput(t, ctx, client, "uname", "-sm")))
 	manifestJSON, _ := json.Marshal(manifest)
 	t.Logf("CORRELATED_OUTAGE_MANIFEST ceph=%s platform=%s essential_image=%s client_image=%s plan=osd.%s,mgr.%s,mon.%s election_leader=%s election_epoch=%d active_mgr_gid=%d manifest=%s",

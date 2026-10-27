@@ -121,7 +121,7 @@ func (c *Container) TerminateOnCleanup(t testing.TB, config FinalizationConfig) 
 	if err != nil {
 		return nil, err
 	}
-	f.cluster, f.images = c.owner, c.Images()
+	f.cluster, f.images = c.owner, c.staticFacts().Images
 	f.collectDiagnostics, f.collectCrash = c.CollectDiagnostics, c.CollectCrashMetadata
 	f.terminate = func(ctx context.Context) error { return c.Terminate(ctx) }
 	f.activate = c.startVerification

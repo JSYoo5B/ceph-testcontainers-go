@@ -71,7 +71,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 			t.Fatal(err)
 		}
 		result, err := cluster.RunNativeCommand(ctx, control, query)
-		if err != nil || result.ExitCode != 0 || !bytes.Contains(result.Stdout, []byte(cluster.CephVersion())) {
+		if err != nil || result.ExitCode != 0 || !bytes.Contains(result.Stdout, []byte(staticFacts(cluster).CephVersion)) {
 			t.Fatalf("MGR query after resume: %+v %v", result, err)
 		}
 		t.Logf("canceled the query to the frozen MGR while processes %s ran; none remained", nativePIDs(running))
@@ -391,7 +391,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		switch {
 		case errors.Is(err, ceph.ErrImageCapability) && strings.Contains(err.Error(), "cannot run python3"):
 			t.Logf("the OSD image has no python3: %v", err)
-		case err != nil || !bytes.Contains(result.Stdout, []byte(cluster.CephVersion())):
+		case err != nil || !bytes.Contains(result.Stdout, []byte(staticFacts(cluster).CephVersion)):
 			t.Fatalf("OSD container: %+v %v", result, err)
 		}
 		foreign, err := testcontainers.Run(ctx, "busybox:1.37.0", ceph.WithIdleEntrypoint())
@@ -446,7 +446,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		// The official images, and so the recipe, have ceph-dencoder.
 		dencoder, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"ceph-dencoder", "version"},
 			Timeout: time.Minute, MaxStdout: 4096, MaxStderr: 4096})
-		if err != nil || !strings.HasPrefix(string(dencoder.Stdout), cluster.CephVersion()) {
+		if err != nil || !strings.HasPrefix(string(dencoder.Stdout), staticFacts(cluster).CephVersion) {
 			t.Fatalf("ceph-dencoder version: %q %v", dencoder.Stdout, err)
 		}
 		getmap, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"ceph", "osd", "getmap", "-o", "/tmp/tc-osdmap"},
@@ -500,7 +500,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 			missing.Capability != "tc-no-such-program" || errors.Is(err, ceph.ErrNativeFailure) {
 			t.Fatalf("a missing program returned %v", err)
 		}
-		t.Logf("Ceph %s: %v", cluster.CephVersion(), failure)
+		t.Logf("Ceph %s: %v", staticFacts(cluster).CephVersion, failure)
 	})
 
 	t.Run("lost_receipt", func(t *testing.T) {
@@ -558,7 +558,7 @@ func logNativeRuntime(t *testing.T, ctx context.Context, cluster *ceph.Container
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("Ceph %s on %s", cluster.CephVersion(), strings.TrimSpace(string(result.Stdout)))
+	t.Logf("Ceph %s on %s", staticFacts(cluster).CephVersion, strings.TrimSpace(string(result.Stdout)))
 }
 
 type nativeOutcome struct {
@@ -585,7 +585,7 @@ func startNative(ctx context.Context, cluster *ceph.Container, target testcontai
 // startNativeHelper starts a caller-owned container attached to the cluster.
 func startNativeHelper(t *testing.T, ctx context.Context, cluster *ceph.Container) testcontainers.Container {
 	t.Helper()
-	helper, err := testcontainers.Run(ctx, nativeClientImage(t, cluster.Images().Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	helper, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, helper)
 	if err != nil {
 		t.Fatal(err)

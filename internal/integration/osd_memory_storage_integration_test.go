@@ -107,7 +107,7 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	for _, manager := range clusteraccess.Managers(t, cluster) {
 		owned[manager.GetContainerID()] = true
 	}
-	network, err := docker.Client.NetworkInspect(ctx, cluster.NetworkName(), mobycl.NetworkInspectOptions{})
+	network, err := docker.Client.NetworkInspect(ctx, staticFacts(cluster).NetworkName, mobycl.NetworkInspectOptions{})
 	if err != nil || network.Network.ID == "" {
 		t.Fatal("owned bridge identity unavailable", err)
 	}
