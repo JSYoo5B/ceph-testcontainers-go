@@ -101,8 +101,9 @@ func TestAddBlocklistUnknownApplyCannotRemovePresentEntry(t *testing.T) {
 	if err == nil || change == nil || change.state.refused != nil || change.state.known {
 		t.Fatal("unknown readback claimed confirmed creation")
 	}
-	if err := change.Restore(t.Context()); err == nil || native.removals != 0 {
-		t.Fatal("unknown creation authorized removal")
+	// The expiry check would also refuse, so the reason pins the unknown readback.
+	if err := change.Restore(t.Context()); err == nil || native.removals != 0 || !strings.Contains(err.Error(), "readback was unavailable") {
+		t.Fatalf("unknown creation authorized removal or was refused for another reason: %v", err)
 	}
 	delete(native.entries, blocklistTestAddress)
 	if err := change.Restore(t.Context()); err != nil {
