@@ -3,8 +3,8 @@
 Design note for the `ceph.Container` size reduction (Refs #146). It records the
 owner decisions of 2026-10-27 on the override group as decided, including the
 owner answers Q1 to Q9 to the first revision of this note (section 12), and
-carries the resulting concrete proposal, whose final spelling of one name is
-still for the owner to approve: the package, every exported signature, the "not applied" handle contract, the
+carries the resulting concrete contract: the package, every exported signature
+and name, the "not applied" handle contract, the
 internal hook seam, the registry and Terminate behavior, the debug-level plan,
 the import graph, and the order of the implementation pull requests. It changes
 no product code, no API catalogue and no caller.
@@ -38,7 +38,7 @@ boundary; override package) are fixed inputs of this note.
 | D5 | The handles keep their state and their `Restore` or settlement responsibilities. Per-operation shared-cluster admission, context and error behavior, lock ordering, restoration lifetimes and uncertain-outcome ownership are preserved. Do not expose locks, credentials or an unrestricted executor; do not duplicate lifecycle or admission state; do not create a broad abstraction to force the split. | Sections 5 to 7. |
 | D7 | Q1: the not-applied rule applies to all seven kinds and every `override` function returns a non-nil handle. No accessor is added to the six kinds without a receipt; the reason is the returned error. | Sections 4.2 and 4.3. |
 | D8 | Q2: one handle type per kind that carries an extra member (the refused or not-applied state), not a separate type behind an interface. Callers need no type assertion or reflection. | Section 4.2. |
-| D9 | Q3: no `Override` or `Temporary` in function names; the verb follows the behavior of each operation: `Set...` for the six settings, `AddBlocklist` for the addition, handles `*...Handle`. Confirmed by the owner. | Section 3.1. The final spelling is approved on this revised document. |
+| D9 | Q3: no `Override` or `Temporary` in function names; the verb follows the behavior of each operation: `Set...` for the six settings, `AddBlocklist` for the addition, handles `*...Handle`. Decided by the owner, including `override.AddBlocklist` returning `*BlocklistHandle` (the Ceph concept is named blocklist). | Sections 3.1 and 3.2. |
 | D10 | Q4: a nil cluster returns a not-applied handle and an `ErrInvalidRequest` error for all seven kinds, with the three deliberate behavior changes. | Section 4.5. |
 | D11 | Q5: typed operations per kind, not the raw CLI hook. | Section 5. |
 | D12 | Q6: the config, OSD flag and MGR module maps join the fault registry. | Section 6.1. |
@@ -145,10 +145,10 @@ name carries it. Settings are verbs, `override.Set...`, and every handle ends in
 setting of an existing value, so its verb is `Add`: `override.AddBlocklist`
 returns a `BlocklistHandle`. `Add` says what the call does (it creates one entry
 that did not exist) and what `Restore` undoes (it removes that entry only), which
-`Set` would blur because a set suggests a previous value to put back. The owner
-accepted choosing the verb by the behavior of each operation, and accepted
-`AddBlocklist`/`BlocklistHandle`; the final spelling is approved on this revised
-document.
+`Set` would blur because a set suggests a previous value to put back. The Ceph
+concept is named blocklist, and `Add` says what the call does. The owner decided
+that the verb follows the behavior of each operation and that
+`override.AddBlocklist` returning `*BlocklistHandle` is the name.
 
 Verb rule: `Set` for an operation that replaces an existing value and later puts
 the previous value back; `Add` for an operation that creates an entry that did
@@ -211,8 +211,9 @@ debug window (section 4):
 | receipt field | `Reason string` with JSON name `reason,omitempty` on `DebugLevelReceipt` |
 | signature | `func (f *Finalization) TrackDebugLevel(handle DebugLevelReceipter)` |
 
-`DebugLevelReceipter` follows the Go convention for a one-method interface. The
-name is a proposal; the behavior is D3.
+`DebugLevelReceipter` follows the Go convention for a one-method interface. D3
+fixes the behavior, not the interface name, so this name is the one choice in
+this note that is still open (section 12).
 
 Removed from `ceph` by the full migration: 7 types, 13 handle methods, 7
 `Container` methods (27 declaration rows). `Container` exported methods go from
@@ -664,7 +665,7 @@ risky first:
 | I-6 | `override.SetOSDFlag`. | Supported-flag list, overlap, restore refusing outside changes. | `osd_policy_test.go` override tests move. | 32 files; mechanical rewrite. |
 | I-7 | `override.SetConfig` and `override.SetMessengerPolicy` together (the latter calls the former). | Messenger-fixed refusals, normalized readback, lost-reply convergence, restore order of the policy children. | `config_test.go`, `messenger_test.go` guard tests and `messenger_policy_test.go` refusal test move or stay as classified in section 10. | up to 46 files (43 and 3 callers, overlap not counted); mechanical rewrite. |
 | I-8 | `override.SetDebugLevel` and the window. | Generation fence, settle before restore, registry leaf lock, native fence, after-`Terminate` result. | the 16 window tests move with their fake target; the 4 `osdDebugTarget` tests stay. | 4 files, one of them in `internal/debugoverhead`. |
-| I-9 | Closure: `fault-package.md` D3 amendment, `container-decomposition.md` counts, final `Container` measurement, remove the placeholder text here. | | | |
+| I-9 | Closure: `fault-package.md` D3 amendment, `container-decomposition.md` counts, final `Container` measurement, remove the remaining proposal wording here. | | | |
 
 I-1 and I-2 are independent and can proceed in parallel. I-5 to I-7 need I-2. A
 mechanical caller rewrite carries no native claim until CI has run those batches
@@ -734,11 +735,13 @@ comment "Owner answers to the questions in the override package proposal").
 | Q7 | Where do the messenger policy and the blocklist belong? | Both in `override` (D13). |
 | Q8, Q9 | Debug-level registry; pull request order. | As recommended (D14). |
 
-Still open for the owner:
+All names in sections 3.1 and 3.2 follow from decisions D7 to D13 and are decided.
 
-- Approval of the final spelling of all names in sections 3.1 and 3.2 on this revised
-  document. The blocklist spelling `AddBlocklist`/`BlocklistHandle` is accepted as
-  proposed; alternatives were `override.Blocklist` and `override.BlockClient`.
+Still open for the owner, one item: the name of the new `ceph` interface that
+`Finalization.TrackDebugLevel` accepts. D3 decides its behavior
+(`Receipt() DebugLevelReceipt`) but not its name; the note proposes
+`DebugLevelReceipter` (Go convention for a one-method interface). It is a public
+`ceph` name, so it is approved before the first implementation pull request (I-1).
 
 ## 13. Not established
 
@@ -754,8 +757,8 @@ Still open for the owner:
 
 ## 14. Review checklist for the implementation pull requests
 
-- The names of section 3.2, as approved, replace the placeholders in the PR, with
-  the exported declarations listed.
+- The names of section 3.2 are implemented as decided, with the exported
+  declarations listed in the PR.
 - A compiled before and after import graph (module-internal imports only), with no
   `ceph` import of `override` or `overridehook`.
 - Every exported function of `override` is classified; a `go/parser` test fails on
