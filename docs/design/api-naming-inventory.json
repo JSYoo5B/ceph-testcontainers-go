@@ -3,7 +3,7 @@
   "scope": "Declared exports in ceph, fault, rbd, cephfs, rgw, rgw/multisite and capture; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "counts": {
     "capture": 36,
-    "ceph": 384,
+    "ceph": 390,
     "cephfs": 155,
     "fault": 35,
     "rbd": 77,
@@ -2187,6 +2187,50 @@
       "current": "ceph.ObjectWatcher",
       "kind": "type",
       "proposed": "ceph.ObjectWatcher",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observe",
+      "kind": "function",
+      "signature": "func(cluster *Container) (*Observer, error)",
+      "proposed": "ceph.Observe",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ObserveTenant",
+      "kind": "function",
+      "signature": "func(tenant *Tenant) (*Observer, error)",
+      "proposed": "ceph.ObserveTenant",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer",
+      "kind": "type",
+      "proposed": "ceph.Observer",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.DaemonAddresses",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (DaemonAddresses, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.DaemonAddresses",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.ManagerStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (ManagerStatus, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.ManagerStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.Observer.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (Status, error)",
+      "receiver": "*Observer",
+      "proposed": "ceph.Observer.Status",
       "decision": "baseline"
     },
     {

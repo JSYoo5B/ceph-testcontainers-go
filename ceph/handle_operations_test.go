@@ -276,6 +276,7 @@ var sharedHandleReceivers = map[string]reflect.Type{
 	"ManagerContainer": reflect.TypeFor[*ManagerContainer](),
 	"Pool":             reflect.TypeFor[*Pool](),
 	"ClientConfig":     reflect.TypeFor[*ClientConfig](),
+	"Observer":         reflect.TypeFor[*Observer](),
 }
 
 // TestSharedGateClassifiesEveryHandleOperation fails for an operation of a
@@ -306,6 +307,7 @@ func TestSharedGateClassifiesEveryHandleOperation(t *testing.T) {
 		"ManagerContainer": reflect.ValueOf(&ManagerContainer{DaemonName: "b", owner: shared}),
 		"Pool":             reflect.ValueOf(&Pool{PoolConfig: PoolConfig{Name: "p"}, owner: shared, ident: &poolIdentity{}}),
 		"ClientConfig":     reflect.ValueOf(&ClientConfig{owner: shared, name: "client.x"}),
+		"Observer":         reflect.ValueOf(&Observer{}),
 	}
 	errorType := reflect.TypeFor[error]()
 	for op, policy := range sharedHandlePolicies {

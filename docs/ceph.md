@@ -2416,6 +2416,37 @@ Returns the native MGR map summary: `Available`, `ActiveName`, `ActiveGID` and
 `Standbys` (each with `Name` and `GID`). The GID changes when a manager process
 restarts.
 
+#### Observe
+
+```golang
+func Observe(cluster *Container) (*Observer, error)
+func ObserveTenant(tenant *Tenant) (*Observer, error)
+```
+
+Return an `Observer`, which groups read-only live queries of one cluster or one
+tenant lease. Both forms have the same type and queries. There is no `Container`
+accessor for it. A nil cluster or tenant returns an error and a nil `Observer`.
+
+#### Observer
+
+```golang
+func (o *Observer) Status(ctx context.Context) (ceph.Status, error)
+func (o *Observer) ManagerStatus(ctx context.Context) (ceph.ManagerStatus, error)
+func (o *Observer) DaemonAddresses(ctx context.Context) (ceph.DaemonAddresses, error)
+```
+
+Each query reads the cluster when it is called; constructing an `Observer`
+captures nothing and a retained one never returns an earlier result. A query is
+not an atomic cluster-wide snapshot. Each query has the execution path, context
+handling and errors of the `Container` method of the same name. A
+tenant-backed `Observer` checks its lease on every query, so after the tenant is
+released or the shared cluster is terminated every query returns an error that
+matches `ErrInvalidRequest`. A cluster-backed `Observer` has no lease, and its
+queries after `Terminate` fail with the error of the command path. An
+`Observer` exposes only its queries, owns no resource and needs no cleanup.
+Only these three observations are available; the other observations stay on
+`Container`.
+
 #### OSDs
 
 ```golang
