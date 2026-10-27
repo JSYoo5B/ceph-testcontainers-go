@@ -341,8 +341,8 @@ and `ceph/harness`, which is acyclic. The check that must hold after the move:
 `rgw`, `servicehook` or any `.../harness` package other than itself.
 
 One reverse dependency remains in core and is new in this refresh:
-`ObserveTenant(tenant *Tenant)` (`ceph/observer.go:43`) names the harness
-`Tenant`. The owner decided that the `Observer` stays in `ceph` (#146, decision
+`ObserveTenant(tenant *Tenant)` named the harness `Tenant` in
+`ceph/observer.go` (resolved inside `ceph` since: see the prerequisite table). The owner decided that the `Observer` stays in `ceph` (#146, decision
 1 of 2026-10-27), so after the move core cannot name `Tenant`. The move has to
 turn the tenant form into a harness-side constructor that hands the `Observer`
 a target function through an internal seam (the same shape as `override`), or
@@ -397,13 +397,13 @@ split is still moving.
 | OSD storage state split (`osds`, `detachedOSDs`, `osdMemory`, `osdVolume`) | Not met | `containerBackend.daemonsRunning` walks the daemon containers (`ceph/shared_backend.go:323`; `monitors` at `:331`, OSDs through `osds`) |
 | Override maps and fault registry | Not met | the three maps are guarded by `Container.mu`; the `override` package is designed (`docs/design/override-package-boundary.md`, owner answers of 2026-10-27) and not implemented |
 | Membership and control (`mu`, `controlMu`, `controlPlane`, `monitors`, `managers`, `services`, `sharing`, `closed`) | Not met, and not a single component | `containerBackend` uses all of these (`ceph/shared_backend.go`); split by lock domain is a separate review |
-| `ObserveTenant` independent of the harness `Tenant` | Not met | `ceph/observer.go:43` |
+| `ObserveTenant` independent of the harness `Tenant` | Met inside `ceph` (internal seam, no public move): `observer.go`, `pool.go` and `pool_handle.go` name no `Tenant`; `ObserveTenant` lives in `ceph/tenant_observe.go` and hands the `Observer` a cluster resolver and a lease check through `newLeasedObserver`. Pinned by `TestObserverAndPoolLeaseNameNoTenant`. The cross-package form (a `hookreg` slot that the harness calls) is part of the public move | `ceph/tenant_observe.go`, `ceph/observer.go` |
 
 Conclusion: the internal sharing orchestration is now independent of
 `Container`, which was the part of the backend port that could be done without
 moving state. The public move is still blocked by #146 slices that are in
 flight or not started: the auth records, OSD storage, the override registry,
-and facts/observation removal (with the `ObserveTenant` seam). The
+and facts/observation removal (the `ObserveTenant` seam inside `ceph` is done). The
 cross-package backend registration (second `hookreg` slot) waits for the
 membership and control split because `containerBackend` would otherwise freeze
 13 fields and 11 private methods in its port.
