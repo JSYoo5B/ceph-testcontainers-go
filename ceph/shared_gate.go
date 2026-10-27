@@ -99,7 +99,6 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"OverrideFullRatios":      sharedExclusive,
 	"OverrideMGRModule":       sharedExclusive,
 	"OverrideMessengerPolicy": sharedExclusive,
-	"OverrideOSDFlag":         sharedExclusive,
 	// Raw access: the admin CLI and keyring, and daemon container handles.
 	"Ceph":              sharedExclusive,
 	"ConnectionConfig":  sharedExclusive,
@@ -177,6 +176,7 @@ func (c *Container) admitFault(op string) error {
 // requires an entry here for every exported function of the package.
 var sharedOverridePolicies = map[string]sharedPolicy{
 	"override.AddBlocklist": sharedExclusive,
+	"override.SetOSDFlag":   sharedExclusive,
 }
 
 // admitOverride refuses the override operation op while a SharedCluster

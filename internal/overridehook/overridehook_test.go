@@ -69,6 +69,24 @@ func TestRegistryThroughHooks(t *testing.T) {
 		if got := overridehook.TestHeld(c, overridehook.Blocklist); got["192.0.2.7:0/1"] != held || len(got) != 1 {
 			t.Errorf("the held handle is %v", got)
 		}
+		// The OSD flag kind has its own keys and its own overlap text.
+		flagToken, err := overridehook.Reserve(ctx, c, overridehook.OSDFlag, "noout")
+		if err != nil {
+			t.Errorf("an OSD flag key was refused next to a blocklist key: %v", err)
+			return nil
+		}
+		if _, err := overridehook.Reserve(ctx, c, overridehook.OSDFlag, "noout"); err == nil || err.Error() != "restore the existing OSD flag override first" {
+			t.Errorf("a reserved OSD flag was reserved twice: %v", err)
+		}
+		if _, err := overridehook.Settle(c, flagToken, held); err != nil {
+			t.Errorf("settle of an OSD flag: %v", err)
+		}
+		if got := overridehook.TestHeld(c, overridehook.OSDFlag); got["noout"] != held || len(got) != 1 {
+			t.Errorf("the held OSD flag handle is %v", got)
+		}
+		if !overridehook.Release(c, flagToken) {
+			t.Error("the OSD flag was not released")
+		}
 		return nil
 	})
 	if err != nil {
@@ -87,6 +105,12 @@ func TestRegistryThroughHooks(t *testing.T) {
 		}
 		if err := overridehook.BlocklistRemove(ctx, c, "192.0.2.7:0/1"); err == nil {
 			t.Error("blocklist removal without a control container")
+		}
+		if _, err := overridehook.OSDMapFlags(ctx, c); err == nil {
+			t.Error("OSDMap flag read without a control container")
+		}
+		if err := overridehook.SetOSDFlag(ctx, c, ceph.OSDFlagNoOut, true); err == nil {
+			t.Error("OSD flag write without a control container")
 		}
 	})
 	// A context that has ended stops the wait for a held mutex.

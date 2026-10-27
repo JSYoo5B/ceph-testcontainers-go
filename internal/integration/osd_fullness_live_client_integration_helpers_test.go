@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -211,10 +212,8 @@ func testOSDFullnessLiveClient(t *testing.T) {
 		return nil
 	})
 	captured := secondFaultInstanceOf(t, ctx, victim)
-	noout, err := cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoOut, true)
-	if noout != nil {
-		restore("noout", noout.Restore)
-	}
+	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+	restore("noout", noout.Restore)
 	if err != nil {
 		fail("%v", err)
 	}
@@ -280,7 +279,7 @@ func testOSDFullnessLiveClient(t *testing.T) {
 		_, replicaDown := minSizeAcksAfter(t, ctx, cluster, client, fullnessLiveLedger, 2, "with the replica down")
 		out.WriterReplicaDown = &replicaDown
 
-		var hold *ceph.OSDFlagOverrideHandle
+		var hold *override.OSDFlagHandle
 		applyPolicy := func() *ceph.FullRatiosOverride {
 			mark, _ := secondFaultMarkNow(t, ctx, cluster, client, fullnessLiveLedger)
 			out.WriterAtPolicy = &mark
@@ -300,10 +299,8 @@ func testOSDFullnessLiveClient(t *testing.T) {
 		var baseRaw []byte
 		haveBase := false
 		if phase.revoke {
-			hold, err = cluster.OverrideOSDFlag(ctx, ceph.OSDFlagNoBackfill, true)
-			if hold != nil {
-				restore("nobackfill "+phase.name, hold.Restore)
-			}
+			hold, err = override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoBackfill, true)
+			restore("nobackfill "+phase.name, hold.Restore)
 			if err != nil {
 				fail("%v", err)
 			}

@@ -48,6 +48,10 @@ The flag names map to constants:
 `ceph.ParsePGID(s)` is new. It checks the form `<pool>.<hex>` and accepts and
 rejects exactly what `DeepScrubPG`, `RepairPG` and `PGInconsistencies` accept.
 
+`OverrideOSDFlag` named above later became `override.SetOSDFlag`, which takes the
+cluster as its second argument (see
+[the override package guide](upgrading-override-package.md)).
+
 ## What does not change
 
 - An untyped string constant converts to a defined string type, so
@@ -56,7 +60,7 @@ rejects exactly what `DeepScrubPG`, `RepairPG` and `PGInconsistencies` accept.
   conversion such as `ceph.OSDFlag(name)`, or `ceph.ParsePGID(s)` for a PG ID
   that comes from outside.
 - The types add discoverability and stop unrelated strings from being mixed up.
-  They do not make an invalid value unrepresentable. `OverrideOSDFlag` still
+  They do not make an invalid value unrepresentable. `OverrideOSDFlag` (now `override.SetOSDFlag`) still
   refuses any value that is not one of the eleven constants, and the three PG
   methods still refuse an ID that does not match `<pool>.<hex>`, before any
   native command runs.

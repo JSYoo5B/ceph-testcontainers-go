@@ -31,6 +31,9 @@ const (
 	// registry only records it for overlap and identity: Terminate does not
 	// undo it, the entry ends with the cluster.
 	Blocklist Kind = "Blocklist"
+	// OSDFlag tracks one global OSDMap flag per token. Terminate does not
+	// undo it: the OSDMap ends with the cluster.
+	OSDFlag Kind = "OSDFlag"
 )
 
 // Token identifies one reservation. Only the token that a key still maps to
@@ -55,6 +58,8 @@ type hooks interface {
 	BlocklistEntries(ctx context.Context, c *ceph.Container) ([]ceph.BlocklistEntry, error)
 	BlocklistAdd(ctx context.Context, c *ceph.Container, address string, duration time.Duration) error
 	BlocklistRemove(ctx context.Context, c *ceph.Container, address string) error
+	OSDMapFlags(ctx context.Context, c *ceph.Container) ([]string, error)
+	SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) error
 }
 
 func get() hooks {
@@ -141,6 +146,18 @@ func BlocklistAdd(ctx context.Context, c *ceph.Container, address string, durati
 // caller holds the mutex.
 func BlocklistRemove(ctx context.Context, c *ceph.Container, address string) error {
 	return get().BlocklistRemove(ctx, c, address)
+}
+
+// OSDMapFlags reads the flag tokens of the native OSDMap, sorted. A dump that
+// does not decode is an error. The caller holds the mutex.
+func OSDMapFlags(ctx context.Context, c *ceph.Container) ([]string, error) {
+	return get().OSDMapFlags(ctx, c)
+}
+
+// SetOSDFlag sets or unsets one global OSDMap flag. The caller holds the
+// mutex.
+func SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) error {
+	return get().SetOSDFlag(ctx, c, flag, enabled)
 }
 
 // TestHeld snapshots the handles that one kind holds, for unit tests. Call

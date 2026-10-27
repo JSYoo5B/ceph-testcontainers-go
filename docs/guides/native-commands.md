@@ -654,7 +654,7 @@ After a clean stop of the OSD that holds shard 1, `Pool.PGs` reported the PG as
 `Acting`. Reads returned the same bytes, rebuilt from the other shards, and a
 write under a snapshot context still preserved a clone. After the OSD started
 again and recovery finished, every byte and version was unchanged. Hold
-`noout` with `OverrideOSDFlag` while the OSD is stopped.
+`noout` with `override.SetOSDFlag` while the OSD is stopped.
 
 `TestRADOSErasureCodedOutcomes` in `internal/integration` runs these cases
 with an independent reader client.
@@ -1022,7 +1022,7 @@ cannot even be detected.
 | Native change | Conflicts with | Prefer |
 | --- | --- | --- |
 | `config set`/`config rm` on a key held by an `OverrideConfig` handle | That handle's `Restore` | `OverrideConfig` |
-| `osd set`/`osd unset` of a global flag | `OverrideOSDFlag` | `OverrideOSDFlag` |
+| `osd set`/`osd unset` of a global flag | `override.SetOSDFlag` | `override.SetOSDFlag` |
 | `osd set-nearfull-ratio`, `set-backfillfull-ratio`, `set-full-ratio` | `OverrideFullRatios` | `OverrideFullRatios` |
 | `mgr module enable`/`disable` | `OverrideMGRModule`; disabling `volumes` or `mirroring` breaks CephFS fixtures | `OverrideMGRModule` |
 | `osd blocklist add`/`rm` of an entry a handle owns | `override.AddBlocklist` | `override.AddBlocklist` |

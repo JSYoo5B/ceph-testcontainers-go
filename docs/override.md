@@ -4,20 +4,24 @@ Import `github.com/JSYoo5B/ceph-testcontainers-go/override` alongside `ceph`.
 The package changes cluster-wide state of a cluster created by `ceph.Run` for a
 while and puts it back. Each operation is a function that takes the cluster and
 returns a handle; the handle owns the change and its `Restore` undoes only what
-the call did. This page documents the first kind, the client blocklist entry.
-The other override kinds are still methods of `ceph.Container` and move here in
-separate changes (see the [design](design/override-package-boundary.md)).
+the call did. This page documents the client blocklist entry and the global OSD
+flag. The other override kinds are still methods of `ceph.Container` and move
+here in separate changes (see the [design](design/override-package-boundary.md)).
 
-0.x: old names are removed without aliases. `Container.TemporaryBlocklist` and
-`ceph.BlocklistOverride` no longer exist in `ceph`:
+0.x: old names are removed without aliases. `Container.TemporaryBlocklist`,
+`ceph.BlocklistOverride`, `Container.OverrideOSDFlag` and
+`ceph.OSDFlagOverrideHandle` no longer exist in `ceph`:
 
 | Previous call or type | New call or type |
 | --- | --- |
 | `cluster.TemporaryBlocklist(ctx, address, duration)` | `override.AddBlocklist(ctx, cluster, address, duration)` |
 | `*ceph.BlocklistOverride` | `*override.BlocklistHandle` (same `Address` and `Restore`) |
+| `cluster.OverrideOSDFlag(ctx, flag, enabled)` | `override.SetOSDFlag(ctx, cluster, flag, enabled)` |
+| `*ceph.OSDFlagOverrideHandle` | `*override.OSDFlagHandle` (same `Restore`) |
 
-`ceph.BlocklistEntry` and `Observer.BlocklistEntries` stay in `ceph`: they only
-read the OSDMap. The package imports `ceph`; `ceph` never imports it. See the
+`ceph.BlocklistEntry`, `Observer.BlocklistEntries`, `ceph.OSDFlag` with its
+constants and `Observer.OSDFlags` stay in `ceph`: they only read the OSDMap or
+name its values. The package imports `ceph`; `ceph` never imports it. See the
 [migration guide](guides/upgrading-override-package.md).
 
 ## Handle contract
@@ -115,3 +119,56 @@ if err := fence.Restore(ctx); err != nil {
 `ceph.Observer.BlocklistEntries` shows the entry and its expiry. For RBD
 exclusive-lock handover, the lock owner's address comes from `rbd.ImageClients`
 (see [rbd](rbd.md)).
+
+## SetOSDFlag
+
+```golang
+func SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) (*override.OSDFlagHandle, error)
+```
+
+Sets or clears one global OSDMap flag and remembers its prior state. Supported
+flags are the eleven `ceph.OSDFlag` constants: `OSDFlagNoUp`, `OSDFlagNoDown`,
+`OSDFlagNoOut`, `OSDFlagNoIn`, `OSDFlagNoBackfill`, `OSDFlagNoRebalance`,
+`OSDFlagNoRecover`, `OSDFlagNoScrub`, `OSDFlagNoDeepScrub`, `OSDFlagNoSnapTrim`
+and `OSDFlagNoAutoscale`. Any other value, including an untyped string constant
+that names another flag, is refused with an error before Ceph is contacted. The
+composite `pause` flag and irreversible compatibility flags are not supported.
+Overlapping handles for one flag are refused. External edits to the same flag
+must not race the helper: a boolean flag has no generation and Ceph provides no
+compare-and-set. While set, flags such as `noout` raise the `OSDMAP_FLAGS`
+health warning (per-OSD flags raise `OSD_FLAGS` instead).
+
+| Outcome | Handle | Error |
+| --- | --- | --- |
+| Flag set or cleared and read back | Real | nil |
+| Flag already in the requested state | Real, a lease without a write | nil |
+| Nil cluster | Not applied | `ErrInvalidRequest`, `Op` `override.SetOSDFlag` |
+| Shared cluster | Not applied | `ErrSharedCluster`, `Op` `override.SetOSDFlag` |
+| Unsupported flag | Not applied | plain error |
+| Terminated cluster or no control container | Not applied | the cluster's own error |
+| This flag is already held by another handle | Not applied | plain error |
+| The native OSDMap cannot be read before the write | Not applied, reservation released | the native error |
+| The write or the readback after it fails | Real, uncertain | the error |
+
+## OSDFlagHandle
+
+| Method | Meaning |
+| --- | --- |
+| `Restore(ctx) error` | Returns only this flag to its original state. |
+
+`Restore` never touches other flags. A flag that was already set stays set. It
+is idempotent and reconciles a lost restoration reply before another native
+mutation. A lease without a write refuses an outside change instead of
+overwriting it: when the flag no longer has the state the call left, the restore
+fails with `ErrInvalidRequest`. Outside writes that are indistinguishable from the
+applied or prior state cannot be detected. A restore after `Terminate` is refused
+with the error of an operation on a terminated cluster.
+
+```golang
+hold, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
+// hold is never nil: after a refusal its Restore does nothing.
+defer hold.Restore(context.Background())
+if err != nil {
+	t.Fatal(err)
+}
+```

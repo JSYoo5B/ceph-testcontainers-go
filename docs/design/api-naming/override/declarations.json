@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "override",
-  "count": 4,
+  "count": 7,
   "entries": [
     {
       "current": "override.AddBlocklist",
@@ -31,6 +31,27 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*BlocklistHandle",
       "proposed": "override.BlocklistHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.OSDFlagHandle",
+      "kind": "type",
+      "proposed": "override.OSDFlagHandle",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.OSDFlagHandle.Restore",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*OSDFlagHandle",
+      "proposed": "override.OSDFlagHandle.Restore",
+      "decision": "baseline"
+    },
+    {
+      "current": "override.SetOSDFlag",
+      "kind": "function",
+      "signature": "func(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) (*OSDFlagHandle, error)",
+      "proposed": "override.SetOSDFlag",
       "decision": "baseline"
     }
   ]

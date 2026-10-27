@@ -26,6 +26,7 @@ func init() {
 // faultKinds.
 var overrideKindNames = map[string]faultKind{
 	"Blocklist": faultBlocklist,
+	"OSDFlag":   faultOSDFlag,
 }
 
 // Admit refuses the override operation op while a SharedCluster shares c,
@@ -127,6 +128,22 @@ func (overrideHooks) BlocklistAdd(ctx context.Context, c *Container, address str
 func (overrideHooks) BlocklistRemove(ctx context.Context, c *Container, address string) error {
 	_, err := c.cephCLI(ctx, "osd", "blocklist", "rm", address)
 	return err
+}
+
+// OSDMapFlags reads the flag tokens of the native OSDMap, sorted, with the
+// decode checks of the OSD policy dump. The caller holds the mutex.
+func (overrideHooks) OSDMapFlags(ctx context.Context, c *Container) ([]string, error) {
+	dump, err := c.osdPolicyDump(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return dump.flags, nil
+}
+
+// SetOSDFlag sets or unsets one global OSDMap flag. The caller holds the
+// mutex.
+func (overrideHooks) SetOSDFlag(ctx context.Context, c *Container, flag OSDFlag, enabled bool) error {
+	return c.setOSDFlag(ctx, flag, enabled)
 }
 
 // TestHeld snapshots the handles that one kind holds, for unit tests.

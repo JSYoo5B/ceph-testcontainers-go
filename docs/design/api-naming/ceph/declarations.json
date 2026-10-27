@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 376,
+  "count": 373,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -520,14 +520,6 @@
       "signature": "func(ctx context.Context, policy MessengerPolicy) (*MessengerPolicyOverrideHandle, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.OverrideMessengerPolicy",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.OverrideOSDFlag",
-      "kind": "method",
-      "signature": "func(ctx context.Context, flag OSDFlag, enabled bool) (*OSDFlagOverrideHandle, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.OverrideOSDFlag",
       "decision": "baseline"
     },
     {
@@ -1745,20 +1737,6 @@
       "current": "ceph.OSDFlagNoUp",
       "kind": "const",
       "proposed": "ceph.OSDFlagNoUp",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDFlagOverrideHandle",
-      "kind": "type",
-      "proposed": "ceph.OSDFlagOverrideHandle",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.OSDFlagOverrideHandle.Restore",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*OSDFlagOverrideHandle",
-      "proposed": "ceph.OSDFlagOverrideHandle.Restore",
       "decision": "baseline"
     },
     {

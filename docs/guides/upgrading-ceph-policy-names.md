@@ -23,6 +23,10 @@ migrate these management objects:
 | `ceph.MessengerPolicyOverride` | `ceph.MessengerPolicyOverrideHandle` |
 | `ceph.ClientRevocation` | `ceph.ClientRevocationHandle` |
 
+`OverrideOSDFlag` and `OSDFlagOverrideHandle` named in the tables above were kept in
+`ceph` at this checkpoint and later became `override.SetOSDFlag` and
+`override.OSDFlagHandle` (see [the override package guide](upgrading-override-package.md)).
+
 Each handle retains prior state, ownership and possibly partial or uncertain
 application for explicit restoration. The suffix distinguishes the management
 object from input configuration or observed values; it guarantees neither a
