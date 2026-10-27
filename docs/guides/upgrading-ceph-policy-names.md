@@ -69,7 +69,10 @@ Service containers inherit the renamed ceph methods through their embedded
 
 `TemporaryBlocklist` still has a real native duration/expiry; it was kept in `ceph` at
 this checkpoint and later became `override.AddBlocklist` (see
-[the override package guide](upgrading-override-package.md)).
+[the override package guide](upgrading-override-package.md)). Likewise
+`OverrideMGRModule` and `MGRModuleOverrideHandle` of the table above later became
+`override.SetMGRModule` and `override.MGRModuleHandle` (see
+[the MGR module guide](upgrading-override-mgr-module.md)).
 `OverrideFullRatios`, Pause/Resume and native input Close are unchanged by
 this checkpoint. Later service/network/cache stages and the
 [final naming audit](../design/api-naming-audit.md) complete the staged pass;

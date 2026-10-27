@@ -37,271 +37,6 @@ func TestMGRModulesReportMembershipAndNativeDependencies(t *testing.T) {
 	}
 }
 
-func TestOverrideMGRModuleRestoresSharedCopiesAndOriginalMembership(t *testing.T) {
-	for _, prior := range []bool{false, true} {
-		ctr := newMGRModuleFixture()
-		ctr.enabled["mirroring"] = prior
-		c := mgrModuleCluster(ctr)
-		change, err := c.OverrideMGRModule(t.Context(), "mirroring", !prior)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := c.OverrideMGRModule(t.Context(), "mirroring", prior); err == nil {
-			t.Fatal("overlap accepted")
-		}
-		copy := *change
-		if err := copy.Restore(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		before := len(ctr.calls)
-		if err := change.Restore(t.Context()); err != nil || len(ctr.calls) != before {
-			t.Fatal("shared restoration is not idempotent")
-		}
-		if ctr.enabled["mirroring"] != prior || len(c.faultsOf(faultMGRModule)) != 0 || !ctr.enabled["rbd_support"] {
-			t.Fatal("original or unrelated module state lost")
-		}
-	}
-}
-
-func TestOverrideMGRModuleInitialSnapshotWaitsForNativeConvergence(t *testing.T) {
-	for _, operation := range []string{"apply", "restore"} {
-		t.Run(operation, func(t *testing.T) {
-			ctr := newMGRModuleFixture()
-			c := mgrModuleCluster(ctr)
-			c.settings.startupTimeout = 3 * time.Second
-			var change *MGRModuleOverrideHandle
-			if operation == "restore" {
-				var err error
-				change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			beforeMutations, beforeDumps := ctr.mutations, ctr.dumps
-			ctr.dumpResponses = []string{
-				`{"available":false,"modules":[],"available_modules":[]}`,
-				`{"available":true,"modules":["other"],"available_modules":[]}`,
-			}
-			if operation == "apply" {
-				var err error
-				change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)
-				if err != nil || change == nil || !ctr.enabled["mirroring"] {
-					t.Fatal("transient native snapshots prevented apply", err)
-				}
-			} else if err := change.Restore(t.Context()); err != nil || ctr.enabled["mirroring"] {
-				t.Fatal("transient native snapshots prevented restoration", err)
-			}
-			if len(ctr.dumpResponses) != 0 || ctr.dumps-beforeDumps < 4 || ctr.mutations-beforeMutations != 1 {
-				t.Fatalf("native convergence must precede one mutation: dumps=%d mutations=%d pending=%d", ctr.dumps-beforeDumps, ctr.mutations-beforeMutations, len(ctr.dumpResponses))
-			}
-			if !ctr.enabled["rbd_support"] || !ctr.enabled["volumes"] {
-				t.Fatal("unrelated module membership changed")
-			}
-			if operation == "apply" {
-				if err := change.Restore(t.Context()); err != nil || len(c.faultsOf(faultMGRModule)) != 0 {
-					t.Fatal("converged apply did not preserve restoration ownership", err)
-				}
-			} else if len(c.faultsOf(faultMGRModule)) != 0 || !change.state.restored {
-				t.Fatal("successful restoration retained its lease")
-			}
-		})
-	}
-}
-
-func TestOverrideMGRModuleInitialSnapshotFailurePreservesStateAndOwnership(t *testing.T) {
-	for _, operation := range []string{"apply", "restore"} {
-		for _, failure := range []string{"unavailable", "inconsistent", "canceled-before-read", "canceled-after-read"} {
-			t.Run(operation+"/"+failure, func(t *testing.T) {
-				ctr := newMGRModuleFixture()
-				c := mgrModuleCluster(ctr)
-				var change *MGRModuleOverrideHandle
-				if operation == "restore" {
-					var err error
-					change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
-				beforeMutations, beforeCalls := ctr.mutations, len(ctr.calls)
-				c.settings.startupTimeout = 120 * time.Millisecond
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				wantErr := error(context.DeadlineExceeded)
-				switch failure {
-				case "unavailable":
-					ctr.rawDump = `{"available":false,"modules":[],"available_modules":[]}`
-				case "inconsistent":
-					ctr.rawDump = `{"available":true,"modules":["other"],"available_modules":[]}`
-				case "canceled-before-read":
-					cancel()
-					wantErr = context.Canceled
-				case "canceled-after-read":
-					ctr.cancelOnDump = cancel
-					wantErr = context.Canceled
-				}
-				started := time.Now()
-				var err error
-				if operation == "apply" {
-					change, err = c.OverrideMGRModule(ctx, "mirroring", true)
-					if change != nil || len(c.faultsOf(faultMGRModule)) != 0 || ctr.enabled["mirroring"] {
-						t.Fatal("failed initial snapshot adopted or changed native membership")
-					}
-				} else {
-					err = change.Restore(ctx)
-					if change.state.restored || c.heldFault(faultMGRModule, "mirroring") != change || !ctr.enabled["mirroring"] {
-						t.Fatal("failed initial snapshot lost applied membership or restoration ownership")
-					}
-				}
-				if !errors.Is(err, wantErr) || time.Since(started) > time.Second || ctr.mutations != beforeMutations {
-					t.Fatalf("initial read must fail within context without mutation: err=%v elapsed=%v mutations=%d", err, time.Since(started), ctr.mutations-beforeMutations)
-				}
-				if failure == "canceled-before-read" && len(ctr.calls) != beforeCalls {
-					t.Fatal("canceled admission performed a native read")
-				}
-				if operation == "restore" {
-					ctr.rawDump, ctr.cancelOnDump = "", nil
-					if err := change.Restore(t.Context()); err != nil || ctr.enabled["mirroring"] || len(c.faultsOf(faultMGRModule)) != 0 {
-						t.Fatal("retry after failed initial snapshot did not restore original membership", err)
-					}
-				}
-			})
-		}
-	}
-}
-
-func TestOverrideMGRModuleRejectsMissingCannotRunAndAlwaysOn(t *testing.T) {
-	for _, name := range []string{"--force", "bad name", "mirroring;exit", "unknown", "missing", "broken"} {
-		ctr := newMGRModuleFixture()
-		ctr.enabled["missing"], ctr.enabled["broken"] = false, false
-		ctr.canRun["broken"] = false
-		c := mgrModuleCluster(ctr)
-		if change, err := c.OverrideMGRModule(t.Context(), name, true); err == nil || change != nil || len(c.faultsOf(faultMGRModule)) != 0 || ctr.mutations != 0 {
-			t.Fatal("invalid/unavailable module reached mutation", name)
-		}
-	}
-	ctr := newMGRModuleFixture()
-	c := mgrModuleCluster(ctr)
-	if _, err := c.OverrideMGRModule(t.Context(), "rbd_support", false); err == nil || ctr.mutations != 0 {
-		t.Fatal("always-on module disabled")
-	}
-	change, err := c.OverrideMGRModule(t.Context(), "rbd_support", true)
-	if err != nil || ctr.mutations != 0 {
-		t.Fatal("always-on no-op rejected", err)
-	}
-	ctr.forceDisabled["rbd_support"] = true
-	ctr.enabled["rbd_support"] = false
-	if err := change.Restore(t.Context()); err == nil {
-		t.Fatal("outside force-disable overwritten")
-	}
-	delete(ctr.forceDisabled, "rbd_support")
-	ctr.enabled["rbd_support"] = true
-	if err := change.Restore(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	ctr.forceDisabled["rbd_support"] = true
-	ctr.enabled["rbd_support"] = false
-	if _, err := c.OverrideMGRModule(t.Context(), "rbd_support", true); err == nil {
-		t.Fatal("unrestorable always-on enable accepted")
-	}
-}
-
-func TestOverrideMGRModuleProtectsFilesystemsAndNativeMirroringOnRestore(t *testing.T) {
-	ctr := newMGRModuleFixture()
-	c := mgrModuleCluster(ctr)
-	change, err := c.OverrideMGRModule(t.Context(), "mirroring", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctr.mirrored = true
-	before := ctr.mutations
-	if err := change.Restore(t.Context()); err == nil || ctr.mutations != before || !ctr.enabled["mirroring"] || len(c.faultsOf(faultMGRModule)) != 1 {
-		t.Fatal("new mirror policy did not prevent module restoration")
-	}
-	ctr.mirrored = false
-	if err := change.Restore(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	// A non-always-on volumes variant still protects owned and native filesystems.
-	delete(ctr.always, "volumes")
-	c.extensions = map[string]any{"cephfs": testExtension{modules: []string{"volumes"}}}
-	if _, err := c.OverrideMGRModule(t.Context(), "volumes", false); err == nil {
-		t.Fatal("owned filesystem's volumes module disabled")
-	}
-	c.extensions = nil
-	ctr.filesystems = 1
-	if _, err := c.OverrideMGRModule(t.Context(), "volumes", false); err == nil {
-		t.Fatal("native filesystem's volumes module disabled")
-	}
-}
-
-func TestOverrideMGRModuleNoopRefusesOutsideMembershipChange(t *testing.T) {
-	ctr := newMGRModuleFixture()
-	c := mgrModuleCluster(ctr)
-	change, err := c.OverrideMGRModule(t.Context(), "mirroring", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctr.enabled["mirroring"] = true
-	if err := change.Restore(t.Context()); err == nil || ctr.mutations != 0 || !ctr.enabled["mirroring"] {
-		t.Fatal("outside edit was overwritten by no-op restore")
-	}
-}
-
-func TestOverrideMGRModuleLostRepliesAndReadbackReconcile(t *testing.T) {
-	ctr := newMGRModuleFixture()
-	ctr.failAfter = "enable"
-	c := mgrModuleCluster(ctr)
-	change, err := c.OverrideMGRModule(t.Context(), "mirroring", true)
-	if err == nil || change == nil || !ctr.enabled["mirroring"] || len(c.faultsOf(faultMGRModule)) != 1 {
-		t.Fatal("uncertain apply lost handle")
-	}
-	ctr.failAfter = "disable"
-	if err := change.Restore(t.Context()); err == nil || ctr.enabled["mirroring"] {
-		t.Fatal("uncertain restoration reply hidden")
-	}
-	ctr.failAfter = ""
-	before := ctr.mutations
-	if err := change.Restore(t.Context()); err != nil || ctr.mutations != before || len(c.faultsOf(faultMGRModule)) != 0 {
-		t.Fatal("native completed restore wasn't reconciled")
-	}
-	ctr.failDumpAt = ctr.dumps + 2
-	change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)
-	if err != nil || change == nil {
-		t.Fatal("transient apply readback did not converge", err)
-	}
-	if err := change.Restore(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	ctr.failDumpFrom = ctr.dumps + 2
-	change, err = c.OverrideMGRModule(t.Context(), "mirroring", true)
-	if err == nil || change == nil || len(c.faultsOf(faultMGRModule)) != 1 {
-		t.Fatal("lost persistent apply readback lost handle")
-	}
-	ctr.failDumpFrom = 0
-	if err := change.Restore(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestOverrideMGRModuleRestorationRequiresRunnableMetadata(t *testing.T) {
-	ctr := newMGRModuleFixture()
-	ctr.enabled["mirroring"] = true
-	c := mgrModuleCluster(ctr)
-	change, err := c.OverrideMGRModule(t.Context(), "mirroring", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctr.canRun["mirroring"] = false
-	before := ctr.mutations
-	if err := change.Restore(t.Context()); err == nil || ctr.mutations != before {
-		t.Fatal("cannot-run restoration forced enable")
-	}
-	ctr.canRun["mirroring"] = true
-	if err := change.Restore(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestMGRModulesRefuseMalformedAndInconsistentNativeState(t *testing.T) {
 	for _, raw := range []string{"null", `{}`, `{"enabled_modules":[],"always_on_modules":[],"disabled_modules":[{"name":"bad name"}]}`, `{"enabled_modules":["mirroring"],"always_on_modules":["mirroring"],"disabled_modules":[]}`} {
 		ctr := newMGRModuleFixture()
@@ -344,53 +79,32 @@ func TestWaitMGRModuleReadyProbesCommandsAndStopsOnClosedOrCanceled(t *testing.T
 	}
 }
 
-func TestOverrideMGRModuleCancellationKeepsAppliedHandleWithFreshReadback(t *testing.T) {
-	ctr := newMGRModuleFixture()
-	ctx, cancel := context.WithCancel(t.Context())
-	ctr.cancelOnSet = cancel
-	c := mgrModuleCluster(ctr)
-	change, err := c.OverrideMGRModule(ctx, "mirroring", true)
-	if !errors.Is(err, context.Canceled) || change == nil || !ctr.enabled["mirroring"] {
-		t.Fatal("canceled apply lost native state/handle", err)
-	}
-	if ctr.canceledReads != 0 {
-		t.Fatal("apply readback reused canceled context")
-	}
-	if err := change.Restore(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func mgrModuleCluster(ctr testcontainers.Container) *Container {
 	return &Container{Container: ctr, settings: options{startupTimeout: time.Second}}
 }
 
 type mgrModuleFixture struct {
 	testcontainers.Container
-	enabled, always, forceDisabled                                                 map[string]bool
-	canRun                                                                         map[string]bool
-	calls                                                                          [][]string
-	dumpResponses                                                                  []string
-	failAfter, rawListing, rawDump                                                 string
-	dumps, failDumpAt, failDumpFrom, mutations, probes, filesystems, canceledReads int
-	mirrored                                                                       bool
-	cancelOnSet                                                                    context.CancelFunc
-	cancelOnDump                                                                   context.CancelFunc
+	enabled, always, forceDisabled map[string]bool
+	canRun                         map[string]bool
+	calls                          [][]string
+	rawListing, rawDump            string
+	probes                         int
 }
 
 func newMGRModuleFixture() *mgrModuleFixture {
 	return &mgrModuleFixture{enabled: map[string]bool{"mirroring": false, "rbd_support": true, "volumes": true}, always: map[string]bool{"rbd_support": true, "volumes": true}, forceDisabled: map[string]bool{}, canRun: map[string]bool{"mirroring": true, "rbd_support": true, "volumes": true}}
 }
 
+// Exec answers the read-only commands of the module observation and of
+// WaitMGRModuleReady. The module override tests live in package override.
 func (ctr *mgrModuleFixture) Exec(ctx context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	if err := ctx.Err(); err != nil {
-		ctr.canceledReads++
 		return 0, nil, err
 	}
 	args = slices.Clone(args[3:])
 	ctr.calls = append(ctr.calls, args)
 	var result any
-	code := 0
 	if slices.Equal(args, []string{"mgr", "module", "ls", "--format", "json"}) {
 		enabled, always, force := []string{}, []string{}, []string{}
 		disabled := []map[string]any{}
@@ -411,10 +125,6 @@ func (ctr *mgrModuleFixture) Exec(ctx context.Context, args []string, _ ...tcexe
 			result = json.RawMessage(ctr.rawListing)
 		}
 	} else if slices.Equal(args, []string{"mgr", "dump", "--format", "json"}) {
-		ctr.dumps++
-		if ctr.dumps == ctr.failDumpAt || (ctr.failDumpFrom > 0 && ctr.dumps >= ctr.failDumpFrom) {
-			return 0, nil, errors.New("injected module metadata readback error")
-		}
 		enabled := []string{}
 		metadata := []map[string]any{}
 		for name, on := range ctr.enabled {
@@ -430,38 +140,9 @@ func (ctr *mgrModuleFixture) Exec(ctx context.Context, args []string, _ ...tcexe
 			metadata = append(metadata, map[string]any{"name": name, "can_run": runnable, "error_string": diagnostic})
 		}
 		result = map[string]any{"available": true, "modules": enabled, "available_modules": metadata}
-		if len(ctr.dumpResponses) != 0 {
-			result = json.RawMessage(ctr.dumpResponses[0])
-			ctr.dumpResponses = ctr.dumpResponses[1:]
-		} else if ctr.rawDump != "" {
+		if ctr.rawDump != "" {
 			result = json.RawMessage(ctr.rawDump)
 		}
-		if ctr.cancelOnDump != nil {
-			cancel := ctr.cancelOnDump
-			ctr.cancelOnDump = nil
-			cancel()
-		}
-	} else if len(args) == 4 && slices.Equal(args[:2], []string{"mgr", "module"}) && slices.Contains([]string{"enable", "disable"}, args[2]) {
-		ctr.mutations++
-		ctr.enabled[args[3]] = args[2] == "enable"
-		if ctr.cancelOnSet != nil {
-			ctr.cancelOnSet()
-			ctr.cancelOnSet = nil
-			return 0, nil, context.Canceled
-		}
-		if args[2] == ctr.failAfter {
-			code = 1
-		}
-		result = map[string]any{}
-	} else if slices.Equal(args, []string{"fs", "dump", "--format", "json"}) {
-		filesystems := []map[string]any{}
-		for i := 0; i < ctr.filesystems; i++ {
-			filesystems = append(filesystems, map[string]any{"id": i + 1})
-		}
-		if ctr.mirrored {
-			filesystems = append(filesystems, map[string]any{"mirror_info": map[string]any{"peers": map[string]any{}}})
-		}
-		result = map[string]any{"filesystems": filesystems}
 	} else if slices.Equal(args, []string{"rbd", "task", "list", "--format", "json"}) || slices.Equal(args, []string{"fs", "volume", "ls", "--format", "json"}) {
 		ctr.probes++
 		result = []any{}
@@ -481,5 +162,5 @@ func (ctr *mgrModuleFixture) Exec(ctx context.Context, args []string, _ ...tcexe
 	var stream bytes.Buffer
 	stream.Write(header[:])
 	stream.Write(output)
-	return code, &stream, nil
+	return 0, &stream, nil
 }

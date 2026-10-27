@@ -1502,7 +1502,7 @@ methods that only read state stay available, including `Container.Pool`.
 | Methods | Why they are refused |
 | --- | --- |
 | `CreateClient`, `ClientConfig.Delete`, `ClientConfig.UpdateCaps`, `ClientConfig.ReplaceKey`, `ClientConfig.Revoke`, `ClientConfig.Capabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `OverrideConfig`, `OverrideDebugLevel`, `OverrideOSDFlag`, `OverrideFullRatios`, `OverrideMGRModule`, `OverrideMessengerPolicy`, `override.AddBlocklist` (see [override](override.md)), `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
+| `OverrideConfig`, `OverrideDebugLevel`, `OverrideOSDFlag`, `OverrideFullRatios`, `override.SetMGRModule`, `OverrideMessengerPolicy`, `override.AddBlocklist` (see [override](override.md)), `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `OSDContainer.AdminSocket`, `MonitorContainer.AdminSocket`, `ManagerContainer.AdminSocket`, `OSDContainer.Version`, `MonitorContainer.Version`, `ManagerContainer.Version`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
 | `AddOSD`, `AddOSDWithConfig`, `OSDContainer.Remove`, `OSDContainer.Detach`, `DetachedOSD.Reopen`, `AddMonitor`, `MonitorContainer.Remove`, `AddManager`, `ManagerContainer.Remove` | Change the topology. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
@@ -1576,7 +1576,7 @@ Methods that change cluster state temporarily return a restoration handle:
 | `*ceph.ConfigOverrideHandle` | [OverrideConfig](#overrideconfig) | `Restore` |
 | `*ceph.DebugLevelOverrideHandle` | [OverrideDebugLevel](#overridedebuglevel) | `Restore` |
 | `*ceph.OSDFlagOverrideHandle` | [OverrideOSDFlag](#overrideosdflag) | `Restore` |
-| `*ceph.MGRModuleOverrideHandle` | [OverrideMGRModule](#overridemgrmodule) | `Restore` |
+| `*override.MGRModuleHandle` | [override.SetMGRModule](override.md#setmgrmodule) | `Restore` |
 | `*ceph.FullRatiosOverride` | [OverrideFullRatios](#overridefullratios) | `Restore` |
 | `*override.BlocklistHandle` | [override.AddBlocklist](override.md#addblocklist) | `Restore` |
 | `*fault.PauseLease` | [fault.Pause](fault.md#pause) | `Resume` |
@@ -3670,20 +3670,10 @@ module metadata: `Name`, `Enabled`, `AlwaysOn`, `ForceDisabled`, `Available`
 (Ceph's dependency or load diagnostic). `Enabled` and `CanRun` do not prove that
 a module's commands are ready.
 
-#### OverrideMGRModule
-
-```golang
-func (c *Container) OverrideMGRModule(ctx context.Context, name string, enabled bool) (*ceph.MGRModuleOverrideHandle, error)
-```
-
-Enables or disables one module and restores its original membership with
-`Restore`. It refuses to enable a module whose metadata is missing or reports
-that it cannot run (it never forces dependencies), to disable an always-on module,
-and to disable `volumes` or `mirroring` while filesystems or mirror policies use
-them. An enabled always-on module accepts only a no-op `true` request. A module
-change can restart the active manager; the call waits for the module state to be
-readable again. It verifies membership, not command readiness; probe the module
-afterwards.
+The module membership override that enables or disables one manager module is
+[override.SetMGRModule](override.md#setmgrmodule). It moved out of `ceph` with
+its handle type; `Observer.MGRModules`, `ceph.MGRModuleState` and
+`WaitMGRModuleReady` stay here.
 
 #### WaitMGRModuleReady
 
@@ -3719,7 +3709,7 @@ func (o *Observer) ManagerMetrics(ctx context.Context) (ceph.ManagerMetrics, err
 
 Scrapes the active manager's `prometheus` module once and returns its
 samples parsed from the Prometheus text exposition format. It never enables
-the module: enable it with [OverrideMGRModule](#overridemgrmodule) and wait
+the module: enable it with [override.SetMGRModule](override.md#setmgrmodule) and wait
 until [ManagerServices](#managerservices) lists `prometheus`; until then the
 call fails with `ErrInvalidRequest`. The scrape runs with `python3` in the
 control container, at the address that `ManagerServices` advertises, and is
@@ -4689,7 +4679,7 @@ The cluster owns the auth database; containers you attach with it are yours.
 | --- | --- | --- |
 | `ConfigOverrideHandle` | `Restore(ctx) error`; `String()`, `GoString()` for logging | [OverrideConfig](#overrideconfig) |
 | `OSDFlagOverrideHandle` | `Restore(ctx) error` | [OverrideOSDFlag](#overrideosdflag) |
-| `MGRModuleOverrideHandle` | `Restore(ctx) error` | [OverrideMGRModule](#overridemgrmodule) |
+| `override.MGRModuleHandle` | `Restore(ctx) error` | [override.SetMGRModule](override.md#setmgrmodule) |
 | `FullRatiosOverride` | `Restore(ctx) error` | [OverrideFullRatios](#overridefullratios) |
 | `override.BlocklistHandle` | `Address() string`, `Restore(ctx) error` | [override.AddBlocklist](override.md#addblocklist) |
 | `fault.PauseLease` | `ContainerID`; `Resume(ctx) error` | [fault.Pause](fault.md#pause) |
@@ -5348,10 +5338,9 @@ unchanged.
 ### Scrape the MGR Prometheus exporter
 
 ```golang
-module, err := cluster.OverrideMGRModule(ctx, "prometheus", true)
-if module != nil {
-	defer module.Restore(context.Background())
-}
+module, err := override.SetMGRModule(ctx, cluster, "prometheus", true)
+// module is never nil: after a refusal its Restore does nothing.
+defer module.Restore(context.Background())
 if err != nil {
 	t.Fatal(err)
 }
