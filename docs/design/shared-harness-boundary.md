@@ -6,12 +6,12 @@ for before any public move. The owner decided the package layout on
 public signature and no dependency. The internal state, lock and admission
 decomposition of #146 that blocked the move is complete (see
 [container-decomposition.md](container-decomposition.md) and "Inventory at
-`0f8f4ca`" below); what is left is the cross-package registration contract,
+`83de22a`" below); what is left is the cross-package registration contract,
 which "Cross-package registration design" specifies and "Decisions for the
 owner" lists the open choices of. This note fixes what the move has to carry,
 the exact old-to-new map and the order in which it can be done safely.
 
-How to read the sections: "Inventory at `0f8f4ca`" is the current, guarded
+How to read the sections: "Inventory at `83de22a`" is the current, guarded
 state and wins over every older number. The sections from "Method and limits"
 to "Blocking prerequisites" and the three "Refresh at" sections are the history
 of how the boundary was found; they keep their measured commits and are not
@@ -278,7 +278,7 @@ change (see AGENTS.md and `docs/contributing/package-split-shards.md`).
 ## Blocking prerequisites (history)
 
 Status of the safe extraction order at `e22b728` (superseded by "Inventory at
-`0f8f4ca`", which holds the current table):
+`83de22a`", which holds the current table):
 
 | Step | State |
 | --- | --- |
@@ -498,10 +498,10 @@ the shape of `createSharedClient` and `deleteSharedClient`, whose return type
 cluster. None of this is decided by the merged design, so only the
 audit and the narrowing are done here.
 
-## Inventory at `0f8f4ca`
+## Inventory at `83de22a`
 
-Pinned at `0f8f4ca3bd5b55d35c41f688722cbe0ca465e7fc` (merge of #284, main after
-the owner-listed merges #266, #272, #281, #282 and #284). The rows below are
+Pinned at `83de22a8fe310d612612479d1941d2e3a3d9dabf` (main after the owner-listed
+merges #266, #272, #281, #282 and #284, and after #285, #286, #287 and #290). The rows below are
 measured from the files by `ceph/shared_harness_inventory_test.go` and compared
 with this table, so a drifting row fails the test; the pinned commit is the only
 part that is not checked and is refreshed by hand. Source reading and Docker-free
@@ -537,9 +537,9 @@ files of the directory including tests.
 | references to moved names in rbd | 4 in 1 files |
 | references to moved names in cephfs | 3 in 1 files |
 | references to moved names in rgw | 4 in 1 files |
-| references to moved names in internal/servicehook | 4 in 1 files |
+| references to moved names in internal/servicehook | 2 in 1 files |
 | references to moved names in internal/integration | 36 in 6 files |
-| servicehook.TenantCluster calls in internal/integration | 4 in 2 files |
+| testhelper.TestTenantCluster calls in internal/integration | 4 in 2 files |
 | servicehook.RegisterSharedService calls in rbd, cephfs and rgw | 3 |
 
 What changed against the older tables, so none of them is carried forward:
@@ -553,11 +553,15 @@ What changed against the older tables, so none of them is carried forward:
   the 13 package-level names above: four error helpers, the backend port types
   and its starter, the two gate modes, and `newLeasedObserver`.
 - `internal/integration` uses the moved names 36 times in 6 files, not 30 in 5.
-  `TenantCluster` has four call sites outside `ceph`, all native controls.
+  The test-only tenant-cluster lookup is no longer a `servicehook` function
+  (#286): it is `testhelper.TestTenantCluster`, served by
+  `unitAccess.UnitTenantCluster` through the `hookreg.Test` seam, with four call
+  sites outside `ceph`, all native controls. `internal/servicehook` names the
+  moved names twice, not four times, for that reason.
 - The adapters' private reach is new: each service's `tenant.go` names two to
   four unexported helpers of its own package. They are the inputs of decision 8.
 
-### Prerequisites at `0f8f4ca`
+### Prerequisites at `83de22a`
 
 | Prerequisite | State | Evidence |
 | --- | --- | --- |
@@ -610,7 +614,7 @@ Two untyped slots in `internal/hookreg`:
 | Slot | Set by | Set when | Typed by | Holds |
 | --- | --- | --- | --- | --- |
 | `Harness` | package `ceph`, in its `init` (as `Value`, `Fault`, `Override` are) | before any importer's `init` | `internal/harnesshook` | `Core`: start, tenant observer, lend |
-| `HarnessTenant` | package `ceph/harness`, in its `init` | before `internal/servicehook` and the service harnesses initialize, because both import `ceph/harness` | `internal/servicehook` | tenant port lookup and the test-only cluster lookup |
+| `HarnessTenant` | package `ceph/harness`, in its `init` | before `internal/servicehook` and the service harnesses initialize, because both import `ceph/harness` | `internal/servicehook` | the tenant port lookup (typed by `internal/servicehook`) and the test-only cluster lookup (typed by `internal/testhelper`); each consumer asserts only the method it uses |
 
 Each typed accessor panics with a message naming the missing registrant when its
 slot is empty, as `servicehook.get` does today. Go initializes an imported package
@@ -621,26 +625,47 @@ control imports the harness and asserts that both slots are set and that
 
 ### What `ceph` registers: `harnesshook.Core`
 
+The registered value is implemented by package `ceph`, so every method signature
+of the registered interfaces may use only types that `ceph` itself can spell:
+its own types, the standard library, `testcontainers-go`, `internal/hookreg` and
+`internal/sharedinvariants` (a leaf). It must not name a type declared in
+`internal/harnesshook`, which imports `ceph`. Go requires identical result types
+for an interface to be satisfied, so a ceph-owned interface with the same methods
+is not accepted where `harnesshook.Backend` is expected, and importing
+`harnesshook` from `ceph` to spell the type is an import cycle. A scratch module
+with `hookreg`, `ceph` and `harnesshook` packages shows both failures with that
+shape (the typed assertion on the registered value fails at run time, and the
+import is rejected as a cycle) and compiles and runs with the shape below.
+
+The boundary therefore has two layers in `internal/harnesshook`:
+
+1. Port interfaces that the registered values satisfy structurally. They use
+   `any` wherever the harness-facing type would be a `harnesshook` type, and
+   `int32` for the sharing mode.
+2. Harness-facing types (`Backend`, `Ops`, `Mode`) and typed accessors. They wrap
+   an asserted port value, so the harness sees typed methods and `ceph` never
+   names them.
+
 ```go
-// Core is what package ceph offers the shared-cluster harness.
-type Core interface {
+// Layer 1: satisfied structurally by values that package ceph registers.
+type core interface {
     // Start starts a cluster. On failure it still returns the partial
     // backend, which the harness owns and terminates (sharedRunResult today).
-    Start(ctx context.Context, image string, opts []testcontainers.ContainerCustomizer) (Backend, error)
-    // NewTenantObserver builds the tenant form of an Observer.
-    NewTenantObserver(target func() (Backend, error), live func() error) *ceph.Observer
-    // Lend returns the gated cluster of b. It is called only by
+    Start(ctx context.Context, image string, opts []testcontainers.ContainerCustomizer) (any, error)
+    // NewTenantObserver builds the tenant form of an Observer. target returns
+    // the tenant's backend value after its admission check.
+    NewTenantObserver(target func() (any, error), live func() error) *ceph.Observer
+    // Lend returns the gated cluster of a backend value. It is called only by
     // SharedCluster.Exclusive, after SetSharing(Exclusive), and by the
-    // test-only cluster lookup; a model backend returns nil.
-    Lend(b Backend) *ceph.Container
+    // test-only cluster lookup; a model backend is nil here and gives nil.
+    Lend(backend any) *ceph.Container
+    // The error contract, see "Error handling".
+    InvalidRequest(format string, args ...any) error
+    Classify(kind, err error) error
+    ClassifyDocker(ctx context.Context, err error) error
 }
-```
 
-`Backend` is today's 12-method `sharedBackend` with exported names and four
-type-level changes; `Ops` is `clusterOps` without `raw`:
-
-```go
-type Backend interface {
+type backendValue interface { // the returned backend, today's 12-method sharedBackend
     CreatePool(ctx context.Context, name string) error
     PrepareServices(ctx context.Context) error
     Ready(ctx context.Context) error
@@ -650,25 +675,30 @@ type Backend interface {
     CreateClient(ctx context.Context, entity string, caps ceph.ClientCaps) (client *ceph.ClientConfig, created bool, err error)
     DeleteClient(ctx context.Context, client *ceph.ClientConfig) error
     PurgeNamespace(ctx context.Context, pool, namespace string) error
-    SetSharing(mode Mode)
+    SetSharing(mode int32)
     Terminate(ctx context.Context) error
-    Ops() Ops // nil for a model
+    Ops() any // nil for a model
 }
 
-type Mode int32 // NotShared, SharedWithTenants, SharedExclusively; the gate keeps its policy tables
-
-type Ops interface {
+type opsValue interface { // clusterOps without raw
     StartupTimeout() time.Duration
     Command(ctx context.Context, args ...string) ([]byte, error)
     WithTopology(fn func() error) error
     Extension(kind string, create func() any) any
     RunNativeCommand(ctx context.Context, target testcontainers.Container, command ceph.NativeCommand) (ceph.NativeCommandResult, error)
     WithClientIdentity(client *ceph.ClientConfig, opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
-    Label(ctx context.Context, target testcontainers.Container, key string) (string, error)
 }
+
+// Layer 2: what ceph/harness imports. Backend has the methods of backendValue
+// with SetSharing(mode Mode) and Ops() Ops; Ops has those of opsValue.
+// Start, NewTenantObserver and Lend assert the values of layer 1 and panic with
+// a message naming the registrant if one does not implement its port.
+type Mode int32 // NotShared, SharedWithTenants, SharedExclusively; the gate keeps its policy tables
 ```
 
-The four changes against today, each removing one use of a private name:
+`ceph` implements the layer-1 interfaces on unexported types with exported method
+names (as `serviceHooks` and `unitAccess` do), so it spells no `harnesshook`
+type. The changes against today, each removing one use of a private name:
 
 1. `CreateClient` returns `created`. `Tenant.createClient` reads the private field
    `ClientConfig.created` to decide whether the release must delete the client; a
@@ -676,12 +706,10 @@ The four changes against today, each removing one use of a private name:
    (`createSharedClient` sets it).
 2. `Mode` replaces `sharingMode`. The values map one to one; the policy tables,
    `Container.sharing` and `ErrSharedCluster` stay in core (decided above).
-3. `Ops.Label` replaces the `Inspect` call and the `classifyDocker` of
-   `Tenant.RunNativeCommand`. The backend reads the container's label with its own
-   classification, so `classifyDocker` stays private. The tenant label check
-   (`sharedTenantLabel` equals the tenant ID) stays in the harness.
-4. `raw()` leaves `Ops`. The raw pointer is reachable only through `Core.Lend`,
+3. `raw()` leaves `Ops`. The raw pointer is reachable only through `Core.Lend`,
    which keeps `Ops` safe to hand to service harnesses.
+4. The three error helpers are reached through the `core` interface, not copied
+   (see "Error handling").
 
 `Start`, `NewTenantObserver` and `Lend` replace `startSharedContainer`,
 `newLeasedObserver` and `clusterOps.raw`. The unit-test seam `sharedSettings.start`
@@ -732,10 +760,18 @@ cluster, as today: `ID`, `Live`, `StartupTimeout`, `Command`, `CreateClient`,
 four `servicehook.Lock`/`Unlock` pairs on the gateway's own `*ceph.Container`
 unchanged.
 
-The test-only `servicehook.TenantCluster(t)` is the second function of the
-`HarnessTenant` slot. It calls `Core.Lend` for a live tenant and returns nil for
-a model. Its four call sites are native controls in `internal/integration` and
-stay the only users (guard below).
+The test-only lookup is `testhelper.TestTenantCluster(t)`, which today reaches
+`unitAccess.UnitTenantCluster(t *Tenant)` through the `hookreg.Test` seam
+(`ceph/unit_access.go`, `internal/testhelper/testhelper.go`; #286). After the move
+`ceph` cannot name `Tenant`, so `UnitTenantCluster` leaves `unitAccess`. Its
+replacement is a second method of the value that `ceph/harness` registers in the
+`HarnessTenant` slot: it checks that the tenant is live and returns
+`Core.Lend(backend)`, or nil for a model. `internal/testhelper` asserts only that
+method from the slot and takes `*harness.Tenant` in `TestTenantCluster`, so it
+imports `ceph/harness` and `ceph/harness` does not import it. The unit tests of
+that lookup in `ceph/shared_ops_test.go` move to `ceph/harness`. Its four call
+sites are native controls in `internal/integration` and stay the only non-test
+users (guard below).
 
 ### Observer constructor
 
@@ -777,21 +813,34 @@ removed, only its type direction.
 
 ### Error handling
 
-`OperationError` has exported fields, so the harness can build what `ceph` builds
-without a port:
+Settled by the owner on 2026-10-28: the harness shares `OperationError`
+construction and classification through a narrow internal contract. It adds no
+public error-helper API, copies no core classification into the harness, keeps
+every category, cause, `errors.Is`/`errors.As` result and required diagnostic
+message, and keeps the dependency direction (no core-to-harness import).
 
-- `invalidRequest` and `classify` become two private helpers of `ceph/harness`
-  that construct `&ceph.OperationError{Kind: ceph.ErrInvalidRequest, Err: ...}`
-  with the same text. A control compares a harness-built and a core-built error
-  for `Error()`, `errors.Is(err, ceph.ErrInvalidRequest)` and `errors.As`.
-- `clientIDPattern` is `naming.ClientID`, a package every module package may
-  import.
-- `classifyDocker` is not copied: its only use is the container inspection in
-  `Tenant.RunNativeCommand`, which `Ops.Label` absorbs.
+- The contract is the three error methods of the `core` interface above:
+  `InvalidRequest`, `Classify` and `ClassifyDocker`. `ceph` implements each with
+  the code it has today (`invalidRequest`, `classify`, `classifyDocker`), so there
+  is one implementation. Their signatures use only `error`, `string`, `context` and
+  `any`, which `ceph` can spell. `ceph/harness` calls them through
+  `internal/harnesshook`; the exact internal names remain implementation design.
+- `Tenant.RunNativeCommand` keeps its container inspection in the harness and
+  classifies a failed `Inspect` with `ClassifyDocker`. No `Ops.Label` is needed.
+- `clientIDPattern` is `naming.ClientID`, the one definition both packages
+  already import.
+- Local contextual messages (`"create tenant client: %w"`, the `fmt.Errorf` wraps
+  around a backend error) stay local, as the owner allows.
 - Errors that cross `Backend` (a failed start, scripts, `CreateClient`) are
-  returned as `ceph` built them. The harness wraps them with `%w` as it does today,
-  so `errors.Is` and `errors.As` behavior is preserved, and it does not rebuild
-  their kind. A partial `Start` result still comes with the error.
+  returned as `ceph` built them and wrapped with `%w`, so the kind is not rebuilt.
+  A partial `Start` result still comes with the error.
+- Verification at the move, against the migrated paths and not by compilation:
+  invalid input (an invalid tenant client name, an unknown access, a nil tenant,
+  a released tenant), cancellation and deadline (`Lease`, a started backend,
+  `RunNativeCommand`), shared admission (`ErrSharedCluster` through a leased
+  Observer and a retained Pool) and a Docker failure of the inspection (not found
+  or conflict, transport error, closed context). Each asserts the kind with
+  `errors.Is`, the type with `errors.As` and the message text.
 
 ### Service harness private reach
 
@@ -806,12 +855,11 @@ of `ceph/harness`.
 
 ### Order of work
 
-1. Internal, no public API, ports in place: `Backend.CreateClient` returns
-   `created`; `Ops.Label` replaces the inspection and `classifyDocker` use in
-   `Tenant.RunNativeCommand`. These two touch `sharedBackend`, its test model and
-   `tenant.go`; they are the only code-level preparation that the design needs
-   before the move, and they are left to a separate change so that decisions 3 and
-   4 are settled first.
+1. Internal, no public API: `Backend.CreateClient` returns `created`. It touches
+   `sharedBackend`, its test model and `tenant.go`, and is the only code-level
+   preparation that the design needs before the move. It is left to a separate
+   change. The error contract needs no preparation: it is added with the move
+   because it has no caller before then.
 2. Internal: move the service-private helpers into `<service>/internal/...`
    (decision 8), one change per service.
 3. The move: `ceph/harness`, `internal/harnesshook`, the two slots, the three
@@ -824,32 +872,33 @@ of `ceph/harness`.
 
 Docker-free, with negative controls in the style of `TestContainerBackendReach`:
 the graph test over `go list -deps` (both directions above); the `Lend` allow-list;
-that `harnesshook.Backend` names no `Container` type and no lock; that the
-`HarnessTenant` lookup is used by `servicehook` only; the error-equivalence
-control; and the inventory test of this note, retargeted at the new files.
+that `harnesshook.Backend` names no `Container` type and no lock; that each
+consumer of the `HarnessTenant` slot (`servicehook`, `testhelper`) asserts only its
+own method; a compile example, kept as a test, that the registered `ceph` values
+satisfy the layer-1 interfaces; the error-equivalence checks of "Error handling"; and the inventory test of this note, retargeted at the new files.
 
 ## Decisions for the owner
 
-The owner's last comment on #155 leaves the exported signatures, the SharedPool
-and Exclusive boundaries, the private error handling and the Observer
-registration to design. These are the choices that design cannot settle alone,
-each with a recommendation. Nothing here is implemented.
+The owner's comments on #155 leave the exported signatures, the SharedPool and
+Exclusive boundaries and the Observer registration to design, and settled the
+error-helper policy on 2026-10-28. These are the choices that design cannot settle
+alone, each with a recommendation. Nothing here is implemented.
 
 | # | Decision | Recommendation | Alternative and its cost |
 | --- | --- | --- | --- |
 | 1 | Service registration: `init`-time `RegisterSharedService` in each service harness, or an explicit argument of `NewShared` | `init`-time, registry and callback loops in `ceph`, callbacks keep `*ceph.Container` | An explicit argument adds public API to `NewShared` and a second place to forget a service; it removes the link-time effect |
 | 2 | `SharedPool` and `Exclusive` | `SharedPool` moves to `harness`; `Exclusive` keeps returning `*ceph.Container`, obtained only through `Core.Lend` | A narrower return type is an API redesign outside a move |
-| 3 | Private error handling | Harness-local `invalidRequest`/`classify` over the exported `OperationError`, proven equal by a control | Exporting `ceph` helpers adds public API |
-| 4 | Docker inspection in `RunNativeCommand` | `Ops.Label`, so `classifyDocker` stays private | Exporting or copying `classifyDocker` duplicates Docker error policy |
-| 5 | Typed hook placement | Top-level `internal/harnesshook` beside `faulthook` and `overridehook` | `ceph/internal/...` is not importable by `internal/servicehook` |
+| 3 | Error helpers | Settled by the owner (2026-10-28): one internal contract (`InvalidRequest`, `Classify`, `ClassifyDocker` on the registered core), no public helper, no copy | none |
+| 4 | Docker inspection in `RunNativeCommand` | Settled with 3: the harness inspects and calls `ClassifyDocker` | none |
+| 5 | Typed hook placement and signature boundary | Top-level `internal/harnesshook` beside `faulthook` and `overridehook`, with port interfaces in `any`/`int32` terms that `ceph` satisfies structurally and harness-facing wrappers on the other side | `ceph/internal/...` is not importable by `internal/servicehook`; a shared leaf package for the port types cannot name `ceph.ClientCaps` and the other public types without importing `ceph` |
 | 6 | Observer constructor | `harness.ObserveTenant`, same name, returning `*ceph.Observer`, through `Core.NewTenantObserver` | A `(*Tenant).Observer()` method renames API in the same change as the move |
-| 7 | `TenantCluster` | Keep as the test-only second function of the `HarnessTenant` slot, four known call sites, guarded | Replacing the four native controls with Observer-based checks weakens what they prove about the gate |
+| 7 | Test-only tenant-cluster lookup (`testhelper.TestTenantCluster`, today `unitAccess.UnitTenantCluster`) | Keep it test-only: a second method of the `HarnessTenant` value, asserted by `testhelper`, four known native call sites, guarded | Replacing the four native controls with Observer-based checks weakens what they prove about the gate |
 | 8 | Service-private helpers used by the adapters | `<service>/internal/...` packages, moved before the harness | Exporting them adds public names to rbd, cephfs and rgw |
 | 9 | Exported names and signatures | The old-to-new map: same names in the new packages, no renames, no new options; any rename is a later change | Renaming during the move mixes a mechanical migration with an API review |
 
-Overlap: the open #248 rename changes (#285, #286) touch `internal/clustertest`
-and `internal/servicehook/ceph/unit_access.go`. This change touches none of those
-files.
+Overlap: #285 and #286 (renames and the test-only lookup move) are merged and
+composed into this note. This change touches none of their files except by
+documentation.
 
 ## Not covered
 
@@ -858,5 +907,5 @@ import changed. The only code in this change is the Docker-free inventory guard
 and the CI classifier entry that makes an edit of this note run it; no production
 code changed. No Docker or native Ceph test was run. The sections from "Method
 and limits" to "Refresh at `1a158b9`" are history and keep their older counts;
-"Inventory at `0f8f4ca`" is the current state and must be refreshed, with its
+"Inventory at `83de22a`" is the current state and must be refreshed, with its
 pinned commit, whenever the guard fails or the move starts.

@@ -249,9 +249,9 @@ func measureHarnessInventory(t *testing.T, repoRoot string) map[string]string {
 		rows["references to moved names in "+dir] = fmt.Sprintf("%d in %d files", matches, files)
 	}
 
-	tenantCluster := regexp.MustCompile(`\bservicehook\.TenantCluster\(`)
+	tenantCluster := regexp.MustCompile(`\btesthelper\.TestTenantCluster\(`)
 	matches, files := countReferences(t, filepath.Join(repoRoot, "internal", "integration"), func(string) bool { return true }, tenantCluster)
-	rows["servicehook.TenantCluster calls in internal/integration"] = fmt.Sprintf("%d in %d files", matches, files)
+	rows["testhelper.TestTenantCluster calls in internal/integration"] = fmt.Sprintf("%d in %d files", matches, files)
 
 	register := regexp.MustCompile(`\bservicehook\.RegisterSharedService\(`)
 	total = 0
