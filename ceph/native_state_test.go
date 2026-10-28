@@ -283,7 +283,7 @@ var nativeStateMutexOwners = []string{
 // nativeStateComponents are the types scanned for mutexes: Container and the
 // state components that were moved out of it, plus the registries it holds.
 var nativeStateComponents = []string{
-	"Container", "nativeState", "networkState", "featureClientState", "authState", "osdStorageState", "monStoreState",
+	"Container", "nativeState", "networkState", "featureClientState", "authState", "osdStorageState", "monStoreState", "monStoreVolume", "monStoreFiles", "monStoreEntry", "monStoreMember",
 	"runDirState", "osdRegistry", "portLeaseState", "faultRegistry", "debugLevelRegistry",
 	"controlPlaneState", "bootstrapRecord", "extensionStore", "memberRoster", "startupIdentity",
 }

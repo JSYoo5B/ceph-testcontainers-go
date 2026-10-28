@@ -282,16 +282,25 @@ func (s *monStoreVolume) detach(observed monStoreIdentity) error {
 	return nil
 }
 
-// verify compares an observation of the stopped store with the recorded
-// identity, without writing anything else. A mismatch refuses the next
-// generation; a match admits exactly one dispatch.
-func (s *monStoreVolume) verify(observed monStoreIdentity) error {
-	s.verified = false
+// requireRetained admits an observation of the stopped store: the record holds
+// a retained identity and no generation is attached.
+func (s *monStoreVolume) requireRetained() error {
 	if (s.phase != monStoreBound && s.phase != monStoreDetached) || s.identity == nil {
 		return fmt.Errorf("MON %s store is %s and holds no retained identity", s.mon, s.phase)
 	}
 	if s.attachment != nil {
 		return fmt.Errorf("MON %s store still has an attachment that is not confirmed gone", s.mon)
+	}
+	return nil
+}
+
+// verify compares an observation of the stopped store with the recorded
+// identity, without writing anything else. A mismatch refuses the next
+// generation; a match admits exactly one dispatch.
+func (s *monStoreVolume) verify(observed monStoreIdentity) error {
+	s.verified = false
+	if err := s.requireRetained(); err != nil {
+		return err
 	}
 	if err := observed.validate(); err != nil {
 		return fmt.Errorf("MON %s store observation: %w", s.mon, err)
