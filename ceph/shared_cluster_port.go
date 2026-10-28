@@ -80,54 +80,59 @@ func (c *Container) setSharingMode(mode sharingMode) { c.sharing.Store(int32(mod
 // auth add with it, which the MONs refuse for an existing entity, and auth
 // get. CreateClient takes several Ceph CLI processes and a keyring copy,
 // about a second under the cluster mutex.
-func (c *Container) createSharedClient(ctx context.Context, entity string, caps ClientCaps) (*ClientConfig, error) {
+//
+// created reports whether the MON accepted the new entity, so the caller must
+// delete it on release, and it is true on every return after that point,
+// including a later keyring failure that still returns the partial client. A
+// failure before it returns the partial client, if any, with created false.
+func (c *Container) createSharedClient(ctx context.Context, entity string, caps ClientCaps) (*ClientConfig, bool, error) {
 	generate, err := c.generateKeyArgs(c.settings.auth.KeyType)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	capArgs, err := clientCapArgs(caps)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := c.lockTopology(ctx); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, errClusterTerminated
+		return nil, false, errClusterTerminated
 	}
 	if !c.bootstrap.hasConfig() {
-		return nil, errors.New("ceph cluster bootstrap is incomplete")
+		return nil, false, errors.New("ceph cluster bootstrap is incomplete")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	if err := c.settleClient(ctx, entity); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	client := &ClientConfig{owner: c, name: entity}
 	client.config = clientConfigBytes(c.bootstrap.rawConfig(), client)
 	result, err := c.runSharedScript(ctx, sharedRequest{CreateAuth: &sharedCreateAuth{Entity: entity, Caps: capArgs, Generate: generate}})
 	if err != nil {
 		// The script's output can hold the key.
-		return client, clientOperationError(ctx, "create "+entity+": command failed", err)
+		return client, false, clientOperationError(ctx, "create "+entity+": command failed", err)
 	}
-	created := result.Created
-	if created == nil || created.Key == "" {
-		return client, fmt.Errorf("create %s: no key was generated", entity)
+	auth := result.Created
+	if auth == nil || auth.Key == "" {
+		return client, false, fmt.Errorf("create %s: no key was generated", entity)
 	}
-	c.authRecords.addSecret(created.Key)
-	if created.Ret != 0 {
-		return client, fmt.Errorf("create %s: the MON answered %d", entity, created.Ret)
+	c.authRecords.addSecret(auth.Key)
+	if auth.Ret != 0 {
+		return client, false, fmt.Errorf("create %s: the MON answered %d", entity, auth.Ret)
 	}
 	client.created = true
-	c.authRecords.confirmKey(entity, created.Key)
-	keyring := []byte(created.Keyring)
-	if clientKey(keyring, entity) != created.Key {
-		return client, fmt.Errorf("cephx keyring for %s does not contain the created key", entity)
+	c.authRecords.confirmKey(entity, auth.Key)
+	keyring := []byte(auth.Keyring)
+	if clientKey(keyring, entity) != auth.Key {
+		return client, true, fmt.Errorf("cephx keyring for %s does not contain the created key", entity)
 	}
 	client.keyring = keyring
 	client.ready = true
-	return client, nil
+	return client, true, nil
 }
 
 // deleteSharedClient removes a tenant's client with one auth rm. ClientConfig.Delete

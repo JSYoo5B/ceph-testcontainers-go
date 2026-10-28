@@ -30,7 +30,7 @@ type sharedBackend interface {
 	resources(ctx context.Context) (map[string]string, error)
 	// daemonsRunning fails when a daemon container of the cluster exited.
 	daemonsRunning(ctx context.Context) error
-	createClient(ctx context.Context, entity string, caps ClientCaps) (*ClientConfig, error)
+	createClient(ctx context.Context, entity string, caps ClientCaps) (client *ClientConfig, created bool, err error)
 	deleteClient(ctx context.Context, client *ClientConfig) error
 	// purgeNamespace removes every object of one namespace of pool.
 	purgeNamespace(ctx context.Context, pool, namespace string) error
@@ -319,7 +319,7 @@ func (b containerBackend) daemonsRunning(ctx context.Context) error {
 	return nil
 }
 
-func (b containerBackend) createClient(ctx context.Context, entity string, caps ClientCaps) (*ClientConfig, error) {
+func (b containerBackend) createClient(ctx context.Context, entity string, caps ClientCaps) (*ClientConfig, bool, error) {
 	return b.c.createSharedClient(ctx, entity, caps)
 }
 
