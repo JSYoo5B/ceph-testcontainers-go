@@ -49,8 +49,8 @@ func (c *Container) Managers(ctx context.Context) ([]*ManagerContainer, error) {
 		return nil, err
 	}
 	defer c.mu.Unlock()
-	result := make([]*ManagerContainer, 0, len(c.managers))
-	for _, manager := range c.managers {
+	result := make([]*ManagerContainer, 0, c.roster.managerCount())
+	for _, manager := range c.roster.eachManager() {
 		result = append(result, manager)
 	}
 	slices.SortFunc(result, func(a, b *ManagerContainer) int { return strings.Compare(a.DaemonName, b.DaemonName) })

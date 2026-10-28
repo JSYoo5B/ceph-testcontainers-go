@@ -788,7 +788,7 @@ func waitDaemonExec(ctx context.Context, docker keyRotationExecClient, execID st
 // files from which it authenticates when it starts. The caller holds c.mu.
 func (c *Container) daemonKeyrings(kind, id string) (testcontainers.Container, []string) {
 	if kind == "mgr" {
-		return c.managers[id].Container, []string{"/etc/ceph/mgr.keyring", "/var/lib/ceph/mgr/ceph-" + id + "/keyring"}
+		return c.roster.manager(id).Container, []string{"/etc/ceph/mgr.keyring", "/var/lib/ceph/mgr/ceph-" + id + "/keyring"}
 	}
 	n, _ := strconv.Atoi(id)
 	return c.osdHandles.get(n).Container, []string{"/etc/ceph/osd.keyring", "/var/lib/ceph/osd/ceph-" + id + "/keyring"}

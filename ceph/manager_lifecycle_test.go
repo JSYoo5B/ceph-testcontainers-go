@@ -29,11 +29,11 @@ func TestManagerRemovalPreflightDoesNotMutate(t *testing.T) {
 			case "unowned":
 				name = "external"
 			case "last":
-				delete(cluster.managers, "b")
+				cluster.roster.dropManager("b")
 			case "unowned auth":
-				cluster.managers["a"].authOwned = false
+				cluster.roster.manager("a").authOwned = false
 			case "partial replacement":
-				cluster.managers["b"].Container = nil
+				cluster.roster.manager("b").Container = nil
 			case "stopped replacement":
 				replacement.running = false
 			case "foreign replacement":
@@ -79,9 +79,9 @@ func TestManagerActiveRemovalWaitsForAvailableReplacement(t *testing.T) {
 
 func TestManagerStandbyRemovalUsesObservedGIDForNumericName(t *testing.T) {
 	cluster, control, target, replacement := managerLifecycleFixture()
-	cluster.managers["42"] = cluster.managers["b"]
-	cluster.managers["42"].DaemonName = "42"
-	delete(cluster.managers, "b")
+	cluster.roster.addManager("42", cluster.roster.manager("b"))
+	cluster.roster.manager("42").DaemonName = "42"
+	cluster.roster.dropManager("b")
 	replacement.name = "42"
 	control.status = `{"active_name":"a","active_gid":101,"available":true,"standbys":[{"name":"42","gid":202}]}`
 	control.onFail = func() { control.status = `{"active_name":"a","active_gid":101,"available":true,"standbys":[]}` }
@@ -107,7 +107,7 @@ func TestManagerRemovalFailureRetainsHandleAndAuthForRetry(t *testing.T) {
 				control.fail = failure
 			}
 			err := managerHandle(t, t.Context(), cluster, "a").Remove(t.Context())
-			if err == nil || cluster.managers["a"] == nil || cluster.ManagerContainer() != target {
+			if err == nil || cluster.roster.manager("a") == nil || cluster.ManagerContainer() != target {
 				t.Fatalf("failed removal lost cleanup ownership: %v", err)
 			}
 			if strings.Contains(err.Error(), "PRIVATE-MANAGER-KEY") {
@@ -130,7 +130,7 @@ func TestManagerRemovalFailureRetainsHandleAndAuthForRetry(t *testing.T) {
 			if failure == "terminate" {
 				wantTerminations++
 			}
-			if target.terminations != wantTerminations || cluster.managers["a"] != nil || cluster.ManagerContainer() != nil {
+			if target.terminations != wantTerminations || cluster.roster.manager("a") != nil || cluster.ManagerContainer() != nil {
 				t.Fatal("retry repeated completed Docker teardown or retained removed ownership")
 			}
 		})
@@ -169,11 +169,11 @@ func managerLifecycleFixture() (*Container, *managerLifecycleControl, *managerLi
 	control := &managerLifecycleControl{status: `{"active_name":"a","active_gid":101,"available":true,"standbys":[{"name":"b","gid":202}]}`}
 	target := &managerLifecycleDaemon{name: "a", running: true, control: control}
 	replacement := &managerLifecycleDaemon{name: "b", running: true, control: control}
-	cluster := &Container{Container: control, manager: target, settings: options{startupTimeout: time.Second},
-		managers: map[string]*ManagerContainer{
+	cluster := &Container{Container: control, settings: options{startupTimeout: time.Second},
+		roster: memberRoster{firstMgr: target, managers: map[string]*ManagerContainer{
 			"a": {Container: target, DaemonName: "a", authOwned: true},
 			"b": {Container: replacement, DaemonName: "b", authOwned: true},
-		}}
+		}}}
 	control.onFail = func() { control.status = `{"active_name":"b","active_gid":202,"available":true,"standbys":[]}` }
 	return cluster, control, target, replacement
 }

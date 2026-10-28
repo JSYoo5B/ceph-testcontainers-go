@@ -226,25 +226,25 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	if c.Container != nil && (!c.monitorTerminated || c.closed) {
 		add("mon", "a", c.Container)
 	}
-	for name, mon := range c.monitors {
+	for name, mon := range c.roster.eachMonitor() {
 		if mon != nil {
 			add("mon", name, mon.Container)
 		}
 	}
-	for name, mgr := range c.managers {
+	for name, mgr := range c.roster.eachManager() {
 		if mgr != nil {
 			add("mgr", name, mgr.Container)
 		}
 	}
-	if c.manager != nil {
-		add("mgr", "a", c.manager)
+	if first := c.roster.initialManager(); first != nil {
+		add("mgr", "a", first)
 	}
 	for id, osd := range c.osdHandles.each() {
 		if osd != nil {
 			add("osd", strconv.Itoa(id), osd.Container)
 		}
 	}
-	for name, ctr := range c.services {
+	for name, ctr := range c.roster.eachService() {
 		role := "service"
 		if strings.HasPrefix(name, "mds.") {
 			role = "mds"

@@ -115,11 +115,12 @@ func TestRefreshMonitorConfigUpdatesEveryOwnedRoleWhileStopped(t *testing.T) {
 	cluster.Container = mon
 	cluster.controlPlane.handle = control
 	cluster.toolkit.client = client
-	cluster.monitors["b"] = &MonitorContainer{Container: second, DaemonName: "b"}
-	cluster.managers["a"] = &ManagerContainer{Container: mgr, DaemonName: "a"}
-	cluster.manager = mgr
+	cluster.roster.addMonitor("b", &MonitorContainer{Container: second, DaemonName: "b"})
+	cluster.roster.addManager("a", &ManagerContainer{Container: mgr, DaemonName: "a"})
+	cluster.roster.recordInitialManager(mgr)
 	cluster.osdHandles.register(3, &OSDContainer{Container: osd, ID: 3})
-	cluster.services["rgw.default"], cluster.services["mds.a"] = rgw, mds
+	cluster.roster.setService("rgw.default", rgw)
+	cluster.roster.setService("mds.a", mds)
 	cluster.extensions = extensionStore{states: map[string]any{
 		"rgw":    testExtension{targets: map[string]testcontainers.Container{"rgw.default": rgw}},
 		"cephfs": testExtension{targets: map[string]testcontainers.Container{"mds.a": mds}},
@@ -172,10 +173,10 @@ func TestMonitorConfigInventorySkipsRemovedAndRetiredHandles(t *testing.T) {
 	retiredMgr := newMonitorConfigArchive("retired-manager", "")
 	retiredOSD := newMonitorConfigArchive("retired-osd", "")
 	cluster.Container, cluster.controlPlane.handle = primary, control
-	cluster.monitors["removed"] = &MonitorContainer{Container: removed, DaemonName: "removed"}
-	cluster.monitors["uncreated"] = &MonitorContainer{DaemonName: "uncreated"}
-	cluster.managers["a"] = &ManagerContainer{Container: retiredMgr, terminated: true}
-	cluster.manager = retiredMgr
+	cluster.roster.addMonitor("removed", &MonitorContainer{Container: removed, DaemonName: "removed"})
+	cluster.roster.addMonitor("uncreated", &MonitorContainer{DaemonName: "uncreated"})
+	cluster.roster.addManager("a", &ManagerContainer{Container: retiredMgr, terminated: true})
+	cluster.roster.recordInitialManager(retiredMgr)
 	cluster.osdHandles.register(2, &OSDContainer{Container: retiredOSD, purged: true})
 	cluster.monitorTerminated = true
 	targets, err := cluster.monitorConfigTargets(ctx, control, "removed")
@@ -186,12 +187,12 @@ func TestMonitorConfigInventorySkipsRemovedAndRetiredHandles(t *testing.T) {
 		t.Fatalf("retired or uncreated containers were queued for refresh: %v", targets)
 	}
 	cluster.monitorTerminated = false
-	delete(cluster.monitors, "removed")
+	cluster.roster.dropMonitor("removed")
 	if targets, err := cluster.monitorConfigTargets(ctx, control, "a"); err != nil || len(targets) != 0 {
 		t.Fatal("a just-terminated primary was queued during RemoveMonitor")
 	}
 	cluster.Container = control
-	cluster.services["rgw.same"] = control
+	cluster.roster.setService("rgw.same", control)
 	if targets, err := cluster.monitorConfigTargets(ctx, control, ""); err != nil || len(targets) != 0 {
 		t.Fatal("control/primary/service aliases were recopied")
 	}
@@ -205,7 +206,7 @@ func TestRefreshMonitorConfigPartialCopyPublishesControlAndRetries(t *testing.T)
 			other := newMonitorConfigArchive("osd-7", "[osd.7]\nprivate = neighbor\n")
 			lost := errors.New("daemon archive copy response lost")
 			bad.writeErr, bad.applyOnError = lost, applied
-			cluster.managers["b"] = &ManagerContainer{Container: bad, DaemonName: "b"}
+			cluster.roster.addManager("b", &ManagerContainer{Container: bad, DaemonName: "b"})
 			cluster.osdHandles.register(7, &OSDContainer{Container: other, ID: 7})
 			err := cluster.RefreshMonitorConfig(t.Context())
 			if !errors.Is(err, lost) || !strings.Contains(err.Error(), "mgr.b") {
@@ -253,7 +254,7 @@ func TestRefreshMonitorConfigRefusesMalformedDaemonButKeepsOtherCopies(t *testin
 	bad.config = []byte("[global]\nmon host = old\nmon_host = duplicate\n")
 	before := bytes.Clone(bad.config)
 	other := newMonitorConfigArchive("osd-8", "[osd.8]\nprivate = retained\n")
-	cluster.managers["b"] = &ManagerContainer{Container: bad, DaemonName: "b"}
+	cluster.roster.addManager("b", &ManagerContainer{Container: bad, DaemonName: "b"})
 	cluster.osdHandles.register(8, &OSDContainer{Container: other, ID: 8})
 	if err := cluster.RefreshMonitorConfig(t.Context()); err == nil || !strings.Contains(err.Error(), "duplicate") || !bytes.Equal(before, bad.config) || bad.writes != 0 || control.writes != 1 || other.writes != 1 {
 		t.Fatalf("ambiguous daemon config was rewritten or successful copies rolled back: %v", err)
@@ -358,7 +359,8 @@ func TestMonitorConfigInventoryIsDeterministicAndDeduplicated(t *testing.T) {
 	cluster, control := newMonitorConfigFixture()
 	a := newMonitorConfigArchive("a", "")
 	b := newMonitorConfigArchive("b", "")
-	cluster.services["rgw.z"], cluster.services["mds.a"] = a, b
+	cluster.roster.setService("rgw.z", a)
+	cluster.roster.setService("mds.a", b)
 	cluster.extensions = extensionStore{states: map[string]any{
 		"rgw":    testExtension{targets: map[string]testcontainers.Container{"rgw.z": a}},
 		"cephfs": testExtension{targets: map[string]testcontainers.Container{"mds.a": b}},
@@ -407,9 +409,8 @@ func newMonitorConfigFixture() (*Container, *monitorConfigArchive) {
 	control := newMonitorConfigArchive("control", "[client.admin]\ncontrol_private = retained-only-on-control\n")
 	control.native = []byte(monitorConfigQuorum)
 	cluster := &Container{Container: control, settings: options{startupTimeout: time.Second},
-		bootstrap: bootstrapRecord{config: []byte(monitorConfigOld), keyring: []byte("retained-admin-keyring")},
-		monitors:  make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer),
-		osdHandles: osdRegistry{owned: make(map[int]*OSDContainer)}, services: make(map[string]testcontainers.Container)}
+		bootstrap:  bootstrapRecord{config: []byte(monitorConfigOld), keyring: []byte("retained-admin-keyring")},
+		osdHandles: osdRegistry{owned: make(map[int]*OSDContainer)}}
 	return cluster, control
 }
 
