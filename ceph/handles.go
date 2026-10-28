@@ -41,7 +41,7 @@ func (c *Container) currentMonitor(handle *MonitorContainer) (*MonitorContainer,
 	if name == "a" && !c.monitorTerminated && c.Container != nil && handle.Container == c.Container {
 		return handle, nil
 	}
-	if cur := c.monitors[name]; cur != nil && cur == handle {
+	if cur := c.roster.monitor(name); cur != nil && cur == handle {
 		return cur, nil
 	}
 	return nil, invalid(fmt.Errorf("monitor %s is not owned by this cluster, or this handle is stale", name))
@@ -51,7 +51,7 @@ func (c *Container) currentMonitor(handle *MonitorContainer) (*MonitorContainer,
 // cluster owns under its name now.
 func (c *Container) currentManager(handle *ManagerContainer) (*ManagerContainer, error) {
 	name := handle.DaemonName
-	if cur := c.managers[name]; cur != nil && cur == handle {
+	if cur := c.roster.manager(name); cur != nil && cur == handle {
 		return cur, nil
 	}
 	return nil, invalid(fmt.Errorf("manager %s is not owned by this cluster, or this handle is stale", name))
@@ -77,7 +77,7 @@ func (m *MonitorContainer) ownedBy(c *Container) bool {
 func (m *ManagerContainer) daemonRef() (string, string) { return "mgr", m.DaemonName }
 
 func (m *ManagerContainer) ownedBy(c *Container) bool {
-	return m != nil && c.managers[m.DaemonName] == m && m.Container != nil && !m.terminated
+	return m != nil && c.roster.manager(m.DaemonName) == m && m.Container != nil && !m.terminated
 }
 
 func (o *OSDContainer) cluster(op string) (*Container, error) {

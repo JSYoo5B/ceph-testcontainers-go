@@ -18,7 +18,7 @@ import (
 // queueing tests need as lock identities (see the design note).
 var membershipControlFields = map[string]bool{
 	"closed": true, "controlPlane": true, "settings": true, "monitorTerminated": true,
-	"manager": true, "monitors": true, "managers": true, "services": true,
+	"roster":     true,
 	"extensions": true, "bootstrap": true,
 }
 
@@ -115,7 +115,7 @@ func unitStateResults(t *testing.T) []string {
 
 // TestMembershipControlStateIsNeverAddressed guards that no production code in
 // the package takes the address of a membership or control field, or of
-// anything under one (c.settings.osds, c.services["x"]). An address is how the
+// anything under one (c.settings.osds, c.roster.monitors["x"]). An address is how the
 // old UnitState let another package write the closed flag and the control plane
 // without a lock.
 func TestMembershipControlStateIsNeverAddressed(t *testing.T) {

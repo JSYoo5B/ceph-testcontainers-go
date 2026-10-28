@@ -75,11 +75,11 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 
 // monitorsLocked lists the owned MONs. The caller holds c.mu.
 func (c *Container) monitorsLocked() []*MonitorContainer {
-	result := make([]*MonitorContainer, 0, len(c.monitors)+1)
+	result := make([]*MonitorContainer, 0, c.roster.monitorCount()+1)
 	if c.Container != nil && !c.monitorTerminated {
 		result = append(result, &MonitorContainer{Container: c.Container, DaemonName: "a", owner: c, image: c.settings.essentialImage})
 	}
-	for _, mon := range c.monitors {
+	for _, mon := range c.roster.eachMonitor() {
 		result = append(result, mon)
 	}
 	slices.SortFunc(result, func(a, b *MonitorContainer) int { return strings.Compare(a.DaemonName, b.DaemonName) })
@@ -146,7 +146,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	if c.closed {
 		return nil, errClusterTerminated
 	}
-	if (name == "a" && !c.monitorTerminated) || c.monitors[name] != nil {
+	if (name == "a" && !c.monitorTerminated) || c.roster.monitor(name) != nil {
 		return nil, fmt.Errorf("monitor %s is already owned", name)
 	}
 	if name == "a" {
@@ -179,10 +179,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 		return nil, err
 	}
 	mon := &MonitorContainer{DaemonName: name, owner: c, image: c.daemonImage(daemon)}
-	if c.monitors == nil {
-		c.monitors = make(map[string]*MonitorContainer)
-	}
-	c.monitors[name] = mon
+	c.roster.addMonitor(name, mon)
 	attempts := 1
 	if c.settings.hostNetwork {
 		attempts = hostPortAttempts
@@ -337,7 +334,7 @@ func (c *Container) removeMonitor(ctx context.Context, handle *MonitorContainer)
 	if name == "a" {
 		c.monitorTerminated = true
 	} else {
-		delete(c.monitors, name)
+		c.roster.dropMonitor(name)
 	}
 	return nil
 }
@@ -522,25 +519,25 @@ func (c *Container) monitorConfigTargets(ctx context.Context, control testcontai
 	if !c.monitorTerminated && removedName != "a" {
 		add("mon.a", c.Container)
 	}
-	for name, mon := range c.monitors {
+	for name, mon := range c.roster.eachMonitor() {
 		if mon != nil && name != removedName {
 			add("mon."+name, mon.Container)
 		}
 	}
-	for name, mgr := range c.managers {
+	for name, mgr := range c.roster.eachManager() {
 		if mgr != nil && !mgr.terminated {
 			add("mgr."+name, mgr.Container)
 		}
 	}
-	if initial := c.managers["a"]; initial == nil || !initial.terminated {
-		add("mgr.a", c.manager)
+	if initial := c.roster.manager("a"); initial == nil || !initial.terminated {
+		add("mgr.a", c.roster.initialManager())
 	}
 	for id, osd := range c.osdHandles.each() {
 		if osd != nil && !osd.purged {
 			add(fmt.Sprintf("osd.%d", id), osd.Container)
 		}
 	}
-	for name, ctr := range c.services {
+	for name, ctr := range c.roster.eachService() {
 		add(name, ctr)
 	}
 	for _, state := range extensionsWith[serviceConfigTargets](c) {
@@ -738,7 +735,7 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 // but does not wait for the MGR to register. The caller holds c.mu. The
 // returned MGR is nil when the error came before it was owned.
 func (c *Container) startManager(ctx context.Context, name, image string) (*ManagerContainer, error) {
-	if c.managers[name] != nil {
+	if c.roster.manager(name) != nil {
 		return nil, fmt.Errorf("manager %s is already owned", name)
 	}
 	data, err := c.clientAuthCommand(ctx, "check manager identity", "auth", "ls", "--format", "json")
@@ -770,10 +767,7 @@ func (c *Container) startManager(ctx context.Context, name, image string) (*Mana
 		return nil, err
 	}
 	mgr := &ManagerContainer{DaemonName: name, owner: c, authOwned: true, image: image}
-	if c.managers == nil {
-		c.managers = make(map[string]*ManagerContainer)
-	}
-	c.managers[name] = mgr
+	c.roster.addManager(name, mgr)
 	if err := c.clearAdminSocket(ctx, "mgr."+name); err != nil {
 		return mgr, err
 	}
@@ -784,7 +778,7 @@ func (c *Container) startManager(ctx context.Context, name, image string) (*Mana
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mgr." + name + ".asok"}).WithStartupTimeout(c.settings.startupTimeout))},
 		c.runDir.mounts()...)...)
 	if name == "a" {
-		c.manager = mgr.Container
+		c.roster.recordInitialManager(mgr.Container)
 	}
 	return mgr, err
 }
@@ -830,7 +824,7 @@ func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer)
 	if !mgr.authOwned {
 		return invalid(fmt.Errorf("manager %s is not owned", name))
 	}
-	if len(c.managers) <= 1 {
+	if c.roster.managerCount() <= 1 {
 		return errors.New("cannot remove the last manager candidate; add a replacement first")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -844,7 +838,7 @@ func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer)
 		return fmt.Errorf("manager %s has no daemon ID in the manager map", name)
 	}
 	candidates := make(map[string]bool)
-	for otherName, other := range c.managers {
+	for otherName, other := range c.roster.eachManager() {
 		if otherName == name || other.Container == nil || other.terminated || !other.authOwned {
 			continue
 		}
@@ -887,10 +881,7 @@ func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer)
 	if _, err := c.clientAuthCommand(ctx, "delete manager identity", "auth", "del", "mgr."+name); err != nil {
 		return err
 	}
-	delete(c.managers, name)
-	if name == "a" {
-		c.manager = nil
-	}
+	c.roster.dropManager(name)
 	// The removal is complete; a replacement that advertises an unreachable
 	// address is reported, not undone.
 	return c.checkDualStackAddresses(ctx)

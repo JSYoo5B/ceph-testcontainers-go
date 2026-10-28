@@ -14,7 +14,6 @@ import (
 func TestStartServiceReturnsNoHandleWhenNoContainerWasCreated(t *testing.T) {
 	cluster := &Container{
 		bootstrap: bootstrapRecord{config: []byte("[global]\n"), keyring: []byte("keyring")},
-		services:  map[string]testcontainers.Container{},
 		settings:  options{startupTimeout: time.Second, hostNetwork: true, publicAddress: "127.0.0.1"},
 	}
 	cause := errors.New("rejected before create")
@@ -24,8 +23,8 @@ func TestStartServiceReturnsNoHandleWhenNoContainerWasCreated(t *testing.T) {
 	if ctr != nil || !errors.Is(err, cause) {
 		t.Fatalf("failed creation returned handle %#v and error %v", ctr, err)
 	}
-	if len(cluster.services) != 0 {
-		t.Fatalf("a service without a container was registered: %v", cluster.services)
+	if cluster.roster.serviceCount() != 0 {
+		t.Fatalf("a service without a container was registered: %v", cluster.roster.services)
 	}
 	if err := cluster.lockTopology(t.Context()); err != nil {
 		t.Fatalf("topology lock not released: %v", err)
