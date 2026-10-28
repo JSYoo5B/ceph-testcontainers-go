@@ -102,7 +102,7 @@ func (faultHooks) Owns(c *Container, id string) bool { return c.ownsNativeTarget
 // OwnedLabel labels a helper container as owned by the cluster, so that
 // Terminate removes it when it leaked.
 func (faultHooks) OwnedLabel(c *Container) testcontainers.CustomizeRequestOption {
-	return c.ownedLabel()
+	return c.startup.ownedLabel()
 }
 
 // Control returns the container that runs the control CLI.

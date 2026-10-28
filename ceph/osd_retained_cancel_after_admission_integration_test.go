@@ -102,7 +102,7 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 	if firstID == oldID {
 		t.Fatal("runtime reused the removed instance")
 	}
-	created := retainedCancelCreated(t, ctx, docker.Client, c.owner, before, retainedCancelClock(t, ctx, docker.Client))
+	created := retainedCancelCreated(t, ctx, docker.Client, c.startup.ownerID(), before, retainedCancelClock(t, ctx, docker.Client))
 	if len(created) != 1 || created[0] != firstID {
 		t.Fatal("native creation inventory differs", created)
 	}

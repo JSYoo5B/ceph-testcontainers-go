@@ -56,19 +56,16 @@ type Container struct {
 	authRecords authState
 	// keyRotationDocker replaces the Docker client of RotateKey in tests.
 	keyRotationDocker func(context.Context) (keyRotationExecClient, error)
-	// owner labels every container of the cluster; see clusterOwnerLabel.
-	owner string
-	// ownedContainerDocker replaces the Docker client of Terminate's removal
-	// of labeled containers in tests.
-	ownedContainerDocker func(context.Context) (ownedContainerClient, error)
-	// keyTypeOption records whether the first MON image's ceph-authtool has
-	// --key-type; see generateKeyArgs.
-	keyTypeOption bool
-	settings      options
-	manager       testcontainers.Container
-	monitors      map[string]*MonitorContainer
-	managers      map[string]*ManagerContainer
-	services      map[string]testcontainers.Container
+	// startup is the owner label ID, the first MON's key-type support and
+	// image ID, and the test seam of the labeled-container removal; see
+	// startupIdentity. It has no lock: it is written before the cluster is
+	// shared.
+	startup  startupIdentity
+	settings options
+	manager  testcontainers.Container
+	monitors map[string]*MonitorContainer
+	managers map[string]*ManagerContainer
+	services map[string]testcontainers.Container
 	// extensions is the per-cluster state of the service packages, by kind,
 	// and the lock that guards it, the former extensionsMu; see
 	// extensionStore.
@@ -104,10 +101,6 @@ type Container struct {
 	debugLevels debugLevelRegistry
 	// daemonRunner replaces runContainer for AddMonitor and AddManager containers in tests.
 	daemonRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
-	// firstMonitorImageID is the ID of the image of the first MON container, which
-	// errors about the essential image's capabilities name. It identifies one
-	// container generation, not a role.
-	firstMonitorImageID string
 	// sharing is a sharingMode: whether a SharedCluster shares the cluster
 	// with tenants or lends it to one exclusive lease; see sharedGate.
 	sharing atomic.Int32
@@ -197,7 +190,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		nw, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily())
 	}
 	c := &Container{settings: settings, nets: networkState{public: nw}, services: make(map[string]testcontainers.Container),
-		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), owner: uuid.NewString()}
+		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), startup: newStartupIdentity(uuid.NewString())}
 	if err != nil {
 		if nw == nil {
 			return nil, classifyDocker(ctx, fmt.Errorf("create ceph network: %w", err))
@@ -238,10 +231,12 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err := c.recordCephVersion(ctx); err != nil {
 		return c, err
 	}
-	if c.keyTypeOption, err = detectKeyTypeOption(ctx, mon); err != nil {
+	keyTypeOption, err := detectKeyTypeOption(ctx, mon)
+	c.startup.recordKeyTypeOption(keyTypeOption)
+	if err != nil {
 		return c, err
 	}
-	c.firstMonitorImageID = containerImageID(ctx, mon)
+	c.startup.recordFirstMonitorImage(containerImageID(ctx, mon))
 	keyring, err := readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring")
 	c.bootstrap.recordKeyring(keyring)
 	if err != nil {
@@ -342,7 +337,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		var lease *hostPortLease
 		var err error
 		if c.settings.hostNetwork {
-			lease, err = reserveHostPorts(ctx, image, c.settings.publicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout, c.ownedLabel())
+			lease, err = reserveHostPorts(ctx, image, c.settings.publicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout, c.startup.ownedLabel())
 			c.trackHostPortLease(lease)
 			if err != nil {
 				return nil, err
@@ -375,7 +370,7 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 		if lease != nil {
 			moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart())
 		}
-		mon, err := runContainer(ctx, image, append(moduleOpts, c.ownedLabel())...)
+		mon, err := runContainer(ctx, image, append(moduleOpts, c.startup.ownedLabel())...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseErr := lease.Release(cleanupCtx)
@@ -931,7 +926,7 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	moduleOpts := append([]testcontainers.ContainerCustomizer{c.adminClient()}, opts...)
-	moduleOpts = append(moduleOpts, c.ownedLabel())
+	moduleOpts = append(moduleOpts, c.startup.ownedLabel())
 	ctr, err := runContainer(ctx, image, moduleOpts...)
 	if ctr != nil {
 		c.services[name] = ctr
@@ -1055,7 +1050,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 		c.toolkit.unlock()
 	}
 
-	errs = append(errs, c.removeLabeledContainers(ctx))
+	errs = append(errs, c.startup.removeLabeledContainers(ctx))
 	// The removed containers can include a storage user whose create reply
 	// was lost, such as an OSD or an owned storage helper.
 	memoryErr = c.stores.retryMemory(ctx, memoryErr, c.osdHandles.count() == 0)

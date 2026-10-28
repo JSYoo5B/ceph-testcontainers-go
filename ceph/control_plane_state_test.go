@@ -492,12 +492,12 @@ func TestTerminateRemovesTheControlPlaneUnderTheTopologyLockBeforeTheFeatureClie
 					return true
 				}
 				switch s := types.ExprString(call.Fun); s {
-				case "c.lockTopology", "c.controlPlane.terminate", "c.Container.Terminate", "c.toolkit.lock", "c.removeLabeledContainers":
+				case "c.lockTopology", "c.controlPlane.terminate", "c.Container.Terminate", "c.toolkit.lock", "c.startup.removeLabeledContainers":
 					at[s] = append(at[s], call.Pos())
 				}
 				return true
 			})
-			order := []string{"c.lockTopology", "c.Container.Terminate", "c.controlPlane.terminate", "c.toolkit.lock", "c.removeLabeledContainers"}
+			order := []string{"c.lockTopology", "c.Container.Terminate", "c.controlPlane.terminate", "c.toolkit.lock", "c.startup.removeLabeledContainers"}
 			var problems []string
 			for _, name := range order {
 				if len(at[name]) != 1 {

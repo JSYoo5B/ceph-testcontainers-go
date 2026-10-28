@@ -10,7 +10,7 @@ import (
 // partial allocator remains owned even when reservation or its context fails.
 func (c *Container) reserveTrackedHostPorts(ctx context.Context, count int) (*hostPortLease, error) {
 	return c.reserveTrackedHostPortsWith(ctx, count, func(ctx context.Context, image, address string, count int, timeout time.Duration) (*hostPortLease, error) {
-		return reserveHostPorts(ctx, image, address, count, timeout, c.ownedLabel())
+		return reserveHostPorts(ctx, image, address, count, timeout, c.startup.ownedLabel())
 	})
 }
 

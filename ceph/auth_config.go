@@ -180,11 +180,11 @@ func (c *Container) generateKeyArgs(keyType CephxCipher) ([]string, error) {
 	switch {
 	case keyType == "":
 		return args, nil
-	case !c.keyTypeOption && keyType != CipherAES:
-		return nil, &OperationError{Kind: ErrUnsupported, Target: "control", Version: c.staticFacts().CephVersion, Image: c.firstMonitorImageID,
+	case !c.startup.supportsKeyType() && keyType != CipherAES:
+		return nil, &OperationError{Kind: ErrUnsupported, Target: "control", Version: c.staticFacts().CephVersion, Image: c.startup.firstMonitorImage(),
 			Capability: "ceph-authtool --key-type",
 			Err:        fmt.Errorf("cephx key type %s needs ceph-authtool --key-type, which the essential image lacks", keyType)}
-	case !c.keyTypeOption:
+	case !c.startup.supportsKeyType():
 		return args, nil
 	}
 	return append(args, "--key-type", string(keyType)), nil
