@@ -222,7 +222,7 @@ func TestRGWUserUsageRefusesUnownedOrReplacedGatewayBeforeNative(t *testing.T) {
 		"foreign user":            func(g *Gateway, user *User) { user.owner = testCluster(nil, servicehook.TestConfig{}, nil) },
 		"unconfirmed user":        func(g *Gateway, user *User) { user.state.created = false },
 		"removed user":            func(g *Gateway, user *User) { user.state.removed = true },
-		"closed cluster":          func(g *Gateway, user *User) { *servicehook.TestState(g.owner).Closed = true },
+		"closed cluster":          func(g *Gateway, user *User) { servicehook.TestSetClosed(g.owner, true) },
 		"removed gateway":         func(g *Gateway, user *User) { servicehook.DeleteService(g.owner, rgwServiceName(g.config)) },
 		"same CID foreign handle": func(g *Gateway, user *User) { g.Container = &rgwAdminTestContainer{id: "gateway"} },
 		"typed nil gateway":       func(g *Gateway, user *User) { g.Container = (*rgwAdminTestContainer)(nil) },

@@ -77,7 +77,7 @@ func TestCephFSValidatesAllPoolPlacementsBeforeCreation(t *testing.T) {
 func TestCephFSUsesClusterPoolDefaultsAndPreservesPartialDescriptor(t *testing.T) {
 	ctr := &poolFixtureContainer{Output: map[string]string{"fs dump --format json": `{"standbys":[],"filesystems":[]}`}, Fail: "osd pool set tc-cephfs-metadata min_size 2"}
 	cluster := poolFixtureCluster(ctr, 3)
-	(*servicehook.TestState(cluster).PoolReplicas), (*servicehook.TestState(cluster).PoolMinSize) = 3, 2
+	servicehook.TestSetPoolDefaults(cluster, 3, 2)
 	fs, err := startFilesystem(t.Context(), cluster, Config{})
 	if err == nil || fs == nil || fs.config.MetadataPool.Replicas != 3 || fs.config.MetadataPool.MinSize != 2 || fs.config.DataPool.Replicas != 3 || fs.config.DataPool.MinSize != 2 {
 		t.Fatalf("CephFS ignored cluster defaults or lost attempted resources: fs=%+v error=%v", fs, err)

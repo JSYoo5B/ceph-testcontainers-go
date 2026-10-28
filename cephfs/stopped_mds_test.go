@@ -164,7 +164,7 @@ func stoppedMDSFixture(t *testing.T) (*Filesystem, *stoppedMDSControl, *MDS, *st
 	}
 	c := poolFixtureCluster(n, 2)
 	setServices(c, map[string]testcontainers.Container{})
-	*servicehook.TestState(c).StartupTimeout = time.Second
+	servicehook.TestSetStartupTimeout(c, time.Second)
 	(*servicehook.TestState(c).Config) = []byte("[global]\nfsid = " + coldMDSFixtureFSID + "\nmon_host = [v2:127.0.0.1:3300]\n")
 	(*servicehook.TestState(c).Keyring) = []byte("private-confirmed-keyring")
 	config, err := normalizeCephFSConfig(Config{Name: "target", StandbyMDS: 1})
@@ -367,7 +367,7 @@ func TestStoppedMDSOwnerGuardsCannotRedirectRemoval(t *testing.T) {
 			case "data-description":
 				fs.DataPool = "foreign"
 			case "closed":
-				*servicehook.TestState(fs.cluster).Closed = true
+				servicehook.TestSetClosed(fs.cluster, true)
 			case "duplicate-target":
 				fs.roster.daemons = append(fs.roster.daemons, target)
 			case "unconfirmed":

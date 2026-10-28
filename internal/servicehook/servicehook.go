@@ -82,6 +82,12 @@ type hooks interface {
 	TestState(c *ceph.Container) TestStateView
 	TestReplaceOSDs(c *ceph.Container, osds map[int]*ceph.OSDContainer)
 	TestOSDCount(c *ceph.Container) int
+	TestSetClosed(c *ceph.Container, closed bool)
+	TestSetControlPlane(c *ceph.Container, control testcontainers.Container)
+	TestSetInitialOSDs(c *ceph.Container, osds int)
+	TestSetPoolDefaults(c *ceph.Container, replicas, minSize int)
+	TestSetStartupTimeout(c *ceph.Container, timeout time.Duration)
+	TestSetCephFSImage(c *ceph.Container, image string)
 	TestClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool)
 	TestApply(opts ...ceph.Option) ([]Bootstrap, error)
 	TestPrepare(osds int, noInitialOSDs bool, pools []ceph.PoolConfig, opts ...ceph.Option) ([]ceph.PoolConfig, []Bootstrap, error)
@@ -366,23 +372,16 @@ type TestConfig = struct {
 	Images *ceph.ImageSet
 }
 
-// TestStateView points at a cluster's internals for unit tests. PortLeases is
-// a count taken when TestState is called.
+// TestStateView points at a cluster's locks and bootstrap record for unit
+// tests. PortLeases is a count taken when TestState is called. The closed flag,
+// the control plane and the options are written through the TestSet* functions.
 type TestStateView = struct {
 	Mutex          *sync.Mutex
 	ControlMutex   *sync.RWMutex
 	ConfigMutex    *sync.RWMutex
-	Closed         *bool
 	Config         *[]byte
 	Keyring        *[]byte
 	CephVersion    *string
-	ControlPlane   *testcontainers.Container
-	InitialOSDs    *int
-	PoolReplicas   *int
-	PoolMinSize    *int
-	StartupTimeout *time.Duration
-	CephFSImage    *string
-	RGWImage       *string
 	PortLeases     int
 	NetworkRemoved *bool
 }
@@ -405,6 +404,33 @@ func TestReplaceOSDs(c *ceph.Container, osds map[int]*ceph.OSDContainer) {
 // TestOSDCount is the number of OSD descriptors the cluster value owns, read
 // without a lock.
 func TestOSDCount(c *ceph.Container) int { return get().TestOSDCount(c) }
+
+// TestSetClosed sets or clears a cluster's closed flag. It takes no lock: hold
+// the mutex that TestState exposes, or use a cluster no other goroutine uses.
+func TestSetClosed(c *ceph.Container, closed bool) { get().TestSetClosed(c, closed) }
+
+// TestSetControlPlane replaces a cluster's control-plane container. It takes no
+// lock: hold ControlMutex, or use a cluster no other goroutine uses.
+func TestSetControlPlane(c *ceph.Container, control testcontainers.Container) {
+	get().TestSetControlPlane(c, control)
+}
+
+// TestSetInitialOSDs sets a cluster's initial OSD count. It takes no lock.
+func TestSetInitialOSDs(c *ceph.Container, osds int) { get().TestSetInitialOSDs(c, osds) }
+
+// TestSetPoolDefaults sets the replica count and minimum size that pool
+// defaults resolve to. It takes no lock.
+func TestSetPoolDefaults(c *ceph.Container, replicas, minSize int) {
+	get().TestSetPoolDefaults(c, replicas, minSize)
+}
+
+// TestSetStartupTimeout sets a cluster's startup timeout. It takes no lock.
+func TestSetStartupTimeout(c *ceph.Container, timeout time.Duration) {
+	get().TestSetStartupTimeout(c, timeout)
+}
+
+// TestSetCephFSImage selects the image of the CephFS role. It takes no lock.
+func TestSetCephFSImage(c *ceph.Container, image string) { get().TestSetCephFSImage(c, image) }
 
 // TestClientState returns a client identity's owner and lifecycle flags.
 func TestClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool) {

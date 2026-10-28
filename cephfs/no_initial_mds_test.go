@@ -43,8 +43,8 @@ type coldMDSFixture struct {
 func newColdMDSFixture() (*ceph.Container, *coldMDSFixture) {
 	native := &coldMDSFixture{pools: map[string]int64{}, nextPool: 0, fsid: coldMDSFixtureFSID, auth: `{"auth_dump":[{"entity":"client.admin","key":"never-log-this-auth-key"}]}`, native: map[string]any{"standbys": []any{}, "filesystems": []any{}}}
 	c := poolFixtureCluster(native, 2)
-	(*servicehook.TestState(c).InitialOSDs) = 2
-	*servicehook.TestState(c).CephFSImage = "selected-mds-image"
+	servicehook.TestSetInitialOSDs(c, 2)
+	servicehook.TestSetCephFSImage(c, "selected-mds-image")
 	setServices(c, map[string]testcontainers.Container{})
 	return c, native
 }
@@ -611,7 +611,7 @@ func TestNoInitialMDSSelectedControlAndLateAdmissionPreserveAuthority(t *testing
 	t.Run("legitimate owned CLI switch", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		other := &coldMDSFixture{pools: n.pools, native: n.native, auth: n.auth, fsid: n.fsid}
-		(*servicehook.TestState(fs.cluster).ControlPlane) = other
+		servicehook.TestSetControlPlane(fs.cluster, other)
 		if err := fs.verifyColdMDS(t.Context(), fs.coldMDS); err != nil || len(other.calls) == 0 {
 			t.Fatalf("stable cluster behind changed CLI was rejected: %v", err)
 		}
