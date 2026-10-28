@@ -277,7 +277,7 @@ func TestCephFSSubvolumeAuthorizationOutsideIdentityEditsRefuseMutation(t *testi
 		{"caps", func(_ *Filesystem, c *cephFSAuthFixtureContainer) {
 			c.auth["client.writer"].Caps["osd"] = "allow *"
 		}},
-		{"closed", func(fs *Filesystem, _ *cephFSAuthFixtureContainer) { *servicehook.TestState(fs.cluster).Closed = true }},
+		{"closed", func(fs *Filesystem, _ *cephFSAuthFixtureContainer) { servicehook.TestSetClosed(fs.cluster, true) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fs, c, volume := cephFSAuthorizationFixture(t)

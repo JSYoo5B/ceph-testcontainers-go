@@ -344,7 +344,7 @@ func TestFullRatiosSessionThroughHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	*state.Closed = true
+	servicehook.TestSetClosed(c, true)
 	overridehook.WithTopologyNoContext(c, func() {
 		if _, err := overridehook.OpenFullRatios(ctx, c); err == nil {
 			t.Error("a session opened on a terminated cluster")

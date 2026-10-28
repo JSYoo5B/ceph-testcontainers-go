@@ -134,11 +134,18 @@ func TestClusterFactsUnrecordedStaysUnavailable(t *testing.T) {
 // synchronized read to FactsOf and update this allowlist.
 func TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup(t *testing.T) {
 	allowed := map[string]bool{
-		"Run":                true, // builds the cluster before returning it
-		"recordCephVersion":  true, // called only from Run before publication
-		"TestCluster":        true, // builds a fresh unit-test cluster
-		"TestState":          true, // unit-test pointer hooks
-		"scanRecordedWrites": true,
+		"Run":               true, // builds the cluster before returning it
+		"recordCephVersion": true, // called only from Run before publication
+		"TestCluster":       true, // builds a fresh unit-test cluster
+		"TestState":         true, // unit-test pointer hooks (config, keyring, version, bridge flag)
+		// Unit-test option setters, the only writers of c.settings after Run. They replace
+		// the settings pointers TestState used to publish; only TestSetCephFSImage writes
+		// a recorded fact (cephfsOverride), the others write fields FactsOf never reads.
+		"TestSetInitialOSDs":    true,
+		"TestSetPoolDefaults":   true,
+		"TestSetStartupTimeout": true,
+		"TestSetCephFSImage":    true,
+		"scanRecordedWrites":    true,
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {

@@ -20,7 +20,7 @@ type closingTarget struct {
 func (target closingTarget) Networks(context.Context) ([]string, error) {
 	view := servicehook.TestState(target.c)
 	view.Mutex.Lock()
-	*view.Closed = true
+	servicehook.TestSetClosed(target.c, true)
 	view.Mutex.Unlock()
 	facts, err := ceph.FactsOf(target.c)
 	return []string{facts.NetworkName}, err

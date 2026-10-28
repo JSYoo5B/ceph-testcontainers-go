@@ -249,7 +249,7 @@ func TestCephFSDataPoolGuardsBeforeMutation(t *testing.T) {
 		t.Fatal("overwrite-enabled EC refused", err)
 	}
 	fs, c = dataPoolsFixture(t)
-	*servicehook.TestState(fs.cluster).Closed = true
+	servicehook.TestSetClosed(fs.cluster, true)
 	if _, err := fs.DataPools(t.Context()); err == nil || len(c.calls) != 0 {
 		t.Fatal("terminated cluster queried")
 	}

@@ -153,7 +153,7 @@ func TestBlocklistRestoreRefusedAfterTerminate(t *testing.T) {
 	}
 	view := servicehook.TestState(c)
 	view.Mutex.Lock()
-	*view.Closed = true
+	servicehook.TestSetClosed(c, true)
 	view.Mutex.Unlock()
 	before := native.commands
 	err = change.Restore(t.Context())
@@ -194,8 +194,7 @@ func TestBlocklistAdmissionDoesNotMutateUnavailableCluster(t *testing.T) {
 		}
 	}
 	c, native := newBlocklistFixture(t)
-	view := servicehook.TestState(c)
-	*view.Closed = true
+	servicehook.TestSetClosed(c, true)
 	if change, err := AddBlocklist(t.Context(), c, blocklistTestAddress, time.Minute); err == nil || change == nil || change.state.refused == nil || native.commands != 0 || len(held(c)) != 0 {
 		t.Fatalf("closed cluster admitted: %v", err)
 	}

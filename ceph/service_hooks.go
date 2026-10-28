@@ -445,22 +445,18 @@ func (serviceHooks) TestCluster(control testcontainers.Container, config testClu
 }
 
 // testState points at a cluster's internals for the service packages' unit
-// tests. PortLeases is a count taken when TestState is called.
+// tests. PortLeases is a count taken when TestState is called. It publishes
+// the three lock domains and the bootstrap record, and no pointer to the
+// closed flag, the control plane or the options: those are written through the
+// TestSet* hooks below (see the membership/control section of
+// docs/design/container-decomposition.md).
 type testState = struct {
 	Mutex          *sync.Mutex
 	ControlMutex   *sync.RWMutex
 	ConfigMutex    *sync.RWMutex
-	Closed         *bool
 	Config         *[]byte
 	Keyring        *[]byte
 	CephVersion    *string
-	ControlPlane   *testcontainers.Container
-	InitialOSDs    *int
-	PoolReplicas   *int
-	PoolMinSize    *int
-	StartupTimeout *time.Duration
-	CephFSImage    *string
-	RGWImage       *string
 	PortLeases     int
 	NetworkRemoved *bool
 }
@@ -469,13 +465,48 @@ type testState = struct {
 // caller holds Mutex or the cluster value is not shared yet.
 func (serviceHooks) TestState(c *Container) testState {
 	return testState{
-		Mutex: &c.mu, ControlMutex: &c.controlMu, ConfigMutex: &c.configMu, Closed: &c.closed,
-		Config: &c.config, Keyring: &c.keyring, CephVersion: &c.cephVersion, ControlPlane: &c.controlPlane,
-		InitialOSDs: &c.settings.osds, PoolReplicas: &c.settings.poolReplicas,
-		PoolMinSize: &c.settings.poolMinSize, StartupTimeout: &c.settings.startupTimeout,
-		CephFSImage: &c.settings.cephfsOverride, RGWImage: &c.settings.rgwOverride, PortLeases: c.portLeases.count(), NetworkRemoved: &c.nets.publicRemoved,
+		Mutex: &c.mu, ControlMutex: &c.controlMu, ConfigMutex: &c.configMu,
+		Config: &c.config, Keyring: &c.keyring, CephVersion: &c.cephVersion,
+		PortLeases: c.portLeases.count(), NetworkRemoved: &c.nets.publicRemoved,
 	}
 }
+
+// The TestSet* hooks write one membership or control value of a cluster for the
+// service packages' unit tests. They replace the pointers that TestState used to
+// publish. None takes a lock: the caller holds the mutex that TestState exposes
+// (Mutex for the closed flag and the options, ControlMutex for the control
+// plane) or the cluster value is not shared yet.
+
+// TestSetClosed sets or clears the closed flag. The caller holds Mutex or the
+// cluster value is not shared.
+func (serviceHooks) TestSetClosed(c *Container, closed bool) { c.closed = closed }
+
+// TestSetControlPlane replaces the control-plane container. The caller holds
+// ControlMutex or the cluster value is not shared.
+func (serviceHooks) TestSetControlPlane(c *Container, control testcontainers.Container) {
+	c.controlPlane = control
+}
+
+// TestSetInitialOSDs sets the initial OSD count. The caller holds Mutex or the
+// cluster value is not shared.
+func (serviceHooks) TestSetInitialOSDs(c *Container, osds int) { c.settings.osds = osds }
+
+// TestSetPoolDefaults sets the replica count and minimum size that pool
+// defaults resolve to. The caller holds Mutex or the cluster value is not
+// shared.
+func (serviceHooks) TestSetPoolDefaults(c *Container, replicas, minSize int) {
+	c.settings.poolReplicas, c.settings.poolMinSize = replicas, minSize
+}
+
+// TestSetStartupTimeout sets the startup timeout. The caller holds Mutex or the
+// cluster value is not shared.
+func (serviceHooks) TestSetStartupTimeout(c *Container, timeout time.Duration) {
+	c.settings.startupTimeout = timeout
+}
+
+// TestSetCephFSImage selects the image for the CephFS role. The caller holds
+// Mutex or the cluster value is not shared.
+func (serviceHooks) TestSetCephFSImage(c *Container, image string) { c.settings.cephfsOverride = image }
 
 // TestReplaceOSDs swaps the owned OSD descriptors of a cluster value for
 // osds, for the service packages' unit tests. It takes no lock: the caller
