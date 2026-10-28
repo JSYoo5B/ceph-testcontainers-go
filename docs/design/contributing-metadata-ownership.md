@@ -691,16 +691,271 @@ tests build both sides of the conflict in a temporary Git repository, show the
 same four-file conflict class (`declarations.json` and `review.json` here), and
 show the same tree verifying after `resolve`.
 
+## Integration ledger after the split (one window)
+
+This section records what the new layout did in a window of real integrations,
+with the quantities kept apart as the measurement table above requires. It
+changes no gate. The window is the ten pull requests merged after `apinaming
+resolve` (#277 to #287; no merge of #279 appears in the window), from
+`64cbc22` to `0b6e6c2`, all on 2026-10-28. It is one window of one repository
+and no rate.
+
+Method. Conflict incidence is `git merge-tree --write-tree --name-only` on the
+two parents of every merge commit that a pull request branch contains (a merge
+of `main` into the branch), so it reports what Git would have asked the author
+to resolve, whatever the author then committed. File counts per pull request
+come from `git diff --name-only` between the first-parent and the merge commit.
+Head SHAs, runs and jobs come from the Actions API, and the three units are
+kept apart. A **head** is a pull request commit that has `pull_request` runs.
+An **attempt** is one run attempt of a workflow run (a re-run of a run adds an
+attempt to the same head and starts no new head). An **executed job** is a job
+record of any attempt whose conclusion is not `skipped` (failed and cancelled
+executions count, because they ran), and its window is its start to
+completion. Every attempt of every run of every head is read, through the
+per-attempt jobs endpoint. A re-run attempt also lists the jobs it did not
+re-run, with a new job id but the original run, name, start and completion
+times; those carried-forward records are counted once, deduplicated by run,
+job name, start and completion, so only the re-executed job adds an execution.
+
+Correction found in review. The first version of this ledger read only the
+latest job records of each run, which silently dropped a failed first execution
+that a re-run later replaced. For #284 that gave 76 jobs and 14,819 seconds; the
+actual executions are 77 jobs and 14,964 seconds (a failed Race detector job of
+145 seconds in attempt 1, and a successful one of 129 seconds in attempt 2). The
+whole window was re-measured with the method above; #284 is the only head whose
+numbers changed, and the earlier statement that nothing was left out was wrong
+for it.
+
+### Bookkeeping files: what contended
+
+| Family | Pull requests in the window that changed it | Textual conflicts |
+| --- | ---: | ---: |
+| Release fragments (`docs/changes/`) | 8 of 10 | 0 (eight different files) |
+| `CHANGELOG.md` | 0 of 10 | 0 |
+| Package catalogues and receipts (`docs/design/api-naming/`) | 0 of 10 | 0 |
+| `docs/design/container-decomposition.md` | 5 of 10 | 1 (#282) |
+| `docs/contributing/test-double-inventory.md` | 3 of 10 | 0 textual, 1 semantic (#283) |
+| `ceph/service_hooks.go`, `ceph/ceph.go`, `ceph/membership_control_test.go` and other Go files of package `ceph` | 4 to 5 each | every other conflict |
+
+So the fragments did what the design asked: eight pull requests added a fragment
+each, with no shared edit and no conflict. None of the ten pull requests
+changed a public API, so the window does not exercise `apinaming resolve` or the
+package catalogues at all; the earlier four-integration sample remains the only
+evidence for same-package catalogue conflicts. Three of the ten pull requests
+(#280, #281, #282) needed a conflict-resolution merge of `main`, and every file
+Git reported was a Go source or test file, except one design document:
+
+| Pull request | Merge | Conflicted files |
+| --- | --- | --- |
+| #280 | `c9d2128` | seven Go source and test files in `ceph`, `fault` and `internal/servicehook` |
+| #281 | `e539165` | `ceph/membership_control_test.go` |
+| #282 | `bf46234` | `ceph/ceph.go`, `ceph/native_state_test.go`, `docs/design/container-decomposition.md` |
+
+Two further merges (#283) were textually clean. One of them (`94af721`) still
+needed an edit: its message records that the composed tree failed the
+test-double inventory guard (`testdoublecheck`) and that the cleanup-hook row was
+retargeted to the moved field. That is the intended behavior of a guard that
+reads symbols, and it is the case a textual merge cannot see.
+
+### The one design-document conflict
+
+`container-decomposition.md` is a 2,322-line document to which every extraction
+slice appends a numbered section at the end. #282 was opened while #281 was in
+flight, both appended a section titled "Fourteenth internal slice" at the same
+place, and Git reported two hunks (the heading and the following audit table)
+in that file. The resolution kept both sections and renumbered #282's to
+"Fifteenth".
+Neither the fragment layout nor the catalogue split touches this: the file is
+neither generated nor a shared aggregate of independent records, it is an
+append-only narrative whose ordinal heading names a position in a queue that
+concurrent pull requests cannot both hold.
+
+This is a contested family the inventory above did not list, so it is recorded
+here with the same fields:
+
+| File | Role | Writer | Reader | Contention |
+| --- | --- | --- | --- | --- |
+| `docs/design/container-decomposition.md` | authored design record, appended per slice | the author of each `Container` extraction | reviewers, later slices that cite its sections | 5 of 10 pull requests in the window, 1 textual conflict |
+| `docs/contributing/test-double-inventory.md` | authored table with a source-sync guard | the author of any change that adds, moves or renames a double | `testdoublecheck` in `make tag-compile` | 3 of 10, 1 semantic mismatch caught by the guard, 0 textual |
+
+Options for the design record.
+
+1. Leave it. One textual conflict in ten pull requests, resolved with the
+   combined tree reviewed. The cost that matters (a new head and a full
+   execution) is the same as for the Go conflict in `ceph/ceph.go` that the same
+   pull requests already had, so removing the document conflict alone would not
+   have saved the second head.
+2. Name sections after the component, not the ordinal, and keep the file. This
+   removes the false ordinal collision (two authors can no longer both claim
+   the "Fourteenth") but the append point still conflicts textually.
+3. One file per slice under `docs/design/container-decomposition/`, named after
+   the component, with the current file reduced to the shared measurement and
+   policy sections plus a list of the slice files. Two slices then touch
+   different files. Ordering is no longer implied by position, and the list
+   would again be a shared edit unless it is discovered from the directory as
+   fragments are.
+
+Decision (owner, 2026-10-28, recorded after this section was first written):
+option 3 is selected now, not deferred until a number of future slices exists,
+and it supersedes the earlier recommendation to only drop the ordinals. See
+[Decisions](#decisions-for-the-owner) for the full text. The historical
+observation keeps its limit: the conflict in this document also involved Go
+source conflicts, so splitting the document alone would not have removed that
+integration head or saved its runner time. The test-double inventory needs no
+change: the guard turned a clean-but-wrong merge into a failure with a named
+row, and its three edits did not conflict textually.
+
+### Different-package changes with disjoint paths
+
+#223 (`ceph` observer queries) and #224 (move of the CephFS mirror fixture to
+`cephfs/mirror`) were opened from the same base `2aab805` and merged 37 seconds
+apart (14:28:14 and 14:28:51, +09:00). #223 changed `docs/design/api-naming/ceph/declarations.json`,
+`docs/design/api-naming/ceph/review.json` and its fragment
+`docs/changes/146-observer-locked-queries.md`. #224 changed the catalogue and
+receipt files of `cephfs` and `cephfs/mirror`, its own fragment
+`docs/changes/156-cephfs-mirror-package.md` and `package-split.json`. The path
+sets under `docs/design/api-naming/` and `docs/changes/` are disjoint, #224 was
+merged on top of #223 without being rebased or merged with `main`, and the
+combined commit `4daaba2` passes `go run ./internal/tools/apinaming check` when
+checked out on its own (Docker-free, run once while preparing this note).
+Before the split both pull requests would have edited the two global catalogue
+files and the receipt; the combination would have conflicted or needed a
+regenerate. This shows the different-package case once. It does not show the
+combined commit's native result, and it is not a rate.
+
+### Cost of the extra heads and attempts
+
+| Pull request | Heads with runs | Run attempts (all heads) | Executed jobs per head | Summed job windows per head (s) | Create to merge (min) |
+| --- | ---: | ---: | --- | --- | ---: |
+| #277 | 1 | 15 | 76 | 15,718 | 42 |
+| #278 | 1 | 15 | 76 | 15,981 | 42 |
+| #280 | 3 | 21 | 76, 76, 76 | 15,165; 15,727; 15,508 | 122 |
+| #281 | 2 | 22 | 76, 76 | 15,512; 15,253 | 83 |
+| #282 | 2 | 22 | 76, 76 | 15,323; 15,804 | 93 |
+| #283 | 3 | 33 | 76, 76, 76 | 15,223; 15,876; 15,290 | 120 |
+| #284 | 1 | 20 (one is a re-run attempt) | 77 | 14,964 | 42 |
+| #285 | 1 | 19 | 76 | 15,541 | 36 |
+| #286 | 1 | 19 | 76 | 15,713 | 41 |
+| #287 (documentation only) | 1 | 1 | 7 | 1,859 | 23 |
+
+Sixteen heads started 186 workflow runs and 187 run attempts; exactly one
+attempt is a re-run (#284, Code checks attempt 2, which re-executed only the
+Race detector job). The 16 heads executed 1,148 job records: fifteen heads ran
+76 each (one of them 77 with the re-run), and #287's head ran the seven Code
+checks jobs only. Five of the 1,148 did not succeed (two cancelled in #280's
+first head, one failure each in #278, #283 and #284). The summed job windows
+are 234,457 seconds; each full head is about 15,000 to 16,000 seconds. These
+are sums of overlapping CI job windows including setup. They are not native
+work (the job records include Code checks and non-native runtime jobs), not
+elapsed time and not billed time. Heads and attempts are separate metrics: six
+of the sixteen heads are the second or third head of a pull request (new
+heads), while one additional attempt is a re-run of an existing head. Four of them follow a conflict or an alignment: the conflict
+merges themselves (#281 `e539165`, #282 `bf46234`), the semantic-alignment merge
+(#283 `94af721`) and the head right after #280's conflicting merge `c9d2128`
+(`42a8504`, which also carries a code change). The other two are a textually
+clean merge of `main` (#283, `34806d8`) and a follow-up code commit (#280,
+`bfbe560`). The four conflict-or-alignment heads account for 62,074
+seconds of summed job windows, about a quarter (26%) of the window's total, and in none of
+them did the conflicting files include a fragment or a catalogue.
+
+Three observations the ledger does not turn into savings. First, a merge of
+`main` into a pull request changes the tree, so under the rule above every one
+of those heads rightly ran its checks again; the metadata layout could only
+have removed those heads where the metadata was the only conflict, and in this
+window it never was. Second, #287, which changed one design document and one
+package page, is the one head that executed only the seven Code checks jobs,
+the intended lightweight disposition, and the comparison-identity observation
+recorded on #216 for #243 (event base against combined checkout) is unchanged by
+this window. Third, create-to-merge time is dominated by review and by the
+one-to-two-hour CI cycle of a full head; the three pull requests with a conflict
+merge took 83 to 122 minutes against 36 to 42 minutes for the single-head
+ones, but they are also the largest (88, 33 and 28 changed files against 3 to 18),
+so the difference is not attributable to the conflicts.
+
+What the ledger answers for #216: conflict incidence (3 of 10 pull requests, 0
+of them in fragments or catalogues), new heads (6 additional heads, 4 following a
+conflict or semantic alignment), re-run attempts (1, in #284, unrelated to a
+conflict), executed job records and summed windows per head as above, and
+elapsed time as above, each separate. What it does not answer: the
+effort of review, billed time, queue time, and whether a layout change would
+have removed any head, because none of the heads in this window had a
+metadata-only cause.
+
+## Decisions for the owner
+
+The questions this note raised are settled by owner comments of
+2026-10-28. The text below follows those comments; it adds no requirement.
+
+1. **Settled: component-owned decomposition records (option 3).** Comments:
+   [#289](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/289#issuecomment-6469810638)
+   and [#216](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/216#issuecomment-6469805516).
+   `docs/design/container-decomposition.md` stays for common design principles,
+   shared measurements and status, and cross-component constraints. Independently
+   authored component records go in separate component-named files (for example
+   under `docs/design/container-decomposition/`, or the equivalent final
+   documented layout), with stable names and no ordinal numbering. The files are
+   discovered from the directory: no component pull request edits a
+   hand-maintained list, count or aggregate, and any generated navigation must
+   not recreate that editing requirement. Dependencies and order are stated in a
+   component record where they matter; directory or file name order does not
+   define implementation order. The migration keeps existing content, evidence
+   provenance and references and updates links and anchors. A component-local
+   change normally edits only its own record; shared principles and
+   measurements still use the common document when they change, and genuine
+   cross-component coordination is not promised away. The migration itself is a
+   bounded follow-up, not part of this ledger-only change.
+2. **Settled: no further observation window.** Comments:
+   [#289](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/289#issuecomment-6469916797)
+   and [#216](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/216#issuecomment-6469910951).
+   A repeated ledger with a catalogue conflict is not required. The current
+   ledger is accepted as the observation record with its limits, and the
+   applicable acceptance criteria are assessed item by item against it and the
+   existing deterministic composition and validation evidence. The fragment
+   observations show useful progress toward avoiding shared `CHANGELOG.md`
+   edits, but this ledger makes no causal claim about fewer CI heads, elapsed
+   time or billed savings, and it does not authorize closing the issue. Genuine
+   coupled-refactoring and source conflicts remain integration work.
+   Preserving source and API integration review and current-head validation
+   stands: an earlier SHA's results are not fresh execution. Larger campaigns,
+   generalized evidence reuse and further CI enforcement are separate proposals.
+3. **Settled: optional CI enforcement of `apinaming resolve` composition.** It
+   remains outside the required scope of #216 (same comments as item 2).
+4. **Settled: no mandatory note or no-note fragment for package
+   documentation edits.** Comment:
+   [#216](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/216#issuecomment-6469968974).
+   A pull request that edits `docs/<package>.md` needs no fragment or
+   `kind: none` justification for that reason alone. Release-worthiness is
+   assessed on content (user-facing compatibility, requirements, supported scope
+   or migration guidance), not on the documentation path, with no shared
+   exception list, routine attestation or extra approval step. An actual public
+   API or catalogue change still needs a fragment or the applicable justified
+   no-note decision.
+5. **Settled: CI verifies API approval and never grants it.** Comment:
+   [#216](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/216#issuecomment-6470087537).
+   Regeneration, deliberate approval and verification stay distinct. CI runs a
+   read-only approval-verification check through the existing validators
+   (source, catalogue and review bindings, stale approval, base-to-head
+   migration requirements). It never runs the approval-writing action to create
+   or refresh a review receipt, because a passing consistency check is not human
+   design approval. The existing base-comparison and catalogue checks are
+   preferred over a new duplicate check or attestation. The proof-based
+   composition of already approved parent decisions by `apinaming resolve` is
+   unchanged and distinct from approving new API decisions.
+
+Implementation of items 1, 4 and 5 (the file migration, and reconciling the
+contributing and validator guidance with the existing checks) is not part of
+this change.
+
 ## Not decided and limits
 
-- The directory and field names above are proposals.
-- Whether the approve step may also be run as a pull-request-only check against
-  the base is open.
-- Whether the justified-no-note requirement should apply to `docs/<package>.md`
-  edits as well as catalogue changes is open.
+- The directory and field names above are proposals, except the component-owned
+  decomposition layout chosen in the decisions above.
+- The approve-step and package-documentation questions that this note first
+  listed as open are settled in the decisions above.
 - The numbers above come from one window of one repository and measure edit
   frequency and four overlapping pull requests. They are not a rate, and the
-  workflow-run spans are not billed time.
+  workflow-run spans are not billed time. They support no causal claim about
+  CI heads, elapsed time or billed savings.
 - Nothing here was run natively. This note is source reading and repository
   history only.
 
