@@ -125,7 +125,7 @@ var startupIdentityCallers = map[string][]string{
 	"startManager":            {"ownedLabel"},
 	"startService":            {"ownedLabel"},
 	"startVerification":       {"ownerID"},
-	"terminate":               {"removeLabeledContainers"},
+	"terminate":               {"ownerID", "removeLabeledContainers"},
 }
 
 var startupIdentityFields = map[string]bool{"owner": true, "keyTypeOption": true, "firstMonitorImageID": true, "ownedContainerDocker": true}

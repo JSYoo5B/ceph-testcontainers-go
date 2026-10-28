@@ -82,6 +82,10 @@ type Container struct {
 	// monStoreState. It has no lock of its own: mu guards it. Nothing publishes
 	// a record yet.
 	monStores monStoreState
+	// deviceClaims is the cluster-wide claim table of the host block devices
+	// of OSDs; see osdDeviceClaims. It has no lock of its own: mu guards it.
+	// Nothing publishes a claim yet.
+	deviceClaims osdDeviceClaims
 	// runDir is the shared admin-socket run directory; see runDirState for
 	// what guards each part.
 	runDir runDirState
@@ -815,6 +819,10 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 	if err := c.stores.discard(ctx, id); err != nil {
 		return err
 	}
+	// The container is gone when it was terminated above; a launch that never
+	// created one keeps no claim, and an unconfirmed lost create reply keeps it
+	// for Terminate.
+	c.deviceClaims.release(id, osd.Container != nil)
 	c.osdHandles.forget(id)
 	return nil
 }
@@ -986,6 +994,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 				continue
 			}
 		}
+		c.deviceClaims.release(id, osd.Container != nil)
 		c.osdHandles.forget(id)
 	}
 	memoryErr := c.stores.releaseMemory(ctx, c.osdHandles.count() == 0)
@@ -1047,13 +1056,15 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 		c.toolkit.unlock()
 	}
 
-	errs = append(errs, c.startup.removeLabeledContainers(ctx))
+	scanErr := c.startup.removeLabeledContainers(ctx)
+	errs = append(errs, scanErr)
 	// The removed containers can include a storage user whose create reply
 	// was lost, such as an OSD or an owned storage helper.
 	memoryErr = c.stores.retryMemory(ctx, memoryErr, c.osdHandles.count() == 0)
 	volumeErr = c.stores.retryVolume(ctx, volumeErr, c.osdHandles.count() == 0)
 	monStoreErr = c.monStores.retryStores(ctx, monStoreErr)
-	errs = append(errs, memoryErr, volumeErr, monStoreErr)
+	errs = append(errs, memoryErr, volumeErr, monStoreErr,
+		c.deviceClaims.settle(scanErr == nil && c.startup.ownerID() != ""))
 	if err := c.runDir.release(ctx); err != nil {
 		errs = append(errs, err)
 	}

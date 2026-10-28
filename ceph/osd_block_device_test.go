@@ -226,7 +226,7 @@ func TestOSDBlockDeviceSeamIsInternalAndLockFree(t *testing.T) {
 					problems = append(problems, file+": declares a mutex")
 				}
 			case *ast.Ident:
-				if x.Name == "osdBlockDevice" && file != "osd_block_device.go" && file != "osd_launch.go" {
+				if x.Name == "osdBlockDevice" && file != "osd_block_device.go" && file != "osd_launch.go" && file != "osd_device_claims.go" {
 					problems = append(problems, file+": names osdBlockDevice")
 				}
 			}
