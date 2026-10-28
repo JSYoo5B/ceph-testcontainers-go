@@ -171,7 +171,7 @@ func TestTopologySnapshotContextsRejectExpiredContextAndAllowRetry(t *testing.T)
 
 func TestControlContainerContextBoundsConcurrentTermination(t *testing.T) {
 	cluster := &Container{}
-	assertSnapshotReadLockQueued(t, &cluster.controlMu, func(ctx context.Context) error {
+	assertSnapshotReadLockQueued(t, &cluster.controlPlane.mu, func(ctx context.Context) error {
 		_, err := cluster.ControlContainer(ctx)
 		return err
 	})
@@ -183,11 +183,11 @@ func TestCephStatusQueriesHonorBusyControlWhileOwnerIsHeld(t *testing.T) {
 			cluster := &Container{}
 			cluster.mu.Lock()
 			defer cluster.mu.Unlock()
-			cluster.controlMu.Lock()
+			cluster.controlPlane.mu.Lock()
 			locked := true
 			defer func() {
 				if locked {
-					cluster.controlMu.Unlock()
+					cluster.controlPlane.mu.Unlock()
 				}
 			}()
 			ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
@@ -213,7 +213,7 @@ func TestCephStatusQueriesHonorBusyControlWhileOwnerIsHeld(t *testing.T) {
 					t.Fatalf("control deadline cause: %v", err)
 				}
 			case <-time.After(400 * time.Millisecond):
-				cluster.controlMu.Unlock()
+				cluster.controlPlane.mu.Unlock()
 				locked = false
 				select {
 				case <-done:
@@ -271,12 +271,12 @@ func TestCephControlSnapshotDoesNotReenterTopologyOwner(t *testing.T) {
 
 func TestControlContainerContextRetainsStableCLIAndFallbackIdentity(t *testing.T) {
 	original, control := &snapshotCommandControl{}, &snapshotCommandControl{}
-	cluster := &Container{Container: original, controlPlane: control}
+	cluster := &Container{Container: original, controlPlane: controlPlaneState{handle: control}}
 	selected, err := cluster.ControlContainer(t.Context())
 	if err != nil || selected != control {
 		t.Fatalf("stable CLI identity differs: %v", err)
 	}
-	cluster.controlPlane = nil
+	cluster.controlPlane.handle = nil
 	selected, err = cluster.ControlContainer(t.Context())
 	if err != nil || selected != original {
 		t.Fatalf("default monitor CLI fallback identity differs: %v", err)

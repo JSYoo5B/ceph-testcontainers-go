@@ -174,12 +174,12 @@ func TestPoolPGsUsesOneCapturedControlHandle(t *testing.T) {
 	cluster, embedded := newPoolPGFixture()
 	_, control := newPoolPGFixture()
 	_, replacement := newPoolPGFixture()
-	cluster.controlPlane = control
+	cluster.controlPlane.handle = control
 	control.hook = func(_ context.Context, call int) error {
 		if call == 1 {
-			cluster.controlMu.Lock()
-			cluster.controlPlane = replacement
-			cluster.controlMu.Unlock()
+			cluster.controlPlane.mu.Lock()
+			cluster.controlPlane.handle = replacement
+			cluster.controlPlane.mu.Unlock()
 		}
 		return nil
 	}
@@ -413,8 +413,8 @@ func TestPoolPGsBoundsOwnerControlAndConfigAdmission(t *testing.T) {
 				cluster.mu.Lock()
 				unlock = cluster.mu.Unlock
 			case "control":
-				cluster.controlMu.Lock()
-				unlock = cluster.controlMu.Unlock
+				cluster.controlPlane.mu.Lock()
+				unlock = cluster.controlPlane.mu.Unlock
 			case "config":
 				cluster.configMu.Lock()
 				unlock = cluster.configMu.Unlock

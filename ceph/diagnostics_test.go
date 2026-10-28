@@ -136,7 +136,7 @@ func TestDiagnosticsSnapshotPartialInventory(t *testing.T) {
 	mgr := &diagnosticsTestContainer{id: "manager"}
 	service := &diagnosticsTestContainer{id: "partial-gateway"}
 	cluster := &Container{
-		Container: primary, manager: mgr, controlPlane: primary, closed: true, monitorTerminated: true,
+		Container: primary, manager: mgr, controlPlane: controlPlaneState{handle: primary}, closed: true, monitorTerminated: true,
 		monitors:   map[string]*MonitorContainer{"partial": {}, "uncreated": nil},
 		managers:   map[string]*ManagerContainer{"a": {Container: mgr}},
 		osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {ID: 0}, 1: nil}},
@@ -200,7 +200,7 @@ func TestDiagnosticsSnapshotPartialInventory(t *testing.T) {
 			controlQueries.Add(1)
 			return 0, strings.NewReader(diagnosticsSupervisorResult("control result", 0, false, false)), nil
 		}}
-		cluster.controlPlane = control
+		cluster.controlPlane.handle = control
 		config := diagnosticsUnitConfig(t)
 		snapshot, err := cluster.diagnosticsSnapshot(t.Context(), config)
 		if err != nil || snapshot.control != control {
@@ -232,8 +232,8 @@ func TestDiagnosticsSnapshotLockDeadline(t *testing.T) {
 				cluster.mu.Lock()
 				unlock = cluster.mu.Unlock
 			case "control":
-				cluster.controlMu.Lock()
-				unlock = cluster.controlMu.Unlock
+				cluster.controlPlane.mu.Lock()
+				unlock = cluster.controlPlane.mu.Unlock
 			case "config":
 				cluster.configMu.Lock()
 				unlock = cluster.configMu.Unlock
@@ -263,7 +263,7 @@ func TestDiagnosticsSnapshotLockDeadline(t *testing.T) {
 func TestDiagnosticsTypedNilHandlesRemainInspectable(t *testing.T) {
 	var missing *diagnosticsTestContainer
 	cluster := &Container{
-		Container: missing, controlPlane: missing, manager: missing,
+		Container: missing, controlPlane: controlPlaneState{handle: missing}, manager: missing,
 		monitors:   map[string]*MonitorContainer{"joining": {Container: missing}},
 		osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {Container: missing, ID: 0}}},
 		services:   map[string]testcontainers.Container{"rgw:partial": missing},

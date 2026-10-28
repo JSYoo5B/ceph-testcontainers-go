@@ -212,7 +212,7 @@ func TestWaitContextHeldControlAdmissionDoesNotQuery(t *testing.T) {
 	for _, name := range []string{"Clean", "Quorum", "PGClean", "Module"} {
 		t.Run(name, func(t *testing.T) {
 			f := newWaitContextFixture(t, name)
-			waitContextHeldGate(t, f.cluster.controlMu.Lock, f.cluster.controlMu.Unlock, f.cluster.controlMu.TryRLock, f.wait, f.cluster.controlMu.RUnlock)
+			waitContextHeldGate(t, f.cluster.controlPlane.mu.Lock, f.cluster.controlPlane.mu.Unlock, f.cluster.controlPlane.mu.TryRLock, f.wait, f.cluster.controlPlane.mu.RUnlock)
 			if f.control.calls.Load() != 0 {
 				t.Fatal("busy control issued native query")
 			}
