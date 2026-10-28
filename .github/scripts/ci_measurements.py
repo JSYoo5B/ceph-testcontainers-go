@@ -19,6 +19,8 @@ same markers:
   completion;
 - per phase (setup, compile, Docker baseline, role images, native, cleanup,
   reporting) runner seconds of the runtime jobs;
+- the two Plan-job cache preparation phases (plan_modules, plan_build_cache),
+  which only a Plan job's steps feed and which stay zero for runtime jobs;
 - per profile and release, the distribution of job and native durations;
 - the peak number of jobs that ran at the same time in the repository.
 
@@ -56,9 +58,12 @@ SCHEMA = "ceph-ci-measurements/v1"
 FAMILY = ("Code checks", "Docker checks", "Ceph short", "Ceph topology", "Ceph multicluster",
           "Ceph recovery", "Ceph release matrix")
 EVENTS = ("pull_request", "push")
-# Step name prefixes of each phase of a tagged runtime job, in job order.
-# Every other step of a runtime job is reporting (summaries, history rows,
-# artifact upload and the post steps).
+# Step name prefixes of each phase of a tagged runtime job, in job order,
+# followed by the two cache preparation steps of the Plan job (module download
+# and build-cache warming), which are neither runtime setup nor native-binary
+# compilation. Every other step is reporting (summaries, history rows,
+# artifact upload, cache saves, planning and the post steps); a step name that
+# no prefix names stays in that fallback.
 PHASES = (
     ("setup", ("Set up job", "Run actions/checkout", "Run actions/setup-go", "Restore the Go module cache",
                "Restore the Go build cache", "Prepare Go modules")),
@@ -67,6 +72,8 @@ PHASES = (
     ("images", ("Resolve native published Ceph roles", "Resolve published Ceph roles")),
     ("native", ("Native assertions",)),
     ("cleanup", ("Verify owned Docker resource cleanup",)),
+    ("plan_modules", ("Download every Go module",)),
+    ("plan_build_cache", ("Compile one profile of each package into the build cache",)),
 )
 PHASE_NAMES = tuple(name for name, _ in PHASES) + ("reporting",)
 # The phases that one shared job of several profiles would run once.
@@ -121,16 +128,19 @@ def is_runtime(job):
     return any(step.get("name", "").startswith(RUNTIME_STEP) for step in job.get("steps") or ())
 
 
+def step_phase(name):
+    """The phase of a step name: the first phase naming it, else reporting."""
+    return next((phase for phase, prefixes in PHASES if name.startswith(prefixes)), "reporting")
+
+
 def job_phases(job):
-    """Seconds of each phase of a runtime job, by its step timings."""
+    """Seconds of each phase of a runtime or Plan job, by its step timings."""
     phases = dict.fromkeys(PHASE_NAMES, 0.0)
     for step in job.get("steps") or ():
         duration = seconds(step.get("started_at"), step.get("completed_at"))
         if duration is None:
             continue
-        name = step.get("name", "")
-        phase = next((phase for phase, prefixes in PHASES if name.startswith(prefixes)), "reporting")
-        phases[phase] += duration
+        phases[step_phase(step.get("name", ""))] += duration
     return phases
 
 

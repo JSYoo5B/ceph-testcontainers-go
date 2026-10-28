@@ -17,7 +17,7 @@ import ci_measurements as measurements
 import dispatch_join
 import scenario_history
 
-SCHEMA = "ceph-dispatch-cost/v1"
+SCHEMA = "ceph-dispatch-cost/v2"
 
 
 def canonical(value):

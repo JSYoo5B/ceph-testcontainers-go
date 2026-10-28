@@ -47,7 +47,16 @@ all candidate windows without choosing one as truth.
 exclusive buckets must equal the ledger sum. Unknown-cost jobs are counted
 separately, so this known sum is not a fabricated complete total. The phase
 breakdown reuses the existing step-name taxonomy, with unknown phase counts and
-unattributed job-window time separate. A failed job that never reached its
+unattributed job-window time separate. The Plan job's "Download every Go
+module" step is the `plan_modules` phase and its "Compile one profile of each
+package into the build cache" step is the `plan_build_cache` phase, so cache
+preparation is no longer part of `reporting`. Both are step windows, not a
+cache-hit, compilation or export receipt: a skipped step contributes nothing,
+and a warming step that failed under `continue-on-error` still contributes its
+window. Every other step, including the cache saves, planning and the artifact
+upload, and any step name the taxonomy does not know, stays in `reporting`.
+Report schema `ceph-dispatch-cost/v2` adds these two phases to
+`known_step_seconds`; v1 reports are refused by `compare` without a mapping. A failed job that never reached its
 native step still retains its allocation cost.
 
 `observed_wall_seconds` is workflow creation to the last observed completed job
