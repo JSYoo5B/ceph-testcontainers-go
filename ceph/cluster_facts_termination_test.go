@@ -33,7 +33,7 @@ func TestClusterFactsTerminateKeepsRecordedFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings, public, cluster, version := c.settings, *c.nets.public, *c.nets.cluster, c.cephVersion
+	settings, public, cluster, version := c.settings, *c.nets.public, *c.nets.cluster, c.bootstrap.cephVersion
 	imageSet := *c.settings.imageSet
 
 	if err := c.Terminate(t.Context()); err != nil {
@@ -50,7 +50,7 @@ func TestClusterFactsTerminateKeepsRecordedFacts(t *testing.T) {
 		t.Fatalf("termination changed the snapshot: %+v != %+v", after, before)
 	}
 	if !reflect.DeepEqual(c.settings, settings) || *c.nets.public != public || *c.nets.cluster != cluster ||
-		c.cephVersion != version || *c.settings.imageSet != imageSet {
+		c.bootstrap.cephVersion != version || *c.settings.imageSet != imageSet {
 		t.Fatal("termination rewrote a recorded source of the static facts")
 	}
 }
@@ -136,8 +136,11 @@ func TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup(t *testing.T) 
 	allowed := map[string]bool{
 		"Run":               true, // builds the cluster before returning it
 		"recordCephVersion": true, // called only from Run before publication
-		"TestCluster":       true, // builds a fresh unit-test cluster
-		"TestState":         true, // unit-test pointer hooks (config, keyring, version, bridge flag)
+		// The unit-test setter of the recorded version, a plain write for a cluster the
+		// caller owns or holds the lock of.
+		"TestSetCephVersion": true,
+		"TestCluster":        true, // builds a fresh unit-test cluster
+		"TestState":          true, // unit-test pointer hooks (config, keyring, version, bridge flag)
 		// Unit-test option setters, the only writers of c.settings after Run. They replace
 		// the settings pointers TestState used to publish; only TestSetCephFSImage writes
 		// a recorded fact (cephfsOverride), the others write fields FactsOf never reads.
@@ -165,7 +168,7 @@ func TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup(t *testing.T) 
 
 // recordedFactFields are the Container fields FactsOf reads directly, and the
 // options fields it reads through c.settings.
-var recordedContainerFields = map[string]bool{"cephVersion": true, "nets": true, "settings": true}
+var recordedContainerFields = map[string]bool{"nets": true, "settings": true}
 
 // recordedNetworkFields are the networkState fields FactsOf reads. The removal
 // flags next to them are guarded by Container.mu and are not facts.
@@ -205,6 +208,9 @@ func scanRecordedWrites(t *testing.T, file string, allowed map[string]bool) []st
 					targets = []ast.Expr{s.X}
 				}
 			}
+			if call, ok := n.(*ast.CallExpr); ok && recordsVersion(call) {
+				out = append(out, fset.Position(call.Pos()).String())
+			}
 			for _, target := range targets {
 				if recordedSourceTarget(target) || (recv != "" && networkStateTarget(target, recv)) {
 					out = append(out, fset.Position(target.Pos()).String())
@@ -214,6 +220,17 @@ func scanRecordedWrites(t *testing.T, file string, allowed map[string]bool) []st
 		})
 	}
 	return out
+}
+
+// recordsVersion reports whether call is X.bootstrap.recordVersion(...), the
+// method that stores the recorded Ceph version on the bootstrap record.
+func recordsVersion(call *ast.CallExpr) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "recordVersion" {
+		return false
+	}
+	inner, ok := sel.X.(*ast.SelectorExpr)
+	return ok && inner.Sel.Name == "bootstrap" && isContainerReceiver(inner.X)
 }
 
 // networkStateReceiver returns the receiver name of a networkState method, or
@@ -255,7 +272,7 @@ func networkStateTarget(e ast.Expr, recv string) bool {
 }
 
 // recordedSourceTarget reports whether e names a recorded Container source:
-// X.cephVersion, X.nets (and anything under it), X.settings, X.settings.<fact
+// X.bootstrap.cephVersion, X.nets (and anything under it), X.settings, X.settings.<fact
 // field> (also nested, such as X.settings.imageSet.RGW), or a field of the
 // pointed-to network (X.nets.public.Name).
 func recordedSourceTarget(e ast.Expr) bool {
@@ -269,6 +286,10 @@ func recordedSourceTarget(e ast.Expr) bool {
 			e = v.X
 		case *ast.SelectorExpr:
 			if recordedContainerFields[v.Sel.Name] && isContainerReceiver(v.X) {
+				return true
+			}
+			// X.bootstrap.cephVersion, the recorded Ceph version.
+			if x, ok := v.X.(*ast.SelectorExpr); ok && v.Sel.Name == "cephVersion" && x.Sel.Name == "bootstrap" && isContainerReceiver(x.X) {
 				return true
 			}
 			if x, ok := v.X.(*ast.SelectorExpr); ok && x.Sel.Name == "settings" && isContainerReceiver(x.X) && recordedSettingsFields[v.Sel.Name] {

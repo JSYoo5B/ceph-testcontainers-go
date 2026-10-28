@@ -14,7 +14,7 @@ const clientMonitorForeignFSID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 func newClientMonitorFixture() (*Container, *monitorConfigArchive, *monitorConfigArchive) {
 	cluster, control := newMonitorConfigFixture()
-	cluster.config = bytes.ReplaceAll(cluster.config, []byte("retained-fsid"), []byte(clientMonitorFSID))
+	cluster.bootstrap.config = bytes.ReplaceAll(cluster.bootstrap.config, []byte("retained-fsid"), []byte(clientMonitorFSID))
 	control.config = bytes.ReplaceAll(control.config, []byte("retained-fsid"), []byte(clientMonitorFSID))
 	control.native = []byte(strings.Replace(monitorConfigQuorum, `"monmap":{`, `"monmap":{"fsid":"`+clientMonitorFSID+`",`, 1))
 	client := newMonitorConfigArchive("external-client", "[client.test]\nkeyring = /private/client.keyring\nmon_host = private-override\n")
@@ -24,13 +24,13 @@ func newClientMonitorFixture() (*Container, *monitorConfigArchive, *monitorConfi
 
 func TestRefreshClientMonitorConfigPreservesExplicitStoppedClient(t *testing.T) {
 	cluster, control, client := newClientMonitorFixture()
-	template := bytes.Clone(cluster.config)
+	template := bytes.Clone(cluster.bootstrap.config)
 	before := bytes.Clone(client.config)
 	if err := cluster.RefreshClientMonitorConfig(t.Context(), client); err != nil {
 		t.Fatal(err)
 	}
 	want := bytes.Replace(before, []byte("mon host = old"), []byte("mon host = "+monitorConfigAddresses), 1)
-	if !bytes.Equal(client.config, want) || !bytes.Equal(cluster.config, template) || control.reads != 0 || control.writes != 0 || client.execs != 0 || client.starts != 0 || client.stops != 0 || client.terminations != 0 {
+	if !bytes.Equal(client.config, want) || !bytes.Equal(cluster.bootstrap.config, template) || control.reads != 0 || control.writes != 0 || client.execs != 0 || client.starts != 0 || client.stops != 0 || client.terminations != 0 {
 		t.Fatal("refresh changed unrelated template, private settings, keyring path or process/lifetime")
 	}
 	if client.reads != 1 || client.writes != 1 || control.execs != 2 {
@@ -46,9 +46,9 @@ func TestMonitorBootstrapAddressesRejectsUnconfirmedOrForeignNativeCluster(t *te
 		name  string
 		apply func(*Container, *monitorConfigArchive)
 	}{
-		{"missing template", func(c *Container, _ *monitorConfigArchive) { c.config = nil }},
-		{"missing keyring", func(c *Container, _ *monitorConfigArchive) { c.keyring = nil }},
-		{"invalid original fsid", func(c *Container, _ *monitorConfigArchive) { c.config = []byte(monitorConfigOld) }},
+		{"missing template", func(c *Container, _ *monitorConfigArchive) { c.bootstrap.config = nil }},
+		{"missing keyring", func(c *Container, _ *monitorConfigArchive) { c.bootstrap.keyring = nil }},
+		{"invalid original fsid", func(c *Container, _ *monitorConfigArchive) { c.bootstrap.config = []byte(monitorConfigOld) }},
 		{"missing native fsid", func(_ *Container, a *monitorConfigArchive) { a.native = []byte(monitorConfigQuorum) }},
 		{"foreign native fsid", func(_ *Container, a *monitorConfigArchive) {
 			a.native = bytes.ReplaceAll(a.native, []byte(clientMonitorFSID), []byte(clientMonitorForeignFSID))

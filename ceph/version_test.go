@@ -21,7 +21,7 @@ func TestParseCephVersion(t *testing.T) {
 
 func TestCephBeforeTreatsUnknownAsCurrent(t *testing.T) {
 	for version, want := range map[string]bool{"": false, "19.2.6": true, "20.2.4": false, "21.0.0": false} {
-		c := &Container{cephVersion: version}
+		c := &Container{bootstrap: bootstrapRecord{cephVersion: version}}
 		if got := c.cephBefore(20); got != want {
 			t.Fatalf("cephBefore(20) with %q = %v, want %v", version, got, want)
 		}

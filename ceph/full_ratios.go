@@ -63,13 +63,12 @@ func (c *Container) fullRatiosSession(ctx context.Context) (fullRatiosCLISession
 	if control == nil {
 		return fullRatiosCLISession{}, clientOperationError(ctx, "ceph control container is unavailable", nil)
 	}
-	if err := lockTopologyReadMutex(ctx, &c.configMu); err != nil {
+	identity, err := c.bootstrap.identity(ctx)
+	if err != nil {
 		return fullRatiosCLISession{}, err
 	}
-	fsid, identityErr := monitorConfigClusterIdentity(c.config)
-	confirmed := len(c.keyring) != 0
-	c.configMu.RUnlock()
-	if identityErr != nil || !confirmed {
+	fsid, identityErr := identity.fsid, identity.err
+	if identityErr != nil || !identity.confirmed {
 		return fullRatiosCLISession{}, clientOperationError(ctx, "ceph original bootstrap identity is unavailable", identityErr)
 	}
 	return fullRatiosCLISession{control: control, fsid: fsid}, nil

@@ -41,7 +41,7 @@ func requireUsableClient(t *testing.T, c *Container, client *ClientConfig) {
 
 func TestRevokeClientRestoresTheSameIdentity(t *testing.T) {
 	w, c, client := clientWorld()
-	c.config = []byte("[global]\n")
+	c.bootstrap.config = []byte("[global]\n")
 	original := w.clients["client.app"]
 	revocation, err := client.Revoke(t.Context())
 	if err != nil {

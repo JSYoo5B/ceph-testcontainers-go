@@ -135,12 +135,7 @@ func (c *Container) configureDefaultCRUSHRoot(ctx context.Context) error {
 	if _, err := c.cephCLI(ctx, "config", "set", "global", "osd_pool_default_crush_rule", value); err != nil {
 		return err
 	}
-	c.configMu.Lock()
-	configBytes, err := defaultCRUSHRuleConfig(c.config, value)
-	if err == nil {
-		c.config = configBytes
-	}
-	c.configMu.Unlock()
+	configBytes, err := c.bootstrap.applyDefaultCRUSHRule(value)
 	if err != nil {
 		return err
 	}

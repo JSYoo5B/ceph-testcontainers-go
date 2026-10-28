@@ -292,9 +292,8 @@ func TestFullRatiosSessionThroughHooks(t *testing.T) {
 	})
 	control := &fullRatiosControl{}
 	c := servicehook.TestCluster(control, servicehook.TestConfig{StartupTimeout: time.Second})
-	state := servicehook.TestState(c)
-	*state.Config = []byte("[global]\nfsid = " + sessionFSID + "\nmon_host = mon\n")
-	*state.Keyring = []byte("confirmed")
+	servicehook.TestSetConfig(c, []byte("[global]\nfsid = "+sessionFSID+"\nmon_host = mon\n"))
+	servicehook.TestSetKeyring(c, []byte("confirmed"))
 	err := overridehook.WithTopology(ctx, c, func() error {
 		token, err := overridehook.Reserve(ctx, c, overridehook.FullRatios, "")
 		if err != nil {

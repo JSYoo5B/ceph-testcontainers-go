@@ -140,7 +140,7 @@ func TestCephFSSetsRankCountsSeparatelyOnCeph19(t *testing.T) {
 		Fail:   "fs set tenant refuse_standby_for_another_fs true",
 	}
 	cluster := poolFixtureCluster(ctr, 2)
-	(*servicehook.TestState(cluster).CephVersion) = "19.2.6"
+	servicehook.TestSetCephVersion(cluster, "19.2.6")
 	if _, err := startFilesystem(t.Context(), cluster, Config{Name: "tenant", ActiveMDS: 2, StandbyMDS: 1}); err == nil {
 		t.Fatal("injected configuration failure was ignored")
 	}

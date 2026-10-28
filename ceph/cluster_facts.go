@@ -68,6 +68,6 @@ func (c *Container) staticFacts() ClusterFacts {
 		PublicAddress:             c.settings.advertisedPublicAddress(),
 		ClusterNetworkName:        c.settings.clusterNetworkName(c.nets.public, c.nets.cluster),
 		HasSeparateClusterNetwork: c.nets.cluster != nil,
-		CephVersion:               c.cephVersion,
+		CephVersion:               c.bootstrap.rawVersion(),
 	}
 }

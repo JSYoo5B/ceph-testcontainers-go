@@ -235,14 +235,14 @@ func TestRefreshMonitorConfigUncertainControlCopyPublishesOnlyAfterConfirmation(
 	cluster, control := newMonitorConfigFixture()
 	daemon := newMonitorConfigArchive("osd-9", "[osd.9]\nprivate = retained\n")
 	cluster.osdHandles.register(9, &OSDContainer{Container: daemon, ID: 9})
-	before := bytes.Clone(cluster.config)
+	before := bytes.Clone(cluster.bootstrap.config)
 	lost := errors.New("control archive copy reply lost")
 	control.writeErr, control.applyOnError = lost, true
-	if err := cluster.RefreshMonitorConfig(t.Context()); !errors.Is(err, lost) || !bytes.Equal(cluster.config, before) || daemon.reads != 0 || !bytes.Contains(control.config, []byte(monitorConfigAddresses)) {
+	if err := cluster.RefreshMonitorConfig(t.Context()); !errors.Is(err, lost) || !bytes.Equal(cluster.bootstrap.config, before) || daemon.reads != 0 || !bytes.Contains(control.config, []byte(monitorConfigAddresses)) {
 		t.Fatalf("uncertain control copy published an unconfirmed template or lost error: %v", err)
 	}
 	control.writeErr = nil
-	if err := cluster.RefreshMonitorConfig(t.Context()); err != nil || control.writes != 1 || daemon.writes != 1 || !bytes.Contains(cluster.config, []byte(monitorConfigAddresses)) {
+	if err := cluster.RefreshMonitorConfig(t.Context()); err != nil || control.writes != 1 || daemon.writes != 1 || !bytes.Contains(cluster.bootstrap.config, []byte(monitorConfigAddresses)) {
 		t.Fatalf("fresh archive confirmation did not reconcile uncertain control copy: %v", err)
 	}
 }
@@ -266,7 +266,7 @@ func TestRefreshMonitorConfigRefusesMalformedDaemonButKeepsOtherCopies(t *testin
 
 func TestRefreshMonitorConfigRejectsMalformedTemplateBeforeArchiveCopies(t *testing.T) {
 	cluster, control := newMonitorConfigFixture()
-	cluster.config = []byte("[global]\nmon_host = old\nmon host = ambiguous\n")
+	cluster.bootstrap.config = []byte("[global]\nmon_host = old\nmon host = ambiguous\n")
 	if err := cluster.RefreshMonitorConfig(t.Context()); err == nil || control.reads != 0 || control.writes != 0 {
 		t.Fatalf("ambiguous template was published or Docker files changed: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestRefreshMonitorConfigArchiveReadCloseAndSizeErrorsArePreserved(t *testin
 	for _, phase := range []string{"read", "close", "size"} {
 		t.Run(phase, func(t *testing.T) {
 			cluster, control := newMonitorConfigFixture()
-			before := bytes.Clone(cluster.config)
+			before := bytes.Clone(cluster.bootstrap.config)
 			failed := errors.New("archive " + phase + " failure")
 			switch phase {
 			case "read":
@@ -287,7 +287,7 @@ func TestRefreshMonitorConfigArchiveReadCloseAndSizeErrorsArePreserved(t *testin
 				control.config = []byte(monitorConfigOld + strings.Repeat("#", monitorConfigMaxBytes))
 			}
 			err := cluster.RefreshMonitorConfig(t.Context())
-			if err == nil || (phase != "size" && !errors.Is(err, failed)) || control.writes != 0 || !bytes.Equal(cluster.config, before) {
+			if err == nil || (phase != "size" && !errors.Is(err, failed)) || control.writes != 0 || !bytes.Equal(cluster.bootstrap.config, before) {
 				t.Fatalf("archive error lost or unconfirmed template published: %v", err)
 			}
 		})
@@ -298,7 +298,7 @@ func TestRefreshMonitorConfigCanceledClosedAndContendedOperationsDoNotCopy(t *te
 	for _, phase := range []string{"canceled", "closed", "zero startup timeout", "contended mutex", "cancel during archive read"} {
 		t.Run(phase, func(t *testing.T) {
 			cluster, control := newMonitorConfigFixture()
-			before := bytes.Clone(cluster.config)
+			before := bytes.Clone(cluster.bootstrap.config)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			switch phase {
@@ -319,7 +319,7 @@ func TestRefreshMonitorConfigCanceledClosedAndContendedOperationsDoNotCopy(t *te
 			}
 			started := time.Now()
 			err := cluster.RefreshMonitorConfig(ctx)
-			if err == nil || control.writes != 0 || !bytes.Equal(before, cluster.config) {
+			if err == nil || control.writes != 0 || !bytes.Equal(before, cluster.bootstrap.config) {
 				t.Fatalf("expired/closed refresh copied configs or published template: %v", err)
 			}
 			if phase == "contended mutex" && (!errors.Is(err, context.DeadlineExceeded) || time.Since(started) > time.Second) {
@@ -343,7 +343,7 @@ func TestRefreshMonitorConfigCancellationAfterControlRetainsConfirmedTemplate(t 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	control.afterWrite = cancel
-	if err := cluster.RefreshMonitorConfig(ctx); !errors.Is(err, context.Canceled) || control.writes != 1 || !bytes.Contains(cluster.config, []byte(monitorConfigAddresses)) || daemon.reads != 0 || daemon.writes != 0 {
+	if err := cluster.RefreshMonitorConfig(ctx); !errors.Is(err, context.Canceled) || control.writes != 1 || !bytes.Contains(cluster.bootstrap.config, []byte(monitorConfigAddresses)) || daemon.reads != 0 || daemon.writes != 0 {
 		t.Fatalf("confirmed control/template update was lost or canceled daemon copy continued: %v", err)
 	}
 	control.afterWrite = nil
@@ -407,8 +407,8 @@ func newMonitorConfigFixture() (*Container, *monitorConfigArchive) {
 	control := newMonitorConfigArchive("control", "[client.admin]\ncontrol_private = retained-only-on-control\n")
 	control.native = []byte(monitorConfigQuorum)
 	cluster := &Container{Container: control, settings: options{startupTimeout: time.Second},
-		config: []byte(monitorConfigOld), keyring: []byte("retained-admin-keyring"),
-		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer),
+		bootstrap: bootstrapRecord{config: []byte(monitorConfigOld), keyring: []byte("retained-admin-keyring")},
+		monitors:  make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer),
 		osdHandles: osdRegistry{owned: make(map[int]*OSDContainer)}, services: make(map[string]testcontainers.Container)}
 	return cluster, control
 }

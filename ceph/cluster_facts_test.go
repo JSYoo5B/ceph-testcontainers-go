@@ -12,7 +12,7 @@ func factsFixture() *Container {
 	return &Container{
 		nets: networkState{public: &testcontainers.DockerNetwork{Name: "public-net"},
 			cluster: &testcontainers.DockerNetwork{Name: "cluster-net"}},
-		cephVersion: "20.2.4",
+		bootstrap: bootstrapRecord{cephVersion: "20.2.4"},
 		settings: options{
 			addressFamily:  AddressDualStack,
 			essentialImage: "essential:1",
@@ -104,7 +104,7 @@ func TestClusterFactsAreIndependentCopies(t *testing.T) {
 	if second.Images.Essential != "essential:1" || second.NetworkName != "public-net" || second.Images.RGW != "rgw:1" || second.UsesHostNetwork {
 		t.Fatalf("snapshots share state: %+v", second)
 	}
-	if c.settings.essentialImage != "essential:1" || c.nets.public.Name != "public-net" || c.cephVersion != "20.2.4" || c.settings.hostNetwork {
+	if c.settings.essentialImage != "essential:1" || c.nets.public.Name != "public-net" || c.bootstrap.cephVersion != "20.2.4" || c.settings.hostNetwork {
 		t.Fatal("mutating a snapshot changed the cluster")
 	}
 
@@ -119,7 +119,7 @@ func TestClusterFactsAreIndependentCopies(t *testing.T) {
 	}
 
 	// Later cluster changes do not update an obtained snapshot.
-	c.cephVersion = "21.0.0"
+	c.bootstrap.cephVersion = "21.0.0"
 	if snap.CephVersion != "20.2.4" {
 		t.Fatalf("snapshot followed the cluster: %q", snap.CephVersion)
 	}

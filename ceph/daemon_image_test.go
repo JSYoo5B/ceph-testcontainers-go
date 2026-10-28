@@ -145,7 +145,7 @@ func TestDaemonImageOptionIsRefusedForTenantsOfASharedCluster(t *testing.T) {
 // OSD starts from its image and the cluster, and a second OSD, keep the default.
 func TestOverriddenOSDRecordsItsImageWithoutChangingTheClusterOrOtherOSDs(t *testing.T) {
 	c, _, runner := newInitialOSDCluster(options{essentialImage: "example.invalid/ceph:cluster", osds: 2})
-	c.config, c.keyring = []byte("[global]\nfsid = synthetic-cluster\n"), []byte("synthetic-admin-keyring")
+	c.bootstrap.config, c.bootstrap.keyring = []byte("[global]\nfsid = synthetic-cluster\n"), []byte("synthetic-admin-keyring")
 	var images []string
 	inner := c.stores.runner
 	c.stores.runner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
@@ -182,7 +182,7 @@ func TestOverriddenOSDRecordsItsImageWithoutChangingTheClusterOrOtherOSDs(t *tes
 }
 
 func TestOSDLaunchRecipeKeepsTheOSDImageNotTheClusterImage(t *testing.T) {
-	c := &Container{settings: options{essentialImage: "example.invalid/ceph:cluster", startupTimeout: time.Minute}, config: []byte("[global]\n")}
+	c := &Container{settings: options{essentialImage: "example.invalid/ceph:cluster", startupTimeout: time.Minute}, bootstrap: bootstrapRecord{config: []byte("[global]\n")}}
 	overridden := &OSDContainer{ID: 7, image: "example.invalid/ceph:new"}
 	ordinary := &OSDContainer{ID: 8, image: "example.invalid/ceph:cluster"}
 	unset := &OSDContainer{ID: 9}

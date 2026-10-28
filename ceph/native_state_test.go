@@ -264,15 +264,16 @@ func TestNativeStateMethodsHoldOnlyTheLeafLock(t *testing.T) {
 // components declare, by owning type and field. The native split moved
 // nativeMu into nativeState, the feature-client split moved clientMu and
 // clientPublishMu into featureClientState, and the control-plane split moved
-// controlMu into controlPlaneState (the same lock, renamed `mu` in its owner). The auth-records, OSD storage,
+// controlMu into controlPlaneState and the bootstrap-record split moved
+// configMu into bootstrapRecord (the same locks, renamed `mu` in their owners). The auth-records, OSD storage,
 // run-directory, OSD registry, port-lease and fault-registry splits added no
 // locks. debugLevelRegistry has always had its own leaf lock (the registry
 // type predates the split); earlier versions of this test did not scan it,
 // so the count of seven understated the real eight by that one. A new
 // entry needs its own lock-order review.
 var nativeStateMutexOwners = []string{
-	"Container.mu", "Container.configMu", "Container.extensionsMu",
-	"controlPlaneState.mu",
+	"Container.mu", "Container.extensionsMu",
+	"controlPlaneState.mu", "bootstrapRecord.mu",
 	"nativeState.mu",
 	"featureClientState.mu", "featureClientState.publishMu",
 	"debugLevelRegistry.mu",
@@ -283,7 +284,7 @@ var nativeStateMutexOwners = []string{
 var nativeStateComponents = []string{
 	"Container", "nativeState", "networkState", "featureClientState", "authState", "osdStorageState",
 	"runDirState", "osdRegistry", "portLeaseState", "faultRegistry", "debugLevelRegistry",
-	"controlPlaneState",
+	"controlPlaneState", "bootstrapRecord",
 }
 
 // TestNativeStateAddsNoMutex compares the mutexes of Container and its state

@@ -133,7 +133,7 @@ func TestRGWSyncPrincipalRequiresExactSourceDestinationTenants(t *testing.T) {
 func TestRGWAccountPipeRefusalNamesTheSquidZone(t *testing.T) {
 	cluster := func(version string) *ceph.Container {
 		c := servicehook.TestCluster(nil, servicehook.TestConfig{})
-		*servicehook.TestState(c).CephVersion = version
+		servicehook.TestSetCephVersion(c, version)
 		return c
 	}
 	f := &Fixture{config: Config{SourceZone: "source", DestinationZone: "destination", Source: cluster("20.2.4"), Destination: cluster("19.2.5")}}

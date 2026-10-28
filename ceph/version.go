@@ -35,6 +35,6 @@ func (c *Container) recordCephVersion(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	c.cephVersion = version
+	c.bootstrap.recordVersion(version)
 	return nil
 }

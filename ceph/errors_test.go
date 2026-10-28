@@ -384,7 +384,7 @@ func TestKeyTypeSupportFollowsTheFirstMonitorImage(t *testing.T) {
 		{"20.2.4", false, nil},
 		{"19.2.5", false, nil},
 	} {
-		c := &Container{cephVersion: tc.version, keyTypeOption: tc.option, firstMonitorImageID: "sha256:essential"}
+		c := &Container{bootstrap: bootstrapRecord{cephVersion: tc.version}, keyTypeOption: tc.option, firstMonitorImageID: "sha256:essential"}
 		args, err := c.generateKeyArgs(CipherAES256K)
 		var unsupported *OperationError
 		switch {

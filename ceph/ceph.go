@@ -40,15 +40,17 @@ var scripts embed.FS
 // cluster networking, rather than changing only the MON's network mode.
 type Container struct {
 	testcontainers.Container
-	mu       sync.Mutex
-	configMu sync.RWMutex
+	mu sync.Mutex
 	// controlPlane is the separate control container and the lock that guards
 	// it, the former controlMu; see controlPlaneState.
 	controlPlane controlPlaneState
 	// toolkit is the feature-client cache; see featureClientState for what
 	// guards each part.
-	toolkit     featureClientState
-	cephVersion string
+	toolkit featureClientState
+	// bootstrap is the first MON's configuration, admin keyring and Ceph
+	// version and the lock that guards the first two, the former configMu; see
+	// bootstrapRecord.
+	bootstrap bootstrapRecord
 	// authRecords holds the records of the calls that change an auth entry; see
 	// authState for what guards them.
 	authRecords authState
@@ -83,8 +85,6 @@ type Container struct {
 	// portLeases is the host-port reservations of host network mode; see
 	// portLeaseState. It has no lock of its own: mu guards it.
 	portLeases        portLeaseState
-	config            []byte
-	keyring           []byte
 	closed            bool
 	monitorTerminated bool
 
@@ -228,7 +228,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		return c, fmt.Errorf("run ceph monitor: %w", err)
 	}
-	if c.config, err = readFile(ctx, mon, "/etc/ceph/ceph.conf"); err != nil {
+	config, err := readFile(ctx, mon, "/etc/ceph/ceph.conf")
+	c.bootstrap.recordConfig(config)
+	if err != nil {
 		return c, err
 	}
 	if err := c.recordCephVersion(ctx); err != nil {
@@ -238,7 +240,9 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		return c, err
 	}
 	c.firstMonitorImageID = containerImageID(ctx, mon)
-	if c.keyring, err = readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring"); err != nil {
+	keyring, err := readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring")
+	c.bootstrap.recordKeyring(keyring)
+	if err != nil {
 		return c, err
 	}
 	if err := c.configureDefaultCRUSHRoot(ctx); err != nil {
@@ -464,9 +468,7 @@ func (c *Container) WithClient(opts ...ClientContainerOption) testcontainers.Cus
 // adminClient attaches a container of the module's own with the admin keyring.
 func (c *Container) adminClient(opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
-		c.configMu.RLock()
-		config, keyring := bytes.Clone(c.config), bytes.Clone(c.keyring)
-		c.configMu.RUnlock()
+		config, keyring := c.bootstrap.clones()
 		config, err := clientContainerConfig(config, opts)
 		if err != nil {
 			return err
@@ -921,7 +923,7 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	if _, exists := c.services[name]; exists {
 		return nil, fmt.Errorf("ceph service %s already started", name)
 	}
-	if len(c.config) == 0 || len(c.keyring) == 0 {
+	if !c.bootstrap.isComplete() {
 		return nil, errors.New("ceph cluster bootstrap is incomplete")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)

@@ -66,13 +66,12 @@ func (c *Container) healthDetails(ctx context.Context) (HealthSnapshot, error) {
 	if control == nil {
 		return HealthSnapshot{}, errors.New("ceph control container is unavailable")
 	}
-	if err := lockTopologyReadMutex(ctx, &c.configMu); err != nil {
+	identity, err := c.bootstrap.identity(ctx)
+	if err != nil {
 		return HealthSnapshot{}, err
 	}
-	fsid, identityErr := monitorConfigClusterIdentity(c.config)
-	confirmed := len(c.keyring) != 0
-	c.configMu.RUnlock()
-	if identityErr != nil || !confirmed {
+	fsid, identityErr := identity.fsid, identity.err
+	if identityErr != nil || !identity.confirmed {
 		return HealthSnapshot{}, clientOperationError(ctx, "ceph original bootstrap identity is unavailable", identityErr)
 	}
 	query := func(args ...string) ([]byte, error) {

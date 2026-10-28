@@ -1126,7 +1126,7 @@ func (f *launchUnavailableTarget) Exec(ctx context.Context, args []string, opts 
 }
 
 func TestRedactSecretsUsesTheClusterSecrets(t *testing.T) {
-	cluster := &Container{keyring: []byte("[client.admin]\n\tkey = AQBsecretadminkey==\n")}
+	cluster := &Container{bootstrap: bootstrapRecord{keyring: []byte("[client.admin]\n\tkey = AQBsecretadminkey==\n")}}
 	cluster.authRecords.addSecret("AQBreplacedclientkey==")
 	data := []byte("admin AQBsecretadminkey== client AQBreplacedclientkey== app opaque-value \x00\xff")
 	redacted, err := cluster.RedactSecrets(t.Context(), data, "opaque-value")

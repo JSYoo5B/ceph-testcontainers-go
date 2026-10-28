@@ -280,13 +280,13 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	if client != nil {
 		add("client", "toolkit", client)
 	}
-	if err := diagnosticLock(ctx, c.configMu.TryRLock); err != nil {
+	keyring, err := c.bootstrap.diagnosticKeyring(ctx)
+	if err != nil {
 		return snapshot, err
 	}
-	for _, match := range diagnosticKeyringPattern.FindAllSubmatch(c.keyring, -1) {
+	for _, match := range diagnosticKeyringPattern.FindAllSubmatch(keyring, -1) {
 		snapshot.secrets = append(snapshot.secrets, strings.Trim(string(match[1]), "\"'"))
 	}
-	c.configMu.RUnlock()
 	for i, target := range config.AdditionalContainers {
 		target.Container = diagnosticContainerHandle(target.Container)
 		if target.Name == "" {

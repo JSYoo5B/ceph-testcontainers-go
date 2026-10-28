@@ -143,7 +143,7 @@ func TestDiagnosticsSnapshotPartialInventory(t *testing.T) {
 		services:   map[string]testcontainers.Container{"rgw:bootstrapping": service, "mds.tenant-0": nil},
 		extensions: map[string]any{"rgw": testExtension{secrets: []string{"access-private", "s3-private"}}},
 		nets:       networkState{public: &testcontainers.DockerNetwork{ID: "public-id", Name: "public"}},
-		keyring:    []byte("[client.admin]\n key = cephx-private\n"),
+		bootstrap:  bootstrapRecord{keyring: []byte("[client.admin]\n key = cephx-private\n")},
 	}
 	// The generic service owns the gateway before its public descriptor exists.
 	config := diagnosticsUnitConfig(t)
@@ -235,8 +235,8 @@ func TestDiagnosticsSnapshotLockDeadline(t *testing.T) {
 				cluster.controlPlane.mu.Lock()
 				unlock = cluster.controlPlane.mu.Unlock
 			case "config":
-				cluster.configMu.Lock()
-				unlock = cluster.configMu.Unlock
+				cluster.bootstrap.mu.Lock()
+				unlock = cluster.bootstrap.mu.Unlock
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 			defer cancel()

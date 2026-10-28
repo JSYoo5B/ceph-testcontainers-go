@@ -84,10 +84,7 @@ func (c *Container) currentMonitorBootstrapAddresses(ctx context.Context) (strin
 	if c.closed {
 		return "", "", errClusterTerminated
 	}
-	c.configMu.RLock()
-	template := bytes.Clone(c.config)
-	confirmed := len(c.keyring) != 0
-	c.configMu.RUnlock()
+	template, confirmed := c.bootstrap.templateAndConfirmed()
 	fsid, err := monitorConfigClusterIdentity(template)
 	if err != nil || !confirmed {
 		return "", "", errors.New("ceph original bootstrap identity is unavailable")

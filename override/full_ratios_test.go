@@ -140,7 +140,7 @@ func TestSetFullRatiosRestoreRetainsCapturedIdentityAndMapEpoch(t *testing.T) {
 			switch drift {
 			case "bootstrap":
 				ctr.fsid = "8797c2db-bf63-40a1-990e-eb6658b50cf7"
-				*servicehook.TestState(c).Config = []byte("[global]\nfsid = " + ctr.fsid + "\nmon_host = mon\n")
+				servicehook.TestSetConfig(c, []byte("[global]\nfsid = "+ctr.fsid+"\nmon_host = mon\n"))
 			case "rollback":
 				ctr.epoch = 1
 			case "unrelated-epoch":
@@ -163,7 +163,6 @@ func TestSetFullRatiosFailureBeforeRegistrationFreesTheReservation(t *testing.T)
 	for _, unavailable := range []string{"closed", "control", "config", "keyring", "native", "unordered"} {
 		t.Run(unavailable, func(t *testing.T) {
 			c, ctr := newFullRatiosFixture(t)
-			state := servicehook.TestState(c)
 			ordered := ctr.ratios
 			switch unavailable {
 			case "closed":
@@ -171,12 +170,12 @@ func TestSetFullRatiosFailureBeforeRegistrationFreesTheReservation(t *testing.T)
 			case "control":
 				// Not the fixture: a cluster without a control container.
 				c = servicehook.TestCluster(nil, servicehook.TestConfig{StartupTimeout: time.Minute})
-				*servicehook.TestState(c).Config = []byte("[global]\nfsid = " + fullRatiosFSID + "\nmon_host = mon\n")
-				*servicehook.TestState(c).Keyring = []byte("confirmed")
+				servicehook.TestSetConfig(c, []byte("[global]\nfsid = "+fullRatiosFSID+"\nmon_host = mon\n"))
+				servicehook.TestSetKeyring(c, []byte("confirmed"))
 			case "config":
-				*state.Config = nil
+				servicehook.TestSetConfig(c, nil)
 			case "keyring":
-				*state.Keyring = nil
+				servicehook.TestSetKeyring(c, nil)
 			case "native":
 				ctr.failDump = true
 			case "unordered":
@@ -194,7 +193,8 @@ func TestSetFullRatiosFailureBeforeRegistrationFreesTheReservation(t *testing.T)
 				return
 			}
 			servicehook.TestSetClosed(c, false)
-			*state.Config, *state.Keyring = []byte("[global]\nfsid = "+fullRatiosFSID+"\nmon_host = mon\n"), []byte("confirmed")
+			servicehook.TestSetConfig(c, []byte("[global]\nfsid = "+fullRatiosFSID+"\nmon_host = mon\n"))
+			servicehook.TestSetKeyring(c, []byte("confirmed"))
 			ctr.failDump, ctr.ratios = false, ordered
 			if again, err := SetFullRatios(t.Context(), c, ceph.FullRatios{NearFull: .86, BackfillFull: .91, Full: .96}); err != nil || again.state.refused != nil {
 				t.Fatal("a freed key stayed refused", err)

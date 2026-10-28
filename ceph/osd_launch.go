@@ -34,9 +34,7 @@ type osdLaunchRecipe struct {
 // The caller holds c.mu. Strings own snapshots of the source slices; each
 // request receives fresh file Readers, maps, wait strategy and mount options.
 func (c *Container) newOSDLaunchRecipe(osd *OSDContainer, keyring []byte) *osdLaunchRecipe {
-	c.configMu.RLock()
-	config, admin := string(c.config), string(c.keyring)
-	c.configMu.RUnlock()
+	config, admin := c.bootstrap.launchStrings()
 	image := osd.image
 	if image == "" {
 		image = c.settings.essentialImage

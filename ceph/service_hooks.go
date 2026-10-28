@@ -349,13 +349,11 @@ func (serviceHooks) AuthCommand(ctx context.Context, c *Container, operation str
 // ClusterIdentity returns the FSID of the bootstrap configuration and whether
 // the configuration and admin keyring were confirmed. The error is only ctx's.
 func (serviceHooks) ClusterIdentity(ctx context.Context, c *Container) (string, bool, error) {
-	if err := lockTopologyReadMutex(ctx, &c.configMu); err != nil {
+	identity, err := c.bootstrap.identity(ctx)
+	if err != nil {
 		return "", false, err
 	}
-	fsid, err := monitorConfigClusterIdentity(c.config)
-	confirmed := len(c.keyring) != 0
-	c.configMu.RUnlock()
-	return fsid, err == nil && confirmed, nil
+	return identity.fsid, identity.err == nil && identity.confirmed, nil
 }
 
 // ClientConfirmed reports a client identity that c created and confirmed.
@@ -446,17 +444,14 @@ func (serviceHooks) TestCluster(control testcontainers.Container, config testClu
 
 // testState points at a cluster's internals for the service packages' unit
 // tests. PortLeases is a count taken when TestState is called. It publishes
-// the three lock domains and the bootstrap record, and no pointer to the
-// closed flag, the control plane or the options: those are written through the
+// the three lock identities and no pointer to the closed flag, the control
+// plane, the options or the bootstrap record: those are written through the
 // TestSet* hooks below (see the membership/control section of
 // docs/design/container-decomposition.md).
 type testState = struct {
 	Mutex          *sync.Mutex
 	ControlMutex   *sync.RWMutex
 	ConfigMutex    *sync.RWMutex
-	Config         *[]byte
-	Keyring        *[]byte
-	CephVersion    *string
 	PortLeases     int
 	NetworkRemoved *bool
 }
@@ -465,8 +460,7 @@ type testState = struct {
 // caller holds Mutex or the cluster value is not shared yet.
 func (serviceHooks) TestState(c *Container) testState {
 	return testState{
-		Mutex: &c.mu, ControlMutex: c.controlPlane.mutex(), ConfigMutex: &c.configMu,
-		Config: &c.config, Keyring: &c.keyring, CephVersion: &c.cephVersion,
+		Mutex: &c.mu, ControlMutex: c.controlPlane.mutex(), ConfigMutex: c.bootstrap.mutex(),
 		PortLeases: c.portLeases.count(), NetworkRemoved: &c.nets.publicRemoved,
 	}
 }
@@ -485,6 +479,20 @@ func (serviceHooks) TestSetClosed(c *Container, closed bool) { c.closed = closed
 // ControlMutex or the cluster value is not shared.
 func (serviceHooks) TestSetControlPlane(c *Container, control testcontainers.Container) {
 	c.controlPlane.handle = control
+}
+
+// TestSetConfig replaces the recorded bootstrap configuration. The caller holds
+// ConfigMutex or the cluster value is not shared.
+func (serviceHooks) TestSetConfig(c *Container, config []byte) { c.bootstrap.config = config }
+
+// TestSetKeyring replaces the recorded admin keyring. The caller holds
+// ConfigMutex or the cluster value is not shared.
+func (serviceHooks) TestSetKeyring(c *Container, keyring []byte) { c.bootstrap.keyring = keyring }
+
+// TestSetCephVersion replaces the recorded Ceph version. The caller holds
+// Mutex or the cluster value is not shared.
+func (serviceHooks) TestSetCephVersion(c *Container, version string) {
+	c.bootstrap.cephVersion = version
 }
 
 // TestSetInitialOSDs sets the initial OSD count. The caller holds Mutex or the
