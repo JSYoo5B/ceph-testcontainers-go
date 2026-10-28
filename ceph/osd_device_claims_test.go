@@ -326,11 +326,17 @@ func osdDeviceClaimIgnoredCall(call string) bool {
 	return false
 }
 
-// osdDeviceClaimCallers is the production caller table. claim has none: the
-// first production caller adds itself here, with the topology lock it holds.
+// osdDeviceClaimCallers is the production caller table of the functions that
+// take the topology lock themselves. osdDeviceClaimHolders lists the functions
+// whose doc comment requires the caller to hold it: they must not take it, and
+// their own callers are pinned by osdDeviceWiringCallers.
 var osdDeviceClaimCallers = map[string]map[string]bool{
 	"removeOSD": {"release": true},
 	"terminate": {"release": true, "settle": true},
+}
+
+var osdDeviceClaimHolders = map[string]map[string]bool{
+	"registerBlockDeviceOSD": {"claim": true},
 }
 
 func osdDeviceClaimUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "deviceClaims" }
@@ -458,10 +464,12 @@ func TestOSDDeviceClaimsMethodsMakeOnlyTheirPinnedCallsAndHaveNoMutex(t *testing
 	}
 }
 
-// TestOSDDeviceClaimCallersAreTheTwoReleaseHooksUnderTheTopologyLock is the
-// caller-table guard: claim has no production caller, the others are used only
-// by the listed functions, and each takes lockTopology before its first use.
-func TestOSDDeviceClaimCallersAreTheTwoReleaseHooksUnderTheTopologyLock(t *testing.T) {
+// TestOSDDeviceClaimCallersAreTheReleaseHooksAndTheWiringStep is the
+// caller-table guard: claim is called only by the lock-holding wiring step
+// (osd_device_wiring.go), the release hooks only by the listed functions, and
+// each of those takes lockTopology before its first use. A holder never takes
+// the lock itself.
+func TestOSDDeviceClaimCallersAreTheReleaseHooksAndTheWiringStep(t *testing.T) {
 	found := map[string]map[string]bool{}
 	var problems []string
 	for _, parsed := range parseProductionFiles(t) {
@@ -496,6 +504,13 @@ func TestOSDDeviceClaimCallersAreTheTwoReleaseHooksUnderTheTopologyLock(t *testi
 			name := fn.Name.Name
 			found[name] = used
 			want, known := osdDeviceClaimCallers[name]
+			if holder, isHolder := osdDeviceClaimHolders[name]; isHolder {
+				want, known = holder, true
+				if lockAt != token.NoPos {
+					problems = append(problems, name+" is a lock holder and must not take lockTopology")
+				}
+				lockAt = firstUse
+			}
 			switch {
 			case !known:
 				problems = append(problems, name+" uses the OSD device claims but is not in osdDeviceClaimCallers")
@@ -510,10 +525,12 @@ func TestOSDDeviceClaimCallersAreTheTwoReleaseHooksUnderTheTopologyLock(t *testi
 			}
 		}
 	}
-	for name, want := range osdDeviceClaimCallers {
-		for method := range want {
-			if !found[name][method] {
-				problems = append(problems, name+" no longer calls osdDeviceClaims."+method)
+	for _, table := range []map[string]map[string]bool{osdDeviceClaimCallers, osdDeviceClaimHolders} {
+		for name, want := range table {
+			for method := range want {
+				if !found[name][method] {
+					problems = append(problems, name+" no longer calls osdDeviceClaims."+method)
+				}
 			}
 		}
 	}

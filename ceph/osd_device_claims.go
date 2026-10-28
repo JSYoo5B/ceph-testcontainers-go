@@ -16,9 +16,11 @@ var osdDeviceLease = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 // osdDeviceClaims is the cluster-wide claim table of the host block devices
 // that OSDs of one cluster are launched on: the table that the pre-mkfs launch
 // seam (osd_block_device.go) left to its first production caller. It is a
-// primitive in the shape of osdStorageState and monStoreState. Nothing calls
-// claim in this slice, so every cluster holds no claim and the two Terminate
-// stages and the removal hook that use the table return without effect.
+// primitive in the shape of osdStorageState and monStoreState. Only the
+// unexported wiring step registerBlockDeviceOSD (osd_device_wiring.go) calls
+// claim, and it has no production caller, so every cluster holds no claim and
+// the two Terminate stages and the removal hook that use the table return
+// without effect.
 //
 // A claim is exclusion bookkeeping inside the Go cluster and nothing more. It
 // is not the device lease: the caller still owns the file, loop and
