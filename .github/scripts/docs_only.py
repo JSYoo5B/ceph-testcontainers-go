@@ -36,7 +36,16 @@ READ_DOC_FILES = frozenset((
 REGULAR_MODES = frozenset(("100644", "000000"))
 # internal/apiinventory reads the audit, the review notes and the package-scoped
 # declaration, member and review files below docs/design/api-naming/.
-READ_DOC_PREFIXES = ("docs/design/api-naming",)
+# ceph/container_decomposition_records_test.go and
+# ceph/container_residual_fields_test.go read the shared decomposition document
+# and every component record in the docs/design/container-decomposition/
+# directory (discovered by listing it), so any path below it, including a
+# record that does not exist yet, runs the checks.
+READ_DOC_PREFIXES = (
+    "docs/design/api-naming",
+    "docs/design/container-decomposition.md",
+    "docs/design/container-decomposition/",
+)
 
 
 # A fragment name: <change-id>.md, matched in full (never with a "$" anchor,

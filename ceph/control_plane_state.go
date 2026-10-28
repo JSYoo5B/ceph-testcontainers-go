@@ -10,9 +10,9 @@ import (
 // controlPlaneState is the separate control container of one cluster and the
 // read-write lock that guards its handle: the independent CLI container that
 // keeps topology operations available while the first MON is stopped. It is
-// a component of the internal state split described in
-// docs/design/container-decomposition.md, the control-plane lock domain of the
-// membership and control group.
+// a component of the internal state split, recorded in
+// docs/design/container-decomposition/control-plane-state.md, the control-plane
+// lock domain of the membership and control group.
 //
 // The lock is the former Container.controlMu, moved with the handle it
 // guards; no mutex was added and no lock order changed. controlMu is a leaf

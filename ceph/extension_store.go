@@ -9,8 +9,8 @@ import (
 // extensionStore is the per-cluster state that service packages keep under a
 // kind string (the CephFS filesystem registry, the RGW gateway registry), and
 // the mutex that guards the map. It is a component of the internal state split
-// described in docs/design/container-decomposition.md, the extensions lock
-// domain of the membership and control group.
+// recorded in docs/design/container-decomposition/extension-store.md, the
+// extensions lock domain of the membership and control group.
 //
 // The lock is the former Container.extensionsMu, moved with the data it guards;
 // no mutex was added and no lock order changed. mu is a leaf: no method of the

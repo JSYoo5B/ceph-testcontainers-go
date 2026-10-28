@@ -399,7 +399,7 @@ split is still moving.
 | Networking, native-command and feature-client state split from `Container` | Met (#239, #241, #246) | `ceph/network_state.go`, `ceph/native_state.go`, `ceph/feature_client_state.go` |
 | Static facts extraction | Partly met: `FactsOf` exists (`ceph/cluster_facts.go:49`) but the old exported fact accessors are still on `Container` | owner decision 1 of 2026-10-27 says to delete them; in flight |
 | Observation object and removal of the Tenant forwarders | Not met: `Observe` and `ObserveTenant` exist (`ceph/observer.go:33,43`), but the eight views are still `Container` methods (`ceph/status.go:30`, `ceph/health_details.go:55`, `ceph/pool_policy.go:45`, `ceph/object_watchers.go:26`, `ceph/osd_policy.go:115`, `ceph/fencing.go:47`) and still forwarded by `Tenant` (`ceph/tenant.go:181-253`); the forwarders go through `clusterOps` now, and are deleted when the views move | #146 decision 1, in flight |
-| Auth records split (`authFences`, `clientKeys`, `clientSecrets`, `strayAuthInputs`, `clientRevocations`) | Not met | `containerBackend` calls `generateKeyArgs`, `settleClient`, `recordClientSecret` and `setClientKey` (`ceph/shared_backend.go:377,397,411,416,445,457`); audit in `docs/design/container-decomposition.md`, "Components not picked" |
+| Auth records split (`authFences`, `clientKeys`, `clientSecrets`, `strayAuthInputs`, `clientRevocations`) | Not met | `containerBackend` calls `generateKeyArgs`, `settleClient`, `recordClientSecret` and `setClientKey` (`ceph/shared_backend.go:377,397,411,416,445,457`); audit in `docs/design/container-decomposition/feature-client-state.md`, "Components not picked" |
 | OSD storage state split (`osds`, `detachedOSDs`, `osdMemory`, `osdVolume`) | Not met | `containerBackend.daemonsRunning` walks the daemon containers (`ceph/shared_backend.go:323`; `monitors` at `:331`, OSDs through `osds`) |
 | Override maps and fault registry | Not met | the three maps are guarded by `Container.mu`; the `override` package is designed (`docs/design/override-package-boundary.md`, owner answers of 2026-10-27) and not implemented |
 | Membership and control (`mu`, `controlMu`, `controlPlane`, `monitors`, `managers`, `services`, `sharing`, `closed`) | Not met, and not a single component | `containerBackend` uses all of these (`ceph/shared_backend.go`); split by lock domain is a separate review |
@@ -436,7 +436,7 @@ first backend port is still internal. No exported symbol moved.
 | OSD storage state and handle registry | Met | `osdStorageState` (`ceph/osd_storage_state.go:32`), `osdRegistry` (`ceph/osd_registry_state.go:29`) |
 | Run directory and port leases | Met | `ceph/run_dir_state.go`, `ceph/port_lease_state.go`; fields `ceph/ceph.go:81,84` |
 | Override package and fault registry | Partly met: the `override` and `fault` packages exist, `faultRegistry` holds the bookkeeping (`ceph/fault_registry.go:115`, field `ceph/ceph.go:97`). The move of the registry logic into the component is open as #271 (owner review) | `override/`, `fault/`; open PR #271 |
-| Membership and control (`mu`, `controlPlane`, `bootstrap`, `extensions`, `monitors`, `managers`, `services`, `closed`, `monitorTerminated`, `sharing`) | Partly met: two lock domains are components. `controlPlane` with the former `controlMu` is `controlPlaneState` (`ceph/control_plane_state.go:34`; eleventh slice in `container-decomposition.md`), and `config`, `keyring` and `cephVersion` with the former `configMu` are `bootstrapRecord` (`ceph/bootstrap_record.go:35`, field `ceph/ceph.go:53`; twelfth slice). `extensions` with the former `extensionsMu` is `extensionStore` (`ceph/extension_store.go:33`, field `ceph/ceph.go:75`; thirteenth slice). `monitors`, `managers`, `services` and the first MGR's container are `memberRoster` (`ceph/member_roster.go:35`, field `ceph/ceph.go:71`; fourteenth slice), guarded by `mu`. The rest is not met as components. #270 and the twelfth slice replaced the test-state pointers with setters (`ceph/service_hooks.go:484-494`, `ceph/membership_control_test.go`), so `TestState` now publishes only lock identities and a count (the thirteenth slice replaced the network removal flag pointer with `TestSetNetworkRemoved` and `TestNetworkRemoved`), and the other fields stay on `Container` where nothing outside `ceph` can address them. They are not split by lock domain | `ceph/ceph.go:34-100` |
+| Membership and control (`mu`, `controlPlane`, `bootstrap`, `extensions`, `monitors`, `managers`, `services`, `closed`, `monitorTerminated`, `sharing`) | Partly met: two lock domains are components. `controlPlane` with the former `controlMu` is `controlPlaneState` (`ceph/control_plane_state.go:34`; record `container-decomposition/control-plane-state.md`, formerly the eleventh slice), and `config`, `keyring` and `cephVersion` with the former `configMu` are `bootstrapRecord` (`ceph/bootstrap_record.go:35`, field `ceph/ceph.go:53`; twelfth slice). `extensions` with the former `extensionsMu` is `extensionStore` (`ceph/extension_store.go:33`, field `ceph/ceph.go:75`; thirteenth slice). `monitors`, `managers`, `services` and the first MGR's container are `memberRoster` (`ceph/member_roster.go:35`, field `ceph/ceph.go:71`; fourteenth slice), guarded by `mu`. The rest is not met as components. #270 and the twelfth slice replaced the test-state pointers with setters (`ceph/service_hooks.go:484-494`, `ceph/membership_control_test.go`), so `TestState` now publishes only lock identities and a count (the thirteenth slice replaced the network removal flag pointer with `TestSetNetworkRemoved` and `TestNetworkRemoved`), and the other fields stay on `Container` where nothing outside `ceph` can address them. They are not split by lock domain | `ceph/ceph.go:34-100` |
 | Backend port shape (`containerBackend` reach into `Container`) | Narrowed by this change; see below | `ceph/shared_cluster_port.go`, `ceph/shared_backend_reach_test.go` |
 | Move to `ceph/harness` and the service harnesses | Not started, see "Is the move unambiguous" | |
 
@@ -572,8 +572,8 @@ What changed against the older tables, so none of them is carried forward:
 | Orchestration and `Tenant` free of `*Container` | Met (#253) | `ceph/shared_ops.go`, `TestLeaseOrchestrationNamesNoContainerBeyondTheAllowList` |
 | Backend port: 12-method `sharedBackend`, nine core methods, zero `Container` fields | Met (#272) | `ceph/shared_cluster_port.go`, `TestContainerBackendReach` |
 | `Observer` and `poolLease` free of `*Tenant` | Met (#266) | `ceph/tenant_observe.go`, `TestObserverAndPoolLeaseNameNoTenant` |
-| Facts, observation views, auth records, OSD storage and registry, run directory, port leases, override and fault registries | Met | `container-decomposition.md`, the internal slices before the control-plane slice |
-| Membership and control: control plane, bootstrap record, extension store, member roster, startup identity | Met (#281, #282) | `container-decomposition.md`, slices eleven to fifteen |
+| Facts, observation views, auth records, OSD storage and registry, run directory, port leases, override and fault registries | Met | the records under `container-decomposition/` (formerly the internal slices before the control-plane slice, see the historical ordinals in `container-decomposition.md`) |
+| Membership and control: control plane, bootstrap record, extension store, member roster, startup identity | Met (#281, #282) | `container-decomposition/` records `control-plane-state.md`, `bootstrap-record.md`, `extension-store.md`, `member-roster.md` and `startup-identity.md` (formerly slices eleven to fifteen) |
 | Disposition of every remaining `Container` field | Met (#284) | `ceph/container_residual_fields_test.go`, sixteenth slice |
 | Cross-package registration contract | Specified below, not implemented | this note |
 | Public move, exported signatures, API catalogue moves, direct caller migration, native acceptance | Not started | |
@@ -933,11 +933,22 @@ of `ceph/harness`.
 0. Done, internal, no public API: the single internal definition of the shared
    pool name (see "SharedPool and Exclusive"). The error contract has no caller
    before the move and is therefore not prepared separately (see "Error handling").
-1. Internal, no public API: `Backend.CreateClient` returns `created`. It touches
-   `sharedBackend`, its test model and `tenant.go`, and is the only code-level
-   preparation that the design needs before the move. It is left to a separate
-   change. The error contract needs no preparation: it is added with the move
-   because it has no caller before then.
+1. Internal, no public API (done): the private backend method `createClient`
+   (`Backend.CreateClient` after the move) returns `created`. `sharedBackend`,
+   `containerBackend`, `createSharedClient`, the model backend of the tests and
+   `Tenant.createClient` changed; the tenant registers a client for deletion on
+   the backend's report and no longer reads `ClientConfig.created`. The report is
+   true from the point where the MON accepted the entity, including a later
+   keyring failure that still returns the partial client, and false before it.
+   Docker-free controls pin both the tenant's use of the report and the
+   backend's value at each return. Not done and not independent of the open
+   items: removing `raw()` from the operations port. Its callers are
+   `SharedCluster.Exclusive`, the Observer path `Tenant.container` and the
+   test-only `UnitTenantCluster` (decision 7), so it needs the `Lend` route,
+   hence the placement of decision 5, the stale-handle audit of decision 11 and
+   the decision 7 lookup.
+   The error contract needs no preparation: it is added with the move because it
+   has no caller before then.
 2. Internal: move the service-private helpers into `<service>/internal/...`
    (decision 8), one change per service.
 3. The move: `ceph/harness`, `internal/harnesshook`, the two slots, the three

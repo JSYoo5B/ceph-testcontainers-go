@@ -6,7 +6,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -14,7 +13,7 @@ import (
 )
 
 // residualFieldVerdicts is the disposition of every field the Container struct
-// still declares after the fifteenth internal slice. The verdict kinds are:
+// still declares. The verdict kinds are:
 //
 //	public   part of the public type (the embedded first MON)
 //	lock     the cluster mutex that every lock-order citation is measured from
@@ -24,10 +23,9 @@ import (
 //	seam     a test seam with one reader and no state of its own
 //	owner    a component with its own type, file and guards
 //
-// A new field must be added here with a verdict and a row in the "Sixteenth
-// internal slice" table of docs/design/container-decomposition.md, or the test
-// fails. This is the "owner or stays" ledger of issue #146, not a method-count
-// target.
+// A new field must be added here with a verdict and a row in the table of
+// docs/design/container-decomposition/residual-fields.md, or the test fails.
+// This is the "owner or stays" ledger of issue #146, not a method-count target.
 var residualFieldVerdicts = map[string]string{
 	"testcontainers.Container": "public",
 	"mu":                       "lock",
@@ -43,6 +41,7 @@ var residualFieldVerdicts = map[string]string{
 	"nets":                     "owner",
 	"osdHandles":               "owner",
 	"stores":                   "owner",
+	"monStores":                "owner",
 	"runDir":                   "owner",
 	"portLeases":               "owner",
 	"closed":                   "flag",
@@ -102,21 +101,14 @@ func readContainerSource(t *testing.T) string {
 	return string(b)
 }
 
-// residualDocFields returns the field names that the verdict table of the
-// sixteenth slice names in its first column, in backticks.
+// residualDocFields returns the field names that the verdict rows of the
+// residual-field record name in their first column, in backticks. The record
+// is docs/design/container-decomposition/residual-fields.md and holds nothing
+// else with such rows.
 func residualDocFields(doc string) []string {
-	const heading = "## Sixteenth internal slice"
-	start := strings.Index(doc, heading)
-	if start < 0 {
-		return nil
-	}
-	section := doc[start+len(heading):]
-	if end := strings.Index(section, "\n## "); end >= 0 {
-		section = section[:end]
-	}
 	row := regexp.MustCompile("(?m)^\\| `([A-Za-z.]+)` \\|")
 	var names []string
-	for _, m := range row.FindAllStringSubmatch(section, -1) {
+	for _, m := range row.FindAllStringSubmatch(doc, -1) {
 		names = append(names, m[1])
 	}
 	slices.Sort(names)
@@ -203,26 +195,26 @@ func TestContainerResidualFieldCheckRejectsDrift(t *testing.T) {
 }
 
 // TestContainerResidualFieldsAreInTheDesignNote requires one table row per
-// field in the sixteenth-slice section of the design note.
+// field in the residual-field record. The record is found by name in the
+// decomposition directory; its absence fails the test.
 func TestContainerResidualFieldsAreInTheDesignNote(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "docs", "design", "container-decomposition.md"))
+	got, err := residualRecordFields(repoFS())
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := residualDocFields(string(b))
 	want := sortedKeys(residualFieldVerdicts)
 	if !slices.Equal(got, want) {
-		t.Fatalf("the design note's verdict table names %v, the ledger %v", got, want)
+		t.Fatalf("the residual-field record's verdict table names %v, the ledger %v", got, want)
 	}
 }
 
-func TestResidualDocFieldsReadsOnlyTheSixteenthSection(t *testing.T) {
-	doc := "## Fifteenth internal slice\n| `owner` | x |\n## Sixteenth internal slice: x\n| `mu` | y |\n| `closed` | z |\n## Limits\n| `settings` | w |\n"
+func TestResidualDocFieldsReadsTheVerdictRows(t *testing.T) {
+	doc := "# Residual fields\n| `mu` | y |\n| `closed` | z |\nprose | `x` |\n| Measure | Value |\n"
 	if got := residualDocFields(doc); !slices.Equal(got, []string{"closed", "mu"}) {
 		t.Fatalf("rows = %v", got)
 	}
-	if residualDocFields("no section") != nil {
-		t.Fatal("a missing section yielded rows")
+	if residualDocFields("no rows") != nil {
+		t.Fatal("a document without rows yielded rows")
 	}
 }
 

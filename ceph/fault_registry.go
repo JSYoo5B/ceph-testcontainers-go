@@ -114,8 +114,8 @@ type faultEntry struct {
 }
 
 // faultRegistry holds the faults of one cluster. It is the state component
-// described in docs/design/container-decomposition.md ("Ninth internal
-// slice") and is guarded by Container.mu: it has no mutex and takes none. The
+// recorded in docs/design/container-decomposition/fault-registry.md and is
+// guarded by Container.mu: it has no mutex and takes none. The
 // one lock operation it performs is the release of the caller's lock around
 // a network-shaping undo, through the sync.Locker that undo receives. It
 // calls into no Container method and reads no Container field; the closed

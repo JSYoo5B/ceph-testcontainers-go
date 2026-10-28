@@ -78,6 +78,10 @@ type Container struct {
 	// stores is the OSD memory and volume storage and its test seams; see
 	// osdStorageState. It has no lock of its own: mu guards it.
 	stores osdStorageState
+	// monStores is the owned MON store volumes, by MON name; see
+	// monStoreState. It has no lock of its own: mu guards it. Nothing publishes
+	// a record yet.
+	monStores monStoreState
 	// runDir is the shared admin-socket run directory; see runDirState for
 	// what guards each part.
 	runDir runDirState
@@ -1024,6 +1028,9 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 			c.monitorTerminated = true
 		}
 	}
+	// The added and the primary MON containers are the users of the MON store
+	// volumes; release the stores whose attachment is gone.
+	monStoreErr := c.monStores.releaseStores(ctx)
 	if err := c.controlPlane.terminate(ctx, opts...); err != nil {
 		errs = append(errs, err)
 	}
@@ -1045,7 +1052,8 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	// was lost, such as an OSD or an owned storage helper.
 	memoryErr = c.stores.retryMemory(ctx, memoryErr, c.osdHandles.count() == 0)
 	volumeErr = c.stores.retryVolume(ctx, volumeErr, c.osdHandles.count() == 0)
-	errs = append(errs, memoryErr, volumeErr)
+	monStoreErr = c.monStores.retryStores(ctx, monStoreErr)
+	errs = append(errs, memoryErr, volumeErr, monStoreErr)
 	if err := c.runDir.release(ctx); err != nil {
 		errs = append(errs, err)
 	}

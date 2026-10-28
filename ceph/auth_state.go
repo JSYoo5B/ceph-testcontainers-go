@@ -7,7 +7,8 @@ import (
 
 // authState holds the records that the calls changing an auth entry keep
 // between calls, for clients and for daemons. It is the fourth component of the
-// internal state split described in docs/design/container-decomposition.md.
+// internal state split, recorded in
+// docs/design/container-decomposition/auth-records.md.
 //
 // The records have no lock of their own and no new lock was added for them:
 // Container.mu guards every part, as it did when they were fields of

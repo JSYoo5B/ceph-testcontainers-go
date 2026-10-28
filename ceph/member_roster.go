@@ -11,7 +11,8 @@ import (
 // memberRoster is the roster of the daemons that a cluster owns beside its
 // first MON and its OSDs: the added MONs, the MGR candidates, the first MGR's
 // container and the optional services. It is a component of the internal
-// state split described in docs/design/container-decomposition.md.
+// state split, recorded in
+// docs/design/container-decomposition/member-roster.md.
 //
 // The type has no mutex. Container.mu guards every field, as it guarded
 // Container.manager, monitors, managers and services before the move: each

@@ -5,7 +5,8 @@ import "context"
 // portLeaseState is the host-port reservations of one cluster in host network
 // mode: every allocator container that holds reserved ports for a MON, owned
 // until Terminate releases it. It is the eighth component of the internal state
-// split described in docs/design/container-decomposition.md.
+// split, recorded in
+// docs/design/container-decomposition/host-port-lease-state.md.
 //
 // The type has no mutex and Container.mu was not given a new job. Every
 // reader and writer runs under Container.mu: track from the three places that

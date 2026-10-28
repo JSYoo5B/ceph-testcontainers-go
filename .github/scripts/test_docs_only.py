@@ -36,6 +36,15 @@ TABLE = [
     ("docs/contributing/test-double-inventory.md", False),
     # Read by ceph/shared_harness_inventory_test.go (the shared harness inventory).
     ("docs/design/shared-harness-boundary.md", False),
+    # Read by ceph/container_decomposition_records_test.go and ceph/container_residual_fields_test.go:
+    # the shared document and every component record of the directory, including one that is added later.
+    ("docs/design/container-decomposition.md", False),
+    ("docs/design/container-decomposition/member-roster.md", False),
+    ("docs/design/container-decomposition/residual-fields.md", False),
+    ("docs/design/container-decomposition/a-record-added-later.md", False),
+    ("docs/design/container-decomposition/sub/deeper.md", False),
+    # Neighbours of the directory that no check reads stay documentation.
+    ("docs/design/container-decompositions.md", True), ("docs/design/filesystem-decomposition.md", True),
     # Read by tag_scenarios (registry) and its tests (catalogue).
     ("docs/guides/bug-compatibility-tags.json", False), ("docs/guides/bug-compatibility-tags.md", False),
     # Not on the allowlist: data files, new top-level pages, nested paths, other trees.
@@ -93,6 +102,21 @@ class NegativeControlTests(unittest.TestCase):
         return docs_only.is_unread_doc(path) or (isinstance(path, str) and path.startswith("docs/design/api-naming"))
 
     @staticmethod
+    def decomposition_document_only(path):
+        # Registers the shared document but not the directory of component records.
+        return docs_only.is_unread_doc(path) or path == "docs/design/container-decomposition.md"
+
+    @staticmethod
+    def decomposition_directory_only(path):
+        # Registers the records but forgets the shared document the residual guard also reads.
+        return docs_only.is_unread_doc(path) or (isinstance(path, str)
+                                                 and path.startswith("docs/design/container-decomposition/"))
+
+    @staticmethod
+    def design_subtrees_allowed(path):
+        return docs_only.is_unread_doc(path) or (isinstance(path, str) and path.startswith("docs/design/"))
+
+    @staticmethod
     def package_pages_allowed(path):
         return docs_only.is_unread_doc(path) or path in ("docs/ceph.md", "docs/rgw.md")
 
@@ -114,6 +138,7 @@ class NegativeControlTests(unittest.TestCase):
 
     def test_wrong_classifiers_fail_the_table(self):
         for name in ("paths_ignore", "any_markdown", "no_read_exceptions", "naming_receipts_allowed",
+                     "decomposition_document_only", "decomposition_directory_only", "design_subtrees_allowed",
                      "package_pages_allowed", "changes_not_allowlisted", "changes_subtree_allowed",
                      "top_level_changes_allowed", "never"):
             with self.subTest(name):
@@ -343,7 +368,7 @@ class ReaderInventoryTests(unittest.TestCase):
 
     # A Go source names a document file, or the whole package-scoped catalogue
     # directory that internal/apiinventory/catalogue reads.
-    REFERENCE = re.compile(r"docs/[A-Za-z0-9_./-]*\.(?:md|json)|docs/design/api-naming/?")
+    REFERENCE = re.compile(r"docs/[A-Za-z0-9_./-]*\.(?:md|json)|docs/design/api-naming/?|docs/design/container-decomposition/?")
 
     def sources(self):
         for path in sorted(ROOT.rglob("*.go")):
@@ -362,7 +387,8 @@ class ReaderInventoryTests(unittest.TestCase):
                 for match in self.REFERENCE.findall(line):
                     found.setdefault(match, "%s:%d" % (relative, number))
         # The scan must keep seeing the known readers, or it proves nothing.
-        for known in ("docs/design/api-naming", "docs/guides/messenger-client-fixtures.md",
+        for known in ("docs/design/api-naming", "docs/design/container-decomposition.md",
+                      "docs/design/container-decomposition", "docs/guides/messenger-client-fixtures.md",
                       "docs/guides/bug-compatibility-tags.json"):
             self.assertIn(known, found)
         for path, where in sorted(found.items()):
@@ -378,6 +404,16 @@ class ReaderInventoryTests(unittest.TestCase):
             for path in (data["page"], "docs/design/" + data["review"]):
                 self.assertTrue((ROOT / path).is_file(), "%s names a missing file %s" % (receipt.relative_to(ROOT), path))
                 self.assertFalse(docs_only.is_unread_doc(path), "%s names %s, which is skipped as unread" % (receipt.relative_to(ROOT), path))
+
+    def test_the_scan_sees_a_reader_of_the_decomposition_directory(self):
+        # A Go guard that lists the record directory names it by a literal; a
+        # path built from parts would hide the reader from this scan.
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "reader_test.go"
+            source.write_text('const dir = "docs/design/container-decomposition"\n')
+            found = self.REFERENCE.findall(source.read_text())
+        self.assertEqual(found, ["docs/design/container-decomposition"])
+        self.assertFalse(docs_only.is_unread_doc(found[0] + "/any-record.md"))
 
     def test_the_scan_catches_a_reader_of_a_fragment(self):
         # A Go test that names a fragment file must make the allowlist fail.

@@ -114,16 +114,16 @@ func (f *fakeShared) daemonsRunning(context.Context) error {
 	return nil
 }
 
-func (f *fakeShared) createClient(_ context.Context, entity string, caps ClientCaps) (*ClientConfig, error) {
+func (f *fakeShared) createClient(_ context.Context, entity string, caps ClientCaps) (*ClientConfig, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.auth[entity]; ok {
-		return nil, invalidRequest("%s exists", entity)
+		return nil, false, invalidRequest("%s exists", entity)
 	}
 	f.auth[entity] = "mon=" + caps.Mon + ";osd=" + caps.OSD
 	f.clients++
 	f.maxClients = max(f.maxClients, f.clients)
-	return &ClientConfig{name: entity, created: true, ready: true}, nil
+	return &ClientConfig{name: entity, created: true, ready: true}, true, nil
 }
 
 func (f *fakeShared) deleteClient(_ context.Context, client *ClientConfig) error {
