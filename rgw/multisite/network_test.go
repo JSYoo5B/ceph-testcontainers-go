@@ -14,7 +14,7 @@ import (
 // that names its own, a zone's link to itself, or unknown zones are refused
 // before anything runs.
 func TestTemporaryZoneLinkDelayRefusesBeforeAnythingRuns(t *testing.T) {
-	probe := &clustertest.ContextLockRuntime{}
+	probe := &clustertest.NativeCallCounter{}
 	f := &Fixture{sourceClient: probe, destinationClient: probe}
 	loss := fault.NetworkProfile{HelperImage: "netem-helper:test", Loss: 100}
 	for name, edit := range map[string]func(*fault.NetworkProfile){

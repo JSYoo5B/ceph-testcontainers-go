@@ -2009,8 +2009,19 @@ Limits:
   removed or replaced container takes its logs and crash records along and is
   reported as a gap, not covered.
 - Clean is evidence for the reported sources and window, not proof that no
-  daemon failed. Its log and crash coverage has not yet been measured against
-  native log windows, crash completion and collection limits (#47).
+  daemon failed. Native evidence currently includes one Ceph 20.2.4 / Linux
+  amd64 cohort with unchanged generations and a non-rotating `json-file`
+  driver: early and late warnings stay in the verification window after the
+  early event has left the 24-line diagnostic tail, the selected generation
+  and its configuration are unchanged, no log gap, omitted finding or
+  truncated finding is reported, and cleanup passes. The same run checks that
+  an INF line quoting a warning cannot satisfy a required warning (see the
+  #206 receipt on #47). This does not qualify other releases, daemon roles or
+  log formats, rotating, restarted or removed generations, or continuous
+  collection, and current gaps stay incomplete coverage. Native crash
+  completion timing and measured collection-resource defaults remain
+  unestablished; the configured limits and their loss accounting are separate
+  evidence.
 - Shared-cluster tenants, scrub results, fresh scrubs and fault recovery waits
   are not verified, and the bug compatibility selection is not known to the
   report.

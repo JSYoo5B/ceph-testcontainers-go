@@ -43,6 +43,7 @@ type unitHooks interface {
 	UnitSetCephFSImage(c *ceph.Container, image string)
 	UnitReplaceOSDs(c *ceph.Container, osds map[int]*ceph.OSDContainer)
 	UnitOSDCount(c *ceph.Container) int
+	UnitTenantCluster(t *ceph.Tenant) *ceph.Container
 	UnitClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool)
 	UnitApply(opts ...ceph.Option) ([]servicehook.Bootstrap, error)
 	UnitPrepare(osds int, noInitialOSDs bool, pools []ceph.PoolConfig, opts ...ceph.Option) ([]ceph.PoolConfig, []servicehook.Bootstrap, error)
@@ -164,6 +165,11 @@ func TestSetCephFSImage(c *ceph.Container, image string) { get().UnitSetCephFSIm
 func TestClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool) {
 	return get().UnitClientState(client)
 }
+
+// TestTenantCluster returns the shared cluster of a live tenant, or nil. Its
+// gate refuses the methods that a tenant cannot use. The service adapters use
+// servicehook.Tenant and never this.
+func TestTenantCluster(t *ceph.Tenant) *ceph.Container { return get().UnitTenantCluster(t) }
 
 // TestApply applies options to empty settings and returns the service
 // bootstraps they record.

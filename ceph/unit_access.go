@@ -128,6 +128,18 @@ func (unitAccess) UnitReplaceOSDs(c *Container, osds map[int]*OSDContainer) {
 // goroutine uses.
 func (unitAccess) UnitOSDCount(c *Container) int { return c.osdHandles.count() }
 
+// UnitTenantCluster returns the shared cluster of a live tenant, whose gate
+// still refuses the methods a tenant cannot use, or nil. Only the unit tests and
+// the native gate and release tests use it; the service adapters use the tenant
+// port.
+func (unitAccess) UnitTenantCluster(t *Tenant) *Container {
+	c, err := t.cluster()
+	if err != nil {
+		return nil
+	}
+	return c.raw()
+}
+
 // UnitClientState returns a client identity's owner and lifecycle flags.
 func (unitAccess) UnitClientState(client *ClientConfig) (owner *Container, created, ready, revoked bool) {
 	return client.owner, client.created, client.ready, client.revoked

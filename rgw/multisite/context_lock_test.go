@@ -10,7 +10,7 @@ import (
 )
 
 func TestSerializedMultisiteMutationQueuedDeadline(t *testing.T) {
-	probe := &clustertest.ContextLockRuntime{}
+	probe := &clustertest.NativeCallCounter{}
 	f := &Fixture{sourceClient: probe, destinationClient: probe}
 	group := &SyncGroup{owner: f, state: &rgwSyncGroupState{id: "queued"}}
 	operations := map[string]func(context.Context) error{

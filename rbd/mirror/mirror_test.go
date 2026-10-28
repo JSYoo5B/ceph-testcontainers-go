@@ -62,9 +62,9 @@ func TestRBDMirrorDaemonConfigurationRejectsInvalidTopologyBeforeAllocation(t *t
 }
 
 func TestRBDMirrorDaemonRemovalOwnsMembershipAndRetriesFailedCleanup(t *testing.T) {
-	initialContainer := &clustertest.CleanupContainer{}
+	initialContainer := &clustertest.TerminateRecorder{}
 	initial := &Daemon{Container: initialContainer, DaemonName: "a"}
-	failedContainer := &clustertest.CleanupContainer{Err: errors.New("temporary cleanup failure")}
+	failedContainer := &clustertest.TerminateRecorder{Err: errors.New("temporary cleanup failure")}
 	standby := &Daemon{Container: failedContainer, DaemonName: "b"}
 	link := &Mirror{Container: initial, daemons: []*Daemon{standby, initial}, initialDaemonName: "a"}
 	link.owned.AddContainer(initial)
@@ -99,7 +99,7 @@ func TestRBDMirrorDaemonRemovalOwnsMembershipAndRetriesFailedCleanup(t *testing.
 }
 
 func TestRBDMirrorTerminateClosesAdditionsButAllowsCleanupRetry(t *testing.T) {
-	ctr := &clustertest.CleanupContainer{Err: errors.New("temporary cleanup failure")}
+	ctr := &clustertest.TerminateRecorder{Err: errors.New("temporary cleanup failure")}
 	daemon := &Daemon{Container: ctr, DaemonName: "a"}
 	link := &Mirror{Container: daemon, initialDaemonName: "a", daemons: []*Daemon{daemon}}
 	link.owned.AddContainer(daemon)

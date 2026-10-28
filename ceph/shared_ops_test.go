@@ -156,8 +156,22 @@ func TestTenantOfAModelWithoutOpsRefusesClusterViews(t *testing.T) {
 			t.Errorf("%s without a cluster returned %v", name, err)
 		}
 	}
-	if (serviceHooks{}).TenantCluster(tenant) != nil {
+	if (unitAccess{}).UnitTenantCluster(tenant) != nil {
 		t.Error("TenantCluster returned a cluster for a model")
+	}
+}
+
+func TestUnitTenantClusterReturnsTheLiveTenantsCluster(t *testing.T) {
+	sentinel := &Container{}
+	shared := newOpsShared(&recordingOps{rawValue: sentinel})
+	tb := newFakeTB(t)
+	tenant := shared.Lease(tb)
+	if got := (unitAccess{}).UnitTenantCluster(tenant); got != sentinel {
+		t.Errorf("UnitTenantCluster returned %p, want the backend's cluster %p", got, sentinel)
+	}
+	tb.finish()
+	if got := (unitAccess{}).UnitTenantCluster(tenant); got != nil {
+		t.Errorf("UnitTenantCluster of a released tenant returned %p, want nil", got)
 	}
 }
 
