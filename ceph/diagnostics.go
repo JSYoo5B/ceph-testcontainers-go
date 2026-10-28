@@ -264,15 +264,15 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 		snapshot.networks = append(snapshot.networks, diagnosticNetwork{id: nw.ID, name: nw.Name})
 	}
 	c.mu.Unlock()
-	if err := diagnosticLock(ctx, c.controlMu.TryRLock); err != nil {
+	control, err := c.controlPlane.diagnosticHandle(ctx)
+	if err != nil {
 		return snapshot, err
 	}
-	if c.controlPlane != nil {
-		snapshot.control = diagnosticContainerHandle(c.controlPlane)
+	if control != nil {
+		snapshot.control = diagnosticContainerHandle(control)
 		snapshot.controlPlane = snapshot.control
 		add("control", "cli", snapshot.control)
 	}
-	c.controlMu.RUnlock()
 	client, err := c.toolkit.diagnosticSnapshot(ctx)
 	if err != nil {
 		return snapshot, err

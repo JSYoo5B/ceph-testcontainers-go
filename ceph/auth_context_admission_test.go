@@ -77,7 +77,7 @@ func TestClientControlAdmissionQueuedDeadline(t *testing.T) {
 				}
 				return err
 			}
-			assertSnapshotReadLockQueued(t, &cluster.controlMu, operation)
+			assertSnapshotReadLockQueued(t, &cluster.controlPlane.mu, operation)
 			if len(control.calls) != before || created != nil || client.revoked || !client.created || !client.ready {
 				t.Fatal("queued control selection performed native auth or lost the active identity")
 			}
@@ -109,7 +109,7 @@ func TestCreateClientLateControlAdmissionRetainsPartialIdentity(t *testing.T) {
 			publicationMu.Lock()
 			disabled = true
 			if held {
-				cluster.controlMu.Unlock()
+				cluster.controlPlane.mu.Unlock()
 				held = false
 			}
 			publicationMu.Unlock()
@@ -131,7 +131,7 @@ func TestCreateClientLateControlAdmissionRetainsPartialIdentity(t *testing.T) {
 				if disabled {
 					return
 				}
-				if !cluster.controlMu.TryLock() {
+				if !cluster.controlPlane.mu.TryLock() {
 					hookFailure <- errors.New("native readback unexpectedly retained the control cache gate")
 					cancel()
 					return
@@ -175,7 +175,7 @@ func TestCreateClientLateControlAdmissionRetainsPartialIdentity(t *testing.T) {
 			t.Fatal("late control admission did not honor cancellation")
 		}
 	}
-	if cluster.controlMu.TryLock() {
+	if cluster.controlPlane.mu.TryLock() {
 		// Restore writer ownership before failing so cleanup still unlocks a
 		// held gate if a regression incorrectly released the fixture's writer.
 		t.Fatal("late control admission stole or unlocked the busy cache gate")

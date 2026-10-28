@@ -113,7 +113,7 @@ func TestRefreshMonitorConfigUpdatesEveryOwnedRoleWhileStopped(t *testing.T) {
 	client := newMonitorConfigArchive("feature-client", "[client.admin]\nclient cache size = 32\n")
 	caller := newMonitorConfigArchive("caller-owned", "[client.test]\nkeyring = /private/keyring\n")
 	cluster.Container = mon
-	cluster.controlPlane = control
+	cluster.controlPlane.handle = control
 	cluster.toolkit.client = client
 	cluster.monitors["b"] = &MonitorContainer{Container: second, DaemonName: "b"}
 	cluster.managers["a"] = &ManagerContainer{Container: mgr, DaemonName: "a"}
@@ -171,7 +171,7 @@ func TestMonitorConfigInventorySkipsRemovedAndRetiredHandles(t *testing.T) {
 	removed := newMonitorConfigArchive("retired-secondary", "")
 	retiredMgr := newMonitorConfigArchive("retired-manager", "")
 	retiredOSD := newMonitorConfigArchive("retired-osd", "")
-	cluster.Container, cluster.controlPlane = primary, control
+	cluster.Container, cluster.controlPlane.handle = primary, control
 	cluster.monitors["removed"] = &MonitorContainer{Container: removed, DaemonName: "removed"}
 	cluster.monitors["uncreated"] = &MonitorContainer{DaemonName: "uncreated"}
 	cluster.managers["a"] = &ManagerContainer{Container: retiredMgr, terminated: true}

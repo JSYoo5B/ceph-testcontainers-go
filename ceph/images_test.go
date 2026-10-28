@@ -93,7 +93,7 @@ func TestAggregateClientExecutorUsesCurrentControl(t *testing.T) {
 	if got, err := c.ClientContainer(t.Context()); err != nil || got != mon {
 		t.Fatalf("aggregate MON: %v %v", got, err)
 	}
-	c.controlPlane = control
+	c.controlPlane.handle = control
 	if got, err := c.ClientContainer(t.Context()); err != nil || got != control {
 		t.Fatalf("aggregate stable CLI: %v %v", got, err)
 	}

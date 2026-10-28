@@ -69,7 +69,7 @@ func TestTestStateExposesNoMembershipControlPointer(t *testing.T) {
 	if got := structFieldNames(t, "service_hooks.go", "testState"); !slices.Equal(got, testStateFields) {
 		t.Fatalf("testState fields = %v, pinned %v", got, testStateFields)
 	}
-	if got := structFieldNames(t, filepath.Join("..", "internal", "servicehook", "servicehook.go"), "TestStateView"); !slices.Equal(got, testStateFields) {
+	if got := structFieldNames(t, filepath.Join("..", "internal", "servicehook", "testaccess.go"), "TestStateView"); !slices.Equal(got, testStateFields) {
 		t.Fatalf("TestStateView fields = %v, pinned %v", got, testStateFields)
 	}
 }
@@ -127,23 +127,19 @@ func membershipFieldUnder(e ast.Expr) string {
 	}
 }
 
-// TestClosedAndControlPlaneWritersAreAudited lists every function that writes
-// c.closed or c.controlPlane (assignment, or a key of a Container literal). The
-// terminate function appears under both fields; the table keys writers by name
-// and field together. The modes are "terminate" (terminate holds Container.mu
-// and takes controlMu around the control plane), "takes" (the function takes
-// controlMu around the write), "build" (a cluster no other goroutine uses yet)
-// and "hook" (a TestSet* hook whose doc names the lock the caller holds). A new
-// writer, or a stale row, fails.
-func TestClosedAndControlPlaneWritersAreAudited(t *testing.T) {
+// TestClosedWritersAreAudited lists every function that writes c.closed
+// (assignment, or a key of a Container literal). The modes are "terminate"
+// (terminate holds Container.mu), "build" (a cluster no other goroutine uses
+// yet) and "hook" (a TestSet* hook whose doc names the lock the caller holds).
+// A new writer, or a stale row, fails. The control-plane handle left this table
+// when it moved into controlPlaneState; its writers are pinned by
+// TestControlPlaneHandleHasAuditedWriters in control_plane_state_test.go.
+func TestClosedWritersAreAudited(t *testing.T) {
 	type key struct{ fn, field string }
 	want := map[key]string{
-		{"terminate", "closed"}:                 "terminate",
-		{"terminate", "controlPlane"}:           "terminate",
-		{"TestCluster", "closed"}:               "build",
-		{"TestSetClosed", "closed"}:             "hook",
-		{"ensureControlPlane", "controlPlane"}:  "takes",
-		{"TestSetControlPlane", "controlPlane"}: "hook",
+		{"terminate", "closed"}:     "terminate",
+		{"TestCluster", "closed"}:   "build",
+		{"TestSetClosed", "closed"}: "hook",
 	}
 	docs := osdRegistryDocs(t)
 	got := map[key]bool{}
@@ -165,25 +161,20 @@ func TestClosedAndControlPlaneWritersAreAudited(t *testing.T) {
 				if mode == "hook" && !(strings.Contains(docs[fn.Name.Name], "holds") && strings.Contains(docs[fn.Name.Name], "not shared")) {
 					problems = append(problems, fn.Name.Name+" is a hook row but its doc comment does not name the lock contract")
 				}
-				if mode == "takes" && !callsMethod(fn, "controlMu", "Lock") {
-					problems = append(problems, fn.Name.Name+" must take controlMu around its write")
-				}
 			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.AssignStmt:
 					for _, lhs := range x.Lhs {
-						for _, field := range []string{"closed", "controlPlane"} {
-							if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == field && isContainerReceiver(sel.X) {
-								note(field)
-							}
+						if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "closed" && isContainerReceiver(sel.X) {
+							note("closed")
 						}
 					}
 				case *ast.CompositeLit:
 					if id, ok := x.Type.(*ast.Ident); ok && id.Name == "Container" {
 						for _, elt := range x.Elts {
 							if kv, ok := elt.(*ast.KeyValueExpr); ok {
-								if key, ok := kv.Key.(*ast.Ident); ok && (key.Name == "closed" || key.Name == "controlPlane") {
+								if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "closed" {
 									note(key.Name)
 								}
 							}
@@ -201,12 +192,12 @@ func TestClosedAndControlPlaneWritersAreAudited(t *testing.T) {
 	}
 	if len(problems) != 0 {
 		slices.Sort(problems)
-		t.Fatalf("closed/controlPlane writers changed: %v", problems)
+		t.Fatalf("closed writers changed: %v", problems)
 	}
 }
 
 // callsMethod reports whether fn calls <recv>.<method>() on a selector named
-// recv, such as c.controlMu.Lock().
+// recv, such as s.mu.Lock().
 func callsMethod(fn *ast.FuncDecl, recv, method string) bool {
 	found := false
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -227,7 +218,7 @@ func callsMethod(fn *ast.FuncDecl, recv, method string) bool {
 // holds the lock or owns the cluster.
 var testSetHooks = map[string][]string{
 	"TestSetClosed":         {"closed"},
-	"TestSetControlPlane":   {"controlPlane"},
+	"TestSetControlPlane":   {"handle"},
 	"TestSetInitialOSDs":    {"osds"},
 	"TestSetPoolDefaults":   {"poolMinSize", "poolReplicas"},
 	"TestSetStartupTimeout": {"startupTimeout"},
@@ -294,7 +285,7 @@ func TestTestSetHooksAreSingleWritesWithoutCalls(t *testing.T) {
 // non-test source file in the module calls a servicehook.TestSet* function. The
 // wrappers in internal/servicehook are the only definitions; production code
 // that wrote the closed flag or the control plane through them would bypass the
-// terminate and ensureControlPlane writers audited above.
+// terminate writer and the control-plane writers audited in control_plane_state_test.go.
 func TestTestSetHooksAreCalledOnlyFromTests(t *testing.T) {
 	var problems []string
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
@@ -317,8 +308,8 @@ func TestTestSetHooksAreCalledOnlyFromTests(t *testing.T) {
 				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "servicehook" {
 					problems = append(problems, filepath.ToSlash(path))
 				}
-				// get().TestSetX(...) inside the wrappers themselves is the definition.
-				if _, ok := sel.X.(*ast.CallExpr); ok && !strings.HasSuffix(filepath.ToSlash(path), "internal/servicehook/servicehook.go") {
+				// getTest().TestSetX(...) inside the wrappers themselves is the definition.
+				if _, ok := sel.X.(*ast.CallExpr); ok && !strings.HasSuffix(filepath.ToSlash(path), "internal/servicehook/testaccess.go") {
 					problems = append(problems, filepath.ToSlash(path))
 				}
 			}

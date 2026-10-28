@@ -478,7 +478,7 @@ func TestCrashMetadataSelectsTargetsByIdentity(t *testing.T) {
 			docker := &fakeCrashDocker{containers: map[string]*fakeCrashContainer{
 				"control": {archive: records}, "helper": {archive: records},
 			}}
-			cluster := &Container{controlPlane: control}
+			cluster := &Container{controlPlane: controlPlaneState{handle: control}}
 			config, err := normalizeCrashMetadataConfig(CrashMetadataConfig{AdditionalContainers: tc.additional})
 			if err != nil {
 				t.Fatal(err)

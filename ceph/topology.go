@@ -51,10 +51,8 @@ func daemonName(index int) string {
 }
 
 func (c *Container) cliContainer() testcontainers.Container {
-	c.controlMu.RLock()
-	defer c.controlMu.RUnlock()
-	if c.controlPlane != nil {
-		return c.controlPlane
+	if control := c.controlPlane.current(); control != nil {
+		return control
 	}
 	return c.Container
 }
@@ -62,10 +60,7 @@ func (c *Container) cliContainer() testcontainers.Container {
 // ensureControlPlane is called while topology holds c.mu. Separating CLI from
 // MON a keeps topology operations available when that quorum member is stopped.
 func (c *Container) ensureControlPlane(ctx context.Context) error {
-	c.controlMu.RLock()
-	exists := c.controlPlane != nil
-	c.controlMu.RUnlock()
-	if exists {
+	if c.controlPlane.current() != nil {
 		return nil
 	}
 	ctr, err := testcontainers.Run(ctx, c.settings.essentialImage, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.ownedLabel(),
@@ -73,9 +68,7 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"}))},
 		c.runDir.mounts()...)...)
 	if ctr != nil {
-		c.controlMu.Lock()
-		c.controlPlane = ctr
-		c.controlMu.Unlock()
+		c.controlPlane.publish(ctr)
 	}
 	return err
 }

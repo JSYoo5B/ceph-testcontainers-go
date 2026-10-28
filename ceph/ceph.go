@@ -40,10 +40,11 @@ var scripts embed.FS
 // cluster networking, rather than changing only the MON's network mode.
 type Container struct {
 	testcontainers.Container
-	mu           sync.Mutex
-	controlMu    sync.RWMutex
-	configMu     sync.RWMutex
-	controlPlane testcontainers.Container
+	mu       sync.Mutex
+	configMu sync.RWMutex
+	// controlPlane is the separate control container and the lock that guards
+	// it, the former controlMu; see controlPlaneState.
+	controlPlane controlPlaneState
 	// toolkit is the feature-client cache; see featureClientState for what
 	// guards each part.
 	toolkit     featureClientState
@@ -1034,15 +1035,9 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 			c.monitorTerminated = true
 		}
 	}
-	c.controlMu.Lock()
-	if c.controlPlane != nil {
-		if err := c.controlPlane.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-			errs = append(errs, err)
-		} else {
-			c.controlPlane = nil
-		}
+	if err := c.controlPlane.terminate(ctx, opts...); err != nil {
+		errs = append(errs, err)
 	}
-	c.controlMu.Unlock()
 	if err := c.toolkit.lock(ctx); err != nil {
 		errs = append(errs, err)
 	} else {
