@@ -1,11 +1,10 @@
 package fault
 
 import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // objectIdentity is the (namespace, object) pair a native command addresses.
@@ -95,13 +94,13 @@ func TestInjectObjectDataErrorRefusesSlashNamesBeforeAnyNativeCommand(t *testing
 		}
 		ctr := injectFixture()
 		ctr.Output["osd map fixture "+name+" --format json"] = ctr.Output[mapCommand]
-		err := InjectObjectDataError(t.Context(), injectCluster(ctr, servicehook.TestConfig{}), "fixture", name, 0)
+		err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{}), "fixture", name, 0)
 		if err == nil || len(ctr.Calls) != 0 || len(tellCommands(ctr)) != 0 {
 			t.Fatalf("%q: slash name reached the native CLI: %v %v", name, err, ctr.Calls)
 		}
 	}
 	ctr := injectFixture()
-	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, servicehook.TestConfig{}), "fixture", "victim", 0); err != nil {
+	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{}), "fixture", "victim", 0); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{enableCommand, injectCommand}

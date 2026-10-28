@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
@@ -23,7 +24,7 @@ import (
 // native command. The blocklist commands themselves run against a fake control
 // container in the tests of package override.
 func TestRegistryThroughHooks(t *testing.T) {
-	c := servicehook.TestCluster(nil, servicehook.TestConfig{StartupTimeout: 3 * time.Second})
+	c := testhelper.TestCluster(nil, testhelper.TestConfig{StartupTimeout: 3 * time.Second})
 	ctx := t.Context()
 	if err := overridehook.Admit(c, "override.AddBlocklist"); err != nil {
 		t.Fatalf("a cluster of its own refused an override: %v", err)
@@ -80,7 +81,7 @@ func TestRegistryThroughHooks(t *testing.T) {
 		if _, err := overridehook.Settle(c, overridehook.Token{}, held); err == nil {
 			t.Error("a zero token settled")
 		}
-		if got := overridehook.TestHeld(c, overridehook.Blocklist); got["192.0.2.7:0/1"] != held || len(got) != 1 {
+		if got := testhelper.TestHeld(c, overridehook.Blocklist); got["192.0.2.7:0/1"] != held || len(got) != 1 {
 			t.Errorf("the held handle is %v", got)
 		}
 		// The OSD flag kind has its own keys and its own overlap text.
@@ -95,7 +96,7 @@ func TestRegistryThroughHooks(t *testing.T) {
 		if _, err := overridehook.Settle(c, flagToken, held); err != nil {
 			t.Errorf("settle of an OSD flag: %v", err)
 		}
-		if got := overridehook.TestHeld(c, overridehook.OSDFlag); got["noout"] != held || len(got) != 1 {
+		if got := testhelper.TestHeld(c, overridehook.OSDFlag); got["noout"] != held || len(got) != 1 {
 			t.Errorf("the held OSD flag handle is %v", got)
 		}
 		if !overridehook.Release(c, flagToken) {
@@ -173,11 +174,11 @@ type inertControl struct{ testcontainers.Container }
 // package override.
 func TestDebugHooks(t *testing.T) {
 	ctx := t.Context()
-	c := servicehook.TestCluster(inertControl{}, servicehook.TestConfig{StartupTimeout: time.Second, OSDs: 1})
+	c := testhelper.TestCluster(inertControl{}, testhelper.TestConfig{StartupTimeout: time.Second, OSDs: 1})
 	if err := overridehook.Admit(c, "override.SetDebugLevel"); err != nil {
 		t.Fatalf("a cluster of its own refused SetDebugLevel: %v", err)
 	}
-	shared := servicehook.TestCluster(nil, servicehook.TestConfig{Shared: true})
+	shared := testhelper.TestCluster(nil, testhelper.TestConfig{Shared: true})
 	if err := overridehook.Admit(shared, "override.SetDebugLevel"); !errors.Is(err, ceph.ErrSharedCluster) {
 		t.Fatalf("a shared cluster admitted SetDebugLevel: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestDebugHooks(t *testing.T) {
 			t.Errorf("%s: target %v err %v", daemon, target, err)
 		}
 	}
-	closed := servicehook.TestCluster(inertControl{}, servicehook.TestConfig{Closed: true, OSDs: 1})
+	closed := testhelper.TestCluster(inertControl{}, testhelper.TestConfig{Closed: true, OSDs: 1})
 	if _, err := overridehook.OpenDebugTarget(ctx, closed, "osd.0"); !errors.Is(err, overridehook.Terminated()) {
 		t.Errorf("a terminated cluster: %v", err)
 	}
@@ -284,16 +285,16 @@ func (f *fullRatiosControl) Exec(_ context.Context, argv []string, _ ...tcexec.P
 // session and the registry kind that tracks it.
 func TestFullRatiosSessionThroughHooks(t *testing.T) {
 	ctx := t.Context()
-	bare := servicehook.TestCluster(nil, servicehook.TestConfig{StartupTimeout: time.Second})
+	bare := testhelper.TestCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second})
 	overridehook.WithTopologyNoContext(bare, func() {
 		if _, err := overridehook.OpenFullRatios(ctx, bare); err == nil {
 			t.Error("a session opened without a control container")
 		}
 	})
 	control := &fullRatiosControl{}
-	c := servicehook.TestCluster(control, servicehook.TestConfig{StartupTimeout: time.Second})
-	servicehook.TestSetConfig(c, []byte("[global]\nfsid = "+sessionFSID+"\nmon_host = mon\n"))
-	servicehook.TestSetKeyring(c, []byte("confirmed"))
+	c := testhelper.TestCluster(control, testhelper.TestConfig{StartupTimeout: time.Second})
+	testhelper.TestSetConfig(c, []byte("[global]\nfsid = "+sessionFSID+"\nmon_host = mon\n"))
+	testhelper.TestSetKeyring(c, []byte("confirmed"))
 	err := overridehook.WithTopology(ctx, c, func() error {
 		token, err := overridehook.Reserve(ctx, c, overridehook.FullRatios, "")
 		if err != nil {
@@ -343,7 +344,7 @@ func TestFullRatiosSessionThroughHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	servicehook.TestSetClosed(c, true)
+	testhelper.TestSetClosed(c, true)
 	overridehook.WithTopologyNoContext(c, func() {
 		if _, err := overridehook.OpenFullRatios(ctx, c); err == nil {
 			t.Error("a session opened on a terminated cluster")
@@ -376,13 +377,13 @@ func TestConfigOperationsWithoutNativeCommands(t *testing.T) {
 		ceph.MessengerV2Secure: {"ms_service_mode", false},
 		ceph.MessengerV2Only:   {"ms_service_mode", true},
 	} {
-		c := servicehook.TestCluster(nil, servicehook.TestConfig{MessengerMode: mode})
+		c := testhelper.TestCluster(nil, testhelper.TestConfig{MessengerMode: mode})
 		err := overridehook.CheckConfigAllowed(c, ceph.ConfigSetting{Section: "global", Name: tc.name})
 		if tc.allowed != (err == nil) || (err != nil && !errors.Is(err, ceph.ErrInvalidRequest)) {
 			t.Errorf("mode %v option %s: %v", mode, tc.name, err)
 		}
 	}
-	v2only := servicehook.TestCluster(nil, servicehook.TestConfig{MessengerMode: ceph.MessengerV2Only})
+	v2only := testhelper.TestCluster(nil, testhelper.TestConfig{MessengerMode: ceph.MessengerV2Only})
 	if err := overridehook.CheckConfigAllowed(v2only, ceph.ConfigSetting{Section: "global", Name: "ms_bind_msgr2"}); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Errorf("a fixed protocol option was allowed: %v", err)
 	}
@@ -390,7 +391,7 @@ func TestConfigOperationsWithoutNativeCommands(t *testing.T) {
 	if err != nil || len(settings) != 1 || settings[0].Name != "ms_service_mode" {
 		t.Fatalf("policy settings: %+v %v", settings, err)
 	}
-	secure := servicehook.TestCluster(nil, servicehook.TestConfig{MessengerMode: ceph.MessengerV2Secure})
+	secure := testhelper.TestCluster(nil, testhelper.TestConfig{MessengerMode: ceph.MessengerV2Secure})
 	for name, tc := range map[string]struct {
 		c      *ceph.Container
 		policy ceph.MessengerPolicy

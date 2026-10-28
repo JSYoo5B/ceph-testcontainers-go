@@ -138,16 +138,16 @@ func TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup(t *testing.T) 
 		"recordCephVersion": true, // called only from Run before publication
 		// The unit-test setter of the recorded version, a plain write for a cluster the
 		// caller owns or holds the lock of.
-		"TestSetCephVersion": true,
-		"TestCluster":        true, // builds a fresh unit-test cluster
-		"TestState":          true, // unit-test pointer hooks (config, keyring, version, bridge flag)
+		"UnitSetCephVersion": true,
+		"UnitCluster":        true, // builds a fresh unit-test cluster
+		"UnitState":          true, // unit-test pointer hooks (config, keyring, version, bridge flag)
 		// Unit-test option setters, the only writers of c.settings after Run. They replace
-		// the settings pointers TestState used to publish; only TestSetCephFSImage writes
+		// the settings pointers UnitState used to publish; only UnitSetCephFSImage writes
 		// a recorded fact (cephfsOverride), the others write fields FactsOf never reads.
-		"TestSetInitialOSDs":    true,
-		"TestSetPoolDefaults":   true,
-		"TestSetStartupTimeout": true,
-		"TestSetCephFSImage":    true,
+		"UnitSetInitialOSDs":    true,
+		"UnitSetPoolDefaults":   true,
+		"UnitSetStartupTimeout": true,
+		"UnitSetCephFSImage":    true,
 		"scanRecordedWrites":    true,
 	}
 	files, err := filepath.Glob("*.go")

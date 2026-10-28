@@ -209,12 +209,12 @@ var faultRegistryCallers = map[string]struct {
 	"faultHooks.Settle":              {"hook", []string{"settle"}},
 	"faultHooks.Release":             {"hook", []string{"release"}},
 	"faultHooks.Tracks":              {"hook", []string{"tracks"}},
-	"faultHooks.TestFaults":          {"hook", []string{"handles"}},
+	"unitAccess.UnitFaults":          {"hook", []string{"handles"}},
 	"overrideHooks.Reserve":          {"hook", []string{"reserve"}},
 	"overrideHooks.Settle":           {"hook", []string{"settle"}},
 	"overrideHooks.Release":          {"hook", []string{"release"}},
 	"overrideHooks.Tracks":           {"hook", []string{"tracks"}},
-	"overrideHooks.TestHeld":         {"hook", []string{"handles"}},
+	"unitAccess.UnitHeld":            {"hook", []string{"handles"}},
 }
 
 // TestFaultRegistryCallersAreAudited guards the callers: the set of functions

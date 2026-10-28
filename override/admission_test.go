@@ -2,6 +2,7 @@ package override
 
 import (
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/overridehook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // exportedFunctions parses the non-test source of the package and returns the
@@ -67,7 +67,7 @@ func zeroArgumentCalls(t *testing.T, c *ceph.Container) map[string]func() error 
 // function uses. An unclassified name is refused by the admission, even on a
 // cluster of the test's own.
 func TestEveryExportedFunctionIsClassified(t *testing.T) {
-	own := servicehook.TestCluster(nil, servicehook.TestConfig{})
+	own := testhelper.TestCluster(nil, testhelper.TestConfig{})
 	functions := exportedFunctions(t)
 	if len(functions) == 0 {
 		t.Fatal("the parser found no exported function")
@@ -76,7 +76,7 @@ func TestEveryExportedFunctionIsClassified(t *testing.T) {
 		if err := overridehook.Admit(own, "override."+name); err != nil {
 			t.Errorf("override.%s has no policy for a cluster of its own: %v", name, err)
 		}
-		shared := servicehook.TestCluster(nil, servicehook.TestConfig{Shared: true})
+		shared := testhelper.TestCluster(nil, testhelper.TestConfig{Shared: true})
 		if err := overridehook.Admit(shared, "override."+name); !errors.Is(err, ceph.ErrSharedCluster) {
 			t.Errorf("override.%s is not refused on a shared cluster: %v", name, err)
 		}
@@ -98,7 +98,7 @@ func TestEveryExportedFunctionIsClassified(t *testing.T) {
 // so the zero arguments are never validated and no command is run.
 func TestExportedFunctionsRefuseSharedClusterBeforeAnyEffect(t *testing.T) {
 	native := &blocklistFixture{entries: map[string]time.Time{}}
-	c := servicehook.TestCluster(native, servicehook.TestConfig{Shared: true, StartupTimeout: time.Second})
+	c := testhelper.TestCluster(native, testhelper.TestConfig{Shared: true, StartupTimeout: time.Second})
 	for name, call := range zeroArgumentCalls(t, c) {
 		err := call()
 		var op *ceph.OperationError

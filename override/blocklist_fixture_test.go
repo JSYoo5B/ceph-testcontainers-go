@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strconv"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -35,7 +35,7 @@ type blocklistFixture struct {
 func newBlocklistFixture(t *testing.T) (*ceph.Container, *blocklistFixture) {
 	t.Helper()
 	native := &blocklistFixture{entries: make(map[string]time.Time), ranges: []map[string]string{{"range": "198.51.100.0:0/24", "until": "2026-10-03T08:00:00.123456+0000"}}}
-	return servicehook.TestCluster(native, servicehook.TestConfig{StartupTimeout: time.Second}), native
+	return testhelper.TestCluster(native, testhelper.TestConfig{StartupTimeout: time.Second}), native
 }
 
 func (f *blocklistFixture) Exec(ctx context.Context, argv []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {

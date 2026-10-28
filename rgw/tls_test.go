@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"math/big"
 	"net"
@@ -18,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -77,7 +77,7 @@ func TestRGWTLSValidationAndKeyIsolation(t *testing.T) {
 func TestRGWTLSOptionsKeepHTTPAndNativeListenerPorts(t *testing.T) {
 	for _, host := range []bool{false, true} {
 		material := testRGWTLSMaterial(t)
-		cluster := testCluster(nil, servicehook.TestConfig{HostNetwork: host, PublicAddress: "127.0.0.1", StartupTimeout: time.Second}, nil)
+		cluster := testCluster(nil, testhelper.TestConfig{HostNetwork: host, PublicAddress: "127.0.0.1", StartupTimeout: time.Second}, nil)
 		port, secure := 7480, 7481
 		if host {
 			port, secure = 41301, 41302

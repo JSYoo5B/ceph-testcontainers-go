@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strconv"
@@ -46,9 +47,9 @@ func newFullRatiosFixture(t *testing.T) (*ceph.Container, *fullRatiosFixture) {
 	t.Helper()
 	ratios, _ := normalizeFullRatios(ceph.FullRatios{NearFull: .85, BackfillFull: .9, Full: .95})
 	ctr := &fullRatiosFixture{ratios: ratios, epoch: 7, fsid: fullRatiosFSID, observedOrdered: true}
-	c := servicehook.TestCluster(ctr, servicehook.TestConfig{StartupTimeout: time.Minute})
-	servicehook.TestSetConfig(c, []byte("[global]\nfsid = "+fullRatiosFSID+"\nmon_host = mon\n"))
-	servicehook.TestSetKeyring(c, []byte("confirmed"))
+	c := testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Minute})
+	testhelper.TestSetConfig(c, []byte("[global]\nfsid = "+fullRatiosFSID+"\nmon_host = mon\n"))
+	testhelper.TestSetKeyring(c, []byte("confirmed"))
 	return c, ctr
 }
 
@@ -57,7 +58,7 @@ func newFullRatiosFixture(t *testing.T) (*ceph.Container, *fullRatiosFixture) {
 func heldFullRatios(c *ceph.Container) map[string]any {
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
-	return overridehook.TestHeld(c, overridehook.FullRatios)
+	return testhelper.TestHeld(c, overridehook.FullRatios)
 }
 
 func fullRatiosStream(output string) io.Reader {

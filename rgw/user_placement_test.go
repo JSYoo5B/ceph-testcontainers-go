@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"reflect"
 	"slices"
@@ -191,7 +192,7 @@ func TestRGWUserPlacementRejectsOwnershipScopePoolMappingAndKeyChanges(t *testin
 		edit func(*Gateway, *rgwUserPlacementTestContainer, *Placement, *User)
 	}{
 		{"foreign user", func(_ *Gateway, _ *rgwUserPlacementTestContainer, _ *Placement, user *User) {
-			user.owner = testCluster(nil, servicehook.TestConfig{}, nil)
+			user.owner = testCluster(nil, testhelper.TestConfig{}, nil)
 		}},
 		{"foreign scope", func(_ *Gateway, _ *rgwUserPlacementTestContainer, _ *Placement, user *User) {
 			user.scope.Zone = "elsewhere"
@@ -208,7 +209,7 @@ func TestRGWUserPlacementRejectsOwnershipScopePoolMappingAndKeyChanges(t *testin
 			p.confirmed = false
 		}},
 		{"foreign placement", func(_ *Gateway, _ *rgwUserPlacementTestContainer, p *Placement, _ *User) {
-			p.owner = testCluster(nil, servicehook.TestConfig{}, nil)
+			p.owner = testCluster(nil, testhelper.TestConfig{}, nil)
 		}},
 		{"replaced pool", func(_ *Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *User) { f.poolID = 99 }},
 		{"changed native scope", func(_ *Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *User) {

@@ -3,11 +3,11 @@ package fault
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // closingTarget is a caller-owned target whose network inspection overlaps
@@ -18,18 +18,18 @@ type closingTarget struct {
 }
 
 func (target closingTarget) Networks(context.Context) ([]string, error) {
-	view := servicehook.TestState(target.c)
+	view := testhelper.TestState(target.c)
 	view.Mutex.Lock()
-	servicehook.TestSetClosed(target.c, true)
+	testhelper.TestSetClosed(target.c, true)
 	view.Mutex.Unlock()
 	facts, err := ceph.FactsOf(target.c)
 	return []string{facts.NetworkName}, err
 }
 
 func TestNetworkDelayReservationRefusesClusterClosedDuringAdmission(t *testing.T) {
-	c := servicehook.TestCluster(nil, servicehook.TestConfig{NetworkName: "public"})
+	c := testhelper.TestCluster(nil, testhelper.TestConfig{NetworkName: "public"})
 	_, terminated := faulthook.Terminated()
-	if _, token, err := reserveNetworkDelay(t.Context(), c, closingTarget{c: c}, ceph.PublicNetworkPlane); !errors.Is(err, terminated) || token != (faulthook.Token{}) || len(faulthook.TestFaults(c, faulthook.NetworkDelay)) != 0 {
+	if _, token, err := reserveNetworkDelay(t.Context(), c, closingTarget{c: c}, ceph.PublicNetworkPlane); !errors.Is(err, terminated) || token != (faulthook.Token{}) || len(testhelper.TestFaults(c, faulthook.NetworkDelay)) != 0 {
 		t.Fatalf("a delay was reserved on a cluster closed meanwhile: %v", err)
 	}
 }
@@ -37,7 +37,7 @@ func TestNetworkDelayReservationRefusesClusterClosedDuringAdmission(t *testing.T
 // The public package-level entry points must gate before validating zero
 // requests or touching Docker, just as their former Container methods did.
 func TestPublicFaultsRefuseSharedCluster(t *testing.T) {
-	c := servicehook.TestCluster(nil, servicehook.TestConfig{Shared: true})
+	c := testhelper.TestCluster(nil, testhelper.TestConfig{Shared: true})
 	for name, apply := range map[string]func() error{
 		"fault.ApplyNetworkProfile":   func() error { _, err := ApplyNetworkProfile(t.Context(), c, nil, NetworkProfile{}); return err },
 		"fault.Pause":                 func() error { _, err := Pause(t.Context(), c, nil); return err },
@@ -53,7 +53,7 @@ func TestPublicFaultsRefuseSharedCluster(t *testing.T) {
 }
 
 func TestClosedClusterRefusesNetworkDelayReservation(t *testing.T) {
-	c := servicehook.TestCluster(nil, servicehook.TestConfig{Closed: true})
+	c := testhelper.TestCluster(nil, testhelper.TestConfig{Closed: true})
 	_, terminated := faulthook.Terminated()
 	if _, _, err := reserveNetworkDelay(t.Context(), c, contextLockClient{}, ceph.PublicNetworkPlane); !errors.Is(err, terminated) {
 		t.Fatalf("closed cluster admitted a delay: %v", err)

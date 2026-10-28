@@ -3,6 +3,7 @@ package override
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"slices"
 	"strings"
 	"testing"
@@ -328,7 +329,7 @@ func TestSetMGRModuleNilClusterReturnsNotAppliedHandle(t *testing.T) {
 
 func TestSetMGRModuleSharedClusterIsRefusedBeforeAnyEffect(t *testing.T) {
 	ctr := newMGRModuleFixture()
-	c := servicehook.TestCluster(ctr, servicehook.TestConfig{Shared: true, StartupTimeout: time.Second})
+	c := testhelper.TestCluster(ctr, testhelper.TestConfig{Shared: true, StartupTimeout: time.Second})
 	handle, err := SetMGRModule(t.Context(), c, "--force", true)
 	var op *ceph.OperationError
 	if !errors.Is(err, ceph.ErrSharedCluster) || !errors.As(err, &op) || op.Op != "override.SetMGRModule" {
@@ -505,9 +506,9 @@ func TestMGRModuleRestoreAfterTerminateIsRefusedAndKeepsTheModule(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := servicehook.TestState(c)
+	view := testhelper.TestState(c)
 	view.Mutex.Lock()
-	servicehook.TestSetClosed(c, true)
+	testhelper.TestSetClosed(c, true)
 	view.Mutex.Unlock()
 	before := len(ctr.calls)
 	if err := change.Restore(t.Context()); err != overridehook.Terminated() {

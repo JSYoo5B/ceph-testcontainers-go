@@ -3,6 +3,7 @@ package override
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 func held(c *ceph.Container) map[string]any {
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
-	return overridehook.TestHeld(c, overridehook.Blocklist)
+	return testhelper.TestHeld(c, overridehook.Blocklist)
 }
 
 func TestAddBlocklistRestoresOnlyOwnedEntryAndSharesCopies(t *testing.T) {
@@ -151,9 +152,9 @@ func TestBlocklistRestoreRefusedAfterTerminate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := servicehook.TestState(c)
+	view := testhelper.TestState(c)
 	view.Mutex.Lock()
-	servicehook.TestSetClosed(c, true)
+	testhelper.TestSetClosed(c, true)
 	view.Mutex.Unlock()
 	before := native.commands
 	err = change.Restore(t.Context())
@@ -194,7 +195,7 @@ func TestBlocklistAdmissionDoesNotMutateUnavailableCluster(t *testing.T) {
 		}
 	}
 	c, native := newBlocklistFixture(t)
-	servicehook.TestSetClosed(c, true)
+	testhelper.TestSetClosed(c, true)
 	if change, err := AddBlocklist(t.Context(), c, blocklistTestAddress, time.Minute); err == nil || change == nil || change.state.refused == nil || native.commands != 0 || len(held(c)) != 0 {
 		t.Fatalf("closed cluster admitted: %v", err)
 	}
@@ -232,7 +233,7 @@ func TestAddBlocklistNilClusterReturnsNotAppliedHandle(t *testing.T) {
 
 func TestAddBlocklistSharedClusterIsRefusedBeforeAnyEffect(t *testing.T) {
 	native := &blocklistFixture{entries: map[string]time.Time{}}
-	c := servicehook.TestCluster(native, servicehook.TestConfig{Shared: true, StartupTimeout: time.Second})
+	c := testhelper.TestCluster(native, testhelper.TestConfig{Shared: true, StartupTimeout: time.Second})
 	handle, err := AddBlocklist(t.Context(), c, "not an address", 0)
 	var op *ceph.OperationError
 	if !errors.Is(err, ceph.ErrSharedCluster) || !errors.As(err, &op) || op.Op != "override.AddBlocklist" {

@@ -3,6 +3,7 @@ package cephfs
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"sync"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func newCephStateFake() *cephStateFake { return clustertest.NewStateFake() }
 // poolFixtureCluster builds a cluster value with count owned OSDs whose
 // control and OSD containers are ctr.
 func poolFixtureCluster(ctr testcontainers.Container, count int) *ceph.Container {
-	return servicehook.TestCluster(ctr, servicehook.TestConfig{StartupTimeout: time.Second, OSDs: count})
+	return testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second, OSDs: count})
 }
 
 func assertContextLockQueued(t *testing.T, mutex *sync.Mutex, operation func(context.Context) error) {
@@ -81,17 +82,17 @@ func setServices(c *ceph.Container, services map[string]testcontainers.Container
 }
 
 func clientOwner(client *ceph.ClientConfig) *ceph.Container {
-	owner, _, _, _ := servicehook.TestClientState(client)
+	owner, _, _, _ := testhelper.TestClientState(client)
 	return owner
 }
 
 func clientCreated(client *ceph.ClientConfig) bool {
-	_, created, _, _ := servicehook.TestClientState(client)
+	_, created, _, _ := testhelper.TestClientState(client)
 	return created
 }
 
 func clientReady(client *ceph.ClientConfig) bool {
-	_, _, ready, _ := servicehook.TestClientState(client)
+	_, _, ready, _ := testhelper.TestClientState(client)
 	return ready
 }
 

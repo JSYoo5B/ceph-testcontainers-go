@@ -3,6 +3,7 @@ package cephfs
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"maps"
 	"reflect"
@@ -97,7 +98,7 @@ func TestCephFSAuthorizationContextLateOwnerAdmissionCancellation(t *testing.T) 
 			beforeState := cephFSAuthorizationContextGrantState(grant)
 			control := &cephFSAuthorizationContextControl{cephFSAuthFixtureContainer: native}
 			fs.cluster.Container = control
-			assertCephFSContextLateOwnerGate(t, servicehook.TestState(fs.cluster).Mutex, func(hook func()) {
+			assertCephFSContextLateOwnerGate(t, testhelper.TestState(fs.cluster).Mutex, func(hook func()) {
 				// The initial begin-operation pool query precedes subvolume
 				// info. The subsequent pool query completes the original
 				// volume/layout readback immediately before owner admission.

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
@@ -43,8 +44,8 @@ type coldMDSFixture struct {
 func newColdMDSFixture() (*ceph.Container, *coldMDSFixture) {
 	native := &coldMDSFixture{pools: map[string]int64{}, nextPool: 0, fsid: coldMDSFixtureFSID, auth: `{"auth_dump":[{"entity":"client.admin","key":"never-log-this-auth-key"}]}`, native: map[string]any{"standbys": []any{}, "filesystems": []any{}}}
 	c := poolFixtureCluster(native, 2)
-	servicehook.TestSetInitialOSDs(c, 2)
-	servicehook.TestSetCephFSImage(c, "selected-mds-image")
+	testhelper.TestSetInitialOSDs(c, 2)
+	testhelper.TestSetCephFSImage(c, "selected-mds-image")
 	setServices(c, map[string]testcontainers.Container{})
 	return c, native
 }
@@ -199,7 +200,7 @@ func TestNoInitialMDSCompositionAndRuntimeKeepOmittedCounts(t *testing.T) {
 	config := Config{Name: "cold-target", NoInitialMDS: true, AdditionalDataPools: []ceph.PoolConfig{{Name: "extra"}}}
 	option := WithFilesystems(config)
 	config.AdditionalDataPools[0].Name = "caller-mutated"
-	_, services, err := servicehook.TestPrepare(2, false, nil, ceph.WithPoolDefaults(2, 1), option)
+	_, services, err := testhelper.TestPrepare(2, false, nil, ceph.WithPoolDefaults(2, 1), option)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,9 +461,9 @@ func TestNoInitialMDSRealAdmissionGatesAndCancellation(t *testing.T) {
 				case "setup":
 					coldMDSTestGate(t, filesystems(c).setupMu.Lock, filesystems(c).setupMu.Unlock, operation)
 				case "owner":
-					coldMDSTestGate(t, servicehook.TestState(c).Mutex.Lock, servicehook.TestState(c).Mutex.Unlock, operation)
+					coldMDSTestGate(t, testhelper.TestState(c).Mutex.Lock, testhelper.TestState(c).Mutex.Unlock, operation)
 				case "control":
-					coldMDSTestGate(t, servicehook.TestState(c).ControlMutex.Lock, servicehook.TestState(c).ControlMutex.Unlock, operation)
+					coldMDSTestGate(t, testhelper.TestState(c).ControlMutex.Lock, testhelper.TestState(c).ControlMutex.Unlock, operation)
 				}
 				if n.mutationCount() != before || len(n.calls) != beforeQueries || fs != nil && (fs.coldMDS.attempted || fs.roster.nextIndex != 0) {
 					t.Fatal("failed admission queried, mutated or consumed first permission")
@@ -555,7 +556,7 @@ func TestNoInitialMDSFirstPublicationAndOrdinaryScaling(t *testing.T) {
 	if customizers != 1 || fs.Container != worker || fs.roster.nextIndex != 1 {
 		t.Fatal("ordinary same-count scale launched replacement")
 	}
-	servicehook.TestReplaceOSDs(c, nil)
+	testhelper.TestReplaceOSDs(c, nil)
 	if err := c.Terminate(t.Context()); err != nil || worker.removes != 1 || len(servicehook.Services(c)) != 0 {
 		t.Fatalf("first owned MDS cleanup: %v removes=%d", err, worker.removes)
 	}
@@ -585,7 +586,7 @@ func TestNoInitialMDSPartialDaemonOwnershipAndNoImplicitRetry(t *testing.T) {
 			if err := fs.ScaleMDS(t.Context(), 1, 0); err == nil || n.mutationCount() != before {
 				t.Fatalf("partial first daemon was automatically retried: %v", err)
 			}
-			servicehook.TestReplaceOSDs(fs.cluster, nil)
+			testhelper.TestReplaceOSDs(fs.cluster, nil)
 			if err := fs.cluster.Terminate(t.Context()); err != nil || len(servicehook.Services(fs.cluster)) != 0 || worker.removes != btoi(withHandle) {
 				t.Fatalf("partial cleanup lost handle: %v removes=%d", err, worker.removes)
 			}
@@ -611,7 +612,7 @@ func TestNoInitialMDSSelectedControlAndLateAdmissionPreserveAuthority(t *testing
 	t.Run("legitimate owned CLI switch", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		other := &coldMDSFixture{pools: n.pools, native: n.native, auth: n.auth, fsid: n.fsid}
-		servicehook.TestSetControlPlane(fs.cluster, other)
+		testhelper.TestSetControlPlane(fs.cluster, other)
 		if err := fs.verifyColdMDS(t.Context(), fs.coldMDS); err != nil || len(other.calls) == 0 {
 			t.Fatalf("stable cluster behind changed CLI was rejected: %v", err)
 		}

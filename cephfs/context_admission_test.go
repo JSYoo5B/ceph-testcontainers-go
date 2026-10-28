@@ -3,6 +3,7 @@ package cephfs
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"reflect"
 	"slices"
@@ -97,7 +98,7 @@ func TestCephFSContextSetupAdmissionDeadline(t *testing.T) {
 				return err
 			})
 			if result != nil || len(control.Calls) != 0 || len(filesystems(cluster).byName) != 0 ||
-				len(servicehook.Services(cluster)) != 0 || servicehook.Closed(cluster) || servicehook.TestOSDCount(cluster) != 2 {
+				len(servicehook.Services(cluster)) != 0 || servicehook.Closed(cluster) || testhelper.TestOSDCount(cluster) != 2 {
 				t.Fatal("queued setup registered an attempt, ran native commands or changed cluster ownership")
 			}
 			assertCephFSContextAdmissionReleased(t, cluster)
@@ -191,7 +192,7 @@ func TestCephFSContextMDSSnapshotPreservesOwnedDescriptors(t *testing.T) {
 	first := &MDS{ID: "z", FilesystemName: "fixture"}
 	second := &MDS{ID: "a", FilesystemName: "fixture"}
 	fs.roster.daemons = []*MDS{first, second}
-	assertContextLockQueued(t, servicehook.TestState(fs.cluster).Mutex, func(ctx context.Context) error {
+	assertContextLockQueued(t, testhelper.TestState(fs.cluster).Mutex, func(ctx context.Context) error {
 		_, err := fs.mdsSnapshot(ctx)
 		return err
 	})
@@ -199,7 +200,7 @@ func TestCephFSContextMDSSnapshotPreservesOwnedDescriptors(t *testing.T) {
 		t.Fatal("queued snapshot queried native state or altered the owned creation order")
 	}
 	for _, closed := range []bool{false, true} {
-		servicehook.TestSetClosed(fs.cluster, closed)
+		testhelper.TestSetClosed(fs.cluster, closed)
 		snapshot, err := fs.mdsSnapshot(t.Context())
 		if err != nil || len(snapshot) != 2 || snapshot[0] != first || snapshot[1] != second {
 			t.Fatalf("snapshot lost pointers, creation order or terminated-fixture inspection: %+v %v", snapshot, err)
@@ -213,7 +214,7 @@ func TestCephFSContextMDSSnapshotPreservesOwnedDescriptors(t *testing.T) {
 
 func TestCephFSContextMDSStatusSnapshotsBeforeNativeQuery(t *testing.T) {
 	fs, control, _, _ := cephFSContextAdmissionFixture()
-	assertContextLockQueued(t, servicehook.TestState(fs.cluster).Mutex, func(ctx context.Context) error {
+	assertContextLockQueued(t, testhelper.TestState(fs.cluster).Mutex, func(ctx context.Context) error {
 		_, err := fs.MDSStatus(ctx)
 		return err
 	})
@@ -236,7 +237,7 @@ func TestCephFSContextSetupRegistrationAdmissionCancellation(t *testing.T) {
 	control := &cephFSContextBoundaryControl{native: native, query: "fs dump --format json"}
 	cluster := poolFixtureCluster(control, 2)
 	var result *Filesystem
-	assertCephFSContextLateOwnerGate(t, servicehook.TestState(cluster).Mutex, func(hook func()) {
+	assertCephFSContextLateOwnerGate(t, testhelper.TestState(cluster).Mutex, func(hook func()) {
 		control.afterQuery = hook
 	}, func(ctx context.Context) error {
 		var err error
@@ -260,7 +261,7 @@ func TestCephFSContextScaleDesiredConfigAdmissionCancellation(t *testing.T) {
 	fs, control, daemon, _ := cephFSContextAdmissionFixture()
 	originalConfig := fs.config
 	originalIdentity := fs.nativeIdentity
-	assertCephFSContextLateOwnerGate(t, servicehook.TestState(fs.cluster).Mutex, func(hook func()) {
+	assertCephFSContextLateOwnerGate(t, testhelper.TestState(fs.cluster).Mutex, func(hook func()) {
 		daemon.afterState = hook
 	}, func(ctx context.Context) error {
 		return fs.ScaleMDS(ctx, 1, 1)
@@ -303,7 +304,7 @@ func TestCephFSContextWaitReadyConfigAdmissionCancellation(t *testing.T) {
 	control := &cephFSContextBoundaryControl{native: native, query: "fs dump --format json"}
 	fs.cluster.Container = control
 	originalConfig := fs.config
-	assertCephFSContextLateOwnerGate(t, servicehook.TestState(fs.cluster).Mutex, func(hook func()) {
+	assertCephFSContextLateOwnerGate(t, testhelper.TestState(fs.cluster).Mutex, func(hook func()) {
 		control.afterQuery = hook
 	}, fs.WaitReady)
 	if !reflect.DeepEqual(fs.config, originalConfig) || len(native.Calls) != 1 {
@@ -373,9 +374,9 @@ func assertCephFSContextAdmissionGate(t *testing.T, cluster *ceph.Container, gat
 	case "setup":
 		assertContextLockQueued(t, &filesystems(cluster).setupMu, operation)
 	case "owner":
-		assertContextLockQueued(t, servicehook.TestState(cluster).Mutex, operation)
+		assertContextLockQueued(t, testhelper.TestState(cluster).Mutex, operation)
 	case "control":
-		assertSnapshotReadLockQueued(t, servicehook.TestState(cluster).ControlMutex, operation)
+		assertSnapshotReadLockQueued(t, testhelper.TestState(cluster).ControlMutex, operation)
 	default:
 		t.Fatalf("unknown admission gate %q", gate)
 	}
@@ -383,16 +384,16 @@ func assertCephFSContextAdmissionGate(t *testing.T, cluster *ceph.Container, gat
 
 func assertCephFSContextAdmissionReleased(t *testing.T, cluster *ceph.Container) {
 	t.Helper()
-	for name, mutex := range map[string]*sync.Mutex{"setup": &filesystems(cluster).setupMu, "owner": servicehook.TestState(cluster).Mutex} {
+	for name, mutex := range map[string]*sync.Mutex{"setup": &filesystems(cluster).setupMu, "owner": testhelper.TestState(cluster).Mutex} {
 		if !mutex.TryLock() {
 			t.Fatalf("canceled admission retained the %s gate", name)
 		}
 		mutex.Unlock()
 	}
-	if !servicehook.TestState(cluster).ControlMutex.TryLock() {
+	if !testhelper.TestState(cluster).ControlMutex.TryLock() {
 		t.Fatal("canceled admission retained the control cache gate")
 	}
-	servicehook.TestState(cluster).ControlMutex.Unlock()
+	testhelper.TestState(cluster).ControlMutex.Unlock()
 }
 
 func assertCephFSContextOnlyReadQueries(t *testing.T, calls [][]string) {

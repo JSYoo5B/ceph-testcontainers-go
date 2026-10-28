@@ -3,6 +3,7 @@ package override
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"reflect"
 	"slices"
 	"strings"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/overridehook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // debugLevelFake is one daemon generation's runtime level. A set stores the
@@ -175,7 +175,7 @@ func (f *debugLevelFake) current() string {
 // is the registry that SetDebugLevel opens windows in.
 func newDebugWindows(t *testing.T) overridehook.DebugWindows {
 	t.Helper()
-	return overridehook.DebugWindowRegistry(servicehook.TestCluster(nil, servicehook.TestConfig{}))
+	return overridehook.DebugWindowRegistry(testhelper.TestCluster(nil, testhelper.TestConfig{}))
 }
 
 // slotHeld reports whether a window of osd.0 debug_osd is open in registry.

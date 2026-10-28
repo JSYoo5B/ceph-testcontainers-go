@@ -3,6 +3,7 @@ package rgw
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"strings"
 	"testing"
@@ -69,7 +70,7 @@ func TestRGWEndpointUsesSelectedHostPortAndBridgeDefault(t *testing.T) {
 func TestDiscardRGWConflictRetainsFailedCleanupAndNewOwner(t *testing.T) {
 	cleanupFailure := errors.New("temporary Docker removal failure")
 	failed := &rgwTestContainer{id: "conflicted", terminateErr: cleanupFailure}
-	c := testCluster(nil, servicehook.TestConfig{}, map[string]testcontainers.Container{"rgw": failed})
+	c := testCluster(nil, testhelper.TestConfig{}, map[string]testcontainers.Container{"rgw": failed})
 	if err := discardAttempt(t.Context(), c, failed); !errors.Is(err, cleanupFailure) || servicehook.Service(c, "rgw") != failed {
 		t.Fatal("failed cleanup lost the partial RGW service")
 	}
@@ -100,7 +101,7 @@ func TestDiscardRGWConflictAcceptsOnlyMissingResources(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctr := &rgwTestContainer{id: "conflicted", terminateErr: tc.err}
-			c := testCluster(nil, servicehook.TestConfig{}, map[string]testcontainers.Container{"rgw": ctr})
+			c := testCluster(nil, testhelper.TestConfig{}, map[string]testcontainers.Container{"rgw": ctr})
 			err := discardAttempt(t.Context(), c, ctr)
 			retained := servicehook.Service(c, "rgw") != nil
 			if (err == nil) != tc.safe || retained == tc.safe {
@@ -133,7 +134,7 @@ func (target *rgwReadinessTarget) Exec(context.Context, []string, ...tcexec.Proc
 
 func TestRGWHostReadinessRequiresOwnedListener(t *testing.T) {
 	controller := &rgwTestContainer{}
-	c := testCluster(controller, servicehook.TestConfig{StartupTimeout: time.Second}, nil)
+	c := testCluster(controller, testhelper.TestConfig{StartupTimeout: time.Second}, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	target := &rgwReadinessTarget{state: container.State{Running: true}, probeCode: 1, probe: cancel}

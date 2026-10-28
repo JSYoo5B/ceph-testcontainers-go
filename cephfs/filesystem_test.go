@@ -3,6 +3,7 @@ package cephfs
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"slices"
 	"strings"
 	"testing"
@@ -66,7 +67,7 @@ func TestCephFSValidatesAllPoolPlacementsBeforeCreation(t *testing.T) {
 	if fs, err := startFilesystem(t.Context(), poolFixtureCluster(ctr, 2), config); err == nil || fs != nil || len(ctr.Calls) != 0 {
 		t.Fatalf("later EC placement failure created earlier replicated pools: fs=%+v error=%v calls=%v", fs, err, ctr.Calls)
 	}
-	cluster := servicehook.TestCluster(ctr, servicehook.TestConfig{StartupTimeout: time.Second, OSDs: 3,
+	cluster := testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second, OSDs: 3,
 		OSDPlacement: ceph.OSDConfig{Host: "single-host", Rack: "single-rack", Root: "default"}})
 	config.AdditionalDataPools[0].FailureDomain = "host"
 	if fs, err := startFilesystem(t.Context(), cluster, config); err == nil || fs != nil || len(ctr.Calls) != 0 {
@@ -77,7 +78,7 @@ func TestCephFSValidatesAllPoolPlacementsBeforeCreation(t *testing.T) {
 func TestCephFSUsesClusterPoolDefaultsAndPreservesPartialDescriptor(t *testing.T) {
 	ctr := &poolFixtureContainer{Output: map[string]string{"fs dump --format json": `{"standbys":[],"filesystems":[]}`}, Fail: "osd pool set tc-cephfs-metadata min_size 2"}
 	cluster := poolFixtureCluster(ctr, 3)
-	servicehook.TestSetPoolDefaults(cluster, 3, 2)
+	testhelper.TestSetPoolDefaults(cluster, 3, 2)
 	fs, err := startFilesystem(t.Context(), cluster, Config{})
 	if err == nil || fs == nil || fs.config.MetadataPool.Replicas != 3 || fs.config.MetadataPool.MinSize != 2 || fs.config.DataPool.Replicas != 3 || fs.config.DataPool.MinSize != 2 {
 		t.Fatalf("CephFS ignored cluster defaults or lost attempted resources: fs=%+v error=%v", fs, err)
@@ -140,7 +141,7 @@ func TestCephFSSetsRankCountsSeparatelyOnCeph19(t *testing.T) {
 		Fail:   "fs set tenant refuse_standby_for_another_fs true",
 	}
 	cluster := poolFixtureCluster(ctr, 2)
-	servicehook.TestSetCephVersion(cluster, "19.2.6")
+	testhelper.TestSetCephVersion(cluster, "19.2.6")
 	if _, err := startFilesystem(t.Context(), cluster, Config{Name: "tenant", ActiveMDS: 2, StandbyMDS: 1}); err == nil {
 		t.Fatal("injected configuration failure was ignored")
 	}

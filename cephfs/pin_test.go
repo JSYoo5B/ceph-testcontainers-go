@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"math"
 	"slices"
@@ -13,7 +14,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -35,7 +35,7 @@ func TestCephFSPinValidationAndOwnershipBeforeCommands(t *testing.T) {
 	if _, err := fs.SubvolumePinPolicy(t.Context(), &foreign); err == nil || len(control.calls) != 0 {
 		t.Fatal("foreign resource policy was queried")
 	}
-	servicehook.TestSetClosed(fs.cluster, true)
+	testhelper.TestSetClosed(fs.cluster, true)
 	if change, err := fs.OverrideSubvolumePin(t.Context(), volume, PinSetting{Type: PinExport, Value: 1}); change != nil || err == nil || len(control.calls) != 0 {
 		t.Fatal("closed cluster queried or changed directory pins")
 	}
@@ -62,11 +62,11 @@ func TestCephFSPinNativeBasePrivateNamesAndSharedRestore(t *testing.T) {
 	if err := copy.Restore(t.Context()); err != nil || len(fs.pinOverrides) != 0 || control.policies[change.state.path].ExportRank != 0 {
 		t.Fatalf("copy did not restore shared override: %v", err)
 	}
-	servicehook.TestSetClosed(fs.cluster, true)
+	testhelper.TestSetClosed(fs.cluster, true)
 	if err := change.Restore(t.Context()); err != nil || len(control.mutations) != 2 {
 		t.Fatal("verified restore was not idempotent after cluster termination")
 	}
-	servicehook.TestSetClosed(fs.cluster, false)
+	testhelper.TestSetClosed(fs.cluster, false)
 	group.Name, group.Path = "foreign", "/foreign"
 	groupChange, err := fs.OverrideSubvolumeGroupPin(t.Context(), group, PinSetting{Type: PinExport, Value: 1})
 	if err != nil || !slices.Equal(control.mutations[2], []string{"fs", "subvolumegroup", "pin", "fixture", "group", "export", "1"}) {

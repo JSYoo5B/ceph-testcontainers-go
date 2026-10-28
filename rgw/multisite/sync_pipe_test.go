@@ -2,13 +2,13 @@ package multisite
 
 import (
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 func TestRGWSyncPipeCapturesDistinctBucketInstancesAndTagPriority(t *testing.T) {
@@ -132,8 +132,8 @@ func TestRGWSyncPrincipalRequiresExactSourceDestinationTenants(t *testing.T) {
 // refusal names the zone that runs it.
 func TestRGWAccountPipeRefusalNamesTheSquidZone(t *testing.T) {
 	cluster := func(version string) *ceph.Container {
-		c := servicehook.TestCluster(nil, servicehook.TestConfig{})
-		servicehook.TestSetCephVersion(c, version)
+		c := testhelper.TestCluster(nil, testhelper.TestConfig{})
+		testhelper.TestSetCephVersion(c, version)
 		return c
 	}
 	f := &Fixture{config: Config{SourceZone: "source", DestinationZone: "destination", Source: cluster("20.2.4"), Destination: cluster("19.2.5")}}
