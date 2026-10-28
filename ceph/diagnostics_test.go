@@ -136,11 +136,14 @@ func TestDiagnosticsSnapshotPartialInventory(t *testing.T) {
 	mgr := &diagnosticsTestContainer{id: "manager"}
 	service := &diagnosticsTestContainer{id: "partial-gateway"}
 	cluster := &Container{
-		Container: primary, manager: mgr, controlPlane: controlPlaneState{handle: primary}, closed: true, monitorTerminated: true,
-		monitors:   map[string]*MonitorContainer{"partial": {}, "uncreated": nil},
-		managers:   map[string]*ManagerContainer{"a": {Container: mgr}},
+		Container: primary, controlPlane: controlPlaneState{handle: primary}, closed: true, monitorTerminated: true,
+		roster: memberRoster{
+			firstMgr: mgr,
+			monitors: map[string]*MonitorContainer{"partial": {}, "uncreated": nil},
+			managers: map[string]*ManagerContainer{"a": {Container: mgr}},
+			services: map[string]testcontainers.Container{"rgw:bootstrapping": service, "mds.tenant-0": nil},
+		},
 		osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {ID: 0}, 1: nil}},
-		services:   map[string]testcontainers.Container{"rgw:bootstrapping": service, "mds.tenant-0": nil},
 		extensions: extensionStore{states: map[string]any{"rgw": testExtension{secrets: []string{"access-private", "s3-private"}}}},
 		nets:       networkState{public: &testcontainers.DockerNetwork{ID: "public-id", Name: "public"}},
 		bootstrap:  bootstrapRecord{keyring: []byte("[client.admin]\n key = cephx-private\n")},
@@ -263,10 +266,13 @@ func TestDiagnosticsSnapshotLockDeadline(t *testing.T) {
 func TestDiagnosticsTypedNilHandlesRemainInspectable(t *testing.T) {
 	var missing *diagnosticsTestContainer
 	cluster := &Container{
-		Container: missing, controlPlane: controlPlaneState{handle: missing}, manager: missing,
-		monitors:   map[string]*MonitorContainer{"joining": {Container: missing}},
+		Container: missing, controlPlane: controlPlaneState{handle: missing},
+		roster: memberRoster{
+			firstMgr: missing,
+			monitors: map[string]*MonitorContainer{"joining": {Container: missing}},
+			services: map[string]testcontainers.Container{"rgw:partial": missing},
+		},
 		osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {Container: missing, ID: 0}}},
-		services:   map[string]testcontainers.Container{"rgw:partial": missing},
 	}
 	config := diagnosticsUnitConfig(t)
 	config.AdditionalContainers = []DiagnosticsContainer{{Role: "mirror", Name: "failed-mirror", Container: missing}}

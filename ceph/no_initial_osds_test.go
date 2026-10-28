@@ -166,11 +166,11 @@ func TestNoInitialOSDsFirstAddHonorsOwnerDeadlineAndFreshRetry(t *testing.T) {
 func TestNoInitialOSDsEmptyAndPartialControlCleanupRemainsRetryable(t *testing.T) {
 	mon := &noInitialOSDControl{}
 	mgr := &hostNetworkFixtureContainer{failTerminationOnce: true}
-	cluster := &Container{Container: mon, manager: mgr, managers: map[string]*ManagerContainer{"a": {Container: mgr, DaemonName: "a"}}, osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}, settings: options{noInitialOSDs: true}}
-	if err := cluster.Terminate(t.Context()); err == nil || !cluster.closed || cluster.manager != mgr || mon.terminations != 1 {
+	cluster := &Container{Container: mon, roster: memberRoster{firstMgr: mgr, managers: map[string]*ManagerContainer{"a": {Container: mgr, DaemonName: "a"}}}, osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}, settings: options{noInitialOSDs: true}}
+	if err := cluster.Terminate(t.Context()); err == nil || !cluster.closed || cluster.roster.initialManager() != mgr || mon.terminations != 1 {
 		t.Fatal("failed manager cleanup lost zero-storage resources")
 	}
-	if err := cluster.Terminate(t.Context()); err != nil || cluster.manager != nil || len(cluster.managers) != 0 || mgr.terminations != 2 || mon.terminations != 1 {
+	if err := cluster.Terminate(t.Context()); err != nil || cluster.roster.initialManager() != nil || cluster.roster.managerCount() != 0 || mgr.terminations != 2 || mon.terminations != 1 {
 		t.Fatal("retry repeated completed MON cleanup or skipped partial MGR")
 	}
 	if osd, err := cluster.AddOSD(t.Context()); osd != nil || err == nil || len(mon.actions) != 0 {

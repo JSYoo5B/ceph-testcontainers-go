@@ -62,10 +62,10 @@ type Container struct {
 	// shared.
 	startup  startupIdentity
 	settings options
-	manager  testcontainers.Container
-	monitors map[string]*MonitorContainer
-	managers map[string]*ManagerContainer
-	services map[string]testcontainers.Container
+	// roster is the added MONs, the MGR candidates, the first MGR's container
+	// and the services; see memberRoster. It has no lock of its own: mu guards
+	// it.
+	roster memberRoster
 	// extensions is the per-cluster state of the service packages, by kind,
 	// and the lock that guards it, the former extensionsMu; see
 	// extensionStore.
@@ -189,8 +189,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	} else {
 		nw, err = dockerbridge.NewFamily(ctx, settings.bridgeFamily())
 	}
-	c := &Container{settings: settings, nets: networkState{public: nw}, services: make(map[string]testcontainers.Container),
-		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer), startup: newStartupIdentity(uuid.NewString())}
+	c := &Container{settings: settings, nets: networkState{public: nw}, startup: newStartupIdentity(uuid.NewString())}
 	if err != nil {
 		if nw == nil {
 			return nil, classifyDocker(ctx, fmt.Errorf("create ceph network: %w", err))
@@ -448,7 +447,7 @@ func (c *Container) ManagerContainer() testcontainers.Container {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.manager
+	return c.roster.initialManager()
 }
 
 // WithClient connects another container to Ceph and copies its admin credentials.
@@ -892,16 +891,7 @@ func (c *Container) ServiceContainers() []testcontainers.Container {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	names := make([]string, 0, len(c.services))
-	for name := range c.services {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	result := make([]testcontainers.Container, 0, len(names))
-	for _, name := range names {
-		result = append(result, c.services[name])
-	}
-	return result
+	return c.roster.sortedServices()
 }
 
 // startService registers partial failures too, so callers can always terminate
@@ -917,7 +907,7 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	if strings.TrimSpace(image) == "" {
 		return nil, invalidRequest("image is required for service %s", name)
 	}
-	if _, exists := c.services[name]; exists {
+	if c.roster.hasService(name) {
 		return nil, fmt.Errorf("ceph service %s already started", name)
 	}
 	if !c.bootstrap.isComplete() {
@@ -929,7 +919,7 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	moduleOpts = append(moduleOpts, c.startup.ownedLabel())
 	ctr, err := runContainer(ctx, image, moduleOpts...)
 	if ctr != nil {
-		c.services[name] = ctr
+		c.roster.setService(name, ctr)
 	}
 	if err != nil {
 		return ctr, fmt.Errorf("run ceph %s: %w", name, err)
@@ -978,11 +968,11 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	_ = c.stopNativeInvocations(ctx)
 	errs = append(errs, c.portLeases.release(ctx)...)
 	// Stop gateways and metadata servers while their backing OSDs are alive.
-	for name, ctr := range c.services {
+	for name, ctr := range c.roster.eachService() {
 		if err := ctr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 			errs = append(errs, fmt.Errorf("terminate service %s: %w", name, err))
 		} else {
-			delete(c.services, name)
+			c.roster.dropService(name)
 		}
 	}
 	for id, osd := range c.osdHandles.each() {
@@ -996,17 +986,17 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	}
 	memoryErr := c.stores.releaseMemory(ctx, c.osdHandles.count() == 0)
 	volumeErr := c.stores.releaseVolume(ctx, c.osdHandles.count() == 0)
-	if c.manager != nil {
-		if err := c.manager.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+	if first := c.roster.initialManager(); first != nil {
+		if err := first.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 			errs = append(errs, err)
 		} else {
-			c.manager = nil
+			c.roster.clearInitialManager()
 		}
 	}
-	for name, mgr := range c.managers {
+	for name, mgr := range c.roster.eachManager() {
 		if name == "a" {
-			if c.manager == nil {
-				delete(c.managers, name)
+			if c.roster.initialManager() == nil {
+				c.roster.dropManager(name)
 			}
 			continue
 		}
@@ -1016,16 +1006,16 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 				continue
 			}
 		}
-		delete(c.managers, name)
+		c.roster.dropManager(name)
 	}
-	for name, mon := range c.monitors {
+	for name, mon := range c.roster.eachMonitor() {
 		if mon.Container != nil {
 			if err := mon.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 				errs = append(errs, err)
 				continue
 			}
 		}
-		delete(c.monitors, name)
+		c.roster.dropMonitor(name)
 	}
 	if c.Container != nil && !c.monitorTerminated {
 		if err := c.Container.Terminate(ctx, opts...); !onlyMissingHostResource(err) {

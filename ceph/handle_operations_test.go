@@ -138,20 +138,20 @@ func TestMonitorHandleIsMatchedByNameAndContainerNotByPointer(t *testing.T) {
 		t.Fatal("a descriptor of the primary MON was not matched by name and container")
 	}
 	daemon := &monitorLifecycleDaemon{}
-	cluster.monitors["b"] = &MonitorContainer{Container: daemon, DaemonName: "b", owner: cluster}
-	removed := cluster.monitors["b"]
+	cluster.roster.addMonitor("b", &MonitorContainer{Container: daemon, DaemonName: "b", owner: cluster})
+	removed := cluster.roster.monitor("b")
 	if err := removed.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	removals := control.removals
 	// A successor with the same name is not reachable through the old handle.
 	successor := &MonitorContainer{Container: &monitorLifecycleDaemon{}, DaemonName: "b", owner: cluster}
-	cluster.monitors["b"] = successor
+	cluster.roster.addMonitor("b", successor)
 	requireStale(t, "Remove of a removed monitor", removed.Remove(t.Context()))
 	if _, err := removed.AdminSocket(t.Context(), "version"); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("AdminSocket of a removed monitor: %v", err)
 	}
-	if control.removals != removals || cluster.monitors["b"] != successor {
+	if control.removals != removals || cluster.roster.monitor("b") != successor {
 		t.Fatal("a stale monitor handle acted on its successor")
 	}
 	// The primary MON's descriptor goes stale when it is gone.
@@ -164,13 +164,13 @@ func TestManagerHandleOfAReplacedManagerIsRefused(t *testing.T) {
 	cluster.runDir.volume = &runVolume{name: "run"}
 	old := managerHandle(t, t.Context(), cluster, "a")
 	successor := &ManagerContainer{Container: replacement, DaemonName: "a", owner: cluster, authOwned: true}
-	cluster.managers["a"] = successor
+	cluster.roster.addManager("a", successor)
 	requireStale(t, "Remove of a manager that another descriptor replaced", old.Remove(t.Context()))
 	requireStale(t, "RotateKey of a manager that another descriptor replaced", old.RotateKey(t.Context()))
 	if _, err := old.AdminSocket(t.Context(), "status"); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("AdminSocket: %v", err)
 	}
-	if target.terminations != 0 || replacement.terminations != 0 || cluster.managers["a"] != successor {
+	if target.terminations != 0 || replacement.terminations != 0 || cluster.roster.manager("a") != successor {
 		t.Fatalf("a stale manager handle acted on its successor: %v", control.calls)
 	}
 }

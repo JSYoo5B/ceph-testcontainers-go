@@ -48,12 +48,12 @@ func (c *Container) sharedDaemons(ctx context.Context) (map[string]testcontainer
 	if c.Container != nil && !c.monitorTerminated {
 		daemons["mon"] = c.Container
 	}
-	for name, mon := range c.monitors {
+	for name, mon := range c.roster.eachMonitor() {
 		if mon.Container != nil {
 			daemons["mon."+name] = mon.Container
 		}
 	}
-	for name, mgr := range c.managers {
+	for name, mgr := range c.roster.eachManager() {
 		if mgr.Container != nil && !mgr.terminated {
 			daemons["mgr."+name] = mgr.Container
 		}
@@ -63,7 +63,7 @@ func (c *Container) sharedDaemons(ctx context.Context) (map[string]testcontainer
 			daemons[fmt.Sprintf("osd.%d", id)] = osd.Container
 		}
 	}
-	for name, ctr := range c.services {
+	for name, ctr := range c.roster.eachService() {
 		daemons[name] = ctr
 	}
 	c.mu.Unlock()

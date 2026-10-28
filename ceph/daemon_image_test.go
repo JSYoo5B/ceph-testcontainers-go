@@ -101,8 +101,8 @@ func TestDaemonImageRefusalHappensBeforeLockAndState(t *testing.T) {
 			case *OSDContainer:
 				isNil = v == nil
 			}
-			if !isNil || len(c.monitors) != 0 || len(c.managers) != 0 || c.osdHandles.count() != 0 || c.closed {
-				t.Fatalf("refusal left state: %v monitors=%d managers=%d osds=%d", got, len(c.monitors), len(c.managers), c.osdHandles.count())
+			if !isNil || c.roster.monitorCount() != 0 || c.roster.managerCount() != 0 || c.osdHandles.count() != 0 || c.closed {
+				t.Fatalf("refusal left state: %v monitors=%d managers=%d osds=%d", got, c.roster.monitorCount(), c.roster.managerCount(), c.osdHandles.count())
 			}
 		})
 	}
@@ -125,7 +125,7 @@ func TestDaemonImageOptionIsRefusedForTenantsOfASharedCluster(t *testing.T) {
 				t.Errorf("%s with image %q: %v, want ErrSharedCluster", name, image, err)
 			}
 		}
-		if len(shared.monitors)+len(shared.managers)+shared.osdHandles.count() != 0 {
+		if shared.roster.monitorCount()+shared.roster.managerCount()+shared.osdHandles.count() != 0 {
 			t.Fatal("a refused tenant call changed the topology")
 		}
 	}
