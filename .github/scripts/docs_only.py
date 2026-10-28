@@ -29,6 +29,8 @@ READ_DOC_FILES = frozenset((
     "docs/guides/bug-compatibility-tags.md",
     # internal/tools/testdoublecheck reads the test-double inventory.
     "docs/contributing/test-double-inventory.md",
+    # ceph/shared_harness_inventory_test.go compares this note's inventory with the source.
+    "docs/design/shared-harness-boundary.md",
 ))
 # Git file modes of an ordinary file and of an absent side (added or deleted).
 REGULAR_MODES = frozenset(("100644", "000000"))
