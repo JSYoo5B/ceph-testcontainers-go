@@ -4,6 +4,7 @@ import io
 import json
 from datetime import date
 from pathlib import Path
+import re
 import tempfile
 import unittest
 import unittest.mock
@@ -58,6 +59,57 @@ class PhaseTests(unittest.TestCase):
         self.assertEqual(phases["native"], 300)
         self.assertEqual(phases["cleanup"], 60)
         self.assertEqual(phases["reporting"], 30)
+
+    def test_plan_cache_preparation_has_its_own_phases(self):
+        # Synthetic Plan windows: 3 s of module download and 5 s of warming.
+        job = plan_job(at(0), at(0), at(0, 8))
+        job["steps"] = [step("Download every Go module", at(0), at(0, 3)),
+                        step("Compile one profile of each package into the build cache", at(0, 3), at(0, 8))]
+        phases = measure.job_phases(job)
+        self.assertEqual((phases["plan_modules"], phases["plan_build_cache"]), (3, 5))
+        self.assertEqual((phases["reporting"], phases["setup"], phases["compile"]), (0, 0, 0))
+        self.assertEqual(sum(phases.values()), 8)
+
+    def test_runtime_step_names_keep_their_phases(self):
+        for name, phase in (("Prepare Go modules", "setup"), ("Compile selected tagged suite", "compile"),
+                            ("Restore the Go build cache", "setup"), ("Native assertions and completion proof", "native"),
+                            ("Docker baseline and engine identity", "docker"),
+                            ("Resolve native published Ceph roles", "images"),
+                            ("Verify owned Docker resource cleanup", "cleanup")):
+            self.assertEqual(measure.step_phase(name), phase, name)
+
+    def test_similar_plan_step_names_are_not_captured(self):
+        for name in ("Save the Go module cache", "Save the Go build cache", "Download Go modules",
+                     "Compile one profile of each package",
+                     "Save family plan", "Discover only this workflow family from source tags",
+                     "Some step added later"):
+            self.assertEqual(measure.step_phase(name), "reporting", name)
+
+    def test_every_plan_job_step_is_classified_explicitly(self):
+        expected = {
+            "Set up job": "setup", "Run actions/checkout": "setup", "Run actions/setup-go": "setup",
+            "Restore the Go module cache": "setup", "Restore the Go build cache": "setup",
+            "Discover only this workflow family from source tags": "reporting",
+            "Download every Go module": "plan_modules",
+            "Save the Go module cache": "reporting",
+            "Compile one profile of each package into the build cache": "plan_build_cache",
+            "Save the Go build cache": "reporting", "Save family plan": "reporting",
+            "Post Run actions/setup-go": "reporting", "Post Run actions/checkout": "reporting",
+            "Complete job": "reporting"}
+        text = (Path(__file__).resolve().parents[1] / "workflows" / "tagged-runtime.yml").read_text(encoding="utf-8")
+        block = text.split("\n  plan:\n", 1)[1].split("\n  runtime:\n", 1)[0]
+        names = ["Set up job"]
+        for line in block.splitlines():
+            found = re.match(r"      - (?:name: (.+)|uses: ([^@\s]+)@.*)$", line)
+            if found:
+                names.append(found.group(1) or "Run " + found.group(2))
+        # The runner adds post steps of the actions that have one and the
+        # final job step. Unnamed "uses" steps are named "Run <action>".
+        names += ["Post Run actions/setup-go", "Post Run actions/checkout", "Complete job"]
+        self.assertGreater(len(names), 10)
+        self.assertEqual(sorted(set(names)), sorted(expected), "classify every Plan step in this table")
+        for name, phase in expected.items():
+            self.assertEqual(measure.step_phase(name), phase, name)
 
     def test_only_jobs_with_a_native_step_are_runtime_jobs(self):
         self.assertTrue(measure.is_runtime(runtime_job("Scenarios / x", at(0), at(0), 1)))

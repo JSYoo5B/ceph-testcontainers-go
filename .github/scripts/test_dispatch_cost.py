@@ -89,6 +89,43 @@ class DispatchCostTest(unittest.TestCase):
         self.assertFalse(report["claims"]["billing"])
         self.assertFalse(report["claims"]["dag_critical_path"])
 
+    def test_plan_cache_preparation_is_not_reporting_and_seconds_are_conserved(self):
+        # Synthetic Plan: 3 s of module download then 5 s of cache warming.
+        self.jobs[0].update(started_at=clock(2), completed_at=clock(10), steps=[step("Set up job", 2, 2),
+            step("Download every Go module", 2, 5),
+            step("Compile one profile of each package into the build cache", 5, 10)])
+        report = self.assess()
+        phases = report["metrics"]["known_step_seconds"]
+        self.assertEqual((phases["plan_modules"], phases["plan_build_cache"]), (3, 5))
+        plan = next(r for r in report["jobs"] if r["job_id"] == "1")
+        self.assertEqual((plan["step_seconds"]["reporting"], plan["step_seconds"]["compile"],
+                          plan["step_seconds"]["setup"]), (0, 0, 0))
+        self.assertEqual(plan["runner_seconds"], 8)
+        self.assertEqual(sum(plan["step_seconds"].values()) + plan["unattributed_seconds"], 8)
+        self.assertEqual(report["conservation"]["known_runner_seconds"], 28)
+
+    def test_skipped_warming_adds_no_seconds_and_unknown_steps_stay_reporting(self):
+        self.jobs[0]["steps"] = [step("Set up job", 2, 4), step("Download every Go module", 4, 6),
+            {"name": "Compile one profile of each package into the build cache", "conclusion": "skipped",
+             "started_at": None, "completed_at": None},
+            step("Some step added later", 6, 8)]
+        report = self.assess()
+        plan = next(r for r in report["jobs"] if r["job_id"] == "1")["step_seconds"]
+        self.assertEqual((plan["plan_modules"], plan["plan_build_cache"], plan["reporting"]), (2, 0, 2))
+        self.assertEqual(report["metrics"]["known_step_seconds"]["plan_build_cache"], 0)
+
+    def test_failed_continue_on_error_warming_keeps_its_window(self):
+        self.jobs[0]["steps"] = [step("Set up job", 2, 4),
+            step("Compile one profile of each package into the build cache", 4, 8) | {"conclusion": "failure"}]
+        self.assertEqual(self.assess()["metrics"]["known_step_seconds"]["plan_build_cache"], 4)
+
+    def test_report_of_the_previous_schema_is_refused(self):
+        first, second = self.assess(), self.second()
+        self.assertEqual(cost.SCHEMA, "ceph-dispatch-cost/v2")
+        old = dict(first, schema="ceph-dispatch-cost/v1")
+        with self.assertRaises(ValueError):
+            cost.compare([old, second])
+
     def test_two_equivalent_complete_attempts_have_descriptive_ranges(self):
         first, second = self.assess(), self.second()
         report = cost.compare([first, second])
