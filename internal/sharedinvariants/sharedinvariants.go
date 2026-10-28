@@ -11,6 +11,13 @@ import (
 	"strings"
 )
 
+// SharedPool is the one definition of the pool whose RADOS namespaces a
+// shared cluster gives its tenants. The public constant of the shared harness
+// is declared from it and the core checks that need the name take it from here
+// or as an argument, never from a second literal. The value is the pool
+// identity of existing clusters and does not change.
+const SharedPool = "tenants"
+
 // Invariants is the state that a tenant cannot change through its own
 // scope. Config values are compared but never reported.
 type Invariants struct {

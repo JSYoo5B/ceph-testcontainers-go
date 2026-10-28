@@ -14,11 +14,13 @@ import (
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/sharedinvariants"
 )
 
 // SharedPool is the pool whose RADOS namespaces a shared cluster gives its
 // tenants.
-const SharedPool = "tenants"
+const SharedPool = sharedinvariants.SharedPool
 
 const (
 	defaultMaxTenants  = 4

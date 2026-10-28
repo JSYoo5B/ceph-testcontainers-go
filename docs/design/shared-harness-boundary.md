@@ -845,10 +845,19 @@ removed, only its type direction.
   it in a comment. Core checks do not import the harness. Today they receive the
   pool name as an argument (`Backend.Invariants(ctx, pool)`,
   `PurgeNamespace(ctx, pool, ns)`, `sharedinvariants.ReleaseDiff`), which is the
-  explicit input the owner allows. If a core check ever needs the value without an
-  argument, it takes it from one internal definition (recommended: a constant in the
-  leaf `internal/sharedinvariants` that the public constant is declared from), not
-  from a second literal. The mechanism is implementation design.
+  explicit input the owner allows.
+- Done as internal preparation (no public change): the leaf
+  `internal/sharedinvariants` declares `SharedPool = "tenants"` as the one
+  definition, and `ceph.SharedPool` is declared from it
+  (`const SharedPool = sharedinvariants.SharedPool`). At the move the public constant
+  is declared in `ceph/harness` from the same internal definition and the `ceph`
+  declaration is deleted without an alias; the pool value is never spelled twice.
+  `TestSharedPoolHasOneDefinitionInNonTestCode` scans every non-test Go file of the
+  module for a second literal of the name (also as `pool=<name>` or `pool <name>`) and
+  pins which file declares `SharedPool` from what; `TestSharedPoolValueIsTheExistingPoolIdentity`
+  pins the value so a placement change cannot rename the pool; a negative control
+  shows the readers report a copied literal and a redeclared constant. The scan
+  needs no change at the move except the declaring-file row.
 
 `Exclusive` is settled by the owner on 2026-10-28 ([comment](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469536710)):
 
@@ -921,6 +930,9 @@ of `ceph/harness`.
 
 ### Order of work
 
+0. Done, internal, no public API: the single internal definition of the shared
+   pool name (see "SharedPool and Exclusive"). The error contract has no caller
+   before the move and is therefore not prepared separately (see "Error handling").
 1. Internal, no public API (done): the private backend method `createClient`
    (`Backend.CreateClient` after the move) returns `created`. `sharedBackend`,
    `containerBackend`, `createSharedClient`, the model backend of the tests and
@@ -967,7 +979,7 @@ recommendation. Nothing here is implemented.
 | --- | --- | --- |
 | `Exclusive` handle | `*ceph.Container` stays the handle during an active exclusive interval; no second facade; authority is lease-bounded and the move must show stale-handle and generation-reuse enforcement and audit the access paths | [12:55Z](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469536710) |
 | Service harness registration | No `init` or import-side-effect registration and no process-global registry behind a `Register` function; the shared harness instance is given its service support at construction and owns its lifecycle; option names and duplicate or missing-support validation are design work | [13:00Z](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469630041) |
-| `SharedPool` | The public constant moves to `ceph/harness`; no `ceph.SharedPool` alias; core checks use an internal shared definition or an explicit input, never a second literal | [13:01Z](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469654249) |
+| `SharedPool` | The public constant moves to `ceph/harness`; no `ceph.SharedPool` alias; core checks use an internal shared definition or an explicit input, never a second literal. The internal definition and its guard are in place; the constant move itself is not | [13:01Z](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469654249) |
 | Observer construction | `Observer` and its queries stay in `ceph`; `ObserveTenant` moves to `ceph/harness`; core names no `Tenant` and imports no harness; the original tenant is revalidated on every query; no public executor, resolver or authorization callback; direct caller migration | [13:03Z](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469688158) |
 | Error helpers | One narrow internal contract; no public helper, no copy of core classification; categories, causes, `errors.Is`/`errors.As` and diagnostics preserved; classification verified on the migrated paths | [13:04Z](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469722063) |
 
@@ -993,9 +1005,11 @@ composed into this note.
 ## Not covered
 
 No exported symbol was moved, no public signature was added and no package
-import changed. The only code in this change is the Docker-free inventory guard
-and the CI classifier entry that makes an edit of this note run it; no production
-code changed. No Docker or native Ceph test was run. The sections from "Method
+import changed. The code in this note's history is the Docker-free inventory guard,
+the CI classifier entry that makes an edit of this note run it and, with the
+single internal definition of the shared pool name, one production line: the
+constant `ceph.SharedPool` is declared from `internal/sharedinvariants` with the
+same value. No Docker or native Ceph test was run. The sections from "Method
 and limits" to "Refresh at `1a158b9`" are history and keep their older counts;
 "Inventory at `83de22a`" is the current state and must be refreshed, with its
 pinned commit, whenever the guard fails or the move starts.
