@@ -317,7 +317,7 @@ func scan(file string, forbiddenTypes []string, seamImport, seamName string) ([]
 			}
 		}
 	}
-	binding := ""
+	var bindings []string // one per import of the seam path; Go allows several aliases
 	for _, spec := range parsed.Imports {
 		importPath, err := strconv.Unquote(spec.Path.Value)
 		if err != nil || importPath != seamImport {
@@ -325,17 +325,17 @@ func scan(file string, forbiddenTypes []string, seamImport, seamName string) ([]
 		}
 		switch {
 		case spec.Name == nil:
-			binding = path.Base(importPath)
+			bindings = append(bindings, path.Base(importPath))
 		case spec.Name.Name == ".":
 			found = append(found, finding{what: "dot-imports the seam package", seam: true})
 		case spec.Name.Name != "_":
-			binding = spec.Name.Name
+			bindings = append(bindings, spec.Name.Name)
 		}
 	}
-	if binding != "" {
+	if len(bindings) > 0 {
 		ast.Inspect(parsed, func(n ast.Node) bool {
 			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == seamName {
-				if id, ok := sel.X.(*ast.Ident); ok && id.Name == binding && id.Obj == nil {
+				if id, ok := sel.X.(*ast.Ident); ok && slices.Contains(bindings, id.Name) && id.Obj == nil {
 					found = append(found, finding{what: "reads the seam", seam: true})
 				}
 			}

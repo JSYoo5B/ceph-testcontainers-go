@@ -120,10 +120,12 @@ const hookregPath = `"example.test/fixture/hookreg"`
 // every spelling of the import.
 func TestSeamAccessOutsideSeamFilesFails(t *testing.T) {
 	for name, source := range map[string]string{
-		"plain":         "package consumer\n\nimport " + hookregPath + "\n\nfunc Use() any { return hookreg.Test }\n",
-		"renamed":       "package consumer\n\nimport reg " + hookregPath + "\n\nfunc Use() any { return reg.Test }\n",
-		"dot":           "package consumer\n\nimport . " + hookregPath + "\n\nfunc Use() any { return Test }\n",
-		"blank dot mix": "package consumer\n\nimport (\n\t_ " + hookregPath + "\n\treg " + hookregPath + "\n)\n\nfunc Use() any { return reg.Test }\n",
+		"plain":                "package consumer\n\nimport " + hookregPath + "\n\nfunc Use() any { return hookreg.Test }\n",
+		"renamed":              "package consumer\n\nimport reg " + hookregPath + "\n\nfunc Use() any { return reg.Test }\n",
+		"dot":                  "package consumer\n\nimport . " + hookregPath + "\n\nfunc Use() any { return Test }\n",
+		"first of two aliases": "package consumer\n\nimport (\n\tfirst " + hookregPath + "\n\tsecond " + hookregPath + "\n)\n\nfunc Use() any {\n\t_ = second.Other\n\treturn first.Test\n}\n",
+		"last of two aliases":  "package consumer\n\nimport (\n\tfirst " + hookregPath + "\n\tsecond " + hookregPath + "\n)\n\nfunc Use() any {\n\t_ = first.Other\n\treturn second.Test\n}\n",
+		"blank dot mix":        "package consumer\n\nimport (\n\t_ " + hookregPath + "\n\treg " + hookregPath + "\n)\n\nfunc Use() any { return reg.Test }\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			requireProblem(t, run(t, seamUser(source)), "consumer/consumer.go", "seam")
@@ -154,10 +156,11 @@ func TestLookalikesOfTheSeamPass(t *testing.T) {
 // renamed, dot or blank import of it fails as well.
 func TestHelperImportSpellingsFail(t *testing.T) {
 	for name, source := range map[string]string{
-		"plain":   "package consumer\n\nimport \"example.test/fixture/helper\"\n\nvar _ = helper.TestCluster\n",
-		"renamed": "package consumer\n\nimport h \"example.test/fixture/helper\"\n\nvar _ = h.TestCluster\n",
-		"dot":     "package consumer\n\nimport . \"example.test/fixture/helper\"\n\nvar _ = TestCluster\n",
-		"blank":   "package consumer\n\nimport _ \"example.test/fixture/helper\"\n",
+		"plain":       "package consumer\n\nimport \"example.test/fixture/helper\"\n\nvar _ = helper.TestCluster\n",
+		"renamed":     "package consumer\n\nimport h \"example.test/fixture/helper\"\n\nvar _ = h.TestCluster\n",
+		"dot":         "package consumer\n\nimport . \"example.test/fixture/helper\"\n\nvar _ = TestCluster\n",
+		"blank":       "package consumer\n\nimport _ \"example.test/fixture/helper\"\n",
+		"two aliases": "package consumer\n\nimport (\n\ta \"example.test/fixture/helper\"\n\tb \"example.test/fixture/helper\"\n)\n\nvar _ = a.TestCluster\nvar _ = b.TestCluster\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			files := variant(func(files map[string]string) { files["consumer/consumer.go"] = source })
