@@ -407,7 +407,12 @@ call exists in them, no public name was added, and no native run was made.
   than 100000 entries. It prints a format line, one JSON object per entry sorted
   by path (path, kind, permission bits, inode, size, `mtime_ns`, SHA-256 of
   regular files), and a trailer with the entry count and the `kv_backend`
-  content (`null` when it was not read). It exits 0 only after the trailer. The
+  content (`null` when it was not read). The marker is read completely or
+  refused: the script reads to EOF and fails when the file is larger than 4096
+  bytes (the bound of the pinned `MonitorDBStore` reader, which strips only
+  trailing whitespace) or is not UTF-8, so a suffix behind trailing whitespace
+  cannot be dropped and listed as `rocksdb`. The only other reads, the content
+  digests, loop to EOF. It exits 0 only after the trailer. The
   tests execute it with the host `python3` against temporary directories.
   Symlinks (to an outside file or directory, relative escapes, dangling, and a
   keyring, `kv_backend` or `store.db` replaced by a link) and a FIFO appear as

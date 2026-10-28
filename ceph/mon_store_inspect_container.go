@@ -57,7 +57,7 @@ const (
 //
 //	{"format": "tc-mon-store-listing-v1"}
 //	{"path","kind","mode","inode","size","mtime_ns","digest"} per entry, sorted by path
-//	{"end": true, "count": N, "kv_backend": "<up to 65 bytes>"|null}
+//	{"end": true, "count": N, "kv_backend": "<whole file, at most 4096 bytes>"|null}
 //
 // and exits 0 only after the last line. Any error, a path that is not UTF-8, or
 // more entries than the bound writes a reason to standard error and exits
@@ -67,6 +67,7 @@ const monStoreInspectScript = `
 import hashlib, json, os, stat, sys
 
 MAX_ENTRIES = %d
+MAX_MARKER = 4096
 
 def fail(message, code=3):
     sys.stderr.write(message + "\n")
@@ -101,9 +102,19 @@ def digest_of(path, st):
         os.close(fd)
 
 def read_marker(path):
+    # A complete bounded read: loop to EOF and refuse a marker beyond the bound
+    # instead of keeping a prefix (the pinned MonitorDBStore reader allows 4096).
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
-        return os.read(fd, 65).decode("utf-8", "replace")
+        data = b""
+        while True:
+            chunk = os.read(fd, MAX_MARKER + 1 - len(data))
+            if not chunk:
+                break
+            data += chunk
+            if len(data) > MAX_MARKER:
+                fail("the kv_backend marker is beyond the bound")
+        return data.decode("utf-8")
     finally:
         os.close(fd)
 

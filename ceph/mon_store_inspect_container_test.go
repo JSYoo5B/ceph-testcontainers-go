@@ -647,3 +647,53 @@ func TestMonStoreInspectorAndMonmapAdaptersFeedVerifyStopped(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// monStoreMarkerPipeline runs the real script, the parser and storeFacts on a
+// store whose kv_backend holds marker.
+func monStoreMarkerPipeline(t *testing.T, marker string) (error, error) {
+	t.Helper()
+	dir := monStoreTempStore(t)
+	monStoreWrite(t, dir, "kv_backend", marker, 0o644)
+	out, _, scriptErr := monStoreRunScript(t, monStoreInspectScriptSource(), dir)
+	if scriptErr != nil {
+		return scriptErr, nil
+	}
+	files, err := parseMonStoreListing(out)
+	if err != nil {
+		return nil, err
+	}
+	_, _, _, err = files.storeFacts()
+	return nil, err
+}
+
+// TestMonStoreInspectScriptNeverHidesAMarkerSuffix pins that the marker is read
+// completely or refused: a suffix beyond a fixed read size must not vanish.
+func TestMonStoreInspectScriptNeverHidesAMarkerSuffix(t *testing.T) {
+	refused := map[string]string{
+		"suffix after 58 newlines (76 bytes)": "rocksdb" + strings.Repeat("\n", 58) + "not-rocksdb",
+		"suffix after the old 65-byte read":   "rocksdb" + strings.Repeat("\n", 58) + "x",
+		"suffix just inside the bound":        "rocksdb" + strings.Repeat("\n", 4096-7-1) + "x",
+		"marker beyond the bound":             "rocksdb" + strings.Repeat("\n", 4096),
+		"marker not UTF-8":                    "rocksdb\xff",
+	}
+	for name, marker := range refused {
+		t.Run(name, func(t *testing.T) {
+			scriptErr, err := monStoreMarkerPipeline(t, marker)
+			if scriptErr == nil && err == nil {
+				t.Fatal("the pipeline reported a supported backend")
+			}
+		})
+	}
+	accepted := map[string]string{
+		"plain":                     "rocksdb\n",
+		"65-byte whitespace padded": "rocksdb" + strings.Repeat("\n", 58),
+		"whole marker at the bound": "rocksdb" + strings.Repeat("\n", 4096-7),
+	}
+	for name, marker := range accepted {
+		t.Run(name, func(t *testing.T) {
+			if scriptErr, err := monStoreMarkerPipeline(t, marker); scriptErr != nil || err != nil {
+				t.Fatalf("control refused: %v %v", scriptErr, err)
+			}
+		})
+	}
+}
