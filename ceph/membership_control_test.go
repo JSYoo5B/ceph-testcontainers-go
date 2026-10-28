@@ -23,7 +23,7 @@ var membershipControlFields = map[string]bool{
 }
 
 // testStateFields is the exact field set of the unit-test state view in internal/testhelper. A new pointer needs a review of what it exposes.
-var testStateFields = []string{"ConfigMutex", "ControlMutex", "Mutex", "NetworkRemoved", "PortLeases"}
+var testStateFields = []string{"ConfigMutex", "ControlMutex", "Mutex", "PortLeases"}
 
 func structFieldNames(t *testing.T, file, typeName string) []string {
 	t.Helper()
@@ -83,7 +83,7 @@ func TestTestStateExposesNoMembershipControlPointer(t *testing.T) {
 		}
 	}
 	results := unitStateResults(t)
-	if want := []string{"mu", "control", "config", "portLeases", "networkRemoved"}; !slices.Equal(results, want) {
+	if want := []string{"mu", "control", "config", "portLeases"}; !slices.Equal(results, want) {
 		t.Fatalf("UnitState results = %v, pinned %v", results, want)
 	}
 }
@@ -261,6 +261,7 @@ var testSetHooks = map[string][]string{
 	"UnitSetConfig":         {"config"},
 	"UnitSetKeyring":        {"keyring"},
 	"UnitSetCephVersion":    {"cephVersion"},
+	"UnitSetNetworkRemoved": {"publicRemoved"},
 	"UnitSetInitialOSDs":    {"osds"},
 	"UnitSetPoolDefaults":   {"poolMinSize", "poolReplicas"},
 	"UnitSetStartupTimeout": {"startupTimeout"},

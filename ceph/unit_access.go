@@ -55,8 +55,8 @@ func (unitAccess) UnitCluster(control testcontainers.Container, startupTimeout t
 
 // UnitState exposes a cluster's internals to unit tests. It takes no lock: the
 // caller holds Mutex or the cluster value is not shared yet.
-func (unitAccess) UnitState(c *Container) (mu *sync.Mutex, control, config *sync.RWMutex, portLeases int, networkRemoved *bool) {
-	return &c.mu, c.controlPlane.mutex(), c.bootstrap.mutex(), c.portLeases.count(), &c.nets.publicRemoved
+func (unitAccess) UnitState(c *Container) (mu *sync.Mutex, control, config *sync.RWMutex, portLeases int) {
+	return &c.mu, c.controlPlane.mutex(), c.bootstrap.mutex(), c.portLeases.count()
 }
 
 // UnitSetClosed sets or clears the closed flag. The caller holds Mutex or the
@@ -82,6 +82,17 @@ func (unitAccess) UnitSetKeyring(c *Container, keyring []byte) { c.bootstrap.key
 func (unitAccess) UnitSetCephVersion(c *Container, version string) {
 	c.bootstrap.cephVersion = version
 }
+
+// UnitSetNetworkRemoved marks the public bridge as removed or not, so a unit
+// test with a synthetic bridge skips the Docker removal. The caller holds Mutex
+// or the cluster value is not shared.
+func (unitAccess) UnitSetNetworkRemoved(c *Container, removed bool) {
+	c.nets.publicRemoved = removed
+}
+
+// UnitNetworkRemoved reports whether the public bridge is marked removed. The
+// caller holds Mutex or the cluster value is not shared.
+func (unitAccess) UnitNetworkRemoved(c *Container) bool { return c.nets.publicRemoved }
 
 // UnitSetInitialOSDs sets the initial OSD count. The caller holds Mutex or the
 // cluster value is not shared.

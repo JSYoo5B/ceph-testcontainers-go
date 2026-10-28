@@ -141,7 +141,7 @@ func TestDiagnosticsSnapshotPartialInventory(t *testing.T) {
 		managers:   map[string]*ManagerContainer{"a": {Container: mgr}},
 		osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {ID: 0}, 1: nil}},
 		services:   map[string]testcontainers.Container{"rgw:bootstrapping": service, "mds.tenant-0": nil},
-		extensions: map[string]any{"rgw": testExtension{secrets: []string{"access-private", "s3-private"}}},
+		extensions: extensionStore{states: map[string]any{"rgw": testExtension{secrets: []string{"access-private", "s3-private"}}}},
 		nets:       networkState{public: &testcontainers.DockerNetwork{ID: "public-id", Name: "public"}},
 		bootstrap:  bootstrapRecord{keyring: []byte("[client.admin]\n key = cephx-private\n")},
 	}

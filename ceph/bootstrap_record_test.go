@@ -184,7 +184,7 @@ func TestBootstrapRecordConcurrentReadersAndWriters(t *testing.T) {
 // record the readers see.
 func TestTestStatePublishesTheBootstrapRecordLockIdentityAndHooksReachIt(t *testing.T) {
 	c := &Container{}
-	if _, _, config, _, _ := (unitAccess{}).UnitState(c); config != &c.bootstrap.mu {
+	if _, _, config, _ := (unitAccess{}).UnitState(c); config != &c.bootstrap.mu {
 		t.Fatal("UnitState.ConfigMutex is not the bootstrap-record lock")
 	}
 	hooks := unitAccess{}

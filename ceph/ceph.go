@@ -69,8 +69,10 @@ type Container struct {
 	monitors      map[string]*MonitorContainer
 	managers      map[string]*ManagerContainer
 	services      map[string]testcontainers.Container
-	extensionsMu  sync.Mutex
-	extensions    map[string]any
+	// extensions is the per-cluster state of the service packages, by kind,
+	// and the lock that guards it, the former extensionsMu; see
+	// extensionStore.
+	extensions extensionStore
 	// nets is the bridge state; see networkState for what guards each part.
 	nets networkState
 	// osdHandles is the OSD handle registry, owned and detached; see

@@ -29,12 +29,14 @@ type unitHooks interface {
 	UnitCluster(control testcontainers.Container, startupTimeout time.Duration, closed, hostNetwork bool,
 		publicAddress, networkName string, shared bool, osds int, placement ceph.OSDConfig, memStore bool,
 		mode ceph.MessengerMode, images *ceph.ImageSet) *ceph.Container
-	UnitState(c *ceph.Container) (mu *sync.Mutex, control, config *sync.RWMutex, portLeases int, networkRemoved *bool)
+	UnitState(c *ceph.Container) (mu *sync.Mutex, control, config *sync.RWMutex, portLeases int)
 	UnitSetClosed(c *ceph.Container, closed bool)
 	UnitSetControlPlane(c *ceph.Container, control testcontainers.Container)
 	UnitSetConfig(c *ceph.Container, config []byte)
 	UnitSetKeyring(c *ceph.Container, keyring []byte)
 	UnitSetCephVersion(c *ceph.Container, version string)
+	UnitSetNetworkRemoved(c *ceph.Container, removed bool)
+	UnitNetworkRemoved(c *ceph.Container) bool
 	UnitSetInitialOSDs(c *ceph.Container, osds int)
 	UnitSetPoolDefaults(c *ceph.Container, replicas, minSize int)
 	UnitSetStartupTimeout(c *ceph.Container, timeout time.Duration)
@@ -78,13 +80,12 @@ type TestConfig struct {
 
 // TestStateView points at a cluster's locks for unit tests. PortLeases is a
 // count taken when TestState is called. The closed flag, the control plane, the
-// options and the bootstrap record are written through the TestSet* functions.
+// options, the bootstrap record and the bridge-removal flag are written through the TestSet* functions.
 type TestStateView struct {
-	Mutex          *sync.Mutex
-	ControlMutex   *sync.RWMutex
-	ConfigMutex    *sync.RWMutex
-	PortLeases     int
-	NetworkRemoved *bool
+	Mutex        *sync.Mutex
+	ControlMutex *sync.RWMutex
+	ConfigMutex  *sync.RWMutex
+	PortLeases   int
 }
 
 // TestCluster builds a cluster value for unit tests: control runs the CLI.
@@ -95,8 +96,8 @@ func TestCluster(control testcontainers.Container, c TestConfig) *ceph.Container
 
 // TestState exposes a cluster's lock identities to unit tests.
 func TestState(c *ceph.Container) TestStateView {
-	mu, control, config, leases, removed := get().UnitState(c)
-	return TestStateView{Mutex: mu, ControlMutex: control, ConfigMutex: config, PortLeases: leases, NetworkRemoved: removed}
+	mu, control, config, leases := get().UnitState(c)
+	return TestStateView{Mutex: mu, ControlMutex: control, ConfigMutex: config, PortLeases: leases}
 }
 
 // TestReplaceOSDs swaps the owned OSD descriptors of a cluster value for osds.
@@ -132,6 +133,15 @@ func TestSetKeyring(c *ceph.Container, keyring []byte) { get().UnitSetKeyring(c,
 // lock: use a cluster no other goroutine uses, or hold the mutex that TestState
 // exposes.
 func TestSetCephVersion(c *ceph.Container, version string) { get().UnitSetCephVersion(c, version) }
+
+// TestSetNetworkRemoved marks a cluster's public bridge as removed or not. It
+// takes no lock: hold the mutex that TestState exposes, or use a cluster no
+// other goroutine uses.
+func TestSetNetworkRemoved(c *ceph.Container, removed bool) { get().UnitSetNetworkRemoved(c, removed) }
+
+// TestNetworkRemoved reports whether a cluster's public bridge is marked
+// removed, read without a lock.
+func TestNetworkRemoved(c *ceph.Container) bool { return get().UnitNetworkRemoved(c) }
 
 // TestSetInitialOSDs sets a cluster's initial OSD count. It takes no lock.
 func TestSetInitialOSDs(c *ceph.Container, osds int) { get().UnitSetInitialOSDs(c, osds) }

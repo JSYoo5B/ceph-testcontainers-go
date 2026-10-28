@@ -282,17 +282,7 @@ func (serviceHooks) WithServiceImage(role, image string) Option {
 // kind, storing the result of create on first use. It takes its own lock, so
 // callers may or may not hold the cluster mutex.
 func (serviceHooks) Extension(c *Container, kind string, create func() any) any {
-	c.extensionsMu.Lock()
-	defer c.extensionsMu.Unlock()
-	if state, ok := c.extensions[kind]; ok {
-		return state
-	}
-	if c.extensions == nil {
-		c.extensions = make(map[string]any)
-	}
-	state := create()
-	c.extensions[kind] = state
-	return state
+	return c.extensions.getOrCreate(kind, create)
 }
 
 // ResolvePool applies the cluster's pool defaults: CRUSH root, replicas and

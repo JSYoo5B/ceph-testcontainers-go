@@ -156,7 +156,7 @@ func TestControlPlaneStateConcurrentReadersAndPublisher(t *testing.T) {
 // is the same lock domain, not a copy.
 func TestTestStatePublishesTheControlPlaneLockIdentity(t *testing.T) {
 	c := &Container{}
-	if _, control, _, _, _ := (unitAccess{}).UnitState(c); control != &c.controlPlane.mu {
+	if _, control, _, _ := (unitAccess{}).UnitState(c); control != &c.controlPlane.mu {
 		t.Fatal("UnitState.ControlMutex is not the control-plane lock")
 	}
 	fake := &controlStateFake{id: "hook"}
