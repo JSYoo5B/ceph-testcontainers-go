@@ -68,6 +68,17 @@ A package move that renames API used by a retained native producer adds its own
 shard under `.github/scripts/fixtures/package-split/`; it does not edit a shared
 file. See [Package-split rewrite shards](docs/contributing/package-split-shards.md).
 
+## Test doubles
+
+Do not use mocks by default. Use a mock only when its substituted behavior and
+verification purpose are explicit at the test's reading site and easier to
+review than a real implementation or a small fake. Prefer small, explicit
+substitutes; do not grow a second implementation of external-system semantics
+or hide long expectation scripts behind helpers. Mock/fake success is not
+native compatibility evidence. Follow the test-double guidance in
+[Testing](docs/contributing/testing.md#test-doubles); existing doubles are in
+the [inventory](docs/contributing/test-double-inventory.md).
+
 ## Validation
 
 Use [Testing](docs/contributing/testing.md) and the Makefile for commands.
