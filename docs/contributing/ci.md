@@ -156,6 +156,10 @@ show that `docs/changes/x.md` is a link to a code file:
   `members.json` and `review.json` catalogues and receipts, which the
   `internal/apiinventory` tests compare with the code. The catalogue JSON files
   are nested non-Markdown files, so they are never on the allowlist;
+- `docs/design/container-decomposition.md` and every file below
+  `docs/design/container-decomposition/`: the shared decomposition document and
+  the component records, which the `ceph` guards read by listing the directory,
+  so a record added later is covered without a list entry;
 - `docs/guides/messenger-client-fixtures.md`: cross-checked against the
   messenger coverage manifest by a test in `internal/integration`;
 - `docs/guides/bug-compatibility-tags.md` and `.json`: the tag registry and
