@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"strconv"
@@ -28,7 +29,11 @@ type osdLaunchRecipe struct {
 	dataVolume                              string
 	owner                                   string
 	timeout                                 time.Duration
-	started                                 atomic.Bool
+	memstore                                bool
+	// blockDevice is set by attachBlockDevice before the recipe is started and
+	// read by Customize; see osd_block_device.go.
+	blockDevice atomic.Pointer[osdBlockDevice]
+	started     atomic.Bool
 }
 
 // The caller holds c.mu. Strings own snapshots of the source slices; each
@@ -42,7 +47,8 @@ func (c *Container) newOSDLaunchRecipe(osd *OSDContainer, keyring []byte) *osdLa
 	r := &osdLaunchRecipe{image: image, config: config, adminKeyring: admin, osdKeyring: string(keyring),
 		id: osd.ID, uuid: osd.nativeUUID, placement: osd.placement,
 		hostNetwork: c.settings.hostNetwork, publicAddress: c.settings.publicAddress, publicNetwork: c.staticFacts().NetworkName,
-		owner: c.startup.ownerID(), timeout: c.settings.startupTimeout}
+		owner: c.startup.ownerID(), timeout: c.settings.startupTimeout,
+		memstore: c.settings.objectStore() == OSDMemStore}
 	if c.nets.cluster != nil {
 		r.clusterNetwork = c.nets.cluster.Name
 	}
@@ -80,6 +86,12 @@ func (r *osdLaunchRecipe) Customize(req *testcontainers.GenericContainerRequest)
 	}
 	if r.runVolume != "" {
 		opts = append(opts, osdLaunchVolume(r.runVolume, adminSocketDir, false))
+	}
+	if device := r.blockDevice.Load(); device != nil {
+		if r.memstore || r.memoryVolume != "" || r.dataVolume != "" {
+			return errors.New("a block device cannot be combined with MemStore or OSD volume storage")
+		}
+		opts = append(opts, device.customizer())
 	}
 	if r.clusterNetwork != "" {
 		opts = append(opts, network.WithNetworkName(nil, r.clusterNetwork))
