@@ -487,7 +487,7 @@ func TestMonStoreVolumeFieldsAreAssignedOnlyByTheirTransitions(t *testing.T) {
 		"generation":      {"dispatch"},
 		"attachment":      {"dispatch", "confirmGone"},
 		"identity":        {"bind", "detach"},
-		"verified":        {"dispatch", "detach", "verify"},
+		"verified":        {"dispatch", "detach", "verify", "verifyStopped"},
 		"createdAt":       {"create"},
 	}
 	docker := map[string][]string{

@@ -255,11 +255,12 @@ volume is never removed with force; `Terminate` releases the stores after the
 added and primary MON containers and again after the labeled-container scan.
 The identity inputs (keyring digest, shape, fingerprint, FSID, address
 vector) are validated and compared but not observed: nothing reads a store or a
-monmap yet.
+monmap yet (the observation ports landed afterwards, see below).
 
 Not in the slice: the require-store mode of `mon.sh` and `mon-join.sh` (it
-landed afterwards, see the status below); the inspector
-container (D6) that would observe the identity; every public name; the option,
+landed afterwards, see the status below); the inspector container (D6) that
+would observe the identity (its ports and the identity computation landed
+afterwards, see the identity observation status below); every public name; the option,
 the mounts, `StoreVolume`, `Remove` discard, `Detach`, `Reopen`; address and
 port-lease handoff; any native run. The `fresh` to `bound` transition and the
 discard of a fresh store are exercised only by the unit tests, since no
@@ -305,6 +306,55 @@ no old name is renamed or removed, and no alias is added.
 - The `require_store` function is duplicated in both scripts between marker
   comments because each script runs alone in the container;
   `TestMonRequireStoreBlocksAreIdentical` keeps the two copies equal.
+
+### Identity observation status
+
+Implemented in `ceph/mon_store_inspect.go`, tested Docker-free in
+`ceph/mon_store_inspect_test.go`. Nothing calls it and nothing implements its
+ports in production: no inspector container, no monmap adapter, no public name,
+no native run. 0.x: no old name is renamed or removed, and no alias is added.
+
+- Ports: `monStoreInspector` (D6 recommendation, a short-lived read-only
+  inspector; the owner has not answered D6, so this is the recommended shape,
+  not a decision) reports the entries of the data directory (kind, mode, inode,
+  size, modification time, SHA-256 of regular files) and the `kv_backend`
+  marker. `monStoreMonmap` reports one member: name, FSID, address vector and
+  quorum. A nil inspector, monmap view or typed nil is refused.
+- Computation: `storeFacts` derives the keyring digest, the shape and the
+  fingerprint from a listing; `observeStopped` adds the FSID and address vector
+  of the live monmap entry. The fingerprint hashes the entries in path order with
+  length-delimited fields under a versioned domain line, and a golden value
+  computed by an independent script pins the encoding.
+- Refusals, all before any write: a member that is absent from the map, named
+  differently, in quorum or of unknown quorum state (the inspector is not
+  called); a listing with an unclean or absolute path, a duplicate, an orphan
+  entry, a symlink or other non-file kind, a file without a content digest, a
+  directory with one, a missing or empty `store.db` directory, a missing
+  `kv_backend` or one that was not read or does not hold `rocksdb`, or a missing
+  or non-regular `keyring`; an FSID that is not a canonical UUID; an empty,
+  empty-entry or duplicate address vector. Absent evidence is never read as an
+  empty value that matches.
+- Stricter than the entrypoint on purpose: `require_store` accepts an absent
+  `kv_backend` or `keyring` because `ceph-mon` recreates them. A binding
+  refuses both, since `MonitorDBStore::open` writes `kv_backend` whenever a store
+  is opened and the keyring digest is one of the bound fields.
+- `monStoreVolume.verifyStopped` runs the preflight: the record must hold a
+  retained identity with no attachment (so the inspector never reads a store a
+  MON may be writing), the volume metadata must pass `validate`, then the
+  observation is compared through `verify`. A mismatch error names the fields
+  (keyring digest, store shape, store fingerprint, cluster FSID, address vector)
+  and prints no value. A failure at any step leaves the record unverified.
+- What it does not establish: that an inspector can mount the volume read-only
+  while the cluster's labels, ordering and release rules hold; how the monmap
+  adapter decodes `mon dump` and the quorum status (its missing or null fields
+  must map to an absent value here); an identity at bind time, when the member
+  runs and the store is being written (this slice observes a stopped member
+  only; the bind-time source is part of the inspector slice); whether
+  `ceph-mon`, in particular a different release, accepts the store.
+- Open decisions it leans on: D6 (inspector, recommended) and D1 (one volume per
+  MON, recommended). Both stay recommendations until the owner answers; the
+  ports take a volume name and a MON name only, so neither answer changes their
+  shape.
 
 ## Owner decisions with recommendations
 
