@@ -2,7 +2,6 @@ package ceph
 
 import (
 	"context"
-	"maps"
 	"slices"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -78,14 +77,11 @@ type (
 )
 
 // extensionsWith returns the per-cluster service states that implement T,
-// in kind order. The caller holds the cluster mutex.
+// in kind order. The store takes its own lock; see extensionStore.
 func extensionsWith[T any](c *Container) []T {
-	c.extensionsMu.Lock()
-	defer c.extensionsMu.Unlock()
-	kinds := slices.Sorted(maps.Keys(c.extensions))
 	var result []T
-	for _, kind := range kinds {
-		if state, ok := c.extensions[kind].(T); ok {
+	for _, state := range c.extensions.inKindOrder() {
+		if state, ok := state.(T); ok {
 			result = append(result, state)
 		}
 	}

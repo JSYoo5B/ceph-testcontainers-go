@@ -283,17 +283,7 @@ func (serviceHooks) WithServiceImage(role, image string) Option {
 // kind, storing the result of create on first use. It takes its own lock, so
 // callers may or may not hold the cluster mutex.
 func (serviceHooks) Extension(c *Container, kind string, create func() any) any {
-	c.extensionsMu.Lock()
-	defer c.extensionsMu.Unlock()
-	if state, ok := c.extensions[kind]; ok {
-		return state
-	}
-	if c.extensions == nil {
-		c.extensions = make(map[string]any)
-	}
-	state := create()
-	c.extensions[kind] = state
-	return state
+	return c.extensions.getOrCreate(kind, create)
 }
 
 // ResolvePool applies the cluster's pool defaults: CRUSH root, replicas and
@@ -445,15 +435,14 @@ func (serviceHooks) TestCluster(control testcontainers.Container, config testClu
 // testState points at a cluster's internals for the service packages' unit
 // tests. PortLeases is a count taken when TestState is called. It publishes
 // the three lock identities and no pointer to the closed flag, the control
-// plane, the options or the bootstrap record: those are written through the
-// TestSet* hooks below (see the membership/control section of
+// plane, the options, the bootstrap record or the bridge-removal flag: those
+// are written through the TestSet* hooks below (see the membership/control section of
 // docs/design/container-decomposition.md).
 type testState = struct {
-	Mutex          *sync.Mutex
-	ControlMutex   *sync.RWMutex
-	ConfigMutex    *sync.RWMutex
-	PortLeases     int
-	NetworkRemoved *bool
+	Mutex        *sync.Mutex
+	ControlMutex *sync.RWMutex
+	ConfigMutex  *sync.RWMutex
+	PortLeases   int
 }
 
 // TestState exposes a cluster's internals to unit tests. It takes no lock: the
@@ -461,7 +450,7 @@ type testState = struct {
 func (serviceHooks) TestState(c *Container) testState {
 	return testState{
 		Mutex: &c.mu, ControlMutex: c.controlPlane.mutex(), ConfigMutex: c.bootstrap.mutex(),
-		PortLeases: c.portLeases.count(), NetworkRemoved: &c.nets.publicRemoved,
+		PortLeases: c.portLeases.count(),
 	}
 }
 
@@ -494,6 +483,17 @@ func (serviceHooks) TestSetKeyring(c *Container, keyring []byte) { c.bootstrap.k
 func (serviceHooks) TestSetCephVersion(c *Container, version string) {
 	c.bootstrap.cephVersion = version
 }
+
+// TestSetNetworkRemoved marks the public bridge as removed or not, so a unit
+// test with a synthetic bridge skips the Docker removal. The caller holds Mutex
+// or the cluster value is not shared.
+func (serviceHooks) TestSetNetworkRemoved(c *Container, removed bool) {
+	c.nets.publicRemoved = removed
+}
+
+// TestNetworkRemoved reports whether the public bridge is marked removed. The
+// caller holds Mutex or the cluster value is not shared.
+func (serviceHooks) TestNetworkRemoved(c *Container) bool { return c.nets.publicRemoved }
 
 // TestSetInitialOSDs sets the initial OSD count. The caller holds Mutex or the
 // cluster value is not shared.

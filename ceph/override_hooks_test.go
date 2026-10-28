@@ -55,7 +55,7 @@ func TestOverrideKindsAreRegistryKinds(t *testing.T) {
 
 func TestProtectMGRModuleHookRefusesOwnedVolumesBeforeAnyCommand(t *testing.T) {
 	// The cluster has no control container: a command would fail differently.
-	c := &Container{extensions: map[string]any{"cephfs": testExtension{modules: []string{"volumes"}}}}
+	c := &Container{extensions: extensionStore{states: map[string]any{"cephfs": testExtension{modules: []string{"volumes"}}}}}
 	err := overrideHooks{}.ProtectMGRModule(t.Context(), c, "volumes")
 	if err == nil || err.Error() != "MGR volumes module is required by configured or owned CephFS filesystems" {
 		t.Fatalf("an owned filesystem's volumes module was not protected: %v", err)

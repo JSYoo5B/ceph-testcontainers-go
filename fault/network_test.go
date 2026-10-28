@@ -160,7 +160,7 @@ func TestClusterCleanupRetainsNetworkAfterCallerRestoreFailure(t *testing.T) {
 	d.connectErr = errors.New("temporary reconnect failure")
 	cluster := servicehook.TestCluster(nil, servicehook.TestConfig{NetworkName: link.NetworkName})
 	trackInterruption(cluster, "client", link)
-	if err := cluster.Terminate(t.Context()); err == nil || *servicehook.TestState(cluster).NetworkRemoved || link.complete || d.closes != 0 {
+	if err := cluster.Terminate(t.Context()); err == nil || servicehook.TestNetworkRemoved(cluster) || link.complete || d.closes != 0 {
 		t.Fatal("cleanup removed the original network needed to restore a caller-owned client")
 	}
 }

@@ -140,7 +140,9 @@ func TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup(t *testing.T) 
 		// caller owns or holds the lock of.
 		"TestSetCephVersion": true,
 		"TestCluster":        true, // builds a fresh unit-test cluster
-		"TestState":          true, // unit-test pointer hooks (config, keyring, version, bridge flag)
+		// The unit-test setter of the bridge-removal flag. It replaces the NetworkRemoved
+		// pointer of TestState; the flag is guarded by Container.mu and is not a fact.
+		"TestSetNetworkRemoved": true,
 		// Unit-test option setters, the only writers of c.settings after Run. They replace
 		// the settings pointers TestState used to publish; only TestSetCephFSImage writes
 		// a recorded fact (cephfsOverride), the others write fields FactsOf never reads.
