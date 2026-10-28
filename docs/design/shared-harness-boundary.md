@@ -141,9 +141,10 @@ internal/integration --> the harness packages it tests, plus the above
 Directory nesting is not an import constraint: `ceph/harness` imports `ceph`
 and `ceph` does not import it. Core and service packages must not import their
 harness children, and `ceph/harness` must not import any service harness.
-Services reach the common harness only through registration made in each
-service harness package's `init`, so a program that does not import a service
-harness does not pay for its shared-cluster hooks.
+A service's shared-cluster support is not registered through `init` or any
+process-global registry (owner decision of 2026-10-28, see "Decisions for the
+owner"). The program supplies it explicitly when it constructs each shared
+harness instance, so the selected services are visible in construction code.
 
 ### What stays in core
 
@@ -218,9 +219,9 @@ through `TenantCluster`; each uses the tenant port.
 
 | Adapter | Port use | Registration |
 | --- | --- | --- |
-| `rbd` | `Tenant`, `Command`, `StartupTimeout`, `AttachScope`, `CreateClient`, `WithClientIdentity` | `RegisterSharedService(bootstrapKind, nil, probeTenantNamespaces)` |
-| `cephfs` | `Tenant`, `Command`, `StartupTimeout`, `Live`, `AttachScope`, `CreateClient`, `WithClientIdentity` | `RegisterSharedService(cephFSBootstrapKind, prepareShared, probeShared)` |
-| `rgw` | `Tenant`, `Live`, `WithTopology`, `Extension`, `AttachScope` | `RegisterSharedService(rgwBootstrapKind, prepareShared, probeShared)` |
+| `rbd` | `Tenant`, `Command`, `StartupTimeout`, `AttachScope`, `CreateClient`, `WithClientIdentity` | `RegisterSharedService(bootstrapKind, nil, probeTenantNamespaces)` at `init` today; explicit service support after the move |
+| `cephfs` | `Tenant`, `Command`, `StartupTimeout`, `Live`, `AttachScope`, `CreateClient`, `WithClientIdentity` | `RegisterSharedService(cephFSBootstrapKind, prepareShared, probeShared)` at `init` today; explicit service support after the move |
+| `rgw` | `Tenant`, `Live`, `WithTopology`, `Extension`, `AttachScope` | `RegisterSharedService(rgwBootstrapKind, prepareShared, probeShared)` at `init` today; explicit service support after the move |
 
 One residue remains in `rgw`: the gateway release path takes the topology
 mutex of the gateway's owning cluster with `servicehook.Lock`/`Unlock` (4
@@ -231,8 +232,9 @@ unchanged and must not widen it to a tenant-provided cluster.
 After the move each adapter's `Lease`, `TenantNamespace`, `TenantGroup` and
 `TenantUser` entry points live in the service's `harness` package and take
 `*harness.Tenant` from `ceph/harness`. The service package keeps the service
-API that does not need a tenant. The registration call moves into the service
-harness `init`; the service package no longer calls it. No adapter obtains a
+API that does not need a tenant. The `init` registration call is removed, not
+moved: the service harness offers its support as a value that the program passes
+when it constructs the shared harness ("Service support"). No adapter obtains a
 cluster from `TenantCluster` any more, so the adapters keep no tenant-derived
 raw-cluster path.
 
@@ -245,7 +247,7 @@ raw-cluster path.
 | `ceph.SharedStats` | `harness.SharedStats` |
 | `ceph.Tenant`, `ceph.TenantAccess`, `ceph.TenantReadOnly`, `ceph.TenantReadWrite` | same names in `ceph/harness` |
 | `ceph.ObserveTenant` | `harness.ObserveTenant` in `ceph/harness`; it returns `*ceph.Observer` |
-| `ceph.SharedPool` | `harness.SharedPool` (recommended, decision 2) |
+| `ceph.SharedPool` | `harness.SharedPool` in `ceph/harness`; no `ceph.SharedPool` alias (settled) |
 | `ceph.ErrSharedCluster` | unchanged, stays in `ceph` |
 | `rbd.Lease`, `rbd.TenantNamespace` | `rbd/harness` |
 | `cephfs.Lease`, `cephfs.TenantGroup` | `cephfs/harness` |
@@ -616,7 +618,9 @@ Two untyped slots in `internal/hookreg`:
 | `Harness` | package `ceph`, in its `init` (as `Value`, `Fault`, `Override` are) | before any importer's `init` | `internal/harnesshook` | `Core`: start, tenant observer, lend |
 | `HarnessTenant` | package `ceph/harness`, in its `init` | before `internal/servicehook` and the service harnesses initialize, because both import `ceph/harness` | `internal/servicehook` | the tenant port lookup (typed by `internal/servicehook`) and the test-only cluster lookup (typed by `internal/testhelper`); each consumer asserts only the method it uses |
 
-Each typed accessor panics with a message naming the missing registrant when its
+These two slots are the internal seams of `ceph`'s own backend and of the harness's
+tenant port; they are not service registration, which the owner removed (see
+"Service support"). Each typed accessor panics with a message naming the missing registrant when its
 slot is empty, as `servicehook.get` does today. Go initializes an imported package
 before its importer, so no registration depends on call order. A Docker-free
 control imports the harness and asserts that both slots are set and that
@@ -667,10 +671,10 @@ type core interface {
 
 type backendValue interface { // the returned backend, today's 12-method sharedBackend
     CreatePool(ctx context.Context, name string) error
-    PrepareServices(ctx context.Context) error
+    PrepareServices(ctx context.Context, prepare []func(context.Context, *ceph.Container) error) error
     Ready(ctx context.Context) error
     Invariants(ctx context.Context, pool string) (sharedinvariants.Invariants, error)
-    Resources(ctx context.Context) (map[string]string, error)
+    Resources(ctx context.Context, probe []func(context.Context, *ceph.Container) (map[string]string, error)) (map[string]string, error)
     DaemonsRunning(ctx context.Context) error
     CreateClient(ctx context.Context, entity string, caps ceph.ClientCaps) (client *ceph.ClientConfig, created bool, err error)
     DeleteClient(ctx context.Context, client *ceph.ClientConfig) error
@@ -718,33 +722,60 @@ stays a private field of the harness with the type
 (`shared_test.go`, `shared_exclusive_test.go`, `shared_services_test.go`) move with
 the orchestration and need no public option.
 
-### Service prepare and probe callbacks
+### Service support: prepare and probe callbacks
 
-The callbacks take `*ceph.Container` (`sharedService.prepare` and `probe`, and the
-signature of `servicehook.RegisterSharedService`). They are part of the contract
-as follows, and the recommendation is that they never cross into `ceph/harness`:
+Owner decision of 2026-10-28 ([comment](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469630041)): no `init` or import side
+effect registers service harness support, and no explicitly called `Register`
+function mutates a process-global registry. The shared harness instance owns the
+service support it was constructed with and its lifecycle. This supersedes this
+note's earlier proposal (a registry in `ceph` filled by each service harness's
+`init`). The decision fixes the policy; exact option, interface and function names
+and the duplicate and missing-support validation are design work, and the shapes
+below are not frozen signatures.
 
-- The registry (`registerSharedService`, `registeredSharedServices`) and the loops
-  that call the callbacks stay in `ceph`, as `containerBackend.prepareServices` and
-  `containerBackend.resources`. `Backend.PrepareServices` and `Backend.Resources`
-  run them on the cluster the backend wraps. The pointer is the one the backend
-  already holds; the harness never receives it.
-- `servicehook.RegisterSharedService(kind, prepare, probe)` keeps its signature.
-  Each service harness package calls it from its `init`, replacing the call that
-  rbd, cephfs and rgw make today. The callbacks and the helpers they use move with
-  the adapter.
-- A program that imports `rbd` without `rbd/harness` no longer registers the RBD
-  probe. The probe exists to report the resources that the adapter's `Lease`
-  creates for a tenant, and that `Lease` lives in `rbd/harness`, so a program
-  that does not link it has nothing for the probe to attribute. This is a
-  behavior difference of linking, not of any lease path, and a native control
-  has to show it before the move is accepted.
-- Ordering is unchanged: registration happens at `init`, before `NewShared`
-  returns and long before the first `Lease` calls `PrepareServices`; a second
-  registration of a kind replaces the first.
-- The alternative, handing the pointer to the harness, would give `ceph/harness`
-  a raw cluster and is rejected. An explicit argument of `NewShared` instead of
-  `init` registration would add public API; it is decision 1's alternative.
+The callbacks still take `*ceph.Container` (`sharedService.prepare` and `probe`
+today). The cluster pointer is handled as follows, and the harness never receives
+it:
+
+- A service support value carries a kind and the two callbacks. It is an opaque
+  type of `ceph/harness` with unexported fields, so the public API shows no
+  callback that receives a cluster. A service harness builds it through an
+  internal route (the `HarnessTenant` value offers a constructor that
+  `internal/servicehook` types), and offers it to the program, for example as
+  `rbdharness.Support()`. A consumer then reads
+  `cephharness.NewShared(image, cephharness.WithServices(rbdharness.Support()))` or
+  an equivalent; that spelling is illustrative.
+- The instance stores the supports in its settings. Nothing is global: two shared
+  harness instances in one test binary can select different services, and a test
+  binary that selects none prepares and probes none.
+- The ports take the callbacks as arguments instead of reading a registry:
+  `Backend.PrepareServices(ctx, prepare []func(context.Context, *ceph.Container) error)`
+  and `Backend.Resources(ctx, probe []func(context.Context, *ceph.Container) (map[string]string, error))`.
+  Both parameter types use only `ceph` types and the standard library, so the
+  layer-1 interfaces can spell them. `ceph` calls each callback with the pointer of
+  the backend's own cluster, in the order given. The harness sorts by kind, as
+  `registeredSharedServices` does today, and wraps each callback so its error keeps
+  the `prepare %s for a shared cluster` and `list the %s resources` context.
+  `ceph` keeps no registry: `registerSharedService`, `registeredSharedServices`,
+  `servicehook.RegisterSharedService` and the `RegisterSharedService` hook method
+  are removed without an alias (0.x).
+- Validation belongs to construction: a duplicate kind, or a support that was
+  never constructed by a service harness, is an `ErrInvalidRequest` recorded in the
+  settings and returned by the first `Lease` or `Exclusive`, as an invalid
+  `WithMaxTenants` is today. A service harness `Lease` on an instance that was not
+  given its support fails before it creates anything, through a check on the tenant
+  port (for example a `RequireService(kind)` method, name not frozen), instead of
+  creating a resource that no probe would attribute.
+- Lifecycle and cleanup: supports hold no process resource of their own beyond what
+  a tenant attaches through `AttachScope`. Partial-failure behavior is unchanged: a
+  failed `PrepareServices` fails the start of that cluster, whose partial backend
+  stays owned and is terminated; a failed probe is an unverifiable release and
+  poisons the cluster; tenant scopes are released in reverse order before clients
+  are deleted. Callers connect the existing `Close` lifecycle to `TestMain`,
+  `t.Cleanup` or `defer`; `RunTests` keeps closing every instance, which is the
+  complete cleanup contract, not `defer` alone.
+- Handing the pointer to the harness is rejected: it would give `ceph/harness` a raw
+  cluster.
 
 `releaseScopes` and `tenantScope` are tenant state and move to `ceph/harness`.
 
@@ -775,6 +806,8 @@ users (guard below).
 
 ### Observer constructor
 
+Settled by the owner on 2026-10-28 ([comment](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469688158)); the properties below follow it. The query implementation and the public `Observer` type stay in `ceph`, and only the Tenant-specific entry point moves.
+
 `harness.ObserveTenant(t *harness.Tenant) (*ceph.Observer, error)` replaces
 `ceph.ObserveTenant`. A nil tenant returns the same `ErrInvalidRequest` error and a
 nil Observer. Otherwise it calls `Core.NewTenantObserver(target, live)` where
@@ -788,7 +821,13 @@ the gated cluster (a model fails with the text it fails with today) and calls
 - a listed `Pool` carries the same `live` check, which runs before the tenant
   admission policy on every operation;
 - the Observer exposes only queries and never the cluster; `Observer`, `Pool` and
-  `poolLease` stay in `ceph` and name no `Tenant`.
+  `poolLease` stay in `ceph` and name no `Tenant`;
+- the bridge is internal: `NewTenantObserver` is a method of the registered core, not
+  public API, and no public executor, resolver or authorization callback is added;
+- a retained Observer or Pool cannot gain access after release or acquire the
+  privileges of a later exclusive interval, because the original tenant is
+  re-checked on every query and every Pool operation;
+- callers of `ceph.ObserveTenant` migrate directly, with no forwarding function.
 
 The closures retain the original `*harness.Tenant` receiver exactly as the bound
 methods do today (#266 states this lifetime relationship): the dependency is not
@@ -796,24 +835,51 @@ removed, only its type direction.
 
 ### SharedPool and Exclusive
 
-- `SharedPool` is declared in `shared.go` and used only by `shared.go` and
-  `tenant.go` in non-test code (`observer.go` mentions it in a comment). It
-  moves with the harness as `harness.SharedPool`; `internal/sharedinvariants`
-  already takes the pool name as an argument. No baseline check in core depends on
-  it.
-- `Exclusive(t testing.TB) *ceph.Container` keeps returning the whole cluster,
-  deliberately, with the gate opened by `SetSharing(SharedExclusively)` and the
-  release retiring the cluster. The harness obtains the pointer only through
-  `Core.Lend`. A guard pins that `Lend` is called from `Exclusive` and from the
-  test-only lookup and nowhere else, that no harness field stores a
-  `*ceph.Container`, and that `Ops` has no method returning one (the successor of
-  `TestLeaseOrchestrationNamesNoContainerBeyondTheAllowList`).
+`SharedPool` is settled by the owner on 2026-10-28 ([comment](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469654249)):
+
+- The public constant moves to `ceph/harness` with the orchestration. There is no
+  `ceph.SharedPool` alias and no forwarding declaration; callers and documentation
+  migrate directly to `harness.SharedPool` (with an import alias where needed). The
+  value `"tenants"` and the isolation and cleanup behavior do not change.
+- Non-test code uses it only in `shared.go` and `tenant.go`; `observer.go` mentions
+  it in a comment. Core checks do not import the harness. Today they receive the
+  pool name as an argument (`Backend.Invariants(ctx, pool)`,
+  `PurgeNamespace(ctx, pool, ns)`, `sharedinvariants.ReleaseDiff`), which is the
+  explicit input the owner allows. If a core check ever needs the value without an
+  argument, it takes it from one internal definition (recommended: a constant in the
+  leaf `internal/sharedinvariants` that the public constant is declared from), not
+  from a second literal. The mechanism is implementation design.
+
+`Exclusive` is settled by the owner on 2026-10-28 ([comment](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469536710)):
+
+- `Exclusive(t testing.TB) *ceph.Container` keeps returning the core cluster handle
+  after the move. No second public exclusive-only facade is added. The harness
+  obtains the pointer only through `Core.Lend`, with the gate opened by
+  `SetSharing(SharedExclusively)`.
+- The decision is lease-bounded authorization, not authority attached to a retained
+  pointer. Cluster-wide use is allowed only while that exclusive interval is active;
+  a retained `Container` or resource handle must not exercise it after the interval
+  ends, including during a later tenant or exclusive interval. The move must show
+  the admission and lifetime enforcement for stale handles and for generation reuse,
+  and must audit direct, derived and embedded access paths (the promoted Docker
+  methods of the embedded container, `Pool` values, `ClientConfig`, `OSDContainer`
+  and other resource handles) and name any enforcement gap before the extraction is
+  accepted. This note does not claim that audit: the current gate decides by the
+  cluster's sharing mode (`admitHandleAs`), and whether it distinguishes one
+  exclusive interval from the next after release is part of the audit.
+- The separate restrictions of ordinary tenant handles, ownership, cancellation,
+  lock order and uncertain-outcome handling are unchanged.
+- A guard pins that `Lend` is called from `Exclusive` and from the test-only lookup
+  and nowhere else, that no harness field stores a `*ceph.Container`, and that `Ops`
+  has no method returning one (the successor of
+  `TestLeaseOrchestrationNamesNoContainerBeyondTheAllowList`). It checks where the
+  pointer is handed out, not the stale-handle enforcement above.
 - `Exclusive` still sets the mode before it lends and the release still skips
   verification for a retired instance; those state-machine rules move unchanged.
 
 ### Error handling
 
-Settled by the owner on 2026-10-28: the harness shares `OperationError`
+Settled by the owner on 2026-10-28 ([comment](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469722063)): the harness shares `OperationError`
 construction and classification through a narrow internal contract. It adds no
 public error-helper API, copies no core classification into the harness, keeps
 every category, cause, `errors.Is`/`errors.As` result and required diagnostic
@@ -879,26 +945,39 @@ satisfy the layer-1 interfaces; the error-equivalence checks of "Error handling"
 
 ## Decisions for the owner
 
-The owner's comments on #155 leave the exported signatures, the SharedPool and
-Exclusive boundaries and the Observer registration to design, and settled the
-error-helper policy on 2026-10-28. These are the choices that design cannot settle
-alone, each with a recommendation. Nothing here is implemented.
+Owner decisions of 2026-10-28 on #155 are recorded below with their comment links
+and are followed by the design text, which this note no longer proposes to
+reverse. Only the items that the owner has not decided stay open, each with a
+recommendation. Nothing here is implemented.
+
+### Settled by the owner
+
+| Topic | Decision | Comment |
+| --- | --- | --- |
+| `Exclusive` handle | `*ceph.Container` stays the handle during an active exclusive interval; no second facade; authority is lease-bounded and the move must show stale-handle and generation-reuse enforcement and audit the access paths | [12:55Z](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469536710) |
+| Service harness registration | No `init` or import-side-effect registration and no process-global registry behind a `Register` function; the shared harness instance is given its service support at construction and owns its lifecycle; option names and duplicate or missing-support validation are design work | [13:00Z](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469630041) |
+| `SharedPool` | The public constant moves to `ceph/harness`; no `ceph.SharedPool` alias; core checks use an internal shared definition or an explicit input, never a second literal | [13:01Z](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469654249) |
+| Observer construction | `Observer` and its queries stay in `ceph`; `ObserveTenant` moves to `ceph/harness`; core names no `Tenant` and imports no harness; the original tenant is revalidated on every query; no public executor, resolver or authorization callback; direct caller migration | [13:03Z](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469688158) |
+| Error helpers | One narrow internal contract; no public helper, no copy of core classification; categories, causes, `errors.Is`/`errors.As` and diagnostics preserved; classification verified on the migrated paths | [13:04Z](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/155#issuecomment-6469722063) |
+
+The earlier layout decision (2026-10-27: `ceph/harness`, `rbd/harness`,
+`cephfs/harness`, `rgw/harness`, direct v0.x migration) is unchanged. Decisions 1
+to 4 and 6 of the first draft of this list are therefore closed, and the first
+draft's `init`-time recommendation for decision 1 is withdrawn.
+
+### Still open
 
 | # | Decision | Recommendation | Alternative and its cost |
 | --- | --- | --- | --- |
-| 1 | Service registration: `init`-time `RegisterSharedService` in each service harness, or an explicit argument of `NewShared` | `init`-time, registry and callback loops in `ceph`, callbacks keep `*ceph.Container` | An explicit argument adds public API to `NewShared` and a second place to forget a service; it removes the link-time effect |
-| 2 | `SharedPool` and `Exclusive` | `SharedPool` moves to `harness`; `Exclusive` keeps returning `*ceph.Container`, obtained only through `Core.Lend` | A narrower return type is an API redesign outside a move |
-| 3 | Error helpers | Settled by the owner (2026-10-28): one internal contract (`InvalidRequest`, `Classify`, `ClassifyDocker` on the registered core), no public helper, no copy | none |
-| 4 | Docker inspection in `RunNativeCommand` | Settled with 3: the harness inspects and calls `ClassifyDocker` | none |
-| 5 | Typed hook placement and signature boundary | Top-level `internal/harnesshook` beside `faulthook` and `overridehook`, with port interfaces in `any`/`int32` terms that `ceph` satisfies structurally and harness-facing wrappers on the other side | `ceph/internal/...` is not importable by `internal/servicehook`; a shared leaf package for the port types cannot name `ceph.ClientCaps` and the other public types without importing `ceph` |
-| 6 | Observer constructor | `harness.ObserveTenant`, same name, returning `*ceph.Observer`, through `Core.NewTenantObserver` | A `(*Tenant).Observer()` method renames API in the same change as the move |
+| 5 | Typed hook placement and the signature boundary between `ceph` and the harness (the owner left the internal package and port mechanism to implementation) | Top-level `internal/harnesshook` beside `faulthook` and `overridehook`, with port interfaces in `any`/`int32` terms that `ceph` satisfies structurally and harness-facing wrappers on the other side | `ceph/internal/...` is not importable by `internal/servicehook`; a shared leaf package for the port types cannot name `ceph.ClientCaps` and the other public types without importing `ceph` |
 | 7 | Test-only tenant-cluster lookup (`testhelper.TestTenantCluster`, today `unitAccess.UnitTenantCluster`) | Keep it test-only: a second method of the `HarnessTenant` value, asserted by `testhelper`, four known native call sites, guarded | Replacing the four native controls with Observer-based checks weakens what they prove about the gate |
 | 8 | Service-private helpers used by the adapters | `<service>/internal/...` packages, moved before the harness | Exporting them adds public names to rbd, cephfs and rgw |
-| 9 | Exported names and signatures | The old-to-new map: same names in the new packages, no renames, no new options; any rename is a later change | Renaming during the move mixes a mechanical migration with an API review |
+| 9 | Exported names and signatures beyond the settled ones | The old-to-new map: same names in the new packages, no renames, no new options other than the service-support input; any rename is a later change | Renaming during the move mixes a mechanical migration with an API review |
+| 10 | Shape of the service-support input and its validation | An opaque `ceph/harness` value built by each service harness through an internal route and passed to `NewShared` as an option, validated at construction (duplicate kind, foreign value) and checked by a tenant-port method before a service `Lease` creates anything | A positional `NewShared` argument changes the signature for every caller; a plain callback struct would show the cluster-receiving callbacks in public API |
+| 11 | Stale-handle audit result for `Exclusive` | Do the audit as the first step of the move, as a Docker-free test over the access paths plus a native control, and record every gap | Deferring it until after the move would accept a handle whose enforcement is unproven |
 
 Overlap: #285 and #286 (renames and the test-only lookup move) are merged and
-composed into this note. This change touches none of their files except by
-documentation.
+composed into this note.
 
 ## Not covered
 
