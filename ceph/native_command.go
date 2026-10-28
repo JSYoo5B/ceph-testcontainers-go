@@ -543,11 +543,10 @@ func (c *Container) admitNativeTarget(ctx context.Context, target testcontainers
 	hostNetwork := c.settings.hostNetwork
 	c.mu.Unlock()
 	if !owned {
-		if err := lockTopologyReadMutex(ctx, &c.controlMu); err != nil {
+		var err error
+		if owned, err = c.controlPlane.owns(ctx, target.GetContainerID()); err != nil {
 			return err
 		}
-		owned = c.controlPlane != nil && c.controlPlane.GetContainerID() == target.GetContainerID()
-		c.controlMu.RUnlock()
 	}
 	switch {
 	case closed:

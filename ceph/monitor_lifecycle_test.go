@@ -73,7 +73,7 @@ func TestMonitorRemovalConvergesAfterTransientNativeRead(t *testing.T) {
 		afterRemoval: []monitorLifecycleRead{{timeout: true}}}
 	cluster := monitorLifecycleFixture(control)
 	daemon := &monitorLifecycleDaemon{}
-	cluster.Container, cluster.controlPlane = daemon, control
+	cluster.Container, cluster.controlPlane.handle = daemon, control
 	if err := monitorHandle(t, t.Context(), cluster, "a").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestMonitorRemovalWaitsForAbsentMemberAndWorkingQuorum(t *testing.T) {
 			control := &monitorLifecycleControl{members: []string{"a", "b", "c", "replacement"}, quorum: []string{"a", "b", "c", "replacement"},
 				afterRemoval: []monitorLifecycleRead{scenario.read}}
 			cluster := monitorLifecycleFixture(control)
-			cluster.Container, cluster.controlPlane = &monitorLifecycleDaemon{}, control
+			cluster.Container, cluster.controlPlane.handle = &monitorLifecycleDaemon{}, control
 			if err := monitorHandle(t, t.Context(), cluster, "a").Remove(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -125,7 +125,7 @@ func TestMonitorRemovalReadDeadlineRetainsOwnershipForRetry(t *testing.T) {
 	cluster := monitorLifecycleFixture(control)
 	cluster.settings.startupTimeout = 20 * time.Millisecond
 	daemon := &monitorLifecycleDaemon{}
-	cluster.Container, cluster.controlPlane = daemon, control
+	cluster.Container, cluster.controlPlane.handle = daemon, control
 	err := monitorHandle(t, t.Context(), cluster, "a").Remove(t.Context())
 	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "after removing monitor a") || cluster.monitorTerminated || control.removals != 1 || control.copies != 0 || daemon.terminations != 1 {
 		t.Fatalf("failed refresh lost retry ownership or its deadline: %v", err)
@@ -182,7 +182,7 @@ func TestAddMonitorRejectsForeignMembershipBeforeCreatingResources(t *testing.T)
 	control := &monitorLifecycleControl{members: []string{"a", "external"}, quorum: []string{"a", "external"}}
 	cluster := monitorLifecycleFixture(control)
 	mon, err := cluster.AddMonitor(t.Context(), "external")
-	if err == nil || mon != nil || cluster.monitors["external"] != nil || cluster.controlPlane != nil {
+	if err == nil || mon != nil || cluster.monitors["external"] != nil || cluster.controlPlane.handle != nil {
 		t.Fatal("existing native member was adopted or caused control-plane creation")
 	}
 	if !slices.Equal(control.calls, []string{"quorum_status --format json"}) {

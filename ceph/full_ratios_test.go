@@ -85,7 +85,7 @@ func TestFullRatiosObservesNativeMapAndCapturedControl(t *testing.T) {
 	original := ctr.ratios
 	ctr.hook = func(_ context.Context, args []string) error {
 		if args[0] == "fsid" {
-			c.controlPlane = &fullRatiosFixture{fsid: "changed"}
+			c.controlPlane.handle = &fullRatiosFixture{fsid: "changed"}
 		}
 		return nil
 	}
