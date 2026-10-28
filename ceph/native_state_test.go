@@ -260,18 +260,33 @@ func TestNativeStateMethodsHoldOnlyTheLeafLock(t *testing.T) {
 	}
 }
 
-// TestNativeStateAddsNoMutex pins the number of mutexes of Container and its
-// state components. The native split moved nativeMu into nativeState and the
-// feature-client split moved clientMu and clientPublishMu into
-// featureClientState; the auth-records, OSD storage, run-directory, OSD registry
-// and port-lease splits added
-// no locks.
-// debugLevelRegistry has its own leaf mutex and is counted too: earlier slices
-// left it out, which made the real total eight while the test said seven.
-// A new one needs its own lock-order review.
+// nativeStateMutexOwners is every mutex that Container and its state
+// components declare, by owning type and field. The native split moved
+// nativeMu into nativeState and the feature-client split moved clientMu and
+// clientPublishMu into featureClientState. The auth-records, OSD storage,
+// run-directory, OSD registry, port-lease and fault-registry splits added no
+// locks. debugLevelRegistry has always had its own leaf lock (the registry
+// type predates the split); earlier versions of this test did not scan it,
+// so the count of seven understated the real eight by that one. A new
+// entry needs its own lock-order review.
+var nativeStateMutexOwners = []string{
+	"Container.mu", "Container.controlMu", "Container.configMu", "Container.extensionsMu",
+	"nativeState.mu",
+	"featureClientState.mu", "featureClientState.publishMu",
+	"debugLevelRegistry.mu",
+}
+
+// nativeStateComponents are the types scanned for mutexes: Container and the
+// state components that were moved out of it, plus the registries it holds.
+var nativeStateComponents = []string{
+	"Container", "nativeState", "networkState", "featureClientState", "authState", "osdStorageState",
+	"runDirState", "osdRegistry", "portLeaseState", "faultRegistry", "debugLevelRegistry",
+}
+
+// TestNativeStateAddsNoMutex compares the mutexes of Container and its state
+// components with nativeStateMutexOwners: exactly eight, each named by owner.
 func TestNativeStateAddsNoMutex(t *testing.T) {
-	const want = 8 // mu, controlMu, configMu, extensionsMu, native.mu, toolkit.mu, toolkit.publishMu, debugLevels.mu
-	got := 0
+	var got []string
 	for _, parsed := range parseProductionFiles(t) {
 		for _, decl := range parsed.Decls {
 			gen, ok := decl.(*ast.GenDecl)
@@ -280,7 +295,7 @@ func TestNativeStateAddsNoMutex(t *testing.T) {
 			}
 			for _, spec := range gen.Specs {
 				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || (ts.Name.Name != "Container" && ts.Name.Name != "nativeState" && ts.Name.Name != "networkState" && ts.Name.Name != "featureClientState" && ts.Name.Name != "authState" && ts.Name.Name != "osdStorageState" && ts.Name.Name != "runDirState" && ts.Name.Name != "osdRegistry" && ts.Name.Name != "portLeaseState" && ts.Name.Name != "debugLevelRegistry") {
+				if !ok || !slices.Contains(nativeStateComponents, ts.Name.Name) {
 					continue
 				}
 				st, ok := ts.Type.(*ast.StructType)
@@ -288,17 +303,26 @@ func TestNativeStateAddsNoMutex(t *testing.T) {
 					continue
 				}
 				for _, field := range st.Fields.List {
-					if sel, ok := field.Type.(*ast.SelectorExpr); ok {
-						if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "sync" && (sel.Sel.Name == "Mutex" || sel.Sel.Name == "RWMutex") {
-							got += max(1, len(field.Names))
+					sel, ok := field.Type.(*ast.SelectorExpr)
+					if !ok {
+						continue
+					}
+					if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "sync" && (sel.Sel.Name == "Mutex" || sel.Sel.Name == "RWMutex") {
+						if len(field.Names) == 0 {
+							got = append(got, ts.Name.Name+".(embedded "+sel.Sel.Name+")")
+						}
+						for _, name := range field.Names {
+							got = append(got, ts.Name.Name+"."+name.Name)
 						}
 					}
 				}
 			}
 		}
 	}
-	if got != want {
-		t.Fatalf("Container and its state components declare %d mutexes, want %d", got, want)
+	slices.Sort(got)
+	want := slices.Sorted(slices.Values(nativeStateMutexOwners))
+	if !slices.Equal(got, want) {
+		t.Fatalf("Container and its state components declare mutexes %v, want %v", got, want)
 	}
 }
 

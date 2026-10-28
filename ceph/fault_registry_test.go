@@ -43,7 +43,7 @@ func (f *modelFault) undo(context.Context) error {
 	f.done = true
 	if f.releases {
 		f.c.mu.Lock()
-		f.c.releaseFault(f.token)
+		f.c.faults.release(f.token)
 		f.c.mu.Unlock()
 	}
 	return nil
@@ -58,7 +58,7 @@ func hold(t *testing.T, c *Container, kind faultKind, key, network string, log *
 	t.Helper()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	token, _, err := c.reserveFault(t.Context(), kind, key)
+	token, _, err := c.faults.reserve(t.Context(), kind, key)
 	if err != nil {
 		t.Fatalf("reserve %v %s: %v", kind, key, err)
 	}
@@ -66,11 +66,11 @@ func hold(t *testing.T, c *Container, kind faultKind, key, network string, log *
 	switch faultKinds[kind].phase {
 	case faultShaping:
 		f.releases = true
-		c.settleFault(token, network, f, f.undo, nil)
+		c.faults.settle(token, network, f, f.undo, nil)
 	case faultEndpoint, faultFreeze:
-		c.settleFault(token, network, f, f.undo, f.complete)
+		c.faults.settle(token, network, f, f.undo, f.complete)
 	default:
-		c.settleFault(token, network, f, nil, nil)
+		c.faults.settle(token, network, f, nil, nil)
 	}
 	return f
 }
@@ -78,44 +78,45 @@ func hold(t *testing.T, c *Container, kind faultKind, key, network string, log *
 func TestFaultRegistryReserveSettleRelease(t *testing.T) {
 	c := &Container{}
 	ctx := t.Context()
-	token, previous, err := c.reserveFault(ctx, faultNetworkDelay, "net/osd-0")
+	token, previous, err := c.faults.reserve(ctx, faultNetworkDelay, "net/osd-0")
 	if err != nil || token == nil || previous != nil {
 		t.Fatalf("first reservation: %v %v %v", token, previous, err)
 	}
 	if got := c.faultsOf(faultNetworkDelay); len(got) != 1 || got["net/osd-0"] != nil {
 		t.Fatalf("a reservation must be a key without a handle: %v", got)
 	}
-	_, previous, err = c.reserveFault(ctx, faultNetworkDelay, "net/osd-0")
+	_, previous, err = c.faults.reserve(ctx, faultNetworkDelay, "net/osd-0")
 	if !errors.Is(err, ErrInvalidRequest) || previous != nil || !strings.Contains(err.Error(), "being applied") {
 		t.Fatalf("a reserved key was not refused as being applied: %v %v", previous, err)
 	}
 	// Another key and another kind with the same key are independent.
-	other, _, err := c.reserveFault(ctx, faultNetworkDelay, "net/osd-1")
+	other, _, err := c.faults.reserve(ctx, faultNetworkDelay, "net/osd-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pause, _, err := c.reserveFault(ctx, faultContainerPause, "net/osd-0")
+	pause, _, err := c.faults.reserve(ctx, faultContainerPause, "net/osd-0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	lease := &modelFault{}
-	if closed := c.settleFault(token, "", lease, lease.undo, nil); closed {
-		t.Fatal("settle reported a terminate that did not happen")
+	c.faults.settle(token, "", lease, lease.undo, nil)
+	if c.closed {
+		t.Fatal("the cluster reports a terminate that did not happen")
 	}
-	_, previous, err = c.reserveFault(ctx, faultNetworkDelay, "net/osd-0")
+	_, previous, err = c.faults.reserve(ctx, faultNetworkDelay, "net/osd-0")
 	if !errors.Is(err, ErrInvalidRequest) || previous != nil || !strings.Contains(err.Error(), "restore the existing") {
 		t.Fatalf("a held delay was not refused with a nil handle: %v %v", previous, err)
 	}
 	// Settling without a handle frees only that reservation.
-	c.settleFault(other, "", nil, nil, nil)
-	c.settleFault(pause, "", nil, nil, nil)
+	c.faults.settle(other, "", nil, nil, nil)
+	c.faults.settle(pause, "", nil, nil, nil)
 	if got := c.faultsOf(faultNetworkDelay); len(got) != 1 || got["net/osd-0"] != lease || len(c.faultsOf(faultContainerPause)) != 0 {
 		t.Fatalf("handle-less settles changed other keys: %v", c.faults.entries)
 	}
-	if !c.tracksFault(token) || !c.releaseFault(token) || c.tracksFault(token) || c.releaseFault(token) {
+	if !c.faults.tracks(token) || !c.faults.release(token) || c.faults.tracks(token) || c.faults.release(token) {
 		t.Fatal("release of the current token did not forget it exactly once")
 	}
-	if _, _, err := c.reserveFault(ctx, faultNetworkDelay, "net/osd-0"); err != nil {
+	if _, _, err := c.faults.reserve(ctx, faultNetworkDelay, "net/osd-0"); err != nil {
 		t.Fatalf("a released key stayed refused: %v", err)
 	}
 }
@@ -123,25 +124,25 @@ func TestFaultRegistryReserveSettleRelease(t *testing.T) {
 func TestFaultRegistryStaleTokenCannotTouchSuccessor(t *testing.T) {
 	c := &Container{}
 	ctx := t.Context()
-	first, _, _ := c.reserveFault(ctx, faultBlocklist, "10.0.0.1:0/1")
-	c.settleFault(first, "", "first", nil, nil)
-	if !c.releaseFault(first) {
+	first, _, _ := c.faults.reserve(ctx, faultBlocklist, "10.0.0.1:0/1")
+	c.faults.settle(first, "", "first", nil, nil)
+	if !c.faults.release(first) {
 		t.Fatal("release failed")
 	}
-	second, _, err := c.reserveFault(ctx, faultBlocklist, "10.0.0.1:0/1")
+	second, _, err := c.faults.reserve(ctx, faultBlocklist, "10.0.0.1:0/1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.settleFault(second, "", "second", nil, nil)
-	if c.releaseFault(first) || c.tracksFault(first) || !c.tracksFault(second) {
+	c.faults.settle(second, "", "second", nil, nil)
+	if c.faults.release(first) || c.faults.tracks(first) || !c.faults.tracks(second) {
 		t.Fatal("a stale token released or claimed its successor")
 	}
-	c.settleFault(first, "", "stale", nil, nil)
-	c.settleFault(first, "", nil, nil, nil)
+	c.faults.settle(first, "", "stale", nil, nil)
+	c.faults.settle(first, "", nil, nil, nil)
 	if got := c.heldFault(faultBlocklist, "10.0.0.1:0/1"); got != "second" {
 		t.Fatalf("a stale settle replaced or freed the successor: %v", got)
 	}
-	if c.releaseFault(nil) || c.tracksFault(nil) {
+	if c.faults.release(nil) || c.faults.tracks(nil) {
 		t.Fatal("a nil token was accepted")
 	}
 }
@@ -152,7 +153,7 @@ func TestFaultRegistryCompletionKindsReturnPreviousHandle(t *testing.T) {
 		var log []string
 		previous := hold(t, c, kind, "net/osd-0", "net", &log)
 		c.mu.Lock()
-		_, handle, err := c.reserveFault(t.Context(), kind, "net/osd-0")
+		_, handle, err := c.faults.reserve(t.Context(), kind, "net/osd-0")
 		c.mu.Unlock()
 		if err == nil || handle != previous {
 			t.Fatalf("kind %v: an incomplete fault was not returned with the refusal: %v %v", kind, handle, err)
@@ -160,24 +161,24 @@ func TestFaultRegistryCompletionKindsReturnPreviousHandle(t *testing.T) {
 		// A failing completion check returns its error with the handle.
 		probeErr := errors.New("probe canceled")
 		c.faults.entries[faultID{kind, "net/osd-0"}].complete = func(context.Context) (bool, error) { return false, probeErr }
-		if _, handle, err := c.reserveFault(t.Context(), kind, "net/osd-0"); !errors.Is(err, probeErr) || handle != previous {
+		if _, handle, err := c.faults.reserve(t.Context(), kind, "net/osd-0"); !errors.Is(err, probeErr) || handle != previous {
 			t.Fatalf("kind %v: probe error lost the handle: %v %v", kind, handle, err)
 		}
 		c.faults.entries[faultID{kind, "net/osd-0"}].complete = previous.complete
 		previous.done = true
 		// A complete fault is replaced; a failed replacement puts it back,
 		// so the key keeps a handle as it did before the attempt.
-		token, handle, err := c.reserveFault(t.Context(), kind, "net/osd-0")
+		token, handle, err := c.faults.reserve(t.Context(), kind, "net/osd-0")
 		if err != nil || handle != nil {
 			t.Fatalf("kind %v: a complete fault was not replaced: %v", kind, err)
 		}
-		c.settleFault(token, "", nil, nil, nil)
+		c.faults.settle(token, "", nil, nil, nil)
 		if got := c.heldFault(kind, "net/osd-0"); got != previous {
 			t.Fatalf("kind %v: a failed replacement dropped the complete fault: %v", kind, got)
 		}
-		token, _, _ = c.reserveFault(t.Context(), kind, "net/osd-0")
+		token, _, _ = c.faults.reserve(t.Context(), kind, "net/osd-0")
 		next := &modelFault{c: c, log: &log}
-		c.settleFault(token, "net", next, next.undo, next.complete)
+		c.faults.settle(token, "net", next, next.undo, next.complete)
 		if got := c.heldFault(kind, "net/osd-0"); got != next || token.replaced != nil {
 			t.Fatalf("kind %v: the replacement was not recorded: %v", kind, got)
 		}
@@ -189,7 +190,7 @@ func TestFaultRegistryTrackedKindsRefuseWithNilHandle(t *testing.T) {
 		c := &Container{}
 		var log []string
 		hold(t, c, kind, "", "", &log)
-		if _, handle, err := c.reserveFault(t.Context(), kind, ""); err == nil || handle != nil || !strings.Contains(err.Error(), want) || errors.Is(err, ErrInvalidRequest) {
+		if _, handle, err := c.faults.reserve(t.Context(), kind, ""); err == nil || handle != nil || !strings.Contains(err.Error(), want) || errors.Is(err, ErrInvalidRequest) {
 			t.Fatalf("kind %v: overlap reply %v %v", kind, handle, err)
 		}
 	}
@@ -208,7 +209,7 @@ func TestTerminateUndoesFaultPhasesInOrderAndLockMode(t *testing.T) {
 	hold(t, c, faultNetworkDelay, "delay-b", "", &log)
 	// A reservation is not undone: its caller settles after Terminate.
 	c.mu.Lock()
-	reserved, _, _ := c.reserveFault(t.Context(), faultNetworkDelay, "delay-reserved")
+	reserved, _, _ := c.faults.reserve(t.Context(), faultNetworkDelay, "delay-reserved")
 	c.mu.Unlock()
 	if err := c.Terminate(t.Context()); err != nil {
 		t.Fatal(err)
@@ -282,7 +283,7 @@ func TestTerminateBlocksOnlyNetworksOfFailedInterruptions(t *testing.T) {
 	hold(t, c, faultNetworkDelay, "public/b", "public", &log).failures = 1
 	hold(t, c, faultContainerPause, "c", "", &log).failures = 1
 	c.mu.Lock()
-	errs, blocked := c.undoFaults(t.Context())
+	errs, blocked := c.faults.undo(t.Context(), &c.mu)
 	c.mu.Unlock()
 	if len(errs) != 3 || len(blocked) != 1 || !blocked["public"] {
 		t.Fatalf("errors %v, blocked %v; want only the failed interruption's network", errs, blocked)
@@ -299,7 +300,7 @@ func TestSettleAfterTerminateReportsClosed(t *testing.T) {
 	c := &Container{}
 	var log []string
 	c.mu.Lock()
-	token, _, err := c.reserveFault(t.Context(), faultNetworkDelay, "net/osd-0")
+	token, _, err := c.faults.reserve(t.Context(), faultNetworkDelay, "net/osd-0")
 	c.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)
@@ -309,7 +310,8 @@ func TestSettleAfterTerminateReportsClosed(t *testing.T) {
 	}
 	f := &modelFault{name: "late", c: c, token: token, releases: true, log: &log}
 	c.mu.Lock()
-	closed := c.settleFault(token, "", f, f.undo, nil)
+	c.faults.settle(token, "", f, f.undo, nil)
+	closed := c.closed
 	c.mu.Unlock()
 	if !closed || len(log) != 0 {
 		t.Fatalf("settle after Terminate reported closed=%v, undo log %v", closed, log)
@@ -329,17 +331,17 @@ func TestTerminateConcurrentWithDelayRestore(t *testing.T) {
 		var leaseMu sync.Mutex
 		restores := 0
 		c.mu.Lock()
-		token, _, _ := c.reserveFault(t.Context(), faultNetworkDelay, "net/osd-0")
+		token, _, _ := c.faults.reserve(t.Context(), faultNetworkDelay, "net/osd-0")
 		restore := func(context.Context) error {
 			leaseMu.Lock()
 			defer leaseMu.Unlock()
 			restores++
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			c.releaseFault(token)
+			c.faults.release(token)
 			return nil
 		}
-		c.settleFault(token, "", &restores, restore, nil)
+		c.faults.settle(token, "", &restores, restore, nil)
 		c.mu.Unlock()
 		done := make(chan error, 2)
 		go func() { done <- c.Terminate(t.Context()) }()

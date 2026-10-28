@@ -128,7 +128,8 @@ func checkDebugLevelGeneration(gen debugLevelGeneration, err error, identity, da
 	return false, nil
 }
 
-// debugLevelRegistry admits one window per daemon and option. It has its own
+// debugLevelRegistry admits one window per daemon and option. The guards in
+// fault_registry_state_test.go pin its leaf contract. It has its own
 // leaf lock on purpose: releasing a window must not wait behind a long
 // topology operation that holds the cluster mutex. The owner of a slot is
 // opaque; the override package passes its window state.

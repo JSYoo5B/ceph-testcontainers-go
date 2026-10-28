@@ -28,12 +28,12 @@ func TestOverrideKindsAreTrackedWithTodaysRefusals(t *testing.T) {
 			c := &Container{}
 			var log []string
 			hold(t, c, tc.kind, "key", "", &log)
-			if _, handle, err := c.reserveFault(t.Context(), tc.kind, "key"); err == nil || handle != nil || err.Error() != tc.overlap {
+			if _, handle, err := c.faults.reserve(t.Context(), tc.kind, "key"); err == nil || handle != nil || err.Error() != tc.overlap {
 				t.Fatalf("overlap reply %v %v, want the text %q and no handle", handle, err, tc.overlap)
 			}
 			c.mu.Lock()
 			for _, phase := range append([]faultPhase{faultTracked}, faultPhases...) {
-				if len(c.heldFaults(phase)) != 0 {
+				if len(c.faults.held(phase)) != 0 {
 					t.Errorf("a tracked override is visited by phase %v", phase)
 				}
 			}
@@ -79,7 +79,7 @@ func TestAllowPoolDeleteHeldFollowsTheRegistry(t *testing.T) {
 	c.mu.Lock()
 	for id, entry := range c.faults.entries {
 		if id.key == configOverrideKey(allowPoolDeleteSetting) {
-			c.releaseFault(entry)
+			c.faults.release(entry)
 		}
 	}
 	c.mu.Unlock()

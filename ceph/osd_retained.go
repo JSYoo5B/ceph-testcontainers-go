@@ -172,24 +172,12 @@ var instanceFaultNames = map[faultKind]string{
 // pause fault still targets: its undo needs the container OSDContainer.Detach removes.
 // The caller holds c.mu.
 func (c *Container) refuseInstanceFaults(ctx context.Context, id int, containerID string) error {
-	for fid, entry := range c.faults.entries {
-		kind, ok := instanceFaultNames[fid.kind]
-		if !ok {
-			continue
-		}
-		if fid.key != containerID && !strings.HasSuffix(fid.key, "/"+containerID) {
-			continue
-		}
-		if entry.handle != nil && entry.complete != nil {
-			done, err := entry.complete(ctx)
-			if err != nil {
-				return err
-			}
-			if done {
-				continue
-			}
-		}
-		return fmt.Errorf("restore the %s of osd.%d before detaching it", kind, id)
+	name, found, err := c.faults.openInstanceFault(ctx, containerID)
+	if err != nil {
+		return err
+	}
+	if found {
+		return fmt.Errorf("restore the %s of osd.%d before detaching it", name, id)
 	}
 	return nil
 }
