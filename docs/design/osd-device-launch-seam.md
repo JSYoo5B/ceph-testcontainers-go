@@ -102,7 +102,7 @@ inputs that are plain strings, with these parts:
 
 `ceph/osd_device_claims.go` (`osdDeviceClaims`, `Container.deviceClaims`) is the
 claim table that the launch seam left to its first production caller. It is a
-primitive: nothing calls `claim`, so no cluster holds a claim and the two
+primitive: only the unexported wiring step below calls `claim` and it has no production caller, so no cluster holds a claim and the two
 Terminate hooks and the `removeOSD` hook are no-ops.
 
 - **What a claim is.** Exclusion bookkeeping in the Go cluster: OSD ID, an opaque
@@ -133,9 +133,21 @@ Terminate hooks and the `removeOSD` hook are no-ops.
 - **Unchanged.** `Detach`, `Reopen` and the retained-store admission still refuse a
   device OSD; the file-backed tmpfs capacity oracle is untouched.
 
-The first production caller must still pin its own lock position in
-`osdDeviceClaimCallers`, build the recipe and claim in one serialized step, and
-pass the lease token its controller owns. The guards fail until it does.
+## Wiring step (internal, no production caller)
+
+`registerBlockDeviceOSD` (`ceph/osd_device_wiring.go`) is the one serialized
+step that registers an OSD, builds its recipe, attaches a verified
+`osdBlockDevice`, claims it under the caller's opaque lease token and returns the
+launch for `startOSD`. The caller holds `Container.mu`; the step takes no lock.
+It is the only caller of `attachBlockDevice` and of `claim`, and nothing in
+production calls it, so default launches are unchanged. A failure after
+registration seals the recipe (never attempted) and leaves the claim table
+unchanged; an attempted or uncertain `startOSD` keeps the claim by the table's
+rules. The caller keeps the external lease through uncertain startup and owned
+cleanup; no result of the step releases it. Lock position, failure table and
+guards are in [OSD device claims](container-decomposition/osd-device-claims.md).
+It establishes no attachment observer, native device opening, effect window,
+restart/reopen or cross-process exclusion.
 
 ## Composition with the existing Python observers
 

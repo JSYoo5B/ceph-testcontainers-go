@@ -209,24 +209,34 @@ func TestOSDLaunchStartsOneContainerWithTheMappedBlockDevice(t *testing.T) {
 }
 
 // TestOSDBlockDeviceSeamIsInternalAndLockFree guards the claims written on the
-// seam: nothing in production calls attachBlockDevice yet (a caller added later
-// must also decide which lock it holds and add a cluster-wide claim), the file
+// seam: the only production caller of attachBlockDevice is the lock-holding
+// wiring step registerBlockDeviceOSD, which also claims the device (see
+// osd_device_wiring_test.go), the file
 // declares no exported identifier and no mutex, and nothing outside the seam
 // and the recipe names the type.
 func TestOSDBlockDeviceSeamIsInternalAndLockFree(t *testing.T) {
 	var problems []string
 	for file, parsed := range parseProductionFiles(t) {
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || fn.Name.Name == "registerBlockDeviceOSD" {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "attachBlockDevice" {
+					problems = append(problems, file+": "+fn.Name.Name+" calls attachBlockDevice; only registerBlockDeviceOSD may")
+				}
+				return true
+			})
+		}
 		ast.Inspect(parsed, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.SelectorExpr:
-				if x.Sel.Name == "attachBlockDevice" {
-					problems = append(problems, file+": calls attachBlockDevice; pin its caller and lock first")
-				}
 				if file == "osd_block_device.go" && (x.Sel.Name == "Mutex" || x.Sel.Name == "RWMutex") {
 					problems = append(problems, file+": declares a mutex")
 				}
 			case *ast.Ident:
-				if x.Name == "osdBlockDevice" && file != "osd_block_device.go" && file != "osd_launch.go" && file != "osd_device_claims.go" {
+				if x.Name == "osdBlockDevice" && file != "osd_block_device.go" && file != "osd_launch.go" && file != "osd_device_claims.go" && file != "osd_device_wiring.go" {
 					problems = append(problems, file+": names osdBlockDevice")
 				}
 			}
