@@ -1,5 +1,8 @@
-// Command testsupportcheck proves, without Docker, that test-only code stays
-// out of the ordinary build of the module.
+// Command testsupportcheck checks, without Docker, the import, seam and
+// declaration boundary of the repository's test-only code: which packages may
+// import the shared test helpers, which files may read the unit seam, and
+// which declarations may appear in non-test files. It does not exclude that
+// code from ordinary compilation or from any linked binary.
 //
 // Test-only code lives in _test.go files wherever the Go toolchain lets a test
 // see it. What tests of other packages need lives in helper packages under
@@ -23,7 +26,8 @@
 //   - no package reports a list error.
 //
 // The test-only packages stay compiled by go build ./... and go vet ./... : the
-// rule limits who imports them, it does not remove them from the build.
+// rule limits who imports them and who reads the seam, it does not remove them
+// from the build. Whether a linked binary contains them is not measured.
 package main
 
 import (
@@ -107,10 +111,10 @@ func main() {
 		}
 		os.Exit(1)
 	}
-	fmt.Printf("test-only code stays out of the ordinary build (%d tag sets checked)\n", len(sets))
+	fmt.Printf("test-only import, seam and declaration boundary holds (%d tag sets checked)\n", len(sets))
 }
 
-// Check returns the violations of the ordinary build in root, or an error
+// Check returns the boundary violations of the ordinary tag sets in root, or an error
 // when the check could not run.
 func Check(root, manifestPath string, tagSets []string) ([]string, error) {
 	var manifest Manifest

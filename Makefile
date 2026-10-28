@@ -194,8 +194,9 @@ check:
 race:
 	CGO_ENABLED=1 go test -mod=readonly -race ./...
 
-# The first line proves, without Docker, that test-only code stays out of the
-# ordinary build (docs/contributing/testing.md#test-only-code). The second keeps
+# The first line checks, without Docker, the import, seam and declaration
+# boundary of test-only code (docs/contributing/testing.md#test-only-code); it
+# does not exclude that code from ordinary compilation. The second keeps
 # docs/contributing/test-double-inventory.md in sync with that code.
 tag-compile:
 	CGO_ENABLED=0 go run -mod=readonly ./internal/tools/testsupportcheck

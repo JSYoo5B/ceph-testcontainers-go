@@ -123,7 +123,9 @@ belong to is #248. They stay, as the thirteenth slice recorded.
   merged pull requests and the final privacy review, which are the owner's.
 - For #248: whether the three lock identities and the four nil-default seams
   (`keyRotationDocker`, `daemonRunner`, `stores` seams and the
-  `startupIdentity` hook) leave the ordinary build.
+  `startupIdentity` hook) are kept inside the test-only boundary. Ordinary
+  untagged internal support is allowed, so this is not a question of leaving
+  the ordinary build.
 
 ## Limits of the guards
 

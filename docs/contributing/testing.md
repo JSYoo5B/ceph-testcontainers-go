@@ -66,7 +66,7 @@ and the test fails. When the test process itself runs inside a container, set
 make test         # CGO_ENABLED=0 go test -mod=readonly ./...
 make race         # CGO_ENABLED=1 go test -mod=readonly -race ./...
 make vet          # CGO_ENABLED=0 go vet -mod=readonly ./...
-make tag-compile  # test-only-code exclusion check, then compile every tagged test file
+make tag-compile  # test-only-code boundary check, then compile every tagged test file
 make check        # all four of the above; never starts Docker
 make lint         # golangci-lint v2.14.0 with .golangci.yml
 make vulncheck    # govulncheck v1.9.0 on every scanned platform and tag set
@@ -133,8 +133,10 @@ the actual image/build identity.
 
 ## Test-only code
 
-Test-only code is not compiled by an ordinary build, with no build tag and no
-extra test command flag:
+Test-only code is kept inside a checked import, seam and declaration boundary,
+with no build tag and no extra test command flag. The shared helper packages
+and the seam are ordinary untagged source, so `go build ./...` still compiles
+them; the boundary limits who can use them:
 
 - Anything that only tests of the same package use is a `_test.go` file of that
   package.
@@ -172,12 +174,19 @@ command's own tests keep a fixture module with a negative control for each rule.
 then requires the package's exported declarations to appear in the
 [test-double inventory](test-double-inventory.md), as described there.
 
+The `internal/` path adds import visibility from outside the module: a
+downstream module that imports `internal/testhelper`, `internal/clustertest`,
+`internal/clusteraccess` or `internal/hookreg` fails with Go's "use of internal
+package ... not allowed". That is a property of the import path, not something
+the check measures.
+
 What this does not prove: the helper packages and the seam stay compiled by
 `go build ./...` and `go vet ./...` (they have no tag), so an ordinary build of
-the module still compiles them; the rule limits who imports them, so they are
-not linked into any non-test importer's binary. The check reads source and
-`go list` metadata, not a symbol listing of a linked binary, and it does not
-look at packages outside the module.
+the module still compiles them. The boundary limits who imports them and who
+reads the seam. It makes no claim about which symbols a linked binary contains,
+because that was not measured. The check reads source and `go list` metadata,
+not a symbol listing of a linked binary, and it does not look at packages
+outside the module.
 
 ## Running integration tests
 
@@ -810,7 +819,7 @@ a concurrent caller. When you write one:
 
 This section is the policy for choosing a substitute in a test. The
 [test-double inventory](test-double-inventory.md) lists what exists today. The
-rules for keeping test-only code out of ordinary builds are in
+rules for the test-only import, seam and declaration boundary are in
 [Test-only code](#test-only-code), and they apply to every kind of substitute.
 
 Most of this project is written by AI and reviewed by a person. Write a test so
