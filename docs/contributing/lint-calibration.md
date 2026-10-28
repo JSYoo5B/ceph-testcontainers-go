@@ -88,7 +88,7 @@ difference is refused, and the error names each mismatching field
 (`golangci_lint_version`, `ci_pinned_version`, `config.sha256`, `patterns`,
 `enabled_linters`, `scope`, `schema`). A raw file is also refused when a member
 the collector always writes is missing or wrong-typed, when its counts, overlap
-flags or test flags disagree with its locations, or when it has unknown members
+flags or test flags disagree with its locations, when a per-linter count is `null` or not a number, or when it has unknown members
 (`null` and `[]` locations are accepted as an empty collection).
 
 **An absent diagnostic is not a measurement.** The collector reports only above
@@ -109,15 +109,18 @@ Identity is the package (module-relative directory plus package clause), the
 receiver type name (pointer, value and type-parameter spelling are not
 distinguished) and the function name. It is read with `go/parser` from the
 snapshot source at the reported line, and the diagnostic message must name that
-function. A metric is the linter plus the message with its numbers masked, so
+function. The declaration must also be unique: declarations are counted per
+package, receiver and function in the whole snapshot on each side, including
+build-tagged files that parse and declarations without a diagnostic, and a
+count other than one leaves the diagnostic `ambiguous_identity`. A metric is the linter plus the message with its numbers masked, so
 funlen's line count and statement count are separate rows and a changed value
 does not change the row. The reasons are `no_snapshot_source` (a snapshot
 directory was not given), `no_declaration_at_position`,
 `message_does_not_name_declaration` (the source does not match the collection),
 `snapshot_file_unparsable`, `linter_has_no_function_identity` (every `dupl`
 diagnostic: it reports a code block, not a declaration), `ambiguous_identity`
-(two diagnostics of one metric for one identity, for example build-tagged
-variants), `declaration_absent_in_head` / `declaration_absent_in_base` (the
+(more than one declaration of the identity in the originating snapshot, or two
+diagnostics of one metric for it, for example build-tagged variants), `declaration_absent_in_head` / `declaration_absent_in_base` (the
 function was moved to another package, renamed, removed or newly added, which
 the data cannot tell apart) and `declaration_ambiguous_in_head` /
 `declaration_ambiguous_in_base`.

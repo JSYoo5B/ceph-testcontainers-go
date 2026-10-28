@@ -141,6 +141,7 @@ func TestPairRefusesUnusableRawCollections(t *testing.T) {
 		"enabled set differs":    edit(func(m map[string]any) { m["enabled_linters"] = []any{"cyclop"} }),
 		"total disagrees":        edit(func(m map[string]any) { m["diagnostics_total"] = 7 }),
 		"count disagrees":        edit(func(m map[string]any) { m["diagnostics_per_linter"].(map[string]any)["cyclop"] = 1 }),
+		"null count":             edit(func(m map[string]any) { m["diagnostics_per_linter"].(map[string]any)["cyclop"] = nil }),
 		"unknown field":          edit(func(m map[string]any) { m["extra"] = 1 }),
 		"missing message":        edit(func(m map[string]any) { delete(locs(m)["diagnostics"].([]any)[0].(map[string]any), "message") }),
 		"missing column":         edit(func(m map[string]any) { delete(locs(m)["diagnostics"].([]any)[0].(map[string]any), "column") }),
@@ -580,5 +581,35 @@ func TestPairOnRealBinary(t *testing.T) {
 	}
 	if d.Counts[stateUnmatched] != 0 {
 		t.Errorf("%+v", d.Entries)
+	}
+}
+
+// Declaration multiplicity is counted per package, receiver and function in the
+// whole snapshot, whether or not the extra declaration has a diagnostic.
+func TestPairAmbiguousDeclarationStaysUnmatched(t *testing.T) {
+	two := snap(t, map[string]string{"a.go": hotSrc, "b.go": "//go:build linux\n\npackage m\n\nfunc Hot(x int) int { return x }\n"})
+	one := snap(t, map[string]string{"a.go": hotSrc})
+	d1 := fd{"gocognit", "a.go", 3, 1, cog("Hot", 40)}
+	d2 := fd{"gocognit", "a.go", 3, 1, cog("Hot", 41)}
+	// Paired: one diagnostic per side, two declarations per snapshot.
+	d := mustPair(t, raw(t, d1), raw(t, d2), two, two)
+	if d.Counts[stateBoth] != 0 || d.Counts[stateUnmatched] != 2 || d.Entries[0].Reason != reasonAmbiguous {
+		t.Errorf("paired: %+v", d.Entries)
+	}
+	// One-sided: ambiguous originating side, unique opposite side without a diagnostic.
+	e := only(t, mustPair(t, raw(t, d1), raw(t), two, one))
+	if e.State != stateUnmatched || e.Reason != reasonAmbiguous {
+		t.Errorf("base ambiguous: %+v", e)
+	}
+	e = only(t, mustPair(t, raw(t), raw(t, d2), one, two))
+	if e.State != stateUnmatched || e.Reason != reasonAmbiguous {
+		t.Errorf("head ambiguous: %+v", e)
+	}
+	// Positive controls: unique declarations pair and disappear as before.
+	if e := only(t, mustPair(t, raw(t, d1), raw(t, d2), one, one)); e.State != stateBoth {
+		t.Errorf("unique paired: %+v", e)
+	}
+	if e := only(t, mustPair(t, raw(t, d1), raw(t), one, one)); e.State != stateNotReported {
+		t.Errorf("unique one-sided: %+v", e)
 	}
 }

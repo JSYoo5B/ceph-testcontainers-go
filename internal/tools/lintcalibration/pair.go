@@ -220,9 +220,16 @@ func loadRaw(data []byte) (*report, error) {
 	if raw.Counts == nil || raw.Total == nil || raw.Overlaps == nil || raw.Locations == nil {
 		return nil, errors.New("raw collection lacks diagnostics_per_linter, diagnostics_total, overlapping_locations or locations")
 	}
-	var counts map[string]int
-	if err := json.Unmarshal(raw.Counts, &counts); err != nil || counts == nil {
+	var rawCounts map[string]*int
+	if err := json.Unmarshal(raw.Counts, &rawCounts); err != nil || rawCounts == nil {
 		return nil, errors.New("raw collection diagnostics_per_linter is not an object of counts")
+	}
+	counts := map[string]int{}
+	for k, v := range rawCounts {
+		if v == nil {
+			return nil, fmt.Errorf("raw collection diagnostics_per_linter.%s is null, not a count", k)
+		}
+		counts[k] = *v
 	}
 	var locs []rawLocation
 	if err := json.Unmarshal(raw.Locations, &locs); err != nil {
@@ -508,6 +515,10 @@ func resolve(s *snapshot, loc location, d diagnostic) sideDiag {
 		switch {
 		case len(cands) != 1:
 			sd.reason = reasonNoDecl
+		case len(s.byKey[cands[0].key()]) != 1:
+			// Declarations are counted per package, receiver and function in
+			// the whole snapshot, whether or not they have a diagnostic.
+			sd.reason = reasonAmbiguous
 		case !namesIdent(d.Message, cands[0].Name):
 			sd.reason = reasonMessage
 		default:
