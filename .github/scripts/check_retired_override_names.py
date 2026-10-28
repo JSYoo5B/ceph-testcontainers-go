@@ -66,6 +66,7 @@ ALLOWED = {
     "docs/design/api-naming.md": "naming inventory of the retired names, marked as a historical record",
     "docs/design/api-naming-audit.md": "naming audit of the retired names, marked as a historical record",
     "docs/design/override-package-boundary.md": "design record that quotes the retired names and maps them",
+    "docs/design/structural-metrics-sample.md": "historical sample of the structure metrics tool on the override move",
     ".github/scripts/check_retired_override_names.py": "this check",
     ".github/scripts/test_check_retired_override_names.py": "this check's tests",
 }
