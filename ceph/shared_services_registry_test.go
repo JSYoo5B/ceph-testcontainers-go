@@ -27,6 +27,11 @@ func swapSharedServices(t *testing.T) {
 	})
 }
 
+// snapshot is the service set that a SharedCluster built now owns when it was
+// given no explicit services: the migration keeps the registry semantics
+// above through it.
+func snapshot() sharedServiceSet { return NewShared("snapshot").settings.services }
+
 type serviceCalls struct {
 	prepared []string
 	probed   []string
@@ -57,7 +62,7 @@ func TestRegistryPreparesInKindOrderWithTheBackendPointer(t *testing.T) {
 	}
 	registerSharedService(sharedService{kind: "aaa-no-prepare", probe: calls.service("aaa-no-prepare", nil, nil, nil).probe})
 	own := &Container{}
-	if err := (containerBackend{c: own}).prepareServices(t.Context()); err != nil {
+	if err := (containerBackend{c: own}).prepareServices(t.Context(), snapshot().prepares); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"cephfs", "rbd", "rgw"}; !slices.Equal(calls.prepared, want) {
@@ -77,7 +82,7 @@ func TestRegistryPrepareFailureStopsAndKeepsContext(t *testing.T) {
 	registerSharedService(calls.service("cephfs", nil, nil, nil))
 	registerSharedService(calls.service("rbd", cause, nil, nil))
 	registerSharedService(calls.service("rgw", nil, nil, nil))
-	err := (containerBackend{c: &Container{}}).prepareServices(t.Context())
+	err := (containerBackend{c: &Container{}}).prepareServices(t.Context(), snapshot().prepares)
 	if err == nil || err.Error() != "prepare rbd for a shared cluster: no zone" || !errors.Is(err, cause) {
 		t.Fatalf("prepare failure = %v", err)
 	}
@@ -92,7 +97,7 @@ func TestRegistryResourcesMergeInKindOrder(t *testing.T) {
 	registerSharedService(calls.service("rgw", nil, map[string]string{"shared": "from rgw", "rgw user": "t1"}, nil))
 	registerSharedService(calls.service("cephfs", nil, map[string]string{"shared": "from cephfs", "cephfs group": "t1"}, nil))
 	registerSharedService(sharedService{kind: "rbd"})
-	got, err := (containerBackend{c: &Container{}}).resources(t.Context())
+	got, err := (containerBackend{c: &Container{}}).resources(t.Context(), snapshot().probes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +121,7 @@ func TestRegistryProbeFailureStopsAndKeepsContext(t *testing.T) {
 	cause := errors.New("gateway gone")
 	registerSharedService(calls.service("cephfs", nil, nil, cause))
 	registerSharedService(calls.service("rgw", nil, nil, nil))
-	got, err := (containerBackend{c: &Container{}}).resources(t.Context())
+	got, err := (containerBackend{c: &Container{}}).resources(t.Context(), snapshot().probes)
 	if got != nil || err == nil || err.Error() != "list the cephfs resources: gateway gone" || !errors.Is(err, cause) {
 		t.Fatalf("probe failure = %v, %v", got, err)
 	}
@@ -128,10 +133,10 @@ func TestRegistryProbeFailureStopsAndKeepsContext(t *testing.T) {
 func TestRegistryWithoutServicesPreparesAndProbesNothing(t *testing.T) {
 	swapSharedServices(t)
 	b := containerBackend{c: &Container{}}
-	if err := b.prepareServices(t.Context()); err != nil {
+	if err := b.prepareServices(t.Context(), snapshot().prepares); err != nil {
 		t.Fatal(err)
 	}
-	got, err := b.resources(t.Context())
+	got, err := b.resources(t.Context(), snapshot().probes)
 	if err != nil || got == nil || len(got) != 0 {
 		t.Fatalf("an unconfigured registry listed %v, %v; want an empty non-nil map", got, err)
 	}
@@ -142,7 +147,7 @@ func TestRegistrySecondRegistrationOfAKindReplacesTheFirst(t *testing.T) {
 	first, second := &serviceCalls{}, &serviceCalls{}
 	registerSharedService(first.service("rbd", nil, nil, nil))
 	registerSharedService(second.service("rbd", nil, nil, nil))
-	if err := (containerBackend{c: &Container{}}).prepareServices(t.Context()); err != nil {
+	if err := (containerBackend{c: &Container{}}).prepareServices(t.Context(), snapshot().prepares); err != nil {
 		t.Fatal(err)
 	}
 	if len(first.prepared) != 0 || len(second.prepared) != 1 {
@@ -150,17 +155,23 @@ func TestRegistrySecondRegistrationOfAKindReplacesTheFirst(t *testing.T) {
 	}
 }
 
-func TestRegistryIsReadAtCallTime(t *testing.T) {
-	// Today the registry is read at each start and release, so a service
-	// registered after a backend exists is used by its next call.
+func TestRegistryIsReadOnceByNewShared(t *testing.T) {
+	// Deliberate difference from the call-time registry: the cluster object
+	// owns the set it was constructed with, so a service registered after
+	// NewShared is not seen by it. Registration happens in init, before any
+	// NewShared of a program, so existing callers see no change.
 	swapSharedServices(t)
 	b := containerBackend{c: &Container{}}
+	early := NewShared("early")
 	calls := &serviceCalls{}
 	registerSharedService(calls.service("late", nil, nil, nil))
-	if err := b.prepareServices(t.Context()); err != nil {
+	if err := b.prepareServices(t.Context(), early.settings.services.prepares); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(calls.prepared, []string{"late"}) {
-		t.Fatalf("a service registered later was not seen: %v", calls.prepared)
+	if len(calls.prepared) != 0 {
+		t.Fatalf("a service registered after NewShared reached the earlier cluster: %v", calls.prepared)
+	}
+	if err := b.prepareServices(t.Context(), NewShared("later").settings.services.prepares); err != nil || len(calls.prepared) != 1 {
+		t.Fatalf("a later NewShared did not take the registered service: %v, %v", calls.prepared, err)
 	}
 }

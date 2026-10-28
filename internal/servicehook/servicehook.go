@@ -127,6 +127,10 @@ type TenantPort = interface {
 	// Attach before creating the resource, so that a partial creation is
 	// removed too. Each key is attached once per tenant.
 	AttachScope(key string, release func(ctx context.Context) ([]string, error)) error
+	// RequireService fails with ceph.ErrInvalidRequest when the shared
+	// cluster was not given the support of kind. A service Lease calls it
+	// before it creates anything.
+	RequireService(kind string) error
 	WithClientIdentity(client *ceph.ClientConfig, opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
 	// WithTopology runs fn while it holds the cluster mutex, the one that
 	// serializes fixture mutations, and returns fn's error. fn must not call

@@ -46,6 +46,9 @@ func Lease(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, 
 	if err != nil {
 		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
+	if err := port.RequireService(bootstrapKind); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, port.StartupTimeout())
 	defer cancel()
 	data, err := port.Command(ctx, "ceph", "--connect-timeout", "5", "osd", "pool", "application", "get", pool, "--format", "json")

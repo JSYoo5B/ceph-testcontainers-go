@@ -19,15 +19,16 @@ import (
 // the shared gate does not refuse; unit tests replace it with a model.
 type sharedBackend interface {
 	createPool(ctx context.Context, name string) error
-	// prepareServices runs the services' preparation before the baseline.
-	prepareServices(ctx context.Context) error
+	// prepareServices runs the services' preparation, given by the
+	// SharedCluster's own set, before the baseline.
+	prepareServices(ctx context.Context, prepares []sharedPrepare) error
 	// ready waits for quorum and active+clean PGs.
 	ready(ctx context.Context) error
 	// invariants reads the cluster's state except Resources, which
 	// resources reads: the services' probes are slower and only the
 	// baseline and releases compare them.
 	invariants(ctx context.Context, pool string) (sharedInvariants, error)
-	resources(ctx context.Context) (map[string]string, error)
+	resources(ctx context.Context, probes []sharedProbe) (map[string]string, error)
 	// daemonsRunning fails when a daemon container of the cluster exited.
 	daemonsRunning(ctx context.Context) error
 	createClient(ctx context.Context, entity string, caps ClientCaps) (client *ClientConfig, created bool, err error)
@@ -332,16 +333,12 @@ func (b containerBackend) purgeNamespace(ctx context.Context, pool, namespace st
 	return err
 }
 
-func (b containerBackend) prepareServices(ctx context.Context) error {
-	for _, service := range registeredSharedServices() {
-		if service.prepare == nil {
-			continue
-		}
-		if err := service.prepare(ctx, b.c); err != nil {
-			return fmt.Errorf("prepare %s for a shared cluster: %w", service.kind, err)
-		}
-	}
-	return nil
+func (b containerBackend) prepareServices(ctx context.Context, prepares []sharedPrepare) error {
+	return runPrepares(ctx, b.c, prepares)
+}
+
+func (b containerBackend) resources(ctx context.Context, probes []sharedProbe) (map[string]string, error) {
+	return runProbes(ctx, b.c, probes)
 }
 
 func (b containerBackend) setSharing(mode sharingMode) { b.c.setSharingMode(mode) }

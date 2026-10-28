@@ -40,6 +40,9 @@ func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error) {
 	if err != nil {
 		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
+	if err := port.RequireService(rgwBootstrapKind); err != nil {
+		return nil, err
+	}
 	if err := port.Live(); err != nil {
 		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}

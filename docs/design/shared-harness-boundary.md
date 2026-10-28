@@ -219,9 +219,9 @@ through `TenantCluster`; each uses the tenant port.
 
 | Adapter | Port use | Registration |
 | --- | --- | --- |
-| `rbd` | `Tenant`, `Command`, `StartupTimeout`, `AttachScope`, `CreateClient`, `WithClientIdentity` | `RegisterSharedService(bootstrapKind, nil, probeTenantNamespaces)` at `init` today; explicit service support after the move |
-| `cephfs` | `Tenant`, `Command`, `StartupTimeout`, `Live`, `AttachScope`, `CreateClient`, `WithClientIdentity` | `RegisterSharedService(cephFSBootstrapKind, prepareShared, probeShared)` at `init` today; explicit service support after the move |
-| `rgw` | `Tenant`, `Live`, `WithTopology`, `Extension`, `AttachScope` | `RegisterSharedService(rgwBootstrapKind, prepareShared, probeShared)` at `init` today; explicit service support after the move |
+| `rbd` | `Tenant`, `Command`, `StartupTimeout`, `AttachScope`, `CreateClient`, `WithClientIdentity` | `RegisterSharedService(bootstrapKind, nil, probeTenantNamespaces)` at `init` into a transitional registry that `NewShared` reads once (see "Instance-owned service set: first slice"); explicit service support after the move |
+| `cephfs` | `Tenant`, `Command`, `StartupTimeout`, `Live`, `AttachScope`, `CreateClient`, `WithClientIdentity` | `RegisterSharedService(cephFSBootstrapKind, prepareShared, probeShared)` at `init` into a transitional registry that `NewShared` reads once (see "Instance-owned service set: first slice"); explicit service support after the move |
+| `rgw` | `Tenant`, `Live`, `WithTopology`, `Extension`, `AttachScope` | `RegisterSharedService(rgwBootstrapKind, prepareShared, probeShared)` at `init` into a transitional registry that `NewShared` reads once (see "Instance-owned service set: first slice"); explicit service support after the move |
 
 One residue remains in `rgw`: the gateway release path takes the topology
 mutex of the gateway's owning cluster with `servicehook.Lock`/`Unlock` (4
@@ -464,7 +464,7 @@ Its whole reach is:
 | `deleteClient` | `deleteSharedClient` | new: the former body |
 | `setSharing` | `setSharingMode` | new |
 | `terminate` | `terminate` | unchanged |
-| `prepareServices`, `resources` | the pointer itself | handed to the registered service `prepare` and `probe` functions, which take the cluster |
+| `prepareServices`, `resources` | the pointer itself | handed to the `prepare` and `probe` callbacks that the `SharedCluster` passes as arguments (its own service set), which take the cluster |
 
 That is 9 methods (3 exported, 6 private) and 0 fields. The remaining private
 methods of the earlier list (`controlContainerContext`, `generateKeyArgs`,
@@ -503,7 +503,7 @@ audit and the narrowing are done here.
 ## Inventory at `83de22a`
 
 Pinned at `83de22a8fe310d612612479d1941d2e3a3d9dabf` (main after the owner-listed
-merges #266, #272, #281, #282 and #284, and after #285, #286, #287 and #290). The rows below are
+merges #266, #272, #281, #282 and #284, and after #285, #286, #287 and #290; the rows were refreshed for the instance-owned service set on top of main at `f5e0e42`). The rows below are
 measured from the files by `ceph/shared_harness_inventory_test.go` and compared
 with this table, so a drifting row fails the test; the pinned commit is the only
 part that is not checked and is refreshed by hand. Source reading and Docker-free
@@ -532,7 +532,7 @@ files of the directory including tests.
 | exported SharedCluster methods that move | 4 |
 | exported Tenant methods that move | 8 |
 | exported declarations that move | 28 |
-| private names of package ceph that the harness files name | classify, classifyDocker, clientIDPattern, clusterOps, containerBackend, invalidRequest, newLeasedObserver, sharedBackend, sharedExclusively, sharedInvariants, sharedStarter, sharedWithTenants, startSharedContainer |
+| private names of package ceph that the harness files name | classify, classifyDocker, clientIDPattern, clusterOps, invalidRequest, newLeasedObserver, sharedBackend, sharedExclusively, sharedInvariants, sharedStarter, sharedWithTenants, startSharedContainer |
 | private names of package rbd that its tenant.go names | bootstrapKind, invalid, validateResourceName |
 | private names of package cephfs that its tenant.go names | cephFSBootstrapKind, invalid |
 | private names of package rgw that its tenant.go names | gateways, gatewaysFrom, invalid, rgwBootstrapKind |
@@ -543,6 +543,7 @@ files of the directory including tests.
 | references to moved names in internal/integration | 36 in 6 files |
 | testhelper.TestTenantCluster calls in internal/integration | 4 in 2 files |
 | servicehook.RegisterSharedService calls in rbd, cephfs and rgw | 3 |
+| port RequireService calls in rbd, cephfs and rgw | 3 |
 
 What changed against the older tables, so none of them is carried forward:
 
@@ -779,6 +780,76 @@ it:
 
 `releaseScopes` and `tenantScope` are tenant state and move to `ceph/harness`.
 
+### Instance-owned service set: first slice
+
+Implemented in `ceph` behind unexported names; no public name is chosen and no
+package moves.
+
+- `sharedServiceSet` (`ceph/shared_services.go`) is the service support one
+  `SharedCluster` owns. `NewShared` builds it once into `sharedSettings.services`,
+  sorted by kind, with the wrapped callbacks (`prepare %s for a shared cluster`,
+  `list the %s resources`, same text and `errors.Is` chain as before). It is
+  immutable afterwards and holds no lock; no mutex is added (guard:
+  `TestSharedServiceSetHoldsNoLock`). Two `SharedCluster` values in one process
+  can own different sets.
+- The backend port takes the callbacks as arguments:
+  `prepareServices(ctx, []sharedPrepare)` and `resources(ctx, []sharedProbe)`,
+  the form specified above. `containerBackend` hands its own `*Container` to each
+  callback; the registry is no longer read by the backend or the orchestration.
+- Validation at construction, reported as `ErrInvalidRequest` by the first
+  `Lease` or `Exclusive` before any cluster starts: a service without a kind (the
+  zero value) and a kind given twice. A nil `prepare` or `probe` stays allowed (rbd
+  has no `prepare`).
+- Missing support: `tenantPort.RequireService(kind)` (also on
+  `servicehook.TenantPort`) fails with `ErrInvalidRequest` when the instance was
+  not given the kind. `rbd.Lease`, `cephfs.Lease` and `rgw.Lease` call it first,
+  after taking the port and before any command or `AttachScope`
+  (`TestServiceAdaptersRequireTheirSupportBeforeCreating`; inventory row).
+- Cleanup and partial failure are unchanged and characterized
+  (`ceph/shared_services_registry_test.go`, `ceph/shared_service_support_test.go`):
+  a failed prepare stops the later ones, fails the start, and the partial cluster
+  stays owned and is terminated; a failed probe at release is an unverifiable
+  release and poisons the cluster. The set owns no process resource, so it has no
+  cleanup of its own.
+- Transitional: until the exported option exists, a service package cannot hand
+  its support to `NewShared`, so `init` still fills the process-global registry
+  (`registerSharedService`, `servicehook.RegisterSharedService`, 3 calls) and
+  `NewShared` snapshots it once when no `withSharedServices` option was given.
+  `NewShared` is the only reader (`TestSharedServiceRegistryHasOneReader`). One
+  deliberate difference from the call-time registry: a service registered after
+  `NewShared` is not seen by that cluster (`TestRegistryIsReadOnceByNewShared`);
+  `init` registration runs before any `NewShared`, so no in-repo caller changes.
+  The zero-kind and repeated-kind checks also apply to a registration that
+  reaches `NewShared`, where the registry used to accept it.
+- Model clusters in the unit tests pass an explicit empty set
+  (`newFakeShared`), because the test binary links the real service packages.
+
+Proposal for the exported form (not implemented, owner choice 10):
+
+| Piece | Proposed spelling |
+| --- | --- |
+| Opaque value | `type ServiceSupport struct{ ... }` in `ceph/harness`, unexported fields, built only through an internal route typed by `internal/servicehook` |
+| Option | `func WithServices(supports ...ServiceSupport) SharedOption`; validation as above, recorded in the settings |
+| Service harness | `func Support() cephharness.ServiceSupport` in `rbd/harness`, `cephfs/harness` and `rgw/harness` |
+| Callers | `internal/integration` (2 `NewShared` calls), `docs/ceph.md` (3 examples), `docs/rbd.md`, `docs/cephfs.md`, `docs/rgw.md`; the 3 `init` registrations, `servicehook.RegisterSharedService`, `registerSharedService`, `registeredSharedServices` and the registry are deleted without an alias (0.x) |
+
+Link effect: today importing `rbd`, `cephfs` or `rgw` registers its probe for
+every shared cluster of the binary. After the exported option, importing a
+service harness registers nothing; a cluster that was not given the support
+prepares and probes nothing, and the service `Lease` fails with
+`ErrInvalidRequest` at `RequireService` before it creates anything. A program
+that relied on the import now lists `WithServices(...)`; the migration is
+mechanical (one option per service the binary leases).
+
+Open choices that remain the owner's, with a recommendation: (1) the option and
+type names above (recommend them: they keep `WithServices` next to the other
+`With...` options and name no cluster); (2) whether the unconfigured service
+`Lease` error is `ErrInvalidRequest` (recommend yes, as an invalid
+`WithMaxTenants` is); (3) whether to land the exported option before the package
+move with the service packages' own `Support()` (recommend no: it would add a
+public name to `rbd`, `cephfs` and `rgw` that the move renames; do it with the
+move).
+
 ### Tenant port for the service harnesses
 
 `tenantPort` and `tenantLease` move to `ceph/harness`, built over the harness
@@ -996,7 +1067,7 @@ draft's `init`-time recommendation for decision 1 is withdrawn.
 | 7 | Test-only tenant-cluster lookup (`testhelper.TestTenantCluster`, today `unitAccess.UnitTenantCluster`) | Keep it test-only: a second method of the `HarnessTenant` value, asserted by `testhelper`, four known native call sites, guarded | Replacing the four native controls with Observer-based checks weakens what they prove about the gate |
 | 8 | Service-private helpers used by the adapters | `<service>/internal/...` packages, moved before the harness | Exporting them adds public names to rbd, cephfs and rgw |
 | 9 | Exported names and signatures beyond the settled ones | The old-to-new map: same names in the new packages, no renames, no new options other than the service-support input; any rename is a later change | Renaming during the move mixes a mechanical migration with an API review |
-| 10 | Shape of the service-support input and its validation | An opaque `ceph/harness` value built by each service harness through an internal route and passed to `NewShared` as an option, validated at construction (duplicate kind, foreign value) and checked by a tenant-port method before a service `Lease` creates anything | A positional `NewShared` argument changes the signature for every caller; a plain callback struct would show the cluster-receiving callbacks in public API |
+| 10 | Shape of the service-support input and its validation (the instance-owned set, its validation and `RequireService` are implemented behind unexported names; see "Instance-owned service set: first slice" for the exact exported spelling proposed) | An opaque `ceph/harness` value built by each service harness through an internal route and passed to `NewShared` as an option, validated at construction (duplicate kind, foreign value) and checked by a tenant-port method before a service `Lease` creates anything | A positional `NewShared` argument changes the signature for every caller; a plain callback struct would show the cluster-receiving callbacks in public API |
 | 11 | Stale-handle audit result for `Exclusive` | Do the audit as the first step of the move, as a Docker-free test over the access paths plus a native control, and record every gap | Deferring it until after the move would accept a handle whose enforcement is unproven |
 
 Overlap: #285 and #286 (renames and the test-only lookup move) are merged and

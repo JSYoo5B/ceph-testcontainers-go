@@ -52,6 +52,9 @@ func Lease(ctx context.Context, t *ceph.Tenant, fs string) (*TenantGroup, error)
 	if err != nil {
 		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
+	if err := port.RequireService(cephFSBootstrapKind); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, port.StartupTimeout())
 	defer cancel()
 	found, err := tenantScript(ctx, port.Command, "find", fs, t.ID())

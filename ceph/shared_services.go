@@ -5,13 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/sharedinvariants"
 )
 
-// sharedService is what a service package (rbd, cephfs, rgw) registers for
-// shared clusters through internal/servicehook.
+// sharedService is the support of one service (rbd, cephfs, rgw) for shared
+// clusters. A SharedCluster owns the set of them it was constructed with.
 type sharedService struct {
 	kind string
 	// prepare readies a cluster that runs the service before its baseline
@@ -26,6 +27,94 @@ type sharedService struct {
 	probe func(ctx context.Context, c *Container) (map[string]string, error)
 }
 
+// sharedPrepare and sharedProbe are a service's callbacks as the cluster
+// backend runs them. The set wraps each one so that its error names the
+// service.
+type (
+	sharedPrepare func(ctx context.Context, c *Container) error
+	sharedProbe   func(ctx context.Context, c *Container) (map[string]string, error)
+)
+
+// sharedServiceSet is the service support one SharedCluster owns. It is built
+// once, by NewShared, and never changes afterwards, so it needs no lock and
+// two SharedClusters of one process can hold different sets. Its services are
+// sorted by kind.
+type sharedServiceSet struct {
+	services []sharedService
+	prepares []sharedPrepare
+	probes   []sharedProbe
+}
+
+// newSharedServiceSet validates services and returns the set. A service
+// without a kind (the zero value is not a constructed service) and a kind
+// given twice are errors; neither callback is required.
+func newSharedServiceSet(services []sharedService) (sharedServiceSet, error) {
+	var errs []error
+	seen := map[string]bool{}
+	var set sharedServiceSet
+	for _, service := range services {
+		switch {
+		case service.kind == "":
+			errs = append(errs, errors.New("a shared service support has no kind"))
+			continue
+		case seen[service.kind]:
+			errs = append(errs, fmt.Errorf("shared service support %q is given twice", service.kind))
+			continue
+		}
+		seen[service.kind] = true
+		set.services = append(set.services, service)
+	}
+	if len(errs) > 0 {
+		return sharedServiceSet{}, errors.Join(errs...)
+	}
+	slices.SortFunc(set.services, func(a, b sharedService) int { return strings.Compare(a.kind, b.kind) })
+	for _, service := range set.services {
+		kind := service.kind
+		if prepare := service.prepare; prepare != nil {
+			set.prepares = append(set.prepares, func(ctx context.Context, c *Container) error {
+				if err := prepare(ctx, c); err != nil {
+					return fmt.Errorf("prepare %s for a shared cluster: %w", kind, err)
+				}
+				return nil
+			})
+		}
+		if probe := service.probe; probe != nil {
+			set.probes = append(set.probes, func(ctx context.Context, c *Container) (map[string]string, error) {
+				found, err := probe(ctx, c)
+				if err != nil {
+					return nil, fmt.Errorf("list the %s resources: %w", kind, err)
+				}
+				return found, nil
+			})
+		}
+	}
+	return set, nil
+}
+
+// has reports whether the set holds the support of kind.
+func (set sharedServiceSet) has(kind string) bool {
+	return slices.ContainsFunc(set.services, func(s sharedService) bool { return s.kind == kind })
+}
+
+// withSharedServices gives a SharedCluster exactly these services instead of
+// the ones the service packages registered. It is the unexported seam of the
+// instance-owned support: the exported option waits for the owner's choice of
+// names. Repeated uses add up; a kind given twice is an ErrInvalidRequest at
+// the first Lease or Exclusive.
+func withSharedServices(services ...sharedService) SharedOption {
+	return func(s *sharedSettings) {
+		s.serviceList = append(s.serviceList, services...)
+		s.serviceListGiven = true
+	}
+}
+
+// transitionalRegisteredServices is read once, by NewShared, when no
+// withSharedServices option was given. It is the last reader of the
+// process-global registry, which goes away with the init registration.
+func transitionalRegisteredServices() []sharedService { return registeredSharedServices() }
+
+// The process-global registry below is the transitional source of the default
+// set. Only NewShared reads it (TestSharedServiceRegistryHasOneReader).
 var sharedServices struct {
 	mu     sync.Mutex
 	byKind map[string]sharedService
@@ -53,16 +142,25 @@ func registeredSharedServices() []sharedService {
 	return services
 }
 
-// resources runs the registered probes on b's cluster.
-func (b containerBackend) resources(ctx context.Context) (map[string]string, error) {
-	resources := map[string]string{}
-	for _, service := range registeredSharedServices() {
-		if service.probe == nil {
-			continue
+// runPrepares runs the services' preparation on c in order and stops at the
+// first failure.
+func runPrepares(ctx context.Context, c *Container, prepares []sharedPrepare) error {
+	for _, prepare := range prepares {
+		if err := prepare(ctx, c); err != nil {
+			return err
 		}
-		found, err := service.probe(ctx, b.c)
+	}
+	return nil
+}
+
+// runProbes merges the probes' listings in order; a later service wins a key
+// that two list. The first failure stops the run.
+func runProbes(ctx context.Context, c *Container, probes []sharedProbe) (map[string]string, error) {
+	resources := map[string]string{}
+	for _, probe := range probes {
+		found, err := probe(ctx, c)
 		if err != nil {
-			return nil, fmt.Errorf("list the %s resources: %w", service.kind, err)
+			return nil, err
 		}
 		for key, owner := range found {
 			resources[key] = owner

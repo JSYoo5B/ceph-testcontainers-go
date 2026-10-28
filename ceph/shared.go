@@ -85,6 +85,12 @@ type sharedSettings struct {
 	maxTenants  int
 	maxRecycles int
 	err         error
+	// serviceList and serviceListGiven come from withSharedServices;
+	// services is the validated set that NewShared builds from them, or from
+	// the transitional registry when none was given.
+	serviceList      []sharedService
+	serviceListGiven bool
+	services         sharedServiceSet
 	// start replaces Run in tests.
 	start sharedStarter
 	// settle replaces sharedSettleTimeout in tests.
@@ -160,6 +166,12 @@ func NewShared(image string, opts ...SharedOption) *SharedCluster {
 	for _, opt := range opts {
 		opt(&settings)
 	}
+	if !settings.serviceListGiven {
+		settings.serviceList = transitionalRegisteredServices()
+	}
+	set, err := newSharedServiceSet(settings.serviceList)
+	settings.err = errors.Join(settings.err, err)
+	settings.services = set
 	return &SharedCluster{image: image, settings: settings, instances: map[*sharedInstance]bool{},
 		holds: map[string]int{}, wake: make(chan struct{})}
 }
@@ -388,7 +400,7 @@ func (s *SharedCluster) start(ctx context.Context, inst *sharedInstance) {
 		err = backend.createPool(ctx, SharedPool)
 	}
 	if err == nil {
-		err = backend.prepareServices(ctx)
+		err = backend.prepareServices(ctx, s.settings.services.prepares)
 	}
 	if err == nil {
 		settleCtx, cancel := context.WithTimeout(ctx, max(s.settings.settle, time.Second)*4)
@@ -433,7 +445,7 @@ func (s *SharedCluster) settledBaseline(ctx context.Context, backend sharedBacke
 		baseline, err := backend.invariants(ctx, SharedPool)
 		if err != nil || !slices.ContainsFunc(baseline.Health, lagging) || time.Now().After(deadline) {
 			if err == nil {
-				baseline.Resources, err = backend.resources(ctx)
+				baseline.Resources, err = backend.resources(ctx, s.settings.services.probes)
 			}
 			return baseline, err
 		}
@@ -629,7 +641,7 @@ func (s *SharedCluster) cleanAndVerify(ctx context.Context, tenant *Tenant) ([]s
 	if len(errs) > 0 {
 		return remains, errors.Join(errs...)
 	}
-	resources, err := backend.resources(ctx)
+	resources, err := backend.resources(ctx, s.settings.services.probes)
 	if err != nil {
 		return remains, err
 	}
