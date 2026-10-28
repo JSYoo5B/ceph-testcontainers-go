@@ -9,6 +9,8 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/resourcename"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -39,14 +41,14 @@ func Lease(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, 
 	if t == nil {
 		return nil, invalid(errors.New("tenant is required"))
 	}
-	if err := validateResourceName("pool", pool); err != nil {
-		return nil, err
+	if err := resourcename.Check("pool", pool); err != nil {
+		return nil, invalid(err)
 	}
 	port, err := servicehook.Tenant(t)
 	if err != nil {
 		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
-	if err := port.RequireService(bootstrapKind); err != nil {
+	if err := port.RequireService(servicekind.RBD); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, port.StartupTimeout())
@@ -237,5 +239,5 @@ func probeTenantNamespaces(ctx context.Context, c *ceph.Container) (map[string]s
 }
 
 func init() {
-	servicehook.RegisterSharedService(bootstrapKind, nil, probeTenantNamespaces)
+	servicehook.RegisterSharedService(servicekind.RBD, nil, probeTenantNamespaces)
 }

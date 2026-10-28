@@ -11,6 +11,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -52,7 +53,7 @@ func Lease(ctx context.Context, t *ceph.Tenant, fs string) (*TenantGroup, error)
 	if err != nil {
 		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
-	if err := port.RequireService(cephFSBootstrapKind); err != nil {
+	if err := port.RequireService(servicekind.CephFS); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, port.StartupTimeout())
@@ -443,5 +444,5 @@ func probeShared(ctx context.Context, c *ceph.Container) (map[string]string, err
 }
 
 func init() {
-	servicehook.RegisterSharedService(cephFSBootstrapKind, prepareShared, probeShared)
+	servicehook.RegisterSharedService(servicekind.CephFS, prepareShared, probeShared)
 }

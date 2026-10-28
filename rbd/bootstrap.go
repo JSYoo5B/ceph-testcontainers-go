@@ -6,9 +6,8 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
 )
-
-const bootstrapKind = "rbd"
 
 // poolsBootstrap creates RBD pools with the initial pools and initializes
 // their RBD metadata once they exist.
@@ -30,7 +29,7 @@ func newPoolsBootstrap(configs []ceph.PoolConfig) (*poolsBootstrap, error) {
 	return &poolsBootstrap{pools: pools}, nil
 }
 
-func (b *poolsBootstrap) Kind() string                    { return bootstrapKind }
+func (b *poolsBootstrap) Kind() string                    { return servicekind.RBD }
 func (b *poolsBootstrap) Order() int                      { return 1 }
 func (b *poolsBootstrap) InitialPools() []ceph.PoolConfig { return b.pools }
 func (b *poolsBootstrap) NeedsManagers() bool             { return false }
@@ -54,13 +53,13 @@ func (b *poolsBootstrap) Start(ctx context.Context, c *ceph.Container) error {
 // another application; erasure-coded data pools are created with WithPools and
 // referenced as an image's data pool. Repeated options replace the list.
 func WithPools(configs ...ceph.PoolConfig) ceph.Option {
-	return servicehook.WithBootstrap(bootstrapKind, false, func() (servicehook.Bootstrap, error) { return newPoolsBootstrap(configs) })
+	return servicehook.WithBootstrap(servicekind.RBD, false, func() (servicehook.Bootstrap, error) { return newPoolsBootstrap(configs) })
 }
 
 // defaultPool selects one initialized RBD pool named rbd when no RBD pool
 // option was given.
 func defaultPool() ceph.Option {
-	return servicehook.WithBootstrap(bootstrapKind, true, func() (servicehook.Bootstrap, error) {
+	return servicehook.WithBootstrap(servicekind.RBD, true, func() (servicehook.Bootstrap, error) {
 		return newPoolsBootstrap([]ceph.PoolConfig{{Name: "rbd", Application: "rbd"}})
 	})
 }

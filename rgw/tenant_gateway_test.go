@@ -1,6 +1,10 @@
 package rgw
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
+)
 
 func TestPickSharedGatewayPrefersDefaultThenFirstByName(t *testing.T) {
 	if pickSharedGateway(nil) != nil {
@@ -28,7 +32,7 @@ func TestGatewaysFromUsesTheGivenStateOnce(t *testing.T) {
 	if r == nil || r.byName == nil || gatewaysFrom(ext) != r {
 		t.Fatal("the registry is not created once per state")
 	}
-	if _, ok := store[rgwBootstrapKind]; !ok {
-		t.Fatalf("registry stored under %v, want %q", store, rgwBootstrapKind)
+	if _, ok := store[servicekind.RGW]; !ok {
+		t.Fatalf("registry stored under %v, want %q", store, servicekind.RGW)
 	}
 }

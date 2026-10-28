@@ -66,11 +66,3 @@ func TestRBDInvalidResourceNamesAreRefusedWithTheSameError(t *testing.T) {
 		}
 	}
 }
-
-func TestRBDValidResourceNamesPassValidation(t *testing.T) {
-	for _, name := range []string{"a", "_", "0", "pool.1", "a-b", "A_b.c-d", strings.Repeat("a", 128)} {
-		if err := validateResourceName("pool", name); err != nil {
-			t.Errorf("%q refused: %v", name, err)
-		}
-	}
-}

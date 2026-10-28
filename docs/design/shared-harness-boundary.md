@@ -503,7 +503,7 @@ audit and the narrowing are done here.
 ## Inventory at `83de22a`
 
 Pinned at `83de22a8fe310d612612479d1941d2e3a3d9dabf` (main after the owner-listed
-merges #266, #272, #281, #282 and #284, and after #285, #286, #287 and #290; the rows were refreshed for the instance-owned service set on top of main at `f5e0e42`). The rows below are
+merges #266, #272, #281, #282 and #284, and after #285, #286, #287 and #290; the rows were refreshed for the instance-owned service set on top of main at `f5e0e42`, and again for the service-helper moves of decision 8 on top of main at `8bff17d`). The rows below are
 measured from the files by `ceph/shared_harness_inventory_test.go` and compared
 with this table, so a drifting row fails the test; the pinned commit is the only
 part that is not checked and is refreshed by hand. Source reading and Docker-free
@@ -533,9 +533,9 @@ files of the directory including tests.
 | exported Tenant methods that move | 8 |
 | exported declarations that move | 28 |
 | private names of package ceph that the harness files name | classify, classifyDocker, clientIDPattern, clusterOps, invalidRequest, newLeasedObserver, sharedBackend, sharedExclusively, sharedInvariants, sharedStarter, sharedWithTenants, startSharedContainer |
-| private names of package rbd that its tenant.go names | bootstrapKind, invalid, validateResourceName |
-| private names of package cephfs that its tenant.go names | cephFSBootstrapKind, invalid |
-| private names of package rgw that its tenant.go names | gateways, gatewaysFrom, invalid, rgwBootstrapKind |
+| private names of package rbd that its tenant.go names | invalid |
+| private names of package cephfs that its tenant.go names | invalid |
+| private names of package rgw that its tenant.go names | gateways, gatewaysFrom, invalid |
 | references to moved names in rbd | 4 in 1 files |
 | references to moved names in cephfs | 3 in 1 files |
 | references to moved names in rgw | 4 in 1 files |
@@ -561,8 +561,11 @@ What changed against the older tables, so none of them is carried forward:
   `unitAccess.UnitTenantCluster` through the `hookreg.Test` seam, with four call
   sites outside `ceph`, all native controls. `internal/servicehook` names the
   moved names twice, not four times, for that reason.
-- The adapters' private reach is new: each service's `tenant.go` names two to
-  four unexported helpers of its own package. They are the inputs of decision 8.
+- The adapters' private reach is new: each service's `tenant.go` named two to
+  four unexported helpers of its own package (rbd 3, cephfs 2, rgw 4). They are
+  the inputs of decision 8. The first move has taken the service kinds and rbd's
+  resource-name check out of it, so the rows above now list rbd 1, cephfs 1 and
+  rgw 3 names; "Service harness private reach" has the inventory of every name.
 
 ### Prerequisites at `83de22a`
 
@@ -990,14 +993,42 @@ message, and keeps the dependency direction (no core-to-harness import).
 
 ### Service harness private reach
 
-The inventory shows what each adapter file names in its own service package:
-`bootstrapKind`, `validateResourceName` and `invalid` in rbd, `cephFSBootstrapKind`
-and `invalid` in cephfs, `gateways`, `gatewaysFrom`, `invalid` and
-`rgwBootstrapKind` in rgw. The recommendation is to move each into a
-`<service>/internal/...` package that the service and its `harness` child both
-import (the internal-directory rule admits any package rooted at `rbd/`), so no
-new public name appears. This is a source move inside each service, independent
-of `ceph/harness`.
+Decision 8 recommends moving each helper that an adapter's `tenant.go` names
+into a leaf package that the service and its `harness` child both import (the
+internal-directory rule admits any package rooted at the module or at the
+service directory), so no new public name appears. The recommendation needs no
+public name, so it is carried out in steps. The inventory below lists every
+private name as measured at `8bff17d`, where it is defined, who else calls it
+(non-test call sites outside `tenant.go`, then test files) and the step.
+
+| Service | Name | Defined | Other callers | Destination | State |
+| --- | --- | --- | --- | --- | --- |
+| rbd | `bootstrapKind` (`"rbd"`) | `rbd/bootstrap.go` | `bootstrap.go` (3: `Kind`, `WithPools`, `defaultPool`) | `servicekind.RBD` in `internal/servicekind` | Moved; the old name is removed |
+| rbd | `validateResourceName` | `rbd/pool.go` | `pool.go` (4), `image_clients.go` (3) | `rbd/internal/resourcename.Check`; each caller wraps the error with its own `invalid` | Moved; the old name is removed |
+| cephfs | `cephFSBootstrapKind` (`"cephfs"`) | `cephfs/bootstrap.go` | `bootstrap.go` (1), `entry.go` (3) | `servicekind.CephFS` | Moved; the old name is removed |
+| rgw | `rgwBootstrapKind` (`"rgw"`) | `rgw/bootstrap.go` | `bootstrap.go` (1), `entry.go` (3), one test | `servicekind.RGW` | Moved; the old name is removed |
+| rbd, cephfs, rgw | `invalid` | one copy per package (also two in the `mirror` packages): `&ceph.OperationError{Kind: ceph.ErrInvalidRequest, Err: err}` | call sites in total: rbd 26, cephfs 68, rgw 63 (14 of them in the three `tenant.go` files), plus `mirror` 29 and 16 | One shared construction, owned by the error contract of "Error handling" | Open: about 200 call sites and the owner's error-contract decision, not a pure helper move |
+| rgw | `gateways`, `gatewaysFrom` | `rgw/entry.go`, with `gatewayRegistry` | `gateway.go`, `tenant.go`, tests | A registry in a leaf package, which cannot name `rgw.Gateway` (import cycle) | Open: needs a type-parameterized registry or a narrower value, a design choice |
+
+The `servicekind` package is shared by the three services instead of one package
+per service because each part is one string constant and the three kinds are the
+keys of one instance-owned service set (`RequireService`, bootstrap kind,
+extension store); a single leaf keeps them in one place for the harness packages.
+`rbd/internal/resourcename` is rbd-owned because only rbd validates RBD names.
+The move is old-name removal under the 0.x policy: no alias, wrapper or forward
+remains, and `ceph/service_helper_moves_test.go` fails if a moved name reappears,
+if a leaf package imports a service package, or if a `tenant.go` names a
+private name outside the table above.
+
+Why the two open rows stay open. `invalid` has no behavior of its own, but moving
+it means rewriting about 200 call sites in five packages and choosing where the
+error contract lives (the owner left the internal package to implementation);
+the harness can build the same value from the public `ceph.OperationError` and
+`ceph.ErrInvalidRequest` only by copying it, which the error decision forbids for
+the classification helpers. `gatewaysFrom(...).sorted()` returns `[]*Gateway`, so
+a leaf registry would have to be generic over the gateway or the tenant would
+have to pick through a narrower interface. Both are design choices for the move
+itself and are not made here.
 
 ### Order of work
 
@@ -1020,8 +1051,10 @@ of `ceph/harness`.
    the decision 7 lookup.
    The error contract needs no preparation: it is added with the move because it
    has no caller before then.
-2. Internal: move the service-private helpers into `<service>/internal/...`
-   (decision 8), one change per service.
+2. Internal: move the service-private helpers into leaf internal packages
+   (decision 8). Done for the three service kinds and rbd's resource-name check
+   (see "Service harness private reach"); `invalid` and the rgw gateway registry
+   remain, each needing a design choice first.
 3. The move: `ceph/harness`, `internal/harnesshook`, the two slots, the three
    service harnesses, `servicehook`, `ObserveTenant`, direct caller migration,
    catalogue regeneration and the `moves` record, the package-split shard, the
@@ -1065,7 +1098,7 @@ draft's `init`-time recommendation for decision 1 is withdrawn.
 | --- | --- | --- | --- |
 | 5 | Typed hook placement and the signature boundary between `ceph` and the harness (the owner left the internal package and port mechanism to implementation) | Top-level `internal/harnesshook` beside `faulthook` and `overridehook`, with port interfaces in `any`/`int32` terms that `ceph` satisfies structurally and harness-facing wrappers on the other side | `ceph/internal/...` is not importable by `internal/servicehook`; a shared leaf package for the port types cannot name `ceph.ClientCaps` and the other public types without importing `ceph` |
 | 7 | Test-only tenant-cluster lookup (`testhelper.TestTenantCluster`, today `unitAccess.UnitTenantCluster`) | Keep it test-only: a second method of the `HarnessTenant` value, asserted by `testhelper`, four known native call sites, guarded | Replacing the four native controls with Observer-based checks weakens what they prove about the gate |
-| 8 | Service-private helpers used by the adapters | `<service>/internal/...` packages, moved before the harness | Exporting them adds public names to rbd, cephfs and rgw |
+| 8 | Service-private helpers used by the adapters | Leaf internal packages, moved before the harness; the pure moves are done and the inventory names the two that are not | Exporting them adds public names to rbd, cephfs and rgw |
 | 9 | Exported names and signatures beyond the settled ones | The old-to-new map: same names in the new packages, no renames, no new options other than the service-support input; any rename is a later change | Renaming during the move mixes a mechanical migration with an API review |
 | 10 | Shape of the service-support input and its validation (the instance-owned set, its validation and `RequireService` are implemented behind unexported names; see "Instance-owned service set: first slice" for the exact exported spelling proposed) | An opaque `ceph/harness` value built by each service harness through an internal route and passed to `NewShared` as an option, validated at construction (duplicate kind, foreign value) and checked by a tenant-port method before a service `Lease` creates anything | A positional `NewShared` argument changes the signature for every caller; a plain callback struct would show the cluster-receiving callbacks in public API |
 | 11 | Stale-handle audit result for `Exclusive` | Do the audit as the first step of the move, as a Docker-free test over the access paths plus a native control, and record every gap | Deferring it until after the move would accept a handle whose enforcement is unproven |
