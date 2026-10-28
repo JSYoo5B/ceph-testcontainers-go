@@ -245,10 +245,16 @@ func TestSharedServiceRegistryHasOneReader(t *testing.T) {
 	}
 }
 
+// isSelector reports whether sel is pkg.name.
+func isSelector(sel *ast.SelectorExpr, pkg, name string) bool {
+	id, ok := sel.X.(*ast.Ident)
+	return ok && id.Name == pkg && sel.Sel.Name == name
+}
+
 func TestServiceAdaptersRequireTheirSupportBeforeCreating(t *testing.T) {
 	// Each adapter Lease calls RequireService with its own kind constant,
 	// after taking the port and before AttachScope or any command.
-	for dir, kind := range map[string]string{"rbd": "bootstrapKind", "cephfs": "cephFSBootstrapKind", "rgw": "rgwBootstrapKind"} {
+	for dir, kind := range map[string]string{"rbd": "RBD", "cephfs": "CephFS", "rgw": "RGW"} {
 		src := nonTestSources(t, filepath.Join("..", dir))["tenant.go"]
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, "tenant.go", src, 0)
@@ -273,8 +279,8 @@ func TestServiceAdaptersRequireTheirSupportBeforeCreating(t *testing.T) {
 				}
 				switch sel.Sel.Name {
 				case "RequireService":
-					if id, ok := call.Args[0].(*ast.Ident); !ok || id.Name != kind {
-						t.Errorf("%s.Lease requires a service other than %s", dir, kind)
+					if sel, ok := call.Args[0].(*ast.SelectorExpr); !ok || !isSelector(sel, "servicekind", kind) {
+						t.Errorf("%s.Lease requires a service other than servicekind.%s", dir, kind)
 					}
 					order = append(order, "require")
 				case "AttachScope", "Command":

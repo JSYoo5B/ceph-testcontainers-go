@@ -6,9 +6,8 @@ import (
 	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
 )
-
-const rgwBootstrapKind = "rgw"
 
 // rgwBootstrap validates initial gateway names and starts the gateways once
 // the initial pools exist.
@@ -18,7 +17,7 @@ func newRGWBootstrap(configs []Config) *rgwBootstrap {
 	return &rgwBootstrap{configs: slices.Clone(configs)}
 }
 
-func (b *rgwBootstrap) Kind() string                    { return rgwBootstrapKind }
+func (b *rgwBootstrap) Kind() string                    { return servicekind.RGW }
 func (b *rgwBootstrap) Order() int                      { return 3 }
 func (b *rgwBootstrap) InitialPools() []ceph.PoolConfig { return nil }
 func (b *rgwBootstrap) NeedsManagers() bool             { return true }

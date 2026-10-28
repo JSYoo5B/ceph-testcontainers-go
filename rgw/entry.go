@@ -9,6 +9,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -60,7 +61,7 @@ func WithGateways(configs ...Config) ceph.Option {
 	if len(configs) == 0 {
 		configs = []Config{{}}
 	}
-	return servicehook.WithBootstrap(rgwBootstrapKind, false, func() (servicehook.Bootstrap, error) { return newRGWBootstrap(configs), nil })
+	return servicehook.WithBootstrap(servicekind.RGW, false, func() (servicehook.Bootstrap, error) { return newRGWBootstrap(configs), nil })
 }
 
 // WithImage selects the image for every gateway of the cluster, those
@@ -75,7 +76,7 @@ func WithImage(image string) ceph.Option { return servicehook.WithServiceImage("
 
 // defaultGateway selects one default gateway when no gateway option was given.
 func defaultGateway() ceph.Option {
-	return servicehook.WithBootstrap(rgwBootstrapKind, true, func() (servicehook.Bootstrap, error) { return newRGWBootstrap([]Config{{}}), nil })
+	return servicehook.WithBootstrap(servicekind.RGW, true, func() (servicehook.Bootstrap, error) { return newRGWBootstrap([]Config{{}}), nil })
 }
 
 // gatewayRegistry is the cluster's per-cluster RGW state. The cluster mutex
@@ -93,7 +94,7 @@ func gateways(c *ceph.Container) *gatewayRegistry {
 // gatewaysFrom is gateways for a caller that reaches the cluster's service
 // state through something other than the cluster, such as a tenant port.
 func gatewaysFrom(extension func(kind string, create func() any) any) *gatewayRegistry {
-	return extension(rgwBootstrapKind, func() any {
+	return extension(servicekind.RGW, func() any {
 		return &gatewayRegistry{byName: make(map[string]*Gateway)}
 	}).(*gatewayRegistry)
 }
