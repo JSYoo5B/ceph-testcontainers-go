@@ -9,9 +9,9 @@ import (
 // bootstrapRecord is the bootstrap record of one cluster: the first MON's
 // ceph.conf and admin keyring as read after startup, the Ceph version that
 // MON reported, and the read-write lock that guards the configuration and the
-// keyring. It is a component of the internal state split described in
-// docs/design/container-decomposition.md, the bootstrap-record lock domain of
-// the membership and control group.
+// keyring. It is a component of the internal state split, recorded in
+// docs/design/container-decomposition/bootstrap-record.md, the bootstrap-record
+// lock domain of the membership and control group.
 //
 // The lock is the former Container.configMu, moved with the data it guards; no
 // mutex was added and no lock order changed. mu is a leaf below Container.mu:

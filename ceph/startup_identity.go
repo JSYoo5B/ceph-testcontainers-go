@@ -15,8 +15,9 @@ import (
 // --key-type, and the ID of the first MON's image. It also holds the one test
 // seam that replaces the Docker client of the labeled-container removal, the
 // only code besides the label itself that uses the owner ID. It is a component
-// of the internal state split described in docs/design/container-decomposition.md,
-// the startup-identity group of the membership and control fields.
+// of the internal state split, recorded in
+// docs/design/container-decomposition/startup-identity.md, the startup-identity
+// group of the membership and control fields.
 //
 // The type has no mutex and Container.mu was not given a new job. Every field
 // is written before the cluster value is shared and is read-only afterwards:

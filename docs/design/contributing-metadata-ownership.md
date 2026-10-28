@@ -946,6 +946,15 @@ Implementation of items 1, 4 and 5 (the file migration, and reconciling the
 contributing and validator guidance with the existing checks) is not part of
 this change.
 
+Update after the migration of item 1: the records now live under
+`docs/design/container-decomposition/`, one file per component, discovered from
+the directory by the Docker-free guards in
+`ceph/container_decomposition_records_test.go` and
+`ceph/container_residual_fields_test.go`. The sixteen former ordinal sections
+keep their text; the shared document records the old ordinals as historical
+context. Where this note says above that the record is one 2,322-line document,
+it describes the state measured at the snapshot.
+
 ## Not decided and limits
 
 - The directory and field names above are proposals, except the component-owned
