@@ -25,7 +25,7 @@ const (
 // run or whose command is not confirmed as stopped, whether Terminate refuses
 // new ones, the OSD instances fenced against new ones, and the cancel function
 // of a client-image startup. It is the second component of the internal state
-// split described in docs/design/container-decomposition.md.
+// split, recorded in docs/design/container-decomposition/native-command-state.md.
 //
 // mu is the former Container.nativeMu, moved with the fields it always
 // guarded, so the split adds no lock. It is a leaf lock: no method here calls

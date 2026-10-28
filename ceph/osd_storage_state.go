@@ -10,8 +10,8 @@ import (
 // that WithOSDInMemoryStorage selects, the ordinary volume that
 // WithOSDVolumeStorage selects, and the test seams that replace the Docker
 // collaborators of their allocation and of the OSD containers. It is the
-// fourth component of the internal state split described in
-// docs/design/container-decomposition.md.
+// fourth component of the internal state split, recorded in
+// docs/design/container-decomposition/osd-storage-state.md.
 //
 // The type has no mutex. Container.mu guards every field, as it guarded
 // Container.osdMemory and Container.osdVolume before the move: registerOSD,

@@ -10,7 +10,7 @@ import (
 // Docker volume that every MON, MGR, OSD and control container mounts at
 // /var/run/ceph, so that a command in the control container can reach the
 // admin socket of a daemon. It is the sixth component of the internal state
-// split described in docs/design/container-decomposition.md.
+// split, recorded in docs/design/container-decomposition/run-directory-state.md.
 //
 // The type has no mutex and Container.mu was not given a new job. The parts
 // have two different guards, which the methods name:
