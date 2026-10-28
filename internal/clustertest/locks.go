@@ -13,25 +13,25 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-// ContextLockRuntime counts native calls a queued operation must not make.
-type ContextLockRuntime struct {
+// NativeCallCounter counts native calls a queued operation must not make.
+type NativeCallCounter struct {
 	testcontainers.Container
 	Execs, Stops, Terminations atomic.Int32
 }
 
-func (runtime *ContextLockRuntime) GetContainerID() string { return "context-lock-runtime" }
+func (runtime *NativeCallCounter) GetContainerID() string { return "context-lock-runtime" }
 
-func (runtime *ContextLockRuntime) Exec(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (runtime *NativeCallCounter) Exec(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
 	runtime.Execs.Add(1)
 	return 1, nil, errors.New("unexpected native command while queued")
 }
 
-func (runtime *ContextLockRuntime) Stop(context.Context, *time.Duration) error {
+func (runtime *NativeCallCounter) Stop(context.Context, *time.Duration) error {
 	runtime.Stops.Add(1)
 	return nil
 }
 
-func (runtime *ContextLockRuntime) Terminate(ctx context.Context, _ ...testcontainers.TerminateOption) error {
+func (runtime *NativeCallCounter) Terminate(ctx context.Context, _ ...testcontainers.TerminateOption) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -76,25 +76,25 @@ func AssertContextLockQueued(t testing.TB, mutex *sync.Mutex, operation func(con
 	locked = false
 }
 
-// AdmissionContainer counts control queries that admission must not reach.
-type AdmissionContainer struct {
+// ControlQueryCounter counts control queries that admission must not reach.
+type ControlQueryCounter struct {
 	testcontainers.Container
 	Calls *atomic.Int32
 }
 
-func (c *AdmissionContainer) GetContainerID() string {
+func (c *ControlQueryCounter) GetContainerID() string {
 	c.Calls.Add(1)
 	return "unexpected-control-query"
 }
 
-// CleanupContainer records Terminate calls and returns Err.
-type CleanupContainer struct {
+// TerminateRecorder records Terminate calls and returns Err.
+type TerminateRecorder struct {
 	testcontainers.Container
 	Calls int
 	Err   error
 }
 
-func (c *CleanupContainer) Terminate(context.Context, ...testcontainers.TerminateOption) error {
+func (c *TerminateRecorder) Terminate(context.Context, ...testcontainers.TerminateOption) error {
 	c.Calls++
 	return c.Err
 }

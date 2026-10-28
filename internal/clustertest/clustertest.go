@@ -1,6 +1,6 @@
 // Package clustertest holds unit-test fakes and assertions that package ceph,
-// the service packages and internal/multicluster share. CLI answers each Ceph
-// command from a table, StateFake keeps a small model of the cluster that
+// the service packages and internal/multicluster share. CannedCommandContainer
+// answers each Ceph command from a table, StateFake keeps a small model of the cluster that
 // commands read and change, and the lock helpers check that operations wait
 // for a held lock without native effects.
 package clustertest
@@ -66,11 +66,12 @@ func Reply(args []string, code int, output []byte) (int, io.Reader, error) {
 	return code, &stream, nil
 }
 
-// CLI answers each command from Output, keyed by the command's words joined
-// with spaces. Commands with an ls word default to an empty JSON list. The
+// CannedCommandContainer is a control container whose Exec answers each
+// command from Output, keyed by the command's words joined with
+// spaces. Commands with an ls word default to an empty JSON list. The
 // command equal to Fail exits FailCode, or 1, and writes FailReason, or a
 // generic message, to standard error. Calls records every command's words.
-type CLI struct {
+type CannedCommandContainer struct {
 	testcontainers.Container
 	Calls      [][]string
 	Output     map[string]string
@@ -80,7 +81,7 @@ type CLI struct {
 }
 
 // Exec answers args from the table.
-func (ctr *CLI) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
+func (ctr *CannedCommandContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
 	commandArgs := args
 	args = slices.Clone(ModuleArgs(args))
 	ctr.Calls = append(ctr.Calls, args)
@@ -119,7 +120,7 @@ func (ctr *CLI) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption
 // from that state and mutations change it, refusing what Ceph refuses, so
 // tests assert the resulting state instead of the commands that produced it.
 type StateFake struct {
-	*CLI
+	*CannedCommandContainer
 	Pools       []FakePool
 	Rules       map[int]string
 	Profiles    []string
@@ -148,11 +149,11 @@ type FakeFilesystem struct {
 // and profile.
 func NewStateFake() *StateFake {
 	return &StateFake{
-		CLI:      &CLI{Output: map[string]string{}},
-		Pools:    []FakePool{{ID: 1, Name: ".mgr", Rule: 0}},
-		Rules:    map[int]string{0: "replicated_rule"},
-		Profiles: []string{"default"},
-		failures: map[string]int{},
+		CannedCommandContainer: &CannedCommandContainer{Output: map[string]string{}},
+		Pools:                  []FakePool{{ID: 1, Name: ".mgr", Rule: 0}},
+		Rules:                  map[int]string{0: "replicated_rule"},
+		Profiles:               []string{"default"},
+		failures:               map[string]int{},
 	}
 }
 
@@ -281,7 +282,7 @@ func (f *StateFake) Exec(ctx context.Context, args []string, opts ...tcexec.Proc
 		name, _, _ := strings.Cut(refusal, ":")
 		f.Fail, f.FailReason, f.FailCode = command, "Error "+refusal+"\n", errnos[name]
 	}
-	code, reader, err := f.CLI.Exec(ctx, args, opts...)
+	code, reader, err := f.CannedCommandContainer.Exec(ctx, args, opts...)
 	if code == 0 && err == nil {
 		f.apply(words)
 	}

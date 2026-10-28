@@ -11,7 +11,7 @@ import (
 )
 
 func TestResourcesCleanupNestedGateDeadlinePreservesRetry(t *testing.T) {
-	probe := &clustertest.ContextLockRuntime{}
+	probe := &clustertest.NativeCallCounter{}
 	var owned Resources
 	owned.AddContainer(probe)
 	operation := func(ctx context.Context) error { return owned.Terminate(ctx) }

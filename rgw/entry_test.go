@@ -99,7 +99,7 @@ func TestSerializedGatewayMutationQueuedDeadline(t *testing.T) {
 	}
 	for name, operation := range operations {
 		t.Run(name, func(t *testing.T) {
-			control := &clustertest.ContextLockRuntime{}
+			control := &clustertest.NativeCallCounter{}
 			cluster := testCluster(control, testhelper.TestConfig{StartupTimeout: time.Second, HostNetwork: name == "StartHost", PublicAddress: "127.0.0.1"}, nil)
 			clustertest.AssertContextLockQueued(t, testhelper.TestState(cluster).Mutex, func(ctx context.Context) error { return operation(ctx, cluster) })
 			if control.Execs.Load() != 0 || testhelper.TestState(cluster).PortLeases != 0 || len(servicehook.Services(cluster)) != 0 || len(gateways(cluster).byName) != 0 {
