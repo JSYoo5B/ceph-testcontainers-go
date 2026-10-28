@@ -465,7 +465,7 @@ type testState = struct {
 // caller holds Mutex or the cluster value is not shared yet.
 func (serviceHooks) TestState(c *Container) testState {
 	return testState{
-		Mutex: &c.mu, ControlMutex: &c.controlMu, ConfigMutex: &c.configMu,
+		Mutex: &c.mu, ControlMutex: c.controlPlane.mutex(), ConfigMutex: &c.configMu,
 		Config: &c.config, Keyring: &c.keyring, CephVersion: &c.cephVersion,
 		PortLeases: c.portLeases.count(), NetworkRemoved: &c.nets.publicRemoved,
 	}
@@ -484,7 +484,7 @@ func (serviceHooks) TestSetClosed(c *Container, closed bool) { c.closed = closed
 // TestSetControlPlane replaces the control-plane container. The caller holds
 // ControlMutex or the cluster value is not shared.
 func (serviceHooks) TestSetControlPlane(c *Container, control testcontainers.Container) {
-	c.controlPlane = control
+	c.controlPlane.handle = control
 }
 
 // TestSetInitialOSDs sets the initial OSD count. The caller holds Mutex or the

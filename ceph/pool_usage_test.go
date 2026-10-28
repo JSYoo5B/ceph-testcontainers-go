@@ -362,8 +362,8 @@ func TestPoolUsageBoundsOwnerControlAndConfigAdmission(t *testing.T) {
 				cluster.mu.Lock()
 				unlock = cluster.mu.Unlock
 			case "control":
-				cluster.controlMu.Lock()
-				unlock = cluster.controlMu.Unlock
+				cluster.controlPlane.mu.Lock()
+				unlock = cluster.controlPlane.mu.Unlock
 			case "config":
 				cluster.configMu.Lock()
 				unlock = cluster.configMu.Unlock

@@ -67,11 +67,9 @@ func (c *Container) sharedDaemons(ctx context.Context) (map[string]testcontainer
 		daemons[name] = ctr
 	}
 	c.mu.Unlock()
-	c.controlMu.RLock()
-	if c.controlPlane != nil {
-		daemons["control"] = c.controlPlane
+	if control := c.controlPlane.current(); control != nil {
+		daemons["control"] = control
 	}
-	c.controlMu.RUnlock()
 	return daemons, nil
 }
 

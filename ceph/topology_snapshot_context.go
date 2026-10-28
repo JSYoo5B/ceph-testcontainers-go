@@ -104,12 +104,12 @@ func (c *Container) controlContainerContext(ctx context.Context) (testcontainers
 	if c == nil {
 		return nil, errors.New("ceph cluster is unavailable")
 	}
-	if err := lockTopologyReadMutex(ctx, &c.controlMu); err != nil {
+	control, err := c.controlPlane.currentContext(ctx)
+	if err != nil {
 		return nil, err
 	}
-	defer c.controlMu.RUnlock()
-	if c.controlPlane != nil {
-		return c.controlPlane, nil
+	if control != nil {
+		return control, nil
 	}
 	return c.Container, nil
 }
