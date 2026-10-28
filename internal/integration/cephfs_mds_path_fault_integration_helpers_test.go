@@ -60,6 +60,12 @@ fs.conf_set("client_mount_timeout", "30")
 fs.conf_set("admin_socket", asok)
 fs.mount(filesystem_name=name.encode())
 fs.mkdir(directory, 0o755)
+# The new directory is made relative to the working directory, so the
+# request that goes out into the cut is the mkdir itself: an absolute path
+# first looks up every component whose dentry lease ran out, and such a
+# lookup is what stays pending instead.
+assert os.path.dirname(created) == directory
+fs.chdir(directory)
 fd = fs.open(path, os.O_CREAT | os.O_RDWR | os.O_TRUNC, 0o644)
 fs.write(fd, base, 0)
 fs.fsync(fd, 0)
@@ -70,7 +76,7 @@ def metadata():
     started = time.monotonic()
     result = {}
     try:
-        fs.mkdir(created, 0o755)
+        fs.mkdir(os.path.basename(created), 0o755)
         result["inode"] = fs.stat(created).st_ino
     except cephfs.Error as error:
         result.update(errno=getattr(error, "errno", None) or -1, error=str(error)[:200])
@@ -337,10 +343,13 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 		requests, err := clientRequests(probeCtx, cluster, client, asok)
 		return requests, err == nil && len(requests) > 0, err
 	})
-	if err != nil || len(submitted.Value) != 1 {
-		t.Fatalf("the client lists no single pending request: %+v, %v", submitted.Value, err)
+	if err != nil {
+		t.Fatalf("the client lists no pending request: %+v, %v", submitted.Value, err)
 	}
-	pending := submitted.Value[0]
+	pending, err := admitPendingMkdir(submitted.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Logf("pending at +%s: %+v", time.Since(cutAt).Round(time.Millisecond), pending)
 
 	// Data I/O on the open file: the tail is appended and synced to the OSDs.
@@ -406,10 +415,12 @@ func testCephFSClientMDSPathCut(t *testing.T, direction mdsPathDirection) {
 	switch {
 	case inFlightFound:
 		t.Fatalf("mds.%s holds tid %d in flight: %v", m.mds.Name, pending.TID, inFlight.events())
-	case direction == mdsToClient && (!historicFound || requestSafety(historic) != "safe" || !strings.HasPrefix(historic.Description, fmt.Sprintf("client_request(client.%d:%d mkdir ", baseline.Client, pending.TID))):
+	case direction == mdsToClient:
 		// The request reached the MDS, which created the directory,
 		// journaled it and replied; only the replies are lost.
-		t.Fatalf("mds.%s did not complete the client's mkdir: found %t %q %v", m.mds.Name, historicFound, historic.Description, historic.events())
+		if err := requireMDSMkdirCompleted(historic, historicFound, baseline.Client, pending.TID, "created"); err != nil {
+			t.Fatalf("mds.%s did not complete the client's mkdir: %v", m.mds.Name, err)
+		}
 	case direction == clientToMDS && historicFound:
 		t.Fatalf("mds.%s saw the client's mkdir through the cut: %q", m.mds.Name, historic.Description)
 	}
