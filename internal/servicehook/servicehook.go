@@ -6,7 +6,6 @@ package servicehook
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -78,19 +77,6 @@ type hooks interface {
 	ClientRevoked(client *ceph.ClientConfig) bool
 	SetClientRevoked(client *ceph.ClientConfig, revoked bool)
 	SettleClient(ctx context.Context, c *ceph.Container, client *ceph.ClientConfig) error
-	TestCluster(control testcontainers.Container, config TestConfig) *ceph.Container
-	TestState(c *ceph.Container) TestStateView
-	TestReplaceOSDs(c *ceph.Container, osds map[int]*ceph.OSDContainer)
-	TestOSDCount(c *ceph.Container) int
-	TestSetClosed(c *ceph.Container, closed bool)
-	TestSetControlPlane(c *ceph.Container, control testcontainers.Container)
-	TestSetInitialOSDs(c *ceph.Container, osds int)
-	TestSetPoolDefaults(c *ceph.Container, replicas, minSize int)
-	TestSetStartupTimeout(c *ceph.Container, timeout time.Duration)
-	TestSetCephFSImage(c *ceph.Container, image string)
-	TestClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool)
-	TestApply(opts ...ceph.Option) ([]Bootstrap, error)
-	TestPrepare(osds int, noInitialOSDs bool, pools []ceph.PoolConfig, opts ...ceph.Option) ([]ceph.PoolConfig, []Bootstrap, error)
 }
 
 func get() hooks {
@@ -350,102 +336,6 @@ func SettleClient(ctx context.Context, c *ceph.Container, client *ceph.ClientCon
 // MonitorAddresses returns the bootstrap addresses of the monitors in quorum.
 func MonitorAddresses(status ceph.QuorumStatus) (string, error) {
 	return get().MonitorAddresses(status)
-}
-
-// TestConfig selects the settings of a unit-test cluster value.
-type TestConfig = struct {
-	StartupTimeout time.Duration
-	Closed         bool
-	HostNetwork    bool
-	PublicAddress  string
-	NetworkName    string
-	Shared         bool
-	// OSDs adds owned OSD descriptors 0..OSDs-1 whose container is control
-	// and whose CRUSH location is OSDPlacement.
-	OSDs         int
-	OSDPlacement ceph.OSDConfig
-	// MemStore selects the OSDMemStore object store instead of BlueStore.
-	MemStore bool
-	// MessengerMode selects the bootstrap messenger mode.
-	MessengerMode ceph.MessengerMode
-	// Images selects the role images; nil means one aggregate image.
-	Images *ceph.ImageSet
-}
-
-// TestStateView points at a cluster's locks and bootstrap record for unit
-// tests. PortLeases is a count taken when TestState is called. The closed flag,
-// the control plane and the options are written through the TestSet* functions.
-type TestStateView = struct {
-	Mutex          *sync.Mutex
-	ControlMutex   *sync.RWMutex
-	ConfigMutex    *sync.RWMutex
-	Config         *[]byte
-	Keyring        *[]byte
-	CephVersion    *string
-	PortLeases     int
-	NetworkRemoved *bool
-}
-
-// TestCluster builds a cluster value for unit tests: control runs the CLI.
-func TestCluster(control testcontainers.Container, config TestConfig) *ceph.Container {
-	return get().TestCluster(control, config)
-}
-
-// TestState exposes a cluster's internals to unit tests.
-func TestState(c *ceph.Container) TestStateView { return get().TestState(c) }
-
-// TestReplaceOSDs swaps the owned OSD descriptors of a cluster value for osds.
-// It takes no lock: use it on a cluster no other goroutine uses, or while
-// holding the mutex that TestState exposes.
-func TestReplaceOSDs(c *ceph.Container, osds map[int]*ceph.OSDContainer) {
-	get().TestReplaceOSDs(c, osds)
-}
-
-// TestOSDCount is the number of OSD descriptors the cluster value owns, read
-// without a lock.
-func TestOSDCount(c *ceph.Container) int { return get().TestOSDCount(c) }
-
-// TestSetClosed sets or clears a cluster's closed flag. It takes no lock: hold
-// the mutex that TestState exposes, or use a cluster no other goroutine uses.
-func TestSetClosed(c *ceph.Container, closed bool) { get().TestSetClosed(c, closed) }
-
-// TestSetControlPlane replaces a cluster's control-plane container. It takes no
-// lock: hold ControlMutex, or use a cluster no other goroutine uses.
-func TestSetControlPlane(c *ceph.Container, control testcontainers.Container) {
-	get().TestSetControlPlane(c, control)
-}
-
-// TestSetInitialOSDs sets a cluster's initial OSD count. It takes no lock.
-func TestSetInitialOSDs(c *ceph.Container, osds int) { get().TestSetInitialOSDs(c, osds) }
-
-// TestSetPoolDefaults sets the replica count and minimum size that pool
-// defaults resolve to. It takes no lock.
-func TestSetPoolDefaults(c *ceph.Container, replicas, minSize int) {
-	get().TestSetPoolDefaults(c, replicas, minSize)
-}
-
-// TestSetStartupTimeout sets a cluster's startup timeout. It takes no lock.
-func TestSetStartupTimeout(c *ceph.Container, timeout time.Duration) {
-	get().TestSetStartupTimeout(c, timeout)
-}
-
-// TestSetCephFSImage selects the image of the CephFS role. It takes no lock.
-func TestSetCephFSImage(c *ceph.Container, image string) { get().TestSetCephFSImage(c, image) }
-
-// TestClientState returns a client identity's owner and lifecycle flags.
-func TestClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool) {
-	return get().TestClientState(client)
-}
-
-// TestApply applies options to empty settings and returns the service
-// bootstraps they record.
-func TestApply(opts ...ceph.Option) ([]Bootstrap, error) { return get().TestApply(opts...) }
-
-// TestPrepare validates an initial composition of osds OSDs and pools with
-// opts applied, as Run does, and returns the resulting initial pool list and
-// the prepared service bootstraps.
-func TestPrepare(osds int, noInitialOSDs bool, pools []ceph.PoolConfig, opts ...ceph.Option) ([]ceph.PoolConfig, []Bootstrap, error) {
-	return get().TestPrepare(osds, noInitialOSDs, pools, opts...)
 }
 
 // ClientCommand executes feature tools in the selected toolkit runtime.
