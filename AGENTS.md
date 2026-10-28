@@ -21,6 +21,9 @@ no note is needed, and link a migration guide for an `api-break`. The legacy
 `Unreleased` section stays editable while open pull requests drain; do not
 rewrite published sections.
 
+Editing a package page (`docs/<package>.md`) needs no fragment by itself;
+judge it by the content, and a public API catalogue change still needs one.
+
 ## Privacy review
 
 Before publishing source, documentation, fixtures, commit messages, release notes,

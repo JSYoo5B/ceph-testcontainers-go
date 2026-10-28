@@ -33,6 +33,16 @@ with a reason is enough). `go run ./internal/tools/apinaming moves -base
 origin/main` enforces this together with the move-record accounting described
 in [Testing](testing.md#package-layout-and-the-export-inventory), and CI runs it on pull requests only.
 
+Editing a package reference page (`docs/<package>.md`) is not a trigger. A typo,
+wording, explanation or example change needs no fragment and no `kind: none`
+justification, and no validator, exception list or attestation checks for one.
+Judge the content with the criteria above: a page change that records a
+meaningful compatibility, requirement, supported-scope or migration change is
+release-worthy and gets a fragment like any other such change. A change to the
+public API catalogue keeps its own fragment requirement whatever the pages say,
+and a page edit never satisfies it. `TestMovesPackagePageEditNeedsNoFragment`
+pins both sides.
+
 ## Format
 
 The file is `docs/changes/<change-id>.md`: Markdown with a front matter block.

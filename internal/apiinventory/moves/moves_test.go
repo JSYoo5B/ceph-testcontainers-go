@@ -237,6 +237,40 @@ func TestMovesNoChangeAndHistoricalRecords(t *testing.T) {
 	}
 }
 
+// A package reference page (docs/<package>.md) is authored prose. Editing it
+// needs neither a release-note fragment nor a "kind none" justification: the
+// fragment requirement follows a changed API catalogue, not a documentation
+// path. The paired controls show the independent catalogue rule still holds
+// when a page edit accompanies a real API change.
+func TestMovesPackagePageEditNeedsNoFragment(t *testing.T) {
+	r := baseRepo(t)
+	r.write(docsDir+"/alpha.md", "# alpha\n\nA typo fixed and an example reworded.\n")
+	r.write(docsDir+"/alpha-mirror.md", "# alpha/mirror\n\nNew wording.\n")
+	result := r.check("main")
+	if result.Status() != "OK" || len(result.Problems) != 0 {
+		t.Fatalf("a package page edit alone must not demand a fragment: %+v", result)
+	}
+	r.commit("page edit")
+	r.write(docsDir+"/alpha.md", "# alpha\n\nMore wording.\n")
+	if result := r.check("main"); result.Status() != "OK" {
+		t.Fatalf("a page edit committed earlier and edited again must pass: %+v", result)
+	}
+
+	// Negative control: the same page edit together with a real catalogue change
+	// and no fragment is refused for the missing fragment.
+	legitHead(r)
+	r.remove(fragment)
+	if result := r.check("main"); !contains(result.Problems, "no release-note fragment") {
+		t.Fatalf("a catalogue change with a page edit must still need a fragment: %+v", result)
+	}
+	// An unrelated fragment added by the change satisfies the catalogue rule, so
+	// the page edit does not substitute for it and does not conflict with it.
+	r.write(fragment, fragmentMD)
+	if result := r.check("main"); result.Status() != "OK" {
+		t.Fatalf("a complete change with a page edit must pass: %+v", result)
+	}
+}
+
 func TestMovesMissingBaseIsSkippedNotPassed(t *testing.T) {
 	r := baseRepo(t)
 	legitHead(r)
