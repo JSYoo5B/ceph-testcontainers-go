@@ -91,9 +91,10 @@ func (f customizerFunc) Customize(req *testcontainers.GenericContainerRequest) e
 // is refused: the retained-store admission requires a regular block file and a
 // device behind a symbolic link must not widen it. The device is mapped into
 // exactly this recipe; whether another OSD uses the same node is the caller's
-// lease to decide. The cluster-wide claim table (osd_device_claims.go) exists
-// but nothing calls it yet: the first production caller claims the device under
-// the topology lock before it attaches it, using the recipe's started one-shot.
+// lease to decide. Its only caller is registerBlockDeviceOSD
+// (osd_device_wiring.go), which holds the topology lock and claims the device in
+// the cluster-wide table (osd_device_claims.go) right after the attach, using
+// the recipe's started one-shot; that step has no production caller yet.
 func (r *osdLaunchRecipe) attachBlockDevice(d osdBlockDevice) error {
 	if err := d.validate(); err != nil {
 		return err
