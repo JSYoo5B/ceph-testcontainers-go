@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"time"
@@ -21,19 +22,19 @@ import (
 
 // mgrModuleCluster is a cluster whose control container is the fake native.
 func mgrModuleCluster(ctr testcontainers.Container) *ceph.Container {
-	return servicehook.TestCluster(ctr, servicehook.TestConfig{StartupTimeout: time.Second})
+	return testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second})
 }
 
 // setStartupTimeout changes the bound of one fixture operation.
 func setStartupTimeout(c *ceph.Container, d time.Duration) {
-	servicehook.TestSetStartupTimeout(c, d)
+	testhelper.TestSetStartupTimeout(c, d)
 }
 
 // heldMGR returns the MGR module handles that the cluster's registry holds.
 func heldMGR(c *ceph.Container) map[string]any {
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
-	return overridehook.TestHeld(c, overridehook.MGRModule)
+	return testhelper.TestHeld(c, overridehook.MGRModule)
 }
 
 type mgrModuleFixture struct {

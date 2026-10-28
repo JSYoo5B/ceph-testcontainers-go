@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"math"
 	"strconv"
 	"strings"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/overridehook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 func TestSetFullRatiosOrderingNormalizationAndSharedRestore(t *testing.T) {
@@ -140,7 +140,7 @@ func TestSetFullRatiosRestoreRetainsCapturedIdentityAndMapEpoch(t *testing.T) {
 			switch drift {
 			case "bootstrap":
 				ctr.fsid = "8797c2db-bf63-40a1-990e-eb6658b50cf7"
-				servicehook.TestSetConfig(c, []byte("[global]\nfsid = "+ctr.fsid+"\nmon_host = mon\n"))
+				testhelper.TestSetConfig(c, []byte("[global]\nfsid = "+ctr.fsid+"\nmon_host = mon\n"))
 			case "rollback":
 				ctr.epoch = 1
 			case "unrelated-epoch":
@@ -166,16 +166,16 @@ func TestSetFullRatiosFailureBeforeRegistrationFreesTheReservation(t *testing.T)
 			ordered := ctr.ratios
 			switch unavailable {
 			case "closed":
-				servicehook.TestSetClosed(c, true)
+				testhelper.TestSetClosed(c, true)
 			case "control":
 				// Not the fixture: a cluster without a control container.
-				c = servicehook.TestCluster(nil, servicehook.TestConfig{StartupTimeout: time.Minute})
-				servicehook.TestSetConfig(c, []byte("[global]\nfsid = "+fullRatiosFSID+"\nmon_host = mon\n"))
-				servicehook.TestSetKeyring(c, []byte("confirmed"))
+				c = testhelper.TestCluster(nil, testhelper.TestConfig{StartupTimeout: time.Minute})
+				testhelper.TestSetConfig(c, []byte("[global]\nfsid = "+fullRatiosFSID+"\nmon_host = mon\n"))
+				testhelper.TestSetKeyring(c, []byte("confirmed"))
 			case "config":
-				servicehook.TestSetConfig(c, nil)
+				testhelper.TestSetConfig(c, nil)
 			case "keyring":
-				servicehook.TestSetKeyring(c, nil)
+				testhelper.TestSetKeyring(c, nil)
 			case "native":
 				ctr.failDump = true
 			case "unordered":
@@ -192,9 +192,9 @@ func TestSetFullRatiosFailureBeforeRegistrationFreesTheReservation(t *testing.T)
 			if unavailable == "control" {
 				return
 			}
-			servicehook.TestSetClosed(c, false)
-			servicehook.TestSetConfig(c, []byte("[global]\nfsid = "+fullRatiosFSID+"\nmon_host = mon\n"))
-			servicehook.TestSetKeyring(c, []byte("confirmed"))
+			testhelper.TestSetClosed(c, false)
+			testhelper.TestSetConfig(c, []byte("[global]\nfsid = "+fullRatiosFSID+"\nmon_host = mon\n"))
+			testhelper.TestSetKeyring(c, []byte("confirmed"))
 			ctr.failDump, ctr.ratios = false, ordered
 			if again, err := SetFullRatios(t.Context(), c, ceph.FullRatios{NearFull: .86, BackfillFull: .91, Full: .96}); err != nil || again.state.refused != nil {
 				t.Fatal("a freed key stayed refused", err)
@@ -227,7 +227,7 @@ func TestSetFullRatiosNotAppliedHandleTakesNoLock(t *testing.T) {
 	for name, call := range map[string]func(*testing.T) (*ceph.Container, *fullRatiosFixture, *FullRatiosHandle, error){
 		"shared": func(t *testing.T) (*ceph.Container, *fullRatiosFixture, *FullRatiosHandle, error) {
 			ctr := &fullRatiosFixture{}
-			c := servicehook.TestCluster(ctr, servicehook.TestConfig{Shared: true, StartupTimeout: time.Minute})
+			c := testhelper.TestCluster(ctr, testhelper.TestConfig{Shared: true, StartupTimeout: time.Minute})
 			h, err := SetFullRatios(t.Context(), c, ceph.FullRatios{NearFull: .1, BackfillFull: .2, Full: .3})
 			return c, ctr, h, err
 		},
@@ -261,7 +261,7 @@ func TestSetFullRatiosNotAppliedHandleTakesNoLock(t *testing.T) {
 					t.Fatal("not classified", err)
 				}
 			}
-			state := servicehook.TestState(c)
+			state := testhelper.TestState(c)
 			state.Mutex.Lock()
 			state.ControlMutex.Lock()
 			state.ConfigMutex.Lock()
@@ -287,7 +287,7 @@ func TestSetFullRatiosCapturesTheControlOnce(t *testing.T) {
 	replacement := &fullRatiosFixture{fsid: "changed"}
 	ctr.hook = func(_ context.Context, args []string) error {
 		if args[0] == "fsid" {
-			servicehook.TestSetControlPlane(c, replacement)
+			testhelper.TestSetControlPlane(c, replacement)
 		}
 		return nil
 	}
@@ -328,7 +328,7 @@ func TestSetFullRatiosStrictNativeInputs(t *testing.T) {
 func TestSetFullRatiosCancellationAndBoundedAdmission(t *testing.T) {
 	for _, gate := range []string{"owner", "control", "config"} {
 		c, ctr := newFullRatiosFixture(t)
-		state := servicehook.TestState(c)
+		state := testhelper.TestState(c)
 		switch gate {
 		case "owner":
 			state.Mutex.Lock()
@@ -398,7 +398,7 @@ func TestSetFullRatiosRestoreAfterTerminateIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	mutations := ctr.mutations
-	servicehook.TestSetClosed(c, true)
+	testhelper.TestSetClosed(c, true)
 	if err := change.Restore(t.Context()); err == nil || ctr.mutations != mutations || len(heldFullRatios(c)) != 1 {
 		t.Fatal("a terminated cluster restored or lost the override", err)
 	}
@@ -413,7 +413,7 @@ func TestSetFullRatiosIsTrackedBeforeTheFirstNativeStep(t *testing.T) {
 	var seen any
 	ctr.hook = func(_ context.Context, args []string) error {
 		if strings.HasPrefix(args[0], "osd") && len(args) == 3 && seen == nil {
-			seen = overridehook.TestHeld(c, overridehook.FullRatios)[""]
+			seen = testhelper.TestHeld(c, overridehook.FullRatios)[""]
 		}
 		return nil
 	}

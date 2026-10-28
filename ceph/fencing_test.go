@@ -3,7 +3,7 @@ package ceph
 import "testing"
 
 // The tests of the blocklist override moved to the override package, which
-// runs them against servicehook.TestCluster. The tests here keep the session
+// runs them against servicehook.UnitCluster. The tests here keep the session
 // normalization and the decoder, which stay in this package.
 
 const blocklistTestAddress = "192.0.2.7:0/1234"

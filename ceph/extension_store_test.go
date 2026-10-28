@@ -114,16 +114,16 @@ func TestServiceHooksExtensionReachesTheStore(t *testing.T) {
 
 func TestNetworkRemovedHooksReachTheFlag(t *testing.T) {
 	c := &Container{}
-	hooks := serviceHooks{}
-	if hooks.TestNetworkRemoved(c) {
+	hooks := unitAccess{}
+	if hooks.UnitNetworkRemoved(c) {
 		t.Fatal("a new cluster has its bridge marked removed")
 	}
-	hooks.TestSetNetworkRemoved(c, true)
-	if !hooks.TestNetworkRemoved(c) || !c.nets.publicRemoved || c.nets.clusterRemoved {
+	hooks.UnitSetNetworkRemoved(c, true)
+	if !hooks.UnitNetworkRemoved(c) || !c.nets.publicRemoved || c.nets.clusterRemoved {
 		t.Fatalf("flags = %+v", c.nets)
 	}
-	hooks.TestSetNetworkRemoved(c, false)
-	if hooks.TestNetworkRemoved(c) {
+	hooks.UnitSetNetworkRemoved(c, false)
+	if hooks.UnitNetworkRemoved(c) {
 		t.Fatal("the flag was not cleared")
 	}
 }

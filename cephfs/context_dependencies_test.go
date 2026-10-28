@@ -3,6 +3,7 @@ package cephfs
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -19,7 +19,7 @@ import (
 func TestCephFSDirectControlSnapshotsHonorBusyPublication(t *testing.T) {
 	t.Run("pin", func(t *testing.T) {
 		fs, control, _, _ := cephFSPinFixture()
-		assertSnapshotReadLockQueued(t, servicehook.TestState(fs.cluster).ControlMutex, func(ctx context.Context) error {
+		assertSnapshotReadLockQueued(t, testhelper.TestState(fs.cluster).ControlMutex, func(ctx context.Context) error {
 			policy, err := fs.readPinPolicy(ctx, "/volumes/group/volume")
 			if policy != nil {
 				t.Error("busy control returned a pin policy")
@@ -37,7 +37,7 @@ func TestCephFSDirectControlSnapshotsHonorBusyPublication(t *testing.T) {
 	t.Run("clone", func(t *testing.T) {
 		fs, control, clone := cloneLifecycleFixture(t)
 		before := *clone.identity.incarnation
-		assertSnapshotReadLockQueued(t, servicehook.TestState(fs.cluster).ControlMutex, func(ctx context.Context) error {
+		assertSnapshotReadLockQueued(t, testhelper.TestState(fs.cluster).ControlMutex, func(ctx context.Context) error {
 			incarnation, err := fs.readCloneIncarnation(ctx, clone.identity)
 			if incarnation != nil {
 				t.Error("busy control returned clone incarnation")
@@ -67,7 +67,7 @@ func TestCephFSDataPoolFinalRADOSReadHonorsBusyControl(t *testing.T) {
 			if disabled {
 				return
 			}
-			servicehook.TestState(fs.cluster).ControlMutex.Lock()
+			testhelper.TestState(fs.cluster).ControlMutex.Lock()
 			held = true
 			close(entered)
 		}
@@ -85,7 +85,7 @@ func TestCephFSDataPoolFinalRADOSReadHonorsBusyControl(t *testing.T) {
 		publicationMu.Lock()
 		disabled = true
 		if held {
-			servicehook.TestState(fs.cluster).ControlMutex.Unlock()
+			testhelper.TestState(fs.cluster).ControlMutex.Unlock()
 			held = false
 		}
 		publicationMu.Unlock()
@@ -114,13 +114,13 @@ func TestCephFSDataPoolFinalRADOSReadHonorsBusyControl(t *testing.T) {
 	if slices.Contains(native.calls, "rados -p extra --all ls") {
 		t.Fatal("busy final control sent RADOS command")
 	}
-	if servicehook.TestState(fs.cluster).ControlMutex.TryLock() {
-		servicehook.TestState(fs.cluster).ControlMutex.Unlock()
+	if testhelper.TestState(fs.cluster).ControlMutex.TryLock() {
+		testhelper.TestState(fs.cluster).ControlMutex.Unlock()
 		t.Fatal("operation stole or unlocked held control gate")
 	}
 	publicationMu.Lock()
 	disabled = true
-	servicehook.TestState(fs.cluster).ControlMutex.Unlock()
+	testhelper.TestState(fs.cluster).ControlMutex.Unlock()
 	held = false
 	publicationMu.Unlock()
 	if err := fs.checkUnusedDataPool(t.Context(), "extra"); err != nil || !slices.Contains(native.calls, "rados -p extra --all ls") {
@@ -131,7 +131,7 @@ func TestCephFSDataPoolFinalRADOSReadHonorsBusyControl(t *testing.T) {
 func TestCephFSInheritedCreatePoolAdmissionHonorsBusyOwner(t *testing.T) {
 	native := &poolFixtureContainer{Output: map[string]string{"osd pool ls detail --format json": `[{"pool_id":5,"pool_name":"queued-cephfs","type":1,"size":2,"min_size":1,"pg_num":8}]`}}
 	cluster := poolFixtureCluster(native, 2)
-	assertContextLockQueued(t, servicehook.TestState(cluster).Mutex, func(ctx context.Context) error {
+	assertContextLockQueued(t, testhelper.TestState(cluster).Mutex, func(ctx context.Context) error {
 		pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "queued-cephfs"})
 		if pool != nil {
 			t.Error("busy owner returned attempted pool")

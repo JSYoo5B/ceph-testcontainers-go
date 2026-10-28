@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"path/filepath"
 	"slices"
@@ -13,7 +14,7 @@ import (
 
 // membershipControlFields are the Container fields of the membership and
 // control group that no hook may publish a pointer to. The locks are not in the
-// list: TestState still publishes the three lock domains, which the lock
+// list: UnitState still publishes the three lock domains, which the lock
 // queueing tests need as lock identities (see the design note).
 var membershipControlFields = map[string]bool{
 	"closed": true, "controlPlane": true, "settings": true, "monitorTerminated": true,
@@ -21,8 +22,7 @@ var membershipControlFields = map[string]bool{
 	"extensions": true, "bootstrap": true,
 }
 
-// testStateFields is the exact field set of the unit-test state view in ceph and
-// in internal/servicehook. A new pointer needs a review of what it exposes.
+// testStateFields is the exact field set of the unit-test state view in internal/testhelper. A new pointer needs a review of what it exposes.
 var testStateFields = []string{"ConfigMutex", "ControlMutex", "Mutex", "PortLeases"}
 
 func structFieldNames(t *testing.T, file, typeName string) []string {
@@ -63,21 +63,60 @@ func structFieldNames(t *testing.T, file, typeName string) []string {
 }
 
 // TestTestStateExposesNoMembershipControlPointer pins the field set of the
-// unit-test state view on both sides of the hook. The closed flag, the control
-// plane and the options are not in it: they are written by the TestSet* hooks.
+// unit-test state view in internal/testhelper and the result list of the one
+// seam method behind it. The closed flag, the control plane and the options are
+// not in it: they are written by the UnitSet* methods. Package ceph itself has
+// no state-view struct.
 func TestTestStateExposesNoMembershipControlPointer(t *testing.T) {
-	if got := structFieldNames(t, "service_hooks.go", "testState"); !slices.Equal(got, testStateFields) {
-		t.Fatalf("testState fields = %v, pinned %v", got, testStateFields)
-	}
-	if got := structFieldNames(t, filepath.Join("..", "internal", "servicehook", "testaccess.go"), "TestStateView"); !slices.Equal(got, testStateFields) {
+	if got := structFieldNames(t, filepath.Join("..", "internal", "testhelper", "testhelper.go"), "TestStateView"); !slices.Equal(got, testStateFields) {
 		t.Fatalf("TestStateView fields = %v, pinned %v", got, testStateFields)
 	}
+	for _, parsed := range parseProductionFiles(t) {
+		for _, decl := range parsed.Decls {
+			if gen, ok := decl.(*ast.GenDecl); ok {
+				for _, spec := range gen.Specs {
+					if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == "testState" {
+						t.Fatal("package ceph declares a test-state struct")
+					}
+				}
+			}
+		}
+	}
+	results := unitStateResults(t)
+	if want := []string{"mu", "control", "config", "portLeases"}; !slices.Equal(results, want) {
+		t.Fatalf("UnitState results = %v, pinned %v", results, want)
+	}
+}
+
+// unitStateResults returns the result names of unitAccess.UnitState.
+func unitStateResults(t *testing.T) []string {
+	t.Helper()
+	for _, parsed := range parseProductionFiles(t) {
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || fn.Name.Name != "UnitState" {
+				continue
+			}
+			var names []string
+			for _, field := range fn.Type.Results.List {
+				if strings.Contains(types.ExprString(field.Type), "OSDContainer") {
+					t.Fatal("UnitState returns OSD descriptors")
+				}
+				for _, name := range field.Names {
+					names = append(names, name.Name)
+				}
+			}
+			return names
+		}
+	}
+	t.Fatal("UnitState not found: the guard is vacuous")
+	return nil
 }
 
 // TestMembershipControlStateIsNeverAddressed guards that no production code in
 // the package takes the address of a membership or control field, or of
 // anything under one (c.settings.osds, c.services["x"]). An address is how the
-// old TestState let another package write the closed flag and the control plane
+// old UnitState let another package write the closed flag and the control plane
 // without a lock.
 func TestMembershipControlStateIsNeverAddressed(t *testing.T) {
 	var problems []string
@@ -138,8 +177,8 @@ func TestClosedWritersAreAudited(t *testing.T) {
 	type key struct{ fn, field string }
 	want := map[key]string{
 		{"terminate", "closed"}:     "terminate",
-		{"TestCluster", "closed"}:   "build",
-		{"TestSetClosed", "closed"}: "hook",
+		{"UnitCluster", "closed"}:   "build",
+		{"UnitSetClosed", "closed"}: "hook",
 	}
 	docs := osdRegistryDocs(t)
 	got := map[key]bool{}
@@ -217,16 +256,16 @@ func callsMethod(fn *ast.FuncDecl, recv, method string) bool {
 // each assigns. A hook calls nothing: it is a plain write for a caller that
 // holds the lock or owns the cluster.
 var testSetHooks = map[string][]string{
-	"TestSetClosed":         {"closed"},
-	"TestSetControlPlane":   {"handle"},
-	"TestSetConfig":         {"config"},
-	"TestSetKeyring":        {"keyring"},
-	"TestSetCephVersion":    {"cephVersion"},
-	"TestSetNetworkRemoved": {"publicRemoved"},
-	"TestSetInitialOSDs":    {"osds"},
-	"TestSetPoolDefaults":   {"poolMinSize", "poolReplicas"},
-	"TestSetStartupTimeout": {"startupTimeout"},
-	"TestSetCephFSImage":    {"cephfsOverride"},
+	"UnitSetClosed":         {"closed"},
+	"UnitSetControlPlane":   {"handle"},
+	"UnitSetConfig":         {"config"},
+	"UnitSetKeyring":        {"keyring"},
+	"UnitSetCephVersion":    {"cephVersion"},
+	"UnitSetNetworkRemoved": {"publicRemoved"},
+	"UnitSetInitialOSDs":    {"osds"},
+	"UnitSetPoolDefaults":   {"poolMinSize", "poolReplicas"},
+	"UnitSetStartupTimeout": {"startupTimeout"},
+	"UnitSetCephFSImage":    {"cephfsOverride"},
 }
 
 // TestTestSetHooksAreSingleWritesWithoutCalls pins the method set of the
@@ -239,7 +278,7 @@ func TestTestSetHooksAreSingleWritesWithoutCalls(t *testing.T) {
 	for _, parsed := range parseProductionFiles(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) != "serviceHooks" || !strings.HasPrefix(fn.Name.Name, "TestSet") {
+			if !ok || fn.Body == nil || receiverTypeName(fn) != "unitAccess" || !strings.HasPrefix(fn.Name.Name, "UnitSet") {
 				continue
 			}
 			name := fn.Name.Name
@@ -286,8 +325,8 @@ func TestTestSetHooksAreSingleWritesWithoutCalls(t *testing.T) {
 }
 
 // TestTestSetHooksAreCalledOnlyFromTests is the cross-package caller table: no
-// non-test source file in the module calls a servicehook.TestSet* function. The
-// wrappers in internal/servicehook are the only definitions; production code
+// non-test source file in the module calls a testhelper.TestSet* function or a
+// UnitSet* seam method. The wrappers in internal/testhelper are the only callers; production code
 // that wrote the closed flag or the control plane through them would bypass the
 // terminate writer and the control-plane writers audited in control_plane_state_test.go.
 func TestTestSetHooksAreCalledOnlyFromTests(t *testing.T) {
@@ -308,14 +347,16 @@ func TestTestSetHooksAreCalledOnlyFromTests(t *testing.T) {
 			if !ok {
 				return true
 			}
-			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && strings.HasPrefix(sel.Sel.Name, "TestSet") {
-				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "servicehook" {
-					problems = append(problems, filepath.ToSlash(path))
-				}
-				// getTest().TestSetX(...) inside the wrappers themselves is the definition.
-				if _, ok := sel.X.(*ast.CallExpr); ok && !strings.HasSuffix(filepath.ToSlash(path), "internal/servicehook/testaccess.go") {
-					problems = append(problems, filepath.ToSlash(path))
-				}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if id, ok := sel.X.(*ast.Ident); ok && id.Name == "testhelper" && strings.HasPrefix(sel.Sel.Name, "TestSet") {
+				problems = append(problems, filepath.ToSlash(path))
+			}
+			// get().UnitSetX(...) inside the helper's wrappers is the definition.
+			if strings.HasPrefix(sel.Sel.Name, "UnitSet") && !strings.HasSuffix(filepath.ToSlash(path), "internal/testhelper/testhelper.go") {
+				problems = append(problems, filepath.ToSlash(path))
 			}
 			return true
 		})

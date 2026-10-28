@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -158,7 +158,7 @@ func TestRBDNamespaceOwnershipAndPoolIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, invalid := range []*Namespace{nil, {}, {owner: cluster, poolName: "images", name: "foreign"}, {owner: servicehook.TestCluster(nil, servicehook.TestConfig{}), state: &rbdNamespaceState{created: true}}} {
+	for _, invalid := range []*Namespace{nil, {}, {owner: cluster, poolName: "images", name: "foreign"}, {owner: testhelper.TestCluster(nil, testhelper.TestConfig{}), state: &rbdNamespaceState{created: true}}} {
 		calls := len(control.calls)
 		if err := removeNamespace(t.Context(), cluster, invalid); err == nil || len(control.calls) != calls {
 			t.Fatal("foreign or unconfirmed descriptor executed native removal")
@@ -232,7 +232,7 @@ func TestRBDNamespaceRejectsUninitializedAndMalformedListing(t *testing.T) {
 }
 
 func TestRBDNamespaceStoppedClusterAndMissingControl(t *testing.T) {
-	for _, cluster := range []*ceph.Container{servicehook.TestCluster(nil, servicehook.TestConfig{Closed: true}), servicehook.TestCluster(nil, servicehook.TestConfig{})} {
+	for _, cluster := range []*ceph.Container{testhelper.TestCluster(nil, testhelper.TestConfig{Closed: true}), testhelper.TestCluster(nil, testhelper.TestConfig{})} {
 		if err := initPool(t.Context(), cluster, "images"); err == nil {
 			t.Fatal("unavailable cluster accepted initialization")
 		}
@@ -249,7 +249,7 @@ func TestRBDNamespaceStoppedClusterAndMissingControl(t *testing.T) {
 }
 
 func rbdTestCluster(control *rbdTestControl) *ceph.Container {
-	return servicehook.TestCluster(control, servicehook.TestConfig{StartupTimeout: time.Second})
+	return testhelper.TestCluster(control, testhelper.TestConfig{StartupTimeout: time.Second})
 }
 
 type rbdTestControl struct {

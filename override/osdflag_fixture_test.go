@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -37,7 +37,7 @@ type osdFlagFixture struct {
 func newOSDFlagFixture(t *testing.T, flags ...string) (*ceph.Container, *osdFlagFixture) {
 	t.Helper()
 	native := &osdFlagFixture{flags: flags}
-	return servicehook.TestCluster(native, servicehook.TestConfig{StartupTimeout: time.Second}), native
+	return testhelper.TestCluster(native, testhelper.TestConfig{StartupTimeout: time.Second}), native
 }
 
 // mutations counts the commands that changed a flag.

@@ -247,16 +247,6 @@ func (session fullRatiosCLISession) CheckIdentity(ctx context.Context, fsid stri
 	return nil
 }
 
-// TestHeld snapshots the handles that one kind holds, for unit tests. The
-// caller holds the mutex, or the cluster is not shared.
-func (overrideHooks) TestHeld(c *Container, kind string) map[string]any {
-	k, ok := overrideKindNames[kind]
-	if !ok {
-		return make(map[string]any)
-	}
-	return c.faults.handles(k)
-}
-
 // NormalizeConfigSetting validates and canonicalizes one central
 // configuration entry, with the errors that override.SetConfig returns.
 func (overrideHooks) NormalizeConfigSetting(setting ConfigSetting) (ConfigSetting, error) {

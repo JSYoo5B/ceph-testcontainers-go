@@ -3,15 +3,15 @@ package faulthook_test
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 func TestRegistryThroughHooks(t *testing.T) {
-	c := servicehook.TestCluster(nil, servicehook.TestConfig{})
+	c := testhelper.TestCluster(nil, testhelper.TestConfig{})
 	ctx := t.Context()
 	if err := faulthook.Admit(c, "fault.Pause"); err != nil {
 		t.Fatalf("a cluster of its own refused a fault: %v", err)

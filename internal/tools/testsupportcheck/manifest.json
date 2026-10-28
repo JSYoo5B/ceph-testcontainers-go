@@ -1,0 +1,20 @@
+{
+  "test_only_packages": [
+    "internal/clusteraccess",
+    "internal/clustertest",
+    "internal/testhelper"
+  ],
+  "seam_selector": "internal/hookreg.Test",
+  "seam_files": [
+    "ceph/unit_access.go",
+    "internal/hookreg/hookreg.go",
+    "internal/testhelper/testhelper.go"
+  ],
+  "forbidden_types": [
+    "TestConfig",
+    "TestStateView",
+    "testClusterConfig",
+    "testHooks",
+    "testState"
+  ]
+}

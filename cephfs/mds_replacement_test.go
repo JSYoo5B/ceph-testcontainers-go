@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"reflect"
 	"slices"
@@ -84,8 +85,8 @@ func newReplacementMDSFixture(t *testing.T) *replacementMDSFixture {
 	r := &replacementMDSFixture{n: &replacementMDSControl{stoppedMDSControl: n, fsid: coldMDSFixtureFSID, auth: []any{map[string]any{"entity": "mds.target-0"}}}}
 	c.Container = r.n
 	setServices(c, map[string]testcontainers.Container{})
-	servicehook.TestSetStartupTimeout(c, 2*time.Second)
-	servicehook.TestSetCephFSImage(c, "selected-existing-mds-image")
+	testhelper.TestSetStartupTimeout(c, 2*time.Second)
+	testhelper.TestSetCephFSImage(c, "selected-existing-mds-image")
 	config, err := normalizeCephFSConfig(Config{Name: "target"})
 	if err != nil {
 		t.Fatal(err)
@@ -206,7 +207,7 @@ func TestMDSReplacementOwnerAndPublicAdmissionRejectsWithoutMutation(t *testing.
 			case "partial-original":
 				r.old.identity.confirmed = false
 			case "closed":
-				servicehook.TestSetClosed(r.fs.cluster, true)
+				testhelper.TestSetClosed(r.fs.cluster, true)
 			case "registry":
 				servicehook.DeleteService(r.fs.cluster, "mds.target-0")
 			case "duplicate":
@@ -673,11 +674,11 @@ func TestMDSReplacementRealAdmissionGatesRespectDeadline(t *testing.T) {
 			case "setup":
 				lock, unlock = filesystems(c).setupMu.Lock, filesystems(c).setupMu.Unlock
 			case "owner":
-				lock, unlock = servicehook.TestState(c).Mutex.Lock, servicehook.TestState(c).Mutex.Unlock
+				lock, unlock = testhelper.TestState(c).Mutex.Lock, testhelper.TestState(c).Mutex.Unlock
 			case "control":
-				lock, unlock = servicehook.TestState(c).ControlMutex.Lock, servicehook.TestState(c).ControlMutex.Unlock
+				lock, unlock = testhelper.TestState(c).ControlMutex.Lock, testhelper.TestState(c).ControlMutex.Unlock
 			case "config":
-				lock, unlock = servicehook.TestState(c).ConfigMutex.Lock, servicehook.TestState(c).ConfigMutex.Unlock
+				lock, unlock = testhelper.TestState(c).ConfigMutex.Lock, testhelper.TestState(c).ConfigMutex.Unlock
 			}
 			coldMDSTestGate(t, lock, unlock, func(ctx context.Context) error { _, err := r.add(ctx); return err })
 			r.assertNoAttempt(t)

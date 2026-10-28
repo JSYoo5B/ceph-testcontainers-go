@@ -163,6 +163,6 @@ func (r *bootstrapRecord) publishConfig(config []byte) {
 	r.mu.Unlock()
 }
 
-// mutex is the lock identity that TestState publishes for the lock queueing
+// mutex is the lock identity that UnitState publishes for the lock queueing
 // tests of the service packages. Nothing else calls it.
 func (r *bootstrapRecord) mutex() *sync.RWMutex { return &r.mu }

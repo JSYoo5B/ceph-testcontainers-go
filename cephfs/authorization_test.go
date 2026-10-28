@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"maps"
 	"slices"
@@ -12,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -147,7 +147,7 @@ func cephFSAuthorizationFixture(t *testing.T) (*Filesystem, *cephFSAuthFixtureCo
 	}
 	ctr := &cephFSAuthFixtureContainer{poolFixtureContainer: pool, auth: make(map[string]*cephFSAuthFixtureEntry), grants: make(map[string]string)}
 	fs.cluster.Container = ctr
-	servicehook.TestSetConfig(fs.cluster, []byte("[global]\nmon_host = fixture\n"))
+	testhelper.TestSetConfig(fs.cluster, []byte("[global]\nmon_host = fixture\n"))
 	ctr.Calls = nil
 	return fs, ctr, volume
 }
@@ -277,7 +277,7 @@ func TestCephFSSubvolumeAuthorizationOutsideIdentityEditsRefuseMutation(t *testi
 		{"caps", func(_ *Filesystem, c *cephFSAuthFixtureContainer) {
 			c.auth["client.writer"].Caps["osd"] = "allow *"
 		}},
-		{"closed", func(fs *Filesystem, _ *cephFSAuthFixtureContainer) { servicehook.TestSetClosed(fs.cluster, true) }},
+		{"closed", func(fs *Filesystem, _ *cephFSAuthFixtureContainer) { testhelper.TestSetClosed(fs.cluster, true) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fs, c, volume := cephFSAuthorizationFixture(t)

@@ -7,13 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
@@ -168,10 +168,10 @@ func TestRBDNamespaceMappingRefusalNamesTheSideThatLacksIt(t *testing.T) {
 				return f
 			}
 			source, destination := fixture("source client"), fixture("destination client")
-			sourceCluster := servicehook.TestCluster(fixture("source"), servicehook.TestConfig{})
-			destinationCluster := servicehook.TestCluster(fixture("destination"), servicehook.TestConfig{})
-			servicehook.TestSetCephVersion(sourceCluster, tc.source)
-			servicehook.TestSetCephVersion(destinationCluster, tc.destination)
+			sourceCluster := testhelper.TestCluster(fixture("source"), testhelper.TestConfig{})
+			destinationCluster := testhelper.TestCluster(fixture("destination"), testhelper.TestConfig{})
+			testhelper.TestSetCephVersion(sourceCluster, tc.source)
+			testhelper.TestSetCephVersion(destinationCluster, tc.destination)
 			link := &Mirror{sourceClient: source, destinationClient: destination, config: Config{
 				Pool: "images", Scope: ScopeImage, SourceNamespace: "ns-a", DestinationNamespace: "ns-b", SourceSite: "source", DestinationSite: "destination",
 				Source: sourceCluster, Destination: destinationCluster,

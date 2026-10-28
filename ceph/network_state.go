@@ -16,7 +16,7 @@ import (
 //   - public, cluster, publicSubnet and clusterSubnet are the recorded
 //     bridges. Run writes them while it builds the cluster, before the cluster
 //     is returned, and nothing writes them afterwards (the unit-test builder
-//     TestCluster is the one other writer, on a fresh cluster). Readers need no
+//     UnitCluster is the one other writer, on a fresh cluster). Readers need no
 //     lock, which FactsOf relies on after termination.
 //     TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup enforces it.
 //   - publicRemoved and clusterRemoved are written only by removeBridges and

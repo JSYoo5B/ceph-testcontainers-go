@@ -2,12 +2,12 @@ package cephfs
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
@@ -249,7 +249,7 @@ func TestCephFSCloneLifecycleCanceledContextAndClosedClusterRefuseMutation(t *te
 	if err := fs.RemovePartialSubvolumeClone(ctx, clone); err == nil {
 		t.Fatal("partial cleanup ignored canceled context")
 	}
-	servicehook.TestSetClosed(fs.cluster, true)
+	testhelper.TestSetClosed(fs.cluster, true)
 	if err := fs.CancelSubvolumeClone(t.Context(), clone); err == nil {
 		t.Fatal("closed cluster allowed cancellation")
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"os"
 	"os/exec"
@@ -19,7 +20,6 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
@@ -72,7 +72,7 @@ func newHostGateway(t *testing.T) (*Gateway, *hostGateway) {
 		ctr.started.Wait()
 	})
 	config := Config{Name: "default"}
-	owner := testCluster(nil, servicehook.TestConfig{}, map[string]testcontainers.Container{rgwServiceName(config): ctr})
+	owner := testCluster(nil, testhelper.TestConfig{}, map[string]testcontainers.Container{rgwServiceName(config): ctr})
 	return &Gateway{Container: ctr, owner: owner, config: config, GatewayName: config.Name}, ctr
 }
 

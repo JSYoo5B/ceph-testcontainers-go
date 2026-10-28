@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"reflect"
 	"slices"
@@ -14,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -163,7 +163,7 @@ func newRGWPlacementFixture() (*Gateway, *rgwPlacementTestContainer) {
 	f := &rgwPlacementTestContainer{poolType: 1, poolID: 1}
 	f.group = map[string]any{"id": "group-id", "name": "active-group", "api_name": "active-api", "realm_id": "", "zones": []any{map[string]any{"id": "zone-id"}}, "default_placement": "default-placement", "placement_targets": []any{map[string]any{"name": "default-placement", "storage_classes": []any{"STANDARD"}, "tags": []any{}}}}
 	f.zone = map[string]any{"id": "zone-id", "name": "active-zone", "realm_id": "", "system_key": map[string]any{"key": "PRIVATE-KEY"}, "placement_pools": []any{}}
-	owner := testCluster(f, servicehook.TestConfig{StartupTimeout: time.Minute}, map[string]testcontainers.Container{"rgw": f})
+	owner := testCluster(f, testhelper.TestConfig{StartupTimeout: time.Minute}, map[string]testcontainers.Container{"rgw": f})
 	return &Gateway{Container: f, owner: owner, port: 7480, config: Config{Name: "default"}}, f
 }
 

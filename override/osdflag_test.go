@@ -3,6 +3,7 @@ package override
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"slices"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ import (
 func heldOSDFlags(c *ceph.Container) map[string]any {
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
-	return overridehook.TestHeld(c, overridehook.OSDFlag)
+	return testhelper.TestHeld(c, overridehook.OSDFlag)
 }
 
 func TestOSDFlagConstantsAreExactlyTheReversibleSet(t *testing.T) {
@@ -214,9 +215,9 @@ func TestOSDFlagRestoreRefusedAfterTerminate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := servicehook.TestState(c)
+	view := testhelper.TestState(c)
 	view.Mutex.Lock()
-	servicehook.TestSetClosed(c, true)
+	testhelper.TestSetClosed(c, true)
 	view.Mutex.Unlock()
 	before := len(native.calls)
 	if err := change.Restore(t.Context()); err != overridehook.Terminated() {
@@ -267,7 +268,7 @@ func TestSetOSDFlagNilClusterReturnsNotAppliedHandle(t *testing.T) {
 
 func TestSetOSDFlagSharedClusterIsRefusedBeforeAnyEffect(t *testing.T) {
 	native := &osdFlagFixture{}
-	c := servicehook.TestCluster(native, servicehook.TestConfig{Shared: true, StartupTimeout: time.Second})
+	c := testhelper.TestCluster(native, testhelper.TestConfig{Shared: true, StartupTimeout: time.Second})
 	handle, err := SetOSDFlag(t.Context(), c, "unsupported", true)
 	var op *ceph.OperationError
 	if !errors.Is(err, ceph.ErrSharedCluster) || !errors.As(err, &op) || op.Op != "override.SetOSDFlag" {

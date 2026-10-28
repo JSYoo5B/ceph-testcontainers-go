@@ -138,18 +138,18 @@ func TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup(t *testing.T) 
 		"recordCephVersion": true, // called only from Run before publication
 		// The unit-test setter of the recorded version, a plain write for a cluster the
 		// caller owns or holds the lock of.
-		"TestSetCephVersion": true,
-		"TestCluster":        true, // builds a fresh unit-test cluster
+		"UnitSetCephVersion": true,
+		"UnitCluster":        true, // builds a fresh unit-test cluster
 		// The unit-test setter of the bridge-removal flag. It replaces the NetworkRemoved
-		// pointer of TestState; the flag is guarded by Container.mu and is not a fact.
-		"TestSetNetworkRemoved": true,
+		// pointer of UnitState; the flag is guarded by Container.mu and is not a fact.
+		"UnitSetNetworkRemoved": true,
 		// Unit-test option setters, the only writers of c.settings after Run. They replace
-		// the settings pointers TestState used to publish; only TestSetCephFSImage writes
+		// the settings pointers UnitState used to publish; only UnitSetCephFSImage writes
 		// a recorded fact (cephfsOverride), the others write fields FactsOf never reads.
-		"TestSetInitialOSDs":    true,
-		"TestSetPoolDefaults":   true,
-		"TestSetStartupTimeout": true,
-		"TestSetCephFSImage":    true,
+		"UnitSetInitialOSDs":    true,
+		"UnitSetPoolDefaults":   true,
+		"UnitSetStartupTimeout": true,
+		"UnitSetCephFSImage":    true,
 		"scanRecordedWrites":    true,
 	}
 	files, err := filepath.Glob("*.go")

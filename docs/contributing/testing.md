@@ -66,7 +66,7 @@ and the test fails. When the test process itself runs inside a container, set
 make test         # CGO_ENABLED=0 go test -mod=readonly ./...
 make race         # CGO_ENABLED=1 go test -mod=readonly -race ./...
 make vet          # CGO_ENABLED=0 go vet -mod=readonly ./...
-make tag-compile  # compile every tagged test file without running it
+make tag-compile  # test-only-code exclusion check, then compile every tagged test file
 make check        # all four of the above; never starts Docker
 make lint         # golangci-lint v2.14.0 with .golangci.yml
 make vulncheck    # govulncheck v1.9.0 on every scanned platform and tag set
@@ -79,7 +79,8 @@ build tag, so it also checks the integration and go-ceph files, and the Code
 checks workflow runs the same version.
 
 `make test`, `make race` and `make vet` see only untagged files.
-`make tag-compile` first compiles the module with only `integration`,
+`make tag-compile` first runs the [test-only-code check](#test-only-code), then
+compiles the module with only `integration`,
 so shared helpers cannot accidentally require an unrelated capability tag.
 It also builds the module's `all` union, its consumer/native-regression/role
 union and its `all,cephfs_fuse` union. Every command runs nothing (`-run '^$'`):
@@ -129,6 +130,51 @@ that must name registered tags (see
 registered tags, so the only accepted selection is empty. Future pairs must
 retain the same test contracts and prove which path was selected, alongside
 the actual image/build identity.
+
+## Test-only code
+
+Test-only code is not compiled by an ordinary build, with no build tag and no
+extra test command flag:
+
+- Anything that only tests of the same package use is a `_test.go` file of that
+  package.
+- A `_test.go` file of package A is invisible to the tests of package B, so
+  what tests of several packages share (a synthetic `ceph.Container`, access
+  to its locks and registry, fake CLIs, accessor wrappers) lives in helper
+  packages under `internal/`: `internal/testhelper`, `internal/clustertest` and
+  `internal/clusteraccess`. Only `_test.go` files import them.
+- A helper cannot read unexported `ceph` state. It reaches it through one
+  registered seam: `ceph/unit_access.go` sets `hookreg.Test` to an unexported
+  `unitAccess` value whose `Unit*` methods take and return plain values, and
+  `internal/testhelper` is its only caller. The seam is not one of the hook
+  values that production packages assert, and no public package has a
+  `Test*` function or method or a test-config or test-state struct in a
+  non-test file.
+
+`make tag-compile` runs `go run ./internal/tools/testsupportcheck` first. For
+every ordinary tag set of that target it requires, from `go list` metadata and
+the syntax of the selected files, that:
+
+- no non-test file of the module imports a package of the manifest's
+  `test_only_packages` list;
+- no selected non-test file outside those packages declares a function or
+  method whose name starts with `Test`, or a type of the manifest's forbidden
+  list;
+- `hookreg.Test` is read only in the manifest's seam files. The import is
+  resolved by path to its local binding, so a renamed import is caught, a
+  local variable or another package called `hookreg` is not, and a dot import
+  of the seam package is rejected outright in other files.
+
+Add a new shared test helper package to
+`internal/tools/testsupportcheck/manifest.json` in the same change. The
+command's own tests keep a fixture module with a negative control for each rule.
+
+What this does not prove: the helper packages and the seam stay compiled by
+`go build ./...` and `go vet ./...` (they have no tag), so an ordinary build of
+the module still compiles them; the rule limits who imports them, so they are
+not linked into any non-test importer's binary. The check reads source and
+`go list` metadata, not a symbol listing of a linked binary, and it does not
+look at packages outside the module.
 
 ## Running integration tests
 

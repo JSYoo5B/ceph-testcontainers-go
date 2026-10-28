@@ -268,9 +268,9 @@ type osdRegistryCaller struct {
 var osdRegistryCallers = map[string]osdRegistryCaller{
 	// Run's composition planner: a throwaway Container no one else sees.
 	"prepareInitialComposition": {"init", []string{"count", "each", "register"}},
-	"TestCluster":               {"init", []string{"register"}},
-	"TestReplaceOSDs":           {"hook", []string{"replace"}},
-	"TestOSDCount":              {"hook", []string{"count"}},
+	"UnitCluster":               {"init", []string{"register"}},
+	"UnitReplaceOSDs":           {"hook", []string{"replace"}},
+	"UnitOSDCount":              {"hook", []string{"count"}},
 	"OwnedOSD":                  {"hook", []string{"get"}},
 
 	"registerOSD":                      {"holds", []string{"each", "register"}},
@@ -511,30 +511,9 @@ func TestOSDRegistryHasNoAddressTakenAndTestHooksExposeNoMap(t *testing.T) {
 			return true
 		})
 	}
-	// testState is the hook's view struct; its fields must not mention OSD
-	// descriptors.
-	found := false
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			gen, ok := decl.(*ast.GenDecl)
-			if !ok {
-				continue
-			}
-			for _, spec := range gen.Specs {
-				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || ts.Name.Name != "testState" {
-					continue
-				}
-				found = true
-				if strings.Contains(types.ExprString(ts.Type), "OSDContainer") {
-					problems = append(problems, "testState exposes OSD descriptors")
-				}
-			}
-		}
-	}
-	if !found {
-		problems = append(problems, "testState not found: the guard is vacuous")
-	}
+	// The seam's state accessor must not return OSD descriptors (it fails the
+	// test itself if it does).
+	unitStateResults(t)
 	if len(problems) != 0 {
 		t.Fatalf("the OSD registry is exposed: %v", problems)
 	}
@@ -563,8 +542,8 @@ func TestOSDRegistryReplaceHasTheSingleCallerTheTestHook(t *testing.T) {
 			})
 		}
 	}
-	if !slices.Equal(callers, []string{"TestReplaceOSDs"}) {
-		t.Fatalf("osdHandles.replace callers = %v, want only TestReplaceOSDs", callers)
+	if !slices.Equal(callers, []string{"UnitReplaceOSDs"}) {
+		t.Fatalf("osdHandles.replace callers = %v, want only UnitReplaceOSDs", callers)
 	}
 }
 

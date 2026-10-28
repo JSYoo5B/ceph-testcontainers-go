@@ -95,5 +95,5 @@ func (r *osdRegistry) unpark(id int, osd *OSDContainer) {
 }
 
 // replace swaps the owned descriptors for owned. Only the unit-test hook
-// serviceHooks.TestReplaceOSDs calls it, on a cluster no one else uses yet.
+// unitAccess.UnitReplaceOSDs calls it, on a cluster no one else uses yet.
 func (r *osdRegistry) replace(owned map[int]*OSDContainer) { r.owned = owned }

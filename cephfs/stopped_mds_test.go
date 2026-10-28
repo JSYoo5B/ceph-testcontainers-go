@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"reflect"
 	"slices"
@@ -164,9 +165,9 @@ func stoppedMDSFixture(t *testing.T) (*Filesystem, *stoppedMDSControl, *MDS, *st
 	}
 	c := poolFixtureCluster(n, 2)
 	setServices(c, map[string]testcontainers.Container{})
-	servicehook.TestSetStartupTimeout(c, time.Second)
-	servicehook.TestSetConfig(c, []byte("[global]\nfsid = "+coldMDSFixtureFSID+"\nmon_host = [v2:127.0.0.1:3300]\n"))
-	servicehook.TestSetKeyring(c, []byte("private-confirmed-keyring"))
+	testhelper.TestSetStartupTimeout(c, time.Second)
+	testhelper.TestSetConfig(c, []byte("[global]\nfsid = "+coldMDSFixtureFSID+"\nmon_host = [v2:127.0.0.1:3300]\n"))
+	testhelper.TestSetKeyring(c, []byte("private-confirmed-keyring"))
 	config, err := normalizeCephFSConfig(Config{Name: "target", StandbyMDS: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -255,7 +256,7 @@ func TestStoppedMDSPublicationRetainsOriginalAndPartialIdentity(t *testing.T) {
 				cid = "short-cid"
 			}
 			if kind == "unconfirmed-bootstrap" {
-				servicehook.TestSetConfig(fs.cluster, nil)
+				testhelper.TestSetConfig(fs.cluster, nil)
 			}
 			d := &stoppedMDSDaemon{cid: cid}
 			stoppedMDSPublish(t, fs, d, cause)
@@ -367,7 +368,7 @@ func TestStoppedMDSOwnerGuardsCannotRedirectRemoval(t *testing.T) {
 			case "data-description":
 				fs.DataPool = "foreign"
 			case "closed":
-				servicehook.TestSetClosed(fs.cluster, true)
+				testhelper.TestSetClosed(fs.cluster, true)
 			case "duplicate-target":
 				fs.roster.daemons = append(fs.roster.daemons, target)
 			case "unconfirmed":
@@ -539,7 +540,7 @@ func TestStoppedMDSOriginalClusterAndPoolsCannotBeAdopted(t *testing.T) {
 			case "native-fsid":
 				native.quorum["monmap"].(map[string]any)["fsid"] = "b011602b-37aa-496b-a8b5-b3e7a5d13ff3"
 			case "bootstrap-fsid":
-				servicehook.TestSetConfig(fs.cluster, []byte("[global]\nfsid = b011602b-37aa-496b-a8b5-b3e7a5d13ff3\n"))
+				testhelper.TestSetConfig(fs.cluster, []byte("[global]\nfsid = b011602b-37aa-496b-a8b5-b3e7a5d13ff3\n"))
 			case "quorum-missing":
 				native.quorum["quorum_names"] = nil
 			case "filesystem-id":
@@ -582,14 +583,14 @@ func TestStoppedMDSRealAdmissionDeadlinesAndCancellation(t *testing.T) {
 		t.Run(gate, func(t *testing.T) {
 			fs, native, target, old, survivor := stoppedMDSFixture(t)
 			c := fs.cluster
-			lock, unlock := servicehook.TestState(c).Mutex.Lock, servicehook.TestState(c).Mutex.Unlock
+			lock, unlock := testhelper.TestState(c).Mutex.Lock, testhelper.TestState(c).Mutex.Unlock
 			switch gate {
 			case "setup":
 				lock, unlock = filesystems(c).setupMu.Lock, filesystems(c).setupMu.Unlock
 			case "control":
-				lock, unlock = servicehook.TestState(c).ControlMutex.Lock, servicehook.TestState(c).ControlMutex.Unlock
+				lock, unlock = testhelper.TestState(c).ControlMutex.Lock, testhelper.TestState(c).ControlMutex.Unlock
 			case "config":
-				lock, unlock = servicehook.TestState(c).ConfigMutex.Lock, servicehook.TestState(c).ConfigMutex.Unlock
+				lock, unlock = testhelper.TestState(c).ConfigMutex.Lock, testhelper.TestState(c).ConfigMutex.Unlock
 			}
 			coldMDSTestGate(t, lock, unlock, func(ctx context.Context) error { return target.RemoveStopped(ctx) })
 			if old.removes != 0 || old.inspects != 0 || survivor.inspects != 0 || len(native.calls) != 0 || target.identity.removalAttempted {
@@ -717,7 +718,7 @@ func TestStoppedMDSWholeClusterCleanupRetainsPartialAndAmbiguousHandles(t *testi
 		t.Fatal("missing pending attempt")
 	}
 	old.termErr = nil
-	servicehook.TestReplaceOSDs(fs.cluster, map[int]*ceph.OSDContainer{})
+	testhelper.TestReplaceOSDs(fs.cluster, map[int]*ceph.OSDContainer{})
 	if err := fs.cluster.Terminate(t.Context()); err != nil || old.removes != 2 || survivor.removes != 1 || partial.removes != 1 || len(servicehook.Services(fs.cluster)) != 0 || !servicehook.Closed(fs.cluster) {
 		t.Fatalf("whole cleanup lost a retained owned handle: %v", err)
 	}

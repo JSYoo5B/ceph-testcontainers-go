@@ -3,6 +3,7 @@ package fault
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
@@ -12,7 +13,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
@@ -29,10 +29,10 @@ func injectFixture() *clustertest.CLI {
 	}}
 }
 
-func injectCluster(ctr *clustertest.CLI, config servicehook.TestConfig) *ceph.Container {
+func injectCluster(ctr *clustertest.CLI, config testhelper.TestConfig) *ceph.Container {
 	config.StartupTimeout = time.Second
 	config.OSDs = max(config.OSDs, 2)
-	return servicehook.TestCluster(ctr, config)
+	return testhelper.TestCluster(ctr, config)
 }
 
 func tellCommands(ctr *clustertest.CLI) []string {
@@ -48,7 +48,7 @@ func tellCommands(ctr *clustertest.CLI) []string {
 func requireNoRegistryEntry(t *testing.T, c *ceph.Container) {
 	t.Helper()
 	for _, kind := range []faulthook.Kind{faulthook.NetworkDelay, faulthook.NetworkInterruption, faulthook.ContainerPause, faulthook.Blocklist, faulthook.FullRatios} {
-		if faults := faulthook.TestFaults(c, kind); len(faults) != 0 {
+		if faults := testhelper.TestFaults(c, kind); len(faults) != 0 {
 			t.Fatalf("a one-shot injection registered a %s fault: %v", kind, faults)
 		}
 	}
@@ -65,30 +65,30 @@ func TestInjectObjectDataErrorValidatesTargetBeforeNativeCommands(t *testing.T) 
 		"unowned OSD":  func(c *ceph.Container) error { return InjectObjectDataError(t.Context(), c, "fixture", "victim", 9) },
 	} {
 		ctr := injectFixture()
-		if err := call(injectCluster(ctr, servicehook.TestConfig{})); err == nil || len(ctr.Calls) != 0 {
+		if err := call(injectCluster(ctr, testhelper.TestConfig{})); err == nil || len(ctr.Calls) != 0 {
 			t.Fatalf("%s: invalid target reached native CLI: %v %v", name, err, ctr.Calls)
 		}
 	}
 	ctr := injectFixture()
 	ctr.Output["osd pool ls detail --format json"] = strings.Replace(ctr.Output["osd pool ls detail --format json"], `"type":1`, `"type":3`, 1)
-	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, servicehook.TestConfig{}), "fixture", "victim", 0); err == nil || len(tellCommands(ctr)) != 0 {
+	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{}), "fixture", "victim", 0); err == nil || len(tellCommands(ctr)) != 0 {
 		t.Fatal("EC pool accepted a replica data error")
 	}
 	ctr = injectFixture()
 	ctr.Output[mapCommand] = strings.Replace(ctr.Output[mapCommand], `"acting":[1,0]`, `"acting":[1]`, 1)
-	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, servicehook.TestConfig{}), "fixture", "victim", 0); err == nil || len(tellCommands(ctr)) != 0 {
+	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{}), "fixture", "victim", 0); err == nil || len(tellCommands(ctr)) != 0 {
 		t.Fatal("OSD outside the acting set received an injection")
 	}
 	ctr = injectFixture()
 	ctr.Output[mapCommand] = strings.Replace(ctr.Output[mapCommand], `"pool_id":7`, `"pool_id":8`, 1)
-	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, servicehook.TestConfig{}), "fixture", "victim", 0); err == nil || len(tellCommands(ctr)) != 0 {
+	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{}), "fixture", "victim", 0); err == nil || len(tellCommands(ctr)) != 0 {
 		t.Fatal("mapping of another pool was accepted")
 	}
 }
 
 func TestInjectObjectDataErrorEnablesOnlyTheTargetDaemon(t *testing.T) {
 	ctr := injectFixture()
-	c := injectCluster(ctr, servicehook.TestConfig{})
+	c := injectCluster(ctr, testhelper.TestConfig{})
 	if err := InjectObjectDataError(t.Context(), c, "fixture", "victim", 0); err != nil {
 		t.Fatal(err)
 	}
@@ -100,21 +100,21 @@ func TestInjectObjectDataErrorEnablesOnlyTheTargetDaemon(t *testing.T) {
 
 func TestInjectObjectDataErrorNeedsBlueStore(t *testing.T) {
 	ctr := injectFixture()
-	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, servicehook.TestConfig{MemStore: true}), "fixture", "victim", 0); err == nil || len(ctr.Calls) != 0 {
+	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{MemStore: true}), "fixture", "victim", 0); err == nil || len(ctr.Calls) != 0 {
 		t.Fatalf("BlueStore read-error injection ran on MemStore: %v %v", err, ctr.Calls)
 	}
 }
 
 func TestInjectObjectDataErrorRefusesSharedAndClosedClusters(t *testing.T) {
 	ctr := injectFixture()
-	err := InjectObjectDataError(t.Context(), injectCluster(ctr, servicehook.TestConfig{Shared: true}), "fixture", "victim", 0)
+	err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{Shared: true}), "fixture", "victim", 0)
 	var op *ceph.OperationError
 	if !errors.Is(err, ceph.ErrSharedCluster) || !errors.As(err, &op) || op.Op != "fault.InjectObjectDataError" || len(ctr.Calls) != 0 {
 		t.Fatalf("shared cluster bypassed admission: %v %v", err, ctr.Calls)
 	}
 	ctr = injectFixture()
 	_, terminated := faulthook.Terminated()
-	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, servicehook.TestConfig{Closed: true}), "fixture", "victim", 0); !errors.Is(err, terminated) || len(ctr.Calls) != 0 {
+	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{Closed: true}), "fixture", "victim", 0); !errors.Is(err, terminated) || len(ctr.Calls) != 0 {
 		t.Fatalf("terminated cluster ran a native command: %v %v (want %v)", err, ctr.Calls, terminated)
 	}
 }
@@ -123,8 +123,8 @@ func TestInjectObjectDataErrorRefusesSharedAndClosedClusters(t *testing.T) {
 // deadline ends while the topology lock is busy runs no native command.
 func TestInjectObjectDataErrorWaitsForTopologyLock(t *testing.T) {
 	ctr := injectFixture()
-	c := injectCluster(ctr, servicehook.TestConfig{})
-	clustertest.AssertContextLockQueued(t, servicehook.TestState(c).Mutex, func(ctx context.Context) error {
+	c := injectCluster(ctr, testhelper.TestConfig{})
+	clustertest.AssertContextLockQueued(t, testhelper.TestState(c).Mutex, func(ctx context.Context) error {
 		return InjectObjectDataError(ctx, c, "fixture", "victim", 0)
 	})
 	if len(ctr.Calls) != 0 {
@@ -137,7 +137,7 @@ func TestInjectObjectDataErrorWaitsForTopologyLock(t *testing.T) {
 func TestInjectObjectDataErrorPartialFailureIsNotRolledBack(t *testing.T) {
 	ctr := injectFixture()
 	ctr.Fail = enableCommand
-	c := injectCluster(ctr, servicehook.TestConfig{})
+	c := injectCluster(ctr, testhelper.TestConfig{})
 	if err := InjectObjectDataError(t.Context(), c, "fixture", "victim", 0); err == nil || !strings.Contains(err.Error(), "enable data error injection on osd.0") {
 		t.Fatalf("enable failure was not reported: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestInjectObjectDataErrorPartialFailureIsNotRolledBack(t *testing.T) {
 
 	ctr = injectFixture()
 	ctr.Fail = injectCommand
-	c = injectCluster(ctr, servicehook.TestConfig{})
+	c = injectCluster(ctr, testhelper.TestConfig{})
 	if err := InjectObjectDataError(t.Context(), c, "fixture", "victim", 0); err == nil || !strings.Contains(err.Error(), "inject data error on osd.0") {
 		t.Fatalf("injection failure was not reported: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestInjectObjectDataErrorPartialFailureIsNotRolledBack(t *testing.T) {
 // replaced meanwhile receives no injection, and the enabled switch stays.
 func TestInjectObjectDataErrorRechecksPoolIdentityBeforeInjecting(t *testing.T) {
 	ctr := &poolReplacingCLI{CLI: injectFixture()}
-	c := servicehook.TestCluster(ctr, servicehook.TestConfig{StartupTimeout: time.Second, OSDs: 2})
+	c := testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second, OSDs: 2})
 	if err := InjectObjectDataError(t.Context(), c, "fixture", "victim", 0); err == nil || !strings.Contains(err.Error(), "replaced") {
 		t.Fatalf("a replaced pool was not refused: %v", err)
 	}

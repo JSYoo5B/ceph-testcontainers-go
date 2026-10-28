@@ -76,7 +76,7 @@ func TestNetworkStateRemovalFlagsHaveOneWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowedWriters := map[string]bool{"removeBridges": true, "TestSetNetworkRemoved": true /* test hook; its doc names the lock contract */}
+	allowedWriters := map[string]bool{"removeBridges": true, "UnitSetNetworkRemoved": true /* test hook; its doc names the lock contract */}
 	var problems []string
 	for _, file := range files {
 		if strings.HasSuffix(file, "_test.go") {

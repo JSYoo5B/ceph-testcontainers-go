@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
@@ -14,7 +15,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -37,7 +37,7 @@ func dataPoolsFixture(t *testing.T) (*Filesystem, *cephFSDataPoolsFixture) {
 	t.Helper()
 	ctr := &cephFSDataPoolsFixture{fsID: 41, metadataID: 1, defaultID: 2, targetID: 3, poolType: 1,
 		apps: map[string]map[string]string{"cephfs": {}}, output: make(map[string]string)}
-	c := servicehook.TestCluster(ctr, servicehook.TestConfig{StartupTimeout: time.Second})
+	c := testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second})
 	fs := &Filesystem{FilesystemName: "fixture", MetadataPool: "metadata", DataPool: "data", cluster: c,
 		config: Config{Name: "fixture", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}}}
 	filesystems(c).byName["fixture"] = fs
@@ -249,7 +249,7 @@ func TestCephFSDataPoolGuardsBeforeMutation(t *testing.T) {
 		t.Fatal("overwrite-enabled EC refused", err)
 	}
 	fs, c = dataPoolsFixture(t)
-	servicehook.TestSetClosed(fs.cluster, true)
+	testhelper.TestSetClosed(fs.cluster, true)
 	if _, err := fs.DataPools(t.Context()); err == nil || len(c.calls) != 0 {
 		t.Fatal("terminated cluster queried")
 	}

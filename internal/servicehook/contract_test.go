@@ -33,15 +33,6 @@ func TestAssertedHooksHaveNoTestAccessMethod(t *testing.T) {
 			t.Errorf("test-only method %s re-entered the asserted production interface", name)
 		}
 	}
-	names := methodNames(reflect.TypeFor[testHooks]())
-	if len(names) == 0 {
-		t.Fatal("the test-access interface is empty")
-	}
-	for _, name := range names {
-		if !strings.HasPrefix(name, "Test") {
-			t.Errorf("production method %s is in the test-access interface", name)
-		}
-	}
 }
 
 var registrationMu sync.Mutex
@@ -54,28 +45,16 @@ func TestProductionCallDoesNotNeedTestAccess(t *testing.T) {
 
 	calls := 0
 	hookreg.Value = onlyLock{locked: &calls}
-	if _, ok := hookreg.Value.(testHooks); ok {
-		t.Fatal("the stub unexpectedly satisfies the test-access interface")
-	}
 	Lock(nil)
 	if calls != 1 {
 		t.Fatalf("Lock reached the hooks %d times", calls)
 	}
-	defer func() {
-		if recover() == nil {
-			t.Error("a test accessor ran against hooks without test access")
-		}
-	}()
-	TestOSDCount(nil)
 }
 
-func TestRegisteredHooksSatisfyBothContracts(t *testing.T) {
+func TestRegisteredHooksSatisfyProductionContract(t *testing.T) {
 	registrationMu.Lock()
 	defer registrationMu.Unlock()
 	if _, ok := hookreg.Value.(hooks); !ok {
 		t.Error("package ceph registered hooks that do not satisfy the production contract")
-	}
-	if _, ok := hookreg.Value.(testHooks); !ok {
-		t.Error("package ceph registered hooks that do not satisfy the test-access contract")
 	}
 }

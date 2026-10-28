@@ -3,6 +3,7 @@ package rgw
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"sync"
 	"testing"
 	"time"
@@ -14,8 +15,8 @@ import (
 
 // testCluster builds a cluster value whose control container is control and
 // whose owned service containers are services.
-func testCluster(control testcontainers.Container, config servicehook.TestConfig, services map[string]testcontainers.Container) *ceph.Container {
-	c := servicehook.TestCluster(control, config)
+func testCluster(control testcontainers.Container, config testhelper.TestConfig, services map[string]testcontainers.Container) *ceph.Container {
+	c := testhelper.TestCluster(control, config)
 	for name, ctr := range services {
 		servicehook.SetService(c, name, ctr)
 	}

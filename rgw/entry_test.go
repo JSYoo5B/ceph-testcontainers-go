@@ -3,6 +3,7 @@ package rgw
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -52,7 +53,7 @@ func TestDefaultGatewayAppliesOnlyWithoutExplicitGateways(t *testing.T) {
 		{[]ceph.Option{defaultGateway()}, ""},
 		{[]ceph.Option{WithGateways(Config{Name: "s3"}), defaultGateway()}, "s3"},
 	} {
-		services, err := servicehook.TestApply(tc.opts...)
+		services, err := testhelper.TestApply(tc.opts...)
 		if err != nil || len(services) != 1 {
 			t.Fatalf("bootstraps: %v %v", services, err)
 		}
@@ -99,9 +100,9 @@ func TestSerializedGatewayMutationQueuedDeadline(t *testing.T) {
 	for name, operation := range operations {
 		t.Run(name, func(t *testing.T) {
 			control := &clustertest.ContextLockRuntime{}
-			cluster := testCluster(control, servicehook.TestConfig{StartupTimeout: time.Second, HostNetwork: name == "StartHost", PublicAddress: "127.0.0.1"}, nil)
-			clustertest.AssertContextLockQueued(t, servicehook.TestState(cluster).Mutex, func(ctx context.Context) error { return operation(ctx, cluster) })
-			if control.Execs.Load() != 0 || servicehook.TestState(cluster).PortLeases != 0 || len(servicehook.Services(cluster)) != 0 || len(gateways(cluster).byName) != 0 {
+			cluster := testCluster(control, testhelper.TestConfig{StartupTimeout: time.Second, HostNetwork: name == "StartHost", PublicAddress: "127.0.0.1"}, nil)
+			clustertest.AssertContextLockQueued(t, testhelper.TestState(cluster).Mutex, func(ctx context.Context) error { return operation(ctx, cluster) })
+			if control.Execs.Load() != 0 || testhelper.TestState(cluster).PortLeases != 0 || len(servicehook.Services(cluster)) != 0 || len(gateways(cluster).byName) != 0 {
 				t.Fatal("queued caller created containers, port leases or gateway inventory")
 			}
 		})
@@ -110,7 +111,7 @@ func TestSerializedGatewayMutationQueuedDeadline(t *testing.T) {
 
 func TestGatewaySnapshotsCopyOwnedDescriptors(t *testing.T) {
 	x, y := &Gateway{GatewayName: "x"}, &Gateway{GatewayName: "y"}
-	cluster := testCluster(nil, servicehook.TestConfig{}, nil)
+	cluster := testCluster(nil, testhelper.TestConfig{}, nil)
 	gateways(cluster).byName["y"], gateways(cluster).byName["x"] = y, x
 	snapshot, err := Gateways(t.Context(), cluster)
 	if err != nil || len(snapshot) != 2 || snapshot[0] != x || snapshot[1] != y {
@@ -138,7 +139,7 @@ func TestContainerShortcutsUseTheEmbeddedCluster(t *testing.T) {
 	if _, err := missing.S3Endpoint(t.Context()); err == nil {
 		t.Fatal("nil container returned an endpoint")
 	}
-	cluster := &Container{Container: testCluster(nil, servicehook.TestConfig{}, nil)}
+	cluster := &Container{Container: testCluster(nil, testhelper.TestConfig{}, nil)}
 	if _, err := cluster.S3Endpoint(t.Context()); err == nil || !strings.Contains(err.Error(), "0 RGW gateways") {
 		t.Fatalf("a cluster without gateways returned an endpoint: %v", err)
 	}

@@ -3,13 +3,13 @@ package fault
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -31,7 +31,7 @@ func TestEndpointRestoreQueuedDeadline(t *testing.T) {
 
 func TestSerializedNetworkNestedGateReturnsOriginalHandle(t *testing.T) {
 	link, docker := newLinkFake()
-	cluster := servicehook.TestCluster(nil, servicehook.TestConfig{NetworkName: link.NetworkName})
+	cluster := testhelper.TestCluster(nil, testhelper.TestConfig{NetworkName: link.NetworkName})
 	trackInterruption(cluster, link.NetworkName+"/osd-0", link)
 	var result *NetworkInterruption
 	assertContextLockQueued(t, &link.mu, func(ctx context.Context) error {
@@ -39,7 +39,7 @@ func TestSerializedNetworkNestedGateReturnsOriginalHandle(t *testing.T) {
 		result, err = InterruptNetwork(ctx, cluster, contextLockClient{}, ceph.PublicNetworkPlane)
 		return err
 	})
-	if result != link || docker.connects != 0 || docker.closes != 0 || link.complete || faulthook.TestFaults(cluster, faulthook.NetworkInterruption)[link.NetworkName+"/osd-0"] != link {
+	if result != link || docker.connects != 0 || docker.closes != 0 || link.complete || testhelper.TestFaults(cluster, faulthook.NetworkInterruption)[link.NetworkName+"/osd-0"] != link {
 		t.Fatal("nested endpoint queue lost the retry handle or changed its endpoint")
 	}
 	if err := link.Restore(t.Context()); err != nil || docker.connects != 1 || !link.complete {
@@ -86,8 +86,8 @@ func assertContextLockQueued(t *testing.T, mutex *sync.Mutex, operation func(con
 // Deadline expiry while waiting for the cluster gate must not reach Docker
 // or reserve an endpoint; a later operation can still acquire the same gate.
 func TestNetworkInterruptionQueuedTopologyDeadline(t *testing.T) {
-	c := servicehook.TestCluster(nil, servicehook.TestConfig{NetworkName: "cluster-network"})
-	view := servicehook.TestState(c)
+	c := testhelper.TestCluster(nil, testhelper.TestConfig{NetworkName: "cluster-network"})
+	view := testhelper.TestState(c)
 	assertContextLockQueued(t, view.Mutex, func(ctx context.Context) error {
 		link, err := InterruptNetwork(ctx, c, contextLockClient{}, ceph.PublicNetworkPlane)
 		if link != nil {
@@ -96,7 +96,7 @@ func TestNetworkInterruptionQueuedTopologyDeadline(t *testing.T) {
 		return err
 	})
 	if err := faulthook.WithTopology(t.Context(), c, func() error {
-		if len(faulthook.TestFaults(c, faulthook.NetworkInterruption)) != 0 || faulthook.Closed(c) {
+		if len(testhelper.TestFaults(c, faulthook.NetworkInterruption)) != 0 || faulthook.Closed(c) {
 			t.Error("queued interruption changed cluster state")
 		}
 		return nil

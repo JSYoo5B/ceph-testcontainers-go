@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"math"
 	"slices"
@@ -219,10 +220,10 @@ func TestRGWUserUsageStrictSchemaAndIntegerBounds(t *testing.T) {
 
 func TestRGWUserUsageRefusesUnownedOrReplacedGatewayBeforeNative(t *testing.T) {
 	cases := map[string]func(*Gateway, *User){
-		"foreign user":            func(g *Gateway, user *User) { user.owner = testCluster(nil, servicehook.TestConfig{}, nil) },
+		"foreign user":            func(g *Gateway, user *User) { user.owner = testCluster(nil, testhelper.TestConfig{}, nil) },
 		"unconfirmed user":        func(g *Gateway, user *User) { user.state.created = false },
 		"removed user":            func(g *Gateway, user *User) { user.state.removed = true },
-		"closed cluster":          func(g *Gateway, user *User) { servicehook.TestSetClosed(g.owner, true) },
+		"closed cluster":          func(g *Gateway, user *User) { testhelper.TestSetClosed(g.owner, true) },
 		"removed gateway":         func(g *Gateway, user *User) { servicehook.DeleteService(g.owner, rgwServiceName(g.config)) },
 		"same CID foreign handle": func(g *Gateway, user *User) { g.Container = &rgwAdminTestContainer{id: "gateway"} },
 		"typed nil gateway":       func(g *Gateway, user *User) { g.Container = (*rgwAdminTestContainer)(nil) },
@@ -408,7 +409,7 @@ func TestRGWUserUsageRejectsChangedNativeScopeAndRedactsControlFailure(t *testin
 
 func TestRGWUserUsageHeldControlDeadlineReleasesOwnerAndDoesNotReadStats(t *testing.T) {
 	g, f, _, user := newRGWUsageAccountFixture(t)
-	assertSnapshotReadLockQueued(t, servicehook.TestState(g.owner).ControlMutex, func(ctx context.Context) error {
+	assertSnapshotReadLockQueued(t, testhelper.TestState(g.owner).ControlMutex, func(ctx context.Context) error {
 		usage, err := g.UserUsage(ctx, user)
 		if usage != (UserUsage{}) {
 			t.Error("queued native scope published usage")
