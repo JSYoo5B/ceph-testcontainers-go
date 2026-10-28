@@ -3,9 +3,10 @@
 This note records the API boundary and the lifecycle for the owner's option 1c
 decision on #64 (2026-10-28): optional MON data-volume support in the ordinary
 `ceph` fixture, covering the initial MON and `AddMonitor`, with the source and
-the replacement MON generation mounting the same cluster-owned store. It adds no
-code, no public name and no native run. Every name and signature below is a
-proposal for the owner to accept or change; none is frozen, and the API
+the replacement MON generation mounting the same cluster-owned store. The note
+itself added no code, no public name and no native run; the status of the
+internal slice 2 that followed is at the end of the slice plan. Every name and
+signature below is a proposal for the owner to accept or change; none is frozen, and the API
 catalogue is untouched until a later slice implements an accepted shape.
 
 What it does not decide: mixed-version compatibility, the Squid to Tentacle
@@ -221,10 +222,10 @@ adds a data race with lock-free readers and is not recommended.
 
 ## Slice plan
 
-1. This note.
+1. This note (merged).
 2. Internal ownership primitive: the unexported record, state machine, volume
-   validation, release stages and guards, Docker-free, with negative controls,
-   and the require-store mode of the two scripts. No option yet.
+   validation, release stages and guards, Docker-free, with negative controls.
+   Landed in the slice 2 change; its status is below.
 3. `WithMonitorVolumeStorage`, the mount in `runMonitor` and `AddMonitor`,
    `StoreVolume`, `Remove` discard and `Terminate` release, catalogue and
    release-note fragment.
@@ -233,10 +234,39 @@ adds a data race with lock-free readers and is not recommended.
 6. A same-release native retention batch, only after the owner authorizes native
    runs. Upgrade evidence is a later, separate step.
 
-The primitive is not part of this slice. Its shape depends on D1 (one volume per
-MON or one shared volume) and D6 (helper or inspector), which the owner has not
-answered, and an unexported type with no caller would only be reviewed against a
-guess.
+### Slice 2 status
+
+Implemented in `ceph/mon_store_volume.go`, `ceph/mon_store_identity.go` and
+`ceph/mon_store_state.go`, with Docker-free tests. Nothing is public and no
+production path publishes a record, so a cluster holds no store and default
+behavior is unchanged. 0.x: no old name is renamed or removed, and no alias is
+added.
+
+What the slice follows from this note: the phases planned, created, fresh,
+bound, detached and released; one volume per MON (D1, followed because the
+owner has not answered it); no persistent helper (D6, followed for the same
+reason: the record carries no helper and the volume-user check is an
+independent container list); publish before create, also for the attachment;
+an unknown volume or container creation outcome is never replayed and is
+settled only by `Terminate` after its labeled-container scan; a bound store
+whose volume is missing, changed or foreign fails instead of being recreated;
+a retained generation is dispatched only after its identity was verified; the
+volume is never removed with force; `Terminate` releases the stores after the
+added and primary MON containers and again after the labeled-container scan.
+The identity inputs (keyring digest, shape, fingerprint, FSID, address
+vector) are validated and compared but not observed: nothing reads a store or a
+monmap yet.
+
+Not in the slice: the require-store mode of `mon.sh` and `mon-join.sh`, which
+has no caller until slice 3 and belongs with the mount that uses it; the inspector
+container (D6) that would observe the identity; every public name; the option,
+the mounts, `StoreVolume`, `Remove` discard, `Detach`, `Reopen`; address and
+port-lease handoff; any native run. The `fresh` to `bound` transition and the
+discard of a fresh store are exercised only by the unit tests, since no
+production caller starts a MON generation yet.
+
+The mutex count is unchanged: `monStoreState` has no lock and sits at the position
+of `osdStorageState` under `Container.mu` (`TestNativeStateAddsNoMutex` scans it).
 
 ## Owner decisions with recommendations
 

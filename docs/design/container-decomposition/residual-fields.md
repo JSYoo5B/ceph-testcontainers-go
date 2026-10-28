@@ -42,6 +42,7 @@ call sites.
 | `nets` | `mu` and its own fields | 22 (6) | Owner: `networkState` (first slice) |
 | `osdHandles` | `mu` | 38 (17) | Owner: `osdRegistry` (seventh slice) |
 | `stores` | `mu` | 17 (5) | Owner: `osdStorageState` (fifth slice) |
+| `monStores` | `mu` | not counted | Owner: `monStoreState` (MON store volumes, see [Cluster-owned MON data volumes](../mon-volume-storage.md)); added after the inspection above. No production path publishes a record yet; `terminate` calls its two release stages |
 | `runDir` | per field | 12 (7) | Owner: `runDirState` (sixth slice) |
 | `portLeases` | `mu` | 5 (4) | Owner: `portLeaseState` (eighth slice) |
 | `nativeCmds` | own leaf lock | 14 (3) | Owner: `nativeState` (second slice) |
