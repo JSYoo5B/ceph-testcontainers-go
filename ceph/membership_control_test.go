@@ -69,7 +69,7 @@ func TestTestStateExposesNoMembershipControlPointer(t *testing.T) {
 	if got := structFieldNames(t, "service_hooks.go", "testState"); !slices.Equal(got, testStateFields) {
 		t.Fatalf("testState fields = %v, pinned %v", got, testStateFields)
 	}
-	if got := structFieldNames(t, filepath.Join("..", "internal", "servicehook", "servicehook.go"), "TestStateView"); !slices.Equal(got, testStateFields) {
+	if got := structFieldNames(t, filepath.Join("..", "internal", "servicehook", "testaccess.go"), "TestStateView"); !slices.Equal(got, testStateFields) {
 		t.Fatalf("TestStateView fields = %v, pinned %v", got, testStateFields)
 	}
 }
@@ -317,8 +317,8 @@ func TestTestSetHooksAreCalledOnlyFromTests(t *testing.T) {
 				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "servicehook" {
 					problems = append(problems, filepath.ToSlash(path))
 				}
-				// get().TestSetX(...) inside the wrappers themselves is the definition.
-				if _, ok := sel.X.(*ast.CallExpr); ok && !strings.HasSuffix(filepath.ToSlash(path), "internal/servicehook/servicehook.go") {
+				// getTest().TestSetX(...) inside the wrappers themselves is the definition.
+				if _, ok := sel.X.(*ast.CallExpr); ok && !strings.HasSuffix(filepath.ToSlash(path), "internal/servicehook/testaccess.go") {
 					problems = append(problems, filepath.ToSlash(path))
 				}
 			}
