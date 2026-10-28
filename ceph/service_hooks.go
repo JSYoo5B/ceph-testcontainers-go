@@ -79,6 +79,10 @@ type tenantPort = interface {
 	// AttachScope registers a service resource that the tenant's release
 	// removes, in reverse order and before its clients are deleted.
 	AttachScope(key string, release func(ctx context.Context) ([]string, error)) error
+	// RequireService fails with ErrInvalidRequest when the shared cluster
+	// was not given the support of kind, so that a service Lease fails
+	// before it creates anything that no probe would attribute.
+	RequireService(kind string) error
 	WithClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption
 	// WithTopology runs fn while it holds the cluster mutex, the one that
 	// serializes fixture mutations, and returns fn's error. fn must not call
@@ -115,6 +119,8 @@ func (l tenantLease) CreateClient(ctx context.Context, suffix string, caps Clien
 func (l tenantLease) AttachScope(key string, release func(ctx context.Context) ([]string, error)) error {
 	return l.t.attachScope(key, release)
 }
+
+func (l tenantLease) RequireService(kind string) error { return l.t.requireService(kind) }
 
 func (l tenantLease) WithClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
 	return l.t.WithClientIdentity(client, opts...)

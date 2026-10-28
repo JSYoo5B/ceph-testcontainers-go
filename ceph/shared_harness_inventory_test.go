@@ -260,6 +260,14 @@ func measureHarnessInventory(t *testing.T, repoRoot string) map[string]string {
 		total += n
 	}
 	rows["servicehook.RegisterSharedService calls in rbd, cephfs and rgw"] = strconv.Itoa(total)
+
+	require := regexp.MustCompile(`\.RequireService\(`)
+	total = 0
+	for _, service := range []string{"rbd", "cephfs", "rgw"} {
+		n, _ := countReferences(t, filepath.Join(repoRoot, service), func(path string) bool { return !strings.HasSuffix(path, "_test.go") }, require)
+		total += n
+	}
+	rows["port RequireService calls in rbd, cephfs and rgw"] = strconv.Itoa(total)
 	return rows
 }
 

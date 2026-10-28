@@ -50,7 +50,10 @@ type fakeShared struct {
 	unsettledReads, unsettledClearsAfter int
 }
 
-func (f *fakeShared) prepareServices(context.Context) error {
+func (f *fakeShared) prepareServices(ctx context.Context, prepares []sharedPrepare) error {
+	if err := runPrepares(ctx, nil, prepares); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fleet.prepareServices != nil {
@@ -96,13 +99,22 @@ func (f *fakeShared) invariants(_ context.Context, pool string) (sharedInvariant
 		Namespaces: namespaces, Unsettled: f.unsettled}, nil
 }
 
-func (f *fakeShared) resources(context.Context) (map[string]string, error) {
+func (f *fakeShared) resources(ctx context.Context, probes []sharedProbe) (map[string]string, error) {
+	listed, err := runProbes(ctx, nil, probes)
+	if err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.terminated {
 		return nil, errClusterTerminated
 	}
-	return maps.Clone(f.services), nil
+	resources := maps.Clone(f.services)
+	if resources == nil {
+		resources = map[string]string{}
+	}
+	maps.Copy(resources, listed)
+	return resources, nil
 }
 
 func (f *fakeShared) daemonsRunning(context.Context) error {
@@ -263,7 +275,9 @@ func (fleet *fakeFleet) clusters() []*fakeShared {
 }
 
 func newFakeShared(fleet *fakeFleet, opts ...SharedOption) *SharedCluster {
-	opts = append([]SharedOption{func(s *sharedSettings) {
+	// Model clusters take no registered service: other test files link the
+	// real service packages, whose callbacks need a real cluster.
+	opts = append([]SharedOption{withSharedServices(), func(s *sharedSettings) {
 		s.start = fleet.start
 		s.settle = 50 * time.Millisecond
 	}}, opts...)

@@ -239,7 +239,7 @@ func TestLeaseOrchestrationNamesNoContainerBeyondTheAllowList(t *testing.T) {
 	allowed := map[string][]string{
 		"shared.go":           nil,
 		"shared_exclusive.go": {"Exclusive"},
-		"shared_services.go":  {"sharedService"},
+		"shared_services.go":  {"sharedPrepare", "sharedProbe", "newSharedServiceSet", "runPrepares", "runProbes", "sharedService"},
 		"tenant.go":           nil,
 	}
 	for file, allow := range allowed {

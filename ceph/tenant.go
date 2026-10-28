@@ -194,6 +194,16 @@ func (t *Tenant) check() error {
 // attachScope registers a service resource that the tenant's release
 // removes. A service attaches it before it creates the resource, so that the
 // release also removes a partial creation. Each key is attached once.
+// requireService fails when the shared cluster that granted t was not given
+// the support of kind. The set is fixed at construction, so the answer does
+// not change and needs no lock or liveness check.
+func (t *Tenant) requireService(kind string) error {
+	if !t.owner.settings.services.has(kind) {
+		return invalidRequest("the shared cluster was not given the %s service support", kind)
+	}
+	return nil
+}
+
 func (t *Tenant) attachScope(key string, release func(ctx context.Context) ([]string, error)) error {
 	if err := t.check(); err != nil {
 		return err
