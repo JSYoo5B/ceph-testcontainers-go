@@ -629,7 +629,7 @@ func TestFinalizationNegativeControls(t *testing.T) {
 
 func TestTerminateOnCleanupRegistersOneCleanup(t *testing.T) {
 	tb := &finalizationTB{name: "TestRegistered"}
-	cluster := &Container{owner: "owner"}
+	cluster := &Container{startup: newStartupIdentity("owner")}
 	f, err := cluster.TerminateOnCleanup(tb, FinalizationConfig{})
 	if err != nil {
 		t.Fatal(err)

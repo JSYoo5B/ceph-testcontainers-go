@@ -112,7 +112,7 @@ func TestGenerateKeyArgsFollowsKeyTypeOption(t *testing.T) {
 		{"19.2.5", false, CipherAES, []string{"ceph-authtool", "--gen-print-key"}},
 		{"19.2.5", false, CipherAES256K, nil},
 	} {
-		c := &Container{bootstrap: bootstrapRecord{cephVersion: test.version}, keyTypeOption: test.option}
+		c := &Container{bootstrap: bootstrapRecord{cephVersion: test.version}, startup: startupIdentity{keyTypeOption: test.option}}
 		got, err := c.generateKeyArgs(test.keyType)
 		if (test.want == nil) != (err != nil) || !slices.Equal(got, test.want) {
 			t.Errorf("%s option=%t %q: %v, %v", test.version, test.option, test.keyType, got, err)
