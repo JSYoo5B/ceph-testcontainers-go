@@ -112,8 +112,8 @@ func (t *Tenant) createClient(ctx context.Context, id string, caps ClientCaps) (
 	if err := t.check(); err != nil {
 		return nil, err
 	}
-	client, err := t.inst.backend.createClient(ctx, "client."+id, caps)
-	if client != nil && client.created {
+	client, created, err := t.inst.backend.createClient(ctx, "client."+id, caps)
+	if client != nil && created {
 		t.mu.Lock()
 		t.clients = append(t.clients, client)
 		t.mu.Unlock()

@@ -921,11 +921,22 @@ of `ceph/harness`.
 
 ### Order of work
 
-1. Internal, no public API: `Backend.CreateClient` returns `created`. It touches
-   `sharedBackend`, its test model and `tenant.go`, and is the only code-level
-   preparation that the design needs before the move. It is left to a separate
-   change. The error contract needs no preparation: it is added with the move
-   because it has no caller before then.
+1. Internal, no public API (done): the private backend method `createClient`
+   (`Backend.CreateClient` after the move) returns `created`. `sharedBackend`,
+   `containerBackend`, `createSharedClient`, the model backend of the tests and
+   `Tenant.createClient` changed; the tenant registers a client for deletion on
+   the backend's report and no longer reads `ClientConfig.created`. The report is
+   true from the point where the MON accepted the entity, including a later
+   keyring failure that still returns the partial client, and false before it.
+   Docker-free controls pin both the tenant's use of the report and the
+   backend's value at each return. Not done and not independent of the open
+   items: removing `raw()` from the operations port. Its callers are
+   `SharedCluster.Exclusive`, the Observer path `Tenant.container` and the
+   test-only `UnitTenantCluster` (decision 7), so it needs the `Lend` route,
+   hence the placement of decision 5, the stale-handle audit of decision 11 and
+   the decision 7 lookup.
+   The error contract needs no preparation: it is added with the move because it
+   has no caller before then.
 2. Internal: move the service-private helpers into `<service>/internal/...`
    (decision 8), one change per service.
 3. The move: `ceph/harness`, `internal/harnesshook`, the two slots, the three
