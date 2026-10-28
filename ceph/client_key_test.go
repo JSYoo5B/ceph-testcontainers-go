@@ -22,7 +22,7 @@ func clientWorld() (*rotationWorld, *Container, *ClientConfig) {
 	w.clients["client.app"] = fakeClient{key: fakeCephxKey(CipherAES256K, 900), caps: maps.Clone(replacedCaps)}
 	w.clients["client.other"] = otherClient
 	c := rotationCluster(w)
-	c.keyTypeOption = true
+	c.startup.recordKeyTypeOption(true)
 	client := &ClientConfig{owner: c, name: "client.app", config: []byte("[global]\n"),
 		keyring: []byte(fakeClientKeyring("client.app", w.clients["client.app"])), created: true, ready: true}
 	c.authRecords.confirmKey("client.app", w.clients["client.app"].key)

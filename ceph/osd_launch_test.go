@@ -41,7 +41,7 @@ func consumeOSDLaunchFiles(t *testing.T, req testcontainers.GenericContainerRequ
 
 func TestOSDLaunchRecipeRebuildsConsumedFilesAndRequestState(t *testing.T) {
 	c := &Container{settings: options{essentialImage: "synthetic-osd-image", startupTimeout: time.Minute},
-		bootstrap: bootstrapRecord{config: []byte("[global]\nfsid = synthetic-cluster\n"), keyring: []byte("synthetic-admin-keyring")}, owner: "synthetic-owner",
+		bootstrap: bootstrapRecord{config: []byte("[global]\nfsid = synthetic-cluster\n"), keyring: []byte("synthetic-admin-keyring")}, startup: newStartupIdentity("synthetic-owner"),
 		nets:   networkState{public: &testcontainers.DockerNetwork{Name: "synthetic-public"}, cluster: &testcontainers.DockerNetwork{Name: "synthetic-cluster"}},
 		runDir: runDirState{volume: &runVolume{name: "synthetic-run"}}, stores: osdStorageState{memory: &osdMemoryStorage{name: "synthetic-memory"}}}
 	osd := &OSDContainer{ID: 7, nativeUUID: "synthetic-osd-uuid", placement: OSDConfig{Host: "synthetic-host", Root: "default", Rack: "rack-a", DeviceClass: "fast"}}
@@ -66,7 +66,7 @@ func TestOSDLaunchRecipeRebuildsConsumedFilesAndRequestState(t *testing.T) {
 	c.bootstrap.config[0], c.bootstrap.keyring[0], key[0] = 'X', 'X', 'X'
 	c.settings.essentialImage, c.settings.hostNetwork = "other-image", true
 	c.nets.public.Name, c.nets.cluster.Name = "other-public", "other-cluster"
-	c.runDir.volume.name, c.stores.memory.name, c.owner = "other-run", "other-memory", "other-owner"
+	c.runDir.volume.name, c.stores.memory.name, c.startup.owner = "other-run", "other-memory", "other-owner"
 	first.Env["CEPH_OSD_UUID"], first.Labels[clusterOwnerLabel] = "foreign", "foreign"
 	first.Networks[0] = "foreign"
 	first.Mounts[0].Source.(testcontainers.DockerVolumeMountSource).VolumeOptions.NoCopy = false

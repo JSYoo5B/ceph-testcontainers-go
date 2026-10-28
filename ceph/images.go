@@ -157,7 +157,7 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 	defer func() { c.nativeCmds.endClientStartup(); cancel() }()
 	c.toolkit.markAttempted()
 	ctr, err := testcontainers.Run(ctx, images.Client, append([]testcontainers.ContainerCustomizer{
-		c.adminClient(), c.ownedLabel(), WithIdleEntrypoint(),
+		c.adminClient(), c.startup.ownedLabel(), WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 	}, c.runDir.mounts()...)...)
 	c.toolkit.publish(ctr) // A partial start remains owned and is never retried.

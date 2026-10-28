@@ -102,7 +102,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 		t.Fatal("runtime reused the removed instance")
 	}
 	raw, err := docker.Client.ContainerInspect(ctx, hiddenID, mobycl.ContainerInspectOptions{})
-	if err != nil || raw.Container.State == nil || !raw.Container.State.Running || raw.Container.Config == nil || raw.Container.Config.Labels[clusterOwnerLabel] != c.owner || raw.Container.Image != image {
+	if err != nil || raw.Container.State == nil || !raw.Container.State.Running || raw.Container.Config == nil || raw.Container.Config.Labels[clusterOwnerLabel] != c.startup.ownerID() || raw.Container.Image != image {
 		t.Fatal("withheld native instance identity/ownership differs", err)
 	}
 	mounted := false
@@ -114,7 +114,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 	if !mounted {
 		t.Fatal("withheld instance does not mount retained volume")
 	}
-	created := retainedUncertainCreated(t, ctx, docker.Client, c.owner, before, retainedUncertainClock(t, ctx, docker.Client))
+	created := retainedUncertainCreated(t, ctx, docker.Client, c.startup.ownerID(), before, retainedUncertainClock(t, ctx, docker.Client))
 	if len(created) != 1 || created[0] != hiddenID {
 		t.Fatal("native creation inventory differs", created)
 	}

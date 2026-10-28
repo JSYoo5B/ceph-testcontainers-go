@@ -939,13 +939,13 @@ func TestFinalizationVerifyRefusals(t *testing.T) {
 // exclusively, and refuses evaluation once it becomes shared.
 func TestVerificationRefusesSharedClusters(t *testing.T) {
 	for _, mode := range []sharingMode{sharedWithTenants, sharedExclusively} {
-		cluster := &Container{owner: "owner"}
+		cluster := &Container{startup: newStartupIdentity("owner")}
 		cluster.sharing.Store(int32(mode))
 		if _, err := cluster.startVerification(t.Context(), VerificationConfig{}); !errors.Is(err, ErrSharedCluster) {
 			t.Fatalf("mode %d: %v", mode, err)
 		}
 	}
-	cluster := &Container{owner: "owner"}
+	cluster := &Container{startup: newStartupIdentity("owner")}
 	fx := newVerifyFixture()
 	v := fx.activate(t)
 	v.admit = func() error { return cluster.admitShared("Finalization.Verify", sharedRefused) }
@@ -956,7 +956,7 @@ func TestVerificationRefusesSharedClusters(t *testing.T) {
 }
 
 func TestTerminateOnCleanupWiresVerification(t *testing.T) {
-	cluster := &Container{owner: "owner"}
+	cluster := &Container{startup: newStartupIdentity("owner")}
 	f, err := cluster.TerminateOnCleanup(&finalizationTB{name: "T"}, FinalizationConfig{})
 	if err != nil || f.activate == nil {
 		t.Fatalf("finalization %v %+v", err, f)

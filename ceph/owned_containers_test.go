@@ -56,9 +56,8 @@ func (d *fakeOwnedDocker) ContainerRemove(_ context.Context, id string, options 
 func (d *fakeOwnedDocker) Close() error { return nil }
 
 func ownedCluster(owner string, docker *fakeOwnedDocker) *Container {
-	return &Container{settings: options{startupTimeout: time.Second}, owner: owner,
-		nets:                 networkState{public: &testcontainers.DockerNetwork{Name: "tc-public"}, publicRemoved: true},
-		ownedContainerDocker: func(context.Context) (ownedContainerClient, error) { return docker, nil }}
+	return &Container{settings: options{startupTimeout: time.Second}, startup: startupIdentity{owner: owner, ownedContainerDocker: func(context.Context) (ownedContainerClient, error) { return docker, nil }},
+		nets: networkState{public: &testcontainers.DockerNetwork{Name: "tc-public"}, publicRemoved: true}}
 }
 
 // A container that Docker created although the create reply was lost has no
@@ -93,7 +92,7 @@ func TestTerminateRemovesLabeledContainers(t *testing.T) {
 
 	// A cluster without an owner ID, such as a fake, lists nothing.
 	unowned := ownedCluster("", nil)
-	unowned.ownedContainerDocker = func(context.Context) (ownedContainerClient, error) {
+	unowned.startup.ownedContainerDocker = func(context.Context) (ownedContainerClient, error) {
 		return nil, errors.New("listed the containers of a cluster without an owner")
 	}
 	if err := unowned.Terminate(t.Context()); err != nil {

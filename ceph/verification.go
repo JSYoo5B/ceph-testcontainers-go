@@ -556,7 +556,7 @@ func (c *Container) startVerification(ctx context.Context, config VerificationCo
 	if err != nil {
 		return nil, err
 	}
-	v.cluster, v.images = c.owner, c.staticFacts().Images
+	v.cluster, v.images = c.startup.ownerID(), c.staticFacts().Images
 	v.admit = func() error { return c.admitShared("Finalization.Verify", sharedRefused) }
 	v.snapshot = func(ctx context.Context) (diagnosticsSnapshot, error) {
 		return c.diagnosticsSnapshot(ctx, DiagnosticsConfig{MaxContainers: 128, AdditionalContainers: v.config.AdditionalContainers, RedactValues: v.config.RedactValues})
