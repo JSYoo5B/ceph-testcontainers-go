@@ -51,7 +51,7 @@ people.
 
 Only `_test.go` files import these packages. `internal/clustertest` is imported
 by 36 test files, `internal/clusteraccess` by 114 and `internal/testhelper` by
-55. None is imported by a non-test file.
+57. None is imported by a non-test file.
 
 | Declarations | Class and role | Substitutes | Name assessment |
 | --- | --- | --- | --- |
@@ -64,7 +64,7 @@ by 36 test files, `internal/clusteraccess` by 114 and `internal/testhelper` by
 | `internal/clustertest/locks.go#TerminateRecorder` | shared double. Records `Terminate` calls and returns a chosen error. | A container being cleaned up. | Accurate. Renamed from `CleanupContainer`, which read as a real container. |
 | `internal/clustertest/locks.go#AssertContextLockQueued` | shared assertion. Holds a mutex and checks that an operation returns its own deadline without taking the gate. | none | Accurate. Keep. |
 | `internal/clusteraccess/clusteraccess.go#OSDs`, `internal/clusteraccess/clusteraccess.go#Monitors`, `internal/clusteraccess/clusteraccess.go#Managers`, `internal/clusteraccess/clusteraccess.go#ControlContainer`, `internal/clusteraccess/clusteraccess.go#Gateways`, `internal/clusteraccess/clusteraccess.go#RGWGateways` | shared assertion. One-line topology accessors that fail the test on an error, so a refused call is not read as an empty topology. | none | Accurate. Keep. |
-| `internal/testhelper/testhelper.go#TestConfig`, `internal/testhelper/testhelper.go#TestStateView`, `internal/testhelper/testhelper.go#TestCluster`, `internal/testhelper/testhelper.go#TestState`, `internal/testhelper/testhelper.go#TestClientState`, `internal/testhelper/testhelper.go#TestApply`, `internal/testhelper/testhelper.go#TestPrepare`, `internal/testhelper/testhelper.go#TestFaults`, `internal/testhelper/testhelper.go#TestHeld` | unit seam client. Build a synthetic `ceph.Container` and read its lock identities, client state, prepared pools and registered fault or override handles. | A bootstrapped cluster. | Accurate in a test-only package. The `Test` prefix is allowed only there. |
+| `internal/testhelper/testhelper.go#TestConfig`, `internal/testhelper/testhelper.go#TestStateView`, `internal/testhelper/testhelper.go#TestCluster`, `internal/testhelper/testhelper.go#TestState`, `internal/testhelper/testhelper.go#TestClientState`, `internal/testhelper/testhelper.go#TestApply`, `internal/testhelper/testhelper.go#TestPrepare`, `internal/testhelper/testhelper.go#TestTenantCluster`, `internal/testhelper/testhelper.go#TestFaults`, `internal/testhelper/testhelper.go#TestHeld` | unit seam client. Build a synthetic `ceph.Container` and read its lock identities, client state, prepared pools, registered fault or override handles and the gated shared cluster of a live tenant. | A bootstrapped cluster. | Accurate in a test-only package. The `Test` prefix is allowed only there. |
 | `internal/testhelper/testhelper.go#TestSetClosed`, `internal/testhelper/testhelper.go#TestSetControlPlane`, `internal/testhelper/testhelper.go#TestSetConfig`, `internal/testhelper/testhelper.go#TestSetKeyring`, `internal/testhelper/testhelper.go#TestSetCephVersion`, `internal/testhelper/testhelper.go#TestSetNetworkRemoved`, `internal/testhelper/testhelper.go#TestNetworkRemoved`, `internal/testhelper/testhelper.go#TestSetInitialOSDs`, `internal/testhelper/testhelper.go#TestSetPoolDefaults`, `internal/testhelper/testhelper.go#TestSetStartupTimeout`, `internal/testhelper/testhelper.go#TestSetCephFSImage`, `internal/testhelper/testhelper.go#TestReplaceOSDs`, `internal/testhelper/testhelper.go#TestOSDCount` | unit seam client. Set or read one field of a synthetic cluster through plain values. | Cluster state that a real bootstrap produces. | Accurate. Keep. |
 
 ## Runtime injection seams
@@ -75,7 +75,7 @@ of a package.
 
 | Declarations | Class and role | Substituted dependency | Notes |
 | --- | --- | --- | --- |
-| `ceph/unit_access.go#unitAccess`, `ceph/unit_access.go#unitAccess.UnitCluster`, `ceph/unit_access.go#unitAccess.UnitState`, `ceph/unit_access.go#unitAccess.UnitFaults`, `ceph/unit_access.go#unitAccess.UnitHeld`, `ceph/unit_access.go#unitAccess.UnitApply`, `ceph/unit_access.go#unitAccess.UnitReplaceOSDs`, `ceph/unit_access.go#unitAccess.UnitSetNetworkRemoved`, `internal/hookreg/hookreg.go#Test` | unit seam. Registered once in `hookreg.Test`; only `internal/testhelper` reads it. Constructs a cluster value and reads or writes unexported fields. | Cluster construction and state. | Compiled into every build of `ceph`. Isolated by `testsupportcheck` (who may read it), not removed from the build. |
+| `ceph/unit_access.go#unitAccess`, `ceph/unit_access.go#unitAccess.UnitCluster`, `ceph/unit_access.go#unitAccess.UnitState`, `ceph/unit_access.go#unitAccess.UnitFaults`, `ceph/unit_access.go#unitAccess.UnitHeld`, `ceph/unit_access.go#unitAccess.UnitApply`, `ceph/unit_access.go#unitAccess.UnitTenantCluster`, `ceph/unit_access.go#unitAccess.UnitReplaceOSDs`, `ceph/unit_access.go#unitAccess.UnitSetNetworkRemoved`, `internal/hookreg/hookreg.go#Test` | unit seam. Registered once in `hookreg.Test`; only `internal/testhelper` reads it. Constructs a cluster value and reads or writes unexported fields. | Cluster construction and state. | Compiled into every build of `ceph`. Isolated by `testsupportcheck` (who may read it), not removed from the build. |
 | `ceph/osd_registry_state.go#osdRegistry.replace` | test mutator. Swaps the owned OSD descriptors. | OSD registry content. | Only `unitAccess.UnitReplaceOSDs` calls it. |
 | `ceph/ceph.go#Container.keyRotationDocker` | nil-default hook. Docker client of `RotateKey`. | Docker engine client. | Same-package tests assign it. Production leaves it nil. |
 | `ceph/ceph.go#Container.startup`, `ceph/startup_identity.go#startupIdentity.ownedContainerDocker` | Runtime identity owner containing a nil-default cleanup hook. The owner holds startup facts; the hook supplies the Docker client for removal of labeled containers in `Terminate`. | Docker engine client (the hook only). | Same-package tests assign the hook. The owner is real runtime state, not a fake. |
@@ -89,7 +89,6 @@ of a package.
 | `capture/docker.go#backend` | dependency port. The Docker backend implements it; tests supply a model. | Docker operations of a packet capture. | Legitimate injection. |
 | `fault/network_delay.go#netemBackend` | dependency port. The Docker and helper-container backend implements it; tests replace it with a model of namespaces and qdiscs. | Docker and netem helper operations. | Legitimate injection. |
 | `fault/pause.go#pauseContainerInCluster` | dependency port as a parameter. `Pause` passes the real Docker client factory. | Docker pause client. | Admission, locks and registry use the real implementation. |
-| `internal/servicehook/servicehook.go#TenantCluster` | test accessor in contract. Returns the shared cluster of a tenant. | none | Open finding, see below. |
 
 ## Package-local doubles
 
@@ -121,12 +120,14 @@ Confirmed by source inspection:
 - No non-test file imports a test-only package and none declares a
   `fake`, `mock`, `stub` or `spy` type or function. The `testdoublecheck` command
   enforces the second statement.
-- `servicehook.TenantCluster` and `serviceHooks.TenantCluster` are part of the
-  runtime hook contract. Their callers are `_test.go` files only: one unit test
-  in `ceph` and the native integration tests of the shared cluster. This is a
-  test-only accessor in a runtime contract, the same kind of mixing that the
-  hook-contract split removed for the `Test*` methods. It is listed here and
-  not changed in this inventory.
+- `TenantCluster` was a test-only accessor in the runtime hook contract: its
+  callers were `_test.go` files only (one unit test in `ceph` and the native
+  integration tests of the shared cluster, which compile under their own build
+  tags). It moved behind the unit seam as `unitAccess.UnitTenantCluster`,
+  reached by `testhelper.TestTenantCluster`. `servicehook.TenantCluster` and
+  `serviceHooks.TenantCluster` no longer exist, and the asserted contract no
+  longer lists it. The accessor still compiles into every build of `ceph`, like
+  the rest of the seam.
 - The nil-default hooks and wired operations are fields of runtime structs that
   production never sets to anything but the real operation. They are a
   deliberate, narrow injection style (unexported, assigned by same-package

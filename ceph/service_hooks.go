@@ -48,17 +48,6 @@ func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.cliCon
 // Closed reports a terminated cluster.
 func (serviceHooks) Closed(c *Container) bool { return c.closed }
 
-// TenantCluster returns the shared cluster of a live tenant, whose gate
-// still refuses the methods a tenant cannot use, or nil. Only the native
-// gate and release tests use it; the service adapters use the tenant port.
-func (serviceHooks) TenantCluster(t *Tenant) *Container {
-	c, err := t.cluster()
-	if err != nil {
-		return nil
-	}
-	return c.raw()
-}
-
 // container returns the gated shared cluster of a live tenant for the
 // Observer, which stays in package ceph and reads through the cluster's own
 // gate and locks. It is the only non-test path from a Tenant to a *Container.

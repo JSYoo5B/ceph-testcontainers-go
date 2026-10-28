@@ -24,8 +24,8 @@ type clusterOps interface {
 	runNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error)
 	withClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption
 	// raw returns the gated cluster. Only SharedCluster.Exclusive, which
-	// lends the whole cluster deliberately, and the test-only TenantCluster
-	// hook call it.
+	// lends the whole cluster deliberately, and the test-only
+	// unitAccess.UnitTenantCluster call it.
 	raw() *Container
 }
 

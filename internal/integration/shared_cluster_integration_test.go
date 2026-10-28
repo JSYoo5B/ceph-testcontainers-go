@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -81,7 +82,7 @@ func TestSharedCluster(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 		defer cancel()
 		tenant := shared.Lease(t)
-		cluster := servicehook.TenantCluster(tenant)
+		cluster := testhelper.TestTenantCluster(tenant)
 		if cluster == nil {
 			t.Fatal("the tenant has no cluster")
 		}
@@ -144,7 +145,7 @@ func TestSharedCluster(t *testing.T) {
 		defer cancel()
 		dirty := &cleanupTB{TB: t}
 		tenant := shared.Lease(dirty)
-		cluster := servicehook.TenantCluster(tenant)
+		cluster := testhelper.TestTenantCluster(tenant)
 		// An internal admin path that bypasses the public shared-cluster gate.
 		if _, err := servicehook.ClientCommand(ctx, cluster, "rados", "-p", ceph.SharedPool, "put", "stray", "/etc/hostname"); err != nil {
 			t.Fatal(err)

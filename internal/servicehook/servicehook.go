@@ -38,7 +38,6 @@ type hooks interface {
 	ClientCommand(ctx context.Context, c *ceph.Container, args ...string) ([]byte, error)
 	CLI(c *ceph.Container) testcontainers.Container
 	Closed(c *ceph.Container) bool
-	TenantCluster(t *ceph.Tenant) *ceph.Container
 	TenantPort(t *ceph.Tenant) (TenantPort, error)
 	RegisterSharedService(kind string, prepare func(context.Context, *ceph.Container) error, probe func(context.Context, *ceph.Container) (map[string]string, error))
 	Command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error)
@@ -104,11 +103,6 @@ func CLI(c *ceph.Container) testcontainers.Container { return get().CLI(c) }
 
 // Closed reports a terminated cluster.
 func Closed(c *ceph.Container) bool { return get().Closed(c) }
-
-// TenantCluster returns the shared cluster of a live tenant, or nil. Its
-// gate refuses the methods that a tenant cannot use. Only the native
-// integration tests still use it; the service adapters use Tenant.
-func TenantCluster(t *ceph.Tenant) *ceph.Container { return get().TenantCluster(t) }
 
 // TenantPort is what an adapter may do for one live tenant. It does not
 // return the cluster.
