@@ -1454,6 +1454,27 @@ def bug_branches(name=BUG_A, tests=("TestNewFeature",), batch="basic", stem="new
     return [ordinary, compatibility]
 
 
+class TestSupportTagTests(unittest.TestCase):
+    def support_file(self, **changes):
+        file = {"path": "internal/servicehook/contract_testsupport_test.go", "package": "servicehook",
+                "constraint": tag("test_support"), "tags": ["test_support"], "tests": ["TestUnit"],
+                "metadata": [], "sha256": "b" * 64}
+        file.update(changes)
+        return file
+
+    def test_unit_test_support_tag_is_not_a_native_capability(self):
+        catalog = [fixture(), self.support_file()]
+        self.assertNotIn("test_support", engine.capability_tags(catalog))
+        for profile in engine.discover(catalog)["include"]:
+            self.assertNotIn("test_support", profile["tags"].split(","))
+
+    def test_runtime_test_requiring_the_support_tag_is_refused(self):
+        runtime = fixture()
+        runtime["tags"].append("test_support")
+        with self.assertRaisesRegex(ValueError, "cannot require the test_support build tag"):
+            engine.capability_tags([runtime])
+
+
 class BugCompatibilitySelectionTests(unittest.TestCase):
     def test_bug_tags_in_source_are_never_promoted_to_capabilities(self):
         catalog = bug_branches() + [fixture(path="internal/integration/unrelated_test.go",

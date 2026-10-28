@@ -1,3 +1,5 @@
+//go:build test_support
+
 package clustertest
 
 import (

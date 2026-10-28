@@ -1,8 +1,11 @@
+//go:build test_support
+
 // Package clustertest holds unit-test fakes and assertions that package ceph,
 // the service packages and internal/multicluster share. CLI answers each Ceph
 // command from a table, StateFake keeps a small model of the cluster that
 // commands read and change, and the lock helpers check that operations wait
-// for a held lock without native effects.
+// for a held lock without native effects. Every file of the package is compiled
+// only with the test_support build tag, so an ordinary build has none of it.
 package clustertest
 
 import (

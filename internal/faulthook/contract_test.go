@@ -16,15 +16,16 @@ type onlyAdmit struct {
 
 func (o onlyAdmit) Admit(*ceph.Container, string) error { *o.admitted++; return nil }
 
+// This file runs in every build. The assertions about the test-access
+// interface need the test_support build tag and are in
+// contract_testsupport_test.go.
+
 func TestAssertedHooksHaveNoTestAccessMethod(t *testing.T) {
 	typ := reflect.TypeFor[hooks]()
 	for i := range typ.NumMethod() {
 		if name := typ.Method(i).Name; strings.HasPrefix(name, "Test") {
 			t.Errorf("test-only method %s re-entered the asserted production interface", name)
 		}
-	}
-	if reflect.TypeFor[testHooks]().NumMethod() == 0 {
-		t.Fatal("the test-access interface is empty")
 	}
 }
 
@@ -34,25 +35,13 @@ func TestProductionCallDoesNotNeedTestAccess(t *testing.T) {
 
 	calls := 0
 	hookreg.Fault = onlyAdmit{admitted: &calls}
-	if _, ok := hookreg.Fault.(testHooks); ok {
-		t.Fatal("the stub unexpectedly satisfies the test-access interface")
-	}
 	if err := Admit(nil, "op"); err != nil || calls != 1 {
 		t.Fatalf("Admit: err=%v calls=%d", err, calls)
 	}
-	defer func() {
-		if recover() == nil {
-			t.Error("TestFaults ran against hooks without test access")
-		}
-	}()
-	TestFaults(nil, ContainerPause)
 }
 
-func TestRegisteredHooksSatisfyBothContracts(t *testing.T) {
+func TestRegisteredHooksSatisfyProductionContract(t *testing.T) {
 	if _, ok := hookreg.Fault.(hooks); !ok {
 		t.Error("package ceph registered fault hooks that do not satisfy the production contract")
-	}
-	if _, ok := hookreg.Fault.(testHooks); !ok {
-		t.Error("package ceph registered fault hooks that do not satisfy the test-access contract")
 	}
 }

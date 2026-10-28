@@ -2,8 +2,11 @@ version: "2"
 
 run:
   # Integration and optional consumer tests compile only with these tags.
+  # test_support selects the unit-test support code (see
+  # docs/contributing/testing.md); no other tag set enables it.
   build-tags:
     - all
+    - test_support
     - goceph
     - native_regression
     - cephfs_fuse

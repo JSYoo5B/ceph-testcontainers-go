@@ -25,6 +25,11 @@ import run_image_matrix as images
 ROOT = Path(__file__).resolve().parents[2]
 CATEGORIES = ("code", "environment", "short", "topology", "multicluster", "recovery")
 RUNTIME_CATEGORIES = tuple(category for category in CATEGORIES if category != "code")
+# TEST_SUPPORT_TAG selects the unit-test support code (see
+# docs/contributing/testing.md). It is a test-command tag, never a capability
+# of a native profile: no profile compiles the product packages with it, and a
+# runtime test that needs it is refused.
+TEST_SUPPORT_TAG = "test_support"
 CAPABILITY_TAGS = ("integration", "auth", "features", "topology", "hostnetwork", "multicluster", "diagnostics")
 CHECKERS = {
     "quiescence": ("check_scenario_quiescence", "TestMultiClusterCephFSOriginalProcessQuiescence"),
@@ -401,6 +406,9 @@ def capability_tags(catalog):
     # require changing this runner, a Make selector or a workflow matrix.
     tags = set(CAPABILITY_TAGS)
     for file in catalog:
+        if TEST_SUPPORT_TAG in file["tags"] and file["tests"] and file.get("metadata"):
+            raise ValueError(file["path"] + ": a runtime test cannot require the " + TEST_SUPPORT_TAG
+                             + " build tag; no native profile selects it")
         if not file["tests"] or "ci_optional" in file["tags"] or "ci_sdk" in file["tags"]:
             continue
         if any(reserved_go_tag(tag) for tag in file["tags"]):
@@ -408,7 +416,7 @@ def capability_tags(catalog):
         suffixes = Path(file["path"]).name[:-len("_test.go")].split("_")[-2:]
         if file.get("metadata") and any(suffix in GO_PLATFORMS for suffix in suffixes):
             raise ValueError(file["path"] + ": platform-specific runtime files need a separate runner policy")
-        tags.update(tag for tag in file["tags"] if tag not in ("all", "ci", "native_regression", "goceph")
+        tags.update(tag for tag in file["tags"] if tag not in ("all", "ci", "native_regression", "goceph", TEST_SUPPORT_TAG)
                     and not tag.startswith("ci_") and not tag.startswith(BUG_TAG_PREFIX))
     return tuple(sorted(tags))
 

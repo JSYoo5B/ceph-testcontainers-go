@@ -72,7 +72,10 @@ file. See [Package-split rewrite shards](docs/contributing/package-split-shards.
 
 Use [Testing](docs/contributing/testing.md) and the Makefile for commands.
 `make check` runs unit tests, race tests, vet and tagged compilation; it does not
-prove Docker or native Ceph interoperability. Run substantial checks and Docker
+prove Docker or native Ceph interoperability. Unit tests, race tests and vet use
+the `test_support` build tag, and `make tag-compile` checks separately that an
+ordinary build excludes the test-only code (see
+[Testing](docs/contributing/testing.md#test-support-build-tag)). Run substantial checks and Docker
 integration on an authorized Linux runner. Use a desktop engine only for an
 explicitly required desktop-specific behavior check.
 

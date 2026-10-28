@@ -9,20 +9,20 @@ tests is described in [Continuous integration](ci.md).
 
 | Layer | Location | Needs Docker | How it is selected |
 | --- | --- | --- | --- |
-| Unit tests | Next to the code they test, without build tags | No | `go test ./...` |
-| Package examples | `examples_test.go` in `ceph`, `rbd`, `cephfs`, `rgw` | No (Docker examples are only compiled) | `go test ./...` |
+| Unit tests | Next to the code they test | No | `go test -tags=test_support ./...` (`make test`) |
+| Package examples | `examples_test.go` in `ceph`, `rbd`, `cephfs`, `rgw` | No (Docker examples are only compiled) | `go test -tags=test_support ./...` |
 | Ceph integration tests | `internal/integration` | Yes, plus Ceph images | Build tags |
 | Docker environment tests | `internal/dockerbridge`, `*_integration_test.go` | Docker only, no Ceph | Build tags |
 | CI tooling tests | `.github/scripts/test_*.py` | No | `python3 -m unittest` |
 | go-ceph consumer check | `internal/integration/goceph` | Yes, prepared Linux images | `goceph` tag and a harness |
 
-Integration tests are excluded by build tags, never by `t.Skip`. A plain
-`go test ./...` therefore never starts a container, and a tagged run does not
+Integration tests are excluded by build tags, never by `t.Skip`. A
+`go test -tags=test_support ./...` therefore never starts a container, and a tagged run does not
 quietly pass when Docker is missing: it fails.
 
 `Example...` functions that start a cluster have no `// Output:` comment.
 `go test` compiles them, so they must keep building, but does not execute
-them. An example with an `// Output:` comment runs in every `go test ./...`
+them. An example with an `// Output:` comment runs in every unit-test run
 and therefore must not need Docker.
 
 ## Prerequisites
@@ -63,10 +63,10 @@ and the test fails. When the test process itself runs inside a container, set
 ## Host checks: unit tests, race detector, vet
 
 ```sh
-make test         # CGO_ENABLED=0 go test -mod=readonly ./...
-make race         # CGO_ENABLED=1 go test -mod=readonly -race ./...
-make vet          # CGO_ENABLED=0 go vet -mod=readonly ./...
-make tag-compile  # compile every tagged test file without running it
+make test         # CGO_ENABLED=0 go test -mod=readonly -tags=test_support ./...
+make race         # CGO_ENABLED=1 go test -mod=readonly -tags=test_support -race ./...
+make vet          # CGO_ENABLED=0 go vet -mod=readonly -tags=test_support ./...
+make tag-compile  # ordinary-build exclusion check, ordinary builds, then compile every tagged test file
 make check        # all four of the above; never starts Docker
 make lint         # golangci-lint v2.14.0 with .golangci.yml
 make vulncheck    # govulncheck v1.9.0 on every scanned platform and tag set
@@ -78,11 +78,14 @@ failure policy. `make lint` needs golangci-lint installed. Its configuration ena
 build tag, so it also checks the integration and go-ceph files, and the Code
 checks workflow runs the same version.
 
-`make test`, `make race` and `make vet` see only untagged files.
-`make tag-compile` first compiles the module with only `integration`,
-so shared helpers cannot accidentally require an unrelated capability tag.
-It also builds the module's `all` union, its consumer/native-regression/role
-union and its `all,cephfs_fuse` union. Every command runs nothing (`-run '^$'`):
+`make test`, `make race` and `make vet` select the `test_support` tag and no
+other (see [Test-support build tag](#test-support-build-tag)).
+`make tag-compile` first runs the ordinary-build exclusion check and builds
+the module without test files under each tag set below. It then compiles the
+tests, with `test_support` added, with only `integration`, so shared helpers
+cannot accidentally require an unrelated capability tag. It also builds the
+module's `all` union, its consumer/native-regression/role union and its
+`all,cephfs_fuse` union. The test compilations run nothing (`-run '^$'`):
 compilation does not establish native execution. These projections still cannot
 check every individual CI batch's helper dependencies. Use
 `plan --verify` for that (see
@@ -129,6 +132,51 @@ that must name registered tags (see
 registered tags, so the only accepted selection is empty. Future pairs must
 retain the same test contracts and prove which path was selected, alongside
 the actual image/build identity.
+
+## Test-support build tag
+
+Test-only implementations are compiled only with the `test_support` build tag:
+
+- the synthetic cluster constructor, the privileged state accessors and their
+  hook methods in `ceph` (`ceph/*_hooks_testsupport.go`), with the forwarding
+  functions in `internal/servicehook`, `internal/faulthook` and
+  `internal/overridehook` (`testaccess.go`);
+- the unit-test fakes of `internal/clustertest`, which has no file in an
+  ordinary build.
+
+`go test` does not enable a custom tag, so every command that runs or vets
+these unit tests passes `-tags=test_support` (the Makefile does; `golangci-lint`
+lists it in `.golangci.yml`). Without the tag the test files that use the support
+fail to compile with an undefined `servicehook.TestCluster`, `clustertest` or a
+similar name. They never skip silently. The tag is not part of `all`, of the CI
+profile tags or of any optional tag set, and `.github/scripts/tag_scenarios.py`
+never collects it as a capability and refuses a runtime test (a file with a
+`//ci:` line) that requires it. Test files that need it carry
+`//go:build test_support`; those that do not run in every build.
+
+`internal/clusteraccess` is not covered by the tag. It wraps `ceph.Container`
+accessors with `testing.TB` failures for unit and native tests alike, and
+native batches compile it without the tag.
+
+Compiling tests with the tag cannot show that an ordinary build leaves the
+support out, because those test files need it. `make tag-compile` runs
+`go run ./internal/tools/testsupportcheck` first, which needs no Docker. For
+every ordinary tag set of that target it requires, from `go list` metadata and
+the syntax of the selected files, that:
+
+- each file in `internal/tools/testsupportcheck/manifest.json` is ignored by the
+  build constraints and is selected once `test_support` is added;
+- the packages that the manifest lists as empty (`internal/clustertest`) have
+  no selected file, and no package of the module has a list error (an ordinary
+  importer of an empty package has one);
+- no non-test file that is selected declares a function or method whose name
+  starts with `Test`, or one of the manifest's forbidden type names.
+
+Add a new test-only file to the manifest in the same change. A file that loses
+its tag is reported by name; the command's own tests in
+`internal/tools/testsupportcheck` keep a fixture module for that negative control.
+The check is source and build metadata, not a symbol listing of a linked binary,
+so it does not say what the linker keeps.
 
 ## Running integration tests
 
@@ -518,7 +566,7 @@ in Ceph periodic, so a test must pass on both releases (see
 CI compiles each batch alone, with only that batch's `ci_batch_<name>` tag. A
 function defined in a file that belongs to batch A does not exist when batch B
 is compiled, so a test in batch B that calls it breaks batch B's compilation.
-`go vet`, `make tag-compile` and `-tags=all` builds compile every file at once
+`go vet`, the test compilations of `make tag-compile` and `-tags=all` builds compile every file at once
 and do not notice.
 
 Put any helper used from more than one file into a helper file whose

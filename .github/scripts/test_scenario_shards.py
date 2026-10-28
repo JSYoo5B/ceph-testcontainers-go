@@ -792,16 +792,31 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
                 self.assertIn("./...", command)
             if target == "test-all":
                 self.assertEqual(len(commands), 1)
-                self.assertIn("-tags=all", commands[0])
+                self.assertIn("-tags=all,test_support", commands[0])
                 self.assertIn("-count=1", commands[0])
                 self.assertIn("-v", commands[0])
                 self.assertFalse(any(token in ("-run", "-short", "-failfast") for token in commands[0]))
             else:
-                tag_sets = [{tag for tag in token.removeprefix("-tags=").split(",")}
+                def tag_sets_of(commands):
+                    return [{tag for tag in token.removeprefix("-tags=").split(",")}
                             for command in commands for token in command if token.startswith("-tags=")]
+                tested = tag_sets_of(commands)
+                # Every test compilation selects the unit-test support tag.
+                self.assertTrue(all("test_support" in tags for tags in tested), tested)
+                tag_sets = [tags - {"test_support"} for tags in tested]
                 self.assertIn({"integration"}, tag_sets)
                 self.assertIn({"all"}, tag_sets)
                 self.assertTrue(any({"all", "goceph", "native_regression", "role_images", "ci_optional"} <= tags for tags in tag_sets))
+                # The ordinary build is checked without the support tag, under
+                # the same tag sets, and the exclusion check runs first.
+                lines = result.stdout.splitlines()
+                self.assertIn("go run -mod=readonly ./internal/tools/testsupportcheck", lines[0])
+                builds = [shlex.split(line) for line in lines if " go build " in line]
+                built = tag_sets_of(builds)
+                self.assertFalse(any("test_support" in tags for tags in built), built)
+                for tags in tag_sets:
+                    self.assertIn(tags, built)
+                self.assertTrue(any(not any(token.startswith("-tags=") for token in command) for command in builds))
 
     def test_release_callers_bound_their_runtime_jobs_within_the_runner_budget(self):
         """Each release caller passes its category's max-parallel, and the

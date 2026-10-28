@@ -1,0 +1,23 @@
+{
+  "files": [
+    "ceph/fault_hooks_testsupport.go",
+    "ceph/override_hooks_testsupport.go",
+    "ceph/service_hooks_testsupport.go",
+    "internal/clustertest/clustertest.go",
+    "internal/clustertest/deadline.go",
+    "internal/clustertest/locks.go",
+    "internal/faulthook/testaccess.go",
+    "internal/overridehook/testaccess.go",
+    "internal/servicehook/testaccess.go"
+  ],
+  "empty_packages": [
+    "internal/clustertest"
+  ],
+  "forbidden_types": [
+    "TestConfig",
+    "TestStateView",
+    "testClusterConfig",
+    "testHooks",
+    "testState"
+  ]
+}

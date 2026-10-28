@@ -679,7 +679,7 @@ func (c heldTopologyMonCluster) OSDs(ctx context.Context) ([]*ceph.OSDContainer,
 // holdTopology holds the real cluster's topology mutex until the test ends.
 func holdTopology(t *testing.T) *ceph.Container {
 	t.Helper()
-	real := servicehook.TestCluster(nil, servicehook.TestConfig{OSDs: 1})
+	real := new(ceph.Container)
 	servicehook.Lock(real)
 	t.Cleanup(func() { servicehook.Unlock(real) })
 	return real

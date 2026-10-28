@@ -175,13 +175,20 @@ cluster-features:
 cluster-feature-extensions:
 	CGO_ENABLED=0 go test -tags=integration,features -count=1 -v -timeout=$(CLUSTER_FEATURE_EXTENSIONS_TIMEOUT) -run '^Test(ConfigurationOverrides|OSDPolicies|CephFSSubvolumeSnapshotsAndClones|(HostNetwork)?RGWPlacementStorageClasses|RGWPlacementRealmStorageClasses)$$' ./internal/integration
 
+# Unit tests need the test_support build tag: the synthetic cluster
+# constructors, state accessors and shared unit-test fakes they use are compiled
+# only with it, and no ordinary or optional-feature tag set selects it. Without
+# the tag those test files do not compile. tag-compile checks separately that an
+# ordinary build excludes the test support.
+TEST_SUPPORT_TAG = test_support
+
 test:
-	CGO_ENABLED=0 go test -mod=readonly ./...
+	CGO_ENABLED=0 go test -mod=readonly -tags=$(TEST_SUPPORT_TAG) ./...
 
 # Normal supported runtime tests and host unit tests. SDK consumers and strict
 # native upstream regressions require their additional explicit opt-in tags.
 test-all:
-	CGO_ENABLED=0 go test -mod=readonly -tags=all -count=1 -v -timeout=$(ALL_TEST_TIMEOUT) ./...
+	CGO_ENABLED=0 go test -mod=readonly -tags=all,$(TEST_SUPPORT_TAG) -count=1 -v -timeout=$(ALL_TEST_TIMEOUT) ./...
 
 # Go host checks. Tag compilation does not execute Docker or native clients.
 # Image builder checks belong to ceph-testcontainers-images.
@@ -192,13 +199,24 @@ check:
 	$(MAKE) tag-compile
 
 race:
-	CGO_ENABLED=1 go test -mod=readonly -race ./...
+	CGO_ENABLED=1 go test -mod=readonly -tags=$(TEST_SUPPORT_TAG) -race ./...
 
+# The first block proves the ordinary build: it excludes the test support
+# (go list and syntax check), and builds without the tag under every tag set
+# that the second block compiles tests with. go build compiles no test file. The
+# second block compiles every tagged test file with the test_support tag added,
+# which is what a test command selects; it cannot show the exclusion.
 tag-compile:
-	CGO_ENABLED=0 go test -mod=readonly -tags=integration -run '^$$' ./...
-	CGO_ENABLED=0 go test -mod=readonly -tags=all -run '^$$' ./...
-	CGO_ENABLED=0 go test -mod=readonly -tags=all,goceph,native_regression,role_images,ci_optional,ci_batch_role_routing,ci_batch_role_mirror_refresh -run '^$$' ./...
-	CGO_ENABLED=0 go test -mod=readonly -tags=all,cephfs_fuse -run '^$$' ./...
+	CGO_ENABLED=0 go run -mod=readonly ./internal/tools/testsupportcheck
+	CGO_ENABLED=0 go build -mod=readonly ./...
+	CGO_ENABLED=0 go build -mod=readonly -tags=integration ./...
+	CGO_ENABLED=0 go build -mod=readonly -tags=all ./...
+	CGO_ENABLED=0 go build -mod=readonly -tags=all,goceph,native_regression,role_images,ci_optional,ci_batch_role_routing,ci_batch_role_mirror_refresh ./...
+	CGO_ENABLED=0 go build -mod=readonly -tags=all,cephfs_fuse ./...
+	CGO_ENABLED=0 go test -mod=readonly -tags=integration,$(TEST_SUPPORT_TAG) -run '^$$' ./...
+	CGO_ENABLED=0 go test -mod=readonly -tags=all,$(TEST_SUPPORT_TAG) -run '^$$' ./...
+	CGO_ENABLED=0 go test -mod=readonly -tags=all,goceph,native_regression,role_images,ci_optional,ci_batch_role_routing,ci_batch_role_mirror_refresh,$(TEST_SUPPORT_TAG) -run '^$$' ./...
+	CGO_ENABLED=0 go test -mod=readonly -tags=all,cephfs_fuse,$(TEST_SUPPORT_TAG) -run '^$$' ./...
 
 integration:
 	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
@@ -308,7 +326,7 @@ multicluster:
 	CGO_ENABLED=0 go test -tags=integration,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^TestMultiCluster' ./internal/integration
 
 vet:
-	CGO_ENABLED=0 go vet -mod=readonly ./...
+	CGO_ENABLED=0 go vet -mod=readonly -tags=$(TEST_SUPPORT_TAG) ./...
 
 # Go vulnerability check, as in the Code checks workflow. govulncheck's JSON
 # mode exits 0 even with findings, so .github/scripts/check_vulns.py applies
@@ -318,7 +336,7 @@ vet:
 # tags. The nested go-ceph probe module, which needs cgo, gets a module scan.
 GOVULNCHECK ?= golang.org/x/vuln/cmd/govulncheck@v1.9.0
 VULNCHECK_DIR ?= artifacts/vulncheck
-VULNCHECK_SCANS ?= linux/amd64: linux/amd64:all linux/amd64:all,goceph,native_regression linux/arm64: darwin/arm64:
+VULNCHECK_SCANS ?= linux/amd64:$(TEST_SUPPORT_TAG) linux/amd64:all,$(TEST_SUPPORT_TAG) linux/amd64:all,goceph,native_regression,$(TEST_SUPPORT_TAG) linux/arm64:$(TEST_SUPPORT_TAG) darwin/arm64:$(TEST_SUPPORT_TAG)
 
 vulncheck:
 	mkdir -p $(VULNCHECK_DIR)/bin

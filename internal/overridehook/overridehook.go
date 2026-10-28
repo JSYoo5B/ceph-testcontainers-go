@@ -56,7 +56,6 @@ const (
 type Token struct{ entry any }
 
 type hooks interface {
-	TestHeld(c *ceph.Container, kind string) map[string]any
 	Admit(c *ceph.Container, op string) error
 	WithTopology(ctx context.Context, c *ceph.Container, fn func() error) error
 	WithTopologyNoContext(c *ceph.Container, fn func())
@@ -374,10 +373,4 @@ func ConfigRemove(ctx context.Context, c *ceph.Container, setting ceph.ConfigSet
 // bootstrap fixes every connection mode. It needs no lock.
 func MessengerPolicySettings(c *ceph.Container, policy ceph.MessengerPolicy) ([]ceph.ConfigSetting, error) {
 	return get().MessengerPolicySettings(c, policy)
-}
-
-// TestHeld snapshots the handles that one kind holds, for unit tests. Call
-// with the cluster mutex held.
-func TestHeld(c *ceph.Container, kind Kind) map[string]any {
-	return get().TestHeld(c, string(kind))
 }

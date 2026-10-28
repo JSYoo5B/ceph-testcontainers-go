@@ -66,7 +66,7 @@ func structFieldNames(t *testing.T, file, typeName string) []string {
 // unit-test state view on both sides of the hook. The closed flag, the control
 // plane and the options are not in it: they are written by the TestSet* hooks.
 func TestTestStateExposesNoMembershipControlPointer(t *testing.T) {
-	if got := structFieldNames(t, "service_hooks.go", "testState"); !slices.Equal(got, testStateFields) {
+	if got := structFieldNames(t, "service_hooks_testsupport.go", "testState"); !slices.Equal(got, testStateFields) {
 		t.Fatalf("testState fields = %v, pinned %v", got, testStateFields)
 	}
 	if got := structFieldNames(t, filepath.Join("..", "internal", "servicehook", "testaccess.go"), "TestStateView"); !slices.Equal(got, testStateFields) {
