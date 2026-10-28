@@ -22,20 +22,20 @@ const (
 	mapCommand    = "osd map fixture victim --format json"
 )
 
-func injectFixture() *clustertest.CLI {
-	return &clustertest.CLI{Output: map[string]string{
+func injectFixture() *clustertest.CannedCommandContainer {
+	return &clustertest.CannedCommandContainer{Output: map[string]string{
 		"osd pool ls detail --format json": `[{"pool_id":7,"pool_name":"fixture","type":1,"size":2,"min_size":1,"pg_num":8,"crush_rule":3}]`,
 		mapCommand:                         `{"epoch":14,"pool":"fixture","pool_id":7,"objname":"victim","pgid":"7.0","up":[1,0],"up_primary":1,"acting":[1,0],"acting_primary":1}`,
 	}}
 }
 
-func injectCluster(ctr *clustertest.CLI, config testhelper.TestConfig) *ceph.Container {
+func injectCluster(ctr *clustertest.CannedCommandContainer, config testhelper.TestConfig) *ceph.Container {
 	config.StartupTimeout = time.Second
 	config.OSDs = max(config.OSDs, 2)
 	return testhelper.TestCluster(ctr, config)
 }
 
-func tellCommands(ctr *clustertest.CLI) []string {
+func tellCommands(ctr *clustertest.CannedCommandContainer) []string {
 	var result []string
 	for _, args := range ctr.Calls {
 		if slices.Contains(args, "tell") || slices.Contains(args, "deep-scrub") || slices.Contains(args, "repair") {
@@ -161,22 +161,24 @@ func TestInjectObjectDataErrorPartialFailureIsNotRolledBack(t *testing.T) {
 // The pool identity is rechecked after the debug switch is enabled; a pool
 // replaced meanwhile receives no injection, and the enabled switch stays.
 func TestInjectObjectDataErrorRechecksPoolIdentityBeforeInjecting(t *testing.T) {
-	ctr := &poolReplacingCLI{CLI: injectFixture()}
+	ctr := &poolReplacingCLI{CannedCommandContainer: injectFixture()}
 	c := testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second, OSDs: 2})
 	if err := InjectObjectDataError(t.Context(), c, "fixture", "victim", 0); err == nil || !strings.Contains(err.Error(), "replaced") {
 		t.Fatalf("a replaced pool was not refused: %v", err)
 	}
-	if want := []string{enableCommand}; !slices.Equal(tellCommands(ctr.CLI), want) {
-		t.Fatalf("a replaced pool received an injection: %v", tellCommands(ctr.CLI))
+	if want := []string{enableCommand}; !slices.Equal(tellCommands(ctr.CannedCommandContainer), want) {
+		t.Fatalf("a replaced pool received an injection: %v", tellCommands(ctr.CannedCommandContainer))
 	}
 	requireNoRegistryEntry(t, c)
 }
 
 // poolReplacingCLI replaces the pool right after the debug switch is enabled.
-type poolReplacingCLI struct{ *clustertest.CLI }
+type poolReplacingCLI struct {
+	*clustertest.CannedCommandContainer
+}
 
 func (ctr *poolReplacingCLI) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
-	code, out, err := ctr.CLI.Exec(ctx, args, opts...)
+	code, out, err := ctr.CannedCommandContainer.Exec(ctx, args, opts...)
 	if last := ctr.Calls[len(ctr.Calls)-1]; strings.Join(last, " ") == enableCommand {
 		ctr.Output["osd pool ls detail --format json"] = strings.Replace(ctr.Output["osd pool ls detail --format json"], `"pool_id":7`, `"pool_id":9`, 1)
 	}

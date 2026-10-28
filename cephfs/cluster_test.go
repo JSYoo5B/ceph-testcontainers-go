@@ -16,7 +16,7 @@ import (
 
 // The shared CLI fakes under the names that the ceph package tests use.
 type (
-	poolFixtureContainer = clustertest.CLI
+	poolFixtureContainer = clustertest.CannedCommandContainer
 	cephStateFake        = clustertest.StateFake
 )
 

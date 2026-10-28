@@ -9,7 +9,7 @@ import (
 )
 
 func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
-	probe := &clustertest.ContextLockRuntime{}
+	probe := &clustertest.NativeCallCounter{}
 	daemon := &Daemon{Container: probe, DaemonName: "a"}
 	m := &Mirror{Container: daemon, daemons: []*Daemon{daemon}, initialDaemonName: "a", sourceClient: probe, destinationClient: probe}
 	operations := map[string]func(context.Context) error{
@@ -41,7 +41,7 @@ func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
 }
 
 func TestSerializedDaemonCleanupNestedGateDeadlinePreservesRetry(t *testing.T) {
-	probe := &clustertest.ContextLockRuntime{}
+	probe := &clustertest.NativeCallCounter{}
 	daemon := &Daemon{Container: probe, DaemonName: "a"}
 	m := &Mirror{daemons: []*Daemon{daemon}}
 	operation := func(ctx context.Context) error { return m.RemoveDaemon(ctx, "a") }
