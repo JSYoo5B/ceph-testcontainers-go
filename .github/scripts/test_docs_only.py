@@ -34,6 +34,8 @@ TABLE = [
     ("docs/guides/messenger-client-fixtures.md", False),
     # Read by internal/tools/testdoublecheck (the test-double inventory).
     ("docs/contributing/test-double-inventory.md", False),
+    # Read by ceph/shared_harness_inventory_test.go (the shared harness inventory).
+    ("docs/design/shared-harness-boundary.md", False),
     # Read by tag_scenarios (registry) and its tests (catalogue).
     ("docs/guides/bug-compatibility-tags.json", False), ("docs/guides/bug-compatibility-tags.md", False),
     # Not on the allowlist: data files, new top-level pages, nested paths, other trees.
