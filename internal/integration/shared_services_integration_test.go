@@ -18,6 +18,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
@@ -162,7 +163,7 @@ func TestSharedClusterServices(t *testing.T) {
 		if got := sharedFSID(t, ctx, checker); got != fsid {
 			t.Fatalf("the cluster changed from %s to %s", fsid, got)
 		}
-		cluster := servicehook.TenantCluster(checker)
+		cluster := testhelper.TestTenantCluster(checker)
 		var namespaces []json.RawMessage
 		decodeCommand(t, ctx, cluster, &namespaces, "rbd", "namespace", "ls", "--pool", sharedRBDPool, "--format", "json")
 		var groups []json.RawMessage
@@ -195,7 +196,7 @@ func TestSharedClusterServices(t *testing.T) {
 		leaseRBD(t, ctx, tenant)
 		// An admin path that the gate does not cover adds a namespace that
 		// belongs to no tenant.
-		if _, err := servicehook.ClientCommand(ctx, servicehook.TenantCluster(tenant), "rbd", "namespace", "create", "--pool", sharedRBDPool, "--namespace", "stray"); err != nil {
+		if _, err := servicehook.ClientCommand(ctx, testhelper.TestTenantCluster(tenant), "rbd", "namespace", "create", "--pool", sharedRBDPool, "--namespace", "stray"); err != nil {
 			t.Fatal(err)
 		}
 		dirty.finish()
