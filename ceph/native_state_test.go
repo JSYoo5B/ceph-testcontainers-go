@@ -263,7 +263,8 @@ func TestNativeStateMethodsHoldOnlyTheLeafLock(t *testing.T) {
 // TestNativeStateAddsNoMutex pins the number of mutexes of Container and its
 // state components. The native split moved nativeMu into nativeState and the
 // feature-client split moved clientMu and clientPublishMu into
-// featureClientState; the auth-records, OSD storage and run-directory splits added
+// featureClientState; the auth-records, OSD storage, run-directory, OSD registry
+// and port-lease splits added
 // no locks.
 // A new one needs its own lock-order review.
 func TestNativeStateAddsNoMutex(t *testing.T) {
@@ -277,7 +278,7 @@ func TestNativeStateAddsNoMutex(t *testing.T) {
 			}
 			for _, spec := range gen.Specs {
 				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || (ts.Name.Name != "Container" && ts.Name.Name != "nativeState" && ts.Name.Name != "networkState" && ts.Name.Name != "featureClientState" && ts.Name.Name != "authState" && ts.Name.Name != "osdStorageState" && ts.Name.Name != "runDirState" && ts.Name.Name != "osdRegistry") {
+				if !ok || (ts.Name.Name != "Container" && ts.Name.Name != "nativeState" && ts.Name.Name != "networkState" && ts.Name.Name != "featureClientState" && ts.Name.Name != "authState" && ts.Name.Name != "osdStorageState" && ts.Name.Name != "runDirState" && ts.Name.Name != "osdRegistry" && ts.Name.Name != "portLeaseState") {
 					continue
 				}
 				st, ok := ts.Type.(*ast.StructType)

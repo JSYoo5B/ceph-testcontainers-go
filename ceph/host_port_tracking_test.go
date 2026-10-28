@@ -26,7 +26,7 @@ func TestTrackedHostPortsRejectBusyOwnerBeforeAllocation(t *testing.T) {
 		}
 		return err
 	})
-	if allocations.Load() != 0 || len(cluster.portLeases) != 0 || cluster.closed {
+	if allocations.Load() != 0 || cluster.portLeases.count() != 0 || cluster.closed {
 		t.Fatal("busy owner admission allocated or changed cleanup inventory")
 	}
 }
@@ -47,7 +47,7 @@ func TestTrackedHostPortsRejectClosedAndCanceledClusterBeforeAllocation(t *testi
 				allocations++
 				return nil, errors.New("unexpected allocator")
 			})
-			if lease != nil || err == nil || allocations != 0 || len(cluster.portLeases) != 0 {
+			if lease != nil || err == nil || allocations != 0 || cluster.portLeases.count() != 0 {
 				t.Fatalf("rejected admission allocated: lease=%v err=%v calls=%d", lease, err, allocations)
 			}
 			if condition == "canceled" && !errors.Is(err, context.Canceled) {
@@ -82,7 +82,7 @@ func TestTrackedHostPortsRetainNativeErrorAndCanceledPartialLease(t *testing.T) 
 				}
 				return lease, nil
 			})
-			if got != lease || len(cluster.portLeases) != 1 || cluster.portLeases[0] != lease || allocator.terminations != 0 {
+			if got != lease || cluster.portLeases.count() != 1 || !cluster.portLeases.has(lease) || allocator.terminations != 0 {
 				t.Fatal("partial reservation lost lease identity or attempted unowned cleanup")
 			}
 			if !cluster.mu.TryLock() {
@@ -123,7 +123,7 @@ func TestTrackedHostPortsNilFailureAndMissingSuccessDoNotPublishLease(t *testing
 			}
 			return nil, nil
 		})
-		if got != nil || err == nil || len(cluster.portLeases) != 0 {
+		if got != nil || err == nil || cluster.portLeases.count() != 0 {
 			t.Fatal("nil reservation published ownership or reported success")
 		}
 		if failure && !errors.Is(err, nativeErr) {
@@ -213,7 +213,7 @@ func TestTrackedHostPortsPublishBeforeConcurrentTerminationSnapshot(t *testing.T
 	case <-time.After(time.Second):
 		t.Fatal("termination could not consume tracked allocator")
 	}
-	if len(cluster.portLeases) != 1 || cluster.portLeases[0] != lease || lease.ctr != nil || allocator.terminations != 1 || !cluster.closed {
+	if cluster.portLeases.count() != 1 || !cluster.portLeases.has(lease) || lease.ctr != nil || allocator.terminations != 1 || !cluster.closed {
 		t.Fatal("termination missed a late-created allocator or lost lease identity")
 	}
 }

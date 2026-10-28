@@ -465,14 +465,15 @@ type testState = struct {
 	NetworkRemoved *bool
 }
 
-// TestState exposes a cluster's internals to unit tests.
+// TestState exposes a cluster's internals to unit tests. It takes no lock: the
+// caller holds Mutex or the cluster value is not shared yet.
 func (serviceHooks) TestState(c *Container) testState {
 	return testState{
 		Mutex: &c.mu, ControlMutex: &c.controlMu, ConfigMutex: &c.configMu, Closed: &c.closed,
 		Config: &c.config, Keyring: &c.keyring, CephVersion: &c.cephVersion, ControlPlane: &c.controlPlane,
 		InitialOSDs: &c.settings.osds, PoolReplicas: &c.settings.poolReplicas,
 		PoolMinSize: &c.settings.poolMinSize, StartupTimeout: &c.settings.startupTimeout,
-		CephFSImage: &c.settings.cephfsOverride, RGWImage: &c.settings.rgwOverride, PortLeases: len(c.portLeases), NetworkRemoved: &c.nets.publicRemoved,
+		CephFSImage: &c.settings.cephfsOverride, RGWImage: &c.settings.rgwOverride, PortLeases: c.portLeases.count(), NetworkRemoved: &c.nets.publicRemoved,
 	}
 }
 
