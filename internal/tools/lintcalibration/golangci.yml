@@ -1,0 +1,51 @@
+# Report-only calibration configuration for issue #226. It is embedded in
+# internal/tools/lintcalibration and is NOT the repository's lint configuration:
+# .golangci.yml and the Code checks workflow are unchanged, and nothing gates on
+# this file.
+#
+# Its purpose is to keep every diagnostic of every metric linter. With the
+# defaults of golangci-lint v2.14.0 the uniq-by-line processor drops a later
+# issue at the same file and line even when it comes from another linter, and
+# the per-linter and same-text caps drop further issues. A comparison made
+# through those filters can hide a second metric at the same location.
+version: "2"
+
+run:
+  # Paths in the report are relative to the module root, not to
+  # the temporary directory the embedded file is written to.
+  relative-path-mode: gomod
+  # Same tag set as .golangci.yml so tagged sources are analysed as in Code CI.
+  build-tags:
+    - all
+    - goceph
+    - native_regression
+    - cephfs_fuse
+    - role_images
+    - ci_optional
+    - ci_batch_role_routing
+    - ci_batch_role_mirror_refresh
+
+linters:
+  default: none
+  enable:
+    - cyclop
+    - dupl
+    - funlen
+    - gocognit
+  settings:
+    # The values below are the linters' own defaults. They are collection
+    # thresholds for this report, not a proposed project policy.
+    cyclop:
+      max-complexity: 10
+    dupl:
+      threshold: 150
+    funlen:
+      lines: 60
+      statements: 40
+    gocognit:
+      min-complexity: 30
+
+issues:
+  uniq-by-line: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
