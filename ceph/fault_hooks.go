@@ -43,7 +43,7 @@ func (faultHooks) Reserve(ctx context.Context, c *Container, kind, key string) (
 	if !ok {
 		return nil, nil, invalidRequest("unknown fault kind %q", kind)
 	}
-	token, previous, err := c.reserveFault(ctx, k, key)
+	token, previous, err := c.faults.reserve(ctx, k, key)
 	if err != nil {
 		return nil, previous, err
 	}
@@ -57,21 +57,22 @@ func (faultHooks) Settle(c *Container, token any, network string, handle any, un
 	if !ok || entry == nil {
 		return false, errFaultToken
 	}
-	return c.settleFault(entry, network, handle, undo, complete), nil
+	c.faults.settle(entry, network, handle, undo, complete)
+	return c.closed, nil
 }
 
 // Release forgets the fault of token while its key still maps to it. The
 // caller holds the mutex.
 func (faultHooks) Release(c *Container, token any) bool {
 	entry, _ := token.(*faultEntry)
-	return c.releaseFault(entry)
+	return c.faults.release(entry)
 }
 
 // Tracks reports whether token is still the fault of its key. The caller
 // holds the mutex.
 func (faultHooks) Tracks(c *Container, token any) bool {
 	entry, _ := token.(*faultEntry)
-	return c.tracksFault(entry)
+	return c.faults.tracks(entry)
 }
 
 // WithTopology runs fn with the cluster mutex held, unless ctx ends first.
@@ -167,17 +168,12 @@ func (faultHooks) NativeFailure(program string, code int, stdout, stderr []byte)
 // network is already gone.
 func (faultHooks) OnlyMissingHostResource(err error) bool { return onlyMissingHostResource(err) }
 
-// TestFaults snapshots one family for cross-package contract tests.
+// TestFaults snapshots one family for cross-package contract tests. The
+// caller holds the mutex, or the cluster is not shared.
 func (faultHooks) TestFaults(c *Container, kind string) map[string]any {
-	result := make(map[string]any)
 	k, ok := faultKindNames[kind]
 	if !ok {
-		return result
+		return make(map[string]any)
 	}
-	for id, entry := range c.faults.entries {
-		if id.kind == k {
-			result[id.key] = entry.handle
-		}
-	}
-	return result
+	return c.faults.handles(k)
 }

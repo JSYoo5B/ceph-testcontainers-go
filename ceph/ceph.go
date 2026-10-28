@@ -93,10 +93,11 @@ type Container struct {
 	// faults holds the network delays, interruptions and pauses, and the
 	// bookkeeping entries of the blocklist, full ratios, configuration, OSD
 	// flag and MGR module overrides, reserved or held; see faultRegistry. It
-	// is guarded by mu.
+	// is guarded by mu, and terminate runs its undo through faults.undo.
 	faults faultRegistry
 	// debugLevels admits one override.SetDebugLevel window per daemon and
-	// option; it has its own lock.
+	// option; it has its own leaf lock and is handed out only by
+	// overrideHooks.DebugWindows. Terminate does not touch it.
 	debugLevels debugLevelRegistry
 	// daemonRunner replaces runContainer for AddMonitor and AddManager containers in tests.
 	daemonRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
@@ -970,7 +971,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	// before any network is removed; then pauses, because a frozen process
 	// cannot handle the stop signal until it is thawed. A failed undo
 	// remains retryable through its handle.
-	errs, blockedNetworks := c.undoFaults(ctx)
+	errs, blockedNetworks := c.faults.undo(ctx, &c.mu)
 	// Stop native commands while their containers still run. Those that
 	// stay unconfirmed are retried after the teardown, which ends the ones in
 	// the cluster's own containers.

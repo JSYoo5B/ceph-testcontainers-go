@@ -289,8 +289,10 @@ func TestTerminateReleasesPortLeasesAfterNativeCommandsAndBeforeTheServices(t *t
 				case *ast.CallExpr:
 					if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
 						switch sel.Sel.Name {
-						case "undoFaults":
-							undo = append(undo, x.Pos())
+						case "undo":
+							if recv, ok := sel.X.(*ast.SelectorExpr); ok && faultsUse(recv) {
+								undo = append(undo, x.Pos())
+							}
 						case "stopNativeInvocations":
 							stop = append(stop, x.Pos())
 						case "release":
@@ -307,7 +309,7 @@ func TestTerminateReleasesPortLeasesAfterNativeCommandsAndBeforeTheServices(t *t
 				return true
 			})
 			if len(undo) != 1 || len(stop) == 0 || len(release) != 1 || len(services) != 1 {
-				t.Fatalf("terminate must call undoFaults and portLeases.release once, stopNativeInvocations at least once and range over services once: %d %d %d %d", len(undo), len(stop), len(release), len(services))
+				t.Fatalf("terminate must call faults.undo and portLeases.release once, stopNativeInvocations at least once and range over services once: %d %d %d %d", len(undo), len(stop), len(release), len(services))
 			}
 			if !(undo[0] < release[0] && stop[0] < release[0] && release[0] < services[0]) {
 				t.Fatal("terminate must release the port leases after the faults and native commands and before the services")

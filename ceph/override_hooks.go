@@ -77,7 +77,7 @@ func (overrideHooks) Reserve(ctx context.Context, c *Container, kind, key string
 	if !ok {
 		return nil, invalidRequest("unknown override kind %q", kind)
 	}
-	token, _, err := c.reserveFault(ctx, k, key)
+	token, _, err := c.faults.reserve(ctx, k, key)
 	if err != nil {
 		return nil, err
 	}
@@ -91,21 +91,22 @@ func (overrideHooks) Settle(c *Container, token any, handle any) (bool, error) {
 	if !ok || entry == nil {
 		return false, errFaultToken
 	}
-	return c.settleFault(entry, "", handle, nil, nil), nil
+	c.faults.settle(entry, "", handle, nil, nil)
+	return c.closed, nil
 }
 
 // Release forgets the override of token while its key still maps to it. The
 // caller holds the mutex.
 func (overrideHooks) Release(c *Container, token any) bool {
 	entry, _ := token.(*faultEntry)
-	return c.releaseFault(entry)
+	return c.faults.release(entry)
 }
 
 // Tracks reports whether token is still the override of its key. The caller
 // holds the mutex.
 func (overrideHooks) Tracks(c *Container, token any) bool {
 	entry, _ := token.(*faultEntry)
-	return c.tracksFault(entry)
+	return c.faults.tracks(entry)
 }
 
 // NormalizeBlocklistSession validates and canonicalizes an exact client
@@ -246,19 +247,14 @@ func (session fullRatiosCLISession) CheckIdentity(ctx context.Context, fsid stri
 	return nil
 }
 
-// TestHeld snapshots the handles that one kind holds, for unit tests.
+// TestHeld snapshots the handles that one kind holds, for unit tests. The
+// caller holds the mutex, or the cluster is not shared.
 func (overrideHooks) TestHeld(c *Container, kind string) map[string]any {
-	result := make(map[string]any)
 	k, ok := overrideKindNames[kind]
 	if !ok {
-		return result
+		return make(map[string]any)
 	}
-	for id, entry := range c.faults.entries {
-		if id.kind == k {
-			result[id.key] = entry.handle
-		}
-	}
-	return result
+	return c.faults.handles(k)
 }
 
 // NormalizeConfigSetting validates and canonicalizes one central

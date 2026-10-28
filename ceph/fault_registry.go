@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 )
 
 // faultKind is one family of faults that a cluster tracks. Its phase, its
@@ -111,28 +113,35 @@ type faultEntry struct {
 	replaced *faultEntry
 }
 
-// faultRegistry holds the faults of one cluster. It is guarded by c.mu.
+// faultRegistry holds the faults of one cluster. It is the state component
+// described in docs/design/container-decomposition.md ("Ninth internal
+// slice") and is guarded by Container.mu: it has no mutex and takes none. The
+// one lock operation it performs is the release of the caller's lock around
+// a network-shaping undo, through the sync.Locker that undo receives. It
+// calls into no Container method and reads no Container field; the closed
+// flag that settle used to return stays with the callers, which hold the lock
+// that guards it. The guards in fault_registry_state_test.go enforce this.
 type faultRegistry struct {
 	entries map[faultID]*faultEntry
 }
 
-// reserveFault reserves key for a fault of kind. The caller holds c.mu and
+// reserve reserves key for a fault of kind. The caller holds Container.mu and
 // has refused a closed cluster in the same critical section: each family
 // does so in its own order and with its own error, so the reservation is
 // atomic with closed without normalizing those errors. A refusal of a kind
 // with a completion check returns the previous handle, which still needs
 // its undo.
-func (c *Container) reserveFault(ctx context.Context, kind faultKind, key string) (*faultEntry, any, error) {
+func (r *faultRegistry) reserve(ctx context.Context, kind faultKind, key string) (*faultEntry, any, error) {
 	spec := faultKinds[kind]
 	id := faultID{kind: kind, key: key}
-	previous := c.faults.entries[id]
+	previous := r.entries[id]
 	if previous != nil {
 		if previous.handle == nil {
 			return nil, nil, spec.refuse(true)
 		}
 		// A fault without a completion check is held until it is
 		// released. Its handle's own mutex is not taken here: a lease's
-		// Restore holds it while it takes c.mu.
+		// Restore holds it while it takes Container.mu.
 		if previous.complete == nil {
 			return nil, nil, spec.refuse(false)
 		}
@@ -144,53 +153,100 @@ func (c *Container) reserveFault(ctx context.Context, kind faultKind, key string
 			return nil, previous.handle, spec.refuse(false)
 		}
 	}
-	if c.faults.entries == nil {
-		c.faults.entries = make(map[faultID]*faultEntry)
+	if r.entries == nil {
+		r.entries = make(map[faultID]*faultEntry)
 	}
 	token := &faultEntry{id: id, replaced: previous}
-	c.faults.entries[id] = token
+	r.entries[id] = token
 	return token, nil, nil
 }
 
-// settleFault records the handle of a reservation, or ends the reservation
-// when there is no handle. It reports whether terminate has started, which
-// then has not seen the handle. The caller holds c.mu.
-func (c *Container) settleFault(token *faultEntry, network string, handle any, undo func(context.Context) error, complete func(context.Context) (bool, error)) bool {
-	if c.faults.entries[token.id] != token {
-		return c.closed
+// settle records the handle of a reservation, or ends the reservation when
+// there is no handle. A token that its key no longer maps to changes nothing.
+// The caller holds Container.mu and reads Container.closed itself to learn
+// whether terminate has started, which then has not seen the handle.
+func (r *faultRegistry) settle(token *faultEntry, network string, handle any, undo func(context.Context) error, complete func(context.Context) (bool, error)) {
+	if r.entries[token.id] != token {
+		return
 	}
 	if handle == nil {
 		if token.replaced != nil {
-			c.faults.entries[token.id] = token.replaced
+			r.entries[token.id] = token.replaced
 		} else {
-			delete(c.faults.entries, token.id)
+			delete(r.entries, token.id)
 		}
-		return c.closed
+		return
 	}
 	token.network, token.handle, token.undo, token.complete, token.replaced = network, handle, undo, complete, nil
-	return c.closed
 }
 
-// releaseFault forgets a fault only while its key still maps to token, so a
-// stale handle cannot release its successor. The caller holds c.mu.
-func (c *Container) releaseFault(token *faultEntry) bool {
-	if token == nil || c.faults.entries[token.id] != token {
+// release forgets a fault only while its key still maps to token, so a
+// stale handle cannot release its successor. The caller holds Container.mu.
+func (r *faultRegistry) release(token *faultEntry) bool {
+	if token == nil || r.entries[token.id] != token {
 		return false
 	}
-	delete(c.faults.entries, token.id)
+	delete(r.entries, token.id)
 	return true
 }
 
-// tracksFault reports whether token is still the fault of its key. The
-// caller holds c.mu.
-func (c *Container) tracksFault(token *faultEntry) bool {
-	return token != nil && c.faults.entries[token.id] == token
+// tracks reports whether token is still the fault of its key. The caller
+// holds Container.mu.
+func (r *faultRegistry) tracks(token *faultEntry) bool {
+	return token != nil && r.entries[token.id] == token
 }
 
-// heldFaults returns the held faults of phase, without reservations.
-func (c *Container) heldFaults(phase faultPhase) []*faultEntry {
+// holds reports whether kind has an entry for key, reserved or held. The
+// caller holds Container.mu.
+func (r *faultRegistry) holds(kind faultKind, key string) bool {
+	return r.entries[faultID{kind: kind, key: key}] != nil
+}
+
+// handles returns the handle of every entry of kind by key, nil for a
+// reservation. The caller holds Container.mu, or the cluster is not shared.
+func (r *faultRegistry) handles(kind faultKind) map[string]any {
+	result := make(map[string]any)
+	for id, entry := range r.entries {
+		if id.kind == kind {
+			result[id.key] = entry.handle
+		}
+	}
+	return result
+}
+
+// openInstanceFault finds an entry of a kind in instanceFaultNames that
+// targets containerID, alone or after its network name, and is not complete.
+// It returns the kind's name for the refusal, and found false when every
+// matching entry is complete or none matches. A failed completion check
+// returns its error. The caller holds Container.mu, which the check runs
+// under as it always has.
+func (r *faultRegistry) openInstanceFault(ctx context.Context, containerID string) (name string, found bool, err error) {
+	for fid, entry := range r.entries {
+		kindName, ok := instanceFaultNames[fid.kind]
+		if !ok {
+			continue
+		}
+		if fid.key != containerID && !strings.HasSuffix(fid.key, "/"+containerID) {
+			continue
+		}
+		if entry.handle != nil && entry.complete != nil {
+			done, err := entry.complete(ctx)
+			if err != nil {
+				return "", false, err
+			}
+			if done {
+				continue
+			}
+		}
+		return kindName, true, nil
+	}
+	return "", false, nil
+}
+
+// held returns the held faults of phase, without reservations.
+func (r *faultRegistry) held(phase faultPhase) []*faultEntry {
 	var held []*faultEntry
-	for _, entry := range c.faults.entries {
+	for _, entry := range r.entries {
 		if entry.handle != nil && entry.undo != nil && faultKinds[entry.id.kind].phase == phase {
 			held = append(held, entry)
 		}
@@ -198,20 +254,20 @@ func (c *Container) heldFaults(phase faultPhase) []*faultEntry {
 	return held
 }
 
-// undoFaults runs terminate's fault phases in order. The caller holds c.mu,
-// which only faultShaping releases around each undo. Failed entries stay
-// registered, so terminate is retryable, and a failed endpoint fault blocks
-// the removal of its network.
-func (c *Container) undoFaults(ctx context.Context) ([]error, map[string]bool) {
+// undo runs terminate's fault phases in order. The caller holds mu, the
+// cluster mutex, which only faultShaping releases around each undo. Failed
+// entries stay registered, so terminate is retryable, and a failed endpoint
+// fault blocks the removal of its network.
+func (r *faultRegistry) undo(ctx context.Context, mu sync.Locker) ([]error, map[string]bool) {
 	var errs []error
 	blockedNetworks := make(map[string]bool)
 	for _, phase := range faultPhases {
-		for _, entry := range c.heldFaults(phase) {
+		for _, entry := range r.held(phase) {
 			var err error
 			if phase == faultShaping {
-				c.mu.Unlock()
+				mu.Unlock()
 				err = entry.undo(ctx)
-				c.mu.Lock()
+				mu.Lock()
 			} else {
 				err = entry.undo(ctx)
 			}
