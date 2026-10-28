@@ -574,8 +574,43 @@ func writeJSON(w io.Writer, v any) error {
 	return err
 }
 
+// writeHeader writes the "# key: value" block that opens every TSV report. A
+// reader skips the lines that start with "#" and parses the rest as a table;
+// the block carries what the JSON report carries outside its rows: the schema,
+// the resolved source commits, the scope and the unmeasured packages.
+func writeHeader(w *bytes.Buffer, schema string, sources map[string]sourceInfo, order []string, sc scope) {
+	fmt.Fprintf(w, "# schema: %s\n", schema)
+	for _, name := range order {
+		src := sources[name]
+		fmt.Fprintf(w, "# %s.kind: %s\n", name, src.Kind)
+		if src.Ref != "" {
+			fmt.Fprintf(w, "# %s.ref: %s\n", name, src.Ref)
+		}
+		if src.Commit != "" {
+			fmt.Fprintf(w, "# %s.commit: %s\n", name, src.Commit)
+		}
+	}
+	for _, line := range sc.Measure {
+		fmt.Fprintf(w, "# scope.measure: %s\n", line)
+	}
+	for _, line := range sc.Exclusions {
+		fmt.Fprintf(w, "# scope.exclusion: %s\n", line)
+	}
+	for _, line := range sc.Caveats {
+		fmt.Fprintf(w, "# scope.caveat: %s\n", line)
+	}
+}
+
 func writeMeasureTSV(out io.Writer, r *measureReport) error {
 	var w bytes.Buffer
+	writeHeader(&w, r.Schema, map[string]sourceInfo{"source": r.Source}, []string{"source"}, r.Scope)
+	for _, pkg := range r.Unmeasured {
+		fmt.Fprintf(&w, "# unmeasured_package: %s\n", pkg)
+	}
+	for _, p := range r.Packages {
+		fmt.Fprintf(&w, "# package: %s files=%d owners=%d exported_methods=%d private_methods=%d fields=%d\n",
+			p.Package, p.Files, p.Owners, p.ExportedMethods, p.PrivateMethods, p.Fields)
+	}
 	fmt.Fprintln(&w, "owner\texported_methods\tprivate_methods\tfields\tdeclarations\tlocations")
 	for _, o := range r.Owners {
 		fmt.Fprintf(&w, "%s\t%d\t%d\t%d\t%d\t%s\n", o.Owner, o.ExportedMethods, o.PrivateMethods, o.Fields, o.Declarations, strings.Join(o.Locations, ","))
@@ -591,8 +626,19 @@ func sideCells(s *side) string {
 	return fmt.Sprintf("%d\t%d\t%d\t%d\t%s", s.ExportedMethods, s.PrivateMethods, s.Fields, s.Declarations, strings.Join(s.Locations, ","))
 }
 
+// packageCells shows a package total in the owner columns: the owner count
+// stands in the declarations column and a package has no locations.
+func packageCells(p packageRow) string {
+	return fmt.Sprintf("%d\t%d\t%d\t%d\t-", p.ExportedMethods, p.PrivateMethods, p.Fields, p.Owners)
+}
+
 func writeDeltaTSV(out io.Writer, r *deltaReport) error {
 	var w bytes.Buffer
+	writeHeader(&w, r.Schema, map[string]sourceInfo{"base": r.Base, "head": r.Head}, []string{"base", "head"}, r.Scope)
+	fmt.Fprintf(&w, "# move_records_read: %s\n# summary: %s\n", r.MoveRecord, r.Summary)
+	for _, u := range r.Unmeasured {
+		fmt.Fprintf(&w, "# unmeasured_package: %s %s\n", u.Package, u.Side)
+	}
 	fmt.Fprintln(&w, "status\towner\tbase_exported\tbase_private\tbase_fields\tbase_declarations\tbase_locations\t"+
 		"head_exported\thead_private\thead_fields\thead_declarations\thead_locations\t"+
 		"delta_exported\tdelta_private\tdelta_fields\tdelta_declarations\tmove_records")
@@ -604,9 +650,10 @@ func writeDeltaTSV(out io.Writer, r *deltaReport) error {
 		fmt.Fprintf(&w, "%s\t%s\t%s\t%s\t%+d\t%+d\t%+d\t%+d\t%s\n", o.Status, o.Owner, sideCells(o.Base), sideCells(o.Head),
 			o.Delta.ExportedMethods, o.Delta.PrivateMethods, o.Delta.Fields, o.Delta.Declarations, strings.Join(moves, ","))
 	}
-	for _, u := range r.Unmeasured {
-		// Padded to the header width so every row has the same columns.
-		fmt.Fprintf(&w, "unmeasured\t%s\t%s%s\n", u.Package, u.Side, strings.Repeat("\t", 14))
+	// Package totals: the declarations column holds the owner count.
+	for _, p := range r.Packages {
+		fmt.Fprintf(&w, "package\t%s\t%s\t%s\t%+d\t%+d\t%+d\t%+d\t\n", p.Package, packageCells(p.Base), packageCells(p.Head),
+			p.Delta.ExportedMethods, p.Delta.PrivateMethods, p.Delta.Fields, p.Delta.Declarations)
 	}
 	_, err := out.Write(w.Bytes())
 	return err

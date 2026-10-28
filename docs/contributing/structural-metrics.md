@@ -34,8 +34,21 @@ go run ./internal/tools/structmetrics delta -packages ceph,override -base-ref <s
 `-base-dir` and `-head-dir` read a module root directory instead of a ref.
 `-packages` is required: a comma-separated list of module-relative package
 directories (`ceph`, `rgw/multisite`), not recursive. `-format json` (default)
-or `-format tsv` selects the table form. Output goes to standard output; commit
+or `-format tsv` selects the table form (see below). Output goes to standard output; commit
 nothing. A pull request description may quote the changed rows.
+
+## TSV form
+
+A TSV report opens with a block of `# key: value` lines and then a tab-separated
+table. Skip the lines that start with `#` to parse the table. The block carries
+what the JSON report holds outside its rows: `schema`, the source kind, ref and
+resolved `commit` of each side (`source.*` for `measure`, `base.*` and `head.*`
+for `delta`), every `scope.measure`, `scope.exclusion` and `scope.caveat` line,
+one `unmeasured_package` line per package without production files (with the
+side for `delta`), and for `delta` the `move_records_read` and `summary` lines.
+`measure` also lists one `# package:` total line per package. In `delta`,
+package totals are table rows whose first column is `package`; their
+declarations column holds the owner count and their locations are `-`.
 
 ## What is measured
 
@@ -86,20 +99,11 @@ Rules that keep a move from reading as an improvement:
 
 With no changed owner the summary is `no measured structural changes`.
 
-Example, the merged change that moved the OSD flag override handle from `ceph`
-to `override` (base `ecb052c9`, head `6709439b`, `-packages ceph,override`):
-
-| Owner | Exported | Private | Fields | Status |
-| --- | ---: | ---: | ---: | --- |
-| `ceph.Container` | 43 to 42 | 189 to 189 | 35 to 35 | changed |
-| `ceph.overrideHooks` | 22 to 24 | 0 to 0 | 0 to 0 | changed |
-| `ceph.OSDFlagOverrideHandle` | 1 to - | 1 to - | 3 to - | removed |
-| `ceph.osdFlagOverrideState` | 0 to - | 0 to - | 4 to - | removed |
-| `override.OSDFlagHandle` | - to 1 | - to 2 | - to 3 | introduced |
-| `override.osdFlagState` | - to 0 | - to 0 | - to 5 | introduced |
-
-These are the numbers from the paired-change sample in issue #226. One result
-on one pair of commits is not a statement about how the tool behaves elsewhere.
+A worked example on a merged change, with the base and head commits and the
+rows the tool returned, is kept as a historical record in
+[structural-metrics-sample](../design/structural-metrics-sample.md). It is one
+result on one pair of commits, not a statement about how the tool behaves
+elsewhere.
 
 ## What it does not measure
 

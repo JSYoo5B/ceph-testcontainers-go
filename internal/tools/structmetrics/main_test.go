@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -422,6 +423,105 @@ func TestMalformedMoveRecordFails(t *testing.T) {
 	}
 }
 
+// splitTSV separates the "# key: value" header block from the table rows.
+func splitTSV(out string) (comments, rows []string) {
+	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		if strings.HasPrefix(line, "#") {
+			comments = append(comments, line)
+		} else {
+			rows = append(rows, line)
+		}
+	}
+	return comments, rows
+}
+
+func TestDeltaTSVCarriesProvenanceScopeAndPackageTotals(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not available")
+	}
+	base, head := pairedTrees()
+	head["q/a.go"] = "package q\n\ntype T struct{}\n" // present in head only
+	repo := t.TempDir()
+	gitIn(t, repo, "init", "-q")
+	commit := func(files map[string]string) string {
+		for name, content := range files {
+			path := filepath.Join(repo, filepath.FromSlash(name))
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		gitIn(t, repo, "add", "-A")
+		gitIn(t, repo, "commit", "-q", "-m", "snapshot")
+		return gitIn(t, repo, "rev-parse", "HEAD")
+	}
+	baseSHA := commit(base)
+	if err := os.Remove(filepath.Join(repo, "p/container.go")); err != nil {
+		t.Fatal(err)
+	}
+	headSHA := commit(head)
+	out, err := runCLI(t, "delta", "-packages", "p,q", "-repo", repo, "-base-ref", baseSHA, "-head-ref", headSHA, "-format", "tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	comments, rows := splitTSV(out)
+	for _, need := range []string{
+		"# schema: " + deltaSchema,
+		"# base.kind: git", "# base.commit: " + baseSHA,
+		"# head.kind: git", "# head.commit: " + headSHA,
+		"# unmeasured_package: q base",
+		"# summary: 6 owners changed; some listed packages are unmeasured on one side",
+	} {
+		if !slices.Contains(comments, need) {
+			t.Errorf("missing %q in %q", need, comments)
+		}
+	}
+	for _, kind := range []string{"measure", "exclusion", "caveat"} {
+		if !strings.Contains(strings.Join(comments, "\n"), "# scope."+kind+": ") {
+			t.Errorf("scope.%s lines missing", kind)
+		}
+	}
+	var pkgRow string
+	for _, row := range rows {
+		if strings.HasPrefix(row, "package\tp\t") {
+			pkgRow = row
+		}
+	}
+	// Package totals of p: exported 6 to 7, private 1 to 1 (Container 2,1; hooks 2; Untouched 1; Handle 1).
+	if !strings.HasPrefix(pkgRow, "package\tp\t6\t1\t") || !strings.Contains(pkgRow, "\t+1\t+0\t") || strings.Count(pkgRow, "\t") != strings.Count(rows[0], "\t") {
+		t.Fatalf("package total row = %q", pkgRow)
+	}
+}
+
+func TestMeasureTSVReportsMissingPackagesAndProvenance(t *testing.T) {
+	root := writeTree(t, map[string]string{"p/a.go": "package p\n\ntype T struct{ a int }\nfunc (T) M() {}\n"})
+	for _, format := range []string{"tsv", "json"} {
+		out, err := runCLI(t, "measure", "-packages", "p,missing", "-dir", root, "-format", format)
+		if err != nil {
+			t.Fatalf("%s: %v", format, err)
+		}
+		if !strings.Contains(out, "missing") {
+			t.Errorf("%s output does not report the missing package:\n%s", format, out)
+		}
+	}
+	out, err := runCLI(t, "measure", "-packages", "p,missing", "-dir", root, "-format", "tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	comments, rows := splitTSV(out)
+	for _, need := range []string{"# schema: " + measureSchema, "# source.kind: dir", "# unmeasured_package: missing",
+		"# package: p files=1 owners=1 exported_methods=1 private_methods=0 fields=1"} {
+		if !slices.Contains(comments, need) {
+			t.Errorf("missing %q in %q", need, comments)
+		}
+	}
+	if !strings.Contains(strings.Join(comments, "\n"), "# scope.exclusion: ") || len(rows) != 2 {
+		t.Fatalf("comments=%q rows=%q", comments, rows)
+	}
+}
+
 func TestTSVHasOneRowPerOwner(t *testing.T) {
 	base, head := pairedTrees()
 	b, h := writeTree(t, base), writeTree(t, head)
@@ -429,8 +529,8 @@ func TestTSVHasOneRowPerOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-	if len(lines) != 6 {
+	_, lines := splitTSV(out)
+	if len(lines) != 7 { // header, five owners, one package total
 		t.Fatalf("lines = %d\n%s", len(lines), out)
 	}
 	header := strings.Count(lines[0], "\t")
@@ -451,9 +551,12 @@ func TestTSVUnmeasuredRowKeepsColumnCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-	if len(lines) != 3 || !strings.HasPrefix(lines[2], "unmeasured\tp\tbase\t") || strings.Count(lines[2], "\t") != strings.Count(lines[0], "\t") {
+	comments, lines := splitTSV(out)
+	if len(lines) != 2 || strings.Count(lines[1], "\t") != strings.Count(lines[0], "\t") {
 		t.Fatalf("lines = %q", lines)
+	}
+	if !slices.Contains(comments, "# unmeasured_package: p base") {
+		t.Fatalf("comments = %q", comments)
 	}
 }
 
