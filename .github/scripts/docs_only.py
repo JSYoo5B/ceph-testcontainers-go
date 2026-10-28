@@ -27,6 +27,8 @@ READ_DOC_FILES = frozenset((
     "docs/guides/messenger-client-fixtures.md",
     # tag_scenarios tests compare the catalogue with the tag registry.
     "docs/guides/bug-compatibility-tags.md",
+    # internal/tools/testdoublecheck reads the test-double inventory.
+    "docs/contributing/test-double-inventory.md",
 ))
 # Git file modes of an ordinary file and of an absent side (added or deleted).
 REGULAR_MODES = frozenset(("100644", "000000"))

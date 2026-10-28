@@ -168,6 +168,9 @@ the syntax of the selected files, that:
 Add a new shared test helper package to
 `internal/tools/testsupportcheck/manifest.json` in the same change. The
 command's own tests keep a fixture module with a negative control for each rule.
+`go run ./internal/tools/testdoublecheck`, the next line of `make tag-compile`,
+then requires the package's exported declarations to appear in the
+[test-double inventory](test-double-inventory.md), as described there.
 
 What this does not prove: the helper packages and the seam stay compiled by
 `go build ./...` and `go vet ./...` (they have no tag), so an ordinary build of
@@ -788,7 +791,8 @@ The product is disposable Ceph clusters for integration tests, so a
 real-cluster test in `internal/integration` is the primary verification. If a
 path can be reproduced on a real cluster, test it there.
 
-Fake-container unit tests are optional. Use them for deterministic checks of
+Fake-container unit tests are optional (see [Test doubles](#test-doubles) for how to
+choose a substitute). Use them for deterministic checks of
 branches that a real cluster cannot produce on demand: the second of two
 commands failing, a lost reply, a filesystem ID replaced under the same name,
 a concurrent caller. When you write one:
@@ -801,6 +805,71 @@ a concurrent caller. When you write one:
   command strings or their order; such tests break on harmless refactors and
   still pass when real Ceph behaves differently.
 - Parse tests use output captured from a real cluster, not hand-written JSON.
+
+## Test doubles
+
+This section is the policy for choosing a substitute in a test. The
+[test-double inventory](test-double-inventory.md) lists what exists today. The
+rules for keeping test-only code out of ordinary builds are in
+[Test-only code](#test-only-code), and they apply to every kind of substitute.
+
+Most of this project is written by AI and reviewed by a person. Write a test so
+that the reader can see what it exercises and what it proves. A substitute that
+saves the writer effort but hides the behavior under test is the wrong choice.
+
+### Choosing a substitute
+
+1. Prefer the real implementation, or a real cluster in `internal/integration`,
+   when the behavior can be reproduced there.
+2. Otherwise prefer a small fake: a type whose limited behavior and state
+   changes are visible in the test or in one short declaration next to it.
+3. Use a mock (a substitute that is configured with expected calls and canned
+   replies, by hand or generated) only when the substituted dependency, the
+   configured behavior and the purpose of the check are short and explicit at
+   the reading site of the test, and the result is easier to review than the
+   real implementation or a small fake. Mocks are allowed under that
+   condition. They are not the default.
+
+A fake is an option, not an automatic replacement for a mock. Do not grow a
+parallel implementation of Ceph or Docker semantics. If understanding a fake
+means studying a large shared simulation, change the boundary between the code
+and its dependency instead. A fake's behavior is a claim made by the test, not
+a fact about Ceph.
+
+### What a good test double check looks like
+
+- Good: inject one known external-call failure and check how the error
+  propagates. The substituted call and the expected result are apparent.
+- Good: check that a refused operation issued no native command, or that an
+  uncertain write was not replayed. Here the interaction is the contract, so
+  asserting it is right.
+- Avoid: a long sequence of expected calls, argument matching and canned replies
+  that rebuilds a whole normal scenario. It repeats the implementation's
+  assumptions and hides whether observable behavior is tested.
+- Avoid: asserting call order or count when it is only an implementation
+  detail. Assert the observable outcome instead.
+- Do not set a line-count limit and do not move a mock's setup into distant
+  helpers to make it look short. The reader must understand what is substituted
+  without chasing hidden expectation machinery.
+
+### Evidence
+
+A passing test with a fake or mock is unit or control evidence for the logic
+under test. It does not show that real Ceph, Docker or a native client behaves
+the same way. Do not word a result, a pull request or a document so that it
+does. Native interoperability is shown only by a run on a real cluster.
+
+### Names and availability
+
+A concrete double is named for its role (a fake models state, a recorder
+records calls, a counter counts them), not like the real thing it replaces. A
+double that more than one package shares lives in a test-only package under
+`internal/`, and a double of one package is declared in a `_test.go` file. No
+double or test accessor is exported from a public package. Add the declaration
+to the [inventory](test-double-inventory.md) in the same change when it is in a
+test-only package or when a runtime file gets a new injection seam whose
+comment says it is replaced in tests; `go run ./internal/tools/testdoublecheck`
+(part of `make tag-compile`) fails otherwise.
 
 ## What features may rely on in images
 
