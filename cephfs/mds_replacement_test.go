@@ -84,8 +84,8 @@ func newReplacementMDSFixture(t *testing.T) *replacementMDSFixture {
 	r := &replacementMDSFixture{n: &replacementMDSControl{stoppedMDSControl: n, fsid: coldMDSFixtureFSID, auth: []any{map[string]any{"entity": "mds.target-0"}}}}
 	c.Container = r.n
 	setServices(c, map[string]testcontainers.Container{})
-	*servicehook.TestState(c).StartupTimeout = 2 * time.Second
-	*servicehook.TestState(c).CephFSImage = "selected-existing-mds-image"
+	servicehook.TestSetStartupTimeout(c, 2*time.Second)
+	servicehook.TestSetCephFSImage(c, "selected-existing-mds-image")
 	config, err := normalizeCephFSConfig(Config{Name: "target"})
 	if err != nil {
 		t.Fatal(err)
@@ -206,7 +206,7 @@ func TestMDSReplacementOwnerAndPublicAdmissionRejectsWithoutMutation(t *testing.
 			case "partial-original":
 				r.old.identity.confirmed = false
 			case "closed":
-				*servicehook.TestState(r.fs.cluster).Closed = true
+				servicehook.TestSetClosed(r.fs.cluster, true)
 			case "registry":
 				servicehook.DeleteService(r.fs.cluster, "mds.target-0")
 			case "duplicate":

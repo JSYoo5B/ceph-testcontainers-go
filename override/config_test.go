@@ -275,7 +275,7 @@ func TestSetConfigRestoreAfterTerminateIsRefusedAndKeepsTheEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	servicehook.Lock(c)
-	*servicehook.TestState(c).Closed = true
+	servicehook.TestSetClosed(c, true)
 	servicehook.Unlock(c)
 	before := len(ctr.calls)
 	if err := change.Restore(t.Context()); err == nil || len(ctr.calls) != before || len(heldConfig(c)) != 1 {

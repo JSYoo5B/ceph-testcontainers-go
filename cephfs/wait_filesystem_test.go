@@ -75,7 +75,7 @@ func newWaitFixture(t *testing.T, name string) waitFixture {
 	default:
 		t.Fatalf("unknown wait fixture %q", name)
 	}
-	*servicehook.TestState(f.cluster).StartupTimeout = 2 * time.Second
+	servicehook.TestSetStartupTimeout(f.cluster, 2*time.Second)
 	return f
 }
 

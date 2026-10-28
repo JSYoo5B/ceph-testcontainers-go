@@ -199,7 +199,7 @@ func TestCephFSContextMDSSnapshotPreservesOwnedDescriptors(t *testing.T) {
 		t.Fatal("queued snapshot queried native state or altered the owned creation order")
 	}
 	for _, closed := range []bool{false, true} {
-		*servicehook.TestState(fs.cluster).Closed = closed
+		servicehook.TestSetClosed(fs.cluster, closed)
 		snapshot, err := fs.mdsSnapshot(t.Context())
 		if err != nil || len(snapshot) != 2 || snapshot[0] != first || snapshot[1] != second {
 			t.Fatalf("snapshot lost pointers, creation order or terminated-fixture inspection: %+v %v", snapshot, err)

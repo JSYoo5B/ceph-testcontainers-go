@@ -122,7 +122,7 @@ func TestPauseRefusesControlAndUnavailableContainers(t *testing.T) {
 			t.Fatalf("%s container accepted: %v", name, err)
 		}
 	}
-	*servicehook.TestState(cluster).Closed = true
+	servicehook.TestSetClosed(cluster, true)
 	if pause, err := Pause(t.Context(), cluster, pauseTestContainer{id: "osd"}); err == nil || pause != nil {
 		t.Fatal("terminated cluster accepted a pause")
 	}

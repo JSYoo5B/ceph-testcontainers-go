@@ -507,7 +507,7 @@ func TestMGRModuleRestoreAfterTerminateIsRefusedAndKeepsTheModule(t *testing.T) 
 	}
 	view := servicehook.TestState(c)
 	view.Mutex.Lock()
-	*view.Closed = true
+	servicehook.TestSetClosed(c, true)
 	view.Mutex.Unlock()
 	before := len(ctr.calls)
 	if err := change.Restore(t.Context()); err != overridehook.Terminated() {

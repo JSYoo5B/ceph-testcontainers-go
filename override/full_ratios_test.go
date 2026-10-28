@@ -167,7 +167,7 @@ func TestSetFullRatiosFailureBeforeRegistrationFreesTheReservation(t *testing.T)
 			ordered := ctr.ratios
 			switch unavailable {
 			case "closed":
-				*state.Closed = true
+				servicehook.TestSetClosed(c, true)
 			case "control":
 				// Not the fixture: a cluster without a control container.
 				c = servicehook.TestCluster(nil, servicehook.TestConfig{StartupTimeout: time.Minute})
@@ -193,7 +193,8 @@ func TestSetFullRatiosFailureBeforeRegistrationFreesTheReservation(t *testing.T)
 			if unavailable == "control" {
 				return
 			}
-			*state.Closed, *state.Config, *state.Keyring = false, []byte("[global]\nfsid = "+fullRatiosFSID+"\nmon_host = mon\n"), []byte("confirmed")
+			servicehook.TestSetClosed(c, false)
+			*state.Config, *state.Keyring = []byte("[global]\nfsid = "+fullRatiosFSID+"\nmon_host = mon\n"), []byte("confirmed")
 			ctr.failDump, ctr.ratios = false, ordered
 			if again, err := SetFullRatios(t.Context(), c, ceph.FullRatios{NearFull: .86, BackfillFull: .91, Full: .96}); err != nil || again.state.refused != nil {
 				t.Fatal("a freed key stayed refused", err)
@@ -286,7 +287,7 @@ func TestSetFullRatiosCapturesTheControlOnce(t *testing.T) {
 	replacement := &fullRatiosFixture{fsid: "changed"}
 	ctr.hook = func(_ context.Context, args []string) error {
 		if args[0] == "fsid" {
-			*servicehook.TestState(c).ControlPlane = replacement
+			servicehook.TestSetControlPlane(c, replacement)
 		}
 		return nil
 	}
@@ -397,7 +398,7 @@ func TestSetFullRatiosRestoreAfterTerminateIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	mutations := ctr.mutations
-	*servicehook.TestState(c).Closed = true
+	servicehook.TestSetClosed(c, true)
 	if err := change.Restore(t.Context()); err == nil || ctr.mutations != mutations || len(heldFullRatios(c)) != 1 {
 		t.Fatal("a terminated cluster restored or lost the override", err)
 	}

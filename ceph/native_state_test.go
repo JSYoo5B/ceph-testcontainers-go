@@ -266,9 +266,11 @@ func TestNativeStateMethodsHoldOnlyTheLeafLock(t *testing.T) {
 // featureClientState; the auth-records, OSD storage, run-directory, OSD registry
 // and port-lease splits added
 // no locks.
+// debugLevelRegistry has its own leaf mutex and is counted too: earlier slices
+// left it out, which made the real total eight while the test said seven.
 // A new one needs its own lock-order review.
 func TestNativeStateAddsNoMutex(t *testing.T) {
-	const want = 7 // mu, controlMu, configMu, extensionsMu, native.mu, toolkit.mu, toolkit.publishMu
+	const want = 8 // mu, controlMu, configMu, extensionsMu, native.mu, toolkit.mu, toolkit.publishMu, debugLevels.mu
 	got := 0
 	for _, parsed := range parseProductionFiles(t) {
 		for _, decl := range parsed.Decls {
@@ -278,7 +280,7 @@ func TestNativeStateAddsNoMutex(t *testing.T) {
 			}
 			for _, spec := range gen.Specs {
 				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || (ts.Name.Name != "Container" && ts.Name.Name != "nativeState" && ts.Name.Name != "networkState" && ts.Name.Name != "featureClientState" && ts.Name.Name != "authState" && ts.Name.Name != "osdStorageState" && ts.Name.Name != "runDirState" && ts.Name.Name != "osdRegistry" && ts.Name.Name != "portLeaseState") {
+				if !ok || (ts.Name.Name != "Container" && ts.Name.Name != "nativeState" && ts.Name.Name != "networkState" && ts.Name.Name != "featureClientState" && ts.Name.Name != "authState" && ts.Name.Name != "osdStorageState" && ts.Name.Name != "runDirState" && ts.Name.Name != "osdRegistry" && ts.Name.Name != "portLeaseState" && ts.Name.Name != "debugLevelRegistry") {
 					continue
 				}
 				st, ok := ts.Type.(*ast.StructType)

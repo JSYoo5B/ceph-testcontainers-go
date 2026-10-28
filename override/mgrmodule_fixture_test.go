@@ -26,7 +26,7 @@ func mgrModuleCluster(ctr testcontainers.Container) *ceph.Container {
 
 // setStartupTimeout changes the bound of one fixture operation.
 func setStartupTimeout(c *ceph.Container, d time.Duration) {
-	*servicehook.TestState(c).StartupTimeout = d
+	servicehook.TestSetStartupTimeout(c, d)
 }
 
 // heldMGR returns the MGR module handles that the cluster's registry holds.
