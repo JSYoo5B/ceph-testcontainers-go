@@ -33,7 +33,7 @@ func monitorHandle(t testing.TB, _ context.Context, c *Container, name string) *
 	if c.mu.TryLock() {
 		defer c.mu.Unlock()
 	}
-	if mon := c.monitors[name]; mon != nil {
+	if mon := c.roster.monitor(name); mon != nil {
 		if mon.owner == nil {
 			mon.owner = c
 		}
@@ -50,7 +50,7 @@ func managerHandle(t testing.TB, _ context.Context, c *Container, name string) *
 	if c.mu.TryLock() {
 		defer c.mu.Unlock()
 	}
-	if mgr := c.managers[name]; mgr != nil {
+	if mgr := c.roster.manager(name); mgr != nil {
 		if mgr.owner == nil {
 			mgr.owner = c
 		}

@@ -187,10 +187,10 @@ func (c *Container) ownsDaemon(kind, id string) bool {
 		if id == "a" && c.Container != nil && !c.monitorTerminated {
 			return true
 		}
-		mon := c.monitors[id]
+		mon := c.roster.monitor(id)
 		return mon != nil && mon.Container != nil
 	case "mgr":
-		mgr := c.managers[id]
+		mgr := c.roster.manager(id)
 		return mgr != nil && mgr.Container != nil && !mgr.terminated
 	case "osd":
 		n, err := strconv.Atoi(id)

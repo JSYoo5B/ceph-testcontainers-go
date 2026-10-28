@@ -531,7 +531,7 @@ func TestTerminateReleasesOSDStorageInItsTwoStagesInOrder(t *testing.T) {
 				if call, ok := n.(*ast.CallExpr); ok {
 					if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 						at[sel.Sel.Name] = append(at[sel.Sel.Name], call.Pos())
-						if firstManager == token.NoPos && types.ExprString(call) == "c.manager.Terminate(ctx, opts...)" {
+						if firstManager == token.NoPos && types.ExprString(call) == "first.Terminate(ctx, opts...)" {
 							firstManager = call.Pos()
 						}
 						if controlLock == token.NoPos && types.ExprString(call) == "c.Container.Terminate(ctx, opts...)" {
