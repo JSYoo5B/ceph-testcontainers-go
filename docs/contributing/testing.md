@@ -29,6 +29,8 @@ and therefore must not need Docker.
 
 For the opt-in warm startup/container/resource comparison of dependency roles,
 see [Measuring dependency-role overhead](role-overhead.md).
+To count the methods and fields of struct types and compare two snapshots, see
+[Structural metrics](structural-metrics.md).
 
 - Go 1.26 or later. In this repository, `go.mod`'s `toolchain go1.26.9` line
   makes an older 1.26 patch switch to 1.26.9, which `make vulncheck` needs to
