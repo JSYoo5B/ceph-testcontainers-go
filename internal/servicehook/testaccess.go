@@ -22,6 +22,8 @@ type testHooks interface {
 	TestSetConfig(c *ceph.Container, config []byte)
 	TestSetKeyring(c *ceph.Container, keyring []byte)
 	TestSetCephVersion(c *ceph.Container, version string)
+	TestSetNetworkRemoved(c *ceph.Container, removed bool)
+	TestNetworkRemoved(c *ceph.Container) bool
 	TestSetInitialOSDs(c *ceph.Container, osds int)
 	TestSetPoolDefaults(c *ceph.Container, replicas, minSize int)
 	TestSetStartupTimeout(c *ceph.Container, timeout time.Duration)
@@ -61,13 +63,12 @@ type TestConfig = struct {
 
 // TestStateView points at a cluster's locks for unit tests. PortLeases is a
 // count taken when TestState is called. The closed flag, the control plane, the
-// options and the bootstrap record are written through the TestSet* functions.
+// options, the bootstrap record and the bridge-removal flag are written through the TestSet* functions.
 type TestStateView = struct {
-	Mutex          *sync.Mutex
-	ControlMutex   *sync.RWMutex
-	ConfigMutex    *sync.RWMutex
-	PortLeases     int
-	NetworkRemoved *bool
+	Mutex        *sync.Mutex
+	ControlMutex *sync.RWMutex
+	ConfigMutex  *sync.RWMutex
+	PortLeases   int
 }
 
 // TestCluster builds a cluster value for unit tests: control runs the CLI.
@@ -111,6 +112,17 @@ func TestSetKeyring(c *ceph.Container, keyring []byte) { getTest().TestSetKeyrin
 // lock: use a cluster no other goroutine uses, or hold the mutex that TestState
 // exposes.
 func TestSetCephVersion(c *ceph.Container, version string) { getTest().TestSetCephVersion(c, version) }
+
+// TestSetNetworkRemoved marks a cluster's public bridge as removed or not. It
+// takes no lock: hold the mutex that TestState exposes, or use a cluster no
+// other goroutine uses.
+func TestSetNetworkRemoved(c *ceph.Container, removed bool) {
+	getTest().TestSetNetworkRemoved(c, removed)
+}
+
+// TestNetworkRemoved reports whether a cluster's public bridge is marked
+// removed, read without a lock.
+func TestNetworkRemoved(c *ceph.Container) bool { return getTest().TestNetworkRemoved(c) }
 
 // TestSetInitialOSDs sets a cluster's initial OSD count. It takes no lock.
 func TestSetInitialOSDs(c *ceph.Container, osds int) { getTest().TestSetInitialOSDs(c, osds) }

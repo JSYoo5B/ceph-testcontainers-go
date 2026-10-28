@@ -20,9 +20,8 @@ type delayTestCluster struct {
 
 func newDelayTestCluster(backend netemBackend, osd testcontainers.Container, host bool) *delayTestCluster {
 	c := servicehook.TestCluster(nil, servicehook.TestConfig{NetworkName: "tc-public", HostNetwork: host, StartupTimeout: time.Second})
-	view := servicehook.TestState(c)
 	servicehook.TestReplaceOSDs(c, map[int]*ceph.OSDContainer{0: {Container: osd}})
-	*view.NetworkRemoved = true // synthetic bridge; no Docker removal
+	servicehook.TestSetNetworkRemoved(c, true) // synthetic bridge; no Docker removal
 	return &delayTestCluster{Container: c, backend: backend}
 }
 func (c *delayTestCluster) ApplyNetworkProfile(ctx context.Context, target testcontainers.Container, delay NetworkProfile) (*NetworkProfileLease, error) {

@@ -120,10 +120,10 @@ func TestRefreshMonitorConfigUpdatesEveryOwnedRoleWhileStopped(t *testing.T) {
 	cluster.manager = mgr
 	cluster.osdHandles.register(3, &OSDContainer{Container: osd, ID: 3})
 	cluster.services["rgw.default"], cluster.services["mds.a"] = rgw, mds
-	cluster.extensions = map[string]any{
+	cluster.extensions = extensionStore{states: map[string]any{
 		"rgw":    testExtension{targets: map[string]testcontainers.Container{"rgw.default": rgw}},
 		"cephfs": testExtension{targets: map[string]testcontainers.Container{"mds.a": mds}},
-	}
+	}}
 	all := []*monitorConfigArchive{control, mon, second, mgr, osd, rgw, mds, client}
 	before := make(map[string]string)
 	for _, daemon := range all {
@@ -359,10 +359,10 @@ func TestMonitorConfigInventoryIsDeterministicAndDeduplicated(t *testing.T) {
 	a := newMonitorConfigArchive("a", "")
 	b := newMonitorConfigArchive("b", "")
 	cluster.services["rgw.z"], cluster.services["mds.a"] = a, b
-	cluster.extensions = map[string]any{
+	cluster.extensions = extensionStore{states: map[string]any{
 		"rgw":    testExtension{targets: map[string]testcontainers.Container{"rgw.z": a}},
 		"cephfs": testExtension{targets: map[string]testcontainers.Container{"mds.a": b}},
-	}
+	}}
 	targets, err := cluster.monitorConfigTargets(ctx, control, "")
 	if err != nil {
 		t.Fatal(err)
