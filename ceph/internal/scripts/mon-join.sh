@@ -1,6 +1,50 @@
 #!/bin/sh
 set -eu
 id=${CEPH_MON_ID}
+# BEGIN mon-store-mode (identical in mon.sh and mon-join.sh)
+# require_store implements CEPH_MON_STORE_MODE=require for the data directory
+# $1: an existing store must be reused, and a missing or non-store directory is
+# a hard failure instead of the mkfs below. It runs before any write. Unset
+# keeps the historical behavior; any other value, also an empty one, is
+# refused so that a misspelled mode cannot fall back to formatting a store.
+# The shape checks mirror what ceph-mon itself needs: store.db is the RocksDB
+# directory, kv_backend (absent in stores of old monitors, which are read as
+# RocksDB) names rocksdb, and keyring (recreated by ceph-mon from the store
+# when absent) is a plain file. They detect foreign content, not a damaged
+# store; ceph-mon still opens and validates the store.
+require_store() {
+    [ "${CEPH_MON_STORE_MODE+set}" = set ] || return 0
+    if [ "$CEPH_MON_STORE_MODE" != require ]; then
+        echo "tc-ceph: environment: unsupported CEPH_MON_STORE_MODE; only require is defined" >&2
+        exit 2
+    fi
+    store_dir=$1
+    store_refuse() {
+        echo "tc-ceph: store: $store_dir $1; require mode never formats a new store" >&2
+        exit 3
+    }
+    if [ -L "$store_dir" ] || [ ! -d "$store_dir" ]; then
+        store_refuse "is not a directory"
+    fi
+    if [ -L "$store_dir/store.db" ] || [ ! -d "$store_dir/store.db" ]; then
+        store_refuse "has no store.db directory"
+    fi
+    if [ -z "$(ls -A "$store_dir/store.db" 2>/dev/null)" ]; then
+        store_refuse "has an empty store.db directory"
+    fi
+    if [ -e "$store_dir/kv_backend" ] || [ -L "$store_dir/kv_backend" ]; then
+        if [ -L "$store_dir/kv_backend" ] || [ ! -f "$store_dir/kv_backend" ] || [ "$(cat "$store_dir/kv_backend")" != rocksdb ]; then
+            store_refuse "has a kv_backend that is not a plain rocksdb marker"
+        fi
+    fi
+    if [ -e "$store_dir/keyring" ] || [ -L "$store_dir/keyring" ]; then
+        if [ -L "$store_dir/keyring" ] || [ ! -f "$store_dir/keyring" ]; then
+            store_refuse "has a keyring that is not a plain file"
+        fi
+    fi
+}
+# END mon-store-mode
+require_store "/var/lib/ceph/mon/ceph-$id"
 # messenger_address prints this container's address of the address family,
 # $1 or CEPH_ADDRESS_FAMILY: IPv4, global IPv6, or IPv4 as an IPv4-mapped
 # IPv6 address in the hexadecimal form that Ceph parses.

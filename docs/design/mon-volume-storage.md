@@ -257,8 +257,8 @@ The identity inputs (keyring digest, shape, fingerprint, FSID, address
 vector) are validated and compared but not observed: nothing reads a store or a
 monmap yet.
 
-Not in the slice: the require-store mode of `mon.sh` and `mon-join.sh`, which
-has no caller until slice 3 and belongs with the mount that uses it; the inspector
+Not in the slice: the require-store mode of `mon.sh` and `mon-join.sh` (it
+landed afterwards, see the status below); the inspector
 container (D6) that would observe the identity; every public name; the option,
 the mounts, `StoreVolume`, `Remove` discard, `Detach`, `Reopen`; address and
 port-lease handoff; any native run. The `fresh` to `bound` transition and the
@@ -267,6 +267,44 @@ production caller starts a MON generation yet.
 
 The mutex count is unchanged: `monStoreState` has no lock and sits at the position
 of `osdStorageState` under `Container.mu` (`TestNativeStateAddsNoMutex` scans it).
+
+### Require-store mode status
+
+Implemented in `ceph/internal/scripts/mon.sh` and `mon-join.sh`, tested
+Docker-free in `ceph/mon_require_store_test.go`. It has no Go caller: nothing
+sets the selector yet, no public name exists and no native run is claimed. 0.x:
+no old name is renamed or removed, and no alias is added.
+
+- Selector: the environment variable `CEPH_MON_STORE_MODE`. Unset keeps the
+  historical behavior unchanged (mkfs when `store.db` is absent). The value
+  `require` selects the mode. Any other value, also an empty one, exits 2
+  before any command or write, so a misspelled mode cannot fall back to
+  formatting a store. The Go side that sets it comes with the slice that
+  mounts the volume.
+- Behavior of `require`: the check runs before the scripts create any
+  directory or run any tool. A missing or non-directory data directory, a
+  missing, symlinked or empty `store.db`, a `kv_backend` that is not a plain
+  file reading `rocksdb`, and a `keyring` that is not a plain file exit 3 with
+  nothing written. A shaped store skips the mkfs branch and goes to
+  `exec ceph-mon -f`. The mkfs branch is unreachable in this mode.
+- Ceph facts, at the pinned commit: `ceph-mon --mkfs` exits 0 without
+  formatting when the data directory holds anything but `kv_backend`, and
+  `ceph-mon` without mkfs exits only for a missing or empty directory
+  (`check_mon_data_exists`, `check_mon_data_empty`), so the entrypoint is the
+  only place that decides between format and reuse. `MonitorDBStore::open`
+  treats an absent or empty `kv_backend` as RocksDB and writes it, and
+  `Monitor::init` rebuilds a missing `keyring` from the store, so neither file
+  is required, only checked when present.
+- What it does not establish: the checks detect foreign or half-provisioned
+  content by shape. They cannot tell a complete store from one whose mkfs was
+  interrupted after `store.db` was created, or a damaged one; `ceph-mon`
+  still opens and validates the store, and the identity binding of this note
+  (fingerprint, FSID, monmap) is a later slice. The default fixture
+  `TestAddressFamilyBootstrapRenderingGolden` still pins the unchanged
+  rendering of the default mode.
+- The `require_store` function is duplicated in both scripts between marker
+  comments because each script runs alone in the container;
+  `TestMonRequireStoreBlocksAreIdentical` keeps the two copies equal.
 
 ## Owner decisions with recommendations
 
