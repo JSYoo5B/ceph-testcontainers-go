@@ -19,6 +19,9 @@ type testHooks interface {
 	TestOSDCount(c *ceph.Container) int
 	TestSetClosed(c *ceph.Container, closed bool)
 	TestSetControlPlane(c *ceph.Container, control testcontainers.Container)
+	TestSetConfig(c *ceph.Container, config []byte)
+	TestSetKeyring(c *ceph.Container, keyring []byte)
+	TestSetCephVersion(c *ceph.Container, version string)
 	TestSetInitialOSDs(c *ceph.Container, osds int)
 	TestSetPoolDefaults(c *ceph.Container, replicas, minSize int)
 	TestSetStartupTimeout(c *ceph.Container, timeout time.Duration)
@@ -56,16 +59,13 @@ type TestConfig = struct {
 	Images *ceph.ImageSet
 }
 
-// TestStateView points at a cluster's locks and bootstrap record for unit
-// tests. PortLeases is a count taken when TestState is called. The closed flag,
-// the control plane and the options are written through the TestSet* functions.
+// TestStateView points at a cluster's locks for unit tests. PortLeases is a
+// count taken when TestState is called. The closed flag, the control plane, the
+// options and the bootstrap record are written through the TestSet* functions.
 type TestStateView = struct {
 	Mutex          *sync.Mutex
 	ControlMutex   *sync.RWMutex
 	ConfigMutex    *sync.RWMutex
-	Config         *[]byte
-	Keyring        *[]byte
-	CephVersion    *string
 	PortLeases     int
 	NetworkRemoved *bool
 }
@@ -98,6 +98,19 @@ func TestSetClosed(c *ceph.Container, closed bool) { getTest().TestSetClosed(c, 
 func TestSetControlPlane(c *ceph.Container, control testcontainers.Container) {
 	getTest().TestSetControlPlane(c, control)
 }
+
+// TestSetConfig replaces a cluster's recorded bootstrap configuration. It takes
+// no lock: hold ConfigMutex, or use a cluster no other goroutine uses.
+func TestSetConfig(c *ceph.Container, config []byte) { getTest().TestSetConfig(c, config) }
+
+// TestSetKeyring replaces a cluster's recorded admin keyring. It takes no lock:
+// hold ConfigMutex, or use a cluster no other goroutine uses.
+func TestSetKeyring(c *ceph.Container, keyring []byte) { getTest().TestSetKeyring(c, keyring) }
+
+// TestSetCephVersion replaces a cluster's recorded Ceph version. It takes no
+// lock: use a cluster no other goroutine uses, or hold the mutex that TestState
+// exposes.
+func TestSetCephVersion(c *ceph.Container, version string) { getTest().TestSetCephVersion(c, version) }
 
 // TestSetInitialOSDs sets a cluster's initial OSD count. It takes no lock.
 func TestSetInitialOSDs(c *ceph.Container, osds int) { getTest().TestSetInitialOSDs(c, osds) }

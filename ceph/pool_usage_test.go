@@ -43,7 +43,7 @@ func newPoolUsageFixture() (*Container, *poolUsageFixtureContainer) {
 		"osd pool ls detail --format json": poolUsageFixturePolicies,
 		"df detail --format json":          poolUsageFixtureDF(poolUsageFixtureStats),
 	}}}
-	cluster := &Container{Container: ctr, config: []byte("[global]\nfsid = " + poolUsageFixtureFSID + "\nmon_host = mon\n"), keyring: []byte("confirmed")}
+	cluster := &Container{Container: ctr, bootstrap: bootstrapRecord{config: []byte("[global]\nfsid = " + poolUsageFixtureFSID + "\nmon_host = mon\n"), keyring: []byte("confirmed")}}
 	return cluster, ctr
 }
 
@@ -277,11 +277,11 @@ func TestPoolUsageRejectsUnavailableFixtureBeforeQuery(t *testing.T) {
 			case "control":
 				cluster.Container = nil
 			case "bootstrap":
-				cluster.config = nil
+				cluster.bootstrap.config = nil
 			case "keyring":
-				cluster.keyring = nil
+				cluster.bootstrap.keyring = nil
 			case "ambiguous uuid":
-				cluster.config = append(cluster.config, []byte("fsid = "+poolUsageFixtureFSID+"\n")...)
+				cluster.bootstrap.config = append(cluster.bootstrap.config, []byte("fsid = "+poolUsageFixtureFSID+"\n")...)
 			}
 			_ = assertPoolUsageFailure(t, cluster, t.Context(), "")
 			if len(ctr.Calls) != 0 {
@@ -365,8 +365,8 @@ func TestPoolUsageBoundsOwnerControlAndConfigAdmission(t *testing.T) {
 				cluster.controlPlane.mu.Lock()
 				unlock = cluster.controlPlane.mu.Unlock
 			case "config":
-				cluster.configMu.Lock()
-				unlock = cluster.configMu.Unlock
+				cluster.bootstrap.mu.Lock()
+				unlock = cluster.bootstrap.mu.Unlock
 			}
 			var once sync.Once
 			release := func() { once.Do(unlock) }

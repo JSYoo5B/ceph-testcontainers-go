@@ -18,12 +18,12 @@ import (
 var membershipControlFields = map[string]bool{
 	"closed": true, "controlPlane": true, "settings": true, "monitorTerminated": true,
 	"manager": true, "monitors": true, "managers": true, "services": true,
-	"extensions": true,
+	"extensions": true, "bootstrap": true,
 }
 
 // testStateFields is the exact field set of the unit-test state view in ceph and
 // in internal/servicehook. A new pointer needs a review of what it exposes.
-var testStateFields = []string{"CephVersion", "Config", "ConfigMutex", "ControlMutex", "Keyring", "Mutex", "NetworkRemoved", "PortLeases"}
+var testStateFields = []string{"ConfigMutex", "ControlMutex", "Mutex", "NetworkRemoved", "PortLeases"}
 
 func structFieldNames(t *testing.T, file, typeName string) []string {
 	t.Helper()
@@ -219,6 +219,9 @@ func callsMethod(fn *ast.FuncDecl, recv, method string) bool {
 var testSetHooks = map[string][]string{
 	"TestSetClosed":         {"closed"},
 	"TestSetControlPlane":   {"handle"},
+	"TestSetConfig":         {"config"},
+	"TestSetKeyring":        {"keyring"},
+	"TestSetCephVersion":    {"cephVersion"},
 	"TestSetInitialOSDs":    {"osds"},
 	"TestSetPoolDefaults":   {"poolMinSize", "poolReplicas"},
 	"TestSetStartupTimeout": {"startupTimeout"},

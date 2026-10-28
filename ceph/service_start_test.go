@@ -13,9 +13,9 @@ import (
 // that test the handle would use a nil pointer.
 func TestStartServiceReturnsNoHandleWhenNoContainerWasCreated(t *testing.T) {
 	cluster := &Container{
-		config: []byte("[global]\n"), keyring: []byte("keyring"),
-		services: map[string]testcontainers.Container{},
-		settings: options{startupTimeout: time.Second, hostNetwork: true, publicAddress: "127.0.0.1"},
+		bootstrap: bootstrapRecord{config: []byte("[global]\n"), keyring: []byte("keyring")},
+		services:  map[string]testcontainers.Container{},
+		settings:  options{startupTimeout: time.Second, hostNetwork: true, publicAddress: "127.0.0.1"},
 	}
 	cause := errors.New("rejected before create")
 	ctr, err := cluster.startService(t.Context(), "mds.a", "image", testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error {

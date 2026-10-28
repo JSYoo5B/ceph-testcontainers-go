@@ -154,7 +154,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	if err != nil {
 		return nil, err
 	}
-	if len(c.config) == 0 || control == nil {
+	if !c.bootstrap.hasConfig() || control == nil {
 		return nil, errors.New("ceph cluster bootstrap is incomplete")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -183,7 +183,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 		}
 	}
 	client := &ClientConfig{owner: c, name: entity}
-	client.config = clientConfigBytes(c.config, client)
+	client.config = clientConfigBytes(c.bootstrap.rawConfig(), client)
 	control, err = c.controlContainerContext(ctx)
 	if err != nil {
 		return client, err
@@ -260,7 +260,7 @@ func (c *Container) withClientIdentity(client *ClientConfig, opts ...ClientConta
 		} else if err := network.WithNetworkName(nil, c.staticFacts().NetworkName)(req); err != nil {
 			return err
 		}
-		config, err := clientContainerConfig(clientConfigBytes(c.config, client), opts)
+		config, err := clientContainerConfig(clientConfigBytes(c.bootstrap.rawConfig(), client), opts)
 		if err != nil {
 			return err
 		}

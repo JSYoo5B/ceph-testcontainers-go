@@ -1,7 +1,6 @@
 package ceph
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"slices"
@@ -27,14 +26,14 @@ func (c *Container) ConnectionConfig(ctx context.Context) (ConnectionConfig, err
 	if c.closed {
 		return ConnectionConfig{}, errClusterTerminated
 	}
-	if err := lockTopologyReadMutex(ctx, &c.configMu); err != nil {
+	config, keyring, complete, err := c.bootstrap.connection(ctx)
+	if err != nil {
 		return ConnectionConfig{}, err
 	}
-	defer c.configMu.RUnlock()
-	if len(c.config) == 0 || len(c.keyring) == 0 {
+	if !complete {
 		return ConnectionConfig{}, errors.New("ceph cluster bootstrap is incomplete")
 	}
-	return ConnectionConfig{Conf: bytes.Clone(c.config), Keyring: bytes.Clone(c.keyring)}, nil
+	return ConnectionConfig{Conf: config, Keyring: keyring}, nil
 }
 
 // Managers returns sorted owned candidate descriptors. The slice is

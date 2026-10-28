@@ -36,8 +36,8 @@ func TestTopologySnapshotContextsHonorBusyOwnerDeadline(t *testing.T) {
 }
 
 func TestConnectionConfigContextBoundsConfigurationCacheWait(t *testing.T) {
-	cluster := &Container{config: []byte("config"), keyring: []byte("keyring")}
-	assertSnapshotReadLockQueued(t, &cluster.configMu, func(ctx context.Context) error {
+	cluster := &Container{bootstrap: bootstrapRecord{config: []byte("config"), keyring: []byte("keyring")}}
+	assertSnapshotReadLockQueued(t, &cluster.bootstrap.mu, func(ctx context.Context) error {
 		_, err := cluster.ConnectionConfig(ctx)
 		return err
 	})
@@ -84,7 +84,7 @@ func assertSnapshotReadLockQueued(t *testing.T, mutex *sync.RWMutex, operation f
 
 func TestTopologySnapshotContextsPreserveCopiesAndOwnedDescriptors(t *testing.T) {
 	a, b := &ManagerContainer{DaemonName: "a"}, &ManagerContainer{DaemonName: "b"}
-	cluster := &Container{config: []byte("config"), keyring: []byte("keyring"), managers: map[string]*ManagerContainer{"b": b, "a": a}}
+	cluster := &Container{bootstrap: bootstrapRecord{config: []byte("config"), keyring: []byte("keyring")}, managers: map[string]*ManagerContainer{"b": b, "a": a}}
 	cc, err := cluster.ConnectionConfig(t.Context())
 	config := cc.Conf
 	keyring := cc.Keyring
@@ -92,7 +92,7 @@ func TestTopologySnapshotContextsPreserveCopiesAndOwnedDescriptors(t *testing.T)
 		t.Fatal(err)
 	}
 	config[0], keyring[0] = 'X', 'Y'
-	if !bytes.Equal(cluster.config, []byte("config")) || !bytes.Equal(cluster.keyring, []byte("keyring")) {
+	if !bytes.Equal(cluster.bootstrap.config, []byte("config")) || !bytes.Equal(cluster.bootstrap.keyring, []byte("keyring")) {
 		t.Fatal("bootstrap snapshot aliased private cache")
 	}
 	managers, err := cluster.Managers(t.Context())
@@ -149,7 +149,7 @@ func TestMonitorAndOSDSnapshotsMatchTheLockedListings(t *testing.T) {
 }
 
 func TestTopologySnapshotContextsRejectExpiredContextAndAllowRetry(t *testing.T) {
-	cluster := &Container{config: []byte("config"), keyring: []byte("keyring")}
+	cluster := &Container{bootstrap: bootstrapRecord{config: []byte("config"), keyring: []byte("keyring")}}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if _, err := cluster.ConnectionConfig(ctx); !errors.Is(err, context.Canceled) {

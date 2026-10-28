@@ -68,7 +68,7 @@ func newHealthDetailsFixture() (*Container, *healthDetailsFixtureContainer) {
 		exits:   make(map[int]int), readers: make(map[int]io.Reader),
 	}
 	cluster := &Container{Container: ctr,
-		config: []byte("[global]\nfsid = " + healthDetailsFixtureFSID + "\nmon_host = mon\n"), keyring: []byte("confirmed")}
+		bootstrap: bootstrapRecord{config: []byte("[global]\nfsid = " + healthDetailsFixtureFSID + "\nmon_host = mon\n"), keyring: []byte("confirmed")}}
 	return cluster, ctr
 }
 
@@ -137,15 +137,15 @@ func TestHealthDetailsRejectsUnavailableBootstrapBeforeQuery(t *testing.T) {
 			case "control":
 				cluster.Container = nil
 			case "config":
-				cluster.config = nil
+				cluster.bootstrap.config = nil
 			case "keyring":
-				cluster.keyring = nil
+				cluster.bootstrap.keyring = nil
 			case "ambiguous FSID":
-				cluster.config = append(cluster.config, []byte("fsid = "+healthDetailsFixtureFSID+"\n")...)
+				cluster.bootstrap.config = append(cluster.bootstrap.config, []byte("fsid = "+healthDetailsFixtureFSID+"\n")...)
 			case "zero FSID":
-				cluster.config = []byte("[global]\nfsid = 00000000-0000-0000-0000-000000000000\n")
+				cluster.bootstrap.config = []byte("[global]\nfsid = 00000000-0000-0000-0000-000000000000\n")
 			case "malformed FSID":
-				cluster.config = []byte("[global]\nfsid = SECRET_BOOTSTRAP_VALUE\n")
+				cluster.bootstrap.config = []byte("[global]\nfsid = SECRET_BOOTSTRAP_VALUE\n")
 			}
 			err := assertHealthDetailsFailure(t, cluster, t.Context())
 			if len(ctr.calls) != 0 || strings.Contains(err.Error(), "SECRET_BOOTSTRAP_VALUE") {
@@ -181,7 +181,7 @@ func TestHealthDetailsRedactsEveryNativeFailure(t *testing.T) {
 		for _, mode := range []string{"exec", "read", "exit", "exit stdout and stderr", "wrapped cancellation", "wrapped deadline"} {
 			t.Run(fmt.Sprintf("%d/%s", call, mode), func(t *testing.T) {
 				cluster, ctr := newHealthDetailsFixture()
-				cluster.keyring = []byte(secret)
+				cluster.bootstrap.keyring = []byte(secret)
 				cause := errors.New(secret)
 				var canonical error
 				switch mode {
@@ -338,8 +338,8 @@ func TestHealthDetailsBoundsOwnerControlAndConfigAdmission(t *testing.T) {
 				cluster.controlPlane.mu.Lock()
 				unlock = cluster.controlPlane.mu.Unlock
 			case "config":
-				cluster.configMu.Lock()
-				unlock = cluster.configMu.Unlock
+				cluster.bootstrap.mu.Lock()
+				unlock = cluster.bootstrap.mu.Unlock
 			}
 			var once sync.Once
 			release := func() { once.Do(unlock) }

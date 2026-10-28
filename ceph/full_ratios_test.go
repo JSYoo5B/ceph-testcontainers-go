@@ -38,7 +38,7 @@ func newFullRatiosFixture() (*Container, *fullRatiosFixture) {
 	ratios := float32Ratios(FullRatios{NearFull: .85, BackfillFull: .9, Full: .95})
 	ctr := &fullRatiosFixture{ratios: ratios, epoch: 7, fsid: fullRatiosFSID}
 	c := &Container{Container: ctr, settings: options{startupTimeout: time.Minute},
-		config: []byte("[global]\nfsid = " + fullRatiosFSID + "\nmon_host = mon\n"), keyring: []byte("confirmed")}
+		bootstrap: bootstrapRecord{config: []byte("[global]\nfsid = " + fullRatiosFSID + "\nmon_host = mon\n"), keyring: []byte("confirmed")}}
 	return c, ctr
 }
 
@@ -171,9 +171,9 @@ func TestFullRatiosObservationFailsWithoutACapturedSession(t *testing.T) {
 		case "control":
 			c.Container = nil
 		case "config":
-			c.config = nil
+			c.bootstrap.config = nil
 		case "keyring":
-			c.keyring = nil
+			c.bootstrap.keyring = nil
 		case "native":
 			ctr.failDump = true
 		}

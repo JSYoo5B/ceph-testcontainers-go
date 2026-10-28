@@ -68,13 +68,12 @@ func (c *Container) poolUsage(ctx context.Context, name string, handle *Pool) (P
 	if control == nil {
 		return PoolUsageSnapshot{}, errors.New("ceph control container is unavailable")
 	}
-	if err := lockTopologyReadMutex(ctx, &c.configMu); err != nil {
+	identity, err := c.bootstrap.identity(ctx)
+	if err != nil {
 		return PoolUsageSnapshot{}, err
 	}
-	fsid, identityErr := monitorConfigClusterIdentity(c.config)
-	confirmed := len(c.keyring) != 0
-	c.configMu.RUnlock()
-	if identityErr != nil || !confirmed {
+	fsid, identityErr := identity.fsid, identity.err
+	if identityErr != nil || !identity.confirmed {
 		return PoolUsageSnapshot{}, errors.New("ceph original bootstrap identity is unavailable")
 	}
 	query := func(args ...string) ([]byte, error) {

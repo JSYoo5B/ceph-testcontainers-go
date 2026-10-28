@@ -47,9 +47,8 @@ func newFullRatiosFixture(t *testing.T) (*ceph.Container, *fullRatiosFixture) {
 	ratios, _ := normalizeFullRatios(ceph.FullRatios{NearFull: .85, BackfillFull: .9, Full: .95})
 	ctr := &fullRatiosFixture{ratios: ratios, epoch: 7, fsid: fullRatiosFSID, observedOrdered: true}
 	c := servicehook.TestCluster(ctr, servicehook.TestConfig{StartupTimeout: time.Minute})
-	state := servicehook.TestState(c)
-	*state.Config = []byte("[global]\nfsid = " + fullRatiosFSID + "\nmon_host = mon\n")
-	*state.Keyring = []byte("confirmed")
+	servicehook.TestSetConfig(c, []byte("[global]\nfsid = "+fullRatiosFSID+"\nmon_host = mon\n"))
+	servicehook.TestSetKeyring(c, []byte("confirmed"))
 	return c, ctr
 }
 

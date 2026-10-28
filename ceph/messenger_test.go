@@ -48,7 +48,7 @@ func TestMessengerModeValidationSelectionAndSnapshot(t *testing.T) {
 			t.Fatal("facts did not report the selected bootstrap mode")
 		}
 		cluster.closed = true
-		cluster.config = []byte("[global]\nms client mode = crc\n")
+		cluster.bootstrap.config = []byte("[global]\nms client mode = crc\n")
 		if facts, err := FactsOf(cluster); err != nil || facts.MessengerMode != mode {
 			t.Fatal("bootstrap facts depended on runtime state or termination")
 		}
@@ -122,7 +122,7 @@ func TestMessengerSecurePolicySurvivesMonitorRefreshAndClientAttachment(t *testi
 	for key, value := range messengerSecurePolicy {
 		global += key + " = " + value + "\n"
 	}
-	cluster.config = []byte(global)
+	cluster.bootstrap.config = []byte(global)
 	control.config = []byte(global + "[client.admin]\nprivate = retained\n")
 	control.native = []byte(`{"quorum_names":["a","b","c"],"monmap":{"mons":[
 {"name":"a","public_addrs":{"addrvec":[{"type":"v2","addr":"127.0.0.1:34111/0"}]}},
@@ -163,7 +163,7 @@ func TestMessengerSecurePolicySurvivesMonitorRefreshAndClientAttachment(t *testi
 	// its own keyring. Later attachment uses the refreshed cluster template.
 	auth := &authFixtureContainer{}
 	clientCluster := authFixtureCluster(auth)
-	clientCluster.config = bytes.Clone(config)
+	clientCluster.bootstrap.config = bytes.Clone(config)
 	client, err := clientCluster.CreateClient(t.Context(), "reader", ClientCaps{Mon: "allow r", OSD: "allow r"})
 	if err != nil {
 		t.Fatal(err)

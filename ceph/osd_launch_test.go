@@ -41,7 +41,7 @@ func consumeOSDLaunchFiles(t *testing.T, req testcontainers.GenericContainerRequ
 
 func TestOSDLaunchRecipeRebuildsConsumedFilesAndRequestState(t *testing.T) {
 	c := &Container{settings: options{essentialImage: "synthetic-osd-image", startupTimeout: time.Minute},
-		config: []byte("[global]\nfsid = synthetic-cluster\n"), keyring: []byte("synthetic-admin-keyring"), owner: "synthetic-owner",
+		bootstrap: bootstrapRecord{config: []byte("[global]\nfsid = synthetic-cluster\n"), keyring: []byte("synthetic-admin-keyring")}, owner: "synthetic-owner",
 		nets:   networkState{public: &testcontainers.DockerNetwork{Name: "synthetic-public"}, cluster: &testcontainers.DockerNetwork{Name: "synthetic-cluster"}},
 		runDir: runDirState{volume: &runVolume{name: "synthetic-run"}}, stores: osdStorageState{memory: &osdMemoryStorage{name: "synthetic-memory"}}}
 	osd := &OSDContainer{ID: 7, nativeUUID: "synthetic-osd-uuid", placement: OSDConfig{Host: "synthetic-host", Root: "default", Rack: "rack-a", DeviceClass: "fast"}}
@@ -63,7 +63,7 @@ func TestOSDLaunchRecipeRebuildsConsumedFilesAndRequestState(t *testing.T) {
 	}
 	// Change the original inputs and the fully consumed request. A subsequent
 	// request must reflect the captured recipe, not either mutable object.
-	c.config[0], c.keyring[0], key[0] = 'X', 'X', 'X'
+	c.bootstrap.config[0], c.bootstrap.keyring[0], key[0] = 'X', 'X', 'X'
 	c.settings.essentialImage, c.settings.hostNetwork = "other-image", true
 	c.nets.public.Name, c.nets.cluster.Name = "other-public", "other-cluster"
 	c.runDir.volume.name, c.stores.memory.name, c.owner = "other-run", "other-memory", "other-owner"
@@ -111,7 +111,7 @@ func TestOSDLaunchRecipeHostModeKeepsIndependentModifiers(t *testing.T) {
 func preparedOSDLaunch(t *testing.T) (*Container, osdLaunch) {
 	t.Helper()
 	c, _, _ := newInitialOSDCluster(options{essentialImage: "synthetic-osd-image"})
-	c.config, c.keyring = []byte("[global]\nfsid = synthetic-cluster\n"), []byte("synthetic-admin-keyring")
+	c.bootstrap.config, c.bootstrap.keyring = []byte("[global]\nfsid = synthetic-cluster\n"), []byte("synthetic-admin-keyring")
 	launch, err := c.registerOSD(t.Context(), OSDConfig{Root: "default", Host: "synthetic-host"}, c.settings.essentialImage, nil)
 	if err != nil {
 		t.Fatal(err)

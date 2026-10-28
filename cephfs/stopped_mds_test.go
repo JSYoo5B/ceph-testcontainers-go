@@ -165,8 +165,8 @@ func stoppedMDSFixture(t *testing.T) (*Filesystem, *stoppedMDSControl, *MDS, *st
 	c := poolFixtureCluster(n, 2)
 	setServices(c, map[string]testcontainers.Container{})
 	servicehook.TestSetStartupTimeout(c, time.Second)
-	(*servicehook.TestState(c).Config) = []byte("[global]\nfsid = " + coldMDSFixtureFSID + "\nmon_host = [v2:127.0.0.1:3300]\n")
-	(*servicehook.TestState(c).Keyring) = []byte("private-confirmed-keyring")
+	servicehook.TestSetConfig(c, []byte("[global]\nfsid = "+coldMDSFixtureFSID+"\nmon_host = [v2:127.0.0.1:3300]\n"))
+	servicehook.TestSetKeyring(c, []byte("private-confirmed-keyring"))
 	config, err := normalizeCephFSConfig(Config{Name: "target", StandbyMDS: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -255,7 +255,7 @@ func TestStoppedMDSPublicationRetainsOriginalAndPartialIdentity(t *testing.T) {
 				cid = "short-cid"
 			}
 			if kind == "unconfirmed-bootstrap" {
-				(*servicehook.TestState(fs.cluster).Config) = nil
+				servicehook.TestSetConfig(fs.cluster, nil)
 			}
 			d := &stoppedMDSDaemon{cid: cid}
 			stoppedMDSPublish(t, fs, d, cause)
@@ -539,7 +539,7 @@ func TestStoppedMDSOriginalClusterAndPoolsCannotBeAdopted(t *testing.T) {
 			case "native-fsid":
 				native.quorum["monmap"].(map[string]any)["fsid"] = "b011602b-37aa-496b-a8b5-b3e7a5d13ff3"
 			case "bootstrap-fsid":
-				(*servicehook.TestState(fs.cluster).Config) = []byte("[global]\nfsid = b011602b-37aa-496b-a8b5-b3e7a5d13ff3\n")
+				servicehook.TestSetConfig(fs.cluster, []byte("[global]\nfsid = b011602b-37aa-496b-a8b5-b3e7a5d13ff3\n"))
 			case "quorum-missing":
 				native.quorum["quorum_names"] = nil
 			case "filesystem-id":

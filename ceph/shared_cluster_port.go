@@ -96,7 +96,7 @@ func (c *Container) createSharedClient(ctx context.Context, entity string, caps 
 	if c.closed {
 		return nil, errClusterTerminated
 	}
-	if len(c.config) == 0 {
+	if !c.bootstrap.hasConfig() {
 		return nil, errors.New("ceph cluster bootstrap is incomplete")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -105,7 +105,7 @@ func (c *Container) createSharedClient(ctx context.Context, entity string, caps 
 		return nil, err
 	}
 	client := &ClientConfig{owner: c, name: entity}
-	client.config = clientConfigBytes(c.config, client)
+	client.config = clientConfigBytes(c.bootstrap.rawConfig(), client)
 	result, err := c.runSharedScript(ctx, sharedRequest{CreateAuth: &sharedCreateAuth{Entity: entity, Caps: capArgs, Generate: generate}})
 	if err != nil {
 		// The script's output can hold the key.

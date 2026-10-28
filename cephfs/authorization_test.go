@@ -147,7 +147,7 @@ func cephFSAuthorizationFixture(t *testing.T) (*Filesystem, *cephFSAuthFixtureCo
 	}
 	ctr := &cephFSAuthFixtureContainer{poolFixtureContainer: pool, auth: make(map[string]*cephFSAuthFixtureEntry), grants: make(map[string]string)}
 	fs.cluster.Container = ctr
-	(*servicehook.TestState(fs.cluster).Config) = []byte("[global]\nmon_host = fixture\n")
+	servicehook.TestSetConfig(fs.cluster, []byte("[global]\nmon_host = fixture\n"))
 	ctr.Calls = nil
 	return fs, ctr, volume
 }

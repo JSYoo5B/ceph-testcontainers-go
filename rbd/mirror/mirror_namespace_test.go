@@ -170,7 +170,8 @@ func TestRBDNamespaceMappingRefusalNamesTheSideThatLacksIt(t *testing.T) {
 			source, destination := fixture("source client"), fixture("destination client")
 			sourceCluster := servicehook.TestCluster(fixture("source"), servicehook.TestConfig{})
 			destinationCluster := servicehook.TestCluster(fixture("destination"), servicehook.TestConfig{})
-			*servicehook.TestState(sourceCluster).CephVersion, *servicehook.TestState(destinationCluster).CephVersion = tc.source, tc.destination
+			servicehook.TestSetCephVersion(sourceCluster, tc.source)
+			servicehook.TestSetCephVersion(destinationCluster, tc.destination)
 			link := &Mirror{sourceClient: source, destinationClient: destination, config: Config{
 				Pool: "images", Scope: ScopeImage, SourceNamespace: "ns-a", DestinationNamespace: "ns-b", SourceSite: "source", DestinationSite: "destination",
 				Source: sourceCluster, Destination: destinationCluster,

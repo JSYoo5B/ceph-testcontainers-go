@@ -29,14 +29,14 @@ func TestCustomDefaultRootConfiguresNumericRuleAndCopiesClientConfig(t *testing.
 	ctr := &defaultRootFixtureContainer{poolFixtureContainer: poolFixtureContainer{Output: map[string]string{
 		"osd crush rule dump tc-default-placement --format json": `{"rule_id":4,"rule_name":"tc-default-placement"}`,
 	}}}
-	cluster := &Container{Container: ctr, config: []byte("[global]\nfsid = fixture\n[osd]\n"), settings: options{defaultCRUSHRoot: "storage", hostNetwork: true, publicAddress: "127.0.0.1"}}
+	cluster := &Container{Container: ctr, bootstrap: bootstrapRecord{config: []byte("[global]\nfsid = fixture\n[osd]\n")}, settings: options{defaultCRUSHRoot: "storage", hostNetwork: true, publicAddress: "127.0.0.1"}}
 	if err := cluster.configureDefaultCRUSHRoot(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(ctr.Calls[0], []string{"osd", "crush", "add-bucket", "storage", "root"}) || !slices.Equal(ctr.Calls[1], replicatedCRUSHRuleCommand(PoolConfig{CRUSHRoot: "storage", FailureDomain: "osd"}, "tc-default-placement")) || !slices.Equal(ctr.Calls[3], []string{"config", "set", "global", "osd_pool_default_crush_rule", "4"}) {
 		t.Fatalf("custom default did not use the actual numeric CRUSH rule: %v", ctr.Calls)
 	}
-	if ctr.path != "/etc/ceph/ceph.conf" || ctr.mode != 0o644 || !bytes.Contains(ctr.copied, []byte("[global]\nosd pool default crush rule = 4")) || !bytes.Equal(cluster.config, ctr.copied) {
+	if ctr.path != "/etc/ceph/ceph.conf" || ctr.mode != 0o644 || !bytes.Contains(ctr.copied, []byte("[global]\nosd pool default crush rule = 4")) || !bytes.Equal(cluster.bootstrap.config, ctr.copied) {
 		t.Fatal("daemon/client config did not retain the selected numeric default")
 	}
 	var request testcontainers.GenericContainerRequest
@@ -44,7 +44,7 @@ func TestCustomDefaultRootConfiguresNumericRuleAndCopiesClientConfig(t *testing.
 		t.Fatal(err)
 	}
 	data, err := io.ReadAll(request.Files[0].Reader)
-	if err != nil || !bytes.Equal(data, cluster.config) {
+	if err != nil || !bytes.Equal(data, cluster.bootstrap.config) {
 		t.Fatal("attached client did not receive the selected default rule")
 	}
 }
@@ -52,7 +52,7 @@ func TestCustomDefaultRootConfiguresNumericRuleAndCopiesClientConfig(t *testing.
 func TestDefaultCRUSHRootRejectsMissingRuleIdentityBeforeSettingConfig(t *testing.T) {
 	for _, output := range []string{`{}`, `{"rule_id":-1,"rule_name":"tc-default-placement"}`, `{"rule_id":4,"rule_name":"other"}`, `[]`} {
 		ctr := &defaultRootFixtureContainer{poolFixtureContainer: poolFixtureContainer{Output: map[string]string{"osd crush rule dump tc-default-placement --format json": output}}}
-		cluster := &Container{Container: ctr, config: []byte("[global]\n"), settings: options{defaultCRUSHRoot: "storage"}}
+		cluster := &Container{Container: ctr, bootstrap: bootstrapRecord{config: []byte("[global]\n")}, settings: options{defaultCRUSHRoot: "storage"}}
 		if err := cluster.configureDefaultCRUSHRoot(t.Context()); err == nil {
 			t.Fatal("malformed rule identity became the default")
 		}

@@ -87,13 +87,12 @@ func (c *Container) poolPGs(ctx context.Context, name string, handle *Pool) (Poo
 	if control == nil {
 		return PoolPGSnapshot{}, clientOperationError(ctx, "ceph control container is unavailable", nil)
 	}
-	if err := lockTopologyReadMutex(ctx, &c.configMu); err != nil {
+	identity, err := c.bootstrap.identity(ctx)
+	if err != nil {
 		return PoolPGSnapshot{}, err
 	}
-	fsid, identityErr := monitorConfigClusterIdentity(c.config)
-	confirmed := len(c.keyring) != 0
-	c.configMu.RUnlock()
-	if identityErr != nil || !confirmed {
+	fsid, identityErr := identity.fsid, identity.err
+	if identityErr != nil || !identity.confirmed {
 		return PoolPGSnapshot{}, clientOperationError(ctx, "ceph original bootstrap identity is unavailable", identityErr)
 	}
 	query := func(args ...string) ([]byte, error) {

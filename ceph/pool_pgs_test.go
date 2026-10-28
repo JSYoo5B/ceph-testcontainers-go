@@ -71,7 +71,7 @@ func newPoolPGFixture() (*Container, *poolPGFixtureContainer) {
 		poolPGFixtureFSID + "\n", poolPGFixtureMap(poolPGFixturePool, 20), poolPGFixtureReports(poolPGFixtureReport, true),
 		poolPGFixtureMap(poolPGFixturePool, 21), poolPGFixtureFSID + "\n",
 	}, exits: map[int]int{}, readers: map[int]io.Reader{}}
-	return &Container{Container: ctr, config: []byte("[global]\nfsid = " + poolPGFixtureFSID + "\nmon_host = mon\n"), keyring: []byte("confirmed")}, ctr
+	return &Container{Container: ctr, bootstrap: bootstrapRecord{config: []byte("[global]\nfsid = " + poolPGFixtureFSID + "\nmon_host = mon\n"), keyring: []byte("confirmed")}}, ctr
 }
 
 func assertPoolPGFailure(t *testing.T, cluster *Container, ctx context.Context) error {
@@ -199,15 +199,15 @@ func TestPoolPGsRejectsUnavailableBootstrapAndInvalidInputBeforeQuery(t *testing
 			case "control":
 				cluster.Container = nil
 			case "config":
-				cluster.config = nil
+				cluster.bootstrap.config = nil
 			case "keyring":
-				cluster.keyring = nil
+				cluster.bootstrap.keyring = nil
 			case "duplicate FSID":
-				cluster.config = append(cluster.config, []byte("fsid = "+poolPGFixtureFSID+"\n")...)
+				cluster.bootstrap.config = append(cluster.bootstrap.config, []byte("fsid = "+poolPGFixtureFSID+"\n")...)
 			case "zero FSID":
-				cluster.config = []byte("[global]\nfsid = 00000000-0000-0000-0000-000000000000\n")
+				cluster.bootstrap.config = []byte("[global]\nfsid = 00000000-0000-0000-0000-000000000000\n")
 			case "malformed FSID":
-				cluster.config = []byte("[global]\nfsid = SECRET_CONFIG_VALUE\n")
+				cluster.bootstrap.config = []byte("[global]\nfsid = SECRET_CONFIG_VALUE\n")
 			}
 			err := assertPoolPGFailure(t, cluster, t.Context())
 			if len(ctr.calls) != 0 || strings.Contains(err.Error(), "SECRET_CONFIG_VALUE") {
@@ -416,8 +416,8 @@ func TestPoolPGsBoundsOwnerControlAndConfigAdmission(t *testing.T) {
 				cluster.controlPlane.mu.Lock()
 				unlock = cluster.controlPlane.mu.Unlock
 			case "config":
-				cluster.configMu.Lock()
-				unlock = cluster.configMu.Unlock
+				cluster.bootstrap.mu.Lock()
+				unlock = cluster.bootstrap.mu.Unlock
 			}
 			var once sync.Once
 			release := func() { once.Do(unlock) }

@@ -70,7 +70,7 @@ func TestClientConfigCopiesCredentialsAndUsesCurrentMonitorConfig(t *testing.T) 
 			}
 		}
 	}
-	cluster.config = []byte("[global]\nmon_host = new-mon\n")
+	cluster.bootstrap.config = []byte("[global]\nmon_host = new-mon\n")
 	var request testcontainers.GenericContainerRequest
 	if err := cluster.WithClientIdentity(client)(&request); err != nil {
 		t.Fatal(err)
@@ -171,7 +171,7 @@ func TestClientCreationUsesFreshKeyAndRemovesTemporaryKeyring(t *testing.T) {
 }
 
 func authFixtureCluster(ctr testcontainers.Container) *Container {
-	return &Container{Container: ctr, config: []byte("[global]\nmon_host = old-mon\n"), settings: options{startupTimeout: time.Second, hostNetwork: true, publicAddress: "127.0.0.1"}}
+	return &Container{Container: ctr, bootstrap: bootstrapRecord{config: []byte("[global]\nmon_host = old-mon\n")}, settings: options{startupTimeout: time.Second, hostNetwork: true, publicAddress: "127.0.0.1"}}
 }
 
 type authFixtureContainer struct {

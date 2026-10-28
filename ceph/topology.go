@@ -197,7 +197,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 				return mon, err
 			}
 		}
-		config := []byte(strings.ReplaceAll(string(c.config), "mon initial members = a\n", ""))
+		config := []byte(strings.ReplaceAll(string(c.bootstrap.rawConfig()), "mon initial members = a\n", ""))
 		monEnv := c.monitorJoinEnvironment(name)
 		opts := []testcontainers.ContainerCustomizer{c.adminClient(),
 			testcontainers.WithEntrypoint("/bin/sh", "/tc/mon-join.sh"), testcontainers.WithCmd(),
@@ -422,9 +422,7 @@ func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, remove
 	if err != nil {
 		return err
 	}
-	c.configMu.RLock()
-	template := bytes.Clone(c.config)
-	c.configMu.RUnlock()
+	template := c.bootstrap.template()
 	template, err = replaceGlobalMonitorHost(template, addresses)
 	if err != nil {
 		return fmt.Errorf("refresh future client configuration: %w", err)
@@ -438,9 +436,7 @@ func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, remove
 	}
 	// Publish after the control's current file confirms the new addresses. A
 	// later daemon copy failure must not keep new clients on removed monitors.
-	c.configMu.Lock()
-	c.config = template
-	c.configMu.Unlock()
+	c.bootstrap.publishConfig(template)
 	var errs []error
 	targets, err := c.monitorConfigTargets(ctx, control, removedName)
 	if err != nil {

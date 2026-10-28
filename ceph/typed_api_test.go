@@ -98,7 +98,7 @@ func TestReportedPGIDsParseAsPGIDs(t *testing.T) {
 }
 
 func TestConnectionConfigNamesTheFilesAndReturnsTheZeroValueOnError(t *testing.T) {
-	cluster := &Container{config: []byte("conf-bytes"), keyring: []byte("keyring-bytes")}
+	cluster := &Container{bootstrap: bootstrapRecord{config: []byte("conf-bytes"), keyring: []byte("keyring-bytes")}}
 	cfg, err := cluster.ConnectionConfig(t.Context())
 	if err != nil || string(cfg.Conf) != "conf-bytes" || string(cfg.Keyring) != "keyring-bytes" {
 		t.Fatalf("container fields swapped or missing: %q %q %v", cfg.Conf, cfg.Keyring, err)
@@ -109,9 +109,9 @@ func TestConnectionConfigNamesTheFilesAndReturnsTheZeroValueOnError(t *testing.T
 		t.Fatalf("container copies alias cluster state: %q %q %v", again.Conf, again.Keyring, err)
 	}
 	for name, broken := range map[string]*Container{
-		"terminated": {config: []byte("c"), keyring: []byte("k"), closed: true},
-		"no config":  {keyring: []byte("k")},
-		"no keyring": {config: []byte("c")},
+		"terminated": {bootstrap: bootstrapRecord{config: []byte("c"), keyring: []byte("k")}, closed: true},
+		"no config":  {bootstrap: bootstrapRecord{keyring: []byte("k")}},
+		"no keyring": {bootstrap: bootstrapRecord{config: []byte("c")}},
 	} {
 		got, err := broken.ConnectionConfig(t.Context())
 		if err == nil || got.Conf != nil || got.Keyring != nil {
