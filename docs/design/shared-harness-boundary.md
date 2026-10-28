@@ -930,9 +930,11 @@ of `ceph/harness`.
    keyring failure that still returns the partial client, and false before it.
    Docker-free controls pin both the tenant's use of the report and the
    backend's value at each return. Not done and not independent of the open
-   items: removing `raw()` from the operations port, which needs the `Lend`
-   route and so the placement of decision 5 and the stale-handle audit of
-   decision 11, because `SharedCluster.Exclusive` is its only non-test caller.
+   items: removing `raw()` from the operations port. Its callers are
+   `SharedCluster.Exclusive`, the Observer path `Tenant.container` and the
+   test-only `UnitTenantCluster` (decision 7), so it needs the `Lend` route,
+   hence the placement of decision 5, the stale-handle audit of decision 11 and
+   the decision 7 lookup.
    The error contract needs no preparation: it is added with the move because it
    has no caller before then.
 2. Internal: move the service-private helpers into `<service>/internal/...`
