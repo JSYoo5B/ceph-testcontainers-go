@@ -795,11 +795,13 @@ Options for the design record.
    would again be a shared edit unless it is discovered from the directory as
    fragments are.
 
-Recommendation: option 3 only if the owner expects many more slices, and then
-with discovery from the directory (no hand-maintained list) and component names
-in place of ordinals. For the window measured here the evidence supports option
-1 or 2: it shows one textual conflict in a document whose conflicting pull
-requests also conflicted in Go source. The test-double inventory needs no
+Decision (owner, 2026-10-28, recorded after this section was first written):
+option 3 is selected now, not deferred until a number of future slices exists,
+and it supersedes the earlier recommendation to only drop the ordinals. See
+[Decisions](#decisions-for-the-owner) for the full text. The historical
+observation keeps its limit: the conflict in this document also involved Go
+source conflicts, so splitting the document alone would not have removed that
+integration head or saved its runner time. The test-double inventory needs no
 change: the guard turned a clean-but-wrong merge into a failure with a named
 row, and its three edits did not conflict textually.
 
@@ -881,27 +883,79 @@ metadata-only cause.
 
 ## Decisions for the owner
 
-1. Whether `container-decomposition.md` should move to component-named files
-   discovered from a directory (option 3), only drop the ordinal numbering
-   (option 2), or stay as it is (option 1). The recommendation is option 2 now
-   and option 3 if more than a handful of slices remain.
-2. Whether the optional CI enforcement of `apinaming resolve` composition stays
-   out of scope. The latest decision on #216 says it is not a new closure
-   requirement, so nothing here proposes it.
-3. Whether the issue's remaining evaluation items (a repeated ledger after the
-   next window, with at least one catalogue conflict in it) should be tracked
-   in this issue or closed with the one-window record above.
+The questions this note raised are settled by owner comments of
+2026-10-28. The text below follows those comments; it adds no requirement.
+
+1. **Settled: component-owned decomposition records (option 3).** Comments:
+   [#289](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/289#issuecomment-6469810638)
+   and [#216](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/216#issuecomment-6469805516).
+   `docs/design/container-decomposition.md` stays for common design principles,
+   shared measurements and status, and cross-component constraints. Independently
+   authored component records go in separate component-named files (for example
+   under `docs/design/container-decomposition/`, or the equivalent final
+   documented layout), with stable names and no ordinal numbering. The files are
+   discovered from the directory: no component pull request edits a
+   hand-maintained list, count or aggregate, and any generated navigation must
+   not recreate that editing requirement. Dependencies and order are stated in a
+   component record where they matter; directory or file name order does not
+   define implementation order. The migration keeps existing content, evidence
+   provenance and references and updates links and anchors. A component-local
+   change normally edits only its own record; shared principles and
+   measurements still use the common document when they change, and genuine
+   cross-component coordination is not promised away. The migration itself is a
+   bounded follow-up, not part of this ledger-only change.
+2. **Settled: no further observation window.** Comments:
+   [#289](https://github.com/JSYoo5B/ceph-testcontainers-go/pull/289#issuecomment-6469916797)
+   and [#216](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/216#issuecomment-6469910951).
+   A repeated ledger with a catalogue conflict is not required. The current
+   ledger is accepted as the observation record with its limits, and the
+   applicable acceptance criteria are assessed item by item against it and the
+   existing deterministic composition and validation evidence. The fragment
+   observations show useful progress toward avoiding shared `CHANGELOG.md`
+   edits, but this ledger makes no causal claim about fewer CI heads, elapsed
+   time or billed savings, and it does not authorize closing the issue. Genuine
+   coupled-refactoring and source conflicts remain integration work.
+   Preserving source and API integration review and current-head validation
+   stands: an earlier SHA's results are not fresh execution. Larger campaigns,
+   generalized evidence reuse and further CI enforcement are separate proposals.
+3. **Settled: optional CI enforcement of `apinaming resolve` composition.** It
+   remains outside the required scope of #216 (same comments as item 2).
+4. **Settled: no mandatory note or no-note fragment for package
+   documentation edits.** Comment:
+   [#216](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/216#issuecomment-6469968974).
+   A pull request that edits `docs/<package>.md` needs no fragment or
+   `kind: none` justification for that reason alone. Release-worthiness is
+   assessed on content (user-facing compatibility, requirements, supported scope
+   or migration guidance), not on the documentation path, with no shared
+   exception list, routine attestation or extra approval step. An actual public
+   API or catalogue change still needs a fragment or the applicable justified
+   no-note decision.
+5. **Settled: CI verifies API approval and never grants it.** Comment:
+   [#216](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/216#issuecomment-6470087537).
+   Regeneration, deliberate approval and verification stay distinct. CI runs a
+   read-only approval-verification check through the existing validators
+   (source, catalogue and review bindings, stale approval, base-to-head
+   migration requirements). It never runs the approval-writing action to create
+   or refresh a review receipt, because a passing consistency check is not human
+   design approval. The existing base-comparison and catalogue checks are
+   preferred over a new duplicate check or attestation. The proof-based
+   composition of already approved parent decisions by `apinaming resolve` is
+   unchanged and distinct from approving new API decisions.
+
+Implementation of items 1, 4 and 5 (the file migration, and reconciling the
+contributing and validator guidance with the existing checks) is not part of
+this change.
 
 ## Not decided and limits
 
-- The directory and field names above are proposals.
-- Whether the approve step may also be run as a pull-request-only check against
-  the base is open.
-- Whether the justified-no-note requirement should apply to `docs/<package>.md`
-  edits as well as catalogue changes is open.
+- The directory and field names above are proposals, except the component-owned
+  decomposition layout chosen in the decisions above.
+- The approve-step and package-documentation questions that this note first
+  listed as open are settled in the decisions above.
 - The numbers above come from one window of one repository and measure edit
   frequency and four overlapping pull requests. They are not a rate, and the
-  workflow-run spans are not billed time.
+  workflow-run spans are not billed time. They support no causal claim about
+  CI heads, elapsed time or billed savings.
 - Nothing here was run natively. This note is source reading and repository
   history only.
 
