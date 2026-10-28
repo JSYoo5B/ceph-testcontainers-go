@@ -3498,8 +3498,9 @@ effective value. Entries can contain sensitive values.
 The runtime debug level window is the package function
 [override.SetDebugLevel](override.md#setdebuglevel) and its
 `*override.DebugLevelHandle`; the call and its restoration rules are documented
-there. 0.x: old names are removed without aliases, so `Container.OverrideDebugLevel`
-and `ceph.DebugLevelOverrideHandle` no longer exist. These types stay in `ceph`
+there. 0.x: old names are removed without aliases, and the
+[migration guide](guides/upgrading-override-debug-level.md) maps the previous
+names. These types stay in `ceph`
 because the failure manifest copies the receipt:
 
 - `ceph.DebugLevelSetting` has `Daemon` (such as `osd.0`), `Name` (`debug_ms` or

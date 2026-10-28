@@ -38,7 +38,7 @@ type userConfigSection struct {
 // WithConfigFile options of testcontainers-go modules. Entries replace the
 // fixture's defaults for the same section and key, and later files override
 // earlier files key by key. Ceph gives local files precedence over the MON
-// configuration database, so OverrideConfig cannot change a key set here.
+// configuration database, so override.SetConfig cannot change a key set here.
 // Keys that the fixture owns or passes on a daemon command line are rejected:
 // identity, addresses, networks, Cephx, Messenger modes, logging, data paths,
 // pool size defaults and BlueStore file layout. Use the dedicated options for

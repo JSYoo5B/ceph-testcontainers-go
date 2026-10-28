@@ -5,7 +5,11 @@ the per-package receipts in [api-naming/](api-naming/) (one `review.json` per
 public package). The last selected operation is
 `rbd.StartImmutableObjectCache`; its [migration](../guides/upgrading-rbd-cache-name.md)
 retains the existing lease and runtime contract. No further rename is selected
-for the remaining names in this snapshot.
+for the remaining names in this snapshot. The seven reversible override
+operations named below as `ceph.Container` methods with `ceph` handle types
+later moved to the package `override` (#146,
+[design](override-package-boundary.md)); those rows are the historical record
+of this audit, not current API.
 
 ## Scope and evidence
 

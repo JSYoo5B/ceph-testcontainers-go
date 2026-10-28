@@ -5,8 +5,13 @@ further extraction from `ceph.Container`. It re-measures the type after the
 accessor, handle-operation and typed-flag changes (#143, #144, #145), proposes a
 shape for each remaining group, and lists the dependencies, admission, state
 and cleanup ownership that each extraction has to preserve. It changes no code.
+Status: the override group has been extracted (see the group section below and
+[override-package-boundary.md](override-package-boundary.md)), and six internal
+state components have been merged (networking, native commands, feature client,
+auth records, OSD storage and the run directory; see the slices below). The
+other shapes are still proposals.
 
-Every shape below is a proposal. Each extraction still gets its own child issue
+Every shape below that is not marked as implemented is a proposal. Each extraction still gets its own child issue
 with exact signatures, call-site counts, caller migration, docs, `CHANGELOG.md`
 and an upgrade-guide table. Moving any of these objects to a separate package
 is decided in #155, #156 and #157 and is out of scope here. New objects live in
@@ -41,8 +46,33 @@ with the same parser on the base `main` and on the branch: named fields of
 1,357 to 1,354 lines. The table above is not rewritten: its absolute numbers
 come from the earlier measurement.
 
-The exported count equals the issue's expected total after #145 (73). The
-unexported count grew by 26. The likely cause is that helpers stayed on
+After the override package migrations (the seven kinds of the override group left
+`Container` for the package `override`) and the sixth internal slice, measured at
+`ba709ff` with the same parser (method declarations whose receiver is `Container`
+or `*Container` in the non-test files of package `ceph`; fields of the struct;
+`wc -l`; the embedded `testcontainers.Container` and the methods it promotes
+are not counted). This is information only: there is no numeric target, and the
+exported count falls for more than one reason (the facts and observation
+extractions are included), so none of the change is attributed to a single group.
+
+| Item | At `ba709ff` |
+| --- | --- |
+| Exported methods declared on `*Container` | 39 |
+| Unexported methods on `*Container` | 189 |
+| Named struct fields | 34 |
+| Non-test files in `ceph` | 99 |
+| Non-test lines in `ceph` | 23,561 |
+| `sharedGate("...")` call sites | 31 |
+| `admitHandle` / `admitFault` call expressions together | 9 |
+| Entries of `sharedMethodPolicies` / `sharedHandlePolicies` / `sharedFaultPolicies` / `sharedOverridePolicies` | 59 / 49 / 4 / 7 |
+
+Of the exported methods that left `Container`, the seven of the override group
+(configuration, debug level, full ratios, MGR module, messenger policy, OSD flag
+and blocklist) are the package functions of `override` now, and their policies
+moved from `sharedMethodPolicies` to `sharedOverridePolicies`.
+
+In the first table, the exported count equals the issue's expected total after
+#145 (73). The unexported count grew by 26. The likely cause is that helpers stayed on
 `Container` while the exported operations moved to handles; this was not
 analyzed method by method (unconfirmed). The 62 versus 38 `sharedGate` call
 sites may count different things, because the issue does not record how the 62
@@ -85,13 +115,13 @@ takes only what its group uses.
   (`errClusterTerminated`) or one without a control container. `EssentialImage`
   documents that it remains available after termination, so facts must not use it.
 - **Command execution.** Observations do not share one execution path. Audit of
-  the observation files at `494d3bd`:
+  the observation files at `494d3bd` (the method names are those of that revision; the sixteen are now methods of `ceph.Observer`, obtained with `ceph.Observe` or `ceph.ObserveTenant`):
 
   | Path | Methods | What it needs |
   | --- | --- | --- |
   | `cephCLI` (selects the control container on every call through `controlContainerContext`, runs `ceph --connect-timeout 5`) | `Status`, `DaemonAddresses`, `ManagerServices`, `ManagerStatus`, `OSDFlags`, `OSDStates`, `Configuration`, `BlocklistEntries`, `MGRModules` | Control container lookup per call. Not gated. |
   | `controlContainerContext` then a query helper | `QuorumStatus` (`queryMonitorQuorum`); `MonitorBootstrapAddresses` (through `QuorumStatus`, the original bootstrap config for the FSID comparison, and `monitorClientRefreshContext`) | Control container and, for the second, the bootstrap identity. |
-  | Captured control handle and captured bootstrap identity, queried directly | `HealthDetails` (FSID, health, FSID queries on one captured handle, with `configMu` read for the original FSID and keyring presence); `FullRatios` (through `fullRatiosSession`, which also serves `OverrideFullRatios`) | The control handle chosen once under the topology lock and never switched to a replacement, the original FSID, and the `closed` check. This fence is part of the behavior and must be preserved, not replaced by `cephCLI`. |
+  | Captured control handle and captured bootstrap identity, queried directly | `HealthDetails` (FSID, health, FSID queries on one captured handle, with `configMu` read for the original FSID and keyring presence); `FullRatios` (through `fullRatiosSession`, which also serves `override.SetFullRatios`) | The control handle chosen once under the topology lock and never switched to a replacement, the original FSID, and the `closed` check. This fence is part of the behavior and must be preserved, not replaced by `cephCLI`. |
   | `clientContainerContext` then `rados` in that container | `PGInconsistencies` (`rados list-inconsistent-obj`), `ObjectWatchers` (`rados listwatchers`) | Client image role selection: the control container when the client image equals the essential image, otherwise the feature client under `clientMu` and `nativeMu` (refused after native commands are closed). Client lifecycle and configuration, not the control container. |
   | `ManagerServices` then `supervised.Run` in the control container | `ManagerMetrics` (python3 scrape of the advertised HTTP endpoint) | Supervised bounded execution (`managerMetricsTimeout`, `managerMetricsLimit`) plus the control container. |
 
@@ -99,9 +129,10 @@ takes only what its group uses.
   captured-control and identity fence, the client container lookup, and
   supervised execution, in addition to `cephCLI`. A `cephCLI`-only contract would
   drop collaborators or change which container runs the query. No override uses a
-  path outside this list except `OverrideDebugLevel`, which runs admin socket
-  commands through a native invocation and `supervised` (`debug_level.go`; not
-  audited in detail, unconfirmed). Shared-cluster admission for observations is
+  path outside this list except `override.SetDebugLevel`, which runs admin socket
+  commands through a native invocation and `supervised` (`override/debug_level.go`
+  and the debug target of `ceph/debug_level.go`; not audited in detail,
+  unconfirmed). Shared-cluster admission for observations is
   unaffected because they are `sharedOpen`; the executors themselves are not gated.
 - **Admission.** `sharedMethodPolicies` is keyed by method name and checked by
   `TestSharedGateClassifiesEveryMethod`, which reflects over `*Container`, requires
@@ -109,22 +140,28 @@ takes only what its group uses.
   to see it refused. `sharedHandlePolicies` and
   `TestSharedGateClassifiesEveryHandleOperation` apply the same scheme to the
   handle receivers through `sharedHandleReceivers`. `sharedFaultPolicies` covers
-  the fault entry points. All 16 observations and 10 facts are `sharedOpen`; all
-  7 overrides are `sharedExclusive`.
-- **Fault registry.** `TemporaryBlocklist`, `OverrideFullRatios`, `OverrideConfig`,
-  `OverrideOSDFlag` and `OverrideMGRModule` reserve and settle entries in
-  `Container.faults` (`reserveFault`, `settleFault`), guarded by `mu`. The last
-  three use the kinds `faultConfigOverride`, `faultOSDFlag` and `faultMGRModule`
-  (phase `faultTracked`, keys the configuration key, the flag token and the
-  module name). `OverrideDebugLevel` uses `debugLevels`, which has its own lock.
-- **Override state.** The handles of `OverrideConfig`, `OverrideOSDFlag` and
-  `OverrideMGRModule` hold a registry token in their state, `owner *Container`
-  and run `Restore` against it; the former maps `configOverrides`,
-  `flagOverrides` and `moduleOverrides` no longer exist. The current lifetime of every family is in the table
+  the fault entry points. `sharedOverridePolicies` covers the seven `override`
+  functions (keys `override.AddBlocklist` and so on) through
+  `Container.admitOverride`, which `override` reaches by the admit hook. All 16
+  observations and 10 facts are `sharedOpen`; all 7 overrides are
+  `sharedExclusive`.
+- **Fault registry.** `override.AddBlocklist`, `override.SetFullRatios`,
+  `override.SetConfig`, `override.SetOSDFlag` and `override.SetMGRModule` reserve
+  and settle entries in `Container.faults` (`reserveFault`, `settleFault`)
+  through `internal/overridehook`, guarded by `mu`. All five kinds
+  (`faultBlocklist`, `faultFullRatios`, `faultConfigOverride`, `faultOSDFlag`,
+  `faultMGRModule`) have phase `faultTracked`; the last three replaced the
+  former maps `configOverrides`, `flagOverrides` and `moduleOverrides`, with the
+  configuration key, the flag token and the module name as keys.
+  `override.SetDebugLevel` uses `debugLevels`, which has its own lock.
+- **Override state.** The handles of `override` hold a registry token in their
+  state, the owning `*ceph.Container` and run `Restore` against it through the
+  hook; `Pool.Remove` asks the registry whether `mon_allow_pool_delete` is held
+  (`allowPoolDeleteHeld`). The current lifetime of every kind is in the table
   under the overrides group below.
-- **Messenger mode.** `OverrideConfig` reads `settings.messengerMode` to refuse
-  options fixed by the bootstrap policy. `OverrideMessengerPolicy` builds its
-  result from `OverrideConfig` calls.
+- **Messenger mode.** `override.SetConfig` refuses options fixed by the bootstrap
+  policy (`settings.messengerMode`, through the `CheckConfigAllowed` hook).
+  `override.SetMessengerPolicy` builds its result from `override.SetConfig` calls.
 
 An interface does not authorize anything. A narrow executor interface that
 receives a raw monitor or manager command could still issue broad administrative
@@ -235,64 +272,70 @@ enumerates the exported functions of that group. Entries leave
 - **Size effect.** `Container` exported methods 63 to 47 after facts; the `Tenant`
   forwarders shrink accordingly.
 
-### Cluster-wide reversible overrides (7 methods)
+### Cluster-wide reversible overrides (7 methods, implemented in `override`)
 
-`OverrideConfig`, `OverrideDebugLevel`, `OverrideFullRatios`, `OverrideMGRModule`,
-`OverrideMessengerPolicy`, `OverrideOSDFlag`, `TemporaryBlocklist`.
+Implemented. The seven former `Container` methods are the package functions
+`override.SetConfig`, `override.SetDebugLevel`, `override.SetFullRatios`,
+`override.SetMGRModule`, `override.SetMessengerPolicy`, `override.SetOSDFlag` and
+`override.AddBlocklist`, each returning a non-nil `*override.*Handle`. 0.x: old
+names are removed without aliases. The decisions, contract and migration order
+are in [override-package-boundary.md](override-package-boundary.md); the public
+reference is [override.md](../override.md).
 
-- **Shape.** Package functions that take the cluster and return the existing
-  handles, for example `ceph.OverrideConfig(ctx, c, setting)`. The handles and
-  their `Restore` behavior do not change; only the entry point moves, as the issue
-  notes.
+- **Shape (as built).** A public package `override` takes the cluster as the
+  first argument (option A of the design: the handles and their `Restore` moved
+  with the entry points). `ceph` never imports `override`; the package reaches
+  `ceph` internals only through `internal/overridehook`, which `ceph` registers
+  in `internal/hookreg` (`ceph/override_hooks.go`).
 - **Dependencies actually consumed.** Admission, `mu` (or `lockTopology`), the
-  liveness check, `faults` (`TemporaryBlocklist`, `OverrideFullRatios`),
-  `debugLevels` (`OverrideDebugLevel`), the three override maps, `settings`
-  (messenger mode, startup timeout) and `cephCLI`.
-- **Admission.** All `sharedExclusive`. The function must call the gate before it
-  touches the cluster, as the methods do. The policy keys move from
-  `sharedMethodPolicies` to a table for package-level operations, and a reflection
-  test must cover every exported function of the group so that a new override
-  cannot skip the gate.
-- **State and lock owner.** Unchanged: the maps and the registries stay on
-  `Container` in this step. They move only with the internal split below.
-- **Cleanup and restore lifetime (current behavior, preserved unchanged).**
+  liveness check, `faults` (the five tracked kinds), `debugLevels`
+  (`override.SetDebugLevel`), `settings` (messenger mode, startup timeout) and
+  `cephCLI`, each through a hook method.
+- **Admission.** All `sharedExclusive`, checked before any effect through
+  `sharedOverridePolicies`. `override/admission_test.go` parses the package
+  source with `go/parser`, enumerates every exported top-level function and
+  requires a policy for it (`TestEveryExportedFunctionIsClassified`), and calls
+  each with zero arguments on a shared cluster to require `ErrSharedCluster`
+  before any effect, so a new override cannot skip the gate; an import test
+  pins that `override` imports only the permitted packages.
+- **State and lock owner.** The registry kinds and `debugLevels` stay on
+  `Container`; the three former maps are registry kinds.
+- **Cleanup and restore lifetime (preserved unchanged by the move).**
   `Container.terminate` sets `closed` and calls `undoFaults`, which visits only
   the faults in the shaping, endpoint and freeze phases (network delays,
-  interruptions, pauses). It never visits the tracked kinds (the five override kinds). The extraction is
-  structural only: it adds no automatic restoration and no uncertain-outcome
-  reporting, and it creates no second ownership path.
+  interruptions, pauses). It never visits the tracked kinds (the five override
+  kinds). The extraction added no automatic restoration and no second ownership
+  path.
 
-  | Family | Who restores | After `Terminate` (read from the code) |
+  | Kind | Who restores | After `Terminate` (read from the code) |
   | --- | --- | --- |
-  | `OverrideConfig` (fault kind `faultConfigOverride`, phase `faultTracked`) | The caller, through `ConfigOverrideHandle.Restore` | `Restore` calls `poolPolicyReady`, so it returns `errClusterTerminated` on a closed cluster. |
-  | `OverrideMessengerPolicy` | The caller, through `MessengerPolicyOverrideHandle.Restore`, which restores its `ConfigOverrideHandle` values in reverse order | Same as `OverrideConfig`, because it is built from those handles. |
-  | `OverrideOSDFlag` (fault kind `faultOSDFlag`, phase `faultTracked`) | The caller, through `Restore` | `Restore` calls `poolPolicyReady`: `errClusterTerminated`. |
-  | `OverrideMGRModule` (fault kind `faultMGRModule`, phase `faultTracked`) | The caller, through `Restore` | `Restore` calls `poolPolicyReady`: `errClusterTerminated`. |
-  | `TemporaryBlocklist` (fault kind `faultBlocklist`, phase `faultTracked`) | The caller, through `BlocklistOverride.Restore` | Tracked kinds are bookkeeping only and `terminate` leaves them alone (`fault_registry.go`). `Restore` calls `poolPolicyReady`: `errClusterTerminated`. |
-  | `OverrideFullRatios` (fault kind `faultFullRatios`, phase `faultTracked`) | The caller, through `FullRatiosOverride.Restore` | Same bookkeeping rule. `Restore` goes through `fullRatiosSession`, which refuses a closed cluster. |
-  | `OverrideDebugLevel` (`debugLevels`) | The caller, typically registered with `Finalization.Cleanup` as the `OverrideDebugLevel` documentation describes | Its `Restore` is driven by the handle's own state and generation checks. Its behavior after `Terminate` was not traced (unconfirmed). |
+  | `override.SetConfig` (fault kind `faultConfigOverride`, phase `faultTracked`) | The caller, through `ConfigHandle.Restore` | `Restore` checks readiness, so it returns `errClusterTerminated` on a closed cluster. |
+  | `override.SetMessengerPolicy` | The caller, through `MessengerPolicyHandle.Restore`, which restores its `ConfigHandle` values in reverse order | Same as `override.SetConfig`, because it is built from those handles. |
+  | `override.SetOSDFlag` (fault kind `faultOSDFlag`, phase `faultTracked`) | The caller, through `Restore` | `Restore` checks readiness: `errClusterTerminated`. |
+  | `override.SetMGRModule` (fault kind `faultMGRModule`, phase `faultTracked`) | The caller, through `Restore` | `Restore` checks readiness: `errClusterTerminated`. |
+  | `override.AddBlocklist` (fault kind `faultBlocklist`, phase `faultTracked`) | The caller, through `BlocklistHandle.Restore` | Tracked kinds are bookkeeping only and `terminate` leaves them alone (`fault_registry.go`). `Restore` checks readiness: `errClusterTerminated`. |
+  | `override.SetFullRatios` (fault kind `faultFullRatios`, phase `faultTracked`) | The caller, through `FullRatiosHandle.Restore` | Same bookkeeping rule. `Restore` goes through `fullRatiosSession`, which refuses a closed cluster. |
+  | `override.SetDebugLevel` (`debugLevels`) | The caller, typically registered with `Finalization.TrackDebugLevel` and `Finalization.Cleanup` | Its `Restore` is driven by the handle's own state and generation checks; after `Terminate` the result is pinned by the window tests of `override`. |
 
-  In every family the handle is the only restoration path, and the cluster's
+  In every kind the handle is the only restoration path, and the cluster's
   termination ends the native state with the cluster rather than restoring it.
-- **Package boundary design.** The owner decided on 2026-10-27 to prefer a public
-  `override` package with the handles moving with the entry points (option A).
-  The decisions, the concrete proposal awaiting owner approval, the import graph
-  and the migration order are in
-  [override-package-boundary.md](override-package-boundary.md). The shape above
-  (functions in `ceph`) is the fallback only if a structural import cycle were
-  shown, and that note shows none.
-- **Open questions.** `OverrideMessengerPolicy` delegates to `OverrideConfig`
-  and takes no lock of its own, unlike the other six; it may be better placed with
-  the messenger fixtures than with this group. `TemporaryBlocklist` is a time-bounded fence
-  rather than a restore-to-previous override and may deserve its own placement.
-- **Size effect.** `Container` exported methods 47 to 40, matching the issue's table.
+- **Not-applied handle.** A refused or never-applied call returns a handle whose
+  `Restore` is a no-op; an uncertain outcome returns a real handle with the
+  error. `Finalization.TrackDebugLevel` takes the narrow `ceph.DebugLevelReceipter`
+  so that `ceph` does not import `override`.
+- **Open questions (decided).** `override.SetMessengerPolicy` is in the group and
+  calls `override.SetConfig`; `override.AddBlocklist` is in the group (the design
+  note records both decisions).
+- **Size effect.** Seven exported methods left `Container`. The measured
+  exported count is in the Measurement section; it is information, not a target.
 
 ### Not in the issue's tables
 
-The issue's size table reaches about 40 exported methods after the three groups.
-The remaining methods listed under "Operations that fit none of the above" were
-not assigned a shape there. Each group below needs a decision before the target
-is reachable; none is proposed as a commitment here.
+The issue's size table quoted about 40 exported methods after the three groups.
+The owner decided later that this figure is a qualitative indicator only and
+that there is no method-count target. The remaining methods listed under
+"Operations that fit none of the above" were not assigned a shape there; none
+is proposed as a commitment here.
 
 | Candidates | Observation |
 | --- | --- |
@@ -302,8 +345,9 @@ is reachable; none is proposed as a commitment here.
 | `CollectCrashMetadata`, `CollectDiagnostics`, `RedactSecrets` | Diagnostics group; `sharedOpen` today. Post-termination representation is compared in [post-termination-diagnostics.md](post-termination-diagnostics.md). |
 | `RunNativeCommand`, `WithClient`, `WithClientIdentity` | Client and native-command surface that `Tenant` mirrors; tied to #155. |
 
-The 40-method target is therefore a lower bound on what the three groups alone
-can achieve, not a measured prediction.
+These methods are what remains on `Container` besides the Docker surface,
+membership and the listing methods; the measurement section records the count
+as information.
 
 ## Internal state and lock split
 
@@ -344,8 +388,11 @@ Rules for every field move:
    depend on it), each with its own lock-order review.
 
 Each step proposes its exact exported signatures in its own child issue before
-code changes. This note does not claim that any step is implemented or that the
-size targets are reached.
+code changes. The override group of step 3 and six components of step 4 (networking,
+native commands, feature client, auth records, OSD storage and the run
+directory) are implemented; this note does not restate the status of steps 1
+and 2. This note claims no
+size target.
 
 ## First internal slice: networking state
 
@@ -578,7 +625,7 @@ and the caller chain was not checked here.
 | --- | --- | --- | --- | --- | --- |
 | Auth records | `authFences`, `clientSecrets`, `clientKeys`, `strayAuthInputs`, `clientRevocations`; seam `keyRotationDocker` | `settleClient` (`ceph/client_key.go:136,140`), `fenceAuth` (`ceph/daemon_key_rotation.go:369,374`), `settleEarlierRotation` (`:439`), `setClientKey` (`ceph/client_key.go:312-318`), `recordClientSecret` (`:330-332`), `strayAuthInput` (`ceph/daemon_key_rotation.go:152-154`), `createClient`/`deleteClient`/`revokeClient`/`ClientRevocationHandle.Restore` (`ceph/auth.go:306`, `ceph/client_revocation.go:59-69,107`) | The same files, plus `diagnosticsSnapshot` for `clientSecrets` (`ceph/diagnostics.go:263`, between the `TryLock` at `:219` and the unlock at `:267`) | `Container.mu`. The revocation code takes it itself (`lockTopology` before every access in `ceph/client_revocation.go` and `ceph/auth.go`). The fence and key helpers rely on a doc comment (`ceph/client_key.go:109,309,324`, `ceph/daemon_key_rotation.go:34,149,159`); `settleClient` alone has eight callers in five files (`ceph/auth.go:162,291`, `ceph/client_key.go:202,273`, `ceph/client_revocation.go:93`, `ceph/shared_backend.go:396,444`, `ceph/service_hooks.go:377`) | Guard by contract across five files and another object (`client.owner.setClientKey`, `ceph/service_hooks.go:368`). `authFences` serves both clients and daemons, so the rotation code moves with it. Needs a per-caller lock audit first. |
 | OSD storage | `osds`, `detachedOSDs`, `osdMemory`, `osdVolume`, `run`; seams `osdRunner`, `osdVolumeDocker`, `osdVolumeRunner` | `osds`: `registerOSD` (`ceph/ceph.go:659`), `removeOSD` (`:863`), `terminate` (`:1046`), `detachOSD` (`ceph/osd_retained.go:274`), `reopenOSD` (`:322`), `serviceHooks.TestCluster` (`ceph/service_hooks.go:429,431`). `osdMemory`/`osdVolume`: `ensureOSDMemory` (`ceph/osd_memory_storage.go:109`), `ensureOSDVolume` (`ceph/osd_volume_storage.go:97`), `terminate` (`ceph/ceph.go:1051,1057,1128,1133`). `run`: once in `Run` (`ceph/ceph.go:234`) | `osds` is read in about twenty files (a name match that also finds the options field of the same name); `osdMemory`/`osdVolume` in `registerOSD`, `removeOSD`, `newOSDLaunchRecipe` (`ceph/osd_launch.go:47-54`) and `detachOSD`/`reopenOSD`; `run` in `ceph/admin_socket.go`, `ceph/debug_level.go:633`, `ceph/osd_retained.go:345`, `terminate` | `Container.mu` for the lifecycle writers (`removeOSD`, `detachOSD`, `reopenOSD`, `terminate` take `lockTopology`); `registerOSD` and `ensureOSD*` take no lock themselves (the caller chain was not checked); `newOSDLaunchRecipe` reads `run`, `osdMemory` and `osdVolume` (`ceph/osd_launch.go:47-54`) after its `configMu` read section and takes no other lock | `terminate` releases memory and volume in two phases around the container and labeled-container removal (`ceph/ceph.go:1049-1057`, `1126-1133`), so the close order of the component has to be reviewed. Largest reader set. Open PR #244 changes `ceph/osd_launch.go` and the `registerOSD` area. |
-| Overrides and faults | `faults`; `debugLevels` | `OverrideConfig` (`ceph/config.go`), `OverrideOSDFlag` (`ceph/osd_policy.go`) and `OverrideMGRModule` (`ceph/mgr_modules.go`) reserve and settle their kind through `reserveFault` and `settleFault`; each handle's `finish` calls `releaseFault`. The former maps `configOverrides`, `flagOverrides` and `moduleOverrides` are gone | The same functions, `Restore` (`tracksFault`) and `deletePool` through `allowPoolDeleteHeld` (`ceph/pool_removal.go`, "called with c.mu held") | All of it under `Container.mu`, taken in every entry point and `Restore`; the registry guards by `Container.mu` by contract (`ceph/fault_registry.go`) and has outside users (`ceph/fault_hooks.go`, `ceph/osd_retained.go`). `debugLevels`: its own mutex (`ceph/debug_level.go`) | Nothing is left to move out of `Container` for the three override kinds: the registry is the one tracking record, as [override-package-boundary.md](override-package-boundary.md) section 6.1 decided, and it is already its own type. `faults` and `debugLevels` are already their own types; moving the field adds nothing. |
+| Overrides and faults | `faults`; `debugLevels` | the configuration, OSD flag and MGR module overrides (at that revision methods in `ceph/config.go`, `ceph/osd_policy.go` and `ceph/mgr_modules.go`; now `override.SetConfig`, `override.SetOSDFlag` and `override.SetMGRModule`) reserve and settle their kind through `reserveFault` and `settleFault`; each handle's `finish` calls `releaseFault`. The former maps `configOverrides`, `flagOverrides` and `moduleOverrides` are gone | The same functions, `Restore` (`tracksFault`) and `deletePool` through `allowPoolDeleteHeld` (`ceph/pool_removal.go`, "called with c.mu held") | All of it under `Container.mu`, taken in every entry point and `Restore`; the registry guards by `Container.mu` by contract (`ceph/fault_registry.go`) and has outside users (`ceph/fault_hooks.go`, `ceph/osd_retained.go`). `debugLevels`: its own mutex (`ceph/debug_level.go`) | Nothing is left to move out of `Container` for the three override kinds: the registry is the one tracking record, as [override-package-boundary.md](override-package-boundary.md) section 6.1 decided, and it is already its own type. `faults` and `debugLevels` are already their own types; moving the field adds nothing. |
 | Test seams | `keyRotationDocker`, `ownedContainerDocker`, `osdRunner`, `osdVolumeDocker`, `osdVolumeRunner` | None in production code; tests assign them | One read each at the point of use (`ceph/daemon_key_rotation.go:730-731`, `ceph/owned_containers.go:35`, `ceph/ceph.go:713`, `ceph/osd_volume_storage.go:96,101`) | None | The rule above moves a seam with the dependency that uses it: three belong to OSD storage, one to the auth records, and `ownedContainerDocker` serves `terminate`'s labeled-container removal, which has no component yet. Open PR #244 adds a sibling seam (`daemonRunner`) next to `osdRunner`. |
 | Membership and control | `mu`, `controlMu`, `configMu`, `extensionsMu`, `controlPlane`, `manager`, `monitors`, `managers`, `services`, `extensions`, `config`, `keyring`, `portLeases`, `closed`, `monitorTerminated`, `firstMonitorImageID`, `cephVersion`, `owner`, `keyTypeOption`, `settings`, `sharing` | `controlPlane`: `ensureControlPlane` (`ceph/topology.go:75`, `controlMu`), `terminate` (`ceph/ceph.go:1103`, `controlMu` inside the topology lock). `monitors`/`managers`/`manager`: `AddMonitor` (`ceph/topology.go:180,182`), `startManager` (`:768-781`, no lock in the function), `removeMonitor`/`removeManager`, `terminate`. `services`: `startService` (`ceph/ceph.go:979`), `serviceHooks.SetService`/`DeleteService` (`ceph/service_hooks.go:179-187`), `terminate`. `config`: `Run` (`ceph/ceph.go:245`), `configureDefaultCRUSHRoot` (`ceph/placement.go:141`, `configMu`), `refreshMonitorConfigAfterRemoval` (`ceph/topology.go:439`, `configMu`). `closed`: `terminate` (`ceph/ceph.go:1014`). `portLeases`: `trackHostPortLease` (`ceph/ceph.go:475`, `mu`), `reserveTrackedHostPortsWith`, `AddMonitor`. `cephVersion`: `recordCephVersion` (`ceph/version.go:51`). `owner`, `keyTypeOption`, `firstMonitorImageID`: `Run` | `settings` is read in 181 places by name and written only while `Run` builds the cluster; `closed` and `monitors` throughout; `FactsOf` reads `settings` and `cephVersion` without a lock | Four lock domains: `mu`, `controlMu`, `configMu`, `extensionsMu`; some fields are written once before publication | Not one component. Four locks and the lock-free `FactsOf` reads depend on the layout. A split by lock domain is a separate review. |
 

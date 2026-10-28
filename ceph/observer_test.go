@@ -106,7 +106,7 @@ func TestObserverClusterFormReadsActualStateOnEveryQuery(t *testing.T) {
 	// The Container method of the same name is unchanged and returns the same.
 	direct, err := readStatus(t.Context(), cluster.cephCLI)
 	if err != nil || direct.FSID != second.FSID {
-		t.Fatalf("Container.Status = %+v, %v", direct, err)
+		t.Fatalf("direct status = %+v, %v", direct, err)
 	}
 }
 

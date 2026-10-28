@@ -109,8 +109,8 @@ func (overrideHooks) Tracks(c *Container, token any) bool {
 }
 
 // NormalizeBlocklistSession validates and canonicalizes an exact client
-// session address for fencing, with the errors of the former
-// TemporaryBlocklist.
+// session address for fencing, with the errors that override.AddBlocklist
+// returns.
 func (overrideHooks) NormalizeBlocklistSession(address string) (string, error) {
 	return normalizeBlocklistSession(address, true)
 }
@@ -262,7 +262,7 @@ func (overrideHooks) TestHeld(c *Container, kind string) map[string]any {
 }
 
 // NormalizeConfigSetting validates and canonicalizes one central
-// configuration entry, with the errors of the former OverrideConfig.
+// configuration entry, with the errors that override.SetConfig returns.
 func (overrideHooks) NormalizeConfigSetting(setting ConfigSetting) (ConfigSetting, error) {
 	return normalizeConfigSetting(setting)
 }
@@ -306,8 +306,8 @@ func (overrideHooks) ConfigRemove(ctx context.Context, c *Container, setting Con
 }
 
 // MessengerPolicySettings returns the central configuration entries of a
-// temporary messenger policy for c, with the refusals of the former
-// OverrideMessengerPolicy in their order: an invalid mode list, a policy that
+// temporary messenger policy for c, with the refusals of
+// override.SetMessengerPolicy in their order: an invalid mode list, a policy that
 // selects no mode, and a cluster whose bootstrap fixes every mode.
 func (overrideHooks) MessengerPolicySettings(c *Container, policy MessengerPolicy) ([]ConfigSetting, error) {
 	settings, err := policy.settings()

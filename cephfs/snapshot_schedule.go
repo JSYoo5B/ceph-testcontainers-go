@@ -31,7 +31,7 @@ type SnapshotSchedule struct {
 	// Repeat is how often a snapshot is taken: a positive number and one of
 	// m (minutes), h, d, w, M (months) or y, such as "6h" or "1m". The module
 	// takes minutes only while mgr/snap_schedule/allow_m_granularity is true,
-	// which OverrideConfig can set for a test.
+	// which override.SetConfig can set for a test.
 	Repeat string
 	// Start is the schedule's first time slot; the zero time leaves the
 	// module's default, midnight of the day the schedule is added, in UTC.
