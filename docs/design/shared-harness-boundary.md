@@ -383,7 +383,7 @@ decoders behind it). That form freezes the shape of `containerBackend`'s 13
 fields and 11 private methods, which the remaining internal state and lock
 split is still moving.
 
-### Which prerequisites are met
+### Which prerequisites are met (history, superseded by "Refresh at `1a158b9`")
 
 | Prerequisite | State at `7266eb7` | Evidence |
 | --- | --- | --- |
@@ -407,6 +407,92 @@ and facts/observation removal (the `ObserveTenant` seam inside `ceph` is done). 
 cross-package backend registration (second `hookreg` slot) waits for the
 membership and control split because `containerBackend` would otherwise freeze
 13 fields and 11 private methods in its port.
+
+## Refresh at `1a158b9`: backend port narrowing
+
+Measured against `1a158b9` (merge of #270) with the change that adds
+`ceph/shared_cluster_port.go` applied. Source reading, `grep` and a Docker-free
+AST guard only; no Docker, no native Ceph, nothing here is native evidence. The
+first backend port is still internal. No exported symbol moved.
+
+### Which prerequisites are met
+
+| Prerequisite | State at `1a158b9` | Evidence |
+| --- | --- | --- |
+| Pure invariant logic outside `ceph` | Met | `internal/sharedinvariants` |
+| Tenant port; adapters off `TenantCluster` | Met (#200) | no call in `rbd/`, `cephfs/`, `rgw/`; port at `ceph/service_hooks.go:146` |
+| Orchestration and `Tenant` free of `*Container` | Met | `ceph/shared_ops.go:18`; `tenant.go` is 232 lines and names no Container member; `TestLeaseOrchestrationNamesNoContainerBeyondTheAllowList` |
+| Networking, native-command and feature-client state | Met (#239, #241, #246) | `ceph/ceph.go:60`, `:92`, `:49` |
+| Static facts | Met: `FactsOf` is the accessor (`ceph/cluster_facts.go:49`) and no old exported fact accessor is left on `Container` | `ceph/cluster_facts_migration_test.go:48` |
+| Observation views and Tenant forwarders | Met: the eight views are no longer `Container` or `Tenant` methods; they are `Observer` queries (`ceph/observer.go:42`, `ceph/tenant_observe.go:10`) | `ceph/shared_ops.go` carries no view |
+| `ObserveTenant` independent of the harness `Tenant` inside `ceph` | Met (#266). The cross-package form of the seam is part of the public move | `ceph/observer.go:54`, `TestObserverAndPoolLeaseNameNoTenant` (`ceph/observer_seam_test.go:47`) |
+| Auth records split | Met | `authState` (`ceph/auth_state.go:22`), field `authRecords` (`ceph/ceph.go:53`); `containerBackend` no longer calls `recordClientSecret`/`setClientKey` |
+| OSD storage state and handle registry | Met | `osdStorageState` (`ceph/osd_storage_state.go:32`), `osdRegistry` (`ceph/osd_registry_state.go:29`) |
+| Run directory and port leases | Met | `ceph/run_dir_state.go`, `ceph/port_lease_state.go`; fields `ceph/ceph.go:81,84` |
+| Override package and fault registry | Partly met: the `override` and `fault` packages exist, `faultRegistry` holds the bookkeeping (`ceph/fault_registry.go:115`, field `ceph/ceph.go:97`). The move of the registry logic into the component is open as #271 (owner review) | `override/`, `fault/`; open PR #271 |
+| Membership and control (`mu`, `controlMu`, `controlPlane`, `monitors`, `managers`, `services`, `closed`, `monitorTerminated`, `config`, `sharing`) | Not met as components. #270 replaced the test-state pointers with setters (`ceph/service_hooks.go:482-522`, `ceph/membership_control_test.go:82,138`), so the fields stay on `Container` and nothing outside `ceph` can address them. They are not split by lock domain | `ceph/ceph.go:34-100` |
+| Backend port shape (`containerBackend` reach into `Container`) | Narrowed by this change; see below | `ceph/shared_cluster_port.go`, `ceph/shared_backend_reach_test.go` |
+| Move to `ceph/harness` and the service harnesses | Not started, see "Is the move unambiguous" | |
+
+### What this change narrows
+
+`containerBackend` used to name 14 `Container` fields (the 13 of the earlier
+measurement, with `osdHandles` for `osds`, plus `authRecords`: `closed`,
+`config`, `controlMu`, `controlPlane`, `managers`, `monitorTerminated`,
+`monitors`, `mu`, `osdHandles`, `services`, `settings`, `sharing`,
+`authRecords` and the embedded `Container`) and 8 `Container` methods
+(`CreatePool`, `WaitForPGClean`, `WaitForQuorum`, `controlContainerContext`,
+`generateKeyArgs`, `lockTopology`, `settleClient`, `terminate`; the earlier "11"
+counted `State` and two auth methods that have since moved into `authState`).
+It also held the topology mutex itself in `createClient`, `deleteClient` and
+`daemonsRunning`. After this change it names no `Container` field and no lock.
+Its whole reach is:
+
+| Port operation | `Container` method | Kind |
+| --- | --- | --- |
+| `createPool` | `CreatePool` | exported, unchanged |
+| `ready` | `WaitForQuorum`, `WaitForPGClean` | exported, unchanged |
+| `invariants`, `purgeNamespace` | `runSharedScript` | new, purpose-named |
+| `daemonsRunning` | `sharedDaemons` | new: the daemon walk under the topology mutex, then the control lock |
+| `createClient` | `createSharedClient` | new: the former body, with the key, secret and settle logic |
+| `deleteClient` | `deleteSharedClient` | new: the former body |
+| `setSharing` | `setSharingMode` | new |
+| `terminate` | `terminate` | unchanged |
+| `prepareServices`, `resources` | the pointer itself | handed to the registered service `prepare` and `probe` functions, which take the cluster |
+
+That is 9 methods (3 exported, 6 private) and 0 fields. The remaining private
+methods of the earlier list (`controlContainerContext`, `generateKeyArgs`,
+`lockTopology`, `settleClient`) are called only by the new `Container` methods.
+The 14 fields now appear only in the `Container` methods of
+`ceph/shared_cluster_port.go`, so they stay private to `ceph` and are not part
+of a cross-package port. The `clusterOps` reach (`ceph/shared_ops.go`) is
+unchanged: `settings` and `mu` through `startupTimeout` and `withTopology`,
+plus `runNativeCommand` and `withClientIdentity`.
+
+The change moves code and adds no behavior: the bodies of `createClient`,
+`deleteClient`, `daemonsRunning` and `run` are the same statements with
+`b.c` replaced by the receiver, and the lock order is as before (topology
+mutex, then the control lock after it is released). `TestContainerBackendReach`
+(`ceph/shared_backend_reach_test.go`) pins this reach with an AST check of
+`shared_backend.go` and `shared_services.go`: any other selected member, a lock,
+or a copy of the pointer fails it, and
+`TestBackendReachCheckerSeesARegression` shows the checker reporting those
+cases. The count of `Container` methods grows by five; the owner has set no
+numeric target and this is information only.
+
+### Is the move unambiguous
+
+No. The prerequisites that gated the backend port are met except the
+membership and control component split, which the narrowed port no longer
+depends on, and #271 is open. But the public move itself still has
+undecided parts that this note lists as open questions: the exported
+signatures, whether `SharedPool` and `Exclusive`'s raw `*Container` stay,
+how the private error helpers reach the harness, and the cross-package form of
+the `ObserveTenant` seam. Registering the second `hookreg` slot would also fix
+the shape of `createSharedClient` and `deleteSharedClient`, whose return type
+`*ClientConfig` is a core type, and the start factory that returns a partial
+cluster. None of this is decided by the merged design, so only the
+audit and the narrowing are done here.
 
 ## Open questions
 
