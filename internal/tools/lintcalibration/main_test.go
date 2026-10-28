@@ -391,3 +391,54 @@ func TestTSVCarriesProvenanceAndOverlap(t *testing.T) {
 		t.Error("unknown subcommand must fail")
 	}
 }
+
+// The top-level Issues member must be present: golangci-lint's JSON printer
+// always emits it and normalizes an empty list to []. An omitted key is
+// incomplete or incompatible output, not a clean run.
+func TestReportIssuesMemberPresence(t *testing.T) {
+	report := linterList(allMetrics...)
+	cases := []struct {
+		name    string
+		js      string
+		wantErr bool
+	}{
+		{"absent", `{` + report + `}`, true},
+		{"null", `{"Issues":null,` + report + `}`, false},
+		{"empty array", `{"Issues":[],` + report + `}`, false},
+		{"string", `{"Issues":"none",` + report + `}`, true},
+		{"object", `{"Issues":{},` + report + `}`, true},
+	}
+	for _, c := range cases {
+		rep, err := collect(t.TempDir(), fakeBinary(t, "2.14.0", c.js, 0), []string{"./..."})
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("%s: want an error, got total %d", c.name, rep.Total)
+			}
+			continue
+		}
+		if err != nil || rep.Total != 0 {
+			t.Errorf("%s: want an accepted empty report, got %v", c.name, err)
+		}
+	}
+}
+
+// Diagnostics that differ only in column are ordered by column, so the output
+// does not depend on the input order.
+func TestReportOrdersByColumn(t *testing.T) {
+	var outs []string
+	for _, cols := range [][2]int{{1, 9}, {9, 1}} {
+		js := `{"Issues":[` + issue("cyclop", "x.go", 3, cols[0]) + `,` + issue("cyclop", "x.go", 3, cols[1]) + `],` + linterList(allMetrics...) + `}`
+		bin := fakeBinary(t, "2.14.0", js, 0)
+		var out bytes.Buffer
+		if err := run([]string{"report", "-dir", t.TempDir(), "-golangci-lint", bin}, &out); err != nil {
+			t.Fatal(err)
+		}
+		outs = append(outs, out.String())
+	}
+	if outs[0] != outs[1] {
+		t.Errorf("output depends on input order:\n%s\n%s", outs[0], outs[1])
+	}
+	if !strings.Contains(outs[0], `"column": 1`) {
+		t.Error("missing column 1")
+	}
+}

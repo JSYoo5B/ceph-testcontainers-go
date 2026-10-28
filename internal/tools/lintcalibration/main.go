@@ -196,15 +196,7 @@ func binaryVersion(bin string) (string, error) {
 // error: an absent issue list must not read as "no findings".
 func parse(raw []byte) (*report, error) {
 	var top struct {
-		Issues *[]struct {
-			FromLinter *string `json:"FromLinter"`
-			Text       *string `json:"Text"`
-			Pos        *struct {
-				Filename *string `json:"Filename"`
-				Line     *int    `json:"Line"`
-				Column   *int    `json:"Column"`
-			} `json:"Pos"`
-		} `json:"Issues"`
+		Issues json.RawMessage `json:"Issues"`
 		Report *struct {
 			Linters *[]struct {
 				Name    string `json:"Name"`
@@ -215,8 +207,12 @@ func parse(raw []byte) (*report, error) {
 	if err := json.Unmarshal(raw, &top); err != nil {
 		return nil, fmt.Errorf("golangci-lint JSON: %w", err)
 	}
-	// golangci-lint prints "Issues": null when nothing was found, so a nil list
-	// is valid only together with a Report that proves the run happened.
+	// The member must be present: golangci-lint always emits it, as an array or
+	// null. RawMessage stays nil only when the key is absent (an explicit null
+	// is the four bytes "null"), so absence is refused here.
+	if top.Issues == nil {
+		return nil, errors.New(`golangci-lint JSON has no top-level "Issues" member, so an empty result cannot be told from incomplete output`)
+	}
 	if top.Report == nil || top.Report.Linters == nil {
 		return nil, errors.New("golangci-lint JSON has no Report.Linters, so the enabled linters cannot be checked")
 	}
@@ -246,8 +242,8 @@ func parse(raw []byte) (*report, error) {
 			Column   *int    `json:"Column"`
 		} `json:"Pos"`
 	}
-	if top.Issues != nil {
-		issues = *top.Issues
+	if err := json.Unmarshal(top.Issues, &issues); err != nil {
+		return nil, fmt.Errorf(`golangci-lint JSON "Issues": %w`, err)
 	}
 	for i, is := range issues {
 		if is.FromLinter == nil || is.Text == nil || is.Pos == nil || is.Pos.Filename == nil || is.Pos.Line == nil || is.Pos.Column == nil {
@@ -272,6 +268,9 @@ func parse(raw []byte) (*report, error) {
 			x, y := loc.Diagnostics[a], loc.Diagnostics[b]
 			if x.Linter != y.Linter {
 				return x.Linter < y.Linter
+			}
+			if x.Column != y.Column {
+				return x.Column < y.Column
 			}
 			return x.Message < y.Message
 		})

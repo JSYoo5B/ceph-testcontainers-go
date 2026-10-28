@@ -52,11 +52,12 @@ lines state what was and was not looked at.
 Each row of the TSV is one diagnostic: `file`, `line`, `column`, `linter`,
 `overlap`, `test_file` and the message. `overlap` is true when more than one
 linter reported at that file and line. The JSON form groups the diagnostics by
-location. Rows are sorted by file, line, linter and message, so the output does
+location. Rows are sorted by file, line, linter, column and message, so the output does
 not depend on the order in which golangci-lint reported them.
 
 The tool refuses output it cannot trust, instead of printing an empty report: a
-missing `Report.Linters`, an enabled set that differs from the four metric
+missing `Report.Linters`, an omitted top-level `Issues` member (`null` and `[]`
+are accepted as an empty result), an enabled set that differs from the four metric
 linters (the configuration was not applied), an issue without linter, text or a
 file, line and column of the right type, an issue from another linter, a
 non-zero exit of golangci-lint, or JSON it cannot decode.
