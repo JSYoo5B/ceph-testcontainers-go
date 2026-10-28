@@ -43,6 +43,7 @@ var residualFieldVerdicts = map[string]string{
 	"nets":                     "owner",
 	"osdHandles":               "owner",
 	"stores":                   "owner",
+	"monStores":                "owner",
 	"runDir":                   "owner",
 	"portLeases":               "owner",
 	"closed":                   "flag",
