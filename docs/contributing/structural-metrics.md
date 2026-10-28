@@ -110,7 +110,7 @@ elsewhere.
 - Promoted methods and promoted fields of embedded members.
 - Top-level functions, function length, cognitive or cyclomatic complexity and
   duplication. Use the linters named in issue #226 for those. The
-  [lint calibration report](lint-calibration.md) collects those diagnostics.
+  [lint calibration report](lint-calibration.md) collects those diagnostics and pairs two collections without treating an absent diagnostic as a measured zero.
 - Types in build profiles separately: every file is read and merged regardless
   of build constraints. Test files, generated files, files whose name starts
   with `.` or `_`, subdirectories, aliases, non-struct named types and struct
