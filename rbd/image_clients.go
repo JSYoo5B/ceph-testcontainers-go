@@ -9,6 +9,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/resourcename"
 )
 
 // ImageWatcher is one client watching an image header. Address is the
@@ -64,16 +65,16 @@ func ImageClients(ctx context.Context, c *ceph.Container, pool, namespace, image
 }
 
 func imageClients(ctx context.Context, c *ceph.Container, pool, namespace, image string) (*ImageClientStatus, error) {
-	if err := validateResourceName("pool", pool); err != nil {
-		return nil, err
+	if err := resourcename.Check("pool", pool); err != nil {
+		return nil, invalid(err)
 	}
 	if namespace != "" {
-		if err := validateResourceName("namespace", namespace); err != nil {
-			return nil, err
+		if err := resourcename.Check("namespace", namespace); err != nil {
+			return nil, invalid(err)
 		}
 	}
-	if err := validateResourceName("image", image); err != nil {
-		return nil, err
+	if err := resourcename.Check("image", image); err != nil {
+		return nil, invalid(err)
 	}
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)

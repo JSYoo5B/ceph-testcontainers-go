@@ -8,8 +8,8 @@ import (
 	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/resourcename"
 )
 
 // Namespace identifies an image namespace created by this cluster. Names and
@@ -43,8 +43,8 @@ func (ns *Namespace) PoolName() string { return ns.poolName }
 // but cannot hold RBD metadata. Use CreatePool before this method, then wait for
 // clean PGs before client I/O. Partial initialization never deletes pool data.
 func initPool(ctx context.Context, c *ceph.Container, poolName string) error {
-	if err := validateResourceName("pool", poolName); err != nil {
-		return err
+	if err := resourcename.Check("pool", poolName); err != nil {
+		return invalid(err)
 	}
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
@@ -73,11 +73,11 @@ func initPool(ctx context.Context, c *ceph.Container, poolName string) error {
 // but cannot authorize removal unless creation was confirmed. Inspect native
 // state or dispose of the cluster after an uncertain creation failure.
 func createNamespace(ctx context.Context, c *ceph.Container, poolName, name string) (*Namespace, error) {
-	if err := validateResourceName("pool", poolName); err != nil {
-		return nil, err
+	if err := resourcename.Check("pool", poolName); err != nil {
+		return nil, invalid(err)
 	}
-	if err := validateResourceName("namespace", name); err != nil {
-		return nil, err
+	if err := resourcename.Check("namespace", name); err != nil {
+		return nil, invalid(err)
 	}
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
@@ -109,8 +109,8 @@ func createNamespace(ctx context.Context, c *ceph.Container, poolName, name stri
 // including names created outside this fixture. The unnamed default namespace
 // is omitted by Ceph. Listing does not grant ownership for removal.
 func listNamespaces(ctx context.Context, c *ceph.Container, poolName string) ([]string, error) {
-	if err := validateResourceName("pool", poolName); err != nil {
-		return nil, err
+	if err := resourcename.Check("pool", poolName); err != nil {
+		return nil, invalid(err)
 	}
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
@@ -165,13 +165,6 @@ func removeNamespace(ctx context.Context, c *ceph.Container, ns *Namespace) erro
 		return fmt.Errorf("remove RBD namespace %q: %w", ns.name, err)
 	}
 	ns.state.removed = true
-	return nil
-}
-
-func validateResourceName(kind, name string) error {
-	if len(name) > 128 || !naming.PoolResource.MatchString(name) {
-		return invalid(fmt.Errorf("RBD %s name must use letters, digits, underscores, dots or dashes and cannot start with a dot or dash", kind))
-	}
 	return nil
 }
 

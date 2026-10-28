@@ -11,6 +11,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -76,7 +77,7 @@ func WithFilesystems(configs ...Config) ceph.Option {
 	}
 	// Copy now, so that later changes to the caller's configs do not reach Run.
 	captured := newCephFSBootstrap(configs).configs
-	return servicehook.WithBootstrap(cephFSBootstrapKind, false, func() (servicehook.Bootstrap, error) { return newCephFSBootstrap(captured), nil })
+	return servicehook.WithBootstrap(servicekind.CephFS, false, func() (servicehook.Bootstrap, error) { return newCephFSBootstrap(captured), nil })
 }
 
 // WithMDSImage selects the image for every metadata server of the cluster,
@@ -90,7 +91,7 @@ func WithMDSImage(image string) ceph.Option { return servicehook.WithServiceImag
 // defaultFilesystem selects the default filesystem when no filesystem option
 // was given.
 func defaultFilesystem() ceph.Option {
-	return servicehook.WithBootstrap(cephFSBootstrapKind, true, func() (servicehook.Bootstrap, error) { return newCephFSBootstrap([]Config{{}}), nil })
+	return servicehook.WithBootstrap(servicekind.CephFS, true, func() (servicehook.Bootstrap, error) { return newCephFSBootstrap([]Config{{}}), nil })
 }
 
 // filesystemRegistry is the cluster's per-cluster CephFS state.
@@ -105,7 +106,7 @@ type filesystemRegistry struct {
 // filesystems returns the cluster's filesystem registry, creating it on first
 // use.
 func filesystems(c *ceph.Container) *filesystemRegistry {
-	return servicehook.Extension(c, cephFSBootstrapKind, func() any {
+	return servicehook.Extension(c, servicekind.CephFS, func() any {
 		return &filesystemRegistry{byName: make(map[string]*Filesystem)}
 	}).(*filesystemRegistry)
 }

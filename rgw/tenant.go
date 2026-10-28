@@ -10,6 +10,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
 )
 
 // tenantUserID is the local ID of a tenant's S3 user.
@@ -40,7 +41,7 @@ func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error) {
 	if err != nil {
 		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
-	if err := port.RequireService(rgwBootstrapKind); err != nil {
+	if err := port.RequireService(servicekind.RGW); err != nil {
 		return nil, err
 	}
 	if err := port.Live(); err != nil {
@@ -346,5 +347,5 @@ func probeShared(ctx context.Context, c *ceph.Container) (map[string]string, err
 }
 
 func init() {
-	servicehook.RegisterSharedService(rgwBootstrapKind, prepareShared, probeShared)
+	servicehook.RegisterSharedService(servicekind.RGW, prepareShared, probeShared)
 }
