@@ -105,12 +105,65 @@ func TestReintroducedSymbolsFail(t *testing.T) {
 	}
 }
 
-// Negative control: the seam is linked from a file that is not listed.
-func TestSeamMentionOutsideSeamFilesFails(t *testing.T) {
-	files := variant(func(files map[string]string) {
-		files["consumer/consumer.go"] = "package consumer\n\nimport \"example.test/fixture/hookreg\"\n\nfunc Use() any { return hookreg.Test }\n"
+// seamAccess is how a file outside the seam files can reach hookreg.Test.
+// Each form below must be one violation; the controls after it must be none.
+func seamUser(source string) map[string]string {
+	return variant(func(files map[string]string) {
+		files["consumer/consumer.go"] = source
+		files["other/other.go"] = "package other\n\nvar Test = 1\n"
 	})
-	requireProblem(t, run(t, files), "consumer/consumer.go", "hookreg.Test")
+}
+
+const hookregPath = `"example.test/fixture/hookreg"`
+
+// Negative controls: the seam is read from a file that is not listed, by
+// every spelling of the import.
+func TestSeamAccessOutsideSeamFilesFails(t *testing.T) {
+	for name, source := range map[string]string{
+		"plain":         "package consumer\n\nimport " + hookregPath + "\n\nfunc Use() any { return hookreg.Test }\n",
+		"renamed":       "package consumer\n\nimport reg " + hookregPath + "\n\nfunc Use() any { return reg.Test }\n",
+		"dot":           "package consumer\n\nimport . " + hookregPath + "\n\nfunc Use() any { return Test }\n",
+		"blank dot mix": "package consumer\n\nimport (\n\t_ " + hookregPath + "\n\treg " + hookregPath + "\n)\n\nfunc Use() any { return reg.Test }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireProblem(t, run(t, seamUser(source)), "consumer/consumer.go", "seam")
+		})
+	}
+}
+
+// Paired controls: none of these reaches the registration slot.
+func TestLookalikesOfTheSeamPass(t *testing.T) {
+	for name, source := range map[string]string{
+		"renamed import of a different package with a Test member": "package consumer\n\nimport hookreg \"example.test/fixture/other\"\n\nfunc Use() any { return hookreg.Test }\n",
+		"local variable named like the package":                    "package consumer\n\nfunc Use() any {\n\thookreg := struct{ Test int }{}\n\treturn hookreg.Test\n}\n",
+		"parameter named like the package":                         "package consumer\n\nfunc Use(hookreg struct{ Test int }) any { return hookreg.Test }\n",
+		"blank import only":                                        "package consumer\n\nimport _ " + hookregPath + "\n",
+		"other member of the seam package":                         "package consumer\n\nimport reg " + hookregPath + "\n\nfunc Use() any { return reg.Other }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := seamUser(source)
+			files["hookreg/hookreg.go"] = "package hookreg\n\nvar Test any\n\nvar Other any\n"
+			if problems := run(t, files); len(problems) != 0 {
+				t.Fatalf("a lookalike failed: %q", problems)
+			}
+		})
+	}
+}
+
+// The import-only boundary of the helper package is by import path, so a
+// renamed, dot or blank import of it fails as well.
+func TestHelperImportSpellingsFail(t *testing.T) {
+	for name, source := range map[string]string{
+		"plain":   "package consumer\n\nimport \"example.test/fixture/helper\"\n\nvar _ = helper.TestCluster\n",
+		"renamed": "package consumer\n\nimport h \"example.test/fixture/helper\"\n\nvar _ = h.TestCluster\n",
+		"dot":     "package consumer\n\nimport . \"example.test/fixture/helper\"\n\nvar _ = TestCluster\n",
+		"blank":   "package consumer\n\nimport _ \"example.test/fixture/helper\"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := variant(func(files map[string]string) { files["consumer/consumer.go"] = source })
+			requireProblem(t, run(t, files), "example.test/fixture/consumer", "test-only package helper")
+		})
+	}
 }
 
 // The rule would be vacuous when the helper package loses all its files.

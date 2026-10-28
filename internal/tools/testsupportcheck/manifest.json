@@ -4,7 +4,7 @@
     "internal/clustertest",
     "internal/testhelper"
   ],
-  "seam_selector": "hookreg.Test",
+  "seam_selector": "internal/hookreg.Test",
   "seam_files": [
     "ceph/unit_access.go",
     "internal/hookreg/hookreg.go",

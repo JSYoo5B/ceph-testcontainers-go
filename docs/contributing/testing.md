@@ -160,7 +160,10 @@ the syntax of the selected files, that:
 - no selected non-test file outside those packages declares a function or
   method whose name starts with `Test`, or a type of the manifest's forbidden
   list;
-- `hookreg.Test` appears only in the manifest's seam files.
+- `hookreg.Test` is read only in the manifest's seam files. The import is
+  resolved by path to its local binding, so a renamed import is caught, a
+  local variable or another package called `hookreg` is not, and a dot import
+  of the seam package is rejected outright in other files.
 
 Add a new shared test helper package to
 `internal/tools/testsupportcheck/manifest.json` in the same change. The

@@ -14,7 +14,12 @@
 //   - no selected non-test file outside the test-only packages declares a
 //     function or method whose name starts with Test, or a type of the
 //     manifest's forbidden list (the moved test-config and test-state types);
-//   - hookreg.Test is mentioned only in the manifest's seam files;
+//   - the seam (hookreg.Test) is read only in the manifest's seam files. The
+//     import is resolved by path to its local binding, so a renamed import is
+//     caught, a local variable or a different package that happens to be
+//     called hookreg is not, and a dot import of the seam package is rejected
+//     outright in a non-seam file because its identifiers cannot be attributed
+//     without type information;
 //   - no package reports a list error.
 //
 // The test-only packages stay compiled by go build ./... and go vet ./... : the
@@ -37,6 +42,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -55,8 +61,9 @@ type Manifest struct {
 	// TestOnlyPackages are module-relative directories of helper packages that
 	// only _test.go files may import.
 	TestOnlyPackages []string `json:"test_only_packages"`
-	// SeamSelector is the registry selector (package.Name) that links test code
-	// to production state, and SeamFiles the only non-test files that mention it.
+	// SeamSelector is the registry member that links test code to production
+	// state, as <module-relative package directory>.<Name>, and SeamFiles the
+	// only non-test files that read it.
 	SeamSelector string   `json:"seam_selector"`
 	SeamFiles    []string `json:"seam_files"`
 	// ForbiddenTypes are type names that no ordinary non-test file outside the
@@ -236,9 +243,14 @@ func checkTagSet(root string, manifest Manifest, tags string) ([]string, error) 
 		files = append(files, file)
 	}
 	sort.Strings(files)
-	pkgName, seamName, _ := strings.Cut(manifest.SeamSelector, ".")
+	cut := strings.LastIndex(manifest.SeamSelector, ".")
+	module, err := modulePath(absRoot)
+	if err != nil {
+		return nil, err
+	}
+	seamImport, seamName := path.Join(module, manifest.SeamSelector[:cut]), manifest.SeamSelector[cut+1:]
 	for _, file := range files {
-		found, err := scan(filepath.Join(absRoot, filepath.FromSlash(file)), manifest.ForbiddenTypes, pkgName, seamName)
+		found, err := scan(filepath.Join(absRoot, filepath.FromSlash(file)), manifest.ForbiddenTypes, seamImport, seamName)
 		if err != nil {
 			return nil, err
 		}
@@ -246,7 +258,7 @@ func checkTagSet(root string, manifest Manifest, tags string) ([]string, error) 
 			switch {
 			case f.seam:
 				if !slices.Contains(manifest.SeamFiles, file) {
-					problems = append(problems, fmt.Sprintf("[%s] %s mentions %s, which only the seam files may", label, file, manifest.SeamSelector))
+					problems = append(problems, fmt.Sprintf("[%s] %s %s, which only the seam files may", label, file, f.what))
 				}
 			case scanned[file]:
 				problems = append(problems, fmt.Sprintf("[%s] %s declares %s, which only a _test.go file or a test-only package may contain", label, file, f.what))
@@ -261,11 +273,25 @@ type finding struct {
 	seam bool
 }
 
+// modulePath is the module path of the module in root.
+func modulePath(root string) (string, error) {
+	cmd := exec.Command("go", "list", "-m")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=readonly", "GOWORK=off")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("go list -m: %v", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // scan lists the test-only declarations of a file (a function or method named
 // Test followed by a character that is not lower case, and the forbidden type
 // names) and every mention of the seam selector.
-func scan(file string, forbiddenTypes []string, seamPkg, seamName string) ([]finding, error) {
-	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
+func scan(file string, forbiddenTypes []string, seamImport, seamName string) ([]finding, error) {
+	// Object resolution stays on: an identifier that resolves to a declaration
+	// in the file (a local variable or parameter) is not the imported package.
+	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -291,14 +317,31 @@ func scan(file string, forbiddenTypes []string, seamPkg, seamName string) ([]fin
 			}
 		}
 	}
-	ast.Inspect(parsed, func(n ast.Node) bool {
-		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == seamName {
-			if id, ok := sel.X.(*ast.Ident); ok && id.Name == seamPkg {
-				found = append(found, finding{seam: true})
-			}
+	binding := ""
+	for _, spec := range parsed.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || importPath != seamImport {
+			continue
 		}
-		return true
-	})
+		switch {
+		case spec.Name == nil:
+			binding = path.Base(importPath)
+		case spec.Name.Name == ".":
+			found = append(found, finding{what: "dot-imports the seam package", seam: true})
+		case spec.Name.Name != "_":
+			binding = spec.Name.Name
+		}
+	}
+	if binding != "" {
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == seamName {
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == binding && id.Obj == nil {
+					found = append(found, finding{what: "reads the seam", seam: true})
+				}
+			}
+			return true
+		})
+	}
 	return found, nil
 }
 
