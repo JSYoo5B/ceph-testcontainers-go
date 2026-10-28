@@ -705,11 +705,26 @@ two parents of every merge commit that a pull request branch contains (a merge
 of `main` into the branch), so it reports what Git would have asked the author
 to resolve, whatever the author then committed. File counts per pull request
 come from `git diff --name-only` between the first-parent and the merge commit.
-Head SHAs, runs and jobs come from the Actions API: every pull request commit
-that has `pull_request` runs is a head, a job counts as executed when its
-conclusion is not `skipped`, and its window is its start to completion. Jobs
-that belong to cancelled runs are included in the counts of the one head that
-has them (#280's first head); nothing was left out.
+Head SHAs, runs and jobs come from the Actions API, and the three units are
+kept apart. A **head** is a pull request commit that has `pull_request` runs.
+An **attempt** is one run attempt of a workflow run (a re-run of a run adds an
+attempt to the same head and starts no new head). An **executed job** is a job
+record of any attempt whose conclusion is not `skipped` (failed and cancelled
+executions count, because they ran), and its window is its start to
+completion. Every attempt of every run of every head is read, through the
+per-attempt jobs endpoint. A re-run attempt also lists the jobs it did not
+re-run, with a new job id but the original run, name, start and completion
+times; those carried-forward records are counted once, deduplicated by run,
+job name, start and completion, so only the re-executed job adds an execution.
+
+Correction found in review. The first version of this ledger read only the
+latest job records of each run, which silently dropped a failed first execution
+that a re-run later replaced. For #284 that gave 76 jobs and 14,819 seconds; the
+actual executions are 77 jobs and 14,964 seconds (a failed Race detector job of
+145 seconds in attempt 1, and a successful one of 129 seconds in attempt 2). The
+whole window was re-measured with the method above; #284 is the only head whose
+numbers changed, and the earlier statement that nothing was left out was wrong
+for it.
 
 ### Bookkeeping files: what contended
 
@@ -806,34 +821,39 @@ files and the receipt; the combination would have conflicted or needed a
 regenerate. This shows the different-package case once. It does not show the
 combined commit's native result, and it is not a rate.
 
-### Cost of the extra heads
+### Cost of the extra heads and attempts
 
-| Pull request | Heads with runs | Executed jobs per head | Summed job windows per head (s) | Create to merge (min) |
-| --- | ---: | --- | --- | ---: |
-| #277 | 1 | 76 | 15,718 | 42 |
-| #278 | 1 | 76 | 15,981 | 42 |
-| #280 | 3 | 76, 76, 76 | 15,165; 15,727; 15,508 | 122 |
-| #281 | 2 | 76, 76 | 15,512; 15,253 | 83 |
-| #282 | 2 | 76, 76 | 15,323; 15,804 | 93 |
-| #283 | 3 | 76, 76, 76 | 15,223; 15,876; 15,290 | 120 |
-| #284 | 1 | 76 | 14,819 | 42 |
-| #285 | 1 | 76 | 15,541 | 36 |
-| #286 | 1 | 76 | 15,713 | 41 |
-| #287 (documentation only) | 1 | 7 | 1,859 | 23 |
+| Pull request | Heads with runs | Run attempts (all heads) | Executed jobs per head | Summed job windows per head (s) | Create to merge (min) |
+| --- | ---: | ---: | --- | --- | ---: |
+| #277 | 1 | 15 | 76 | 15,718 | 42 |
+| #278 | 1 | 15 | 76 | 15,981 | 42 |
+| #280 | 3 | 21 | 76, 76, 76 | 15,165; 15,727; 15,508 | 122 |
+| #281 | 2 | 22 | 76, 76 | 15,512; 15,253 | 83 |
+| #282 | 2 | 22 | 76, 76 | 15,323; 15,804 | 93 |
+| #283 | 3 | 33 | 76, 76, 76 | 15,223; 15,876; 15,290 | 120 |
+| #284 | 1 | 20 (one is a re-run attempt) | 77 | 14,964 | 42 |
+| #285 | 1 | 19 | 76 | 15,541 | 36 |
+| #286 | 1 | 19 | 76 | 15,713 | 41 |
+| #287 (documentation only) | 1 | 1 | 7 | 1,859 | 23 |
 
-Sixteen heads started runs; fifteen of them executed 76 non-skipped jobs across
-the Code checks and runtime workflows, and #287's head executed the seven Code
-checks jobs only. The summed job windows of the sixteen
-heads are about 234,300 seconds; each full head is about 15,000 to 16,000
-seconds, the sum of overlapping job windows including setup, not elapsed time
-and not billed time. Six of the sixteen heads are the second or third head of a
-pull request. Four of them follow a conflict or an alignment: the conflict
+Sixteen heads started 186 workflow runs and 187 run attempts; exactly one
+attempt is a re-run (#284, Code checks attempt 2, which re-executed only the
+Race detector job). The 16 heads executed 1,148 job records: fifteen heads ran
+76 each (one of them 77 with the re-run), and #287's head ran the seven Code
+checks jobs only. Five of the 1,148 did not succeed (two cancelled in #280's
+first head, one failure each in #278, #283 and #284). The summed job windows
+are 234,457 seconds; each full head is about 15,000 to 16,000 seconds. These
+are sums of overlapping CI job windows including setup. They are not native
+work (the job records include Code checks and non-native runtime jobs), not
+elapsed time and not billed time. Heads and attempts are separate metrics: six
+of the sixteen heads are the second or third head of a pull request (new
+heads), while one additional attempt is a re-run of an existing head. Four of them follow a conflict or an alignment: the conflict
 merges themselves (#281 `e539165`, #282 `bf46234`), the semantic-alignment merge
 (#283 `94af721`) and the head right after #280's conflicting merge `c9d2128`
 (`42a8504`, which also carries a code change). The other two are a textually
 clean merge of `main` (#283, `34806d8`) and a follow-up code commit (#280,
-`bfbe560`). The four conflict-or-alignment heads account for about 62,000
-seconds of summed job windows, a quarter of the window's total, and in none of
+`bfbe560`). The four conflict-or-alignment heads account for 62,074
+seconds of summed job windows, about a quarter (26%) of the window's total, and in none of
 them did the conflicting files include a fragment or a catalogue.
 
 Three observations the ledger does not turn into savings. First, a merge of
@@ -851,9 +871,10 @@ ones, but they are also the largest (88, 33 and 28 changed files against 3 to 18
 so the difference is not attributable to the conflicts.
 
 What the ledger answers for #216: conflict incidence (3 of 10 pull requests, 0
-of them in fragments or catalogues), new CI attempts (6 additional heads, 4 following
-a conflict or semantic alignment), native jobs and summed windows per head as
-above, and elapsed time as above, each separate. What it does not answer: the
+of them in fragments or catalogues), new heads (6 additional heads, 4 following a
+conflict or semantic alignment), re-run attempts (1, in #284, unrelated to a
+conflict), executed job records and summed windows per head as above, and
+elapsed time as above, each separate. What it does not answer: the
 effort of review, billed time, queue time, and whether a layout change would
 have removed any head, because none of the heads in this window had a
 metadata-only cause.
