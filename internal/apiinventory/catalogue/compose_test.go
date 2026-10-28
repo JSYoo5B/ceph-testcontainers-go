@@ -2,6 +2,7 @@ package catalogue_test
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -319,5 +320,111 @@ func TestComposeRefusesUnapprovedAndMalformedSides(t *testing.T) {
 	}
 	if _, err := catalogue.Compose("p", base, good, good); err != nil {
 		t.Fatalf("control: %v", err)
+	}
+}
+
+func memberCase(t *testing.T, base, ours, theirs []string) error {
+	t.Helper()
+	mk := func(rows []string) catalogue.State {
+		return state(t, nil, map[string][]string{"p.T": rows}, "a.md", true)
+	}
+	_, err := catalogue.Compose("p", mk(base), mk(ours), mk(theirs))
+	return err
+}
+
+func TestComposeKeepsMemberIdentityAcrossAnEdit(t *testing.T) {
+	name := "T.Name field string"
+	size := "T.Size field int"
+	renamed := "T.Name field int"
+	for label, c := range map[string]struct{ base, ours, theirs []string }{
+		"removal against type edit":     {[]string{name, size}, []string{size}, []string{renamed, size}},
+		"type edit against removal":     {[]string{name, size}, []string{renamed, size}, []string{size}},
+		"edit against edit (types)":     {[]string{name, size}, []string{"T.Name field int", size}, []string{"T.Name field bool", size}},
+		"edit against edit (tags)":      {[]string{name, size}, []string{"T.Name field string `json:\"a\"`", size}, []string{"T.Name field string `json:\"b\"`", size}},
+		"tag edit against removal":      {[]string{name, size}, []string{size}, []string{"T.Name field string `json:\"a\"`", size}},
+		"interface signature vs remove": {[]string{"T.Do method func()"}, []string{}, []string{"T.Do method func(int)"}},
+		"interface edit against edit":   {[]string{"T.Do method func()"}, []string{"T.Do method func(int)"}, []string{"T.Do method func(string)"}},
+	} {
+		err := memberCase(t, c.base, c.ours, c.theirs)
+		if err == nil || !strings.Contains(err.Error(), "member T.") {
+			t.Errorf("%s: err = %v, want a member conflict", label, err)
+		}
+	}
+	// Controls that must still compose: different members edited, the same
+	// edit on both sides, and an edit against an untouched member.
+	for label, c := range map[string]struct{ base, ours, theirs []string }{
+		"different members edited":  {[]string{name, size}, []string{renamed, size}, []string{name, "T.Size field int64"}},
+		"identical edit":            {[]string{name, size}, []string{renamed, size}, []string{renamed, size}},
+		"edit against untouched":    {[]string{name, size}, []string{renamed, size}, []string{name, size}},
+		"removal against untouched": {[]string{name, size}, []string{size}, []string{name, size}},
+	} {
+		if err := memberCase(t, c.base, c.ours, c.theirs); err != nil {
+			t.Errorf("%s: %v", label, err)
+		}
+	}
+	// Embeddings have no editable value: the embedded type is the identity.
+	if err := memberCase(t, []string{"T embed A"}, []string{"T embed A", "T embed B"}, []string{"T embed A", "T embed C"}); err != nil {
+		t.Errorf("two different embeddings added: %v", err)
+	}
+}
+
+func TestComposeRefusesAMemberRemovalAgainstAnEditInExactSource(t *testing.T) {
+	removeName := func(t *testing.T, root string) { replace(t, root, "alpha/alpha.go", "\tName string\n", "") }
+	editName := func(t *testing.T, root string) { replace(t, root, "alpha/alpha.go", "\tName string\n", "\tName int\n") }
+	for label, c := range map[string]struct{ ours, theirs func(*testing.T, string) }{
+		"ours removes, theirs edits": {removeName, editName},
+		"ours edits, theirs removes": {editName, removeName},
+	} {
+		f := forkWith(t, c.ours, c.theirs, true)
+		f.merge(t)
+		// The merged source keeps the edited member.
+		write(t, f.root, "alpha/alpha.go", strings.Replace(alphaSource, "\tName string\n", "\tName int\n", 1))
+		var before [3]string
+		for i, name := range []string{"declarations.json", "members.json", "review.json"} {
+			before[i] = read(t, f.root, catalogue.Dir+"/alpha/"+name)
+		}
+		if _, err := catalogue.Resolve(f.cfg, f.opts(), nil); err == nil || !strings.Contains(err.Error(), "member Widget.Name") {
+			t.Fatalf("%s: err = %v", label, err)
+		}
+		for i, name := range []string{"declarations.json", "members.json", "review.json"} {
+			if read(t, f.root, catalogue.Dir+"/alpha/"+name) != before[i] {
+				t.Fatalf("%s: %s was written by a refused resolve", label, name)
+			}
+		}
+	}
+}
+
+func TestComposeKeysReceiptFieldsByName(t *testing.T) {
+	// An edit of one receipt field on each side composes; a different edit of
+	// the same field does not (see the review-note control above).
+	pageState := func(page string) catalogue.State {
+		st := state(t, nil, map[string][]string{}, "a.md", true)
+		var r catalogue.Receipt
+		if err := decodeForTest(st.Receipt, &r); err != nil {
+			t.Fatal(err)
+		}
+		r.Page = page
+		st.Receipt, _ = catalogue.Marshal(r)
+		return st
+	}
+	base := pageState("docs/p.md")
+	review := state(t, nil, map[string][]string{}, "b.md", true)
+	comp, err := catalogue.Compose("p", base, review, pageState("docs/q.md"))
+	if err != nil || comp.Review != "b.md" || comp.Page != "docs/q.md" {
+		t.Fatalf("comp = %+v, err = %v", comp, err)
+	}
+	if _, err := catalogue.Compose("p", base, pageState("docs/q.md"), pageState("docs/r.md")); err == nil || !strings.Contains(err.Error(), "receipt field page") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func decodeForTest(data []byte, into any) error { return json.Unmarshal(data, into) }
+
+func TestResolveRefusesAMergedMemberFormNeitherParentHas(t *testing.T) {
+	f := forkWith(t, addFunc("a.go", "AlphaOne"), addFunc("b.go", "AlphaTwo"), true)
+	f.merge(t)
+	replace(t, f.root, "alpha/alpha.go", "\tSize int\n", "\tSize int64\n")
+	if _, err := catalogue.Resolve(f.cfg, f.opts(), nil); err == nil || !strings.Contains(err.Error(), "member Widget.Size") {
+		t.Fatalf("err = %v", err)
 	}
 }

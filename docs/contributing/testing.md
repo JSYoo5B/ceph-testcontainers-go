@@ -910,8 +910,9 @@ hold:
 
 - each parent's receipt pins that parent's own committed catalogue bytes and
   counts, so both parents are approved states;
-- the three-way merge of the catalogue rows (one row per declaration, one per
-  type and member) has no row that both parents changed differently, and no
+- the three-way merge of the catalogue rows (one row per declaration, keyed by its
+  name, and one per member, keyed by its type and member path with the full
+  row value, so a removal against an edit of the same member conflicts) has no row that both parents changed differently, and no
   receipt field (`review`, `page`) that both changed differently;
 - the catalogue derived from the merged source consists of exactly those merged
   rows: no declaration or member that neither approved parent contains, and none

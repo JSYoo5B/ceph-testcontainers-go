@@ -113,16 +113,35 @@ func declarationRows(d Declarations) (map[string]Entry, error) {
 	return rows, nil
 }
 
-// memberRows flattens the member catalogue to one row per (type, member).
-func memberRows(m Members) (map[string]struct{}, error) {
-	rows := map[string]struct{}{}
+// memberKey is the stable identity of a member row. A row reads
+// "<Type>.<path> field|method <value>" or "<Type> embed <Type>". The identity
+// of a field or method is its path, so changing its type, tag or signature is
+// an edit of one row and not a removal plus an addition. An embedding has no
+// separate value: the embedded type is its identity.
+func memberKey(row string) (key, value string) {
+	path, rest, _ := strings.Cut(row, " ")
+	kind, _, _ := strings.Cut(rest, " ")
+	if kind == "embed" || kind == "" {
+		return row, row
+	}
+	return path, row
+}
+
+func memberLabel(key string) string {
+	_, label, _ := strings.Cut(key, "\x00")
+	return label
+}
+
+// memberRows maps (member path or embedding) to the full row value.
+func memberRows(m Members) (map[string]string, error) {
+	rows := map[string]string{}
 	for typ, members := range m.Types {
 		for _, member := range members {
-			key := typ + "\x00" + member
-			if _, dup := rows[key]; dup {
-				return nil, fmt.Errorf("member %q of %s appears twice", member, typ)
+			key, value := memberKey(member)
+			if prior, dup := rows[typ+"\x00"+key]; dup {
+				return nil, fmt.Errorf("member %q of %s appears twice (%q)", key, typ, prior)
 			}
-			rows[key] = struct{}{}
+			rows[typ+"\x00"+key] = value
 		}
 	}
 	return rows, nil
@@ -149,7 +168,7 @@ func merge3[V comparable](base, ours, theirs V, hb, ho, ht bool) (V, bool, bool)
 // merged package, and the receipt fields that follow from them.
 type Composition struct {
 	Declarations map[string]Entry
-	Members      map[string]struct{}
+	Members      map[string]string
 	Review, Page string
 	// OursOnly counts composed declaration rows the theirs side does not have
 	// in that exact form, and TheirsOnly the same for ours.
@@ -221,23 +240,23 @@ func Compose(pkg string, base, ours, theirs State) (Composition, error) {
 	if err := errors.Join(e1, e2, e3); err != nil {
 		return comp, err
 	}
-	comp.Members = map[string]struct{}{}
+	comp.Members = map[string]string{}
 	keys = map[string]bool{}
-	for _, m := range []map[string]struct{}{mb, mo, mt} {
+	for _, m := range []map[string]string{mb, mo, mt} {
 		for key := range m {
 			keys[key] = true
 		}
 	}
 	for _, key := range slices.Sorted(maps.Keys(keys)) {
-		_, hb := mb[key]
-		_, ho := mo[key]
-		_, ht := mt[key]
-		_, present, ok := merge3(struct{}{}, struct{}{}, struct{}{}, hb, ho, ht)
+		b, hb := mb[key]
+		o, ho := mo[key]
+		t, ht := mt[key]
+		row, present, ok := merge3(b, o, t, hb, ho, ht)
 		switch {
 		case !ok:
-			conflicts = append(conflicts, "member "+strings.ReplaceAll(key, "\x00", "."))
+			conflicts = append(conflicts, "member "+memberLabel(key))
 		case present:
-			comp.Members[key] = struct{}{}
+			comp.Members[key] = row
 		}
 	}
 
@@ -291,13 +310,17 @@ func ProveComposition(pkg string, comp Composition, surface Surface) error {
 		return err
 	}
 	for _, key := range slices.Sorted(maps.Keys(members)) {
-		if _, ok := comp.Members[key]; !ok {
-			problems = append(problems, fmt.Errorf("merged source has member %s that neither approved parent allows", strings.ReplaceAll(key, "\x00", ".")))
+		want, ok := comp.Members[key]
+		switch {
+		case !ok:
+			problems = append(problems, fmt.Errorf("merged source has member %s that neither approved parent allows", memberLabel(key)))
+		case want != members[key]:
+			problems = append(problems, fmt.Errorf("merged source changes member %s to a form neither approved parent has", memberLabel(key)))
 		}
 	}
 	for _, key := range slices.Sorted(maps.Keys(comp.Members)) {
 		if _, ok := members[key]; !ok {
-			problems = append(problems, fmt.Errorf("merged source lacks member %s that the approved parents keep", strings.ReplaceAll(key, "\x00", ".")))
+			problems = append(problems, fmt.Errorf("merged source lacks member %s that the approved parents keep", memberLabel(key)))
 		}
 	}
 	if err := errors.Join(problems...); err != nil {
