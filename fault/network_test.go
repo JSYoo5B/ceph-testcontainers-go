@@ -3,11 +3,11 @@ package fault
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"net/netip"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	dockernetwork "github.com/moby/moby/api/types/network"
@@ -158,9 +158,9 @@ func TestInterruptedEndpointRequiresOriginalPeerAliases(t *testing.T) {
 func TestClusterCleanupRetainsNetworkAfterCallerRestoreFailure(t *testing.T) {
 	link, d := newLinkFake()
 	d.connectErr = errors.New("temporary reconnect failure")
-	cluster := servicehook.TestCluster(nil, servicehook.TestConfig{NetworkName: link.NetworkName})
+	cluster := testhelper.TestCluster(nil, testhelper.TestConfig{NetworkName: link.NetworkName})
 	trackInterruption(cluster, "client", link)
-	if err := cluster.Terminate(t.Context()); err == nil || servicehook.TestNetworkRemoved(cluster) || link.complete || d.closes != 0 {
+	if err := cluster.Terminate(t.Context()); err == nil || testhelper.TestNetworkRemoved(cluster) || link.complete || d.closes != 0 {
 		t.Fatal("cleanup removed the original network needed to restore a caller-owned client")
 	}
 }

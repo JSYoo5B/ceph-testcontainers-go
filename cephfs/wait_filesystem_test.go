@@ -3,6 +3,7 @@ package cephfs
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"strings"
 	"sync"
@@ -13,7 +14,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -75,7 +75,7 @@ func newWaitFixture(t *testing.T, name string) waitFixture {
 	default:
 		t.Fatalf("unknown wait fixture %q", name)
 	}
-	servicehook.TestSetStartupTimeout(f.cluster, 2*time.Second)
+	testhelper.TestSetStartupTimeout(f.cluster, 2*time.Second)
 	return f
 }
 
@@ -111,7 +111,7 @@ func TestWaitHeldOwnerAdmissionDoesNotQuery(t *testing.T) {
 	for _, name := range []string{"Ready", "Clone"} {
 		t.Run(name, func(t *testing.T) {
 			f := newWaitFixture(t, name)
-			mutex := servicehook.TestState(f.cluster).Mutex
+			mutex := testhelper.TestState(f.cluster).Mutex
 			waitHeldGate(t, mutex.Lock, mutex.Unlock, mutex.TryLock, f.wait)
 			if f.control.calls.Load() != 0 {
 				t.Fatal("busy owner issued native query")
@@ -127,7 +127,7 @@ func TestWaitHeldControlAdmissionDoesNotQuery(t *testing.T) {
 	for _, name := range []string{"Ready", "Clone"} {
 		t.Run(name, func(t *testing.T) {
 			f := newWaitFixture(t, name)
-			control := servicehook.TestState(f.cluster).ControlMutex
+			control := testhelper.TestState(f.cluster).ControlMutex
 			waitHeldGate(t, control.Lock, control.Unlock, control.TryRLock, f.wait, control.RUnlock)
 			if f.control.calls.Load() != 0 {
 				t.Fatal("busy control issued native query")

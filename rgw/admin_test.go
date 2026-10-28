@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strconv"
@@ -66,7 +67,7 @@ func newRGWAdminTestGateway(config Config, responses ...rgwAdminResponse) (*Gate
 		config.Name = "default"
 	}
 	ctr := &rgwAdminTestContainer{id: "gateway", responses: responses}
-	owner := testCluster(nil, servicehook.TestConfig{}, map[string]testcontainers.Container{rgwServiceName(config): ctr})
+	owner := testCluster(nil, testhelper.TestConfig{}, map[string]testcontainers.Container{rgwServiceName(config): ctr})
 	return &Gateway{Container: ctr, owner: owner, config: config, GatewayName: config.Name}, ctr
 }
 
@@ -185,7 +186,7 @@ func TestRGWOwnedUserGuardsClusterScopeAndReplacedKeys(t *testing.T) {
 	gateway, ctr := newRGWAdminTestGateway(Config{Realm: "a", Zonegroup: "b", Zone: "c"}, rgwAdminResponse{data: native})
 	user := rgwAdminOwnedTestUser(gateway)
 	foreign := *user
-	foreign.owner = testCluster(nil, servicehook.TestConfig{}, nil)
+	foreign.owner = testCluster(nil, testhelper.TestConfig{}, nil)
 	if err := gateway.SuspendUser(t.Context(), &foreign, true); err == nil || len(ctr.calls) != 0 {
 		t.Fatal("foreign cluster handle reached native mutation")
 	}

@@ -3,6 +3,7 @@ package override
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ var _ ceph.DebugLevelReceipter = (*DebugLevelHandle)(nil)
 func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
 	good := ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "1"}
 	for name, test := range map[string]struct {
-		config  *servicehook.TestConfig
+		config  *testhelper.TestConfig
 		nilC    bool
 		ctx     func() context.Context
 		setting ceph.DebugLevelSetting
@@ -31,7 +32,7 @@ func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
 		want    string
 	}{
 		"nil cluster":    {nilC: true, setting: good, kind: ceph.ErrInvalidRequest, want: "the cluster is nil"},
-		"shared cluster": {config: &servicehook.TestConfig{Shared: true}, setting: good, kind: ceph.ErrSharedCluster},
+		"shared cluster": {config: &testhelper.TestConfig{Shared: true}, setting: good, kind: ceph.ErrSharedCluster},
 		"ended context": {setting: good, want: "context canceled", ctx: func() context.Context {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
@@ -43,18 +44,18 @@ func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
 		"option":         {setting: ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_mon", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not supported"},
 		"level":          {setting: ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "100"}, kind: ceph.ErrInvalidRequest, want: "N or N/M"},
 		"unknown OSD":    {setting: ceph.DebugLevelSetting{Daemon: "osd.7", Name: "debug_osd", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not a running-capable OSD"},
-		"closed cluster": {config: &servicehook.TestConfig{Closed: true, OSDs: 1}, setting: good, want: "terminated"},
+		"closed cluster": {config: &testhelper.TestConfig{Closed: true, OSDs: 1}, setting: good, want: "terminated"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			native := &blocklistFixture{}
-			config := servicehook.TestConfig{StartupTimeout: time.Second}
+			config := testhelper.TestConfig{StartupTimeout: time.Second}
 			if test.config != nil {
 				config = *test.config
 				config.StartupTimeout = time.Second
 			}
 			var c *ceph.Container
 			if !test.nilC {
-				c = servicehook.TestCluster(native, config)
+				c = testhelper.TestCluster(native, config)
 			}
 			ctx := t.Context()
 			if test.ctx != nil {
@@ -103,7 +104,7 @@ func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
 // TestSetDebugLevelRefusalLeavesNoSlot shows that a refusal at the cluster
 // holds no registry slot: the same window can be opened right after it.
 func TestSetDebugLevelRefusalLeavesNoSlot(t *testing.T) {
-	c := servicehook.TestCluster(nil, servicehook.TestConfig{StartupTimeout: time.Second})
+	c := testhelper.TestCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second})
 	if _, err := SetDebugLevel(t.Context(), c, ceph.DebugLevelSetting{Daemon: "osd.7", Name: "debug_osd", Level: "1"}); err == nil {
 		t.Fatal("unknown OSD accepted")
 	}
@@ -135,7 +136,7 @@ func TestDebugLevelZeroHandleIsUnavailable(t *testing.T) {
 // releases its slot while a long topology operation holds the cluster mutex:
 // the registry has a lock of its own and the fake target takes no cluster lock.
 func TestDebugLevelRestoreNeedsNoClusterMutex(t *testing.T) {
-	c := servicehook.TestCluster(nil, servicehook.TestConfig{StartupTimeout: time.Second})
+	c := testhelper.TestCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second})
 	registry := overridehook.DebugWindowRegistry(c)
 	fake := newDebugLevelFake("1/5")
 	h, err := openDebugLevelFake(t.Context(), registry, fake, "20")

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strings"
@@ -22,7 +23,7 @@ import (
 // configCluster builds a cluster whose control container is ctr, with the
 // bootstrap messenger mode mode.
 func configCluster(ctr testcontainers.Container, mode ceph.MessengerMode) *ceph.Container {
-	return servicehook.TestCluster(ctr, servicehook.TestConfig{StartupTimeout: time.Second, MessengerMode: mode})
+	return testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second, MessengerMode: mode})
 }
 
 // heldConfig returns the configuration handles that the cluster's registry
@@ -30,7 +31,7 @@ func configCluster(ctr testcontainers.Container, mode ceph.MessengerMode) *ceph.
 func heldConfig(c *ceph.Container) map[string]any {
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
-	return overridehook.TestHeld(c, overridehook.Config)
+	return testhelper.TestHeld(c, overridehook.Config)
 }
 
 // configFixture is a fake control container that answers config dump, set and

@@ -184,14 +184,14 @@ func TestBootstrapRecordConcurrentReadersAndWriters(t *testing.T) {
 // record the readers see.
 func TestTestStatePublishesTheBootstrapRecordLockIdentityAndHooksReachIt(t *testing.T) {
 	c := &Container{}
-	if serviceHooks.TestState(serviceHooks{}, c).ConfigMutex != &c.bootstrap.mu {
-		t.Fatal("TestState.ConfigMutex is not the bootstrap-record lock")
+	if _, _, config, _ := (unitAccess{}).UnitState(c); config != &c.bootstrap.mu {
+		t.Fatal("UnitState.ConfigMutex is not the bootstrap-record lock")
 	}
-	hooks := serviceHooks{}
-	hooks.TestSetConfig(c, []byte(bootstrapRecordConfig))
-	hooks.TestSetKeyring(c, []byte("k"))
-	hooks.TestSetCephVersion(c, "20.2.4")
-	if id, ok, err := hooks.ClusterIdentity(t.Context(), c); err != nil || !ok || id != "11111111-2222-3333-4444-555555555555" {
+	hooks := unitAccess{}
+	hooks.UnitSetConfig(c, []byte(bootstrapRecordConfig))
+	hooks.UnitSetKeyring(c, []byte("k"))
+	hooks.UnitSetCephVersion(c, "20.2.4")
+	if id, ok, err := (serviceHooks{}).ClusterIdentity(t.Context(), c); err != nil || !ok || id != "11111111-2222-3333-4444-555555555555" {
 		t.Fatalf("ClusterIdentity = %q, %v, %v", id, ok, err)
 	}
 	if c.staticFacts().CephVersion != "20.2.4" || !c.bootstrap.isComplete() {
@@ -232,7 +232,7 @@ var bootstrapRecordMethods = map[string][]string{
 var bootstrapRecordWriters = map[string]string{
 	"recordConfig": "startup", "recordKeyring": "startup", "recordVersion": "startup",
 	"applyDefaultCRUSHRule": "takes", "publishConfig": "takes",
-	"TestSetConfig": "hook", "TestSetKeyring": "hook", "TestSetCephVersion": "hook",
+	"UnitSetConfig": "hook", "UnitSetKeyring": "hook", "UnitSetCephVersion": "hook",
 }
 
 // bootstrapRecordCallers lists every function outside the component that calls
@@ -266,7 +266,7 @@ var bootstrapRecordCallers = map[string]map[string]string{
 	"poolUsage":                        {"identity": "free"},
 	"ClusterIdentity":                  {"identity": "free"},
 	"ConnectionConfig":                 {"connection": "free"},
-	"TestState":                        {"mutex": "identity"},
+	"UnitState":                        {"mutex": "identity"},
 }
 
 func isBootstrapReceiver(fn *ast.FuncDecl) bool { return receiverTypeName(fn) == "bootstrapRecord" }
@@ -307,7 +307,7 @@ func TestBootstrapRecordFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 			if !ok || fn.Body == nil || isBootstrapReceiver(fn) {
 				continue
 			}
-			isHook := receiverTypeName(fn) == "serviceHooks" && strings.HasPrefix(fn.Name.Name, "TestSet")
+			isHook := receiverTypeName(fn) == "unitAccess" && strings.HasPrefix(fn.Name.Name, "UnitSet")
 			allowed := map[*ast.SelectorExpr]bool{}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				switch x := n.(type) {
@@ -485,7 +485,7 @@ func TestBootstrapRecordWritersAreAudited(t *testing.T) {
 // "takes" caller takes the topology lock before its first use, a "startup"
 // caller is Run or the one function Run calls, the lock-free FactsOf source is
 // the single "lockfree" caller, the lock identity has the single caller
-// TestState, and a stale row fails.
+// UnitState, and a stale row fails.
 func TestBootstrapRecordCallersAreAudited(t *testing.T) {
 	found := map[string]map[string]bool{}
 	var problems []string
@@ -530,7 +530,7 @@ func TestBootstrapRecordCallersAreAudited(t *testing.T) {
 					problems = append(problems, name+" writes the bootstrap record outside startup")
 				case mode == "lockfree" && name != "staticFacts":
 					problems = append(problems, name+" reads the bootstrap record without a lock")
-				case mode == "identity" && name != "TestState":
+				case mode == "identity" && name != "UnitState":
 					problems = append(problems, name+" publishes the bootstrap-record lock identity")
 				}
 			}
@@ -549,8 +549,8 @@ func TestBootstrapRecordCallersAreAudited(t *testing.T) {
 			lockers++
 		}
 	}
-	if lockers != 1 || !found["TestState"]["mutex"] {
-		problems = append(problems, "bootstrap.mutex must have the single caller TestState")
+	if lockers != 1 || !found["UnitState"]["mutex"] {
+		problems = append(problems, "bootstrap.mutex must have the single caller UnitState")
 	}
 	if len(problems) != 0 {
 		slices.Sort(problems)

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"slices"
 	"strconv"
@@ -397,7 +398,7 @@ func TestRGWAccountFreshRootQuotaAndNonpurgeLifecycle(t *testing.T) {
 func TestRGWAccountRejectsUnconfirmedForeignAndReplacedLifetimes(t *testing.T) {
 	for _, edit := range []func(*Account, *rgwAccountTestContainer){
 		func(a *Account, _ *rgwAccountTestContainer) {
-			a.owner = testCluster(nil, servicehook.TestConfig{}, nil)
+			a.owner = testCluster(nil, testhelper.TestConfig{}, nil)
 		},
 		func(a *Account, _ *rgwAccountTestContainer) { a.state.confirmed = false },
 		func(_ *Account, f *rgwAccountTestContainer) { f.versionTag = "replacement-lifetime" },

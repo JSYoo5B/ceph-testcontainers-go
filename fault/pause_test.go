@@ -3,12 +3,12 @@ package fault
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"testing"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
@@ -116,13 +116,13 @@ func TestPauseLeaseUncertainOutcomesRemainRetryable(t *testing.T) {
 
 func TestPauseRefusesControlAndUnavailableContainers(t *testing.T) {
 	control := pauseTestContainer{id: "control"}
-	cluster := servicehook.TestCluster(control, servicehook.TestConfig{StartupTimeout: time.Second})
+	cluster := testhelper.TestCluster(control, testhelper.TestConfig{StartupTimeout: time.Second})
 	for name, target := range map[string]testcontainers.Container{"nil": nil, "unstarted": pauseTestContainer{}, "control": control} {
 		if pause, err := Pause(t.Context(), cluster, target); err == nil || pause != nil {
 			t.Fatalf("%s container accepted: %v", name, err)
 		}
 	}
-	servicehook.TestSetClosed(cluster, true)
+	testhelper.TestSetClosed(cluster, true)
 	if pause, err := Pause(t.Context(), cluster, pauseTestContainer{id: "osd"}); err == nil || pause != nil {
 		t.Fatal("terminated cluster accepted a pause")
 	}
@@ -151,11 +151,11 @@ func (ctr pauseTestContainer) Terminate(context.Context, ...testcontainers.Termi
 }
 
 func pauseCluster() *ceph.Container {
-	return servicehook.TestCluster(pauseTestContainer{id: "control"}, servicehook.TestConfig{StartupTimeout: time.Second})
+	return testhelper.TestCluster(pauseTestContainer{id: "control"}, testhelper.TestConfig{StartupTimeout: time.Second})
 }
 
 func trackedPause(c *ceph.Container, id string) (held any) {
-	faulthook.WithTopologyNoContext(c, func() { held = faulthook.TestFaults(c, faulthook.ContainerPause)[id] })
+	faulthook.WithTopologyNoContext(c, func() { held = testhelper.TestFaults(c, faulthook.ContainerPause)[id] })
 	return held
 }
 
@@ -169,7 +169,7 @@ func TestClusterPauseTracksCancelledApplyAndRetriesTeardown(t *testing.T) {
 	defer cancel()
 	d := &fakePauseDocker{state: &container.State{Running: true}, pauseErr: context.Canceled, pauseOnError: true, onPause: cancel}
 	terminated := 0
-	servicehook.TestReplaceOSDs(c, map[int]*ceph.OSDContainer{0: {Container: pauseTestContainer{id: "osd", docker: d, terminations: &terminated}}})
+	testhelper.TestReplaceOSDs(c, map[int]*ceph.OSDContainer{0: {Container: pauseTestContainer{id: "osd", docker: d, terminations: &terminated}}})
 	pause, err := pauseWithDocker(ctx, c, d)
 	if !errors.Is(err, context.Canceled) || pause == nil || trackedPause(c, "osd") != pause || !d.state.Paused {
 		t.Fatalf("cancelled apply lost ownership: %v", err)
@@ -252,7 +252,7 @@ func TestPauseResumeReconcilesUncertainThawAndClose(t *testing.T) {
 
 func TestPauseQueuedTopologyAndHandleDeadlines(t *testing.T) {
 	c := pauseCluster()
-	view := servicehook.TestState(c)
+	view := testhelper.TestState(c)
 	// The public call must return before opening a Docker connection.
 	assertContextLockQueued(t, view.Mutex, func(ctx context.Context) error {
 		_, err := Pause(ctx, c, pauseTestContainer{id: "osd"})

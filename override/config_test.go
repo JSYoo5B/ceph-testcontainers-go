@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"slices"
 	"strings"
 	"sync"
@@ -166,8 +167,8 @@ func TestSetConfigRefusalsReturnNotAppliedHandles(t *testing.T) {
 	cancel()
 	ctr := &configFixture{}
 	own := newConfigFixture(ctr)
-	terminated := servicehook.TestCluster(ctr, servicehook.TestConfig{StartupTimeout: time.Second, Closed: true})
-	shared := servicehook.TestCluster(ctr, servicehook.TestConfig{StartupTimeout: time.Second, Shared: true})
+	terminated := testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second, Closed: true})
+	shared := testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second, Shared: true})
 	for name, tc := range map[string]struct {
 		c       *ceph.Container
 		ctx     context.Context
@@ -275,7 +276,7 @@ func TestSetConfigRestoreAfterTerminateIsRefusedAndKeepsTheEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	servicehook.Lock(c)
-	servicehook.TestSetClosed(c, true)
+	testhelper.TestSetClosed(c, true)
 	servicehook.Unlock(c)
 	before := len(ctr.calls)
 	if err := change.Restore(t.Context()); err == nil || len(ctr.calls) != before || len(heldConfig(c)) != 1 {

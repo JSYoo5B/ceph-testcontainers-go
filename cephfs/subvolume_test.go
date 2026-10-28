@@ -2,6 +2,7 @@ package cephfs
 
 import (
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"slices"
 	"strings"
 	"sync"
@@ -44,7 +45,7 @@ func TestCephFSSubvolumeValidationPreventsCommands(t *testing.T) {
 	if _, err := fs.CreateSubvolumeGroup(t.Context(), SubvolumeGroupConfig{Name: "group", SizeBytes: -1}); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("negative group quota reached native CLI")
 	}
-	servicehook.TestSetClosed(fs.cluster, true)
+	testhelper.TestSetClosed(fs.cluster, true)
 	if _, err := fs.SubvolumeGroups(t.Context()); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("terminated cluster accepted subvolume operation")
 	}
@@ -333,7 +334,7 @@ func TestCephFSSubvolumeEnablesVolumesAndRejectsUnavailableFilesystem(t *testing
 			t.Fatal("volume operations ran without MGR module readiness")
 		}
 	}
-	servicehook.TestSetClosed(fs.cluster, true)
+	testhelper.TestSetClosed(fs.cluster, true)
 	_, err := fs.SubvolumeGroups(t.Context())
 	if err == nil {
 		t.Fatal("closed filesystem accepted")

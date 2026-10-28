@@ -1,11 +1,10 @@
 package rbd
 
 import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 func TestParseRBDImageClients(t *testing.T) {
@@ -42,7 +41,7 @@ func TestParseRBDImageClients(t *testing.T) {
 func TestRBDImageClientsRefusesInvalidNamesBeforeCommands(t *testing.T) {
 	// An empty Container has no control CLI, so any command attempt would fail
 	// with a different error than the name validation checked here.
-	cluster := servicehook.TestCluster(nil, servicehook.TestConfig{})
+	cluster := testhelper.TestCluster(nil, testhelper.TestConfig{})
 	for _, args := range [][3]string{{"", "", "disk"}, {"data", "bad ns", "disk"}, {"data", "", "a/b"}} {
 		if _, err := ImageClients(t.Context(), cluster, args[0], args[1], args[2]); err == nil || !strings.Contains(err.Error(), "name must use") {
 			t.Fatalf("%q: error=%v", args, err)

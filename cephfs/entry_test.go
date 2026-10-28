@@ -3,12 +3,12 @@ package cephfs
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -56,7 +56,7 @@ func TestFilesystemCompositionResolvesFinalDefaults(t *testing.T) {
 		{"defaults then filesystem", []ceph.Option{ceph.WithPoolDefaults(3, 2), WithFilesystems(Config{Name: "alpha", MetadataPool: ceph.PoolConfig{MinSize: 3}})}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, services, err := servicehook.TestPrepare(3, false, nil, test.opts...)
+			_, services, err := testhelper.TestPrepare(3, false, nil, test.opts...)
 			if err != nil {
 				t.Fatalf("capture prematurely validated unresolved defaults: %v", err)
 			}
@@ -69,7 +69,7 @@ func TestFilesystemCompositionResolvesFinalDefaults(t *testing.T) {
 
 func TestFilesystemCompositionUsesDefaultCRUSHRoot(t *testing.T) {
 	layout := []ceph.OSDConfig{{Host: "a"}, {Host: "b"}, {Host: "other-host", Root: "other"}}
-	_, services, err := servicehook.TestPrepare(3, false, nil, ceph.WithPoolDefaults(2, 1), ceph.WithInitialOSDs(layout...), WithFilesystems(Config{Name: "alpha"}), ceph.WithDefaultCRUSHRoot("storage"))
+	_, services, err := testhelper.TestPrepare(3, false, nil, ceph.WithPoolDefaults(2, 1), ceph.WithInitialOSDs(layout...), WithFilesystems(Config{Name: "alpha"}), ceph.WithDefaultCRUSHRoot("storage"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestFilesystemCompositionCopiesCallerConfigs(t *testing.T) {
 	additional := []ceph.PoolConfig{{Name: "ec", ErasureCode: ec}}
 	option := WithFilesystems(Config{Name: "alpha", AdditionalDataPools: additional})
 	ec.K, additional[0].Name = 100, "changed"
-	_, services, err := servicehook.TestPrepare(3, false, nil, ceph.WithPoolDefaults(3, 2), option, ceph.WithPools(ceph.PoolConfig{Name: "ordinary"}))
+	_, services, err := testhelper.TestPrepare(3, false, nil, ceph.WithPoolDefaults(3, 2), option, ceph.WithPools(ceph.PoolConfig{Name: "ordinary"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestFilesystemCompositionCopiesCallerConfigs(t *testing.T) {
 	if resolved.AdditionalDataPools[0].Name != "ec" || resolved.AdditionalDataPools[0].ErasureCode.K != 2 || resolved.AdditionalDataPools[0].MinSize != 3 {
 		t.Fatal("initial config aliases caller buffers or applied replicated min_size to EC")
 	}
-	_, services, err = servicehook.TestPrepare(1, false, nil, ceph.WithPoolDefaults(1, 1), WithFilesystems())
+	_, services, err = testhelper.TestPrepare(1, false, nil, ceph.WithPoolDefaults(1, 1), WithFilesystems())
 	if err != nil || preparedFilesystems(services)[0].MetadataPool.Replicas != 1 {
 		t.Fatalf("one-OSD filesystem did not resolve to a usable single-copy pool: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestDefaultFilesystemAppliesOnlyWithoutExplicitFilesystems(t *testing.T) {
 		{[]ceph.Option{defaultFilesystem()}, ""},
 		{[]ceph.Option{WithFilesystems(Config{Name: "app"}), defaultFilesystem()}, "app"},
 	} {
-		services, err := servicehook.TestApply(tc.opts...)
+		services, err := testhelper.TestApply(tc.opts...)
 		if err != nil || len(services) != 1 {
 			t.Fatalf("bootstraps: %v %v", services, err)
 		}
@@ -132,7 +132,7 @@ func TestEntryPointsRejectMissingCluster(t *testing.T) {
 }
 
 func TestFilesystemRegistryReportsOwnedState(t *testing.T) {
-	cluster := servicehook.TestCluster(nil, servicehook.TestConfig{})
+	cluster := testhelper.TestCluster(nil, testhelper.TestConfig{})
 	registry := filesystems(cluster)
 	if registry.RequiresMGRModule("volumes") || len(registry.ConfigTargets()) != 0 {
 		t.Fatal("an empty registry reported owned filesystems")
@@ -155,7 +155,7 @@ func TestContainerFilesystemsUsesTheEmbeddedCluster(t *testing.T) {
 	if missing.Filesystems() != nil {
 		t.Fatal("nil container reported filesystems")
 	}
-	cluster := &Container{Container: servicehook.TestCluster(nil, servicehook.TestConfig{})}
+	cluster := &Container{Container: testhelper.TestCluster(nil, testhelper.TestConfig{})}
 	beta, alpha := &Filesystem{FilesystemName: "beta"}, &Filesystem{FilesystemName: "alpha"}
 	filesystems(cluster.Container).byName["beta"], filesystems(cluster.Container).byName["alpha"] = beta, alpha
 	if got := cluster.Filesystems(); len(got) != 2 || got[0] != alpha || got[1] != beta {

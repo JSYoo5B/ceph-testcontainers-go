@@ -98,6 +98,6 @@ func (s *controlPlaneState) terminate(ctx context.Context, opts ...testcontainer
 	return nil
 }
 
-// mutex is the lock identity that TestState publishes for the lock queueing
+// mutex is the lock identity that UnitState publishes for the lock queueing
 // tests of the service packages. Nothing else calls it.
 func (s *controlPlaneState) mutex() *sync.RWMutex { return &s.mu }

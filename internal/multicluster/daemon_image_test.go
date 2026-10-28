@@ -1,15 +1,15 @@
 package multicluster
 
 import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"strings"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 func splitCluster() *ceph.Container {
-	return servicehook.TestCluster(nil, servicehook.TestConfig{Images: &ceph.ImageSet{
+	return testhelper.TestCluster(nil, testhelper.TestConfig{Images: &ceph.ImageSet{
 		Essential: "essential:1", Client: "client:1", CephFS: "cephfs:1", RBDAux: "aux:1", RGW: "rgw:1"}})
 }
 
@@ -31,7 +31,7 @@ func TestRequireRoleImageRefusesAnotherRoleOfASplitCluster(t *testing.T) {
 
 func TestRequireRoleImageAcceptsTheRoleAggregatesAndCustomImages(t *testing.T) {
 	split := splitCluster()
-	aggregate := servicehook.TestCluster(nil, servicehook.TestConfig{})
+	aggregate := testhelper.TestCluster(nil, testhelper.TestConfig{})
 	for _, test := range []struct {
 		image, role string
 		clusters    []*ceph.Container

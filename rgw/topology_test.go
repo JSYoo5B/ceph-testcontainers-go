@@ -2,6 +2,7 @@ package rgw
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"net/netip"
 	"strconv"
 	"testing"
@@ -19,7 +20,7 @@ func TestRGWConfigurationRejectsUnsafeNamesBeforeStarting(t *testing.T) {
 		{Name: "--gateway"}, {Name: "bad/name"}, {Name: "with space"},
 		{Realm: "--realm"}, {Zonegroup: "zone\nother"}, {Zone: " trailing "}, {Region: "region\x00"},
 	} {
-		cluster := testCluster(nil, servicehook.TestConfig{}, nil)
+		cluster := testCluster(nil, testhelper.TestConfig{}, nil)
 		if gateway, err := startGateway(t.Context(), cluster, config); err == nil || gateway != nil {
 			t.Fatalf("unsafe gateway configuration was accepted: %+v", config)
 		}
@@ -33,7 +34,7 @@ func TestRGWConfigurationRejectsUnsafeNamesBeforeStarting(t *testing.T) {
 func TestGatewayRemovalRetainsFailedCleanup(t *testing.T) {
 	ctr := &terminationFixtureContainer{failTerminationOnce: true}
 	gateway := &Gateway{Container: ctr, GatewayName: "a"}
-	cluster := testCluster(nil, servicehook.TestConfig{StartupTimeout: time.Second}, map[string]testcontainers.Container{"rgw:a": ctr})
+	cluster := testCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second}, map[string]testcontainers.Container{"rgw:a": ctr})
 	gateways(cluster).byName["a"] = gateway
 	if err := removeGateway(t.Context(), cluster, &Gateway{Container: ctr, GatewayName: "unknown"}); err == nil || ctr.terminations != 0 {
 		t.Fatal("unknown gateway attempted container removal")
@@ -50,7 +51,7 @@ func TestGatewayRemovalRefusesAStaleDescriptor(t *testing.T) {
 	oldCtr, newCtr := &terminationFixtureContainer{}, &terminationFixtureContainer{}
 	old := &Gateway{Container: oldCtr, GatewayName: "a"}
 	successor := &Gateway{Container: newCtr, GatewayName: "a"}
-	cluster := testCluster(nil, servicehook.TestConfig{StartupTimeout: time.Second}, map[string]testcontainers.Container{"rgw:a": oldCtr})
+	cluster := testCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second}, map[string]testcontainers.Container{"rgw:a": oldCtr})
 	old.owner = cluster
 	successor.owner = cluster
 	gateways(cluster).byName["a"] = old
@@ -71,7 +72,7 @@ func TestNamedRGWOptionsPreserveScopeAndHostListener(t *testing.T) {
 		if host {
 			port = 42791
 		}
-		cluster := testCluster(nil, servicehook.TestConfig{StartupTimeout: time.Second, HostNetwork: host, PublicAddress: "127.0.0.1"}, nil)
+		cluster := testCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second, HostNetwork: host, PublicAddress: "127.0.0.1"}, nil)
 		config := Config{Name: "gateway-b", Realm: "fixture-realm", Zonegroup: "fixture-zonegroup", Zone: "fixture-zone"}
 		var request testcontainers.GenericContainerRequest
 		for _, option := range namedDaemonOptions(cluster, testFacts(t, cluster), port, 0, config) {
@@ -95,7 +96,7 @@ func TestNamedRGWBridgePrefersPublicGatewayWithoutChangingClientOptions(t *testi
 	// A peer sorting before the public network must not become the published
 	// S3 ingress gateway solely because its randomly generated name is lower.
 	const public, peer = "z-public-network", "a-peer-network"
-	cluster := testCluster(nil, servicehook.TestConfig{NetworkName: public, StartupTimeout: time.Second}, nil)
+	cluster := testCluster(nil, testhelper.TestConfig{NetworkName: public, StartupTimeout: time.Second}, nil)
 	var clientRequest testcontainers.GenericContainerRequest
 	if err := cluster.WithClient().Customize(&clientRequest); err != nil {
 		t.Fatal(err)
@@ -142,7 +143,7 @@ func TestNamedRGWBridgePrefersPublicGatewayWithoutChangingClientOptions(t *testi
 }
 
 func TestNamedRGWHostDoesNotConfigureBridgeGatewayPriority(t *testing.T) {
-	cluster := testCluster(nil, servicehook.TestConfig{StartupTimeout: time.Second, HostNetwork: true, PublicAddress: "127.0.0.1"}, nil)
+	cluster := testCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second, HostNetwork: true, PublicAddress: "127.0.0.1"}, nil)
 	var request testcontainers.GenericContainerRequest
 	for _, option := range namedDaemonOptions(cluster, testFacts(t, cluster), 42791, 0, Config{Name: "gateway"}) {
 		if err := option.Customize(&request); err != nil {
@@ -157,7 +158,7 @@ func TestNamedRGWHostDoesNotConfigureBridgeGatewayPriority(t *testing.T) {
 func TestNamedRGWConflictCleanupKeepsOtherGateways(t *testing.T) {
 	first := &rgwTestContainer{id: "gateway-a"}
 	second := &rgwTestContainer{id: "gateway-b"}
-	cluster := testCluster(nil, servicehook.TestConfig{}, map[string]testcontainers.Container{"rgw:gateway-a": first, "rgw:gateway-b": second})
+	cluster := testCluster(nil, testhelper.TestConfig{}, map[string]testcontainers.Container{"rgw:gateway-a": first, "rgw:gateway-b": second})
 	if err := discardNamedAttempt(t.Context(), cluster, "rgw:gateway-b", second); err != nil || servicehook.Service(cluster, "rgw:gateway-a") != first {
 		t.Fatal("named retry cleanup removed another gateway")
 	}

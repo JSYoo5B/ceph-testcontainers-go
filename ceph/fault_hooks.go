@@ -167,13 +167,3 @@ func (faultHooks) NativeFailure(program string, code int, stdout, stderr []byte)
 // OnlyMissingHostResource reports an error that only says a container or
 // network is already gone.
 func (faultHooks) OnlyMissingHostResource(err error) bool { return onlyMissingHostResource(err) }
-
-// TestFaults snapshots one family for cross-package contract tests. The
-// caller holds the mutex, or the cluster is not shared.
-func (faultHooks) TestFaults(c *Container, kind string) map[string]any {
-	k, ok := faultKindNames[kind]
-	if !ok {
-		return make(map[string]any)
-	}
-	return c.faults.handles(k)
-}

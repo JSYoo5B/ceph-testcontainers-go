@@ -156,13 +156,13 @@ func TestControlPlaneStateConcurrentReadersAndPublisher(t *testing.T) {
 // is the same lock domain, not a copy.
 func TestTestStatePublishesTheControlPlaneLockIdentity(t *testing.T) {
 	c := &Container{}
-	if serviceHooks.TestState(serviceHooks{}, c).ControlMutex != &c.controlPlane.mu {
-		t.Fatal("TestState.ControlMutex is not the control-plane lock")
+	if _, control, _, _ := (unitAccess{}).UnitState(c); control != &c.controlPlane.mu {
+		t.Fatal("UnitState.ControlMutex is not the control-plane lock")
 	}
 	fake := &controlStateFake{id: "hook"}
-	serviceHooks{}.TestSetControlPlane(c, fake)
+	unitAccess{}.UnitSetControlPlane(c, fake)
 	if c.cliContainer() != fake {
-		t.Fatal("TestSetControlPlane did not reach the control selection")
+		t.Fatal("UnitSetControlPlane did not reach the control selection")
 	}
 }
 
@@ -196,7 +196,7 @@ var controlPlaneCallers = map[string]map[string]string{
 	"admitNativeTarget":       {"owns": "free"},
 	"sharedDaemons":           {"current": "free"},
 	"diagnosticsSnapshot":     {"diagnosticHandle": "free"},
-	"TestState":               {"mutex": "identity"},
+	"UnitState":               {"mutex": "identity"},
 }
 
 // isControlPlaneHandleOwner reports whether e is the component itself: the
@@ -219,7 +219,7 @@ func isControlPlaneReceiver(fn *ast.FuncDecl) bool {
 
 // TestControlPlaneStateFieldIsOnlyTouchedByItsMethods guards the ownership
 // written on controlPlaneState: outside this type, Container.controlPlane is
-// the receiver of one of its methods, or (the TestSetControlPlane hook only)
+// the receiver of one of its methods, or (the UnitSetControlPlane hook only)
 // the owner of the handle field; the lock-free FactsOf source never mentions
 // it, and no production composite literal of Container sets it.
 func TestControlPlaneStateFieldIsOnlyTouchedByItsMethods(t *testing.T) {
@@ -244,7 +244,7 @@ func TestControlPlaneStateFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 					}
 				case *ast.SelectorExpr:
 					// c.controlPlane.handle = control, in the hook only.
-					if x.Sel.Name == "handle" && fn.Name.Name == "TestSetControlPlane" {
+					if x.Sel.Name == "handle" && fn.Name.Name == "UnitSetControlPlane" {
 						if recv, ok := x.X.(*ast.SelectorExpr); ok && controlPlaneUse(recv) {
 							allowed[recv] = true
 						}
@@ -348,9 +348,9 @@ func TestControlPlaneStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
 
 // TestControlPlaneStateWritersAreAudited pins the production writers of the
 // handle: publish and terminate on the type (each under the write lock) and the
-// TestSetControlPlane hook (a plain write whose doc names the lock contract).
+// UnitSetControlPlane hook (a plain write whose doc names the lock contract).
 func TestControlPlaneStateWritersAreAudited(t *testing.T) {
-	want := map[string]string{"publish": "takes", "terminate": "takes", "TestSetControlPlane": "hook"}
+	want := map[string]string{"publish": "takes", "terminate": "takes", "UnitSetControlPlane": "hook"}
 	docs := osdRegistryDocs(t)
 	got := map[string]bool{}
 	var problems []string
@@ -402,7 +402,7 @@ func TestControlPlaneStateWritersAreAudited(t *testing.T) {
 // functions that use the component and the method each calls are pinned, the
 // "takes" caller calls lockTopology before its first use, the "holds" callers
 // document that the caller holds the topology lock, the lock identity has the
-// single caller TestState, and a stale row fails.
+// single caller UnitState, and a stale row fails.
 func TestControlPlaneStateCallersAreAudited(t *testing.T) {
 	docs := osdRegistryDocs(t)
 	found := map[string]map[string]bool{}
@@ -446,7 +446,7 @@ func TestControlPlaneStateCallersAreAudited(t *testing.T) {
 					problems = append(problems, name+" must take lockTopology before controlPlane."+method)
 				case mode == "holds" && !strings.Contains(docs[name], "holds c.mu"):
 					problems = append(problems, name+" calls controlPlane."+method+" but its doc does not say the caller holds c.mu")
-				case mode == "identity" && name != "TestState":
+				case mode == "identity" && name != "UnitState":
 					problems = append(problems, name+" publishes the control-plane lock identity")
 				}
 			}
@@ -465,8 +465,8 @@ func TestControlPlaneStateCallersAreAudited(t *testing.T) {
 			lockers++
 		}
 	}
-	if lockers != 1 || !found["TestState"]["mutex"] {
-		problems = append(problems, "controlPlane.mutex must have the single caller TestState")
+	if lockers != 1 || !found["UnitState"]["mutex"] {
+		problems = append(problems, "controlPlane.mutex must have the single caller UnitState")
 	}
 	if len(problems) != 0 {
 		slices.Sort(problems)

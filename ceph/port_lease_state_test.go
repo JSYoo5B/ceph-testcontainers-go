@@ -197,7 +197,7 @@ var portLeaseCallers = map[string]struct {
 	"trackHostPortLease":          {"takes", []string{"track"}},
 	"AddMonitor":                  {"takes", []string{"track"}},
 	"terminate":                   {"takes", []string{"release"}},
-	"TestState":                   {"hook", []string{"count"}},
+	"UnitState":                   {"hook", []string{"count"}},
 }
 
 // TestPortLeaseStateCallersAreAudited guards the callers: the set of
