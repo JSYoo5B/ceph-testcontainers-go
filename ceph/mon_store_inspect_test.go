@@ -392,12 +392,20 @@ var monStoreInspectSymbols = []string{
 	"observeStopped", "verifyStopped", "storeFacts", "monStoreFingerprint", "isNilPort",
 }
 
+// monStoreInspectHomes are the production files that may mention the symbols
+// above and implement the ports: the port file and the files of its adapters
+// (monmap decoder, inspector container, shared JSON reader). See
+// mon_store_adapters_test.go for the guard of the adapters themselves.
+var monStoreInspectHomes = []string{
+	"mon_store_inspect.go", "mon_store_monmap.go", "mon_store_inspect_container.go", "mon_store_json.go",
+}
+
 // monStoreInspectProblems returns the references to the symbols from files
-// other than mon_store_inspect.go, and the methods named Inspect or Member that
+// outside monStoreInspectHomes, and the methods named Inspect or Member that
 // would implement a port.
 func monStoreInspectProblems(files map[string]*ast.File) (problems []string) {
 	for file, parsed := range files {
-		if file == "mon_store_inspect.go" {
+		if slices.Contains(monStoreInspectHomes, file) {
 			continue
 		}
 		ast.Inspect(parsed, func(n ast.Node) bool {

@@ -356,6 +356,115 @@ no native run. 0.x: no old name is renamed or removed, and no alias is added.
   ports take a volume name and a MON name only, so neither answer changes their
   shape.
 
+### Identity adapters status
+
+Implemented in `ceph/mon_store_monmap.go`, `ceph/mon_store_inspect_container.go`
+and `ceph/mon_store_json.go`, tested Docker-free. They are the concrete
+adapters behind the two ports above. Nothing calls them, no Docker or moby
+call exists in them, no public name was added, and no native run was made.
+0.x: no old name is renamed or removed, and no alias is added.
+
+- Monmap adapter. `monStoreMonmapCLI` runs `ceph mon dump --format json` and
+  then `ceph quorum_status --format json` through a `monStoreCLI` function (stdout
+  only; the CLI prints `dumped monmap epoch N` on stderr). Shapes were read at the
+  pinned commit 7f793731f1b39eb4f465e960113d2363c311b964: `MonMap::dump`,
+  `MonmapMonitor` (`quorum` is an array of ranks), `Monitor::_quorum_status`
+  (`quorum` ranks, `quorum_names`, `quorum_leader_name`, `quorum_age`), and
+  `entity_addrvec_t::dump`. The recorded 20.2.4 `mon dump` fixture of the
+  daemon-address tests is the real input of the decoder tests; no recorded
+  `quorum_status` exists, so that document is synthetic.
+- Strictness. Exactly one JSON value, no duplicate key at any depth, no
+  trailing data. A required field that is missing, null or of the wrong type is
+  an error: epoch (at least 1), canonical lowercase FSID, a non-empty `mons`
+  array in rank order with unique non-empty names, a non-empty address vector per
+  member whose entries have type `v1` or `v2`, an IP and a port in 1..65535 that
+  is not the unspecified address, and a 32-bit nonce, no repeated address. An
+  empty `quorum` is an error too, since only a member of a quorum answers.
+  Paired missing, null, wrong-type and empty controls run against each parser
+  alone and through the decoder, for both documents.
+- Three-state quorum. The two documents must agree on the epoch, FSID, member
+  names, every address vector and the quorum set, and `quorum_status` must agree
+  with itself (ranks and names, leader in the quorum). Only then is the member
+  in quorum or out of quorum. Any disagreement, for example an election between
+  the two commands, is an error, never the zero (unknown) state and never
+  "out". A name that is not in the map yields a nil member with a nil error, as
+  the port documents. The address strings are `type:addr/nonce` as Ceph prints
+  them (`v2:172.20.0.4:3300/0`).
+- Inspector request. `monStoreInspectRequest` is plain data, so it can be
+  validated without Docker: the volume at `/store` read-only, network mode
+  `none`, all capabilities dropped, no new privileges, a read-only root, not
+  privileged, no engine-side auto-remove, removal that never takes a volume, the
+  cluster owned label (so the `Terminate` scan finds a leaked inspector) and a
+  per-inspection token label. The command is `python3 -I -c <script> /store`
+  from the image given by the caller. The user must be the numeric uid:gid of the
+  store owner: with every capability dropped, root cannot read a `0600` keyring
+  of another owner. Which uid:gid that is for the retained image, and whether the
+  chosen image carries `python3`, are native questions.
+- Listing script and format. The embedded script classifies every entry from
+  `lstat`, never follows a symlink, opens regular files with `O_NOFOLLOW` and
+  requires the opened file to be the one `lstat` saw, treats a directory on
+  another device as `other`, refuses a name that is not UTF-8, and refuses more
+  than 100000 entries. It prints a format line, one JSON object per entry sorted
+  by path (path, kind, permission bits, inode, size, `mtime_ns`, SHA-256 of
+  regular files), and a trailer with the entry count and the `kv_backend`
+  content (`null` when it was not read). It exits 0 only after the trailer. The
+  tests execute it with the host `python3` against temporary directories.
+  Symlinks (to an outside file or directory, relative escapes, dangling, and a
+  keyring, `kv_backend` or `store.db` replaced by a link) and a FIFO appear as
+  entries that `storeFacts` refuses; nothing behind a link is listed or hashed.
+- Parser. `parseMonStoreListing` requires the final newline, valid UTF-8,
+  the format line, entries in strictly ascending path order, exactly the
+  expected fields on every line, a known kind, no control or replacement
+  character in a path, permission bits only, and a trailer whose count equals
+  the number of entries. A listing without its trailer is a truncated listing
+  and is refused. A `null` marker yields an unread marker, which `storeFacts`
+  refuses, as it refuses an empty one.
+- Driver. `monStoreContainerInspector.Inspect` validates the request, then
+  calls an engine (`Create`, `Start`, `Wait`, `Logs`, `Remove`) at most once
+  each. A failed `Create`, `Start` or `Wait` is an unknown outcome: it is not
+  retried and nothing is read afterwards. After `Create` returned an ID the
+  container is removed on every outcome, under a context that does not end with
+  the caller's. A removal failure withholds the listing and is joined with the
+  first failure, so the two stay separate. Output of more than 16 MiB, a
+  truncated stream, a non-zero exit or anything on stderr is refused. A
+  creation that returned an error leaves no ID to remove; the labelled
+  container is left to the `Terminate` scan.
+- Guards. `ceph/mon_store_adapters_test.go` pins that no production file
+  outside the adapter files mentions the adapter symbols, that the symbol table
+  matches the declarations, that the adapters import no `sync`, moby client or
+  testcontainers package, and that the guard detects a synthetic caller. The
+  port guard of `mon_store_inspect_test.go` now exempts the adapter files.
+- Known gap of the script. A regular file swapped for a symlink between the
+  `lstat` and the `open` is refused by `O_NOFOLLOW` and the inode comparison,
+  but no Docker-free test can force that race, so the mutation that removes
+  `O_NOFOLLOW` survives the tests. The mount is read-only and the inspector
+  runs only against a stopped store, which is the real protection.
+
+Design addendum for the engine, the part that this slice does not implement and
+that only a native run settles:
+
+1. A moby-backed `monStoreInspectEngine` translates `monStoreInspectRequest` one
+   to one into the create call (user, entrypoint, command, labels, a read-only
+   mount of the named volume, `NetworkMode: none`, `CapDrop: ALL`,
+   `no-new-privileges`, read-only root file system, no auto-remove). Its
+   `validate` runs on the request first.
+2. `Wait` must return the exit code of the stopped container and must not treat a
+   context end as an exit. `Logs` must demultiplex stdout and stderr, stop
+   reading at the limit and report truncation instead of returning a prefix as a
+   listing. `Remove` must be forced, must not pass `RemoveVolumes`, and must treat
+   a missing container as success.
+3. The image must be a cluster image that carries `python3` and runs as the
+   numeric owner given. The uid:gid is read from the retained store at bind time
+   or taken from the image's `ceph` user; which of the two is correct is a native
+   question and must not be guessed in code.
+4. The inspector is a volume user while it exists. The attachment bookkeeping
+   (`requireRetained`, `inspect`) already refuses an inspection while a MON
+   generation is attached; the caller slice must also keep a second `Reopen` or
+   `Detach` from starting while an inspection runs, under the existing
+   `Container.mu`, with no new mutex.
+5. Bind time (a running member) is not covered: `observeStopped` refuses a member
+   in quorum, and the identity at the first ready check needs its own source.
+
 ## Owner decisions with recommendations
 
 | ID | Question | Recommendation |
