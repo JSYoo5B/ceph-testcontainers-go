@@ -29,8 +29,8 @@ func (c *Container) osdStates(ctx context.Context) ([]OSDState, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	owned := make(map[int]*osdRegistration, len(c.osds))
-	for id, osd := range c.osds {
+	owned := make(map[int]*osdRegistration, c.osdHandles.count())
+	for id, osd := range c.osdHandles.each() {
 		owned[id] = registrationOf(osd)
 	}
 	return readOwnedOSDStates(ctx, c.cephCLI, owned)
@@ -175,8 +175,10 @@ func decodeOSDPolicyDump(data []byte) (osdPolicySnapshot, error) {
 	return result, nil
 }
 
+// ownedOSDState resolves id against a native snapshot and the OSD registry.
+// The caller holds c.mu.
 func (c *Container) ownedOSDState(dump osdPolicySnapshot, id int) (OSDState, error) {
-	return resolveOwnedOSDState(dump, id, registrationOf(c.osds[id]))
+	return resolveOwnedOSDState(dump, id, registrationOf(c.osdHandles.get(id)))
 }
 
 // WaitForPGClean waits for every existing PG to be exactly active+clean. Unlike

@@ -338,7 +338,7 @@ func (b containerBackend) daemonsRunning(ctx context.Context) error {
 			daemons["mgr."+name] = mgr.Container
 		}
 	}
-	for id, osd := range b.c.osds {
+	for id, osd := range b.c.osdHandles.each() {
 		if osd.Container != nil && !osd.purged {
 			daemons[fmt.Sprintf("osd.%d", id)] = osd.Container
 		}

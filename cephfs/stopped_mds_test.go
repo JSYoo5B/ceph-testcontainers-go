@@ -717,7 +717,7 @@ func TestStoppedMDSWholeClusterCleanupRetainsPartialAndAmbiguousHandles(t *testi
 		t.Fatal("missing pending attempt")
 	}
 	old.termErr = nil
-	(*servicehook.TestState(fs.cluster).OSDs) = map[int]*ceph.OSDContainer{}
+	servicehook.TestReplaceOSDs(fs.cluster, map[int]*ceph.OSDContainer{})
 	if err := fs.cluster.Terminate(t.Context()); err != nil || old.removes != 2 || survivor.removes != 1 || partial.removes != 1 || len(servicehook.Services(fs.cluster)) != 0 || !servicehook.Closed(fs.cluster) {
 		t.Fatalf("whole cleanup lost a retained owned handle: %v", err)
 	}

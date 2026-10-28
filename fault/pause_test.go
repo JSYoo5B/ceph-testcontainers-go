@@ -169,7 +169,7 @@ func TestClusterPauseTracksCancelledApplyAndRetriesTeardown(t *testing.T) {
 	defer cancel()
 	d := &fakePauseDocker{state: &container.State{Running: true}, pauseErr: context.Canceled, pauseOnError: true, onPause: cancel}
 	terminated := 0
-	*servicehook.TestState(c).OSDs = map[int]*ceph.OSDContainer{0: {Container: pauseTestContainer{id: "osd", docker: d, terminations: &terminated}}}
+	servicehook.TestReplaceOSDs(c, map[int]*ceph.OSDContainer{0: {Container: pauseTestContainer{id: "osd", docker: d, terminations: &terminated}}})
 	pause, err := pauseWithDocker(ctx, c, d)
 	if !errors.Is(err, context.Canceled) || pause == nil || trackedPause(c, "osd") != pause || !d.state.Paused {
 		t.Fatalf("cancelled apply lost ownership: %v", err)

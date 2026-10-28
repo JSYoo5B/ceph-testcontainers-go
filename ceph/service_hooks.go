@@ -437,9 +437,8 @@ func (serviceHooks) TestCluster(control testcontainers.Container, config testClu
 		c.nets.public = &testcontainers.DockerNetwork{Name: config.NetworkName}
 	}
 	if config.OSDs > 0 {
-		c.osds = make(map[int]*OSDContainer)
 		for id := range config.OSDs {
-			c.osds[id] = &OSDContainer{ID: id, owner: c, Container: control, placement: config.OSDPlacement}
+			c.osdHandles.register(id, &OSDContainer{ID: id, owner: c, Container: control, placement: config.OSDPlacement})
 		}
 	}
 	return c
@@ -456,7 +455,6 @@ type testState = struct {
 	Keyring        *[]byte
 	CephVersion    *string
 	ControlPlane   *testcontainers.Container
-	OSDs           *map[int]*OSDContainer
 	InitialOSDs    *int
 	PoolReplicas   *int
 	PoolMinSize    *int
@@ -472,11 +470,24 @@ func (serviceHooks) TestState(c *Container) testState {
 	return testState{
 		Mutex: &c.mu, ControlMutex: &c.controlMu, ConfigMutex: &c.configMu, Closed: &c.closed,
 		Config: &c.config, Keyring: &c.keyring, CephVersion: &c.cephVersion, ControlPlane: &c.controlPlane,
-		OSDs: &c.osds, InitialOSDs: &c.settings.osds, PoolReplicas: &c.settings.poolReplicas,
+		InitialOSDs: &c.settings.osds, PoolReplicas: &c.settings.poolReplicas,
 		PoolMinSize: &c.settings.poolMinSize, StartupTimeout: &c.settings.startupTimeout,
 		CephFSImage: &c.settings.cephfsOverride, RGWImage: &c.settings.rgwOverride, PortLeases: len(c.portLeases), NetworkRemoved: &c.nets.publicRemoved,
 	}
 }
+
+// TestReplaceOSDs swaps the owned OSD descriptors of a cluster value for
+// osds, for the service packages' unit tests. It takes no lock: the caller
+// owns a cluster no other goroutine uses yet, or holds the mutex that
+// TestState exposes.
+func (serviceHooks) TestReplaceOSDs(c *Container, osds map[int]*OSDContainer) {
+	c.osdHandles.replace(osds)
+}
+
+// TestOSDCount is the number of OSD descriptors a cluster value owns. The
+// caller holds the mutex that TestState exposes, or owns a cluster no other
+// goroutine uses.
+func (serviceHooks) TestOSDCount(c *Container) int { return c.osdHandles.count() }
 
 // TestClientState returns a client identity's owner and lifecycle flags.
 func (serviceHooks) TestClientState(client *ClientConfig) (owner *Container, created, ready, revoked bool) {

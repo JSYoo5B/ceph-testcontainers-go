@@ -134,7 +134,7 @@ func TestMessengerSecurePolicySurvivesMonitorRefreshAndClientAttachment(t *testi
 	cluster.Container = mon
 	cluster.controlPlane = control
 	cluster.managers["b"] = &ManagerContainer{Container: mgr, DaemonName: "b"}
-	cluster.osds[3] = &OSDContainer{Container: osd, ID: 3}
+	cluster.osdHandles.register(3, &OSDContainer{Container: osd, ID: 3})
 	for _, daemon := range []*monitorConfigArchive{mon, mgr, osd} {
 		daemon.config = []byte(global)
 	}

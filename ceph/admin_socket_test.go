@@ -28,9 +28,9 @@ func TestAdminSocketDaemonNames(t *testing.T) {
 func adminSocketCluster() (*Container, *poolFixtureContainer) {
 	control := &poolFixtureContainer{Output: map[string]string{}}
 	c := &Container{Container: control, settings: options{startupTimeout: time.Second}, runDir: runDirState{volume: &runVolume{name: "run"}},
-		monitors: map[string]*MonitorContainer{},
-		managers: map[string]*ManagerContainer{"a": {Container: control, DaemonName: "a"}, "b": {Container: control, DaemonName: "b", terminated: true}},
-		osds:     map[int]*OSDContainer{0: {ID: 0, Container: control}, 1: {ID: 1, Container: control, purged: true}}}
+		monitors:   map[string]*MonitorContainer{},
+		managers:   map[string]*ManagerContainer{"a": {Container: control, DaemonName: "a"}, "b": {Container: control, DaemonName: "b", terminated: true}},
+		osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {ID: 0, Container: control}, 1: {ID: 1, Container: control, purged: true}}}}
 	return c, control
 }
 

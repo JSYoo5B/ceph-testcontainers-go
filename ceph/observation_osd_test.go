@@ -112,7 +112,7 @@ func TestRegistrationOfCopiesFields(t *testing.T) {
 }
 
 func TestContainerOwnedOSDStateUsesRegistrations(t *testing.T) {
-	c := &Container{osds: map[int]*OSDContainer{0: {nativeUUID: osdUUID0}, 1: {purged: true, nativeUUID: osdUUID1}}}
+	c := &Container{osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {nativeUUID: osdUUID0}, 1: {purged: true, nativeUUID: osdUUID1}}}}
 	dump, err := decodeOSDPolicyDump([]byte(osdDumpFor(osdEntry("0", osdUUID0, 1, 1), osdEntry("1", osdUUID1, 1, 1))))
 	if err != nil {
 		t.Fatal(err)

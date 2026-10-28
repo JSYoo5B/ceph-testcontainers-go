@@ -19,7 +19,7 @@ func osdHandle(t testing.TB, _ context.Context, c *Container, id int) *OSDContai
 	if c.mu.TryLock() {
 		defer c.mu.Unlock()
 	}
-	if osd := c.osds[id]; osd != nil {
+	if osd := c.osdHandles.get(id); osd != nil {
 		if osd.owner == nil {
 			osd.owner = c
 		}

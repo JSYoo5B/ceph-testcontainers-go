@@ -301,6 +301,7 @@ func (c *Container) poolRulePlacement(ctx context.Context, id int) (PoolConfig, 
 
 // Count native buckets rather than creation-time placement descriptions. A
 // completed external move, class or weight edit is reflected in this snapshot.
+// The caller holds c.mu, which guards the OSD registry it reads.
 func (c *Container) nativePoolDomains(ctx context.Context, placement PoolConfig) (int, error) {
 	data, err := c.cephCLI(ctx, "osd", "crush", "dump", "--format", "json")
 	if err != nil {
@@ -349,7 +350,7 @@ func (c *Container) nativePoolDomains(ctx context.Context, placement PoolConfig)
 	var visit func(int, int, bool) error
 	visit = func(id, domain int, hasDomain bool) error {
 		if id >= 0 {
-			owned := c.osds[id]
+			owned := c.osdHandles.get(id)
 			class, exists := classes[id]
 			if owned == nil || owned.purged || !exists || (placement.DeviceClass != "" && class != placement.DeviceClass) {
 				return nil

@@ -118,7 +118,7 @@ func TestMonitorAndOSDSnapshotsMatchTheLockedListings(t *testing.T) {
 	c, b := &MonitorContainer{DaemonName: "c"}, &MonitorContainer{DaemonName: "b"}
 	osd0, osd2 := &OSDContainer{ID: 0}, &OSDContainer{ID: 2}
 	cluster := &Container{Container: primary, monitors: map[string]*MonitorContainer{"c": c, "b": b},
-		osds: map[int]*OSDContainer{2: osd2, 0: osd0}}
+		osdHandles: osdRegistry{owned: map[int]*OSDContainer{2: osd2, 0: osd0}}}
 	for _, terminated := range []bool{false, true} {
 		cluster.monitorTerminated = terminated
 		monitors, err := cluster.Monitors(t.Context())
@@ -143,7 +143,7 @@ func TestMonitorAndOSDSnapshotsMatchTheLockedListings(t *testing.T) {
 		t.Fatalf("osd descriptors/order: %v %v", osds, err)
 	}
 	osds[0] = nil
-	if cluster.osds[0] != osd0 {
+	if cluster.osdHandles.get(0) != osd0 {
 		t.Fatal("osd snapshot modified ownership map")
 	}
 }

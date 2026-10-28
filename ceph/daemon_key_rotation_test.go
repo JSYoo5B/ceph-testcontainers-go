@@ -964,7 +964,7 @@ func (d rotationDocker) ExecInspect(ctx context.Context, execID string, _ mobycl
 
 func rotationCluster(w *rotationWorld) *Container {
 	return &Container{Container: &rotationControl{w: w}, settings: options{startupTimeout: time.Minute},
-		osds:              map[int]*OSDContainer{0: {ID: 0, Container: &rotationDaemon{w: w}}},
+		osdHandles:        osdRegistry{owned: map[int]*OSDContainer{0: {ID: 0, Container: &rotationDaemon{w: w}}}},
 		keyRotationDocker: func(context.Context) (keyRotationExecClient, error) { return rotationDocker{w}, nil }}
 }
 
