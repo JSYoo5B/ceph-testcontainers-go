@@ -351,6 +351,8 @@ func (c *Container) removeMonitor(ctx context.Context, handle *MonitorContainer)
 	return nil
 }
 
+// refreshMonitorConfig refreshes the control configuration after a monitor
+// change. The caller holds c.mu.
 func (c *Container) refreshMonitorConfig(ctx context.Context) error {
 	return c.refreshMonitorConfigAfterRemoval(ctx, "")
 }
@@ -391,7 +393,7 @@ func (c *Container) lockTopology(ctx context.Context) error {
 	return lockTopologyMutex(ctx, &c.mu)
 }
 
-// The topology caller supplies its existing operation deadline. Only native
+// The caller holds c.mu throughout. The topology caller supplies its existing operation deadline. Only native
 // reads are polled here; membership is never mutated or daemons restarted. Each
 // config is read through Docker's archive API, which also works when stopped.
 func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, removedName string) error {
@@ -546,7 +548,7 @@ func (c *Container) monitorConfigTargets(ctx context.Context, control testcontai
 	if initial := c.managers["a"]; initial == nil || !initial.terminated {
 		add("mgr.a", c.manager)
 	}
-	for id, osd := range c.osds {
+	for id, osd := range c.osdHandles.each() {
 		if osd != nil && !osd.purged {
 			add(fmt.Sprintf("osd.%d", id), osd.Container)
 		}

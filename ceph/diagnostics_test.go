@@ -139,7 +139,7 @@ func TestDiagnosticsSnapshotPartialInventory(t *testing.T) {
 		Container: primary, manager: mgr, controlPlane: primary, closed: true, monitorTerminated: true,
 		monitors:   map[string]*MonitorContainer{"partial": {}, "uncreated": nil},
 		managers:   map[string]*ManagerContainer{"a": {Container: mgr}},
-		osds:       map[int]*OSDContainer{0: {ID: 0}, 1: nil},
+		osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {ID: 0}, 1: nil}},
 		services:   map[string]testcontainers.Container{"rgw:bootstrapping": service, "mds.tenant-0": nil},
 		extensions: map[string]any{"rgw": testExtension{secrets: []string{"access-private", "s3-private"}}},
 		nets:       networkState{public: &testcontainers.DockerNetwork{ID: "public-id", Name: "public"}},
@@ -264,9 +264,9 @@ func TestDiagnosticsTypedNilHandlesRemainInspectable(t *testing.T) {
 	var missing *diagnosticsTestContainer
 	cluster := &Container{
 		Container: missing, controlPlane: missing, manager: missing,
-		monitors: map[string]*MonitorContainer{"joining": {Container: missing}},
-		osds:     map[int]*OSDContainer{0: {Container: missing, ID: 0}},
-		services: map[string]testcontainers.Container{"rgw:partial": missing},
+		monitors:   map[string]*MonitorContainer{"joining": {Container: missing}},
+		osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {Container: missing, ID: 0}}},
+		services:   map[string]testcontainers.Container{"rgw:partial": missing},
 	}
 	config := diagnosticsUnitConfig(t)
 	config.AdditionalContainers = []DiagnosticsContainer{{Role: "mirror", Name: "failed-mirror", Container: missing}}

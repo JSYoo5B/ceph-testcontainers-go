@@ -555,7 +555,7 @@ func TestNoInitialMDSFirstPublicationAndOrdinaryScaling(t *testing.T) {
 	if customizers != 1 || fs.Container != worker || fs.roster.nextIndex != 1 {
 		t.Fatal("ordinary same-count scale launched replacement")
 	}
-	(*servicehook.TestState(c).OSDs) = nil
+	servicehook.TestReplaceOSDs(c, nil)
 	if err := c.Terminate(t.Context()); err != nil || worker.removes != 1 || len(servicehook.Services(c)) != 0 {
 		t.Fatalf("first owned MDS cleanup: %v removes=%d", err, worker.removes)
 	}
@@ -585,7 +585,7 @@ func TestNoInitialMDSPartialDaemonOwnershipAndNoImplicitRetry(t *testing.T) {
 			if err := fs.ScaleMDS(t.Context(), 1, 0); err == nil || n.mutationCount() != before {
 				t.Fatalf("partial first daemon was automatically retried: %v", err)
 			}
-			(*servicehook.TestState(fs.cluster).OSDs) = nil
+			servicehook.TestReplaceOSDs(fs.cluster, nil)
 			if err := fs.cluster.Terminate(t.Context()); err != nil || len(servicehook.Services(fs.cluster)) != 0 || worker.removes != btoi(withHandle) {
 				t.Fatalf("partial cleanup lost handle: %v removes=%d", err, worker.removes)
 			}

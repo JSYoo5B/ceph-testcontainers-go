@@ -198,12 +198,12 @@ func TestOSDMemoryTerminatePreservesKeeperUntilOSDsAreGone(t *testing.T) {
 	s, docker, keeper := newOSDMemoryUnitFixture()
 	osdError := errors.New("OSD container removal failed")
 	osd := &osdMemoryContainerFake{terminateErr: osdError}
-	cluster := &Container{stores: osdStorageState{memory: s}, osds: map[int]*OSDContainer{4: {Container: osd}}}
-	if err := cluster.Terminate(t.Context()); !errors.Is(err, osdError) || len(cluster.osds) != 1 || cluster.stores.memory != s || keeper.terminations != 0 || docker.removals != 0 {
+	cluster := &Container{stores: osdStorageState{memory: s}, osdHandles: osdRegistry{owned: map[int]*OSDContainer{4: {Container: osd}}}}
+	if err := cluster.Terminate(t.Context()); !errors.Is(err, osdError) || cluster.osdHandles.count() != 1 || cluster.stores.memory != s || keeper.terminations != 0 || docker.removals != 0 {
 		t.Fatalf("unfinished OSD cleanup released its memory store: err=%v", err)
 	}
 	osd.terminateErr = nil
-	if err := cluster.Terminate(t.Context()); err != nil || len(cluster.osds) != 0 || cluster.stores.memory != nil || keeper.terminations != 1 || docker.removals != 1 || docker.removeOptions.Force {
+	if err := cluster.Terminate(t.Context()); err != nil || cluster.osdHandles.count() != 0 || cluster.stores.memory != nil || keeper.terminations != 1 || docker.removals != 1 || docker.removeOptions.Force {
 		t.Fatalf("retry did not release storage after the original OSD was removed: err=%v", err)
 	}
 }

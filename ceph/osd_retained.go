@@ -268,11 +268,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 		return nil, err
 	}
 	detached := &DetachedOSD{cluster: c, id: id, osdUUID: osd.nativeUUID, fsid: fsid, placement: osd.placement, image: osd.image, store: store}
-	if c.detachedOSDs == nil {
-		c.detachedOSDs = make(map[int]*DetachedOSD)
-	}
-	c.detachedOSDs[id] = detached
-	delete(c.osds, id)
+	c.osdHandles.park(id, detached)
 	return detached, nil
 }
 
@@ -293,10 +289,10 @@ func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 		return nil, invalidRequest("the detached OSD belongs to another cluster")
 	}
 	id := detached.id
-	if detached.reopened || c.detachedOSDs[id] != detached {
+	if detached.reopened || c.osdHandles.detachedOf(id) != detached {
 		return nil, invalid(fmt.Errorf("osd.%d was already reopened", id))
 	}
-	if c.osds[id] != nil {
+	if c.osdHandles.get(id) != nil {
 		return nil, fmt.Errorf("osd.%d is owned by another handle", id)
 	}
 	if !c.stores.hasVolume() {
@@ -318,9 +314,8 @@ func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 		return nil, err
 	}
 	detached.reopened = true
-	delete(c.detachedOSDs, id)
 	osd := &OSDContainer{ID: id, owner: c, nativeUUID: detached.osdUUID, placement: detached.placement, image: detached.image}
-	c.osds[id] = osd
+	c.osdHandles.unpark(id, osd)
 	launch := osdLaunch{osd: osd, recipe: c.newOSDLaunchRecipe(osd, []byte(detached.store.keyring))}
 	if err := c.startOSD(ctx, launch); err != nil {
 		return osd, err

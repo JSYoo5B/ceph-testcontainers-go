@@ -92,7 +92,7 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 	if reopenErr == nil || reopenCtx.Err() == nil || ctx.Err() != nil {
 		t.Fatalf("reopen did not observe the post-creation cancellation: err=%v caller=%v test=%v", reopenErr, reopenCtx.Err(), ctx.Err())
 	}
-	if candidate == nil || candidate.Container == nil || c.osds[original.ID] != candidate || !detached.reopened || c.detachedOSDs[original.ID] != nil {
+	if candidate == nil || candidate.Container == nil || c.osdHandles.get(original.ID) != candidate || !detached.reopened || c.osdHandles.detachedOf(original.ID) != nil {
 		t.Fatalf("canceled reopen lost consumed ownership: candidate=%v err=%v", candidate != nil, reopenErr)
 	}
 	if fault.calls != 1 || fault.canceled != 1 || fault.observed == nil || fault.observed != candidate.Container {

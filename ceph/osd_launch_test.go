@@ -156,13 +156,13 @@ func TestOSDLaunchNeverReplaysCreationOrLosesPartialHandle(t *testing.T) {
 			if err := c.startOSD(t.Context(), copyOfLaunch); err == nil || !strings.Contains(err.Error(), "already attempted") || calls != 1 {
 				t.Fatal("a copied launch replayed container creation")
 			}
-			if c.osds[saved.ID] != saved || (saved.Container == created) != (outcome != "no-handle-error") {
+			if c.osdHandles.get(saved.ID) != saved || (saved.Container == created) != (outcome != "no-handle-error") {
 				t.Fatal("original descriptor/partial container ownership was lost")
 			}
 			if err := c.Terminate(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if len(c.osds) != 0 || (outcome != "no-handle-error" && created.terminations != 1) {
+			if c.osdHandles.count() != 0 || (outcome != "no-handle-error" && created.terminations != 1) {
 				t.Fatal("partial handle was not cleaned up through the original owner")
 			}
 		})

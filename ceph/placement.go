@@ -78,8 +78,8 @@ func validateCRUSHHierarchy(defaultRoot string, locations []OSDConfig) error {
 
 // Caller holds c.mu while checking the candidate against immutable owned OSDs.
 func (c *Container) validateOSDPlacement(candidate OSDConfig) error {
-	locations := make([]OSDConfig, 0, len(c.osds)+1)
-	for _, osd := range c.osds {
+	locations := make([]OSDConfig, 0, c.osdHandles.count()+1)
+	for _, osd := range c.osdHandles.each() {
 		locations = append(locations, osd.Placement())
 	}
 	locations = append(locations, candidate)

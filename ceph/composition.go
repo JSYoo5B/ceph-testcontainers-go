@@ -74,7 +74,7 @@ func prepareInitialComposition(settings *options) error {
 		settings.managers = 0
 	}
 	settings.defaultCRUSHRoot = clusterCRUSHRoot(*settings)
-	planned := &Container{osds: make(map[int]*OSDContainer)}
+	planned := &Container{}
 	for i := range settings.osds {
 		var config OSDConfig
 		if len(settings.initialOSDs) != 0 {
@@ -87,15 +87,15 @@ func prepareInitialComposition(settings *options) error {
 		if config.Host == "" {
 			config.Host = fmt.Sprintf("osd-%d", i)
 		}
-		planned.osds[i] = &OSDContainer{ID: i, placement: config}
+		planned.osdHandles.register(i, &OSDContainer{ID: i, placement: config})
 		if len(settings.initialOSDs) != 0 {
 			// Keep host omission until a real OSD ID is assigned at startup.
 			config.Host = settings.initialOSDs[i].Host
 			settings.initialOSDs[i] = config
 		}
 	}
-	locations := make([]OSDConfig, 0, len(planned.osds))
-	for _, osd := range planned.osds {
+	locations := make([]OSDConfig, 0, planned.osdHandles.count())
+	for _, osd := range planned.osdHandles.each() {
 		locations = append(locations, osd.Placement())
 	}
 	if err := validateCRUSHHierarchy(settings.defaultCRUSHRoot, locations); err != nil {

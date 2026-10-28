@@ -80,6 +80,8 @@ type hooks interface {
 	SettleClient(ctx context.Context, c *ceph.Container, client *ceph.ClientConfig) error
 	TestCluster(control testcontainers.Container, config TestConfig) *ceph.Container
 	TestState(c *ceph.Container) TestStateView
+	TestReplaceOSDs(c *ceph.Container, osds map[int]*ceph.OSDContainer)
+	TestOSDCount(c *ceph.Container) int
 	TestClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool)
 	TestApply(opts ...ceph.Option) ([]Bootstrap, error)
 	TestPrepare(osds int, noInitialOSDs bool, pools []ceph.PoolConfig, opts ...ceph.Option) ([]ceph.PoolConfig, []Bootstrap, error)
@@ -375,7 +377,6 @@ type TestStateView = struct {
 	Keyring        *[]byte
 	CephVersion    *string
 	ControlPlane   *testcontainers.Container
-	OSDs           *map[int]*ceph.OSDContainer
 	InitialOSDs    *int
 	PoolReplicas   *int
 	PoolMinSize    *int
@@ -393,6 +394,17 @@ func TestCluster(control testcontainers.Container, config TestConfig) *ceph.Cont
 
 // TestState exposes a cluster's internals to unit tests.
 func TestState(c *ceph.Container) TestStateView { return get().TestState(c) }
+
+// TestReplaceOSDs swaps the owned OSD descriptors of a cluster value for osds.
+// It takes no lock: use it on a cluster no other goroutine uses, or while
+// holding the mutex that TestState exposes.
+func TestReplaceOSDs(c *ceph.Container, osds map[int]*ceph.OSDContainer) {
+	get().TestReplaceOSDs(c, osds)
+}
+
+// TestOSDCount is the number of OSD descriptors the cluster value owns, read
+// without a lock.
+func TestOSDCount(c *ceph.Container) int { return get().TestOSDCount(c) }
 
 // TestClientState returns a client identity's owner and lifecycle flags.
 func TestClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool) {

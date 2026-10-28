@@ -21,7 +21,7 @@ type delayTestCluster struct {
 func newDelayTestCluster(backend netemBackend, osd testcontainers.Container, host bool) *delayTestCluster {
 	c := servicehook.TestCluster(nil, servicehook.TestConfig{NetworkName: "tc-public", HostNetwork: host, StartupTimeout: time.Second})
 	view := servicehook.TestState(c)
-	*view.OSDs = map[int]*ceph.OSDContainer{0: {Container: osd}}
+	servicehook.TestReplaceOSDs(c, map[int]*ceph.OSDContainer{0: {Container: osd}})
 	*view.NetworkRemoved = true // synthetic bridge; no Docker removal
 	return &delayTestCluster{Container: c, backend: backend}
 }

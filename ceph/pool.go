@@ -222,10 +222,11 @@ func replicatedCRUSHRuleCommand(config PoolConfig, rule string) []string {
 	return args
 }
 
-// poolPlacementDomains is called while c.mu serializes topology mutations.
+// poolPlacementDomains counts the owned OSD placement domains that config can
+// use. The caller holds c.mu, which serializes topology mutations.
 func (c *Container) poolPlacementDomains(config PoolConfig) int {
 	domains := make(map[string]struct{})
-	for _, osd := range c.osds {
+	for _, osd := range c.osdHandles.each() {
 		if osd.purged {
 			continue
 		}

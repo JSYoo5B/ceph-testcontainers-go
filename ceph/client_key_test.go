@@ -533,7 +533,8 @@ func TestCopiedClientDescriptorsGoStale(t *testing.T) {
 func requireRedacted(t *testing.T, c *Container, keys ...string) {
 	t.Helper()
 	// The fake cluster has no Docker containers to list.
-	c.Container, c.osds = nil, nil
+	c.Container = nil
+	c.osdHandles.replace(nil)
 	snapshot, err := c.diagnosticsSnapshot(t.Context(), diagnosticsUnitConfig(t))
 	if err != nil {
 		t.Fatal(err)

@@ -118,7 +118,7 @@ func TestRefreshMonitorConfigUpdatesEveryOwnedRoleWhileStopped(t *testing.T) {
 	cluster.monitors["b"] = &MonitorContainer{Container: second, DaemonName: "b"}
 	cluster.managers["a"] = &ManagerContainer{Container: mgr, DaemonName: "a"}
 	cluster.manager = mgr
-	cluster.osds[3] = &OSDContainer{Container: osd, ID: 3}
+	cluster.osdHandles.register(3, &OSDContainer{Container: osd, ID: 3})
 	cluster.services["rgw.default"], cluster.services["mds.a"] = rgw, mds
 	cluster.extensions = map[string]any{
 		"rgw":    testExtension{targets: map[string]testcontainers.Container{"rgw.default": rgw}},
@@ -176,7 +176,7 @@ func TestMonitorConfigInventorySkipsRemovedAndRetiredHandles(t *testing.T) {
 	cluster.monitors["uncreated"] = &MonitorContainer{DaemonName: "uncreated"}
 	cluster.managers["a"] = &ManagerContainer{Container: retiredMgr, terminated: true}
 	cluster.manager = retiredMgr
-	cluster.osds[2] = &OSDContainer{Container: retiredOSD, purged: true}
+	cluster.osdHandles.register(2, &OSDContainer{Container: retiredOSD, purged: true})
 	cluster.monitorTerminated = true
 	targets, err := cluster.monitorConfigTargets(ctx, control, "removed")
 	if err != nil {
@@ -206,7 +206,7 @@ func TestRefreshMonitorConfigPartialCopyPublishesControlAndRetries(t *testing.T)
 			lost := errors.New("daemon archive copy response lost")
 			bad.writeErr, bad.applyOnError = lost, applied
 			cluster.managers["b"] = &ManagerContainer{Container: bad, DaemonName: "b"}
-			cluster.osds[7] = &OSDContainer{Container: other, ID: 7}
+			cluster.osdHandles.register(7, &OSDContainer{Container: other, ID: 7})
 			err := cluster.RefreshMonitorConfig(t.Context())
 			if !errors.Is(err, lost) || !strings.Contains(err.Error(), "mgr.b") {
 				t.Fatalf("partial copy did not retain its named error: %v", err)
@@ -234,7 +234,7 @@ func TestRefreshMonitorConfigPartialCopyPublishesControlAndRetries(t *testing.T)
 func TestRefreshMonitorConfigUncertainControlCopyPublishesOnlyAfterConfirmation(t *testing.T) {
 	cluster, control := newMonitorConfigFixture()
 	daemon := newMonitorConfigArchive("osd-9", "[osd.9]\nprivate = retained\n")
-	cluster.osds[9] = &OSDContainer{Container: daemon, ID: 9}
+	cluster.osdHandles.register(9, &OSDContainer{Container: daemon, ID: 9})
 	before := bytes.Clone(cluster.config)
 	lost := errors.New("control archive copy reply lost")
 	control.writeErr, control.applyOnError = lost, true
@@ -254,7 +254,7 @@ func TestRefreshMonitorConfigRefusesMalformedDaemonButKeepsOtherCopies(t *testin
 	before := bytes.Clone(bad.config)
 	other := newMonitorConfigArchive("osd-8", "[osd.8]\nprivate = retained\n")
 	cluster.managers["b"] = &ManagerContainer{Container: bad, DaemonName: "b"}
-	cluster.osds[8] = &OSDContainer{Container: other, ID: 8}
+	cluster.osdHandles.register(8, &OSDContainer{Container: other, ID: 8})
 	if err := cluster.RefreshMonitorConfig(t.Context()); err == nil || !strings.Contains(err.Error(), "duplicate") || !bytes.Equal(before, bad.config) || bad.writes != 0 || control.writes != 1 || other.writes != 1 {
 		t.Fatalf("ambiguous daemon config was rewritten or successful copies rolled back: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestRefreshMonitorConfigCanceledClosedAndContendedOperationsDoNotCopy(t *te
 func TestRefreshMonitorConfigCancellationAfterControlRetainsConfirmedTemplate(t *testing.T) {
 	cluster, control := newMonitorConfigFixture()
 	daemon := newMonitorConfigArchive("osd-5", "[osd.5]\nprivate = retained\n")
-	cluster.osds[5] = &OSDContainer{Container: daemon, ID: 5}
+	cluster.osdHandles.register(5, &OSDContainer{Container: daemon, ID: 5})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	control.afterWrite = cancel
@@ -409,7 +409,7 @@ func newMonitorConfigFixture() (*Container, *monitorConfigArchive) {
 	cluster := &Container{Container: control, settings: options{startupTimeout: time.Second},
 		config: []byte(monitorConfigOld), keyring: []byte("retained-admin-keyring"),
 		monitors: make(map[string]*MonitorContainer), managers: make(map[string]*ManagerContainer),
-		osds: make(map[int]*OSDContainer), services: make(map[string]testcontainers.Container)}
+		osdHandles: osdRegistry{owned: make(map[int]*OSDContainer)}, services: make(map[string]testcontainers.Container)}
 	return cluster, control
 }
 

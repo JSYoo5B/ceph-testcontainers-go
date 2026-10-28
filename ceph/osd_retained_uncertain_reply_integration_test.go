@@ -91,7 +91,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 	c.stores.runner = fault.run
 	t.Cleanup(func() { c.stores.runner = previous })
 	candidate, reopenErr := c.ReopenOSD(ctx, detached)
-	if !errors.Is(reopenErr, injected) || candidate == nil || candidate.Container != nil || c.osds[original.ID] != candidate || !detached.reopened || c.detachedOSDs[original.ID] != nil {
+	if !errors.Is(reopenErr, injected) || candidate == nil || candidate.Container != nil || c.osdHandles.get(original.ID) != candidate || !detached.reopened || c.osdHandles.detachedOf(original.ID) != nil {
 		t.Fatalf("uncertain result lost consumed ownership: candidate=%v err=%v", candidate != nil, reopenErr)
 	}
 	if fault.calls != 1 || fault.observed == nil {

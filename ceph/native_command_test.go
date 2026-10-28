@@ -564,7 +564,7 @@ func TestNativeCommandAdmitsOnlyClusterAndAttachedContainers(t *testing.T) {
 	clusterSide := newNativeTarget(t, "cluster-client", "tc-cluster")
 	foreign := newNativeTarget(t, "foreign", "bridge", "other")
 	cluster := nativeCluster()
-	cluster.osds = map[int]*OSDContainer{0: {ID: 0, Container: owned}}
+	cluster.osdHandles.replace(map[int]*OSDContainer{0: {ID: 0, Container: owned}})
 	for _, target := range []*nativeTarget{owned, public, clusterSide} {
 		if result, err := cluster.RunNativeCommand(t.Context(), target, quick); !ran(result, err) {
 			t.Fatalf("%s was refused: %+v %v", target.id, result, err)
@@ -1048,7 +1048,7 @@ func TestNativeCommandReportsCancellationBeforeLaunch(t *testing.T) {
 func TestTerminateConfirmsCommandsInRemovedContainers(t *testing.T) {
 	owned := newNativeTarget(t, "osd-container")
 	cluster := nativeCluster()
-	cluster.osds = map[int]*OSDContainer{0: {ID: 0, Container: owned}}
+	cluster.osdHandles.replace(map[int]*OSDContainer{0: {ID: 0, Container: owned}})
 	_, _ = startUnstopped(t, cluster, owned, "owned", func(f *nativeTarget) { f.refuseCancel = true })
 	if err := cluster.Terminate(t.Context()); err != nil || registered(cluster) != 0 {
 		t.Fatalf("Terminate kept a command whose container it removed: %v", err)

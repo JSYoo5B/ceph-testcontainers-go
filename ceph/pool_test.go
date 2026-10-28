@@ -49,7 +49,7 @@ func TestPoolPlacementRequiresOwnedOSDsBeforeCommands(t *testing.T) {
 	}
 	ctr := &poolFixtureContainer{}
 	cluster := poolFixtureCluster(ctr, 3)
-	cluster.osds[2].purged = true
+	cluster.osdHandles.get(2).purged = true
 	if _, err := cluster.CreatePool(t.Context(), PoolConfig{Name: "fixture", Replicas: 3}); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("a purged OSD counted toward pool placement")
 	}
@@ -100,7 +100,7 @@ func TestPoolPlacementCountsDistinctEligibleDomains(t *testing.T) {
 			ctr := &poolFixtureContainer{}
 			cluster := poolFixtureCluster(ctr, len(test.placement))
 			for id, placement := range test.placement {
-				cluster.osds[id].placement = placement
+				cluster.osdHandles.get(id).placement = placement
 			}
 			if pool, err := cluster.CreatePool(t.Context(), test.config); err == nil || pool != nil || len(ctr.Calls) != 0 {
 				t.Fatalf("ineligible domains mutated Ceph: pool=%+v error=%v calls=%v", pool, err, ctr.Calls)
@@ -114,9 +114,9 @@ func TestPoolPlacementSelectsReplicatedAndECConstraints(t *testing.T) {
 		ctr := &poolFixtureContainer{Output: createdPoolOutput()}
 		cluster := poolFixtureCluster(ctr, 4)
 		for id := range 3 {
-			cluster.osds[id].placement = OSDConfig{Host: "host-" + string(rune('a'+id)), Rack: "rack-" + string(rune('a'+id)), Root: "data", DeviceClass: "fast"}
+			cluster.osdHandles.get(id).placement = OSDConfig{Host: "host-" + string(rune('a'+id)), Rack: "rack-" + string(rune('a'+id)), Root: "data", DeviceClass: "fast"}
 		}
-		cluster.osds[3].placement = OSDConfig{Host: "excluded", Rack: "excluded", Root: "other", DeviceClass: "fast"}
+		cluster.osdHandles.get(3).placement = OSDConfig{Host: "excluded", Rack: "excluded", Root: "other", DeviceClass: "fast"}
 		config := PoolConfig{Name: "fixture", Replicas: 3, MinSize: 2, FailureDomain: "rack", CRUSHRoot: "data", DeviceClass: "fast"}
 		if erasure {
 			config.Replicas, config.MinSize = 0, 3
@@ -223,9 +223,9 @@ func TestSingleReplicaPoolExplicitlyAcknowledgesFixtureSetting(t *testing.T) {
 }
 
 func poolFixtureCluster(ctr testcontainers.Container, count int) *Container {
-	cluster := &Container{Container: ctr, osds: make(map[int]*OSDContainer), settings: options{startupTimeout: time.Second}}
+	cluster := &Container{Container: ctr, osdHandles: osdRegistry{owned: make(map[int]*OSDContainer)}, settings: options{startupTimeout: time.Second}}
 	for id := range count {
-		cluster.osds[id] = &OSDContainer{ID: id, Container: ctr}
+		cluster.osdHandles.register(id, &OSDContainer{ID: id, Container: ctr})
 	}
 	return cluster
 }

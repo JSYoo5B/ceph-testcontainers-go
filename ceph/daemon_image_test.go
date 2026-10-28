@@ -101,8 +101,8 @@ func TestDaemonImageRefusalHappensBeforeLockAndState(t *testing.T) {
 			case *OSDContainer:
 				isNil = v == nil
 			}
-			if !isNil || len(c.monitors) != 0 || len(c.managers) != 0 || len(c.osds) != 0 || c.closed {
-				t.Fatalf("refusal left state: %v monitors=%d managers=%d osds=%d", got, len(c.monitors), len(c.managers), len(c.osds))
+			if !isNil || len(c.monitors) != 0 || len(c.managers) != 0 || c.osdHandles.count() != 0 || c.closed {
+				t.Fatalf("refusal left state: %v monitors=%d managers=%d osds=%d", got, len(c.monitors), len(c.managers), c.osdHandles.count())
 			}
 		})
 	}
@@ -125,7 +125,7 @@ func TestDaemonImageOptionIsRefusedForTenantsOfASharedCluster(t *testing.T) {
 				t.Errorf("%s with image %q: %v, want ErrSharedCluster", name, image, err)
 			}
 		}
-		if len(shared.monitors)+len(shared.managers)+len(shared.osds) != 0 {
+		if len(shared.monitors)+len(shared.managers)+shared.osdHandles.count() != 0 {
 			t.Fatal("a refused tenant call changed the topology")
 		}
 	}
@@ -176,8 +176,8 @@ func TestOverriddenOSDRecordsItsImageWithoutChangingTheClusterOrOtherOSDs(t *tes
 		t.Fatal("the overridden OSD has no container")
 	}
 	// A refusal after the override keeps the first OSD intact.
-	if refused, err := c.AddOSD(t.Context(), WithDaemonImage("")); refused != nil || !errors.Is(err, ErrInvalidRequest) || len(c.osds) != 2 {
-		t.Fatalf("refused add: %v %v owned=%d", refused, err, len(c.osds))
+	if refused, err := c.AddOSD(t.Context(), WithDaemonImage("")); refused != nil || !errors.Is(err, ErrInvalidRequest) || c.osdHandles.count() != 2 {
+		t.Fatalf("refused add: %v %v owned=%d", refused, err, c.osdHandles.count())
 	}
 }
 
@@ -207,8 +207,8 @@ func TestOSDLaunchRecipeKeepsTheOSDImageNotTheClusterImage(t *testing.T) {
 func TestReopenKeepsTheOverriddenImage(t *testing.T) {
 	f := newRetainedFixture(t)
 	f.cluster.settings.essentialImage = "example.invalid/ceph:cluster"
-	f.cluster.osds[3].image = "example.invalid/ceph:new"
-	otherBefore := f.cluster.osds[4].image
+	f.cluster.osdHandles.get(3).image = "example.invalid/ceph:new"
+	otherBefore := f.cluster.osdHandles.get(4).image
 	var images []string
 	inner := f.cluster.stores.runner
 	f.cluster.stores.runner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
@@ -230,7 +230,7 @@ func TestReopenKeepsTheOverriddenImage(t *testing.T) {
 	if len(images) != 1 || images[0] != "example.invalid/ceph:new" || reopened.Image() != "example.invalid/ceph:new" {
 		t.Fatalf("reopen images %v handle %q", images, reopened.Image())
 	}
-	if f.cluster.osds[4].image != otherBefore || f.cluster.settings.essentialImage != "example.invalid/ceph:changed-later" {
+	if f.cluster.osdHandles.get(4).image != otherBefore || f.cluster.settings.essentialImage != "example.invalid/ceph:changed-later" {
 		t.Fatal("reopening one OSD changed another daemon or the cluster")
 	}
 }

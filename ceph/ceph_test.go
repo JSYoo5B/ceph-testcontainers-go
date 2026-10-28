@@ -83,13 +83,13 @@ func TestCleanupRetainsFailuresAndAcceptsMissingDaemons(t *testing.T) {
 	manager := &hostNetworkFixtureContainer{failTerminationOnce: true}
 	cluster := &Container{
 		Container: missing, manager: manager,
-		osds:     map[int]*OSDContainer{0: {Container: missing}},
-		services: map[string]testcontainers.Container{"rgw": missing},
+		osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {Container: missing}}},
+		services:   map[string]testcontainers.Container{"rgw": missing},
 	}
 	if err := cluster.Terminate(t.Context()); err == nil || cluster.manager != manager {
 		t.Fatal("failed manager cleanup lost ownership")
 	}
-	if !cluster.monitorTerminated || len(cluster.osds) != 0 || len(cluster.services) != 0 {
+	if !cluster.monitorTerminated || cluster.osdHandles.count() != 0 || len(cluster.services) != 0 {
 		t.Fatal("missing daemons remained owned after cleanup")
 	}
 	if err := cluster.Terminate(t.Context()); err != nil || cluster.manager != nil {

@@ -21,12 +21,12 @@ var errHandleWithoutCluster = "the handle does not belong to a cluster; obtain i
 // reopened OSD is stale and never acts on whatever owns the ID instead.
 func (c *Container) currentOSD(handle *OSDContainer) error {
 	id := handle.ID
-	if cur := c.osds[id]; cur == handle {
+	if cur := c.osdHandles.get(id); cur == handle {
 		return nil
 	} else if cur != nil {
 		return invalid(fmt.Errorf("this handle of osd.%d is stale: the cluster owns another instance of the OSD, which DetachedOSD.Reopen or a later handle returns", id))
 	}
-	if c.detachedOSDs[id] != nil {
+	if c.osdHandles.detachedOf(id) != nil {
 		return invalid(fmt.Errorf("osd.%d is already detached; this handle is stale, reopen it with DetachedOSD.Reopen", id))
 	}
 	return invalid(fmt.Errorf("osd.%d is not owned by this cluster", id))
@@ -59,8 +59,9 @@ func (c *Container) currentManager(handle *ManagerContainer) (*ManagerContainer,
 
 func (o *OSDContainer) daemonRef() (string, string) { return "osd", strconv.Itoa(o.ID) }
 
+// ownedBy reports, with c.mu held by the caller, whether c still owns o.
 func (o *OSDContainer) ownedBy(c *Container) bool {
-	return o != nil && c.osds[o.ID] == o && o.Container != nil && !o.purged
+	return o != nil && c.osdHandles.get(o.ID) == o && o.Container != nil && !o.purged
 }
 
 func (m *MonitorContainer) daemonRef() (string, string) { return "mon", m.DaemonName }
