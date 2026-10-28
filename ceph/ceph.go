@@ -78,10 +78,12 @@ type Container struct {
 	stores osdStorageState
 	// runDir is the shared admin-socket run directory; see runDirState for
 	// what guards each part.
-	runDir            runDirState
+	runDir runDirState
+	// portLeases is the host-port reservations of host network mode; see
+	// portLeaseState. It has no lock of its own: mu guards it.
+	portLeases        portLeaseState
 	config            []byte
 	keyring           []byte
-	portLeases        []*hostPortLease
 	closed            bool
 	monitorTerminated bool
 
@@ -430,7 +432,7 @@ func (c *Container) trackHostPortLease(lease *hostPortLease) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.portLeases = append(c.portLeases, lease)
+	c.portLeases.track(lease)
 }
 
 // ManagerContainer returns the initial MGR a for compatibility and inspection.
@@ -973,11 +975,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	// stay unconfirmed are retried after the teardown, which ends the ones in
 	// the cluster's own containers.
 	_ = c.stopNativeInvocations(ctx)
-	for _, lease := range c.portLeases {
-		if err := lease.Release(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
+	errs = append(errs, c.portLeases.release(ctx)...)
 	// Stop gateways and metadata servers while their backing OSDs are alive.
 	for name, ctr := range c.services {
 		if err := ctr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {

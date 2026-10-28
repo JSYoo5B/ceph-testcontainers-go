@@ -28,10 +28,8 @@ func (c *Container) reserveTrackedHostPortsWith(ctx context.Context, count int, 
 		return nil, errClusterTerminated
 	}
 	lease, err := reserve(ctx, c.settings.essentialImage, c.staticFacts().PublicAddress, count, c.settings.startupTimeout)
-	if lease != nil {
-		// Do not gate this publication on ctx: the native allocator now exists.
-		c.portLeases = append(c.portLeases, lease)
-	}
+	// Do not gate this publication on ctx: the native allocator now exists.
+	c.portLeases.track(lease)
 	if lease == nil && err == nil {
 		err = errors.New("host port reservation returned no lease")
 	}

@@ -199,9 +199,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 		if c.settings.hostNetwork {
 			lease, err = reserveHostPorts(ctx, c.settings.essentialImage, c.staticFacts().PublicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout, c.ownedLabel())
 			// c.mu is already held, so register ownership without re-locking it.
-			if lease != nil {
-				c.portLeases = append(c.portLeases, lease)
-			}
+			c.portLeases.track(lease)
 			if err != nil {
 				return mon, err
 			}
