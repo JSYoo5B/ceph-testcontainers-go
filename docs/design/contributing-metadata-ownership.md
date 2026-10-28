@@ -655,6 +655,42 @@ conflict-resolution commits record). It can be developed in parallel with step
 2, but it is a hard cutover, so it should merge only after #212 and #214 have
 landed.
 
+## Same-package catalogue conflicts: `apinaming resolve`
+
+The per-package split removed the cross-package collision. Two changes to the
+same package still conflict, and the owner's sample of four real integrations
+at one main checkpoint shows what is left: three API migrations that all touched
+the `ceph` and `override` packages each had four content-conflicted catalogue
+files (`declarations.json` and `review.json` of both packages) and no
+release-fragment conflict; the fourth integration had none.
+
+Reproduction of that class. `git merge-tree --write-tree` on the two parents of
+each of the three integrations (their merge bases differ) reports a content
+conflict in exactly those four files each time, and only those four under
+`docs/design/api-naming`. The conflicts are mechanical: both parents add or
+remove different rows at the same place of an array, and both rewrite the
+receipt hashes. The measured outcome the tool is judged on: for each of the
+three pairs and both packages, the three-way merge of the parents' rows is
+identical to the rows of the combined commit that the author committed after
+resolving by hand and re-running regenerate and approve, and the receipt derived
+from the combined catalogue bytes (hashes, counts, review note, page) equals the
+committed combined receipt byte for byte (six of six package pairs; the five
+other packages did not conflict and their composition also matches). This was a
+one-off measurement over the retained commits; it is not a committed test
+because it depends on those commits.
+
+`apinaming resolve` removes the manual part of that class: it takes both
+parents' approved states, composes their rows by three-way merge, checks that
+the merged source derives exactly that row set, and rewrites the three files.
+It does not remove the Git conflict itself, and it does not remove the need to
+resolve conflicting Go sources, move records, `docs/<package>.md` pages or
+`package-split` shards. It approves only a composition of rows that are already
+approved; any row that is new, changed on both sides, or missing from the merge
+is refused and left to `regenerate` and a separate `approve`. The committed
+tests build both sides of the conflict in a temporary Git repository, show the
+same four-file conflict class (`declarations.json` and `review.json` here), and
+show the same tree verifying after `resolve`.
+
 ## Not decided and limits
 
 - The directory and field names above are proposals.
