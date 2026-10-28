@@ -887,9 +887,42 @@ refuses a stale catalogue or a pending rename proposal. A change in one package
 makes only that package's receipt stale, so pull requests on different packages
 touch disjoint files. `go run ./internal/tools/apinaming aggregate` prints the
 per-package counts and totals on demand; they are not committed. CI runs
-neither command, only the tests and the move check below. When a rebase conflicts in these files, take
-the base's version of the package's files, rerun `regenerate` and then
-`approve` for that package, and keep the review note in the receipt.
+neither command, only the tests and the move check below.
+
+#### Merging `main` into a branch that conflicts in these files
+
+Two pull requests that change the same package's API both rewrite its
+`declarations.json` and `review.json` (and `members.json` for members), so Git
+reports a content conflict even when their API changes are independent. After
+`git merge origin/main`, resolve the Go sources first. Then, instead of editing
+the three JSON files by hand:
+
+```sh
+go run ./internal/tools/apinaming resolve            # packages that both parents changed
+go run ./internal/tools/apinaming resolve <package>  # or name them
+```
+
+`resolve` reads the three committed states from Git (the merge base and the two
+parents, `HEAD` and `MERGE_HEAD` by default; `-base`, `-ours` and `-theirs`
+override them), so conflict markers in the working tree do not matter. It
+rewrites the three files of a package, receipt included, only when all of these
+hold:
+
+- each parent's receipt pins that parent's own committed catalogue bytes and
+  counts, so both parents are approved states;
+- the three-way merge of the catalogue rows (one row per declaration, one per
+  type and member) has no row that both parents changed differently, and no
+  receipt field (`review`, `page`) that both changed differently;
+- the catalogue derived from the merged source consists of exactly those merged
+  rows: no declaration or member that neither approved parent contains, and none
+  that both keep missing; no pending rename proposal remains.
+
+That is the whole claim: the merge introduced no API row that a reviewer has not
+already approved on one of the two sides. It does not review whether the two
+changes work together; the merged source still has to compile and pass the
+tests. When any condition fails, `resolve` writes nothing, names the rows, and
+the usual `regenerate` followed by a separate `approve` (a human review of the
+new combination) remains the path. Commit the result with the merge.
 
 A change that moves public API from one package to another (or deletes or
 introduces a declaration row) also adds a move record,

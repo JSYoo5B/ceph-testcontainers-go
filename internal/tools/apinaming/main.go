@@ -3,6 +3,9 @@
 //
 //	apinaming regenerate [package...]    rewrite declarations.json and members.json
 //	apinaming approve [-review note] package...   write review.json only
+//	apinaming resolve [-base rev] [-ours rev] [-theirs rev] [package...]
+//	                                     after a merge, re-derive the catalogues and receipts of packages
+//	                                     that both parents changed, if the merge only composes approved rows
 //	apinaming aggregate                  print the computed totals (nothing is committed)
 //	apinaming check                      verify layout, catalogues and receipts like the tests
 //	apinaming moves [-base rev] [-require-base]   check move records and account for removed/added rows against the merge base
@@ -22,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/apiinventory/catalogue"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/apiinventory/moves"
@@ -63,7 +67,7 @@ func gitShow(root, rev, path string) ([]byte, error) {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: apinaming regenerate|approve|aggregate|check|moves|migrate-split|migrate-verify")
+		return errors.New("usage: apinaming regenerate|approve|resolve|aggregate|check|moves|migrate-split|migrate-verify")
 	}
 	root, err := moduleRoot()
 	if err != nil {
@@ -73,6 +77,8 @@ func run(args []string) error {
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	review := flags.String("review", catalogue.DefaultReview, "approve: review note below docs/design")
 	base := flags.String("base", "", "migrate-*: Git revision that holds the global catalogues; moves: revision to compare with (its merge base with HEAD is used)")
+	ours := flags.String("ours", "HEAD", "resolve: the branch being merged into")
+	theirs := flags.String("theirs", "MERGE_HEAD", "resolve: the branch being merged in")
 	requireBase := flags.Bool("require-base", false, "moves: fail instead of reporting SKIPPED when no base is available")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -90,6 +96,8 @@ func run(args []string) error {
 			fmt.Println("wrote", path)
 		}
 		return err
+	case "resolve":
+		return resolve(cfg, *base, *ours, *theirs, flags.Args())
 	case "aggregate":
 		rows, total, err := catalogue.Summarize(root)
 		if err != nil {
@@ -182,4 +190,59 @@ func checkMoves(root, base string, requireBase bool) error {
 		fmt.Printf("moves: OK (compared with merge base %s)\n", result.Base)
 	}
 	return nil
+}
+
+func gitRead(root string) catalogue.Reader {
+	return func(rev, path string) ([]byte, error) {
+		if err := exec.Command("git", "-C", root, "cat-file", "-e", rev+":"+path).Run(); err != nil {
+			return nil, nil
+		}
+		return gitShow(root, rev, path)
+	}
+}
+
+func gitOutput(root string, args ...string) (string, error) {
+	out, err := exec.Command("git", append([]string{"-C", root}, args...)...).Output()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// resolve implements `apinaming resolve`. Revisions are resolved to commit
+// ids first, so a name that is not a commit fails instead of reading nothing.
+// The merge base defaults to the merge base of the two parents.
+func resolve(cfg catalogue.Config, base, ours, theirs string, packages []string) error {
+	commit := func(label, rev string) (string, error) {
+		id, err := gitOutput(cfg.Root, "rev-parse", "--verify", "--end-of-options", rev+"^{commit}")
+		if err != nil {
+			return "", fmt.Errorf("%s revision %q is not a commit (is a merge in progress?): %w", label, rev, err)
+		}
+		return id, nil
+	}
+	var err error
+	if ours, err = commit("ours", ours); err != nil {
+		return err
+	}
+	if theirs, err = commit("theirs", theirs); err != nil {
+		return err
+	}
+	if base == "" {
+		if base, err = gitOutput(cfg.Root, "merge-base", ours, theirs); err != nil {
+			return fmt.Errorf("no merge base of the two parents: %w", err)
+		}
+	} else if base, err = commit("base", base); err != nil {
+		return err
+	}
+	results, err := catalogue.Resolve(cfg, catalogue.ResolveOptions{Base: base, Ours: ours, Theirs: theirs, Read: gitRead(cfg.Root)}, packages)
+	for _, res := range results {
+		for _, path := range res.Files {
+			fmt.Println("wrote", path)
+		}
+		fmt.Printf("resolved %s: %d declaration rows only in ours, %d only in theirs; both receipts were approved states and the merged rows are their composition\n", res.Package, res.Comp.OursOnly, res.Comp.TheirsOnly)
+	}
+	if err == nil && len(results) == 0 {
+		fmt.Println("resolve: no package was changed by both parents; nothing to do")
+	}
+	return err
 }
