@@ -98,6 +98,45 @@ inputs that are plain strings, with these parts:
 - The one-creation-attempt rule of `startOSD` applies unchanged: the seam does
   not authorize replaying a device launch.
 
+## Cluster-wide device claim table (internal primitive)
+
+`ceph/osd_device_claims.go` (`osdDeviceClaims`, `Container.deviceClaims`) is the
+claim table that the launch seam left to its first production caller. It is a
+primitive: nothing calls `claim`, so no cluster holds a claim and the two
+Terminate hooks and the `removeOSD` hook are no-ops.
+
+- **What a claim is.** Exclusion bookkeeping in the Go cluster: OSD ID, an opaque
+  lease token the caller chose, the `osdBlockDevice` identity and the recipe's
+  `started` one-shot. It is not the file, loop and device-mapper lease. Dropping a
+  claim says only that no container of this cluster can hold the device any more;
+  it never permits the caller to release the DM/loop/backing chain, whose barrier
+  stays the caller's.
+- **Uniqueness.** One claim per OSD ID, lease token, `/dev/mapper` node and
+  major:minor, each compared with every held claim. A refused claim changes
+  nothing and repeating a request is a conflict with itself.
+- **Lock.** `Container.mu` guards the table; no mutex was added. `claim` is
+  meant to run where `registerOSD` runs, before the recipe can start. The only
+  state shared with `startOSD` (which runs without `mu`) is the recipe's atomic
+  one-shot.
+- **Partial start.** A claim whose creation was not attempted is released by
+  sealing the one-shot first, so a recipe that outlives its claim cannot start and
+  `startOSD` reports the ordinary "do not replay" error. A claim whose creation was
+  attempted stays until a container removal is confirmed: a lost create reply can
+  leave a running container that holds the device.
+- **Release order.** `removeOSD` drops the claim after the container terminated and
+  the storage directory was discarded, right before the handle is forgotten.
+  `terminate` drops it per OSD after `osd.Terminate` and before the handle is
+  forgotten, and `settle` drops the rest only after the labeled-container removal
+  succeeded for an owned cluster. A claim that survives Terminate is named in its
+  error so the lease owner keeps the whole chain. The existing Terminate order is
+  unchanged.
+- **Unchanged.** `Detach`, `Reopen` and the retained-store admission still refuse a
+  device OSD; the file-backed tmpfs capacity oracle is untouched.
+
+The first production caller must still pin its own lock position in
+`osdDeviceClaimCallers`, build the recipe and claim in one serialized step, and
+pass the lease token its controller owns. The guards fail until it does.
+
 ## Composition with the existing Python observers
 
 The three merged units map onto launch phases and stay separate from it:
