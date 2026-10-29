@@ -3,7 +3,7 @@
 > Current boundary: the shared-cluster/tenant harness and its core-only policy,
 > lease and hook plumbing have been removed. Harness references and source
 > locations below are historical design evidence, not retained APIs or future
-> extraction requirements. See [independent fixtures](../ceph.md#run).
+> extraction requirements. See [independent fixtures](../ceph.md#usage-example).
 
 Status: stage 2's registry and internal hooks and stage 3's network extraction
 are implemented, including container pause as `fault.Pause`, returning

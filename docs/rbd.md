@@ -527,7 +527,7 @@ Mirroring two clusters moved to the `rbd/mirror` package; see [rbd-mirror.md](rb
 ### Independent test fixtures
 
 Start an independent fixture with `Run`, create service resources explicitly,
-and register owned cleanup. See [Independent test fixtures](ceph.md#run).
+and register owned cleanup. See [Independent test fixtures](ceph.md#usage-example).
 
 ## Examples
 

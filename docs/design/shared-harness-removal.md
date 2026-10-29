@@ -5,7 +5,7 @@ benefit did not justify lifetime, admission, isolation and recycling complexity.
 This decision supersedes extraction and hardening of the framework. Tests own
 independent `ceph.Run` fixtures and explicitly create and clean their resources.
 There is no replacement sharing facade, deprecated alias or retired mode.
-See the [current cluster usage](../ceph.md#run).
+See the [current cluster usage](../ceph.md#usage-example).
 
 ## Removal boundary
 

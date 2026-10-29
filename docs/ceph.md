@@ -34,7 +34,7 @@ The `ceph` package provides:
   and bounded diagnostics reports.
 
 Each test owns an independent `Run` fixture and explicitly creates its pools,
-namespaces and Cephx identities. See [Independent test fixtures](ceph.md#run).
+namespaces and Cephx identities. See [Independent test fixtures](ceph.md#usage-example).
 
 RBD, CephFS and RGW (S3) live in their own packages: [rbd](rbd.md),
 [cephfs](cephfs.md) and [rgw](rgw.md). Their options plug into the same
@@ -1274,7 +1274,7 @@ bootstraps, start with `ceph.Run` and add the service later.
 Call `Run` for each test, register owned cleanup before checking its error, and
 create the resources and restricted identities that the test needs. The shared
 cluster and tenant harness has been removed without aliases or a replacement
-sharing framework. See [the migration guide](ceph.md#run).
+sharing framework. See [the migration guide](ceph.md#usage-example).
 
 ### Container Methods
 
@@ -4327,7 +4327,7 @@ Start `ceph.Run` in each test and register the returned cluster for cleanup
 before checking the error. Use `WithPools` for bootstrap pools, or
 `CreatePool` for an explicitly owned dynamic pool. Create restricted Cephx
 identities with `CreateClient` and use `WithClientIdentity` for client containers.
-See [the complete migration example](ceph.md#run).
+See [the complete migration example](ceph.md#usage-example).
 
 ### Create an erasure-coded data pool for RBD images
 

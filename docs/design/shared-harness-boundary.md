@@ -2,7 +2,7 @@
 
 > Historical record: the extraction direction below was superseded by complete
 > removal of the shared-cluster/tenant harness. These packages and policies are
-> absent from current source. Use [independent fixtures](../ceph.md#run) instead. All snapshots, counts and statements below
+> absent from current source. Use [independent fixtures](../ceph.md#usage-example) instead. All snapshots, counts and statements below
 > describe the earlier extraction, not the supported API.
 
 This note is the measured inventory and the package boundary of the shared-cluster

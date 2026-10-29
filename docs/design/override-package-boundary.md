@@ -3,7 +3,7 @@
 > Current boundary: the shared-cluster/tenant harness and its core-only policy,
 > lease and hook plumbing have been removed. Harness references and source
 > locations below are historical design evidence, not retained APIs or future
-> extraction requirements. See [independent fixtures](../ceph.md#run).
+> extraction requirements. See [independent fixtures](../ceph.md#usage-example).
 
 Design note for the `ceph.Container` size reduction (Refs #146). It records the
 owner decisions of 2026-10-27 on the override group as decided, including the

@@ -407,7 +407,7 @@ remain. Actual RGW tenants/accounts and other independent resource lease types
 are outside the removal boundary.
 
 The [bounded inventory](shared-harness-removal.md) records the private and native
-scenario disposition; the [current cluster usage](../ceph.md#run)
+scenario disposition; the [current cluster usage](../ceph.md#usage-example)
 uses independent `Run` fixtures with explicit resources and owned cleanup.
 The declaration-removal record accounts for the base-to-final catalogue delta.
 Surviving package catalogues are regenerated from source and approved in a
