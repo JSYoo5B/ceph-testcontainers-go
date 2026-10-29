@@ -87,10 +87,48 @@ an owner approval.
   generation, the publish-before-start ownership record and cleanup are
   unchanged.
 
+## Run
+
+Change `312-run-image-set`. Proposal of the implementation side, not an owner
+approval. `Run(ctx, img string, opts ...testcontainers.ContainerCustomizer)` and
+the `rbd`, `cephfs` and `rgw` `Run` signatures are unchanged: `Run` is the
+testcontainers-compatible entry point and its single trailing variadic stays the
+only place for configuration.
+
+- **A configuration value inside the existing variadic.** `ceph.RunOptions` is a
+  value with a chainable `WithImageSet`. It implements
+  `testcontainers.ContainerCustomizer` with a `Customize` that does nothing, and
+  `Run` recognises it the way it recognises `ceph.Option`: it applies it to the
+  cluster settings and validates it before any resource is created. Docker and
+  container execution policy remains the functional customizers.
+- **Service inputs are not forwarded.** `rbd.WithPools`, `cephfs.WithFilesystems`,
+  `cephfs.WithMDSImage`, `rgw.WithGateways`, `rgw.WithImage` and every
+  `ceph.WithX` setting stay `ceph.Option` values that `Run` applies to the
+  settings; they never reach a container request. A test applies a service
+  option together with an image set and fails if either is dropped.
+- **The `img` argument with an image set.** It is not a second image input: empty
+  or equal to the set's Essential (after `All` expansion) is accepted and
+  anything else is `ErrInvalidRequest` before effects. Without an image set the
+  argument is the aggregate image as before.
+- **Composition (rules 1 to 5).** The zero value selects nothing. An explicit set
+  is a selection: an explicit empty set is refused, not read as unspecified. At
+  most one `RunOptions` value in the variadic selects a set; a second selection
+  is refused even when equal, so argument order never decides a conflict. Within
+  one value the later `WithImageSet` replaces the earlier one. Everything is
+  validated once, before any container, network or volume is created, and
+  missing roles that a requested feature needs are refused with no fallback to
+  Essential.
+- **Copies (rule 7).** `RunOptions` holds an `ImageSet`, a struct of strings, so a
+  struct copy is independent and there is no slice to clone. A future member that
+  holds a slice must use `slices.Clone`, which keeps nil and non-nil empty apart.
+- **Raw customizers.** They reach the first MON's container request only, in
+  argument order, after the module's own request options and before the
+  messenger environment, the `WithConfigFile` file and the ownership label.
+- `RunWithImages` and `WithImages` are removed without aliases. The mirror
+  `RunWithImages` functions are separate and unchanged.
+
 ## Not decided here
 
-- How `Run` maps `ceph.Option` values and raw customizers into one effective
-  configuration, and how image selection (single image or `ImageSet`) joins it.
 - How tenant attachment keeps the `*ClientConfig` identity while cloning its
   owned collections.
 - How the mirror `Run` functions keep source/destination role inference.

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 355,
+  "count": 356,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -1994,17 +1994,32 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.RunOptions",
+      "kind": "type",
+      "proposed": "ceph.RunOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.RunOptions.Customize",
+      "kind": "method",
+      "signature": "func(*testcontainers.GenericContainerRequest) error",
+      "receiver": "RunOptions",
+      "proposed": "ceph.RunOptions.Customize",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.RunOptions.WithImageSet",
+      "kind": "method",
+      "signature": "func(images ImageSet) RunOptions",
+      "receiver": "RunOptions",
+      "proposed": "ceph.RunOptions.WithImageSet",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.RunTests",
       "kind": "function",
       "signature": "func(m *testing.M, s ...*SharedCluster) int",
       "proposed": "ceph.RunTests",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.RunWithImages",
-      "kind": "function",
-      "signature": "func(ctx context.Context, images ImageSet, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
-      "proposed": "ceph.RunWithImages",
       "decision": "baseline"
     },
     {
@@ -2305,13 +2320,6 @@
       "kind": "function",
       "signature": "func() testcontainers.CustomizeRequestOption",
       "proposed": "ceph.WithIdleEntrypoint",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithImages",
-      "kind": "function",
-      "signature": "func(images ImageSet) Option",
-      "proposed": "ceph.WithImages",
       "decision": "baseline"
     },
     {

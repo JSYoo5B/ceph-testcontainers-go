@@ -26,7 +26,7 @@ func TestImageSetSelectionDoesNotFallback(t *testing.T) {
 	}
 }
 
-func TestRunWithImagesAppliesServiceOverridesAfterBaseSet(t *testing.T) {
+func TestRunWithImageSetAppliesServiceOverridesAfterBaseSet(t *testing.T) {
 	for _, role := range []string{"rgw", "cephfs"} {
 		for _, selection := range []string{"missing", "replacement", "aggregate"} {
 			t.Run(role+"/"+selection, func(t *testing.T) {
@@ -42,8 +42,7 @@ func TestRunWithImagesAppliesServiceOverridesAfterBaseSet(t *testing.T) {
 				capture := Option(func(o *options) error { effective = o; return nil })
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				cluster, err := RunWithImages(ctx, images,
-					(serviceHooks{}).WithServiceImage(role, "selected-service"), capture)
+				cluster, err := Run(ctx, "", RunOptions{}.WithImageSet(images), (serviceHooks{}).WithServiceImage(role, "selected-service"), capture)
 				if cluster != nil || !errors.Is(err, context.Canceled) {
 					t.Fatalf("valid role selection did not reach canceled admission: %v %v", cluster, err)
 				}
@@ -160,8 +159,8 @@ func TestManualToolkitAttachmentWaitsForMonitorTopology(t *testing.T) {
 	}
 }
 
-// A service image option replaces its role whichever of it and WithImages came
-// first; the Run image still has to equal the essential image.
+// A service image option replaces its role whichever of it and the image set came
+// first; the Run image must be empty or the essential image.
 func TestServiceImageOptionReplacesItsRoleInEitherOrder(t *testing.T) {
 	for _, role := range []string{"rgw", "cephfs"} {
 		for _, serviceFirst := range []bool{true, false} {
@@ -169,7 +168,7 @@ func TestServiceImageOptionReplacesItsRoleInEitherOrder(t *testing.T) {
 				var effective *options
 				capture := Option(func(o *options) error { effective = o; return nil })
 				service := (serviceHooks{}).WithServiceImage(role, "selected-service")
-				set := WithImages(ImageSet{Essential: "core", Client: "toolkit", CephFS: "set-mds", RGW: "set-rgw"})
+				set := RunOptions{}.WithImageSet(ImageSet{Essential: "core", Client: "toolkit", CephFS: "set-mds", RGW: "set-rgw"})
 				opts := []testcontainers.ContainerCustomizer{set, service, capture}
 				if serviceFirst {
 					opts = []testcontainers.ContainerCustomizer{service, set, capture}

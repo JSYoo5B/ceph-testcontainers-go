@@ -143,8 +143,10 @@ These affect commands or client libraries you run yourself, not the typed API:
 
 `ceph.ImageSet` selects Essential, Client, CephFS, RBDAux and RGW, or an
 exclusive All image. This is the image model used by the module and its CI.
-`Run(ctx, image)` treats the image as an aggregate. Use `RunWithImages` or
-`WithImages` for explicit roles; a missing optional feature image is an error.
+`Run(ctx, image)` treats the image as an aggregate. Pass
+`ceph.RunOptions{}.WithImageSet(set)` to `Run` for explicit roles, with an empty
+image argument (or the set's essential image, which is not a second input); a
+missing optional feature image is an error.
 
 | Role | Runtime responsibility |
 | --- | --- |
@@ -156,12 +158,12 @@ exclusive All image. This is the image model used by the module and its CI.
 | all | Aggregate supplying every role |
 
 ```go
-cluster, err := ceph.RunWithImages(ctx, ceph.ImageSet{
+cluster, err := ceph.Run(ctx, "", ceph.RunOptions{}.WithImageSet(ceph.ImageSet{
     Essential: essentialRef,
     Client: clientRef,
     CephFS: cephFSRef,
     RGW: rgwRef,
-}, cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
+}), cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
    rgw.WithGateways(rgw.Config{Name: "s3"}))
 if cluster != nil { testcontainers.CleanupContainer(t, cluster) }
 if err != nil { t.Fatal(err) }
@@ -274,7 +276,7 @@ Read this scope before relying on it:
 ## Related APIs
 
 - [ceph.md](../ceph.md): `DefaultImage`, `Run`, `FactsOf`,
-  `ImageSet`, `WithImages`, `WithDaemonImage`, the error categories.
+  `ImageSet`, `RunOptions.WithImageSet`, `WithDaemonImage`, the error categories.
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.
 - [cephfs.md](../cephfs.md): `WithMDSImage`.

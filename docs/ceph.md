@@ -205,8 +205,8 @@ Docker host, or the test process cannot reach the first MON.
 #### Image
 
 `Run(ctx, image)` uses a complete aggregate image; the default is
-`ceph.DefaultImage`. `RunWithImages` and `WithImages` accept the same
-`ImageSet` role model. Essential supplies MON/MGR/OSD; Client, CephFS,
+`ceph.DefaultImage`. `ceph.RunOptions{}.WithImageSet(set)`, passed to `Run` with
+an empty image argument, selects the `ImageSet` role model. Essential supplies MON/MGR/OSD; Client, CephFS,
 RBDAux and RGW are required only by their selected features. Missing optional
 roles never fall back to essential. See [image selection](guides/releases-and-images.md#role-images).
 
@@ -5395,8 +5395,10 @@ See [Releases and images](guides/releases-and-images.md) for details.
 ## Role image selection
 
 `ImageSet` selects Essential, Client, CephFS, RBDAux and RGW, or an exclusive
-All image. `RunWithImages` accepts the set directly; `WithImages` applies it
-to service Run entry points with images.Essential as the image argument.
+All image. `RunOptions.WithImageSet` carries the set to `Run`; it applies it
+to `Run`, `rbd.Run`, `cephfs.Run` and `rgw.Run`. The image argument is then empty
+or equal to the set's essential image and is not a second input; any other value
+is refused with `ErrInvalidRequest` before anything is created.
 `Run` without an explicit set uses its image as the aggregate.
 `ClusterFacts.Images` returns the effective selection, and its `Essential` field
 is the essential image. `cephfs.WithMDSImage` and `rgw.WithImage` replace the cephfs and rgw

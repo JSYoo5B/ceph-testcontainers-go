@@ -178,7 +178,7 @@ func measureTrial(ctx context.Context, docker *testcontainers.DockerClient, cfg 
 		selection = ceph.ImageSet{Essential: images["essential"], Client: images["client"]}
 	}
 	started := time.Now()
-	c, err := ceph.RunWithImages(ctx, selection, ceph.WithOSDCount(1))
+	c, err := ceph.Run(ctx, "", ceph.RunOptions{}.WithImageSet(selection), ceph.WithOSDCount(1))
 	result.StartSeconds = time.Since(started).Seconds()
 	var owner string
 	defer func() {

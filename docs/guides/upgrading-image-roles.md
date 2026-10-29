@@ -17,7 +17,7 @@ aliases; use the names below.
 
 `ControlContainer` is the executor created from the essential image. It is not
 a role. `cephfs.WithMDSImage` and `rgw.WithImage` set the cephfs and rgw roles
-of the whole cluster and replace those roles of a `WithImages` set whichever
+of the whole cluster and replace those roles of a `RunOptions.WithImageSet` set whichever
 option comes first.
 
 The mirror `Run` functions refuse an image that a cluster selects for another

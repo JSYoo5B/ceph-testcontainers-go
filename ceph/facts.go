@@ -23,7 +23,7 @@ func (o options) effectiveImages() ImageSet {
 	return o.defaultImages()
 }
 
-// defaultImages is the aggregate selection of a Run without WithImages: the
+// defaultImages is the aggregate selection of a Run without WithImageSet: the
 // Run image supplies every role, except where a service image option replaced
 // the cephfs or rgw role.
 func (o options) defaultImages() ImageSet {

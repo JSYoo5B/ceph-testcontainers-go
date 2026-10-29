@@ -144,7 +144,7 @@ The default is `ceph.DefaultImage`, the pruned Tentacle aggregate image
 `quay.io/ceph/ceph:v20.2.4` pinned by its multi-architecture digest
 (linux/amd64 and linux/arm64).
 
-An aggregate supplies all roles. For explicit roles use `ceph.WithImages`:
+An aggregate supplies all roles. For explicit roles pass `ceph.RunOptions{}.WithImageSet(set)` to `Run`, with an empty image argument:
 essential supplies the daemons and client supplies ordinary RBD commands.
 RBD mirror/cache additionally select rbd-aux. Keep Ceph releases and native
 architectures consistent. See the [image guide](guides/releases-and-images.md).
@@ -202,7 +202,7 @@ cluster, err := rbd.Run(ctx, ceph.DefaultImage,
 `AllowOverwrites` is required for RBD data pools.
 
 Every `ceph.Run` option is accepted as well (`ceph.WithOSDCount`,
-`ceph.WithHostNetwork`, `ceph.WithImages`, `ceph.WithConfigFile`,
+`ceph.WithHostNetwork`, `ceph.RunOptions`, `ceph.WithConfigFile`,
 `ceph.WithMessengerMode`, ...); see [ceph.md](ceph.md). The generic options of
 the `testcontainers` package (for example `testcontainers.WithEnv`,
 `testcontainers.WithLogger` or any `testcontainers.CustomizeRequestOption`)
