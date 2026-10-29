@@ -40,7 +40,7 @@ releases before 20.2.4 have no `aes256k` Cephx keys; see the same section. The
 repository's continuous integration runs its test suites on both releases; see
 [CI](../contributing/ci.md). Native limits that both releases share, such as a
 daemon stranded without a MON session after its ticket expired, are listed in
-[Upgrading to v0.2.0](upgrading-to-v0.2.md#remaining-native-limits).
+[Known release-specific issues](#known-release-specific-issues).
 
 To run against Squid, pass a Squid image to `Run`:
 
@@ -138,6 +138,15 @@ These affect commands or client libraries you run yourself, not the typed API:
   `cephfsmirror.Mirror.RebalanceDirectories` after `AddDaemon`. Ceph's Tentacle
   documentation also marks deployments with several CephFS mirror daemons as
   untested upstream. See [cephfs-mirror.md](../cephfs-mirror.md).
+- **Both releases, MON paused past the ticket lifetime.** A MON paused for
+  longer than the MON ticket lifetime can strand a daemon whose MON session was
+  on it: its reconnect is refused with `EACCES`, and it stops authenticating
+  until it is restarted. With 12-second tickets and a 25-second pause this
+  happened to the active MGR in two of four native runs. See
+  [Daemon controls](messenger-client-fixtures.md#daemon-controls).
+- **Both releases, CephFS directory rebalancing.** External directory changes or
+  mirror daemons joining or leaving can still trigger the upstream MGR hang; see
+  [CephFS limitations](../cephfs.md#limitations-and-release-differences).
 
 ## Role images
 
@@ -257,8 +266,7 @@ release, err := osd.Version(ctx) // what the running daemon reports, such as "20
 Read this scope before relying on it:
 
 - It overrides one container. The cluster's images, `ClusterFacts` and the
-  other daemons are untouched, and a shared cluster refuses the call to its
-  tenants.
+  other daemons are untouched.
 - `CephVersion` is recorded once from the first MON and the CLI image. It does
   not describe an overridden daemon: use the daemon handle's `Version`, which
   reads the daemon's own admin socket and fails when the reply has no

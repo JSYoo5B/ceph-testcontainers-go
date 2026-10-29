@@ -225,12 +225,6 @@ func TestSetFullRatiosNotAppliedHandleTakesNoLock(t *testing.T) {
 	ended, cancel := context.WithCancel(t.Context())
 	cancel()
 	for name, call := range map[string]func(*testing.T) (*ceph.Container, *fullRatiosFixture, *FullRatiosHandle, error){
-		"shared": func(t *testing.T) (*ceph.Container, *fullRatiosFixture, *FullRatiosHandle, error) {
-			ctr := &fullRatiosFixture{}
-			c := testhelper.TestCluster(ctr, testhelper.TestConfig{Shared: true, StartupTimeout: time.Minute})
-			h, err := SetFullRatios(t.Context(), c, ceph.FullRatios{NearFull: .1, BackfillFull: .2, Full: .3})
-			return c, ctr, h, err
-		},
 		"context ended": func(t *testing.T) (*ceph.Container, *fullRatiosFixture, *FullRatiosHandle, error) {
 			c, ctr := newFullRatiosFixture(t)
 			h, err := SetFullRatios(ended, c, ceph.FullRatios{NearFull: .1, BackfillFull: .2, Full: .3})
@@ -248,10 +242,6 @@ func TestSetFullRatiosNotAppliedHandleTakesNoLock(t *testing.T) {
 				t.Fatal("the refusal returned a real handle or reached the native CLI", err)
 			}
 			switch name {
-			case "shared":
-				if !errors.Is(err, ceph.ErrSharedCluster) {
-					t.Fatal("not a shared-cluster refusal", err)
-				}
 			case "context ended":
 				if !errors.Is(err, context.Canceled) {
 					t.Fatal("the context error was lost", err)

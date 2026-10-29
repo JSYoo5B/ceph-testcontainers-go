@@ -46,7 +46,7 @@ an owner approval.
    effect: before the topology lock, any registration and any container. A
    refusal changes no state and does not wait for a lock.
 6. **Ordering of checks is part of the contract and is unchanged:** the
-   shared-cluster gate, then the context, then configuration validation, then
+   context, then configuration validation, then
    the topology lock and the existing registration and cleanup path. Existing
    cancellation and error categories are kept.
 7. **Ownership.** A value owns its data. Copies must not share mutable storage:
@@ -132,34 +132,120 @@ only place for configuration.
 - `RunWithImages` and `WithImages` are removed without aliases. The mirror
   `RunWithImages` functions are separate and unchanged.
 
-### Grouping plan for the remaining `ceph.WithX` options (proposal, not decided)
+### OSD storage group (change `312-osd-storage`)
 
-Principle (owner): `Run` keeps its testcontainers signature; Docker and
-container execution policy stays testcontainers-style `WithX`; Ceph settings are
-not one `WithX` each but a few domain-coherent value types with chainable,
-value-returning methods, each carried by one option function that `Run`
-recognises like `ceph.Option` (its `Customize` does nothing). No universal
-options object, and no setting with two spellings: a setting moves in one slice
-and its old function is removed in the same slice.
+Proposal of the implementation side, not an owner approval. The second group
+after images follows the carrier pattern above:
 
-Inventory of the 23 option functions of package `ceph` (plus
-`rbd.WithPools`, `cephfs.WithFilesystems`/`WithMDSImage`, `rgw.WithGateways`/`WithImage`)
-and the proposed owner of each:
+```go
+storage := ceph.OSDStorage{}.WithBlockSize(256 << 20).WithObjectStore(ceph.OSDMemStore)
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDStorage(storage))
+```
 
-| Group (value type) | Settings | Slice |
+The four former per-field options (block size, object store, in-memory size,
+volume) are fields of this value; they are not kept under a second spelling.
+
+- **Why this group first.** The full topology group (counts, no-initial flags,
+  pool defaults, default CRUSH root, pools, startup timeout, auth) has about 300
+  call sites in 150 files. The storage group has the fewest (about 50 call sites
+  in 30 files), is cohesive (where every OSD keeps its data) and has the most
+  incompatible-combination rules, so it is the smallest reviewable slice that
+  exercises explicit-versus-unspecified and conflict refusal.
+- **Rules applied.** The zero value changes nothing. Every field records that it
+  was set, so `WithBlockSize(0)`, `WithObjectStore("")` and `WithInMemory(0)` are
+  refused as explicit invalid settings and never read as the default. Two
+  `WithOSDStorage` options that set the same field are refused even when equal;
+  different fields compose in any order. Within one value a later call replaces
+  the earlier one. The existing combination rules (MemStore with in-memory or
+  volume storage, in-memory with volume storage) are unchanged and still refuse
+  before any resource is created. Repeating a legacy option used to mean last
+  wins; across carriers it is now a refusal, which is the only behavior change.
+- **Reconciliation with `OSDConfig` and `OSDOptions`.** `OSDConfig` is the
+  per-OSD placement and `OSDOptions` (AddOSD) is per-call placement and image.
+  These storage settings are cluster-wide: the runtime keeps one volume or one
+  tmpfs for all OSDs and AddOSD reads the cluster settings. A per-OSD
+  `OSDConfig{}.WithVolume()` would need per-OSD storage plumbing that does not
+  exist, so it is not offered and `OSDConfig` is not made to carry storage.
+  Placement stays in `OSDConfig`; storage stays cluster-wide in `OSDStorage`.
+- **No slice or map member**, so a struct copy is independent. A member that holds
+  one must use `slices.Clone`, which keeps nil and non-nil empty apart.
+
+### Network and messenger group (change `312-network-config`)
+
+Proposal of the implementation side, not an owner approval. The third group
+follows the carrier pattern above:
+
+```go
+network := ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack).WithSeparateClusterNetwork()
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithNetworkConfig(network))
+```
+
+| Old (removed, no alias) | New |
+| --- | --- |
+| `WithAddressFamily(family)` | `NetworkConfig.WithAddressFamily(family)` |
+| `WithSeparateClusterNetwork()` | `NetworkConfig.WithSeparateClusterNetwork()` |
+| `WithHostAddress(address)` | `NetworkConfig.WithHostAddress(address)` |
+| `WithMessengerMode(mode)` | `NetworkConfig.WithMessengerMode(mode)` |
+| `WithMessengerPolicy(policy)` | `NetworkConfig.WithMessengerPolicy(policy)` |
+
+- **Why this group next.** It is the smallest cohesive group left: five settings
+  with about 130 references in 45 files, against about 300 call sites in 150
+  files for the topology group (whose cohesive subsets are not independent: the
+  counts, the no-initial flags and the initial layouts refuse each other) and
+  three separate packages for the service settings. All five settings decide
+  which addresses the daemons bind and advertise and over which Messenger
+  protocol and connection modes they talk, and their combination rules already
+  live together in `Run` (host address needs host network, host network excludes
+  a separate cluster network and non-IPv4 families, the mapped family excludes a
+  separate cluster network, a policy excludes `MessengerV2Secure`). Those rules
+  are unchanged and still refuse before any resource is created.
+- **What stays out.** `WithHostNetwork` is Docker execution policy and stays a
+  testcontainers-style function. `WithClientMessengerPolicy` is a
+  `ClientContainerOption` of `WithClient`, not a `Run` setting. `WithConfigFile`
+  stays with the later configuration group.
+- **Rules applied.** The zero value changes nothing. Every field records that it
+  was set, so the default family `AddressIPv4` and `MessengerDefault` are settings
+  (a second carrier cannot override them), while `WithHostAddress("")`, an unknown
+  family or mode and an empty list in a policy are refused as explicit invalid
+  settings. Two `WithNetworkConfig` options that set the same field are refused
+  even when equal; different fields compose in any order. Within one value a
+  later call replaces the earlier one. A value is validated as a whole before any
+  of its fields is written, so a refused value changes no setting. Repeating a
+  legacy option used to mean last wins; across carriers it is now a refusal,
+  which is the only behavior change.
+- **Copies (rule 7).** `MessengerPolicy` holds three slices. The value clones them
+  with `slices.Clone` when the policy enters it and again when the settings are
+  written, so a caller reusing its slices, a derived value and the settings never
+  share storage, a nil list stays nil (Ceph's default) and a non-nil empty list
+  stays empty and is refused.
+
+### `WithConfigFile` (proposal)
+
+`WithConfigFile(path)` is Ceph configuration, not container-execution policy:
+the module parses the file, refuses keys it manages (for example
+`bluestore_block_size`, which points at `OSDStorage.WithBlockSize`), and renders
+the accepted sections into the daemons' Ceph configuration. No Docker setting
+is involved. It therefore belongs to a later Ceph configuration group and is not
+kept as a testcontainers-style function. `WithHostNetwork` and
+`WithIdleEntrypoint` are Docker or container execution policy and stay functions.
+
+### Grouping plan for the remaining `ceph.WithX` options (proposal; follow-up slices)
+
+Each slice removes the old functions it replaces, so no setting has two
+spellings. Docker and container execution policy stays testcontainers-style
+`WithX`.
+
+| Group (value type, carrier) | Settings | Slice |
 | --- | --- | --- |
-| Images (`ImageOptions` via `WithImageOptions`, this change) | `WithImageSet`; later the service image roles (`cephfs.WithMDSImage`, `rgw.WithImage`) | 1 (this change) |
-| Topology (`ClusterConfig`) | `WithMonitorCount`, `WithManagerCount`, `WithNoInitialManagers`, `WithOSDCount`, `WithInitialOSDs`, `WithNoInitialOSDs`, `WithPoolDefaults`, `WithDefaultCRUSHRoot`, `WithPools`, `WithStartupTimeout`, `WithAuth` | 2 |
-| OSD storage (`OSDConfig` made chainable; reconciled with `OSDOptions` of AddOSD so placement and storage are not duplicated) | `WithOSDBlockSize`, `WithOSDObjectStore`, `WithOSDInMemoryStorage`, `WithOSDVolumeStorage` | 3 |
-| Network and messenger (`NetworkConfig`) | `WithAddressFamily`, `WithSeparateClusterNetwork`, `WithHostAddress`, `WithMessengerMode`, `WithMessengerPolicy` | 4 |
-| Services (own packages, own value types) | `rbd.WithPools`, `cephfs.WithFilesystems`, `rgw.WithGateways` | 5, per package |
-| Stay functional `WithX` (Docker or container execution) | `WithHostNetwork`, `WithIdleEntrypoint`, `WithConfigFile` (mounts a file into the daemon containers) | none |
+| Images (`ImageOptions`, `WithImageOptions`) | `WithImageSet`; later the service image roles | done (`312-image-options`) |
+| OSD storage (`OSDStorage`, `WithOSDStorage`) | block size, object store, in-memory, volume | done (`312-osd-storage`) |
+| Topology (`ClusterConfig`, `WithClusterConfig`) | `WithMonitorCount`, `WithManagerCount`, `WithNoInitialManagers`, `WithOSDCount`, `WithInitialOSDs`, `WithNoInitialOSDs`, `WithPoolDefaults`, `WithDefaultCRUSHRoot`, `WithPools`, `WithStartupTimeout`, `WithAuth`, `WithConfigFile` | next, probably split by cohesion (counts and layout; pools and defaults; auth and config) |
+| Network and messenger (`NetworkConfig`, `WithNetworkConfig`) | address family, separate cluster network, host address, Messenger mode, Messenger policy | done (`312-network-config`) |
+| Services (own packages, own value types) | `rbd.WithPools`, `cephfs.WithFilesystems`, `rgw.WithGateways` | per package |
+| Stay functional (Docker or container execution) | `WithHostNetwork`, `WithIdleEntrypoint` | none |
 
-Open questions for the owner: whether `WithHostNetwork` and `WithConfigFile` are
-container-execution policy (kept as functions) or cluster behavior (moved), and
-whether `WithPools` of package `ceph` belongs with topology or with the
-service packages. Every slice repeats the rules above and the refusal of a
-setting given twice.
+Open for the owner: whether `ceph.WithPools` belongs with topology or with the
+service packages.
 
 ## Not decided here
 

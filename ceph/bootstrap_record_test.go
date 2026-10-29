@@ -248,7 +248,6 @@ var bootstrapRecordWriters = map[string]string{
 var bootstrapRecordCallers = map[string]map[string]string{
 	"createClient":                     {"hasConfig": "takes", "rawConfig": "takes"},
 	"withClientIdentity":               {"rawConfig": "takes"},
-	"createSharedClient":               {"hasConfig": "takes", "rawConfig": "takes"},
 	"startService":                     {"isComplete": "takes"},
 	"AddMonitor":                       {"rawConfig": "takes"},
 	"Run":                              {"recordConfig": "startup", "recordKeyring": "startup"},

@@ -1,5 +1,10 @@
 # Responsibility inventory and decomposition design for cephfs.Filesystem
 
+> Current boundary: the shared-cluster/tenant harness and its core-only policy,
+> lease and hook plumbing have been removed. Harness references and source
+> locations below are historical design evidence, not retained APIs or future
+> extraction requirements. See [independent fixtures](../ceph.md#usage-example).
+
 This note is the design record that follow-up item 2 of #233 asks for: a
 responsibility inventory of `cephfs.Filesystem` and a decision framework for
 which boundaries deserve an internal component and which, if any, deserve a
@@ -402,11 +407,9 @@ lock, so it is independent of the internal steps and not a prerequisite for them
   in one minor release with no deprecated alias and no forwarding method
   (`shared-harness-boundary.md:246`, `override-package-boundary.md:279-283`).
   Internal steps change no exported signature and need no migration.
-- **Catalogue and release notes.** An internal step changes no API catalogue
-  row under `docs/design/api-naming/cephfs/`. This note adds no fragment under
-  `docs/changes/`, as with the earlier design notes: the release-note guide says
-  internal refactors need none. A public handle move needs a catalogue move
-  record and an `api-break` fragment with a migration link.
+- **Catalogue.** An internal step changes no API catalogue
+  row under `docs/design/api-naming/cephfs/`. A public handle move needs a
+  catalogue move record.
 
 ## Findings that the extraction has to respect
 
@@ -556,7 +559,7 @@ cleanup unit.
    `SubvolumeGroup`, `SubvolumeSnapshot`, `SubvolumeClone`,
    `SubvolumeAuthorization` and `DataPool` handles? That is a source-breaking
    change for up to 62 test files and the guides, and needs a catalogue move
-   record and an `api-break` fragment. If yes, before or after steps 1 to 4?
+   record. If yes, before or after steps 1 to 4?
 3. What is the future of the embedded `testcontainers.Container`? It is mutable
    shared state (F2). Options: keep it as documented compatibility, deprecate it
    under the 0.x policy by removing it in one minor release, or replace it by an

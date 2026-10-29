@@ -127,8 +127,7 @@ two constants), `MirrorDaemon`, `MirrorDaemonStatus`, `MirrorPoolReplayerStatus`
 `MirrorImageStatus`, `MirrorNamespace`, `MirrorNamespaceState`, `MirrorPolicies`,
 `MirrorReceiverStatus` and `MirrorReceiverDaemonStatus`. All 74 members keep
 their names, receivers and signature shapes; only the type names inside the
-signatures follow the table. The full table is in
-[the upgrade guide](../guides/upgrading-rbd-mirror-package.md). Callers: 18 Go
+signatures follow the table. Callers: 18 Go
 files under `internal/integration` and the unit tests moved with the package.
 Docs: `docs/rbd.md` keeps pool, namespace, client and backup reference; the
 mirror reference, examples, limitations and pitfalls moved to
@@ -186,8 +185,7 @@ tests to `cephfs/mirror/`. All test names are unchanged. Exported names:
 `MirrorDirectoryStatus`, `MirrorProcessBindingStatus`,
 `MirrorProcessQuiescenceStatus`, `MirrorOriginalProcessStatus` and
 `MirrorProcessQuiescenceAcknowledgment`. Methods keep their names, receivers and
-signature shapes. The table is in
-[the upgrade guide](../guides/upgrading-cephfs-mirror-package.md). Callers: 13
+signature shapes. Callers: 13
 Go files under `internal/integration`. Docs: the mirror reference, example,
 limitations moved from `docs/cephfs.md` to `docs/cephfs-mirror.md`.
 

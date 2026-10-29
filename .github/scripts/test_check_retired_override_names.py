@@ -25,16 +25,12 @@ RETIRED = (
     "var h *ceph." + "FullRatios" + "Override",
     "var h *ceph." + "Blocklist" + "Override",
     "`(*Container)." + "BlocklistEntries`",
-    "`(*Tenant)." + "BlocklistEntries`",
     "`(*Container)." + "FullRatios`",
     "ceph.Container." + "HealthDetails",
-    "Tenant." + "Pools lists the pools",
     "Container." + "EssentialImage",
     "`(*ceph." + "Container).BlocklistEntries`",
-    "`(*ceph." + "Tenant).FullRatios`",
     "(*ceph." + "Container).Status(ctx)",
     "`( *ceph." + "Container ).HealthDetails`",
-    "`(* ceph." + "Tenant).Pools`",
     "(ceph." + "Container).OSDFlags",
     "[(*ceph." + "Container).Configuration](ceph.md#x)",
 )
@@ -53,7 +49,7 @@ VALID = (
     "Container.Pool returns one pool and Pool.Status reports it",
     "ClusterFacts.NetworkName",
     "`(*ceph.Observer).BlocklistEntries`",
-    "(*ceph.Tenant).Pool and (*ceph.Container).Pool",
+    "(*ceph.Container).Pool",
     "(*ceph.Container).Start",
 )
 
@@ -74,8 +70,6 @@ class RetiredOverrideNamesTest(unittest.TestCase):
             subprocess.check_call(["git", "init", "-q", root])
             paths = (
                 "CHANGELOG.md",
-                "docs/changes/146-x.md",
-                "docs/guides/upgrading-x.md",
                 "docs/design/api-naming/moves/146-x.json",
                 "docs/guides/other.md",
                 "docs/design/other.md",

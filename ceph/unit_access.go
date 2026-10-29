@@ -28,7 +28,7 @@ func init() {
 
 // UnitCluster builds a cluster value for the service packages' unit tests.
 func (unitAccess) UnitCluster(control testcontainers.Container, startupTimeout time.Duration, closed, hostNetwork bool,
-	publicAddress, networkName string, shared bool, osds int, placement OSDConfig, memStore bool,
+	publicAddress, networkName string, osds int, placement OSDConfig, memStore bool,
 	mode MessengerMode, images *ImageSet) *Container {
 	c := &Container{Container: control, closed: closed, settings: options{
 		startupTimeout: startupTimeout, hostNetwork: hostNetwork, publicAddress: publicAddress,
@@ -41,9 +41,7 @@ func (unitAccess) UnitCluster(control testcontainers.Container, startupTimeout t
 		set := *images
 		c.settings.imageSet = &set
 	}
-	if shared {
-		c.sharing.Store(int32(sharedWithTenants))
-	}
+
 	if networkName != "" {
 		c.nets.public = &testcontainers.DockerNetwork{Name: networkName}
 	}
@@ -127,17 +125,6 @@ func (unitAccess) UnitReplaceOSDs(c *Container, osds map[int]*OSDContainer) {
 // caller holds the mutex that UnitState exposes, or owns a cluster no other
 // goroutine uses.
 func (unitAccess) UnitOSDCount(c *Container) int { return c.osdHandles.count() }
-
-// UnitBackend returns the shared-harness backend value of c, as Start returns
-// it, so that ceph/harness can prove that the real types satisfy the
-// internal/harnesshook contract without starting Docker.
-func (unitAccess) UnitBackend(c *Container) any { return containerBackend{c: c} }
-
-// UnitNewClient builds a client descriptor for a model backend of the shared
-// harness's unit tests, which cannot set the private fields.
-func (unitAccess) UnitNewClient(name string, created, ready bool) *ClientConfig {
-	return &ClientConfig{name: name, created: created, ready: ready}
-}
 
 // UnitClientState returns a client identity's owner and lifecycle flags.
 func (unitAccess) UnitClientState(client *ClientConfig) (owner *Container, created, ready, revoked bool) {

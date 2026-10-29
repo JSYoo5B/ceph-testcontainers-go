@@ -1,5 +1,10 @@
 # Image role terminology and responsibility map
 
+> Current boundary: the shared-cluster/tenant harness and its core-only policy,
+> lease and hook plumbing have been removed. Harness references and source
+> locations below are historical design evidence, not retained APIs or future
+> extraction requirements. See [independent fixtures](../ceph.md#usage-example).
+
 This note is the first acceptance item of #227: a terminology and
 responsibility map for everything in this repository that names an image role.
 It classifies each occurrence group of the retired control-image vocabulary,
@@ -99,7 +104,6 @@ created from the **essential** image, not a published role.
 | Occurrence | Why it stays | Proposed marking |
 | --- | --- | --- |
 | `CHANGELOG.md` (v0.2.0 entry about `rbd.RunMirror`; v0.2.0 text about OSD images without a CLI) | Published history | None; published sections are not rewritten. |
-| `docs/guides/upgrading-to-v0.2.md`, `docs/guides/upgrading-to-v0.3.md` (`control`/`all` client image, "Role OSD, RGW and MDS images") | Migration guides for released versions | Open question O7: add a one-line "vocabulary of that release" note, or leave untouched. |
 | `docs/research/ceph-fuse-mount.md` (`official-<release>-control` tag, quoted refusal line) | A recorded measurement of what ran | Add a "Historical tag family" sentence stating that `-control` tags belonged to the retired role layout and that the current roles are essential/client/cephfs/rbd-aux/rgw/all. Keep the quoted log line verbatim. |
 | `.github/scripts/fixtures/cephfs-quiescence-native.source.go.txt`, `cephfs-recovery-native.source.go.txt` | Retained native producer sources; their SHA-256 is asserted in `test_scenario_quiescence.py` | Never edited. |
 | `.github/scripts/fixtures/package-split.json` (`cephfsmirror.Run(ctx, source.ControlImage(), ...)` rewrite) | Rewrites the retained producers to current names so declaration parity with current helpers holds | Any change to the call text in current helpers needs a matching rewrite entry here (see "Coordination: retained producers"). |
@@ -121,7 +125,7 @@ could get wrong.
 | Static-fact policy key `"ControlImage": sharedOpen` (`ceph/shared_gate.go`) | Renamed to `EssentialImage` with the method in the same change (the gate test cross-checks method names) | `ceph/shared_gate.go` | **N** |
 | `cephfs.WithMDSImage`, `rgw.WithImage` | **No rename proposed.** Document that they set the role-wide `ImageSet.CephFS` / `ImageSet.RGW` | `ceph/service_hooks.go` (`WithServiceImage` also writes `imageSet.CephFS`/`.RGW`); `cephfs/mirror` `RunWithImages` reads `Images().CephFS`, so `WithMDSImage` also selects the CephFS mirror daemon image | **R** (naming understates scope; owner decision O6) |
 | `rbdmirror.Run(ctx, image, ...)`, `cephfsmirror.Run(ctx, image, ...)` parameter `image` | No signature change. Doc: "the mirror **daemon** image: rbd-aux for RBD, cephfs for CephFS" | `rbd/mirror/mirror.go` (`Mirror.image` is used only to start daemons in `AddDaemon`; setup clients come from `config.*.Images().Client` through `multicluster.RunClient`); `cephfs/mirror/mirror.go` (`daemonImage`; setup through `ClientContainer`). `ValidatePair` only checks the argument is non-blank | **R** (see R1) |
-| Error text of `CreateClient`/`WithAuth` refusal: "which the control image lacks" (`ceph/auth_config.go`) | "which the essential image lacks" (the probe runs `ceph-authtool` from the first MON image, an essential responsibility) | `ceph/auth_config.go`, `ceph/errors_test.go`, `docs/guides/errors.md` | **N**, but the string is observable; list in the release fragment (O10) |
+| Error text of `CreateClient`/`WithAuth` refusal: "which the control image lacks" (`ceph/auth_config.go`) | "which the essential image lacks" (the probe runs `ceph-authtool` from the first MON image, an essential responsibility) | `ceph/auth_config.go`, `ceph/errors_test.go`, `docs/guides/errors.md` | **N**, but the string is observable (O10) |
 
 ### Unexported fields, hooks and helpers
 
@@ -188,7 +192,7 @@ where a name, example or comment points an operation at the wrong image.
 | R4 | Mirror admin sockets "run from the control image" | `docs/guides/native-commands.md` says `--admin-daemon` works because mirror daemons run from the control image. They run from rbd-aux or cephfs; both contain a local `ceph` CLI per the contract. | Docs only. |
 | R5 | Native client oracles use the essential image | 55 `ControlImage()` call sites; `nativeClientImage` swaps in `CEPH_TEST_CLIENT_IMAGE` only under the roles layout. A user following `WithClient` examples with `ControlImage()` gets an image without the client role under split roles. | Docs and tests. Moving tests to `Images().Client` may make the env switch in `nativeClientImage` redundant for clusters started with a set (O8). |
 | R6 | FUSE helper | `fuseClientImage` probes the client container and returns `ControlImage()`. If the probe succeeds the returned image is the essential one, which is not the container that was probed. | Test-only; a behavior change of an optional batch (`cephfs_fuse`). |
-| R7 | OSD, RGW and MDS "need not have python3" (`docs/guides/native-commands.md`, `docs/guides/upgrading-to-v0.3.md`, `docs/ceph.md` `RunNativeCommand`) | The current requirements table lists `python3` under essential and client and says the rgw role has a Python runtime for setup; it says nothing about cephfs. | Needs the contract owner's answer before the wording changes (O3). |
+| R7 | OSD, RGW and MDS "need not have python3" (`docs/guides/native-commands.md`, `docs/ceph.md` `RunNativeCommand`) | The current requirements table lists `python3` under essential and client and says the rgw role has a Python runtime for setup; it says nothing about cephfs. | Needs the contract owner's answer before the wording changes (O3). |
 | R8 | `WithMDSImage` selects the role-wide cephfs image | See the public API table. | Documentation first; any rename is an owner call. |
 | R9 | `mdsImage`/`rgwImage` against `imageSet` | See the fields table. | Only a unit test can say; do not consolidate without one. |
 
@@ -199,8 +203,8 @@ where a name, example or comment points an operation at the wrong image.
   verified by compilation, `make check`, the API catalogue checks and the
   affected Docker-free unit tests.
 - **Observable but not routing:** the key-type refusal text, the "cluster
-  control handle" messages, receipt values. These need the release fragment and
-  the affected unit tests; no native run.
+  control handle" messages, receipt values. These need the affected unit tests;
+  no native run.
 - **Possible behavior change (needs a targeted native split-role scenario with
   actual image IDs, original data/state assertions and owned cleanup):** only
   if a later unit adds role admission to the mirror `Run`/`AddDaemon` path
@@ -233,12 +237,10 @@ where a name, example or comment points an operation at the wrong image.
   cluster-wide "essential image ID". `options.osdImage` is the only place an
   OSD generation's image enters a launch recipe (`newOSDLaunchRecipe`); keep
   that seam as a per-launch image when fields are folded.
-- **#216 (metadata).** Use the package-scoped catalogues and fragments.
+- **#216 (metadata).** Use the package-scoped catalogues.
   Public removal touches only `docs/design/api-naming/ceph/` (regenerate for
-  the `ceph` package, then approve as a separate step) and `docs/design/api-naming-audit.md`. Release text goes in one
-  `docs/changes/<id>.md` fragment of kind `api-break`, with only what the
-  fragment validator mechanically requires and no mapping of old names;
-  do not edit `Unreleased` in `CHANGELOG.md`.
+  the `ceph` package, then approve as a separate step) and `docs/design/api-naming-audit.md`. Pull requests do not edit
+  `CHANGELOG.md`.
 - **#155/#156/#157 (package moves).** The `rbd/mirror`, `cephfs/mirror` and
   `rgw/multisite` call sites are already in their new packages. The shared
   harness policy map in `ceph/shared_gate.go` names `ControlImage`; it must
@@ -290,7 +292,7 @@ independently checked.
    `Container.ControlImage` becomes `EssentialImage` for the remaining real
    essential uses, `ClusterFacts.ControlImage` and the old reference-page
    section are deleted, the `shared_gate.go` key follows, the audit row is
-   amended, an `api-break` fragment is added, and the `ceph` catalogue is
+   amended, and the `ceph` catalogue is
    regenerated and then approved as a separate step. No alias, shim or
    old-name mapping. Afterwards no function named `ControlImage` exists.
 6. **Option consolidation (R9) and any mirror admission (R1/O4).** Only with
@@ -311,11 +313,11 @@ independently checked.
   `ControlImage` remains.
 - **O2 (decided).** Compatibility with published versions is not a concern.
   Retired names are deleted outright, with no deprecated alias, shim or kept
-  mapping table. The repository's own process still applies because the API
-  surface changes: an `api-break` fragment under `docs/changes` and a
-  package-scoped catalogue regenerate followed by a separate approve. The
+  mapping table. The catalogue process still applies because the API
+  surface changes: a package-scoped catalogue regenerate followed by a separate
+  approve. The
   class 3 list applies only to text that is a historical record (published
-  `CHANGELOG.md` sections, old upgrade guides, retained fixtures), not to live
+  `CHANGELOG.md` sections, retained fixtures), not to live
   API or documentation.
 - **O3.** Whether essential, cephfs and rgw guarantee `python3` for
   `RunNativeCommand` targets. The pinned table says essential and client only;
@@ -333,7 +335,7 @@ independently checked.
   read the role from `Images()`.
 - **O9.** The exact name for the first-MON image ID (`firstMonitorImageID` is a
   proposal) and whether #64 replaces it.
-- **O10.** The key-type refusal text and its release note wording.
+- **O10.** The key-type refusal text.
 
 Nothing here selects a new role, adds a fallback from an optional role to
 essential, installs packages at run time, rebuilds or republishes an image,

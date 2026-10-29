@@ -3,8 +3,7 @@
 This finishes #14's staged naming pass at the source captured by
 the per-package receipts in [api-naming/](api-naming/) (one `review.json` per
 public package). The last selected operation is
-`rbd.StartImmutableObjectCache`; its [migration](../guides/upgrading-rbd-cache-name.md)
-retains the existing lease and runtime contract. No further rename is selected
+`rbd.StartImmutableObjectCache`; it retains the existing lease and runtime contract. No further rename is selected
 for the remaining names in this snapshot. The seven reversible override
 operations named below as `ceph.Container` methods with `ceph` handle types
 later moved to the package `override` (#146,
@@ -56,14 +55,14 @@ The receipt is not a stability guarantee or approval of later APIs.
 | --- | --- |
 | Cluster construction, topology and resource operations | Retain `Run`, `RunWithImages`, `Add*`, `Create*`, `Remove*`, `Start`, `Set*` and `Update*`. Their verbs distinguish allocating an owned resource, attaching a daemon to an existing cluster, and changing existing policy. `cephfs.Start`/`rgw.Start` attach services; package `Run` owns a cluster. No blanket Create/Add or Set/Apply conversion is justified. |
 | Role selection and feature executors | Retain `ImageSet` and `Essential`, `Client`, `CephFS`, `RBDAux`, `RGW`, `All`: they match the current dependency-role contract. `WithImages` selects configuration; `Images` reports effective selection; `ClientContainer` names the lazy toolkit executor. `EssentialImage` names the essential image that starts the daemons and the control-plane executor, and `ControlContainer` retains its control-plane meaning; the retired accessor and the old daemon-role image options are gone. |
-| Context-taking getters | Retain `ConnectionConfig`, `ControlContainer`, `Managers`, `Monitors` and `OSDs` of `ceph.Container` and `rgw.Gateways`. Each exists once, takes `ctx` first and returns an error. The former no-context getters and the `Context` suffix variants are gone, with no alias ([migration](../guides/upgrading-context-accessors.md)). The call waits for the topology only while `ctx` is active and does not promise that a returned descriptor stays live. |
+| Context-taking getters | Retain `ConnectionConfig`, `ControlContainer`, `Managers`, `Monitors` and `OSDs` of `ceph.Container` and `rgw.Gateways`. Each exists once, takes `ctx` first and returns an error. The former no-context getters and the `Context` suffix variants are gone, with no alias. The call waits for the topology only while `ctx` is active and does not promise that a returned descriptor stays live. |
 | Queries and waits | Retain domain nouns (`Pools`, `OSDStates`, `Sessions`, `Zonegroups`, `ImageStatus`, `DataPools`), plus List where the standalone namespace CLI uses it. Receiver/package context resolves subject names. `WaitReady`, `WaitFor*`, `Wait*Ready` and `Wait*Synced` identify actual readiness/sync predicates; a naming pass must not turn one observation into a broader completion promise. |
 | Requests, observations and value/resource types | Retain `Config`, `Setting`, `Policy`, `Status`, `State`, `Info`, `Snapshot`, `Report` and domain resource nouns. Request and returned observation distinctions are explicit in their signatures/reference pages. Repeated `Filesystem`, `Mirror`, `Pool`, `Client` or `Network` words remain where needed to distinguish data pools, host/cluster networks, source/destination and daemon/client roles. |
 | Saved policies and revocation handles | Retain the completed `Override*` and management `*Handle` names from #18/#19. Retain `FullRatiosOverride` and `BlocklistOverride` as the explicit #15/#16 exceptions: their domain/Restore methods already identify the saved policy. This does not move either policy into `fault`, add automatic undo, or claim an uncertain handle succeeded. |
 | Owned additions and disruption leases | Retain `PauseLease`, `NetworkProfileLease`, `SnapshotScheduleLease`, and `ImmutableObjectCacheLease`. Preserve `Pause`/`Resume`, Apply/Restore and Add/Restore. `TemporaryBlocklist` retains its real native TTL; the cache's Start name deliberately drops Temporary because it has none. `Lease` identifies ownership, not universal expiry or automatic restoration. |
 | Quiesce and staged removal/addition | Retain `QuiesceSubvolumes`/`Quiesce.Release`, `MirrorDirectoryAddition`, `MirrorDirectoryRemoval`, `MirrorPeerRemoval`, their Begin/Status/Wait/Acknowledge methods and observation types. They represent native set or phased transition ownership, including partial/uncertain progress; a past-participle name or common Undo would misstate their contract. |
-| Operations on handles | Retain `OSDContainer.Remove`, `SetIn`, `Detach`, `AdminSocket` and `RotateKey`, `DetachedOSD.Reopen`, `MonitorContainer.Remove` and `AdminSocket`, `ManagerContainer.Remove`, `AdminSocket` and `RotateKey`, the `Pool` operations `Status`, `Usage`, `PGs`, `SetPGCount`, `WaitForPGCount`, `SetPlacement`, `SetQuota`, `SetReplication` and `Remove`, the `ClientConfig` operations `Capabilities`, `UpdateCaps`, `ReplaceKey`, `Revoke` and `Delete`, `cephfs.Filesystem.Remove`, `cephfs.MDS.RemoveStopped` and `AddReplacement`, `rgw.Gateway.Remove` and the lookup `Container.Pool`. The receiver names the object, so the method drops the noun (`Remove`, not `RemoveOSD`) and takes no name or ID; the verbs keep their meaning. Creating operations (`AddOSD`, `AddMonitor`, `AddManager`, `CreatePool`, `CreateClient`, `cephfs.Start`, `rgw.Start`) have no handle yet and stay where they are. The former `Container` methods and package functions are gone, with no alias ([migration](../guides/upgrading-handle-operations.md)). |
-| Typed values | Retain `OSDFlag` with its eleven constants, `PGID` with `ParsePGID` and `String`, and the result type `ConnectionConfig` (fields `Conf` and `Keyring`) for `Container.ConnectionConfig` and `ClientConfig.ConnectionConfig`. A value type names what a plain `string` or an unlabeled `[]byte` pair hid, so a swapped conf/keyring assignment no longer compiles. `OSDFlag` stays an open string type because `OSDFlags` reports flags that have no constant; `OverrideOSDFlag` and the PG methods keep their run-time refusal. An untyped string constant still converts to these types. The method and the result type share the name `ConnectionConfig`, which Go allows. The former `string` and `[]byte, []byte` shapes are gone, with no alias ([migration](../guides/upgrading-typed-values.md)). |
+| Operations on handles | Retain `OSDContainer.Remove`, `SetIn`, `Detach`, `AdminSocket` and `RotateKey`, `DetachedOSD.Reopen`, `MonitorContainer.Remove` and `AdminSocket`, `ManagerContainer.Remove`, `AdminSocket` and `RotateKey`, the `Pool` operations `Status`, `Usage`, `PGs`, `SetPGCount`, `WaitForPGCount`, `SetPlacement`, `SetQuota`, `SetReplication` and `Remove`, the `ClientConfig` operations `Capabilities`, `UpdateCaps`, `ReplaceKey`, `Revoke` and `Delete`, `cephfs.Filesystem.Remove`, `cephfs.MDS.RemoveStopped` and `AddReplacement`, `rgw.Gateway.Remove` and the lookup `Container.Pool`. The receiver names the object, so the method drops the noun (`Remove`, not `RemoveOSD`) and takes no name or ID; the verbs keep their meaning. Creating operations (`AddOSD`, `AddMonitor`, `AddManager`, `CreatePool`, `CreateClient`, `cephfs.Start`, `rgw.Start`) have no handle yet and stay where they are. The former `Container` methods and package functions are gone, with no alias. |
+| Typed values | Retain `OSDFlag` with its eleven constants, `PGID` with `ParsePGID` and `String`, and the result type `ConnectionConfig` (fields `Conf` and `Keyring`) for `Container.ConnectionConfig` and `ClientConfig.ConnectionConfig`. A value type names what a plain `string` or an unlabeled `[]byte` pair hid, so a swapped conf/keyring assignment no longer compiles. `OSDFlag` stays an open string type because `OSDFlags` reports flags that have no constant; `OverrideOSDFlag` and the PG methods keep their run-time refusal. An untyped string constant still converts to these types. The method and the result type share the name `ConnectionConfig`, which Go allows. The former `string` and `[]byte, []byte` shapes are gone, with no alias. |
 | Retained OSD lifecycle | Retain `OSDContainer.Detach`, `DetachedOSD.Reopen` and `DetachedOSD`. Detach names releasing a daemon's container while keeping its store and MON registration, and is distinct from `Remove` (drain and purge) and from container Stop/Start (same container). Reopen names starting a new container on that retained store; it neither allocates a registration like `Add*` nor formats like a fresh start. `DetachedOSD` exposes read-only accessors instead of mutable fields, because Reopen validates against private copies; `ClusterFSID` qualifies which FSID it is. |
 | Test finalization | Retain `TerminateOnCleanup`, `Finalization`, `Finalization.Check`, `Finalization.Cleanup` and `FinalizationConfig`. `TerminateOnCleanup` names what the call owns: it registers the cluster's termination with test cleanup, like `testcontainers.CleanupContainer`, and orders the checks, failure archive and cleanups before it. `Finalization` is that registered phase sequence, not a lease or restore handle; `Check` and `Cleanup` add steps to its two phases and keep `testing.TB.Cleanup`'s meaning of a function that runs at test end. `Archive` opts into the failure archive; `ArchiveDirectory`, `ArchiveTimeout`, `CheckTimeout` and `CleanupTimeout` qualify the phase they bound, and `Diagnostics` and `CrashMetadata` take the existing collector configurations unchanged. No generic cleanup interface or automatic archive for other fixtures follows. |
 | Lifetime and recovery operations | Retain `Terminate` for owned clusters/fixtures, `Close` for streams/shared fixtures, explicit Restore for policies/files, Stop for a process that may retain files, and Resume for thawing. `RestoreBackup`, `RestoreIncremental`, `Rebootstrap*`, `RepairPG` and clone cancel/remove are domain recovery operations, not interchangeable cleanup handles. |
@@ -217,8 +216,7 @@ dropped from the types, constants and `RunMirror` functions (`Config`, `Mode`,
 `Scope`, `Daemon`, `ImageStatus`, `Namespace`, `Run`, `RunWithImages` and so
 on), while `Mirror` itself and every method name, receiver and signature
 shape were retained. No operation verb, handle or undo name changed, and no
-alias remains. The reviewed mapping is in
-[the upgrade guide](../guides/upgrading-rbd-mirror-package.md). The receipt was
+alias remains. The receipt was
 refreshed for this deliberate move only. CephFS mirror names are not yet part
 of it.
 
@@ -233,9 +231,7 @@ the package by its directory, `cephfs/mirror`. As for the RBD move, the repeated
 (`Run`, `RunWithImages`, `Config`, `Daemon`, `DirectoryAddition`,
 `DirectoryRemoval`, `PeerRemoval`, `Snapshot`, `DirectoryStatus` and the status
 types), while `Mirror` and every method name, receiver and signature shape were
-retained. No operation verb, handle or undo name changed and no alias remains.
-The reviewed mapping is in
-[the upgrade guide](../guides/upgrading-cephfs-mirror-package.md). The receipts
+retained. No operation verb, handle or undo name changed and no alias remains. The receipts
 of `cephfs` and `cephfs/mirror` were approved separately for this move only.
 
 ## 227-image-role-overhaul
@@ -267,8 +263,7 @@ The `Observer` methods keep the removed names, receivers and signature shapes.
 The one addition is `Observer.Pools`, which lists pools as `*ceph.Pool`
 objects instead of the `PoolState` slice of `Container.Pools`; the per-pool
 reads stay the methods of `Pool`. The record is historical API accounting only;
-no alias or compatibility mapping remains. The mapping is in
-[the upgrade guide](../guides/upgrading-observer-queries.md).
+no alias or compatibility mapping remains.
 
 ## 146-static-facts-accessors
 
@@ -292,8 +287,7 @@ record lists it as removed and the function as added instead of pairing them.
 `Add` names what the call does (it creates one entry that did not exist) and
 what `Restore` undoes (it removes only that entry); `Temporary` is dropped
 because the package name carries the meaning. The names follow the decisions
-D7 to D9 of `override-package-boundary.md`. The reviewed mapping is in
-[the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
+D7 to D9 of `override-package-boundary.md`. No alias remains.
 The receipts of `ceph` and `override` were approved separately for this move.
 
 ## 146-override-mgrmodule-package
@@ -307,8 +301,7 @@ record lists it as removed and the function as added instead of pairing them.
 `Set` names what the call does (it replaces the module's enabled state) and what
 `Restore` undoes (it puts the previous state back); `Override` is dropped because
 the package name carries the meaning. The names follow the decisions D7 to D9 of
-`override-package-boundary.md`. The reviewed mapping is in
-[the upgrade guide](../guides/upgrading-override-mgr-module.md). No alias
+`override-package-boundary.md`. No alias
 remains. The receipts of `ceph` and `override` were approved separately for this
 move.
 
@@ -323,8 +316,7 @@ handle type `ceph.FullRatiosOverride` and its `Restore` move to
 removed and the function as added instead of pairing them. `Set` names what the
 call does: it replaces the three existing thresholds and `Restore` puts the
 captured tuple back. The names follow the decisions D7 to D9 of
-`override-package-boundary.md`. The reviewed mapping is in
-[the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
+`override-package-boundary.md`. No alias remains.
 The receipts of `ceph` and `override` were approved separately for this move.
 
 ## 146-override-osdflag-package
@@ -339,8 +331,7 @@ and the function as added instead of pairing them. `Set` names what the call doe
 previous state back); `Override` is dropped because the package name carries the
 meaning. The names follow the decisions D7 to D9 of
 `override-package-boundary.md`. `ceph.OSDFlag` and its eleven constants stay in
-`ceph` because `Observer.OSDFlags` returns them. The reviewed mapping is in
-[the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
+`ceph` because `Observer.OSDFlags` returns them. No alias remains.
 The receipts of `ceph` and `override` were approved separately for this move.
 
 ## 146-override-debug-level-package
@@ -354,8 +345,7 @@ verb, so the record lists it as removed and the function as added instead of
 pairing them. `Set` names what the call does (it replaces one runtime value and
 `Restore` puts the prior value back); `Override` is dropped because the package
 name carries the meaning. The names follow the decisions D7 to D9 of
-`override-package-boundary.md`. The reviewed mapping is in
-[the upgrade guide](../guides/upgrading-override-debug-level.md). No alias
+`override-package-boundary.md`. No alias
 remains. The receipts of `ceph` and `override` were approved separately for this
 move.
 
@@ -373,11 +363,14 @@ so the record lists them as removed and the functions as added instead of
 pairing them. `Set` names what the calls do: each replaces a value that may
 already exist and `Restore` puts the previous entry back or removes the entry
 that was absent. The names follow the decisions D7 to D9 of
-`override-package-boundary.md`. The reviewed mapping is in
-[the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
+`override-package-boundary.md`. No alias remains.
 The receipts of `ceph` and `override` were approved separately for this move.
 
 ## 155-harness-package-move
+
+Historical migration record. The shared/tenant framework was subsequently
+removed by [the complete-removal decision](shared-harness-removal.md); the
+following text describes the former API rather than current support.
 
 The change moves the shared-cluster and tenant harness out of `ceph` and the
 service packages into harness packages under the domains that own them, on the
@@ -397,7 +390,25 @@ Five declarations are new. `ceph/harness.ServiceSupport` and
 selection that replaces the removed `init` registration: one opaque value and
 one option, not one option per service or per field. Each service harness
 offers `Support`, which returns that value. `ceph.ErrSharedCluster` stays in
-`ceph`, with the gate. The reviewed mapping is in
-[the upgrade guide](../guides/upgrading-harness-packages.md). No alias or
+`ceph`, with the gate. No alias or
 forwarding declaration remains. The receipts of `ceph`, `rbd`, `cephfs`, `rgw`
 and the four harness packages were approved separately for this move.
+
+## 332-remove-shared-harness
+
+Remove all declared exports of `ceph/harness`, `rbd/harness`, `cephfs/harness`
+and `rgw/harness`, and `ceph.ErrSharedCluster`. These are deliberate removals,
+not package moves or renamed aliases. The shared-only `Container` wrappers
+also lose their own declaration rows; ordinary methods provided by its embedded
+Testcontainers container remain inherited and do not need forwarding aliases.
+The core Observer/Pool tenant lease and internal service/harness ports disappear;
+ordinary lifecycle, ownership, fault restoration and uncertain-result cleanup
+remain. Actual RGW tenants/accounts and other independent resource lease types
+are outside the removal boundary.
+
+The [bounded inventory](shared-harness-removal.md) records the private and native
+scenario disposition; the [current cluster usage](../ceph.md#usage-example)
+uses independent `Run` fixtures with explicit resources and owned cleanup.
+The declaration-removal record accounts for the base-to-final catalogue delta.
+Surviving package catalogues are regenerated from source and approved in a
+separate deliberate step; the four deleted packages have no orphan catalogues.

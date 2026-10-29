@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"slices"
 	"strings"
 	"sync"
@@ -191,7 +191,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
 	}
 	if _, err := multicluster.NormalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons); err != nil {
-		return nil, harnesshook.Invalid(fmt.Errorf("configure RBD mirror: RBD %w", err))
+		return nil, servicehook.Invalid(fmt.Errorf("configure RBD mirror: RBD %w", err))
 	}
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
@@ -201,7 +201,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	}
 	config, err := normalizeRBDMirrorConfig(config)
 	if err != nil {
-		return nil, harnesshook.Invalid(fmt.Errorf("configure RBD mirror: %w", err))
+		return nil, servicehook.Invalid(fmt.Errorf("configure RBD mirror: %w", err))
 	}
 	sourceFacts, err := ceph.FactsOf(config.Source)
 	if err != nil {
@@ -213,7 +213,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	}
 	sourceImage, destinationImage := sourceFacts.Images.Client, destinationFacts.Images.Client
 	if sourceImage == "" || destinationImage == "" {
-		return nil, harnesshook.Invalid(fmt.Errorf("RBD mirror setup requires both client images"))
+		return nil, servicehook.Invalid(fmt.Errorf("RBD mirror setup requires both client images"))
 	}
 	receiverClusters, err := captureRBDReceiverClusters(ctx, config)
 	if err != nil {
@@ -286,11 +286,11 @@ func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontain
 	}
 	defer m.mu.Unlock()
 	if m.closed || m.sourceClient == nil || m.destinationClient == nil || m.config.Destination == nil {
-		return nil, harnesshook.Invalid(errors.New("RBD mirror fixture is unavailable or terminated"))
+		return nil, servicehook.Invalid(errors.New("RBD mirror fixture is unavailable or terminated"))
 	}
 	for _, daemon := range m.daemons {
 		if daemon.DaemonName == name {
-			return nil, harnesshook.Invalid(fmt.Errorf("RBD mirror daemon %q already exists", name))
+			return nil, servicehook.Invalid(fmt.Errorf("RBD mirror daemon %q already exists", name))
 		}
 	}
 	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
@@ -351,7 +351,7 @@ func (m *Mirror) RemoveDaemon(ctx context.Context, name string, opts ...testcont
 	}
 	defer m.mu.Unlock()
 	if m.closed {
-		return harnesshook.Invalid(errors.New("RBD mirror fixture is terminated"))
+		return servicehook.Invalid(errors.New("RBD mirror fixture is terminated"))
 	}
 	for i, daemon := range m.daemons {
 		if daemon.DaemonName != name {
@@ -366,16 +366,16 @@ func (m *Mirror) RemoveDaemon(ctx context.Context, name string, opts ...testcont
 		}
 		return nil
 	}
-	return harnesshook.Invalid(fmt.Errorf("RBD mirror daemon %q is not owned by this fixture", name))
+	return servicehook.Invalid(fmt.Errorf("RBD mirror daemon %q is not owned by this fixture", name))
 }
 
 func validateRBDMirrorDaemonName(name string) error {
 	if name == "" || len(name) > 63 || name[0] == '-' {
-		return harnesshook.Invalid(errors.New("RBD mirror daemon name must contain 1 to 63 ASCII letters, digits, underscores or hyphens, without a leading hyphen"))
+		return servicehook.Invalid(errors.New("RBD mirror daemon name must contain 1 to 63 ASCII letters, digits, underscores or hyphens, without a leading hyphen"))
 	}
 	for _, char := range name {
 		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '_' && char != '-' {
-			return harnesshook.Invalid(errors.New("RBD mirror daemon name must contain only ASCII letters, digits, underscores or hyphens"))
+			return servicehook.Invalid(errors.New("RBD mirror daemon name must contain only ASCII letters, digits, underscores or hyphens"))
 		}
 	}
 	return nil
@@ -617,20 +617,20 @@ func (m *Mirror) DestinationRBD(ctx context.Context, args ...string) ([]byte, er
 // quiesce their application before changing an existing image's mirroring.
 func (m *Mirror) EnableImage(ctx context.Context, imageName string) error {
 	if m == nil {
-		return harnesshook.Invalid(errors.New("RBD mirror source setup client is unavailable"))
+		return servicehook.Invalid(errors.New("RBD mirror source setup client is unavailable"))
 	}
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
 		return err
 	}
 	defer m.mu.Unlock()
 	if m.closed || m.sourceClient == nil {
-		return harnesshook.Invalid(errors.New("RBD mirror source setup client is unavailable or terminated"))
+		return servicehook.Invalid(errors.New("RBD mirror source setup client is unavailable or terminated"))
 	}
 	if imageName == "" || strings.TrimSpace(imageName) != imageName || strings.HasPrefix(imageName, "-") || strings.ContainsAny(imageName, "/@\x00\t\r\n") {
-		return harnesshook.Invalid(errors.New("RBD image must be a name without pool, namespace, snapshot or option syntax"))
+		return servicehook.Invalid(errors.New("RBD image must be a name without pool, namespace, snapshot or option syntax"))
 	}
 	if m.config.Scope == ScopePool {
-		return harnesshook.Invalid(errors.New("pool-scope mirroring enrolls journal-enabled images automatically; EnableImage is only for image scope"))
+		return servicehook.Invalid(errors.New("pool-scope mirroring enrolls journal-enabled images automatically; EnableImage is only for image scope"))
 	}
 	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
 		return err
@@ -656,15 +656,15 @@ func (m *Mirror) EnableImage(ctx context.Context, imageName string) error {
 	}
 	if info.Mirroring != nil && info.Mirroring.State != "disabled" && info.Mirroring.State != "" {
 		if info.Mirroring.State != "enabled" {
-			return harnesshook.Invalid(fmt.Errorf("source image mirroring is %q, expected a stable enabled or disabled state", info.Mirroring.State))
+			return servicehook.Invalid(fmt.Errorf("source image mirroring is %q, expected a stable enabled or disabled state", info.Mirroring.State))
 		}
 		if info.Mirroring.Mode != string(mode) {
-			return harnesshook.Invalid(fmt.Errorf("source image already uses %s mirroring; changing to %s requires explicit disable/reconfiguration", info.Mirroring.Mode, mode))
+			return servicehook.Invalid(fmt.Errorf("source image already uses %s mirroring; changing to %s requires explicit disable/reconfiguration", info.Mirroring.Mode, mode))
 		}
 		return m.checkRBDMirrorPolicyIdentities(ctx)
 	}
 	if mode == ModeJournal && !slices.Contains(info.Features, "exclusive-lock") {
-		return harnesshook.Invalid(errors.New("journal mirroring requires the source image's exclusive-lock feature; enable it explicitly before mirroring"))
+		return servicehook.Invalid(errors.New("journal mirroring requires the source image's exclusive-lock feature; enable it explicitly before mirroring"))
 	}
 	if err := m.checkRBDMirrorPolicyIdentities(ctx); err != nil {
 		return err
@@ -734,7 +734,7 @@ func normalizeRBDMirrorMode(mode Mode) (Mode, error) {
 	case ModeSnapshot, ModeJournal:
 		return mode, nil
 	default:
-		return "", harnesshook.Invalid(fmt.Errorf("unsupported RBD mirror mode %q; use snapshot or journal", mode))
+		return "", servicehook.Invalid(fmt.Errorf("unsupported RBD mirror mode %q; use snapshot or journal", mode))
 	}
 }
 
@@ -742,7 +742,7 @@ func normalizeRBDMirrorMode(mode Mode) (Mode, error) {
 // cluster's independent client runtime. Later AddDaemon uses the same runtime.
 func RunWithImages(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
 	if config.Source == nil || config.Destination == nil {
-		return nil, harnesshook.Invalid(fmt.Errorf("roles clusters are required"))
+		return nil, servicehook.Invalid(fmt.Errorf("roles clusters are required"))
 	}
 	facts, err := ceph.FactsOf(config.Destination)
 	if err != nil {
@@ -750,7 +750,7 @@ func RunWithImages(ctx context.Context, config Config, opts ...testcontainers.Co
 	}
 	image := facts.Images.RBDAux
 	if image == "" {
-		return nil, harnesshook.Invalid(fmt.Errorf("rbd-aux image is required"))
+		return nil, servicehook.Invalid(fmt.Errorf("rbd-aux image is required"))
 	}
 	return Run(ctx, image, config, opts...)
 }

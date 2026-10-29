@@ -194,7 +194,6 @@ var controlPlaneCallers = map[string]map[string]string{
 	"cliContainer":            {"current": "free"},
 	"controlContainerContext": {"currentContext": "free"},
 	"admitNativeTarget":       {"owns": "free"},
-	"sharedDaemons":           {"current": "free"},
 	"diagnosticsSnapshot":     {"diagnosticHandle": "free"},
 	"UnitState":               {"mutex": "identity"},
 }

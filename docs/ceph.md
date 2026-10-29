@@ -33,8 +33,8 @@ The `ceph` package provides:
 - observation: health checks, PG reports, pool usage, quorum, manager services
   and bounded diagnostics reports.
 
-A [shared cluster](#shared-cluster) lends one cluster to many tests, each
-confined to a RADOS namespace of its own.
+Each test owns an independent `Run` fixture and explicitly creates its pools,
+namespaces and Cephx identities. See [Independent test fixtures](ceph.md#usage-example).
 
 RBD, CephFS and RGW (S3) live in their own packages: [rbd](rbd.md),
 [cephfs](cephfs.md) and [rgw](rgw.md). Their options plug into the same
@@ -150,7 +150,7 @@ and by [WithStartupTimeout](#withstartuptimeout) (3 minutes by default):
 1. Validate all options together. Contradictory combinations fail before any
    Docker resource is created (see the table below).
 2. Create a dedicated bridge network (two with
-   [WithSeparateClusterNetwork](#withseparateclusternetwork)), or verify the
+   [NetworkConfig.WithSeparateClusterNetwork](#networkconfigwithseparateclusternetwork)), or verify the
    engine in host mode.
 3. Start MON `a`, record `ClusterFacts.CephVersion` (see [FactsOf](#factsof)), and read the generated
    `ceph.conf` and the `client.admin` keyring.
@@ -184,11 +184,11 @@ of option order:
 
 | Combination | Result |
 | --- | --- |
-| `WithHostAddress` without `WithHostNetwork` | `WithHostAddress requires WithHostNetwork` |
-| `WithHostNetwork` with `WithSeparateClusterNetwork` | `WithSeparateClusterNetwork requires bridge mode` |
-| `WithMessengerPolicy` with `MessengerV2Secure` | rejected; `MessengerV2Secure` fixes every connection mode |
-| `WithAddressFamily` with any family but `AddressIPv4`, and `WithHostNetwork` | `WithAddressFamily(...) requires bridge mode` |
-| `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithSeparateClusterNetwork` | rejected |
+| `NetworkConfig.WithHostAddress` without `WithHostNetwork` | `NetworkConfig.WithHostAddress requires WithHostNetwork` |
+| `WithHostNetwork` with `NetworkConfig.WithSeparateClusterNetwork` | `NetworkConfig.WithSeparateClusterNetwork requires bridge mode` |
+| `NetworkConfig.WithMessengerPolicy` with `MessengerV2Secure` | rejected; `MessengerV2Secure` fixes every connection mode |
+| `NetworkConfig.WithAddressFamily` with any family but `AddressIPv4`, and `WithHostNetwork` | `NetworkConfig.WithAddressFamily(...) requires bridge mode` |
+| `NetworkConfig.WithAddressFamily(AddressIPv4MappedIPv6)` with `NetworkConfig.WithSeparateClusterNetwork` | rejected |
 | `WithNoInitialOSDs` with `WithOSDCount` or `WithInitialOSDs` | rejected; pick one initial layout |
 | `WithNoInitialOSDs` with initial pools, filesystems or gateways | rejected; add OSDs before provisioning them |
 | `WithNoInitialManagers` with `WithManagerCount` | rejected |
@@ -291,9 +291,9 @@ Starts only the MON and MGR topology. Add storage later with
 - Run still waits for an available MGR. No storage readiness is implied: Ceph's
   own `.mgr` pool can have pending PGs, and health is usually `HEALTH_WARN`
   (for example `TOO_FEW_OSDS`) until OSDs join.
-- With [WithOSDInMemoryStorage](#withosdinmemorystorage), the tmpfs volume is
+- With [OSDStorage.WithInMemory](#osdstoragewithinmemory), the tmpfs volume is
   created on the first `AddOSD`.
-- [WithOSDVolumeStorage](#withosdvolumestorage) also defers its ordinary
+- [OSDStorage.WithVolume](#osdstoragewithvolume) also defers its ordinary
   named volume until the first `AddOSD`.
 - Removing the last OSD is still refused later.
 
@@ -415,14 +415,40 @@ option the root is `default`. The initial layout must contain enough OSDs in thi
 root for the default replica count; this check is skipped with
 `WithNoInitialOSDs`.
 
-#### WithOSDBlockSize
+#### OSDStorage
 
 ```golang
-ceph.WithOSDBlockSize(256 << 20)
+type OSDStorage struct { /* unexported */ }
+
+func (OSDStorage) WithBlockSize(size int64) OSDStorage
+func (OSDStorage) WithObjectStore(store OSDObjectStore) OSDStorage
+func (OSDStorage) WithInMemory(maxBytes int64) OSDStorage
+func (OSDStorage) WithVolume() OSDStorage
+func WithOSDStorage(storage OSDStorage) Option
+```
+
+The OSD storage group: where and how every OSD of the cluster, including OSDs
+added later, keeps its data. `OSDStorage` is a plain value with chainable,
+value-returning methods; `WithOSDStorage` is its one option function. The zero
+value changes nothing, and each field records whether it was set, so an explicit
+setting differs from an unspecified one (`WithBlockSize(0)` is refused, not the
+default). Within one value a later call of the same method replaces the earlier
+one. `Run` refuses a field that two `WithOSDStorage` options both set, even when
+they agree. Incompatible combinations fail before resource allocation.
+
+```golang
+storage := ceph.OSDStorage{}.WithBlockSize(256 << 20).WithObjectStore(ceph.OSDMemStore)
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDStorage(storage))
+```
+
+#### OSDStorage.WithBlockSize
+
+```golang
+ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(256 << 20))
 ```
 
 Sets the logical size in bytes of each OSD's sparse BlueStore file, or the
-capacity of each MemStore OSD (see [WithOSDObjectStore](#withosdobjectstore)).
+capacity of each MemStore OSD (see [OSDStorage.WithObjectStore](#osdstoragewithobjectstore)).
 The default is 1 GiB and the minimum accepted value is 64 MiB. These are disposable files,
 not real disks; the space is allocated as data is written.
 
@@ -435,16 +461,16 @@ times out waiting for it. For small OSDs, start with
 changes the scheduler or the benchmark. See
 [Run small OSDs](#run-small-osds).
 
-#### WithOSDInMemoryStorage
+#### OSDStorage.WithInMemory
 
 ```golang
-ceph.WithOSDInMemoryStorage(2 << 30)
+ceph.WithOSDStorage(ceph.OSDStorage{}.WithInMemory(2 << 30))
 ```
 
 Keeps every OSD's BlueStore file in one Docker-managed tmpfs volume instead of
 the OSD containers' writable layers. `maxBytes` must be positive and is the
 allocation ceiling for the whole cluster's OSD volume, independent of each file's
-logical [WithOSDBlockSize](#withosdblocksize). It can be smaller than the sum of
+logical [OSDStorage.WithBlockSize](#osdstoragewithblocksize). It can be smaller than the sum of
 the logical sizes.
 
 - It is not a per-OSD reservation and does not limit daemon memory. The volume
@@ -469,17 +495,17 @@ the logical sizes.
 Without either storage-volume option, the default remains a container-local
 sparse file per OSD.
 
-#### WithOSDVolumeStorage
+#### OSDStorage.WithVolume
 
 ```golang
-ceph.WithOSDVolumeStorage()
+ceph.WithOSDStorage(ceph.OSDStorage{}.WithVolume())
 ```
 
 Keeps classic BlueStore OSD directories in one ordinary Docker local named
 volume owned by the cluster. Each OSD still gets its own sparse file with
-[WithOSDBlockSize](#withosdblocksize) as its logical capacity. Unlike the tmpfs
+[OSDStorage.WithBlockSize](#osdstoragewithblocksize) as its logical capacity. Unlike the tmpfs
 option, bytes do not depend on a live keeper. This option cannot be combined
-with MemStore or `WithOSDInMemoryStorage`; invalid combinations fail before
+with MemStore or `OSDStorage.WithInMemory`; invalid combinations fail before
 resource allocation.
 
 The first OSD allocates a unique volume and an isolated idle helper from the
@@ -502,10 +528,10 @@ always discards its owned volume, including detached stores. See
 [the storage design](design/osd-volume-storage.md) and
 [retained reopen](design/osd-retained-reopen.md).
 
-#### WithOSDObjectStore
+#### OSDStorage.WithObjectStore
 
 ```golang
-ceph.WithOSDObjectStore(ceph.OSDMemStore)
+ceph.WithOSDStorage(ceph.OSDStorage{}.WithObjectStore(ceph.OSDMemStore))
 ```
 
 Selects the object store of every OSD, including OSDs added later. The
@@ -514,15 +540,15 @@ argument is a `ceph.OSDObjectStore`:
 | Value | Store |
 | --- | --- |
 | `ceph.OSDBlueStore` | Default. A sparse BlueStore file per OSD. |
-| `ceph.OSDMemStore` | Ceph's in-memory test store, `memstore`. Data lives in the OSD process's memory; [WithOSDBlockSize](#withosdblocksize) sets its capacity (`memstore_device_bytes`). |
+| `ceph.OSDMemStore` | Ceph's in-memory test store, `memstore`. Data lives in the OSD process's memory; [OSDStorage.WithBlockSize](#osdstoragewithblocksize) sets its capacity (`memstore_device_bytes`). |
 
 - MemStore saves its contents to the OSD's data directory when the store is
   unmounted, so the fixture disables Ceph's fast OSD shutdown for MemStore
   OSDs. A stopped OSD keeps its data across `Stop` and `Start`; an OSD that is
   killed, or whose container is removed, loses it.
 - MemStore cannot be combined with
-  [WithOSDInMemoryStorage](#withosdinmemorystorage) or
-  [WithOSDVolumeStorage](#withosdvolumestorage), which use BlueStore files, and [fault.InjectObjectDataError](fault.md#injectobjectdataerror)
+  [OSDStorage.WithInMemory](#osdstoragewithinmemory) or
+  [OSDStorage.WithVolume](#osdstoragewithvolume), which use BlueStore files, and [fault.InjectObjectDataError](fault.md#injectobjectdataerror)
   needs BlueStore.
 - `ceph osd metadata` reports `osd_objectstore` as `memstore`.
 
@@ -572,12 +598,12 @@ rejected with the option to use instead:
 | Keys | Use instead |
 | --- | --- |
 | `fsid`, `mon_host`, `mon_initial_members`, `mon_addr` | generated; `WithMonitorCount` |
-| `public_network`, `cluster_network`, `public_addr`, `cluster_addr`, `*_bind_addr` | `WithHostNetwork`, `WithSeparateClusterNetwork`, `WithHostAddress` |
+| `public_network`, `cluster_network`, `public_addr`, `cluster_addr`, `*_bind_addr` | `WithHostNetwork`, `NetworkConfig.WithSeparateClusterNetwork`, `NetworkConfig.WithHostAddress` |
 | `auth_*`, `keyring`, `key`, `keyfile` | `WithAuth`; fixture Cephx setup |
-| `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` except `ms_bind_prefer_ipv4` | `WithMessengerMode`, `WithMessengerPolicy`, `WithClientMessengerPolicy`, `WithAddressFamily`, `WithHostNetwork` |
+| `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` except `ms_bind_prefer_ipv4` | `NetworkConfig.WithMessengerMode`, `NetworkConfig.WithMessengerPolicy`, `WithClientMessengerPolicy`, `NetworkConfig.WithAddressFamily`, `WithHostNetwork` |
 | `osd_pool_default_size`, `osd_pool_default_min_size` | `WithPoolDefaults` |
 | `osd_pool_default_crush_rule` | `WithDefaultCRUSHRoot` |
-| `bluestore_block_size` | `WithOSDBlockSize` |
+| `bluestore_block_size` | `OSDStorage.WithBlockSize` |
 | `osd_objectstore`, `bluestore_block_path`, `bluestore_block_create` | fixed OSD storage layout |
 | `log_file`, `log_to_file`, `log_to_stderr`, `err_to_stderr`, `mon_cluster_log_to_*` | daemon logs always go to container output |
 | `admin_socket`, `run_dir`, `mon_data`, `osd_data`, `mgr_data`, `mds_data` | fixed paths |
@@ -596,10 +622,45 @@ file, NUL bytes or invalid UTF-8, and files (or merged results) larger than
 64 KiB. Ceph treats `#` and `;` as comment starts even inside quotes, so a value
 such as `"a;b"` is rejected; escape literal characters as `\#` and `\;`.
 
-#### WithMessengerMode
+#### NetworkConfig
 
 ```golang
-ceph.WithMessengerMode(ceph.MessengerV2Secure)
+type NetworkConfig struct { /* unexported */ }
+
+func (NetworkConfig) WithAddressFamily(family AddressFamily) NetworkConfig
+func (NetworkConfig) WithSeparateClusterNetwork() NetworkConfig
+func (NetworkConfig) WithHostAddress(address string) NetworkConfig
+func (NetworkConfig) WithMessengerMode(mode MessengerMode) NetworkConfig
+func (NetworkConfig) WithMessengerPolicy(policy MessengerPolicy) NetworkConfig
+func WithNetworkConfig(network NetworkConfig) Option
+```
+
+The network and Messenger group: the address family, the separate cluster
+network, the host-mode address, the Messenger protocol mode and the Messenger
+connection policy. `NetworkConfig` is a plain value with chainable,
+value-returning methods; `WithNetworkConfig` is its one option function. The zero
+value changes nothing, and each field records whether it was set, so an explicit
+setting differs from an unspecified one (`WithAddressFamily(ceph.AddressIPv4)`
+and `WithMessengerMode(ceph.MessengerDefault)` are settings, `WithHostAddress("")`
+is refused). Within one value a later call of the same method replaces the earlier
+one. `Run` refuses a field that two `WithNetworkConfig` options both set, even
+when they agree; different fields in different options compose in any order. The
+value copies the lists of a `MessengerPolicy`, so changing them afterwards does
+not change it, and a non-nil empty list is still refused. Incompatible
+combinations (see the table above) fail before resource allocation.
+`WithHostNetwork` is container execution policy and stays its own option. It
+replaces `WithAddressFamily`, `WithSeparateClusterNetwork`, `WithHostAddress`,
+`WithMessengerMode` and `WithMessengerPolicy`.
+
+```golang
+network := ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack).WithSeparateClusterNetwork()
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithNetworkConfig(network))
+```
+
+#### NetworkConfig.WithMessengerMode
+
+```golang
+ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure))
 ```
 
 Selects, at bootstrap, the Messenger protocols that every daemon listens on and
@@ -608,7 +669,7 @@ immutable for the lifetime of the cluster.
 
 | Mode | Listeners and addresses | Connection modes |
 | --- | --- | --- |
-| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [WithMessengerPolicy](#withmessengerpolicy), [override.SetMessengerPolicy](override.md#setmessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
+| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [NetworkConfig.WithMessengerPolicy](#networkconfigwithmessengerpolicy), [override.SetMessengerPolicy](override.md#setmessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
 | `ceph.MessengerV2Only` | v2 only | As with `MessengerDefault`: CRC, secure or a per-daemon-type mix, changeable later. |
 | `ceph.MessengerV2Secure` | v2 only | Fixed to encrypted Messenger v2 (`secure`, AES-GCM) for every connection; no CRC mode. |
 
@@ -618,8 +679,7 @@ and `ms_bind_msgr2` to `true` and nothing else, so a CRC-only cluster is:
 ```golang
 crc := []ceph.MessengerConnectionMode{ceph.MessengerCRC}
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithMessengerMode(ceph.MessengerV2Only),
-	ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc}),
+	ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only).WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc})),
 )
 // Native clients attached with WithClient(ceph.WithClientMessengerPolicy(
 // ceph.ClientMessengerPolicy{MonitorsAndManagers: crc, OtherDaemons: crc}))
@@ -634,8 +694,8 @@ describe to these options:
 
 | `ceph.conf` | Options |
 | --- | --- |
-| All six `ms_*_mode` and `ms_mon_*_mode` options `secure` | `WithMessengerMode(ceph.MessengerV2Secure)` |
-| `ms_mon_service_mode` of the MONs or MGRs, `ms_service_mode` of the OSDs | `WithMessengerMode(ceph.MessengerV2Only)` and the matching fields of `WithMessengerPolicy` |
+| All six `ms_*_mode` and `ms_mon_*_mode` options `secure` | `NetworkConfig.WithMessengerMode(ceph.MessengerV2Secure)` |
+| `ms_mon_service_mode` of the MONs or MGRs, `ms_service_mode` of the OSDs | `NetworkConfig.WithMessengerMode(ceph.MessengerV2Only)` and the matching fields of `NetworkConfig.WithMessengerPolicy` |
 | `ms_mon_client_mode` and `ms_client_mode` of a client | `WithClientMessengerPolicy` on that client's container |
 | `ms_cluster_mode` and `ms_mon_cluster_mode` between daemons | Ceph's defaults: the policy options leave them alone; with `MessengerV2Only`, [override.SetConfig](override.md#setconfig) can change them |
 | `mon_host` with only v2 addresses, port 3300 | [MonitorBootstrapAddresses](#monitorbootstrapaddresses), or `MappedPort(ctx, "3300/tcp")` in bridge mode; there is no 6789 to map |
@@ -740,13 +800,13 @@ records its type: the first two bytes, little-endian, are 1 for `aes` and 2 for
   `aes256k`.
 - `WithConfigFile` rejects `auth_*` keys, so set the lifetimes here.
 
-#### WithMessengerPolicy
+#### NetworkConfig.WithMessengerPolicy
 
 ```golang
-ceph.WithMessengerPolicy(ceph.MessengerPolicy{
+ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerPolicy(ceph.MessengerPolicy{
 	Monitors: []ceph.MessengerConnectionMode{ceph.MessengerSecure},
 	Managers: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
-})
+}))
 ```
 
 Selects, for each daemon type, the Messenger v2 connection modes that it accepts
@@ -836,7 +896,7 @@ Linux) can reach MONs and OSDs directly.
   Ceph's dynamic port selection. MON port reservation is retried up to five times
   when another process takes a port.
 - The advertised address defaults to `127.0.0.1`; use
-  [WithHostAddress](#withhostaddress) for a remote Docker host.
+  [NetworkConfig.WithHostAddress](#networkconfigwithhostaddress) for a remote Docker host.
 - `Run` checks that the engine runs Linux containers and that the test process
   reaches the first MON's advertised v2 endpoint (retried for up to 5 seconds)
   before creating MGRs and OSDs. Otherwise it returns an error wrapping
@@ -845,7 +905,7 @@ Linux) can reach MONs and OSDs directly.
 - Docker Desktop needs host networking enabled in its settings (version 4.34 or
   later), and its network behaviour differs from a Linux engine. A test process
   that itself runs in a bridge-network container cannot use host mode.
-- Cannot be combined with [WithSeparateClusterNetwork](#withseparateclusternetwork),
+- Cannot be combined with [NetworkConfig.WithSeparateClusterNetwork](#networkconfigwithseparateclusternetwork),
   and Docker endpoint interruption ([fault.InterruptNetwork](fault.md#interruptnetwork)) and
   packet delay ([fault.ApplyNetworkProfile](fault.md#applynetworkprofile)) are not
   available.
@@ -854,10 +914,10 @@ Linux) can reach MONs and OSDs directly.
 report the mode and address. See [Host networking](guides/host-network.md) for native
 clients, Docker Desktop, remote engines and port behaviour.
 
-#### WithHostAddress
+#### NetworkConfig.WithHostAddress
 
 ```golang
-ceph.WithHostAddress("192.0.2.10")
+ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithHostAddress("192.0.2.10"))
 ```
 
 Selects the IPv4 address that daemons bind and advertise in host mode, typically
@@ -866,10 +926,10 @@ the Docker host and reachable from the test process; `Run` verifies both and
 fails with `ErrHostNetworkUnavailable` otherwise. Requires
 [WithHostNetwork](#withhostnetwork).
 
-#### WithSeparateClusterNetwork
+#### NetworkConfig.WithSeparateClusterNetwork
 
 ```golang
-ceph.WithSeparateClusterNetwork()
+ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork())
 ```
 
 Creates a second owned bridge for OSD replication, recovery and heartbeat
@@ -881,7 +941,7 @@ return the two bridges, and [fault.InterruptNetwork](fault.md#interruptnetwork) 
 `ceph.ClusterNetworkPlane` disconnects one OSD's replication endpoint only.
 Requires bridge mode.
 
-With `WithAddressFamily(ceph.AddressIPv6)`, both bridges are dual-stack and
+With `NetworkConfig.WithAddressFamily(ceph.AddressIPv6)`, both bridges are dual-stack and
 Ceph's `public network` and `cluster network` are their IPv6 subnets. The
 MONs, MGRs and OSDs then advertise only IPv6 addresses: MONs, MGRs and the
 public and heartbeat front addresses of OSDs from the public subnet, and the
@@ -891,7 +951,7 @@ cluster endpoint, IPv4 and IPv6, and keeps its public endpoint.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithAddressFamily(ceph.AddressIPv6), ceph.WithSeparateClusterNetwork())
+	ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv6).WithSeparateClusterNetwork()))
 observer, err := ceph.Observe(cluster)
 if err != nil {
 	t.Fatal(err)
@@ -902,15 +962,15 @@ addresses, err := observer.DaemonAddresses(ctx)
 // addresses.OSDs[0].Cluster[0].Addr == "[fd62:93fe:2c9e:1::2]:6800"
 ```
 
-With `WithAddressFamily(ceph.AddressDualStack)`, both bridges are dual-stack
+With `NetworkConfig.WithAddressFamily(ceph.AddressDualStack)`, both bridges are dual-stack
 as well, and `public network` and `cluster network` each list both subnets of
 their bridge. Every daemon then advertises one address of each family from
 the matching bridge.
 
-#### WithAddressFamily
+#### NetworkConfig.WithAddressFamily
 
 ```golang
-ceph.WithAddressFamily(ceph.AddressIPv6)
+ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv6))
 ```
 
 Selects the addresses that the Messenger of every MON, MGR, OSD and MDS binds
@@ -935,7 +995,7 @@ selected family for every daemon, including the heartbeat addresses of OSDs.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithAddressFamily(ceph.AddressIPv4MappedIPv6))
+	ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv4MappedIPv6)))
 observer, err := ceph.Observe(cluster)
 if err != nil {
 	t.Fatal(err)
@@ -945,7 +1005,7 @@ addresses, err := observer.DaemonAddresses(ctx)
 ```
 
 - Bridge mode only. `AddressIPv6` and `AddressDualStack` work with
-  [WithSeparateClusterNetwork](#withseparateclusternetwork), which then makes
+  [NetworkConfig.WithSeparateClusterNetwork](#networkconfigwithseparateclusternetwork), which then makes
   both bridges dual-stack; `AddressIPv4MappedIPv6` cannot be combined with it.
 - `AddressIPv6` and `AddressDualStack` need a Docker Engine that allocates an IPv6 subnet for a new
   IPv6 bridge without an explicit subnet, from its default pool of unique local
@@ -970,11 +1030,11 @@ The generated `ceph.conf` sets `ms_bind_ipv4`, `ms_bind_ipv6` and
 `ms_bind_prefer_ipv4` to `true` and `public network` to both subnets of the
 bridge, such as `172.19.0.0/16,fd62:93fe:2c9e::/64`. Every address vector
 then has one entry of each family for each enabled Messenger protocol: v2,
-and v1 unless [WithMessengerMode](#withmessengermode) removes it.
+and v1 unless [NetworkConfig.WithMessengerMode](#networkconfigwithmessengermode) removes it.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithAddressFamily(ceph.AddressDualStack))
+	ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack)))
 observer, err := ceph.Observe(cluster)
 if err != nil {
 	t.Fatal(err)
@@ -1054,7 +1114,7 @@ families, which the admission check accepts.
   the Messenger v2 banner.
 
 `TestDualStackSeparateClusterNetwork` checks the same with
-`WithSeparateClusterNetwork`, with OSD cluster and heartbeat back addresses of
+`NetworkConfig.WithSeparateClusterNetwork`, with OSD cluster and heartbeat back addresses of
 both families from the replication bridge.
 
 `TestDualStackServices` starts CephFS and RGW with two MGRs, two OSDs, an
@@ -1243,42 +1303,12 @@ leave its service without the storage or manager it needs (for example
 `ceph.WithNoInitialOSDs`); `rbd.Run` accepts `WithNoInitialManagers`. For staged
 bootstraps, start with `ceph.Run` and add the service later.
 
-### Shared cluster
+### Independent test fixtures
 
-A cluster takes 15 to 25 seconds to start, so a package with many small RADOS
-tests spends most of its time starting clusters. The
-[ceph/harness package](ceph-harness.md) starts one cluster for the whole test
-binary and lends each test a tenant: a RADOS namespace of one shared pool and a
-Cephx client that can reach nothing else. A test that needs the whole cluster
-takes it with `Exclusive`, which returns this package's `*ceph.Container`. The
-service harness packages ([rbd/harness](rbd-harness.md),
-[cephfs/harness](cephfs-harness.md) and [rgw/harness](rgw-harness.md)) lease RBD,
-CephFS and RGW resources of the same tenant. Core `ceph` keeps the cluster, its
-operations and the gate that the next section describes; the harness packages
-own sharing, leasing and reuse.
-
-
-#### The shared Container
-
-The tenant never gets the `*ceph.Container`. While a cluster is shared, its
-methods that could reach outside one tenant return an error that matches
-`ErrSharedCluster` and names the method in `OperationError.Op`; an operation
-that is a method of a handle is named `Type.Method`, such as `Pool.Remove`. The
-methods that only read state stay available, including `Container.Pool`.
-
-| Methods | Why they are refused |
-| --- | --- |
-| `CreateClient`, `ClientConfig.Delete`, `ClientConfig.UpdateCaps`, `ClientConfig.ReplaceKey`, `ClientConfig.Revoke`, `ClientConfig.Capabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `override.SetConfig`, `override.SetDebugLevel`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetMessengerPolicy`, `override.AddBlocklist` and `override.SetFullRatios` (see [override](override.md)), `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
-| `Ceph`, `OSDContainer.AdminSocket`, `MonitorContainer.AdminSocket`, `ManagerContainer.AdminSocket`, `OSDContainer.Version`, `MonitorContainer.Version`, `ManagerContainer.Version`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
-| `AddOSD`, `OSDContainer.Remove`, `OSDContainer.Detach`, `DetachedOSD.Reopen`, `AddMonitor`, `MonitorContainer.Remove`, `AddManager`, `ManagerContainer.Remove` | Change the topology. |
-| `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
-
-Under an [exclusive lease](ceph-harness.md#exclusive-lease) the gate refuses only `Terminate`.
-
-`*ceph.Container` overrides those promoted methods of the MON's
-`testcontainers.Container` only to apply this gate; on a cluster of your own
-they behave as before.
+Call `Run` for each test, register owned cleanup before checking its error, and
+create the resources and restricted identities that the test needs. The shared
+cluster and tenant harness has been removed without aliases or a replacement
+sharing framework. See [the migration guide](ceph.md#usage-example).
 
 ### Container Methods
 
@@ -1301,13 +1331,11 @@ These rules apply across its methods:
   deleted daemon, pool or identity returns an error, and so does a handle of a
   terminated cluster. Functions that create handles, such as `AddOSD`,
   `CreatePool` and `CreateClient`, and cluster-wide operations stay on
-  `Container`. [Upgrading to handle operations](guides/upgrading-handle-operations.md)
-  maps each former method to its handle method.
+  `Container`.
 - Typed values. Global OSD flags are `OSDFlag`, PG IDs are `PGID` and the
   bootstrap files are a `ConnectionConfig`. An untyped string constant still
   converts to the flag and PG ID types, so the types do not replace the run-time
-  checks. [Upgrading to typed values](guides/upgrading-typed-values.md) has the
-  migration table.
+  checks.
 - Partial results. A method that creates something (an OSD, a pool, a client
   identity, a handle) can return a non-nil result together with an error. The
   result identifies what was attempted and stays owned by the cluster; inspect it,
@@ -1398,9 +1426,6 @@ retried. Each container gets a 2-second stop timeout instead of Docker's
 10 seconds, because the data is discarded; a `testcontainers.StopTimeout` option
 passed by the caller takes precedence.
 
-A cluster that a [shared cluster](#shared-cluster) shares refuses `Terminate`
-with `ErrSharedCluster`; `SharedCluster.Close` ends it.
-
 Containers you attached with [WithClient](#withclient) or
 [WithClientIdentity](#withclientidentity) are yours: terminate them before the
 cluster, because Docker cannot remove a network that still has attached
@@ -1459,8 +1484,7 @@ Each phase gets a fresh context with its own bound, because the test's
 context has already ended when cleanups run. Errors stay separate: a check's
 error and a cleanup's error fail the test under their names, the
 archive's collection and storage errors are only logged and recorded in its
-manifest, and none of them skips a later phase. A shared cluster refuses
-`TerminateOnCleanup` with `ErrSharedCluster`. Adding a step after the
+manifest, and none of them skips a later phase. Adding a step after the
 finalization has started fails the test instead.
 
 `ceph.FinalizationConfig` fields (zero selects the default):
@@ -1643,10 +1667,8 @@ restart count; the crash IDs already in their crash directories; and the
 window's start on the Docker engine's clock. A crash is new when its crash ID
 was not in that container's directory at activation. `Verify` returns an
 error for an invalid configuration, when the engine's clock cannot be read,
-after the finalization has started, for a name already active on the
-finalization, and with `ErrSharedCluster` on a cluster that a `SharedCluster`
-shares, even exclusively: cluster-wide events cannot be attributed to one
-tenant. `Evaluate` returns the report of the window until now without failing
+after the finalization has started, or for a name already active on the
+finalization. `Evaluate` returns the report of the window until now without failing
 the test, and can be repeated; it returns an error only when it cannot
 evaluate at all.
 
@@ -1917,7 +1939,7 @@ container created by the first [AddMonitor](#addmonitor) (also during `Run`), so
 commands keep working while MON `a` is stopped or removed. The cluster owns it.
 `ctx` bounds the wait for a concurrent control-plane creation or termination.
 The returned handle is a snapshot; it does not promise that the container stays
-alive. A shared cluster refuses the call with an error. The container is created
+alive. The container is created
 from the essential image (`ClusterFacts.Images.Essential`), so it carries the `ceph` CLI and
 the bootstrap tools such as `ceph-authtool`, not the client role's `rados` and
 `rbd` (use [ClientContainer](#clientcontainer)) and not `radosgw-admin` (use
@@ -1943,8 +1965,7 @@ func (c *Container) ClientContainer(ctx context.Context) (testcontainers.Contain
 Returns the owned userspace toolkit executor. A separate client image starts it
 lazily; aggregate images reuse the [control container](#controlcontainer). Run
 `rados`, `rbd` and the Python client bindings here.
-`ctx` bounds the wait for a concurrent topology change, and a shared cluster
-refuses the call with an error. The cluster owns the container.
+`ctx` bounds the wait for a concurrent topology change. The cluster owns the container.
 
 #### Per-daemon images
 
@@ -1971,8 +1992,7 @@ does not touch the cluster's settings, `ClusterFacts` or any other daemon.
 - Validation. The reference must be non-empty with no whitespace or control
   characters, and may be given once. A refusal matches `ErrInvalidRequest` and
   happens before the topology lock, any key or identity, any OSD registration
-  and any container. A shared cluster refuses the topology calls with
-  `ErrSharedCluster` first, so a tenant cannot use the option. Nothing checks
+  and any container. Nothing checks
   that the image exists, that it has the daemon binary and the tools the
   fixture scripts use, or that its release works with the running cluster;
   an unusable image fails at start like any other.
@@ -2023,7 +2043,7 @@ func (c *Container) Monitors(ctx context.Context) ([]*ceph.MonitorContainer, err
 ```
 
 Returns the owned monitors sorted by daemon name. `ctx` bounds the wait for a
-concurrent topology change, and a shared cluster refuses the call with an error.
+concurrent topology change.
 The returned slice is independent; descriptors and containers remain owned by
 the cluster. Each `*ceph.MonitorContainer`
 embeds its `testcontainers.Container` and has a `DaemonName`. `Stop` and `Start`
@@ -2149,8 +2169,7 @@ func (c *Container) Managers(ctx context.Context) ([]*ceph.ManagerContainer, err
 ```
 
 Returns the owned manager candidates sorted by daemon name. `ctx` bounds the
-wait for a concurrent topology change, and a shared cluster refuses the call
-with an error. The returned slice is independent; descriptors and containers
+wait for a concurrent topology change. The returned slice is independent; descriptors and containers
 remain owned by the cluster. Each
 `*ceph.ManagerContainer` embeds its container and has a `DaemonName`. Stop the
 active manager's container to trigger a standby takeover, or stop the only
@@ -2238,9 +2257,8 @@ func Observe(cluster *Container) (*Observer, error)
 ```
 
 Returns an `Observer`, which groups read-only live queries of one cluster. A nil
-cluster returns an error and a nil `Observer`. The Observer of a tenant lease is
-built by `ObserveTenant` in [ceph/harness](ceph-harness.md#observe-a-tenant); it
-has the same type and queries. There is no `Container` accessor for it.
+cluster returns an error and a nil `Observer`. There is no `Container` accessor
+for it.
 
 #### Observer
 
@@ -2267,10 +2285,7 @@ func (o *Observer) Pools(ctx context.Context) ([]*ceph.Pool, error)
 Each query reads the cluster when it is called; constructing an `Observer`
 captures nothing and a retained one never returns an earlier result. A query is
 not an atomic cluster-wide snapshot. These queries are methods of the
-`Observer` only: the `Container` and the harness `Tenant` have no method of the same
-names. A tenant-backed `Observer` checks its lease on every query, so after
-the tenant is released or the shared cluster is terminated every query returns
-an error that matches `ErrInvalidRequest`. A cluster-backed `Observer` has no lease, and its
+`Observer` only: the `Container` has no method of the same names. Its
 queries after `Terminate` fail with the error of the command path. An
 `Observer` exposes only its queries, owns no resource and needs no cleanup.
 `Configuration`, `BlocklistEntries`, `MGRModules`, `OSDFlags`, `OSDStates` and
@@ -2292,7 +2307,7 @@ supervised scrape in the control container. A refused or failed collection is an
 error and is never returned as an empty result. `Pools` lists the pools as
 `Pool` objects (see [Pools](#pools)). The `Observer` stays in package `ceph`,
 because its queries need the captured control handle, the topology and
-configuration locks and the shared-cluster admission, which are internal to the
+configuration locks, which are internal to the
 package.
 
 #### OSDs
@@ -2302,7 +2317,7 @@ func (c *Container) OSDs(ctx context.Context) ([]*ceph.OSDContainer, error)
 ```
 
 Returns a snapshot of the owned OSDs sorted by ID. `ctx` bounds the wait for a
-concurrent topology change, and a shared cluster refuses the call with an error.
+concurrent topology change.
 The returned slice is independent; descriptors and containers remain owned by
 the cluster. Each `*ceph.OSDContainer`
 embeds its container and has the numeric `ID`; `Placement()` returns its resolved
@@ -2352,8 +2367,8 @@ the block size and storage options selected at `Run`. The optional
 inspected; nothing is purged automatically. `AddOSD` is refused while an
 earlier [OSDContainer.Remove](#osdcontainerremove) has not finished its cleanup, so a reused numeric
 ID cannot be confused with the old handle. Adding OSDs does not change existing
-pool sizes. The shared-cluster gate is checked first, then the context, and the
-assembled configuration is validated once before the topology lock, any OSD
+pool sizes. The context is checked and the assembled configuration is
+validated once before the topology lock, any OSD
 registration and any container.
 
 An omitted host resolves to `osd-<ID>` after native registration. If that name
@@ -2438,7 +2453,7 @@ func (o *OSDContainer) Detach(ctx context.Context) (*ceph.DetachedOSD, error)
 
 Stops and removes an owned OSD's container but keeps its store in the owned
 volume and its MON registration, so that [DetachedOSD.Reopen](#detachedosdreopen) can start a
-new container on them. It needs [WithOSDVolumeStorage](#withosdvolumestorage);
+new container on them. It needs [OSDStorage.WithVolume](#osdstoragewithvolume);
 other storage is an invalid request. The OSD is down while it is detached, not
 out or purged: hold `noout` with [override.SetOSDFlag](override.md#setosdflag) if Ceph
 must not mark it out.
@@ -2599,7 +2614,7 @@ a pool of a service. It fails when the pool does not exist. The handle is bound
 to the pool's native ID. The returned `Pool` reports `Name`, `PGNum`, `Replicas`
 (of a replicated pool), `MinSize` and `ErasureCodeProfile`; its other fields,
 `CRUSHRule` included, are zero, and [Pool.Status](#poolstatus) reports the full
-native state. A shared cluster allows the call.
+native state.
 
 ```golang
 appData, err := cluster.Pool(ctx, "app-data")
@@ -2618,15 +2633,7 @@ what the listing reports: `Name`, `PGNum`, `Replicas` of a replicated pool,
 `MinSize` and `ErasureCodeProfile`. Read the full native state with
 [Pool.Status](#poolstatus), the usage with [Pool.Usage](#poolusage) and the PGs
 with `Pool.PGs`. The listing is one read of the native pool map, so a failed or
-malformed listing is an error and never an empty list. The `Observer` of a
-tenant lists the pools too. Each of its handles remembers the tenant lease and
-checks it on every operation, reads included: after the tenant is released or
-its shared cluster is terminated, every operation returns an error that matches
-`ErrInvalidRequest` without reaching the cluster. Operations that change a pool
-are always refused with `ErrSharedCluster`, also after the cluster has been lent
-to a later exclusive lease. Handles of `Container.Pool` and of a cluster-backed
-`Observer` are unchanged. The usage of `SharedPool` includes the objects of the
-other tenants.
+malformed listing is an error and never an empty list.
 
 #### Pool.Status
 
@@ -2859,7 +2866,7 @@ the cluster's public network; in host mode it joins the host network.
   which you run commands with `Exec`.
 - Options change the copied `ceph.conf`: `ceph.WithClientMessengerPolicy` sets
   the client's Messenger connection modes (see
-  [WithMessengerPolicy](#withmessengerpolicy)).
+  [NetworkConfig.WithMessengerPolicy](#networkconfigwithmessengerpolicy)).
 - You own the container. Terminate it before the cluster (register its cleanup
   after the cluster's).
 
@@ -3215,8 +3222,8 @@ go-ceph in host mode or a custom client implementation. The configuration
 contains the addresses that the cluster advertises: container addresses in bridge
 mode, host addresses (with final MON ports) in host mode. The keyring grants full
 privileges. `ctx` bounds the wait for a concurrent topology change or
-configuration update. It fails after termination or before bootstrap completed,
-and a shared cluster refuses the call. On error it returns the zero
+configuration update. It fails after termination or before bootstrap completed.
+On error it returns the zero
 `ceph.ConnectionConfig`.
 
 ```golang
@@ -3279,9 +3286,7 @@ effective value. Entries can contain sensitive values.
 The runtime debug level window is the package function
 [override.SetDebugLevel](override.md#setdebuglevel) and its
 `*override.DebugLevelHandle`; the call and its restoration rules are documented
-there. 0.x: old names are removed without aliases, and the
-[migration guide](guides/upgrading-override-debug-level.md) maps the previous
-names. These types stay in `ceph`
+there. 0.x: old names are removed without aliases. These types stay in `ceph`
 because the failure manifest copies the receipt:
 
 - `ceph.DebugLevelSetting` has `Daemon` (such as `osd.0`), `Name` (`debug_ms` or
@@ -3500,7 +3505,7 @@ about health or daemon availability.
 The override that changes the policy of a running cluster is
 [override.SetMessengerPolicy](override.md#setmessengerpolicy). It moved out of
 `ceph` with its handle type; `ceph.MessengerPolicy` and
-`ceph.MessengerConnectionMode` stay here because `WithMessengerPolicy` takes them
+`ceph.MessengerConnectionMode` stay here because `NetworkConfig.WithMessengerPolicy` takes them
 at `Run`.
 
 ### Container Methods: Object watchers and client fencing
@@ -4063,7 +4068,7 @@ var ErrHostNetworkUnavailable error
 ```
 
 Wrapped by the error that `Run` returns in host mode when the engine does not run
-Linux containers, the [WithHostAddress](#withhostaddress) address is not assigned
+Linux containers, the [NetworkConfig.WithHostAddress](#networkconfigwithhostaddress) address is not assigned
 on the Docker host, or the test process cannot reach the first MON's advertised
 endpoint. `Run` returns it before creating managers and OSDs; later MON and RGW
 port reservations can also return it. The error message explains the likely
@@ -4090,7 +4095,6 @@ var (
 	ErrImageCapability        error
 	ErrEnvironmentUnavailable error
 	ErrNativeFailure          error
-	ErrSharedCluster          error
 )
 ```
 
@@ -4106,7 +4110,6 @@ engine capability, and from a native command that failed. Match them with
 | `ErrImageCapability` | The image lacks an executable or runtime that the operation needs, or an optional extension was not selected or does not meet its contract. |
 | `ErrEnvironmentUnavailable` | The Docker engine, host, kernel or container permissions cannot provide what the operation needs, although the image may be valid. |
 | `ErrNativeFailure` | A native command ran and failed. `*NativeFailure` carries its status. |
-| `ErrSharedCluster` | A cluster that a `SharedCluster` shares refused the method before any change; see [The shared Container](#the-shared-container). |
 
 Context errors, `ErrNativeCommandIncomplete`, `ErrNativeInputClosed` and
 `*NativeCommandUnstoppedError` keep their own contracts and belong to no
@@ -4114,8 +4117,7 @@ category; a call that `ctx` ended is never classified by what it could not
 finish. An error that matches no category is a failed check of the fixture's
 own, such as native output that it could not parse, or a failure whose
 outcome is unknown, such as a container that disappeared after a native
-command was sent to it. Only `ErrInvalidRequest` and `ErrSharedCluster`
-promise that nothing changed. See [Classified errors](guides/errors.md).
+command was sent to it. Only `ErrInvalidRequest` promises that nothing changed. See [Classified errors](guides/errors.md).
 
 ```golang
 _, err := cluster.CreateClient(ctx, "modern", ceph.ClientCaps{Mon: "allow r"},
@@ -4221,7 +4223,7 @@ const (
 )
 ```
 
-The bootstrap protocols and connection policy for [WithMessengerMode](#withmessengermode).
+The bootstrap protocols and connection policy for [NetworkConfig.WithMessengerMode](#networkconfigwithmessengermode).
 Unknown values are rejected by `Run`.
 
 #### NetworkPlane
@@ -4353,37 +4355,13 @@ if err := reader.Delete(ctx); err != nil {
 }
 ```
 
-### Give each test its own pool on a shared cluster
+### Give each test an independent fixture
 
-Starting a cluster costs tens of seconds, so a package can share one cluster
-(for example from `TestMain`) and give each test a pool that it removes again.
-Removing pools keeps the cluster below Ceph's per-OSD PG limit.
-
-```golang
-func newTestPool(t *testing.T, cluster *ceph.Container) string {
-	t.Helper()
-	ctx := t.Context()
-	name := "t-" + strings.ToLower(strings.NewReplacer("/", "-", "_", "-").Replace(t.Name()))
-	pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: name, Application: "rados"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		if err := pool.Remove(ctx); err != nil {
-			t.Error(err)
-		}
-	})
-	if err := cluster.WaitForClean(ctx); err != nil {
-		t.Fatal(err)
-	}
-	return name
-}
-```
-
-Pool names must use letters, digits, `_`, `.` and `-` and must be unique among
-pools, CRUSH rules and EC profiles; derive them from `t.Name()` as above.
+Start `ceph.Run` in each test and register the returned cluster for cleanup
+before checking the error. Use `WithPools` for bootstrap pools, or
+`CreatePool` for an explicitly owned dynamic pool. Create restricted Cephx
+identities with `CreateClient` and use `WithClientIdentity` for client containers.
+See [the complete migration example](ceph.md#usage-example).
 
 ### Create an erasure-coded data pool for RBD images
 
@@ -4516,8 +4494,8 @@ if err := os.WriteFile(legacyPools, []byte("[global]\nosd_pool_default_flag_hash
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 	ceph.WithOSDCount(1),
 	ceph.WithPoolDefaults(1, 1),
-	ceph.WithOSDObjectStore(ceph.OSDMemStore),
-	ceph.WithOSDBlockSize(256<<20),
+	ceph.WithOSDStorage(ceph.OSDStorage{}.WithObjectStore(ceph.OSDMemStore)),
+	ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(256<<20)),
 	ceph.WithConfigFile(legacyPools),
 )
 testcontainers.CleanupContainer(t, cluster)
@@ -4600,8 +4578,8 @@ start.
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 	ceph.WithNoInitialOSDs(),
-	ceph.WithOSDBlockSize(64<<20),
-	ceph.WithOSDInMemoryStorage(256<<20), // optional; omit for container-local files
+	ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(64<<20)),
+	ceph.WithOSDStorage(ceph.OSDStorage{}.WithInMemory(256<<20)), // optional; omit for container-local files
 )
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
@@ -4628,8 +4606,8 @@ recovery. The three limits are independent:
 
 | Resource | Bounded by | Includes |
 | --- | --- | --- |
-| Logical storage per OSD | `WithOSDBlockSize` | BlueStore data, metadata and temporary writes inside each file |
-| Shared RAM backing | `WithOSDInMemoryStorage` | Allocated tmpfs pages of all OSD files |
+| Logical storage per OSD | `OSDStorage.WithBlockSize` | BlueStore data, metadata and temporary writes inside each file |
+| Shared RAM backing | `OSDStorage.WithInMemory` | Allocated tmpfs pages of all OSD files |
 | Process memory | Docker host or VM limits and daemon settings | MON, MGR, OSD and client memory |
 
 If you customize daemon arguments or config files, confirm the effective value
@@ -4993,7 +4971,7 @@ Desktop and port selection.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithMessengerMode(ceph.MessengerV2Secure),
+	ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)),
 )
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
@@ -5061,7 +5039,7 @@ examples.
   Test data paths with user-space clients (librados, librbd, libcephfs, S3).
 - The module prepares and observes server-side conditions. It is not an
   operations SDK and does not wrap data APIs.
-- IPv4 is the default. [WithAddressFamily](#withaddressfamily) selects IPv6
+- IPv4 is the default. [NetworkConfig.WithAddressFamily](#networkconfigwithaddressfamily) selects IPv6
   or IPv4-mapped IPv6 on a bridge network; the host network is IPv4 only.
 
 ### Fixture defaults that differ from a stock cluster
@@ -5072,7 +5050,7 @@ examples.
 | `osd_pool_default_pg_num`, autoscale mode | 8, `off` | `PoolConfig.PGNum`, `Pool.SetPGCount` |
 | `mon_allow_pool_size_one` | `true` (replica-1 pools allowed) | config file |
 | `mgr_stats_period` | 1 second (faster PG reports) | config file |
-| `bluestore_block_size` | 1 GiB sparse file | `WithOSDBlockSize` |
+| `bluestore_block_size` | 1 GiB sparse file | `OSDStorage.WithBlockSize` |
 | `bluestore_cache_size`, autotune | 64 MiB, off | config file `[osd]` |
 | `osd_max_object_name_len`, `osd_max_object_namespace_len` | 256, 64 | config file `[osd]` |
 | `auth_allow_insecure_global_id_reclaim` | `false` | not configurable |
@@ -5119,7 +5097,7 @@ a helper applies or restores it.
   [cephfs](cephfs.md) and [rgw](rgw.md) packages.
 - Squid has no `messenger dump` admin command, so encryption of individual
   connections cannot be inspected there (see
-  [WithMessengerMode](#withmessengermode)).
+  [NetworkConfig.WithMessengerMode](#networkconfigwithmessengermode)).
 - Squid 19.2.6 has an RGW multisite regression; use 19.2.5 for multisite tests
   (see [rgw](rgw.md)).
 - `ClusterFacts.CephVersion` reflects only the first MON's image (essential). Mixing releases across role
@@ -5133,7 +5111,7 @@ See [Releases and images](guides/releases-and-images.md) for details.
   size already follows `min(2, OSD count)`; `CreatePool` refuses an explicit
   `Replicas: 2` there, and a size-2 pool created through the CLI never becomes
   clean.
-- Small `WithOSDBlockSize` values with initial OSDs make `Run` time out (see
+- Small `OSDStorage.WithBlockSize` values with initial OSDs make `Run` time out (see
   [Run small OSDs](#run-small-osds)).
 - A key set with `WithConfigFile` cannot be changed with `override.SetConfig`;
   `mon_allow_pool_delete = false` in a config file blocks `Pool.Remove`.

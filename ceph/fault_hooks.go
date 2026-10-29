@@ -31,10 +31,6 @@ var faultKindNames = map[string]faultKind{
 
 var errFaultToken = errors.New("fault registry token is not one that a cluster issued")
 
-// Admit refuses the fault operation op on a cluster that a SharedCluster
-// shares, with the policy of sharedFaultPolicies.
-func (faultHooks) Admit(c *Container, op string) error { return c.admitFault(op) }
-
 // Reserve reserves key for a fault of kind. The caller holds the cluster
 // mutex and has refused a closed cluster. A refusal may return the previous
 // handle, which still needs its undo.

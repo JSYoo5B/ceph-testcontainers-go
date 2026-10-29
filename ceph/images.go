@@ -141,9 +141,7 @@ func (c *Container) ClientContainer(ctx context.Context) (testcontainers.Contain
 	if c == nil {
 		return nil, fmt.Errorf("ceph cluster is unavailable")
 	}
-	if err := c.sharedGate("ClientContainer"); err != nil {
-		return nil, err
-	}
+
 	// Initial attachment must observe one MON configuration: a concurrent
 	// topology refresh cannot inventory a toolkit that has not been created yet.
 	if images := c.staticFacts().Images; images.Client != "" && images.Client != images.Essential {

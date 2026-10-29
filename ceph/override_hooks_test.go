@@ -1,49 +1,8 @@
 package ceph
 
 import (
-	"errors"
 	"testing"
 )
-
-func TestOverrideAdmissionKeepsMethodPolicies(t *testing.T) {
-	// Every override operation is exclusive; the table is pinned entry by entry.
-	for op, expected := range map[string]sharedPolicy{
-		"override.AddBlocklist":       sharedExclusive,
-		"override.SetDebugLevel":      sharedExclusive,
-		"override.SetMGRModule":       sharedExclusive,
-		"override.SetFullRatios":      sharedExclusive,
-		"override.SetOSDFlag":         sharedExclusive,
-		"override.SetConfig":          sharedExclusive,
-		"override.SetMessengerPolicy": sharedExclusive,
-	} {
-		if policy, ok := sharedOverridePolicies[op]; !ok || policy != expected {
-			t.Errorf("%s has policy %v, want %v", op, policy, expected)
-		}
-	}
-	if len(sharedOverridePolicies) != 7 {
-		t.Errorf("sharedOverridePolicies has %d entries, want the seven pinned entries", len(sharedOverridePolicies))
-	}
-	c := &Container{}
-	if err := c.admitOverride("override.AddBlocklist"); err != nil {
-		t.Fatalf("a cluster of its own refused an override: %v", err)
-	}
-	if err := c.admitOverride("override.Unknown"); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("an unclassified override was admitted: %v", err)
-	}
-	for opName := range sharedOverridePolicies {
-		c.sharing.Store(int32(sharedWithTenants))
-		err := c.admitOverride(opName)
-		var op *OperationError
-		if !errors.Is(err, ErrSharedCluster) || !errors.As(err, &op) || op.Op != opName {
-			t.Fatalf("a shared cluster admitted %s: %v", opName, err)
-		}
-		c.sharing.Store(int32(sharedExclusively))
-		if err := c.admitOverride(opName); err != nil {
-			t.Fatalf("an exclusive lease refused %s: %v", opName, err)
-		}
-		c.sharing.Store(int32(0))
-	}
-}
 
 func TestOverrideKindsAreRegistryKinds(t *testing.T) {
 	for name, kind := range overrideKindNames {

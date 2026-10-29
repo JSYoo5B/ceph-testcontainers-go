@@ -51,8 +51,8 @@ func osdVolumeFixture() (*osdVolumeStorage, *osdVolumeDockerFake, *osdVolumeHelp
 
 func TestOSDVolumeStorageAdmissionBeforeAllocation(t *testing.T) {
 	for _, opts := range [][]testcontainers.ContainerCustomizer{
-		{WithOSDVolumeStorage(), WithOSDInMemoryStorage(1)}, {WithOSDInMemoryStorage(1), WithOSDVolumeStorage()},
-		{WithOSDVolumeStorage(), WithOSDObjectStore(OSDMemStore)}, {WithOSDObjectStore(OSDMemStore), WithOSDVolumeStorage()},
+		{WithOSDStorage(OSDStorage{}.WithVolume().WithInMemory(1))}, {WithOSDStorage(OSDStorage{}.WithInMemory(1).WithVolume())},
+		{WithOSDStorage(OSDStorage{}.WithVolume().WithObjectStore(OSDMemStore))}, {WithOSDStorage(OSDStorage{}.WithObjectStore(OSDMemStore).WithVolume())},
 	} {
 		c, err := Run(t.Context(), DefaultImage, opts...)
 		if c != nil || !errors.Is(err, ErrInvalidRequest) {
@@ -60,7 +60,7 @@ func TestOSDVolumeStorageAdmissionBeforeAllocation(t *testing.T) {
 		}
 	}
 	o := options{blockSize: 123, osds: 2}
-	if err := WithOSDVolumeStorage()(&o); err != nil || !o.osdVolumeStorage || o.blockSize != 123 || o.osds != 2 {
+	if err := WithOSDStorage(OSDStorage{}.WithVolume())(&o); err != nil || !o.osdVolumeStorage || o.blockSize != 123 || o.osds != 2 {
 		t.Fatal("volume option changed capacity/topology")
 	}
 }

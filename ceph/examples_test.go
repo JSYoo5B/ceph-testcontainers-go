@@ -70,3 +70,35 @@ func ExampleWithImageOptions() {
 		panic(err)
 	}
 }
+
+// OSD storage is one OSDStorage value, passed to Run once through the grouped
+// option function WithOSDStorage. Compiled, not run.
+func ExampleWithOSDStorage() {
+	ctx := context.Background()
+	storage := ceph.OSDStorage{}.WithBlockSize(256 << 20).WithObjectStore(ceph.OSDMemStore)
+	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDStorage(storage), ceph.WithOSDCount(1))
+	defer func() {
+		if err := testcontainers.TerminateContainer(cluster); err != nil {
+			log.Printf("failed to terminate container: %s", err)
+		}
+	}()
+	if err != nil {
+		panic(err)
+	}
+}
+
+// Network and Messenger settings are one NetworkConfig value, passed to Run once
+// through the grouped option function WithNetworkConfig. Compiled, not run.
+func ExampleWithNetworkConfig() {
+	ctx := context.Background()
+	network := ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack).WithSeparateClusterNetwork()
+	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithNetworkConfig(network), ceph.WithOSDCount(1))
+	defer func() {
+		if err := testcontainers.TerminateContainer(cluster); err != nil {
+			log.Printf("failed to terminate container: %s", err)
+		}
+	}()
+	if err != nil {
+		panic(err)
+	}
+}

@@ -2,7 +2,6 @@ package ceph
 
 import (
 	"fmt"
-	"net"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -27,9 +26,12 @@ type options struct {
 	blockSize            int64
 	osdMemorySize        int64
 	osdVolumeStorage     bool
-	auth                 AuthConfig
-	osdObjectStore       OSDObjectStore
-	startupTimeout       time.Duration
+	// osdStorageSet records which OSDStorage fields a carrier already set, so a
+	// second carrier setting the same field is refused.
+	osdStorageSet  osdStorageField
+	auth           AuthConfig
+	osdObjectStore OSDObjectStore
+	startupTimeout time.Duration
 	// essentialImage is the Run image. It starts every MON, MGR and OSD and the
 	// control-plane CLI executor. Role images come from imageSet.
 	essentialImage string
@@ -44,23 +46,9 @@ type options struct {
 	messengerPolicy             MessengerPolicy
 	addressFamily               AddressFamily
 	userConfig                  []userConfigSection
-}
-
-// WithMessengerMode selects the Messenger policy at bootstrap. MessengerDefault
-// retains Ceph's image defaults and v1/v2 addresses. MessengerV2Secure requires
-// encrypted v2 connections without CRC-mode or v1 fallback, including later
-// daemons and WithClient containers. MessengerV2Only removes the v1 listeners
-// and addresses in the same way but leaves the connection modes to Ceph's
-// defaults and the Messenger policy options. This option does not enable RGW
-// HTTP TLS.
-func WithMessengerMode(mode MessengerMode) Option {
-	return func(o *options) error {
-		if mode != MessengerDefault && mode != MessengerV2Secure && mode != MessengerV2Only {
-			return fmt.Errorf("unsupported Messenger mode %d", mode)
-		}
-		o.messengerMode = mode
-		return nil
-	}
+	// networkSet records which NetworkConfig fields a carrier already set, so a
+	// second carrier setting the same field is refused.
+	networkSet networkField
 }
 
 // WithMonitorCount selects the initial monitor count. Three enables quorum
@@ -116,34 +104,6 @@ func (Option) Customize(*testcontainers.GenericContainerRequest) error { return 
 func WithHostNetwork() Option {
 	return func(o *options) error {
 		o.hostNetwork = true
-		return nil
-	}
-}
-
-// WithSeparateClusterNetwork creates a second owned bridge for OSD replication,
-// recovery and heartbeat traffic. MON/MGR/MDS/RGW and WithClient use only the
-// public bridge. Docker selects both subnets; with WithAddressFamily(AddressIPv6)
-// both bridges are dual-stack and Ceph uses their IPv6 subnets. This option
-// requires bridge mode.
-func WithSeparateClusterNetwork() Option {
-	return func(o *options) error {
-		o.separateClusterNetwork = true
-		return nil
-	}
-}
-
-// WithHostAddress selects a local IPv4 address to bind and advertise in host
-// mode, typically the Docker host's address when Docker is remote. The address
-// must be assigned on the Docker daemon host and reachable from the test
-// process; Run verifies both. Requires WithHostNetwork.
-func WithHostAddress(address string) Option {
-	return func(o *options) error {
-		ip := net.ParseIP(address)
-		if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Equal(net.IPv4bcast) {
-			return fmt.Errorf("host address must be a specific IPv4 address")
-		}
-		o.publicAddress = ip.String()
-		o.hostAddressSet = true
 		return nil
 	}
 }
@@ -229,21 +189,6 @@ func WithPoolDefaults(replicas, minSize int) Option {
 	}
 }
 
-// WithOSDBlockSize sets each sparse BlueStore file's logical size in bytes.
-// The minimum is 64 MiB and the default remains 1 GiB. These are disposable
-// files, not real disks. Small functional fixtures can use WithNoInitialOSDs
-// and override.SetConfig to skip mClock's startup capacity benchmark before
-// AddOSD; the benchmark can exhaust a small file even without client data.
-func WithOSDBlockSize(size int64) Option {
-	return func(o *options) error {
-		if size < 64<<20 {
-			return fmt.Errorf("OSD block size must be at least 64 MiB")
-		}
-		o.blockSize = size
-		return nil
-	}
-}
-
 // OSDObjectStore names the object store that OSDs keep their data in.
 type OSDObjectStore string
 
@@ -252,58 +197,11 @@ const (
 	// default.
 	OSDBlueStore OSDObjectStore = "bluestore"
 	// OSDMemStore keeps each OSD's data in the OSD process's memory, with
-	// WithOSDBlockSize as its capacity. A clean stop saves the store to the
+	// OSDStorage.WithBlockSize as its capacity. A clean stop saves the store to the
 	// OSD's data directory and Start loads it again; a killed OSD loses it.
 	// It is Ceph's test backend and needs no block file.
 	OSDMemStore OSDObjectStore = "memstore"
 )
-
-// WithOSDObjectStore selects the object store of every OSD in the cluster,
-// including OSDs added later. WithOSDBlockSize sets the capacity of a
-// MemStore OSD. MemStore cannot be combined with WithOSDInMemoryStorage or
-// WithOSDVolumeStorage, which place BlueStore files in shared volumes.
-// fault.InjectObjectDataError needs BlueStore.
-func WithOSDObjectStore(store OSDObjectStore) Option {
-	return func(o *options) error {
-		if store != OSDBlueStore && store != OSDMemStore {
-			return fmt.Errorf("unknown OSD object store %q", store)
-		}
-		o.osdObjectStore = store
-		return nil
-	}
-}
-
-// WithOSDInMemoryStorage keeps all OSD stores in one Docker-managed tmpfs
-// volume. maxBytes is a positive cluster-wide filesystem allocation ceiling,
-// independent of each sparse file's logical WithOSDBlockSize. It does not
-// reserve RAM or limit daemon RSS; tmpfs may swap, and a full volume fails I/O.
-// An owned helper using the essential image preserves data across OSD Stop/Start.
-// Cluster termination discards the volume. Helper loss or Docker host/VM
-// restart can lose data. Requires a Linux Docker engine with local tmpfs
-// volume support, including compatible Docker Desktop engines. No host mount,
-// privileged container or additional image is required. The default remains
-// container-local sparse files. NoInitialOSDs defers allocation until AddOSD.
-func WithOSDInMemoryStorage(maxBytes int64) Option {
-	return func(o *options) error {
-		if maxBytes <= 0 {
-			return fmt.Errorf("OSD in-memory storage size must be positive")
-		}
-		o.osdMemorySize = maxBytes
-		return nil
-	}
-}
-
-// WithOSDVolumeStorage keeps classic BlueStore OSD directories in one ordinary
-// Docker-managed local named volume owned by the cluster. Allocation is lazy
-// until the first OSD registration. Unlike tmpfs it needs no live keeper to
-// preserve bytes; an isolated essential-image helper manages fresh/purged paths.
-// Terminate removes the volume after its users; a busy/failed removal is retryable.
-// It cannot be combined with MemStore or WithOSDInMemoryStorage. No caller-owned
-// volumes, host mounts or devices are adopted. This does not provide retained
-// detach/reopen, host-reboot durability or a public replacement-container API.
-func WithOSDVolumeStorage() Option {
-	return func(o *options) error { o.osdVolumeStorage = true; return nil }
-}
 
 // WithStartupTimeout bounds bootstrap, readiness and topology operations.
 // Each operation is also bounded by the caller's context. Default: 3 minutes.

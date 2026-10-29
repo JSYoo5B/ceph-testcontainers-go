@@ -46,17 +46,14 @@ func notAppliedMessengerPolicy(cause error) (*MessengerPolicyHandle, error) {
 //
 // The handle is non-nil for every outcome. A refusal returns a not-applied
 // handle whose Restore is a no-op. A nil cluster is refused with
-// ceph.ErrInvalidRequest and a cluster that a SharedCluster shares with
-// ceph.ErrSharedCluster, both with Op "override.SetMessengerPolicy". When a
+// ceph.ErrInvalidRequest and Op "override.SetMessengerPolicy". When a
 // later option is refused, the handle holds the options made before it.
 func SetMessengerPolicy(ctx context.Context, c *ceph.Container, policy ceph.MessengerPolicy) (*MessengerPolicyHandle, error) {
 	const op = "override.SetMessengerPolicy"
 	if c == nil {
 		return notAppliedMessengerPolicy(&ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: op, Err: errors.New("the cluster is nil")})
 	}
-	if err := overridehook.Admit(c, op); err != nil {
-		return notAppliedMessengerPolicy(err)
-	}
+
 	settings, err := overridehook.MessengerPolicySettings(c, policy)
 	if err != nil {
 		return notAppliedMessengerPolicy(err)

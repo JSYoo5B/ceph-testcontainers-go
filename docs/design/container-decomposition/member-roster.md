@@ -1,5 +1,10 @@
 # Member roster
 
+> Current boundary: the shared-cluster/tenant harness and its core-only policy,
+> lease and hook plumbing have been removed. Harness references and source
+> locations below are historical design evidence, not retained APIs or future
+> extraction requirements. See [independent fixtures](../../ceph.md#usage-example).
+
 Moved without rewriting from the section "Fourteenth internal slice: member roster" of [container-decomposition.md](../container-decomposition.md) when the decomposition records became one file per component (issue #216, owner decision of 2026-10-28). The ordinal is historical: statements below that cite another slice by its number use the [historical ordinals](../container-decomposition.md#historical-ordinals) of the shared document.
 
 0.x: old names are removed without aliases. Inspected at `1fec584` (main after

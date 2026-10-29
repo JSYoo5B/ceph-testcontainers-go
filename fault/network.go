@@ -44,9 +44,6 @@ type NetworkInterruption struct {
 // The fixture retains the handle and attempts restoration during Terminate.
 // Restore explicitly before destroying caller-owned containers or the cluster.
 func InterruptNetwork(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, plane ceph.NetworkPlane) (link *NetworkInterruption, err error) {
-	if gateErr := faulthook.Admit(c, "fault.InterruptNetwork"); gateErr != nil {
-		return nil, gateErr
-	}
 	err = faulthook.WithTopology(ctx, c, func() error {
 		facts, factsErr := ceph.FactsOf(c)
 		if factsErr != nil {

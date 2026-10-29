@@ -165,7 +165,7 @@ func testOSDReplicationPeerPathCut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image := netemImage(t)
-	cluster, client := newServiceCluster(t, ceph.WithSeparateClusterNetwork())
+	cluster, client := newServiceCluster(t, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()))
 	if !staticFacts(cluster).HasSeparateClusterNetwork {
 		t.Fatal("no separate cluster network")
 	}

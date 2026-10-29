@@ -358,7 +358,7 @@ func testDualStackFamilyCut(t *testing.T) {
 	image, roles := integrationImages(t)
 	const pool = "tc-family-cut"
 	opts := append(roles, ceph.WithOSDCount(2), ceph.WithPoolDefaults(1, 1),
-		ceph.WithAddressFamily(ceph.AddressDualStack),
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack)),
 		ceph.WithConfigFile(dualStackOrderConfig(t, "osd.1")))
 	cluster, client := newServiceClusterRun(t, ceph.Run, image, opts...)
 	addresses, _ := waitDualStackAddresses(t, ctx, cluster, 1, 2)

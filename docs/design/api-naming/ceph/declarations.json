@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 328,
+  "count": 324,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -349,38 +349,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.CopyDirToContainer",
-      "kind": "method",
-      "signature": "func(ctx context.Context, hostDirPath string, containerParentPath string, fileMode int64) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.CopyDirToContainer",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.CopyFileFromContainer",
-      "kind": "method",
-      "signature": "func(ctx context.Context, filePath string) (io.ReadCloser, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.CopyFileFromContainer",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.CopyFileToContainer",
-      "kind": "method",
-      "signature": "func(ctx context.Context, hostFilePath string, containerFilePath string, fileMode int64) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.CopyFileToContainer",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.CopyToContainer",
-      "kind": "method",
-      "signature": "func(ctx context.Context, fileContent []byte, containerFilePath string, fileMode int64) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.CopyToContainer",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.CreateClient",
       "kind": "method",
       "signature": "func(ctx context.Context, name string, caps ClientCaps, opts ...ClientOption) (*ClientConfig, error)",
@@ -402,14 +370,6 @@
       "signature": "func(ctx context.Context, pgid PGID) error",
       "receiver": "*Container",
       "proposed": "ceph.Container.DeepScrubPG",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.Exec",
-      "kind": "method",
-      "signature": "func(ctx context.Context, cmd []string, options ...tcexec.ProcessOption) (int, io.Reader, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.Exec",
       "decision": "baseline"
     },
     {
@@ -498,22 +458,6 @@
       "signature": "func() []testcontainers.Container",
       "receiver": "*Container",
       "proposed": "ceph.Container.ServiceContainers",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.Start",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.Start",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.Stop",
-      "kind": "method",
-      "signature": "func(ctx context.Context, timeout *time.Duration) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.Stop",
       "decision": "baseline"
     },
     {
@@ -914,12 +858,6 @@
       "current": "ceph.ErrNativeInputClosed",
       "kind": "var",
       "proposed": "ceph.ErrNativeInputClosed",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.ErrSharedCluster",
-      "kind": "var",
-      "proposed": "ceph.ErrSharedCluster",
       "decision": "baseline"
     },
     {
@@ -1402,6 +1340,52 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.NetworkConfig",
+      "kind": "type",
+      "proposed": "ceph.NetworkConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NetworkConfig.WithAddressFamily",
+      "kind": "method",
+      "signature": "func(family AddressFamily) NetworkConfig",
+      "receiver": "NetworkConfig",
+      "proposed": "ceph.NetworkConfig.WithAddressFamily",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NetworkConfig.WithHostAddress",
+      "kind": "method",
+      "signature": "func(address string) NetworkConfig",
+      "receiver": "NetworkConfig",
+      "proposed": "ceph.NetworkConfig.WithHostAddress",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NetworkConfig.WithMessengerMode",
+      "kind": "method",
+      "signature": "func(mode MessengerMode) NetworkConfig",
+      "receiver": "NetworkConfig",
+      "proposed": "ceph.NetworkConfig.WithMessengerMode",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NetworkConfig.WithMessengerPolicy",
+      "kind": "method",
+      "signature": "func(policy MessengerPolicy) NetworkConfig",
+      "receiver": "NetworkConfig",
+      "proposed": "ceph.NetworkConfig.WithMessengerPolicy",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NetworkConfig.WithSeparateClusterNetwork",
+      "kind": "method",
+      "signature": "func() NetworkConfig",
+      "receiver": "NetworkConfig",
+      "proposed": "ceph.NetworkConfig.WithSeparateClusterNetwork",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.NetworkPlane",
       "kind": "type",
       "proposed": "ceph.NetworkPlane",
@@ -1620,6 +1604,44 @@
       "current": "ceph.OSDState",
       "kind": "type",
       "proposed": "ceph.OSDState",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDStorage",
+      "kind": "type",
+      "proposed": "ceph.OSDStorage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDStorage.WithBlockSize",
+      "kind": "method",
+      "signature": "func(size int64) OSDStorage",
+      "receiver": "OSDStorage",
+      "proposed": "ceph.OSDStorage.WithBlockSize",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDStorage.WithInMemory",
+      "kind": "method",
+      "signature": "func(maxBytes int64) OSDStorage",
+      "receiver": "OSDStorage",
+      "proposed": "ceph.OSDStorage.WithInMemory",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDStorage.WithObjectStore",
+      "kind": "method",
+      "signature": "func(store OSDObjectStore) OSDStorage",
+      "receiver": "OSDStorage",
+      "proposed": "ceph.OSDStorage.WithObjectStore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDStorage.WithVolume",
+      "kind": "method",
+      "signature": "func() OSDStorage",
+      "receiver": "OSDStorage",
+      "proposed": "ceph.OSDStorage.WithVolume",
       "decision": "baseline"
     },
     {
@@ -2074,13 +2096,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithAddressFamily",
-      "kind": "function",
-      "signature": "func(family AddressFamily) Option",
-      "proposed": "ceph.WithAddressFamily",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.WithAuth",
       "kind": "function",
       "signature": "func(config AuthConfig) Option",
@@ -2123,13 +2138,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithHostAddress",
-      "kind": "function",
-      "signature": "func(address string) Option",
-      "proposed": "ceph.WithHostAddress",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.WithHostNetwork",
       "kind": "function",
       "signature": "func() Option",
@@ -2165,24 +2173,17 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithMessengerMode",
-      "kind": "function",
-      "signature": "func(mode MessengerMode) Option",
-      "proposed": "ceph.WithMessengerMode",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithMessengerPolicy",
-      "kind": "function",
-      "signature": "func(policy MessengerPolicy) Option",
-      "proposed": "ceph.WithMessengerPolicy",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.WithMonitorCount",
       "kind": "function",
       "signature": "func(count int) Option",
       "proposed": "ceph.WithMonitorCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithNetworkConfig",
+      "kind": "function",
+      "signature": "func(network NetworkConfig) Option",
+      "proposed": "ceph.WithNetworkConfig",
       "decision": "baseline"
     },
     {
@@ -2200,13 +2201,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithOSDBlockSize",
-      "kind": "function",
-      "signature": "func(size int64) Option",
-      "proposed": "ceph.WithOSDBlockSize",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.WithOSDCount",
       "kind": "function",
       "signature": "func(count int) Option",
@@ -2214,24 +2208,10 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithOSDInMemoryStorage",
+      "current": "ceph.WithOSDStorage",
       "kind": "function",
-      "signature": "func(maxBytes int64) Option",
-      "proposed": "ceph.WithOSDInMemoryStorage",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithOSDObjectStore",
-      "kind": "function",
-      "signature": "func(store OSDObjectStore) Option",
-      "proposed": "ceph.WithOSDObjectStore",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithOSDVolumeStorage",
-      "kind": "function",
-      "signature": "func() Option",
-      "proposed": "ceph.WithOSDVolumeStorage",
+      "signature": "func(storage OSDStorage) Option",
+      "proposed": "ceph.WithOSDStorage",
       "decision": "baseline"
     },
     {
@@ -2246,13 +2226,6 @@
       "kind": "function",
       "signature": "func(configs ...PoolConfig) Option",
       "proposed": "ceph.WithPools",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithSeparateClusterNetwork",
-      "kind": "function",
-      "signature": "func() Option",
-      "proposed": "ceph.WithSeparateClusterNetwork",
       "decision": "baseline"
     },
     {

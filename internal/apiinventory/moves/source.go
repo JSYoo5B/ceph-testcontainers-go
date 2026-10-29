@@ -82,7 +82,7 @@ func resolveBase(root, rev string) resolution {
 // newline stays one path and is then rejected by classify.
 func readBase(root, sha string) (*snapshot, error) {
 	snap := newSnapshot()
-	out, err := git(root, "ls-tree", "-r", "-z", "--full-tree", sha, "--", catalogue.Dir, "docs/changes")
+	out, err := git(root, "ls-tree", "-r", "-z", "--full-tree", sha, "--", catalogue.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -130,53 +130,51 @@ func readBase(root, sha string) (*snapshot, error) {
 // irregular files at relevant paths are problems, not data.
 func readHead(root string) (*snapshot, error) {
 	snap := newSnapshot()
-	for _, top := range []string{catalogue.Dir, "docs/changes"} {
-		base := filepath.Join(root, filepath.FromSlash(top))
-		err := filepath.WalkDir(base, func(path string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) && path == base {
-					return fs.SkipAll
-				}
-				return err
-			}
-			if entry.IsDir() {
-				return nil
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			rel = filepath.ToSlash(rel)
-			kind, _ := classify(rel)
-			switch kind {
-			case kindNone:
-				return nil
-			case kindStray, kindReserved:
-				snap.problems = append(snap.problems, fmt.Sprintf("unexpected file %q in %s", rel, RecordsDir))
-				return nil
-			}
-			info, err := os.Lstat(path)
-			if err != nil {
-				return err
-			}
-			if !info.Mode().IsRegular() {
-				snap.problems = append(snap.problems, fmt.Sprintf("%q is not a regular file", rel))
-				return nil
-			}
-			if info.Size() > maxFile {
-				snap.problems = append(snap.problems, fmt.Sprintf("%q is larger than %d bytes", rel, maxFile))
-				return nil
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			snap.files[rel] = data
-			return nil
-		})
+	base := filepath.Join(root, filepath.FromSlash(catalogue.Dir))
+	err := filepath.WalkDir(base, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
-			return nil, err
+			if errors.Is(err, fs.ErrNotExist) && path == base {
+				return fs.SkipAll
+			}
+			return err
 		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		kind, _ := classify(rel)
+		switch kind {
+		case kindNone:
+			return nil
+		case kindStray, kindReserved:
+			snap.problems = append(snap.problems, fmt.Sprintf("unexpected file %q in %s", rel, RecordsDir))
+			return nil
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			snap.problems = append(snap.problems, fmt.Sprintf("%q is not a regular file", rel))
+			return nil
+		}
+		if info.Size() > maxFile {
+			snap.problems = append(snap.problems, fmt.Sprintf("%q is larger than %d bytes", rel, maxFile))
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		snap.files[rel] = data
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return snap, nil
 }

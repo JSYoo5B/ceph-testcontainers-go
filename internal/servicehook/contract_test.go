@@ -2,7 +2,6 @@ package servicehook
 
 import (
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -32,31 +31,6 @@ func TestAssertedHooksHaveNoTestAccessMethod(t *testing.T) {
 	for _, name := range methodNames(reflect.TypeFor[hooks]()) {
 		if strings.HasPrefix(name, "Test") {
 			t.Errorf("test-only method %s re-entered the asserted production interface", name)
-		}
-	}
-}
-
-// testOnlyAccessors are accessors that only test files call. They belong to the
-// unit-test seam (internal/testhelper), not to the asserted production contract
-// nor to the exported wrappers of this package.
-var testOnlyAccessors = []string{"TenantCluster"}
-
-func TestAssertedHooksHaveNoTestOnlyAccessor(t *testing.T) {
-	names := methodNames(reflect.TypeFor[hooks]())
-	for _, accessor := range testOnlyAccessors {
-		if slices.Contains(names, accessor) {
-			t.Errorf("test-only accessor %s re-entered the asserted production interface", accessor)
-		}
-	}
-}
-
-func TestRegisteredHooksDoNotImplementTestOnlyAccessors(t *testing.T) {
-	registrationMu.Lock()
-	defer registrationMu.Unlock()
-	names := methodNames(reflect.TypeOf(hookreg.Value))
-	for _, accessor := range testOnlyAccessors {
-		if slices.Contains(names, accessor) {
-			t.Errorf("the registered production hooks still implement test-only accessor %s", accessor)
 		}
 	}
 }

@@ -711,7 +711,7 @@ Other release differences, kept out of the table on purpose:
 ## Debugging a failing local run
 
 - Read the `-v` output from the top. Tests log the phase they reached, and
-  failed tests that use the shared cluster helpers print daemon log tails.
+  failed tests that use the independent fixture helpers print daemon log tails.
 - `TestMultiClusterMonitorBootstrapRefresh` replaces every MON as named
   phases (`add d`, `remove a`, ...). A passing replacement logs one
   `MON_REPLACEMENT_RECEIPT` line per cluster: each phase's operation and
@@ -1097,9 +1097,7 @@ must be the `from` of a move or listed in `removed`, and every added row the
   not mention it;
 - a changed package whose receipt equals the base's, does not bind the head
   catalogue bytes, is missing, or names another note than the record;
-- a changed catalogue with no new or changed release-note fragment under
-  `docs/changes` (a fragment of kind `none` with a reason is enough);
-- a record or fragment path that is not exactly the expected name (a trailing
+- a record path that is not exactly the expected name (a trailing
   newline, a symbolic link) and a base revision that is not a plain revision
   name.
 

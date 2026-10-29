@@ -101,8 +101,7 @@ their waits by `ctx`:
 | `ControlContainer(ctx)` | The control CLI container; the snapshot does not guarantee the process stays alive |
 
 These are the only forms of these accessors: the context-free versions were
-removed without aliases (see
-[upgrading the topology accessors](upgrading-context-accessors.md)). A refused
+removed without aliases. A refused
 or unavailable cluster and a cancelled `ctx` are returned as errors.
 
 ### Waiting in the background
@@ -172,12 +171,12 @@ resources from calls that failed halfway:
 | --- | --- |
 | MON containers and the separate control CLI container (multi-MON clusters) | `Run`, `AddMonitor` |
 | MGR containers | `Run`, `AddManager` |
-| OSD containers and the in-memory OSD volume with its keeper container | `Run`, `AddOSD`, `WithOSDInMemoryStorage` |
+| OSD containers and the in-memory OSD volume with its keeper container | `Run`, `AddOSD`, `OSDStorage.WithInMemory` |
 | Shared `/var/run/ceph` volume | `Run`; MON/MGR/OSD and the control container share admin sockets |
 | RGW gateways | `rgw.WithGateways`, `rgw.Start` |
 | MDS daemons | `cephfs.WithFilesystems`, `cephfs.Start`, `ScaleMDS` |
 | Host-port reservation helpers | Host mode MON and RGW startup |
-| The public bridge and the separate cluster bridge | `Run`, `WithSeparateClusterNetwork` |
+| The public bridge and the separate cluster bridge | `Run`, `NetworkConfig.WithSeparateClusterNetwork` |
 | Network delays and their netem helper containers | `ApplyNetworkProfile` (removed first, also on your client containers) |
 | Container pauses | `fault.Pause` (resumed before the teardown) |
 | Network interruptions | `cluster.InterruptNetwork` (restored before the teardown, also on your client containers) |

@@ -30,9 +30,8 @@ versions keep their original APIs. Update imports and calls together:
 `multisite.Fixture.ApplyZoneLinkProfile` takes `fault.NetworkProfile` and returns
 `*fault.NetworkProfileLease`. These service fixtures still register cleanup.
 
-Cluster-bound operations keep shared-cluster admission and cleanup ordering:
-shaping first, endpoint restoration second, then container resumes. Faults
-refuse a shared tenant cluster and are allowed in an exclusive lease.
+Cluster-bound operations keep ownership checks and cleanup ordering:
+shaping first, endpoint restoration second, then container resumes.
 Standalone `InterruptLink` and `ApplyLinkProfile` remain caller-owned:
 restore them before removing their container or bridge. Preserve non-nil
 handles returned with errors; restore remains retryable after uncertain results.
@@ -50,9 +49,6 @@ Dedicated object-error injection (`fault.InjectObjectDataError`) is a
 purpose-built synthetic error and belongs in `fault`, although Ceph implements
 the hook as a daemon debug switch. Scrub, repair and inspection of the damaged PG
 stay in `ceph`.
-
-For code already using the extracted `fault` delay names, follow the
-[network profile naming migration](guides/upgrading-network-profile-names.md).
 
 ## Pause
 
@@ -128,9 +124,7 @@ Observed behaviour on Ceph 20.2.4:
 The object is addressed in the default namespace. A name that contains a slash
 is refused before any native command, because `injectdataerr` would read the
 part before the first slash as a namespace while the preflight `osd map` takes
-the whole word as the object. A cluster that a `SharedCluster` shares refuses
-the call unless the caller holds the exclusive lease. Topology operations are
-serialized with it.
+the whole word as the object. Topology operations are serialized with it.
 
 This is a one-shot injection. It returns no handle, the cluster does not
 register it, and `Terminate` does not undo it. A failure after the debug setting
@@ -154,7 +148,7 @@ host-network endpoint.
 The returned `*fault.NetworkInterruption` has `ContainerID`, `NetworkName` and
 `OriginalAddress`. `Restore` reconnects the endpoint with its original IP, also
 its original IPv6 address on the dual-stack bridge of
-[WithAddressFamily](ceph.md#withaddressfamily)`(AddressIPv6)`, and its aliases, so the
+[NetworkConfig.WithAddressFamily](ceph.md#networkconfigwithaddressfamily)`(AddressIPv6)`, and its aliases, so the
 address Ceph advertises stays valid and the daemon is not restarted. An
 endpoint that someone else reattached with a different or missing address is
 refused, and the handle can be restored again once the endpoint is back. It is a whole-endpoint interruption, not a packet filter between
@@ -177,7 +171,7 @@ if cut != nil {
 if err != nil {
 	t.Fatal(err)
 }
-// With WithSeparateClusterNetwork, osd.0 keeps its public listener and process
+// With NetworkConfig.WithSeparateClusterNetwork, osd.0 keeps its public listener and process
 // but loses replication and heartbeat traffic until Restore.
 if err := cut.Restore(ctx); err != nil {
 	t.Fatal(err)

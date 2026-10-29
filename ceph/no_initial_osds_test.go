@@ -89,7 +89,7 @@ func TestNoInitialOSDsCanceledRunDoesNotAllocateOrCustomize(t *testing.T) {
 	for _, opts := range [][]testcontainers.ContainerCustomizer{
 		{WithNoInitialOSDs()},
 		{WithNoInitialOSDs(), WithHostNetwork()},
-		{WithNoInitialOSDs(), WithSeparateClusterNetwork(), WithMonitorCount(3), WithManagerCount(2)},
+		{WithNoInitialOSDs(), WithNetworkConfig(NetworkConfig{}.WithSeparateClusterNetwork()), WithMonitorCount(3), WithManagerCount(2)},
 	} {
 		var customizers atomic.Int32
 		opts = append(opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
@@ -104,8 +104,8 @@ func TestNoInitialOSDsCanceledRunDoesNotAllocateOrCustomize(t *testing.T) {
 
 func TestNoInitialOSDsPreservesOldNetworkAndPlacementValidation(t *testing.T) {
 	for _, opts := range [][]testcontainers.ContainerCustomizer{
-		{WithNoInitialOSDs(), WithHostAddress("127.0.0.1")},
-		{WithNoInitialOSDs(), WithHostNetwork(), WithSeparateClusterNetwork()},
+		{WithNoInitialOSDs(), WithNetworkConfig(NetworkConfig{}.WithHostAddress("127.0.0.1"))},
+		{WithNoInitialOSDs(), WithHostNetwork(), WithNetworkConfig(NetworkConfig{}.WithSeparateClusterNetwork())},
 		{WithOSDCount(1), WithPoolDefaults(2, 1)},
 		{WithInitialOSDs(OSDConfig{Root: "storage"})},
 	} {

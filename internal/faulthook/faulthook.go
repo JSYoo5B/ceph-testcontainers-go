@@ -1,6 +1,5 @@
 // Package faulthook gives fault operations outside package ceph the parts of
-// a ceph.Container that are not public API: shared-cluster admission, the
-// cluster's fault registry, its mutex and the private helpers that fault
+// a ceph.Container that are not public API: the cluster's fault registry, its mutex and the private helpers that fault
 // operations use. Package ceph registers them in internal/hookreg when it is
 // initialized.
 //
@@ -68,7 +67,6 @@ type Held struct {
 }
 
 type hooks interface {
-	Admit(c *ceph.Container, op string) error
 	Reserve(ctx context.Context, c *ceph.Container, kind, key string) (any, any, error)
 	Settle(c *ceph.Container, token any, network string, handle any, undo func(context.Context) error, complete func(context.Context) (bool, error)) (bool, error)
 	Release(c *ceph.Container, token any) bool
@@ -100,12 +98,6 @@ func get() hooks {
 	}
 	return h
 }
-
-// Admit refuses the fault operation op ("fault.Pause" and so on)
-// on a cluster that a SharedCluster shares, with the policy of the method
-// that implements it in package ceph. An operation without a policy is
-// refused.
-func Admit(c *ceph.Container, op string) error { return get().Admit(c, op) }
 
 // Reserve reserves key for a fault of kind. The caller holds the mutex and
 // has refused a closed cluster with its own error. A refusal of

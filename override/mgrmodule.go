@@ -53,8 +53,7 @@ func mgrModuleNotApplied(name string, cause error) (*MGRModuleHandle, error) {
 //
 // The handle is non-nil for every outcome. A refusal returns a not-applied handle
 // whose Restore is a no-op (see MGRModuleHandle). A nil cluster is refused with
-// ceph.ErrInvalidRequest and a cluster that a SharedCluster shares with
-// ceph.ErrSharedCluster, both with Op "override.SetMGRModule". A module that is
+// ceph.ErrInvalidRequest and Op "override.SetMGRModule". A module that is
 // already in the requested state returns a real handle and no error: it holds a
 // lease with no write.
 func SetMGRModule(ctx context.Context, c *ceph.Container, name string, enabled bool) (*MGRModuleHandle, error) {
@@ -62,9 +61,7 @@ func SetMGRModule(ctx context.Context, c *ceph.Container, name string, enabled b
 	if c == nil {
 		return mgrModuleNotApplied(name, &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: op, Err: errors.New("the cluster is nil")})
 	}
-	if err := overridehook.Admit(c, op); err != nil {
-		return mgrModuleNotApplied(name, err)
-	}
+
 	if !overridehook.ValidMGRModuleName(name) {
 		return mgrModuleNotApplied(name, errors.New("invalid Ceph manager module name"))
 	}

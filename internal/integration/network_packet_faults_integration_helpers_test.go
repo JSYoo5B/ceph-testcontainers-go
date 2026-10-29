@@ -292,7 +292,7 @@ func testNetworkPacketFaults(t *testing.T, ipv6 bool) {
 	var customizers []testcontainers.ContainerCustomizer
 	family := "ipv4"
 	if ipv6 {
-		customizers, family = append(customizers, ceph.WithAddressFamily(ceph.AddressIPv6)), "ipv6"
+		customizers, family = append(customizers, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv6))), "ipv6"
 	}
 	p := packetFaultFixture{bandwidthFixture: newBandwidthFixture(t, ctx, customizers...), observers: map[string]transportObserver{}}
 	p.name, p.sha256 = putBandwidthObject(t, ctx, p.cluster, p.client, p.limited.ID, "faults", packetFaultObject)

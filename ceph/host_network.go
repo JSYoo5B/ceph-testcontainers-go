@@ -340,9 +340,9 @@ func describeHostNetworkFailure(operatingSystem, daemonHost, address string) str
 	case strings.Contains(operatingSystem, "Docker Desktop") && loopback:
 		return "Docker Desktop forwards host-mode ports only with host networking enabled (Settings > Resources > Network)"
 	case strings.Contains(operatingSystem, "Docker Desktop"):
-		return "Docker Desktop forwards host-mode ports only to this machine's loopback; omit WithHostAddress to use 127.0.0.1"
+		return "Docker Desktop forwards host-mode ports only to this machine's loopback; omit NetworkConfig.WithHostAddress to use 127.0.0.1"
 	case daemonHost != "" && !local && loopback:
-		return fmt.Sprintf("Docker daemon %s is remote; select its address reachable from this process with WithHostAddress", daemonHost)
+		return fmt.Sprintf("Docker daemon %s is remote; select its address reachable from this process with NetworkConfig.WithHostAddress", daemonHost)
 	default:
 		return "the test process must reach the Docker host's network; a process inside a bridge container cannot reach host-mode daemons"
 	}

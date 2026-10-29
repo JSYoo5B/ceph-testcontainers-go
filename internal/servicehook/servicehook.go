@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/testcontainers/testcontainers-go"
@@ -32,6 +31,7 @@ type Bootstrap = interface {
 }
 
 type hooks interface {
+	Invalid(error) error
 	Lock(c *ceph.Container)
 	Unlock(c *ceph.Container)
 	TryLock(c *ceph.Container) bool
@@ -77,22 +77,6 @@ type hooks interface {
 	SettleClient(ctx context.Context, c *ceph.Container, client *ceph.ClientConfig) error
 }
 
-// harnessTenant is the seam that package ceph/harness registers in
-// hookreg.HarnessTenant. It is typed here, not in ceph/harness, because the
-// service harnesses reach it through this package.
-type harnessTenant interface {
-	TenantPort(t *harness.Tenant) (TenantPort, error)
-	NewServiceSupport(kind string, prepare func(context.Context, *ceph.Container) error, probe func(context.Context, *ceph.Container) (map[string]string, error)) harness.ServiceSupport
-}
-
-func tenantHooks() harnessTenant {
-	h, ok := hookreg.HarnessTenant.(harnessTenant)
-	if !ok {
-		panic("servicehook: package ceph/harness did not register its tenant hooks")
-	}
-	return h
-}
-
 func get() hooks {
 	h, ok := hookreg.Value.(hooks)
 	if !ok {
@@ -118,61 +102,6 @@ func CLI(c *ceph.Container) testcontainers.Container { return get().CLI(c) }
 
 // Closed reports a terminated cluster.
 func Closed(c *ceph.Container) bool { return get().Closed(c) }
-
-// TenantPort is what an adapter may do for one live tenant. It does not
-// return the cluster.
-type TenantPort = interface {
-	ID() string
-	// Live fails once the tenant is released or its cluster terminated.
-	Live() error
-	// StartupTimeout bounds one fixture operation.
-	StartupTimeout() time.Duration
-	// Command runs a CLI command in the tenant's cluster. It does not check
-	// liveness, so a scope's release can use it.
-	Command(ctx context.Context, args ...string) ([]byte, error)
-	// CreateClient creates client.ID-suffix for the tenant with caps that
-	// the service limited to the tenant's resources. The tenant's release
-	// deletes it, and the tenant's WithClientIdentity and RunNativeCommand
-	// accept it.
-	CreateClient(ctx context.Context, suffix string, caps ceph.ClientCaps) (*ceph.ClientConfig, error)
-	// AttachScope registers a service resource of the tenant. The tenant's
-	// release calls release, in reverse order of attachment and before it
-	// deletes the tenant's clients, to remove the resource and list what
-	// remains of it; a remainder or an error poisons the shared cluster.
-	// Attach before creating the resource, so that a partial creation is
-	// removed too. Each key is attached once per tenant.
-	AttachScope(key string, release func(ctx context.Context) ([]string, error)) error
-	// RequireService fails with ceph.ErrInvalidRequest when the shared
-	// cluster was not given the support of kind. A service Lease calls it
-	// before it creates anything.
-	RequireService(kind string) error
-	WithClientIdentity(client *ceph.ClientConfig, opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
-	// WithTopology runs fn while it holds the cluster mutex, the one that
-	// serializes fixture mutations, and returns fn's error. fn must not call
-	// WithTopology again.
-	WithTopology(fn func() error) error
-	// Extension returns the service state that the cluster keeps for kind,
-	// created by create on first use. Call it only inside WithTopology,
-	// because the state is guarded by the cluster mutex.
-	Extension(kind string, create func() any) any
-}
-
-// Tenant returns the port of a live tenant, or the error that says it is
-// released.
-func Tenant(t *harness.Tenant) (TenantPort, error) { return tenantHooks().TenantPort(t) }
-
-// Support builds the shared-cluster support of one service for its harness
-// package to offer (for example rbd/harness.Support). prepare runs on each
-// shared cluster that was given the support, before its baseline is taken and
-// while the cluster is not shared yet, to create what the service would
-// create lazily on a tenant's first use; it does nothing on a cluster without
-// the service, and may be nil. probe lists the service's resources that a
-// tenant could create, each mapped to the tenant ID that owns it (or to
-// another name); releases compare the listing with the baseline. Nothing is
-// registered: the program passes the value to harness.WithServices.
-func Support(kind string, prepare func(context.Context, *ceph.Container) error, probe func(context.Context, *ceph.Container) (map[string]string, error)) harness.ServiceSupport {
-	return tenantHooks().NewServiceSupport(kind, prepare, probe)
-}
 
 // Command runs a CLI command in ctr and returns its standard output.
 func Command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
@@ -357,3 +286,6 @@ func MonitorAddresses(status ceph.QuorumStatus) (string, error) {
 func ClientCommand(ctx context.Context, c *ceph.Container, args ...string) ([]byte, error) {
 	return get().ClientCommand(ctx, c, args...)
 }
+
+// Invalid classifies a refused service request without losing its cause.
+func Invalid(err error) error { return get().Invalid(err) }

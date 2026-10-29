@@ -1034,7 +1034,7 @@ cannot even be detected.
 | `radosgw-admin` changes to fixture-created users, accounts or placement | `UserInfo`, `RemoveUser`, `ApplyPlacement`, which verify keys and identity | The typed RGW helpers |
 | `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `ApplySyncGroup` | Typed topology calls, one at a time |
 | `rbd mirror pool enable`/`peer` changes on a mirrored pool | `rbdmirror.Mirror` operations, which compare captured policies | `rbdmirror.Mirror` methods, `Rebootstrap` |
-| Messenger mode and bind options with `MessengerV2Secure` | The fixed bootstrap policy; `override.SetConfig` refuses them | Choose `WithMessengerMode` at `Run` |
+| Messenger mode and bind options with `MessengerV2Secure` | The fixed bootstrap policy; `override.SetConfig` refuses them | Choose `NetworkConfig.WithMessengerMode` at `Run` |
 | `docker stop`, `docker pause`, `docker network disconnect` on owned containers | Pause and interruption tracking, `Terminate` order | `Stop`/`Start`, `fault.Pause`, `InterruptNetwork` |
 
 Resources you create natively (pools, images, users, buckets, CRUSH rules)

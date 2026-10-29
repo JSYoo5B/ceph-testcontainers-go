@@ -13,20 +13,19 @@ The profiles below are derived from the ceph-msgr-go integration environment.
 Each row names a test in this repository's `internal/integration` that starts
 the profile with public options and checks it with native clients and daemon
 observations. These prove fixture readiness, not ceph-msgr-go's own protocol
-implementation or its migration to these APIs. For the compatibility changes
-when replacing a custom bootstrap, see [Upgrading to v0.2.0](upgrading-to-v0.2.md).
+implementation or its migration to these APIs.
 
 ## Profiles
 
 | Profile input | Values | Fixture options | Proven by |
 | --- | --- | --- | --- |
 | Image | Tentacle 20.2.4, Tentacle 20.2.3 | `ceph.Run(ctx, image, ...)` | every test below; `TestMessengerClientProfileWithoutKeyTypes` runs 20.2.3 |
-| Messenger v1 | never bound or advertised | `WithMessengerMode(MessengerV2Only)`, or `MessengerV2Secure` | every profile |
+| Messenger v1 | never bound or advertised | `NetworkConfig.WithMessengerMode(MessengerV2Only)`, or `MessengerV2Secure` | every profile |
 | Monitors | three | `WithMonitorCount(3)` | every profile |
 | Managers | two | `WithManagerCount(2)` | every profile but the next |
 | | none at bootstrap, two started later | `WithNoInitialManagers`, then `AddManager("a")` and `AddManager("b")` | `TestMessengerClientProfileDelayedManagers` |
 | OSD | none | `WithNoInitialOSDs` | `TestMessengerClientProfileSecure` |
-| | one MemStore OSD | `WithOSDCount(1)`, `WithOSDObjectStore(OSDMemStore)`, `WithPoolDefaults(1, 1)` | `TestMessengerClientProfileCRC` |
+| | one MemStore OSD | `WithOSDCount(1)`, `WithOSDStorage(OSDStorage{}.WithObjectStore(OSDMemStore))`, `WithPoolDefaults(1, 1)` | `TestMessengerClientProfileCRC` |
 | CRUSH and pool | legacy tunables, a straw root, a rule that chooses OSDs; a pool with one PG and size 1; no pool with `hashpspool`, the MGR's `.mgr` included | compile the map with `crushtool` and install it with `osd setcrushmap` (see [Reproduce a minimal legacy placement setup](../ceph.md#reproduce-a-minimal-legacy-placement-setup)); `osd_pool_default_flag_hashpspool = false` in a `WithConfigFile` `[global]` section; `CreatePool(ceph.PoolConfig{PGNum: 1, Replicas: 1, MinSize: 1, NoHashPSPool: true})` | `TestMessengerClientProfileCRC`, `TestOSDMemStoreLegacyPlacement`, `TestRADOSMutationContracts`, which check the flags of every pool |
 | Key type / service cipher | `aes256k`/`aes256k` | `WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K})` | `TestMessengerClientProfileSecure` |
 | | `aes`/`aes` | `AuthConfig{KeyType: ceph.CipherAES}` | `TestMessengerClientProfileModeRejection/managers` |
@@ -37,14 +36,14 @@ when replacing a custom bootstrap, see [Upgrading to v0.2.0](upgrading-to-v0.2.m
 | | 1.5 s MON tickets, 12 s service tickets | `AuthConfig{MonTicketTTL: 1500 * time.Millisecond, ServiceTicketTTL: 12 * time.Second}` and `mon_tick_interval = 1` in `[global]` | `TestMessengerClientProfileShortTickets`, an optional test that needs the `native_regression` build tag: the bootstrap, the lifetimes, and a MON and a MGR command from a client; see [Differences](#differences-from-a-single-container-bootstrap) |
 | `global_id` reclaim | not allowed insecurely | always `auth_allow_insecure_global_id_reclaim = false` | `TestMessengerClientProfileSecure` |
 | Connection modes | every connection secure | `MessengerV2Secure` | `TestMessengerClientProfileSecure`, which reads all six `ms_*_mode` options from each MON and MGR |
-| | MONs, MGRs and OSDs accept only CRC from clients | `MessengerV2Only` with `WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc})` | `TestMessengerClientProfileCRC`, which reads each daemon's service mode |
+| | MONs, MGRs and OSDs accept only CRC from clients | `MessengerV2Only` with `NetworkConfig.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc})` | `TestMessengerClientProfileCRC`, which reads each daemon's service mode |
 | | MONs accept only CRC, MGRs only secure | `MessengerV2Only` with `MessengerPolicy{Monitors: crc, Managers: secure}` | `TestMessengerClientProfileModeRejection/monitors` |
 | | MONs accept only secure, MGRs only CRC | `MessengerV2Only` with `MessengerPolicy{Monitors: secure, Managers: crc}` | `TestMessengerClientProfileModeRejection/managers` |
 | Client modes | secure, CRC, or secure then CRC | `WithClientMessengerPolicy` on a `WithClient` or `WithClientIdentity` container | `TestMessengerClientProfileModeRejection`, `TestMessengerClientProfileCRC` |
 | Address family | IPv4 | the default | every other profile |
-| | IPv6 | `WithAddressFamily(ceph.AddressIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv6` |
-| | IPv4-mapped IPv6 | `WithAddressFamily(ceph.AddressIPv4MappedIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv4-mapped` |
-| | IPv4 and IPv6 on every daemon | `WithAddressFamily(ceph.AddressDualStack)`; MON vectors list IPv6 first, the others IPv4 first (see [Dual-stack clusters](../ceph.md#dual-stack-clusters)) | `TestDualStackAddressFamily`, `TestDualStackSeparateClusterNetwork` |
+| | IPv6 | `NetworkConfig.WithAddressFamily(ceph.AddressIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv6` |
+| | IPv4-mapped IPv6 | `NetworkConfig.WithAddressFamily(ceph.AddressIPv4MappedIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv4-mapped` |
+| | IPv4 and IPv6 on every daemon | `NetworkConfig.WithAddressFamily(ceph.AddressDualStack)`; MON vectors list IPv6 first, the others IPv4 first (see [Dual-stack clusters](../ceph.md#dual-stack-clusters)) | `TestDualStackAddressFamily`, `TestDualStackSeparateClusterNetwork` |
 | Where the tests run | a container on the cluster network | a container with `WithClient` or `WithClientIdentity` | every profile |
 | | a host process | `WithHostNetwork` (see [Host network](host-network.md)); every advertised MON, MGR and OSD address is reachable from the host | `TestMessengerClientProfileCRC/host`, where the test process reads each daemon's Messenger v2 banner |
 | Client identities | full access, read-only, revocable, and one limited to the `fsid` command | `CreateClient` with `ceph.ClientCaps`, for example `{Mon: "allow command \"fsid\"", MGR: "allow r"}`; keys get the cluster's `KeyType` | `TestMessengerClientProfileSecure` |

@@ -38,7 +38,7 @@ HANDLES = (
     "FullRatiosOverride",
     "BlocklistOverride",
 )
-# Observation methods and static-fact accessors that left Container and Tenant
+# Observation methods and static-fact accessors that left Container
 # (they are methods of ceph.Observer or fields of ceph.ClusterFacts now).
 RECEIVER_METHODS = (
     "AddressFamily", "BlocklistEntries", "CephVersion", "ClusterNetworkName", "Configuration",
@@ -54,8 +54,8 @@ PATTERNS = (
     ("retired ceph handle type", re.compile(r"\b(?:%s)\b" % "|".join(HANDLES))),
     # Only receiver-qualified spellings: the bare names are valid on Observer
     # and ClusterFacts (and Status is also a method of Pool).
-    ("retired Container or Tenant receiver",
-     re.compile(r"(?:\(\s*\*?\s*(?:ceph\.)?(?:Container|Tenant)\s*\)|\b(?:Container|Tenant))\.(?:%s)\b"
+    ("retired Container receiver",
+     re.compile(r"(?:\(\s*\*?\s*(?:ceph\.)?Container\s*\)|\bContainer)\.(?:%s)\b"
                 % "|".join(RECEIVER_METHODS))),
 )
 
@@ -72,8 +72,6 @@ ALLOWED = {
 }
 # A path that starts with one of these is a historical record.
 PREFIXES = {
-    "docs/changes/": "release-note fragments",
-    "docs/guides/upgrading-": "migration guides",
     "docs/design/api-naming/moves/": "move records",
 }
 SUFFIXES = (".go", ".md", ".py", ".json", ".yml", ".yaml", ".txt", ".sh", ".mod")

@@ -100,7 +100,7 @@ func testMessengerPolicy(t *testing.T, opts ...testcontainers.ContainerCustomize
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
-		ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeSecure, Managers: modeCRC, OSDs: modeSecure})}, opts...)...)
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeSecure, Managers: modeCRC, OSDs: modeSecure}))}, opts...)...)
 	if staticFacts(cluster).MessengerMode == ceph.MessengerV2Only {
 		checkMessengerV2Only(t, ctx, cluster)
 	}
@@ -201,7 +201,7 @@ func testClientPolicyOverridesSecureOnly(t *testing.T, opts ...testcontainers.Co
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
-		ceph.WithMessengerMode(ceph.MessengerV2Secure)}, opts...)...)
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure))}, opts...)...)
 	crc := startPolicyClient(t, ctx, cluster, "crc", cluster.WithClient(
 		ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeCRC})))
 	inherited := startPolicyClient(t, ctx, cluster, "inherited", cluster.WithClient())
@@ -406,8 +406,8 @@ func testMessengerV2OnlyCRC(t *testing.T) {
 		keyType = ceph.CipherAES256K
 	}
 	cluster, _ := newServiceClusterWithOptions(t, image, append(roles, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
-		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithAuth(ceph.AuthConfig{KeyType: keyType}),
-		ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC}))...)
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only)), ceph.WithAuth(ceph.AuthConfig{KeyType: keyType}),
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC})))...)
 	if staticFacts(cluster).MessengerMode != ceph.MessengerV2Only {
 		t.Fatal("the cluster reports another Messenger mode")
 	}

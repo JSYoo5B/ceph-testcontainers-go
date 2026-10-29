@@ -33,11 +33,6 @@ var overrideKindNames = map[string]faultKind{
 	"OSDFlag":    faultOSDFlag,
 }
 
-// Admit refuses the override operation op while a SharedCluster shares c,
-// with the policy of sharedOverridePolicies. An operation without a policy
-// is refused.
-func (overrideHooks) Admit(c *Container, op string) error { return c.admitOverride(op) }
-
 // WithTopology runs fn with the cluster mutex held, unless ctx ends first.
 func (overrideHooks) WithTopology(ctx context.Context, c *Container, fn func() error) error {
 	if err := c.lockTopology(ctx); err != nil {
@@ -258,10 +253,10 @@ func (overrideHooks) NormalizeConfigSetting(setting ConfigSetting) (ConfigSettin
 // construction and needs no lock.
 func (overrideHooks) CheckConfigAllowed(c *Container, setting ConfigSetting) error {
 	if c.settings.messengerMode == MessengerV2Secure && messengerBootstrapSetting(setting.Name) {
-		return invalid(fmt.Errorf("%s is fixed in the MessengerV2Secure bootstrap configuration for every section and mask; choose WithMessengerMode when creating a new cluster", setting.Name))
+		return invalid(fmt.Errorf("%s is fixed in the MessengerV2Secure bootstrap configuration for every section and mask; choose NetworkConfig.WithMessengerMode when creating a new cluster", setting.Name))
 	}
 	if c.settings.messengerMode == MessengerV2Only && messengerProtocolSetting(setting.Name) {
-		return invalid(fmt.Errorf("%s is fixed in the MessengerV2Only bootstrap configuration for every section and mask; choose WithMessengerMode when creating a new cluster", setting.Name))
+		return invalid(fmt.Errorf("%s is fixed in the MessengerV2Only bootstrap configuration for every section and mask; choose NetworkConfig.WithMessengerMode when creating a new cluster", setting.Name))
 	}
 	return nil
 }

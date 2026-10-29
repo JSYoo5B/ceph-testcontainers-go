@@ -1,5 +1,10 @@
 # Design: extracting fault injection into package `fault`
 
+> Current boundary: the shared-cluster/tenant harness and its core-only policy,
+> lease and hook plumbing have been removed. Harness references and source
+> locations below are historical design evidence, not retained APIs or future
+> extraction requirements. See [independent fixtures](../ceph.md#usage-example).
+
 Status: stage 2's registry and internal hooks and stage 3's network extraction
 are implemented, including container pause as `fault.Pause`, returning
 `*fault.PauseLease`. Admission and phase-3 `Resume` cleanup are preserved.
@@ -14,7 +19,7 @@ reversible overrides, to the package `override` under #146 (see
 that dedicated object-error injection belongs in `fault`: it is implemented as
 `fault.InjectObjectDataError(ctx, cluster, pool, object, osdID)`, a one-shot
 operation with no handle, no registry kind and no Restore. See the
-[migration guide](../fault.md) for the current API.
+[current cluster usage](../fault.md) for the current API.
 
 The inventory below records the original stage 1 design. It inventories every fault-injection API of the module, decides which package
 each one belongs to, records the contracts that the move must preserve, and
@@ -26,8 +31,7 @@ reviewed. A decision here that turns out wrong is changed in this document
 first, in the stage that discovers it.
 
 The network rows below retain their extraction-checkpoint spellings. The later
-[naming migration](../guides/upgrading-network-profile-names.md) replaces the
-three delay types with profile types and the three apply entry points with
+naming change replaces the three delay types with profile types and the three apply entry points with
 `ApplyNetworkProfile`, `ApplyLinkProfile` and `ApplyZoneLinkProfile`. This does
 not change the package decisions or fault contracts recorded here.
 
@@ -446,9 +450,9 @@ in `fault` lists every exported function that takes a `*ceph.Container` with
 cluster (`servicehook.TestCluster`-style constructor) to check
 `ErrSharedCluster`.
 
-## Consumer migration
+## Consumers
 
-The blocklist and full ratios controls are not `fault` APIs; their migration to `override` is in the [override upgrade guide](../guides/upgrading-override-package.md).
+The blocklist and full ratios controls are not `fault` APIs; they belong to the `override` package.
 
 | Before | After |
 | --- | --- |
@@ -489,9 +493,8 @@ stay in `ceph` with `fault` aliasing them, which keeps the implementation
 and its state in `ceph` and defeats the extraction. An internal shared
 implementation package that both alias would work, but it is a third
 location for every type and outlives the transition. Recommendation: no
-wrappers. Stages 3 and 4 break the API on main; the break is released once,
-after stage 5, with `docs/guides/upgrading-to-v0.4.md` holding the table
-above. Stage 5 confirms or overturns this explicitly.
+wrappers. Stages 3 and 4 break the API on main with no alias, as 0.x allows.
+Stage 5 confirms or overturns this explicitly.
 
 ## Stage checkpoints
 

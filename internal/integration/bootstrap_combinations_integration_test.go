@@ -39,21 +39,21 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 		{
 			name:  "host-memory-storage",
 			run:   ceph.Run,
-			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(256 << 20), ceph.WithOSDInMemoryStorage(1 << 30)},
+			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithNoInitialOSDs(), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(256 << 20).WithInMemory(1 << 30))},
 			pool:  "tc-combo",
 			small: true,
 		},
 		{
 			name:  "host-small-blocks",
 			run:   ceph.Run,
-			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(128 << 20)},
+			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithNoInitialOSDs(), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(128 << 20))},
 			pool:  "tc-combo",
 			small: true,
 		},
 		{
 			name: "secure-messenger-config-file",
 			run:  ceph.Run,
-			opts: []testcontainers.ContainerCustomizer{ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithConfigFile(configFile)},
+			opts: []testcontainers.ContainerCustomizer{ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)), ceph.WithConfigFile(configFile)},
 			pool: "tc-combo",
 			check: func(t *testing.T, ctx context.Context, cluster *ceph.Container) {
 				if mode := staticFacts(cluster).MessengerMode; mode != ceph.MessengerV2Secure {

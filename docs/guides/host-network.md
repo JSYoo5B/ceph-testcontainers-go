@@ -109,7 +109,7 @@ reach all of them.
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 	ceph.WithHostNetwork(),
-	// ceph.WithHostAddress("192.0.2.10"), // a remote Linux Docker host
+	// ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithHostAddress("192.0.2.10")), // a remote Linux Docker host
 )
 if cluster != nil {
 	testcontainers.CleanupContainer(t, cluster)
@@ -131,7 +131,7 @@ _ = cfg
 | Option or method | Meaning |
 | --- | --- |
 | `ceph.WithHostNetwork()` | Selects host networking for the whole cluster. |
-| `ceph.WithHostAddress(address)` | IPv4 address to bind and advertise. Defaults to `127.0.0.1`. The address must be assigned on the Docker host and reachable from the test process. Requires `WithHostNetwork`. |
+| `NetworkConfig.WithHostAddress(address)` | IPv4 address to bind and advertise. Defaults to `127.0.0.1`. The address must be assigned on the Docker host and reachable from the test process. Requires `WithHostNetwork`. |
 | `FactsOf(cluster).UsesHostNetwork` | Reports the selected mode. |
 | `FactsOf(cluster).PublicAddress` | The advertised address; empty in bridge mode. |
 | `FactsOf(cluster).NetworkName` | Returns `"host"` in host mode. |
@@ -155,7 +155,7 @@ reach.
 `Run` checks the environment before it creates MGR and OSD daemons:
 
 1. It checks that the Docker engine's OS type is `linux`.
-2. It checks that the `WithHostAddress` address can be bound on the Docker
+2. It checks that the `NetworkConfig.WithHostAddress` address can be bound on the Docker
    host. An address that does not exist there fails before the first MON is
    created.
 3. After the first MON starts, it connects from the test process to the MON's
@@ -172,7 +172,7 @@ includes a hint for the detected Docker environment.
 Common causes:
 
 - Docker Desktop host networking is disabled.
-- `WithHostAddress` names an address inside the Docker Desktop VM (such as the
+- `NetworkConfig.WithHostAddress` names an address inside the Docker Desktop VM (such as the
   VM's `eth0` address), which the host cannot reach. Use `127.0.0.1`.
 - A remote Docker engine is used with the default `127.0.0.1`.
 - The test process runs in a bridge container.
@@ -290,8 +290,8 @@ Linux processes. When the setting is off, `Run` fails with
 
 ### Caveats
 
-- `WithHostNetwork` and `WithSeparateClusterNetwork` cannot be combined; `Run`
-  rejects the combination before creating anything. `WithHostAddress` without
+- `WithHostNetwork` and `NetworkConfig.WithSeparateClusterNetwork` cannot be combined; `Run`
+  rejects the combination before creating anything. `NetworkConfig.WithHostAddress` without
   `WithHostNetwork` is rejected too.
 - Docker cannot disconnect a host-network endpoint, so `InterruptNetwork`,
   `InterruptPeerLink` and `InterruptZoneLink` are refused in host mode.
@@ -308,11 +308,11 @@ Linux processes. When the setting is off, `Run` fails with
 
 ## Separate cluster network
 
-`ceph.WithSeparateClusterNetwork()` creates a second bridge for OSD
+`NetworkConfig.WithSeparateClusterNetwork()` creates a second bridge for OSD
 replication, recovery and heartbeat traffic. Docker selects both subnets.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithSeparateClusterNetwork())
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()))
 if cluster != nil {
 	testcontainers.CleanupContainer(t, cluster)
 }
@@ -337,8 +337,8 @@ _, _ = public, backend
 
 ## Related APIs
 
-- [ceph.md](../ceph.md): `WithHostNetwork`, `WithHostAddress`,
-  `WithSeparateClusterNetwork`, `ConnectionConfig`, `WithClient`,
+- [ceph.md](../ceph.md): `WithHostNetwork`, `NetworkConfig.WithHostAddress`,
+  `NetworkConfig.WithSeparateClusterNetwork`, `ConnectionConfig`, `WithClient`,
   `WithClientIdentity`, `CreateClient`, `ErrHostNetworkUnavailable`.
 - [rgw.md](../rgw.md): `S3Endpoint`, `S3SecureEndpoint`, `DaemonEndpoint`.
 - [Running native commands](native-commands.md): client containers and the

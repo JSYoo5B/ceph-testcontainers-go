@@ -130,22 +130,21 @@ checks skip themselves and report success; GitHub documents that a job
 skipped by a condition reports success. The Vulnerability check matrix jobs
 and `Vet, compile and CI tooling` skip their steps instead of the whole job:
 the matrix so that each keeps its expanded check name, and the vet job so
-that the fragment validator below still runs. The job names are unchanged.
+that the text checks below still run. The job names are unchanged.
 
 A pull request is documentation-only when every changed file is on this
 allowlist, and the allowlist contains only files that no check reads:
 - `README.md`, `CHANGELOG.md`, any other top-level `*.md` file and `LICENSE`;
-- Markdown files directly inside `docs/changes/` (release-note fragments),
-  `docs/contributing/`, `docs/design/`, `docs/guides/` and `docs/research/`,
+- Markdown files directly inside `docs/contributing/`, `docs/design/`, `docs/guides/` and `docs/research/`,
   except the files below.
 
 These documentation files are read by a check and always run the full Code
 checks, as does every other path (including any non-Markdown file under
-`docs/` or `docs/changes/`, a new top-level `docs/` page, a nested path such
-as `docs/changes/sub/x.md` and a top-level `changes/` directory). A changed
+`docs/`, a new top-level `docs/` page and a nested path such as
+`docs/guides/sub/x.md`). A changed
 path whose old or new Git mode is not an ordinary file (a symbolic link, an
 executable or a submodule) also runs them, because the path name alone cannot
-show that `docs/changes/x.md` is a link to a code file:
+show that `docs/guides/x.md` is a link to a code file:
 - The API reference page of every public package (`docs/ceph.md`,
   `docs/fault.md`, `docs/override.md`, `docs/rbd.md`, `docs/rbd-mirror.md`, `docs/cephfs.md`,
   `docs/rgw.md`, `docs/rgw-multisite.md`, `docs/capture.md`, and the page a new
@@ -170,22 +169,15 @@ paths they name and fails when one of them is on the allowlist, so a new
 reader of a documentation file has to remove that file from it. Add the
 file to `READ_DOC_FILES` or `READ_DOC_PREFIXES` in `docs_only.py`.
 
-A head that changes only fragments is documentation-only, but it is still
-validated. `Vet, compile and CI tooling` runs on every head instead of
-skipping the whole job: its checkout and its last four steps run regardless
-of `docs_only`. They are `Validate release-note fragments`
-(`.github/scripts/release_fragments.py`, see
-[Release-note fragments](release-fragments.md)) and `Check the released
-changelog range` (`.github/scripts/release_assemble.py check`, see
-[Release assembly](release-fragments.md#release-assembly)) and `Check the image
+A documentation-only head is still validated by text checks. `Vet, compile and CI
+tooling` runs on every head instead of skipping the whole job: its checkout and
+its last two steps run regardless of `docs_only`. They are `Check the image
 role vocabulary` (`.github/scripts/check_image_vocabulary.py`, which fails when a
 tracked file reintroduces the retired single-broad-role image vocabulary outside
 its list of historical records) and `Check the retired override names`
 (`.github/scripts/check_retired_override_names.py`, which fails when a tracked
 file names a removed `ceph.Container` override method, `ceph` handle type or
-observation method receiver (these are `ceph.Observer` methods now) outside its list of historical records). The changelog step needs no network; the shallow checkout has no release tags, so it prints
-`tag comparison: SKIPPED` and checks only the identifiers recorded in
-`CHANGELOG.md` against `docs/changes`. Vet, lint, tag compilation, the Python tooling tests,
+observation method receiver (these are `ceph.Observer` methods now) outside its list of historical records). Vet, lint, tag compilation, the Python tooling tests,
 actionlint and the go-ceph harness test skip themselves on a
 documentation-only head. The job name is unchanged and no required check is
 added. The job's checkout fetches two commits (`fetch-depth: 2`), and a pull
@@ -232,7 +224,7 @@ Request additional role routing through the existing review command:
 
 These optional profiles cover constrained ordinary RBD, RGW without a generic
 client, and stopped-link mirror monitor refresh. Other cache, scheduling,
-shared/native and aggregate compatibility checks remain in their ordinary
+native and aggregate compatibility checks remain in their ordinary
 source-owned batches; reviewers can select those batches by the same command.
 
 ### Check names
@@ -273,7 +265,7 @@ Practical consequences:
 | --- | --- | --- |
 | Unit tests | 15 min | `make test` |
 | Race detector | 15 min | `make race` |
-| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint (`make lint`), `make tag-compile` (test-only-code boundary check, then tagged compilation), the Python tests in `.github/scripts` (`test_*.py`), actionlint and the go-ceph harness test; the release-note fragment validator on every head; on pull requests, `apinaming moves` against the merge base |
+| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint (`make lint`), `make tag-compile` (test-only-code boundary check, then tagged compilation), the Python tests in `.github/scripts` (`test_*.py`), actionlint and the go-ceph harness test; the text vocabulary checks on every head; on pull requests, `apinaming moves` against the merge base |
 | Compiled tag coverage and helpers | 25 min | `tag_scenarios.py plan --verify`, then `tag_scenarios.py code` (the Docker-free `code` batch) |
 | Vulnerability check (Go 1.26.x and 1.27.x) | 20 min | `make vulncheck` |
 
@@ -841,7 +833,7 @@ The default is `host` for the RADOS products (`ceph`, `rbd`, `cephfs`): their
 clients reach every daemon at the address that the maps advertise, which a
 native client in the test process can use only on the host network. It is
 `bridge` for RGW, whose one HTTP endpoint a port mapping serves. A test that
-uses a bridge-only feature (`WithSeparateClusterNetwork`, `InterruptNetwork`,
+uses a bridge-only feature (`NetworkConfig.WithSeparateClusterNetwork`, `InterruptNetwork`,
 `ApplyNetworkProfile`) declares `bridge` alone, or keeps that part in the
 bridge subtest.
 
@@ -1676,7 +1668,7 @@ job's result.
 | Native assertions and completion | `native/native.log`, `native/report.json` | An assertion failed, a Ceph wait hit its deadline, the batch timeout expired, or a test was skipped. For a Go timeout, the `panic: test timed out` block lists the tests still running and for how long. |
 | Docker resource cleanup | `runtime-cleanup-<id>/after.json` | A test left a container, network or named volume behind, for example by not registering cleanup when `Run` returned an error. |
 
-Failed integration tests that use the shared cluster helpers print the last
+Failed integration tests that use the independent fixture helpers print the last
 16 KB of every daemon's log into `native.log` before the cluster is removed.
 Search for `container ... logs:` near the failing test.
 

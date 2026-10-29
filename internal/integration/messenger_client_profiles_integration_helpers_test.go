@@ -563,7 +563,7 @@ func testMessengerClientSecureProfile(t *testing.T) {
 	defer cancel()
 	image, roles := integrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
-		ceph.WithMessengerMode(ceph.MessengerV2Secure))
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
 	cluster, admin := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
@@ -594,7 +594,7 @@ func testMessengerClientModeRejection(t *testing.T, monitors, managers []ceph.Me
 	defer cancel()
 	image, roles := integrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
-		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: monitors, Managers: managers}))
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only).WithMessengerPolicy(ceph.MessengerPolicy{Monitors: monitors, Managers: managers})))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: keyType, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
 	cluster, _ := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
@@ -690,7 +690,7 @@ func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Dura
 	defer cancel()
 	image, roles := integrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
-		ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithConfigFile(profileConfigFile(t, file)))
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)), ceph.WithConfigFile(profileConfigFile(t, file)))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: monTTL, ServiceTicketTTL: serviceTTL})
 	cluster, client := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
@@ -718,7 +718,7 @@ func testMessengerClientDelayedManagers(t *testing.T) {
 	defer cancel()
 	image, roles := integrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithMonitorCount(3), ceph.WithNoInitialManagers(), ceph.WithNoInitialOSDs(),
-		ceph.WithMessengerMode(ceph.MessengerV2Secure))
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
 	cluster, _ := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, -1)
@@ -752,8 +752,8 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 	defer cancel()
 	image, roles := integrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithOSDCount(1),
-		ceph.WithPoolDefaults(1, 1), ceph.WithOSDObjectStore(ceph.OSDMemStore), ceph.WithOSDBlockSize(256<<20), legacyPoolFlags(t),
-		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC}))
+		ceph.WithPoolDefaults(1, 1), ceph.WithOSDStorage(ceph.OSDStorage{}.WithObjectStore(ceph.OSDMemStore).WithBlockSize(256<<20)), legacyPoolFlags(t),
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only).WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC})))
 	base = append(base, extra...)
 	auth = profileAuth(t, ctx, image, base, auth)
 	cluster, _ := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
@@ -803,7 +803,7 @@ func testMessengerClientAddressProfile(t *testing.T, family ceph.AddressFamily) 
 	defer cancel()
 	image, roles := integrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
-		ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithAddressFamily(family))
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure).WithAddressFamily(family)))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
 	cluster, client := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
@@ -820,7 +820,7 @@ func testMessengerClientWithoutKeyTypes(t *testing.T, image string) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	base := []testcontainers.ContainerCustomizer{ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
-		ceph.WithMessengerMode(ceph.MessengerV2Secure)}
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure))}
 	if imageHasKeyTypes(t, ctx, image) {
 		t.Fatalf("%s has ceph-authtool --key-type", image)
 	}

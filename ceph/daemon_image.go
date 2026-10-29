@@ -28,8 +28,7 @@ type daemonOptions struct {
 // from the same image again, Stop and Start keep the container, and the
 // daemon's handle reports it with Image. It does not change ClusterFacts, which
 // describes the cluster's own settings and its first MON, and a CLI, client or helper container still
-// uses the cluster's images. A cluster that a SharedCluster shares refuses the
-// calls that take this option, so a tenant cannot use it.
+// uses the cluster's images.
 //
 // The image reference must be non-empty and free of whitespace and control
 // characters. A refusal happens before any daemon identity, key or container

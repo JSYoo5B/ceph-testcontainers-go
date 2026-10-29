@@ -67,17 +67,7 @@ type Pool struct {
 	ErasureCodeProfile string
 	owner              *Container
 	ident              *poolIdentity
-	// lease is set on a Pool that a tenant-backed Observer listed.
-	lease *poolLease
 }
-
-// poolLease is the lease that a tenant-derived Pool comes from. live is the
-// admission check of that one lease, which the shared-cluster side hands to
-// the Observer; every lease is a separate value and is never reused, so a later
-// lease of the same shared cluster, exclusive or not, has another check. The
-// Pool calls it on every operation and applies the tenant policy under it,
-// whatever mode the cluster is in then. It names no tenant type.
-type poolLease struct{ live func() error }
 
 // poolIdentity is what the copies of one Pool handle share: the native pool
 // ID once it is known and whether the handle removed the pool. The owner's
@@ -102,9 +92,6 @@ type poolIdentity struct {
 // application I/O. For RBD, create images in a replicated metadata pool and pass
 // the EC pool as data_pool in the native client (or --data-pool to the RBD CLI).
 func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, error) {
-	if gateErr := c.sharedGate("CreatePool"); gateErr != nil {
-		return nil, gateErr
-	}
 	config = resolvePoolDefaults(c.settings, config)
 	config, err := normalizePoolConfig(config)
 	if err != nil {

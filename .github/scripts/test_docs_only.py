@@ -18,7 +18,7 @@ TABLE = [
     ("README.md", True), ("CHANGELOG.md", True), ("AGENTS.md", True), ("LICENSE", True),
     ("docs/contributing/ci.md", True), ("docs/contributing/testing.md", True),
     ("docs/research/ceph-fuse-mount.md", True),
-    ("docs/guides/errors.md", True), ("docs/guides/upgrading-to-v0.3.md", True),
+    ("docs/guides/errors.md", True),
     ("docs/design/fault-package.md", True), ("docs/design/messenger-evidence.md", True),
     # Read by internal/apiinventory (package pages name every export).
     ("docs/ceph.md", False), ("docs/fault.md", False), ("docs/rbd.md", False),
@@ -34,8 +34,6 @@ TABLE = [
     ("docs/guides/messenger-client-fixtures.md", False),
     # Read by internal/tools/testdoublecheck (the test-double inventory).
     ("docs/contributing/test-double-inventory.md", False),
-    # Read by ceph/shared_harness_inventory_test.go (the shared harness inventory).
-    ("docs/design/shared-harness-boundary.md", False),
     ("docs/design/value-configuration-composition.md", False),
     # Read by ceph/container_decomposition_records_test.go and ceph/container_residual_fields_test.go:
     # the shared document and every component record of the directory, including one that is added later.
@@ -55,16 +53,6 @@ TABLE = [
     ("ceph/notes.md", False), (".github/scripts/docs_only.py", False), (".github/workflows/code.yml", False),
     ("Makefile", False), ("go.mod", False), ("ceph/ceph.go", False), ("license", False),
     ("README.md.go", False), ("docs/contributing/ci.md/x", False),
-    # Release-note fragments: only direct Markdown children of docs/changes are unread.
-    ("docs/changes/216-example.md", True), ("docs/changes/1-a.md", True),
-    ("docs/changes/x.json", False), ("docs/changes/x.go", False), ("docs/changes/x.txt", False),
-    ("docs/changes/x", False), ("docs/changes/sub/x.md", False), ("docs/changes/sub/deeper/x.md", False),
-    ("changes/x.md", False), ("changes/x.json", False), ("docs/change/x.md", False),
-    ("docs/changes.md", False), ("docs/changes", False), ("docs/changes/", False),
-    ("docs/changes/x.md/y", False), ("docs/changes/../ceph/ceph.go", False),
-    ("docs/changes//x.md", False), ("docs/changes/x.md\n", False), ("\ndocs/changes/x.md", False),
-    ("docs/changes/\nx.md", False), ("docs/changes/x.md ", False), ("docs/changes/ x.md", False),
-    ("docs/changes/x.md\r", False), ("docs/changes/x.md\x00", False), ("docs/changes\n/x.md", False),
     # Malformed or escaping paths.
     ("", False), ("/docs/guides/errors.md", False), ("docs/../ceph/ceph.go", False),
     ("docs//guides/errors.md", False), ("docs/guides/errors.md\n", False), (" README.md", False),
@@ -122,26 +110,13 @@ class NegativeControlTests(unittest.TestCase):
         return docs_only.is_unread_doc(path) or path in ("docs/ceph.md", "docs/rgw.md")
 
     @staticmethod
-    def changes_not_allowlisted(path):
-        return docs_only.is_unread_doc(path) and not (isinstance(path, str) and path.startswith("docs/changes/"))
-
-    @staticmethod
-    def changes_subtree_allowed(path):
-        return docs_only.is_unread_doc(path) or (isinstance(path, str) and path.startswith("docs/changes/"))
-
-    @staticmethod
-    def top_level_changes_allowed(path):
-        return docs_only.is_unread_doc(path) or (isinstance(path, str) and path.startswith("changes/"))
-
-    @staticmethod
     def never(path):
         return False
 
     def test_wrong_classifiers_fail_the_table(self):
         for name in ("paths_ignore", "any_markdown", "no_read_exceptions", "naming_receipts_allowed",
                      "decomposition_document_only", "decomposition_directory_only", "design_subtrees_allowed",
-                     "package_pages_allowed", "changes_not_allowlisted", "changes_subtree_allowed",
-                     "top_level_changes_allowed", "never"):
+                     "package_pages_allowed", "never"):
             with self.subTest(name):
                 self.assertNotEqual(mismatches(getattr(self, name)), [], name)
 
@@ -164,9 +139,9 @@ class DecideTests(unittest.TestCase):
                 self.assertFalse(docs_only.decide("pull_request", False, "abc", ["README.md", extra])[0])
 
     def test_irregular_mode_runs_everything(self):
-        self.assertFalse(docs_only.decide("pull_request", False, "abc", ["docs/changes/x.md"],
-                                          frozenset(["docs/changes/x.md"]))[0])
-        self.assertTrue(docs_only.decide("pull_request", False, "abc", ["docs/changes/x.md"], frozenset())[0])
+        self.assertFalse(docs_only.decide("pull_request", False, "abc", ["docs/guides/x.md"],
+                                          frozenset(["docs/guides/x.md"]))[0])
+        self.assertTrue(docs_only.decide("pull_request", False, "abc", ["docs/guides/x.md"], frozenset())[0])
 
     def test_fail_open_cases(self):
         docs = ["README.md"]
@@ -257,55 +232,55 @@ class GitTests(unittest.TestCase):
     def classify(self):
         return self.run_main("--event", "pull_request", "--base", self.base)
 
-    def test_fragment_commit(self):
-        self.write("docs/changes/216-example.md", "---\nchange: 216-example\nkind: none\nreason: r\n---\n")
+    def test_guide_commit(self):
+        self.write("docs/guides/example.md", "x\n")
         self.commit()
         self.assertEqual(self.classify(), "docs_only=true\n")
 
-    def test_fragment_plus_code_runs_everything(self):
-        self.write("docs/changes/216-example.md", "x\n")
+    def test_guide_plus_code_runs_everything(self):
+        self.write("docs/guides/example.md", "x\n")
         self.write("ceph/ceph.go", "package ceph // changed\n")
         self.commit()
         self.assertEqual(self.classify(), "docs_only=false\n")
 
-    def test_misclassified_fragment_paths_run_everything(self):
-        for name in ("docs/changes/x.json", "docs/changes/sub/x.md", "changes/x.md", "docs/changes/x.go"):
+    def test_misclassified_doc_paths_run_everything(self):
+        for name in ("docs/guides/x.json", "docs/guides/sub/x.md", "changes/x.md", "docs/guides/x.go"):
             with self.subTest(name):
                 self.write(name, "x\n")
                 self.commit()
                 self.assertEqual(self.classify(), "docs_only=false\n")
                 git(self.root, "reset", "-q", "--hard", self.base)
 
-    def test_symlinked_fragment_runs_everything(self):
-        self.link("docs/changes/x.md", "../../ceph/ceph.go")
+    def test_symlinked_doc_runs_everything(self):
+        self.link("docs/guides/x.md", "../../ceph/ceph.go")
         self.commit()
         self.assertEqual(self.classify(), "docs_only=false\n")
 
-    def test_symlinked_fragment_to_markdown_runs_everything(self):
-        self.link("docs/changes/x.md", "../../README.md")
+    def test_symlinked_doc_to_markdown_runs_everything(self):
+        self.link("docs/guides/x.md", "../../README.md")
         self.commit()
         self.assertEqual(self.classify(), "docs_only=false\n")
 
     def test_deleted_symlink_runs_everything(self):
-        self.link("docs/changes/x.md", "../../README.md")
+        self.link("docs/guides/x.md", "../../README.md")
         self.commit()
         self.base = self.rev()
-        (self.root / "docs/changes/x.md").unlink()
+        (self.root / "docs/guides/x.md").unlink()
         self.commit()
         self.assertEqual(self.classify(), "docs_only=false\n")
 
     def test_symlink_replaced_by_file_runs_everything(self):
-        self.link("docs/changes/x.md", "../../README.md")
+        self.link("docs/guides/x.md", "../../README.md")
         self.commit()
         self.base = self.rev()
-        (self.root / "docs/changes/x.md").unlink()
-        self.write("docs/changes/x.md", "text\n")
+        (self.root / "docs/guides/x.md").unlink()
+        self.write("docs/guides/x.md", "text\n")
         self.commit()
         self.assertEqual(self.classify(), "docs_only=false\n")
 
-    def test_executable_fragment_runs_everything(self):
-        self.write("docs/changes/x.md", "x\n")
-        (self.root / "docs/changes/x.md").chmod(0o755)
+    def test_executable_doc_runs_everything(self):
+        self.write("docs/guides/x.md", "x\n")
+        (self.root / "docs/guides/x.md").chmod(0o755)
         self.commit()
         self.assertEqual(self.classify(), "docs_only=false\n")
 
@@ -315,9 +290,8 @@ class GitTests(unittest.TestCase):
         self.commit()
         self.assertEqual(self.classify(), "docs_only=false\n")
 
-    def test_code_file_moved_into_changes_runs_everything(self):
-        (self.root / "docs/changes").mkdir(parents=True)
-        git(self.root, "mv", "ceph/ceph.go", "docs/changes/moved.md")
+    def test_code_file_moved_into_docs_runs_everything(self):
+        git(self.root, "mv", "ceph/ceph.go", "docs/guides/moved.md")
         self.commit()
         self.assertEqual(self.classify(), "docs_only=false\n")
 
@@ -416,15 +390,6 @@ class ReaderInventoryTests(unittest.TestCase):
         self.assertEqual(found, ["docs/design/container-decomposition"])
         self.assertFalse(docs_only.is_unread_doc(found[0] + "/any-record.md"))
 
-    def test_the_scan_catches_a_reader_of_a_fragment(self):
-        # A Go test that names a fragment file must make the allowlist fail.
-        with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "reader_test.go"
-            source.write_text('os.ReadFile("../../docs/changes/216-example.md")\n')
-            found = self.REFERENCE.findall(source.read_text())
-        self.assertEqual(found, ["docs/changes/216-example.md"])
-        self.assertTrue(docs_only.is_unread_doc(found[0]))
-
     def test_the_scan_catches_a_reader_of_an_allowlisted_file(self):
         self.assertTrue(docs_only.is_unread_doc("docs/guides/errors.md"))
         with tempfile.TemporaryDirectory() as directory:
@@ -471,26 +436,17 @@ class WorkflowWiringTests(unittest.TestCase):
             if self.GATE not in step:
                 ungated.append(step.splitlines()[0])
         # Checkout stays ungated (the checks need the tree); nothing else but the
-        # fragment validator, the released-range check, the image role vocabulary
-        # check and the retired override names check, which read text.
-        self.assertEqual(ungated, ["uses: actions/checkout@v7", "name: Validate release-note fragments",
-                                   "name: Check the released changelog range",
+        # image role vocabulary check and the retired override names check,
+        # which read text.
+        self.assertEqual(ungated, ["uses: actions/checkout@v7",
                                    "name: Check the image role vocabulary",
                                    "name: Check the retired override names"])
-        validator = [step for step in steps if "release_fragments.py" in step]
-        self.assertEqual(len(validator), 1)
-        self.assertIn("if: ${{ !cancelled() }}", validator[0])
         vocabulary = [step for step in steps if "check_image_vocabulary.py" in step]
         self.assertEqual(len(vocabulary), 1)
         self.assertIn("if: ${{ !cancelled() }}", vocabulary[0])
         retired = [step for step in steps if "check_retired_override_names.py" in step]
         self.assertEqual(len(retired), 1)
         self.assertIn("if: ${{ !cancelled() }}", retired[0])
-        self.assertIn("python3 .github/scripts/release_fragments.py", validator[0])
-        released = [step for step in steps if "release_assemble.py" in step]
-        self.assertEqual(len(released), 1)
-        self.assertIn("if: ${{ !cancelled() }}", released[0])
-        self.assertIn("run: python3 .github/scripts/release_assemble.py check", released[0])
 
     def test_required_check_names_are_unchanged(self):
         names = re.findall(r"(?m)^    name: (.*)$", self.text)

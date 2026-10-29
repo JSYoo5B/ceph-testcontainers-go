@@ -14,7 +14,6 @@ import (
 	"unicode"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/google/uuid"
@@ -61,14 +60,14 @@ func removeGateway(ctx context.Context, c *ceph.Container, handle *Gateway) erro
 	}
 	defer servicehook.Unlock(c)
 	if servicehook.Closed(c) {
-		return harnesshook.Invalid(errors.New("ceph cluster is terminated"))
+		return servicehook.Invalid(errors.New("ceph cluster is terminated"))
 	}
 	if name == "" {
 		name = "default"
 	}
-	gateway, ok := gateways(c).ByName[name]
+	gateway, ok := gateways(c).byName[name]
 	if !ok || gateway != handle || gateway.Container == nil {
-		return harnesshook.Invalid(fmt.Errorf("RGW gateway %q is not owned by this cluster, or this descriptor is stale", name))
+		return servicehook.Invalid(fmt.Errorf("RGW gateway %q is not owned by this cluster, or this descriptor is stale", name))
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 	defer cancel()
@@ -76,7 +75,7 @@ func removeGateway(ctx context.Context, c *ceph.Container, handle *Gateway) erro
 		return fmt.Errorf("remove RGW gateway %s: %w", name, err)
 	}
 	servicehook.DeleteService(c, rgwServiceName(Config{Name: name}))
-	delete(gateways(c).ByName, name)
+	delete(gateways(c).byName, name)
 	return nil
 }
 
@@ -89,7 +88,7 @@ func startGateway(ctx context.Context, c *ceph.Container, config Config, opts ..
 		return nil, err
 	}
 	if facts.Images.RGW == "" {
-		return nil, harnesshook.Invalid(fmt.Errorf("rgw image is required before gateway setup"))
+		return nil, servicehook.Invalid(fmt.Errorf("rgw image is required before gateway setup"))
 	}
 	config, err = normalizeRGWConfig(config)
 	if err != nil {
@@ -111,7 +110,7 @@ func startGateway(ctx context.Context, c *ceph.Container, config Config, opts ..
 			if owned == nil || owned.GetContainerID() != ctr.GetContainerID() {
 				return // Concurrent cluster cleanup already removed this service.
 			}
-			gateways(c).ByName[config.Name] = rgw
+			gateways(c).byName[config.Name] = rgw
 		}()
 	}
 	if err != nil {
@@ -153,14 +152,14 @@ func normalizeRGWConfig(config Config) (Config, error) {
 		config.Name = "default"
 	}
 	if !naming.DaemonName.MatchString(config.Name) {
-		return Config{}, harnesshook.Invalid(errors.New("RGW name must use letters, digits, dots, underscores or hyphens"))
+		return Config{}, servicehook.Invalid(errors.New("RGW name must use letters, digits, dots, underscores or hyphens"))
 	}
 	if config.Region == "" {
 		config.Region = "us-east-1"
 	}
 	for _, value := range []string{config.Realm, config.Zonegroup, config.Zone, config.Region} {
 		if strings.TrimSpace(value) != value || strings.HasPrefix(value, "-") || strings.IndexFunc(value, unicode.IsControl) != -1 {
-			return Config{}, harnesshook.Invalid(errors.New("invalid RGW realm, zonegroup, zone or region"))
+			return Config{}, servicehook.Invalid(errors.New("invalid RGW realm, zonegroup, zone or region"))
 		}
 	}
 	if config.TLS != nil {

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -47,7 +46,7 @@ func normalizeRGWTLSConfig(config *TLSConfig) (*TLSConfig, error) {
 		return nil, nil
 	}
 	if _, err := tls.X509KeyPair(config.CertificatePEM, config.PrivateKeyPEM); err != nil {
-		return nil, harnesshook.Invalid(errors.New("RGW TLS requires a valid PEM certificate chain and matching unencrypted private key"))
+		return nil, servicehook.Invalid(errors.New("RGW TLS requires a valid PEM certificate chain and matching unencrypted private key"))
 	}
 	return &TLSConfig{CertificatePEM: slices.Clone(config.CertificatePEM), PrivateKeyPEM: slices.Clone(config.PrivateKeyPEM)}, nil
 }

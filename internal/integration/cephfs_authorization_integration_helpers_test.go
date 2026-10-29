@@ -144,6 +144,48 @@ finally:
 	probe(writerClient, writer.Client, source, neighbor, sourceInfo, neighborInfo, "rw")
 	probe(readerClient, reader.Client, source, neighbor, sourceInfo, neighborInfo, "r")
 
+	// Keep crashed-mount cleanup as an ordinary owned grant operation. The
+	// client dies while mounted, then its exact grant is revoked and its
+	// sessions are evicted before logical subvolume removal below.
+	crashed, err := fs.AuthorizeSubvolume(ctx, source, cephfs.SubvolumeAuthorizationConfig{ClientID: "subvolume-crashed", Access: "rw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClientIdentity(crashed.Client),
+		testcontainers.WithEntrypoint("python3", "-c", cephFSAuthorizationKilledSession,
+			filesystem, crashed.Client.User(), crashed.Client.KeyringPath(), source.Path),
+		testcontainers.WithWaitStrategy(wait.ForLog("OWNED_CEPHFS_MOUNTED").WithStartupTimeout(time.Minute)))
+	if holder != nil {
+		testcontainers.CleanupContainer(t, holder)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := fs.Sessions(ctx)
+	if err != nil || !slices.ContainsFunc(sessions, func(session cephfs.Session) bool {
+		return session.EntityID == crashed.Client.User() && strings.TrimRight(session.Root, "/") == strings.TrimRight(source.Path, "/")
+	}) {
+		t.Fatalf("owned client did not retain its exact mounted session: %+v error=%v", sessions, err)
+	}
+	if err := holder.Terminate(ctx, testcontainers.StopTimeout(0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.DeauthorizeSubvolume(ctx, crashed); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.EvictSubvolumeClients(ctx, crashed); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err = fs.Sessions(ctx)
+	if err != nil || slices.ContainsFunc(sessions, func(session cephfs.Session) bool {
+		return session.EntityID == crashed.Client.User() && strings.TrimRight(session.Root, "/") == strings.TrimRight(source.Path, "/")
+	}) {
+		t.Fatalf("crashed owned client's mounted session remains after explicit eviction: %+v error=%v", sessions, err)
+	}
+	if err := crashed.Client.Delete(ctx); err != nil {
+		t.Fatal(err)
+	}
+
 	// Add independently managed neighbor RO and MGR rights only after each
 	// principal's source-only isolation proof. Keeping a usable OSD cap avoids
 	// testing an absent-service-ticket timeout after the last grant is removed;
@@ -309,6 +351,13 @@ if phase != 'revoked':
             denied(lambda: other_fs.mount(mount_root=other.encode(), filesystem_name=filesystem.encode()))
     finally:
         other_fs.shutdown()
+    if phase != 'r-both':
+        for outside in ('/', '/volumes', os.path.dirname(os.path.dirname(root))):
+            outside_fs = make_fs()
+            try:
+                denied(lambda: outside_fs.mount(mount_root=outside.encode(), filesystem_name=filesystem.encode()), record_mount=True)
+            finally:
+                outside_fs.shutdown()
 c = rados.Rados(conffile='/etc/ceph/ceph.conf', name=entity)
 c.conf_set('keyring', keyring)
 c.conf_set('rados_mon_op_timeout', '5')
@@ -347,6 +396,19 @@ finally:
     c.shutdown()
 deadline.cancel()
 print(json.dumps({'phase': phase, 'principal': entity, 'path': root, 'pool_namespace': namespace, 'mount_refusal_errno': mount_refusal_errno}))
+`
+
+const cephFSAuthorizationKilledSession = `import cephfs, os, sys, time
+filesystem, user, keyring, root = sys.argv[1:]
+fs = cephfs.LibCephFS(conffile='/etc/ceph/ceph.conf', auth_id=user)
+fs.conf_set('keyring', keyring)
+fs.conf_set('client_mount_timeout', '10')
+fs.mount(mount_root=root.encode(), filesystem_name=filesystem.encode())
+fd = fs.open('/crashed-owned-client', os.O_CREAT | os.O_WRONLY, 0o600)
+assert fs.write(fd, b'owned mounted client', 0) == 20
+fs.fsync(fd, False)
+print('OWNED_CEPHFS_MOUNTED', flush=True)
+time.sleep(3600)
 `
 
 const cephFSAuthorizationAdminConnectivity = `import cephfs, os, rados, sys, threading, time

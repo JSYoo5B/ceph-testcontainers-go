@@ -405,7 +405,6 @@ var memberRosterCallers = map[string]memberRosterCaller{
 	"startService":        {"takes", []string{"hasService", "setService"}},
 	"terminate":           {"takes", []string{"clearInitialManager", "dropManager", "dropMonitor", "dropService", "eachManager", "eachMonitor", "eachService", "initialManager"}},
 	"diagnosticsSnapshot": {"takes", []string{"eachManager", "eachMonitor", "eachService", "initialManager"}},
-	"sharedDaemons":       {"takes", []string{"eachManager", "eachMonitor", "eachService"}},
 
 	"startManager":                     {"holds", []string{"addManager", "manager", "recordInitialManager"}},
 	"currentManager":                   {"holds", []string{"manager"}},

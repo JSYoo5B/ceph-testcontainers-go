@@ -168,7 +168,6 @@ func TestSetConfigRefusalsReturnNotAppliedHandles(t *testing.T) {
 	ctr := &configFixture{}
 	own := newConfigFixture(ctr)
 	terminated := testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second, Closed: true})
-	shared := testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second, Shared: true})
 	for name, tc := range map[string]struct {
 		c       *ceph.Container
 		ctx     context.Context
@@ -177,7 +176,6 @@ func TestSetConfigRefusalsReturnNotAppliedHandles(t *testing.T) {
 		"canceled context":   {own, canceled, setting},
 		"invalid section":    {own, t.Context(), ceph.ConfigSetting{Section: "bad", Name: "debug_ms"}},
 		"terminated cluster": {terminated, t.Context(), setting},
-		"shared cluster":     {shared, t.Context(), setting},
 	} {
 		change, err := SetConfig(tc.ctx, tc.c, tc.setting)
 		if err == nil || change == nil || change.state == nil || change.state.refused == nil || len(ctr.calls) != 0 {

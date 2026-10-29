@@ -3,11 +3,11 @@ package rgw
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/namedregistry"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -59,7 +59,7 @@ func WithGateways(configs ...Config) ceph.Option {
 	if len(configs) == 0 {
 		configs = []Config{{}}
 	}
-	return servicehook.WithBootstrap(servicekind.RGW, false, func() (servicehook.Bootstrap, error) { return newRGWBootstrap(configs), nil })
+	return servicehook.WithBootstrap(bootstrapKind, false, func() (servicehook.Bootstrap, error) { return newRGWBootstrap(configs), nil })
 }
 
 // WithImage selects the image for every gateway of the cluster, those
@@ -74,29 +74,50 @@ func WithImage(image string) ceph.Option { return servicehook.WithServiceImage("
 
 // defaultGateway selects one default gateway when no gateway option was given.
 func defaultGateway() ceph.Option {
-	return servicehook.WithBootstrap(servicekind.RGW, true, func() (servicehook.Bootstrap, error) { return newRGWBootstrap([]Config{{}}), nil })
+	return servicehook.WithBootstrap(bootstrapKind, true, func() (servicehook.Bootstrap, error) { return newRGWBootstrap([]Config{{}}), nil })
 }
 
-// gateways returns the cluster's gateway registry, creating it on first use.
+// gatewayRegistry holds the gateways this cluster owns. The cluster mutex
+// guards byName; the diagnostics and configuration readers use the same state.
+type gatewayRegistry struct {
+	byName map[string]*Gateway
+}
+
+// gateways returns the cluster's owned gateways, creating their state on first use.
 // The caller holds the cluster mutex.
-func gateways(c *ceph.Container) *namedregistry.Registry[*Gateway] {
-	return describeGateways(namedregistry.From[*Gateway](func(kind string, create func() any) any { return servicehook.Extension(c, kind, create) }, servicekind.RGW))
+func gateways(c *ceph.Container) *gatewayRegistry {
+	return servicehook.Extension(c, bootstrapKind, func() any {
+		return &gatewayRegistry{byName: make(map[string]*Gateway)}
+	}).(*gatewayRegistry)
 }
 
-// describeGateways tells the cluster how to read gateway credentials and
-// config targets out of the registry, whichever side created it first.
-func describeGateways(r *namedregistry.Registry[*Gateway]) *namedregistry.Registry[*Gateway] {
-	return r.Describe(
-		func(g *Gateway) []string {
-			if g == nil {
-				return nil
-			}
-			return []string{g.AccessKey, g.SecretKey}
-		},
-		func(name string, g *Gateway) (string, testcontainers.Container) {
-			if g == nil || g.Container == nil {
-				return "", nil
-			}
-			return "rgw." + name, g.Container
-		})
+// Sorted returns gateways in name order, including partial startup attempts.
+func (r *gatewayRegistry) Sorted() []*Gateway {
+	result := make([]*Gateway, 0, len(r.byName))
+	for _, name := range slices.Sorted(maps.Keys(r.byName)) {
+		result = append(result, r.byName[name])
+	}
+	return result
+}
+
+// Secrets lists owned gateway credentials for diagnostic redaction.
+func (r *gatewayRegistry) Secrets() []string {
+	var result []string
+	for _, g := range r.byName {
+		if g != nil {
+			result = append(result, g.AccessKey, g.SecretKey)
+		}
+	}
+	return result
+}
+
+// ConfigTargets lists owned gateway containers that read ceph.conf.
+func (r *gatewayRegistry) ConfigTargets() map[string]testcontainers.Container {
+	targets := make(map[string]testcontainers.Container)
+	for name, g := range r.byName {
+		if g != nil && g.Container != nil {
+			targets["rgw."+name] = g.Container
+		}
+	}
+	return targets
 }

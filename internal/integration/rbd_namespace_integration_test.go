@@ -74,7 +74,7 @@ func TestRBDNamespaces(t *testing.T) {
 			}
 			assertNamespaces("blue", "foreign", "red")
 			identity, err := cluster.CreateClient(ctx, "rbd-blue", ceph.ClientCaps{
-				Mon: "profile rbd",
+				Mon: "allow r",
 				MGR: "profile rbd pool=" + pool + " namespace=blue",
 				OSD: "profile rbd pool=" + pool + " namespace=blue",
 			})
@@ -153,6 +153,42 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, c
 			execCommand(t, ctx, client, "python3", "-c", `import subprocess, sys
 subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, check=True)`,
 				rbdNamespaceScopedProbe, pool, identity.Name(), identity.KeyringPath())
+			// A crashed client is owned by this test, not a release/recycle
+			// framework. Its image is removed explicitly after native watches
+			// settle, before the namespace-removal assertions below.
+			holder, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClientIdentity(identity),
+				testcontainers.WithEntrypoint("python3", "-c", rbdNamespaceKilledHolder, pool, identity.User()),
+				testcontainers.WithWaitStrategy(wait.ForLog("RBD_NAMESPACE_HELD").WithStartupTimeout(time.Minute)))
+			if holder != nil {
+				testcontainers.CleanupContainer(t, holder)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			held, err := rbd.ImageClients(ctx, cluster, pool, "blue", "held")
+			if err != nil || len(held.Watchers) == 0 || held.ExclusiveOwner() == nil {
+				t.Fatalf("owned RBD holder did not acquire a watch and exclusive lock: %+v error=%v", held, err)
+			}
+			if err := holder.Terminate(ctx, testcontainers.StopTimeout(0)); err != nil {
+				t.Fatal(err)
+			}
+			settle, stop := context.WithTimeout(ctx, time.Minute)
+			defer stop()
+			for {
+				held, err = rbd.ImageClients(settle, cluster, pool, "blue", "held")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(held.Watchers) == 0 {
+					break
+				}
+				select {
+				case <-settle.Done():
+					t.Fatal("crashed owned RBD client's watch did not settle", settle.Err())
+				case <-time.After(time.Second):
+				}
+			}
+			execCommand(t, ctx, admin, "rbd", "rm", "--no-progress", pool+"/blue/held")
 			// A namespace remains nonempty when its image is moved to trash.
 			// Fixture removal must retain that recoverable data too.
 			execCommand(t, ctx, admin, "rbd", "trash", "move", "--pool", pool, "--namespace", "blue", "shared")
