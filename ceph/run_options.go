@@ -77,12 +77,15 @@ func (o RunOptions) WithOptions(options ...Option) RunOptions {
 	return o
 }
 
+// selectsImages reports whether the value selected images, explicitly empty or not.
+func (o RunOptions) selectsImages() bool { return o.selection != imagesUnspecified }
+
 // merge appends other's options and, when other selects images, replaces the
 // image selection of o. It serves WithSharedRunOptions, whose repeated calls
 // accumulate into one value; Run itself takes one value.
 func (o RunOptions) merge(other RunOptions) RunOptions {
 	merged := o.WithOptions(other.options...)
-	if other.selection != imagesUnspecified {
+	if other.selectsImages() {
 		merged.selection, merged.image, merged.images = other.selection, other.image, other.images
 	}
 	return merged

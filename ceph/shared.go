@@ -106,7 +106,7 @@ type sharedSettings struct {
 // the first Lease reports, as for any invalid shared option.
 func WithSharedRunOptions(config RunOptions, customizers ...testcontainers.ContainerCustomizer) SharedOption {
 	return func(s *sharedSettings) {
-		if config.selection != imagesUnspecified && s.runConfig.selection != imagesUnspecified {
+		if config.selectsImages() && s.runConfig.selectsImages() {
 			s.err = errors.Join(s.err, fmt.Errorf("WithSharedRunOptions selects images twice"))
 		}
 		s.runConfig = s.runConfig.merge(config)

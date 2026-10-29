@@ -64,7 +64,7 @@ func startSharedContainer(ctx context.Context, image string, config RunOptions, 
 // cluster: the configured image selection when there is one, else the image of
 // NewShared as an aggregate selection.
 func sharedRunConfig(image string, config RunOptions) RunOptions {
-	if config.selection == imagesUnspecified {
+	if !config.selectsImages() {
 		return config.WithImage(image)
 	}
 	return config
