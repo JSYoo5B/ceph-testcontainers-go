@@ -63,7 +63,7 @@ func TestInvalidPanicsNamingTheMissingRegistrant(t *testing.T) {
 					t.Errorf("%s slot: recovered %q, want a panic naming package ceph", name, msg)
 				}
 			}()
-			Invalid(errors.New("x"))
+			_ = Invalid(errors.New("x"))
 		}()
 	}
 }
