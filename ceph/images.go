@@ -40,32 +40,58 @@ func (s ImageSet) normalized() (ImageSet, error) {
 	return s, nil
 }
 
-// RunWithImages starts a cluster with explicit role images. Service image options
-// in opts (cephfs.WithMDSImage, rgw.WithImage) replace the corresponding role of
-// images, whatever the order of the options.
-func RunWithImages(ctx context.Context, images ImageSet, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
-	images, err := images.normalized()
-	if err != nil {
-		return nil, invalidRequest("image set: %v", err)
-	}
-
-	return Run(ctx, images.Essential, append([]testcontainers.ContainerCustomizer{WithImages(images)}, opts...)...)
+// ImageOptions is the image group of the Ceph configuration: a plain value with
+// chainable, value-returning methods. It is not a customizer. Pass it to Run
+// through its one grouped option function, WithImageOptions, which Run applies
+// and validates like any Option before it creates a resource. The zero value
+// changes nothing.
+//
+//	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), ceph.WithOSDCount(1))
+//
+// Run takes at most one WithImageOptions that selects an image set, and a
+// second selection is refused with ErrInvalidRequest even when it repeats the
+// first. The pattern for every configuration group, and the composition rules,
+// are in docs/design/value-configuration-composition.md.
+type ImageOptions struct {
+	images    ImageSet
+	imagesSet bool
 }
 
-// WithImages selects role images. Essential must equal the Run image. A service
-// image option replaces its role of the set whichever came first.
-func WithImages(images ImageSet) Option {
-	return func(o *options) error {
-		normalized, err := images.normalized()
-		if err != nil {
-			return err
-		}
-		if o.imageSet != nil {
-			return fmt.Errorf("image set selected twice")
-		}
-		o.imageSet = &normalized
+// WithImageOptions is the grouped option function that carries an ImageOptions
+// to Run. Like every Option it changes the cluster settings only and never
+// reaches a container request.
+func WithImageOptions(config ImageOptions) Option {
+	return func(o *options) error { return config.apply(o) }
+}
+
+// WithImageSet selects explicit role images, replacing an earlier WithImageSet of
+// the same value. The set is the one authoritative image configuration:
+// Essential starts the MON, MGR and OSD daemons, so the image argument of Run
+// must be empty or equal to Essential and is not a second input. An All set
+// supplies every role. A role that a requested feature needs and the set leaves
+// empty is refused; there is no fallback to Essential. An explicit empty set is
+// refused, not read as unspecified. Service image options (cephfs.WithMDSImage,
+// rgw.WithImage) replace the matching role whatever the order. The ImageSet is
+// copied.
+func (o ImageOptions) WithImageSet(images ImageSet) ImageOptions {
+	o.images, o.imagesSet = images, true
+	return o
+}
+
+// apply selects the image set of o in settings.
+func (o ImageOptions) apply(settings *options) error {
+	if !o.imagesSet {
 		return nil
 	}
+	if settings.imageSet != nil {
+		return fmt.Errorf("image set selected twice")
+	}
+	normalized, err := o.images.normalized()
+	if err != nil {
+		return err
+	}
+	settings.imageSet = &normalized
+	return nil
 }
 
 func configureImages(o *options) error {
@@ -74,11 +100,16 @@ func configureImages(o *options) error {
 		o.imageSet = &images
 	}
 	s := o.imageSet
-	if o.essentialImage != s.Essential {
-		return fmt.Errorf("Run image must equal the essential image with WithImages")
+	// With an image set, the Run image is not a second input: empty or the set's
+	// essential image.
+	if o.essentialImage == "" {
+		o.essentialImage = s.Essential
 	}
-	// A service image option replaces its role whichever of it and WithImages
-	// came first.
+	if o.essentialImage != s.Essential {
+		return fmt.Errorf("Run image %q must be empty or equal the essential image %q of the image set", o.essentialImage, s.Essential)
+	}
+	// A service image option replaces its role whichever of it and the image
+	// set came first.
 	if o.cephfsOverride != "" {
 		s.CephFS = o.cephfsOverride
 	}

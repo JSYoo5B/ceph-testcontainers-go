@@ -34,7 +34,7 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = docker.Close() })
-	c, err := Run(ctx, image, WithImages(ImageSet{Essential: image, Client: clientImage}), WithNoInitialOSDs(), WithOSDVolumeStorage())
+	c, err := Run(ctx, image, WithImageOptions(ImageOptions{}.WithImageSet(ImageSet{Essential: image, Client: clientImage})), WithNoInitialOSDs(), WithOSDVolumeStorage())
 	terminated := false
 	if c != nil {
 		t.Cleanup(func() {

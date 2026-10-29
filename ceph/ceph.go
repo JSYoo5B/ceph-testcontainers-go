@@ -135,7 +135,16 @@ type OSDContainer struct {
 }
 
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
-// img supplies all roles unless WithImages selects explicit role images.
+// img supplies all roles unless WithImageOptions selects explicit role images
+// with ImageOptions.WithImageSet, in which case img must be empty or the set's
+// essential image. Run recognises the Option values among opts (every Ceph
+// setting, including each grouped configuration value carried by its option
+// function), applies and validates them before it creates anything, and passes
+// all of opts, in argument order, to the first MON's container request after
+// the module's own request options and before the messenger environment, the
+// WithConfigFile file and the ownership label. An Option has no effect on that
+// request, so a setting passed as one is never lost and never reaches a
+// container.
 // Images contain runtime tools; this module supplies cluster setup.
 // A non-nil Container returned with an error must still be terminated.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {

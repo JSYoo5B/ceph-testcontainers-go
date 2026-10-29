@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 327,
+  "count": 328,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -1032,6 +1032,20 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.ImageOptions",
+      "kind": "type",
+      "proposed": "ceph.ImageOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ImageOptions.WithImageSet",
+      "kind": "method",
+      "signature": "func(images ImageSet) ImageOptions",
+      "receiver": "ImageOptions",
+      "proposed": "ceph.ImageOptions.WithImageSet",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.ImageSet",
       "kind": "type",
       "proposed": "ceph.ImageSet",
@@ -1974,13 +1988,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.RunWithImages",
-      "kind": "function",
-      "signature": "func(ctx context.Context, images ImageSet, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
-      "proposed": "ceph.RunWithImages",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Status",
       "kind": "type",
       "proposed": "ceph.Status",
@@ -2137,10 +2144,10 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithImages",
+      "current": "ceph.WithImageOptions",
       "kind": "function",
-      "signature": "func(images ImageSet) Option",
-      "proposed": "ceph.WithImages",
+      "signature": "func(config ImageOptions) Option",
+      "proposed": "ceph.WithImageOptions",
       "decision": "baseline"
     },
     {

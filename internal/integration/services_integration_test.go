@@ -48,13 +48,13 @@ func integrationImages(t *testing.T) (string, []testcontainers.ContainerCustomiz
 	t.Helper()
 	if os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE") == "" && os.Getenv("SCENARIO_IMAGE_LAYOUT") != "roles" {
 		image := essentialImage(t)
-		return image, []testcontainers.ContainerCustomizer{ceph.WithImages(ceph.ImageSet{All: image})}
+		return image, []testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{All: image}))}
 	}
 	images := ceph.ImageSet{Essential: os.Getenv("CEPH_TEST_ESSENTIAL_IMAGE"), Client: os.Getenv("CEPH_TEST_CLIENT_IMAGE"), CephFS: os.Getenv("CEPH_TEST_CEPHFS_IMAGE"), RBDAux: os.Getenv("CEPH_TEST_RBD_AUX_IMAGE"), RGW: os.Getenv("CEPH_TEST_RGW_IMAGE")}
 	if images.Essential == "" {
 		t.Fatal("missing essential image")
 	}
-	return images.Essential, []testcontainers.ContainerCustomizer{ceph.WithImages(images)}
+	return images.Essential, []testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images))}
 }
 
 // Service tests run sequentially to fit the local Docker VM's 4 GiB budget.
