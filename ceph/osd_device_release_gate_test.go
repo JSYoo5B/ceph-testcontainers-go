@@ -250,6 +250,73 @@ func TestCollectChainEvidence(t *testing.T) {
 	})
 }
 
+// Named nil values of every nilable kind that implement the owner interface and
+// would answer with a receipt matching the asked lease and device. reflect's
+// IsNil accepts Chan, Func, Interface, Map, Pointer, Slice and UnsafePointer; a
+// value stored in an interface never has kind Interface, and a named
+// unsafe.Pointer cannot carry methods, so those two kinds cannot reach the
+// check and are not constructible here.
+type (
+	nilChanOwner  chan int
+	nilFuncOwner  func()
+	nilMapOwner   map[string]int
+	nilSliceOwner []int
+	nilPtrOwner   struct{ _ int }
+)
+
+func matchingReceipt() osdChainEvidence { return quietChain("lease-a", claimDevice("a", 1)) }
+
+func (nilChanOwner) chainEvidence(context.Context, string) (osdChainEvidence, error) {
+	return matchingReceipt(), nil
+}
+func (nilFuncOwner) chainEvidence(context.Context, string) (osdChainEvidence, error) {
+	return matchingReceipt(), nil
+}
+func (nilMapOwner) chainEvidence(context.Context, string) (osdChainEvidence, error) {
+	return matchingReceipt(), nil
+}
+func (nilSliceOwner) chainEvidence(context.Context, string) (osdChainEvidence, error) {
+	return matchingReceipt(), nil
+}
+func (*nilPtrOwner) chainEvidence(context.Context, string) (osdChainEvidence, error) {
+	return matchingReceipt(), nil
+}
+
+func TestCollectChainEvidenceRefusesEveryNilableOwnerKind(t *testing.T) {
+	d := claimDevice("a", 1)
+	for name, owner := range map[string]osdChainLeaseOwner{
+		"nil channel": nilChanOwner(nil),
+		"nil func":    nilFuncOwner(nil),
+		"nil map":     nilMapOwner(nil),
+		"nil slice":   nilSliceOwner(nil),
+		"nil pointer": (*nilPtrOwner)(nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ev, err := collectChainEvidence(t.Context(), owner, "lease-a")
+			if err == nil || !strings.Contains(err.Error(), "typed nil") || ev != (osdChainEvidence{}) {
+				t.Fatalf("ev %+v err %v", ev, err)
+			}
+			var s osdDeviceClaims
+			if v := judgeWith(t, &s, "lease-a", d, ev, err); v.outcome == osdChainClear {
+				t.Fatalf("a nil owner reached %+v", v)
+			}
+		})
+	}
+	t.Run("non-nil values of the same kinds are asked", func(t *testing.T) {
+		for name, owner := range map[string]osdChainLeaseOwner{
+			"channel": nilChanOwner(make(chan int)),
+			"func":    nilFuncOwner(func() {}),
+			"map":     nilMapOwner{},
+			"slice":   nilSliceOwner{},
+			"pointer": &nilPtrOwner{},
+		} {
+			if ev, err := collectChainEvidence(t.Context(), owner, "lease-a"); err != nil || ev != matchingReceipt() {
+				t.Errorf("%s: ev %+v err %v", name, ev, err)
+			}
+		}
+	})
+}
+
 func TestOSDChainLeaseOwnerCannotActOnTheChain(t *testing.T) {
 	typ := reflect.TypeOf((*osdChainLeaseOwner)(nil)).Elem()
 	if typ.NumMethod() != 1 || typ.Method(0).Name != "chainEvidence" {

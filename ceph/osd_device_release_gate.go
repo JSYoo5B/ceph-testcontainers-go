@@ -78,7 +78,8 @@ func collectChainEvidence(ctx context.Context, owner osdChainLeaseOwner, lease s
 	if owner == nil {
 		return osdChainEvidence{}, errors.New("OSD chain evidence needs a lease owner")
 	}
-	if v := reflect.ValueOf(owner); v.Kind() == reflect.Pointer || v.Kind() == reflect.Map || v.Kind() == reflect.Func || v.Kind() == reflect.Slice {
+	switch v := reflect.ValueOf(owner); v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
 		if v.IsNil() {
 			return osdChainEvidence{}, errors.New("OSD chain evidence needs a lease owner, got a typed nil")
 		}
