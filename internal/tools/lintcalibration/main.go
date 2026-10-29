@@ -3,6 +3,7 @@
 // keeps every diagnostic, and prints them grouped by source location.
 //
 //	lintcalibration report [-dir MODULE_ROOT] [-golangci-lint PATH] [-format json|tsv] [PACKAGE_PATTERN...]
+//	lintcalibration pair -base RAW.json -head RAW.json -base-ref ID -head-ref ID [-base-dir SNAPSHOT] [-head-dir SNAPSHOT] [-format json|tsv]
 //
 // Why a separate configuration: golangci-lint's uniq-by-line processor keys
 // only by file and line, not by linter, and its default caps drop issues beyond
@@ -15,6 +16,9 @@
 // version pinned by Code CI, and a digest of the configuration, and lists the
 // linters the binary reported as enabled. Nothing is committed or written to
 // the module.
+//
+// The pair subcommand (pair.go) joins two such raw collections into a focused
+// delta and keeps the raw collections as the evidence.
 //
 // See docs/contributing/lint-calibration.md.
 package main
@@ -108,8 +112,11 @@ func main() {
 }
 
 func run(args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "pair" {
+		return runPair(args[1:], out)
+	}
 	if len(args) == 0 || args[0] != "report" {
-		return errors.New("usage: lintcalibration report [-dir MODULE_ROOT] [-golangci-lint PATH] [-format json|tsv] [PACKAGE_PATTERN...]")
+		return errors.New("usage: lintcalibration report [-dir MODULE_ROOT] [-golangci-lint PATH] [-format json|tsv] [PACKAGE_PATTERN...]\n       " + deltaUsage)
 	}
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)
 	dir := fs.String("dir", ".", "module root to analyse")
