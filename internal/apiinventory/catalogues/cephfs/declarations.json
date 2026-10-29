@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs",
-  "count": 95,
+  "count": 94,
   "entries": [
     {
       "current": "cephfs.CloneConfig",
@@ -672,13 +672,6 @@
       "kind": "function",
       "signature": "func(configs ...Config) ceph.Option",
       "proposed": "cephfs.WithFilesystems",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.WithMDSImage",
-      "kind": "function",
-      "signature": "func(image string) ceph.Option",
-      "proposed": "cephfs.WithMDSImage",
       "decision": "baseline"
     }
   ]
