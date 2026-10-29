@@ -56,7 +56,6 @@ var (
 	packagePath = regexp.MustCompile(`\A[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*\z`)
 	rowName     = regexp.MustCompile(`\A([A-Za-z0-9_][A-Za-z0-9_-]*(?:/[A-Za-z0-9_][A-Za-z0-9_-]*)*)\.[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?\z`)
 	revision    = regexp.MustCompile(`\A[A-Za-z0-9_][A-Za-z0-9._/@^~{}+-]*\z`)
-	fragmentRe  = regexp.MustCompile(`\Adocs/changes/[a-z0-9][a-z0-9-]{0,63}\.md\z`)
 )
 
 // reservedIDs cannot name a record: they are catalogue file names.
@@ -75,16 +74,12 @@ const (
 	kindRecord                   // moves/<change-id>.json
 	kindStray                    // a name in moves/ that is not a record
 	kindReserved                 // moves/<catalogue file name>
-	kindFragment                 // docs/changes/<change-id>.md
 )
 
 // classify decides by exact, whole-string matching. A path that carries a
-// trailing newline or any other unexpected byte is never a catalogue, record
-// or fragment; inside moves/ it is reported as stray.
+// trailing newline or any other unexpected byte is never a catalogue or
+// record; inside moves/ it is reported as stray.
 func classify(rel string) (kind fileKind, pkg string) {
-	if fragmentRe.MatchString(rel) {
-		return kindFragment, ""
-	}
 	prefix := catalogue.Dir + "/"
 	if !strings.HasPrefix(rel, prefix) {
 		return kindNone, ""

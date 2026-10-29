@@ -26,8 +26,7 @@ reviewed. A decision here that turns out wrong is changed in this document
 first, in the stage that discovers it.
 
 The network rows below retain their extraction-checkpoint spellings. The later
-[naming migration](../guides/upgrading-network-profile-names.md) replaces the
-three delay types with profile types and the three apply entry points with
+naming change replaces the three delay types with profile types and the three apply entry points with
 `ApplyNetworkProfile`, `ApplyLinkProfile` and `ApplyZoneLinkProfile`. This does
 not change the package decisions or fault contracts recorded here.
 
@@ -446,9 +445,9 @@ in `fault` lists every exported function that takes a `*ceph.Container` with
 cluster (`servicehook.TestCluster`-style constructor) to check
 `ErrSharedCluster`.
 
-## Consumer migration
+## Consumers
 
-The blocklist and full ratios controls are not `fault` APIs; their migration to `override` is in the [override upgrade guide](../guides/upgrading-override-package.md).
+The blocklist and full ratios controls are not `fault` APIs; they belong to the `override` package.
 
 | Before | After |
 | --- | --- |
@@ -489,9 +488,8 @@ stay in `ceph` with `fault` aliasing them, which keeps the implementation
 and its state in `ceph` and defeats the extraction. An internal shared
 implementation package that both alias would work, but it is a third
 location for every type and outlives the transition. Recommendation: no
-wrappers. Stages 3 and 4 break the API on main; the break is released once,
-after stage 5, with `docs/guides/upgrading-to-v0.4.md` holding the table
-above. Stage 5 confirms or overturns this explicitly.
+wrappers. Stages 3 and 4 break the API on main with no alias, as 0.x allows.
+Stage 5 confirms or overturns this explicitly.
 
 ## Stage checkpoints
 

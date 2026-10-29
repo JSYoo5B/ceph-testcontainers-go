@@ -274,8 +274,6 @@ follows the files. The unit tests moved with it. The files lose their
   before.
 - Documentation: `docs/rgw-multisite.md` holds the moved reference, examples,
   native-command and selective-sync sections; `docs/rgw.md` links to it.
-  `docs/guides/upgrading-rgw-multisite.md` and the CHANGELOG record the
-  old-to-new mapping.
 
 Not covered: no native run of the moved scenarios is claimed beyond what CI
 reports for the exact head of the change that carries this move, and the move

@@ -101,8 +101,7 @@ their waits by `ctx`:
 | `ControlContainer(ctx)` | The control CLI container; the snapshot does not guarantee the process stays alive |
 
 These are the only forms of these accessors: the context-free versions were
-removed without aliases (see
-[upgrading the topology accessors](upgrading-context-accessors.md)). A refused
+removed without aliases. A refused
 or unavailable cluster and a cancelled `ctx` are returned as errors.
 
 ### Waiting in the background

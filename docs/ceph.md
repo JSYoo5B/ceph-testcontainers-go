@@ -434,9 +434,7 @@ value changes nothing, and each field records whether it was set, so an explicit
 setting differs from an unspecified one (`WithBlockSize(0)` is refused, not the
 default). Within one value a later call of the same method replaces the earlier
 one. `Run` refuses a field that two `WithOSDStorage` options both set, even when
-they agree. Incompatible combinations fail before resource allocation. It
-replaces `WithOSDBlockSize`, `WithOSDObjectStore`, `WithOSDInMemoryStorage` and
-`WithOSDVolumeStorage`.
+they agree. Incompatible combinations fail before resource allocation.
 
 ```golang
 storage := ceph.OSDStorage{}.WithBlockSize(256 << 20).WithObjectStore(ceph.OSDMemStore)
@@ -1363,13 +1361,11 @@ These rules apply across its methods:
   deleted daemon, pool or identity returns an error, and so does a handle of a
   terminated cluster. Functions that create handles, such as `AddOSD`,
   `CreatePool` and `CreateClient`, and cluster-wide operations stay on
-  `Container`. [Upgrading to handle operations](guides/upgrading-handle-operations.md)
-  maps each former method to its handle method.
+  `Container`.
 - Typed values. Global OSD flags are `OSDFlag`, PG IDs are `PGID` and the
   bootstrap files are a `ConnectionConfig`. An untyped string constant still
   converts to the flag and PG ID types, so the types do not replace the run-time
-  checks. [Upgrading to typed values](guides/upgrading-typed-values.md) has the
-  migration table.
+  checks.
 - Partial results. A method that creates something (an OSD, a pool, a client
   identity, a handle) can return a non-nil result together with an error. The
   result identifies what was attempted and stays owned by the cluster; inspect it,
@@ -3341,9 +3337,7 @@ effective value. Entries can contain sensitive values.
 The runtime debug level window is the package function
 [override.SetDebugLevel](override.md#setdebuglevel) and its
 `*override.DebugLevelHandle`; the call and its restoration rules are documented
-there. 0.x: old names are removed without aliases, and the
-[migration guide](guides/upgrading-override-debug-level.md) maps the previous
-names. These types stay in `ceph`
+there. 0.x: old names are removed without aliases. These types stay in `ceph`
 because the failure manifest copies the receipt:
 
 - `ceph.DebugLevelSetting` has `Daemon` (such as `osd.0`), `Name` (`debug_ms` or

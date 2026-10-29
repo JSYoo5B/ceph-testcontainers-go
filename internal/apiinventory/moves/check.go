@@ -51,14 +51,13 @@ type tree struct {
 	raw          map[string][]byte // path -> bytes of catalogue, receipt and record files
 	rows         map[string]string // declaration row -> kind
 	records      map[string]Record
-	fragments    map[string][]byte
 }
 
 func parseTree(side string, snap *snapshot) (*tree, []string) {
 	t := &tree{
 		declarations: map[string]catalogue.Declarations{}, members: map[string]catalogue.Members{},
 		receipts: map[string]catalogue.Receipt{}, raw: map[string][]byte{}, rows: map[string]string{},
-		records: map[string]Record{}, fragments: map[string][]byte{},
+		records: map[string]Record{},
 	}
 	problems := slices.Clone(snap.problems)
 	fail := func(format string, args ...any) { problems = append(problems, side+": "+fmt.Sprintf(format, args...)) }
@@ -66,8 +65,6 @@ func parseTree(side string, snap *snapshot) (*tree, []string) {
 		data := snap.files[path]
 		kind, name := classify(path)
 		switch kind {
-		case kindFragment:
-			t.fragments[path] = data
 		case kindRecord:
 			t.raw[path] = data
 			record, bad := ParseRecord(name, data)
@@ -385,18 +382,6 @@ func account(root string, base, head *tree) []string {
 		case receipt.DeclarationsSHA256 != sum(head.raw[catalogPath(pkg, catalogue.DeclarationsFile)]) ||
 			receipt.MembersSHA256 != sum(head.raw[catalogPath(pkg, catalogue.MembersFile)]):
 			fail("package %s: the receipt does not bind the head catalogue files", pkg)
-		}
-	}
-
-	if len(changed) > 0 {
-		found := false
-		for path, data := range head.fragments {
-			if old, ok := base.fragments[path]; !ok || string(old) != string(data) {
-				found = true
-			}
-		}
-		if !found {
-			fail("the catalogue of %s changed but no release-note fragment under docs/changes was added or changed (kind none with a reason is accepted)", strings.Join(slices.Sorted(mapsKeys(changed)), ", "))
 		}
 	}
 	return problems
