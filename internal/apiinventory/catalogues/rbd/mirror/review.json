@@ -1,10 +1,10 @@
 {
   "schema": "ceph-api-naming-review/v2",
   "package": "rbd/mirror",
-  "declarations_sha256": "e195e478f962b16f355f676ad5263347fd6f82555b944d332c9518fe506f03da",
+  "declarations_sha256": "6af42c52d40f48e485695f4a8edd3bf89b0e61c81db210ea126543b8ededee44",
   "members_sha256": "d427816144c6f1d52a4f0e8951b877451b0a7ea62d72bc80906ccf670d582f1e",
-  "declarations": 40,
+  "declarations": 43,
   "members": 74,
-  "review": "configuration-composition.md",
+  "review": "api-naming.md",
   "page": "rbd/mirror/README.md"
 }
