@@ -97,7 +97,7 @@ func (fs *Filesystem) checkSnapshotSubvolume(ctx context.Context, fsID int64, id
 }
 
 func (fs *Filesystem) snapshotNames(ctx context.Context, identity *cephFSVolumeIdentity) ([]string, error) {
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "ls", fs.config.Name, identity.name}, identity.group)
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "ls", fs.name, identity.name}, identity.group)
 	data, err := fs.cluster.Ceph(ctx, append(args, "--format", "json")...)
 	if err != nil {
 		return nil, err
@@ -156,8 +156,8 @@ func (fs *Filesystem) CreateSubvolumeSnapshot(ctx context.Context, subvolume *Su
 		return nil, servicehook.Invalid(fmt.Errorf("subvolume snapshot %q already exists", name))
 	}
 	identity := &cephFSSnapshotIdentity{subvolume: subvolume.identity, name: name}
-	snapshot := &SubvolumeSnapshot{Name: name, SubvolumeName: subvolume.identity.name, GroupName: subvolume.identity.group, FilesystemName: fs.config.Name, identity: identity}
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "create", fs.config.Name, subvolume.identity.name, name}, subvolume.identity.group)
+	snapshot := &SubvolumeSnapshot{Name: name, SubvolumeName: subvolume.identity.name, GroupName: subvolume.identity.group, FilesystemName: fs.name, identity: identity}
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "create", fs.name, subvolume.identity.name, name}, subvolume.identity.group)
 	if _, err := fs.cluster.Ceph(ctx, args...); err != nil {
 		return snapshot, err
 	}
@@ -219,7 +219,7 @@ func decodeCephFSSnapshotInfo(data []byte) (*SubvolumeSnapshotInfo, error) {
 }
 
 func (fs *Filesystem) subvolumeSnapshotInfo(ctx context.Context, subvolumeName, groupName, snapshotName string) (*SubvolumeSnapshotInfo, error) {
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "info", fs.config.Name, subvolumeName, snapshotName}, groupName)
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "info", fs.name, subvolumeName, snapshotName}, groupName)
 	data, err := fs.cluster.Ceph(ctx, append(args, "--format", "json")...)
 	if err != nil {
 		return nil, err
@@ -228,7 +228,7 @@ func (fs *Filesystem) subvolumeSnapshotInfo(ctx context.Context, subvolumeName, 
 	if err != nil {
 		return nil, err
 	}
-	args = appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "getpath", fs.config.Name, subvolumeName, snapshotName}, groupName)
+	args = appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "getpath", fs.name, subvolumeName, snapshotName}, groupName)
 	data, err = fs.cluster.Ceph(ctx, args...)
 	if err != nil {
 		return nil, err
@@ -302,7 +302,7 @@ func (fs *Filesystem) RemoveSubvolumeSnapshot(ctx context.Context, snapshot *Sub
 	if info.HasPendingClones || info.OrphanClonesCount > 0 {
 		return servicehook.Invalid(errors.New("subvolume snapshot has pending or orphan clones; refusing removal"))
 	}
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "rm", fs.config.Name, identity.subvolume.name, identity.name}, identity.subvolume.group)
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "rm", fs.name, identity.subvolume.name, identity.name}, identity.subvolume.group)
 	identity.removalAttempted = true
 	if _, err := fs.cluster.Ceph(ctx, args...); err != nil {
 		return err
@@ -349,9 +349,9 @@ func (fs *Filesystem) CloneSubvolumeSnapshot(ctx context.Context, snapshot *Subv
 		return nil, servicehook.Invalid(fmt.Errorf("clone target subvolume %q already exists", config.Name))
 	}
 	identity := &cephFSCloneIdentity{filesystem: fs, filesystemID: fsID, source: snapshot.identity, name: config.Name, group: config.GroupName, dataPool: config.DataPool}
-	clone := &SubvolumeClone{Name: config.Name, GroupName: config.GroupName, FilesystemName: fs.config.Name, identity: identity}
+	clone := &SubvolumeClone{Name: config.Name, GroupName: config.GroupName, FilesystemName: fs.name, identity: identity}
 	source := snapshot.identity.subvolume
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "clone", fs.config.Name, source.name, snapshot.identity.name, config.Name}, source.group)
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "clone", fs.name, source.name, snapshot.identity.name, config.Name}, source.group)
 	if config.GroupName != "" {
 		args = append(args, "--target_group_name", config.GroupName)
 	}
@@ -430,7 +430,7 @@ func (fs *Filesystem) subvolumeCloneStatus(ctx context.Context, fsID int64, iden
 	if identity.filesystemID != fsID {
 		return nil, errors.New("CephFS filesystem was replaced outside this fixture; refusing clone adoption")
 	}
-	args := appendSubvolumeGroup([]string{"fs", "clone", "status", fs.config.Name, identity.name}, identity.group)
+	args := appendSubvolumeGroup([]string{"fs", "clone", "status", fs.name, identity.name}, identity.group)
 	data, err := fs.cluster.Ceph(ctx, append(args, "--format", "json")...)
 	if err != nil {
 		return nil, err
@@ -440,7 +440,7 @@ func (fs *Filesystem) subvolumeCloneStatus(ctx context.Context, fsID int64, iden
 		return nil, err
 	}
 	source := identity.source.subvolume
-	if status.SourceFilesystem != "" && (status.SourceFilesystem != fs.config.Name || status.SourceSubvolume != source.name || status.SourceGroup != source.group || status.SourceSnapshot != identity.source.name) {
+	if status.SourceFilesystem != "" && (status.SourceFilesystem != fs.name || status.SourceSubvolume != source.name || status.SourceGroup != source.group || status.SourceSnapshot != identity.source.name) {
 		return nil, errors.New("native clone source was replaced outside this fixture")
 	}
 	if identity.subvolume != nil {
@@ -536,7 +536,7 @@ func (fs *Filesystem) advanceSubvolumeClone(ctx context.Context, identity *cephF
 		if identity.incarnation != nil && info.Path != identity.incarnation.Path {
 			return nil, false, errors.New("completed clone incarnation differs from its submission identity")
 		}
-		identity.subvolume = &Subvolume{Name: identity.name, GroupName: identity.group, FilesystemName: fs.config.Name, Path: info.Path,
+		identity.subvolume = &Subvolume{Name: identity.name, GroupName: identity.group, FilesystemName: fs.name, Path: info.Path,
 			identity: &cephFSVolumeIdentity{filesystem: fs, filesystemID: fsID, name: identity.name, group: identity.group, path: info.Path, createdAt: info.CreatedAt, ready: true}}
 	}
 	// Return a separate public descriptor while retaining shared private lifecycle.

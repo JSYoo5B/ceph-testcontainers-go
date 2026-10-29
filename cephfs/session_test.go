@@ -52,7 +52,7 @@ func sessionFilesystem(t *testing.T) (*Filesystem, *sessionFixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs := &Filesystem{FilesystemName: "app", cluster: cluster, config: config, nativeIdentity: &cephFSNativeIdentity{id: 7}}
+	fs := &Filesystem{FilesystemName: "app", name: "app", cluster: cluster, config: config, nativeIdentity: &cephFSNativeIdentity{id: 7}}
 	filesystems(cluster).byName = map[string]*Filesystem{"app": fs}
 	return fs, ctr
 }

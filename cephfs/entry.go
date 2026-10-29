@@ -112,7 +112,7 @@ func filesystems(c *ceph.Container) *filesystemRegistry {
 
 func (r *filesystemRegistry) sorted() []*Filesystem {
 	result := slices.Collect(maps.Values(r.byName))
-	slices.SortFunc(result, func(a, b *Filesystem) int { return strings.Compare(a.FilesystemName, b.FilesystemName) })
+	slices.SortFunc(result, func(a, b *Filesystem) int { return strings.Compare(a.name, b.name) })
 	return result
 }
 

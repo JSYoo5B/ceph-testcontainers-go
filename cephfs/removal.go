@@ -18,7 +18,7 @@ import (
 // AddDataPool are detached by the native removal but kept. A retry after an
 // error continues with whatever remains.
 func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem) error {
-	name := handle.FilesystemName
+	name := handle.name
 	release, err := lockSetupThenTopology(ctx, c)
 	if err != nil {
 		return err

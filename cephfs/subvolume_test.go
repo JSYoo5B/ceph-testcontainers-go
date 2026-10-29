@@ -23,7 +23,7 @@ func subvolumeFixture() (*Filesystem, *poolFixtureContainer) {
 		"fs subvolume info fixture volume --group_name group --format json": `{"path":"/volumes/group/volume/unique-id","bytes_quota":32768,"bytes_used":8192,"data_pool":"additional","pool_namespace":"fsvolumens_group_volume","created_at":"2026-10-03 00:00:01.123456","state":"complete","type":"subvolume"}`,
 	}}
 	cluster := poolFixtureCluster(ctr, 2)
-	fs := &Filesystem{FilesystemName: "fixture", MetadataPool: "metadata", DataPool: "data", AdditionalDataPools: []string{"additional"}, cluster: cluster,
+	fs := &Filesystem{FilesystemName: "fixture", name: "fixture", MetadataPool: "metadata", DataPool: "data", AdditionalDataPools: []string{"additional"}, cluster: cluster,
 		config:         Config{Name: "fixture", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}, AdditionalDataPools: []ceph.PoolConfig{{Name: "additional"}}},
 		nativeIdentity: &cephFSNativeIdentity{id: 41, metadataPool: 1, defaultPool: 2, attachments: make(map[string]*cephFSDataPoolIdentity)}}
 	filesystems(cluster).byName = map[string]*Filesystem{"fixture": fs}

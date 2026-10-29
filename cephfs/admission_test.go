@@ -11,16 +11,15 @@ import (
 	"testing"
 )
 
-// TestAdmissionKeepsEachOperationsOwnNameAuthority is the offline
-// characterization from the owner's comment on issue #313 (synthetic FSMap with
-// an owned filesystem41 and a sibling99; no native cluster). Only the exported
-// FilesystemName is edited: MDSStatus follows it, the session admission refuses
-// the edited descriptor, the data-pool admission admits it without a native
-// command, and restoring the name admits the session again. It must keep
-// passing when the begin*Operation lifetime is shared: the shared part must not
-// become one "valid filesystem" Boolean. Changing which name MDSStatus follows
-// is a separate semantic decision. It does not show that a whole data-pool
-// operation succeeds, and it says nothing about concurrent access to config.
+// TestAdmissionKeepsEachOperationsOwnNameAuthority starts from the offline
+// characterization in the owner's comment on issue #313 (synthetic FSMap with
+// an owned filesystem41 and a sibling99; no native cluster) and records the
+// decided identity (F1): the private name captured at creation is the only
+// source of which filesystem an operation targets. Editing the exported
+// FilesystemName no longer redirects MDSStatus to the sibling. The explicit
+// descriptor-integrity refusal of the session admission is retained, and the
+// data-pool admission still admits without a native command. It does not show
+// that a whole data-pool operation succeeds.
 func TestAdmissionKeepsEachOperationsOwnNameAuthority(t *testing.T) {
 	fs, control, _, _ := cephFSContextAdmissionFixture()
 	control.Output["fs dump --format json"] = `{"filesystems":[` +
@@ -34,11 +33,11 @@ func TestAdmissionKeepsEachOperationsOwnNameAuthority(t *testing.T) {
 
 	fs.FilesystemName = "sibling"
 	status, err = fs.MDSStatus(t.Context())
-	if err != nil || len(status.Active) != 1 || status.Active[0].Name != "b" || status.Active[0].Owned {
-		t.Fatalf("MDSStatus no longer follows the exported FilesystemName (a separate decision): %+v %v", status, err)
+	if err != nil || status.FilesystemID != 41 || len(status.Active) != 1 || status.Active[0].Name != "a" || !status.Active[0].Owned {
+		t.Fatalf("MDSStatus follows the edited exported FilesystemName instead of the creation identity: %+v %v", status, err)
 	}
-	if fs.config.Name != "fixture" || fs.nativeIdentity.id != 41 {
-		t.Fatal("the stored config or native identity changed with the descriptor")
+	if fs.config.Name != "fixture" || fs.name != "fixture" || fs.nativeIdentity.id != 41 {
+		t.Fatal("the stored config, name or native identity changed with the descriptor")
 	}
 
 	if _, _, done, err := fs.beginSessionOperation(t.Context()); err == nil {

@@ -60,13 +60,19 @@ type Filesystem struct {
 	MetadataPool        string
 	DataPool            string
 	AdditionalDataPools []string
-	cluster             *ceph.Container
-	config              Config
-	roster              mdsRoster
-	nativeIdentity      *cephFSNativeIdentity
-	coldMDS             *cephFSColdMDS
-	pinOverrides        map[string]*PinOverrideHandle
-	sessionTimeouts     *cephFSSessionTimeoutsState
+	// name is the filesystem's one authoritative identity. It is captured from
+	// the validated Config before the handle is published, is never written
+	// again, and so needs no lock to read. Every registry key, ownership
+	// predicate and native command target uses it. FilesystemName is a
+	// descriptive copy for callers: editing it changes no operation's target.
+	name            string
+	cluster         *ceph.Container
+	config          Config
+	roster          mdsRoster
+	nativeIdentity  *cephFSNativeIdentity
+	coldMDS         *cephFSColdMDS
+	pinOverrides    map[string]*PinOverrideHandle
+	sessionTimeouts *cephFSSessionTimeoutsState
 	// scheduledPaths holds the directories with a snapshot schedule lease
 	// that is not restored yet.
 	snapshotScheduleMu sync.Mutex
@@ -141,7 +147,7 @@ func startFilesystem(ctx context.Context, c *ceph.Container, config Config, opts
 		}
 	}
 	fs := &Filesystem{
-		FilesystemName: config.Name, MetadataPool: config.MetadataPool.Name,
+		FilesystemName: config.Name, name: config.Name, MetadataPool: config.MetadataPool.Name,
 		DataPool: config.DataPool.Name, cluster: c, config: config, roster: newMDSRoster(opts),
 	}
 	for _, pool := range config.AdditionalDataPools {
@@ -276,7 +282,7 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 		servicehook.Unlock(c)
 		return fs.scaleColdMDS(ctx, active, standby, fs.startMDS)
 	}
-	if servicehook.Closed(c) || filesystems(c).byName[fs.FilesystemName] != fs || fs.Container == nil || fs.nativeIdentity == nil {
+	if servicehook.Closed(c) || filesystems(c).byName[fs.name] != fs || fs.Container == nil || fs.nativeIdentity == nil {
 		servicehook.Unlock(c)
 		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
 	}
@@ -315,7 +321,7 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 	if err := servicehook.LockTopology(ctx, c); err != nil {
 		return err
 	}
-	if servicehook.Closed(c) || filesystems(c).byName[fs.FilesystemName] != fs || fs.Container == nil || fs.nativeIdentity == nil {
+	if servicehook.Closed(c) || filesystems(c).byName[fs.name] != fs || fs.Container == nil || fs.nativeIdentity == nil {
 		servicehook.Unlock(c)
 		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
 	}
@@ -329,7 +335,7 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 	// into ordinary standbys while growing ranks, then restore the preference.
 	replayPaused := false
 	if desired.StandbyReplay && active > status.MaxMDS {
-		if _, err := c.Ceph(ctx, "fs", "set", fs.FilesystemName, "allow_standby_replay", "false"); err != nil {
+		if _, err := c.Ceph(ctx, "fs", "set", fs.name, "allow_standby_replay", "false"); err != nil {
 			return fmt.Errorf("prepare replay followers for rank growth: %w", err)
 		}
 		replayPaused = true
@@ -337,7 +343,7 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 			if replayPaused {
 				restoreCtx, restoreCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 				defer restoreCancel()
-				_, err := c.Ceph(restoreCtx, "fs", "set", fs.FilesystemName, "allow_standby_replay", "true")
+				_, err := c.Ceph(restoreCtx, "fs", "set", fs.name, "allow_standby_replay", "true")
 				if err != nil {
 					returnErr = errors.Join(returnErr, fmt.Errorf("restore cephfs standby replay: %w", err))
 				}
@@ -370,11 +376,11 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 		}
 	}
 	if status.MaxMDS != active {
-		if _, err := c.Ceph(ctx, "fs", "set", fs.FilesystemName, "max_mds", strconv.Itoa(active), "--yes-i-really-mean-it"); err != nil {
+		if _, err := c.Ceph(ctx, "fs", "set", fs.name, "max_mds", strconv.Itoa(active), "--yes-i-really-mean-it"); err != nil {
 			return fmt.Errorf("scale cephfs active ranks: %w", err)
 		}
 	}
-	if _, err := c.Ceph(ctx, "fs", "set", fs.FilesystemName, "standby_count_wanted", strconv.Itoa(standby)); err != nil {
+	if _, err := c.Ceph(ctx, "fs", "set", fs.name, "standby_count_wanted", strconv.Itoa(standby)); err != nil {
 		return fmt.Errorf("scale cephfs standby count: %w", err)
 	}
 	// A retiring rank passes through up:stopping before it respawns as standby.
@@ -414,7 +420,7 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 		}
 	}
 	if replayPaused {
-		if _, err := c.Ceph(ctx, "fs", "set", fs.FilesystemName, "allow_standby_replay", "true"); err != nil {
+		if _, err := c.Ceph(ctx, "fs", "set", fs.name, "allow_standby_replay", "true"); err != nil {
 			return fmt.Errorf("restore cephfs standby replay: %w", err)
 		}
 		replayPaused = false
@@ -469,7 +475,7 @@ func (fs *Filesystem) startMDSWithAdmission(ctx context.Context, start func(cont
 		return nil, err
 	}
 	moduleOpts := []testcontainers.ContainerCustomizer{
-		testcontainers.WithEnv(map[string]string{"CEPH_MDS_ID": id, "CEPH_FILESYSTEM": fs.FilesystemName}),
+		testcontainers.WithEnv(map[string]string{"CEPH_MDS_ID": id, "CEPH_FILESYSTEM": fs.name}),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mds.sh"), testcontainers.WithCmd(),
 		testcontainers.WithFiles(servicehook.ScriptFile("mds"), clusterutil.TextFile("/etc/ceph/mds.keyring", keyring, 0o600)),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mds." + id + ".asok"}).WithStartupTimeout(servicehook.StartupTimeout(c))),
@@ -500,11 +506,11 @@ func (fs *Filesystem) admitMDSStart(ctx context.Context, admit func(context.Cont
 	if err := servicehook.LockTopology(ctx, c); err != nil {
 		return nil, err
 	}
-	if servicehook.Closed(c) || filesystems(c).byName[fs.FilesystemName] != fs {
+	if servicehook.Closed(c) || filesystems(c).byName[fs.name] != fs {
 		servicehook.Unlock(c)
 		return nil, servicehook.Invalid(errors.New("cephfs cluster is terminated or filesystem ownership changed"))
 	}
-	id := fs.roster.nextID(fs.FilesystemName)
+	id := fs.roster.nextID(fs.name)
 	opts := fs.roster.customizers()
 	cold := fs.coldMDS != nil && !fs.coldMDS.attempted
 	var control testcontainers.Container
@@ -581,7 +587,7 @@ func (fs *Filesystem) publishStartedMDS(ctx context.Context, id string, ctr test
 	}
 	c := fs.cluster
 	servicehook.Lock(c)
-	daemon := &MDS{Container: ctr, ID: id, FilesystemName: fs.FilesystemName}
+	daemon := &MDS{Container: ctr, ID: id, FilesystemName: fs.name}
 	daemon.identity = fs.captureMDSIdentity(ctx, daemon, ctr, startErr)
 	fs.roster.publish(daemon)
 	if fs.Container == nil {
@@ -713,7 +719,7 @@ func (fs *Filesystem) MDSStatus(ctx context.Context) (*FilesystemStatus, error) 
 	if err != nil {
 		return nil, fmt.Errorf("read cephfs MDS status: %w", err)
 	}
-	return parseCephFSMDSStatus(data, fs.FilesystemName, daemons)
+	return parseCephFSMDSStatus(data, fs.name, daemons)
 }
 
 // WaitReady waits for all configured ranks to be owned and active and all
@@ -738,7 +744,7 @@ func (fs *Filesystem) WaitReady(ctx context.Context) error {
 		config := fs.config
 		servicehook.Unlock(fs.cluster)
 		if !cephFSMDSReady(status, config) {
-			return false, fmt.Errorf("cephfs %q is not ready: active=%v standby=%v replay=%v max_mds=%d", fs.FilesystemName, status.Active, status.Standby, status.StandbyReplay, status.MaxMDS)
+			return false, fmt.Errorf("cephfs %q is not ready: active=%v standby=%v replay=%v max_mds=%d", fs.name, status.Active, status.Standby, status.StandbyReplay, status.MaxMDS)
 		}
 		return true, nil
 	}); err != nil {

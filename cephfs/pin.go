@@ -340,7 +340,7 @@ func (fs *Filesystem) validatePinRank(ctx context.Context, fsID int64, setting P
 
 func (fs *Filesystem) pinCommand(ctx context.Context, target cephFSPinTarget, kind PinType, value float64) ([]byte, error) {
 	identity := target.identity
-	args := []string{"fs", "subvolume", "pin", fs.config.Name, identity.name, string(kind), strconv.FormatFloat(value, 'g', -1, 64)}
+	args := []string{"fs", "subvolume", "pin", fs.name, identity.name, string(kind), strconv.FormatFloat(value, 'g', -1, 64)}
 	if target.group {
 		args[1] = "subvolumegroup"
 	} else {
@@ -373,7 +373,7 @@ func (fs *Filesystem) readPinPolicy(ctx context.Context, base string) (*PinPolic
 	if err != nil {
 		return nil, fmt.Errorf("select CephFS pin CLI container: %w", err)
 	}
-	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSPinReadScript, fs.config.Name, base)
+	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSPinReadScript, fs.name, base)
 	if err != nil {
 		return nil, fmt.Errorf("read native CephFS directory pins: %w", err)
 	}

@@ -805,7 +805,7 @@ untyped; see [Structural metrics](../contributing/structural-metrics.md)):
 | 2. Shared admission | Partly delivered: the acquisition, timeout and release lifetime of the three `begin*Operation` flows, and the setup-gate-then-topology acquisition prefix of four more operations. The per-operation predicates, the other registry-predicate and ownership sites remain; `startMDSWithAdmission` is split into admission, credentials and publication phases without sharing anything | [Admission lifetime](filesystem-decomposition/admission-lifetime.md), [Setup-then-topology prefix](filesystem-decomposition/setup-topology-lock.md), [startMDSWithAdmission phases](filesystem-decomposition/start-mds-admission.md) |
 | 3. Decoder boundary | Partly delivered: one shared state list, and the stopped-MDS decoder split from survivor verification | [Stopped-MDS native-state decoder](filesystem-decomposition/stopped-mds-decoder.md) |
 | 3, remaining | Delivered: the cold-start decoder is an argument-only function and the replacement decoder is split from its two native reads | [Cold-start and replacement decoders](filesystem-decomposition/cold-replacement-decoder.md) |
-| 4. Ownership proofs | Not started | |
+| 4. Ownership proofs | Partly delivered: name authority (F1) and the unlocked name read (F5) are decided | [Filesystem identity](filesystem-decomposition/identity.md) |
 | 5. Public handles, embedded `Container` | Owner decision | |
 
 ### Proposals that need an owner decision (not approvals)
@@ -816,9 +816,7 @@ this slice.
 - P1, embedded `Container`: keep it as documented compatibility until a public
   change is chosen; do not unify the four re-seat sites. Unchanged from the
   recommendation above; the decoder slice does not depend on it.
-- P2, name authority (F1): keep both sources until the owner decides which is
-  authoritative. A shared admission step takes the predicate as a parameter per
-  operation, so deciding later does not block it.
+- P2, name authority (F1): decided, see [Filesystem identity](filesystem-decomposition/identity.md).
 - P3, public handles: no signature changes are proposed in the internal slices.
   Moving the 20 handle-targeted operations needs the old-to-new map from the
   Public-handle numbers above and its own issue.

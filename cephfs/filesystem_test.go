@@ -314,7 +314,7 @@ func TestCephFSScaleDownPreservesFailuresAndRemovesOnlyOwnedStandby(t *testing.T
 			idle := &mdsScaleFixtureContainer{id: "idle", control: control, afterStop: after, removeErr: tc.removeErr}
 			active := &mdsScaleFixtureContainer{id: "active"}
 			other := &mdsScaleFixtureContainer{id: "other"}
-			fs := &Filesystem{Container: idle, cluster: cluster, FilesystemName: "tenant", config: Config{Name: "tenant", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}, ActiveMDS: 1, StandbyMDS: 1}, nativeIdentity: &cephFSNativeIdentity{id: 7, metadataPool: 1, defaultPool: 2},
+			fs := &Filesystem{Container: idle, cluster: cluster, FilesystemName: "tenant", name: "tenant", config: Config{Name: "tenant", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}, ActiveMDS: 1, StandbyMDS: 1}, nativeIdentity: &cephFSNativeIdentity{id: 7, metadataPool: 1, defaultPool: 2},
 				roster: mdsRoster{nextIndex: 2, daemons: []*MDS{{Container: idle, ID: "tenant-0", FilesystemName: "tenant"}, {Container: active, ID: "tenant-1", FilesystemName: "tenant"}}},
 			}
 			filesystems(cluster).byName = map[string]*Filesystem{"tenant": fs}

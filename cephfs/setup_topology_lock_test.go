@@ -114,7 +114,7 @@ func TestSetupThenTopologyAcquisitionKeepsItsOrderAndRelease(t *testing.T) {
 	}
 	t.Run("refusals-release-both-locks", func(t *testing.T) {
 		r := newReplacementMDSFixture(t)
-		stale := &Filesystem{cluster: r.fs.cluster, FilesystemName: "target", config: r.fs.config}
+		stale := &Filesystem{cluster: r.fs.cluster, FilesystemName: "target", name: "target", config: r.fs.config}
 		refused := map[string]error{
 			"remove-filesystem": removeFilesystem(t.Context(), r.fs.cluster, stale),
 			"scale-mds":         stale.ScaleMDS(t.Context(), 1, 0),
