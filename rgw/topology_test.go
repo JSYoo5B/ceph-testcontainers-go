@@ -35,14 +35,14 @@ func TestGatewayRemovalRetainsFailedCleanup(t *testing.T) {
 	ctr := &terminationFixtureContainer{failTerminationOnce: true}
 	gateway := &Gateway{Container: ctr, GatewayName: "a"}
 	cluster := testCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second}, map[string]testcontainers.Container{"rgw:a": ctr})
-	gateways(cluster).byName["a"] = gateway
+	gateways(cluster).ByName["a"] = gateway
 	if err := removeGateway(t.Context(), cluster, &Gateway{Container: ctr, GatewayName: "unknown"}); err == nil || ctr.terminations != 0 {
 		t.Fatal("unknown gateway attempted container removal")
 	}
-	if err := removeGateway(t.Context(), cluster, gateway); err == nil || len(gateways(cluster).byName) != 1 || len(servicehook.Services(cluster)) != 1 {
+	if err := removeGateway(t.Context(), cluster, gateway); err == nil || len(gateways(cluster).ByName) != 1 || len(servicehook.Services(cluster)) != 1 {
 		t.Fatal("failed cleanup lost gateway ownership")
 	}
-	if err := removeGateway(t.Context(), cluster, gateway); err != nil || len(gateways(cluster).byName) != 0 || len(servicehook.Services(cluster)) != 0 || ctr.terminations != 2 {
+	if err := removeGateway(t.Context(), cluster, gateway); err != nil || len(gateways(cluster).ByName) != 0 || len(servicehook.Services(cluster)) != 0 || ctr.terminations != 2 {
 		t.Fatalf("gateway cleanup did not recover: %v", err)
 	}
 }
@@ -54,14 +54,14 @@ func TestGatewayRemovalRefusesAStaleDescriptor(t *testing.T) {
 	cluster := testCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second}, map[string]testcontainers.Container{"rgw:a": oldCtr})
 	old.owner = cluster
 	successor.owner = cluster
-	gateways(cluster).byName["a"] = old
+	gateways(cluster).ByName["a"] = old
 	if err := old.Remove(t.Context()); err != nil || oldCtr.terminations != 1 {
 		t.Fatalf("remove the gateway: %v", err)
 	}
 	// A later gateway of the same name must not be reached through the
 	// descriptor of the removed one.
-	gateways(cluster).byName["a"] = successor
-	if err := old.Remove(t.Context()); err == nil || newCtr.terminations != 0 || gateways(cluster).byName["a"] != successor {
+	gateways(cluster).ByName["a"] = successor
+	if err := old.Remove(t.Context()); err == nil || newCtr.terminations != 0 || gateways(cluster).ByName["a"] != successor {
 		t.Fatalf("a stale descriptor acted on its successor: %v", err)
 	}
 }

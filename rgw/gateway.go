@@ -65,7 +65,7 @@ func removeGateway(ctx context.Context, c *ceph.Container, handle *Gateway) erro
 	if name == "" {
 		name = "default"
 	}
-	gateway, ok := gateways(c).byName[name]
+	gateway, ok := gateways(c).ByName[name]
 	if !ok || gateway != handle || gateway.Container == nil {
 		return invalid(fmt.Errorf("RGW gateway %q is not owned by this cluster, or this descriptor is stale", name))
 	}
@@ -75,7 +75,7 @@ func removeGateway(ctx context.Context, c *ceph.Container, handle *Gateway) erro
 		return fmt.Errorf("remove RGW gateway %s: %w", name, err)
 	}
 	servicehook.DeleteService(c, rgwServiceName(Config{Name: name}))
-	delete(gateways(c).byName, name)
+	delete(gateways(c).ByName, name)
 	return nil
 }
 
@@ -110,7 +110,7 @@ func startGateway(ctx context.Context, c *ceph.Container, config Config, opts ..
 			if owned == nil || owned.GetContainerID() != ctr.GetContainerID() {
 				return // Concurrent cluster cleanup already removed this service.
 			}
-			gateways(c).byName[config.Name] = rgw
+			gateways(c).ByName[config.Name] = rgw
 		}()
 	}
 	if err != nil {

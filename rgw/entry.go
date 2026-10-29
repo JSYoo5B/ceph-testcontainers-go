@@ -3,11 +3,9 @@ package rgw
 import (
 	"context"
 	"errors"
-	"maps"
-	"slices"
-	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/namedregistry"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
 	"github.com/testcontainers/testcontainers-go"
@@ -50,7 +48,7 @@ func Gateways(ctx context.Context, c *ceph.Container) ([]*Gateway, error) {
 		return nil, err
 	}
 	defer servicehook.Unlock(c)
-	return gateways(c).sorted(), nil
+	return gateways(c).Sorted(), nil
 }
 
 // WithGateways starts named gateways during Run. No arguments starts one
@@ -79,50 +77,26 @@ func defaultGateway() ceph.Option {
 	return servicehook.WithBootstrap(servicekind.RGW, true, func() (servicehook.Bootstrap, error) { return newRGWBootstrap([]Config{{}}), nil })
 }
 
-// gatewayRegistry is the cluster's per-cluster RGW state. The cluster mutex
-// guards it.
-type gatewayRegistry struct {
-	byName map[string]*Gateway
-}
-
 // gateways returns the cluster's gateway registry, creating it on first use.
 // The caller holds the cluster mutex.
-func gateways(c *ceph.Container) *gatewayRegistry {
-	return gatewaysFrom(func(kind string, create func() any) any { return servicehook.Extension(c, kind, create) })
+func gateways(c *ceph.Container) *namedregistry.Registry[*Gateway] {
+	return describeGateways(namedregistry.From[*Gateway](func(kind string, create func() any) any { return servicehook.Extension(c, kind, create) }, servicekind.RGW))
 }
 
-// gatewaysFrom is gateways for a caller that reaches the cluster's service
-// state through something other than the cluster, such as a tenant port.
-func gatewaysFrom(extension func(kind string, create func() any) any) *gatewayRegistry {
-	return extension(servicekind.RGW, func() any {
-		return &gatewayRegistry{byName: make(map[string]*Gateway)}
-	}).(*gatewayRegistry)
-}
-
-func (r *gatewayRegistry) sorted() []*Gateway {
-	result := slices.Collect(maps.Values(r.byName))
-	slices.SortFunc(result, func(a, b *Gateway) int { return strings.Compare(a.GatewayName, b.GatewayName) })
-	return result
-}
-
-// Secrets lists the gateways' S3 credentials for diagnostics to redact.
-func (r *gatewayRegistry) Secrets() []string {
-	var secrets []string
-	for _, gateway := range r.byName {
-		if gateway != nil {
-			secrets = append(secrets, gateway.AccessKey, gateway.SecretKey)
-		}
-	}
-	return secrets
-}
-
-// ConfigTargets lists gateway containers that read the cluster's ceph.conf.
-func (r *gatewayRegistry) ConfigTargets() map[string]testcontainers.Container {
-	targets := make(map[string]testcontainers.Container)
-	for name, gateway := range r.byName {
-		if gateway != nil && gateway.Container != nil {
-			targets["rgw."+name] = gateway.Container
-		}
-	}
-	return targets
+// describeGateways tells the cluster how to read gateway credentials and
+// config targets out of the registry, whichever side created it first.
+func describeGateways(r *namedregistry.Registry[*Gateway]) *namedregistry.Registry[*Gateway] {
+	return r.Describe(
+		func(g *Gateway) []string {
+			if g == nil {
+				return nil
+			}
+			return []string{g.AccessKey, g.SecretKey}
+		},
+		func(name string, g *Gateway) (string, testcontainers.Container) {
+			if g == nil || g.Container == nil {
+				return "", nil
+			}
+			return "rgw." + name, g.Container
+		})
 }
