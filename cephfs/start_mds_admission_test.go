@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"go/ast"
+	"go/token"
 	"reflect"
 	"slices"
 	"strings"
@@ -348,6 +349,28 @@ func TestStartMDSWithAdmissionHasThreePhasesInOrder(t *testing.T) {
 	admission := funcs["admitMDSStart"]
 	if count(admission, "LockTopology") != 1 || count(admission, "Unlock") != 7 || count(admission, "reserveIndex") != 1 || count(admission, "Lock") != 0 {
 		t.Error("the admission phase must take the topology mutex once, release it on each of its seven returns and reserve the index once")
+	}
+	// Cold permission is consumed only after the last cancellation check of the
+	// admission phase. No fixture isolates that final check (a canceled context
+	// already fails the control read before it), so the order is pinned here.
+	var consumeAt, lastErrAt token.Pos
+	ast.Inspect(admission.Body, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.AssignStmt:
+			for _, lhs := range node.Lhs {
+				if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "attempted" {
+					consumeAt = node.Pos()
+				}
+			}
+		case *ast.CallExpr:
+			if admissionCallee(node) == "Err" && node.Pos() > lastErrAt {
+				lastErrAt = node.Pos()
+			}
+		}
+		return true
+	})
+	if consumeAt == token.NoPos || lastErrAt == token.NoPos || consumeAt < lastErrAt {
+		t.Error("cold permission must be consumed after the last cancellation check of the admission phase")
 	}
 	creds := funcs["createMDSCredentials"]
 	if count(creds, "Lock", "LockTopology", "Unlock", "LockMutex", "reserveIndex", "publish") != 0 {
