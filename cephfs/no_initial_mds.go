@@ -245,7 +245,7 @@ func validateColdMDSMap(data []byte, name string, cap *cephFSColdMDS, reserved s
 	}
 	gids, names := map[uint64]bool{}, map[string]bool{}
 	rowValid := func(row coldMDSRow) bool {
-		if row.Name == nil || !naming.PoolResource.MatchString(*row.Name) || row.GID == nil || *row.GID == 0 || row.Rank == nil || row.State == nil || !slices.Contains([]string{"up:boot", "up:standby", "up:standby-replay", "up:creating", "up:starting", "up:replay", "up:resolve", "up:reconnect", "up:rejoin", "up:clientreplay", "up:active", "up:stopping"}, *row.State) || row.Join == nil || *row.Join < -1 || gids[*row.GID] || names[*row.Name] || *row.Name == reserved {
+		if row.Name == nil || !naming.PoolResource.MatchString(*row.Name) || row.GID == nil || *row.GID == 0 || row.Rank == nil || row.State == nil || !cephFSMDSRowStateAccepted(*row.State) || row.Join == nil || *row.Join < -1 || gids[*row.GID] || names[*row.Name] || *row.Name == reserved {
 			return false
 		}
 		gids[*row.GID], names[*row.Name] = true, true

@@ -153,7 +153,7 @@ var mdsRosterSetupHeld = map[string]bool{
 var mdsRosterOwnerHeld = map[string]bool{
 	"completedMDSReplacementCohort": true, "checkMDSReplacementOwner": true,
 	"checkMDSReplacementPartial": true, "checkStoppedMDSOwner": true,
-	"decodeStoppedMDSScope": true, "readStoppedMDSScope": true, "ConfigTargets": true,
+	"decodeStoppedMDSScope": true, "verifyStoppedMDSSurvivors": true, "readStoppedMDSScope": true, "ConfigTargets": true,
 }
 
 // mdsRosterSetupOnlyReaders read the roster under setupMu alone, between the
