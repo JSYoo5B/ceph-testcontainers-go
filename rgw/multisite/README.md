@@ -47,6 +47,7 @@ owns partial resources and must still be terminated.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Fixture, error)
 func WithConfig(config Config) Option
 func WithTopology(config TopologyConfig) Option
+func (Option) Customize(*testcontainers.GenericContainerRequest) error
 ```
 
 `img` is the gateway image and is required; the setup clients use each

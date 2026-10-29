@@ -36,6 +36,7 @@ image, when that cluster has a separate rbd-aux image. See the
 ```golang
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)
 func WithConfig(config Config) Option
+func (Option) Customize(*testcontainers.GenericContainerRequest) error
 ```
 
 - `context.Context`, the Go context.

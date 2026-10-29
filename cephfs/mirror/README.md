@@ -40,6 +40,7 @@ so the mirror is terminated first.
 ```golang
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)
 func WithConfig(config Config) Option
+func (Option) Customize(*testcontainers.GenericContainerRequest) error
 ```
 
 Configures one-way snapshot mirroring between two existing filesystems and
