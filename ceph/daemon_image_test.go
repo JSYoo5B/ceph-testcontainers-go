@@ -258,8 +258,8 @@ func TestParseDaemonVersion(t *testing.T) {
 	}
 }
 
-// Version goes through the admin socket admission, so a stale or foreign handle
-// and a shared cluster are refused before any command runs.
+// Version uses admin socket admission, so stale, foreign and terminated
+// handles are refused before any command runs.
 func TestDaemonVersionRefusesLikeTheAdminSocket(t *testing.T) {
 	c, control := adminSocketCluster()
 	ctx := t.Context()

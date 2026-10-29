@@ -1,6 +1,6 @@
 // Package overridehook gives the override package the parts of a
-// ceph.Container that are not public API: shared-cluster admission, the
-// cluster's registry of held overrides, its mutex and one typed operation per
+// ceph.Container that are not public API: the cluster's registry of held
+// overrides, its mutex and one typed operation per
 // native command. Package ceph registers them in internal/hookreg when it is
 // initialized.
 //
