@@ -20,11 +20,19 @@ import (
 
 // monStoreGenerations is the container side of one MON generation.
 type monStoreGenerations interface {
-	// Create makes and starts the container of launch from image, mounting
-	// launch.volume at the MON data directory and passing launch.mode to the
-	// entrypoint. It returns the container ID also with an error when a
-	// partial container exists. An error without an ID is an unknown outcome.
+	// Create makes the container of launch from image without starting it,
+	// mounting launch.volume at the MON data directory, passing launch.mode to
+	// the entrypoint and giving it launch.endpoint when that is set. It returns
+	// the container ID also with an error when a partial container exists. An
+	// error without an ID is an unknown outcome.
 	Create(ctx context.Context, launch monStoreLaunch, image string) (string, error)
+	// Start starts the created container of id.
+	Start(ctx context.Context, id string) error
+	// Observe returns the address the running container of id bound.
+	Observe(ctx context.Context, id string) (monStoreEndpoint, error)
+	// Hold keeps address from every other user once the old container is gone
+	// and until the returned hold is released (mon_store_address.go).
+	Hold(ctx context.Context, address monStoreEndpoint) (monStoreEndpointHold, error)
 	// WaitReady returns once the MON of container id passed its ready check.
 	WaitReady(ctx context.Context, id string) error
 	// Remove stops and removes the container, never its volume. A container
@@ -44,29 +52,57 @@ func checkMonStoreGenerations(g monStoreGenerations, image string) error {
 
 // startGeneration starts the next container on the volume. A new store is
 // formatted by its first generation; a store that was ready before is required
-// to exist. The pending attachment is published before the container is
-// created and the returned ID is recorded also when creation failed, so a lost
-// reply stays owned and is never replayed. A first generation that reaches its
-// ready check marks the store ready.
+// to exist and is given the address its first generation bound. For that, the
+// exact hold on the address is taken first, kept while the container is
+// created without being started, and released immediately before the start.
+// The pending attachment is published before the container is created and the
+// returned ID is recorded also when creation failed, so a lost reply stays
+// owned and is never replayed. A first generation that reaches its ready check
+// marks the store ready and records the address it bound; a later generation
+// must have bound the recorded one.
 func (s *monStoreVolume) startGeneration(ctx context.Context, g monStoreGenerations, image string) (string, error) {
 	if err := checkMonStoreGenerations(g, image); err != nil {
 		return "", err
 	}
+	later := s.phase == monStoreBound || s.phase == monStoreDetached
+	if later && s.endpoint == nil {
+		return "", fmt.Errorf("MON %s store has no recorded address for the next generation", s.mon)
+	}
+	if later {
+		// A live attachment is refused before anything is held: its container
+		// owns the address.
+		if s.attachment != nil {
+			return "", fmt.Errorf("MON %s store still has an attachment that is not confirmed gone", s.mon)
+		}
+		if err := s.holdAddress(ctx, g); err != nil {
+			return "", err
+		}
+	}
 	launch, err := s.dispatch(ctx)
 	if err != nil {
-		return "", err
+		return "", errors.Join(err, s.releaseAddressHold(ctx))
+	}
+	if later {
+		address := s.endpoint.clone()
+		launch.endpoint = &address
 	}
 	id, createErr := g.Create(ctx, launch, image)
 	if id != "" {
 		if err := s.recordContainer(id); err != nil {
-			return id, errors.Join(createErr, err)
+			return id, errors.Join(createErr, err, s.releaseAddressHold(ctx))
 		}
 	}
 	if createErr != nil {
-		return id, fmt.Errorf("create MON %s generation %d: %w", s.mon, launch.generation, createErr)
+		return id, errors.Join(fmt.Errorf("create MON %s generation %d: %w", s.mon, launch.generation, createErr), s.releaseAddressHold(ctx))
 	}
 	if id == "" {
-		return "", fmt.Errorf("create MON %s generation %d returned no container ID; the outcome stays unknown", s.mon, launch.generation)
+		return "", errors.Join(fmt.Errorf("create MON %s generation %d returned no container ID; the outcome stays unknown", s.mon, launch.generation), s.releaseAddressHold(ctx))
+	}
+	if err := s.releaseAddressHold(ctx); err != nil {
+		return id, err
+	}
+	if err := g.Start(ctx, id); err != nil {
+		return id, fmt.Errorf("start MON %s generation %d: %w", s.mon, launch.generation, err)
 	}
 	if err := g.WaitReady(ctx, id); err != nil {
 		return id, fmt.Errorf("MON %s generation %d is not ready: %w", s.mon, launch.generation, err)
@@ -75,6 +111,9 @@ func (s *monStoreVolume) startGeneration(ctx context.Context, g monStoreGenerati
 		if err := s.ready(); err != nil {
 			return id, err
 		}
+	}
+	if err := s.observeAddress(ctx, g, id); err != nil {
+		return id, err
 	}
 	return id, nil
 }
@@ -102,7 +141,7 @@ func (s *monStoreVolume) stopGeneration(ctx context.Context, g monStoreGeneratio
 // replaceGeneration is the upgrade step: the running generation is removed and
 // the next one, from image, starts on the same volume. The checks that the next
 // generation needs run before the old container is touched, so a store that
-// the next generation would refuse is found while the old MON still runs. If
+// the next generation would refuse, or that has no address to give it, is found while the old MON still runs. If
 // the new container then fails, the volume and its attachment record stay, and
 // the store is neither formatted nor released.
 func (s *monStoreVolume) replaceGeneration(ctx context.Context, g monStoreGenerations, image string) (string, error) {
@@ -114,6 +153,9 @@ func (s *monStoreVolume) replaceGeneration(ctx context.Context, g monStoreGenera
 	}
 	if s.identity != nil && !s.verified {
 		return "", fmt.Errorf("MON %s store identity was not verified for the next generation", s.mon)
+	}
+	if s.endpoint == nil {
+		return "", fmt.Errorf("MON %s store has no recorded address for the next generation", s.mon)
 	}
 	if err := s.inspect(ctx); err != nil {
 		return "", err

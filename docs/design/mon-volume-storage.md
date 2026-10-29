@@ -566,6 +566,45 @@ renamed or removed, and no alias is added.
   verification. A store bound with an identity (`bind`) keeps needing it, and
   `detached` is unchanged.
 - What it does not establish: any real container call, that the new image
-  starts on the old store, that the monmap lets it rejoin, address or port-lease
-  handoff, the production caller (`runMonitor`, `AddMonitor`), the option and
+  starts on the old store, that the monmap lets it rejoin, that the address
+  handoff below works against a real engine, the production caller (`runMonitor`, `AddMonitor`), the option and
   `Remove`/`Terminate` wiring, and any native behavior.
+
+### Address handoff status
+
+Implemented in `ceph/mon_store_address.go` and `startGeneration`, uncalled and
+tested Docker-free against the same fake. The premise: the monmap pins the
+address a MON joined with, so the replacement container must bind exactly that
+address, and nothing may take it between the removal of the old container and
+the start of the new one.
+
+- The record keeps the endpoint its first generation bound (`monStoreEndpoint`:
+  the IP, and either the bridge network name or the host ports), read from the
+  running container after the ready check (`Observe`). If that observation
+  fails the store is ready but cannot be replaced.
+- A later generation is created, not started, for a copy of that endpoint. After
+  its ready check the bound endpoint is observed and must equal the recorded one.
+- A cluster-wide reservation for the MON's lifetime is not possible in host
+  mode: the running MON owns its ports, and the old container has to be gone
+  before anything can bind them. This is what forces a hold. The hold is taken
+  after `stopGeneration` confirmed the old container gone, kept while the new
+  container is created, and released immediately before `Start`. The same
+  window exists for the first MON today (`runMonitor`), and it fails closed: a
+  taken port makes the hold or the start fail, the volume and the record stay,
+  and nothing formats.
+- Bridge mode has no hold of its own. The container is created with a static IP
+  assignment, every container of the cluster is created under `Container.mu`, and
+  a taken IP fails the creation. The container side's `Hold` only has to verify
+  that the address is free.
+- A failed release keeps the hold on the record. The next generation releases it
+  first, so there is never more than one, and `Terminate` will release it
+  (not wired).
+- `monStoreGenerations` gained `Start`, `Observe` and `Hold`, and `Create` no
+  longer starts the container, so that the hold can be released between the two.
+- Guards: the new symbols have no production caller, the files import no `sync`,
+  the container side is called only from its pinned methods, a hold is released
+  only by `releaseAddressHold`, and `startGeneration` holds, dispatches,
+  creates, releases, starts, waits and observes in that order.
+- Not established: how a real engine allocates ports and IPs after a removal,
+  the exact-port allocator container and the static-IP creation (not written),
+  any production caller, option, `Remove`/`Terminate` wiring and any native run.

@@ -76,6 +76,10 @@ type monStoreLaunch struct {
 	volume     string
 	mode       monStoreMode
 	generation int
+	// endpoint is the address the container must bind: the one recorded from
+	// the first generation. It is nil for the first generation, whose address
+	// the container side chooses and startGeneration records after it is ready.
+	endpoint *monStoreEndpoint
 }
 
 // monStoreAttachment is the one container that may use the volume. pending is
@@ -109,6 +113,11 @@ type monStoreVolume struct {
 	generation      int
 	attachment      *monStoreAttachment
 	identity        *monStoreIdentity
+	// endpoint is the address the first generation bound, recorded after its
+	// ready check; hold is the exact hold on it while a replacement is created
+	// (mon_store_address.go).
+	endpoint *monStoreEndpoint
+	hold     monStoreEndpointHold
 	// verified is set by verify and consumed by the dispatch of a generation
 	// that must find the retained store.
 	verified  bool
