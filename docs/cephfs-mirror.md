@@ -57,8 +57,9 @@ starts the initial daemons. It:
    them to register, then registers `Directories`.
 
 `image` is the mirror daemon image: it must contain `cephfs-mirror` and the `ceph`
-CLI (the cephfs role or `all`); `FactsOf(source).Images.CephFS` is the usual choice, and
-`RunWithImages` uses it. `Run` refuses an image that a cluster selects for
+CLI (the cephfs role or `all`). An empty `image` selects
+`FactsOf(source).Images.CephFS`, and a source without that role is refused; a
+non-empty image is used as given and a blank one is refused. `Run` refuses an image that a cluster selects for
 another role, such as its essential image, when that cluster has a separate
 cephfs image. The setup commands run in each cluster's client toolkit. The customizers apply to every daemon, including daemons
 added later. Both clusters must use the same network mode. In bridge mode each
@@ -1382,9 +1383,3 @@ Notes:
 - `InterruptPeerLink` requires bridge networking.
 - `Released`, `Drained` and the process-quiescence acknowledgement do not prove
   remote unlock, checkpoint completion or unchanged destination metadata.
-
-### RunWithImages
-
-`RunWithImages` selects the receiving cluster's `cephfs` image and
-preserves the same runtime for later daemon additions. Setup clients use each
-cluster's client image. `Run` accepts an explicit daemon image.

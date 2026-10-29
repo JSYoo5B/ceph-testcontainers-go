@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs/mirror",
-  "count": 50,
+  "count": 49,
   "entries": [
     {
       "current": "cephfs/mirror.Config",
@@ -353,13 +353,6 @@
       "kind": "function",
       "signature": "func(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
       "proposed": "cephfs/mirror.Run",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs/mirror.RunWithImages",
-      "kind": "function",
-      "signature": "func(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
-      "proposed": "cephfs/mirror.RunWithImages",
       "decision": "baseline"
     },
     {

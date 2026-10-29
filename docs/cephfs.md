@@ -163,7 +163,7 @@ executes the fixture's `ceph` commands. Other roles can use separate images:
 | MON, MGR, control CLI | `Run` image | `ceph` CLI, MGR modules (`volumes`, `mirroring`), Python `cephfs` binding (pin policy reads and clone identity checks run libcephfs in the control container) |
 | OSD | `ImageSet.Essential` | `ceph-osd` |
 | MDS | `cephfs.WithMDSImage`, otherwise the `Run` image | `ceph-mds` |
-| CephFS mirror daemon | `image` argument of `cephfsmirror.Run` | `cephfs-mirror` and the `ceph` CLI used to query its admin socket; usually `FactsOf(cluster).Images.CephFS` |
+| CephFS mirror daemon | `image` argument of `cephfsmirror.Run`; empty selects `FactsOf(source).Images.CephFS` | `cephfs-mirror` and the `ceph` CLI used to query its admin socket |
 | Client containers | chosen by the test | the client under test; `ceph.DefaultImage` provides Python libcephfs |
 
 Use the same Ceph release for every role. `FactsOf(cluster).CephVersion` reports the

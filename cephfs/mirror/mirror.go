@@ -132,7 +132,9 @@ type cephFSPeerIdentity struct {
 // is the mirror daemon image: it must meet the cephfs (or all) role
 // requirements, including cephfs-mirror and the ceph CLI used to query its
 // local admin socket, and is refused when it is known to be another role of a
-// cluster. RunWithImages uses the source's Images().CephFS; the setup commands
+// cluster. An empty image selects the source's Images().CephFS and a source
+// without that role is refused; no other role substitutes. A non-empty image is
+// used as given, so a blank one is refused. The setup commands
 // run in each cluster's client toolkit, not in this image. MGRs must supply mirroring.
 // A non-nil result returned with an error must be terminated for partial cleanup.
 // Terminate leaves Ceph auth, peer and directory policies in the caller-owned
@@ -147,13 +149,17 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	if _, err := multicluster.NormalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons); err != nil {
 		return nil, fmt.Errorf("CephFS %w", err)
 	}
+	image, err := resolveDaemonImage(image, config)
+	if err != nil {
+		return nil, err
+	}
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
 	}
 	if err := multicluster.RequireRoleImage(image, multicluster.RoleCephFS, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure CephFS mirror daemon image: %w", err)
 	}
-	config, err := normalizeCephFSMirrorConfig(config)
+	config, err = normalizeCephFSMirrorConfig(config)
 	if err != nil {
 		return nil, err
 	}
@@ -1378,18 +1384,28 @@ func validCephFSMirrorFilesystemName(name string) bool {
 	return true
 }
 
-// RunWithImages selects the source cluster's CephFS daemon runtime.
-func RunWithImages(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
+// resolveDaemonImage returns the explicit daemon image, or for the empty image
+// the source's cephfs role. Only the exact empty string derives: a blank image
+// is an explicit selection that ValidatePair refuses.
+func resolveDaemonImage(image string, config Config) (string, error) {
+	if image != "" {
+		return image, nil
+	}
 	if config.Source == nil || config.Destination == nil {
-		return nil, servicehook.Invalid(fmt.Errorf("roles clusters are required"))
+		return "", servicehook.Invalid(fmt.Errorf("roles clusters are required"))
 	}
 	facts, err := ceph.FactsOf(config.Source)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	image := facts.Images.CephFS
-	if image == "" {
-		return nil, servicehook.Invalid(fmt.Errorf("cephfs image is required"))
+	return daemonImageFromRole(facts.Images)
+}
+
+// daemonImageFromRole is the source's cephfs image; no other role substitutes
+// for a missing one.
+func daemonImageFromRole(images ceph.ImageSet) (string, error) {
+	if images.CephFS == "" {
+		return "", servicehook.Invalid(fmt.Errorf("cephfs image is required"))
 	}
-	return Run(ctx, image, config, opts...)
+	return images.CephFS, nil
 }
