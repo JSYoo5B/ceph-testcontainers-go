@@ -210,7 +210,7 @@ var reservedConfigKeys = map[string]string{
 	"osd_objectstore":             "is managed by the fixture",
 	"bluestore_block_path":        "is managed by the fixture",
 	"bluestore_block_create":      "is managed by the fixture",
-	"bluestore_block_size":        "is managed by the fixture; use WithOSDBlockSize",
+	"bluestore_block_size":        "is managed by the fixture; use OSDStorage.WithBlockSize",
 	"mds_join_fs":                 "is set on the MDS command line by the fixture",
 	"mds_cache_memory_limit":      "is set on the MDS command line by the fixture",
 	"rgw_frontends":               "is set on the RGW command line by the fixture",

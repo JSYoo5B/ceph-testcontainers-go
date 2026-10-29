@@ -291,9 +291,9 @@ Starts only the MON and MGR topology. Add storage later with
 - Run still waits for an available MGR. No storage readiness is implied: Ceph's
   own `.mgr` pool can have pending PGs, and health is usually `HEALTH_WARN`
   (for example `TOO_FEW_OSDS`) until OSDs join.
-- With [WithOSDInMemoryStorage](#withosdinmemorystorage), the tmpfs volume is
+- With [OSDStorage.WithInMemory](#osdstoragewithinmemory), the tmpfs volume is
   created on the first `AddOSD`.
-- [WithOSDVolumeStorage](#withosdvolumestorage) also defers its ordinary
+- [OSDStorage.WithVolume](#osdstoragewithvolume) also defers its ordinary
   named volume until the first `AddOSD`.
 - Removing the last OSD is still refused later.
 
@@ -415,14 +415,42 @@ option the root is `default`. The initial layout must contain enough OSDs in thi
 root for the default replica count; this check is skipped with
 `WithNoInitialOSDs`.
 
-#### WithOSDBlockSize
+#### OSDStorage
 
 ```golang
-ceph.WithOSDBlockSize(256 << 20)
+type OSDStorage struct { /* unexported */ }
+
+func (OSDStorage) WithBlockSize(size int64) OSDStorage
+func (OSDStorage) WithObjectStore(store OSDObjectStore) OSDStorage
+func (OSDStorage) WithInMemory(maxBytes int64) OSDStorage
+func (OSDStorage) WithVolume() OSDStorage
+func WithOSDStorage(storage OSDStorage) Option
+```
+
+The OSD storage group: where and how every OSD of the cluster, including OSDs
+added later, keeps its data. `OSDStorage` is a plain value with chainable,
+value-returning methods; `WithOSDStorage` is its one option function. The zero
+value changes nothing, and each field records whether it was set, so an explicit
+setting differs from an unspecified one (`WithBlockSize(0)` is refused, not the
+default). Within one value a later call of the same method replaces the earlier
+one. `Run` refuses a field that two `WithOSDStorage` options both set, even when
+they agree. Incompatible combinations fail before resource allocation. It
+replaces `WithOSDBlockSize`, `WithOSDObjectStore`, `WithOSDInMemoryStorage` and
+`WithOSDVolumeStorage`.
+
+```golang
+storage := ceph.OSDStorage{}.WithBlockSize(256 << 20).WithObjectStore(ceph.OSDMemStore)
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDStorage(storage))
+```
+
+#### OSDStorage.WithBlockSize
+
+```golang
+ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(256 << 20))
 ```
 
 Sets the logical size in bytes of each OSD's sparse BlueStore file, or the
-capacity of each MemStore OSD (see [WithOSDObjectStore](#withosdobjectstore)).
+capacity of each MemStore OSD (see [OSDStorage.WithObjectStore](#osdstoragewithobjectstore)).
 The default is 1 GiB and the minimum accepted value is 64 MiB. These are disposable files,
 not real disks; the space is allocated as data is written.
 
@@ -435,16 +463,16 @@ times out waiting for it. For small OSDs, start with
 changes the scheduler or the benchmark. See
 [Run small OSDs](#run-small-osds).
 
-#### WithOSDInMemoryStorage
+#### OSDStorage.WithInMemory
 
 ```golang
-ceph.WithOSDInMemoryStorage(2 << 30)
+ceph.WithOSDStorage(ceph.OSDStorage{}.WithInMemory(2 << 30))
 ```
 
 Keeps every OSD's BlueStore file in one Docker-managed tmpfs volume instead of
 the OSD containers' writable layers. `maxBytes` must be positive and is the
 allocation ceiling for the whole cluster's OSD volume, independent of each file's
-logical [WithOSDBlockSize](#withosdblocksize). It can be smaller than the sum of
+logical [OSDStorage.WithBlockSize](#osdstoragewithblocksize). It can be smaller than the sum of
 the logical sizes.
 
 - It is not a per-OSD reservation and does not limit daemon memory. The volume
@@ -469,17 +497,17 @@ the logical sizes.
 Without either storage-volume option, the default remains a container-local
 sparse file per OSD.
 
-#### WithOSDVolumeStorage
+#### OSDStorage.WithVolume
 
 ```golang
-ceph.WithOSDVolumeStorage()
+ceph.WithOSDStorage(ceph.OSDStorage{}.WithVolume())
 ```
 
 Keeps classic BlueStore OSD directories in one ordinary Docker local named
 volume owned by the cluster. Each OSD still gets its own sparse file with
-[WithOSDBlockSize](#withosdblocksize) as its logical capacity. Unlike the tmpfs
+[OSDStorage.WithBlockSize](#osdstoragewithblocksize) as its logical capacity. Unlike the tmpfs
 option, bytes do not depend on a live keeper. This option cannot be combined
-with MemStore or `WithOSDInMemoryStorage`; invalid combinations fail before
+with MemStore or `OSDStorage.WithInMemory`; invalid combinations fail before
 resource allocation.
 
 The first OSD allocates a unique volume and an isolated idle helper from the
@@ -502,10 +530,10 @@ always discards its owned volume, including detached stores. See
 [the storage design](design/osd-volume-storage.md) and
 [retained reopen](design/osd-retained-reopen.md).
 
-#### WithOSDObjectStore
+#### OSDStorage.WithObjectStore
 
 ```golang
-ceph.WithOSDObjectStore(ceph.OSDMemStore)
+ceph.WithOSDStorage(ceph.OSDStorage{}.WithObjectStore(ceph.OSDMemStore))
 ```
 
 Selects the object store of every OSD, including OSDs added later. The
@@ -514,15 +542,15 @@ argument is a `ceph.OSDObjectStore`:
 | Value | Store |
 | --- | --- |
 | `ceph.OSDBlueStore` | Default. A sparse BlueStore file per OSD. |
-| `ceph.OSDMemStore` | Ceph's in-memory test store, `memstore`. Data lives in the OSD process's memory; [WithOSDBlockSize](#withosdblocksize) sets its capacity (`memstore_device_bytes`). |
+| `ceph.OSDMemStore` | Ceph's in-memory test store, `memstore`. Data lives in the OSD process's memory; [OSDStorage.WithBlockSize](#osdstoragewithblocksize) sets its capacity (`memstore_device_bytes`). |
 
 - MemStore saves its contents to the OSD's data directory when the store is
   unmounted, so the fixture disables Ceph's fast OSD shutdown for MemStore
   OSDs. A stopped OSD keeps its data across `Stop` and `Start`; an OSD that is
   killed, or whose container is removed, loses it.
 - MemStore cannot be combined with
-  [WithOSDInMemoryStorage](#withosdinmemorystorage) or
-  [WithOSDVolumeStorage](#withosdvolumestorage), which use BlueStore files, and [fault.InjectObjectDataError](fault.md#injectobjectdataerror)
+  [OSDStorage.WithInMemory](#osdstoragewithinmemory) or
+  [OSDStorage.WithVolume](#osdstoragewithvolume), which use BlueStore files, and [fault.InjectObjectDataError](fault.md#injectobjectdataerror)
   needs BlueStore.
 - `ceph osd metadata` reports `osd_objectstore` as `memstore`.
 
@@ -577,7 +605,7 @@ rejected with the option to use instead:
 | `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` except `ms_bind_prefer_ipv4` | `WithMessengerMode`, `WithMessengerPolicy`, `WithClientMessengerPolicy`, `WithAddressFamily`, `WithHostNetwork` |
 | `osd_pool_default_size`, `osd_pool_default_min_size` | `WithPoolDefaults` |
 | `osd_pool_default_crush_rule` | `WithDefaultCRUSHRoot` |
-| `bluestore_block_size` | `WithOSDBlockSize` |
+| `bluestore_block_size` | `OSDStorage.WithBlockSize` |
 | `osd_objectstore`, `bluestore_block_path`, `bluestore_block_create` | fixed OSD storage layout |
 | `log_file`, `log_to_file`, `log_to_stderr`, `err_to_stderr`, `mon_cluster_log_to_*` | daemon logs always go to container output |
 | `admin_socket`, `run_dir`, `mon_data`, `osd_data`, `mgr_data`, `mds_data` | fixed paths |
@@ -2438,7 +2466,7 @@ func (o *OSDContainer) Detach(ctx context.Context) (*ceph.DetachedOSD, error)
 
 Stops and removes an owned OSD's container but keeps its store in the owned
 volume and its MON registration, so that [DetachedOSD.Reopen](#detachedosdreopen) can start a
-new container on them. It needs [WithOSDVolumeStorage](#withosdvolumestorage);
+new container on them. It needs [OSDStorage.WithVolume](#osdstoragewithvolume);
 other storage is an invalid request. The OSD is down while it is detached, not
 out or purged: hold `noout` with [override.SetOSDFlag](override.md#setosdflag) if Ceph
 must not mark it out.
@@ -4516,8 +4544,8 @@ if err := os.WriteFile(legacyPools, []byte("[global]\nosd_pool_default_flag_hash
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 	ceph.WithOSDCount(1),
 	ceph.WithPoolDefaults(1, 1),
-	ceph.WithOSDObjectStore(ceph.OSDMemStore),
-	ceph.WithOSDBlockSize(256<<20),
+	ceph.WithOSDStorage(ceph.OSDStorage{}.WithObjectStore(ceph.OSDMemStore)),
+	ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(256<<20)),
 	ceph.WithConfigFile(legacyPools),
 )
 testcontainers.CleanupContainer(t, cluster)
@@ -4600,8 +4628,8 @@ start.
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 	ceph.WithNoInitialOSDs(),
-	ceph.WithOSDBlockSize(64<<20),
-	ceph.WithOSDInMemoryStorage(256<<20), // optional; omit for container-local files
+	ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(64<<20)),
+	ceph.WithOSDStorage(ceph.OSDStorage{}.WithInMemory(256<<20)), // optional; omit for container-local files
 )
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
@@ -4628,8 +4656,8 @@ recovery. The three limits are independent:
 
 | Resource | Bounded by | Includes |
 | --- | --- | --- |
-| Logical storage per OSD | `WithOSDBlockSize` | BlueStore data, metadata and temporary writes inside each file |
-| Shared RAM backing | `WithOSDInMemoryStorage` | Allocated tmpfs pages of all OSD files |
+| Logical storage per OSD | `OSDStorage.WithBlockSize` | BlueStore data, metadata and temporary writes inside each file |
+| Shared RAM backing | `OSDStorage.WithInMemory` | Allocated tmpfs pages of all OSD files |
 | Process memory | Docker host or VM limits and daemon settings | MON, MGR, OSD and client memory |
 
 If you customize daemon arguments or config files, confirm the effective value
@@ -5072,7 +5100,7 @@ examples.
 | `osd_pool_default_pg_num`, autoscale mode | 8, `off` | `PoolConfig.PGNum`, `Pool.SetPGCount` |
 | `mon_allow_pool_size_one` | `true` (replica-1 pools allowed) | config file |
 | `mgr_stats_period` | 1 second (faster PG reports) | config file |
-| `bluestore_block_size` | 1 GiB sparse file | `WithOSDBlockSize` |
+| `bluestore_block_size` | 1 GiB sparse file | `OSDStorage.WithBlockSize` |
 | `bluestore_cache_size`, autotune | 64 MiB, off | config file `[osd]` |
 | `osd_max_object_name_len`, `osd_max_object_namespace_len` | 256, 64 | config file `[osd]` |
 | `auth_allow_insecure_global_id_reclaim` | `false` | not configurable |
@@ -5133,7 +5161,7 @@ See [Releases and images](guides/releases-and-images.md) for details.
   size already follows `min(2, OSD count)`; `CreatePool` refuses an explicit
   `Replicas: 2` there, and a size-2 pool created through the CLI never becomes
   clean.
-- Small `WithOSDBlockSize` values with initial OSDs make `Run` time out (see
+- Small `OSDStorage.WithBlockSize` values with initial OSDs make `Run` time out (see
   [Run small OSDs](#run-small-osds)).
 - A key set with `WithConfigFile` cannot be changed with `override.SetConfig`;
   `mon_allow_pool_delete = false` in a config file blocks `Pool.Remove`.

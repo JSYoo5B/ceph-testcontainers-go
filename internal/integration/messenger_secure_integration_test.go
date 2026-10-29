@@ -25,7 +25,7 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = append(opts, ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
+			opts = append(opts, ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithNoInitialOSDs(), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			} else {
@@ -95,7 +95,7 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = append(opts, ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
+			opts = append(opts, ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithNoInitialOSDs(), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}

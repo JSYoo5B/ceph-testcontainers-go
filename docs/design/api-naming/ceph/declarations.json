@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 328,
+  "count": 330,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -1623,6 +1623,44 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.OSDStorage",
+      "kind": "type",
+      "proposed": "ceph.OSDStorage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDStorage.WithBlockSize",
+      "kind": "method",
+      "signature": "func(size int64) OSDStorage",
+      "receiver": "OSDStorage",
+      "proposed": "ceph.OSDStorage.WithBlockSize",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDStorage.WithInMemory",
+      "kind": "method",
+      "signature": "func(maxBytes int64) OSDStorage",
+      "receiver": "OSDStorage",
+      "proposed": "ceph.OSDStorage.WithInMemory",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDStorage.WithObjectStore",
+      "kind": "method",
+      "signature": "func(store OSDObjectStore) OSDStorage",
+      "receiver": "OSDStorage",
+      "proposed": "ceph.OSDStorage.WithObjectStore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDStorage.WithVolume",
+      "kind": "method",
+      "signature": "func() OSDStorage",
+      "receiver": "OSDStorage",
+      "proposed": "ceph.OSDStorage.WithVolume",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.ObjectWatcher",
       "kind": "type",
       "proposed": "ceph.ObjectWatcher",
@@ -2200,13 +2238,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithOSDBlockSize",
-      "kind": "function",
-      "signature": "func(size int64) Option",
-      "proposed": "ceph.WithOSDBlockSize",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.WithOSDCount",
       "kind": "function",
       "signature": "func(count int) Option",
@@ -2214,24 +2245,10 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithOSDInMemoryStorage",
+      "current": "ceph.WithOSDStorage",
       "kind": "function",
-      "signature": "func(maxBytes int64) Option",
-      "proposed": "ceph.WithOSDInMemoryStorage",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithOSDObjectStore",
-      "kind": "function",
-      "signature": "func(store OSDObjectStore) Option",
-      "proposed": "ceph.WithOSDObjectStore",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithOSDVolumeStorage",
-      "kind": "function",
-      "signature": "func() Option",
-      "proposed": "ceph.WithOSDVolumeStorage",
+      "signature": "func(storage OSDStorage) Option",
+      "proposed": "ceph.WithOSDStorage",
       "decision": "baseline"
     },
     {

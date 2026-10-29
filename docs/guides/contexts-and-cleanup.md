@@ -172,7 +172,7 @@ resources from calls that failed halfway:
 | --- | --- |
 | MON containers and the separate control CLI container (multi-MON clusters) | `Run`, `AddMonitor` |
 | MGR containers | `Run`, `AddManager` |
-| OSD containers and the in-memory OSD volume with its keeper container | `Run`, `AddOSD`, `WithOSDInMemoryStorage` |
+| OSD containers and the in-memory OSD volume with its keeper container | `Run`, `AddOSD`, `OSDStorage.WithInMemory` |
 | Shared `/var/run/ceph` volume | `Run`; MON/MGR/OSD and the control container share admin sockets |
 | RGW gateways | `rgw.WithGateways`, `rgw.Start` |
 | MDS daemons | `cephfs.WithFilesystems`, `cephfs.Start`, `ScaleMDS` |
