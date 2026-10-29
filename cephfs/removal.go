@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
@@ -21,13 +20,11 @@ import (
 // error continues with whatever remains.
 func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem) error {
 	name := handle.FilesystemName
-	if err := clusterutil.LockMutex(ctx, &filesystems(c).setupMu); err != nil {
+	release, err := lockSetupThenTopology(ctx, c)
+	if err != nil {
 		return err
 	}
-	defer filesystems(c).setupMu.Unlock()
-	if err := servicehook.LockTopology(ctx, c); err != nil {
-		return err
-	}
+	defer release()
 	defer servicehook.Unlock(c)
 	if err := servicehook.PoolPolicyReady(c); err != nil {
 		return err

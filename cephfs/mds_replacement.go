@@ -59,13 +59,11 @@ func (fs *Filesystem) addMDSReplacement(parent context.Context, stopped *MDS, st
 	c := fs.cluster
 	ctx, cancel := context.WithTimeout(parent, servicehook.StartupTimeout(c))
 	defer cancel()
-	if err := clusterutil.LockMutex(ctx, &filesystems(c).setupMu); err != nil {
+	release, err := lockSetupThenTopology(ctx, c)
+	if err != nil {
 		return nil, err
 	}
-	defer filesystems(c).setupMu.Unlock()
-	if err := servicehook.LockTopology(ctx, c); err != nil {
-		return nil, err
-	}
+	defer release()
 	i := stopped.identity
 	if previous := i.replacement; previous != nil && !previous.completed {
 		err := fs.checkStoppedMDSOwner(stopped, i)

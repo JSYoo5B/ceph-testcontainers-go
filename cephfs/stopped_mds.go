@@ -93,13 +93,11 @@ func (fs *Filesystem) removeStoppedMDS(parent context.Context, daemon *MDS) erro
 	c := fs.cluster
 	ctx, cancel := context.WithTimeout(parent, servicehook.StartupTimeout(c))
 	defer cancel()
-	if err := clusterutil.LockMutex(ctx, &filesystems(c).setupMu); err != nil {
+	release, err := lockSetupThenTopology(ctx, c)
+	if err != nil {
 		return err
 	}
-	defer filesystems(c).setupMu.Unlock()
-	if err := servicehook.LockTopology(ctx, c); err != nil {
-		return err
-	}
+	defer release()
 	defer servicehook.Unlock(c)
 	i := daemon.identity
 	if err := fs.checkStoppedMDSOwner(daemon, i); err != nil {

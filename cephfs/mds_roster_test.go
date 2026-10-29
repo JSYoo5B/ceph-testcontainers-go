@@ -211,6 +211,10 @@ func rosterCall(call *ast.CallExpr) (method string, recv *ast.SelectorExpr, ok b
 }
 
 func isClusterLockAcquire(call *ast.CallExpr) bool {
+	if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "lockSetupThenTopology" {
+		// The shared prefix takes the cluster mutex (after setupMu).
+		return true
+	}
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return false
@@ -220,6 +224,10 @@ func isClusterLockAcquire(call *ast.CallExpr) bool {
 }
 
 func isSetupMuAcquire(call *ast.CallExpr) bool {
+	if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "lockSetupThenTopology" {
+		// The shared prefix takes setupMu first.
+		return true
+	}
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != "LockMutex" {
 		return false
