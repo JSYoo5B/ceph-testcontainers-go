@@ -522,8 +522,8 @@ There is no caller-supplied volume, host path, device or driver option.
 [OSDContainer.Detach](#osdcontainerdetach) and [DetachedOSD.Reopen](#detachedosdreopen) restart a retained store in
 a new container; this backend gives no host-reboot durability. `Terminate`
 always discards its owned volume, including detached stores. See
-[the storage design](../docs/design/osd-volume-storage.md) and
-[retained reopen](../docs/design/osd-retained-reopen.md).
+[the storage design](../docs/design/osd-storage.md#volume-storage) and
+[retained reopen](../docs/design/osd-storage.md#retained-detach-and-reopen).
 
 #### OSDStorage.WithObjectStore
 
@@ -2356,8 +2356,8 @@ stores without a regular ready marker before copying the launch keyring or
 running mkfs. A ready store must have matching numeric ID, OSD UUID and configured
 cluster FSID, with non-empty regular identity/keyring files, before daemon
 startup. Failed initialization is not automatically replayed. See
-[bootstrap admission](../docs/design/osd-bootstrap-admission.md) for the exact checks
-and limits. [Launch recipes](../docs/design/osd-launch-recipes.md) capture file/config
+[bootstrap admission](../docs/design/osd-storage.md#bootstrap-admission) for the exact checks
+and limits. [Launch recipes](../docs/design/osd-storage.md#launch-recipes) capture file/config
 inputs and rebuild fresh Readers without replaying container creation.
 
 #### AddOSD
@@ -2475,6 +2475,11 @@ naming the removed container and is stale: its methods return an error.
 On error the OSD stays owned and fenced. Retry `OSDContainer.Detach` with a fresh context;
 it resumes after a completed removal. `OSDContainer.Remove` refuses it meanwhile.
 
+Detach only an OSD that is up. A daemon that is still booting can be killed at
+the end of the stop grace period before it marks itself down; in a one-OSD
+cluster no peer reports it, and `OSDContainer.Detach` waits until its context
+ends.
+
 #### DetachedOSD.Reopen
 
 ```golang
@@ -2494,7 +2499,9 @@ stored one. A refusal leaves the OSD detached for another attempt. Once the
 container is requested the `DetachedOSD` is consumed: on a later error the
 returned handle is owned by the cluster, so detach or remove it, or terminate
 the cluster. The OSD bootstrap checks the stored identity again and never
-formats a store that has its ready marker.
+formats a store that has its ready marker. When the creation reply is lost,
+the returned descriptor has a nil embedded container: do not call container
+methods on it. `Terminate` finds and removes that instance by its owner label.
 
 ```golang
 noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)

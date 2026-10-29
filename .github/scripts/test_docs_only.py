@@ -19,7 +19,7 @@ TABLE = [
     ("docs/contributing/ci.md", True), ("docs/contributing/testing.md", True),
     ("docs/guides/host-network.md", True),
     ("docs/guides/errors.md", True),
-    ("docs/design/osd-retained-reopen.md", True), ("docs/design/messenger-evidence.md", True),
+    ("docs/design/osd-storage.md", True), ("docs/design/messenger-evidence.md", True),
     # Read by internal/apiinventory (package pages name every export).
     ("ceph/README.md", False), ("fault/README.md", False), ("rbd/mirror/README.md", False),
     ("cephfs/README.md", False), ("rgw/multisite/README.md", False), ("capture/README.md", False),

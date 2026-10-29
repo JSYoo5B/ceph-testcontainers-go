@@ -994,8 +994,3 @@ python3 .github/scripts/messenger_reference.py generate --source ~/ceph \
 The [declaration/native-case evidence join](../design/messenger-evidence.md)
 connects a bounded reference family to validated post-cleanup receipts without
 promoting fixture availability into wire coverage or consumer implementation.
-
-The [live CephFS file-count quota recipe](cephfs-live-quota.md) retains one
-client session and descriptor through independently applied limit/enforcement
-and relaxation, then checks acknowledged bytes with another native reader.
-Byte quotas, client metrics and reclaim remain separate coverage gaps.
