@@ -26,15 +26,6 @@ func TestPackageCephRegistersTheSeam(t *testing.T) {
 	}
 }
 
-func TestSeamOffersTheTenantClusterAccessor(t *testing.T) {
-	if _, ok := reflect.TypeFor[unitHooks]().MethodByName("UnitTenantCluster"); !ok {
-		t.Fatal("the unit-test seam lost the tenant-cluster accessor that the native shared tests use")
-	}
-	if _, ok := hookreg.Test.(unitHooks); !ok {
-		t.Fatal("registered seam does not satisfy the helper's interface")
-	}
-}
-
 func TestMissingSeamPanics(t *testing.T) {
 	saved := hookreg.Test
 	defer func() { hookreg.Test = saved }()
@@ -47,13 +38,14 @@ func TestMissingSeamPanics(t *testing.T) {
 	TestOSDCount(nil)
 }
 
-func TestMissingSeamPanicsForTheTenantClusterAccessor(t *testing.T) {
-	saved := hookreg.Test
-	defer func() { hookreg.Test = saved }()
-	hookreg.Test = nil
+func TestMissingHarnessSlotPanicsForTheTenantClusterAccessor(t *testing.T) {
+	saved := hookreg.HarnessTenant
+	defer func() { hookreg.HarnessTenant = saved }()
+	hookreg.HarnessTenant = nil
 	defer func() {
-		if recover() == nil {
-			t.Error("TestTenantCluster ran without a registered seam")
+		msg, _ := recover().(string)
+		if !strings.Contains(msg, "ceph/harness did not register") {
+			t.Errorf("TestTenantCluster without the harness slot recovered %q, want a panic naming ceph/harness", msg)
 		}
 	}()
 	TestTenantCluster(nil)

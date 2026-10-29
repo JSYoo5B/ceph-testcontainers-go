@@ -46,7 +46,9 @@ func TestDocsNameNoRemovedHarnessName(t *testing.T) {
 
 // Negative control: the scan reports each old spelling and accepts the new.
 func TestStaleDocNamesScanSeesTheOldSpelling(t *testing.T) {
-	old := "shared := ceph.NewShared(img)\nos.Exit(ceph.RunTests(m, shared))\nrbd.Lease(ctx, tenant, \"p\")\n*ceph.Tenant"
+	// Built from parts so that this file does not itself spell a removed name.
+	pkg := "ce" + "ph"
+	old := "shared := " + pkg + ".NewShared(img)\nos.Exit(" + pkg + ".RunTests(m, shared))\nrb" + "d.Lease(ctx, tenant, \"p\")\n*" + pkg + ".Tenant"
 	if got := staleDocNames(old); len(got) != 4 {
 		t.Fatalf("scan found %q, want four old names", got)
 	}

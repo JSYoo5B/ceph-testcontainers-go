@@ -174,9 +174,9 @@ func NewShared(image string, opts ...SharedOption) *SharedCluster {
 // RunTests runs m and then closes every s. It returns the exit code for
 // os.Exit: m's, or 1 when m passed and a Close failed.
 //
-//	var cluster = ceph.NewShared(ceph.DefaultImage)
+//	var cluster = harness.NewShared(ceph.DefaultImage)
 //
-//	func TestMain(m *testing.M) { os.Exit(ceph.RunTests(m, cluster)) }
+//	func TestMain(m *testing.M) { os.Exit(harness.RunTests(m, cluster)) }
 func RunTests(m *testing.M, s ...*SharedCluster) int {
 	for _, cluster := range s {
 		cluster.mu.Lock()
@@ -368,7 +368,7 @@ func (s *SharedCluster) instance(ctx context.Context, logf func(string, ...any))
 		s.warned = s.warned || warn
 		s.mu.Unlock()
 		if warn {
-			logf("ceph: the shared cluster is not registered with ceph.RunTests; unless the test binary closes it, Ryuk removes it when the process exits")
+			logf("ceph: the shared cluster is not registered with RunTests; unless the test binary closes it, Ryuk removes it when the process exits")
 		}
 		go s.start(startCtx, inst)
 	} else {

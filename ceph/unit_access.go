@@ -128,6 +128,11 @@ func (unitAccess) UnitReplaceOSDs(c *Container, osds map[int]*OSDContainer) {
 // goroutine uses.
 func (unitAccess) UnitOSDCount(c *Container) int { return c.osdHandles.count() }
 
+// UnitBackend returns the shared-harness backend value of c, as Start returns
+// it, so that ceph/harness can prove that the real types satisfy the
+// internal/harnesshook contract without starting Docker.
+func (unitAccess) UnitBackend(c *Container) any { return containerBackend{c: c} }
+
 // UnitNewClient builds a client descriptor for a model backend of the shared
 // harness's unit tests, which cannot set the private fields.
 func (unitAccess) UnitNewClient(name string, created, ready bool) *ClientConfig {

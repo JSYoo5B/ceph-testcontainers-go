@@ -162,45 +162,6 @@ func TestSharedServiceSetHoldsNoLock(t *testing.T) {
 	}
 }
 
-// functionsCalling returns, per file of dir, the names of the functions whose
-// body calls an identifier or selector named one of names.
-func functionsCalling(t *testing.T, src map[string]string, names ...string) []string {
-	t.Helper()
-	var got []string
-	fset := token.NewFileSet()
-	for file, text := range src {
-		f, err := parser.ParseFile(fset, file, text, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, decl := range f.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				var name string
-				switch fun := call.Fun.(type) {
-				case *ast.Ident:
-					name = fun.Name
-				case *ast.SelectorExpr:
-					name = fun.Sel.Name
-				}
-				if slices.Contains(names, name) {
-					got = append(got, file+": "+fn.Name.Name+" -> "+name)
-				}
-				return true
-			})
-		}
-	}
-	slices.Sort(got)
-	return got
-}
-
 func nonTestSources(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(dir, "*.go"))

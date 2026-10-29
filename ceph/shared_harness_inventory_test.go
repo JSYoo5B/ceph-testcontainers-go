@@ -124,36 +124,6 @@ func privateReach(t *testing.T, harness map[string]string, others map[string]str
 	return sortedKeys(reach)
 }
 
-func readFiles(t *testing.T, dir string, names []string) map[string]string {
-	t.Helper()
-	out := map[string]string{}
-	for _, name := range names {
-		b, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		out[name] = string(b)
-	}
-	return out
-}
-
-// nonTestFiles lists the non-test Go files directly in dir.
-func nonTestFiles(t *testing.T, dir string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, e := range entries {
-		n := e.Name()
-		if strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
-			names = append(names, n)
-		}
-	}
-	return names
-}
-
 // movedNameReference matches a qualified use of one of the 16 package-level
 // names that ceph/harness took over, under their old package. After the move no
 // file may use one, because the names were removed without an alias.
@@ -228,7 +198,6 @@ func measureHarnessInventory(t *testing.T, repoRoot string) map[string]string {
 		{"function", "exported package functions"},
 		{"SharedCluster method", "exported SharedCluster methods"},
 		{"Tenant method", "exported Tenant methods"},
-		{"ServiceSupport method", "exported ServiceSupport methods"},
 	} {
 		rows[kind.row+" in ceph/harness"] = strconv.Itoa(exported[kind.key])
 		total += exported[kind.key]

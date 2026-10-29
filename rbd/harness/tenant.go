@@ -37,7 +37,7 @@ const tenantWatchWait = 60
 // with mon 'allow r' and osd and mgr 'profile rbd pool=POOL namespace=ID'.
 // The client cannot reach other namespaces, create namespaces or add
 // blocklist entries. Create the pool with WithPools in
-// ceph.WithSharedRunOptions. A tenant leases each pool once; its release
+// harness.WithSharedRunOptions. A tenant leases each pool once; its release
 // removes everything in the namespace.
 func Lease(ctx context.Context, t *cephharness.Tenant, pool string) (*TenantNamespace, error) {
 	if t == nil {
@@ -64,7 +64,7 @@ func Lease(ctx context.Context, t *cephharness.Tenant, pool string) (*TenantName
 		return nil, errors.New("decode the applications of an RBD pool")
 	}
 	if _, ok := applications["rbd"]; !ok {
-		return nil, harnesshook.Invalid(fmt.Errorf("pool %q is not an RBD pool; create it with rbd.WithPools in ceph.WithSharedRunOptions", pool))
+		return nil, harnesshook.Invalid(fmt.Errorf("pool %q is not an RBD pool; create it with rbd.WithPools in harness.WithSharedRunOptions", pool))
 	}
 	namespace := t.ID()
 	// Attached first, so that the release also removes a namespace whose

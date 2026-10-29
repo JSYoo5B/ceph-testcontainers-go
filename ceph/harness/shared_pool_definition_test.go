@@ -16,10 +16,9 @@ import (
 )
 
 // The shared pool name has one definition, sharedinvariants.SharedPool. The
-// public ceph.SharedPool is declared from it today and moves to ceph/harness
-// with the orchestration (issue 155); core checks must then take the value
-// from the internal definition or as an argument, and a second literal in
-// non-test code would drift from it unnoticed. These controls run without
+// public SharedPool of ceph/harness is declared from it (issue 155); core
+// checks take the value from the internal definition or as an argument, and a
+// second literal in non-test code would drift from it unnoticed. These controls run without
 // Docker and read the source files only.
 
 // sharedPoolDefinition is the one file allowed to spell the pool name.
