@@ -80,7 +80,7 @@ import (
 func TestRADOSRoundTrip(t *testing.T) {
 	ctx := t.Context()
 
-	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 		ceph.WithPools(ceph.PoolConfig{Name: "app-data", Application: "rados"}),
 	))
 	// Register cleanup before checking err: a partially started cluster
@@ -134,14 +134,15 @@ Give `go test` a generous `-timeout` when several clusters run in one package.
 
 ### Run function
 
-The Ceph module exposes one entrypoint function to create the Ceph container, and this function receives the context and any number of `RunOptions` values:
+The Ceph module exposes one entrypoint function to create the Ceph container. It receives the context, the Ceph configuration value and then testcontainers customizers:
 
 ```golang
-func Run(ctx context.Context, configs ...RunOptions) (*Container, error)
+func Run(ctx context.Context, config RunOptions, customizers ...testcontainers.ContainerCustomizer) (*Container, error)
 ```
 
 - `context.Context`, the Go context.
-- `RunOptions`, a variadic argument for the image selection and the options. See [RunOptions](#runoptions).
+- `RunOptions`, the image selection and the Ceph cluster and service settings. See [RunOptions](#runoptions). The zero value selects `ceph.DefaultImage` and every default.
+- `testcontainers.ContainerCustomizer`, the only trailing variadic Go permits, for Docker and container execution policies. See [Container customizers](#container-customizers).
 
 `Run` builds the whole cluster before it returns. The steps are bounded by `ctx`
 and by [WithStartupTimeout](#withstartuptimeout) (3 minutes by default):
@@ -217,28 +218,43 @@ type RunOptions struct { /* unexported */ }
 
 func (RunOptions) WithImage(image string) RunOptions
 func (RunOptions) WithImageSet(images ImageSet) RunOptions
-func (RunOptions) WithCustomizers(customizers ...testcontainers.ContainerCustomizer) RunOptions
+func (RunOptions) WithOptions(options ...Option) RunOptions
 ```
 
 `RunOptions` is a value. The zero value selects every default, and each `With`
 method returns a modified copy, so one base value can derive several
-independent configurations. Run composes the values it receives in argument
-order:
+independent configurations:
 
-- Customizers (cluster `Option` values and other `testcontainers.ContainerCustomizer`
-  values) are concatenated in argument order. `Option` values change the cluster
-  settings; any other customizer applies to the first MON's container request.
-- At most one value may select images. A second `WithImage` or `WithImageSet`
-  in another value is refused with `ErrInvalidRequest`, also when it repeats the
-  first. Within one value the later selection replaces the earlier one.
-- An explicit empty image or image set is refused; it is not read as
-  unspecified, and no value falls back to the default image after selecting
-  nothing usable.
-- A nil customizer is refused.
-- The whole configuration is validated before any container, network or
-  volume is created.
+- `WithImage` and `WithImageSet` select the images. Within one value the later
+  selection replaces the earlier one completely. An explicit empty image or image
+  set is refused, never read as unspecified.
+- `WithOptions` appends cluster and service settings (`WithOSDCount`,
+  `rbd.WithPools`, `cephfs.WithFilesystems`, `rgw.WithGateways`,
+  `cephfs.WithMDSImage` and the other `Option` values) in call order. They are
+  applied to the cluster settings in that order and validated together with the
+  image selection before any container, network or volume is created. A nil
+  `Option` is refused.
+- `Run` takes one `RunOptions`, because its trailing variadic is taken by the
+  container customizers. The composition rules (explicit presence, repeated
+  fields, owned copies) are in
+  [value-configuration-composition](design/value-configuration-composition.md).
 
-The design record is [run-options](design/run-options.md).
+#### Container customizers
+
+The customizers after `RunOptions` are the retained escape to the testcontainers
+dependency, for Docker and container execution policies such as
+`testcontainers.WithEnv`, `WithEntrypoint` or `WithCmd`. They apply to the
+**first MON's container request only**, in argument order, after the module's own
+request options (entrypoint, environment, files, wait strategy, network and run
+directory mounts). The module then adds the messenger environment, the
+`WithConfigFile` file and the ownership label, which a caller customizer cannot
+override. They are not validated by the module, and later daemons, the client
+toolkit and helper containers do not receive them.
+
+A `ceph.Option` is a module setting and its `Customize` does nothing. Passing one
+in the customizer position would drop the setting silently, so `Run` refuses it
+with `ErrInvalidRequest` and names `RunOptions.WithOptions`. A nil customizer is
+refused as well.
 
 ### Container Options
 
@@ -647,7 +663,7 @@ and `ms_bind_msgr2` to `true` and nothing else, so a CRC-only cluster is:
 
 ```golang
 crc := []ceph.MessengerConnectionMode{ceph.MessengerCRC}
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithMessengerMode(ceph.MessengerV2Only),
 	ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc}),
 ))
@@ -920,7 +936,7 @@ cluster and heartbeat back addresses of OSDs from the cluster subnet.
 cluster endpoint, IPv4 and IPv6, and keeps its public endpoint.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithAddressFamily(ceph.AddressIPv6),
 	ceph.WithSeparateClusterNetwork(),
 ))
@@ -966,7 +982,7 @@ vectors from [DaemonAddresses](#daemonaddresses) and `ceph ... dump` show the
 selected family for every daemon, including the heartbeat addresses of OSDs.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithAddressFamily(ceph.AddressIPv4MappedIPv6),
 ))
 observer, err := ceph.Observe(cluster)
@@ -1006,7 +1022,7 @@ then has one entry of each family for each enabled Messenger protocol: v2,
 and v1 unless [WithMessengerMode](#withmessengermode) removes it.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithAddressFamily(ceph.AddressDualStack),
 ))
 observer, err := ceph.Observe(cluster)
@@ -1237,7 +1253,7 @@ Their options are `ceph.Option` values that `ceph.Run` accepts, so one cluster c
 serve RBD, CephFS and S3 clients together:
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithOSDCount(3),
 	rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
 	cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
@@ -1288,7 +1304,7 @@ cluster with other `Run` options, or several clusters, keep using `Run`.
 
 ```golang
 func NewShared(image string, opts ...SharedOption) *SharedCluster
-func WithSharedRunOptions(config RunOptions) SharedOption
+func WithSharedRunOptions(config RunOptions, customizers ...testcontainers.ContainerCustomizer) SharedOption
 func WithMaxTenants(n int) SharedOption
 func WithMaxRecycles(n int) SharedOption
 func RunTests(m *testing.M, s ...*SharedCluster) int
@@ -1302,14 +1318,14 @@ func WithKeepOnTenantFailure() LeaseOption
 
 Create the shared cluster in a package variable and end it in `TestMain`.
 `NewShared` starts nothing; the first `Lease` starts the cluster with the
-`RunOptions` of `WithSharedRunOptions`. A selection of images in that value
+`RunOptions` and the container customizers of `WithSharedRunOptions` (the arguments of `Run`). A selection of images in that value
 replaces the image of `NewShared`; otherwise the image of `NewShared` is the
 aggregate selection. `RunTests` runs the
 tests and then closes every shared cluster you pass it:
 
 ```golang
 var shared = ceph.NewShared(ceph.DefaultImage,
-	ceph.WithSharedRunOptions(ceph.RunOptions{}.WithCustomizers(ceph.WithOSDCount(1))))
+	ceph.WithSharedRunOptions(ceph.RunOptions{}.WithOptions(ceph.WithOSDCount(1))))
 
 func TestMain(m *testing.M) { os.Exit(ceph.RunTests(m, shared)) }
 
@@ -1401,7 +1417,7 @@ Start the services with the usual `Run` options in the `RunOptions` of `WithShar
 call the service package's `Lease` with the tenant:
 
 ```golang
-var shared = ceph.NewShared(ceph.DefaultImage, ceph.WithSharedRunOptions(ceph.RunOptions{}.WithCustomizers(
+var shared = ceph.NewShared(ceph.DefaultImage, ceph.WithSharedRunOptions(ceph.RunOptions{}.WithOptions(
 	ceph.WithOSDCount(1),
 	rbd.WithPools(ceph.PoolConfig{Name: "rbd"}),
 	cephfs.WithFilesystems(),
@@ -4352,7 +4368,7 @@ cause for the detected Docker environment. It belongs to
 [ErrEnvironmentUnavailable](#error-categories).
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithHostNetwork()))
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(ceph.WithHostNetwork()))
 testcontainers.CleanupContainer(t, cluster)
 if errors.Is(err, ceph.ErrHostNetworkUnavailable) {
 	t.Skip("host networking is not usable here:", err)
@@ -4672,7 +4688,7 @@ RBD keeps image metadata in a replicated pool and can store data in an EC pool
 that allows overwrites.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithOSDCount(3),
 	rbd.WithPools(ceph.PoolConfig{Name: "rbd-meta"}),
 	ceph.WithPools(ceph.PoolConfig{
@@ -4699,7 +4715,7 @@ Logical hosts, racks, roots and device classes let you test placement rules and
 domain failures on one Docker engine.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithInitialOSDs(
 		ceph.OSDConfig{Host: "host-a", Rack: "rack-a", Root: "tc-storage", DeviceClass: "fast"},
 		ceph.OSDConfig{Host: "host-b", Rack: "rack-b", Root: "tc-storage", DeviceClass: "fast"},
@@ -4733,7 +4749,7 @@ or `"osd", "find", "<id>"`.
 ### Start without OSDs, then add storage
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithNoInitialOSDs()))
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(ceph.WithNoInitialOSDs()))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
@@ -4758,7 +4774,7 @@ if err := cluster.WaitForClean(ctx); err != nil {
 ### Start without a manager
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithNoInitialManagers(),
 	ceph.WithPools(ceph.PoolConfig{Name: "application", Application: "rados"}),
 ))
@@ -4794,7 +4810,7 @@ legacyPools := filepath.Join(t.TempDir(), "legacy-pools.conf")
 if err := os.WriteFile(legacyPools, []byte("[global]\nosd_pool_default_flag_hashpspool = false\n"), 0o644); err != nil {
 	t.Fatal(err)
 }
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithOSDCount(1),
 	ceph.WithPoolDefaults(1, 1),
 	ceph.WithOSDObjectStore(ceph.OSDMemStore),
@@ -4879,7 +4895,7 @@ whole lifetime, because restored defaults would run the benchmark at the next OS
 start.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithNoInitialOSDs(),
 	ceph.WithOSDBlockSize(64<<20),
 	ceph.WithOSDInMemoryStorage(256<<20), // optional; omit for container-local files
@@ -4925,7 +4941,7 @@ HDD recovery sleeps to 0 removed most of that difference. The module keeps
 Ceph's default (mClock); measure your own scenario before changing it.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithNoInitialOSDs()))
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(ceph.WithNoInitialOSDs()))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
@@ -4962,7 +4978,7 @@ never at risk. Owned daemons are updated automatically; your client containers
 are not.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithMonitorCount(3)))
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(ceph.WithMonitorCount(3)))
 // ... CleanupContainer, error check, client container `client` with WithClient()
 original, err := cluster.Monitors(ctx) // a, b, c
 if err != nil {
@@ -5038,7 +5054,7 @@ Create the state in which PGs have moved to new OSDs but objects are still being
 recovered, and test client I/O against it.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithInitialOSDs(
 		ceph.OSDConfig{DeviceClass: "fast"},
 		ceph.OSDConfig{DeviceClass: "slow"},
@@ -5258,7 +5274,7 @@ On a Linux Docker host, host mode lets a test process use go-ceph or librados
 directly:
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithHostNetwork()))
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(ceph.WithHostNetwork()))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
@@ -5273,7 +5289,7 @@ Desktop and port selection.
 ### Run a cluster that accepts only encrypted connections
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithMessengerMode(ceph.MessengerV2Secure),
 ))
 testcontainers.CleanupContainer(t, cluster)

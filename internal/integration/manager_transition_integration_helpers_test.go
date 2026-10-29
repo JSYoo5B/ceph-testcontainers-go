@@ -590,7 +590,7 @@ func testManagerTransitionReceipt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	cluster, _ := newServiceClusterWithOptions(t, image, roles.WithCustomizers(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs()))
+	cluster, _ := newServiceClusterWithOptions(t, image, roles.WithOptions(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs()))
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	receipt := mgrTransitionReceipt{Schema: mgrReceiptSchema, Source: "ceph-testcontainers-go internal/integration", Run: t.Name(),
 		Images: map[string]string{"control": image}}

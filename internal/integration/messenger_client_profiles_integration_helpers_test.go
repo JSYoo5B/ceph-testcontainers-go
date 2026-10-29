@@ -42,7 +42,7 @@ func profileAuth(t *testing.T, ctx context.Context, image string, base ceph.RunO
 		return want
 	}
 	started := time.Now()
-	refused, err := ceph.Run(ctx, base.WithCustomizers(ceph.WithAuth(want)))
+	refused, err := ceph.Run(ctx, base.WithOptions(ceph.WithAuth(want)))
 	testcontainers.CleanupContainer(t, refused)
 	if !errors.Is(err, ceph.ErrUnsupported) || !strings.Contains(err.Error(), "ceph-authtool --key-type") || time.Since(started) > 2*time.Minute {
 		t.Fatalf("an image without --key-type: Run with %+v returned %v after %s", want, err, time.Since(started))
@@ -562,10 +562,10 @@ func testMessengerClientSecureProfile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	base := roles.WithCustomizers(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
+	base := roles.WithOptions(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
 		ceph.WithMessengerMode(ceph.MessengerV2Secure))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	cluster, admin := newServiceClusterWithOptions(t, image, base.WithCustomizers(ceph.WithAuth(auth)))
+	cluster, admin := newServiceClusterWithOptions(t, image, base.WithOptions(ceph.WithAuth(auth)))
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
@@ -593,10 +593,10 @@ func testMessengerClientModeRejection(t *testing.T, monitors, managers []ceph.Me
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	base := roles.WithCustomizers(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
+	base := roles.WithOptions(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
 		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: monitors, Managers: managers}))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: keyType, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	cluster, _ := newServiceClusterWithOptions(t, image, base.WithCustomizers(ceph.WithAuth(auth)))
+	cluster, _ := newServiceClusterWithOptions(t, image, base.WithOptions(ceph.WithAuth(auth)))
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
@@ -689,10 +689,10 @@ func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Dura
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	base := roles.WithCustomizers(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
+	base := roles.WithOptions(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
 		ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithConfigFile(profileConfigFile(t, file)))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: monTTL, ServiceTicketTTL: serviceTTL})
-	cluster, client := newServiceClusterWithOptions(t, image, base.WithCustomizers(ceph.WithAuth(auth)))
+	cluster, client := newServiceClusterWithOptions(t, image, base.WithOptions(ceph.WithAuth(auth)))
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileTickets(t, ctx, cluster, monTTL.Seconds(), serviceTTL.Seconds())
@@ -717,10 +717,10 @@ func testMessengerClientDelayedManagers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	base := roles.WithCustomizers(ceph.WithMonitorCount(3), ceph.WithNoInitialManagers(), ceph.WithNoInitialOSDs(),
+	base := roles.WithOptions(ceph.WithMonitorCount(3), ceph.WithNoInitialManagers(), ceph.WithNoInitialOSDs(),
 		ceph.WithMessengerMode(ceph.MessengerV2Secure))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	cluster, _ := newServiceClusterWithOptions(t, image, base.WithCustomizers(ceph.WithAuth(auth)))
+	cluster, _ := newServiceClusterWithOptions(t, image, base.WithOptions(ceph.WithAuth(auth)))
 	waitProfileTopology(t, ctx, cluster, 3, -1)
 	status, err := observeCluster(cluster).ManagerStatus(ctx)
 	if err != nil || status.Available || status.ActiveGID != 0 || len(status.Standbys) != 0 || len(clusteraccess.Managers(t, cluster)) != 0 {
@@ -747,16 +747,16 @@ func testMessengerClientDelayedManagers(t *testing.T) {
 // on Messenger v2 only, with every daemon accepting only CRC from clients. The
 // OSD gets the legacy CRUSH map and a one-PG, size-one pool without
 // hashpspool, and a CRC-only client writes, stats and reads an object.
-func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...testcontainers.ContainerCustomizer) {
+func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...ceph.Option) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	base := roles.WithCustomizers(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithOSDCount(1),
+	base := roles.WithOptions(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithOSDCount(1),
 		ceph.WithPoolDefaults(1, 1), ceph.WithOSDObjectStore(ceph.OSDMemStore), ceph.WithOSDBlockSize(256<<20), legacyPoolFlags(t),
 		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC}))
-	base = base.WithCustomizers(extra...)
+	base = base.WithOptions(extra...)
 	auth = profileAuth(t, ctx, image, base, auth)
-	cluster, _ := newServiceClusterWithOptions(t, image, base.WithCustomizers(ceph.WithAuth(auth)))
+	cluster, _ := newServiceClusterWithOptions(t, image, base.WithOptions(ceph.WithAuth(auth)))
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
@@ -802,10 +802,10 @@ func testMessengerClientAddressProfile(t *testing.T, family ceph.AddressFamily) 
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	base := roles.WithCustomizers(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
+	base := roles.WithOptions(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
 		ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithAddressFamily(family))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	cluster, client := newServiceClusterWithOptions(t, image, base.WithCustomizers(ceph.WithAuth(auth)))
+	cluster, client := newServiceClusterWithOptions(t, image, base.WithOptions(ceph.WithAuth(auth)))
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileAddressFamily(t, ctx, cluster, family)
@@ -819,13 +819,13 @@ func testMessengerClientAddressProfile(t *testing.T, family ceph.AddressFamily) 
 func testMessengerClientWithoutKeyTypes(t *testing.T, image string) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	base := ceph.RunOptions{}.WithImage(image).WithCustomizers(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
+	base := ceph.RunOptions{}.WithImage(image).WithOptions(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
 		ceph.WithMessengerMode(ceph.MessengerV2Secure))
 	if imageHasKeyTypes(t, ctx, image) {
 		t.Fatalf("%s has ceph-authtool --key-type", image)
 	}
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	cluster, _ := newServiceClusterWithOptions(t, image, base.WithCustomizers(ceph.WithAuth(auth)))
+	cluster, _ := newServiceClusterWithOptions(t, image, base.WithOptions(ceph.WithAuth(auth)))
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)

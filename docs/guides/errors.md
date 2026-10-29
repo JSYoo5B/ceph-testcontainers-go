@@ -55,7 +55,7 @@ The narrower errors of the module belong to a category:
 `fault.ErrNetemImageUnsupported` to `ErrImageCapability`. Both forms match:
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithHostNetwork()))
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(ceph.WithHostNetwork()))
 testcontainers.CleanupContainer(t, cluster)
 switch {
 case errors.Is(err, ceph.ErrHostNetworkUnavailable): // also ErrEnvironmentUnavailable

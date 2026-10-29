@@ -30,9 +30,9 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image, opts := integrationImages(t)
-	opts = opts.WithCustomizers(ceph.WithOSDCount(2))
+	opts = opts.WithOptions(ceph.WithOSDCount(2))
 	if host {
-		opts = opts.WithCustomizers(ceph.WithHostNetwork())
+		opts = opts.WithOptions(ceph.WithHostNetwork())
 	}
 	oracle := newNoInitialOSDOracle(t, ctx)
 	cluster, err := ceph.Run(ctx, opts)

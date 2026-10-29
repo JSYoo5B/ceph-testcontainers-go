@@ -124,7 +124,7 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	defer cancel()
 	const ledger, stopFile = "/tmp/tc-min-size.jsonl", "/tmp/tc-min-size.stop"
 	image, opts := integrationImages(t)
-	cluster, client := newServiceClusterWithOptions(t, image, opts.WithCustomizers(ceph.WithNoInitialOSDs()))
+	cluster, client := newServiceClusterWithOptions(t, image, opts.WithOptions(ceph.WithNoInitialOSDs()))
 	restore := func(name string, fn func(context.Context) error) {
 		t.Helper()
 		t.Cleanup(func() {

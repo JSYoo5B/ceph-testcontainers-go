@@ -202,7 +202,7 @@ func testVerificationJSONFileNativeReceipt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	_, opts := integrationImages(t)
-	cluster, err := ceph.Run(ctx, opts.WithCustomizers(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)))
+	cluster, err := ceph.Run(ctx, opts.WithOptions(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)))
 	recorder := &jsonFileFinalizer{TB: t}
 	var finalization *ceph.Finalization
 	if cluster != nil {

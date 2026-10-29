@@ -27,7 +27,7 @@ func TestRGWMinimalS3Recipe(t *testing.T) {
 	defer cancel()
 	_, roles := integrationImages(t)
 	started := time.Now()
-	cluster, err := rgw.Run(ctx, roles.WithCustomizers(ceph.WithMonitorCount(1),
+	cluster, err := rgw.Run(ctx, roles.WithOptions(ceph.WithMonitorCount(1),
 		ceph.WithManagerCount(1),
 		ceph.WithOSDCount(1),
 		ceph.WithPoolDefaults(1, 1)))

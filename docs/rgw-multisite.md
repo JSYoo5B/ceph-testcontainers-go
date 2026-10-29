@@ -61,12 +61,12 @@ into a new bucket, wait for its metadata in both zones (see
 [`WaitSyncReady`](#waitsyncready)).
 
 ```golang
-source, err := ceph.Run(ctx)
+source, err := ceph.Run(ctx, ceph.RunOptions{})
 testcontainers.CleanupContainer(t, source)
 if err != nil {
 	t.Fatal(err)
 }
-destination, err := ceph.Run(ctx)
+destination, err := ceph.Run(ctx, ceph.RunOptions{})
 testcontainers.CleanupContainer(t, destination)
 if err != nil {
 	t.Fatal(err)

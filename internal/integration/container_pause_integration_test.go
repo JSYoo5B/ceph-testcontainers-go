@@ -27,9 +27,9 @@ func TestPausedOSDFaults(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = opts.WithCustomizers(ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
+			opts = opts.WithOptions(ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
 			if host {
-				opts = opts.WithCustomizers(ceph.WithHostNetwork())
+				opts = opts.WithOptions(ceph.WithHostNetwork())
 			}
 			cluster, client := newServiceClusterWithOptions(t, image, opts)
 			fsid := strings.TrimSpace(string(mustCeph(t, ctx, cluster, "fsid")))

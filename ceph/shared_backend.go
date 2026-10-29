@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/sharedinvariants"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // sharedBackend is what a SharedCluster needs from one cluster. The
@@ -41,7 +42,7 @@ type sharedBackend interface {
 	ops() clusterOps
 }
 
-type sharedStarter func(ctx context.Context, image string, config RunOptions) (sharedBackend, error)
+type sharedStarter func(ctx context.Context, image string, config RunOptions, customizers []testcontainers.ContainerCustomizer) (sharedBackend, error)
 
 // sharedInvariants is the state that a tenant cannot change through its own
 // scope; the comparison logic lives in internal/sharedinvariants.
@@ -55,8 +56,8 @@ var sharedIgnoredHealth = map[string]bool{"MON_DISK_LOW": true}
 // containerBackend shares a *Container.
 type containerBackend struct{ c *Container }
 
-func startSharedContainer(ctx context.Context, image string, config RunOptions) (sharedBackend, error) {
-	return sharedRunResult(Run(ctx, sharedRunConfig(image, config)))
+func startSharedContainer(ctx context.Context, image string, config RunOptions, customizers []testcontainers.ContainerCustomizer) (sharedBackend, error) {
+	return sharedRunResult(Run(ctx, sharedRunConfig(image, config), customizers...))
 }
 
 // sharedRunConfig is the configuration of the Run that starts a shared

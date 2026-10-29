@@ -20,7 +20,7 @@ func TestInitialClusterComposition(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	image, opts := integrationImages(t)
-	opts = opts.WithCustomizers(ceph.WithOSDCount(1),
+	opts = opts.WithOptions(ceph.WithOSDCount(1),
 		ceph.WithPools(ceph.PoolConfig{Name: "tc-initial", Application: "rados"}),
 		cephfs.WithFilesystems(cephfs.Config{Name: "small"}))
 	cluster, err := ceph.Run(ctx, opts)

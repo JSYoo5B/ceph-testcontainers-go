@@ -25,11 +25,11 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = opts.WithCustomizers(ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
+			opts = opts.WithOptions(ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
 			if host {
-				opts = opts.WithCustomizers(ceph.WithHostNetwork())
+				opts = opts.WithOptions(ceph.WithHostNetwork())
 			} else {
-				opts = opts.WithCustomizers(ceph.WithSeparateClusterNetwork())
+				opts = opts.WithOptions(ceph.WithSeparateClusterNetwork())
 			}
 			cluster, client := newServiceClusterWithOptions(t, image, opts)
 			if staticFacts(cluster).MessengerMode != ceph.MessengerV2Secure {
@@ -95,9 +95,9 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = opts.WithCustomizers(ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
+			opts = opts.WithOptions(ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
 			if host {
-				opts = opts.WithCustomizers(ceph.WithHostNetwork())
+				opts = opts.WithOptions(ceph.WithHostNetwork())
 			}
 			cluster, client := newServiceClusterWithOptions(t, image, opts)
 			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {

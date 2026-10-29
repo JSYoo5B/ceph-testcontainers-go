@@ -166,7 +166,7 @@ func testCephFSDentryLeaseRecall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	image, imageOpts := integrationImages(t)
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, imageOpts.WithCustomizers(ceph.WithMessengerMode(ceph.MessengerV2Secure)))
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, imageOpts.WithOptions(ceph.WithMessengerMode(ceph.MessengerV2Secure)))
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)

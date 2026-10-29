@@ -24,7 +24,7 @@ func TestClusterLifecycle(t *testing.T) {
 	defer cancel()
 	started := time.Now()
 	image, opts := integrationImages(t)
-	opts = opts.WithCustomizers(ceph.WithOSDCount(2))
+	opts = opts.WithOptions(ceph.WithOSDCount(2))
 	cluster, err := ceph.Run(ctx, opts)
 	// One finalization archives a failure before the client and the
 	// cluster are removed; go test -artifacts keeps the archive.
@@ -144,9 +144,8 @@ func TestClusterLifecycle(t *testing.T) {
 
 func TestBootstrapFailureCleanup(t *testing.T) {
 	_, opts := integrationImages(t)
-	opts = opts.WithCustomizers(ceph.WithStartupTimeout(15*time.Second),
-		testcontainers.WithEntrypoint("/bin/sh", "-c", "exit 23"))
-	cluster, err := ceph.Run(t.Context(), opts)
+	opts = opts.WithOptions(ceph.WithStartupTimeout(15 * time.Second))
+	cluster, err := ceph.Run(t.Context(), opts, testcontainers.WithEntrypoint("/bin/sh", "-c", "exit 23"))
 	if cluster != nil {
 		testcontainers.CleanupContainer(t, cluster)
 	}

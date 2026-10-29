@@ -567,7 +567,7 @@ func testDualStackServices(t *testing.T) {
 	defer cancel()
 	image, roles := integrationImages(t)
 	const filesystem = "tc-cephfs"
-	opts := roles.WithCustomizers(ceph.WithOSDCount(2), ceph.WithManagerCount(2),
+	opts := roles.WithOptions(ceph.WithOSDCount(2), ceph.WithManagerCount(2),
 		ceph.WithAddressFamily(ceph.AddressDualStack),
 		ceph.WithConfigFile(dualStackOrderConfig(t, "mgr.b", "osd.1", "mds."+filesystem+"-1")),
 		cephfs.WithFilesystems(cephfs.Config{Name: filesystem, ActiveMDS: 1, StandbyMDS: 1}),

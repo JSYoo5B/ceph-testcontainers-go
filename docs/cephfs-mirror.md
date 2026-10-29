@@ -763,7 +763,7 @@ finally:
     fs.shutdown()
 `
 
-cluster, err := cephfs.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := cephfs.Run(ctx, ceph.RunOptions{}.WithOptions(
 	cephfs.WithFilesystems(cephfs.Config{Name: "app-fs"}, cephfs.Config{Name: "logs"}),
 ))
 testcontainers.CleanupContainer(t, cluster)
@@ -970,7 +970,7 @@ standby take rank 0. The test then either restarts the old daemon or retires it
 and creates a new one.
 
 ```golang
-cluster, err := cephfs.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := cephfs.Run(ctx, ceph.RunOptions{}.WithOptions(
 	cephfs.WithFilesystems(cephfs.Config{ActiveMDS: 1, StandbyMDS: 1}),
 ))
 testcontainers.CleanupContainer(t, cluster)
@@ -1293,12 +1293,12 @@ finally:
 
 func TestCephFSMirror(t *testing.T) {
 	ctx := t.Context()
-	sourceCluster, err := cephfs.Run(ctx)
+	sourceCluster, err := cephfs.Run(ctx, ceph.RunOptions{})
 	testcontainers.CleanupContainer(t, sourceCluster)
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinationCluster, err := cephfs.Run(ctx)
+	destinationCluster, err := cephfs.Run(ctx, ceph.RunOptions{})
 	testcontainers.CleanupContainer(t, destinationCluster)
 	if err != nil {
 		t.Fatal(err)

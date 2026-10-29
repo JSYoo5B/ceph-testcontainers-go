@@ -40,7 +40,7 @@ func TestRunWithImageSetAppliesServiceOverridesAfterBaseSet(t *testing.T) {
 				capture := Option(func(o *options) error { effective = o; return nil })
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				cluster, err := Run(ctx, RunOptions{}.WithImageSet(images).WithCustomizers(
+				cluster, err := Run(ctx, RunOptions{}.WithImageSet(images).WithOptions(
 					(serviceHooks{}).WithServiceImage(role, "selected-service"), capture))
 				if cluster != nil || !errors.Is(err, context.Canceled) {
 					t.Fatalf("valid role selection did not reach canceled admission: %v %v", cluster, err)
@@ -168,9 +168,9 @@ func TestServiceImageOptionReplacesItsRoleInEitherOrder(t *testing.T) {
 				capture := Option(func(o *options) error { effective = o; return nil })
 				service := (serviceHooks{}).WithServiceImage(role, "selected-service")
 				set := ImageSet{Essential: "core", Client: "toolkit", CephFS: "set-mds", RGW: "set-rgw"}
-				config := RunOptions{}.WithImageSet(set).WithCustomizers(service, capture)
+				config := RunOptions{}.WithImageSet(set).WithOptions(service, capture)
 				if serviceFirst {
-					config = RunOptions{}.WithCustomizers(service, capture).WithImageSet(set)
+					config = RunOptions{}.WithOptions(service, capture).WithImageSet(set)
 				}
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()

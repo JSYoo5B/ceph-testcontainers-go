@@ -87,10 +87,54 @@ an owner approval.
   generation, the publish-before-start ownership record and cleanup are
   unchanged.
 
+## Run
+
+Change `312-run-options`. Proposal of the implementation side, not an owner
+approval. It follows the owner's split: Docker and container execution policies
+stay functional `WithX` customizers, Ceph cluster and service settings and the
+image selection live on a chainable value.
+
+```go
+func Run(ctx context.Context, config RunOptions, customizers ...testcontainers.ContainerCustomizer) (*Container, error)
+```
+
+- **Reconciling the inputs with one trailing variadic.** Go permits one trailing
+  variadic, and Run's was `...testcontainers.ContainerCustomizer`, a bag that
+  mixed container customizers with `ceph.Option` values. The variadic keeps the
+  container customizers. The Ceph configuration is one positional `RunOptions`
+  value, so `Run` composes one value (rule 3 is vacuous across values) and the
+  within-value rules 1, 4, 5 and 7 apply: image selection (`WithImage`,
+  `WithImageSet`) replaces within the value; explicit empty selections are
+  refused; the assembled configuration is validated before any effect.
+- **Service inputs are mapped, not forwarded.** `rbd.WithPools`,
+  `cephfs.WithFilesystems`, `cephfs.WithMDSImage`, `rgw.WithGateways`,
+  `rgw.WithImage` and every `ceph.WithX` cluster setting return `ceph.Option`,
+  whose `Customize` does nothing. `RunOptions.WithOptions(...Option)` carries
+  them into the settings in call order. Passing an `Option` in the customizer
+  position is refused with `ErrInvalidRequest` instead of being dropped, so a
+  setting cannot be lost. `rbd.Run`, `cephfs.Run` and `rgw.Run` append their
+  default pool, filesystem or gateway with `WithOptions` and take the same
+  arguments.
+- **Raw customizers.** They reach the first MON's container request only, in
+  argument order, after the module's own request options and before the
+  messenger environment, the config file and the ownership label.
+- **Images.** One authoritative selection: `WithImage(img)` (aggregate) or
+  `WithImageSet(set)`; there is no second Essential input. `RunWithImages`,
+  `WithImages` and the `img` parameter are removed without aliases. A missing
+  role that a requested feature needs is refused; there is no fallback to
+  Essential. Service image options replace their role whatever the order.
+- **Copies.** `WithImage`, `WithImageSet` and `WithOptions` copy the option list
+  with `slices.Clone` or `append(slices.Clone(...))`, so nil stays nil and a
+  non-nil empty list stays non-nil. `ImageSet` is a struct of strings.
+- **SharedCluster.** `WithSharedRunOptions(config, customizers...)` carries the
+  same two inputs. A selection in `config` replaces the image of `NewShared`;
+  selecting images in two calls is a configuration error reported by the first
+  lease.
+- Not a method per setting: the existing `Option` vocabulary is kept, and its
+  conversion to chainable methods, if wanted, is a separate decision.
+
 ## Not decided here
 
-- How `Run` maps `ceph.Option` values and raw customizers into one effective
-  configuration, and how image selection (single image or `ImageSet`) joins it.
 - How tenant attachment keeps the `*ClientConfig` identity while cloning its
   owned collections.
 - How the mirror `Run` functions keep source/destination role inference.

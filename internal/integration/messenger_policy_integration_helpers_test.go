@@ -405,7 +405,7 @@ func testMessengerV2OnlyCRC(t *testing.T) {
 	if imageHasKeyTypes(t, ctx, image) {
 		keyType = ceph.CipherAES256K
 	}
-	cluster, _ := newServiceClusterWithOptions(t, image, roles.WithCustomizers(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
+	cluster, _ := newServiceClusterWithOptions(t, image, roles.WithOptions(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
 		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithAuth(ceph.AuthConfig{KeyType: keyType}),
 		ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC})))
 	if staticFacts(cluster).MessengerMode != ceph.MessengerV2Only {

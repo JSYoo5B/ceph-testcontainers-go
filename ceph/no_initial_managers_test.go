@@ -29,19 +29,19 @@ func TestNoInitialManagersRejectsContradictionsBeforeRuntime(t *testing.T) {
 		{"negative count", "manager count must be at least 1", WithManagerCount(-1)},
 	} {
 		for _, first := range []bool{false, true} {
-			opts := []testcontainers.ContainerCustomizer{test.opt, WithNoInitialManagers()}
+			opts := []Option{test.opt, WithNoInitialManagers()}
 			order := "zero-last"
 			if first {
-				opts, order = []testcontainers.ContainerCustomizer{WithNoInitialManagers(), test.opt}, "zero-first"
+				opts, order = []Option{WithNoInitialManagers(), test.opt}, "zero-first"
 			}
 			t.Run(test.name+"/"+order, func(t *testing.T) {
 				var customizers atomic.Int32
-				opts = append(opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+				probe := testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil })
 				// Even a validation regression cannot allocate Docker resources:
 				// the canonical canceled fallback is distinguishable from rejection.
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				cluster, err := Run(ctx, RunOptions{}.WithCustomizers(opts...))
+				cluster, err := Run(ctx, RunOptions{}.WithOptions(opts...), probe)
 				if cluster != nil || err == nil || !strings.Contains(err.Error(), test.want) || errors.Is(err, context.Canceled) || customizers.Load() != 0 {
 					t.Fatalf("configuration reached runtime or lost validation: cluster=%v err=%v customizers=%d", cluster, err, customizers.Load())
 				}
@@ -95,7 +95,7 @@ func TestNoInitialManagersPreservesDefaultsAndPositivePoolComposition(t *testing
 }
 
 func TestNoInitialManagersPreservesPlacementNetworkAndCombinedStorageGuards(t *testing.T) {
-	for _, opts := range [][]testcontainers.ContainerCustomizer{
+	for _, opts := range [][]Option{
 		{WithNoInitialManagers(), WithHostAddress("127.0.0.1")},
 		{WithNoInitialManagers(), WithHostNetwork(), WithSeparateClusterNetwork()},
 		{WithNoInitialManagers(), WithOSDCount(1), WithPools(PoolConfig{Name: "data", Replicas: 2})},
@@ -105,7 +105,7 @@ func TestNoInitialManagersPreservesPlacementNetworkAndCombinedStorageGuards(t *t
 	} {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		cluster, err := Run(ctx, RunOptions{}.WithCustomizers(opts...))
+		cluster, err := Run(ctx, RunOptions{}.WithOptions(opts...))
 		if cluster != nil || err == nil || errors.Is(err, context.Canceled) {
 			t.Fatalf("zero manager bypassed existing pre-allocation guard: %v", err)
 		}
@@ -113,17 +113,17 @@ func TestNoInitialManagersPreservesPlacementNetworkAndCombinedStorageGuards(t *t
 }
 
 func TestNoInitialManagersCanceledRunDoesNotAllocateOrCustomize(t *testing.T) {
-	for _, opts := range [][]testcontainers.ContainerCustomizer{
+	for _, opts := range [][]Option{
 		{WithNoInitialManagers()},
 		{WithNoInitialManagers(), WithHostNetwork(), WithPools(PoolConfig{Name: "data"})},
 		{WithNoInitialManagers(), WithMonitorCount(3), WithSeparateClusterNetwork()},
 		{WithNoInitialManagers(), WithNoInitialOSDs()},
 	} {
 		var customizers atomic.Int32
-		opts = append(opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+		probe := testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil })
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		cluster, err := Run(ctx, RunOptions{}.WithCustomizers(opts...))
+		cluster, err := Run(ctx, RunOptions{}.WithOptions(opts...), probe)
 		if cluster != nil || !errors.Is(err, context.Canceled) || customizers.Load() != 0 {
 			t.Fatalf("canceled cold constructor reached runtime: cluster=%v err=%v customizers=%d", cluster, err, customizers.Load())
 		}

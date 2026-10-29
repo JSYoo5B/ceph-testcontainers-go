@@ -42,7 +42,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = docker.Close() })
 	image, opts := integrationImages(t)
-	opts = opts.WithCustomizers(ceph.WithNoInitialOSDs(), ceph.WithOSDVolumeStorage())
+	opts = opts.WithOptions(ceph.WithNoInitialOSDs(), ceph.WithOSDVolumeStorage())
 	cluster, err := ceph.Run(ctx, opts)
 	terminated := false
 	if cluster != nil {

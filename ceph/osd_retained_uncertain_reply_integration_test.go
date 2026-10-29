@@ -34,7 +34,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = docker.Close() })
-	c, err := Run(ctx, RunOptions{}.WithImageSet(ImageSet{Essential: image, Client: clientImage}).WithCustomizers(WithNoInitialOSDs(), WithOSDVolumeStorage()))
+	c, err := Run(ctx, RunOptions{}.WithImageSet(ImageSet{Essential: image, Client: clientImage}).WithOptions(WithNoInitialOSDs(), WithOSDVolumeStorage()))
 	terminated := false
 	if c != nil {
 		t.Cleanup(func() {

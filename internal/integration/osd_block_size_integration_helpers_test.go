@@ -39,13 +39,13 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 		t.Fatal("small-device engine identity unavailable", err)
 	}
 	_, opts := integrationImages(t)
-	opts = opts.WithCustomizers(ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(size))
+	opts = opts.WithOptions(ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(size))
 	ramCap := int64(0)
 	if ram {
 		// The cluster allocation ceiling is independent of per-OSD logical bytes
 		// and leaves room for all three files; it reserves no physical memory.
 		ramCap = 4 * size
-		opts = opts.WithCustomizers(ceph.WithOSDInMemoryStorage(ramCap))
+		opts = opts.WithOptions(ceph.WithOSDInMemoryStorage(ramCap))
 	}
 	cluster, err := ceph.Run(ctx, opts)
 	terminated := false

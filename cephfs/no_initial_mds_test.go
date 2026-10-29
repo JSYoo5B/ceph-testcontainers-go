@@ -175,20 +175,20 @@ func TestNoInitialMDSDefaultsAndContradictionsBeforeNative(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		cluster, runErr := Run(ctx, ceph.RunOptions{}.WithCustomizers(WithFilesystems(config)))
+		cluster, runErr := Run(ctx, ceph.RunOptions{}.WithOptions(WithFilesystems(config)))
 		if cluster != nil || runErr == nil || errors.Is(runErr, context.Canceled) {
 			t.Fatalf("initial config reached runtime: %+v %v", config, runErr)
 		}
 	}
 	for _, zero := range []ceph.Option{ceph.WithNoInitialOSDs(), ceph.WithNoInitialManagers()} {
 		for _, first := range []bool{false, true} {
-			opts := []testcontainers.ContainerCustomizer{zero, WithFilesystems(Config{NoInitialMDS: true})}
+			opts := []ceph.Option{zero, WithFilesystems(Config{NoInitialMDS: true})}
 			if first {
 				opts[0], opts[1] = opts[1], opts[0]
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			c, err := Run(ctx, ceph.RunOptions{}.WithCustomizers(opts...))
+			c, err := Run(ctx, ceph.RunOptions{}.WithOptions(opts...))
 			if c != nil || err == nil || errors.Is(err, context.Canceled) {
 				t.Fatalf("cold FS waived existing OSD/MGR composition guard: %v", err)
 			}

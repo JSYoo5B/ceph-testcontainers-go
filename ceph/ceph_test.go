@@ -49,7 +49,7 @@ func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 		{"host address IPv6", WithHostAddress("::1")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cluster, err := Run(context.Background(), RunOptions{}.WithCustomizers(test.opt))
+			cluster, err := Run(context.Background(), RunOptions{}.WithOptions(test.opt))
 			if err == nil || cluster != nil {
 				t.Fatalf("invalid setting allocated resources: cluster=%v error=%v", cluster, err)
 			}
@@ -137,7 +137,7 @@ func (c *commandContainer) Exec(context.Context, []string, ...tcexec.ProcessOpti
 }
 
 func TestMemStoreRefusesBlueStoreOnlySettings(t *testing.T) {
-	cluster, err := Run(context.Background(), RunOptions{}.WithCustomizers(WithOSDObjectStore(OSDMemStore), WithOSDInMemoryStorage(1<<30)))
+	cluster, err := Run(context.Background(), RunOptions{}.WithOptions(WithOSDObjectStore(OSDMemStore), WithOSDInMemoryStorage(1<<30)))
 	if err == nil || cluster != nil || !strings.Contains(err.Error(), "OSDMemStore") {
 		t.Fatalf("MemStore with in-memory BlueStore files allocated resources: %v %v", cluster, err)
 	}

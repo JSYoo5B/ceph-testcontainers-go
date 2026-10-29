@@ -29,7 +29,7 @@ func TestRADOSCompoundTupleNoFault(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	_, opts := integrationImages(t)
-	opts = opts.WithCustomizers(ceph.WithOSDCount(1))
+	opts = opts.WithOptions(ceph.WithOSDCount(1))
 	cluster, err := ceph.Run(ctx, opts)
 	if cluster != nil {
 		t.Cleanup(func() {

@@ -927,7 +927,7 @@ Keep the conventions of the upstream testcontainers-go modules:
   `testcontainers.Container`. `ceph.Container` overrides `Terminate` so that
   terminating it removes the whole cluster.
 - The entry point is
-  `Run(ctx context.Context, configs ...ceph.RunOptions) (*Container, error)`
+  `Run(ctx context.Context, config ceph.RunOptions, customizers ...testcontainers.ContainerCustomizer) (*Container, error)`
   (`RunOptions` in the `ceph` package itself).
   The service packages' `Run` returns a `Container` that embeds
   `*ceph.Container`. `Run` applies the module defaults first, then the

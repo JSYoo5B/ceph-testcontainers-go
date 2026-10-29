@@ -511,7 +511,7 @@
     {
       "current": "cephfs.Run",
       "kind": "function",
-      "signature": "func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
+      "signature": "func(ctx context.Context, config ceph.RunOptions, customizers ...testcontainers.ContainerCustomizer) (*Container, error)",
       "proposed": "cephfs.Run",
       "decision": "baseline"
     },

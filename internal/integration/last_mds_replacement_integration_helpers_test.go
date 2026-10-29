@@ -27,12 +27,12 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	defer cancel()
 	started := time.Now()
 	image, opts := integrationImages(t)
-	opts = opts.WithCustomizers(ceph.WithOSDCount(2), testcontainers.WithEnv(map[string]string{"CEPH_ARGS": "--mds-beacon-grace=3600"}))
+	opts = opts.WithOptions(ceph.WithOSDCount(2))
 	if host {
-		opts = opts.WithCustomizers(ceph.WithHostNetwork())
+		opts = opts.WithOptions(ceph.WithHostNetwork())
 	}
 	oracle := newNoInitialOSDOracle(t, ctx)
-	cluster, err := ceph.Run(ctx, opts)
+	cluster, err := ceph.Run(ctx, opts, testcontainers.WithEnv(map[string]string{"CEPH_ARGS": "--mds-beacon-grace=3600"}))
 	noInitialOSDCleanup(t, cluster)
 	coldMDSFailureLogs(t, cluster)
 	if err != nil {

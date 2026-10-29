@@ -9,7 +9,7 @@ import (
 
 func ExampleSetConfig() {
 	ctx := context.Background()
-	cluster, err := ceph.Run(ctx)
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{})
 	if cluster != nil {
 		defer func() { _ = cluster.Terminate(context.Background()) }()
 	}

@@ -38,7 +38,7 @@ func TestSharedClusterBenchmark(t *testing.T) {
 		}
 	}
 	image, run := integrationImages(t)
-	run = run.WithCustomizers(ceph.WithOSDCount(1))
+	run = run.WithOptions(ceph.WithOSDCount(1))
 	var report []string
 	for _, n := range counts {
 		began := time.Now()
@@ -49,7 +49,7 @@ func TestSharedClusterBenchmark(t *testing.T) {
 		})
 		report = append(report, fmt.Sprintf("N=%-2d own clusters, sequential:   %8s", n, time.Since(began).Round(time.Second)))
 		for _, parallel := range []bool{false, true} {
-			shared := ceph.NewShared(image, ceph.WithSharedRunOptions(run...), ceph.WithMaxTenants(4))
+			shared := ceph.NewShared(image, ceph.WithSharedRunOptions(run), ceph.WithMaxTenants(4))
 			began := time.Now()
 			t.Run(fmt.Sprintf("shared-%d-parallel-%v", n, parallel), func(t *testing.T) {
 				for i := range n {
@@ -83,7 +83,7 @@ func TestSharedClusterBenchmark(t *testing.T) {
 const benchmarkRADOS = `rados --id "$1" -p "$2" -N "$3" put object /etc/hostname && rados --id "$1" -p "$2" -N "$3" get object /tmp/object && python3 -c 'from pathlib import Path; assert Path("/etc/hostname").read_bytes() == Path("/tmp/object").read_bytes(), "RADOS bytes differ"'`
 
 // ownClusterRADOSTest is the small test with a cluster of its own.
-func ownClusterRADOSTest(t *testing.T, image string, run []testcontainers.ContainerCustomizer) {
+func ownClusterRADOSTest(t *testing.T, image string, run ceph.RunOptions) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	cluster, err := ceph.Run(ctx, run)

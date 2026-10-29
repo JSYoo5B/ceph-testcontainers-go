@@ -61,7 +61,7 @@ func TestWithMessengerPolicyKeepsCallerSlices(t *testing.T) {
 }
 
 func TestMessengerPolicyRefusesMessengerV2Secure(t *testing.T) {
-	cluster, err := Run(context.Background(), RunOptions{}.WithCustomizers(WithMessengerMode(MessengerV2Secure), WithMessengerPolicy(MessengerPolicy{Monitors: []MessengerConnectionMode{MessengerSecure}})))
+	cluster, err := Run(context.Background(), RunOptions{}.WithOptions(WithMessengerMode(MessengerV2Secure), WithMessengerPolicy(MessengerPolicy{Monitors: []MessengerConnectionMode{MessengerSecure}})))
 	if err == nil || cluster != nil || !strings.Contains(err.Error(), "MessengerV2Secure") {
 		t.Fatalf("Run accepted a policy with MessengerV2Secure: %v", err)
 	}

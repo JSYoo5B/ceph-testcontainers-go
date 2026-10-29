@@ -313,7 +313,7 @@ func testDualStackReplacement(t *testing.T) {
 	const filesystem, pool = "tc-cephfs", "tc-dual-stack"
 	replacementMDS := filesystem + "-1"
 	ipv6First := map[string]bool{"osd.2": true, "mds." + replacementMDS: true, "mgr.b": true}
-	opts := roles.WithCustomizers(ceph.WithOSDCount(2), ceph.WithMonitorCount(2), ceph.WithManagerCount(1),
+	opts := roles.WithOptions(ceph.WithOSDCount(2), ceph.WithMonitorCount(2), ceph.WithManagerCount(1),
 		ceph.WithAddressFamily(ceph.AddressDualStack),
 		ceph.WithConfigFile(dualStackOrderConfig(t, "osd.2", "mds."+replacementMDS, "mgr.b")),
 		cephfs.WithFilesystems(cephfs.Config{Name: filesystem, ActiveMDS: 1}))

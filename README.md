@@ -96,7 +96,7 @@ import (
 
 func TestWithCeph(t *testing.T) {
 	ctx := t.Context()
-	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 		ceph.WithPools(ceph.PoolConfig{Name: "app"}),
 	))
 	testcontainers.CleanupContainer(t, cluster)
@@ -120,13 +120,13 @@ The service packages start a cluster with their own defaults:
 
 ```golang
 // An initialized RBD pool named rbd.
-volumes, err := rbd.Run(ctx)
+volumes, err := rbd.Run(ctx, ceph.RunOptions{})
 
 // The filesystem tc-cephfs with one active MDS.
-files, err := cephfs.Run(ctx)
+files, err := cephfs.Run(ctx, ceph.RunOptions{})
 
 // One S3 gateway with a generated test user.
-objects, err := rgw.Run(ctx)
+objects, err := rgw.Run(ctx, ceph.RunOptions{})
 endpoint, err := objects.S3Endpoint(ctx)
 gateways, err := objects.Gateways(ctx)
 if err != nil {
@@ -138,7 +138,7 @@ gateway := gateways[0] // AccessKey, SecretKey and Region
 To serve several services from one cluster, pass their options to `ceph.Run`:
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
 	cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
 	rgw.WithGateways(rgw.Config{Name: "s3"}),

@@ -24,7 +24,7 @@ it starts each container, so any image that meets the
 [requirements](#image-requirements-by-role) can replace the default.
 
 ```golang
-cluster, err := ceph.Run(ctx)
+cluster, err := ceph.Run(ctx, ceph.RunOptions{})
 ```
 
 ## Supported releases
@@ -165,7 +165,7 @@ cluster, err := ceph.Run(ctx, ceph.RunOptions{}.
         CephFS: cephFSRef,
         RGW: rgwRef,
     }).
-    WithCustomizers(
+    WithOptions(
         cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
         rgw.WithGateways(rgw.Config{Name: "s3"}),
     ))

@@ -21,25 +21,25 @@ var (
 func TestFilesystemOptionsRejectInvalidCompositionBeforeRuntime(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		opts []testcontainers.ContainerCustomizer
+		opts []ceph.Option
 	}{
-		{"duplicate initial filesystems", []testcontainers.ContainerCustomizer{WithFilesystems(Config{Name: "alpha"}, Config{Name: "alpha"})}},
-		{"pool shared with filesystem", []testcontainers.ContainerCustomizer{ceph.WithPools(ceph.PoolConfig{Name: "alpha-data"}), WithFilesystems(Config{Name: "alpha"})}},
-		{"invalid captured filesystem", []testcontainers.ContainerCustomizer{WithFilesystems(Config{Name: "bad name"})}},
-		{"blank MDS image", []testcontainers.ContainerCustomizer{WithMDSImage("\n")}},
-		{"no initial OSDs/zero-last", []testcontainers.ContainerCustomizer{WithFilesystems(), ceph.WithNoInitialOSDs()}},
-		{"no initial OSDs/zero-first", []testcontainers.ContainerCustomizer{ceph.WithNoInitialOSDs(), WithFilesystems()}},
-		{"no initial managers/zero-last", []testcontainers.ContainerCustomizer{WithFilesystems(), ceph.WithNoInitialManagers()}},
-		{"no initial managers/zero-first", []testcontainers.ContainerCustomizer{ceph.WithNoInitialManagers(), WithFilesystems()}},
+		{"duplicate initial filesystems", []ceph.Option{WithFilesystems(Config{Name: "alpha"}, Config{Name: "alpha"})}},
+		{"pool shared with filesystem", []ceph.Option{ceph.WithPools(ceph.PoolConfig{Name: "alpha-data"}), WithFilesystems(Config{Name: "alpha"})}},
+		{"invalid captured filesystem", []ceph.Option{WithFilesystems(Config{Name: "bad name"})}},
+		{"blank MDS image", []ceph.Option{WithMDSImage("\n")}},
+		{"no initial OSDs/zero-last", []ceph.Option{WithFilesystems(), ceph.WithNoInitialOSDs()}},
+		{"no initial OSDs/zero-first", []ceph.Option{ceph.WithNoInitialOSDs(), WithFilesystems()}},
+		{"no initial managers/zero-last", []ceph.Option{WithFilesystems(), ceph.WithNoInitialManagers()}},
+		{"no initial managers/zero-first", []ceph.Option{ceph.WithNoInitialManagers(), WithFilesystems()}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var customizers atomic.Int32
-			opts := append(test.opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+			probe := testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil })
 			// Validation runs before the context is consulted, so a canceled
 			// context separates a rejection from an attempt to start.
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(opts...))
+			cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(test.opts...), probe)
 			if cluster != nil || err == nil || errors.Is(err, context.Canceled) || customizers.Load() != 0 {
 				t.Fatalf("invalid filesystem composition reached runtime: cluster=%v err=%v customizers=%d", cluster, err, customizers.Load())
 			}
@@ -167,7 +167,7 @@ func TestFilesystemImageOptionFillsMissingRoleInRunWithImageSet(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithImageSet(ceph.ImageSet{Essential: "core", Client: "toolkit"}).
-		WithCustomizers(WithMDSImage("service-image"), WithFilesystems()))
+		WithOptions(WithMDSImage("service-image"), WithFilesystems()))
 	if cluster != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("service image option did not reach canceled admission: %v %v", cluster, err)
 	}

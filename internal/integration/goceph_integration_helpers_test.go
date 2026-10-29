@@ -35,9 +35,9 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 	results := make(chan outcome, 2)
 	for i := range 2 {
 		go func() {
-			config := imageOpts.WithCustomizers(ceph.WithOSDCount(2), ceph.WithStartupTimeout(5*time.Minute))
+			config := imageOpts.WithOptions(ceph.WithOSDCount(2), ceph.WithStartupTimeout(5*time.Minute))
 			if mode == "host" {
-				config = config.WithCustomizers(ceph.WithHostNetwork())
+				config = config.WithOptions(ceph.WithHostNetwork())
 			}
 			cluster, err := ceph.Run(ctx, config)
 			results <- outcome{i, cluster, err}

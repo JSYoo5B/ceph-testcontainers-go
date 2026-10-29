@@ -60,28 +60,47 @@ func integrationImages(t *testing.T) (string, ceph.RunOptions) {
 	return images.Essential, ceph.RunOptions{}.WithImageSet(images)
 }
 
+// splitRunInputs separates the mixed argument lists of the many test callers of
+// newServiceCluster into what Run takes separately: the ceph.Option settings
+// for ceph.RunOptions and the raw container customizers for the trailing
+// variadic. Production code has no such split-after-the-fact; Run refuses an
+// Option in the customizer position.
+func splitRunInputs(inputs []testcontainers.ContainerCustomizer) ([]ceph.Option, []testcontainers.ContainerCustomizer) {
+	var options []ceph.Option
+	var raw []testcontainers.ContainerCustomizer
+	for _, input := range inputs {
+		if option, ok := input.(ceph.Option); ok {
+			options = append(options, option)
+		} else {
+			raw = append(raw, input)
+		}
+	}
+	return options, raw
+}
+
 // Service tests run sequentially to fit the local Docker VM's 4 GiB budget.
 func newServiceCluster(t *testing.T, customizers ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {
 	t.Helper()
 	image, config := integrationImages(t)
-	config = config.WithCustomizers(ceph.WithOSDCount(2)).WithCustomizers(customizers...)
-	return newServiceClusterWithOptions(t, image, config)
+	options, raw := splitRunInputs(customizers)
+	config = config.WithOptions(ceph.WithOSDCount(2)).WithOptions(options...)
+	return newServiceClusterWithOptions(t, image, config, raw...)
 }
 
 // This variant keeps the caller's initial topology, including zero OSDs.
-func newServiceClusterWithOptions(t *testing.T, image string, config ceph.RunOptions) (*ceph.Container, testcontainers.Container) {
+func newServiceClusterWithOptions(t *testing.T, image string, config ceph.RunOptions, customizers ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {
 	t.Helper()
-	return newServiceClusterRun(t, ceph.Run, image, config)
+	return newServiceClusterRun(t, ceph.Run, image, config, customizers...)
 }
 
 // clusterRun is ceph.Run or a service package's Run.
-type clusterRun func(context.Context, ...ceph.RunOptions) (*ceph.Container, error)
+type clusterRun func(context.Context, ceph.RunOptions, ...testcontainers.ContainerCustomizer) (*ceph.Container, error)
 
 // serviceRun adapts a service package's Run, which returns its own Container
 // embedding *ceph.Container, to clusterRun.
-func serviceRun[C any](run func(context.Context, ...ceph.RunOptions) (*C, error), cluster func(*C) *ceph.Container) clusterRun {
-	return func(ctx context.Context, configs ...ceph.RunOptions) (*ceph.Container, error) {
-		c, err := run(ctx, configs...)
+func serviceRun[C any](run func(context.Context, ceph.RunOptions, ...testcontainers.ContainerCustomizer) (*C, error), cluster func(*C) *ceph.Container) clusterRun {
+	return func(ctx context.Context, config ceph.RunOptions, customizers ...testcontainers.ContainerCustomizer) (*ceph.Container, error) {
+		c, err := run(ctx, config, customizers...)
 		if c == nil {
 			return nil, err
 		}
@@ -98,9 +117,9 @@ var (
 // newServiceClusterRun starts a cluster with run and attaches a client.
 // image is the aggregate image from which the native client image derives; it
 // is not a second image selection of the cluster, which config carries.
-func newServiceClusterRun(t *testing.T, run clusterRun, image string, config ceph.RunOptions) (*ceph.Container, testcontainers.Container) {
+func newServiceClusterRun(t *testing.T, run clusterRun, image string, config ceph.RunOptions, customizers ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {
 	t.Helper()
-	cluster, err := run(t.Context(), config)
+	cluster, err := run(t.Context(), config, customizers...)
 	if cluster != nil {
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

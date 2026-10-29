@@ -55,7 +55,7 @@ func TestRBD(t *testing.T) {
 	ctx := context.Background()
 
 	// MON, MGR and two OSDs, plus the initialized replicated pool "rbd".
-	cluster, err := rbd.Run(ctx)
+	cluster, err := rbd.Run(ctx, ceph.RunOptions{})
 	testcontainers.CleanupContainer(t, cluster)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ port. For native clients outside Docker, see
 The RBD module exposes one entrypoint function to create the RBD container, and this function receives three parameters:
 
 ```golang
-func Run(ctx context.Context, configs ...ceph.RunOptions) (*Container, error)
+func Run(ctx context.Context, config ceph.RunOptions, customizers ...testcontainers.ContainerCustomizer) (*Container, error)
 ```
 
 - `context.Context`, the Go context.
@@ -133,7 +133,7 @@ The package-level functions (`InitPool`, `CreateNamespace`, `ImageClients`, ...)
 take a `*ceph.Container`. They work with a cluster from
 `ceph.Run` and with any other service package's `Run`. For a cluster started
 with `rbd.Run`, pass its embedded `*ceph.Container`. The examples on this page
-start clusters with `ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(rbd.WithPools(...)))`, which is
+start clusters with `ceph.Run(ctx, ceph.RunOptions{}.WithOptions(rbd.WithPools(...)))`, which is
 equivalent to `rbd.Run` with explicit pools.
 
 #### Image
@@ -164,7 +164,7 @@ metadata (`rbd pool init`). It works with `rbd.Run`, `ceph.Run` and the other
 service packages' `Run`.
 
 ```golang
-cluster, err := rbd.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := rbd.Run(ctx, ceph.RunOptions{}.WithOptions(
 	rbd.WithPools(
 		ceph.PoolConfig{Name: "volumes"},
 		ceph.PoolConfig{Name: "backups", Replicas: 1, MinSize: 1},
@@ -186,7 +186,7 @@ An erasure-coded pool can hold image data, not metadata. Create it with
 `ceph.WithPools` and name it as the image's data pool:
 
 ```golang
-cluster, err := rbd.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := rbd.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithOSDCount(3),
 	rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
 	ceph.WithPools(ceph.PoolConfig{
@@ -240,7 +240,7 @@ Initializes an existing replicated pool for RBD metadata, for clusters started
 without `WithPools` or pools created later with `CreatePool`.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithPools(ceph.PoolConfig{Name: "images", Application: "rbd"}),
 ))
 // ... cleanup and error handling ...
@@ -624,7 +624,7 @@ that can create and write images in the namespace, and one that can only read.
 ```golang
 func TestTenantNamespace(t *testing.T) {
 	ctx := context.Background()
-	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 		rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
 	))
 	testcontainers.CleanupContainer(t, cluster)
@@ -768,7 +768,7 @@ without waiting.
 func TestLockHandover(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 		rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
 	))
 	testcontainers.CleanupContainer(t, cluster)

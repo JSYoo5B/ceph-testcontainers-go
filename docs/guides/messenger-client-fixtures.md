@@ -20,7 +20,7 @@ when replacing a custom bootstrap, see [Upgrading to v0.2.0](upgrading-to-v0.2.m
 
 | Profile input | Values | Fixture options | Proven by |
 | --- | --- | --- | --- |
-| Image | Tentacle 20.2.4, Tentacle 20.2.3 | `ceph.Run(ctx, ceph.RunOptions{}.WithImage(image).WithCustomizers(...))` | every test below; `TestMessengerClientProfileWithoutKeyTypes` runs 20.2.3 |
+| Image | Tentacle 20.2.4, Tentacle 20.2.3 | `ceph.Run(ctx, ceph.RunOptions{}.WithImage(image).WithOptions(...))` | every test below; `TestMessengerClientProfileWithoutKeyTypes` runs 20.2.3 |
 | Messenger v1 | never bound or advertised | `WithMessengerMode(MessengerV2Only)`, or `MessengerV2Secure` | every profile |
 | Monitors | three | `WithMonitorCount(3)` | every profile |
 | Managers | two | `WithManagerCount(2)` | every profile but the next |

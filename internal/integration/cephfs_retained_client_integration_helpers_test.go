@@ -423,18 +423,19 @@ func testCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...tes
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, imageOpts := integrationImages(t)
-	config := imageOpts.WithCustomizers(ceph.WithMessengerMode(ceph.MessengerV2Secure)).WithCustomizers(opts...)
+	callerOptions, raw := splitRunInputs(opts)
+	config := imageOpts.WithOptions(ceph.WithMessengerMode(ceph.MessengerV2Secure)).WithOptions(callerOptions...)
 	activeRanks, failedRank, pin := 1, 0, "-"
 	path, renamed := "/retained", "/retained-renamed"
 	switch failover {
 	case cephFSStandbyTakeover, cephFSReplayTakeover:
-		config = config.WithCustomizers(cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1, StandbyReplay: failover == cephFSReplayTakeover}))
+		config = config.WithOptions(cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1, StandbyReplay: failover == cephFSReplayTakeover}))
 	case cephFSRankOneTakeover:
-		config = config.WithCustomizers(cephfs.WithFilesystems(cephfs.Config{ActiveMDS: 2, StandbyMDS: 1}))
+		config = config.WithOptions(cephfs.WithFilesystems(cephfs.Config{ActiveMDS: 2, StandbyMDS: 1}))
 		activeRanks, failedRank, pin = 2, 1, "1"
 		path, renamed = "/pinned/retained", "/pinned/retained-renamed"
 	}
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, config)
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, config, raw...)
 	filesystems := cephfs.Filesystems(cluster)
 	if len(filesystems) != 1 {
 		t.Fatalf("filesystems = %d, want 1", len(filesystems))
@@ -812,7 +813,7 @@ func testCephFSCapabilityHandoff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, imageOpts := integrationImages(t)
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, imageOpts.WithCustomizers(ceph.WithMessengerMode(ceph.MessengerV2Secure)))
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, imageOpts.WithOptions(ceph.WithMessengerMode(ceph.MessengerV2Secure)))
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)
@@ -985,7 +986,7 @@ func testCephFSLateReconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, imageOpts := integrationImages(t)
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, imageOpts.WithCustomizers(ceph.WithMessengerMode(ceph.MessengerV2Secure),
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, imageOpts.WithOptions(ceph.WithMessengerMode(ceph.MessengerV2Secure),
 		cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1})))
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
@@ -1406,7 +1407,7 @@ func testCephFSLiveRankMigration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, imageOpts := integrationImages(t)
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, imageOpts.WithCustomizers(ceph.WithMessengerMode(ceph.MessengerV2Secure),
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, imageOpts.WithOptions(ceph.WithMessengerMode(ceph.MessengerV2Secure),
 		cephfs.WithFilesystems(cephfs.Config{ActiveMDS: 2})))
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
@@ -1832,7 +1833,8 @@ type cephFSSingleMDS struct {
 func startCephFSSingleMDS(t *testing.T, ctx context.Context, opts ...testcontainers.ContainerCustomizer) *cephFSSingleMDS {
 	t.Helper()
 	image, imageOpts := integrationImages(t)
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, imageOpts.WithCustomizers(ceph.WithMessengerMode(ceph.MessengerV2Secure)).WithCustomizers(opts...))
+	callerOptions, raw := splitRunInputs(opts)
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, imageOpts.WithOptions(ceph.WithMessengerMode(ceph.MessengerV2Secure)).WithOptions(callerOptions...), raw...)
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)

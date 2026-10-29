@@ -3,29 +3,27 @@ package ceph
 import (
 	"context"
 	"testing"
-
-	"github.com/testcontainers/testcontainers-go"
 )
 
 func TestInvalidInitialCompositionDoesNotCreateResources(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		opts []testcontainers.ContainerCustomizer
+		opts []Option
 	}{
-		{"replicas exceed initial OSDs", []testcontainers.ContainerCustomizer{WithOSDCount(1), WithPools(PoolConfig{Name: "data", Replicas: 3})}},
-		{"EC exceeds initial OSDs", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "data", ErasureCode: &ErasureCodeConfig{K: 2, M: 1}})}},
-		{"duplicate initial pools", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "data"}, PoolConfig{Name: "data"})}},
-		{"too few CRUSH domains", []testcontainers.ContainerCustomizer{WithInitialOSDs(OSDConfig{Host: "same"}, OSDConfig{Host: "same"}), WithPools(PoolConfig{Name: "data", FailureDomain: "host"})}},
-		{"late default invalidates pool", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "data", Replicas: 1}), WithPoolDefaults(3, 2)}},
-		{"empty default root", []testcontainers.ContainerCustomizer{WithDefaultCRUSHRoot("")}},
-		{"unsafe default root", []testcontainers.ContainerCustomizer{WithDefaultCRUSHRoot("bad root")}},
-		{"unpopulated default root", []testcontainers.ContainerCustomizer{WithInitialOSDs(OSDConfig{Root: "storage"}, OSDConfig{Root: "storage"})}},
-		{"default root too small", []testcontainers.ContainerCustomizer{WithInitialOSDs(OSDConfig{Root: "default"}, OSDConfig{Root: "storage"})}},
-		{"explicit absent default root", []testcontainers.ContainerCustomizer{WithDefaultCRUSHRoot("absent"), WithInitialOSDs(OSDConfig{Root: "storage"}, OSDConfig{Root: "storage"})}},
-		{"invalid captured pool", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "bad name"})}},
+		{"replicas exceed initial OSDs", []Option{WithOSDCount(1), WithPools(PoolConfig{Name: "data", Replicas: 3})}},
+		{"EC exceeds initial OSDs", []Option{WithPools(PoolConfig{Name: "data", ErasureCode: &ErasureCodeConfig{K: 2, M: 1}})}},
+		{"duplicate initial pools", []Option{WithPools(PoolConfig{Name: "data"}, PoolConfig{Name: "data"})}},
+		{"too few CRUSH domains", []Option{WithInitialOSDs(OSDConfig{Host: "same"}, OSDConfig{Host: "same"}), WithPools(PoolConfig{Name: "data", FailureDomain: "host"})}},
+		{"late default invalidates pool", []Option{WithPools(PoolConfig{Name: "data", Replicas: 1}), WithPoolDefaults(3, 2)}},
+		{"empty default root", []Option{WithDefaultCRUSHRoot("")}},
+		{"unsafe default root", []Option{WithDefaultCRUSHRoot("bad root")}},
+		{"unpopulated default root", []Option{WithInitialOSDs(OSDConfig{Root: "storage"}, OSDConfig{Root: "storage"})}},
+		{"default root too small", []Option{WithInitialOSDs(OSDConfig{Root: "default"}, OSDConfig{Root: "storage"})}},
+		{"explicit absent default root", []Option{WithDefaultCRUSHRoot("absent"), WithInitialOSDs(OSDConfig{Root: "storage"}, OSDConfig{Root: "storage"})}},
+		{"invalid captured pool", []Option{WithPools(PoolConfig{Name: "bad name"})}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cluster, err := Run(context.Background(), RunOptions{}.WithCustomizers(test.opts...))
+			cluster, err := Run(context.Background(), RunOptions{}.WithOptions(test.opts...))
 			if err == nil || cluster != nil {
 				t.Fatalf("invalid initial composition allocated resources: cluster=%v error=%v", cluster, err)
 			}

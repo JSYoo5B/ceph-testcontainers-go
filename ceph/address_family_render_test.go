@@ -47,7 +47,7 @@ func TestAddressFamilyBootstrapRenderingGolden(t *testing.T) {
 							// rather than treating cancellation as proof of configuration refusal.
 							ctx, cancel := context.WithCancel(t.Context())
 							cancel()
-							refused, err := Run(ctx, RunOptions{}.WithCustomizers(WithAddressFamily(family), WithSeparateClusterNetwork(), WithMessengerMode(mode)))
+							refused, err := Run(ctx, RunOptions{}.WithOptions(WithAddressFamily(family), WithSeparateClusterNetwork(), WithMessengerMode(mode)))
 							if refused != nil || !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "cannot be combined with WithSeparateClusterNetwork") {
 								t.Fatalf("unsupported address-family/layout admission: container=%v error=%v", refused != nil, err)
 							}

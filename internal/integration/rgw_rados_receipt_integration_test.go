@@ -55,7 +55,7 @@ func TestRGWRadosReceipt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	_, roles := integrationImages(t)
-	cluster, err := rgw.Run(ctx, roles.WithCustomizers(ceph.WithMonitorCount(1), ceph.WithManagerCount(1), ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)))
+	cluster, err := rgw.Run(ctx, roles.WithOptions(ceph.WithMonitorCount(1), ceph.WithManagerCount(1), ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)))
 	testcontainers.CleanupContainer(t, cluster)
 	if err != nil {
 		t.Fatal(err)

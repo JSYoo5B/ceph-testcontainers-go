@@ -66,9 +66,9 @@ func TestRBDPausedLockOwner(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = opts.WithCustomizers(ceph.WithOSDCount(2))
+			opts = opts.WithOptions(ceph.WithOSDCount(2))
 			if host {
-				opts = opts.WithCustomizers(ceph.WithHostNetwork())
+				opts = opts.WithOptions(ceph.WithHostNetwork())
 			}
 			cluster, first := newServiceClusterWithOptions(t, image, opts)
 			second, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(), ceph.WithIdleEntrypoint(),

@@ -11,7 +11,7 @@ import (
 // The service default joins the composition that Run validates before it
 // creates any network or container, so a cluster without OSDs is refused.
 func TestRunRequiresStorageForItsDefaultService(t *testing.T) {
-	cluster, err := rgw.Run(context.Background(), ceph.RunOptions{}.WithCustomizers(ceph.WithNoInitialOSDs()))
+	cluster, err := rgw.Run(context.Background(), ceph.RunOptions{}.WithOptions(ceph.WithNoInitialOSDs()))
 	if err == nil || cluster != nil {
 		t.Fatalf("Run accepted a cluster without storage: %v", err)
 	}

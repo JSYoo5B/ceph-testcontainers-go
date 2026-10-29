@@ -90,7 +90,7 @@ func TestCephFSPausedClientEviction(t *testing.T) {
 			defer cancel()
 			image, opts := integrationImages(t)
 			if host {
-				opts = opts.WithCustomizers(ceph.WithHostNetwork())
+				opts = opts.WithOptions(ceph.WithHostNetwork())
 			}
 			cluster, client := newServiceClusterRun(t, cephfsRun, image, opts)
 			filesystems := cephfs.Filesystems(cluster)

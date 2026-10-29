@@ -20,24 +20,24 @@ var _ testcontainers.Container = (*Gateway)(nil)
 func TestGatewayOptionsRejectInvalidCompositionBeforeRuntime(t *testing.T) {
 	for _, test := range []struct {
 		name, want string
-		opts       []testcontainers.ContainerCustomizer
+		opts       []ceph.Option
 	}{
-		{"duplicate initial gateways", "duplicated", []testcontainers.ContainerCustomizer{WithGateways(Config{Name: "a"}, Config{Name: "a"})}},
-		{"invalid initial gateway", "", []testcontainers.ContainerCustomizer{WithGateways(Config{Name: "invalid/name"})}},
-		{"blank image", "image", []testcontainers.ContainerCustomizer{WithImage(" \t")}},
-		{"no initial OSDs/zero-last", "", []testcontainers.ContainerCustomizer{WithGateways(), ceph.WithNoInitialOSDs()}},
-		{"no initial OSDs/zero-first", "", []testcontainers.ContainerCustomizer{ceph.WithNoInitialOSDs(), WithGateways()}},
-		{"no initial managers/zero-last", "no initial", []testcontainers.ContainerCustomizer{WithGateways(), ceph.WithNoInitialManagers()}},
-		{"no initial managers/zero-first", "no initial", []testcontainers.ContainerCustomizer{ceph.WithNoInitialManagers(), WithGateways()}},
+		{"duplicate initial gateways", "duplicated", []ceph.Option{WithGateways(Config{Name: "a"}, Config{Name: "a"})}},
+		{"invalid initial gateway", "", []ceph.Option{WithGateways(Config{Name: "invalid/name"})}},
+		{"blank image", "image", []ceph.Option{WithImage(" \t")}},
+		{"no initial OSDs/zero-last", "", []ceph.Option{WithGateways(), ceph.WithNoInitialOSDs()}},
+		{"no initial OSDs/zero-first", "", []ceph.Option{ceph.WithNoInitialOSDs(), WithGateways()}},
+		{"no initial managers/zero-last", "no initial", []ceph.Option{WithGateways(), ceph.WithNoInitialManagers()}},
+		{"no initial managers/zero-first", "no initial", []ceph.Option{ceph.WithNoInitialManagers(), WithGateways()}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var customizers atomic.Int32
-			opts := append(test.opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+			probe := testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil })
 			// Validation runs before the context is consulted, so a canceled
 			// context separates a rejection from an attempt to start.
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(opts...))
+			cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(test.opts...), probe)
 			if cluster != nil || err == nil || errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), test.want) || customizers.Load() != 0 {
 				t.Fatalf("invalid gateway composition reached runtime: cluster=%v err=%v customizers=%d", cluster, err, customizers.Load())
 			}
@@ -161,7 +161,7 @@ func TestGatewayImageOptionFillsMissingRoleInRunWithImageSet(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithImageSet(ceph.ImageSet{Essential: "core", Client: "toolkit"}).
-		WithCustomizers(WithImage("service-image"), WithGateways()))
+		WithOptions(WithImage("service-image"), WithGateways()))
 	if cluster != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("service image option did not reach canceled admission: %v %v", cluster, err)
 	}

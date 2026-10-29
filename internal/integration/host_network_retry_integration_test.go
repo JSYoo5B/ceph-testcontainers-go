@@ -88,9 +88,9 @@ func TestHostNetworkMonitorPortConflictRetry(t *testing.T) {
 		})
 		return nil
 	})
-	opts = opts.WithCustomizers(ceph.WithHostNetwork(), ceph.WithHostAddress(address),
-		ceph.WithOSDCount(1), ceph.WithStartupTimeout(3*time.Minute), customize)
-	cluster, err := ceph.Run(ctx, opts)
+	opts = opts.WithOptions(ceph.WithHostNetwork(), ceph.WithHostAddress(address),
+		ceph.WithOSDCount(1), ceph.WithStartupTimeout(3*time.Minute))
+	cluster, err := ceph.Run(ctx, opts, customize)
 	if cluster != nil {
 		hostNetworkCleanupCluster(t, cluster)
 	}

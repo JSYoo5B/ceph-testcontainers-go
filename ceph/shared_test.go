@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // fakeShared models the state of one cluster that the shared cluster's
@@ -244,7 +246,7 @@ type fakeFleet struct {
 	prepareServices func(*fakeShared) error
 }
 
-func (fleet *fakeFleet) start(context.Context, string, RunOptions) (sharedBackend, error) {
+func (fleet *fakeFleet) start(context.Context, string, RunOptions, []testcontainers.ContainerCustomizer) (sharedBackend, error) {
 	if fleet.entered != nil {
 		fleet.entered <- struct{}{}
 		<-fleet.gate

@@ -21,7 +21,7 @@ func TestManagerLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 7*time.Minute)
 	defer cancel()
 	_, options := integrationImages(t)
-	options = options.WithCustomizers(ceph.WithOSDCount(1), ceph.WithManagerCount(1), ceph.WithStartupTimeout(3*time.Minute))
+	options = options.WithOptions(ceph.WithOSDCount(1), ceph.WithManagerCount(1), ceph.WithStartupTimeout(3*time.Minute))
 	cluster, err := ceph.Run(ctx, options)
 	if cluster != nil {
 		testcontainers.CleanupContainer(t, cluster)

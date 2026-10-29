@@ -136,30 +136,35 @@ type OSDContainer struct {
 
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
 //
-// Run takes any number of RunOptions values. No value selects DefaultImage and
-// every default. Several values compose in argument order: customizers are
-// concatenated, and at most one value may select images (WithImage or
-// WithImageSet); a second selection is refused even when it repeats the first.
-// An explicit selection of an empty image is refused, not read as unspecified.
-// The whole assembled configuration is validated before any container, network
-// or volume is created. Images contain runtime tools; this module supplies
+// Run takes the Ceph configuration (RunOptions: image selection and the cluster
+// and service settings) and then any number of testcontainers customizers, the
+// only trailing variadic Go permits. No image selection means DefaultImage and
+// every default; an explicit empty image or image set is refused, not read as
+// unspecified. The Ceph settings, in the order of RunOptions.WithOptions, are
+// applied and validated together with the image selection before any container,
+// network or volume is created.
+//
+// The trailing customizers are the retained escape to the dependency. They
+// apply to the first MON's container request only, in argument order, after the
+// module's own request options and before the module adds the messenger
+// environment, the WithConfigFile file and the ownership label, which a caller
+// cannot override. They are not validated here. A ceph.Option is refused there
+// instead of being dropped, because an Option is a module setting and its
+// Customize does nothing. Images contain runtime tools; this module supplies
 // cluster setup. A non-nil Container returned with an error must still be
 // terminated.
-func Run(ctx context.Context, configs ...RunOptions) (*Container, error) {
-	plan, err := composeRunOptions(configs)
+func Run(ctx context.Context, runConfig RunOptions, customizers ...testcontainers.ContainerCustomizer) (*Container, error) {
+	plan, err := composeRun(runConfig, customizers)
 	if err != nil {
 		return nil, err
 	}
-	opts := plan.customizers
 	settings := options{
 		osds: 2, monitors: 1, managers: 1, blockSize: 1 << 30, startupTimeout: 3 * time.Minute,
 		essentialImage: plan.essential, imageSet: plan.images, publicAddress: "127.0.0.1",
 	}
-	for _, opt := range opts {
-		if opt, ok := opt.(Option); ok {
-			if err := opt(&settings); err != nil {
-				return nil, classify(ErrInvalidRequest, fmt.Errorf("configure ceph: %w", err))
-			}
+	for _, opt := range plan.options {
+		if err := opt(&settings); err != nil {
+			return nil, classify(ErrInvalidRequest, fmt.Errorf("configure ceph: %w", err))
 		}
 	}
 	if err := configureImages(&settings); err != nil {
@@ -234,7 +239,7 @@ func Run(ctx context.Context, configs ...RunOptions) (*Container, error) {
 	if err := c.runDir.create(ctx); err != nil {
 		return c, err
 	}
-	mon, err := c.runMonitor(ctx, settings.essentialImage, uuid.NewString(), opts...)
+	mon, err := c.runMonitor(ctx, settings.essentialImage, uuid.NewString(), plan.customizers...)
 	if mon != nil {
 		c.Container = mon
 	}

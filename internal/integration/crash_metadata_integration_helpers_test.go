@@ -41,7 +41,7 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	// after the first cluster, so that no image pull counts against its
 	// short startup timeout.
 	_, imageOpts := integrationImages(t)
-	partial, err := ceph.Run(ctx, imageOpts.WithCustomizers(ceph.WithOSDCount(1), ceph.WithStartupTimeout(3*time.Second)))
+	partial, err := ceph.Run(ctx, imageOpts.WithOptions(ceph.WithOSDCount(1), ceph.WithStartupTimeout(3*time.Second)))
 	if partial == nil || err == nil {
 		if partial != nil {
 			_ = partial.Terminate(context.WithoutCancel(ctx))

@@ -1,0 +1,15 @@
+{
+  "schema": "ceph-api-move/v1",
+  "change": "312-run-options",
+  "review": "value-configuration-composition.md",
+  "removed": [
+    "ceph.RunWithImages",
+    "ceph.WithImages"
+  ],
+  "added": [
+    "ceph.RunOptions",
+    "ceph.RunOptions.WithImage",
+    "ceph.RunOptions.WithImageSet",
+    "ceph.RunOptions.WithOptions"
+  ]
+}

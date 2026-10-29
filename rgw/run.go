@@ -3,20 +3,20 @@ package rgw
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // Run starts a disposable cluster for S3 and Swift clients. It takes the same
-// ceph.RunOptions values as ceph.Run, composed the same way; pass the options of
-// other service packages through RunOptions.WithCustomizers. When no WithGateways option is
+// arguments as ceph.Run: the ceph.RunOptions, in which the options of other
+// service packages go through WithOptions, and trailing container customizers. When no WithGateways option is
 // given, it starts the default gateway and creates its test user.
 // Bootstrap options that leave the cluster without OSDs or managers for the gateway, such as
 // ceph.WithNoInitialOSDs, are rejected; use ceph.Run for those stages.
 // A non-nil Container returned with an error must still be terminated.
-func Run(ctx context.Context, configs ...ceph.RunOptions) (*Container, error) {
-	c, err := ceph.Run(ctx, append(slices.Clone(configs), ceph.RunOptions{}.WithCustomizers(defaultGateway()))...)
+func Run(ctx context.Context, config ceph.RunOptions, customizers ...testcontainers.ContainerCustomizer) (*Container, error) {
+	c, err := ceph.Run(ctx, config.WithOptions(defaultGateway()), customizers...)
 	if c == nil {
 		return nil, err
 	}

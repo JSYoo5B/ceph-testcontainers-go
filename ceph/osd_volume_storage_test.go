@@ -50,11 +50,11 @@ func osdVolumeFixture() (*osdVolumeStorage, *osdVolumeDockerFake, *osdVolumeHelp
 }
 
 func TestOSDVolumeStorageAdmissionBeforeAllocation(t *testing.T) {
-	for _, opts := range [][]testcontainers.ContainerCustomizer{
+	for _, opts := range [][]Option{
 		{WithOSDVolumeStorage(), WithOSDInMemoryStorage(1)}, {WithOSDInMemoryStorage(1), WithOSDVolumeStorage()},
 		{WithOSDVolumeStorage(), WithOSDObjectStore(OSDMemStore)}, {WithOSDObjectStore(OSDMemStore), WithOSDVolumeStorage()},
 	} {
-		c, err := Run(t.Context(), RunOptions{}.WithCustomizers(opts...))
+		c, err := Run(t.Context(), RunOptions{}.WithOptions(opts...))
 		if c != nil || !errors.Is(err, ErrInvalidRequest) {
 			t.Fatalf("incompatible storage allocated resources: %v", err)
 		}

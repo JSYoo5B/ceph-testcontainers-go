@@ -59,7 +59,7 @@ import (
 func TestUploadAndDownload(t *testing.T) {
 	ctx := t.Context()
 
-	cluster, err := rgw.Run(ctx)
+	cluster, err := rgw.Run(ctx, ceph.RunOptions{})
 	testcontainers.CleanupContainer(t, cluster)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ For tests that only need an S3 endpoint, keep one daemon of each kind and
 single-copy pools:
 
 ```golang
-cluster, err := rgw.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := rgw.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithMonitorCount(1),
 	ceph.WithManagerCount(1),
 	ceph.WithOSDCount(1),
@@ -162,7 +162,7 @@ delete.
 The Ceph RGW module exposes one entrypoint function to create the Ceph RGW container, and this function receives three parameters:
 
 ```golang
-func Run(ctx context.Context, configs ...ceph.RunOptions) (*Container, error)
+func Run(ctx context.Context, config ceph.RunOptions, customizers ...testcontainers.ContainerCustomizer) (*Container, error)
 ```
 
 - `context.Context`, the Go context.
@@ -204,7 +204,7 @@ with `ceph.Run`, apply the options with `override.SetConfig`, and then call
 #### Image
 
 Pass `ceph.RunOptions{}.WithImage(image)` to the `Run` function to set a valid
-Docker image. `rgw.Run(ctx)` uses the default image.
+Docker image. `rgw.Run(ctx, ceph.RunOptions{})` uses the default image.
 
 - The default image is `ceph.DefaultImage`,
   `quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9`
@@ -248,7 +248,7 @@ and objects. Multisite scope is configured separately with
 [`rgw/multisite`](rgw-multisite.md) package.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithOptions(
 	ceph.WithOSDCount(3),
 	rgw.WithGateways(
 		rgw.Config{Name: "gateway-a"},
@@ -268,7 +268,7 @@ Selects the image for every gateway of the cluster, both the ones started by
 passed to `Run`. Use the same Ceph release as the essential image.
 
 ```golang
-cluster, err := rgw.Run(ctx, ceph.RunOptions{}.WithImage("registry.example.com/ceph:20.2.4-all").WithCustomizers(
+cluster, err := rgw.Run(ctx, ceph.RunOptions{}.WithImage("registry.example.com/ceph:20.2.4-all").WithOptions(
 	rgw.WithImage("registry.example.com/ceph:20.2.4-rgw"),
 ))
 ```
@@ -1051,7 +1051,7 @@ import (
 // applied before a gateway starts.
 func startCluster(t *testing.T, opts ...testcontainers.ContainerCustomizer) *ceph.Container {
 	t.Helper()
-	cluster, err := ceph.Run(t.Context(), ceph.RunOptions{}.WithCustomizers(opts...))
+	cluster, err := ceph.Run(t.Context(), ceph.RunOptions{}.WithOptions(opts...))
 	testcontainers.CleanupContainer(t, cluster)
 	if err != nil {
 		t.Fatal(err)
@@ -1156,7 +1156,7 @@ Gateways of one cluster serve the same data. This tests client failover between
 endpoints, or credentials shared by several gateways:
 
 ```golang
-cluster, err := rgw.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+cluster, err := rgw.Run(ctx, ceph.RunOptions{}.WithOptions(
 	rgw.WithGateways(
 		rgw.Config{Name: "a"},
 		rgw.Config{Name: "b", SkipUserCreation: true},

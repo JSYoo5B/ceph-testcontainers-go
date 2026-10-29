@@ -22,9 +22,9 @@ import (
 func rgwTopologyClusters(t *testing.T, ctx context.Context, count int, host bool) (string, string, []*ceph.Container) {
 	t.Helper()
 	control, options := integrationImages(t)
-	options = options.WithCustomizers(ceph.WithOSDCount(1))
+	options = options.WithOptions(ceph.WithOSDCount(1))
 	if host {
-		options = options.WithCustomizers(ceph.WithHostNetwork())
+		options = options.WithOptions(ceph.WithHostNetwork())
 	}
 	clusters := make([]*ceph.Container, count)
 	identities := make(map[string]bool)

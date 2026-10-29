@@ -32,9 +32,8 @@ func TestPartialClusterDiagnostics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	_, opts := integrationImages(t)
-	opts = opts.WithCustomizers(ceph.WithStartupTimeout(5*time.Second),
-		testcontainers.WithEntrypoint("/bin/sh", "-c", "exit 17"), testcontainers.WithCmd())
-	cluster, runErr := ceph.Run(ctx, opts)
+	opts = opts.WithOptions(ceph.WithStartupTimeout(5 * time.Second))
+	cluster, runErr := ceph.Run(ctx, opts, testcontainers.WithEntrypoint("/bin/sh", "-c", "exit 17"), testcontainers.WithCmd())
 	if cluster != nil {
 		testcontainers.CleanupContainer(t, cluster)
 	}

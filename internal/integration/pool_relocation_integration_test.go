@@ -36,9 +36,9 @@ func TestPoolPGRelocation(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = opts.WithCustomizers(ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
+			opts = opts.WithOptions(ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
 			if host {
-				opts = opts.WithCustomizers(ceph.WithHostNetwork())
+				opts = opts.WithOptions(ceph.WithHostNetwork())
 			}
 			cluster, client := newServiceClusterWithOptions(t, image, opts)
 			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {

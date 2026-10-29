@@ -145,8 +145,8 @@ func keyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) b
 func testAuthCiphers(t *testing.T, image string, imageOpts ceph.RunOptions) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	base := imageOpts.WithCustomizers(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))
-	cluster, _ := newServiceClusterWithOptions(t, image, base.WithCustomizers(ceph.WithAuth(ceph.AuthConfig{
+	base := imageOpts.WithOptions(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))
+	cluster, _ := newServiceClusterWithOptions(t, image, base.WithOptions(ceph.WithAuth(ceph.AuthConfig{
 		KeyType: ceph.CipherAES, MonTicketTTL: 10500 * time.Millisecond, ServiceTicketTTL: 120 * time.Second,
 	})))
 	keyTypes := keyTypeOption(t, ctx, cluster)
@@ -191,7 +191,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts ceph.RunOptions) {
 			t.Fatal("the refused AES256K client exists")
 		}
 		started := time.Now()
-		refused, err := ceph.Run(ctx, base.WithCustomizers(ceph.WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K})))
+		refused, err := ceph.Run(ctx, base.WithOptions(ceph.WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K})))
 		testcontainers.CleanupContainer(t, refused)
 		if !errors.Is(err, ceph.ErrUnsupported) || !strings.Contains(err.Error(), "ceph-authtool --key-type") || time.Since(started) > 2*time.Minute {
 			t.Fatalf("bootstrap with AES256K keys without --key-type: %v after %s", err, time.Since(started))
@@ -224,7 +224,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts ceph.RunOptions) {
 	}
 
 	// A service cipher other than the key type allows both types.
-	mixed, _ := newServiceClusterWithOptions(t, image, base.WithCustomizers(ceph.WithAuth(ceph.AuthConfig{
+	mixed, _ := newServiceClusterWithOptions(t, image, base.WithOptions(ceph.WithAuth(ceph.AuthConfig{
 		KeyType: ceph.CipherAES256K, ServiceCipher: ceph.CipherAES,
 	})))
 	service, allowed, preferred = readMonMapCiphers(t, ctx, mixed)

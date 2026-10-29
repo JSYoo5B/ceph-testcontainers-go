@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 355,
+  "count": 357,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -1989,8 +1989,38 @@
     {
       "current": "ceph.Run",
       "kind": "function",
-      "signature": "func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
+      "signature": "func(ctx context.Context, runConfig RunOptions, customizers ...testcontainers.ContainerCustomizer) (*Container, error)",
       "proposed": "ceph.Run",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.RunOptions",
+      "kind": "type",
+      "proposed": "ceph.RunOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.RunOptions.WithImage",
+      "kind": "method",
+      "signature": "func(image string) RunOptions",
+      "receiver": "RunOptions",
+      "proposed": "ceph.RunOptions.WithImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.RunOptions.WithImageSet",
+      "kind": "method",
+      "signature": "func(images ImageSet) RunOptions",
+      "receiver": "RunOptions",
+      "proposed": "ceph.RunOptions.WithImageSet",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.RunOptions.WithOptions",
+      "kind": "method",
+      "signature": "func(options ...Option) RunOptions",
+      "receiver": "RunOptions",
+      "proposed": "ceph.RunOptions.WithOptions",
       "decision": "baseline"
     },
     {
@@ -1998,13 +2028,6 @@
       "kind": "function",
       "signature": "func(m *testing.M, s ...*SharedCluster) int",
       "proposed": "ceph.RunTests",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.RunWithImages",
-      "kind": "function",
-      "signature": "func(ctx context.Context, images ImageSet, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
-      "proposed": "ceph.RunWithImages",
       "decision": "baseline"
     },
     {
@@ -2308,13 +2331,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithImages",
-      "kind": "function",
-      "signature": "func(images ImageSet) Option",
-      "proposed": "ceph.WithImages",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.WithInitialOSDs",
       "kind": "function",
       "signature": "func(configs ...OSDConfig) Option",
@@ -2443,7 +2459,7 @@
     {
       "current": "ceph.WithSharedRunOptions",
       "kind": "function",
-      "signature": "func(opts ...testcontainers.ContainerCustomizer) SharedOption",
+      "signature": "func(config RunOptions, customizers ...testcontainers.ContainerCustomizer) SharedOption",
       "proposed": "ceph.WithSharedRunOptions",
       "decision": "baseline"
     },

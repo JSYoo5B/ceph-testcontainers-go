@@ -60,7 +60,7 @@ func runDebugOverhead(t *testing.T, option string) {
 		}
 		image = images.Essential
 	}
-	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithImageSet(images).WithCustomizers(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)))
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithImageSet(images).WithOptions(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)))
 	var finalization *ceph.Finalization
 	if cluster != nil {
 		var registerErr error

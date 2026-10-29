@@ -36,7 +36,7 @@ func hostNetworkRunPair(t *testing.T, ctx context.Context, imageOpts ceph.RunOpt
 	results := make(chan result, 2)
 	for i := range 2 {
 		go func() {
-			config := imageOpts.WithCustomizers(ceph.WithHostNetwork(), ceph.WithHostAddress("127.0.0.1"),
+			config := imageOpts.WithOptions(ceph.WithHostNetwork(), ceph.WithHostAddress("127.0.0.1"),
 				ceph.WithOSDCount(2), ceph.WithStartupTimeout(5*time.Minute))
 			cluster, err := ceph.Run(ctx, config)
 			results <- result{index: i, cluster: cluster, err: err}

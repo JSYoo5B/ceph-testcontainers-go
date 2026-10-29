@@ -19,7 +19,7 @@ import (
 func newSharedCluster(t *testing.T, opts ...ceph.SharedOption) *ceph.SharedCluster {
 	t.Helper()
 	image, run := integrationImages(t)
-	opts = append([]ceph.SharedOption{ceph.WithSharedRunOptions(run.WithCustomizers(ceph.WithOSDCount(1)))}, opts...)
+	opts = append([]ceph.SharedOption{ceph.WithSharedRunOptions(run.WithOptions(ceph.WithOSDCount(1)))}, opts...)
 	shared := ceph.NewShared(image, opts...)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)

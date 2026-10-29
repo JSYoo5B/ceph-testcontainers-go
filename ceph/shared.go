@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/sharedinvariants"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // SharedPool is the pool whose RADOS namespaces a shared cluster gives its
@@ -79,10 +80,11 @@ type SharedCluster struct {
 type SharedOption func(*sharedSettings)
 
 type sharedSettings struct {
-	runConfig   RunOptions
-	maxTenants  int
-	maxRecycles int
-	err         error
+	runConfig      RunOptions
+	runCustomizers []testcontainers.ContainerCustomizer
+	maxTenants     int
+	maxRecycles    int
+	err            error
 	// serviceList and serviceListGiven come from withSharedServices;
 	// services is the validated set that NewShared builds from them, or from
 	// the transitional registry when none was given.
@@ -95,13 +97,21 @@ type sharedSettings struct {
 	settle time.Duration
 }
 
-// WithSharedRunOptions passes the RunOptions of the Run that starts each
-// cluster. When config selects images (WithImage or WithImageSet), that
-// selection replaces the image given to NewShared; otherwise NewShared's image
-// is the aggregate selection. Several calls append their customizers in call
-// order, and a later call that selects images replaces an earlier selection.
-func WithSharedRunOptions(config RunOptions) SharedOption {
-	return func(s *sharedSettings) { s.runConfig = s.runConfig.merge(config) }
+// WithSharedRunOptions passes the arguments of the Run that starts each
+// cluster: the Ceph configuration and the trailing container customizers (see
+// Run). When config selects images (WithImage or WithImageSet), that selection
+// replaces the image given to NewShared; otherwise NewShared's image is the
+// aggregate selection. Several calls append their options and customizers in
+// call order. A second call that selects images is a configuration error that
+// the first Lease reports, as for any invalid shared option.
+func WithSharedRunOptions(config RunOptions, customizers ...testcontainers.ContainerCustomizer) SharedOption {
+	return func(s *sharedSettings) {
+		if config.selection != imagesUnspecified && s.runConfig.selection != imagesUnspecified {
+			s.err = errors.Join(s.err, fmt.Errorf("WithSharedRunOptions selects images twice"))
+		}
+		s.runConfig = s.runConfig.merge(config)
+		s.runCustomizers = slices.Concat(s.runCustomizers, customizers)
+	}
 }
 
 // WithMaxTenants bounds the leases that are held at once; Lease waits for a
@@ -397,7 +407,7 @@ func (s *SharedCluster) instance(ctx context.Context, logf func(string, ...any))
 // failed to start and cannot be terminated stays owned by s for Close.
 func (s *SharedCluster) start(ctx context.Context, inst *sharedInstance) {
 	began := time.Now()
-	backend, err := s.settings.start(ctx, s.image, s.settings.runConfig)
+	backend, err := s.settings.start(ctx, s.image, s.settings.runConfig, s.settings.runCustomizers)
 	if err == nil {
 		err = backend.createPool(ctx, SharedPool)
 	}

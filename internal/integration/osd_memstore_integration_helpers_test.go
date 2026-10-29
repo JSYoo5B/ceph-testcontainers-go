@@ -69,7 +69,7 @@ func installCRUSHMap(t *testing.T, ctx context.Context, cluster *ceph.Container,
 // legacyPoolFlags returns a configuration file option that creates every
 // pool without hashpspool, the MGR's .mgr pool included. The MON requires
 // CEPH_FEATURE_OSDHASHPSPOOL of every client while any pool has the flag.
-func legacyPoolFlags(t *testing.T) testcontainers.ContainerCustomizer {
+func legacyPoolFlags(t *testing.T) ceph.Option {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "legacy-pools.conf")
 	if err := os.WriteFile(path, []byte("[global]\nosd_pool_default_flag_hashpspool = false\n"), 0o644); err != nil {

@@ -35,7 +35,7 @@ func TestMessengerModeValidationSelectionAndSnapshot(t *testing.T) {
 		if err := WithMessengerMode(unknown)(&settings); err == nil || settings.messengerMode != MessengerV2Secure {
 			t.Fatal("unknown Messenger mode was accepted or replaced the selected policy")
 		}
-		if cluster, err := Run(t.Context(), RunOptions{}.WithImage("not-a-runnable-image").WithCustomizers(WithMessengerMode(unknown))); err == nil || cluster != nil {
+		if cluster, err := Run(t.Context(), RunOptions{}.WithImage("not-a-runnable-image").WithOptions(WithMessengerMode(unknown))); err == nil || cluster != nil {
 			t.Fatal("unknown Messenger mode reached Docker allocation")
 		}
 	}
