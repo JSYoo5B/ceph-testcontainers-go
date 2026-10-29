@@ -377,7 +377,7 @@ func (fs *Filesystem) readMDSReplacementScope(ctx context.Context, old *cephFSMD
 		if row.Name != nil && *row.Name == old.name {
 			return errors.New("original stopped MDS name is still registered")
 		}
-		if row.Name == nil || !naming.PoolResource.MatchString(*row.Name) || row.GID == nil || *row.GID == 0 || row.Rank == nil || row.Join == nil || *row.Join < -1 || row.State == nil || !slices.Contains([]string{"up:boot", "up:standby", "up:standby-replay", "up:creating", "up:starting", "up:replay", "up:resolve", "up:reconnect", "up:rejoin", "up:clientreplay", "up:active", "up:stopping"}, *row.State) || names[*row.Name] || gids[*row.GID] {
+		if row.Name == nil || !naming.PoolResource.MatchString(*row.Name) || row.GID == nil || *row.GID == 0 || row.Rank == nil || row.Join == nil || *row.Join < -1 || row.State == nil || !cephFSMDSRowStateAccepted(*row.State) || names[*row.Name] || gids[*row.GID] {
 			return errors.New("MDS replacement global daemon map is contradictory")
 		}
 		names[*row.Name], gids[*row.GID] = true, true
