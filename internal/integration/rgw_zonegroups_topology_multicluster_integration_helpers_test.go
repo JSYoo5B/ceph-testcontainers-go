@@ -148,10 +148,10 @@ func testRGWInitialZonegroupsTopology(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, host)
-	fixture, err := multisite.RunTopology(ctx, rgwGateway, multisite.TopologyConfig{MasterZonegroup: "us", Zonegroups: []multisite.ZonegroupConfig{
+	fixture, err := multisite.Run(ctx, rgwGateway, multisite.WithTopology(multisite.TopologyConfig{MasterZonegroup: "us", Zonegroups: []multisite.ZonegroupConfig{
 		{Name: "eu", MasterZone: "c", Zones: []multisite.ZoneConfig{{Name: "c", Cluster: clusters[1]}}},
 		{Name: "us", MasterZone: "a", Zones: []multisite.ZoneConfig{{Name: "a", Cluster: clusters[0]}}},
-	}})
+	}}))
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func testRGWZonegroupsAndRemovalTopology(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
 	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 3, host)
-	fixture, err := multisite.RunTopology(ctx, rgwGateway, multisite.TopologyConfig{Zonegroup: "us", MetadataMaster: "a", Zones: []multisite.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}}})
+	fixture, err := multisite.Run(ctx, rgwGateway, multisite.WithTopology(multisite.TopologyConfig{Zonegroup: "us", MetadataMaster: "a", Zones: []multisite.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}}}))
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {
 		t.Fatal(err)

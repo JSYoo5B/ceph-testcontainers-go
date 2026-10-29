@@ -63,11 +63,11 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	}
 	initial := checkpoint("initial")
 	image := staticFacts(source).Images.CephFS
-	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", image), cephfsmirror.Config{
+	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", image), cephfsmirror.WithConfig(cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: directories, DaemonCount: 2,
-	})
+	}))
 	if mirror != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

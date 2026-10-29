@@ -241,9 +241,9 @@ if err != nil {
 	t.Fatal(err)
 }
 
-mirror, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+mirror, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.WithConfig(rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "images",
-})
+}))
 testcontainers.CleanupContainer(t, mirror) // runs first
 if err != nil {
 	t.Fatal(err)
@@ -255,9 +255,9 @@ if err != nil {
 it up with `t.Cleanup`:
 
 ```golang
-site, err := multisite.Run(ctx, ceph.DefaultImage, multisite.Config{
+site, err := multisite.Run(ctx, ceph.DefaultImage, multisite.WithConfig(multisite.Config{
 	Source: source, Destination: destination,
-})
+}))
 if site != nil {
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -346,7 +346,7 @@ result:
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
 | `ApplyNetworkProfile`, `ApplyLinkProfile`, `ApplyZoneLinkProfile` | Delay lease (the change may have reached the kernel) | `Restore` |
-| `rbdmirror.Run`, `cephfsmirror.Run`, `multisite.Run`, `multisite.RunTopology` | Partial fixture | `Terminate` it |
+| `rbdmirror.Run`, `cephfsmirror.Run`, `multisite.Run` | Partial fixture | `Terminate` it |
 | `AddDaemon` on a mirror | Partial daemon | `RemoveDaemon` or the fixture's `Terminate` |
 | `Multisite.AddZone`, `AddZonegroup` | Partial zone or zonegroup | `Terminate` the fixture; do not add the same name again |
 

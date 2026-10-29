@@ -241,7 +241,7 @@ by default every gateway gets its own generated S3 test user; set
 
 All gateways of one cluster serve the same zone, so they share users, buckets
 and objects. Multisite scope is configured separately with
-`multisite.Run` and `multisite.RunTopology` from the
+`multisite.Run` from the
 [`rgw/multisite`](multisite/README.md) package.
 
 ```golang
@@ -283,7 +283,7 @@ The generic options of the `testcontainers` package (for example
 `testcontainers.WithEnv`, `testcontainers.WithLogger`,
 `testcontainers.CustomizeRequestOption`) also apply. Passed to `Run`, they
 customise only the MON/control container. To customise a gateway container,
-pass them to [`Start`](#start), or to `multisite.Run`, `multisite.RunTopology`,
+pass them to [`Start`](#start), or to `multisite.Run`,
 `Fixture.AddZone` or `Fixture.AddZonegroup` from
 [`rgw/multisite`](multisite/README.md), where they are applied last. Do not replace
 the gateway's entrypoint, command, network or listener settings.

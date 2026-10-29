@@ -76,9 +76,9 @@ func rbdFanoutThirdCluster(t *testing.T, ctx context.Context, a, b *ceph.Contain
 func rbdFanoutRunLink(t *testing.T, ctx context.Context, a, destination *ceph.Container, pool, destinationSite string) *rbdmirror.Mirror {
 	t.Helper()
 	image := staticFacts(a).Images.RBDAux
-	link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", image), rbdmirror.Config{
+	link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", image), rbdmirror.WithConfig(rbdmirror.Config{
 		Source: a, Destination: destination, Pool: pool, SourceSite: "a", DestinationSite: destinationSite,
-	})
+	}))
 	if link != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)

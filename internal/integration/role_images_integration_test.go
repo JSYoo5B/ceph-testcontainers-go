@@ -96,7 +96,7 @@ func TestRoleImagesRGWWithoutClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := multisite.Run(t.Context(), images.RGW, multisite.Config{Source: source, Destination: destination})
+	f, err := multisite.Run(t.Context(), images.RGW, multisite.WithConfig(multisite.Config{Source: source, Destination: destination}))
 	if f != nil {
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

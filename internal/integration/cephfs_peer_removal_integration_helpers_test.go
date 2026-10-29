@@ -62,7 +62,7 @@ func testCephFSPeerRemovalDrain(t *testing.T, host bool) {
 		return result
 	}
 	initial := checkpoint("before-peer-removal")
-	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.Config{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, Directories: directories, DaemonCount: 2})
+	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.WithConfig(cephfsmirror.Config{Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName, Directories: directories, DaemonCount: 2}))
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)

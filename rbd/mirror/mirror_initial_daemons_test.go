@@ -67,7 +67,7 @@ func TestMirrorInitialDaemonRejectionPrecedesRuntimeAndCustomization(t *testing.
 				})
 				var nonnil bool
 				var err error
-				fixture, e := Run(t.Context(), "example/ceph:version", Config{Source: source, Destination: destination, Pool: "rbd", DaemonCount: count, NoInitialDaemons: zero}, customizer)
+				fixture, e := Run(t.Context(), "example/ceph:version", WithConfig(Config{Source: source, Destination: destination, Pool: "rbd", DaemonCount: count, NoInitialDaemons: zero}), customizer)
 				nonnil, err = fixture != nil, e
 
 				if err == nil || nonnil || controlCalls.Load() != 0 || customizerCalls.Load() != 0 || factoryCalls.Load() != 0 {
@@ -102,7 +102,7 @@ func TestMirrorInitialDaemonCanceledAdmissionHasNoRuntimeEffects(t *testing.T) {
 				customizer := testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customized.Add(1); return nil })
 				var err error
 				var nonnil bool
-				result, e := Run(ctx, "example/ceph:version", Config{Source: source, Destination: destination, Pool: "rbd", NoInitialDaemons: zero}, customizer)
+				result, e := Run(ctx, "example/ceph:version", WithConfig(Config{Source: source, Destination: destination, Pool: "rbd", NoInitialDaemons: zero}), customizer)
 				nonnil, err = result != nil, e
 
 				if !errors.Is(err, wanted) || nonnil || native.Load() != 0 || customized.Load() != 0 || factory.Load() != 0 {

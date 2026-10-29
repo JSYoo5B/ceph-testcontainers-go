@@ -54,7 +54,7 @@ func Gateways(ctx context.Context, c *ceph.Container) ([]*Gateway, error) {
 // WithGateways starts named gateways during Run. No arguments starts one
 // default gateway. Repeated options replace the list. All gateways share this
 // cluster's backing zone; multisite scope is configured separately by
-// multisite.Run and multisite.RunTopology.
+// multisite.Run.
 func WithGateways(configs ...Config) ceph.Option {
 	if len(configs) == 0 {
 		configs = []Config{{}}

@@ -31,7 +31,7 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	if rgwImage == "" {
 		rgwImage = image
 	}
-	link, err := multisite.Run(ctx, rgwImage, multisite.Config{Source: source, Destination: destination, Realm: "tc-sync-accounts", SourceZone: "source", DestinationZone: "destination"})
+	link, err := multisite.Run(ctx, rgwImage, multisite.WithConfig(multisite.Config{Source: source, Destination: destination, Realm: "tc-sync-accounts", SourceZone: "source", DestinationZone: "destination"}))
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

@@ -71,7 +71,11 @@ func TestRoleImagesMirrorRefresh(t *testing.T) {
 		return c
 	}
 	source, destination := newCluster(), newCluster()
-	m, err := Run(ctx, "", Config{Source: source, Destination: destination, Pool: "role-refresh", SourceNamespace: "selected", DestinationNamespace: "selected"})
+	facts, err := ceph.FactsOf(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := Run(ctx, facts.Images.RBDAux, WithConfig(Config{Source: source, Destination: destination, Pool: "role-refresh", SourceNamespace: "selected", DestinationNamespace: "selected"}))
 	if m != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)

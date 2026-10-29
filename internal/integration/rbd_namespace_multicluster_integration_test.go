@@ -101,10 +101,10 @@ func TestMultiClusterRBDMirrorScopeAndNamespaces(t *testing.T) {
 					// journal enrollment, even while journaling images are mirrored.
 					rbdScopeCreate(t, ctx, sourceClient, pool, tc.sourceNamespace, "plain", false)
 					mirrorImage := staticFacts(source).Images.RBDAux
-					link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", mirrorImage), rbdmirror.Config{
+					link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", mirrorImage), rbdmirror.WithConfig(rbdmirror.Config{
 						Source: source, Destination: destination, Pool: pool, Scope: tc.scope,
 						SourceNamespace: tc.sourceNamespace, DestinationNamespace: tc.destinationNamespace,
-					})
+					}))
 					if link != nil {
 						t.Cleanup(func() {
 							cleanupCtx, stop := context.WithTimeout(context.Background(), 2*time.Minute)

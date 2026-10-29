@@ -38,7 +38,8 @@ so the mirror is terminated first.
 #### Run
 
 ```golang
-func Run(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)
+func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)
+func WithConfig(config Config) Option
 ```
 
 Configures one-way snapshot mirroring between two existing filesystems and
@@ -56,12 +57,12 @@ starts the initial daemons. It:
 5. starts the daemons (named `a` through `z`, then `node-27`, ...), waits for
    them to register, then registers `Directories`.
 
-`image` is the mirror daemon image: it must contain `cephfs-mirror` and the `ceph`
-CLI (the cephfs role or `all`). An empty `image` selects
-`FactsOf(source).Images.CephFS`, and a source without that role is refused; a
-non-empty image is used as given and a blank one is refused. `Run` refuses an image that a cluster selects for
+`img` is the mirror daemon image and is required: it must contain
+`cephfs-mirror` and the `ceph` CLI (the cephfs role or `all`), usually
+`FactsOf(source).Images.CephFS`. The `Config` comes from exactly one
+`WithConfig` among the options. `Run` refuses an image that a cluster selects for
 another role, such as its essential image, when that cluster has a separate
-cephfs image. The setup commands run in each cluster's client toolkit. The customizers apply to every daemon, including daemons
+cephfs image. The setup commands run in each cluster's client toolkit. The other customizers apply to every daemon, including daemons
 added later. Both clusters must use the same network mode. In bridge mode each
 daemon joins the destination network; in host mode no attachment is needed.
 
@@ -71,13 +72,13 @@ in the caller's clusters.
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-mirror, err := cephfsmirror.Run(ctx, sourceFacts.Images.CephFS, cephfsmirror.Config{
+mirror, err := cephfsmirror.Run(ctx, sourceFacts.Images.CephFS, cephfsmirror.WithConfig(cephfsmirror.Config{
 	Source:                source.Container,
 	Destination:           destination.Container,
 	SourceFilesystem:      sourceFS.FilesystemName,
 	DestinationFilesystem: destinationFS.FilesystemName,
 	Directories:           []string{"/data"},
-})
+}))
 if mirror != nil {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -1311,13 +1312,13 @@ func TestCephFSMirror(t *testing.T) {
 
 	// Registered after the clusters, so it is terminated before them.
 	sourceClusterFacts, err := ceph.FactsOf(sourceCluster)
-	mirror, err := cephfsmirror.Run(ctx, sourceClusterFacts.Images.CephFS, cephfsmirror.Config{
+	mirror, err := cephfsmirror.Run(ctx, sourceClusterFacts.Images.CephFS, cephfsmirror.WithConfig(cephfsmirror.Config{
 		Source:                sourceCluster.Container,
 		Destination:           destinationCluster.Container,
 		SourceFilesystem:      sourceFS.FilesystemName,
 		DestinationFilesystem: destinationFS.FilesystemName,
 		Directories:           []string{"/data"},
-	})
+	}))
 	if mirror != nil {
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

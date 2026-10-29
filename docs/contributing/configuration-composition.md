@@ -118,8 +118,6 @@ variadic is the only place for configuration.
 - **Raw customizers.** They reach the first MON's container request only, in
   argument order, after the module's own request options and before the
   messenger environment, the `WithConfigFile` file and the ownership label.
-- The mirror packages select the role image through an empty `image` argument
-  (see "Mirror `Run`" below).
 
 ### Topology and placement group
 
@@ -219,18 +217,20 @@ follows the `WithConfigFile` convention of testcontainers-go modules, and
 `WithAuth` already carries one `AuthConfig` value. Each value group has exactly
 one carrier, so no setting has two spellings.
 
-## Mirror `Run`
+## Cross-cluster fixture `Run`
 
-`rbd/mirror.Run` and `cephfs/mirror.Run` keep the testcontainers-style signature
-`Run(ctx, image string, config Config, opts ...testcontainers.ContainerCustomizer)`.
-The image is a single setting that already has its positional argument, so no
-grouped carrier exists next to it: a second input for the same field would give
-the setting two spellings.
+`rbd/mirror`, `cephfs/mirror` and `rgw/multisite` have the same single entry
+point as every module, `Run(ctx, img string, opts ...testcontainers.ContainerCustomizer)`.
 
-Only the exact empty string derives the role image; a blank string such as a
-single space is an explicit selection and is still refused by pair validation.
-A cluster without the role is refused with `ErrInvalidRequest` and no other role
-substitutes.
+- `img` is the image of the containers the fixture creates (the rbd-mirror,
+  cephfs-mirror or gateway daemons) and is required. It is never derived from
+  the clusters.
+- The fixture configuration is a plain `Config` struct carried by exactly one
+  `WithConfig` option (multisite: `WithConfig` or `WithTopology`). The option's
+  `Customize` does nothing. `Run` refuses a missing carrier and a second one
+  before it queries any cluster (`multicluster.SplitConfig`). The carrier copies
+  the slices of its config.
+- The other customizers reach the daemon containers, as before.
 
 ## Client entry points stay separate
 

@@ -47,7 +47,7 @@ func TestRBDAutomaticSnapshotSchedule(t *testing.T) {
 				t.Fatal(err)
 			}
 			runtimeImage := staticFacts(source).Images.RBDAux
-			mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", runtimeImage), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
+			mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", runtimeImage), rbdmirror.WithConfig(rbdmirror.Config{Source: source, Destination: destination, Pool: pool}))
 			if mirror != nil {
 				t.Cleanup(func() {
 					cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

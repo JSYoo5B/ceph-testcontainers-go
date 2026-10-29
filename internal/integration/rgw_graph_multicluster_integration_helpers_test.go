@@ -61,10 +61,10 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 	}
 	// Deliberately declare the master last. Run chooses roles by name rather
 	// than assuming that the first caller-provided storage cluster is master.
-	fixture, err := multisite.RunTopology(ctx, rgwImage, multisite.TopologyConfig{
+	fixture, err := multisite.Run(ctx, rgwImage, multisite.WithTopology(multisite.TopologyConfig{
 		Zones:          []multisite.ZoneConfig{{Name: "b", Cluster: clusters[1]}, {Name: "c", Cluster: clusters[2]}, {Name: "a", Cluster: clusters[0]}},
 		MetadataMaster: "a",
-	})
+	}))
 	if fixture != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

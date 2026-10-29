@@ -34,9 +34,9 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 	}
 	// The RGW role needs no Python or Ceph CLI. Setup must select the
 	// source and destination essential images without an explicit override.
-	multisite, err := multisite.Run(ctx, rgwImage, multisite.Config{
+	multisite, err := multisite.Run(ctx, rgwImage, multisite.WithConfig(multisite.Config{
 		Source: source, Destination: destination,
-	})
+	}))
 	if multisite != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

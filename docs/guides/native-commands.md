@@ -570,8 +570,8 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
   uses them.
 
 In multisite fixtures, `SourceAdmin` and `DestinationAdmin` address the two
-zones of `multisite.Run`, and `ZoneAdmin(ctx, name, ...)` any owned zone of
-`multisite.RunTopology`. They pass the zone's scope but do not add
+zones of a `multisite.WithConfig` fixture, and `ZoneAdmin(ctx, name, ...)` any
+owned zone, including those of a `multisite.WithTopology` fixture. They pass the zone's scope but do not add
 `--format json`. Do not edit periods or zones while `AddZone`,
 `AddZonegroup`, `RemoveZone`, `ApplySyncGroup` or a metadata master transition
 runs.

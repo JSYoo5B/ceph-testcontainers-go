@@ -68,25 +68,25 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 					topologySnapshotQueue(t, releaseOwner, func(callCtx context.Context) (topologySnapshotPartial, error) {
 						switch kind {
 						case "rbd":
-							result, err := rbdmirror.Run(callCtx, nativeMirrorImage(t, "rbd-aux", staticFacts(source).Images.RBDAux), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
+							result, err := rbdmirror.Run(callCtx, nativeMirrorImage(t, "rbd-aux", staticFacts(source).Images.RBDAux), rbdmirror.WithConfig(rbdmirror.Config{Source: source, Destination: destination, Pool: pool}))
 							if result == nil {
 								return nil, err
 							}
 							return result, err
 						case "cephfs":
-							result, err := cephfsmirror.Run(callCtx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.Config{Source: source, Destination: destination, SourceFilesystem: "fs", DestinationFilesystem: "fs", Directories: []string{"/owned"}})
+							result, err := cephfsmirror.Run(callCtx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.WithConfig(cephfsmirror.Config{Source: source, Destination: destination, SourceFilesystem: "fs", DestinationFilesystem: "fs", Directories: []string{"/owned"}}))
 							if result == nil {
 								return nil, err
 							}
 							return result, err
 						case "rgw":
-							result, err := multisite.Run(callCtx, staticFacts(source).Images.RGW, multisite.Config{Source: source, Destination: destination})
+							result, err := multisite.Run(callCtx, staticFacts(source).Images.RGW, multisite.WithConfig(multisite.Config{Source: source, Destination: destination}))
 							if result == nil {
 								return nil, err
 							}
 							return result, err
 						default:
-							result, err := multisite.RunTopology(callCtx, staticFacts(source).Images.RGW, multisite.TopologyConfig{Zones: []multisite.ZoneConfig{{Name: "a", Cluster: source}, {Name: "b", Cluster: destination}}})
+							result, err := multisite.Run(callCtx, staticFacts(source).Images.RGW, multisite.WithTopology(multisite.TopologyConfig{Zones: []multisite.ZoneConfig{{Name: "a", Cluster: source}, {Name: "b", Cluster: destination}}}))
 							if result == nil {
 								return nil, err
 							}

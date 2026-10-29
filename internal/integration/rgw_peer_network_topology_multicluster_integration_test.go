@@ -24,10 +24,10 @@ func TestMultiClusterRGWPeerNetworkTopology(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, false)
-	fixture, err := multisite.RunTopology(ctx, rgwGateway, multisite.TopologyConfig{
+	fixture, err := multisite.Run(ctx, rgwGateway, multisite.WithTopology(multisite.TopologyConfig{
 		Zonegroup: "us", MetadataMaster: "a",
 		Zones: []multisite.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
-	})
+	}))
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {
 		t.Fatal(err)
@@ -156,10 +156,10 @@ func TestMultiClusterRGWZoneLinkPathCut(t *testing.T) {
 	defer cancel()
 	netem := netemImage(t)
 	_, rgwGateway, clusters := rgwTopologyClusters(t, ctx, 2, false)
-	fixture, err := multisite.RunTopology(ctx, rgwGateway, multisite.TopologyConfig{
+	fixture, err := multisite.Run(ctx, rgwGateway, multisite.WithTopology(multisite.TopologyConfig{
 		Zonegroup: "us", MetadataMaster: "a",
 		Zones: []multisite.ZoneConfig{{Name: "a", Cluster: clusters[0]}, {Name: "b", Cluster: clusters[1]}},
-	})
+	}))
 	rgwTopologyCleanup(t, fixture)
 	if err != nil {
 		t.Fatal(err)

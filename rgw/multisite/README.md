@@ -26,7 +26,7 @@ import "github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 
 ## Module Reference
 
-### Run and RunTopology
+### Run function
 
 RGW multisite connects independent Ceph clusters as zones of one realm. Users
 and bucket metadata are shared across the realm; object data replicates between
@@ -43,16 +43,21 @@ Register the clusters' cleanup first and the fixture's cleanup afterwards, so
 that the fixture terminates first. A non-nil fixture returned with an error
 owns partial resources and must still be terminated.
 
-#### Run
-
 ```golang
-func Run(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Fixture, error)
+func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Fixture, error)
+func WithConfig(config Config) Option
+func WithTopology(config TopologyConfig) Option
 ```
 
-Configures a two-zone realm. `config.Source` becomes the metadata master zone;
-both zones accept object writes. `image` is the gateway image; the setup
-clients use each cluster's RGW image unless `config.SetupImage` is set.
-`opts` customise both gateways and are applied last.
+`img` is the gateway image and is required; the setup clients use each
+cluster's RGW image unless `SetupImage` is set. Exactly one `WithConfig` or
+`WithTopology` among the options selects the realm; the other options customise
+every gateway and are applied last.
+
+#### WithConfig
+
+Configures a two-zone realm. `Config.Source` becomes the metadata master zone;
+both zones accept object writes.
 
 It creates one ordinary S3 test user on the master. Both gateways expose its
 keys in `AccessKey` and `SecretKey`, and their `Region` is the zonegroup name.
@@ -72,10 +77,10 @@ if err != nil {
 	t.Fatal(err)
 }
 
-ms, err := multisite.Run(ctx, ceph.DefaultImage, multisite.Config{
+ms, err := multisite.Run(ctx, ceph.DefaultImage, multisite.WithConfig(multisite.Config{
 	Source: source, Destination: destination,
 	SourceZone: "east", DestinationZone: "west",
-})
+}))
 if ms != nil {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -90,28 +95,24 @@ if err != nil {
 }
 ```
 
-#### RunTopology
-
-```golang
-func RunTopology(ctx context.Context, image string, config TopologyConfig, opts ...testcontainers.ContainerCustomizer) (*Fixture, error)
-```
+#### WithTopology
 
 Creates one realm over two or more fresh clusters, with the same ownership and
-cleanup contract as `Run`. Use `Zones`, `Zonegroup` and
+cleanup contract as `WithConfig`. The zone lists are copied. Use `Zones`, `Zonegroup` and
 `MetadataMaster` for a single zonegroup, or `Zonegroups` and `MasterZonegroup`
 for several zonegroups, each with its own master zone. The initial metadata
 master becomes `Source`; the first remaining zone becomes `Destination`.
 `Zones()` returns all zones.
 
 ```golang
-topology, err := multisite.RunTopology(ctx, ceph.DefaultImage, multisite.TopologyConfig{
+topology, err := multisite.Run(ctx, ceph.DefaultImage, multisite.WithTopology(multisite.TopologyConfig{
 	Realm: "application", Zonegroup: "us-east-1", MetadataMaster: "a",
 	Zones: []multisite.ZoneConfig{
 		{Name: "a", Cluster: clusterA},
 		{Name: "b", Cluster: clusterB},
 		{Name: "c", Cluster: clusterC},
 	},
-})
+}))
 ```
 
 #### Config
@@ -759,10 +760,10 @@ Native markers and error text are never returned.
 ```golang
 source := startCluster(t)
 destination := startCluster(t)
-ms, err := multisite.Run(ctx, ceph.DefaultImage, multisite.Config{
+ms, err := multisite.Run(ctx, ceph.DefaultImage, multisite.WithConfig(multisite.Config{
 	Source: source, Destination: destination,
 	SourceZone: "east", DestinationZone: "west",
-})
+}))
 if ms != nil {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -891,14 +892,14 @@ injection. See [guides/fault-injection.md](../../docs/guides/fault-injection.md)
 
 ```golang
 // One zonegroup, three zones, "a" is the metadata master.
-topology, err := multisite.RunTopology(ctx, ceph.DefaultImage, multisite.TopologyConfig{
+topology, err := multisite.Run(ctx, ceph.DefaultImage, multisite.WithTopology(multisite.TopologyConfig{
 	Realm: "application", MetadataMaster: "a",
 	Zones: []multisite.ZoneConfig{
 		{Name: "a", Cluster: clusterA},
 		{Name: "b", Cluster: clusterB},
 		{Name: "c", Cluster: clusterC},
 	},
-})
+}))
 for _, zone := range topology.Zones() {
 	endpoint, err := zone.Gateway.S3Endpoint(ctx)
 	// S3 client per zone with zone.Gateway.AccessKey, SecretKey and Region.

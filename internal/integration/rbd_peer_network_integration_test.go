@@ -25,7 +25,7 @@ func TestMultiClusterRBDPeerNetworkInterruption(t *testing.T) {
 	rbdMultiClusterPool(t, ctx, source, a, pool)
 	rbdMultiClusterPool(t, ctx, destination, b, pool)
 	image := staticFacts(source).Images.RBDAux
-	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", image), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
+	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", image), rbdmirror.WithConfig(rbdmirror.Config{Source: source, Destination: destination, Pool: pool}))
 	if mirror != nil {
 		testcontainers.CleanupContainer(t, mirror)
 	}

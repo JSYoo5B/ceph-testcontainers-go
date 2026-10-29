@@ -121,8 +121,8 @@ These affect commands or client libraries you run yourself, not the typed API:
   pull` is rejected by the master gateway with HTTP 403. The RGW debug log gives
   the reason `'x-amz-content-sha256' supplied, but not in CanonicalHeaders`: the
   release's `radosgw-admin` sends that header without signing it, and its RGW
-  rejects such requests. No setting disables the check. `multisite.Run` and
-  `multisite.RunTopology` therefore cannot start on 19.2.6. Use 19.2.5 for
+  rejects such requests. No setting disables the check. `multisite.Run`
+  therefore cannot start on 19.2.6. Use 19.2.5 for
   multisite tests on Squid; everything else behaves on 19.2.6 as on 19.2.5.
 - **Tentacle before 20.2.4, Cephx key types.** `ceph-authtool` has no
   `--key-type` and `monmaptool` no cipher options in 20.2.0 to 20.2.3, so these
@@ -289,7 +289,7 @@ Read this scope before relying on it:
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.
 - [`cephfs/mirror`](../../cephfs/mirror/README.md): `Run`, `Mirror.RebalanceDirectories`.
-- [`rgw/multisite`](../../rgw/multisite/README.md): `Run`, `RunTopology`,
+- [`rgw/multisite`](../../rgw/multisite/README.md): `Run`, `WithTopology`,
   `Config.SetupImage`.
 - [`rbd/mirror`](../../rbd/mirror/README.md): `Run`, namespace mapping.
 - [Testing this repository](../contributing/testing.md): running the module's

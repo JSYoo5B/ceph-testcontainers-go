@@ -21,11 +21,10 @@ Two clusters need the pool and namespaces prepared with `rbd.WithPools`,
 `*ceph.Container`, so it works with a cluster from `ceph.Run` and with any
 other service package's `Run`.
 
-`Run` takes the mirror daemon image: the rbd-aux role (or the aggregate `all`
-image). The daemons run for the destination cluster, so an empty image selects
-the destination's `Images.RBDAux`; a destination without that role is refused
-and no other role substitutes. A non-empty image is used as given. The setup CLI
-clients are not started from it: each cluster's `Images.Client` supplies them. `Run`
+`Run` takes the mirror daemon image, which is required: the rbd-aux role (or
+the aggregate `all` image). The daemons run for the destination cluster, so the
+destination's `Images.RBDAux` is the usual choice. The setup CLI clients are not
+started from it: each cluster's `Images.Client` supplies them. `Run`
 refuses an image that a cluster selects for another role, such as its essential
 image, when that cluster has a separate rbd-aux image. See the
 [image guide](../../docs/guides/releases-and-images.md).
@@ -35,13 +34,19 @@ image, when that cluster has a separate rbd-aux image. See the
 ### Run function
 
 ```golang
-func Run(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)
+func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)
+func WithConfig(config Config) Option
 ```
 
 - `context.Context`, the Go context.
-- `string`, the image for the `rbd-mirror` daemons (rbd-aux or `all` role). Empty selects `FactsOf(destination).Images.RBDAux`; a blank non-empty string is refused. The setup clients use each cluster's `Images.Client`.
-- `Config`, the two clusters and the mirroring policy.
-- `testcontainers.ContainerCustomizer`, options applied to every `rbd-mirror` daemon container (not to the setup clients).
+- `string`, the image for the `rbd-mirror` daemons (rbd-aux or `all` role), required. The setup clients use each cluster's `Images.Client`.
+- `testcontainers.ContainerCustomizer`, exactly one `WithConfig` with the two clusters and the mirroring policy, and options applied to every `rbd-mirror` daemon container (not to the setup clients).
+
+```golang
+facts, err := ceph.FactsOf(destination)
+link, err := rbdmirror.Run(ctx, facts.Images.RBDAux,
+	rbdmirror.WithConfig(rbdmirror.Config{Source: source, Destination: destination, Pool: "rbd"}))
+```
 
 `Run` connects two existing, independent clusters with native RBD
 mirroring. Replication is one-way, from `Source` to `Destination`; the
@@ -87,9 +92,9 @@ the link is terminated before the clusters:
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.WithConfig(rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
-})
+}))
 testcontainers.CleanupContainer(t, link)
 if err != nil {
 	t.Fatal(err)
@@ -719,9 +724,9 @@ func TestSnapshotMirroring(t *testing.T) {
 	source, destination := newCluster(), newCluster()
 
 	sourceFacts, err := ceph.FactsOf(source)
-	link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+	link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.WithConfig(rbdmirror.Config{
 		Source: source, Destination: destination, Pool: "volumes",
-	})
+	}))
 	testcontainers.CleanupContainer(t, link) // runs before the clusters' cleanup
 	if err != nil {
 		t.Fatal(err)
@@ -771,10 +776,10 @@ Journal mirroring replays every write. No mirror snapshots are involved.
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.WithConfig(rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	Mode: rbdmirror.ModeJournal,
-})
+}))
 testcontainers.CleanupContainer(t, link)
 if err != nil {
 	t.Fatal(err)
@@ -800,10 +805,10 @@ without `EnableImage` (which is rejected in pool scope):
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.WithConfig(rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	Scope: rbdmirror.ScopePool, // Mode defaults to journal
-})
+}))
 // ...
 _, err = link.SourceRBD(ctx, "create", "--size", "8M",
 	"--image-feature", "layering,exclusive-lock,journaling", "volumes/disk")
@@ -825,19 +830,19 @@ for the other. Give each cluster one site name and keep it in both links.
 
 ```golang
 aFacts, err := ceph.FactsOf(a)
-forward, err := rbdmirror.Run(ctx, aFacts.Images.RBDAux, rbdmirror.Config{
+forward, err := rbdmirror.Run(ctx, aFacts.Images.RBDAux, rbdmirror.WithConfig(rbdmirror.Config{
 	Source: a, Destination: b, Pool: "volumes",
 	SourceSite: "site-a", DestinationSite: "site-b",
-})
+}))
 testcontainers.CleanupContainer(t, forward)
 if err != nil {
 	t.Fatal(err)
 }
 bFacts, err := ceph.FactsOf(b)
-reverse, err := rbdmirror.Run(ctx, bFacts.Images.RBDAux, rbdmirror.Config{
+reverse, err := rbdmirror.Run(ctx, bFacts.Images.RBDAux, rbdmirror.WithConfig(rbdmirror.Config{
 	Source: b, Destination: a, Pool: "volumes",
 	SourceSite: "site-b", DestinationSite: "site-a",
-})
+}))
 testcontainers.CleanupContainer(t, reverse)
 if err != nil {
 	t.Fatal(err)
@@ -979,10 +984,10 @@ can prepare data on the source and choose when replication begins.
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.WithConfig(rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	NoInitialDaemons: true,
-})
+}))
 testcontainers.CleanupContainer(t, link)
 if err != nil {
 	t.Fatal(err)
@@ -1024,10 +1029,10 @@ controls only this link's daemons; it does not prove that no other
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.WithConfig(rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	DaemonCount: 2, // daemons "a" and "b"
-})
+}))
 testcontainers.CleanupContainer(t, link)
 if err != nil {
 	t.Fatal(err)
@@ -1070,10 +1075,10 @@ Ceph 20.
 ```golang
 // The namespaces exist on both clusters (rbd.CreateNamespace on each).
 sourceFacts, err := ceph.FactsOf(source)
-owner, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+owner, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.WithConfig(rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	SourceNamespace: "app", DestinationNamespace: "app-replica",
-})
+}))
 testcontainers.CleanupContainer(t, owner)
 if err != nil {
 	t.Fatal(err)
@@ -1145,7 +1150,7 @@ the test:
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, config)
+link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.WithConfig(config))
 if link != nil {
 	t.Cleanup(func() { _ = link.Terminate(context.Background()) })
 }
