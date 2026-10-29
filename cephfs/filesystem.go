@@ -268,13 +268,11 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 		return errors.New("cephfs cluster is unavailable")
 	}
 	c := fs.cluster
-	if err := clusterutil.LockMutex(ctx, &filesystems(c).setupMu); err != nil {
+	release, err := lockSetupThenTopology(ctx, c)
+	if err != nil {
 		return err
 	}
-	defer filesystems(c).setupMu.Unlock()
-	if err := servicehook.LockTopology(ctx, c); err != nil {
-		return err
-	}
+	defer release()
 	if fs.Container == nil && fs.coldMDS != nil {
 		servicehook.Unlock(c)
 		return fs.scaleColdMDS(ctx, active, standby, fs.startMDS)
