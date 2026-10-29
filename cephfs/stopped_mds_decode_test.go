@@ -342,9 +342,9 @@ func TestMDSRowStateListHasOneCopy(t *testing.T) {
 		}
 	}
 	want := map[string][]string{
-		"validateColdMDSMap":      {"no_initial_mds.go"},
+		"decodeColdMDSMap":        {"cold_mds_decode.go"},
 		"decodeStoppedMDSMap":     {"stopped_mds_decode.go"},
-		"readMDSReplacementScope": {"mds_replacement.go"},
+		"decodeMDSReplacementMap": {"mds_replacement_decode.go"},
 	}
 	if !reflect.DeepEqual(callers, want) {
 		t.Errorf("state-list callers changed: %v, pinned %v", callers, want)
