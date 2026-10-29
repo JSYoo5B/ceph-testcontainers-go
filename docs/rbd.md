@@ -522,7 +522,7 @@ for name, value := range lease.ClientOptions() {
 
 ### Mirroring
 
-Mirroring two clusters moved to the `rbd/mirror` package; see [rbd-mirror.md](rbd-mirror.md).
+Mirroring between two clusters is provided by the `rbd/mirror` package; see [rbd-mirror.md](rbd-mirror.md).
 
 ### Independent test fixtures
 

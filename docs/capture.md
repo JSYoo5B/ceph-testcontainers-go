@@ -7,12 +7,9 @@ one classic pcap file and checks its structure. It never decodes, decrypts or
 judges the packets: Messenger interpretation belongs to consumers. A capture
 observes one endpoint, not a cluster.
 
-This is the first increment of
-[#52](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/52). It
-supports one explicitly selected endpoint on a user-defined bridge, one file,
-no rotation and no host-network capture. A capture never follows its target
-across a restart. See the [design note](design/packet-capture.md) for what is
-covered and what is left.
+A capture supports one explicitly selected endpoint on a user-defined bridge,
+one file, no rotation and no host-network capture. It never follows its target
+across a restart.
 
 ## Start
 

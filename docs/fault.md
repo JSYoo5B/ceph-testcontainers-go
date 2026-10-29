@@ -4,39 +4,20 @@ Import `github.com/JSYoo5B/ceph-testcontainers-go/fault` alongside `ceph`.
 This package uses the cluster created by `ceph.Run`; there is no separate
 fixture lifetime. `NetworkPlane` and its constants remain in `ceph`.
 
-## Upgrade from the ceph fault APIs
-
-This is an intentional source-breaking move for the next minor release.
-There are no compatibility aliases or wrappers in `ceph`. Existing released
-versions keep their original APIs. Update imports and calls together:
-
-| Previous call or type | New call or type |
-| --- | --- |
-| `cluster.PauseContainer(ctx, target)` | `fault.Pause(ctx, cluster, target)` |
-| `ceph.ContainerPause` | `fault.PauseLease` (same `Resume` contract) |
-| `cluster.InjectObjectDataError(ctx, pool, object, osdID)` | `fault.InjectObjectDataError(ctx, cluster, pool, object, osdID)` (same one-shot contract, no handle) |
-| `cluster.TemporaryNetworkDelay(ctx, target, delay)` | `fault.ApplyNetworkProfile(ctx, cluster, target, delay)` |
-| `ceph.TemporaryLinkDelay(ctx, target, network, delay)` | `fault.ApplyLinkProfile(ctx, target, network, delay)` |
-| `cluster.InterruptNetwork(ctx, target, plane)` | `fault.InterruptNetwork(ctx, cluster, target, plane)` |
-| `ceph.InterruptNetwork(ctx, target, network)` | `fault.InterruptLink(ctx, target, network)` |
-| `ceph.NetworkDelay` | `fault.NetworkProfile` |
-| `ceph.NetworkPeer`, `NetworkRate`, `NetworkPacketFault` | Same names in `fault` |
-| `ceph.NetworkDelayLease`, `NetworkDelayStatus` | `fault.NetworkProfileLease`, `NetworkProfileStatus` |
-| `ceph.NetworkInterruption` | `fault.NetworkInterruption` |
-| Netem constants, rate units and `ErrNetem*` sentinels | Same names in `fault` |
+## Ownership and scope
 
 `rbdmirror.Mirror.InterruptPeerLink`, `cephfsmirror.Mirror.InterruptPeerLink` and
-`multisite.Fixture.InterruptZoneLink` now return `*fault.NetworkInterruption`.
+`multisite.Fixture.InterruptZoneLink` return `*fault.NetworkInterruption`.
 `multisite.Fixture.ApplyZoneLinkProfile` takes `fault.NetworkProfile` and returns
-`*fault.NetworkProfileLease`. These service fixtures still register cleanup.
+`*fault.NetworkProfileLease`. These service fixtures register cleanup.
 
 Cluster-bound operations keep ownership checks and cleanup ordering:
 shaping first, endpoint restoration second, then container resumes.
-Standalone `InterruptLink` and `ApplyLinkProfile` remain caller-owned:
+Standalone `InterruptLink` and `ApplyLinkProfile` are caller-owned:
 restore them before removing their container or bridge. Preserve non-nil
 handles returned with errors; restore remains retryable after uncertain results.
-The error categories remain in `ceph`; the moved sentinels still match them
-with `errors.Is`.
+The error categories are in `ceph`; the `fault` sentinels match them with
+`errors.Is`.
 
 Fullness policy uses
 [`override.SetFullRatios`](override.md#setfullratios), returning

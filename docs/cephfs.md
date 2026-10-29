@@ -392,8 +392,7 @@ state. The caller must still stop operations on the target filesystem first.
 
 This common sequence avoids the unrelated-MDS warning refusal in affected
 `fs fail` implementations without selecting by runtime release strings or
-registering a compatibility tag. Qualification and its remaining scope are
-tracked in [#125](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/125).
+registering a compatibility tag.
 
 #### Filesystem
 
@@ -404,7 +403,7 @@ tracked in [#125](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/125).
 | `FilesystemName` | Filesystem name. Pass it to clients (`filesystem_name` in libcephfs). |
 | `MetadataPool`, `DataPool` | Pool names at creation. |
 | `AdditionalDataPools` | Additional pool names from `Config`. `DataPools` reports the current registration. |
-| embedded `testcontainers.Container` | One MDS container, kept for compatibility. It is nil while a `NoInitialMDS` filesystem is cold and is moved to a surviving daemon when the original is retired. Use `MDSs()` for the topology. |
+| embedded `testcontainers.Container` | One MDS container. It is nil while a `NoInitialMDS` filesystem is cold and is moved to a surviving daemon when the original is retired. Use `MDSs()` for the topology. |
 
 #### MDS
 
@@ -1327,7 +1326,7 @@ been terminated.
 
 ### Snapshot mirroring
 
-Snapshot mirroring between two clusters moved to the `cephfs/mirror` package; see [cephfs-mirror.md](cephfs-mirror.md).
+Snapshot mirroring between two clusters is provided by the `cephfs/mirror` package; see [cephfs-mirror.md](cephfs-mirror.md).
 
 ### Independent test fixtures
 

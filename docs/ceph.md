@@ -57,9 +57,6 @@ Please run the following command to add the Ceph module to your Go dependencies:
 go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
 ```
 
-Until the first release tag exists, `go get` records a pseudo-version of the
-latest commit on `main`.
-
 ## Usage example
 
 The test below starts the default cluster with one pool, attaches a client
@@ -689,8 +686,7 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 Connections between daemons keep Ceph's defaults in both configurable modes, so
 every policy leaves the cluster working.
 
-To move a cluster that a `ceph.conf` with `ms_bind_msgr1 = false` used to
-describe to these options:
+To express a `ceph.conf` with `ms_bind_msgr1 = false` with these options:
 
 | `ceph.conf` | Options |
 | --- | --- |
@@ -1306,9 +1302,7 @@ bootstraps, start with `ceph.Run` and add the service later.
 ### Independent test fixtures
 
 Call `Run` for each test, register owned cleanup before checking its error, and
-create the resources and restricted identities that the test needs. The shared
-cluster and tenant harness has been removed without aliases or a replacement
-sharing framework. See the [usage example](#usage-example) for a complete
+create the resources and restricted identities that the test needs. See the [usage example](#usage-example) for a complete
 fixture.
 
 RADOS namespaces are selected by the client operation; naming one in Cephx caps
@@ -2217,7 +2211,7 @@ for _, mgr := range managers {
 func (c *Container) ManagerContainer() testcontainers.Container
 ```
 
-Returns the container of the initial manager `a`, kept for compatibility. It is
+Returns the container of the initial manager `a`. It is
 nil when `a` has been removed or was never created (for example when the first
 manager added after `WithNoInitialManagers` has another name). Use
 [Managers](#managers) and [ManagerStatus](#managerstatus) for the current
@@ -2364,8 +2358,7 @@ cluster FSID, with non-empty regular identity/keyring files, before daemon
 startup. Failed initialization is not automatically replayed. See
 [bootstrap admission](design/osd-bootstrap-admission.md) for the exact checks
 and limits. [Launch recipes](design/osd-launch-recipes.md) capture file/config
-inputs and rebuild fresh Readers without replaying container creation; neither
-change introduces retained-store detach/reopen support.
+inputs and rebuild fresh Readers without replaying container creation.
 
 #### AddOSD
 
@@ -2426,9 +2419,8 @@ cancelled drain retains the invocation, OSD ownership and fence for a fresh
 removal retry. Commands targeting other instances remain admitted. This does
 not close cluster-wide native admission.
 
-This increment does not add retained-store detach/reopen, attachment leases or
-fault-handle fencing. Internal service shell admission and raw Docker handles
-keep their existing contracts; raw references are not revoked by a Go admission
+Admission does not cover attachment leases or fault handles. Internal service
+shell admission and raw Docker handles keep their own contracts; raw references are not revoked by a Go admission
 fence. `OSDContainer.Remove` still confirms container cleanup after permanent purge.
 
 
@@ -3278,9 +3270,8 @@ already current. Do not edit the file concurrently.
 ### Container Methods: Configuration
 
 The override that sets one stored entry for a while is
-[override.SetConfig](override.md#setconfig). It moved out of `ceph` with its
-handle type; `ceph.ConfigSetting`, `ceph.ConfigEntry` and
-`Observer.Configuration` stay here because they describe and read the database.
+[override.SetConfig](override.md#setconfig). `ceph.ConfigSetting`,
+`ceph.ConfigEntry` and `Observer.Configuration` describe and read the database.
 
 #### Configuration
 
@@ -3299,8 +3290,8 @@ effective value. Entries can contain sensitive values.
 The runtime debug level window is the package function
 [override.SetDebugLevel](override.md#setdebuglevel) and its
 `*override.DebugLevelHandle`; the call and its restoration rules are documented
-there. 0.x: old names are removed without aliases. These types stay in `ceph`
-because the failure manifest copies the receipt:
+there. These types are in `ceph` because the failure manifest copies the
+receipt:
 
 - `ceph.DebugLevelSetting` has `Daemon` (such as `osd.0`), `Name` (`debug_ms` or
   `debug_osd`) and `Level` (`N` or `N/M`, from 0 to 99).
@@ -3332,9 +3323,8 @@ module metadata: `Name`, `Enabled`, `AlwaysOn`, `ForceDisabled`, `Available`
 a module's commands are ready.
 
 The module membership override that enables or disables one manager module is
-[override.SetMGRModule](override.md#setmgrmodule). It moved out of `ceph` with
-its handle type; `Observer.MGRModules`, `ceph.MGRModuleState` and
-`WaitMGRModuleReady` stay here.
+[override.SetMGRModule](override.md#setmgrmodule). `Observer.MGRModules`,
+`ceph.MGRModuleState` and `WaitMGRModuleReady` are documented here.
 
 #### WaitMGRModuleReady
 
@@ -3516,9 +3506,8 @@ about health or daemon availability.
 ### Container Methods: Messenger mode
 
 The override that changes the policy of a running cluster is
-[override.SetMessengerPolicy](override.md#setmessengerpolicy). It moved out of
-`ceph` with its handle type; `ceph.MessengerPolicy` and
-`ceph.MessengerConnectionMode` stay here because `NetworkConfig.WithMessengerPolicy` takes them
+[override.SetMessengerPolicy](override.md#setmessengerpolicy).
+`ceph.MessengerPolicy` and `ceph.MessengerConnectionMode` are in `ceph` because `NetworkConfig.WithMessengerPolicy` takes them
 at `Run`.
 
 ### Container Methods: Object watchers and client fencing
@@ -3551,9 +3540,8 @@ CIDR range) and `Until` (the MON's absolute expiration time). Listing grants no
 ownership to remove an entry.
 
 The blocklist entry that fences a client session is added by
-[override.AddBlocklist](override.md#addblocklist). It moved out of `ceph` with
-its handle type; `Observer.BlocklistEntries` and `ceph.BlocklistEntry` stay here because
-they only read the OSDMap.
+[override.AddBlocklist](override.md#addblocklist). `Observer.BlocklistEntries`
+and `ceph.BlocklistEntry` only read the OSDMap.
 
 ### Container Methods: Full ratios
 
@@ -3574,9 +3562,8 @@ configuration and pool quotas, and do not say whether any OSD has reported
 fullness.
 
 The override that lowers or raises these thresholds is
-[override.SetFullRatios](override.md#setfullratios). It moved out of `ceph` with
-its handle type; `Observer.FullRatios`, `ceph.FullRatios` and
-`ceph.FullRatioSnapshot` stay here because they describe and read the OSDMap.
+[override.SetFullRatios](override.md#setfullratios). `Observer.FullRatios`,
+`ceph.FullRatios` and `ceph.FullRatioSnapshot` describe and read the OSDMap.
 See [Fill the cluster with low full ratios](#fill-the-cluster-with-low-full-ratios).
 
 ### Container Methods: Scrub inconsistencies
@@ -4374,7 +4361,7 @@ Start `ceph.Run` in each test and register the returned cluster for cleanup
 before checking the error. Use `WithPools` for bootstrap pools, or
 `CreatePool` for an explicitly owned dynamic pool. Create restricted Cephx
 identities with `CreateClient` and use `WithClientIdentity` for client containers.
-See [the complete migration example](ceph.md#usage-example).
+See the [usage example](#usage-example).
 
 ### Create an erasure-coded data pool for RBD images
 

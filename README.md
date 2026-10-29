@@ -48,7 +48,7 @@ audit are recorded in [API naming](docs/design/api-naming.md).
 
 ## Requirements
 
-- Go 1.26 or later (v0.1.0 needs Go 1.25); use a patched toolchain. The
+- Go 1.26 or later; use a patched toolchain. The
   repository selects Go 1.26.9 for its own checks. A consumer must select its
   own toolchain; the toolchain line of this repository does not set it.
 - A Docker engine that runs Linux containers. Docker Desktop works. Host
@@ -171,7 +171,7 @@ For contributors:
 - [Package-split rewrite shards](docs/contributing/package-split-shards.md): add
   one shard per package move for the retained producer rewrites.
 - [Behavioral bug compatibility](docs/contributing/bug-compatibility.md): explicit
-  bug-ID selection policy and the planned supported-tag catalogue.
+  bug-ID selection policy.
 - [Preparing a release](docs/contributing/releasing.md): the scope, evidence
   and publication checks for a candidate.
 

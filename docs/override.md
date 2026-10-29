@@ -9,10 +9,6 @@ OSDMap full ratios, MGR module state, global OSD flags, runtime debug levels,
 central configuration entries and messenger policy. The package and restoration
 boundary follow the [design](design/override-package-boundary.md).
 
-0.x: old names are removed without aliases. The seven `Container` methods and
-their handle types no longer exist in `ceph`; each is an `override` function
-with its own handle.
-
 `ceph.BlocklistEntry`, `Observer.BlocklistEntries`, `ceph.OSDFlag`,
 its constants, `Observer.OSDFlags`, `ceph.FullRatios`,
 `ceph.FullRatioSnapshot`, `Observer.FullRatios`, `ceph.ConfigSetting`,
@@ -306,8 +302,6 @@ if err := change.Restore(ctx); err != nil {
 ```golang
 func SetDebugLevel(ctx context.Context, c *ceph.Container, setting ceph.DebugLevelSetting) (*override.DebugLevelHandle, error)
 ```
-
-0.x: old names are removed without aliases.
 
 `ceph.DebugLevelSetting`, `ceph.DebugLevelReceipt`, `ceph.DebugLevelState` and
 `ceph.DebugLevelTransition` stay in `ceph` because the failure manifest copies
