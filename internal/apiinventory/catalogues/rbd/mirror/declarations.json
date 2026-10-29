@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rbd/mirror",
-  "count": 40,
+  "count": 43,
   "entries": [
     {
       "current": "rbd/mirror.Config",
@@ -241,6 +241,20 @@
       "decision": "baseline"
     },
     {
+      "current": "rbd/mirror.Option",
+      "kind": "type",
+      "proposed": "rbd/mirror.Option",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Option.Customize",
+      "kind": "method",
+      "signature": "func(*testcontainers.GenericContainerRequest) error",
+      "receiver": "Option",
+      "proposed": "rbd/mirror.Option.Customize",
+      "decision": "baseline"
+    },
+    {
       "current": "rbd/mirror.Policies",
       "kind": "type",
       "proposed": "rbd/mirror.Policies",
@@ -267,7 +281,7 @@
     {
       "current": "rbd/mirror.Run",
       "kind": "function",
-      "signature": "func(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
+      "signature": "func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
       "proposed": "rbd/mirror.Run",
       "decision": "baseline"
     },
@@ -287,6 +301,13 @@
       "current": "rbd/mirror.ScopePool",
       "kind": "const",
       "proposed": "rbd/mirror.ScopePool",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.WithConfig",
+      "kind": "function",
+      "signature": "func(config Config) Option",
+      "proposed": "rbd/mirror.WithConfig",
       "decision": "baseline"
     }
   ]
