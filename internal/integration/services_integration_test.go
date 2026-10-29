@@ -61,7 +61,6 @@ func integrationImages(t *testing.T) (string, []testcontainers.ContainerCustomiz
 func newServiceCluster(t *testing.T, customizers ...testcontainers.ContainerCustomizer) (*ceph.Container, testcontainers.Container) {
 	t.Helper()
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithOSDCount(2))
 	opts = append(opts, customizers...)
 	return newServiceClusterWithOptions(t, image, opts...)
 }

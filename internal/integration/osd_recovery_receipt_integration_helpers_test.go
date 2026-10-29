@@ -298,7 +298,7 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 	if erasure {
 		width = 3
 		pool = ceph.PoolConfig{Name: "tc-paths", PGNum: 1, MinSize: 2, Application: "rados", ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1}}
-		opts = append(opts, ceph.WithOSDCount(3))
+		opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	}
 	cluster, client := newServiceCluster(t, opts...)
 	if _, err := cluster.CreatePool(ctx, pool); err != nil {

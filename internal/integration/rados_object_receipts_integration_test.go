@@ -25,7 +25,7 @@ func TestRADOSObjectReceipts(t *testing.T) {
 	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithOSDCount(1))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	const objects, stats, enumerated, namespace = "tc-objects", "tc-objstats", "tc-enumeration", "receipts"
 	for _, pool := range []struct {
 		name string

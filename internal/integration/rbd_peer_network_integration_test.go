@@ -19,13 +19,13 @@ import (
 func TestMultiClusterRBDPeerNetworkInterruption(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	source, destination, a, b := newMultiClusterPair(t, ceph.WithOSDCount(1), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()))
+	source, destination, a, b := newMultiClusterPair(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()))
 	const pool = "tc-peer-network"
 	const name = "backlog"
 	rbdMultiClusterPool(t, ctx, source, a, pool)
 	rbdMultiClusterPool(t, ctx, destination, b, pool)
 	image := staticFacts(source).Images.RBDAux
-	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", image), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
+	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", image), rbdmirror.WithConfig(rbdmirror.Config{Source: source, Destination: destination, Pool: pool}))
 	if mirror != nil {
 		testcontainers.CleanupContainer(t, mirror)
 	}

@@ -149,7 +149,7 @@ func TestRunOSDStorageRefusesBeforeEffectsAndKeepsOtherSettings(t *testing.T) {
 	}
 	effective, err := admit(t, "image",
 		WithOSDStorage(OSDStorage{}.WithBlockSize(128<<20).WithVolume()),
-		(serviceHooks{}).WithServiceImage("rgw", "selected-gateway"), WithOSDCount(3), raw)
+		roleImageOption("rgw", "selected-gateway"), WithClusterConfig(ClusterConfig{}.WithOSDCount(3)), raw)
 	wantAdmitted(t, err)
 	if effective.blockSize != 128<<20 || !effective.osdVolumeStorage || effective.rgwOverride != "selected-gateway" || effective.osds != 3 || calls != 0 {
 		t.Fatalf("a setting was dropped or reached a container: %+v calls=%d", effective, calls)

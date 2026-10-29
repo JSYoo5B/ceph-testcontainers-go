@@ -22,14 +22,14 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	defer cancel()
 	// A single OSD per independent cluster is sufficient for protocol and
 	// selective-sync fixtures; this scenario does not test storage redundancy.
-	opts = append(opts, ceph.WithOSDCount(1))
+	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	source, destination, _, _ := newMultiClusterPair(t, opts...)
 	essentialImage, _ := integrationImages(t)
 	image := os.Getenv("CEPH_TEST_RGW_IMAGE")
 	if image == "" {
 		image = essentialImage
 	}
-	link, err := multisite.Run(ctx, image, multisite.Config{Source: source, Destination: destination, Realm: "tc-owned-sync", SourceZone: "source", DestinationZone: "destination"})
+	link, err := multisite.Run(ctx, image, multisite.WithConfig(multisite.Config{Source: source, Destination: destination, Realm: "tc-owned-sync", SourceZone: "source", DestinationZone: "destination"}))
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

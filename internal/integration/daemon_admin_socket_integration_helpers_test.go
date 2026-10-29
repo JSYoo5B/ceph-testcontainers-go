@@ -25,7 +25,7 @@ import (
 func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)}, opts...)...)
+	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1))}, opts...)...)
 
 	for _, daemon := range []string{"mon.a", "mgr.a", "osd.0"} {
 		out, err := adminSocket(t, ctx, cluster, daemon, "version")

@@ -505,7 +505,7 @@ type osdBackoffReceipt struct {
 func testOSDBackoffReceipt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithOSDCount(3))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: backoffPool, PGNum: 1, Replicas: 3, MinSize: 3, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}

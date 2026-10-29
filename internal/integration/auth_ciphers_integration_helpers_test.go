@@ -145,7 +145,7 @@ func keyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) b
 func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	base := append(slices.Clone(imageOpts), ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))
+	base := append(slices.Clone(imageOpts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))
 	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{
 		KeyType: ceph.CipherAES, MonTicketTTL: 10500 * time.Millisecond, ServiceTicketTTL: 120 * time.Second,
 	}))...)
@@ -173,7 +173,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 	if err != nil || cephxKeyType(t, clientKeyring(t, aesClient), aesClient.Name()) != ceph.CipherAES || !clientAuthenticates(t, ctx, cluster, aesClient) {
 		t.Fatalf("default AES client: %v", err)
 	}
-	explicit, err := cluster.CreateClient(ctx, "explicit-aes-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.WithClientKeyType(ceph.CipherAES))
+	explicit, err := cluster.CreateClient(ctx, "explicit-aes-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.ClientOptions{}.WithKeyType(ceph.CipherAES))
 	if err != nil || cephxKeyType(t, clientKeyring(t, explicit), explicit.Name()) != ceph.CipherAES || !clientAuthenticates(t, ctx, cluster, explicit) {
 		t.Fatalf("explicit AES client: %v", err)
 	}
@@ -181,7 +181,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 	if !keyTypes {
 		// Without key type support only AES keys exist: an AES256K client and
 		// cluster are refused before anything is created.
-		_, err := cluster.CreateClient(ctx, "aes256k-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.WithClientKeyType(ceph.CipherAES256K))
+		_, err := cluster.CreateClient(ctx, "aes256k-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.ClientOptions{}.WithKeyType(ceph.CipherAES256K))
 		var refusal *ceph.OperationError
 		if !errors.As(err, &refusal) || refusal.Kind != ceph.ErrUnsupported || refusal.Capability != "ceph-authtool --key-type" ||
 			refusal.Version != staticFacts(cluster).CephVersion || !strings.HasPrefix(refusal.Image, "sha256:") {
@@ -205,7 +205,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 	if service != "aes" || strings.Join(allowed, ",") != "aes" || preferred != "aes" {
 		t.Fatalf("monmap ciphers service=%s allowed=%v preferred=%s", service, allowed, preferred)
 	}
-	strong, err := cluster.CreateClient(ctx, "aes256k-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.WithClientKeyType(ceph.CipherAES256K))
+	strong, err := cluster.CreateClient(ctx, "aes256k-reader", ceph.ClientCaps{Mon: "allow r"}, ceph.ClientOptions{}.WithKeyType(ceph.CipherAES256K))
 	if err != nil || cephxKeyType(t, clientKeyring(t, strong), strong.Name()) != ceph.CipherAES256K {
 		t.Fatalf("AES256K client: %v", err)
 	}
@@ -237,7 +237,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 		t.Fatalf("mixed cluster mgr.a has a %s key", got)
 	}
 	for _, cipher := range []ceph.CephxCipher{ceph.CipherAES, ceph.CipherAES256K} {
-		client, err := mixed.CreateClient(ctx, "mixed-"+string(cipher), ceph.ClientCaps{Mon: "allow r"}, ceph.WithClientKeyType(cipher))
+		client, err := mixed.CreateClient(ctx, "mixed-"+string(cipher), ceph.ClientCaps{Mon: "allow r"}, ceph.ClientOptions{}.WithKeyType(cipher))
 		if err != nil || !clientAuthenticates(t, ctx, mixed, client) {
 			t.Fatalf("%s client on the mixed cluster: %v", cipher, err)
 		}

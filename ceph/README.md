@@ -78,7 +78,7 @@ func TestRADOSRoundTrip(t *testing.T) {
 	ctx := t.Context()
 
 	cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-		ceph.WithPools(ceph.PoolConfig{Name: "app-data", Application: "rados"}),
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{Name: "app-data", Application: "rados"})),
 	)
 	// Register cleanup before checking err: a partially started cluster
 	// is returned together with the error and still owns containers.
@@ -157,9 +157,9 @@ and by [WithStartupTimeout](#withstartuptimeout) (3 minutes by default):
 5. Start managers `a`, `b`, ...; the first becomes active, the others standby.
 6. Register, format and start each OSD and wait until it is up and in.
 7. Wait for an available active MGR. With
-   [WithNoInitialManagers](#withnoinitialmanagers), wait for MON quorum and for
+   [ClusterConfig.WithNoInitialManagers](#clusterconfigwithnoinitialmanagers), wait for MON quorum and for
    the OSDs to be up and in instead.
-8. Create the [WithPools](#withpools) pools, then the service resources passed by
+8. Create the [ClusterConfig.WithPools](#clusterconfigwithpools) pools, then the service resources passed by
    service package options: RBD pools, CephFS filesystems and RGW gateways.
 
 `Run` does not wait for clean placement groups. Call
@@ -186,10 +186,9 @@ of option order:
 | `NetworkConfig.WithMessengerPolicy` with `MessengerV2Secure` | rejected; `MessengerV2Secure` fixes every connection mode |
 | `NetworkConfig.WithAddressFamily` with any family but `AddressIPv4`, and `WithHostNetwork` | `NetworkConfig.WithAddressFamily(...) requires bridge mode` |
 | `NetworkConfig.WithAddressFamily(AddressIPv4MappedIPv6)` with `NetworkConfig.WithSeparateClusterNetwork` | rejected |
-| `WithNoInitialOSDs` with `WithOSDCount` or `WithInitialOSDs` | rejected; pick one initial layout |
-| `WithNoInitialOSDs` with initial pools, filesystems or gateways | rejected; add OSDs before provisioning them |
-| `WithNoInitialManagers` with `WithManagerCount` | rejected |
-| `WithNoInitialManagers` with initial filesystems or gateways | rejected; add a manager before provisioning them (initial pools are allowed) |
+| One field of a value group set by two carriers, for example two `WithClusterConfig` values that both set the OSDs | rejected, even when they agree |
+| `ClusterConfig.WithNoInitialOSDs` with initial pools, filesystems or gateways | rejected; add OSDs before provisioning them |
+| `ClusterConfig.WithNoInitialManagers` with initial filesystems or gateways | rejected; add a manager before provisioning them (initial pools are allowed) |
 | Fewer OSDs in the default CRUSH root than the default replica count | `default CRUSH root ... needs N initial OSDs` |
 | An initial pool needs more failure domains than the initial layout has | `initial pool ... needs N distinct ... domains` |
 | Duplicate pool, filesystem or gateway names, including the pools a filesystem creates | rejected as duplicates |
@@ -209,32 +208,66 @@ roles never fall back to essential. See [image selection](../docs/guides/release
 
 ### Container Options
 
-When starting the Ceph container, you can pass options in a variadic way to configure it.
+Ceph settings are grouped into plain values with chainable, value-returning
+methods (`ClusterConfig`, `OSDStorage`, `NetworkConfig`, `ImageOptions`), each
+passed to `Run` through its one option function. Docker and container execution
+policy (`WithHostNetwork`, `WithStartupTimeout`) and the testcontainers-style
+`WithConfigFile` stay functions.
 
-#### WithOSDCount
+#### ClusterConfig
 
 ```golang
-ceph.WithOSDCount(3)
+type ClusterConfig struct { /* unexported */ }
+
+func (ClusterConfig) WithMonitorCount(count int) ClusterConfig
+func (ClusterConfig) WithManagerCount(count int) ClusterConfig
+func (ClusterConfig) WithNoInitialManagers() ClusterConfig
+func (ClusterConfig) WithOSDCount(count int) ClusterConfig
+func (ClusterConfig) WithInitialOSDs(configs ...OSDConfig) ClusterConfig
+func (ClusterConfig) WithNoInitialOSDs() ClusterConfig
+func (ClusterConfig) WithDefaultCRUSHRoot(root string) ClusterConfig
+func (ClusterConfig) WithPoolDefaults(replicas, minSize int) ClusterConfig
+func (ClusterConfig) WithPools(configs ...PoolConfig) ClusterConfig
+func WithClusterConfig(cluster ClusterConfig) Option
+```
+
+The topology and placement group: the initial MON, MGR and OSD topology, the
+initial OSD layout, the default CRUSH root, the pool defaults and the initial
+pools. The zero value changes nothing, and each field records whether it was
+set. The managers (`WithManagerCount`, `WithNoInitialManagers`) are one field,
+and so are the initial OSDs (`WithOSDCount`, `WithInitialOSDs`,
+`WithNoInitialOSDs`): within one value a later call replaces the earlier one,
+and `Run` refuses a field that two `WithClusterConfig` options both set, even
+when they agree.
+
+```golang
+cluster := ceph.ClusterConfig{}.WithMonitorCount(3).WithOSDCount(3).WithPoolDefaults(3, 2)
+c, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithClusterConfig(cluster))
+```
+
+#### ClusterConfig.WithOSDCount
+
+```golang
+ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3))
 ```
 
 Sets the number of initial OSD containers. The default is 2 and the minimum is 1;
-use [WithNoInitialOSDs](#withnoinitialosds) to start without storage. Each OSD
+use [WithNoInitialOSDs](#clusterconfigwithnoinitialosds) to start without storage. Each OSD
 gets the default CRUSH location: a logical host `osd-<ID>` under the default
-root. A later `WithOSDCount` replaces an earlier
-[WithInitialOSDs](#withinitialosds) layout.
+root.
 
-Without [WithPoolDefaults](#withpooldefaults), the cluster's default pool size is
+Without [WithPoolDefaults](#clusterconfigwithpooldefaults), the cluster's default pool size is
 `min(2, OSD count)` with `min_size` 1, so a one-OSD cluster gets replica-1 pools
 that can become clean.
 
-#### WithInitialOSDs
+#### ClusterConfig.WithInitialOSDs
 
 ```golang
-ceph.WithInitialOSDs(
+ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(
 	ceph.OSDConfig{Host: "host-a", Rack: "rack-a", DeviceClass: "fast"},
 	ceph.OSDConfig{Host: "host-b", Rack: "rack-b", DeviceClass: "fast"},
 	ceph.OSDConfig{Host: "host-c", Rack: "rack-b", DeviceClass: "slow"},
-)
+))
 ```
 
 Selects the number of initial OSDs and the logical CRUSH location of each. Each
@@ -244,11 +277,11 @@ Selects the number of initial OSDs and the logical CRUSH location of each. Each
 | --- | --- | --- |
 | `Host` | `osd-<ID>` | CRUSH host bucket. Several OSDs may share a host. |
 | `Rack` | none | Optional CRUSH rack bucket. Several hosts may share a rack. |
-| `Root` | the cluster's default root | CRUSH root bucket (see [WithDefaultCRUSHRoot](#withdefaultcrushroot)). |
+| `Root` | the cluster's default root | CRUSH root bucket (see [WithDefaultCRUSHRoot](#clusterconfigwithdefaultcrushroot)). |
 | `DeviceClass` | none | Device class used by `PoolConfig.DeviceClass` and `PoolPlacement.DeviceClass`. |
 
 An empty list is rejected, and one host cannot appear under different racks or
-roots. A later [WithOSDCount](#withosdcount) replaces this layout. Hosts and
+roots. Hosts and
 racks are simulated placement domains on one Docker engine; they let you test
 CRUSH behaviour, not physical failure tolerance. Pools that need `N` distinct
 domains are validated against this layout before anything is created.
@@ -261,7 +294,7 @@ run: the first OSD gets the lowest free ID, and each host bucket is created
 before any OSD boots. It then creates and starts up to four OSD containers at
 a time and waits until all OSDs are up and in. The first manager boots while
 the OSDs are registered and started; further managers from
-[WithManagerCount](#withmanagercount) are added after it is registered, so it
+[WithManagerCount](#clusterconfigwithmanagercount) are added after it is registered, so it
 stays the active one.
 
 If an OSD fails to start, `Run` starts no further OSD and returns an error that
@@ -271,17 +304,16 @@ owned by the returned cluster, and `Terminate` removes them. On
 to 11 seconds for three OSDs and from about 27 to 16 seconds for five.
 [AddOSD](#addosd) still adds one OSD at a time.
 
-#### WithNoInitialOSDs
+#### ClusterConfig.WithNoInitialOSDs
 
 ```golang
-ceph.WithNoInitialOSDs()
+ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs())
 ```
 
 Starts only the MON and MGR topology. Add storage later with
 [AddOSD](#addosd), then create pools.
 
-- Initial pools, filesystems and gateways, and an explicit `WithOSDCount` or
-  `WithInitialOSDs`, are rejected before allocation.
+- Initial pools, filesystems and gateways are rejected before allocation.
 - Prospective pool defaults stay at size 2 and `min_size` 1. Use
   `WithPoolDefaults(1, 1)` if you will add only one OSD; adding OSDs does not
   change existing pool sizes.
@@ -296,13 +328,13 @@ Starts only the MON and MGR topology. Add storage later with
 
 Use it for MON-only or MGR-only tests, bootstrap-ordering tests, and to apply OSD
 configuration (for example a scheduler or benchmark setting) before any OSD
-starts. Combined with [WithNoInitialManagers](#withnoinitialmanagers) it gives a
+starts. Combined with [WithNoInitialManagers](#clusterconfigwithnoinitialmanagers) it gives a
 MON-only phase. See [Start without OSDs, then add storage](#start-without-osds-then-add-storage).
 
-#### WithMonitorCount
+#### ClusterConfig.WithMonitorCount
 
 ```golang
-ceph.WithMonitorCount(3)
+ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3))
 ```
 
 Sets the initial number of monitors (default 1, minimum 1). Monitors are named
@@ -311,21 +343,21 @@ allowed for deliberate quorum-loss scenarios. With more than one monitor the
 cluster also starts an independent CLI control container, so fixture commands
 keep working while MON `a` is stopped.
 
-#### WithManagerCount
+#### ClusterConfig.WithManagerCount
 
 ```golang
-ceph.WithManagerCount(2)
+ceph.WithClusterConfig(ceph.ClusterConfig{}.WithManagerCount(2))
 ```
 
 Sets the initial number of managers (default 1, minimum 1). Managers are named
 `a`, `b`, ...; one becomes active and the rest register as standbys.
 `WithManagerCount(0)` is invalid; use
-[WithNoInitialManagers](#withnoinitialmanagers) instead.
+[WithNoInitialManagers](#clusterconfigwithnoinitialmanagers) instead.
 
-#### WithNoInitialManagers
+#### ClusterConfig.WithNoInitialManagers
 
 ```golang
-ceph.WithNoInitialManagers()
+ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers())
 ```
 
 Starts the MON and OSD topology without creating a manager. Add the first manager
@@ -333,8 +365,8 @@ with [AddManager](#addmanager).
 
 - `Run` waits for MON quorum and for the initial OSDs to be up and in. It does not
   wait for MGR availability, modules, PG statistics or health.
-- Initial pools are allowed and created; initial filesystems and gateways and an
-  explicit `WithManagerCount` are rejected.
+- Initial pools are allowed and created; initial filesystems and gateways are
+  rejected.
 - [WaitForClean](#waitforclean) and [WaitForPGClean](#waitforpgclean) need an
   available manager, so they cannot succeed until you add one.
 - Ceph may raise `MGR_DOWN` (only after the new monitor's `mon_mgr_mkfs_grace`,
@@ -345,21 +377,21 @@ with [AddManager](#addmanager).
 To simulate a manager outage in an already configured cluster, stop the existing
 manager container instead (see [Managers](#managers)).
 
-#### WithPools
+#### ClusterConfig.WithPools
 
 ```golang
-ceph.WithOSDCount(3), // the EC pool needs K+M = 3 distinct OSDs
-ceph.WithPools(
-	ceph.PoolConfig{Name: "app-data", Application: "rados"},
-	ceph.PoolConfig{Name: "app-ec", Application: "rados",
-		ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1}},
-),
+ceph.WithClusterConfig(ceph.ClusterConfig{}.
+	WithOSDCount(3). // the EC pool needs K+M = 3 distinct OSDs
+	WithPools(
+		ceph.PoolConfig{Name: "app-data", Application: "rados"},
+		ceph.PoolConfig{Name: "app-ec", Application: "rados",
+			ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1}},
+	))
 ```
 
 Creates pools after the initial OSDs have started, with the same validation and
-result as [CreatePool](#createpool). Repeated `WithPools` options replace the list;
-a final `WithPools()` clears it. Defaults from other options are resolved after
-all options have been applied. `Run` does not wait for the pools to become clean.
+result as [CreatePool](#createpool). The value copies the configs. Defaults from
+other settings are resolved after all options have been applied. `Run` does not wait for the pools to become clean.
 
 `ceph.PoolConfig` fields:
 
@@ -387,28 +419,28 @@ additional CephFS data pool.
 For RBD pools that need `rbd pool init`, use `rbd.WithPools` instead (see
 [Service packages](#service-packages)).
 
-#### WithPoolDefaults
+#### ClusterConfig.WithPoolDefaults
 
 ```golang
-ceph.WithPoolDefaults(3, 2)
+ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPoolDefaults(3, 2))
 ```
 
 Sets `osd_pool_default_size` and `osd_pool_default_min_size` for pools that Ceph
 or services create and for `PoolConfig` values that omit `Replicas`/`MinSize`.
-Requires `1 <= minSize <= replicas <= 10`. Without this option the default is
+Requires `1 <= minSize <= replicas <= 10`. Without this setting the default is
 `size = min(2, initial OSD count)` and `min_size = 1` (2/1 with
 `WithNoInitialOSDs`). Set the defaults here rather than in a config file; the
 config file rejects these keys.
 
-#### WithDefaultCRUSHRoot
+#### ClusterConfig.WithDefaultCRUSHRoot
 
 ```golang
-ceph.WithDefaultCRUSHRoot("tc-storage")
+ceph.WithClusterConfig(ceph.ClusterConfig{}.WithDefaultCRUSHRoot("tc-storage"))
 ```
 
 Selects the CRUSH root used for pools that Ceph creates itself (such as `.mgr`)
 and for omitted `PoolConfig.CRUSHRoot` and `OSDConfig.Root` fields. Without this
-option the root is `default`. The initial layout must contain enough OSDs in this
+setting the root is `default`. The initial layout must contain enough OSDs in this
 root for the default replica count; this check is skipped with
 `WithNoInitialOSDs`.
 
@@ -453,7 +485,7 @@ Caveat: with Ceph's default mClock scheduler, a fresh OSD runs a startup capacit
 benchmark that can write about 100 objects of 4 MiB (400 MiB) before deleting
 them. That alone fills a 64 to 256 MiB file, BlueStore aborts the OSD, and `Run`
 times out waiting for it. For small OSDs, start with
-[WithNoInitialOSDs](#withnoinitialosds), set `osd_mclock_skip_benchmark` with
+[ClusterConfig.WithNoInitialOSDs](#clusterconfigwithnoinitialosds), set `osd_mclock_skip_benchmark` with
 [override.SetConfig](../override/README.md#setconfig), then add OSDs. The option itself never
 changes the scheduler or the benchmark. See
 [Run small OSDs](#run-small-osds).
@@ -594,12 +626,12 @@ rejected with the option to use instead:
 
 | Keys | Use instead |
 | --- | --- |
-| `fsid`, `mon_host`, `mon_initial_members`, `mon_addr` | generated; `WithMonitorCount` |
+| `fsid`, `mon_host`, `mon_initial_members`, `mon_addr` | generated; `ClusterConfig.WithMonitorCount` |
 | `public_network`, `cluster_network`, `public_addr`, `cluster_addr`, `*_bind_addr` | `WithHostNetwork`, `NetworkConfig.WithSeparateClusterNetwork`, `NetworkConfig.WithHostAddress` |
 | `auth_*`, `keyring`, `key`, `keyfile` | `WithAuth`; fixture Cephx setup |
-| `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` except `ms_bind_prefer_ipv4` | `NetworkConfig.WithMessengerMode`, `NetworkConfig.WithMessengerPolicy`, `WithClientMessengerPolicy`, `NetworkConfig.WithAddressFamily`, `WithHostNetwork` |
-| `osd_pool_default_size`, `osd_pool_default_min_size` | `WithPoolDefaults` |
-| `osd_pool_default_crush_rule` | `WithDefaultCRUSHRoot` |
+| `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` except `ms_bind_prefer_ipv4` | `NetworkConfig.WithMessengerMode`, `NetworkConfig.WithMessengerPolicy`, `ClientContainerOptions.WithMessengerPolicy`, `NetworkConfig.WithAddressFamily`, `WithHostNetwork` |
+| `osd_pool_default_size`, `osd_pool_default_min_size` | `ClusterConfig.WithPoolDefaults` |
+| `osd_pool_default_crush_rule` | `ClusterConfig.WithDefaultCRUSHRoot` |
 | `bluestore_block_size` | `OSDStorage.WithBlockSize` |
 | `osd_objectstore`, `bluestore_block_path`, `bluestore_block_create` | fixed OSD storage layout |
 | `log_file`, `log_to_file`, `log_to_stderr`, `err_to_stderr`, `mon_cluster_log_to_*` | daemon logs always go to container output |
@@ -666,7 +698,7 @@ immutable for the lifetime of the cluster.
 
 | Mode | Listeners and addresses | Connection modes |
 | --- | --- | --- |
-| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [NetworkConfig.WithMessengerPolicy](#networkconfigwithmessengerpolicy), [override.SetMessengerPolicy](../override/README.md#setmessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
+| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [NetworkConfig.WithMessengerPolicy](#networkconfigwithmessengerpolicy), [override.SetMessengerPolicy](../override/README.md#setmessengerpolicy) and [ClientContainerOptions.WithMessengerPolicy](#clientcontaineroptions). Not every connection is encrypted. |
 | `ceph.MessengerV2Only` | v2 only | As with `MessengerDefault`: CRC, secure or a per-daemon-type mix, changeable later. |
 | `ceph.MessengerV2Secure` | v2 only | Fixed to encrypted Messenger v2 (`secure`, AES-GCM) for every connection; no CRC mode. |
 
@@ -678,7 +710,7 @@ crc := []ceph.MessengerConnectionMode{ceph.MessengerCRC}
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 	ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only).WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc})),
 )
-// Native clients attached with WithClient(ceph.WithClientMessengerPolicy(
+// Native clients attached with WithClient(ceph.ClientContainerOptions{}.WithMessengerPolicy(
 // ceph.ClientMessengerPolicy{MonitorsAndManagers: crc, OtherDaemons: crc}))
 // connect with CRC; a client that offers only secure is refused.
 ```
@@ -692,7 +724,7 @@ To express a `ceph.conf` with `ms_bind_msgr1 = false` with these options:
 | --- | --- |
 | All six `ms_*_mode` and `ms_mon_*_mode` options `secure` | `NetworkConfig.WithMessengerMode(ceph.MessengerV2Secure)` |
 | `ms_mon_service_mode` of the MONs or MGRs, `ms_service_mode` of the OSDs | `NetworkConfig.WithMessengerMode(ceph.MessengerV2Only)` and the matching fields of `NetworkConfig.WithMessengerPolicy` |
-| `ms_mon_client_mode` and `ms_client_mode` of a client | `WithClientMessengerPolicy` on that client's container |
+| `ms_mon_client_mode` and `ms_client_mode` of a client | `ClientContainerOptions.WithMessengerPolicy` on that client's container |
 | `ms_cluster_mode` and `ms_mon_cluster_mode` between daemons | Ceph's defaults: the policy options leave them alone; with `MessengerV2Only`, [override.SetConfig](../override/README.md#setconfig) can change them |
 | `mon_host` with only v2 addresses, port 3300 | [MonitorBootstrapAddresses](#monitorbootstrapaddresses), or `MappedPort(ctx, "3300/tcp")` in bridge mode; there is no 6789 to map |
 
@@ -845,16 +877,16 @@ after a failed connect the `ceph` CLI exits without shutting librados down,
 so the line is sometimes missing. A librados client of your own writes it
 reliably to its log when you call `shutdown` after the failed connect.
 
-#### WithClientMessengerPolicy
+#### ClientContainerOptions
 
 The policy of a native client is set separately, in that client's own
-configuration, with `ceph.WithClientMessengerPolicy`. It is a
-`ceph.ClientContainerOption` of [WithClient](#withclient) and
-[WithClientIdentity](#withclientidentity), so a mode rejection test can give
+configuration, with `ceph.ClientContainerOptions.WithMessengerPolicy`.
+`ClientContainerOptions` is the configuration value of [WithClient](#withclient) and
+[WithClientIdentity](#withclientidentity); a field set by two values is refused. So a mode rejection test can give
 the native reference client and the client under test different policies:
 
 ```golang
-crcOnly := ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{
+crcOnly := ceph.ClientContainerOptions{}.WithMessengerPolicy(ceph.ClientMessengerPolicy{
 	MonitorsAndManagers: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
 })
 facts, err := ceph.FactsOf(cluster)
@@ -1260,7 +1292,7 @@ serve RBD, CephFS and S3 clients together:
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithOSDCount(3),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)),
 	rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
 	cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
 	rgw.WithGateways(rgw.Config{Name: "s3"}),
@@ -1285,7 +1317,7 @@ if err != nil {
 `Run` creates `WithPools` pools first, then RBD pools, filesystems and gateways.
 All names, including the pools a filesystem creates, are validated together.
 Filesystems and gateways need OSDs and a manager, so they are rejected with
-`WithNoInitialOSDs` or `WithNoInitialManagers`; RBD pools need OSDs but no
+`ClusterConfig.WithNoInitialOSDs` or `ClusterConfig.WithNoInitialManagers`; RBD pools need OSDs but no
 manager. The cluster owns all service containers: `Terminate` removes them, and
 [ServiceContainers](#servicecontainers) lists them.
 
@@ -1296,7 +1328,7 @@ active MDS, and `rgw.Run` the default gateway with a test user. Their result is
 that package's `Container`, which embeds `*ceph.Container`, so every method on
 this page is available on it. A service `Run` rejects bootstrap options that
 leave its service without the storage or manager it needs (for example
-`ceph.WithNoInitialOSDs`); `rbd.Run` accepts `WithNoInitialManagers`. For staged
+`ceph.ClusterConfig.WithNoInitialOSDs`); `rbd.Run` accepts `ClusterConfig.WithNoInitialManagers`. For staged
 bootstraps, start with `ceph.Run` and add the service later.
 
 ### Independent test fixtures
@@ -1976,8 +2008,8 @@ lazily; aggregate images reuse the [control container](#controlcontainer). Run
 #### Per-daemon images
 
 ```golang
-type DaemonOption func(*daemonOptions) error
-func WithDaemonImage(image string) DaemonOption
+type DaemonOptions struct { /* unexported */ }
+func (DaemonOptions) WithImage(image string) DaemonOptions
 
 func (m *MonitorContainer) Image() string
 func (m *ManagerContainer) Image() string
@@ -1989,14 +2021,20 @@ func (m *ManagerContainer) Version(ctx context.Context) (string, error)
 func (o *OSDContainer) Version(ctx context.Context) (string, error)
 ```
 
-`WithDaemonImage` is an option of [AddMonitor](#addmonitor) and
-[AddManager](#addmanager); `OSDOptions.WithImage` does the same for
-[AddOSD](#addosd). It starts that one new daemon from the given image instead of
-the essential image. Nothing else changes: the option
-does not touch the cluster's settings, `ClusterFacts` or any other daemon.
+`DaemonOptions` is the configuration value of [AddMonitor](#addmonitor) and
+[AddManager](#addmanager), as `OSDOptions` is for [AddOSD](#addosd). Its
+`WithImage` starts that one new daemon from the given image instead of the
+essential image (`OSDOptions.WithImage` does the same for an OSD). Nothing else
+changes: the value does not touch the cluster's settings, `ClusterFacts` or any
+other daemon.
+
+```golang
+mon, err := cluster.AddMonitor(ctx, "b", ceph.DaemonOptions{}.WithImage(newImage))
+```
 
 - Validation. The reference must be non-empty with no whitespace or control
-  characters, and may be given once. A refusal matches `ErrInvalidRequest` and
+  characters. Within one value a later `WithImage` replaces the earlier one; two
+  values that both set the image are refused. A refusal matches `ErrInvalidRequest` and
   happens before the topology lock, any key or identity, any OSD registration
   and any container. Nothing checks
   that the image exists, that it has the daemon binary and the tools the
@@ -2089,7 +2127,7 @@ MONs were stopped, start the others first.
 #### AddMonitor
 
 ```golang
-func (c *Container) AddMonitor(ctx context.Context, name string, opts ...ceph.DaemonOption) (*ceph.MonitorContainer, error)
+func (c *Container) AddMonitor(ctx context.Context, name string, opts ...ceph.DaemonOptions) (*ceph.MonitorContainer, error)
 ```
 
 Starts a new monitor with the given name and joins it to the live quorum's
@@ -2100,7 +2138,7 @@ owned daemon's `ceph.conf`, including stopped daemons. A partially started membe
 stays owned on error; if only the configuration copy failed, retry
 [RefreshMonitorConfig](#refreshmonitorconfig). Client containers you own are not
 updated (see [RefreshClientMonitorConfig](#refreshclientmonitorconfig)).
-[WithDaemonImage](#per-daemon-images) starts this one MON from another image.
+[DaemonOptions.WithImage](#per-daemon-images) starts this one MON from another image.
 
 #### MonitorContainer.Remove
 
@@ -2212,14 +2250,14 @@ func (c *Container) ManagerContainer() testcontainers.Container
 
 Returns the container of the initial manager `a`. It is
 nil when `a` has been removed or was never created (for example when the first
-manager added after `WithNoInitialManagers` has another name). Use
+manager added after `ClusterConfig.WithNoInitialManagers` has another name). Use
 [Managers](#managers) and [ManagerStatus](#managerstatus) for the current
 candidates and the active identity.
 
 #### AddManager
 
 ```golang
-func (c *Container) AddManager(ctx context.Context, name string, opts ...ceph.DaemonOption) (*ceph.ManagerContainer, error)
+func (c *Container) AddManager(ctx context.Context, name string, opts ...ceph.DaemonOptions) (*ceph.ManagerContainer, error)
 ```
 
 Creates a named manager and waits for it to register in the MGR map, as active
@@ -2230,7 +2268,7 @@ not mean that every MGR module is ready; use
 afterwards. A non-nil descriptor returned with an error stays owned. On an
 `AddressDualStack` cluster it then checks the advertised addresses of the
 active MGR; see [Dual-stack clusters](#dual-stack-clusters).
-[WithDaemonImage](#per-daemon-images) starts this one MGR from another image.
+[DaemonOptions.WithImage](#per-daemon-images) starts this one MGR from another image.
 
 #### ManagerContainer.Remove
 
@@ -2398,9 +2436,9 @@ func (OSDOptions) WithImage(image string) OSDOptions
 
 `OSDOptions` is a value; the zero value selects every default and each `With`
 method returns a modified copy, so one base can derive independent
-configurations. `WithPlacement` takes an [OSDConfig](#withinitialosds) whole.
+configurations. `WithPlacement` takes an [OSDConfig](#clusterconfigwithinitialosds) whole.
 `WithImage` starts this one OSD from another image with the contract of
-[WithDaemonImage](#per-daemon-images): the reference must be non-empty with no
+[DaemonOptions.WithImage](#per-daemon-images): the reference must be non-empty with no
 whitespace or control characters, and an empty image is an explicit invalid
 selection. `AddOSD` composes several values in argument order: each field may be
 set by at most one value, and setting it in two is refused with
@@ -2574,7 +2612,7 @@ func (c *Container) CreatePool(ctx context.Context, config ceph.PoolConfig) (*ce
 ```
 
 Creates a new pool with explicit placement and replication (see the
-[PoolConfig fields](#withpools)). The whole configuration is validated and the
+[PoolConfig fields](#clusterconfigwithpools)). The whole configuration is validated and the
 cluster must own enough eligible failure domains (`Replicas`, or `K+M` for EC,
 distinct buckets of `FailureDomain` in `CRUSHRoot`, restricted to `DeviceClass`)
 before any command is sent. Existing pools, CRUSH rules and EC profiles are
@@ -2859,7 +2897,7 @@ for _, pg := range snapshot.PGs {
 #### WithClient
 
 ```golang
-func (c *Container) WithClient(opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
+func (c *Container) WithClient(opts ...ceph.ClientContainerOptions) testcontainers.CustomizeRequestOption
 ```
 
 Returns a customizer for your own container that connects it to the cluster and
@@ -2875,7 +2913,7 @@ the cluster's public network; in host mode it joins the host network.
   clients.
 - Combine it with [WithIdleEntrypoint](#withidleentrypoint) for a container in
   which you run commands with `Exec`.
-- Options change the copied `ceph.conf`: `ceph.WithClientMessengerPolicy` sets
+- Options change the copied `ceph.conf`: `ceph.ClientContainerOptions.WithMessengerPolicy` sets
   the client's Messenger connection modes (see
   [NetworkConfig.WithMessengerPolicy](#networkconfigwithmessengerpolicy)).
 - You own the container. Terminate it before the cluster (register its cleanup
@@ -2890,7 +2928,7 @@ MON's mapped port alone. Run the client in a `WithClient` container, or use
 #### WithClientIdentity
 
 ```golang
-func (c *Container) WithClientIdentity(client *ceph.ClientConfig, opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
+func (c *Container) WithClientIdentity(client *ceph.ClientConfig, opts ...ceph.ClientContainerOptions) testcontainers.CustomizeRequestOption
 ```
 
 Like [WithClient](#withclient), but copies only the keyring of a restricted
@@ -2910,7 +2948,7 @@ creations and revoked identities are rejected, and so are descriptors whose key
 #### CreateClient
 
 ```golang
-func (c *Container) CreateClient(ctx context.Context, name string, caps ceph.ClientCaps, opts ...ceph.ClientOption) (*ceph.ClientConfig, error)
+func (c *Container) CreateClient(ctx context.Context, name string, caps ceph.ClientCaps, opts ...ceph.ClientOptions) (*ceph.ClientConfig, error)
 ```
 
 Creates a fresh Cephx identity with exactly the given capabilities. `name` is an
@@ -2940,13 +2978,13 @@ than retrying with broader caps. The returned `*ceph.ClientConfig` keeps the
 credentials private; see [ClientConfig](#clientconfig).
 
 The key has the cluster's [WithAuth](#withauth) `KeyType`, or the release
-default without one. The `ceph.ClientOption` `ceph.WithClientKeyType` selects
+default without one. `ceph.ClientOptions.WithKeyType` selects
 another type for this identity, for example to check that the MONs reject a key type they do not
 allow:
 
 ```golang
 legacy, err := cluster.CreateClient(ctx, "legacy", ceph.ClientCaps{Mon: "allow r"},
-	ceph.WithClientKeyType(ceph.CipherAES))
+	ceph.ClientOptions{}.WithKeyType(ceph.CipherAES))
 ```
 
 The identity is created whether or not the MONs allow its type; whether it can
@@ -2993,13 +3031,13 @@ fenced like the import of [ClientConfig.ReplaceKey](#clientconfigreplacekey).
 #### ClientConfig.ReplaceKey
 
 ```golang
-func (client *ClientConfig) ReplaceKey(ctx context.Context, opts ...ceph.ClientOption) (*ceph.ClientConfig, error)
+func (client *ClientConfig) ReplaceKey(ctx context.Context, opts ...ceph.ClientOptions) (*ceph.ClientConfig, error)
 ```
 
 Gives an identity created by this cluster a fresh key and keeps its name and
 its exact capabilities. The change is one `ceph auth import` of the identity's
 own keyring with the new key, so the identity never disappears from the MONs.
-The new key has the type of the old one; `ceph.WithClientKeyType` selects
+The new key has the type of the old one; `ceph.ClientOptions.WithKeyType` selects
 another (see [CreateClient](#createclient)). The identity needs at least one
 capability, because Ceph refuses to import an entry without any; an identity
 without capabilities is refused before any change.
@@ -3946,7 +3984,7 @@ the Ceph version. A nil cluster returns an error that matches
 yields a snapshot, because the values come from the recorded configuration and
 identity and need no lock, command or Docker call. `Images` and `CephVersion`
 describe the cluster's own settings and first MON only; a daemon started with
-[WithDaemonImage](#per-daemon-images) is not reflected, so read its handle's
+[DaemonOptions.WithImage](#per-daemon-images) is not reflected, so read its handle's
 `Image` and `Version`.
 
 #### ClusterFacts
@@ -4127,7 +4165,7 @@ command was sent to it. Only `ErrInvalidRequest` promises that nothing changed. 
 
 ```golang
 _, err := cluster.CreateClient(ctx, "modern", ceph.ClientCaps{Mon: "allow r"},
-	ceph.WithClientKeyType(ceph.CipherAES256K))
+	ceph.ClientOptions{}.WithKeyType(ceph.CipherAES256K))
 var unsupported *ceph.OperationError
 if errors.As(err, &unsupported) && unsupported.Kind == ceph.ErrUnsupported {
 	t.Logf("Ceph %s lacks %s", unsupported.Version, unsupported.Capability)
@@ -4211,8 +4249,8 @@ type Option func(*options) error
 func (Option) Customize(*testcontainers.GenericContainerRequest) error
 ```
 
-The type of every module option (`WithOSDCount`, ..., and the service package
-options). It implements `testcontainers.ContainerCustomizer`, so it can be mixed
+The type of every module option (the value-group carriers such as `WithClusterConfig`,
+the execution functions and the service package options). It implements `testcontainers.ContainerCustomizer`, so it can be mixed
 with generic options in `Run`. `Run` reads it as cluster configuration; its
 `Customize` method does nothing, so passing it to another container has no
 effect.
@@ -4291,16 +4329,16 @@ See the [handle contract](#container-methods).
 
 | Type | Used by |
 | --- | --- |
-| `OSDConfig` | [WithInitialOSDs](#withinitialosds), [OSDOptions](#osdoptions), `OSDContainer.Placement` |
+| `OSDConfig` | [ClusterConfig.WithInitialOSDs](#clusterconfigwithinitialosds), [OSDOptions](#osdoptions), `OSDContainer.Placement` |
 | `OSDState` | [OSDStates](#osdstates) |
-| `PoolConfig`, `ErasureCodeConfig` | [WithPools](#withpools), [CreatePool](#createpool) |
+| `PoolConfig`, `ErasureCodeConfig` | [WithPools](#clusterconfigwithpools), [CreatePool](#createpool) |
 | `Pool` | [CreatePool](#createpool), [Pool](#pool); its methods are [Status](#poolstatus), [Usage](#poolusage), [PGs](#poolpgs), [SetReplication](#poolsetreplication), [SetQuota](#poolsetquota), [SetPlacement](#poolsetplacement), [SetPGCount](#poolsetpgcount), [WaitForPGCount](#poolwaitforpgcount) and [Remove](#poolremove) |
 | `PoolState`, `PoolQuota` | [Pool.Status](#poolstatus), [Pool.SetQuota](#poolsetquota) |
 | `PoolPlacement` | [Pool.SetPlacement](#poolsetplacement) |
 | `PoolUsageSnapshot` | [Pool.Usage](#poolusage) |
 | `PoolPGSnapshot`, `PGState`, `PGStats` | [Pool.PGs](#poolpgs) |
 | `ClientCaps` | [CreateClient](#createclient), [ClientConfig.Capabilities](#clientconfigcapabilities), [ClientConfig.UpdateCaps](#clientconfigupdatecaps) |
-| `ClientOption` | [CreateClient](#createclient), [ClientConfig.ReplaceKey](#clientconfigreplacekey) |
+| `ClientOptions` | [CreateClient](#createclient), [ClientConfig.ReplaceKey](#clientconfigreplacekey) |
 | `ConfigSetting` | [override.SetConfig](../override/README.md#setconfig) |
 | `ConfigEntry` | [Configuration](#configuration) |
 | `MGRModuleState` | [MGRModules](#mgrmodules) |
@@ -4376,12 +4414,12 @@ that allows overwrites.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithOSDCount(3),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)),
 	rbd.WithPools(ceph.PoolConfig{Name: "rbd-meta"}),
-	ceph.WithPools(ceph.PoolConfig{
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{
 		Name: "rbd-data", Application: "rbd",
 		ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true},
-	}),
+	})),
 )
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
@@ -4403,13 +4441,11 @@ domain failures on one Docker engine.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithInitialOSDs(
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(
 		ceph.OSDConfig{Host: "host-a", Rack: "rack-a", Root: "tc-storage", DeviceClass: "fast"},
 		ceph.OSDConfig{Host: "host-b", Rack: "rack-b", Root: "tc-storage", DeviceClass: "fast"},
 		ceph.OSDConfig{Host: "host-c", Rack: "rack-c", Root: "tc-storage", DeviceClass: "fast"},
-	),
-	ceph.WithPoolDefaults(3, 2),
-	ceph.WithDefaultCRUSHRoot("tc-storage"),
+	).WithPoolDefaults(3, 2).WithDefaultCRUSHRoot("tc-storage")),
 )
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
@@ -4436,7 +4472,7 @@ or `"osd", "find", "<id>"`.
 ### Start without OSDs, then add storage
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithNoInitialOSDs())
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
@@ -4462,8 +4498,7 @@ if err := cluster.WaitForClean(ctx); err != nil {
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithNoInitialManagers(),
-	ceph.WithPools(ceph.PoolConfig{Name: "application", Application: "rados"}),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers().WithPools(ceph.PoolConfig{Name: "application", Application: "rados"})),
 )
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
@@ -4479,7 +4514,7 @@ if err := cluster.WaitForClean(ctx); err != nil {
 }
 ```
 
-Add `ceph.WithNoInitialOSDs()` for a MON-only phase; you can add the first
+Add `ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs())` for a MON-only phase; you can add the first
 manager before or after the first OSD.
 
 ### Reproduce a minimal legacy placement setup
@@ -4498,8 +4533,7 @@ if err := os.WriteFile(legacyPools, []byte("[global]\nosd_pool_default_flag_hash
 	t.Fatal(err)
 }
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithOSDCount(1),
-	ceph.WithPoolDefaults(1, 1),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
 	ceph.WithOSDStorage(ceph.OSDStorage{}.WithObjectStore(ceph.OSDMemStore)),
 	ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(256<<20)),
 	ceph.WithConfigFile(legacyPools),
@@ -4583,7 +4617,7 @@ start.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithNoInitialOSDs(),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()),
 	ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(64<<20)),
 	ceph.WithOSDStorage(ceph.OSDStorage{}.WithInMemory(256<<20)), // optional; omit for container-local files
 )
@@ -4628,7 +4662,7 @@ HDD recovery sleeps to 0 removed most of that difference. The module keeps
 Ceph's default (mClock); measure your own scenario before changing it.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithNoInitialOSDs())
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
@@ -4665,7 +4699,7 @@ never at risk. Owned daemons are updated automatically; your client containers
 are not.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithMonitorCount(3))
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3)))
 // ... CleanupContainer, error check, client container `client` with WithClient()
 original, err := cluster.Monitors(ctx) // a, b, c
 if err != nil {
@@ -4742,10 +4776,10 @@ recovered, and test client I/O against it.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithInitialOSDs(
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(
 		ceph.OSDConfig{DeviceClass: "fast"},
 		ceph.OSDConfig{DeviceClass: "slow"},
-	),
+	)),
 )
 // ... CleanupContainer and error check
 app, err := cluster.CreatePool(ctx, ceph.PoolConfig{
@@ -5052,7 +5086,7 @@ examples.
 
 | Setting | Fixture value | Change with |
 | --- | --- | --- |
-| `osd_pool_default_size` / `min_size` | `min(2, initial OSDs)` / 1 | `WithPoolDefaults` |
+| `osd_pool_default_size` / `min_size` | `min(2, initial OSDs)` / 1 | `ClusterConfig.WithPoolDefaults` |
 | `osd_pool_default_pg_num`, autoscale mode | 8, `off` | `PoolConfig.PGNum`, `Pool.SetPGCount` |
 | `mon_allow_pool_size_one` | `true` (replica-1 pools allowed) | config file |
 | `mgr_stats_period` | 1 second (faster PG reports) | config file |
@@ -5140,8 +5174,8 @@ or equal to the set's essential image and is not a second input; any other value
 is refused with `ErrInvalidRequest` before anything is created.
 `Run` without an explicit set uses its image as the aggregate.
 `ClusterFacts.Images` returns the effective selection, and its `Essential` field
-is the essential image. `cephfs.WithMDSImage` and `rgw.WithImage` replace the cephfs and rgw
-roles of a set whichever option comes first.
+is the essential image. `ImageOptions.WithCephFSImage` and `ImageOptions.WithRGWImage` replace the cephfs and rgw
+roles of a set.
 
 `ClientContainer` lazily creates one owned toolkit for a separate
 client image; aggregate selections reuse the control executor. Initial

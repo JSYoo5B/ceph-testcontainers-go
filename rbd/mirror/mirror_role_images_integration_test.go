@@ -39,7 +39,7 @@ func TestRoleImagesMirrorRefresh(t *testing.T) {
 	images := ceph.ImageSet{Essential: image("CEPH_TEST_ESSENTIAL_IMAGE"), Client: image("CEPH_TEST_CLIENT_IMAGE"), RBDAux: image("CEPH_TEST_RBD_AUX_IMAGE")}
 	newCluster := func() *ceph.Container {
 		t.Helper()
-		c, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), ceph.WithOSDCount(1))
+		c, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 		if c != nil {
 			t.Cleanup(func() {
 				cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -71,7 +71,11 @@ func TestRoleImagesMirrorRefresh(t *testing.T) {
 		return c
 	}
 	source, destination := newCluster(), newCluster()
-	m, err := Run(ctx, "", Config{Source: source, Destination: destination, Pool: "role-refresh", SourceNamespace: "selected", DestinationNamespace: "selected"})
+	facts, err := ceph.FactsOf(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := Run(ctx, facts.Images.RBDAux, WithConfig(Config{Source: source, Destination: destination, Pool: "role-refresh", SourceNamespace: "selected", DestinationNamespace: "selected"}))
 	if m != nil {
 		t.Cleanup(func() {
 			cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)

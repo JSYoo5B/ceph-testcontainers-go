@@ -38,7 +38,7 @@ func newRGWScenario(t *testing.T, ctx context.Context, realm string) (*multisite
 	if image == "" {
 		image = essentialImage
 	}
-	link, err := multisite.Run(ctx, image, multisite.Config{Source: source, Destination: destination, Realm: realm, SourceZone: "source", DestinationZone: "destination"})
+	link, err := multisite.Run(ctx, image, multisite.WithConfig(multisite.Config{Source: source, Destination: destination, Realm: realm, SourceZone: "source", DestinationZone: "destination"}))
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

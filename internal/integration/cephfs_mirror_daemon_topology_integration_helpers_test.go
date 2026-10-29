@@ -27,7 +27,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	opts := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1)}
+	opts := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1))}
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	}
@@ -63,11 +63,11 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	}
 	initial := checkpoint("initial")
 	image := staticFacts(source).Images.CephFS
-	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", image), cephfsmirror.Config{
+	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", image), cephfsmirror.WithConfig(cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: directories, DaemonCount: 2,
-	})
+	}))
 	if mirror != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

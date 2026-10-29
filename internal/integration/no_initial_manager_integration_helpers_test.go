@@ -33,12 +33,12 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), budget)
 	defer cancel()
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithNoInitialManagers())
+	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers()))
 	const pool = "tc-cold-manager"
 	if noStorage {
-		opts = append(opts, ceph.WithNoInitialOSDs())
+		opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))
 	} else {
-		opts = append(opts, ceph.WithPools(ceph.PoolConfig{Name: pool, Application: "rados"}))
+		opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{Name: pool, Application: "rados"})))
 	}
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())

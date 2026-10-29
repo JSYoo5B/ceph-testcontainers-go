@@ -27,7 +27,7 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	opts := []testcontainers.ContainerCustomizer{
-		ceph.WithInitialOSDs(ceph.OSDConfig{DeviceClass: "ssd"}, ceph.OSDConfig{DeviceClass: "ssd"}),
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(ceph.OSDConfig{DeviceClass: "ssd"}, ceph.OSDConfig{DeviceClass: "ssd"})),
 		ceph.WithConfigFile(configFile),
 	}
 	if host {

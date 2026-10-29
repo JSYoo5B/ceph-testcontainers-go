@@ -83,7 +83,7 @@ func legacyPoolFlags(t *testing.T) testcontainers.ContainerCustomizer {
 func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	opts = append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
+	opts = append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
 		ceph.WithOSDStorage(ceph.OSDStorage{}.WithObjectStore(ceph.OSDMemStore).WithBlockSize(256 << 20)), legacyPoolFlags(t)}, opts...)
 	cluster, client := newServiceCluster(t, opts...)
 

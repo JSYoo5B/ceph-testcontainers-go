@@ -37,7 +37,7 @@ func validCephxCipher(cipher CephxCipher) bool {
 // the defaults of the image's Ceph release.
 type AuthConfig struct {
 	// KeyType is the type of the keys the fixture generates itself: the
-	// mon., client.admin and OSD keys and, unless WithClientKeyType selects
+	// mon., client.admin and OSD keys and, unless ClientOptions.WithKeyType selects
 	// another, CreateClient keys.
 	KeyType CephxCipher
 	// ServiceCipher encrypts service tickets. AllowedCiphers are the key
@@ -149,26 +149,46 @@ func (config AuthConfig) environment() map[string]string {
 	return env
 }
 
-// ClientOption customizes CreateClient.
-type ClientOption func(*clientOptions) error
-
-type clientOptions struct {
-	keyType CephxCipher
+// ClientOptions is the configuration of the key that CreateClient and
+// ClientConfig.ReplaceKey generate. It is a plain value with chainable,
+// value-returning methods; the zero value changes nothing. Within one value a
+// later call of the same method replaces the earlier one. A field set by two
+// values is refused with ErrInvalidRequest, even when they agree.
+//
+//	client, err := cluster.CreateClient(ctx, "app", caps, ceph.ClientOptions{}.WithKeyType(ceph.CipherAES256K))
+type ClientOptions struct {
+	keyType    CephxCipher
+	keyTypeSet bool
 }
 
-// WithClientKeyType selects the key type of a new client identity instead of
-// the cluster's AuthConfig.KeyType or the release default. The MONs must
-// allow the type for the client to authenticate. CipherAES256K needs an
-// image with key type support (see CipherAES256K); without it CreateClient
-// fails before any change.
-func WithClientKeyType(cipher CephxCipher) ClientOption {
-	return func(o *clientOptions) error {
-		if !validCephxCipher(cipher) {
-			return invalidRequest("unknown Cephx cipher %q; use aes or aes256k", cipher)
+// WithKeyType selects the key type of the new key instead of the cluster's
+// AuthConfig.KeyType or the release default for CreateClient, or the type of
+// the current key for ReplaceKey. The MONs must allow the type for the client
+// to authenticate. CipherAES256K needs an image with key type support (see
+// CipherAES256K); without it the operation fails before any change. An
+// unknown cipher, including the empty one, is refused.
+func (o ClientOptions) WithKeyType(cipher CephxCipher) ClientOptions {
+	o.keyType, o.keyTypeSet = cipher, true
+	return o
+}
+
+// resolveClientOptions merges and validates configs. keyType is the type used
+// when no value sets one.
+func resolveClientOptions(keyType CephxCipher, configs []ClientOptions) (CephxCipher, error) {
+	set := false
+	for _, config := range configs {
+		if !config.keyTypeSet {
+			continue
 		}
-		o.keyType = cipher
-		return nil
+		if set {
+			return "", invalidRequest("client key type set by more than one ClientOptions")
+		}
+		if !validCephxCipher(config.keyType) {
+			return "", invalidRequest("unknown Cephx cipher %q; use aes or aes256k", config.keyType)
+		}
+		keyType, set = config.keyType, true
 	}
+	return keyType, nil
 }
 
 // generateKeyArgs returns the ceph-authtool command that prints a fresh key

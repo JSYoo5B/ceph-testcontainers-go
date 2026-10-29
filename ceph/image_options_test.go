@@ -95,14 +95,14 @@ func TestImageOptionsRefuseRepeatedImageSetSelection(t *testing.T) {
 	for name, opts := range map[string][]testcontainers.ContainerCustomizer{
 		"different sets": {WithImageOptions(ImageOptions{}.WithImageSet(a)), WithImageOptions(ImageOptions{}.WithImageSet(b))},
 		"equal sets":     {WithImageOptions(ImageOptions{}.WithImageSet(a)), WithImageOptions(ImageOptions{}.WithImageSet(a))},
-		"gap between":    {WithImageOptions(ImageOptions{}.WithImageSet(a)), WithImageOptions(ImageOptions{}), WithImageOptions(ImageOptions{}.WithImageSet(a))},
+		"gap between":    {WithImageOptions(ImageOptions{}.WithImageSet(a)), WithImageOptions(ImageOptions{}.WithImageSet(a))},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := admit(t, "", opts...)
 			wantRefused(t, err)
 		})
 	}
-	effective, err := admit(t, "", WithImageOptions(ImageOptions{}.WithImageSet(a).WithImageSet(b)), WithImageOptions(ImageOptions{}))
+	effective, err := admit(t, "", WithImageOptions(ImageOptions{}.WithImageSet(a).WithImageSet(b)))
 	wantAdmitted(t, err)
 	if effective.imageSet.Client != "other" {
 		t.Fatalf("later selection of one value did not replace the earlier: %+v", effective.imageSet)
@@ -159,10 +159,38 @@ func TestImageOptionsEnterRunOnlyThroughTheGroupedOption(t *testing.T) {
 // replaces its role of the set.
 func TestImageOptionsKeepServiceSettings(t *testing.T) {
 	effective, err := admit(t, "", WithImageOptions(ImageOptions{}.WithImageSet(ImageSet{Essential: "core", Client: "toolkit", RGW: "set-rgw"})),
-		(serviceHooks{}).WithServiceImage("rgw", "selected"), WithOSDCount(3))
+		roleImageOption("rgw", "selected"), WithClusterConfig(ClusterConfig{}.WithOSDCount(3)))
 	wantAdmitted(t, err)
 	if effective.rgwOverride != "selected" || effective.imageSet.RGW != "selected" || effective.osds != 3 {
 		t.Fatalf("a setting was dropped: %+v", effective)
+	}
+}
+
+// The role images are fields of the image group: each is set once across
+// values, a blank image is refused, and they replace their role of an image set.
+func TestImageOptionsRoleImages(t *testing.T) {
+	effective, err := admit(t, "", WithImageOptions(ImageOptions{}.WithCephFSImage("mds").WithImageSet(ImageSet{Essential: "core", Client: "toolkit", CephFS: "set-mds"})),
+		WithImageOptions(ImageOptions{}.WithRGWImage("old").WithRGWImage("gateway")))
+	wantAdmitted(t, err)
+	if effective.imageSet.CephFS != "mds" || effective.imageSet.RGW != "gateway" {
+		t.Fatalf("role images: %+v", effective.imageSet)
+	}
+	for name, opts := range map[string][]testcontainers.ContainerCustomizer{
+		"CephFS twice":   {WithImageOptions(ImageOptions{}.WithCephFSImage("a")), WithImageOptions(ImageOptions{}.WithCephFSImage("a"))},
+		"RGW twice":      {WithImageOptions(ImageOptions{}.WithRGWImage("a")), WithImageOptions(ImageOptions{}.WithRGWImage("b"))},
+		"blank CephFS":   {WithImageOptions(ImageOptions{}.WithCephFSImage(" "))},
+		"empty RGW":      {WithImageOptions(ImageOptions{}.WithRGWImage(""))},
+		"valid then bad": {WithImageOptions(ImageOptions{}.WithRGWImage("a").WithRGWImage(""))},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := admit(t, "core", opts...)
+			wantRefused(t, err)
+		})
+	}
+	// A refused value writes none of its fields.
+	o := &options{}
+	if err := WithImageOptions(ImageOptions{}.WithCephFSImage("mds").WithRGWImage(""))(o); err == nil || o.cephfsOverride != "" {
+		t.Fatalf("a refused value changed the settings: %+v %v", o, err)
 	}
 }
 
@@ -202,12 +230,12 @@ func TestRunImageSetMissingRoleIsRefusedWithoutFallback(t *testing.T) {
 // takes its plain value, so wrapping its result in a second carrier does not
 // compile. Documentation snippets
 // are not compiled, so scan the godoc comments of this package and the package
-// reference pages for that mistake. ExampleWithImageOptions,
-// ExampleWithOSDStorage and ExampleWithNetworkConfig cover the correct form at compile time.
+// reference pages for that mistake. ExampleWithImageOptions, ExampleWithOSDStorage,
+// ExampleWithNetworkConfig and ExampleWithClusterConfig cover the correct form at compile time.
 func TestDocumentedSnippetsDoNotWrapGroupedOptionsTwice(t *testing.T) {
-	doubleWrap := regexp.MustCompile(`With(?:ImageOptions|OSDStorage|NetworkConfig)\(\s*(?:ceph\.)?With(?:ImageOptions|OSDStorage|NetworkConfig)\(`)
+	doubleWrap := regexp.MustCompile(`With(?:ImageOptions|OSDStorage|NetworkConfig|ClusterConfig)\(\s*(?:ceph\.)?With(?:ImageOptions|OSDStorage|NetworkConfig|ClusterConfig)\(`)
 	var files []string
-	for _, pattern := range []string{"*.go", "../docs/*.md"} {
+	for _, pattern := range []string{"*.go", "README.md", "../README.md", "../docs/*/*.md", "../*/README.md", "../*/*/README.md"} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			t.Fatal(err)

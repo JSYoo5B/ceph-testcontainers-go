@@ -116,23 +116,21 @@ func clientCapArgs(caps ClientCaps) ([]string, error) {
 // creation; inspect auth state or terminate the cluster rather than retrying with
 // broader caps. ClientConfig.Delete can revoke a confirmed successful creation.
 // The key has the cluster's AuthConfig.KeyType, the release default without
-// one, or the type that WithClientKeyType selects.
-func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCaps, opts ...ClientOption) (*ClientConfig, error) {
+// one, or the type that ClientOptions.WithKeyType selects.
+func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCaps, opts ...ClientOptions) (*ClientConfig, error) {
 	return c.createClient(ctx, name, caps, opts...)
 }
 
-func (c *Container) createClient(ctx context.Context, name string, caps ClientCaps, opts ...ClientOption) (*ClientConfig, error) {
+func (c *Container) createClient(ctx context.Context, name string, caps ClientCaps, opts ...ClientOptions) (*ClientConfig, error) {
 	entity, err := clientEntity(name)
 	if err != nil {
 		return nil, err
 	}
-	settings := clientOptions{keyType: c.settings.auth.KeyType}
-	for _, opt := range opts {
-		if err := opt(&settings); err != nil {
-			return nil, err
-		}
+	keyType, err := resolveClientOptions(c.settings.auth.KeyType, opts)
+	if err != nil {
+		return nil, err
 	}
-	generate, err := c.generateKeyArgs(settings.keyType)
+	generate, err := c.generateKeyArgs(keyType)
 	if err != nil {
 		return nil, err
 	}
@@ -230,11 +228,11 @@ func clientConfigBytes(base []byte, client *ClientConfig) []byte {
 // It rejects descriptors from another cluster, incomplete creation and revocation.
 // Caller owns the attached container and must terminate it before the cluster.
 // The options customize the container's ceph.conf.
-func (c *Container) WithClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
+func (c *Container) WithClientIdentity(client *ClientConfig, opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
 	return c.withClientIdentity(client, opts...)
 }
 
-func (c *Container) withClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
+func (c *Container) withClientIdentity(client *ClientConfig, opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw/multisite",
-  "count": 56,
+  "count": 59,
   "entries": [
     {
       "current": "rgw/multisite.BucketSyncPolicyStatus",
@@ -257,17 +257,24 @@
       "decision": "baseline"
     },
     {
-      "current": "rgw/multisite.Run",
-      "kind": "function",
-      "signature": "func(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Fixture, error)",
-      "proposed": "rgw/multisite.Run",
+      "current": "rgw/multisite.Option",
+      "kind": "type",
+      "proposed": "rgw/multisite.Option",
       "decision": "baseline"
     },
     {
-      "current": "rgw/multisite.RunTopology",
+      "current": "rgw/multisite.Option.Customize",
+      "kind": "method",
+      "signature": "func(*testcontainers.GenericContainerRequest) error",
+      "receiver": "Option",
+      "proposed": "rgw/multisite.Option.Customize",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.Run",
       "kind": "function",
-      "signature": "func(ctx context.Context, image string, config TopologyConfig, opts ...testcontainers.ContainerCustomizer) (*Fixture, error)",
-      "proposed": "rgw/multisite.RunTopology",
+      "signature": "func(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Fixture, error)",
+      "proposed": "rgw/multisite.Run",
       "decision": "baseline"
     },
     {
@@ -376,6 +383,20 @@
       "current": "rgw/multisite.TopologyConfig",
       "kind": "type",
       "proposed": "rgw/multisite.TopologyConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.WithConfig",
+      "kind": "function",
+      "signature": "func(config Config) Option",
+      "proposed": "rgw/multisite.WithConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.WithTopology",
+      "kind": "function",
+      "signature": "func(config TopologyConfig) Option",
+      "proposed": "rgw/multisite.WithTopology",
       "decision": "baseline"
     },
     {

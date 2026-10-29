@@ -183,7 +183,7 @@ func rgwPlacementWaitCreateBucket(t *testing.T, parent context.Context, client s
 func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	options = append(options, ceph.WithOSDCount(3))
+	options = append(options, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	cluster, control := newServiceCluster(t, options...)
 	for _, config := range []ceph.PoolConfig{
 		{Name: "tc-rgw-index", Application: "rgw", PGNum: 1},

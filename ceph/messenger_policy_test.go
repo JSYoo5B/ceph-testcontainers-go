@@ -68,17 +68,17 @@ func TestMessengerPolicyRefusesMessengerV2Secure(t *testing.T) {
 }
 
 func TestClientContainerConfigWritesClientSection(t *testing.T) {
-	policy := WithClientMessengerPolicy(ClientMessengerPolicy{
+	policy := ClientContainerOptions{}.WithMessengerPolicy(ClientMessengerPolicy{
 		MonitorsAndManagers: []MessengerConnectionMode{MessengerCRC},
 		OtherDaemons:        []MessengerConnectionMode{MessengerSecure, MessengerCRC},
 	})
 	base := "[global]\nfsid = x\n[client]\nrados osd op timeout = 25\n[client.reader]\nkeyring = k\n"
-	got, err := clientContainerConfig([]byte(base), []ClientContainerOption{policy})
+	got, err := clientContainerConfig([]byte(base), []ClientContainerOptions{policy})
 	want := "[global]\nfsid = x\n[client]\nms mon client mode = crc\nms client mode = secure crc\nrados osd op timeout = 25\n[client.reader]\nkeyring = k\n"
 	if err != nil || string(got) != want {
 		t.Fatalf("existing section:\n%s\n%v", got, err)
 	}
-	got, err = clientContainerConfig([]byte("[global]\nfsid = x"), []ClientContainerOption{policy})
+	got, err = clientContainerConfig([]byte("[global]\nfsid = x"), []ClientContainerOptions{policy})
 	want = "[global]\nfsid = x\n[client]\nms mon client mode = crc\nms client mode = secure crc\n"
 	if err != nil || string(got) != want {
 		t.Fatalf("new section:\n%s\n%v", got, err)
@@ -86,10 +86,16 @@ func TestClientContainerConfigWritesClientSection(t *testing.T) {
 	if got, err := clientContainerConfig([]byte(base), nil); err != nil || string(got) != base {
 		t.Fatalf("no options changed the config: %q, %v", got, err)
 	}
-	if _, err := clientContainerConfig([]byte(base), []ClientContainerOption{nil}); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("nil option: %v", err)
+	if _, err := clientContainerConfig([]byte(base), []ClientContainerOptions{policy, policy}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("a policy set by two values was accepted: %v", err)
 	}
-	if _, err := clientContainerConfig([]byte(base), []ClientContainerOption{WithClientMessengerPolicy(ClientMessengerPolicy{OtherDaemons: []MessengerConnectionMode{}})}); !errors.Is(err, ErrInvalidRequest) {
+	modes := []MessengerConnectionMode{"crc"}
+	derived := ClientContainerOptions{}.WithMessengerPolicy(ClientMessengerPolicy{MonitorsAndManagers: modes})
+	modes[0] = "bogus"
+	if _, err := clientContainerConfig([]byte(base), []ClientContainerOptions{{}, derived}); err != nil {
+		t.Fatalf("the value shared the caller's slice: %v", err)
+	}
+	if _, err := clientContainerConfig([]byte(base), []ClientContainerOptions{ClientContainerOptions{}.WithMessengerPolicy(ClientMessengerPolicy{OtherDaemons: []MessengerConnectionMode{}})}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("invalid client policy: %v", err)
 	}
 }

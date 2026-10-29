@@ -23,16 +23,16 @@ func TestNoInitialManagersRejectsContradictionsBeforeRuntime(t *testing.T) {
 		name, want string
 		opt        Option
 	}{
-		{"positive count", "explicit initial manager count", WithManagerCount(1)},
-		{"HA count", "explicit initial manager count", WithManagerCount(3)},
-		{"zero count", "manager count must be at least 1", WithManagerCount(0)},
-		{"negative count", "manager count must be at least 1", WithManagerCount(-1)},
+		{"positive count", "managers set by more than one WithClusterConfig", WithClusterConfig(ClusterConfig{}.WithManagerCount(1))},
+		{"HA count", "managers set by more than one WithClusterConfig", WithClusterConfig(ClusterConfig{}.WithManagerCount(3))},
+		{"zero count", "manager", WithClusterConfig(ClusterConfig{}.WithManagerCount(0))},
+		{"negative count", "manager", WithClusterConfig(ClusterConfig{}.WithManagerCount(-1))},
 	} {
 		for _, first := range []bool{false, true} {
-			opts := []testcontainers.ContainerCustomizer{test.opt, WithNoInitialManagers()}
+			opts := []testcontainers.ContainerCustomizer{test.opt, WithClusterConfig(ClusterConfig{}.WithNoInitialManagers())}
 			order := "zero-last"
 			if first {
-				opts, order = []testcontainers.ContainerCustomizer{WithNoInitialManagers(), test.opt}, "zero-first"
+				opts, order = []testcontainers.ContainerCustomizer{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers()), test.opt}, "zero-first"
 			}
 			t.Run(test.name+"/"+order, func(t *testing.T) {
 				var customizers atomic.Int32
@@ -58,18 +58,18 @@ func TestNoInitialManagersPreservesDefaultsAndPositivePoolComposition(t *testing
 		pools                int
 	}{
 		{"ordinary default", nil, 1, 2, 2, 0},
-		{"ordinary standby", []Option{WithManagerCount(2)}, 2, 2, 2, 0},
-		{"ordinary replacement count", []Option{WithManagerCount(3), WithManagerCount(1)}, 1, 2, 2, 0},
-		{"zero", []Option{WithNoInitialManagers()}, 0, 2, 2, 0},
-		{"zero repeated", []Option{WithNoInitialManagers(), WithNoInitialManagers()}, 0, 2, 2, 0},
-		{"zero with pool", []Option{WithNoInitialManagers(), WithPools(PoolConfig{Name: "data"})}, 0, 2, 2, 1},
-		{"pool before zero", []Option{WithPools(PoolConfig{Name: "data"}), WithNoInitialManagers()}, 0, 2, 2, 1},
-		{"final pool replacement", []Option{WithNoInitialManagers(), WithPools(PoolConfig{Name: "discarded"}), WithPools(PoolConfig{Name: "data"})}, 0, 2, 2, 1},
-		{"one storage", []Option{WithNoInitialManagers(), WithOSDCount(1), WithPools(PoolConfig{Name: "data"})}, 0, 1, 1, 1},
-		{"selected storage", []Option{WithInitialOSDs(OSDConfig{Root: "storage"}, OSDConfig{Root: "storage"}), WithDefaultCRUSHRoot("storage"), WithNoInitialManagers()}, 0, 2, 2, 0},
-		{"combined zero", []Option{WithNoInitialManagers(), WithNoInitialOSDs()}, 0, 0, 2, 0},
-		{"combined reverse", []Option{WithNoInitialOSDs(), WithNoInitialManagers()}, 0, 0, 2, 0},
-		{"combined final empty pools", []Option{WithPools(PoolConfig{Name: "discarded"}), WithPools(), WithNoInitialManagers(), WithNoInitialOSDs()}, 0, 0, 2, 0},
+		{"ordinary standby", []Option{WithClusterConfig(ClusterConfig{}.WithManagerCount(2))}, 2, 2, 2, 0},
+		{"ordinary replacement count", []Option{WithClusterConfig(ClusterConfig{}.WithManagerCount(3).WithManagerCount(1))}, 1, 2, 2, 0},
+		{"zero", []Option{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers())}, 0, 2, 2, 0},
+		{"zero repeated", []Option{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers().WithNoInitialManagers())}, 0, 2, 2, 0},
+		{"zero with pool", []Option{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers().WithPools(PoolConfig{Name: "data"}))}, 0, 2, 2, 1},
+		{"pool before zero", []Option{WithClusterConfig(ClusterConfig{}.WithPools(PoolConfig{Name: "data"}).WithNoInitialManagers())}, 0, 2, 2, 1},
+		{"final pool replacement", []Option{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers().WithPools(PoolConfig{Name: "discarded"}).WithPools(PoolConfig{Name: "data"}))}, 0, 2, 2, 1},
+		{"one storage", []Option{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers().WithOSDCount(1).WithPools(PoolConfig{Name: "data"}))}, 0, 1, 1, 1},
+		{"selected storage", []Option{WithClusterConfig(ClusterConfig{}.WithInitialOSDs(OSDConfig{Root: "storage"}, OSDConfig{Root: "storage"}).WithDefaultCRUSHRoot("storage").WithNoInitialManagers())}, 0, 2, 2, 0},
+		{"combined zero", []Option{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers().WithNoInitialOSDs())}, 0, 0, 2, 0},
+		{"combined reverse", []Option{WithClusterConfig(ClusterConfig{}.WithNoInitialOSDs().WithNoInitialManagers())}, 0, 0, 2, 0},
+		{"combined final empty pools", []Option{WithClusterConfig(ClusterConfig{}.WithPools(PoolConfig{Name: "discarded"}).WithPools().WithNoInitialManagers().WithNoInitialOSDs())}, 0, 0, 2, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			settings := options{osds: 2, monitors: 1, managers: 1}
@@ -96,12 +96,12 @@ func TestNoInitialManagersPreservesDefaultsAndPositivePoolComposition(t *testing
 
 func TestNoInitialManagersPreservesPlacementNetworkAndCombinedStorageGuards(t *testing.T) {
 	for _, opts := range [][]testcontainers.ContainerCustomizer{
-		{WithNoInitialManagers(), WithNetworkConfig(NetworkConfig{}.WithHostAddress("127.0.0.1"))},
-		{WithNoInitialManagers(), WithHostNetwork(), WithNetworkConfig(NetworkConfig{}.WithSeparateClusterNetwork())},
-		{WithNoInitialManagers(), WithOSDCount(1), WithPools(PoolConfig{Name: "data", Replicas: 2})},
-		{WithNoInitialManagers(), WithInitialOSDs(OSDConfig{Root: "elsewhere"})},
-		{WithNoInitialManagers(), WithNoInitialOSDs(), WithPools(PoolConfig{Name: "data"})},
-		{WithPools(PoolConfig{Name: "data"}), WithNoInitialOSDs(), WithNoInitialManagers()},
+		{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers()), WithNetworkConfig(NetworkConfig{}.WithHostAddress("127.0.0.1"))},
+		{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers()), WithHostNetwork(), WithNetworkConfig(NetworkConfig{}.WithSeparateClusterNetwork())},
+		{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers().WithOSDCount(1).WithPools(PoolConfig{Name: "data", Replicas: 2}))},
+		{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers().WithInitialOSDs(OSDConfig{Root: "elsewhere"}))},
+		{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers().WithNoInitialOSDs().WithPools(PoolConfig{Name: "data"}))},
+		{WithClusterConfig(ClusterConfig{}.WithPools(PoolConfig{Name: "data"}).WithNoInitialOSDs().WithNoInitialManagers())},
 	} {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -114,10 +114,10 @@ func TestNoInitialManagersPreservesPlacementNetworkAndCombinedStorageGuards(t *t
 
 func TestNoInitialManagersCanceledRunDoesNotAllocateOrCustomize(t *testing.T) {
 	for _, opts := range [][]testcontainers.ContainerCustomizer{
-		{WithNoInitialManagers()},
-		{WithNoInitialManagers(), WithHostNetwork(), WithPools(PoolConfig{Name: "data"})},
-		{WithNoInitialManagers(), WithMonitorCount(3), WithNetworkConfig(NetworkConfig{}.WithSeparateClusterNetwork())},
-		{WithNoInitialManagers(), WithNoInitialOSDs()},
+		{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers())},
+		{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers()), WithHostNetwork(), WithClusterConfig(ClusterConfig{}.WithPools(PoolConfig{Name: "data"}))},
+		{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers().WithMonitorCount(3)), WithNetworkConfig(NetworkConfig{}.WithSeparateClusterNetwork())},
+		{WithClusterConfig(ClusterConfig{}.WithNoInitialManagers().WithNoInitialOSDs())},
 	} {
 		var customizers atomic.Int32
 		opts = append(opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))

@@ -20,11 +20,11 @@ readiness, not a client's protocol implementation.
 | --- | --- | --- | --- |
 | Image | Tentacle 20.2.4, Tentacle 20.2.3 | `ceph.Run(ctx, image, ...)` | every test below; `TestMessengerClientProfileWithoutKeyTypes` runs 20.2.3 |
 | Messenger v1 | never bound or advertised | `NetworkConfig.WithMessengerMode(MessengerV2Only)`, or `MessengerV2Secure` | every profile |
-| Monitors | three | `WithMonitorCount(3)` | every profile |
-| Managers | two | `WithManagerCount(2)` | every profile but the next |
-| | none at bootstrap, two started later | `WithNoInitialManagers`, then `AddManager("a")` and `AddManager("b")` | `TestMessengerClientProfileDelayedManagers` |
-| OSD | none | `WithNoInitialOSDs` | `TestMessengerClientProfileSecure` |
-| | one MemStore OSD | `WithOSDCount(1)`, `WithOSDStorage(OSDStorage{}.WithObjectStore(OSDMemStore))`, `WithPoolDefaults(1, 1)` | `TestMessengerClientProfileCRC` |
+| Monitors | three | `ClusterConfig.WithMonitorCount(3)` | every profile |
+| Managers | two | `ClusterConfig.WithManagerCount(2)` | every profile but the next |
+| | none at bootstrap, two started later | `ClusterConfig.WithNoInitialManagers`, then `AddManager("a")` and `AddManager("b")` | `TestMessengerClientProfileDelayedManagers` |
+| OSD | none | `ClusterConfig.WithNoInitialOSDs` | `TestMessengerClientProfileSecure` |
+| | one MemStore OSD | `ClusterConfig.WithOSDCount(1).WithPoolDefaults(1, 1)`, `OSDStorage.WithObjectStore(OSDMemStore)` | `TestMessengerClientProfileCRC` |
 | CRUSH and pool | legacy tunables, a straw root, a rule that chooses OSDs; a pool with one PG and size 1; no pool with `hashpspool`, `.mgr` included | compile the map with `crushtool` and install it with `osd setcrushmap` (see [Reproduce a minimal legacy placement setup](../../ceph/README.md#reproduce-a-minimal-legacy-placement-setup)); `osd_pool_default_flag_hashpspool = false` in a `WithConfigFile` `[global]` section; `CreatePool(ceph.PoolConfig{PGNum: 1, Replicas: 1, MinSize: 1, NoHashPSPool: true})` | `TestMessengerClientProfileCRC`, `TestOSDMemStoreLegacyPlacement`, `TestRADOSMutationContracts` |
 | Key type / service cipher | `aes256k`/`aes256k` | `WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K})` | `TestMessengerClientProfileSecure` |
 | | `aes`/`aes` | `AuthConfig{KeyType: ceph.CipherAES}` | `TestMessengerClientProfileModeRejection/managers` |
@@ -38,7 +38,7 @@ readiness, not a client's protocol implementation.
 | | MONs, MGRs and OSDs accept only CRC from clients | `MessengerV2Only` with `NetworkConfig.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc})` | `TestMessengerClientProfileCRC` |
 | | MONs only CRC, MGRs only secure | `MessengerV2Only` with `MessengerPolicy{Monitors: crc, Managers: secure}` | `TestMessengerClientProfileModeRejection/monitors` |
 | | MONs only secure, MGRs only CRC | `MessengerV2Only` with `MessengerPolicy{Monitors: secure, Managers: crc}` | `TestMessengerClientProfileModeRejection/managers` |
-| Client modes | secure, CRC, or secure then CRC | `WithClientMessengerPolicy` on a `WithClient` or `WithClientIdentity` container | `TestMessengerClientProfileModeRejection`, `TestMessengerClientProfileCRC` |
+| Client modes | secure, CRC, or secure then CRC | `ClientContainerOptions.WithMessengerPolicy` on a `WithClient` or `WithClientIdentity` container | `TestMessengerClientProfileModeRejection`, `TestMessengerClientProfileCRC` |
 | Address family | IPv4 | the default | every other profile |
 | | IPv6 | `NetworkConfig.WithAddressFamily(ceph.AddressIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv6` |
 | | IPv4-mapped IPv6 | `NetworkConfig.WithAddressFamily(ceph.AddressIPv4MappedIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv4-mapped` |
@@ -62,7 +62,7 @@ makes only AES keys. `Run` refuses a profile that needs `aes256k` with
 
 ### Readiness
 
-`Run` returns once a MGR is available, or, with `WithNoInitialManagers`, once
+`Run` returns once a MGR is available, or, with `ClusterConfig.WithNoInitialManagers`, once
 the MONs have a quorum and the initial OSDs are up and in. To wait for every
 MON and a standby MGR, poll `QuorumStatus` until it lists all three MONs and
 `ManagerStatus` until it reports an active MGR and one standby.

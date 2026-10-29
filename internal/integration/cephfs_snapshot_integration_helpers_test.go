@@ -25,7 +25,7 @@ func testCephFSSubvolumeSnapshotsAndClones(t *testing.T, host bool) {
 		cloneTimelineClone{Identity: delayed, Expect: []string{cloneTimelineSubmit, cloneTimelinePending, cloneTimelineDelayRestore, cloneTimelineTerminal, cloneTimelineDataCheck, cloneTimelineFinalDataCheck, cloneTimelineCleanup}},
 		cloneTimelineClone{Identity: otherPool, Expect: []string{cloneTimelineSubmit, cloneTimelineTerminal, cloneTimelineDataCheck}})
 	defer timeline.Emit(t)
-	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), cephfs.WithFilesystems(cephfs.Config{Name: filesystem,
+	options := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), cephfs.WithFilesystems(cephfs.Config{Name: filesystem,
 		AdditionalDataPools: []ceph.PoolConfig{{Name: extraPool}},
 	})}
 	if host {

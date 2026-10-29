@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw",
-  "count": 61,
+  "count": 60,
   "entries": [
     {
       "current": "rgw.Account",
@@ -442,13 +442,6 @@
       "kind": "function",
       "signature": "func(configs ...Config) ceph.Option",
       "proposed": "rgw.WithGateways",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.WithImage",
-      "kind": "function",
-      "signature": "func(image string) ceph.Option",
-      "proposed": "rgw.WithImage",
       "decision": "baseline"
     }
   ]

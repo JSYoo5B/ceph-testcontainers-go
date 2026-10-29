@@ -24,13 +24,13 @@ func TestFilesystemOptionsRejectInvalidCompositionBeforeRuntime(t *testing.T) {
 		opts []testcontainers.ContainerCustomizer
 	}{
 		{"duplicate initial filesystems", []testcontainers.ContainerCustomizer{WithFilesystems(Config{Name: "alpha"}, Config{Name: "alpha"})}},
-		{"pool shared with filesystem", []testcontainers.ContainerCustomizer{ceph.WithPools(ceph.PoolConfig{Name: "alpha-data"}), WithFilesystems(Config{Name: "alpha"})}},
+		{"pool shared with filesystem", []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{Name: "alpha-data"})), WithFilesystems(Config{Name: "alpha"})}},
 		{"invalid captured filesystem", []testcontainers.ContainerCustomizer{WithFilesystems(Config{Name: "bad name"})}},
-		{"blank MDS image", []testcontainers.ContainerCustomizer{WithMDSImage("\n")}},
-		{"no initial OSDs/zero-last", []testcontainers.ContainerCustomizer{WithFilesystems(), ceph.WithNoInitialOSDs()}},
-		{"no initial OSDs/zero-first", []testcontainers.ContainerCustomizer{ceph.WithNoInitialOSDs(), WithFilesystems()}},
-		{"no initial managers/zero-last", []testcontainers.ContainerCustomizer{WithFilesystems(), ceph.WithNoInitialManagers()}},
-		{"no initial managers/zero-first", []testcontainers.ContainerCustomizer{ceph.WithNoInitialManagers(), WithFilesystems()}},
+		{"blank MDS image", []testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithCephFSImage("\n"))}},
+		{"no initial OSDs/zero-last", []testcontainers.ContainerCustomizer{WithFilesystems(), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs())}},
+		{"no initial OSDs/zero-first", []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), WithFilesystems()}},
+		{"no initial managers/zero-last", []testcontainers.ContainerCustomizer{WithFilesystems(), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers())}},
+		{"no initial managers/zero-first", []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers()), WithFilesystems()}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var customizers atomic.Int32
@@ -52,8 +52,8 @@ func TestFilesystemCompositionResolvesFinalDefaults(t *testing.T) {
 		name string
 		opts []ceph.Option
 	}{
-		{"filesystem then defaults", []ceph.Option{WithFilesystems(Config{Name: "alpha", MetadataPool: ceph.PoolConfig{MinSize: 3}}), ceph.WithPoolDefaults(3, 2)}},
-		{"defaults then filesystem", []ceph.Option{ceph.WithPoolDefaults(3, 2), WithFilesystems(Config{Name: "alpha", MetadataPool: ceph.PoolConfig{MinSize: 3}})}},
+		{"filesystem then defaults", []ceph.Option{WithFilesystems(Config{Name: "alpha", MetadataPool: ceph.PoolConfig{MinSize: 3}}), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPoolDefaults(3, 2))}},
+		{"defaults then filesystem", []ceph.Option{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPoolDefaults(3, 2)), WithFilesystems(Config{Name: "alpha", MetadataPool: ceph.PoolConfig{MinSize: 3}})}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, services, err := testhelper.TestPrepare(3, false, nil, test.opts...)
@@ -69,7 +69,7 @@ func TestFilesystemCompositionResolvesFinalDefaults(t *testing.T) {
 
 func TestFilesystemCompositionUsesDefaultCRUSHRoot(t *testing.T) {
 	layout := []ceph.OSDConfig{{Host: "a"}, {Host: "b"}, {Host: "other-host", Root: "other"}}
-	_, services, err := testhelper.TestPrepare(3, false, nil, ceph.WithPoolDefaults(2, 1), ceph.WithInitialOSDs(layout...), WithFilesystems(Config{Name: "alpha"}), ceph.WithDefaultCRUSHRoot("storage"))
+	_, services, err := testhelper.TestPrepare(3, false, nil, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPoolDefaults(2, 1).WithInitialOSDs(layout...)), WithFilesystems(Config{Name: "alpha"}), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithDefaultCRUSHRoot("storage")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestFilesystemCompositionCopiesCallerConfigs(t *testing.T) {
 	additional := []ceph.PoolConfig{{Name: "ec", ErasureCode: ec}}
 	option := WithFilesystems(Config{Name: "alpha", AdditionalDataPools: additional})
 	ec.K, additional[0].Name = 100, "changed"
-	_, services, err := testhelper.TestPrepare(3, false, nil, ceph.WithPoolDefaults(3, 2), option, ceph.WithPools(ceph.PoolConfig{Name: "ordinary"}))
+	_, services, err := testhelper.TestPrepare(3, false, nil, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPoolDefaults(3, 2)), option, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{Name: "ordinary"})))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestFilesystemCompositionCopiesCallerConfigs(t *testing.T) {
 	if resolved.AdditionalDataPools[0].Name != "ec" || resolved.AdditionalDataPools[0].ErasureCode.K != 2 || resolved.AdditionalDataPools[0].MinSize != 3 {
 		t.Fatal("initial config aliases caller buffers or applied replicated min_size to EC")
 	}
-	_, services, err = testhelper.TestPrepare(1, false, nil, ceph.WithPoolDefaults(1, 1), WithFilesystems())
+	_, services, err = testhelper.TestPrepare(1, false, nil, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPoolDefaults(1, 1)), WithFilesystems())
 	if err != nil || preparedFilesystems(services)[0].MetadataPool.Replicas != 1 {
 		t.Fatalf("one-OSD filesystem did not resolve to a usable single-copy pool: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestContainerFilesystemsUsesTheEmbeddedCluster(t *testing.T) {
 func TestFilesystemImageOptionFillsMissingRoleInRunWithImageSet(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{Essential: "core", Client: "toolkit"})), WithMDSImage("service-image"), WithFilesystems())
+	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{Essential: "core", Client: "toolkit"}).WithCephFSImage("service-image")), WithFilesystems())
 	if cluster != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("service image option did not reach canceled admission: %v %v", cluster, err)
 	}

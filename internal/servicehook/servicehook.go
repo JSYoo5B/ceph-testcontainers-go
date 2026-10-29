@@ -56,7 +56,6 @@ type hooks interface {
 	DiagnosticHandle(ctr testcontainers.Container) testcontainers.Container
 	ScriptFile(name string) testcontainers.ContainerFile
 	ServiceImage(c *ceph.Container, role string) string
-	WithServiceImage(role, image string) ceph.Option
 	Extension(c *ceph.Container, kind string, create func() any) any
 	ResolvePool(c *ceph.Container, config ceph.PoolConfig) ceph.PoolConfig
 	NormalizePool(config ceph.PoolConfig) (ceph.PoolConfig, error)
@@ -182,9 +181,6 @@ func ScriptFile(name string) testcontainers.ContainerFile { return get().ScriptF
 
 // ServiceImage returns the image selected for an image role: rgw or cephfs.
 func ServiceImage(c *ceph.Container, role string) string { return get().ServiceImage(c, role) }
-
-// WithServiceImage selects the image of an image role: rgw or cephfs.
-func WithServiceImage(role, image string) ceph.Option { return get().WithServiceImage(role, image) }
 
 // Extension returns the per-cluster state a service package keeps under
 // kind, storing the result of create on first use. It takes its own lock, so

@@ -26,7 +26,7 @@ func TestHostFailureDomainPool(t *testing.T) {
 		{Host: "host-b", Rack: "rack-b", Root: "tc-storage", DeviceClass: "fast"},
 		{Host: "host-c", Rack: "rack-c", Root: "tc-storage", DeviceClass: "fast"},
 	}
-	cluster, client := newServiceCluster(t, ceph.WithInitialOSDs(layout...), ceph.WithPoolDefaults(3, 2), ceph.WithDefaultCRUSHRoot("tc-storage"))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(layout...).WithPoolDefaults(3, 2).WithDefaultCRUSHRoot("tc-storage")))
 	pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 		Name: "tc-host-replicated", PGNum: 8, Application: "rados",
 		FailureDomain: "host", CRUSHRoot: "tc-storage", DeviceClass: "fast",

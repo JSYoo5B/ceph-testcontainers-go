@@ -23,7 +23,7 @@ func TestRADOSMutationOutcomes(t *testing.T) {
 	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithOSDCount(1))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	const pool, namespace = "tc-outcomes", "fixture"
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", PGNum: 1}); err != nil {
 		t.Fatal(err)

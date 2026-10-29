@@ -30,7 +30,6 @@ func newMultiClusterPair(t *testing.T, customizers ...testcontainers.ContainerCu
 func newMultiClusterPairWithContext(t *testing.T, ctx context.Context, customizers ...testcontainers.ContainerCustomizer) (*ceph.Container, *ceph.Container, testcontainers.Container, testcontainers.Container) {
 	t.Helper()
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithOSDCount(2))
 	opts = append(opts, customizers...)
 	clusters := make([]*ceph.Container, 2)
 	for i := range clusters {

@@ -28,7 +28,7 @@ import (
 func TestMonMajorityLossLocalOracle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, ceph.WithMonitorCount(5))
+	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(5)))
 	monitors := clusteraccess.Monitors(t, cluster)
 	if len(monitors) != 5 {
 		t.Fatal("fixture did not construct five monitors")

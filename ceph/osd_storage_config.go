@@ -39,7 +39,7 @@ type OSDStorage struct {
 // WithBlockSize sets each sparse BlueStore file's logical size in bytes. The
 // minimum is 64 MiB and the default remains 1 GiB. These are disposable files,
 // not real disks. It is also the capacity of a MemStore OSD. Small functional
-// fixtures can use WithNoInitialOSDs and override.SetConfig to skip mClock's
+// fixtures can use ClusterConfig.WithNoInitialOSDs and override.SetConfig to skip mClock's
 // startup capacity benchmark before AddOSD; the benchmark can exhaust a small
 // file even without client data. A size below the minimum, including zero, is an
 // explicit invalid setting, not an unspecified one.
@@ -69,7 +69,7 @@ func (o OSDStorage) WithObjectStore(store OSDObjectStore) OSDStorage {
 // Requires a Linux Docker engine with local tmpfs volume support, including
 // compatible Docker Desktop engines. No host mount, privileged container or
 // additional image is required. The default remains container-local sparse
-// files. WithNoInitialOSDs defers allocation until AddOSD. A non-positive
+// files. ClusterConfig.WithNoInitialOSDs defers allocation until AddOSD. A non-positive
 // maxBytes is refused.
 func (o OSDStorage) WithInMemory(maxBytes int64) OSDStorage {
 	o.set |= osdStorageInMemory

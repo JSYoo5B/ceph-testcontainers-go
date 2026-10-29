@@ -73,13 +73,9 @@ type rgwZoneState struct {
 	client  testcontainers.Container
 }
 
-// RunTopology creates a multi-zone fixture using the same ownership and
-// cleanup contract as Run. The initial master becomes Source, and
-// the first remaining zone becomes Destination for compatibility. Zones returns
-// all sites. A non-nil result on error owns partial resources and needs cleanup.
-// image selects RGW gateways; each setup client uses its cluster's RGW
-// image unless SetupImage supplies a shared override.
-func RunTopology(ctx context.Context, image string, config TopologyConfig, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
+// runTopology implements Run with WithTopology. A non-nil result on error owns
+// partial resources and needs cleanup.
+func runTopology(ctx context.Context, image string, config TopologyConfig, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
 	zones, err := prepareRGWTopology(ctx, image, config)
 	if err != nil {
 		return nil, err
@@ -89,7 +85,7 @@ func RunTopology(ctx context.Context, image string, config TopologyConfig, opts 
 			return nil, err
 		}
 	}
-	f, err := Run(ctx, image, Config{
+	f, err := runPair(ctx, image, Config{
 		Source: zones[0].Cluster, Destination: zones[1].Cluster,
 		SourceZone: zones[0].Name, DestinationZone: zones[1].Name,
 		Realm: config.Realm, Zonegroup: zones[0].Zonegroup, SetupImage: config.SetupImage,

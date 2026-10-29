@@ -41,7 +41,7 @@ esac
 func TestRGWAdminCommandLifetime(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, ceph.WithOSDCount(1))
+	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	gateway, err := rgw.Start(ctx, cluster, rgw.Config{SkipUserCreation: true})
 	if err != nil {
 		t.Fatal(err)

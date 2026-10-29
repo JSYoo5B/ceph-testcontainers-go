@@ -21,7 +21,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, append(opts, ceph.WithOSDCount(1))...)
+	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))...)
 	const pool = "tc-rbd-daemon-topology"
 	const name = "preserved"
 	const image = pool + "/" + name
@@ -29,9 +29,9 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	rbdMultiClusterPool(t, ctx, source, sourceClient, pool)
 	rbdMultiClusterPool(t, ctx, destination, destinationClient, pool)
 	imageName := staticFacts(source).Images.RBDAux
-	link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", imageName), rbdmirror.Config{
+	link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", imageName), rbdmirror.WithConfig(rbdmirror.Config{
 		Source: source, Destination: destination, Pool: pool, DaemonCount: 2,
-	})
+	}))
 	if link != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)

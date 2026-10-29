@@ -39,7 +39,7 @@ func testCephFSRemovalWarning(t *testing.T, condition string) {
 		bConfig.StandbyMDS = 1
 		bConfig.StandbyReplay = true
 	}
-	cluster, client := newServiceCluster(t, ceph.WithOSDCount(1), cephfs.WithFilesystems(cephfs.Config{Name: "warning-a"}, bConfig))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), cephfs.WithFilesystems(cephfs.Config{Name: "warning-a"}, bConfig))
 	a, b := cephFSOwnedFilesystem(t, cluster, "warning-a"), cephFSOwnedFilesystem(t, cluster, "warning-b")
 	aBefore, bBefore := cephFSTopologyStatus(t, ctx, a), cephFSTopologyStatus(t, ctx, b)
 	if len(aBefore.Active) != 1 || len(bBefore.Active) != 1 || aBefore.FilesystemID == bBefore.FilesystemID || a.MetadataPool == b.MetadataPool || a.DataPool == b.DataPool {

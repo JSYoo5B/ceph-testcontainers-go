@@ -39,14 +39,14 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 		{
 			name:  "host-memory-storage",
 			run:   ceph.Run,
-			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithNoInitialOSDs(), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(256 << 20).WithInMemory(1 << 30))},
+			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(256 << 20).WithInMemory(1 << 30))},
 			pool:  "tc-combo",
 			small: true,
 		},
 		{
 			name:  "host-small-blocks",
 			run:   ceph.Run,
-			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithNoInitialOSDs(), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(128 << 20))},
+			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(128 << 20))},
 			pool:  "tc-combo",
 			small: true,
 		},
@@ -68,7 +68,7 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 			// rbd.Run adds an RBD pool, which Run admits without a manager.
 			name: "rbd-without-managers",
 			run:  rbdRun,
-			opts: []testcontainers.ContainerCustomizer{ceph.WithNoInitialManagers()},
+			opts: []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers())},
 			pool: "rbd",
 			check: func(t *testing.T, ctx context.Context, cluster *ceph.Container) {
 				if managers := clusteraccess.Managers(t, cluster); len(managers) != 0 {
@@ -82,7 +82,7 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 			defer cancel()
 			image, opts := integrationImages(t)
 			if !test.small {
-				opts = append(opts, ceph.WithOSDCount(2))
+				opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))
 			}
 			opts = append(opts, test.opts...)
 			cluster, client := newServiceClusterRun(t, test.run, image, opts...)

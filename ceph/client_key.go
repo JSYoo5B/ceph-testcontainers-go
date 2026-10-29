@@ -180,12 +180,10 @@ func (c *Container) changeClient(ctx context.Context, entity string, command map
 }
 
 // replaceClientKey implements ClientConfig.ReplaceKey, which documents the behavior.
-func (c *Container) replaceClientKey(ctx context.Context, client *ClientConfig, opts ...ClientOption) (*ClientConfig, error) {
-	settings := clientOptions{}
-	for _, opt := range opts {
-		if err := opt(&settings); err != nil {
-			return nil, err
-		}
+func (c *Container) replaceClientKey(ctx context.Context, client *ClientConfig, opts ...ClientOptions) (*ClientConfig, error) {
+	keyType, err := resolveClientOptions("", opts)
+	if err != nil {
+		return nil, err
 	}
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
@@ -218,7 +216,6 @@ func (c *Container) replaceClientKey(ctx context.Context, client *ClientConfig, 
 		// auth import refuses an entry without capabilities.
 		return nil, fmt.Errorf("cephx identity %s has no capabilities, which a key replacement needs", client.name)
 	}
-	keyType := settings.keyType
 	if keyType == "" {
 		if keyType, err = keyCipher(current.key); err != nil {
 			return nil, fmt.Errorf("cephx identity %s: %w", client.name, err)

@@ -44,7 +44,7 @@ func testMonitorAddressAcrossNetworkInterruption(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(roles), ceph.WithMonitorCount(3), ceph.WithNoInitialOSDs(),
+	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithNoInitialOSDs()),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv6)))...)
 	waitQuorumNames(t, ctx, cluster, "a", "b", "c")
 	monitors := map[string]*ceph.MonitorContainer{}

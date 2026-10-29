@@ -33,7 +33,7 @@ import (
 // module's own (ceph/ceph.go runMonitor appends opts after the mon.sh
 // options), and testcontainers.WithMounts appends, so a caller-supplied volume
 // mount at the MON data directory reaches MON "a". MON "b" and later come from
-// AddMonitor, which takes only DaemonOption values and builds its container
+// AddMonitor, which takes only DaemonOptions values and builds its container
 // options itself (ceph/topology.go AddMonitor), so a volume cannot reach them
 // from outside the package. The experiment therefore replaces MON "a" only.
 //

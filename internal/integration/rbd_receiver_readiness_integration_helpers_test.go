@@ -238,7 +238,7 @@ func rbdReceiverNativeSnapshot(t *testing.T, ctx context.Context, client testcon
 func testRBDReceiverReadiness(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 35*time.Minute)
 	defer cancel()
-	opts := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1)}
+	opts := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1))}
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	}
@@ -285,7 +285,7 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", staticFacts(source).Images.RBDAux), rbdmirror.Config{Source: source, Destination: destination, Pool: pool, Scope: scope, SourceNamespace: mapping[0], DestinationNamespace: mapping[1], DaemonCount: 2})
+			link, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", staticFacts(source).Images.RBDAux), rbdmirror.WithConfig(rbdmirror.Config{Source: source, Destination: destination, Pool: pool, Scope: scope, SourceNamespace: mapping[0], DestinationNamespace: mapping[1], DaemonCount: 2}))
 			if link != nil {
 				t.Cleanup(func() {
 					cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)

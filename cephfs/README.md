@@ -138,7 +138,7 @@ method is a shortcut for `cephfs.Filesystems(cluster.Container)`.
 packages, such as `rbd.WithPools` and `rgw.WithGateways`, so one cluster can
 serve RBD, CephFS and S3 clients. Bootstrap options that leave the cluster
 without the OSDs or managers a filesystem needs, such as
-`ceph.WithNoInitialOSDs()` and `ceph.WithNoInitialManagers()`, are rejected
+`ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs())` and `ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers())`, are rejected
 before any container is created. For staged bootstraps, start the cluster with
 `ceph.Run` and add the filesystem later with `Start`.
 
@@ -162,7 +162,7 @@ executes the fixture's `ceph` commands. Other roles can use separate images:
 | --- | --- | --- |
 | MON, MGR, control CLI | `Run` image | `ceph` CLI, MGR modules (`volumes`, `mirroring`), Python `cephfs` binding (pin policy reads and clone identity checks run libcephfs in the control container) |
 | OSD | `ImageSet.Essential` | `ceph-osd` |
-| MDS | `cephfs.WithMDSImage`, otherwise the `Run` image | `ceph-mds` |
+| MDS | `ceph.ImageOptions.WithCephFSImage`, otherwise the `Run` image | `ceph-mds` |
 | CephFS mirror daemon | `image` argument of `cephfsmirror.Run`; empty selects `FactsOf(source).Images.CephFS` | `cephfs-mirror` and the `ceph` CLI used to query its admin socket |
 | Client containers | chosen by the test | the client under test; `ceph.DefaultImage` provides Python libcephfs |
 
@@ -190,7 +190,7 @@ earlier list. `Start` adds further filesystems after `Run` returns.
 
 ```golang
 cluster, err := cephfs.Run(ctx, ceph.DefaultImage,
-	ceph.WithOSDCount(3),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)),
 	cephfs.WithFilesystems(
 		cephfs.Config{Name: "app-fs", ActiveMDS: 2, StandbyMDS: 1},
 		cephfs.Config{Name: "scratch"},
@@ -238,7 +238,7 @@ for the filesystem. The first MDS is started with `ScaleMDS(ctx, 1, 0)`; after
 that the filesystem behaves like any other.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDCount(2))
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
@@ -263,19 +263,15 @@ before Ceph is changed can be retried. Once the first MDS start has been
 attempted, a failure is not retried automatically: any partially started MDS
 stays owned by the cluster for cleanup.
 
-#### WithMDSImage
+#### MDS image
 
-```golang
-func WithMDSImage(image string) ceph.Option
-```
-
-Selects the image for every MDS container started by `Run`, `Start`,
-`ScaleMDS` and `MDS.AddReplacement`. Without it, MDS daemons use the `Run` image.
-Use an image of the same Ceph release.
+`ceph.ImageOptions.WithCephFSImage` selects the image for every MDS container
+started by `Run`, `Start`, `ScaleMDS` and `MDS.AddReplacement`. Without it, MDS
+daemons use the `Run` image. Use an image of the same Ceph release.
 
 ```golang
 cluster, err := cephfs.Run(ctx, "registry.example.com/ceph:20.2.4-all",
-	cephfs.WithMDSImage("registry.example.com/ceph:20.2.4-mds"),
+	ceph.WithImageOptions(ceph.ImageOptions{}.WithCephFSImage("registry.example.com/ceph:20.2.4-mds")),
 )
 ```
 
@@ -284,7 +280,7 @@ The generic options of the `testcontainers` package (for example
 `testcontainers.CustomizeRequestOption`) also apply. Passed to `Run`, they
 customise only the MON container. To customise MDS containers, pass customizers
 to `Start`; mirror daemons take customizers from `cephfsmirror.Run` and
-`Mirror.AddDaemon`. The cluster options of `ceph.Run` (`ceph.WithOSDCount`,
+`Mirror.AddDaemon`. The cluster options of `ceph.Run` (`ceph.WithClusterConfig`,
 `ceph.WithHostNetwork`, `ceph.WithStartupTimeout`, `ceph.WithConfigFile`, ...)
 are documented in [Ceph](../ceph/README.md).
 
@@ -346,7 +342,7 @@ fs, err := cephfs.Start(ctx, cluster.Container, cephfs.Config{
 	StandbyMDS: 1,
 	AdditionalDataPools: []ceph.PoolConfig{{
 		Name: "app-fs-ec",
-		// K=2, M=1 needs three OSDs: ceph.WithOSDCount(3).
+		// K=2, M=1 needs three OSDs: ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)).
 		ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true},
 	}},
 })

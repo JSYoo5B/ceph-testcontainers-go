@@ -37,8 +37,8 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	for i, host := range hosts {
 		layout = append(layout, ceph.OSDConfig{Host: host, Rack: "rack-" + string(rune('a'+i)), Root: "tc-storage", DeviceClass: "fast"})
 	}
-	cluster, client := newServiceCluster(t, ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithStartupTimeout(3*time.Minute),
-		ceph.WithInitialOSDs(layout...), ceph.WithPoolDefaults(3, 2), ceph.WithDefaultCRUSHRoot("tc-storage"))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2)), ceph.WithStartupTimeout(3*time.Minute),
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(layout...).WithPoolDefaults(3, 2).WithDefaultCRUSHRoot("tc-storage")))
 	for _, pg := range []struct {
 		name string
 		num  int

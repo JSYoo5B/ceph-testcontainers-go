@@ -269,7 +269,7 @@ func testNoInitialOSDStorage(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithNoInitialOSDs())
+	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	} else {
@@ -406,7 +406,7 @@ func testNoInitialOSDPartial(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithNoInitialOSDs(), ceph.WithDefaultCRUSHRoot("osd-0"), ceph.WithPoolDefaults(1, 1))
+	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithDefaultCRUSHRoot("osd-0").WithPoolDefaults(1, 1)))
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	}

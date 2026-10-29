@@ -1,8 +1,10 @@
 # Value configuration composition
 
-These are the composition rules of the operation-specific value configurations
-(`ceph.OSDOptions`, `ceph.ImageOptions`, `ceph.OSDStorage`, `ceph.NetworkConfig`)
-and of the entry points that take them. This page is also the review note of the
+These are the composition rules of the value configurations and of the entry
+points that take them: the `Run` groups (`ceph.ClusterConfig`, `ceph.ImageOptions`,
+`ceph.OSDStorage`, `ceph.NetworkConfig`) and the operation values
+(`ceph.OSDOptions`, `ceph.DaemonOptions`, `ceph.ClientOptions`,
+`ceph.ClientContainerOptions`). This page is also the review note of the
 `ceph`, `cephfs/mirror` and `rbd/mirror` API catalogue receipts.
 
 ## Shape
@@ -12,7 +14,10 @@ and of the entry points that take them. This page is also the review note of the
   There is no pointer builder, no shared mutable state and no universal options
   type: each operation domain has its own type (`OSDOptions` is not a Run
   option).
-- The entry point takes one trailing typed variadic, `configs ...OSDOptions`.
+- An operation takes one trailing typed variadic of its value, for example
+  `AddOSD(ctx, ...OSDOptions)`, `AddMonitor(ctx, name, ...DaemonOptions)`,
+  `CreateClient(ctx, name, caps, ...ClientOptions)` and
+  `WithClient(...ClientContainerOptions)`.
   Go allows only one trailing variadic, so a second input such as the daemon
   image is a field of the configuration type (`OSDOptions.WithImage`), never an
   untyped `...any` bag.
@@ -26,7 +31,7 @@ and of the entry points that take them. This page is also the review note of the
    `WithImage("")`) is a setting: the first is an explicit request for the
    defaults, the second is an invalid selection that is refused, never read as
    "no override".
-2. **Order and scope.** `AddOSD` merges its values in argument order. A value
+2. **Order and scope.** An operation merges its values in argument order. A value
    that leaves a field unset never erases what another value set.
 3. **One owner per field across values.** A field set by two values is refused
    with `ErrInvalidRequest`, also when both agree. There is no
@@ -67,9 +72,9 @@ and of the entry points that take them. This page is also the review note of the
 - Placement reuses `OSDConfig`. `WithPlacement` takes the four fields as one
   unit, so an explicit placement is never mixed field by field with another
   value's placement (rule 3).
-- The image check is the same function as `WithDaemonImage` (`validateDaemonImage`),
-  so MON, MGR and OSD images are validated alike. `WithDaemonImage` is the
-  option of `AddMonitor` and `AddManager`.
+- The image check is the same function as `DaemonOptions.WithImage`
+  (`validateDaemonImage`), so MON, MGR and OSD images are validated alike.
+  `DaemonOptions` is the value of `AddMonitor` and `AddManager`.
 - Hosts, racks, device class and root are validated and resolved by
   `resolveOSDDefaults` and `normalizeOSDConfig`.
 
@@ -82,7 +87,8 @@ variadic is the only place for configuration.
 
 - **The grouped-carrier pattern (used by every Ceph configuration group).** A
   group is a plain value type with unexported fields and chainable,
-  value-returning methods (`ImageOptions`, `OSDStorage`, `NetworkConfig`). The value is **not** a customizer and has no `Customize`
+  value-returning methods (`ClusterConfig`, `ImageOptions`, `OSDStorage`,
+  `NetworkConfig`). The value is **not** a customizer and has no `Customize`
   method; passing it straight to `Run` does not compile. Each group has exactly
   one carrier option function, `With<Group>(value) Option` (here
   `WithImageOptions(ImageOptions)`), a `ceph.Option` that `Run` already
@@ -91,9 +97,8 @@ variadic is the only place for configuration.
   request. The carrier is not a `WithX` per field: one function per group.
   Docker and container execution policy remains testcontainers-style `WithX`.
 - **Service inputs are not forwarded.** `rbd.WithPools`, `cephfs.WithFilesystems`,
-  `cephfs.WithMDSImage`, `rgw.WithGateways`, `rgw.WithImage` and every
-  `ceph.WithX` setting stay `ceph.Option` values that `Run` applies to the
-  settings; they never reach a container request. A test applies a service
+  `rgw.WithGateways` and every group carrier are `ceph.Option` values that `Run`
+  applies to the settings; they never reach a container request. A test applies a service
   option together with an image set and fails if either is dropped.
 - **The `img` argument with an image set.** It is not a second image input: empty
   or equal to the set's Essential (after `All` expansion) is accepted and
@@ -113,8 +118,40 @@ variadic is the only place for configuration.
 - **Raw customizers.** They reach the first MON's container request only, in
   argument order, after the module's own request options and before the
   messenger environment, the `WithConfigFile` file and the ownership label.
-- The mirror packages select the role image through an empty `image` argument
-  (see "Mirror `Run`" below).
+
+### Topology and placement group
+
+```go
+cluster := ceph.ClusterConfig{}.WithMonitorCount(3).WithOSDCount(3).WithPoolDefaults(3, 2)
+c, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithClusterConfig(cluster))
+```
+
+The group holds the MON count, the managers, the initial OSDs, the default
+CRUSH root, the pool defaults and the initial pools. Their combination rules
+(pool defaults derived from the OSD count, a layout that can hold the default
+root and the pools, no initial pools or services without initial OSDs, no
+initial CephFS or RGW without initial managers) are checked together in `Run`
+before any resource is created.
+
+- **One field per choice.** `WithManagerCount` and `WithNoInitialManagers` set
+  one field, and `WithOSDCount`, `WithInitialOSDs` and `WithNoInitialOSDs` set
+  another, because each pair or triple is one choice. Within one value the
+  later call replaces the earlier one; two values that set the field are
+  refused, so "no OSDs" and "three OSDs" can never both be requested.
+- **Rules applied.** The zero value changes nothing. A count below one, an
+  empty layout, an invalid root and invalid pool defaults are refused as
+  explicit invalid settings. `WithPools()` with no argument is an explicit empty
+  list. A value is validated as a whole before any of its fields is written.
+- **Copies (rule 7).** The layout is cloned with `slices.Clone` and the pools with
+  their nested erasure-code settings, when they enter the value and again when
+  the settings are written.
+
+### Image group
+
+`ImageOptions` holds the image set and the CephFS and RGW role images.
+`WithCephFSImage` and `WithRGWImage` replace their role of the set, or of the
+aggregate `Run` image without a set; each is set at most once across values and
+a blank image is refused.
 
 ### OSD storage group
 
@@ -156,8 +193,8 @@ separate cluster network, a policy excludes `MessengerV2Secure`) and refuse
 before any resource is created.
 
 - **What stays out.** `WithHostNetwork` is Docker execution policy and stays a
-  testcontainers-style function. `WithClientMessengerPolicy` is a
-  `ClientContainerOption` of `WithClient`, not a `Run` setting.
+  testcontainers-style function. `ClientContainerOptions.WithMessengerPolicy` is
+  a setting of the `WithClient` container, not a `Run` setting.
 - **Rules applied.** The zero value changes nothing. Every field records that it
   was set, so the default family `AddressIPv4` and `MessengerDefault` are settings
   (a second carrier cannot override them), while `WithHostAddress("")`, an unknown
@@ -174,24 +211,28 @@ before any resource is created.
 
 ### What stays a function
 
-Docker and container execution policy (`WithHostNetwork`, `WithIdleEntrypoint`)
-stays a testcontainers-style `WithX`. Each value group has exactly one carrier,
-so no setting has two spellings.
+Docker and container execution policy (`WithHostNetwork`, `WithIdleEntrypoint`,
+`WithStartupTimeout`) stays a testcontainers-style `WithX`. `WithConfigFile`
+follows the `WithConfigFile` convention of testcontainers-go modules, and
+`WithAuth` already carries one `AuthConfig` value. Each value group has exactly
+one carrier, so no setting has two spellings.
 
-## Mirror `Run`
+## Cross-cluster fixture `Run`
 
-`rbd/mirror.Run` and `cephfs/mirror.Run` keep the testcontainers-style signature
-`Run(ctx, image string, config Config, opts ...testcontainers.ContainerCustomizer)`.
-The image is a single setting that already has its positional argument, so no
-grouped carrier exists next to it: a second input for the same field would give
-the setting two spellings.
+`rbd/mirror`, `cephfs/mirror` and `rgw/multisite` have the same single entry
+point as every module, `Run(ctx, img string, opts ...testcontainers.ContainerCustomizer)`.
 
-Only the exact empty string derives the role image; a blank string such as a
-single space is an explicit selection and is still refused by pair validation.
-A cluster without the role is refused with `ErrInvalidRequest` and no other role
-substitutes.
+- `img` is the image of the containers the fixture creates (the rbd-mirror,
+  cephfs-mirror or gateway daemons) and is required. It is never derived from
+  the clusters.
+- The fixture configuration is a plain `Config` struct carried by exactly one
+  `WithConfig` option (multisite: `WithConfig` or `WithTopology`). The option's
+  `Customize` does nothing. `Run` refuses a missing carrier and a second one
+  before it queries any cluster (`multicluster.SplitConfig`). The carrier copies
+  the slices of its config.
+- The other customizers reach the daemon containers, as before.
 
-### Client entry points stay separate
+## Client entry points stay separate
 
 `Container.WithClient` copies the admin keyring and takes no lock, closed check
 or identity validation. `Container.WithClientIdentity` copies a scoped keyring,

@@ -80,7 +80,7 @@ failure:
 
 ```golang
 _, err := cluster.CreateClient(ctx, "modern", ceph.ClientCaps{Mon: "allow r"},
-	ceph.WithClientKeyType(ceph.CipherAES256K))
+	ceph.ClientOptions{}.WithKeyType(ceph.CipherAES256K))
 var failure *ceph.OperationError
 if errors.As(err, &failure) && failure.Kind == ceph.ErrUnsupported {
 	t.Logf("%s (Ceph %s) lacks %s", failure.Target, failure.Version, failure.Capability)
@@ -250,7 +250,7 @@ The same test then holds on Squid, on Tentacle and on patched images:
 
 ```golang
 _, err := cluster.CreateClient(ctx, "modern", ceph.ClientCaps{Mon: "allow r"},
-	ceph.WithClientKeyType(ceph.CipherAES256K))
+	ceph.ClientOptions{}.WithKeyType(ceph.CipherAES256K))
 var unsupported *ceph.OperationError
 switch {
 case errors.As(err, &unsupported) && unsupported.Kind == ceph.ErrUnsupported:

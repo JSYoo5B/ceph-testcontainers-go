@@ -240,7 +240,7 @@ type VerificationReport struct {
 	Cluster       string              `json:"cluster"`
 	Outcome       VerificationOutcome `json:"outcome"`
 	Window        VerificationWindow  `json:"window"`
-	// Images are the cluster's role images; a daemon started with WithDaemonImage
+	// Images are the cluster's role images; a daemon started with DaemonOptions.WithImage
 	// is not reflected.
 	Images  ImageSet             `json:"images"`
 	Sources []VerificationSource `json:"sources"`

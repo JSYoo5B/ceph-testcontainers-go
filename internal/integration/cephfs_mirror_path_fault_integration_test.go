@@ -37,7 +37,7 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	netem := netemImage(t)
-	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, ceph.WithOSDCount(1))
+	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	sourceFS, err := cephfs.Start(ctx, source, cephfs.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -80,11 +80,11 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 	fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
 	first := cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, "/federation", "backup-1")
 	archive("backup-1")
-	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.Config{
+	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.WithConfig(cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: []string{"/federation"},
-	})
+	}))
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

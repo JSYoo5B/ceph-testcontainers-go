@@ -4,18 +4,17 @@ import (
 	"fmt"
 )
 
-// WithPools creates the selected pools after initial OSD startup. Repeated
-// options replace the list. Configs and nested EC settings are copied; cluster
-// defaults are resolved after all Run options have been applied.
-func WithPools(configs ...PoolConfig) Option {
-	return func(o *options) error {
-		pools := make([]PoolConfig, len(configs))
-		for i, config := range configs {
-			pools[i] = clonePoolConfig(config)
-		}
-		o.pools = pools
+// clonePoolConfigs copies configs and their nested EC settings. A non-nil empty
+// list stays non-nil.
+func clonePoolConfigs(configs []PoolConfig) []PoolConfig {
+	if configs == nil {
 		return nil
 	}
+	pools := make([]PoolConfig, len(configs))
+	for i, config := range configs {
+		pools[i] = clonePoolConfig(config)
+	}
+	return pools
 }
 
 func clonePoolConfig(config PoolConfig) PoolConfig {
@@ -54,22 +53,16 @@ func prepareInitialComposition(settings *options) error {
 		needsManagers = needsManagers || service.NeedsManagers()
 	}
 	if settings.noInitialOSDs {
-		if settings.initialOSDsExplicit || len(settings.initialOSDs) != 0 {
-			return fmt.Errorf("WithNoInitialOSDs cannot be combined with explicit initial OSD count or layout")
-		}
 		if len(settings.pools) != 0 || len(settings.services) != 0 {
-			return fmt.Errorf("WithNoInitialOSDs requires no initial user pools, CephFS filesystems or RGW gateways; add OSDs before provisioning them")
+			return fmt.Errorf("ClusterConfig.WithNoInitialOSDs requires no initial user pools, CephFS filesystems or RGW gateways; add OSDs before provisioning them")
 		}
 		// Run resolves positive prospective pool defaults before this suppresses
 		// initial launches. Later AddOSD uses the same placement and defaults.
 		settings.osds = 0
 	}
 	if settings.noInitialManagers {
-		if settings.managerCountExplicit {
-			return fmt.Errorf("WithNoInitialManagers cannot be combined with an explicit initial manager count")
-		}
 		if needsManagers {
-			return fmt.Errorf("WithNoInitialManagers requires no initial CephFS filesystems or RGW gateways; add a manager before provisioning them")
+			return fmt.Errorf("ClusterConfig.WithNoInitialManagers requires no initial CephFS filesystems or RGW gateways; add a manager before provisioning them")
 		}
 		settings.managers = 0
 	}
@@ -108,7 +101,7 @@ func prepareInitialComposition(settings *options) error {
 		needed = min(2, settings.osds)
 	}
 	if !settings.noInitialOSDs && (eligible < needed || eligible == 0) {
-		return fmt.Errorf("default CRUSH root %q needs %d initial OSDs for automatically created pools, requested layout has %d; select a populated root with WithDefaultCRUSHRoot", settings.defaultCRUSHRoot, needed, eligible)
+		return fmt.Errorf("default CRUSH root %q needs %d initial OSDs for automatically created pools, requested layout has %d; select a populated root with ClusterConfig.WithDefaultCRUSHRoot", settings.defaultCRUSHRoot, needed, eligible)
 	}
 	names := make(map[string]bool)
 	validatePool := func(config PoolConfig) error {

@@ -4,18 +4,40 @@
 
 This repository is a set of Testcontainers for Go modules, and every package
 that runs containers keeps the testcontainers-go module conventions. A change
-that breaks them is not allowed, however convenient it looks:
+that breaks them is not allowed, however convenient it looks, and "0.x may
+break" does not apply to them.
 
-- `Run(ctx, img, opts ...testcontainers.ContainerCustomizer)` returns a
-  `Container` that embeds `testcontainers.Container` (a service package embeds
-  `*ceph.Container`). The two-cluster fixtures add only a `Config` before the
-  variadic. Never change an existing `Run` signature or add a second entry point
-  for the same fixture; carry new configuration through the existing variadic
-  (a module `Option` or one value-group carrier).
-- `Run` returns the partially started container together with its error, so the
-  caller's `testcontainers.CleanupContainer` still terminates it.
+- **One entry point per package: `Run`.** Every package that starts containers,
+  including the cross-cluster fixtures (`rbd/mirror`, `cephfs/mirror`,
+  `rgw/multisite`), has exactly one entry point,
+  `Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer)`.
+  Do not add a second one for the same package (`RunWithImages`,
+  `RunTopology`, `RunWithConfig`, a `New`, `Setup` or `Start` constructor, ...),
+  and do not rename `Run`. A variant is an option, not a function. Functions
+  that act on an existing cluster or fixture (`AddOSD`, `cephfs.Start`,
+  `rgw.Start`) are operations, not entry points.
+- **Never change the `Run` signature.** No positional configuration argument,
+  no removed or reordered `img`, no second variadic.
+- **`img` is the image the package runs, and it is required.** It is never a
+  placeholder: an empty `img` is not "derive it from somewhere else". A fixture
+  whose containers need a role image (rbd-aux, cephfs, rgw) takes that image as
+  `img`. `ceph.Run` alone also accepts an image set through `ImageOptions`, with
+  `img` empty or equal to its essential image.
+- **All configuration travels through the variadic.** Docker and container
+  execution policy is a testcontainers-style `WithX` function. Ceph, service and
+  fixture settings are plain values with chainable methods or plain config
+  structs, each carried by exactly one grouped option function (`WithClusterConfig`,
+  `WithConfig`, ...) whose `Customize` does nothing. Do not add one `WithX`
+  function per Ceph setting, and do not give one setting two spellings.
+  Customizers that are not options reach the containers the package creates.
+- **`Run` returns the partially started value together with its error**, so the
+  caller's `testcontainers.CleanupContainer` still terminates it. A module's
+  `Container` embeds `testcontainers.Container` (a service package embeds
+  `*ceph.Container`).
 - Container settings are testcontainers customizers. Do not build a parallel
   option, lifecycle or cleanup framework next to them.
+- An existing exception is not a precedent. When code breaks these rules, fix it;
+  do not copy its shape or describe it here as allowed.
 - Assume the reader knows Testcontainers for Go and Go. Do not explain its basics
   in code comments or documentation.
 

@@ -275,7 +275,7 @@ func ecPoolFacts(t *testing.T, ctx context.Context, cluster *ceph.Container, poo
 func testECEligibleFragments(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithOSDCount(3))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 		Name: "tc-ec-eligible", Application: "rados", PGNum: 1, MinSize: 2,
 		ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true},

@@ -3,6 +3,7 @@ package multisite
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/dockerbridge"
@@ -54,15 +56,60 @@ type Fixture struct {
 	closed                                   bool
 }
 
-// Run configures native RGW multisite on two existing clusters.
-// opts customize both gateways and are applied last. Do not replace required
+// Option carries the realm configuration of a fixture to Run: a two-zone
+// Config (WithConfig) or a larger TopologyConfig (WithTopology). It is not a
+// container customization: its Customize does nothing, so it never reaches a
+// gateway.
+type Option struct {
+	config   *Config
+	topology *TopologyConfig
+}
+
+// Customize implements testcontainers.ContainerCustomizer.
+func (Option) Customize(*testcontainers.GenericContainerRequest) error { return nil }
+
+// WithConfig carries a two-zone realm on two existing clusters to Run.
+func WithConfig(config Config) Option { return Option{config: &config} }
+
+// WithTopology carries a realm of at least two zones, in one or several
+// zonegroups, to Run. The zone lists are copied.
+func WithTopology(config TopologyConfig) Option {
+	config.Zones = slices.Clone(config.Zones)
+	config.Zonegroups = slices.Clone(config.Zonegroups)
+	for i := range config.Zonegroups {
+		config.Zonegroups[i].Zones = slices.Clone(config.Zonegroups[i].Zones)
+	}
+	return Option{topology: &config}
+}
+
+// Run configures native RGW multisite on existing clusters. Exactly one
+// WithConfig or WithTopology among opts selects the realm; the other
+// customizers apply to every gateway, last. Do not replace required
 // networking or commands. A non-nil result returned with an error must still
 // be terminated. The clusters must not already serve standalone RGW traffic.
-// Both clusters must use the same network mode. Host mode advertises the
+// All clusters must use the same network mode. Host mode advertises the
 // configured daemon-host addresses, which must be mutually reachable.
-// image supplies the gateway runtime; setup clients use each cluster's RGW
-// image unless SetupImage explicitly overrides it.
-func Run(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
+// img is the gateway image and is required; setup clients use each cluster's
+// RGW image unless SetupImage explicitly overrides it.
+//
+// With WithTopology the initial master becomes Source and the first remaining
+// zone becomes Destination; Zones returns all sites.
+func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
+	carrier, opts, err := multicluster.SplitConfig[Option]("RGW multisite", "WithConfig or WithTopology", opts)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case carrier.topology != nil:
+		return runTopology(ctx, img, *carrier.topology, opts...)
+	case carrier.config != nil:
+		return runPair(ctx, img, *carrier.config, opts...)
+	}
+	return nil, servicehook.Invalid(errors.New("RGW multisite Option must come from WithConfig or WithTopology"))
+}
+
+// runPair configures a two-zone realm; runTopology builds larger ones on it.
+func runPair(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
 	}

@@ -47,8 +47,7 @@ func addressOfFamily(family ceph.AddressFamily, addr string) bool {
 func testAddressFamily(t *testing.T, family ceph.AddressFamily, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
-		ceph.WithMonitorCount(3), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(family)), cephfs.WithFilesystems(cephfs.Config{Name: "tc-family-fs"})}, opts...)...)
+	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1).WithMonitorCount(3)), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(family)), cephfs.WithFilesystems(cephfs.Config{Name: "tc-family-fs"})}, opts...)...)
 	if staticFacts(cluster).AddressFamily != family {
 		t.Fatalf("cluster reports %s", staticFacts(cluster).AddressFamily)
 	}

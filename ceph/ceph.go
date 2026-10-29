@@ -462,12 +462,12 @@ func (c *Container) ManagerContainer() testcontainers.Container {
 // These privileged, ephemeral credentials are for trusted test containers only.
 // Caller owns and terminates that container before terminating the cluster.
 // The options customize the container's ceph.conf.
-func (c *Container) WithClient(opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
+func (c *Container) WithClient(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
 	return c.adminClient(opts...)
 }
 
 // adminClient attaches a container of the module's own with the admin keyring.
-func (c *Container) adminClient(opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
+func (c *Container) adminClient(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
 		config, keyring := c.bootstrap.clones()
 		config, err := clientContainerConfig(config, opts)

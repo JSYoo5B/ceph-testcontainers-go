@@ -29,7 +29,7 @@ func ExampleRun() {
 func ExampleInitPool() {
 	ctx := context.Background()
 	cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-		ceph.WithPools(ceph.PoolConfig{Name: "images", Application: "rbd"}),
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{Name: "images", Application: "rbd"})),
 	)
 	defer func() {
 		if err := testcontainers.TerminateContainer(cluster); err != nil {

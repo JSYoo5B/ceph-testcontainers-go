@@ -30,7 +30,7 @@ func TestManagerPrometheusExporter(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()
-			opts := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithManagerCount(2)}
+			opts := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithManagerCount(2))}
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
@@ -178,7 +178,7 @@ print(len(body))`, metrics)
 func TestManagerMetrics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithManagerCount(2), ceph.WithPoolDefaults(1, 1))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithManagerCount(2).WithPoolDefaults(1, 1)))
 	if _, err := observeCluster(cluster).ManagerMetrics(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("metrics without the module: %v", err)
 	}

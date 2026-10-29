@@ -19,7 +19,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	opts := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1)}
+	opts := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1))}
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	}
@@ -98,11 +98,11 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
 	archiveSnapshot("backup-1")
 	image := staticFacts(source).Images.CephFS
-	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", image), cephfsmirror.Config{
+	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", image), cephfsmirror.WithConfig(cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: []string{"/federation"},
-	})
+	}))
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)

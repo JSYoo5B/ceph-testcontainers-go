@@ -107,7 +107,7 @@ func testRBDMirrorBandwidthCatchUp(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
 	netem := netemImage(t)
-	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, ceph.WithOSDCount(1))
+	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	const pool = "tc-rbd-rate"
 	const image = pool + "/rate"
 	for _, cluster := range []*ceph.Container{source, destination} {
@@ -121,7 +121,7 @@ func testRBDMirrorBandwidthCatchUp(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", staticFacts(source).Images.RBDAux), rbdmirror.Config{Source: source, Destination: destination, Pool: pool})
+	mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", staticFacts(source).Images.RBDAux), rbdmirror.WithConfig(rbdmirror.Config{Source: source, Destination: destination, Pool: pool}))
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

@@ -25,13 +25,13 @@ import (
 func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	source, destination, _, _ := newMultiClusterPair(t, append(opts, ceph.WithOSDCount(1))...)
+	source, destination, _, _ := newMultiClusterPair(t, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))...)
 	image, _ := integrationImages(t)
 	rgwImage := os.Getenv("CEPH_TEST_RGW_IMAGE")
 	if rgwImage == "" {
 		rgwImage = image
 	}
-	link, err := multisite.Run(ctx, rgwImage, multisite.Config{Source: source, Destination: destination, Realm: "tc-sync-accounts", SourceZone: "source", DestinationZone: "destination"})
+	link, err := multisite.Run(ctx, rgwImage, multisite.WithConfig(multisite.Config{Source: source, Destination: destination, Realm: "tc-sync-accounts", SourceZone: "source", DestinationZone: "destination"}))
 	if link != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

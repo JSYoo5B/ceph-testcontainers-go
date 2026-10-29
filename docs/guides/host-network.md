@@ -302,7 +302,7 @@ Linux processes. When the setting is off, `Run` fails with
   sessions by `ID` rather than `Hostname`, and do not rely on `hostname` to
   tell containers apart.
 - Multicluster fixtures (`rbdmirror.Run`, `cephfsmirror.Run`,
-  `multisite.Run`, `multisite.RunTopology`) require both clusters to use the same
+  `multisite.Run`) require both clusters to use the same
   network mode. In host mode the advertised addresses of each cluster must be
   reachable from the other.
 

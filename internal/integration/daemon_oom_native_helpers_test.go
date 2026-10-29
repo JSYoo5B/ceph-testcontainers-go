@@ -63,7 +63,7 @@ func testDaemonMemoryQualification(t *testing.T, pressure bool) {
 		t.Skip("eligibility: less than 4 GiB available runner memory")
 	}
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithMonitorCount(3), ceph.WithNoInitialManagers(), ceph.WithNoInitialOSDs(),
+	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithNoInitialManagers().WithNoInitialOSDs()),
 		testcontainers.WithHostConfigModifier(func(h *container.HostConfig) {
 			h.Memory = daemonMemoryBaseline
 			h.MemorySwap = daemonMemoryBaseline

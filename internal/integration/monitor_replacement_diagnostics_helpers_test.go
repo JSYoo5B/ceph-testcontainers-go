@@ -29,7 +29,7 @@ import (
 // through public APIs. Membership is listed with the context getters, so a
 // held topology mutex cannot outlive an observation's bound.
 type monReplacementCluster interface {
-	AddMonitor(context.Context, string, ...ceph.DaemonOption) (*ceph.MonitorContainer, error)
+	AddMonitor(context.Context, string, ...ceph.DaemonOptions) (*ceph.MonitorContainer, error)
 	RemoveMonitor(context.Context, string) error
 	QuorumStatus(context.Context) (ceph.QuorumStatus, error)
 	AdminSocket(context.Context, string, ...string) ([]byte, error)

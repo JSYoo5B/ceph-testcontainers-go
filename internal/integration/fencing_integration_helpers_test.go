@@ -20,7 +20,7 @@ import (
 func testClientFencing(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 6*time.Minute)
 	defer cancel()
-	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1)}
+	options := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1))}
 	if host {
 		options = append(options, ceph.WithHostNetwork())
 	}

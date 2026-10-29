@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 324,
+  "count": 328,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -147,7 +147,7 @@
     {
       "current": "ceph.ClientConfig.ReplaceKey",
       "kind": "method",
-      "signature": "func(ctx context.Context, opts ...ClientOption) (*ClientConfig, error)",
+      "signature": "func(ctx context.Context, opts ...ClientOptions) (*ClientConfig, error)",
       "receiver": "*ClientConfig",
       "proposed": "ceph.ClientConfig.ReplaceKey",
       "decision": "baseline"
@@ -185,9 +185,17 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.ClientContainerOption",
+      "current": "ceph.ClientContainerOptions",
       "kind": "type",
-      "proposed": "ceph.ClientContainerOption",
+      "proposed": "ceph.ClientContainerOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientContainerOptions.WithMessengerPolicy",
+      "kind": "method",
+      "signature": "func(policy ClientMessengerPolicy) ClientContainerOptions",
+      "receiver": "ClientContainerOptions",
+      "proposed": "ceph.ClientContainerOptions.WithMessengerPolicy",
       "decision": "baseline"
     },
     {
@@ -197,9 +205,17 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.ClientOption",
+      "current": "ceph.ClientOptions",
       "kind": "type",
-      "proposed": "ceph.ClientOption",
+      "proposed": "ceph.ClientOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClientOptions.WithKeyType",
+      "kind": "method",
+      "signature": "func(cipher CephxCipher) ClientOptions",
+      "receiver": "ClientOptions",
+      "proposed": "ceph.ClientOptions.WithKeyType",
       "decision": "baseline"
     },
     {
@@ -241,6 +257,84 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.ClusterConfig",
+      "kind": "type",
+      "proposed": "ceph.ClusterConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClusterConfig.WithDefaultCRUSHRoot",
+      "kind": "method",
+      "signature": "func(root string) ClusterConfig",
+      "receiver": "ClusterConfig",
+      "proposed": "ceph.ClusterConfig.WithDefaultCRUSHRoot",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClusterConfig.WithInitialOSDs",
+      "kind": "method",
+      "signature": "func(configs ...OSDConfig) ClusterConfig",
+      "receiver": "ClusterConfig",
+      "proposed": "ceph.ClusterConfig.WithInitialOSDs",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClusterConfig.WithManagerCount",
+      "kind": "method",
+      "signature": "func(count int) ClusterConfig",
+      "receiver": "ClusterConfig",
+      "proposed": "ceph.ClusterConfig.WithManagerCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClusterConfig.WithMonitorCount",
+      "kind": "method",
+      "signature": "func(count int) ClusterConfig",
+      "receiver": "ClusterConfig",
+      "proposed": "ceph.ClusterConfig.WithMonitorCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClusterConfig.WithNoInitialManagers",
+      "kind": "method",
+      "signature": "func() ClusterConfig",
+      "receiver": "ClusterConfig",
+      "proposed": "ceph.ClusterConfig.WithNoInitialManagers",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClusterConfig.WithNoInitialOSDs",
+      "kind": "method",
+      "signature": "func() ClusterConfig",
+      "receiver": "ClusterConfig",
+      "proposed": "ceph.ClusterConfig.WithNoInitialOSDs",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClusterConfig.WithOSDCount",
+      "kind": "method",
+      "signature": "func(count int) ClusterConfig",
+      "receiver": "ClusterConfig",
+      "proposed": "ceph.ClusterConfig.WithOSDCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClusterConfig.WithPoolDefaults",
+      "kind": "method",
+      "signature": "func(replicas, minSize int) ClusterConfig",
+      "receiver": "ClusterConfig",
+      "proposed": "ceph.ClusterConfig.WithPoolDefaults",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ClusterConfig.WithPools",
+      "kind": "method",
+      "signature": "func(configs ...PoolConfig) ClusterConfig",
+      "receiver": "ClusterConfig",
+      "proposed": "ceph.ClusterConfig.WithPools",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.ClusterFacts",
       "kind": "type",
       "proposed": "ceph.ClusterFacts",
@@ -279,7 +373,7 @@
     {
       "current": "ceph.Container.AddManager",
       "kind": "method",
-      "signature": "func(ctx context.Context, name string, opts ...DaemonOption) (*ManagerContainer, error)",
+      "signature": "func(ctx context.Context, name string, opts ...DaemonOptions) (*ManagerContainer, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.AddManager",
       "decision": "baseline"
@@ -287,7 +381,7 @@
     {
       "current": "ceph.Container.AddMonitor",
       "kind": "method",
-      "signature": "func(ctx context.Context, name string, opts ...DaemonOption) (*MonitorContainer, error)",
+      "signature": "func(ctx context.Context, name string, opts ...DaemonOptions) (*MonitorContainer, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.AddMonitor",
       "decision": "baseline"
@@ -351,7 +445,7 @@
     {
       "current": "ceph.Container.CreateClient",
       "kind": "method",
-      "signature": "func(ctx context.Context, name string, caps ClientCaps, opts ...ClientOption) (*ClientConfig, error)",
+      "signature": "func(ctx context.Context, name string, caps ClientCaps, opts ...ClientOptions) (*ClientConfig, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.CreateClient",
       "decision": "baseline"
@@ -511,7 +605,7 @@
     {
       "current": "ceph.Container.WithClient",
       "kind": "method",
-      "signature": "func(opts ...ClientContainerOption) testcontainers.CustomizeRequestOption",
+      "signature": "func(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption",
       "receiver": "*Container",
       "proposed": "ceph.Container.WithClient",
       "decision": "baseline"
@@ -519,7 +613,7 @@
     {
       "current": "ceph.Container.WithClientIdentity",
       "kind": "method",
-      "signature": "func(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption",
+      "signature": "func(client *ClientConfig, opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption",
       "receiver": "*Container",
       "proposed": "ceph.Container.WithClientIdentity",
       "decision": "baseline"
@@ -627,9 +721,17 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.DaemonOption",
+      "current": "ceph.DaemonOptions",
       "kind": "type",
-      "proposed": "ceph.DaemonOption",
+      "proposed": "ceph.DaemonOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.DaemonOptions.WithImage",
+      "kind": "method",
+      "signature": "func(image string) DaemonOptions",
+      "receiver": "DaemonOptions",
+      "proposed": "ceph.DaemonOptions.WithImage",
       "decision": "baseline"
     },
     {
@@ -976,11 +1078,27 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.ImageOptions.WithCephFSImage",
+      "kind": "method",
+      "signature": "func(image string) ImageOptions",
+      "receiver": "ImageOptions",
+      "proposed": "ceph.ImageOptions.WithCephFSImage",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.ImageOptions.WithImageSet",
       "kind": "method",
       "signature": "func(images ImageSet) ImageOptions",
       "receiver": "ImageOptions",
       "proposed": "ceph.ImageOptions.WithImageSet",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ImageOptions.WithRGWImage",
+      "kind": "method",
+      "signature": "func(image string) ImageOptions",
+      "receiver": "ImageOptions",
+      "proposed": "ceph.ImageOptions.WithRGWImage",
       "decision": "baseline"
     },
     {
@@ -2103,17 +2221,10 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithClientKeyType",
+      "current": "ceph.WithClusterConfig",
       "kind": "function",
-      "signature": "func(cipher CephxCipher) ClientOption",
-      "proposed": "ceph.WithClientKeyType",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithClientMessengerPolicy",
-      "kind": "function",
-      "signature": "func(policy ClientMessengerPolicy) ClientContainerOption",
-      "proposed": "ceph.WithClientMessengerPolicy",
+      "signature": "func(cluster ClusterConfig) Option",
+      "proposed": "ceph.WithClusterConfig",
       "decision": "baseline"
     },
     {
@@ -2121,20 +2232,6 @@
       "kind": "function",
       "signature": "func(path string) Option",
       "proposed": "ceph.WithConfigFile",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithDaemonImage",
-      "kind": "function",
-      "signature": "func(image string) DaemonOption",
-      "proposed": "ceph.WithDaemonImage",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithDefaultCRUSHRoot",
-      "kind": "function",
-      "signature": "func(root string) Option",
-      "proposed": "ceph.WithDefaultCRUSHRoot",
       "decision": "baseline"
     },
     {
@@ -2159,27 +2256,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithInitialOSDs",
-      "kind": "function",
-      "signature": "func(configs ...OSDConfig) Option",
-      "proposed": "ceph.WithInitialOSDs",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithManagerCount",
-      "kind": "function",
-      "signature": "func(count int) Option",
-      "proposed": "ceph.WithManagerCount",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithMonitorCount",
-      "kind": "function",
-      "signature": "func(count int) Option",
-      "proposed": "ceph.WithMonitorCount",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.WithNetworkConfig",
       "kind": "function",
       "signature": "func(network NetworkConfig) Option",
@@ -2187,45 +2263,10 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithNoInitialManagers",
-      "kind": "function",
-      "signature": "func() Option",
-      "proposed": "ceph.WithNoInitialManagers",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithNoInitialOSDs",
-      "kind": "function",
-      "signature": "func() Option",
-      "proposed": "ceph.WithNoInitialOSDs",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithOSDCount",
-      "kind": "function",
-      "signature": "func(count int) Option",
-      "proposed": "ceph.WithOSDCount",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.WithOSDStorage",
       "kind": "function",
       "signature": "func(storage OSDStorage) Option",
       "proposed": "ceph.WithOSDStorage",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithPoolDefaults",
-      "kind": "function",
-      "signature": "func(replicas, minSize int) Option",
-      "proposed": "ceph.WithPoolDefaults",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithPools",
-      "kind": "function",
-      "signature": "func(configs ...PoolConfig) Option",
-      "proposed": "ceph.WithPools",
       "decision": "baseline"
     },
     {

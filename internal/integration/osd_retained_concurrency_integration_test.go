@@ -34,7 +34,7 @@ func TestOSDRetainedConcurrentReopen(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = docker.Close() })
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithNoInitialOSDs(), ceph.WithOSDStorage(ceph.OSDStorage{}.WithVolume()))
+	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithVolume()))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	terminated := false
 	if cluster != nil {

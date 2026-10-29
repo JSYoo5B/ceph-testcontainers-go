@@ -12,17 +12,17 @@ func TestInvalidInitialCompositionDoesNotCreateResources(t *testing.T) {
 		name string
 		opts []testcontainers.ContainerCustomizer
 	}{
-		{"replicas exceed initial OSDs", []testcontainers.ContainerCustomizer{WithOSDCount(1), WithPools(PoolConfig{Name: "data", Replicas: 3})}},
-		{"EC exceeds initial OSDs", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "data", ErasureCode: &ErasureCodeConfig{K: 2, M: 1}})}},
-		{"duplicate initial pools", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "data"}, PoolConfig{Name: "data"})}},
-		{"too few CRUSH domains", []testcontainers.ContainerCustomizer{WithInitialOSDs(OSDConfig{Host: "same"}, OSDConfig{Host: "same"}), WithPools(PoolConfig{Name: "data", FailureDomain: "host"})}},
-		{"late default invalidates pool", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "data", Replicas: 1}), WithPoolDefaults(3, 2)}},
-		{"empty default root", []testcontainers.ContainerCustomizer{WithDefaultCRUSHRoot("")}},
-		{"unsafe default root", []testcontainers.ContainerCustomizer{WithDefaultCRUSHRoot("bad root")}},
-		{"unpopulated default root", []testcontainers.ContainerCustomizer{WithInitialOSDs(OSDConfig{Root: "storage"}, OSDConfig{Root: "storage"})}},
-		{"default root too small", []testcontainers.ContainerCustomizer{WithInitialOSDs(OSDConfig{Root: "default"}, OSDConfig{Root: "storage"})}},
-		{"explicit absent default root", []testcontainers.ContainerCustomizer{WithDefaultCRUSHRoot("absent"), WithInitialOSDs(OSDConfig{Root: "storage"}, OSDConfig{Root: "storage"})}},
-		{"invalid captured pool", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "bad name"})}},
+		{"replicas exceed initial OSDs", []testcontainers.ContainerCustomizer{WithClusterConfig(ClusterConfig{}.WithOSDCount(1).WithPools(PoolConfig{Name: "data", Replicas: 3}))}},
+		{"EC exceeds initial OSDs", []testcontainers.ContainerCustomizer{WithClusterConfig(ClusterConfig{}.WithPools(PoolConfig{Name: "data", ErasureCode: &ErasureCodeConfig{K: 2, M: 1}}))}},
+		{"duplicate initial pools", []testcontainers.ContainerCustomizer{WithClusterConfig(ClusterConfig{}.WithPools(PoolConfig{Name: "data"}, PoolConfig{Name: "data"}))}},
+		{"too few CRUSH domains", []testcontainers.ContainerCustomizer{WithClusterConfig(ClusterConfig{}.WithInitialOSDs(OSDConfig{Host: "same"}, OSDConfig{Host: "same"}).WithPools(PoolConfig{Name: "data", FailureDomain: "host"}))}},
+		{"late default invalidates pool", []testcontainers.ContainerCustomizer{WithClusterConfig(ClusterConfig{}.WithPools(PoolConfig{Name: "data", Replicas: 1}).WithPoolDefaults(3, 2))}},
+		{"empty default root", []testcontainers.ContainerCustomizer{WithClusterConfig(ClusterConfig{}.WithDefaultCRUSHRoot(""))}},
+		{"unsafe default root", []testcontainers.ContainerCustomizer{WithClusterConfig(ClusterConfig{}.WithDefaultCRUSHRoot("bad root"))}},
+		{"unpopulated default root", []testcontainers.ContainerCustomizer{WithClusterConfig(ClusterConfig{}.WithInitialOSDs(OSDConfig{Root: "storage"}, OSDConfig{Root: "storage"}))}},
+		{"default root too small", []testcontainers.ContainerCustomizer{WithClusterConfig(ClusterConfig{}.WithInitialOSDs(OSDConfig{Root: "default"}, OSDConfig{Root: "storage"}))}},
+		{"explicit absent default root", []testcontainers.ContainerCustomizer{WithClusterConfig(ClusterConfig{}.WithDefaultCRUSHRoot("absent").WithInitialOSDs(OSDConfig{Root: "storage"}, OSDConfig{Root: "storage"}))}},
+		{"invalid captured pool", []testcontainers.ContainerCustomizer{WithClusterConfig(ClusterConfig{}.WithPools(PoolConfig{Name: "bad name"}))}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cluster, err := Run(context.Background(), DefaultImage, test.opts...)
@@ -38,8 +38,8 @@ func TestCompositionResolvesDefaultsAfterOptionCapture(t *testing.T) {
 		name string
 		opts []Option
 	}{
-		{"pool then defaults", []Option{WithPools(PoolConfig{Name: "data", MinSize: 3}), WithPoolDefaults(3, 2)}},
-		{"defaults then pool", []Option{WithPoolDefaults(3, 2), WithPools(PoolConfig{Name: "data", MinSize: 3})}},
+		{"pool then defaults", []Option{WithClusterConfig(ClusterConfig{}.WithPools(PoolConfig{Name: "data", MinSize: 3}).WithPoolDefaults(3, 2))}},
+		{"defaults then pool", []Option{WithClusterConfig(ClusterConfig{}.WithPoolDefaults(3, 2).WithPools(PoolConfig{Name: "data", MinSize: 3}))}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			settings := options{osds: 3}
@@ -63,11 +63,11 @@ func TestCompositionDefaultCRUSHRootResolvesOmissionsAndHonorsExplicitRoots(t *t
 	for _, rootFirst := range []bool{false, true} {
 		settings := options{osds: 3, poolReplicas: 2, poolMinSize: 1}
 		layout := []OSDConfig{{Host: "a"}, {Host: "b"}, {Host: "other-host", Root: "other"}}
-		opts := []Option{WithInitialOSDs(layout...), WithPools(PoolConfig{Name: "ordinary"})}
+		opts := []Option{WithClusterConfig(ClusterConfig{}.WithInitialOSDs(layout...).WithPools(PoolConfig{Name: "ordinary"}))}
 		if rootFirst {
-			opts = append([]Option{WithDefaultCRUSHRoot("storage")}, opts...)
+			opts = append([]Option{WithClusterConfig(ClusterConfig{}.WithDefaultCRUSHRoot("storage"))}, opts...)
 		} else {
-			opts = append(opts, WithDefaultCRUSHRoot("storage"))
+			opts = append(opts, WithClusterConfig(ClusterConfig{}.WithDefaultCRUSHRoot("storage")))
 		}
 		for _, option := range opts {
 			if err := option(&settings); err != nil {

@@ -180,7 +180,7 @@ func TestRBDLayoutReceipt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	cluster, client := newServiceClusterRun(t, rbdRun, image, append(roles, ceph.WithOSDCount(2))...)
+	cluster, client := newServiceClusterRun(t, rbdRun, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))...)
 	const pool, namespace = "rbd", "tc-layout"
 	if _, err := rbd.CreateNamespace(ctx, cluster, pool, namespace); err != nil {
 		t.Fatal(err)

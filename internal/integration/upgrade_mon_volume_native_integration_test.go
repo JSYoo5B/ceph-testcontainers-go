@@ -105,7 +105,7 @@ func monitorStoreVolumeRetention(t *testing.T) {
 	}
 
 	storeDir := upgradeMonDataDir("a")
-	opts := append(slices.Clone(roles), ceph.WithHostNetwork(), ceph.WithMonitorCount(3), ceph.WithOSDCount(2),
+	opts := append(slices.Clone(roles), ceph.WithHostNetwork(), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithOSDCount(2)),
 		// ceph.Run hands this customizer to the first MON after the module's own options.
 		testcontainers.WithMounts(testcontainers.ContainerMount{
 			Source: testcontainers.DockerVolumeMountSource{Name: vol.name},

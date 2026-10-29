@@ -121,7 +121,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 	for i := range layout {
 		layout[i] = ceph.OSDConfig{Host: fmt.Sprintf("tc-ec-host-%d", i), Root: "tc-ec-four-two"}
 	}
-	cluster, client := newServiceCluster(t, ceph.WithInitialOSDs(layout...), ceph.WithDefaultCRUSHRoot("tc-ec-four-two"))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(layout...).WithDefaultCRUSHRoot("tc-ec-four-two")))
 	pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-four-two", Application: "rados", PGNum: 1, MinSize: minSize, FailureDomain: "host", CRUSHRoot: "tc-ec-four-two", ErasureCode: &ceph.ErasureCodeConfig{K: 4, M: 2, AllowOverwrites: true}})
 	if err != nil {
 		t.Fatalf("4+2 topology/pool admission failed: %v", err)

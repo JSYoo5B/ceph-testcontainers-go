@@ -3,8 +3,6 @@ package ceph
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
@@ -145,25 +143,6 @@ func (serviceHooks) ServiceImage(c *Container, role string) string {
 		return c.staticFacts().Images.CephFS
 	}
 	return ""
-}
-
-// WithServiceImage selects the image of the rgw or cephfs role. It replaces
-// that role of any ImageSet, whatever the option order.
-func (serviceHooks) WithServiceImage(role, image string) Option {
-	return func(o *options) error {
-		if strings.TrimSpace(image) == "" {
-			return fmt.Errorf("%s image must not be blank", strings.ToUpper(role))
-		}
-		switch role {
-		case "rgw":
-			o.rgwOverride = image
-		case "cephfs":
-			o.cephfsOverride = image
-		default:
-			return fmt.Errorf("unknown service role %q", role)
-		}
-		return nil
-	}
 }
 
 // Extension returns the per-cluster state a service package keeps under

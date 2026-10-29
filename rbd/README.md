@@ -118,7 +118,7 @@ so every `ceph.Container` method is available on it.
 `Run` accepts every `ceph.Run` option and the options of the other service
 packages, so one cluster can serve RBD, CephFS and RGW tests at once. It rejects
 bootstrap options that leave the cluster without OSDs for its pool, such as
-`ceph.WithNoInitialOSDs`; start those staged clusters with `ceph.Run` and call
+`ceph.ClusterConfig.WithNoInitialOSDs`; start those staged clusters with `ceph.Run` and call
 `InitPool` later.
 
 `Run` returns after the pools exist and their RBD metadata is initialized. PG
@@ -187,13 +187,13 @@ An erasure-coded pool can hold image data, not metadata. Create it with
 
 ```golang
 cluster, err := rbd.Run(ctx, ceph.DefaultImage,
-	ceph.WithOSDCount(3),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)),
 	rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
-	ceph.WithPools(ceph.PoolConfig{
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{
 		Name:        "volumes-data",
 		Application: "rbd",
 		ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true},
-	}),
+	})),
 )
 // rbd create --size 64M --data-pool volumes-data volumes/disk
 // (go-ceph: set the data pool in the image options before CreateImage)
@@ -201,7 +201,7 @@ cluster, err := rbd.Run(ctx, ceph.DefaultImage,
 
 `AllowOverwrites` is required for RBD data pools.
 
-Every `ceph.Run` option is accepted as well (`ceph.WithOSDCount`,
+Every `ceph.Run` option is accepted as well (`ceph.WithClusterConfig`,
 `ceph.WithHostNetwork`, `ceph.WithImageOptions`, `ceph.WithConfigFile`,
 `NetworkConfig.WithMessengerMode`, ...); see [`ceph`](../ceph/README.md). The generic options of
 the `testcontainers` package (for example `testcontainers.WithEnv`,
@@ -241,7 +241,7 @@ without `WithPools` or pools created later with `CreatePool`.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithPools(ceph.PoolConfig{Name: "images", Application: "rbd"}),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{Name: "images", Application: "rbd"})),
 )
 // ... cleanup and error handling ...
 if err := rbd.InitPool(ctx, cluster, "images"); err != nil {

@@ -138,7 +138,7 @@ func testClientKeyReplacement(t *testing.T) {
 	defer cancel()
 	image, opts := integrationImages(t)
 	ciphers, auth := clientKeyCiphers(t, ctx, image)
-	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1), ceph.WithAuth(auth))...)
+	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)), ceph.WithAuth(auth))...)
 	payload := prepareHeldObject(t, ctx, cluster)
 	bystander, err := cluster.CreateClient(ctx, "bystander", ceph.ClientCaps{Mon: "allow r"})
 	if err != nil {
@@ -148,7 +148,7 @@ func testClientKeyReplacement(t *testing.T) {
 	for _, cipher := range ciphers {
 		t.Run(string(cipher), func(t *testing.T) {
 			caps := ceph.ClientCaps{Mon: "allow r", MGR: "allow r", OSD: "allow rw pool=data namespace=tenant-a"}
-			client, err := cluster.CreateClient(ctx, "renewed-"+string(cipher), caps, ceph.WithClientKeyType(cipher))
+			client, err := cluster.CreateClient(ctx, "renewed-"+string(cipher), caps, ceph.ClientOptions{}.WithKeyType(cipher))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -200,7 +200,7 @@ func testClientKeyReplacement(t *testing.T) {
 				if other == cipher {
 					other = ciphers[1]
 				}
-				changed, err := next.ReplaceKey(ctx, ceph.WithClientKeyType(other))
+				changed, err := next.ReplaceKey(ctx, ceph.ClientOptions{}.WithKeyType(other))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -229,7 +229,7 @@ func testClientKeyReplacement(t *testing.T) {
 	}
 
 	t.Run("three MONs", func(t *testing.T) {
-		cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithNoInitialOSDs(), ceph.WithMonitorCount(3))...)
+		cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithMonitorCount(3)))...)
 		client, err := cluster.CreateClient(ctx, "renewed", ceph.ClientCaps{Mon: "allow r", MGR: "allow r"})
 		if err != nil {
 			t.Fatal(err)

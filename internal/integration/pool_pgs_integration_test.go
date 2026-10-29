@@ -28,7 +28,7 @@ func TestPoolPGReportedBoundaries(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithNoInitialOSDs())
+	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	if cluster != nil {
 		t.Cleanup(func() {
