@@ -142,12 +142,8 @@ storage := ceph.OSDStorage{}.WithBlockSize(256 << 20).WithObjectStore(ceph.OSDMe
 cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDStorage(storage))
 ```
 
-| Old (removed, no alias) | New |
-| --- | --- |
-| `WithOSDBlockSize(size)` | `OSDStorage.WithBlockSize(size)` |
-| `WithOSDObjectStore(store)` | `OSDStorage.WithObjectStore(store)` |
-| `WithOSDInMemoryStorage(maxBytes)` | `OSDStorage.WithInMemory(maxBytes)` |
-| `WithOSDVolumeStorage()` | `OSDStorage.WithVolume()` |
+The four former per-field options (block size, object store, in-memory size,
+volume) are fields of this value; they are not kept under a second spelling.
 
 - **Why this group first.** The full topology group (counts, no-initial flags,
   pool defaults, default CRUSH root, pools, startup timeout, auth) has about 300

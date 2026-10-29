@@ -434,9 +434,7 @@ value changes nothing, and each field records whether it was set, so an explicit
 setting differs from an unspecified one (`WithBlockSize(0)` is refused, not the
 default). Within one value a later call of the same method replaces the earlier
 one. `Run` refuses a field that two `WithOSDStorage` options both set, even when
-they agree. Incompatible combinations fail before resource allocation. It
-replaces `WithOSDBlockSize`, `WithOSDObjectStore`, `WithOSDInMemoryStorage` and
-`WithOSDVolumeStorage`.
+they agree. Incompatible combinations fail before resource allocation.
 
 ```golang
 storage := ceph.OSDStorage{}.WithBlockSize(256 << 20).WithObjectStore(ceph.OSDMemStore)
