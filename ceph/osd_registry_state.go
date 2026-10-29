@@ -18,7 +18,7 @@ import (
 // from the single-threaded constructors, which run before the cluster is
 // shared: Run's composition planner and the unit-test cluster builder. Because
 // the lock is Container.mu, the registry sits at the same position in the lock
-// order as the fields it replaced: after the shared-gate admission and before
+// order as the fields it replaced: under the topology lock and before
 // configMu, controlMu and the leaf locks, and a method never takes a lock or
 // calls into Container.
 //

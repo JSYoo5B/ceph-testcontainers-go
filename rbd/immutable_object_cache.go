@@ -15,8 +15,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // Defaults of ImmutableObjectCache.
@@ -191,9 +191,9 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 		return nil, &ceph.OperationError{Kind: ceph.ErrImageCapability, Capability: "librbd parent_cache plugin",
 			Err: errors.New("the client container has no librbd parent_cache plugin")}
 	case state["socket"] != "0":
-		return nil, harnesshook.Invalid(fmt.Errorf("the immutable object cache socket %s already exists", config.Socket))
+		return nil, servicehook.Invalid(fmt.Errorf("the immutable object cache socket %s already exists", config.Socket))
 	case state["path"] != "none" && state["path"] != "empty":
-		return nil, harnesshook.Invalid(fmt.Errorf("the immutable object cache path %s is not an absent or empty directory", config.Path))
+		return nil, servicehook.Invalid(fmt.Errorf("the immutable object cache path %s is not an absent or empty directory", config.Path))
 	}
 	token := uuid.NewString()[:8]
 	lease := &ImmutableObjectCacheLease{
@@ -226,7 +226,7 @@ func StartImmutableObjectCache(ctx context.Context, client testcontainers.Contai
 
 func normalizeImmutableObjectCache(client testcontainers.Container, config ImmutableObjectCache) (ImmutableObjectCache, error) {
 	if client == nil {
-		return config, harnesshook.Invalid(errors.New("the immutable object cache requires a client container"))
+		return config, servicehook.Invalid(errors.New("the immutable object cache requires a client container"))
 	}
 	if config.ID == "" {
 		config.ID = "admin"
@@ -242,15 +242,15 @@ func normalizeImmutableObjectCache(client testcontainers.Container, config Immut
 	}
 	switch {
 	case !immutableObjectCacheID.MatchString(config.ID) || strings.HasPrefix(config.ID, "-"):
-		return config, harnesshook.Invalid(fmt.Errorf("invalid cephx ID %q", config.ID))
+		return config, servicehook.Invalid(fmt.Errorf("invalid cephx ID %q", config.ID))
 	case !cleanAbsolute(config.Path) || config.Path == "/":
-		return config, harnesshook.Invalid(fmt.Errorf("the cache path %q is not a clean absolute path below /", config.Path))
+		return config, servicehook.Invalid(fmt.Errorf("the cache path %q is not a clean absolute path below /", config.Path))
 	case !cleanAbsolute(config.Socket) || config.Socket == "/":
-		return config, harnesshook.Invalid(fmt.Errorf("the socket %q is not a clean absolute path below /", config.Socket))
+		return config, servicehook.Invalid(fmt.Errorf("the socket %q is not a clean absolute path below /", config.Socket))
 	case config.Socket == config.Path || strings.HasPrefix(config.Socket, config.Path+"/") || strings.HasPrefix(config.Path, config.Socket+"/"):
-		return config, harnesshook.Invalid(errors.New("the socket and the cache path must not contain each other"))
+		return config, servicehook.Invalid(errors.New("the socket and the cache path must not contain each other"))
 	case config.MaxSize < 0:
-		return config, harnesshook.Invalid(fmt.Errorf("negative cache size %d", config.MaxSize))
+		return config, servicehook.Invalid(fmt.Errorf("negative cache size %d", config.MaxSize))
 	}
 	return config, nil
 }
@@ -275,7 +275,7 @@ func (l *ImmutableObjectCacheLease) Status(ctx context.Context) (ImmutableObject
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.complete {
-		return ImmutableObjectCacheStatus{}, harnesshook.Invalid(errors.New("the immutable object cache lease was restored"))
+		return ImmutableObjectCacheStatus{}, servicehook.Invalid(errors.New("the immutable object cache lease was restored"))
 	}
 	return l.status(ctx)
 }

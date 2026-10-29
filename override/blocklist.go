@@ -60,8 +60,7 @@ func notApplied(address string, cause error) (*BlocklistHandle, error) {
 //
 // The handle is non-nil for every outcome. A refusal returns a not-applied handle
 // whose Restore is a no-op (see BlocklistHandle). A nil cluster is refused with
-// ceph.ErrInvalidRequest and a cluster that a SharedCluster shares with
-// ceph.ErrSharedCluster, both with Op "override.AddBlocklist".
+// ceph.ErrInvalidRequest and Op "override.AddBlocklist".
 //
 // The handle is retained on uncertain command/readback failure. Restore checks
 // its captured expiration before removal, preserving outside renewal. An unknown
@@ -72,9 +71,7 @@ func AddBlocklist(ctx context.Context, c *ceph.Container, address string, durati
 	if c == nil {
 		return notApplied(address, &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: op, Err: errors.New("the cluster is nil")})
 	}
-	if err := overridehook.Admit(c, op); err != nil {
-		return notApplied(address, err)
-	}
+
 	normalized, err := overridehook.NormalizeBlocklistSession(address)
 	if err != nil {
 		return notApplied(address, err)

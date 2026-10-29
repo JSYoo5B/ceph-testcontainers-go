@@ -1,5 +1,10 @@
 # Responsibility inventory and decomposition design for cephfs.Filesystem
 
+> Current boundary: the shared-cluster/tenant harness and its core-only policy,
+> lease and hook plumbing have been removed. Harness references and source
+> locations below are historical design evidence, not retained APIs or future
+> extraction requirements. See [independent fixtures](../ceph.md#usage-example).
+
 This note is the design record that follow-up item 2 of #233 asks for: a
 responsibility inventory of `cephfs.Filesystem` and a decision framework for
 which boundaries deserve an internal component and which, if any, deserve a

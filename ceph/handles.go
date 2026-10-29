@@ -84,9 +84,7 @@ func (o *OSDContainer) cluster(op string) (*Container, error) {
 	if o == nil || o.owner == nil {
 		return nil, invalidRequest("%s: "+errHandleWithoutCluster, op)
 	}
-	if err := o.owner.admitHandle(op); err != nil {
-		return nil, err
-	}
+
 	return o.owner, nil
 }
 
@@ -94,9 +92,7 @@ func (m *MonitorContainer) cluster(op string) (*Container, error) {
 	if m == nil || m.owner == nil {
 		return nil, invalidRequest("%s: "+errHandleWithoutCluster, op)
 	}
-	if err := m.owner.admitHandle(op); err != nil {
-		return nil, err
-	}
+
 	return m.owner, nil
 }
 
@@ -104,9 +100,7 @@ func (m *ManagerContainer) cluster(op string) (*Container, error) {
 	if m == nil || m.owner == nil {
 		return nil, invalidRequest("%s: "+errHandleWithoutCluster, op)
 	}
-	if err := m.owner.admitHandle(op); err != nil {
-		return nil, err
-	}
+
 	return m.owner, nil
 }
 
@@ -338,8 +332,6 @@ func (d *DetachedOSD) Reopen(ctx context.Context) (*OSDContainer, error) {
 	if d == nil || d.cluster == nil {
 		return nil, invalidRequest("DetachedOSD.Reopen: the detached OSD does not belong to a cluster")
 	}
-	if err := d.cluster.admitHandle("DetachedOSD.Reopen"); err != nil {
-		return nil, err
-	}
+
 	return d.cluster.reopenOSD(ctx, d)
 }

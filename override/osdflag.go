@@ -64,8 +64,7 @@ func notAppliedOSDFlag(flag ceph.OSDFlag, cause error) (*OSDFlagHandle, error) {
 //
 // The handle is non-nil for every outcome. A refusal returns a not-applied
 // handle whose Restore is a no-op (see OSDFlagHandle). A nil cluster is
-// refused with ceph.ErrInvalidRequest and a cluster that a SharedCluster
-// shares with ceph.ErrSharedCluster, both with Op "override.SetOSDFlag". A
+// refused with ceph.ErrInvalidRequest and Op "override.SetOSDFlag". A
 // handle returned together with an error for an uncertain outcome is real and
 // still restorable.
 func SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) (*OSDFlagHandle, error) {
@@ -73,9 +72,7 @@ func SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabl
 	if c == nil {
 		return notAppliedOSDFlag(flag, &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: op, Err: errors.New("the cluster is nil")})
 	}
-	if err := overridehook.Admit(c, op); err != nil {
-		return notAppliedOSDFlag(flag, err)
-	}
+
 	if !slices.Contains(supportedOSDFlags, flag) {
 		return notAppliedOSDFlag(flag, errors.New("unsupported reversible global OSD flag"))
 	}

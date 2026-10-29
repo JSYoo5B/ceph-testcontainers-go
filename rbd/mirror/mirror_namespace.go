@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"regexp"
 	"slices"
 	"strings"
@@ -47,14 +47,14 @@ type Policies struct {
 func (m *Mirror) PolicyStatus(ctx context.Context) (Policies, error) {
 	var status Policies
 	if m == nil {
-		return status, harnesshook.Invalid(errors.New("RBD mirror fixture is unavailable"))
+		return status, servicehook.Invalid(errors.New("RBD mirror fixture is unavailable"))
 	}
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
 		return Policies{}, err
 	}
 	defer m.mu.Unlock()
 	if m.closed || m.sourceClient == nil || m.destinationClient == nil {
-		return status, harnesshook.Invalid(errors.New("RBD mirror fixture is unavailable or terminated"))
+		return status, servicehook.Invalid(errors.New("RBD mirror fixture is unavailable or terminated"))
 	}
 	if err := m.checkRBDMirrorPools(ctx); err != nil {
 		return status, err
@@ -90,11 +90,11 @@ func normalizeRBDMirrorScopeAndNamespaces(config Config) (Config, error) {
 		config.Scope = ScopeImage
 	}
 	if config.Scope != ScopeImage && config.Scope != ScopePool {
-		return config, harnesshook.Invalid(errors.New("RBD mirror scope must be image or pool"))
+		return config, servicehook.Invalid(errors.New("RBD mirror scope must be image or pool"))
 	}
 	for _, namespace := range []string{config.SourceNamespace, config.DestinationNamespace} {
 		if namespace != "" && !rbdMirrorNamespaceName.MatchString(namespace) {
-			return config, harnesshook.Invalid(errors.New("RBD mirror namespaces must be empty for default or use letters, digits, underscores, dots or dashes without starting with a dot or dash"))
+			return config, servicehook.Invalid(errors.New("RBD mirror namespaces must be empty for default or use letters, digits, underscores, dots or dashes without starting with a dot or dash"))
 		}
 	}
 	if config.Scope == ScopePool {
@@ -102,7 +102,7 @@ func normalizeRBDMirrorScopeAndNamespaces(config Config) (Config, error) {
 			config.Mode = ModeJournal
 		}
 		if config.Mode != ModeJournal {
-			return config, harnesshook.Invalid(errors.New("pool-scope RBD mirroring supports journal mode only"))
+			return config, servicehook.Invalid(errors.New("pool-scope RBD mirroring supports journal mode only"))
 		}
 	}
 	return config, nil
@@ -351,7 +351,7 @@ type rbdMirrorPolicyStep struct {
 
 func planRBDMirrorSite(client testcontainers.Container, namespace, remote, site string, scope Scope, base, selected nativeRBDMirrorPolicy, legacy bool) ([]rbdMirrorPolicyStep, error) {
 	if base.Mode != "disabled" && base.SiteName != site {
-		return nil, harnesshook.Invalid(errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly"))
+		return nil, servicehook.Invalid(errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly"))
 	}
 	steps := []rbdMirrorPolicyStep{}
 	if namespace != "" && base.Mode == "disabled" {
@@ -365,7 +365,7 @@ func planRBDMirrorSite(client testcontainers.Container, namespace, remote, site 
 	}
 	if selected.Mode == "image" || selected.Mode == "pool" {
 		if selected.Mode != string(scope) || selected.RemoteNamespace == nil || *selected.RemoteNamespace != remote {
-			return nil, harnesshook.Invalid(errors.New("existing RBD mirror namespace scope or remote mapping differs; reconfigure explicitly"))
+			return nil, servicehook.Invalid(errors.New("existing RBD mirror namespace scope or remote mapping differs; reconfigure explicitly"))
 		}
 		return steps, nil
 	}
@@ -400,7 +400,7 @@ func (m *Mirror) provisionRBDMirrorPolicies(ctx context.Context) error {
 			return err
 		}
 		if configuredSite != "" && configuredSite != site.name {
-			return harnesshook.Invalid(errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly"))
+			return servicehook.Invalid(errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly"))
 		}
 		configuredSites[site.name] = configuredSite
 		base, err := readRBDMirrorNamespacePolicy(ctx, site.client, m.config.Pool, "", legacy)

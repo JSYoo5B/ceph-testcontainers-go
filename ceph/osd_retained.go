@@ -183,7 +183,7 @@ func (c *Container) refuseInstanceFaults(ctx context.Context, id int, containerI
 }
 
 // detachOSD implements OSDContainer.Detach, which documents the behavior. The caller
-// admitted the shared-cluster policy; the handle is checked under the lock.
+// checks the handle under the topology lock.
 func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*DetachedOSD, error) {
 	id := handle.ID
 	if err := ctx.Err(); err != nil {
@@ -261,7 +261,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 }
 
 // reopenOSD implements DetachedOSD.Reopen, which documents the behavior. The caller
-// admitted the shared-cluster policy; the handle is checked under the lock.
+// checks the handle under the topology lock.
 func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDContainer, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

@@ -30,9 +30,8 @@ versions keep their original APIs. Update imports and calls together:
 `multisite.Fixture.ApplyZoneLinkProfile` takes `fault.NetworkProfile` and returns
 `*fault.NetworkProfileLease`. These service fixtures still register cleanup.
 
-Cluster-bound operations keep shared-cluster admission and cleanup ordering:
-shaping first, endpoint restoration second, then container resumes. Faults
-refuse a shared tenant cluster and are allowed in an exclusive lease.
+Cluster-bound operations keep ownership checks and cleanup ordering:
+shaping first, endpoint restoration second, then container resumes.
 Standalone `InterruptLink` and `ApplyLinkProfile` remain caller-owned:
 restore them before removing their container or bridge. Preserve non-nil
 handles returned with errors; restore remains retryable after uncertain results.
@@ -125,9 +124,7 @@ Observed behaviour on Ceph 20.2.4:
 The object is addressed in the default namespace. A name that contains a slash
 is refused before any native command, because `injectdataerr` would read the
 part before the first slash as a namespace while the preflight `osd map` takes
-the whole word as the object. A cluster that a `SharedCluster` shares refuses
-the call unless the caller holds the exclusive lease. Topology operations are
-serialized with it.
+the whole word as the object. Topology operations are serialized with it.
 
 This is a one-shot injection. It returns no handle, the cluster does not
 register it, and `Terminate` does not undo it. A failure after the debug setting

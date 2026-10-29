@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 330,
+  "count": 322,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -349,38 +349,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.Container.CopyDirToContainer",
-      "kind": "method",
-      "signature": "func(ctx context.Context, hostDirPath string, containerParentPath string, fileMode int64) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.CopyDirToContainer",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.CopyFileFromContainer",
-      "kind": "method",
-      "signature": "func(ctx context.Context, filePath string) (io.ReadCloser, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.CopyFileFromContainer",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.CopyFileToContainer",
-      "kind": "method",
-      "signature": "func(ctx context.Context, hostFilePath string, containerFilePath string, fileMode int64) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.CopyFileToContainer",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.CopyToContainer",
-      "kind": "method",
-      "signature": "func(ctx context.Context, fileContent []byte, containerFilePath string, fileMode int64) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.CopyToContainer",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Container.CreateClient",
       "kind": "method",
       "signature": "func(ctx context.Context, name string, caps ClientCaps, opts ...ClientOption) (*ClientConfig, error)",
@@ -402,14 +370,6 @@
       "signature": "func(ctx context.Context, pgid PGID) error",
       "receiver": "*Container",
       "proposed": "ceph.Container.DeepScrubPG",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.Exec",
-      "kind": "method",
-      "signature": "func(ctx context.Context, cmd []string, options ...tcexec.ProcessOption) (int, io.Reader, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.Exec",
       "decision": "baseline"
     },
     {
@@ -498,22 +458,6 @@
       "signature": "func() []testcontainers.Container",
       "receiver": "*Container",
       "proposed": "ceph.Container.ServiceContainers",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.Start",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.Start",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.Stop",
-      "kind": "method",
-      "signature": "func(ctx context.Context, timeout *time.Duration) error",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.Stop",
       "decision": "baseline"
     },
     {
@@ -914,12 +858,6 @@
       "current": "ceph.ErrNativeInputClosed",
       "kind": "var",
       "proposed": "ceph.ErrNativeInputClosed",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.ErrSharedCluster",
-      "kind": "var",
-      "proposed": "ceph.ErrSharedCluster",
       "decision": "baseline"
     },
     {

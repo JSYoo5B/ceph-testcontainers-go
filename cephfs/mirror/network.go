@@ -7,8 +7,8 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
 // InterruptPeerLink disconnects one CephFS daemon from the destination's public
@@ -38,5 +38,5 @@ func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*fau
 			return multicluster.InterruptOwnedPeerLink(ctx, &m.owned, daemon, facts.NetworkName)
 		}
 	}
-	return nil, harnesshook.Invalid(fmt.Errorf("CephFS mirror daemon %s is not owned", daemonName))
+	return nil, servicehook.Invalid(fmt.Errorf("CephFS mirror daemon %s is not owned", daemonName))
 }

@@ -18,7 +18,6 @@ import (
 //	public   part of the public type (the embedded first MON)
 //	lock     the cluster mutex that every lock-order citation is measured from
 //	flag     a boolean that mu guards and that the admission paths read
-//	atomic   one atomic that sharedGate owns by name
 //	options  immutable options after Run
 //	seam     a test seam with one reader and no state of its own
 //	owner    a component with its own type, file and guards
@@ -51,7 +50,6 @@ var residualFieldVerdicts = map[string]string{
 	"faults":                   "owner",
 	"debugLevels":              "owner",
 	"daemonRunner":             "seam",
-	"sharing":                  "atomic",
 }
 
 // containerFieldTypes returns the declared fields of the struct typeName in
@@ -136,10 +134,6 @@ func checkResidualFields(fields map[string]string, verdicts map[string]string) e
 			if typ != "sync.Mutex" {
 				return fmt.Errorf("%s is %s, the one lock must be sync.Mutex", name, typ)
 			}
-		case "atomic":
-			if typ != "atomic.Int32" {
-				return fmt.Errorf("%s is %s, the one atomic must be atomic.Int32", name, typ)
-			}
 		case "flag":
 			if typ != "bool" {
 				return fmt.Errorf("%s is %s, a flag must be bool", name, typ)
@@ -148,10 +142,10 @@ func checkResidualFields(fields map[string]string, verdicts map[string]string) e
 		default:
 			return fmt.Errorf("%s has unknown verdict %q", name, verdicts[name])
 		}
-		// Only the lock and the atomic may be a sync primitive; a component
+		// Only mu may be a direct sync primitive; a component
 		// owns any other lock (TestNativeStateAddsNoMutex counts those).
-		if (strings.HasPrefix(typ, "sync.") || strings.HasPrefix(typ, "atomic.")) && verdicts[name] != "lock" && verdicts[name] != "atomic" {
-			return fmt.Errorf("%s (%s) is a sync primitive outside the lock and the atomic", name, typ)
+		if (strings.HasPrefix(typ, "sync.") || strings.HasPrefix(typ, "atomic.")) && verdicts[name] != "lock" {
+			return fmt.Errorf("%s (%s) is a sync primitive outside the cluster lock", name, typ)
 		}
 	}
 	return nil
@@ -159,7 +153,7 @@ func checkResidualFields(fields map[string]string, verdicts map[string]string) e
 
 // TestContainerResidualFieldsAreAllDispositioned pins the full field set of
 // Container: each field has a verdict, and Container itself declares exactly
-// one mutex (mu) and one atomic (sharing).
+// one mutex (mu).
 func TestContainerResidualFieldsAreAllDispositioned(t *testing.T) {
 	fields := containerFieldTypes(t, readContainerSource(t), "Container")
 	if err := checkResidualFields(fields, residualFieldVerdicts); err != nil {
@@ -183,7 +177,6 @@ func TestContainerResidualFieldCheckRejectsDrift(t *testing.T) {
 		"a second mutex":        with(func(m map[string]string) { m["controlPlane"] = "sync.RWMutex" }),
 		"mu as an RWMutex":      with(func(m map[string]string) { m["mu"] = "sync.RWMutex" }),
 		"the flag as an atomic": with(func(m map[string]string) { m["closed"] = "atomic.Bool" }),
-		"sharing as a mutex":    with(func(m map[string]string) { m["sharing"] = "sync.Mutex" }),
 	}
 	for name, fields := range cases {
 		if checkResidualFields(fields, residualFieldVerdicts) == nil {
@@ -313,7 +306,6 @@ var monitorTerminatedReaders = []string{
 	"Container.monitorConfigTargets",
 	"Container.monitorsLocked",
 	"Container.ownsDaemon",
-	"Container.sharedDaemons",
 	"Container.terminate",
 }
 

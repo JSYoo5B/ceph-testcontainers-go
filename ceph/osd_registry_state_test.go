@@ -293,7 +293,6 @@ var osdRegistryCallers = map[string]osdRegistryCaller{
 	"monitorConfigTargets":             {"holds", []string{"each"}},
 	"osdStates":                        {"takes", []string{"count", "each"}},
 	"WaitForClean":                     {"takes", []string{"count"}},
-	"sharedDaemons":                    {"takes", []string{"each"}},
 	"diagnosticsSnapshot":              {"takes", []string{"each"}},
 	"openDebugTarget":                  {"takes", []string{"get"}},
 	"PoolPlacementDomains":             {"hook", nil},

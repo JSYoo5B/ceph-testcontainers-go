@@ -8,10 +8,8 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
-// These controls pin the behavior of the helpers that the tenant adapter
-// shares with the rest of the package, so that moving them into leaf internal
-// packages (docs/design/shared-harness-boundary.md, decision 8) is checked
-// against the same expectations before and after. They run without Docker.
+// These controls pin bootstrap identity and standalone resource validation.
+// They run without Docker.
 
 const resourceNameMessage = "RBD %s name must use letters, digits, underscores, dots or dashes and cannot start with a dot or dash"
 

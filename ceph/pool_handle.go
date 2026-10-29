@@ -70,23 +70,10 @@ func (c *Container) poolOf(state PoolState) *Pool {
 	}
 }
 
-// cluster admits op for the shared-cluster policy and returns the cluster
-// that the handle belongs to.
+// cluster returns the cluster that owns this handle.
 func (p *Pool) cluster(op string) (*Container, error) {
 	if p == nil || p.owner == nil || p.ident == nil {
 		return nil, invalidRequest("%s: the pool does not come from a cluster; obtain it from Container.CreatePool or Container.Pool", op)
-	}
-	if p.lease != nil {
-		if err := p.lease.live(); err != nil {
-			return nil, err
-		}
-		if err := p.owner.admitHandleAs(op, sharedWithTenants); err != nil {
-			return nil, err
-		}
-		return p.owner, nil
-	}
-	if err := p.owner.admitHandle(op); err != nil {
-		return nil, err
 	}
 	return p.owner, nil
 }

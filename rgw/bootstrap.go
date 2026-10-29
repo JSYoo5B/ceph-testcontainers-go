@@ -6,8 +6,10 @@ import (
 	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
 )
+
+// bootstrapKind identifies this service in Run provisioning and owned state.
+const bootstrapKind = "rgw"
 
 // rgwBootstrap validates initial gateway names and starts the gateways once
 // the initial pools exist.
@@ -17,7 +19,7 @@ func newRGWBootstrap(configs []Config) *rgwBootstrap {
 	return &rgwBootstrap{configs: slices.Clone(configs)}
 }
 
-func (b *rgwBootstrap) Kind() string                    { return servicekind.RGW }
+func (b *rgwBootstrap) Kind() string                    { return bootstrapKind }
 func (b *rgwBootstrap) Order() int                      { return 3 }
 func (b *rgwBootstrap) InitialPools() []ceph.PoolConfig { return nil }
 func (b *rgwBootstrap) NeedsManagers() bool             { return true }

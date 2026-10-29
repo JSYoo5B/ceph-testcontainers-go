@@ -33,8 +33,8 @@ The `ceph` package provides:
 - observation: health checks, PG reports, pool usage, quorum, manager services
   and bounded diagnostics reports.
 
-A [shared cluster](#shared-cluster) lends one cluster to many tests, each
-confined to a RADOS namespace of its own.
+Each test owns an independent `Run` fixture and explicitly creates its pools,
+namespaces and Cephx identities. See [Independent test fixtures](ceph.md#usage-example).
 
 RBD, CephFS and RGW (S3) live in their own packages: [rbd](rbd.md),
 [cephfs](cephfs.md) and [rgw](rgw.md). Their options plug into the same
@@ -1269,42 +1269,12 @@ leave its service without the storage or manager it needs (for example
 `ceph.WithNoInitialOSDs`); `rbd.Run` accepts `WithNoInitialManagers`. For staged
 bootstraps, start with `ceph.Run` and add the service later.
 
-### Shared cluster
+### Independent test fixtures
 
-A cluster takes 15 to 25 seconds to start, so a package with many small RADOS
-tests spends most of its time starting clusters. The
-[ceph/harness package](ceph-harness.md) starts one cluster for the whole test
-binary and lends each test a tenant: a RADOS namespace of one shared pool and a
-Cephx client that can reach nothing else. A test that needs the whole cluster
-takes it with `Exclusive`, which returns this package's `*ceph.Container`. The
-service harness packages ([rbd/harness](rbd-harness.md),
-[cephfs/harness](cephfs-harness.md) and [rgw/harness](rgw-harness.md)) lease RBD,
-CephFS and RGW resources of the same tenant. Core `ceph` keeps the cluster, its
-operations and the gate that the next section describes; the harness packages
-own sharing, leasing and reuse.
-
-
-#### The shared Container
-
-The tenant never gets the `*ceph.Container`. While a cluster is shared, its
-methods that could reach outside one tenant return an error that matches
-`ErrSharedCluster` and names the method in `OperationError.Op`; an operation
-that is a method of a handle is named `Type.Method`, such as `Pool.Remove`. The
-methods that only read state stay available, including `Container.Pool`.
-
-| Methods | Why they are refused |
-| --- | --- |
-| `CreateClient`, `ClientConfig.Delete`, `ClientConfig.UpdateCaps`, `ClientConfig.ReplaceKey`, `ClientConfig.Revoke`, `ClientConfig.Capabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
-| `override.SetConfig`, `override.SetDebugLevel`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetMessengerPolicy`, `override.AddBlocklist` and `override.SetFullRatios` (see [override](override.md)), `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
-| `Ceph`, `OSDContainer.AdminSocket`, `MonitorContainer.AdminSocket`, `ManagerContainer.AdminSocket`, `OSDContainer.Version`, `MonitorContainer.Version`, `ManagerContainer.Version`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
-| `AddOSD`, `OSDContainer.Remove`, `OSDContainer.Detach`, `DetachedOSD.Reopen`, `AddMonitor`, `MonitorContainer.Remove`, `AddManager`, `ManagerContainer.Remove` | Change the topology. |
-| `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
-
-Under an [exclusive lease](ceph-harness.md#exclusive-lease) the gate refuses only `Terminate`.
-
-`*ceph.Container` overrides those promoted methods of the MON's
-`testcontainers.Container` only to apply this gate; on a cluster of your own
-they behave as before.
+Call `Run` for each test, register owned cleanup before checking its error, and
+create the resources and restricted identities that the test needs. The shared
+cluster and tenant harness has been removed without aliases or a replacement
+sharing framework. See [the migration guide](ceph.md#usage-example).
 
 ### Container Methods
 
@@ -1422,9 +1392,6 @@ retried. Each container gets a 2-second stop timeout instead of Docker's
 10 seconds, because the data is discarded; a `testcontainers.StopTimeout` option
 passed by the caller takes precedence.
 
-A cluster that a [shared cluster](#shared-cluster) shares refuses `Terminate`
-with `ErrSharedCluster`; `SharedCluster.Close` ends it.
-
 Containers you attached with [WithClient](#withclient) or
 [WithClientIdentity](#withclientidentity) are yours: terminate them before the
 cluster, because Docker cannot remove a network that still has attached
@@ -1483,8 +1450,7 @@ Each phase gets a fresh context with its own bound, because the test's
 context has already ended when cleanups run. Errors stay separate: a check's
 error and a cleanup's error fail the test under their names, the
 archive's collection and storage errors are only logged and recorded in its
-manifest, and none of them skips a later phase. A shared cluster refuses
-`TerminateOnCleanup` with `ErrSharedCluster`. Adding a step after the
+manifest, and none of them skips a later phase. Adding a step after the
 finalization has started fails the test instead.
 
 `ceph.FinalizationConfig` fields (zero selects the default):
@@ -1667,10 +1633,8 @@ restart count; the crash IDs already in their crash directories; and the
 window's start on the Docker engine's clock. A crash is new when its crash ID
 was not in that container's directory at activation. `Verify` returns an
 error for an invalid configuration, when the engine's clock cannot be read,
-after the finalization has started, for a name already active on the
-finalization, and with `ErrSharedCluster` on a cluster that a `SharedCluster`
-shares, even exclusively: cluster-wide events cannot be attributed to one
-tenant. `Evaluate` returns the report of the window until now without failing
+after the finalization has started, or for a name already active on the
+finalization. `Evaluate` returns the report of the window until now without failing
 the test, and can be repeated; it returns an error only when it cannot
 evaluate at all.
 
@@ -1941,7 +1905,7 @@ container created by the first [AddMonitor](#addmonitor) (also during `Run`), so
 commands keep working while MON `a` is stopped or removed. The cluster owns it.
 `ctx` bounds the wait for a concurrent control-plane creation or termination.
 The returned handle is a snapshot; it does not promise that the container stays
-alive. A shared cluster refuses the call with an error. The container is created
+alive. The container is created
 from the essential image (`ClusterFacts.Images.Essential`), so it carries the `ceph` CLI and
 the bootstrap tools such as `ceph-authtool`, not the client role's `rados` and
 `rbd` (use [ClientContainer](#clientcontainer)) and not `radosgw-admin` (use
@@ -1967,8 +1931,7 @@ func (c *Container) ClientContainer(ctx context.Context) (testcontainers.Contain
 Returns the owned userspace toolkit executor. A separate client image starts it
 lazily; aggregate images reuse the [control container](#controlcontainer). Run
 `rados`, `rbd` and the Python client bindings here.
-`ctx` bounds the wait for a concurrent topology change, and a shared cluster
-refuses the call with an error. The cluster owns the container.
+`ctx` bounds the wait for a concurrent topology change. The cluster owns the container.
 
 #### Per-daemon images
 
@@ -1995,8 +1958,7 @@ does not touch the cluster's settings, `ClusterFacts` or any other daemon.
 - Validation. The reference must be non-empty with no whitespace or control
   characters, and may be given once. A refusal matches `ErrInvalidRequest` and
   happens before the topology lock, any key or identity, any OSD registration
-  and any container. A shared cluster refuses the topology calls with
-  `ErrSharedCluster` first, so a tenant cannot use the option. Nothing checks
+  and any container. Nothing checks
   that the image exists, that it has the daemon binary and the tools the
   fixture scripts use, or that its release works with the running cluster;
   an unusable image fails at start like any other.
@@ -2047,7 +2009,7 @@ func (c *Container) Monitors(ctx context.Context) ([]*ceph.MonitorContainer, err
 ```
 
 Returns the owned monitors sorted by daemon name. `ctx` bounds the wait for a
-concurrent topology change, and a shared cluster refuses the call with an error.
+concurrent topology change.
 The returned slice is independent; descriptors and containers remain owned by
 the cluster. Each `*ceph.MonitorContainer`
 embeds its `testcontainers.Container` and has a `DaemonName`. `Stop` and `Start`
@@ -2173,8 +2135,7 @@ func (c *Container) Managers(ctx context.Context) ([]*ceph.ManagerContainer, err
 ```
 
 Returns the owned manager candidates sorted by daemon name. `ctx` bounds the
-wait for a concurrent topology change, and a shared cluster refuses the call
-with an error. The returned slice is independent; descriptors and containers
+wait for a concurrent topology change. The returned slice is independent; descriptors and containers
 remain owned by the cluster. Each
 `*ceph.ManagerContainer` embeds its container and has a `DaemonName`. Stop the
 active manager's container to trigger a standby takeover, or stop the only
@@ -2262,9 +2223,8 @@ func Observe(cluster *Container) (*Observer, error)
 ```
 
 Returns an `Observer`, which groups read-only live queries of one cluster. A nil
-cluster returns an error and a nil `Observer`. The Observer of a tenant lease is
-built by `ObserveTenant` in [ceph/harness](ceph-harness.md#observe-a-tenant); it
-has the same type and queries. There is no `Container` accessor for it.
+cluster returns an error and a nil `Observer`. There is no `Container` accessor
+for it.
 
 #### Observer
 
@@ -2291,10 +2251,7 @@ func (o *Observer) Pools(ctx context.Context) ([]*ceph.Pool, error)
 Each query reads the cluster when it is called; constructing an `Observer`
 captures nothing and a retained one never returns an earlier result. A query is
 not an atomic cluster-wide snapshot. These queries are methods of the
-`Observer` only: the `Container` and the harness `Tenant` have no method of the same
-names. A tenant-backed `Observer` checks its lease on every query, so after
-the tenant is released or the shared cluster is terminated every query returns
-an error that matches `ErrInvalidRequest`. A cluster-backed `Observer` has no lease, and its
+`Observer` only: the `Container` has no method of the same names. Its
 queries after `Terminate` fail with the error of the command path. An
 `Observer` exposes only its queries, owns no resource and needs no cleanup.
 `Configuration`, `BlocklistEntries`, `MGRModules`, `OSDFlags`, `OSDStates` and
@@ -2316,7 +2273,7 @@ supervised scrape in the control container. A refused or failed collection is an
 error and is never returned as an empty result. `Pools` lists the pools as
 `Pool` objects (see [Pools](#pools)). The `Observer` stays in package `ceph`,
 because its queries need the captured control handle, the topology and
-configuration locks and the shared-cluster admission, which are internal to the
+configuration locks, which are internal to the
 package.
 
 #### OSDs
@@ -2326,7 +2283,7 @@ func (c *Container) OSDs(ctx context.Context) ([]*ceph.OSDContainer, error)
 ```
 
 Returns a snapshot of the owned OSDs sorted by ID. `ctx` bounds the wait for a
-concurrent topology change, and a shared cluster refuses the call with an error.
+concurrent topology change.
 The returned slice is independent; descriptors and containers remain owned by
 the cluster. Each `*ceph.OSDContainer`
 embeds its container and has the numeric `ID`; `Placement()` returns its resolved
@@ -2376,8 +2333,8 @@ the block size and storage options selected at `Run`. The optional
 inspected; nothing is purged automatically. `AddOSD` is refused while an
 earlier [OSDContainer.Remove](#osdcontainerremove) has not finished its cleanup, so a reused numeric
 ID cannot be confused with the old handle. Adding OSDs does not change existing
-pool sizes. The shared-cluster gate is checked first, then the context, and the
-assembled configuration is validated once before the topology lock, any OSD
+pool sizes. The context is checked and the assembled configuration is
+validated once before the topology lock, any OSD
 registration and any container.
 
 An omitted host resolves to `osd-<ID>` after native registration. If that name
@@ -2623,7 +2580,7 @@ a pool of a service. It fails when the pool does not exist. The handle is bound
 to the pool's native ID. The returned `Pool` reports `Name`, `PGNum`, `Replicas`
 (of a replicated pool), `MinSize` and `ErasureCodeProfile`; its other fields,
 `CRUSHRule` included, are zero, and [Pool.Status](#poolstatus) reports the full
-native state. A shared cluster allows the call.
+native state.
 
 ```golang
 appData, err := cluster.Pool(ctx, "app-data")
@@ -2642,15 +2599,7 @@ what the listing reports: `Name`, `PGNum`, `Replicas` of a replicated pool,
 `MinSize` and `ErasureCodeProfile`. Read the full native state with
 [Pool.Status](#poolstatus), the usage with [Pool.Usage](#poolusage) and the PGs
 with `Pool.PGs`. The listing is one read of the native pool map, so a failed or
-malformed listing is an error and never an empty list. The `Observer` of a
-tenant lists the pools too. Each of its handles remembers the tenant lease and
-checks it on every operation, reads included: after the tenant is released or
-its shared cluster is terminated, every operation returns an error that matches
-`ErrInvalidRequest` without reaching the cluster. Operations that change a pool
-are always refused with `ErrSharedCluster`, also after the cluster has been lent
-to a later exclusive lease. Handles of `Container.Pool` and of a cluster-backed
-`Observer` are unchanged. The usage of `SharedPool` includes the objects of the
-other tenants.
+malformed listing is an error and never an empty list.
 
 #### Pool.Status
 
@@ -3239,8 +3188,8 @@ go-ceph in host mode or a custom client implementation. The configuration
 contains the addresses that the cluster advertises: container addresses in bridge
 mode, host addresses (with final MON ports) in host mode. The keyring grants full
 privileges. `ctx` bounds the wait for a concurrent topology change or
-configuration update. It fails after termination or before bootstrap completed,
-and a shared cluster refuses the call. On error it returns the zero
+configuration update. It fails after termination or before bootstrap completed.
+On error it returns the zero
 `ceph.ConnectionConfig`.
 
 ```golang
@@ -4112,7 +4061,6 @@ var (
 	ErrImageCapability        error
 	ErrEnvironmentUnavailable error
 	ErrNativeFailure          error
-	ErrSharedCluster          error
 )
 ```
 
@@ -4128,7 +4076,6 @@ engine capability, and from a native command that failed. Match them with
 | `ErrImageCapability` | The image lacks an executable or runtime that the operation needs, or an optional extension was not selected or does not meet its contract. |
 | `ErrEnvironmentUnavailable` | The Docker engine, host, kernel or container permissions cannot provide what the operation needs, although the image may be valid. |
 | `ErrNativeFailure` | A native command ran and failed. `*NativeFailure` carries its status. |
-| `ErrSharedCluster` | A cluster that a `SharedCluster` shares refused the method before any change; see [The shared Container](#the-shared-container). |
 
 Context errors, `ErrNativeCommandIncomplete`, `ErrNativeInputClosed` and
 `*NativeCommandUnstoppedError` keep their own contracts and belong to no
@@ -4136,8 +4083,7 @@ category; a call that `ctx` ended is never classified by what it could not
 finish. An error that matches no category is a failed check of the fixture's
 own, such as native output that it could not parse, or a failure whose
 outcome is unknown, such as a container that disappeared after a native
-command was sent to it. Only `ErrInvalidRequest` and `ErrSharedCluster`
-promise that nothing changed. See [Classified errors](guides/errors.md).
+command was sent to it. Only `ErrInvalidRequest` promises that nothing changed. See [Classified errors](guides/errors.md).
 
 ```golang
 _, err := cluster.CreateClient(ctx, "modern", ceph.ClientCaps{Mon: "allow r"},
@@ -4375,37 +4321,13 @@ if err := reader.Delete(ctx); err != nil {
 }
 ```
 
-### Give each test its own pool on a shared cluster
+### Give each test an independent fixture
 
-Starting a cluster costs tens of seconds, so a package can share one cluster
-(for example from `TestMain`) and give each test a pool that it removes again.
-Removing pools keeps the cluster below Ceph's per-OSD PG limit.
-
-```golang
-func newTestPool(t *testing.T, cluster *ceph.Container) string {
-	t.Helper()
-	ctx := t.Context()
-	name := "t-" + strings.ToLower(strings.NewReplacer("/", "-", "_", "-").Replace(t.Name()))
-	pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: name, Application: "rados"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		if err := pool.Remove(ctx); err != nil {
-			t.Error(err)
-		}
-	})
-	if err := cluster.WaitForClean(ctx); err != nil {
-		t.Fatal(err)
-	}
-	return name
-}
-```
-
-Pool names must use letters, digits, `_`, `.` and `-` and must be unique among
-pools, CRUSH rules and EC profiles; derive them from `t.Name()` as above.
+Start `ceph.Run` in each test and register the returned cluster for cleanup
+before checking the error. Use `WithPools` for bootstrap pools, or
+`CreatePool` for an explicitly owned dynamic pool. Create restricted Cephx
+identities with `CreateClient` and use `WithClientIdentity` for client containers.
+See [the complete migration example](ceph.md#usage-example).
 
 ### Create an erasure-coded data pool for RBD images
 

@@ -368,6 +368,10 @@ The receipts of `ceph` and `override` were approved separately for this move.
 
 ## 155-harness-package-move
 
+Historical migration record. The shared/tenant framework was subsequently
+removed by [the complete-removal decision](shared-harness-removal.md); the
+following text describes the former API rather than current support.
+
 The change moves the shared-cluster and tenant harness out of `ceph` and the
 service packages into harness packages under the domains that own them, on the
 owner's layout decision of 2026-10-27 (`design/shared-harness-boundary.md`).
@@ -389,3 +393,22 @@ offers `Support`, which returns that value. `ceph.ErrSharedCluster` stays in
 `ceph`, with the gate. No alias or
 forwarding declaration remains. The receipts of `ceph`, `rbd`, `cephfs`, `rgw`
 and the four harness packages were approved separately for this move.
+
+## 332-remove-shared-harness
+
+Remove all declared exports of `ceph/harness`, `rbd/harness`, `cephfs/harness`
+and `rgw/harness`, and `ceph.ErrSharedCluster`. These are deliberate removals,
+not package moves or renamed aliases. The shared-only `Container` wrappers
+also lose their own declaration rows; ordinary methods provided by its embedded
+Testcontainers container remain inherited and do not need forwarding aliases.
+The core Observer/Pool tenant lease and internal service/harness ports disappear;
+ordinary lifecycle, ownership, fault restoration and uncertain-result cleanup
+remain. Actual RGW tenants/accounts and other independent resource lease types
+are outside the removal boundary.
+
+The [bounded inventory](shared-harness-removal.md) records the private and native
+scenario disposition; the [current cluster usage](../ceph.md#usage-example)
+uses independent `Run` fixtures with explicit resources and owned cleanup.
+The declaration-removal record accounts for the base-to-final catalogue delta.
+Surviving package catalogues are regenerated from source and approved in a
+separate deliberate step; the four deleted packages have no orphan catalogues.

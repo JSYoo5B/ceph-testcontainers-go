@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -96,13 +95,13 @@ type SnapshotScheduleLease struct {
 func validateSnapshotSchedule(schedule SnapshotSchedule) error {
 	switch {
 	case !strings.HasPrefix(schedule.Path, "/") || path.Clean(schedule.Path) != schedule.Path:
-		return harnesshook.Invalid(fmt.Errorf("snapshot schedule path %q must be a clean absolute path", schedule.Path))
+		return servicehook.Invalid(fmt.Errorf("snapshot schedule path %q must be a clean absolute path", schedule.Path))
 	case !snapshotSchedulePeriod.MatchString(schedule.Repeat):
-		return harnesshook.Invalid(fmt.Errorf("snapshot schedule repeat %q must be a number and one of m, h, d, w, M or y", schedule.Repeat))
+		return servicehook.Invalid(fmt.Errorf("snapshot schedule repeat %q must be a number and one of m, h, d, w, M or y", schedule.Repeat))
 	}
 	for period, count := range schedule.Retention {
 		if !strings.Contains("mhdwMyn", period) || len(period) != 1 || count <= 0 {
-			return harnesshook.Invalid(fmt.Errorf("snapshot retention %s=%d: want a positive count of m, h, d, w, M, y or n", period, count))
+			return servicehook.Invalid(fmt.Errorf("snapshot retention %s=%d: want a positive count of m, h, d, w, M, y or n", period, count))
 		}
 	}
 	return nil
@@ -139,7 +138,7 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 		}
 	}
 	if !enabled {
-		return nil, harnesshook.Invalid(errors.New("the MGR snap_schedule module is not enabled: enable it with override.SetMGRModule"))
+		return nil, servicehook.Invalid(errors.New("the MGR snap_schedule module is not enabled: enable it with override.SetMGRModule"))
 	}
 	if strings.HasSuffix(schedule.Repeat, "m") {
 		data, err := fs.cluster.Ceph(ctx, "config", "get", "mgr", "mgr/snap_schedule/allow_m_granularity")
@@ -147,7 +146,7 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 			return nil, fmt.Errorf("read mgr/snap_schedule/allow_m_granularity: %w", err)
 		}
 		if strings.TrimSpace(string(data)) != "true" {
-			return nil, harnesshook.Invalid(fmt.Errorf("snapshot schedule repeat %s is in minutes, which the module refuses while mgr/snap_schedule/allow_m_granularity is %s", schedule.Repeat, strings.TrimSpace(string(data))))
+			return nil, servicehook.Invalid(fmt.Errorf("snapshot schedule repeat %s is in minutes, which the module refuses while mgr/snap_schedule/allow_m_granularity is %s", schedule.Repeat, strings.TrimSpace(string(data))))
 		}
 	}
 	lease := &SnapshotScheduleLease{Path: schedule.Path, Repeat: schedule.Repeat, Start: schedule.Start.UTC(), Retention: maps.Clone(schedule.Retention),
@@ -157,7 +156,7 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 	fs.snapshotScheduleMu.Lock()
 	if fs.scheduledPaths[schedule.Path] != nil {
 		fs.snapshotScheduleMu.Unlock()
-		return nil, harnesshook.Invalid(fmt.Errorf("directory %s already has a snapshot schedule lease", schedule.Path))
+		return nil, servicehook.Invalid(fmt.Errorf("directory %s already has a snapshot schedule lease", schedule.Path))
 	}
 	if fs.scheduledPaths == nil {
 		fs.scheduledPaths = map[string]*SnapshotScheduleLease{}
@@ -166,7 +165,7 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 	fs.snapshotScheduleMu.Unlock()
 	existing, err := fs.snapshotScheduleStatuses(ctx, schedule.Path)
 	if err == nil && len(existing) > 0 {
-		err = harnesshook.Invalid(fmt.Errorf("directory %s already has %d snapshot schedules", schedule.Path, len(existing)))
+		err = servicehook.Invalid(fmt.Errorf("directory %s already has %d snapshot schedules", schedule.Path, len(existing)))
 	}
 	if err != nil {
 		lease.release()
@@ -189,7 +188,7 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 	}
 	lease.start, lease.added = added.start, added.added
 	if len(added.Retention) > 0 {
-		return lease, harnesshook.Invalid(fmt.Errorf("directory %s keeps retention rules %v from earlier schedules, which the new schedule inherits: remove them first", schedule.Path, added.Retention))
+		return lease, servicehook.Invalid(fmt.Errorf("directory %s keeps retention rules %v from earlier schedules, which the new schedule inherits: remove them first", schedule.Path, added.Retention))
 	}
 	for _, period := range slices.Sorted(maps.Keys(schedule.Retention)) {
 		lease.rules[period] = schedule.Retention[period]
@@ -313,7 +312,7 @@ func (l *SnapshotScheduleLease) match(statuses []SnapshotScheduleStatus) (*Snaps
 			candidates = append(candidates, status)
 			continue
 		}
-		return nil, harnesshook.Invalid(fmt.Errorf("the snapshot schedule %s of %s starting %s, added %s, is not the lease's", status.Schedule, l.Path, status.start, status.added))
+		return nil, servicehook.Invalid(fmt.Errorf("the snapshot schedule %s of %s starting %s, added %s, is not the lease's", status.Schedule, l.Path, status.start, status.added))
 	}
 	switch len(candidates) {
 	case 0:
@@ -321,7 +320,7 @@ func (l *SnapshotScheduleLease) match(statuses []SnapshotScheduleStatus) (*Snaps
 	case 1:
 		return &candidates[0], nil
 	}
-	return nil, harnesshook.Invalid(fmt.Errorf("directory %s has %d snapshot schedules %s that could be the lease's", l.Path, len(candidates), l.Repeat))
+	return nil, servicehook.Invalid(fmt.Errorf("directory %s has %d snapshot schedules %s that could be the lease's", l.Path, len(candidates), l.Repeat))
 }
 
 // Status reads the schedule's state from the snap_schedule module.
@@ -458,7 +457,7 @@ func (l *SnapshotScheduleLease) removeRules(ctx context.Context, statuses []Snap
 			case !ok:
 				l.cleared[period] = true
 			case current != l.rules[period]:
-				return harnesshook.Invalid(fmt.Errorf("the snapshot retention %s of %s is %d, not the lease's %d", period, l.Path, current, l.rules[period]))
+				return servicehook.Invalid(fmt.Errorf("the snapshot retention %s of %s is %d, not the lease's %d", period, l.Path, current, l.rules[period]))
 			default:
 				remaining = append(remaining, period)
 			}
@@ -466,7 +465,7 @@ func (l *SnapshotScheduleLease) removeRules(ctx context.Context, statuses []Snap
 		if len(remaining) > 0 {
 			for _, status := range statuses {
 				if owned == nil || status.start != owned.start || status.added != owned.added || status.Schedule != owned.Schedule {
-					return harnesshook.Invalid(fmt.Errorf("removing the lease's snapshot retention %v of %s would change the retention of the schedule %s starting %s, which the lease did not add: remove that schedule first",
+					return servicehook.Invalid(fmt.Errorf("removing the lease's snapshot retention %v of %s would change the retention of the schedule %s starting %s, which the lease did not add: remove that schedule first",
 						remaining, l.Path, status.Schedule, status.start))
 				}
 			}

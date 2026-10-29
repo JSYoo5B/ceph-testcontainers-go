@@ -327,19 +327,6 @@ func TestSetMGRModuleNilClusterReturnsNotAppliedHandle(t *testing.T) {
 	}
 }
 
-func TestSetMGRModuleSharedClusterIsRefusedBeforeAnyEffect(t *testing.T) {
-	ctr := newMGRModuleFixture()
-	c := testhelper.TestCluster(ctr, testhelper.TestConfig{Shared: true, StartupTimeout: time.Second})
-	handle, err := SetMGRModule(t.Context(), c, "--force", true)
-	var op *ceph.OperationError
-	if !errors.Is(err, ceph.ErrSharedCluster) || !errors.As(err, &op) || op.Op != "override.SetMGRModule" {
-		t.Fatalf("a shared cluster was not refused with its class and Op: %v", err)
-	}
-	if !refusedMGR(handle) || len(ctr.calls) != 0 || len(heldMGR(c)) != 0 {
-		t.Fatalf("a refusal returned %+v after %d commands", handle, len(ctr.calls))
-	}
-}
-
 func TestSetMGRModuleInvalidNameKeepsTextAndClass(t *testing.T) {
 	ctr := newMGRModuleFixture()
 	c := mgrModuleCluster(ctr)

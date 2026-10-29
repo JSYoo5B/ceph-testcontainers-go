@@ -21,8 +21,8 @@ import (
 // finish. An error that matches no category is a failed check of the
 // fixture's own, such as output it could not parse, or a failure whose
 // outcome is unknown, such as a container that disappeared after a native
-// command was sent to it. Only ErrInvalidRequest and ErrSharedCluster
-// promise that nothing changed.
+// command was sent to it. Only ErrInvalidRequest
+// promises that nothing changed.
 var (
 	// ErrInvalidRequest reports a request that the fixture refused before
 	// any change: malformed arguments, or an operation that the state of the
@@ -52,20 +52,13 @@ var (
 	// refused the request, a resource was missing, permission was denied or
 	// I/O failed. *NativeFailure carries the native status.
 	ErrNativeFailure = errors.New("native operation failed")
-	// ErrSharedCluster reports a method that a cluster shared through
-	// SharedCluster refuses before any change: an operation that would
-	// reach outside one tenant's scope, a raw handle to its containers or
-	// credentials, or Terminate, since only SharedCluster.Close ends it.
-	// *OperationError names the method in Op.
-	ErrSharedCluster = errors.New("refused on a shared cluster")
 )
 
 // OperationError is a classified failure with the details that identify it.
 // Its text never includes command arguments, raw output or credentials.
 type OperationError struct {
 	// Kind is the category: ErrInvalidRequest, ErrUnsupported,
-	// ErrImageCapability, ErrEnvironmentUnavailable, ErrNativeFailure or
-	// ErrSharedCluster.
+	// ErrImageCapability, ErrEnvironmentUnavailable, ErrNativeFailure.
 	Kind error
 	// Op names the operation, such as "create client", when the error's
 	// text does not already start with it.
@@ -186,7 +179,7 @@ func (e *categoryError) Error() string { return e.text }
 func (e *categoryError) Is(target error) bool { return target == e.kind }
 
 // categories are the error categories.
-var categories = []error{ErrInvalidRequest, ErrUnsupported, ErrImageCapability, ErrEnvironmentUnavailable, ErrNativeFailure, ErrSharedCluster}
+var categories = []error{ErrInvalidRequest, ErrUnsupported, ErrImageCapability, ErrEnvironmentUnavailable, ErrNativeFailure}
 
 // classified reports whether err belongs to a category.
 func classified(err error) bool {
@@ -267,7 +260,7 @@ func invalidRequest(format string, args ...any) error {
 
 // newInvalid marks err as a refused request with ErrInvalidRequest and keeps
 // err as the cause, as it is, also when it is nil. It is the one construction
-// that invalidRequest and the shared harness error contract use.
+// that invalidRequest and the service error contract use.
 func newInvalid(err error) error {
 	return &OperationError{Kind: ErrInvalidRequest, Err: err}
 }

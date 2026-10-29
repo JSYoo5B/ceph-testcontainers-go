@@ -1,5 +1,10 @@
 # Disposition of the remaining fields
 
+> Current boundary: the shared-cluster/tenant harness and its core-only policy,
+> lease and hook plumbing have been removed. Harness references and source
+> locations below are historical design evidence, not retained APIs or future
+> extraction requirements. See [independent fixtures](../../ceph.md#usage-example).
+
 Moved without rewriting from the section "Sixteenth internal slice: disposition of the remaining fields" of [container-decomposition.md](../container-decomposition.md) when the decomposition records became one file per component (issue #216, owner decision of 2026-10-28). The ordinal is historical: statements below that cite another slice by its number use the [historical ordinals](../container-decomposition.md#historical-ordinals) of the shared document.
 
 0.x: old names are removed without aliases. This slice removes no name and moves
@@ -24,19 +29,24 @@ of 2026-10-27).
 
 ## Verdict per field
 
+This table is the current field ledger. The harness removal deleted `sharing`
+and its admission policy; the use counts below retain the earlier measurement
+where a field remains. The embedded Docker surface and ordinary ownership and
+lifecycle synchronization remain.
+
 Uses are selector uses of the field through a `c` or `cluster` receiver in
 non-test files, with the number of files in parentheses. They overstate real
 call sites.
 
 | Field | Lock domain | Uses | Verdict |
 | --- | --- | --- | --- |
-| `testcontainers.Container` | `mu` | | Stays. The first MON and the public embedded Docker surface; it cannot move into an unexported component. Shared-cluster refusals of its methods stay with `Container` |
+| `testcontainers.Container` | `mu` | | Stays. The first MON and the public embedded Docker surface; it cannot move into an unexported component. The harness-only Docker wrappers are removed; the embedded surface remains |
 | `mu` | the lock | 109 (40) | Stays. The cluster mutex (`ceph/ceph.go:43`) guards the roster, the OSD registry, the fault registry, the OSD storage, the port leases and the two flags; every lock-order citation in this note is measured from it |
 | `controlPlane` | own leaf lock | 10 (7) | Owner: `controlPlaneState` (eleventh slice) |
 | `toolkit` | own locks | 14 (3) | Owner: `featureClientState` (third slice) |
 | `bootstrap` | own leaf lock | 28 (17) | Owner: `bootstrapRecord` (twelfth slice) |
 | `authRecords` | `mu` | 38 (6) | Owner: `authState` (fourth slice) |
-| `startup` | none, written before sharing | 22 (12) | Owner: `startupIdentity` (fifteenth slice) |
+| `startup` | none, written before publication | 22 (12) | Owner: `startupIdentity` (fifteenth slice) |
 | `roster` | `mu` | 53 (10) | Owner: `memberRoster` (fourteenth slice) |
 | `extensions` | own leaf lock | 2 (2) | Owner: `extensionStore` (thirteenth slice) |
 | `nets` | `mu` and its own fields | 22 (6) | Owner: `networkState` (first slice) |
@@ -50,7 +60,6 @@ call sites.
 | `faults` | `mu` | 13 (6) | Owner: `faultRegistry` (tenth slice) |
 | `debugLevels` | own leaf lock | 1 (1) | Owner: `debugLevelRegistry` (tenth slice) |
 | `settings` | none after `Run` | 141 (37) | Stays. Immutable options read across the package; a component would add an accessor per option and hide nothing |
-| `sharing` | atomic | 4 (3) | Stays. One `atomic.Int32` that `sharedGate` already owns by name (`ceph/shared_gate.go:252,273`) |
 | `closed` | `mu` | 44 (27) | Stays, see below |
 | `monitorTerminated` | `mu` | 10 (6) | Stays, see below |
 | `keyRotationDocker` | none | 2 (1) | Stays. Test seam with one reader, `keyRotationExec` (`ceph/daemon_key_rotation.go:707`); the rotation code is a set of `Container` methods, so a component would be a one-field type without state of its own |
@@ -82,8 +91,8 @@ so the question is only whether a component would own something. It would not.
 
 - `TestContainerResidualFieldsAreAllDispositioned`: the field set of
   `Container` (including the embedded field) equals the verdict ledger; `mu`
-  is the only `sync.Mutex`, `sharing` the only atomic, the two flags are
-  `bool`, and no other field is a sync primitive.
+  is the only `sync.Mutex`, the two flags are `bool`, and no other field is a
+  sync primitive. There is no harness sharing atomic.
 - `TestContainerResidualFieldsAreInTheDesignNote`: the table above names
   exactly the ledger's fields in its first column.
 - `TestLifecycleFlagsHaveAuditedWritersAndReaders`: the functions that assign
@@ -92,7 +101,7 @@ so the question is only whether a component would own something. It would not.
   table, and the only `Container` literal that names a flag is the unit
   constructor in `ceph/unit_access.go`.
 - Scanner and drift controls: `TestContainerResidualFieldCheckRejectsDrift`,
-  `TestResidualDocFieldsReadsOnlyTheSixteenthSection` and
+  `TestResidualDocFieldsReadsTheVerdictRows` and
   `TestLifecycleAccessScannerSeesWritersReadersAndLiterals`.
 
 `TestNativeStateAddsNoMutex` is unchanged and still counts eight mutexes; no
@@ -112,12 +121,10 @@ belong to is #248. They stay, as the thirteenth slice recorded.
 
 ## What the owner still decides
 
-- For #155 (public harness packages): the exported names and signatures of
-  `ceph/harness` and the three service harnesses, the cross-package
-  registration slot (it waited for the membership and control split, which is
-  now merged), what replaces the test-only `TenantCluster` access in the final
-  import graph, and the extraction-specific native acceptance. This note makes
-  none of those decisions.
+- The earlier public-harness extraction direction was retired. The harness
+  packages, cross-package registration and test-only tenant access are removed,
+  with no replacement framework. The [ordinary cluster usage](../../ceph.md#usage-example)
+  describes the current ownership boundary.
 - For the original acceptance of #146: nothing in this note adds a criterion.
   The remaining items are reconciliation of validation already recorded on the
   merged pull requests and the final privacy review, which are the owner's.

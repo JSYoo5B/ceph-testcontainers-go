@@ -110,6 +110,10 @@ func TestServiceHooksExtensionReachesTheStore(t *testing.T) {
 	if got := c.extensions.inKindOrder(); len(got) != 1 || got[0] != state {
 		t.Fatalf("the hook did not store its state: %v", got)
 	}
+	other := &Container{}
+	if got := (serviceHooks{}).Extension(other, "kind", func() any { return new(testExtension) }); got == state {
+		t.Fatal("independent clusters share service state")
+	}
 }
 
 func TestNetworkRemovedHooksReachTheFlag(t *testing.T) {

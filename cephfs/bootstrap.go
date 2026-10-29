@@ -5,8 +5,10 @@ import (
 	"fmt"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
 )
+
+// bootstrapKind identifies this service in Run provisioning and owned state.
+const bootstrapKind = "cephfs"
 
 // cephFSBootstrap validates initial filesystems with the initial composition
 // and creates them, with their MDS topologies, once the pools exist.
@@ -20,7 +22,7 @@ func newCephFSBootstrap(configs []Config) *cephFSBootstrap {
 	return b
 }
 
-func (b *cephFSBootstrap) Kind() string                    { return servicekind.CephFS }
+func (b *cephFSBootstrap) Kind() string                    { return bootstrapKind }
 func (b *cephFSBootstrap) Order() int                      { return 2 }
 func (b *cephFSBootstrap) InitialPools() []ceph.PoolConfig { return nil }
 func (b *cephFSBootstrap) NeedsManagers() bool             { return true }

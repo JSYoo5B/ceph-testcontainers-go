@@ -69,9 +69,6 @@ func (p PGID) String() string { return string(p) }
 // are reported, not repaired. The noscrub and nodeep-scrub flags or an
 // unavailable primary can keep the wait from finishing before its deadline.
 func (c *Container) DeepScrubPG(ctx context.Context, pgid PGID) error {
-	if gateErr := c.sharedGate("DeepScrubPG"); gateErr != nil {
-		return gateErr
-	}
 	_, err := c.scrubPG(ctx, pgid, "deep-scrub")
 	return err
 }
@@ -81,9 +78,6 @@ func (c *Container) DeepScrubPG(ctx context.Context, pgid PGID) error {
 // replicas from an authoritative copy; it cannot recover an object without
 // one, and the wait then ends with the PG still inconsistent.
 func (c *Container) RepairPG(ctx context.Context, pgid PGID) error {
-	if gateErr := c.sharedGate("RepairPG"); gateErr != nil {
-		return gateErr
-	}
 	state, err := c.scrubPG(ctx, pgid, "repair")
 	if err == nil && strings.Contains(state, "inconsistent") {
 		return fmt.Errorf("PG %s is still %s after repair", pgid, state)

@@ -40,6 +40,14 @@ func TestClientIdentities(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
+			admin, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(), ceph.WithIdleEntrypoint())
+			if admin != nil {
+				testcontainers.CleanupContainer(t, admin)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			execCommand(t, ctx, admin, "python3", "-c", authNativeIsolationControl, "seed")
 			writer, err := cluster.CreateClient(ctx, "writer", ceph.ClientCaps{Mon: "allow r", OSD: "allow rw pool=tc-auth namespace=blue", MGR: "allow r"})
 			if err != nil {
 				t.Fatal(err)
@@ -118,6 +126,7 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=35, c
 			}
 			probe(writerClient, writer, "bad-auth", writer.KeyringPath())
 			probe(readerClient, reader, "readonly", reader.KeyringPath())
+			execCommand(t, ctx, admin, "python3", "-c", authNativeIsolationControl, "verify")
 			t.Log("native librados: scoped read/write and cross-boundary denials; writer→reader→writer retained its key and dropped omitted mgr caps; wrong-key and revoked fresh connections failed")
 		})
 	}

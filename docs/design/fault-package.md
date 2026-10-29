@@ -1,5 +1,10 @@
 # Design: extracting fault injection into package `fault`
 
+> Current boundary: the shared-cluster/tenant harness and its core-only policy,
+> lease and hook plumbing have been removed. Harness references and source
+> locations below are historical design evidence, not retained APIs or future
+> extraction requirements. See [independent fixtures](../ceph.md#usage-example).
+
 Status: stage 2's registry and internal hooks and stage 3's network extraction
 are implemented, including container pause as `fault.Pause`, returning
 `*fault.PauseLease`. Admission and phase-3 `Resume` cleanup are preserved.
@@ -14,7 +19,7 @@ reversible overrides, to the package `override` under #146 (see
 that dedicated object-error injection belongs in `fault`: it is implemented as
 `fault.InjectObjectDataError(ctx, cluster, pool, object, osdID)`, a one-shot
 operation with no handle, no registry kind and no Restore. See the
-[migration guide](../fault.md) for the current API.
+[current cluster usage](../fault.md) for the current API.
 
 The inventory below records the original stage 1 design. It inventories every fault-injection API of the module, decides which package
 each one belongs to, records the contracts that the move must preserve, and

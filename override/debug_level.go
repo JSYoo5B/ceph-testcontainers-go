@@ -66,8 +66,7 @@ func (h *DebugLevelHandle) Receipt() ceph.DebugLevelReceipt {
 //
 // The handle is non-nil for every outcome. A refusal returns a not-applied
 // handle whose Restore is a no-op (see DebugLevelHandle). A nil cluster is
-// refused with ceph.ErrInvalidRequest and a cluster that a SharedCluster shares
-// with ceph.ErrSharedCluster, both with Op "override.SetDebugLevel". When the
+// refused with ceph.ErrInvalidRequest and Op "override.SetDebugLevel". When the
 // set or its readback fails, the returned handle keeps the prior level for
 // Restore, which reconciles first: a lost reply is not evidence that nothing
 // changed. The readback after a set uses a fresh context bounded by the
@@ -101,9 +100,7 @@ func SetDebugLevel(ctx context.Context, c *ceph.Container, setting ceph.DebugLev
 	if c == nil {
 		return debugNotApplied(setting, &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: op, Err: errors.New("the cluster is nil")})
 	}
-	if err := overridehook.Admit(c, op); err != nil {
-		return debugNotApplied(setting, err)
-	}
+
 	if err := ctx.Err(); err != nil {
 		return debugNotApplied(setting, err)
 	}

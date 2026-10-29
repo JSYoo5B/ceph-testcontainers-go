@@ -266,19 +266,6 @@ func TestSetOSDFlagNilClusterReturnsNotAppliedHandle(t *testing.T) {
 	}
 }
 
-func TestSetOSDFlagSharedClusterIsRefusedBeforeAnyEffect(t *testing.T) {
-	native := &osdFlagFixture{}
-	c := testhelper.TestCluster(native, testhelper.TestConfig{Shared: true, StartupTimeout: time.Second})
-	handle, err := SetOSDFlag(t.Context(), c, "unsupported", true)
-	var op *ceph.OperationError
-	if !errors.Is(err, ceph.ErrSharedCluster) || !errors.As(err, &op) || op.Op != "override.SetOSDFlag" {
-		t.Fatalf("a shared cluster was not refused with its class and Op: %v", err)
-	}
-	if handle == nil || handle.state.refused == nil || len(native.calls) != 0 {
-		t.Fatalf("a refusal returned %+v after %d commands", handle, len(native.calls))
-	}
-}
-
 func TestNotAppliedOSDFlagRestoreIsANoOpThatTakesNoLock(t *testing.T) {
 	c, native := newOSDFlagFixture(t, "noout")
 	holder, err := SetOSDFlag(t.Context(), c, ceph.OSDFlagNoOut, false)

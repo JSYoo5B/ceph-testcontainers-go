@@ -524,11 +524,10 @@ for name, value := range lease.ClientOptions() {
 
 Mirroring two clusters moved to the `rbd/mirror` package; see [rbd-mirror.md](rbd-mirror.md).
 
-### Shared cluster tenants
+### Independent test fixtures
 
-A tenant of a [shared cluster](ceph-harness.md#shared-cluster) leases an RBD namespace
-of its own through the [rbd/harness](rbd-harness.md) package, which composes this
-package with `ceph/harness`. This package does not import it.
+Start an independent fixture with `Run`, create service resources explicitly,
+and register owned cleanup. See [Independent test fixtures](ceph.md#usage-example).
 
 ## Examples
 

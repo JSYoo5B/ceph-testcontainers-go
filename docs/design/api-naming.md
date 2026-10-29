@@ -114,8 +114,6 @@ directory without a package fails as well.
    is insufficient reason for the prefix.
 5. Preserve specific undo verbs. `Resume` thaws a process; `Restore` restores
    owned state; `Close` and `Terminate` describe resource or owner lifetimes.
-   Existing shared `Lease`/`Exclusive` calls register release with `testing.TB.Cleanup`;
-   do not invent a public `Tenant.Release` just to match another handle.
    Do not add a generic cleanup interface or rename these methods into equivalence without reviewing their distinct contracts.
 6. Keep native domain operations such as backup restore and one-shot error
    injection distinct from fixture rollback. An injection does not acquire a
@@ -211,7 +209,6 @@ Baseline alone still means inventory, not naming approval.
 | `rbd.Mirror.InterruptPeerLink`, `cephfs.Mirror.InterruptPeerLink`, `rgw/multisite.Fixture.InterruptZoneLink` | Retain domain-selected peer/zone names and service-owned restoration. These are not global network-wide cuts. |
 | `fault.InjectObjectDataError` | Record the one-shot debug mutation in `fault` (moved from `ceph.Container` by the #9 checkpoint); retain `Inject` and no universal Restore handle. Recovery by replica rewrite/repair or OSD restart is distinct from removing a policy override. |
 | `ceph.NativeInput.Close` | Retain stream-resource lifetime; not cluster termination or policy rollback. [native_command.go](../../ceph/native_command.go) |
-| `ceph.SharedCluster.Close`, `ceph.SharedCluster.Lease`, `ceph.SharedCluster.Exclusive`, `ceph.Container.Terminate` | Retain distinct owner/tenant/fixture lifetimes. Lease/Exclusive register release with test cleanup; there is no public Tenant.Release method. A tenant cleanup does not mean every shared cluster is immediately terminated. [shared.go](../../ceph/shared.go), [shared_exclusive.go](../../ceph/shared_exclusive.go), [tenant.go](../../ceph/tenant.go) |
 | `rbd.RestoreBackup`, `rbd.RestoreIncremental` | Retain domain data-restore verbs. They consume backup input; they are not lease cleanup and must not be converted into a generic cleanup contract. [backup.go](../../rbd/backup.go) |
 
 ## Implementation sequence and evidence

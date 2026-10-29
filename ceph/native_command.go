@@ -385,9 +385,6 @@ func validateNativeCommand(command NativeCommand) (string, error) {
 // then fails. A malformed limit or an Input that served another command fails
 // before anything runs or any input is taken.
 func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error) {
-	if err := c.sharedGate("RunNativeCommand"); err != nil {
-		return NativeCommandResult{}, err
-	}
 	return c.runNativeCommand(ctx, target, command)
 }
 

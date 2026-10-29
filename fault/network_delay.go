@@ -916,9 +916,6 @@ func ApplyNetworkProfile(ctx context.Context, c *ceph.Container, target testcont
 }
 
 func temporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkProfile, backend netemBackend) (*NetworkProfileLease, error) {
-	if gateErr := faulthook.Admit(c, "fault.ApplyNetworkProfile"); gateErr != nil {
-		return nil, gateErr
-	}
 	if backend == nil {
 		backend = dockerNetemBackend{label: faulthook.OwnedLabel(c)}
 	}

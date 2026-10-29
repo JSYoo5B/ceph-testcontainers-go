@@ -2,39 +2,12 @@ package ceph
 
 import "context"
 
-// Observer groups the read-only live observations of one selected target: a
-// cluster (Observe) or a tenant lease (ObserveTenant). Both forms have this
-// one type and the same queries.
-//
-// An Observer holds a reference that locates the target, not a result. Each
-// query resolves the target again and reads the cluster's actual state at that
-// moment, so constructing an Observer captures nothing and a retained Observer
-// never returns an earlier answer. A query is not an atomic cluster-wide
-// snapshot and is no more consistent than the observation it runs.
-//
-// A tenant-backed Observer validates its lease on every query. Once the
-// tenant is released, or its shared cluster is terminated, every query returns
-// ErrInvalidRequest, however long the Observer was kept. A cluster-backed
-// Observer has no lease: after Terminate its queries fail with the error of the
-// command path, as the command path reports it.
-//
-// An Observer exposes only its queries. It never exposes the cluster, its
-// credentials or an executor, owns no resource and needs no cleanup. It is the
-// only way to read these live observations: the Container and Tenant have no
-// method of the same names.
-//
-// The Observer stays in package ceph. Its queries need the captured control
-// handle, the topology and configuration locks and the shared-cluster
-// admission, which are internal to the package.
+// Observer groups the read-only live observations of one cluster. Each query
+// reads current state rather than retaining a snapshot. It owns no resource
+// and needs no cleanup. Queries keep the cluster's normal locking, liveness
+// and command-outcome checks.
 type Observer struct {
-	// target resolves the cluster for one query and applies the admission of
-	// the form: the tenant form checks its lease here.
-	target func() (*Container, error)
-	// live re-checks the lease of the tenant form, or is nil for the cluster
-	// form. The Pool values that the form lists carry it. The Observer does
-	// not know what the lease is: the shared-cluster side hands it over
-	// through newLeasedObserver.
-	live func() error
+	target *Container
 }
 
 // Observe returns an Observer for cluster. A nil cluster returns an error and
@@ -43,35 +16,25 @@ func Observe(cluster *Container) (*Observer, error) {
 	if cluster == nil {
 		return nil, invalidRequest("observe: the cluster is nil")
 	}
-	return &Observer{target: func() (*Container, error) { return cluster, nil }}, nil
-}
-
-// newLeasedObserver returns the tenant form of an Observer. target resolves
-// the leased cluster and refuses an expired lease; live re-checks the same
-// lease and is also what the Pool values of Pools check on every operation.
-// This is the one seam from the shared-cluster side: the Observer names no
-// tenant type, so it can stay in package ceph when the tenant moves out.
-func newLeasedObserver(target func() (*Container, error), live func() error) *Observer {
-	return &Observer{target: target, live: live}
+	return &Observer{target: cluster}, nil
 }
 
 // query resolves the target for one query and returns the CLI contract bound
 // to it. The control container is still selected on every command.
 func (o *Observer) query() (cliQuery, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return nil, err
 	}
 	return c.cephCLI, nil
 }
 
-// cluster resolves the target for one query. The tenant form checks its lease
-// here, so every query of every group validates it.
-func (o *Observer) cluster() (*Container, error) {
+// resolve validates the observer's construction for one query.
+func (o *Observer) resolve() (*Container, error) {
 	if o == nil || o.target == nil {
-		return nil, invalidRequest("observe: the observer is not constructed by Observe or ObserveTenant")
+		return nil, invalidRequest("observe: the observer is not constructed by Observe")
 	}
-	return o.target()
+	return o.target, nil
 }
 
 // Status queries the monitor's JSON API through the container-local CLI.
@@ -114,29 +77,14 @@ func (o *Observer) DaemonAddresses(ctx context.Context) (DaemonAddresses, error)
 // and Pool.Usage and Pool.PGs the usage and the PGs. The listing is one read of
 // the native pool map, so the pools of one result are consistent with each
 // other and later reads through them are separate observations.
-//
-// A Pool of a tenant-backed Observer remembers the tenant lease that listed it
-// and checks that lease on every operation, reads included: once the tenant is
-// released or its shared cluster is terminated, every operation returns an
-// error that matches ErrInvalidRequest without reaching the cluster. Its
-// operations that change the pool are always refused under the tenant's
-// shared-cluster policy (ErrSharedCluster), also when the cluster has been
-// lent to a later exclusive lease. The usage of SharedPool includes the
-// objects of the other tenants.
 func (o *Observer) Pools(ctx context.Context) ([]*Pool, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return nil, err
 	}
 	pools, err := c.pools(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if o.live != nil {
-		lease := &poolLease{live: o.live}
-		for _, pool := range pools {
-			pool.lease = lease
-		}
 	}
 	return pools, nil
 }
@@ -153,7 +101,7 @@ func (o *Observer) Pools(ctx context.Context) ([]*Pool, error) {
 // Use native config show/daemon config get to inspect a running daemon's effective
 // value; this method does not claim a stored setting has overridden local config.
 func (o *Observer) Configuration(ctx context.Context) ([]ConfigEntry, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +110,7 @@ func (o *Observer) Configuration(ctx context.Context) ([]ConfigEntry, error) {
 
 // BlocklistEntries lists exact entries and CIDR ranges without mutating them.
 func (o *Observer) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +121,7 @@ func (o *Observer) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, erro
 // and CanRun do not prove command readiness; WaitMGRModuleReady probes selected
 // built-in modules, and callers must probe their intended commands for others.
 func (o *Observer) MGRModules(ctx context.Context) ([]MGRModuleState, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +132,7 @@ func (o *Observer) MGRModules(ctx context.Context) ([]MGRModuleState, error) {
 // flags that are not among the OSDFlag constants. Per-OSD, CRUSH-node or
 // device-class flags are separate native state.
 func (o *Observer) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +142,7 @@ func (o *Observer) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
 // OSDStates returns owned OSD states sorted by native ID. It refuses an owned
 // ID that is missing, purged or now belongs to a different native UUID.
 func (o *Observer) OSDStates(ctx context.Context) ([]OSDState, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +157,7 @@ func (o *Observer) OSDStates(ctx context.Context) ([]OSDState, error) {
 // in bridge mode, or the configured address in host mode. They are not mapped
 // to Docker host ports. An empty map means no module advertises a service.
 func (o *Observer) ManagerServices(ctx context.Context) (map[string]string, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +177,7 @@ func (o *Observer) ManagerServices(ctx context.Context) (map[string]string, erro
 // QuorumStatus reads the monitor quorum and monmap. It takes no topology lock
 // and selects the control container for each read.
 func (o *Observer) QuorumStatus(ctx context.Context) (QuorumStatus, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return QuorumStatus{}, err
 	}
@@ -241,7 +189,7 @@ func (o *Observer) QuorumStatus(ctx context.Context) (QuorumStatus, error) {
 // FSID must match this fixture's original bootstrap configuration. This is a
 // bounded native observation, not a network attachment or membership mutation.
 func (o *Observer) MonitorBootstrapAddresses(ctx context.Context) (string, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return "", err
 	}
@@ -257,7 +205,7 @@ func (o *Observer) MonitorBootstrapAddresses(ctx context.Context) (string, error
 // three reads are not an atomic transaction. Poll with a caller deadline when
 // asserting eventual health after changing a test topology.
 func (o *Observer) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return HealthSnapshot{}, err
 	}
@@ -271,7 +219,7 @@ func (o *Observer) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
 // These separate reads are not atomic; external configuration writers must not
 // race the observation. Poll HealthDetails for eventual OSD fullness reports.
 func (o *Observer) FullRatios(ctx context.Context) (FullRatioSnapshot, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return FullRatioSnapshot{}, err
 	}
@@ -279,8 +227,8 @@ func (o *Observer) FullRatios(ctx context.Context) (FullRatioSnapshot, error) {
 }
 
 // The queries below run `rados` in the client container or a supervised scrape
-// in the control container. Each one resolves the target (validating the tenant
-// lease) and runs the read of the resolved cluster, so argument
+// in the control container. Each one resolves the target and runs the read
+// of the resolved cluster, so argument
 // validation, topology lock, liveness check, client or control container
 // selection, bounds and errors are the existing ones. A failed or refused
 // collection is an error; it is never returned as an empty result.
@@ -289,7 +237,7 @@ func (o *Observer) FullRatios(ctx context.Context) (FullRatioSnapshot, error) {
 // inconsistent. An empty result means that scrub found none; it is not a new
 // scrub. A PG whose results are no longer available returns an error.
 func (o *Observer) PGInconsistencies(ctx context.Context, pgid PGID) ([]InconsistentObject, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +248,7 @@ func (o *Observer) PGInconsistencies(ctx context.Context, pgid PGID) ([]Inconsis
 // outside this fixture. Namespace is empty for the default namespace. It
 // reads native state only and grants no ownership.
 func (o *Observer) ObjectWatchers(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +264,7 @@ func (o *Observer) ObjectWatchers(ctx context.Context, pool, namespace, object s
 // 32 MiB, and a failed fetch or unparsable output is a *NativeFailure or an
 // error.
 func (o *Observer) ManagerMetrics(ctx context.Context) (ManagerMetrics, error) {
-	c, err := o.cluster()
+	c, err := o.resolve()
 	if err != nil {
 		return ManagerMetrics{}, err
 	}
