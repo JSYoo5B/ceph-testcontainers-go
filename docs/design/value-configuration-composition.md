@@ -129,8 +129,8 @@ only place for configuration.
 - **Raw customizers.** They reach the first MON's container request only, in
   argument order, after the module's own request options and before the
   messenger environment, the `WithConfigFile` file and the ownership label.
-- `RunWithImages` and `WithImages` are removed without aliases. The mirror
-  `RunWithImages` functions are removed by `312-mirror-run-image` (below).
+- `RunWithImages` and `WithImages` do not exist. The mirror packages select the
+  role image through an empty `image` argument (see "Mirror `Run`" below).
 
 ### OSD storage group (change `312-osd-storage`)
 
@@ -247,36 +247,18 @@ spellings. Docker and container execution policy stays testcontainers-style
 Open for the owner: whether `ceph.WithPools` belongs with topology or with the
 service packages.
 
-## Mirror `Run` (change `312-mirror-run-image`)
+## Mirror `Run`
 
-Proposal of the implementation side, not an owner approval. `rbd/mirror.Run` and
-`cephfs/mirror.Run` keep the signature
-`Run(ctx, image string, config Config, opts ...testcontainers.ContainerCustomizer)`
-byte for byte. Their `RunWithImages` siblings only derived the daemon image from
-the clusters and forwarded to `Run`.
+`rbd/mirror.Run` and `cephfs/mirror.Run` keep the testcontainers-style signature
+`Run(ctx, image string, config Config, opts ...testcontainers.ContainerCustomizer)`.
+The image is a single setting that already has its positional argument, so no
+grouped carrier exists next to it: a second input for the same field would give
+the setting two spellings.
 
-- **What is removed.** `RunWithImages` in both packages, without an alias. An
-  empty `image` argument now selects the role image: the destination's
-  `Images().RBDAux` for RBD, the source's `Images().CephFS` for CephFS. This is
-  the same convention as `ceph.Run`, where an empty image is accepted when the
-  image configuration supplies it, so there is no second spelling for the setting
-  and no new exported type.
-- **Why no grouped value.** The image is a single setting that already has its
-  positional argument. A grouped `ImageOptions` carrier next to it would be a
-  second input for the same field, which the pattern forbids ("no two spellings
-  for the same setting"); the earlier attempt that did so changed the `Run`
-  signature and was closed. The grouped carrier stays the right tool once a mirror
-  package has several related settings.
-- **Unspecified is not blank.** Only the exact empty string derives. A blank
-  string such as a single space is an explicit selection and is still refused by
-  pair validation, as is any image that a cluster selects for another role.
-- **Role inference is unchanged.** A cluster without the role is refused with
-  `ErrInvalidRequest` and no other role substitutes; nil clusters are refused
-  before any effect. Setup clients still come from each cluster's
-  `Images().Client`, and `AddDaemon` and the relaunch recipe keep using the image
-  `Run` resolved.
-- **Behavior change.** `Run(ctx, "", ...)` used to be refused as an empty image
-  and now derives the role image. No other behavior changes.
+Only the exact empty string derives the role image; a blank string such as a
+single space is an explicit selection and is still refused by pair validation.
+A cluster without the role is refused with `ErrInvalidRequest` and no other role
+substitutes.
 
 ### Client entry points stay separate
 
@@ -285,11 +267,4 @@ or identity validation. `Container.WithClientIdentity` copies a scoped keyring,
 takes the topology lock, and refuses a terminated cluster, a descriptor from
 another cluster, an incomplete creation, a revoked identity and a stale key; its
 input is a live `*ClientConfig` handle compared by pointer. They are different
-privilege contracts, not configuration variants, and the issue requires admin
-access to stay visibly distinct, so both names stay. The shared tenant harness
-the original candidate named was removed.
-
-## Not decided here
-
-- How tenant attachment keeps the `*ClientConfig` identity while cloning its
-  owned collections.
+privilege contracts, not configuration variants, so both names stay.
