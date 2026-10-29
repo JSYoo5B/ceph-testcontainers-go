@@ -20,14 +20,14 @@ import (
 // pins every caller and how it holds the lock), apart from the
 // single-threaded constructors that run before the cluster is shared. Because
 // the lock is Container.mu, the roster sits at the position of the fields it
-// replaced: after the shared-gate admission and the topology gate, before
+// replaced: after the topology gate, before
 // configMu, controlMu and the leaf locks, and a method never takes a lock or
 // calls into Container.
 //
 // What stays on Container, with the reason, is in the fourteenth slice of the
 // design note: the first MON (the embedded container, which the roster does
 // not own), monitorTerminated (it describes that embedded container), closed
-// (read by the shared-gate admission and by the terminate gate) and mu.
+// (read by the terminate gate) and mu.
 //
 // The first MGR's container (firstMgr) mirrors the entry "a" of managers.
 // dropManager is therefore the only way to forget a manager entry: it clears
