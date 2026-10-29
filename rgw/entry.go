@@ -66,7 +66,7 @@ func WithGateways(configs ...Config) ceph.Option {
 // started by Run with WithGateways as well as those started later with Start.
 // If omitted, gateways use the image passed to Run. It selects the rgw role of
 // the cluster, so Images().RGW, which the multisite setup clients use, reports
-// it too. It replaces the rgw role of a WithImages set whichever option comes
+// it too. It replaces the rgw role of a ImageOptions image set whichever option comes
 // first. Use matching Ceph
 // versions. Multisite gateways are not affected: multisite.Run and multisite.RunTopology
 // take their gateway image as an argument.

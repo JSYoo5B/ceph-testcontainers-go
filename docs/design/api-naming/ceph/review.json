@@ -1,9 +1,9 @@
 {
   "schema": "ceph-api-naming-review/v2",
   "package": "ceph",
-  "declarations_sha256": "d7e696fcda85ac627d30f4ebb5634b01dec2ed59ac424d96995e74dc5face679",
+  "declarations_sha256": "0398e166b34e9de0d3860cb81dc4759d0565f8c62a8a4b6f611e6d25d9749a77",
   "members_sha256": "19c6a3756fa6fe0b96a47d2af5f0f4009c1fae95b57ded1e74e38c80c9098396",
-  "declarations": 355,
+  "declarations": 356,
   "members": 437,
   "review": "value-configuration-composition.md",
   "page": "docs/ceph.md"

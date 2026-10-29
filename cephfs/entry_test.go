@@ -163,11 +163,10 @@ func TestContainerFilesystemsUsesTheEmbeddedCluster(t *testing.T) {
 	}
 }
 
-func TestFilesystemImageOptionFillsMissingRoleInRunWithImages(t *testing.T) {
+func TestFilesystemImageOptionFillsMissingRoleInRunWithImageSet(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	cluster, err := ceph.RunWithImages(ctx, ceph.ImageSet{Essential: "core", Client: "toolkit"},
-		WithMDSImage("service-image"), WithFilesystems())
+	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{Essential: "core", Client: "toolkit"})), WithMDSImage("service-image"), WithFilesystems())
 	if cluster != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("service image option did not reach canceled admission: %v %v", cluster, err)
 	}

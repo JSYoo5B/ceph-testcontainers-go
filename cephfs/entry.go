@@ -86,7 +86,7 @@ func WithFilesystems(configs ...Config) ceph.Option {
 // If omitted, MDS daemons use the image passed to Run. It selects the cephfs
 // role of the cluster, so Images().CephFS, which the CephFS mirror daemons of
 // cephfsmirror.RunWithImages use, reports it too. It replaces the cephfs role of
-// a WithImages set whichever option comes first. Use matching Ceph versions.
+// a ImageOptions image set whichever option comes first. Use matching Ceph versions.
 func WithMDSImage(image string) ceph.Option { return servicehook.WithServiceImage("cephfs", image) }
 
 // defaultFilesystem selects the default filesystem when no filesystem option

@@ -52,3 +52,21 @@ func ExampleRun_services() {
 	_ = cephfs.Filesystems(cluster)
 	_, _ = rgw.Gateways(context.Background(), cluster)
 }
+
+// Role images are one ImageOptions value, passed to Run once through the grouped
+// option function WithImageOptions. The image argument is empty because the set
+// is the one image configuration. This example is compiled, so the snippet it
+// shows cannot drift from the API; it is not run.
+func ExampleWithImageOptions() {
+	ctx := context.Background()
+	images := ceph.ImageSet{Essential: "registry.example.com/ceph-core:20.2.4", Client: "registry.example.com/ceph-client:20.2.4"}
+	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), ceph.WithOSDCount(1))
+	defer func() {
+		if err := testcontainers.TerminateContainer(cluster); err != nil {
+			log.Printf("failed to terminate container: %s", err)
+		}
+	}()
+	if err != nil {
+		panic(err)
+	}
+}
