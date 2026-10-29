@@ -247,7 +247,7 @@ spellings. Docker and container execution policy stays testcontainers-style
 Open for the owner: whether `ceph.WithPools` belongs with topology or with the
 service packages.
 
-## Mirror `Run`
+## Mirror `Run` (change `312-mirror-run-image`)
 
 `rbd/mirror.Run` and `cephfs/mirror.Run` keep the testcontainers-style signature
 `Run(ctx, image string, config Config, opts ...testcontainers.ContainerCustomizer)`.
