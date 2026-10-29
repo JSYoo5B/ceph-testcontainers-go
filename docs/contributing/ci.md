@@ -240,7 +240,7 @@ Practical consequences:
 | --- | --- | --- |
 | Unit tests | 15 min | `make test` |
 | Race detector | 15 min | `make race` |
-| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint (`make lint`), `make tag-compile` (test-only-code boundary check, then tagged compilation), the Python tests in `.github/scripts` (`test_*.py`), actionlint and the go-ceph harness test; the text vocabulary checks on every head; on pull requests, `apinaming moves` against the merge base |
+| Vet, compile and CI tooling | 25 min | `make vet`, golangci-lint (`make lint`), `make tag-compile` (test-only-code boundary check, then tagged compilation), the Python tests in `.github/scripts` (`test_*.py`), actionlint and the go-ceph harness test |
 | Compiled tag coverage and helpers | 25 min | `tag_scenarios.py plan --verify`, then `tag_scenarios.py code` (the Docker-free `code` batch) |
 | Vulnerability check (Go 1.26.x and 1.27.x) | 20 min | `make vulncheck` |
 
