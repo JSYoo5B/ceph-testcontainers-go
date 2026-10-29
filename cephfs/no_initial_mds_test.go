@@ -180,7 +180,7 @@ func TestNoInitialMDSDefaultsAndContradictionsBeforeNative(t *testing.T) {
 			t.Fatalf("initial config reached runtime: %+v %v", config, runErr)
 		}
 	}
-	for _, zero := range []ceph.Option{ceph.WithNoInitialOSDs(), ceph.WithNoInitialManagers()} {
+	for _, zero := range []ceph.Option{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithNoInitialManagers())} {
 		for _, first := range []bool{false, true} {
 			opts := []testcontainers.ContainerCustomizer{zero, WithFilesystems(Config{NoInitialMDS: true})}
 			if first {
@@ -200,7 +200,7 @@ func TestNoInitialMDSCompositionAndRuntimeKeepOmittedCounts(t *testing.T) {
 	config := Config{Name: "cold-target", NoInitialMDS: true, AdditionalDataPools: []ceph.PoolConfig{{Name: "extra"}}}
 	option := WithFilesystems(config)
 	config.AdditionalDataPools[0].Name = "caller-mutated"
-	_, services, err := testhelper.TestPrepare(2, false, nil, ceph.WithPoolDefaults(2, 1), option)
+	_, services, err := testhelper.TestPrepare(2, false, nil, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPoolDefaults(2, 1)), option)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,7 +21,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, append(opts, ceph.WithOSDCount(1))...)
+	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))...)
 	const pool = "tc-rbd-daemon-topology"
 	const name = "preserved"
 	const image = pool + "/" + name

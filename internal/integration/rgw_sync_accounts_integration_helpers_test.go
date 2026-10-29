@@ -25,7 +25,7 @@ import (
 func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	source, destination, _, _ := newMultiClusterPair(t, append(opts, ceph.WithOSDCount(1))...)
+	source, destination, _, _ := newMultiClusterPair(t, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))...)
 	image, _ := integrationImages(t)
 	rgwImage := os.Getenv("CEPH_TEST_RGW_IMAGE")
 	if rgwImage == "" {

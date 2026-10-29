@@ -30,7 +30,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 			defer cancel()
-			opts := []testcontainers.ContainerCustomizer{ceph.WithMonitorCount(3), ceph.WithOSDCount(1), ceph.WithStartupTimeout(3 * time.Minute)}
+			opts := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithOSDCount(1)), ceph.WithStartupTimeout(3 * time.Minute)}
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}

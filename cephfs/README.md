@@ -138,7 +138,7 @@ method is a shortcut for `cephfs.Filesystems(cluster.Container)`.
 packages, such as `rbd.WithPools` and `rgw.WithGateways`, so one cluster can
 serve RBD, CephFS and S3 clients. Bootstrap options that leave the cluster
 without the OSDs or managers a filesystem needs, such as
-`ceph.WithNoInitialOSDs()` and `ceph.WithNoInitialManagers()`, are rejected
+`ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs())` and `ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers())`, are rejected
 before any container is created. For staged bootstraps, start the cluster with
 `ceph.Run` and add the filesystem later with `Start`.
 
@@ -190,7 +190,7 @@ earlier list. `Start` adds further filesystems after `Run` returns.
 
 ```golang
 cluster, err := cephfs.Run(ctx, ceph.DefaultImage,
-	ceph.WithOSDCount(3),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)),
 	cephfs.WithFilesystems(
 		cephfs.Config{Name: "app-fs", ActiveMDS: 2, StandbyMDS: 1},
 		cephfs.Config{Name: "scratch"},
@@ -238,7 +238,7 @@ for the filesystem. The first MDS is started with `ScaleMDS(ctx, 1, 0)`; after
 that the filesystem behaves like any other.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDCount(2))
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
@@ -266,7 +266,7 @@ stays owned by the cluster for cleanup.
 #### WithMDSImage
 
 ```golang
-func WithMDSImage(image string) ceph.Option
+func ceph.WithImageOptions(ceph.ImageOptions{}.WithCephFSImage(image string)) ceph.Option
 ```
 
 Selects the image for every MDS container started by `Run`, `Start`,
@@ -275,7 +275,7 @@ Use an image of the same Ceph release.
 
 ```golang
 cluster, err := cephfs.Run(ctx, "registry.example.com/ceph:20.2.4-all",
-	cephfs.WithMDSImage("registry.example.com/ceph:20.2.4-mds"),
+	ceph.WithImageOptions(ceph.ImageOptions{}.WithCephFSImage("registry.example.com/ceph:20.2.4-mds")),
 )
 ```
 
@@ -346,7 +346,7 @@ fs, err := cephfs.Start(ctx, cluster.Container, cephfs.Config{
 	StandbyMDS: 1,
 	AdditionalDataPools: []ceph.PoolConfig{{
 		Name: "app-fs-ec",
-		// K=2, M=1 needs three OSDs: ceph.WithOSDCount(3).
+		// K=2, M=1 needs three OSDs: ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)).
 		ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true},
 	}},
 })

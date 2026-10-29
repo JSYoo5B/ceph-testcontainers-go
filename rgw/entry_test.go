@@ -24,11 +24,11 @@ func TestGatewayOptionsRejectInvalidCompositionBeforeRuntime(t *testing.T) {
 	}{
 		{"duplicate initial gateways", "duplicated", []testcontainers.ContainerCustomizer{WithGateways(Config{Name: "a"}, Config{Name: "a"})}},
 		{"invalid initial gateway", "", []testcontainers.ContainerCustomizer{WithGateways(Config{Name: "invalid/name"})}},
-		{"blank image", "image", []testcontainers.ContainerCustomizer{WithImage(" \t")}},
-		{"no initial OSDs/zero-last", "", []testcontainers.ContainerCustomizer{WithGateways(), ceph.WithNoInitialOSDs()}},
-		{"no initial OSDs/zero-first", "", []testcontainers.ContainerCustomizer{ceph.WithNoInitialOSDs(), WithGateways()}},
-		{"no initial managers/zero-last", "no initial", []testcontainers.ContainerCustomizer{WithGateways(), ceph.WithNoInitialManagers()}},
-		{"no initial managers/zero-first", "no initial", []testcontainers.ContainerCustomizer{ceph.WithNoInitialManagers(), WithGateways()}},
+		{"blank image", "image", []testcontainers.ContainerCustomizer{ceph.WithImageOptions(ceph.ImageOptions{}.WithRGWImage(" \t"))}},
+		{"no initial OSDs/zero-last", "", []testcontainers.ContainerCustomizer{WithGateways(), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs())}},
+		{"no initial OSDs/zero-first", "", []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), WithGateways()}},
+		{"no initial managers/zero-last", "no initial", []testcontainers.ContainerCustomizer{WithGateways(), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers())}},
+		{"no initial managers/zero-first", "no initial", []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers()), WithGateways()}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var customizers atomic.Int32
@@ -178,7 +178,7 @@ func TestContainerShortcutsUseTheEmbeddedCluster(t *testing.T) {
 func TestGatewayImageOptionFillsMissingRoleInRunWithImageSet(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{Essential: "core", Client: "toolkit"})), WithImage("service-image"), WithGateways())
+	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{Essential: "core", Client: "toolkit"}).WithRGWImage("service-image")), WithGateways())
 	if cluster != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("service image option did not reach canceled admission: %v %v", cluster, err)
 	}

@@ -25,8 +25,7 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 	defer cancel()
 	const pool = "tc-context-snapshot"
 	source, destination, sourceClient, destinationClient := newMultiClusterPair(t,
-		ceph.WithMonitorCount(1), ceph.WithOSDCount(1),
-		ceph.WithPools(ceph.PoolConfig{Name: pool, Application: "rados", Replicas: 1, MinSize: 1}))
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(1).WithOSDCount(1).WithPools(ceph.PoolConfig{Name: pool, Application: "rados", Replicas: 1, MinSize: 1})))
 	type state struct {
 		config, keyring []byte
 		managers        []*ceph.ManagerContainer

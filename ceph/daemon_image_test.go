@@ -14,29 +14,32 @@ import (
 
 func TestWithDaemonImageValidation(t *testing.T) {
 	for name, test := range map[string]struct {
-		opts []DaemonOption
+		opts []DaemonOptions
 		want string
 	}{
-		"empty":               {[]DaemonOption{WithDaemonImage("")}, "empty"},
-		"spaces only":         {[]DaemonOption{WithDaemonImage("   ")}, "whitespace"},
-		"leading space":       {[]DaemonOption{WithDaemonImage(" example.invalid/ceph:new")}, "whitespace"},
-		"trailing newline":    {[]DaemonOption{WithDaemonImage("example.invalid/ceph:new\n")}, "whitespace"},
-		"inner tab":           {[]DaemonOption{WithDaemonImage("example.invalid/ceph\t:new")}, "whitespace"},
-		"NUL":                 {[]DaemonOption{WithDaemonImage("example.invalid/ceph:\x00new")}, "control"},
-		"twice":               {[]DaemonOption{WithDaemonImage("a:1"), WithDaemonImage("b:2")}, "twice"},
-		"nil option":          {[]DaemonOption{nil}, "nil"},
-		"nil after valid one": {[]DaemonOption{WithDaemonImage("a:1"), nil}, "nil"},
+		"empty":            {[]DaemonOptions{DaemonOptions{}.WithImage("")}, "empty"},
+		"spaces only":      {[]DaemonOptions{DaemonOptions{}.WithImage("   ")}, "whitespace"},
+		"leading space":    {[]DaemonOptions{DaemonOptions{}.WithImage(" example.invalid/ceph:new")}, "whitespace"},
+		"trailing newline": {[]DaemonOptions{DaemonOptions{}.WithImage("example.invalid/ceph:new\n")}, "whitespace"},
+		"inner tab":        {[]DaemonOptions{DaemonOptions{}.WithImage("example.invalid/ceph\t:new")}, "whitespace"},
+		"NUL":              {[]DaemonOptions{DaemonOptions{}.WithImage("example.invalid/ceph:\x00new")}, "control"},
+		"two values":       {[]DaemonOptions{DaemonOptions{}.WithImage("a:1"), DaemonOptions{}.WithImage("b:2")}, "more than one"},
+		"two equal values": {[]DaemonOptions{DaemonOptions{}.WithImage("a:1"), DaemonOptions{}.WithImage("a:1")}, "more than one"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := resolveDaemonOptions(test.opts)
-			if err == nil || !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), test.want) || got != (daemonOptions{}) {
+			if err == nil || !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), test.want) || got != (DaemonOptions{}) {
 				t.Fatalf("resolved %+v, err %v", got, err)
 			}
 		})
 	}
-	got, err := resolveDaemonOptions([]DaemonOption{WithDaemonImage("example.invalid/ceph:new")})
+	got, err := resolveDaemonOptions([]DaemonOptions{DaemonOptions{}.WithImage("example.invalid/ceph:new")})
 	if err != nil || got.image != "example.invalid/ceph:new" || !got.imageSet {
 		t.Fatalf("valid image: %+v %v", got, err)
+	}
+	got, err = resolveDaemonOptions([]DaemonOptions{{}, DaemonOptions{}.WithImage("a:1").WithImage("b:2")})
+	if err != nil || got.image != "b:2" {
+		t.Fatalf("a later call in one value did not replace the earlier one: %+v %v", got, err)
 	}
 	if got, err := resolveDaemonOptions(nil); err != nil || got.imageSet {
 		t.Fatalf("no options: %+v %v", got, err)
@@ -45,11 +48,11 @@ func TestWithDaemonImageValidation(t *testing.T) {
 
 func TestDaemonImageDefaultsToTheEssentialImageWithoutChangingIt(t *testing.T) {
 	c := &Container{settings: options{essentialImage: "example.invalid/ceph:cluster"}}
-	override, _ := resolveDaemonOptions([]DaemonOption{WithDaemonImage("example.invalid/ceph:new")})
+	override, _ := resolveDaemonOptions([]DaemonOptions{DaemonOptions{}.WithImage("example.invalid/ceph:new")})
 	if got := c.daemonImage(override); got != "example.invalid/ceph:new" {
 		t.Fatalf("override image %q", got)
 	}
-	if got := c.daemonImage(daemonOptions{}); got != "example.invalid/ceph:cluster" {
+	if got := c.daemonImage(DaemonOptions{}); got != "example.invalid/ceph:cluster" {
 		t.Fatalf("default image %q", got)
 	}
 	if c.settings.essentialImage != "example.invalid/ceph:cluster" || c.staticFacts().Images.Essential != "example.invalid/ceph:cluster" {
@@ -60,7 +63,7 @@ func TestDaemonImageDefaultsToTheEssentialImageWithoutChangingIt(t *testing.T) {
 // A refused option leaves the topology untouched and does not wait for the
 // topology lock: the call returns while the test holds it.
 func TestDaemonImageRefusalHappensBeforeLockAndState(t *testing.T) {
-	bad := WithDaemonImage(" ")
+	bad := DaemonOptions{}.WithImage(" ")
 	calls := map[string]func(context.Context, *Container) (any, error){
 		"AddMonitor": func(ctx context.Context, c *Container) (any, error) {
 			m, err := c.AddMonitor(ctx, "b", bad)
@@ -301,11 +304,11 @@ func TestStartManagerLaunchesFromTheGivenImage(t *testing.T) {
 		images = append(images, image)
 		return &initialOSDDaemon{}, nil
 	}
-	overridden, err := cluster.startManager(t.Context(), "b", cluster.daemonImage(daemonOptions{image: "example.invalid/ceph:new", imageSet: true}))
+	overridden, err := cluster.startManager(t.Context(), "b", cluster.daemonImage(DaemonOptions{image: "example.invalid/ceph:new", imageSet: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ordinary, err := cluster.startManager(t.Context(), "c", cluster.daemonImage(daemonOptions{}))
+	ordinary, err := cluster.startManager(t.Context(), "c", cluster.daemonImage(DaemonOptions{}))
 	if err != nil {
 		t.Fatal(err)
 	}

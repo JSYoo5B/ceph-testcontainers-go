@@ -42,7 +42,7 @@ func TestRunWithImageSetAppliesServiceOverridesAfterBaseSet(t *testing.T) {
 				capture := Option(func(o *options) error { effective = o; return nil })
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				cluster, err := Run(ctx, "", WithImageOptions(ImageOptions{}.WithImageSet(images)), (serviceHooks{}).WithServiceImage(role, "selected-service"), capture)
+				cluster, err := Run(ctx, "", WithImageOptions(ImageOptions{}.WithImageSet(images)), roleImageOption(role, "selected-service"), capture)
 				if cluster != nil || !errors.Is(err, context.Canceled) {
 					t.Fatalf("valid role selection did not reach canceled admission: %v %v", cluster, err)
 				}
@@ -159,15 +159,15 @@ func TestManualToolkitAttachmentWaitsForMonitorTopology(t *testing.T) {
 	}
 }
 
-// A service image option replaces its role whichever of it and the image set came
-// first; the Run image must be empty or the essential image.
-func TestServiceImageOptionReplacesItsRoleInEitherOrder(t *testing.T) {
+// A role image replaces its role of the image set whichever carrier came first;
+// the Run image must be empty or the essential image.
+func TestRoleImageReplacesItsRoleInEitherOrder(t *testing.T) {
 	for _, role := range []string{"rgw", "cephfs"} {
 		for _, serviceFirst := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/serviceFirst=%t", role, serviceFirst), func(t *testing.T) {
 				var effective *options
 				capture := Option(func(o *options) error { effective = o; return nil })
-				service := (serviceHooks{}).WithServiceImage(role, "selected-service")
+				service := roleImageOption(role, "selected-service")
 				set := WithImageOptions(ImageOptions{}.WithImageSet(ImageSet{Essential: "core", Client: "toolkit", CephFS: "set-mds", RGW: "set-rgw"}))
 				opts := []testcontainers.ContainerCustomizer{set, service, capture}
 				if serviceFirst {
@@ -196,9 +196,9 @@ func TestServiceImageOptionReplacesItsRoleInEitherOrder(t *testing.T) {
 	}
 }
 
-func TestServiceImageOptionWithoutASetKeepsTheRunImageForOtherRoles(t *testing.T) {
+func TestRoleImageWithoutASetKeepsTheRunImageForOtherRoles(t *testing.T) {
 	o := options{essentialImage: "all-in-one"}
-	if err := (serviceHooks{}).WithServiceImage("cephfs", "mds-image")(&o); err != nil {
+	if err := roleImageOption("cephfs", "mds-image")(&o); err != nil {
 		t.Fatal(err)
 	}
 	if err := configureImages(&o); err != nil {
@@ -208,7 +208,13 @@ func TestServiceImageOptionWithoutASetKeepsTheRunImageForOtherRoles(t *testing.T
 	if got := o.effectiveImages(); got != want {
 		t.Fatalf("effective images = %+v, want %+v", got, want)
 	}
-	if err := (serviceHooks{}).WithServiceImage("mds", "x")(&o); err == nil {
-		t.Fatal("the retired daemon-named role was accepted")
+}
+
+// roleImageOption selects the image of role, rgw or cephfs, through its own
+// ImageOptions carrier.
+func roleImageOption(role, image string) Option {
+	if role == "rgw" {
+		return WithImageOptions(ImageOptions{}.WithRGWImage(image))
 	}
+	return WithImageOptions(ImageOptions{}.WithCephFSImage(image))
 }

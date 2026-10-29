@@ -23,7 +23,7 @@ import (
 func TestMultiClusterRBDSnapshotFanout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	a, b, aClient, bClient := newMultiClusterPair(t, ceph.WithOSDCount(1))
+	a, b, aClient, bClient := newMultiClusterPair(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	c, cClient := rbdFanoutThirdCluster(t, ctx, a, b, aClient, bClient)
 	clusters := []*ceph.Container{a, b, c}
 	clients := []testcontainers.Container{aClient, bClient, cClient}

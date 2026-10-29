@@ -32,7 +32,7 @@ func TestPostTestVerificationLogEnvelope(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, opts := integrationImages(t)
-	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))...)
+	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))...)
 	recorder := &finalizationRecorder{TB: t}
 	var finalization *ceph.Finalization
 	if cluster != nil {

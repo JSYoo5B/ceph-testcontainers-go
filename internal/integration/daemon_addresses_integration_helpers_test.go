@@ -19,7 +19,7 @@ import (
 func testDaemonAddresses(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	opts = append([]testcontainers.ContainerCustomizer{ceph.WithMonitorCount(2), ceph.WithManagerCount(2), ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)}, opts...)
+	opts = append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(2).WithManagerCount(2).WithOSDCount(1).WithPoolDefaults(1, 1))}, opts...)
 	cluster, client := newServiceCluster(t, opts...)
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)

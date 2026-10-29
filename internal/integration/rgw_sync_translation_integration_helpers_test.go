@@ -87,7 +87,7 @@ func newRGWSyncTranslationFixture(t *testing.T, ctx context.Context, opts ...tes
 	// Independent scenarios share realm/storage bootstrap. Reserve bounded
 	// fixture time for strict four-minute observations and child cleanup after
 	// a failing scenario; per-object/checkpoint and exclusion windows stay fixed.
-	source, destination, _, _ := newMultiClusterPair(t, append(opts, ceph.WithOSDCount(1))...)
+	source, destination, _, _ := newMultiClusterPair(t, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))...)
 	image, _ := integrationImages(t)
 	rgwImage := os.Getenv("CEPH_TEST_RGW_IMAGE")
 	if rgwImage == "" {

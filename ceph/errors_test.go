@@ -398,8 +398,7 @@ func TestKeyTypeSupportFollowsTheFirstMonitorImage(t *testing.T) {
 	if _, err := (&Container{}).generateKeyArgs(""); err != nil {
 		t.Fatal(err)
 	}
-	options := &clientOptions{}
-	if err := WithClientKeyType("des")(options); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := resolveClientOptions("", []ClientOptions{ClientOptions{}.WithKeyType("des")}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("an unknown cipher returned %v", err)
 	}
 }

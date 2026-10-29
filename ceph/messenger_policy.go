@@ -125,39 +125,47 @@ func (policy ClientMessengerPolicy) configLines() ([]string, error) {
 	return lines, nil
 }
 
-// ClientContainerOption customizes the configuration that WithClient and
-// WithClientIdentity write into a client container.
-type ClientContainerOption func(*clientContainerOptions) error
-
-type clientContainerOptions struct {
-	messengerLines []string
+// ClientContainerOptions is the configuration that WithClient and
+// WithClientIdentity write into a client container. It is a plain value with
+// chainable, value-returning methods; the zero value changes nothing. Within
+// one value a later call of the same method replaces the earlier one. A field
+// set by two values is refused with ErrInvalidRequest, even when they agree.
+//
+//	cluster.WithClient(ceph.ClientContainerOptions{}.WithMessengerPolicy(policy))
+type ClientContainerOptions struct {
+	messengerPolicy    ClientMessengerPolicy
+	messengerPolicySet bool
 }
 
-// WithClientMessengerPolicy writes the policy into the [client] section of the
+// WithMessengerPolicy writes the policy into the [client] section of the
 // client container's ceph.conf. It applies only to the Ceph clients in that
 // container, overrides the central configuration and MessengerV2Secure's
-// global modes, and leaves the cluster's own control CLI alone.
-func WithClientMessengerPolicy(policy ClientMessengerPolicy) ClientContainerOption {
-	return func(o *clientContainerOptions) error {
-		lines, err := policy.configLines()
-		if err != nil {
-			return invalid(fmt.Errorf("client messenger policy: %w", err))
-		}
-		o.messengerLines = lines
-		return nil
-	}
+// global modes, and leaves the cluster's own control CLI alone. The value keeps
+// its own copy of the lists; a nil list keeps Ceph's default and a non-nil
+// empty list is refused.
+func (o ClientContainerOptions) WithMessengerPolicy(policy ClientMessengerPolicy) ClientContainerOptions {
+	o.messengerPolicy = ClientMessengerPolicy{MonitorsAndManagers: slices.Clone(policy.MonitorsAndManagers), OtherDaemons: slices.Clone(policy.OtherDaemons)}
+	o.messengerPolicySet = true
+	return o
 }
 
-// clientContainerConfig applies the options to a client container's config.
-func clientContainerConfig(config []byte, opts []ClientContainerOption) ([]byte, error) {
-	var settings clientContainerOptions
-	for _, opt := range opts {
-		if opt == nil {
-			return nil, invalidRequest("client container option is nil")
+// clientContainerConfig merges and validates configs and applies them to a
+// client container's config.
+func clientContainerConfig(config []byte, configs []ClientContainerOptions) ([]byte, error) {
+	var lines []string
+	set := false
+	for _, c := range configs {
+		if !c.messengerPolicySet {
+			continue
 		}
-		if err := opt(&settings); err != nil {
-			return nil, err
+		if set {
+			return nil, invalidRequest("client Messenger policy set by more than one ClientContainerOptions")
 		}
+		var err error
+		if lines, err = c.messengerPolicy.configLines(); err != nil {
+			return nil, invalid(fmt.Errorf("client messenger policy: %w", err))
+		}
+		set = true
 	}
-	return withConfigSectionValues(config, "client", settings.messengerLines), nil
+	return withConfigSectionValues(config, "client", lines), nil
 }

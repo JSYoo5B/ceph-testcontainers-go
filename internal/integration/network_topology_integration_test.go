@@ -269,7 +269,7 @@ func entityIP(t *testing.T, addr string) netip.Addr {
 func TestFiveMonitorQuorumAndNetworkRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithMonitorCount(5))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(5)))
 	if len(clusteraccess.Monitors(t, cluster)) != 5 {
 		t.Fatal("fixture did not construct five monitors")
 	}

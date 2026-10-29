@@ -109,7 +109,7 @@ func testCephFSMDSOSDPath(t *testing.T, osdCount int) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	netem := netemImage(t)
-	m := startCephFSSingleMDS(t, ctx, ceph.WithOSDCount(osdCount))
+	m := startCephFSSingleMDS(t, ctx, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(osdCount)))
 	const path, directory = "/mds-osd-path", "/journaled"
 	const writerDir, waiterDir = "/tmp/mds-osd-writer", "/tmp/mds-osd-waiter"
 	writerAsok, waiterAsok := writerDir+"/client.asok", waiterDir+"/client.asok"

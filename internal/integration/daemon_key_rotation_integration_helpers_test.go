@@ -35,7 +35,7 @@ func testDaemonKeyRotation(t *testing.T) {
 	if err := os.WriteFile(tick, []byte("[mon]\nmon_tick_interval = 1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cluster, _ := newServiceCluster(t, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
+	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
 		ceph.WithAuth(ceph.AuthConfig{ServiceTicketTTL: 10 * time.Second}), ceph.WithConfigFile(tick))
 	osd, mgr := clusteraccess.OSDs(t, cluster)[0], cluster.ManagerContainer()
 

@@ -33,7 +33,7 @@ func testRBDMirrorPeerPathCut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	netem := netemImage(t)
-	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, ceph.WithOSDCount(1))
+	source, destination, sourceClient, destinationClient := newMultiClusterPair(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	const pool = "tc-rbd-path"
 	const image = pool + "/cut"
 	for _, cluster := range []*ceph.Container{source, destination} {

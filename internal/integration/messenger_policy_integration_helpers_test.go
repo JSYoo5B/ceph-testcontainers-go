@@ -99,7 +99,7 @@ func policyOutcome(code int, output string) string {
 func testMessengerPolicy(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
+	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeSecure, Managers: modeCRC, OSDs: modeSecure}))}, opts...)...)
 	if staticFacts(cluster).MessengerMode == ceph.MessengerV2Only {
 		checkMessengerV2Only(t, ctx, cluster)
@@ -135,13 +135,13 @@ func testMessengerPolicy(t *testing.T, opts ...testcontainers.ContainerCustomize
 		t.Fatal(err)
 	}
 	monCRC := startPolicyClient(t, ctx, cluster, "MON and MGR crc", cluster.WithClientIdentity(reader,
-		ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeCRC})), "--id", reader.User())
+		ceph.ClientContainerOptions{}.WithMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeCRC})), "--id", reader.User())
 	monSecure := startPolicyClient(t, ctx, cluster, "MON and MGR secure", cluster.WithClient(
-		ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeSecure})))
+		ceph.ClientContainerOptions{}.WithMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeSecure})))
 	osdCRC := startPolicyClient(t, ctx, cluster, "OSD crc", cluster.WithClient(
-		ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeSecureCRC, OtherDaemons: modeCRC})))
+		ceph.ClientContainerOptions{}.WithMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeSecureCRC, OtherDaemons: modeCRC})))
 	osdSecure := startPolicyClient(t, ctx, cluster, "OSD secure", cluster.WithClient(
-		ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeSecureCRC, OtherDaemons: modeSecure})))
+		ceph.ClientContainerOptions{}.WithMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeSecureCRC, OtherDaemons: modeSecure})))
 
 	monCRC.expect(t, ctx, "bootstrap", "rejected", "mon", "stat")
 	monSecure.expect(t, ctx, "bootstrap", "accepted", "mon", "stat")
@@ -200,10 +200,10 @@ func testMessengerPolicy(t *testing.T, opts ...testcontainers.ContainerCustomize
 func testClientPolicyOverridesSecureOnly(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
+	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure))}, opts...)...)
 	crc := startPolicyClient(t, ctx, cluster, "crc", cluster.WithClient(
-		ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeCRC})))
+		ceph.ClientContainerOptions{}.WithMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeCRC})))
 	inherited := startPolicyClient(t, ctx, cluster, "inherited", cluster.WithClient())
 	crc.expect(t, ctx, "secure-only", "rejected", "mon", "stat")
 	inherited.expect(t, ctx, "secure-only", "accepted", "mon", "stat")
@@ -405,7 +405,7 @@ func testMessengerV2OnlyCRC(t *testing.T) {
 	if imageHasKeyTypes(t, ctx, image) {
 		keyType = ceph.CipherAES256K
 	}
-	cluster, _ := newServiceClusterWithOptions(t, image, append(roles, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
+	cluster, _ := newServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only)), ceph.WithAuth(ceph.AuthConfig{KeyType: keyType}),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC})))...)
 	if staticFacts(cluster).MessengerMode != ceph.MessengerV2Only {
@@ -423,11 +423,11 @@ func testMessengerV2OnlyCRC(t *testing.T) {
 	}
 
 	crc := startPolicyClient(t, ctx, cluster, "crc", cluster.WithClient(
-		ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeCRC, OtherDaemons: modeCRC})))
+		ceph.ClientContainerOptions{}.WithMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeCRC, OtherDaemons: modeCRC})))
 	secure := startPolicyClient(t, ctx, cluster, "secure", cluster.WithClient(
-		ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeSecure, OtherDaemons: modeSecure})))
+		ceph.ClientContainerOptions{}.WithMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeSecure, OtherDaemons: modeSecure})))
 	ordered := startPolicyClient(t, ctx, cluster, "secure, then crc", cluster.WithClient(
-		ceph.WithClientMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeSecureCRC, OtherDaemons: modeSecureCRC})))
+		ceph.ClientContainerOptions{}.WithMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeSecureCRC, OtherDaemons: modeSecureCRC})))
 	for _, client := range []policyClient{crc, ordered} {
 		client.expect(t, ctx, "crc only", "accepted", "mon", "stat")
 		client.expect(t, ctx, "crc only", "accepted", "crash", "ls")

@@ -101,7 +101,7 @@ type bandwidthFixture struct {
 func newBandwidthFixture(t *testing.T, ctx context.Context, customizers ...testcontainers.ContainerCustomizer) bandwidthFixture {
 	t.Helper()
 	image := netemImage(t)
-	cluster, client := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithPoolDefaults(1, 1)}, customizers...)...)
+	cluster, client := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPoolDefaults(1, 1))}, customizers...)...)
 	if _, err := cluster.Ceph(ctx, "osd", "pool", "create", bandwidthPool, "16"); err != nil {
 		t.Fatal(err)
 	}

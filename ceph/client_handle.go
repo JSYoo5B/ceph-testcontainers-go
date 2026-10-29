@@ -64,7 +64,7 @@ func (client *ClientConfig) UpdateCaps(ctx context.Context, caps ClientCaps) err
 // usable descriptor of that key once the import turns out to have applied,
 // or replaces the key anew once it turns out not to have. A returned
 // descriptor never changes afterwards.
-func (client *ClientConfig) ReplaceKey(ctx context.Context, opts ...ClientOption) (*ClientConfig, error) {
+func (client *ClientConfig) ReplaceKey(ctx context.Context, opts ...ClientOptions) (*ClientConfig, error) {
 	c, err := client.cluster("ClientConfig.ReplaceKey")
 	if err != nil {
 		return nil, err

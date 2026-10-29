@@ -62,7 +62,7 @@ func monLossCallsShort(calls []monLossCall) string {
 func TestMonMajorityLossClientCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 22*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithMonitorCount(5))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(5)))
 	monitors := clusteraccess.Monitors(t, cluster)
 	if len(monitors) != 5 {
 		t.Fatal("fixture did not construct five monitors")

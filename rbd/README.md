@@ -187,13 +187,13 @@ An erasure-coded pool can hold image data, not metadata. Create it with
 
 ```golang
 cluster, err := rbd.Run(ctx, ceph.DefaultImage,
-	ceph.WithOSDCount(3),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)),
 	rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
-	ceph.WithPools(ceph.PoolConfig{
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{
 		Name:        "volumes-data",
 		Application: "rbd",
 		ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true},
-	}),
+	})),
 )
 // rbd create --size 64M --data-pool volumes-data volumes/disk
 // (go-ceph: set the data pool in the image options before CreateImage)
@@ -241,7 +241,7 @@ without `WithPools` or pools created later with `CreatePool`.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithPools(ceph.PoolConfig{Name: "images", Application: "rbd"}),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{Name: "images", Application: "rbd"})),
 )
 // ... cleanup and error handling ...
 if err := rbd.InitPool(ctx, cluster, "images"); err != nil {

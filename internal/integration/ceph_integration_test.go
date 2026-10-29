@@ -24,7 +24,7 @@ func TestClusterLifecycle(t *testing.T) {
 	defer cancel()
 	started := time.Now()
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithOSDCount(2))
+	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	// One finalization archives a failure before the client and the
 	// cluster are removed; go test -artifacts keeps the archive.

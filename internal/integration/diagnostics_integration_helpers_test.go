@@ -29,7 +29,7 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	opts := []testcontainers.ContainerCustomizer{
-		ceph.WithPools(ceph.PoolConfig{Name: "tc-diagnostics", Application: "rados"}),
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{Name: "tc-diagnostics", Application: "rados"})),
 		cephfs.WithFilesystems(cephfs.Config{Name: "tc-diagnostics-fs"}),
 		rgw.WithGateways(rgw.Config{Name: "diagnostics"}),
 	}
@@ -469,7 +469,7 @@ func diagnosticsProcesses(t *testing.T, ctx context.Context, control testcontain
 func testCanceledDiagnostics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))
+	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))
 	pause, err := fault.Pause(ctx, cluster, cluster.ManagerContainer())
 	if pause != nil {
 		defer func() { _ = pause.Resume(context.Background()) }()

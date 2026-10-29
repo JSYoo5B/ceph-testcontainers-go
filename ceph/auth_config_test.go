@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"errors"
 	"maps"
 	"slices"
 	"strings"
@@ -120,12 +121,23 @@ func TestGenerateKeyArgsFollowsKeyTypeOption(t *testing.T) {
 	}
 }
 
-func TestWithClientKeyTypeRefusesUnknownCiphers(t *testing.T) {
-	var settings clientOptions
-	if err := WithClientKeyType("aes128")(&settings); err == nil {
-		t.Fatal("unknown cipher accepted")
+func TestClientOptionsKeyTypeComposition(t *testing.T) {
+	for _, cipher := range []CephxCipher{"aes128", ""} {
+		if _, err := resolveClientOptions(CipherAES, []ClientOptions{ClientOptions{}.WithKeyType(cipher)}); !errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("cipher %q accepted: %v", cipher, err)
+		}
 	}
-	if err := WithClientKeyType(CipherAES256K)(&settings); err != nil || settings.keyType != CipherAES256K {
-		t.Fatalf("aes256k: %v %q", err, settings.keyType)
+	if got, err := resolveClientOptions(CipherAES, []ClientOptions{ClientOptions{}.WithKeyType(CipherAES256K)}); err != nil || got != CipherAES256K {
+		t.Fatalf("aes256k: %v %q", err, got)
+	}
+	if got, err := resolveClientOptions(CipherAES, []ClientOptions{{}, ClientOptions{}.WithKeyType("des").WithKeyType(CipherAES256K)}); err != nil || got != CipherAES256K {
+		t.Fatalf("a later call in one value did not replace the earlier one: %v %q", err, got)
+	}
+	if got, err := resolveClientOptions(CipherAES256K, nil); err != nil || got != CipherAES256K {
+		t.Fatalf("no value did not keep the default: %v %q", err, got)
+	}
+	twice := ClientOptions{}.WithKeyType(CipherAES)
+	if _, err := resolveClientOptions("", []ClientOptions{twice, twice}); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("a key type set by two values was accepted: %v", err)
 	}
 }

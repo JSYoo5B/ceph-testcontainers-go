@@ -26,7 +26,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 		cloneTimelineClone{Identity: replacementID, Expect: []string{cloneTimelineSubmit, cloneTimelineTerminal, cloneTimelineDataCheck, cloneTimelineFinalDataCheck, cloneTimelineCleanup}},
 		cloneTimelineClone{Identity: faultedID, Expect: []string{cloneTimelineSubmit, cloneTimelineCollisionSetup, cloneTimelineDelayRestore, cloneTimelineTerminal, cloneTimelineSourceRelease, cloneTimelineDataCheck, cloneTimelineCleanup}})
 	defer timeline.Emit(t)
-	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), cephfs.WithFilesystems(cephfs.Config{Name: filesystem})}
+	options := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), cephfs.WithFilesystems(cephfs.Config{Name: filesystem})}
 	if host {
 		options = append(options, ceph.WithHostNetwork())
 	}

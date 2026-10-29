@@ -35,13 +35,13 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	defer func() { _ = docker.Close() }()
 	baseline := dockerObjects(t, ctx, docker)
 
-	cluster, client := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(2), ceph.WithPoolDefaults(1, 1)}, opts...)...)
+	cluster, client := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithPoolDefaults(1, 1))}, opts...)...)
 
 	// A cluster whose bootstrap failed is read as far as it got. It starts
 	// after the first cluster, so that no image pull counts against its
 	// short startup timeout.
 	image, imageOpts := integrationImages(t)
-	partial, err := ceph.Run(ctx, image, append(imageOpts, ceph.WithOSDCount(1), ceph.WithStartupTimeout(3*time.Second))...)
+	partial, err := ceph.Run(ctx, image, append(imageOpts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), ceph.WithStartupTimeout(3*time.Second))...)
 	if partial == nil || err == nil {
 		if partial != nil {
 			_ = partial.Terminate(context.WithoutCancel(ctx))

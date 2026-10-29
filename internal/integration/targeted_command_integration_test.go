@@ -61,7 +61,7 @@ func TestTargetedCommandRecipe(t *testing.T) {
 	defer cancel()
 	image, roles := integrationImages(t)
 	const filesystem, pool, object = "tc-targets", "tc-targets", "targeted"
-	cluster, _ := newServiceClusterWithOptions(t, image, append(roles, ceph.WithOSDCount(2),
+	cluster, _ := newServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)),
 		cephfs.WithFilesystems(cephfs.Config{Name: filesystem}))...)
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 8, Replicas: 2, MinSize: 1}); err != nil {
 		t.Fatal(err)

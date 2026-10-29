@@ -18,7 +18,7 @@ func TestErasureCodedPools(t *testing.T) {
 	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithOSDCount(3))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	metadata, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 		Name: "tc-rbd-metadata", PGNum: 8, Replicas: 2, MinSize: 1, Application: "rbd",
 	})

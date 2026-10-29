@@ -96,7 +96,7 @@ func TestOSDMemoryOOMStep(t *testing.T) {
 	t.Logf("OSD_OOM_CONTROLLER euid=%d engine=%s arch=%s ncpu=%d", os.Geteuid(), info.Info.ServerVersion, runtime.GOARCH, info.Info.NCPU)
 
 	image, opts := integrationImages(t)
-	cluster, client := newServiceClusterWithOptions(t, image, append(opts, ceph.WithNoInitialOSDs())...)
+	cluster, client := newServiceClusterWithOptions(t, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
 	if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 		t.Fatal(err)
 	}

@@ -36,7 +36,7 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 	for i := range 2 {
 		go func() {
 			opts := append([]testcontainers.ContainerCustomizer(nil), imageOpts...)
-			opts = append(opts, ceph.WithOSDCount(2), ceph.WithStartupTimeout(5*time.Minute))
+			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)), ceph.WithStartupTimeout(5*time.Minute))
 			if mode == "host" {
 				opts = append(opts, ceph.WithHostNetwork())
 			}

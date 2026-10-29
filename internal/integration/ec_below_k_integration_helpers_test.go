@@ -71,7 +71,7 @@ func ecBelowKRead(t *testing.T, ctx context.Context, c *ceph.Container, client t
 func testECBelowK(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 17*time.Minute)
 	defer cancel()
-	c, client := newServiceCluster(t, ceph.WithOSDCount(3))
+	c, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	pool, err := c.CreatePool(ctx, ceph.PoolConfig{Name: "tc-below-k", Application: "rados", PGNum: 1, MinSize: 2, ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true}})
 	if err != nil {
 		t.Fatal("2+1 topology admission:", err)

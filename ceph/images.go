@@ -46,15 +46,18 @@ func (s ImageSet) normalized() (ImageSet, error) {
 // and validates like any Option before it creates a resource. The zero value
 // changes nothing.
 //
-//	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), ceph.WithOSDCount(1))
+//	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)))
 //
-// Run takes at most one WithImageOptions that selects an image set, and a
-// second selection is refused with ErrInvalidRequest even when it repeats the
-// first. The pattern for every configuration group, and the composition rules,
-// are in docs/contributing/configuration-composition.md.
+// Each method sets one field. Within one value a later call of the same method
+// replaces the earlier one. Run refuses a field that two WithImageOptions
+// options both set, even when they agree, so argument order never decides a
+// conflict. The pattern for every configuration group, and the composition
+// rules, are in docs/contributing/configuration-composition.md.
 type ImageOptions struct {
-	images    ImageSet
-	imagesSet bool
+	images            ImageSet
+	imagesSet         bool
+	cephfs, rgw       string
+	cephfsSet, rgwSet bool
 }
 
 // WithImageOptions is the grouped option function that carries an ImageOptions
@@ -64,33 +67,73 @@ func WithImageOptions(config ImageOptions) Option {
 	return func(o *options) error { return config.apply(o) }
 }
 
-// WithImageSet selects explicit role images, replacing an earlier WithImageSet of
-// the same value. The set is the one authoritative image configuration:
-// Essential starts the MON, MGR and OSD daemons, so the image argument of Run
-// must be empty or equal to Essential and is not a second input. An All set
-// supplies every role. A role that a requested feature needs and the set leaves
-// empty is refused; there is no fallback to Essential. An explicit empty set is
-// refused, not read as unspecified. Service image options (cephfs.WithMDSImage,
-// rgw.WithImage) replace the matching role whatever the order. The ImageSet is
-// copied.
+// WithImageSet selects explicit role images. The set is the one authoritative
+// image configuration: Essential starts the MON, MGR and OSD daemons, so the
+// image argument of Run must be empty or equal to Essential and is not a second
+// input. An All set supplies every role. A role that a requested feature needs
+// and the set leaves empty is refused; there is no fallback to Essential. An
+// explicit empty set is refused, not read as unspecified. WithCephFSImage and
+// WithRGWImage replace the matching role of the set. The ImageSet is copied.
 func (o ImageOptions) WithImageSet(images ImageSet) ImageOptions {
 	o.images, o.imagesSet = images, true
 	return o
 }
 
-// apply selects the image set of o in settings.
+// WithCephFSImage selects the image of the CephFS role: every metadata server
+// of the cluster, those started by Run with cephfs.WithFilesystems as well as
+// those started later. Without it MDS daemons use the Run image. Images().CephFS
+// reports it, so the daemons of cephfs/mirror.Run use it when that Run gets an
+// empty image. With WithImageSet it replaces the set's CephFS role. Use matching
+// Ceph versions. A blank image is refused.
+func (o ImageOptions) WithCephFSImage(image string) ImageOptions {
+	o.cephfs, o.cephfsSet = image, true
+	return o
+}
+
+// WithRGWImage selects the image of the RGW role: every gateway of the cluster,
+// those started by Run with rgw.WithGateways as well as those started later
+// with rgw.Start. Without it gateways use the Run image. Images().RGW reports
+// it, so the multisite setup clients use it too; multisite gateways take their
+// image as an argument of multisite.Run and multisite.RunTopology instead. With
+// WithImageSet it replaces the set's RGW role. Use matching Ceph versions. A
+// blank image is refused.
+func (o ImageOptions) WithRGWImage(image string) ImageOptions {
+	o.rgw, o.rgwSet = image, true
+	return o
+}
+
+// apply validates the fields o set and, only if all are valid, writes them to
+// the settings. It refuses a field that an earlier WithImageOptions already set.
 func (o ImageOptions) apply(settings *options) error {
-	if !o.imagesSet {
-		return nil
-	}
-	if settings.imageSet != nil {
+	if o.imagesSet && settings.imageSet != nil {
 		return fmt.Errorf("image set selected twice")
 	}
-	normalized, err := o.images.normalized()
-	if err != nil {
-		return err
+	if o.cephfsSet && settings.cephfsOverride != "" {
+		return fmt.Errorf("CephFS image selected twice")
 	}
-	settings.imageSet = &normalized
+	if o.rgwSet && settings.rgwOverride != "" {
+		return fmt.Errorf("RGW image selected twice")
+	}
+	if o.cephfsSet && strings.TrimSpace(o.cephfs) == "" {
+		return fmt.Errorf("CephFS image must not be blank")
+	}
+	if o.rgwSet && strings.TrimSpace(o.rgw) == "" {
+		return fmt.Errorf("RGW image must not be blank")
+	}
+	var normalized ImageSet
+	if o.imagesSet {
+		var err error
+		if normalized, err = o.images.normalized(); err != nil {
+			return err
+		}
+		settings.imageSet = &normalized
+	}
+	if o.cephfsSet {
+		settings.cephfsOverride = o.cephfs
+	}
+	if o.rgwSet {
+		settings.rgwOverride = o.rgw
+	}
 	return nil
 }
 
@@ -108,8 +151,7 @@ func configureImages(o *options) error {
 	if o.essentialImage != s.Essential {
 		return fmt.Errorf("Run image %q must be empty or equal the essential image %q of the image set", o.essentialImage, s.Essential)
 	}
-	// A service image option replaces its role whichever of it and the image
-	// set came first.
+	// WithCephFSImage and WithRGWImage replace their role of the image set.
 	if o.cephfsOverride != "" {
 		s.CephFS = o.cephfsOverride
 	}

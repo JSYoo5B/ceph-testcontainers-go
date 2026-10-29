@@ -90,7 +90,7 @@ import (
 func TestWithCeph(t *testing.T) {
 	ctx := t.Context()
 	cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-		ceph.WithPools(ceph.PoolConfig{Name: "app"}),
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithPools(ceph.PoolConfig{Name: "app"})),
 	)
 	testcontainers.CleanupContainer(t, cluster)
 	if err != nil {

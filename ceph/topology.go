@@ -128,7 +128,7 @@ func (c *Container) WaitForQuorum(ctx context.Context) error {
 // WithDaemonImage starts this one MON from another image; the default is the
 // essential image. Options are validated before the topology lock is taken or
 // anything is created.
-func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonOption) (*MonitorContainer, error) {
+func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonOptions) (*MonitorContainer, error) {
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid monitor name")
 	}
@@ -692,7 +692,7 @@ func monitorConfigComment(line string) (int, error) {
 // WithDaemonImage starts this one MGR from another image; the default is the
 // essential image. Options are validated before the topology lock is taken or
 // any identity is created.
-func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonOption) (*ManagerContainer, error) {
+func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonOptions) (*ManagerContainer, error) {
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid manager name")
 	}

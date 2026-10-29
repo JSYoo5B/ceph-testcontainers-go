@@ -102,7 +102,7 @@ func awaitMonmap(t *testing.T, ctx context.Context, cluster *ceph.Container, nam
 func testMapPropagationReceipt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, ceph.WithMonitorCount(3))
+	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3)))
 	if err := cluster.WaitForQuorum(ctx); err != nil {
 		t.Fatal(err)
 	}

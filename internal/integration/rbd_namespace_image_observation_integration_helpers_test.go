@@ -27,7 +27,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()
-	opts := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(2)}
+	opts := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2))}
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	}

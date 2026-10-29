@@ -48,8 +48,8 @@ kept.
 
 | Daemon | Handle | Traps |
 | --- | --- | --- |
-| MON | `cluster.Monitors(ctx)` | With one MON, the MON is also the control container, so every fixture call fails until it starts again. Use `ceph.WithMonitorCount(3)` or more. |
-| MGR | `cluster.Managers(ctx)` | Use `ceph.WithManagerCount(2)` so a standby takes over; `ManagerStatus` reports the active one. |
+| MON | `cluster.Monitors(ctx)` | With one MON, the MON is also the control container, so every fixture call fails until it starts again. Use `ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3))` or more. |
+| MGR | `cluster.Managers(ctx)` | Use `ceph.WithClusterConfig(ceph.ClusterConfig{}.WithManagerCount(2))` so a standby takes over; `ManagerStatus` reports the active one. |
 | OSD | `cluster.OSDs(ctx)` | A down OSD is marked out after `mon_osd_down_out_interval` (600 s). Hold `noout` to avoid data movement. `Start` does not wait for up and in: wait with `WaitForClean`, `OSDStates` or `HealthDetails`. |
 | MDS | `fs.MDSs()` | Configure `StandbyMDS` so a standby takes the rank. `fs.WaitReady` also waits for standby capacity, so restart the stopped daemon first. |
 | RGW | `rgw.Gateways(ctx, cluster)` | In bridge mode Docker can map a new port on restart: call `S3Endpoint` again. |

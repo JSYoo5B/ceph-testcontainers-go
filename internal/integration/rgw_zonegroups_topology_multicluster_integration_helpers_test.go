@@ -22,7 +22,7 @@ import (
 func rgwTopologyClusters(t *testing.T, ctx context.Context, count int, host bool) (string, string, []*ceph.Container) {
 	t.Helper()
 	control, options := integrationImages(t)
-	options = append(options, ceph.WithOSDCount(1))
+	options = append(options, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	if host {
 		options = append(options, ceph.WithHostNetwork())
 	}

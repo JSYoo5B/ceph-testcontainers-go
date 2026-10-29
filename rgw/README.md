@@ -119,10 +119,7 @@ single-copy pools:
 
 ```golang
 cluster, err := rgw.Run(ctx, ceph.DefaultImage,
-	ceph.WithMonitorCount(1),
-	ceph.WithManagerCount(1),
-	ceph.WithOSDCount(1),
-	ceph.WithPoolDefaults(1, 1),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(1).WithManagerCount(1).WithOSDCount(1).WithPoolDefaults(1, 1)),
 )
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
@@ -249,7 +246,7 @@ and objects. Multisite scope is configured separately with
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithOSDCount(3),
+	ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)),
 	rgw.WithGateways(
 		rgw.Config{Name: "gateway-a"},
 		rgw.Config{Name: "gateway-b", SkipUserCreation: true},
@@ -260,7 +257,7 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 #### WithImage
 
 ```golang
-func WithImage(image string) ceph.Option
+func ceph.WithImageOptions(ceph.ImageOptions{}.WithRGWImage(image string)) ceph.Option
 ```
 
 Selects the image for every gateway of the cluster, both the ones started by
@@ -269,7 +266,7 @@ passed to `Run`. Use the same Ceph release as the essential image.
 
 ```golang
 cluster, err := rgw.Run(ctx, "registry.example.com/ceph:20.2.4-all",
-	rgw.WithImage("registry.example.com/ceph:20.2.4-rgw"),
+	ceph.WithImageOptions(ceph.ImageOptions{}.WithRGWImage("registry.example.com/ceph:20.2.4-rgw")),
 )
 ```
 
@@ -278,7 +275,7 @@ matter most for RGW tests:
 
 | Option | Effect on gateways |
 | --- | --- |
-| `ceph.WithOSDCount(n)` | One OSD is enough for most S3 tests and starts faster. Erasure-coded storage classes need at least K+M OSDs. |
+| `ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(n))` | One OSD is enough for most S3 tests and starts faster. Erasure-coded storage classes need at least K+M OSDs. |
 | `ceph.WithHostNetwork()` | Gateways bind ports on the Docker host. Ports are reserved automatically, so several clusters can share a host. See [guides/host-network.md](../docs/guides/host-network.md). |
 | `NetworkConfig.WithHostAddress(addr)` | The address gateways bind and advertise in host mode. `S3Endpoint` returns it directly. |
 | `ceph.WithConfigFile(path)` | Native `ceph.conf` entries for every daemon. RGW runs as `client.admin`, so RGW options belong in `[client]` or `[client.admin]`. |
@@ -1082,7 +1079,7 @@ The default gateway user is enough for a single principal. Create one user per
 principal when the test checks permissions between users:
 
 ```golang
-cluster := startCluster(t, ceph.WithOSDCount(1))
+cluster := startCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 gateway, err := rgw.Start(ctx, cluster, rgw.Config{SkipUserCreation: true})
 if err != nil {
 	t.Fatal(err)
@@ -1186,7 +1183,7 @@ last the given number of seconds. Disabling the background lifecycle threads
 and processing the bucket explicitly makes the test deterministic:
 
 ```golang
-cluster := startCluster(t, ceph.WithOSDCount(1))
+cluster := startCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 applyConfig(t, cluster,
 	ceph.ConfigSetting{Section: "client.admin", Name: "rgw_lc_debug_interval", Value: "2"},
 	ceph.ConfigSetting{Section: "client.admin", Name: "rgw_enable_lc_threads", Value: "false"},
@@ -1240,7 +1237,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 http.server.HTTPServer(("0.0.0.0", int(sys.argv[1])), Handler).serve_forever()
 `
 
-cluster := startCluster(t, ceph.WithOSDCount(1))
+cluster := startCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 gateway, err := rgw.Start(ctx, cluster, rgw.Config{SkipUserCreation: true})
 user, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: "notifier"})
 accessKey, secretKey, err := user.Credentials()
@@ -1331,7 +1328,7 @@ the session tokens needs the same `rgw_sts_key`, so set it before starting the
 gateways:
 
 ```golang
-cluster := startCluster(t, ceph.WithOSDCount(1))
+cluster := startCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 
 // Generate a CryptoKey for session tokens. Never log it.
 control, err := cluster.ControlContainer(ctx)
@@ -1427,7 +1424,7 @@ The Swift API is served under `/swift` next to S3. With
 (`/swift/v1/AUTH_<uid>`):
 
 ```golang
-cluster := startCluster(t, ceph.WithOSDCount(1))
+cluster := startCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 applyConfig(t, cluster,
 	ceph.ConfigSetting{Section: "client.admin", Name: "rgw_swift_account_in_url", Value: "true"},
 )
@@ -1537,7 +1534,7 @@ It is disabled by default. Enable it before the gateway starts and shorten the
 flush settings:
 
 ```golang
-cluster := startCluster(t, ceph.WithOSDCount(1))
+cluster := startCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 applyConfig(t, cluster,
 	ceph.ConfigSetting{Section: "client.admin", Name: "rgw_enable_usage_log", Value: "true"},
 	ceph.ConfigSetting{Section: "client.admin", Name: "rgw_usage_log_tick_interval", Value: "1"},
@@ -1651,7 +1648,7 @@ resp, err := adminRequest(ctx, http.MethodPost, endpoint, path(limit), gateway.R
 and to reshard a bucket on demand, use `Admin`:
 
 ```golang
-cluster := startCluster(t, ceph.WithOSDCount(1))
+cluster := startCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 // Stop the background resharder from racing the explicit reshard below.
 applyConfig(t, cluster, ceph.ConfigSetting{
 	Section: "client.admin", Name: "rgw_dynamic_resharding", Value: "false",
@@ -1756,7 +1753,7 @@ a bucket in it with `LocationConstraint`:
 
 ```golang
 // Three OSDs for the 2+1 erasure-coded class.
-cluster := startCluster(t, ceph.WithOSDCount(3))
+cluster := startCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 for _, pool := range []ceph.PoolConfig{
 	{Name: "app-index", Application: "rgw", PGNum: 1},
 	{Name: "app-extra", Application: "rgw", PGNum: 1},

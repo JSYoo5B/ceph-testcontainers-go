@@ -25,7 +25,7 @@ func TestCephFSPins(t *testing.T) {
 		t.Run(network, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 16*time.Minute)
 			defer cancel()
-			opts := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), cephfs.WithFilesystems(cephfs.Config{Name: "pins", ActiveMDS: 2})}
+			opts := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), cephfs.WithFilesystems(cephfs.Config{Name: "pins", ActiveMDS: 2})}
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}

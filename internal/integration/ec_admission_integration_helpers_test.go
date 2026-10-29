@@ -119,7 +119,7 @@ func ecAdmissionInstanceOf(t *testing.T, ctx context.Context, osd *ceph.OSDConta
 func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithOSDCount(3))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	config := ceph.PoolConfig{Name: "tc-ec-admission", Application: "rados", PGNum: 1, MinSize: minSize, ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true}}
 	pool, err := cluster.CreatePool(ctx, config)
 	if err != nil {

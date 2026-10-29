@@ -23,7 +23,7 @@ func TestOSDPolicies(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
-			opts := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(4)}
+			opts := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(4))}
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}

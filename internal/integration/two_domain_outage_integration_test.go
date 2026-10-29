@@ -43,8 +43,8 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	for i, host := range hosts {
 		layout = append(layout, ceph.OSDConfig{Host: host, Rack: "rack-" + string(rune('a'+i)), Root: "tc-storage", DeviceClass: "fast"})
 	}
-	cluster, client := newServiceCluster(t, ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithStartupTimeout(3*time.Minute),
-		ceph.WithInitialOSDs(layout...), ceph.WithPoolDefaults(3, 2), ceph.WithDefaultCRUSHRoot("tc-storage"))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2)), ceph.WithStartupTimeout(3*time.Minute),
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(layout...).WithPoolDefaults(3, 2).WithDefaultCRUSHRoot("tc-storage")))
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: twoDomainPool, PGNum: 1, Application: "rados", Replicas: 3, MinSize: 2,
 		FailureDomain: "host", CRUSHRoot: "tc-storage", DeviceClass: "fast"}); err != nil {
 		t.Fatal(err)

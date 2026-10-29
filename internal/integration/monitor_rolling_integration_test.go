@@ -32,8 +32,7 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()
 			opts := []testcontainers.ContainerCustomizer{
-				ceph.WithMonitorCount(3), ceph.WithManagerCount(1), ceph.WithOSDCount(2),
-				ceph.WithPools(ceph.PoolConfig{Name: "tc-mon-rolling", Application: "rados"}),
+				ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(1).WithOSDCount(2).WithPools(ceph.PoolConfig{Name: "tc-mon-rolling", Application: "rados"})),
 				cephfs.WithFilesystems(cephfs.Config{Name: "tc-mon-rolling-fs"}), rgw.WithGateways(),
 				ceph.WithStartupTimeout(3 * time.Minute),
 			}

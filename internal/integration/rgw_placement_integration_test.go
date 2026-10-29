@@ -37,7 +37,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, options := integrationImages(t)
-	options = append(options, ceph.WithOSDCount(1))
+	options = append(options, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	clusters := make([]*ceph.Container, 2)
 	for i := range clusters {
 		cluster, err := ceph.Run(ctx, image, options...)

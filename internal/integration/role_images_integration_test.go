@@ -43,7 +43,7 @@ func ownRoleCluster(t *testing.T, c *ceph.Container) {
 // back to. Its toolkit executor survives MON membership changes independently.
 func TestRoleImagesOrdinaryRBD(t *testing.T) {
 	images := ceph.ImageSet{Essential: explicitRoleImage(t, "CEPH_TEST_ESSENTIAL_IMAGE"), Client: explicitRoleImage(t, "CEPH_TEST_CLIENT_IMAGE")}
-	c, err := ceph.Run(t.Context(), "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), ceph.WithOSDCount(1))
+	c, err := ceph.Run(t.Context(), "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	ownRoleCluster(t, c)
 	if err != nil {
 		t.Fatal(err)

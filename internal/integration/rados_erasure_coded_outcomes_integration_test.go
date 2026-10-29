@@ -28,7 +28,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithOSDCount(3))
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	const appendOnly, overwrite = "tc-ec-append", "tc-ec-overwrite"
 	// MinSize 2 (K) keeps the PGs active while one shard is missing.
 	for _, config := range []ceph.PoolConfig{

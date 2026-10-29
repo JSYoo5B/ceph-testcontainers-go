@@ -157,7 +157,7 @@ before any resource is created.
 
 - **What stays out.** `WithHostNetwork` is Docker execution policy and stays a
   testcontainers-style function. `WithClientMessengerPolicy` is a
-  `ClientContainerOption` of `WithClient`, not a `Run` setting.
+  `ClientContainerOptions` of `WithClient`, not a `Run` setting.
 - **Rules applied.** The zero value changes nothing. Every field records that it
   was set, so the default family `AddressIPv4` and `MessengerDefault` are settings
   (a second carrier cannot override them), while `WithHostAddress("")`, an unknown

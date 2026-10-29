@@ -29,13 +29,13 @@ func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 		name string
 		opt  Option
 	}{
-		{"OSD count", WithOSDCount(0)},
-		{"MON count", WithMonitorCount(0)},
-		{"MGR count", WithManagerCount(-1)},
-		{"empty OSD layout", WithInitialOSDs()},
-		{"invalid OSD layout", WithInitialOSDs(OSDConfig{Host: "bad host"})},
-		{"conflicting OSD host", WithInitialOSDs(OSDConfig{Host: "host1", Rack: "rack1"}, OSDConfig{Host: "host1", Rack: "rack2"})},
-		{"invalid pool defaults", WithPoolDefaults(2, 3)},
+		{"OSD count", WithClusterConfig(ClusterConfig{}.WithOSDCount(0))},
+		{"MON count", WithClusterConfig(ClusterConfig{}.WithMonitorCount(0))},
+		{"MGR count", WithClusterConfig(ClusterConfig{}.WithManagerCount(-1))},
+		{"empty OSD layout", WithClusterConfig(ClusterConfig{}.WithInitialOSDs())},
+		{"invalid OSD layout", WithClusterConfig(ClusterConfig{}.WithInitialOSDs(OSDConfig{Host: "bad host"}))},
+		{"conflicting OSD host", WithClusterConfig(ClusterConfig{}.WithInitialOSDs(OSDConfig{Host: "host1", Rack: "rack1"}, OSDConfig{Host: "host1", Rack: "rack2"}))},
+		{"invalid pool defaults", WithClusterConfig(ClusterConfig{}.WithPoolDefaults(2, 3))},
 		{"OSD block size", WithOSDStorage(OSDStorage{}.WithBlockSize(0))},
 		{"negative OSD block size", WithOSDStorage(OSDStorage{}.WithBlockSize(-1))},
 		{"small OSD block size", WithOSDStorage(OSDStorage{}.WithBlockSize((64 << 20) - 1))},

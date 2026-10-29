@@ -21,7 +21,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
 	essentialImage, options := integrationImages(t)
-	options = append(options, ceph.WithOSDCount(1))
+	options = append(options, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	if host {
 		options = append(options, ceph.WithHostNetwork())
 	}
@@ -30,7 +30,7 @@ func testRGWThreeZoneTopology(t *testing.T, host bool) {
 	for i := range clusters {
 		clusterOptions := append([]testcontainers.ContainerCustomizer(nil), options...)
 		if i == 0 {
-			clusterOptions = append(clusterOptions, ceph.WithMonitorCount(3))
+			clusterOptions = append(clusterOptions, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3)))
 		}
 		cluster, err := ceph.Run(ctx, essentialImage, clusterOptions...)
 		if cluster != nil {

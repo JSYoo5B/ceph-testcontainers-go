@@ -193,7 +193,7 @@ func TestRunNetworkConfigRefusesBeforeEffectsAndKeepsOtherSettings(t *testing.T)
 	effective, err := admit(t, "image",
 		WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressDualStack).WithSeparateClusterNetwork()),
 		WithNetworkConfig(NetworkConfig{}.WithMessengerMode(MessengerV2Only)),
-		(serviceHooks{}).WithServiceImage("rgw", "selected-gateway"), WithOSDCount(3), raw)
+		roleImageOption("rgw", "selected-gateway"), WithClusterConfig(ClusterConfig{}.WithOSDCount(3)), raw)
 	wantAdmitted(t, err)
 	if effective.addressFamily != AddressDualStack || !effective.separateClusterNetwork || effective.messengerMode != MessengerV2Only ||
 		effective.rgwOverride != "selected-gateway" || effective.osds != 3 || calls != 0 {

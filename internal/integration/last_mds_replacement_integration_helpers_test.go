@@ -27,7 +27,7 @@ func testLastMDSReplacement(t *testing.T, host bool) {
 	defer cancel()
 	started := time.Now()
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithOSDCount(2), testcontainers.WithEnv(map[string]string{"CEPH_ARGS": "--mds-beacon-grace=3600"}))
+	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)), testcontainers.WithEnv(map[string]string{"CEPH_ARGS": "--mds-beacon-grace=3600"}))
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	}

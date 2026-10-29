@@ -94,13 +94,13 @@ func TestReplaceClientKeyKeepsIdentityAndCaps(t *testing.T) {
 	if again, err := client.ReplaceKey(t.Context()); err != nil || again != next || w.counts["import"] != imports {
 		t.Fatalf("a repeated replacement returned %p (want %p), %v, after %d imports", again, next, err, w.counts["import"]-imports)
 	}
-	third, err := next.ReplaceKey(t.Context(), WithClientKeyType(CipherAES))
+	third, err := next.ReplaceKey(t.Context(), ClientOptions{}.WithKeyType(CipherAES))
 	if err != nil {
 		t.Fatal(err)
 	}
 	w.requireClient(t, clientKey(third.keyring, "client.app"))
 	if cipher, _ := keyCipher(clientKey(third.keyring, "client.app")); cipher != CipherAES {
-		t.Fatalf("WithClientKeyType(aes) gave a %s key", cipher)
+		t.Fatalf("ClientOptions{}.WithKeyType(aes) gave a %s key", cipher)
 	}
 	if err := third.Delete(t.Context()); err != nil {
 		t.Fatal(err)

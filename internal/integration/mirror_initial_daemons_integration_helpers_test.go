@@ -103,7 +103,7 @@ func (o mirrorInitialDockerOracle) assertPolicyOnly(t *testing.T, ctx context.Co
 
 func mirrorInitialPair(t *testing.T, host bool) (*ceph.Container, *ceph.Container, testcontainers.Container, testcontainers.Container) {
 	t.Helper()
-	opts := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1)}
+	opts := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1))}
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	}

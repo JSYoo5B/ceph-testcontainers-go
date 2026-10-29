@@ -35,7 +35,7 @@ import (
 func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)}, opts...)...)
+	cluster, client := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1))}, opts...)...)
 	control := clusteraccess.ControlContainer(t, cluster)
 	logNativeRuntime(t, ctx, cluster, map[string]testcontainers.Container{
 		"control": control, "mgr": cluster.ManagerContainer(), "osd": clusteraccess.OSDs(t, cluster)[0], "client": client,

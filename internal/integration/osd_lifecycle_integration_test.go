@@ -31,7 +31,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()
-			opts := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(3)}
+			opts := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3))}
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}

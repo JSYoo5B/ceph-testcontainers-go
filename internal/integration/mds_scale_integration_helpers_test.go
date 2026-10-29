@@ -24,7 +24,7 @@ func testCephFSMDSScaleTopology(t *testing.T, replay bool) {
 	if replay {
 		config.StandbyMDS, config.StandbyReplay = 1, true
 	}
-	cluster, client := newServiceCluster(t, ceph.WithOSDCount(1), cephfs.WithFilesystems(
+	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), cephfs.WithFilesystems(
 		config, cephfs.Config{Name: "other"},
 	))
 	fs, other := cephFSOwnedFilesystem(t, cluster, "scale"), cephFSOwnedFilesystem(t, cluster, "other")

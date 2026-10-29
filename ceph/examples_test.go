@@ -13,7 +13,7 @@ import (
 
 func ExampleRun() {
 	ctx := context.Background()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDCount(2))
+	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))
 	defer func() {
 		if err := testcontainers.TerminateContainer(cluster); err != nil {
 			log.Printf("failed to terminate container: %s", err)
@@ -36,7 +36,7 @@ func ExampleRun() {
 func ExampleRun_services() {
 	ctx := context.Background()
 	cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-		ceph.WithOSDCount(3),
+		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)),
 		rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
 		cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
 		rgw.WithGateways(rgw.Config{Name: "s3"}),
@@ -60,7 +60,7 @@ func ExampleRun_services() {
 func ExampleWithImageOptions() {
 	ctx := context.Background()
 	images := ceph.ImageSet{Essential: "registry.example.com/ceph-core:20.2.4", Client: "registry.example.com/ceph-client:20.2.4"}
-	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), ceph.WithOSDCount(1))
+	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	defer func() {
 		if err := testcontainers.TerminateContainer(cluster); err != nil {
 			log.Printf("failed to terminate container: %s", err)
@@ -76,7 +76,7 @@ func ExampleWithImageOptions() {
 func ExampleWithOSDStorage() {
 	ctx := context.Background()
 	storage := ceph.OSDStorage{}.WithBlockSize(256 << 20).WithObjectStore(ceph.OSDMemStore)
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDStorage(storage), ceph.WithOSDCount(1))
+	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDStorage(storage), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	defer func() {
 		if err := testcontainers.TerminateContainer(cluster); err != nil {
 			log.Printf("failed to terminate container: %s", err)
@@ -92,7 +92,21 @@ func ExampleWithOSDStorage() {
 func ExampleWithNetworkConfig() {
 	ctx := context.Background()
 	network := ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack).WithSeparateClusterNetwork()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithNetworkConfig(network), ceph.WithOSDCount(1))
+	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithNetworkConfig(network), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	defer func() {
+		if err := testcontainers.TerminateContainer(cluster); err != nil {
+			log.Printf("failed to terminate container: %s", err)
+		}
+	}()
+	if err != nil {
+		panic(err)
+	}
+}
+
+func ExampleWithClusterConfig() {
+	ctx := context.Background()
+	topology := ceph.ClusterConfig{}.WithMonitorCount(3).WithOSDCount(3).WithPoolDefaults(3, 2)
+	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithClusterConfig(topology))
 	defer func() {
 		if err := testcontainers.TerminateContainer(cluster); err != nil {
 			log.Printf("failed to terminate container: %s", err)

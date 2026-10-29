@@ -22,7 +22,7 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	const filesystem, extraPool = "subvolumes", "subvolumes-additional"
-	options := []testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), cephfs.WithFilesystems(cephfs.Config{
+	options := []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), cephfs.WithFilesystems(cephfs.Config{
 		Name: filesystem, AdditionalDataPools: []ceph.PoolConfig{{Name: extraPool}},
 	})}
 	if host {

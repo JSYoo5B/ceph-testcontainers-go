@@ -29,7 +29,7 @@ func testClientRevocation(t *testing.T) {
 	defer cancel()
 	image, opts := integrationImages(t)
 	ciphers, auth := clientKeyCiphers(t, ctx, image)
-	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1), ceph.WithAuth(auth))...)
+	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)), ceph.WithAuth(auth))...)
 	payload := prepareHeldObject(t, ctx, cluster)
 	if _, err := cluster.CreateClient(ctx, "bystander", ceph.ClientCaps{Mon: "allow r"}); err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func testClientRevocation(t *testing.T) {
 	for _, cipher := range ciphers {
 		t.Run(string(cipher), func(t *testing.T) {
 			caps := ceph.ClientCaps{Mon: "allow r", MGR: "allow r", OSD: "allow rw pool=data namespace=tenant-a"}
-			client, err := cluster.CreateClient(ctx, "recoverable-"+string(cipher), caps, ceph.WithClientKeyType(cipher))
+			client, err := cluster.CreateClient(ctx, "recoverable-"+string(cipher), caps, ceph.ClientOptions{}.WithKeyType(cipher))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -175,7 +175,7 @@ func testClientRevocation(t *testing.T) {
 	})
 
 	t.Run("three MONs", func(t *testing.T) {
-		cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithNoInitialOSDs(), ceph.WithMonitorCount(3))...)
+		cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithMonitorCount(3)))...)
 		client, err := cluster.CreateClient(ctx, "recoverable", ceph.ClientCaps{Mon: "allow r", MGR: "allow r"})
 		if err != nil {
 			t.Fatal(err)

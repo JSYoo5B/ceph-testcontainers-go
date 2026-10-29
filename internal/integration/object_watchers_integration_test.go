@@ -61,7 +61,7 @@ func TestPausedObjectWatcher(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = append(opts, ceph.WithOSDCount(2))
+			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}

@@ -223,7 +223,7 @@ func runDualStackClient(t *testing.T, ctx context.Context, client testcontainers
 func testDualStackAddressFamily(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, ceph.WithOSDCount(2), ceph.WithMonitorCount(2), ceph.WithManagerCount(2),
+	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithMonitorCount(2).WithManagerCount(2)),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack)))
 	if staticFacts(cluster).AddressFamily != ceph.AddressDualStack {
 		t.Fatalf("cluster reports %s", staticFacts(cluster).AddressFamily)
@@ -296,7 +296,7 @@ func testDualStackAddressFamily(t *testing.T) {
 func testDualStackSeparateClusterNetwork(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, ceph.WithOSDCount(2), ceph.WithPoolDefaults(2, 2), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork().WithAddressFamily(ceph.AddressDualStack)))
+	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithPoolDefaults(2, 2)), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork().WithAddressFamily(ceph.AddressDualStack)))
 	if !staticFacts(cluster).HasSeparateClusterNetwork {
 		t.Fatal("no replication bridge")
 	}
