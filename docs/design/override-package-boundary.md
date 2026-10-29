@@ -658,15 +658,14 @@ fault hooks (`internal/faulthook/faulthook_test.go`).
 ## 9. Migration order
 
 The v0.x policy is a direct migration with no alias. Each pull request that moves
-a kind removes its `Container` method and handle type and migrates every caller,
-doc, CHANGELOG fragment and upgrade mapping in the same change. Smallest and least
-risky first:
+a kind removes its `Container` method and handle type and migrates every caller
+and doc in the same change. Smallest and least risky first:
 
 | PR | Content | Behavior invariants | Acceptance evidence | Native implication |
 | --- | --- | --- | --- | --- |
-| I-1 (#251, merged) | `DebugLevelReceipter`, `DebugLevelNotApplied`, `Reason`, `TrackDebugLevel(DebugLevelReceipter)`, manifest `reason`. `ceph` only; no move. | The manifest of every existing case is byte-identical; a nil or zero-value handle still records `Present: false`. | New tests pin: nil interface, typed nil, zero-value handle, a zero receipt from a foreign receipter, a not-applied receipt (`Present: true`, reason redacted and bounded), a real window; existing finalization tests unchanged. Catalogue regenerated and approved; fragment (kind `feature`). | None. Docker-free. |
+| I-1 (#251, merged) | `DebugLevelReceipter`, `DebugLevelNotApplied`, `Reason`, `TrackDebugLevel(DebugLevelReceipter)`, manifest `reason`. `ceph` only; no move. | The manifest of every existing case is byte-identical; a nil or zero-value handle still records `Present: false`. | New tests pin: nil interface, typed nil, zero-value handle, a zero receipt from a foreign receipter, a not-applied receipt (`Present: true`, reason redacted and bounded), a real window; existing finalization tests unchanged. Catalogue regenerated and approved. | None. Docker-free. |
 | I-2 (#252, merged) | Three registry kinds replace the three maps; `deletePool` uses the registry. Handles stay in `ceph` and hold a token. No public change. | Overlap texts, `Restore` refusal "not tracked", `Pool.Remove` refusal text, Terminate leaves them alone. | The existing `config_test.go`, `osd_policy_test.go`, `mgr_modules_test.go`, `pool_removal_test.go` pass unchanged; new registry tests for the three kinds (phase tracked, no reservation left after each early return, stale token). | None. |
-| I-3 (#259, merged) | Package birth: `hookreg.Override`, `overridehook` (common operations), `sharedOverridePolicies`, `override.AddBlocklist`/`BlocklistHandle`, the `go/parser` coverage test, the import test, new catalogue directory, move record, upgrade guide, fragment (`api-break`). | Blocklist reservation, expiry check, retry after a lost reply, `Restore` refused after `Terminate`. | Tests of `fencing_test.go` that need the handle move to `override` against `servicehook.TestCluster`; negative controls for each. | 4 Go files call it; the planner selects their batches, and the native result of the exact head is the only native claim. |
+| I-3 (#259, merged) | Package birth: `hookreg.Override`, `overridehook` (common operations), `sharedOverridePolicies`, `override.AddBlocklist`/`BlocklistHandle`, the `go/parser` coverage test, the import test, new catalogue directory, move record. | Blocklist reservation, expiry check, retry after a lost reply, `Restore` refused after `Terminate`. | Tests of `fencing_test.go` that need the handle move to `override` against `servicehook.TestCluster`; negative controls for each. | 4 Go files call it; the planner selects their batches, and the native result of the exact head is the only native claim. |
 | I-4 (#260, merged) | `override.SetFullRatios`. | Session captured once; FSID check; deadline before the lock; ordered steps; tracked before the first step. | `full_ratios_test.go` override tests move; observation tests stay. | 7 files. |
 | I-5 (#261, merged) | `override.SetMGRModule`. | Name check, protect before disable, always-on rules, readiness not claimed. | `mgr_modules_test.go` override tests move. | 4 files. |
 | I-6 (#262, merged) | `override.SetOSDFlag`. | Supported-flag list, overlap, restore refusing outside changes. | `osd_policy_test.go` override tests move. | 32 files; mechanical rewrite. |
@@ -781,6 +780,5 @@ This note records a design and its merged implementation. It does not establish:
   restored and leaves no registry entry; the table of section 4.4 is a test table.
 - No exported field, method or hook exposes `Container.mu`, a keyring, config
   secrets or an executor that accepts arbitrary Ceph arguments.
-- Callers, docs, `CHANGELOG.md` fragment and the upgrade mapping land in the same
-  pull request as the removal of the method.
+- Callers and docs land in the same pull request as the removal of the method.
 - Native results are quoted from the exact head and attempt of that pull request.

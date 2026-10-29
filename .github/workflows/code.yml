@@ -154,18 +154,9 @@ jobs:
       - name: Check supplied-image Linux consumer harness without Docker
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: python3 -m unittest discover -s internal/integration/goceph -p test_run.py -v
-      # Runs on every head, including a documentation-only one and one on which
-      # an earlier step failed; only a cancelled run skips it.
-      - name: Validate release-note fragments
-        if: ${{ !cancelled() }}
-        run: python3 .github/scripts/release_fragments.py
-      # Same always-run rule. It reads CHANGELOG.md and docs/changes only; without
-      # release tags in the checkout it reports the tag comparison as SKIPPED.
-      - name: Check the released changelog range
-        if: ${{ !cancelled() }}
-        run: python3 .github/scripts/release_assemble.py check
-      # Reads tracked text files, documentation included, so it also runs on a
-      # documentation-only head.
+      # Reads tracked text files, documentation included, so it runs on every
+      # head, including a documentation-only one and one on which an earlier
+      # step failed; only a cancelled run skips it.
       - name: Check the image role vocabulary
         if: ${{ !cancelled() }}
         run: python3 .github/scripts/check_image_vocabulary.py

@@ -11,18 +11,12 @@ For changes to Ceph behavioral bug compatibility, follow the
 
 ## Release notes
 
-For a release-worthy change (a breaking API or import change, user-visible
-behavior, a compatibility or requirement change, or a supported-scope change),
-add a fragment `docs/changes/<change-id>.md` instead of editing the shared
-`Unreleased` section of `CHANGELOG.md`. Follow
-[Release-note fragments](docs/contributing/release-fragments.md): choose a
-unique change identifier, use `kind: none` with a reason when you decided that
-no note is needed, and link a migration guide for an `api-break`. The legacy
-`Unreleased` section stays editable while open pull requests drain; do not
-rewrite published sections.
-
-Editing a package page (`docs/<package>.md`) needs no fragment by itself;
-judge it by the content, and a public API catalogue change still needs one.
+A pull request does not edit `CHANGELOG.md` and does not add release-note
+fragments, no-note declarations, compatibility ledgers, migration tables or
+upgrade guides. Record intent and validation in the pull request description.
+Before 1.0, a breaking change removes the old names without aliases. The
+maintainer writes concise final release notes at release time, from the previous
+release and the final source (see [Preparing a release](docs/contributing/releasing.md)).
 
 ## Privacy review
 
@@ -59,9 +53,7 @@ Regeneration never approves a changed API. After a `git merge` that conflicts in
 files, run `go run ./internal/tools/apinaming resolve`; it rewrites them only when the merge
 just composes the rows of two approved parents (see [Testing](docs/contributing/testing.md)). A move of API between packages, or
 a deliberate removal or addition of a declaration row, needs a record under
-`docs/design/api-naming/moves/`, and any catalogue change needs a release-note
-fragment under `docs/changes/` (kind `none` with a reason is accepted). Check
-with `go run ./internal/tools/apinaming moves -base origin/main`; `SKIPPED`
+`docs/design/api-naming/moves/`. Check with `go run ./internal/tools/apinaming moves -base origin/main`; `SKIPPED`
 means no base was available and is not a pass. See
 [Testing](docs/contributing/testing.md).
 

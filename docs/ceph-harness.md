@@ -22,7 +22,7 @@ import (
 ```
 
 The names moved here from `ceph` in v0.4 without aliases or forwarding
-declarations; see the [upgrade guide](guides/upgrading-harness-packages.md).
+declarations.
 
 ## Shared cluster
 
