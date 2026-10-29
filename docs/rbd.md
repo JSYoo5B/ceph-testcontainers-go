@@ -203,7 +203,7 @@ cluster, err := rbd.Run(ctx, ceph.DefaultImage,
 
 Every `ceph.Run` option is accepted as well (`ceph.WithOSDCount`,
 `ceph.WithHostNetwork`, `ceph.WithImageOptions`, `ceph.WithConfigFile`,
-`ceph.WithMessengerMode`, ...); see [ceph.md](ceph.md). The generic options of
+`NetworkConfig.WithMessengerMode`, ...); see [ceph.md](ceph.md). The generic options of
 the `testcontainers` package (for example `testcontainers.WithEnv`,
 `testcontainers.WithLogger` or any `testcontainers.CustomizeRequestOption`)
 also apply, but they customise only the MON/control container. Module options

@@ -53,7 +53,7 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 		{
 			name: "secure-messenger-config-file",
 			run:  ceph.Run,
-			opts: []testcontainers.ContainerCustomizer{ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithConfigFile(configFile)},
+			opts: []testcontainers.ContainerCustomizer{ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)), ceph.WithConfigFile(configFile)},
 			pool: "tc-combo",
 			check: func(t *testing.T, ctx context.Context, cluster *ceph.Container) {
 				if mode := staticFacts(cluster).MessengerMode; mode != ceph.MessengerV2Secure {

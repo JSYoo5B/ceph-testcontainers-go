@@ -41,12 +41,12 @@ func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 		{"small OSD block size", WithOSDStorage(OSDStorage{}.WithBlockSize((64 << 20) - 1))},
 		{"startup timeout", WithStartupTimeout(0)},
 		{"unknown OSD object store", WithOSDStorage(OSDStorage{}.WithObjectStore("filestore"))},
-		{"host address requires host mode", WithHostAddress("127.0.0.1")},
-		{"host address empty", WithHostAddress("")},
-		{"host address unspecified", WithHostAddress("0.0.0.0")},
-		{"host address broadcast", WithHostAddress("255.255.255.255")},
-		{"host address multicast", WithHostAddress("224.0.0.1")},
-		{"host address IPv6", WithHostAddress("::1")},
+		{"host address requires host mode", WithNetworkConfig(NetworkConfig{}.WithHostAddress("127.0.0.1"))},
+		{"host address empty", WithNetworkConfig(NetworkConfig{}.WithHostAddress(""))},
+		{"host address unspecified", WithNetworkConfig(NetworkConfig{}.WithHostAddress("0.0.0.0"))},
+		{"host address broadcast", WithNetworkConfig(NetworkConfig{}.WithHostAddress("255.255.255.255"))},
+		{"host address multicast", WithNetworkConfig(NetworkConfig{}.WithHostAddress("224.0.0.1"))},
+		{"host address IPv6", WithNetworkConfig(NetworkConfig{}.WithHostAddress("::1"))},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cluster, err := Run(context.Background(), DefaultImage, test.opt)

@@ -16,7 +16,7 @@ func TestDualStackAddressFamily(t *testing.T) {
 }
 
 // TestDualStackSeparateClusterNetwork combines AddressDualStack with
-// WithSeparateClusterNetwork.
+// NetworkConfig.WithSeparateClusterNetwork.
 func TestDualStackSeparateClusterNetwork(t *testing.T) {
 	parallelWhenEnabled(t)
 	testDualStackSeparateClusterNetwork(t)

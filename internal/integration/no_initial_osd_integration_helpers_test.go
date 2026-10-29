@@ -273,7 +273,7 @@ func testNoInitialOSDStorage(t *testing.T, host bool) {
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	} else {
-		opts = append(opts, ceph.WithSeparateClusterNetwork())
+		opts = append(opts, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()))
 	}
 	var customizers atomic.Int32
 	opts = append(opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))

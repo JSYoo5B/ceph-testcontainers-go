@@ -89,7 +89,7 @@ func TestWithConfigFileRejectsUnsafeInput(t *testing.T) {
 		"crush rule":       {"[global]\nosd_pool_default_crush_rule = 1\n", "use WithDefaultCRUSHRoot"},
 		"block size":       {"[osd]\nbluestore_block_size = 1\n", "use OSDStorage.WithBlockSize"},
 		"auth":             {"[global]\nauth_client_required = none\n", "Cephx setup"},
-		"messenger mode":   {"[global]\nms_mon_client_mode = secure\n", "use WithMessengerMode, WithMessengerPolicy or WithClientMessengerPolicy"},
+		"messenger mode":   {"[global]\nms_mon_client_mode = secure\n", "use NetworkConfig.WithMessengerMode, NetworkConfig.WithMessengerPolicy or WithClientMessengerPolicy"},
 		"messenger bind":   {"[global]\nms_bind_ipv6 = true\n", "WithHostNetwork"},
 		"logging":          {"[global]\nlog_to_stderr = false\n", "container output"},
 		"crash dir":        {"[global]\ncrash dir = /tmp/crash\n", "CollectCrashMetadata reads /var/lib/ceph/crash"},

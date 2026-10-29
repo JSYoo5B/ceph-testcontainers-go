@@ -180,10 +180,10 @@ var reservedConfigKeys = map[string]string{
 	"mon_host":                    "is managed by the fixture",
 	"mon_initial_members":         "is managed by the fixture; use WithMonitorCount",
 	"mon_addr":                    "is managed by the fixture",
-	"public_network":              "is managed by the fixture; use WithHostNetwork, WithSeparateClusterNetwork or WithAddressFamily",
-	"cluster_network":             "is managed by the fixture; use WithSeparateClusterNetwork",
-	"public_addr":                 "is managed by the fixture; use WithHostAddress",
-	"cluster_addr":                "is managed by the fixture; use WithHostAddress",
+	"public_network":              "is managed by the fixture; use WithHostNetwork, NetworkConfig.WithSeparateClusterNetwork or NetworkConfig.WithAddressFamily",
+	"cluster_network":             "is managed by the fixture; use NetworkConfig.WithSeparateClusterNetwork",
+	"public_addr":                 "is managed by the fixture; use NetworkConfig.WithHostAddress",
+	"cluster_addr":                "is managed by the fixture; use NetworkConfig.WithHostAddress",
 	"public_bind_addr":            "is managed by the fixture",
 	"cluster_bind_addr":           "is managed by the fixture",
 	"keyring":                     "is managed by the fixture's Cephx setup",
@@ -232,9 +232,9 @@ func reservedConfigKey(key string) string {
 	case strings.HasPrefix(key, "auth_"):
 		return "is managed by the fixture's Cephx setup"
 	case reservedMessengerMode.MatchString(key):
-		return "is managed by the fixture; use WithMessengerMode, WithMessengerPolicy or WithClientMessengerPolicy"
+		return "is managed by the fixture; use NetworkConfig.WithMessengerMode, NetworkConfig.WithMessengerPolicy or WithClientMessengerPolicy"
 	case strings.HasPrefix(key, "ms_bind_") && key != dualStackOrderKey:
-		return "is managed by the fixture; use WithMessengerMode, WithAddressFamily or WithHostNetwork"
+		return "is managed by the fixture; use NetworkConfig.WithMessengerMode, NetworkConfig.WithAddressFamily or WithHostNetwork"
 	}
 	return ""
 }

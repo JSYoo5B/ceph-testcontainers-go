@@ -148,7 +148,7 @@ host-network endpoint.
 The returned `*fault.NetworkInterruption` has `ContainerID`, `NetworkName` and
 `OriginalAddress`. `Restore` reconnects the endpoint with its original IP, also
 its original IPv6 address on the dual-stack bridge of
-[WithAddressFamily](ceph.md#withaddressfamily)`(AddressIPv6)`, and its aliases, so the
+[NetworkConfig.WithAddressFamily](ceph.md#networkconfigwithaddressfamily)`(AddressIPv6)`, and its aliases, so the
 address Ceph advertises stays valid and the daemon is not restarted. An
 endpoint that someone else reattached with a different or missing address is
 refused, and the handle can be restored again once the endpoint is back. It is a whole-endpoint interruption, not a packet filter between
@@ -171,7 +171,7 @@ if cut != nil {
 if err != nil {
 	t.Fatal(err)
 }
-// With WithSeparateClusterNetwork, osd.0 keeps its public listener and process
+// With NetworkConfig.WithSeparateClusterNetwork, osd.0 keeps its public listener and process
 // but loses replication and heartbeat traffic until Restore.
 if err := cut.Restore(ctx); err != nil {
 	t.Fatal(err)

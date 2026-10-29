@@ -198,14 +198,14 @@ func TestRunImageSetMissingRoleIsRefusedWithoutFallback(t *testing.T) {
 	}
 }
 
-// A grouped carrier (WithImageOptions, WithOSDStorage) returns an Option and
+// A grouped carrier (WithImageOptions, WithOSDStorage, WithNetworkConfig) returns an Option and
 // takes its plain value, so wrapping its result in a second carrier does not
 // compile. Documentation snippets
 // are not compiled, so scan the godoc comments of this package and the package
-// reference pages for that mistake. ExampleWithImageOptions and
-// ExampleWithOSDStorage cover the correct form at compile time.
+// reference pages for that mistake. ExampleWithImageOptions,
+// ExampleWithOSDStorage and ExampleWithNetworkConfig cover the correct form at compile time.
 func TestDocumentedSnippetsDoNotWrapGroupedOptionsTwice(t *testing.T) {
-	doubleWrap := regexp.MustCompile(`With(?:ImageOptions|OSDStorage)\(\s*(?:ceph\.)?With(?:ImageOptions|OSDStorage)\(`)
+	doubleWrap := regexp.MustCompile(`With(?:ImageOptions|OSDStorage|NetworkConfig)\(\s*(?:ceph\.)?With(?:ImageOptions|OSDStorage|NetworkConfig)\(`)
 	var files []string
 	for _, pattern := range []string{"*.go", "../docs/*.md"} {
 		matches, err := filepath.Glob(pattern)

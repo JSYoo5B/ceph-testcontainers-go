@@ -13,7 +13,7 @@ import (
 // The policy of TestMessengerPolicy on a cluster without Messenger v1.
 func TestMessengerPolicyV2Only(t *testing.T) {
 	parallelWhenEnabled(t)
-	testMessengerPolicy(t, ceph.WithMessengerMode(ceph.MessengerV2Only))
+	testMessengerPolicy(t, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only)))
 }
 
 func TestMessengerV2OnlyCRC(t *testing.T) {

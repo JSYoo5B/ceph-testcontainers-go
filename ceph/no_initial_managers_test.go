@@ -96,8 +96,8 @@ func TestNoInitialManagersPreservesDefaultsAndPositivePoolComposition(t *testing
 
 func TestNoInitialManagersPreservesPlacementNetworkAndCombinedStorageGuards(t *testing.T) {
 	for _, opts := range [][]testcontainers.ContainerCustomizer{
-		{WithNoInitialManagers(), WithHostAddress("127.0.0.1")},
-		{WithNoInitialManagers(), WithHostNetwork(), WithSeparateClusterNetwork()},
+		{WithNoInitialManagers(), WithNetworkConfig(NetworkConfig{}.WithHostAddress("127.0.0.1"))},
+		{WithNoInitialManagers(), WithHostNetwork(), WithNetworkConfig(NetworkConfig{}.WithSeparateClusterNetwork())},
 		{WithNoInitialManagers(), WithOSDCount(1), WithPools(PoolConfig{Name: "data", Replicas: 2})},
 		{WithNoInitialManagers(), WithInitialOSDs(OSDConfig{Root: "elsewhere"})},
 		{WithNoInitialManagers(), WithNoInitialOSDs(), WithPools(PoolConfig{Name: "data"})},
@@ -116,7 +116,7 @@ func TestNoInitialManagersCanceledRunDoesNotAllocateOrCustomize(t *testing.T) {
 	for _, opts := range [][]testcontainers.ContainerCustomizer{
 		{WithNoInitialManagers()},
 		{WithNoInitialManagers(), WithHostNetwork(), WithPools(PoolConfig{Name: "data"})},
-		{WithNoInitialManagers(), WithMonitorCount(3), WithSeparateClusterNetwork()},
+		{WithNoInitialManagers(), WithMonitorCount(3), WithNetworkConfig(NetworkConfig{}.WithSeparateClusterNetwork())},
 		{WithNoInitialManagers(), WithNoInitialOSDs()},
 	} {
 		var customizers atomic.Int32

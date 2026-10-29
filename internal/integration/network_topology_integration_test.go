@@ -35,7 +35,7 @@ func TestSeparateIPv6ClusterNetworksAndInterruptions(t *testing.T) {
 func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithSeparateClusterNetwork(), ceph.WithAddressFamily(family))
+	cluster, client := newServiceCluster(t, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork().WithAddressFamily(family)))
 	if !staticFacts(cluster).HasSeparateClusterNetwork || staticFacts(cluster).NetworkName == staticFacts(cluster).ClusterNetworkName {
 		t.Fatal("fixture did not create independent public/cluster bridges")
 	}

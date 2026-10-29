@@ -35,7 +35,7 @@ func TestMessengerSecureBootstrapRejectsCentralShadowInEveryScope(t *testing.T) 
 				if err == nil || change == nil || change.state.refused == nil || len(control.calls) != 0 || len(heldConfig(cluster)) != 0 {
 					t.Fatalf("secure bootstrap %s/%s/%s acquired an override or ran native commands", scope.Section, scope.Mask, scope.Name)
 				}
-				if !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), canonical) || !strings.Contains(err.Error(), "WithMessengerMode") || strings.Contains(err.Error(), scope.Value) {
+				if !errors.Is(err, ceph.ErrInvalidRequest) || !strings.Contains(err.Error(), canonical) || !strings.Contains(err.Error(), "NetworkConfig.WithMessengerMode") || strings.Contains(err.Error(), scope.Value) {
 					t.Fatal("bootstrap refusal omitted its precise reason or exposed the requested value")
 				}
 			}

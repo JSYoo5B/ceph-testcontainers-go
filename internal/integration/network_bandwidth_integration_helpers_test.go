@@ -270,7 +270,7 @@ func testNetworkBandwidth(t *testing.T) {
 func testNetworkBandwidthIPv6(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	f := newBandwidthFixture(t, ctx, ceph.WithAddressFamily(ceph.AddressIPv6))
+	f := newBandwidthFixture(t, ctx, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv6)))
 	inspection, err := f.client.Inspect(ctx)
 	if err != nil {
 		t.Fatal(err)

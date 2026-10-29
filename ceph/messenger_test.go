@@ -25,22 +25,30 @@ func TestMessengerModeValidationSelectionAndSnapshot(t *testing.T) {
 		t.Fatal("Messenger policy values changed")
 	}
 	settings := options{}
-	if err := WithMessengerMode(MessengerV2Only)(&settings); err != nil || settings.messengerMode != MessengerV2Only {
+	if err := WithNetworkConfig(NetworkConfig{}.WithMessengerMode(MessengerV2Only))(&settings); err != nil || settings.messengerMode != MessengerV2Only {
 		t.Fatal("MessengerV2Only was refused", err)
 	}
-	if err := WithMessengerMode(MessengerV2Secure)(&settings); err != nil {
+	selected := options{}
+	if err := WithNetworkConfig(NetworkConfig{}.WithMessengerMode(MessengerV2Secure))(&selected); err != nil {
 		t.Fatal(err)
 	}
 	for _, unknown := range []MessengerMode{-1, 3, 256} {
-		if err := WithMessengerMode(unknown)(&settings); err == nil || settings.messengerMode != MessengerV2Secure {
+		// A refused value leaves the selected mode and the recorded fields alone.
+		before := selected.networkSet
+		if err := WithNetworkConfig(NetworkConfig{}.WithMessengerMode(unknown))(&selected); err == nil || selected.networkSet != before || selected.messengerMode != MessengerV2Secure {
 			t.Fatal("unknown Messenger mode was accepted or replaced the selected policy")
 		}
-		if cluster, err := Run(t.Context(), "not-a-runnable-image", WithMessengerMode(unknown)); err == nil || cluster != nil {
+		if cluster, err := Run(t.Context(), "not-a-runnable-image", WithNetworkConfig(NetworkConfig{}.WithMessengerMode(unknown))); err == nil || cluster != nil {
 			t.Fatal("unknown Messenger mode reached Docker allocation")
 		}
 	}
-	if err := WithMessengerMode(MessengerDefault)(&settings); err != nil || settings.messengerMode != MessengerDefault {
-		t.Fatal("explicit default did not replace the previous option")
+	// A second carrier cannot replace the selection, not even with the default.
+	if err := WithNetworkConfig(NetworkConfig{}.WithMessengerMode(MessengerDefault))(&selected); err == nil || selected.messengerMode != MessengerV2Secure {
+		t.Fatal("a second carrier replaced the selected mode")
+	}
+	explicit := options{}
+	if err := WithNetworkConfig(NetworkConfig{}.WithMessengerMode(MessengerDefault))(&explicit); err != nil || explicit.messengerMode != MessengerDefault {
+		t.Fatal("explicit default was refused")
 	}
 	for _, mode := range []MessengerMode{MessengerDefault, MessengerV2Secure, MessengerV2Only} {
 		cluster := &Container{settings: options{messengerMode: mode}}
@@ -73,7 +81,7 @@ func TestMessengerBootstrapAndLateMonitorAddressPolicy(t *testing.T) {
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			settings := options{}
-			if err := WithMessengerMode(fixture.mode)(&settings); err != nil {
+			if err := WithNetworkConfig(NetworkConfig{}.WithMessengerMode(fixture.mode))(&settings); err != nil {
 				t.Fatal(err)
 			}
 			env := map[string]string{

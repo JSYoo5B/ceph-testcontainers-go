@@ -120,7 +120,7 @@ func testMessengerClientUnreachableMonitor(t *testing.T) {
 	defer cancel()
 	image, roles := integrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs(),
-		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeSecure, Managers: modeSecure}))
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only).WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeSecure, Managers: modeSecure})))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, ServiceCipher: ceph.CipherAES256K,
 		MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
 	cluster, client := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)

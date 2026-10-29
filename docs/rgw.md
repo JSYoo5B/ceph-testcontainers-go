@@ -280,10 +280,10 @@ matter most for RGW tests:
 | --- | --- |
 | `ceph.WithOSDCount(n)` | One OSD is enough for most S3 tests and starts faster. Erasure-coded storage classes need at least K+M OSDs. |
 | `ceph.WithHostNetwork()` | Gateways bind ports on the Docker host. Ports are reserved automatically, so several clusters can share a host. See [guides/host-network.md](guides/host-network.md). |
-| `ceph.WithHostAddress(addr)` | The address gateways bind and advertise in host mode. `S3Endpoint` returns it directly. |
+| `NetworkConfig.WithHostAddress(addr)` | The address gateways bind and advertise in host mode. `S3Endpoint` returns it directly. |
 | `ceph.WithConfigFile(path)` | Native `ceph.conf` entries for every daemon. RGW runs as `client.admin`, so RGW options belong in `[client]` or `[client.admin]`. |
 | `ceph.WithStartupTimeout(d)` | Bounds gateway startup and each `Gateway.Admin` call. |
-| `ceph.WithMessengerMode(...)` | Encrypts Ceph messenger traffic only. It does not enable HTTPS on gateways; use `Config.TLS`. |
+| `NetworkConfig.WithMessengerMode(...)` | Encrypts Ceph messenger traffic only. It does not enable HTTPS on gateways; use `Config.TLS`. |
 
 The generic options of the `testcontainers` package (for example
 `testcontainers.WithEnv`, `testcontainers.WithLogger`,
@@ -341,7 +341,7 @@ Returns the HTTP endpoint for S3 clients running in the test process, in the
 form `http://host:port`. In bridge mode it is the Docker-mapped port of the
 gateway's port 7480. In host mode it is the daemon port selected at startup on
 the advertised address; the default `127.0.0.1` is resolved through the Docker
-host, and an address given with `ceph.WithHostAddress` is returned as is.
+host, and an address given with `NetworkConfig.WithHostAddress` is returned as is.
 
 Configure clients with path-style addressing (`UsePathStyle: true` in the AWS
 SDK for Go) and sign with `Gateway.Region`.
@@ -1692,7 +1692,7 @@ documentation.
 
 `Config.TLS` starts Beast's HTTPS listener next to HTTP. The certificate must
 name the host that `S3SecureEndpoint` returns: `localhost` or `127.0.0.1` for a
-local Docker engine, or the address given with `ceph.WithHostAddress`.
+local Docker engine, or the address given with `NetworkConfig.WithHostAddress`.
 
 ```golang
 // A test CA and a server certificate for localhost.
@@ -1925,7 +1925,7 @@ The fixture never grants the global `admin` flag.
 - **Usage log persistence is asynchronous** even with a one-second flush
   interval.
 - **Rate limits** are enforced by each gateway separately.
-- **TLS** is native Beast TLS with no proxy. `WithMessengerMode` does not
+- **TLS** is native Beast TLS with no proxy. `NetworkConfig.WithMessengerMode` does not
   enable HTTPS. Clients must trust the CA themselves.
 - **Admin output** may contain keys; failed `Admin` calls never include native
   output.

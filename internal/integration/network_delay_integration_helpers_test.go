@@ -715,7 +715,7 @@ func testNetworkDelayPeerIPv6(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	image := netemImage(t)
-	cluster, client := newServiceCluster(t, ceph.WithPoolDefaults(1, 1), ceph.WithAddressFamily(ceph.AddressIPv6))
+	cluster, client := newServiceCluster(t, ceph.WithPoolDefaults(1, 1), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv6)))
 	objects := placeDelayObjects(t, ctx, cluster, client)
 	osds := clusteraccess.OSDs(t, cluster)
 	delayed, other := osds[0], osds[1]

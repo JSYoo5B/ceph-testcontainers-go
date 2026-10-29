@@ -343,8 +343,8 @@ func TestVerifyHostMonitorWrapsSentinel(t *testing.T) {
 func TestDescribeHostNetworkFailureNamesTheLikelyCause(t *testing.T) {
 	for _, test := range []struct{ name, os, daemon, address, want string }{
 		{"Docker Desktop", "Docker Desktop", "unix:///Users/u/.docker/run/docker.sock", "127.0.0.1", "host networking enabled"},
-		{"Docker Desktop VM address", "Docker Desktop", "unix:///Users/u/.docker/run/docker.sock", "192.168.65.3", "omit WithHostAddress"},
-		{"remote loopback", "Ubuntu 24.04 LTS", "tcp://192.0.2.10:2376", "127.0.0.1", "WithHostAddress"},
+		{"Docker Desktop VM address", "Docker Desktop", "unix:///Users/u/.docker/run/docker.sock", "192.168.65.3", "omit NetworkConfig.WithHostAddress"},
+		{"remote loopback", "Ubuntu 24.04 LTS", "tcp://192.0.2.10:2376", "127.0.0.1", "NetworkConfig.WithHostAddress"},
 		{"remote explicit address", "Ubuntu 24.04 LTS", "tcp://192.0.2.10:2376", "192.0.2.10", "bridge container"},
 		{"local Linux", "Ubuntu 24.04 LTS", "unix:///var/run/docker.sock", "127.0.0.1", "bridge container"},
 		{"unknown engine", "", "", "127.0.0.1", "bridge container"},
