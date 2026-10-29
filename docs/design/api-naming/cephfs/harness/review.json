@@ -1,0 +1,10 @@
+{
+  "schema": "ceph-api-naming-review/v2",
+  "package": "cephfs/harness",
+  "declarations_sha256": "698925325771b355674e8968c06eb89748c5446977c2dcae8f503734e41e612b",
+  "members_sha256": "fd8c0dae7dcebe3dab59163311cf2bcfd0f2fde905b06c190cd17ace117bf235",
+  "declarations": 11,
+  "members": 0,
+  "review": "api-naming-audit.md",
+  "page": "docs/cephfs-harness.md"
+}
