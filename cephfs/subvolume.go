@@ -142,42 +142,24 @@ func (fs *Filesystem) validateSubvolumeConfig(name, group, dataPool string, size
 // filesystem; using fs volume create would invoke an orchestrator and create
 // resources outside this fixture's ownership.
 func (fs *Filesystem) beginSubvolumeOperation(ctx context.Context) (context.Context, int64, func(), error) {
-	if err := ctx.Err(); err != nil {
+	ctx, done, err := fs.admitOperation(ctx, admissionSpec{
+		recheckCanceled: true,
+		refusal:         "CephFS filesystem must be an active filesystem created by this cluster",
+		check: func(ctx context.Context) (bool, error) {
+			c := fs.cluster
+			if servicehook.Closed(c) || filesystems(c).byName[fs.config.Name] != fs || fs.FilesystemName != fs.config.Name || fs.nativeIdentity == nil {
+				return false, nil
+			}
+			control, err := c.ControlContainer(ctx)
+			if err != nil {
+				return false, err
+			}
+			return control != nil, nil
+		},
+	})
+	if err != nil {
 		return ctx, 0, func() {}, err
 	}
-	if fs == nil || fs.cluster == nil {
-		return ctx, 0, func() {}, errors.New("CephFS filesystem is unavailable")
-	}
-	c := fs.cluster
-	if err := clusterutil.LockMutex(ctx, &filesystems(c).setupMu); err != nil {
-		return ctx, 0, func() {}, err
-	}
-	if err := ctx.Err(); err != nil {
-		filesystems(c).setupMu.Unlock()
-		return ctx, 0, func() {}, err
-	}
-	if err := servicehook.LockTopology(ctx, c); err != nil {
-		filesystems(c).setupMu.Unlock()
-		return ctx, 0, func() {}, err
-	}
-	valid := !servicehook.Closed(c) && filesystems(c).byName[fs.config.Name] == fs && fs.FilesystemName == fs.config.Name && fs.nativeIdentity != nil
-	timeout := servicehook.StartupTimeout(c)
-	if valid {
-		control, err := c.ControlContainer(ctx)
-		if err != nil {
-			servicehook.Unlock(c)
-			filesystems(c).setupMu.Unlock()
-			return ctx, 0, func() {}, err
-		}
-		valid = control != nil
-	}
-	servicehook.Unlock(c)
-	if !valid {
-		filesystems(c).setupMu.Unlock()
-		return ctx, 0, func() {}, errors.New("CephFS filesystem must be an active filesystem created by this cluster")
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	done := func() { cancel(); filesystems(c).setupMu.Unlock() }
 	state, err := fs.readNativePools(ctx)
 	if err != nil {
 		done()

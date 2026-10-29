@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
@@ -145,42 +144,21 @@ func (state *cephFSNativePools) poolByName(name string) (ceph.PoolState, error) 
 }
 
 func (fs *Filesystem) beginDataPoolOperation(ctx context.Context) (context.Context, func(), error) {
-	if err := ctx.Err(); err != nil {
-		return ctx, func() {}, err
-	}
-	if fs == nil || fs.cluster == nil {
-		return ctx, func() {}, errors.New("CephFS filesystem is unavailable")
-	}
-	c := fs.cluster
-	if err := clusterutil.LockMutex(ctx, &filesystems(c).setupMu); err != nil {
-		return ctx, func() {}, err
-	}
-	if err := ctx.Err(); err != nil {
-		filesystems(c).setupMu.Unlock()
-		return ctx, func() {}, err
-	}
-	if err := servicehook.LockTopology(ctx, c); err != nil {
-		filesystems(c).setupMu.Unlock()
-		return ctx, func() {}, err
-	}
-	valid := !servicehook.Closed(c) && filesystems(c).byName[fs.config.Name] == fs && fs.nativeIdentity != nil
-	timeout := servicehook.StartupTimeout(c)
-	if valid {
-		control, err := c.ControlContainer(ctx)
-		if err != nil {
-			servicehook.Unlock(c)
-			filesystems(c).setupMu.Unlock()
-			return ctx, func() {}, err
-		}
-		valid = control != nil
-	}
-	servicehook.Unlock(c)
-	if !valid {
-		filesystems(c).setupMu.Unlock()
-		return ctx, func() {}, errors.New("filesystem must have a confirmed creation identity in this active cluster")
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	return ctx, func() { cancel(); filesystems(c).setupMu.Unlock() }, nil
+	return fs.admitOperation(ctx, admissionSpec{
+		recheckCanceled: true,
+		refusal:         "filesystem must have a confirmed creation identity in this active cluster",
+		check: func(ctx context.Context) (bool, error) {
+			c := fs.cluster
+			if servicehook.Closed(c) || filesystems(c).byName[fs.config.Name] != fs || fs.nativeIdentity == nil {
+				return false, nil
+			}
+			control, err := c.ControlContainer(ctx)
+			if err != nil {
+				return false, err
+			}
+			return control != nil, nil
+		},
+	})
 }
 
 // DataPools reads the authoritative FSMap registration and current pool IDs.

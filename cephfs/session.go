@@ -244,33 +244,22 @@ func validateCephFSSessionTimeouts(requested SessionTimeouts) error {
 // beginSessionOperation serializes with other CephFS setup and confirms that
 // this handle is still the cluster's active owned filesystem.
 func (fs *Filesystem) beginSessionOperation(ctx context.Context) (context.Context, int64, func(), error) {
-	if err := ctx.Err(); err != nil {
-		return ctx, 0, func() {}, err
-	}
-	if fs == nil || fs.cluster == nil {
-		return ctx, 0, func() {}, errors.New("CephFS filesystem is unavailable")
-	}
-	c := fs.cluster
-	if err := clusterutil.LockMutex(ctx, &filesystems(c).setupMu); err != nil {
-		return ctx, 0, func() {}, err
-	}
-	if err := servicehook.LockTopology(ctx, c); err != nil {
-		filesystems(c).setupMu.Unlock()
-		return ctx, 0, func() {}, err
-	}
-	valid := !servicehook.Closed(c) && filesystems(c).byName[fs.config.Name] == fs && fs.FilesystemName == fs.config.Name && fs.nativeIdentity != nil
 	var fsID int64
-	if valid {
-		fsID = fs.nativeIdentity.id
+	ctx, done, err := fs.admitOperation(ctx, admissionSpec{
+		refusal: "CephFS filesystem must be an active filesystem created by this cluster",
+		check: func(context.Context) (bool, error) {
+			c := fs.cluster
+			if servicehook.Closed(c) || filesystems(c).byName[fs.config.Name] != fs || fs.FilesystemName != fs.config.Name || fs.nativeIdentity == nil {
+				return false, nil
+			}
+			fsID = fs.nativeIdentity.id
+			return true, nil
+		},
+	})
+	if err != nil {
+		return ctx, 0, func() {}, err
 	}
-	timeout := servicehook.StartupTimeout(c)
-	servicehook.Unlock(c)
-	if !valid {
-		filesystems(c).setupMu.Unlock()
-		return ctx, 0, func() {}, errors.New("CephFS filesystem must be an active filesystem created by this cluster")
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	return ctx, fsID, func() { cancel(); filesystems(c).setupMu.Unlock() }, nil
+	return ctx, fsID, done, nil
 }
 
 func (fs *Filesystem) readSessionTimeouts(ctx context.Context, fsID int64) (SessionTimeouts, error) {
