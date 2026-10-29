@@ -89,13 +89,13 @@ an owner approval.
 
 ## Run
 
-Change `312-run-image-set`. Proposal of the implementation side, not an owner
+Change `312-image-options`. Proposal of the implementation side, not an owner
 approval. `Run(ctx, img string, opts ...testcontainers.ContainerCustomizer)` and
 the `rbd`, `cephfs` and `rgw` `Run` signatures are unchanged: `Run` is the
 testcontainers-compatible entry point and its single trailing variadic stays the
 only place for configuration.
 
-- **A configuration value inside the existing variadic.** `ceph.RunOptions` is a
+- **A configuration value inside the existing variadic.** `ceph.ImageOptions` is a
   value with a chainable `WithImageSet`. It implements
   `testcontainers.ContainerCustomizer` with a `Customize` that does nothing, and
   `Run` recognises it the way it recognises `ceph.Option`: it applies it to the
@@ -112,13 +112,13 @@ only place for configuration.
   argument is the aggregate image as before.
 - **Composition (rules 1 to 5).** The zero value selects nothing. An explicit set
   is a selection: an explicit empty set is refused, not read as unspecified. At
-  most one `RunOptions` value in the variadic selects a set; a second selection
+  most one `ImageOptions` value in the variadic selects a set; a second selection
   is refused even when equal, so argument order never decides a conflict. Within
   one value the later `WithImageSet` replaces the earlier one. Everything is
   validated once, before any container, network or volume is created, and
   missing roles that a requested feature needs are refused with no fallback to
   Essential.
-- **Copies (rule 7).** `RunOptions` holds an `ImageSet`, a struct of strings, so a
+- **Copies (rule 7).** `ImageOptions` holds an `ImageSet`, a struct of strings, so a
   struct copy is independent and there is no slice to clone. A future member that
   holds a slice must use `slices.Clone`, which keeps nil and non-nil empty apart.
 - **Raw customizers.** They reach the first MON's container request only, in
@@ -126,6 +126,35 @@ only place for configuration.
   messenger environment, the `WithConfigFile` file and the ownership label.
 - `RunWithImages` and `WithImages` are removed without aliases. The mirror
   `RunWithImages` functions are separate and unchanged.
+
+### Grouping plan for the remaining `ceph.WithX` options (proposal, not decided)
+
+Principle (owner): `Run` keeps its testcontainers signature; Docker and
+container execution policy stays testcontainers-style `WithX`; Ceph settings are
+not one `WithX` each but a few domain-coherent value types with chainable,
+value-returning methods, each carried by one option function that `Run`
+recognises like `ceph.Option` (its `Customize` does nothing). No universal
+options object, and no setting with two spellings: a setting moves in one slice
+and its old function is removed in the same slice.
+
+Inventory of the 23 option functions of package `ceph` (plus
+`rbd.WithPools`, `cephfs.WithFilesystems`/`WithMDSImage`, `rgw.WithGateways`/`WithImage`)
+and the proposed owner of each:
+
+| Group (value type) | Settings | Slice |
+| --- | --- | --- |
+| Images (`ImageOptions`, this change) | `WithImageSet`; later the service image roles (`cephfs.WithMDSImage`, `rgw.WithImage`) | 1 (this change) |
+| Topology (`ClusterConfig`) | `WithMonitorCount`, `WithManagerCount`, `WithNoInitialManagers`, `WithOSDCount`, `WithInitialOSDs`, `WithNoInitialOSDs`, `WithPoolDefaults`, `WithDefaultCRUSHRoot`, `WithPools`, `WithStartupTimeout`, `WithAuth` | 2 |
+| OSD storage (`OSDConfig` made chainable; reconciled with `OSDOptions` of AddOSD so placement and storage are not duplicated) | `WithOSDBlockSize`, `WithOSDObjectStore`, `WithOSDInMemoryStorage`, `WithOSDVolumeStorage` | 3 |
+| Network and messenger (`NetworkConfig`) | `WithAddressFamily`, `WithSeparateClusterNetwork`, `WithHostAddress`, `WithMessengerMode`, `WithMessengerPolicy` | 4 |
+| Services (own packages, own value types) | `rbd.WithPools`, `cephfs.WithFilesystems`, `rgw.WithGateways` | 5, per package |
+| Stay functional `WithX` (Docker or container execution) | `WithHostNetwork`, `WithIdleEntrypoint`, `WithConfigFile` (mounts a file into the daemon containers) | none |
+
+Open questions for the owner: whether `WithHostNetwork` and `WithConfigFile` are
+container-execution policy (kept as functions) or cluster behavior (moved), and
+whether `WithPools` of package `ceph` belongs with topology or with the
+service packages. Every slice repeats the rules above and the refusal of a
+setting given twice.
 
 ## Not decided here
 

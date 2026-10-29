@@ -1,6 +1,6 @@
 {
   "schema": "ceph-api-move/v1",
-  "change": "312-run-image-set",
+  "change": "312-image-options",
   "review": "value-configuration-composition.md",
   "removed": [
     "ceph.RunWithImages",

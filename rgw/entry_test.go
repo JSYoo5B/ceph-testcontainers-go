@@ -160,7 +160,7 @@ func TestContainerShortcutsUseTheEmbeddedCluster(t *testing.T) {
 func TestGatewayImageOptionFillsMissingRoleInRunWithImageSet(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	cluster, err := ceph.Run(ctx, "", ceph.RunOptions{}.WithImageSet(ceph.ImageSet{Essential: "core", Client: "toolkit"}), WithImage("service-image"), WithGateways())
+	cluster, err := ceph.Run(ctx, "", ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{Essential: "core", Client: "toolkit"}), WithImage("service-image"), WithGateways())
 	if cluster != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("service image option did not reach canceled admission: %v %v", cluster, err)
 	}

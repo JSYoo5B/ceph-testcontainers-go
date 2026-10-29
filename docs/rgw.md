@@ -148,7 +148,7 @@ returned in 17 seconds with Ceph 20.2.4 and in 23 seconds with 19.2.5.
 - With one OSD and one copy, nothing can recover from an OSD failure. Tests of
   OSD faults, recovery or separate traffic planes need the default two OSDs or
   more.
-- For role images, add `ceph.RunOptions{}.WithImageSet` and `rgw.WithImage`, as described
+- For role images, add `ceph.ImageOptions{}.WithImageSet` and `rgw.WithImage`, as described
   under [Image](#image).
 
 `TestRGWMinimalS3Recipe` in `internal/integration` runs this recipe with a
@@ -211,7 +211,7 @@ example: `rgw.Run(ctx, ceph.DefaultImage)`.
   (Ceph Tentacle 20.2.4).
 - The image passed to `Run` is the essential image. It runs the MON, MGR and OSD
   daemons and the Ceph CLI. Every other role uses the same image unless a role
-  image is selected: `rgw.WithImage` for gateways, `ceph.RunOptions.WithImageSet` for the
+  image is selected: `rgw.WithImage` for gateways, `ceph.ImageOptions.WithImageSet` for the
   client, cephfs, rbd-aux and rgw roles.
 - A gateway image must contain `radosgw` and `radosgw-admin`, because
   `Gateway.Admin` runs inside the gateway container. Multisite setup clients and
@@ -998,7 +998,7 @@ confirmed creation can be activated.
 ### Shared cluster tenants
 
 A tenant of a [shared cluster](ceph.md#shared-cluster) leases an RGW tenant of
-its own. Start the gateway with `WithGateways` in `ceph.WithSharedRunOptions`.
+its own. Start the gateway with `WithGateways` in `ceph.WithSharedImageOptions`.
 
 ```golang
 func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error)

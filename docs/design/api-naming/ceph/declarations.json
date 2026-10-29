@@ -1032,6 +1032,28 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.ImageOptions",
+      "kind": "type",
+      "proposed": "ceph.ImageOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ImageOptions.Customize",
+      "kind": "method",
+      "signature": "func(*testcontainers.GenericContainerRequest) error",
+      "receiver": "ImageOptions",
+      "proposed": "ceph.ImageOptions.Customize",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.ImageOptions.WithImageSet",
+      "kind": "method",
+      "signature": "func(images ImageSet) ImageOptions",
+      "receiver": "ImageOptions",
+      "proposed": "ceph.ImageOptions.WithImageSet",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.ImageSet",
       "kind": "type",
       "proposed": "ceph.ImageSet",
@@ -1994,28 +2016,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.RunOptions",
-      "kind": "type",
-      "proposed": "ceph.RunOptions",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.RunOptions.Customize",
-      "kind": "method",
-      "signature": "func(*testcontainers.GenericContainerRequest) error",
-      "receiver": "RunOptions",
-      "proposed": "ceph.RunOptions.Customize",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.RunOptions.WithImageSet",
-      "kind": "method",
-      "signature": "func(images ImageSet) RunOptions",
-      "receiver": "RunOptions",
-      "proposed": "ceph.RunOptions.WithImageSet",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.RunTests",
       "kind": "function",
       "signature": "func(m *testing.M, s ...*SharedCluster) int",
@@ -2449,10 +2449,10 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithSharedRunOptions",
+      "current": "ceph.WithSharedImageOptions",
       "kind": "function",
       "signature": "func(opts ...testcontainers.ContainerCustomizer) SharedOption",
-      "proposed": "ceph.WithSharedRunOptions",
+      "proposed": "ceph.WithSharedImageOptions",
       "decision": "baseline"
     },
     {

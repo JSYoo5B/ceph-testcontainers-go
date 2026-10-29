@@ -97,8 +97,8 @@ type sharedSettings struct {
 	settle time.Duration
 }
 
-// WithSharedRunOptions passes options to the Run that starts each cluster.
-func WithSharedRunOptions(opts ...testcontainers.ContainerCustomizer) SharedOption {
+// WithSharedImageOptions passes options to the Run that starts each cluster.
+func WithSharedImageOptions(opts ...testcontainers.ContainerCustomizer) SharedOption {
 	return func(s *sharedSettings) { s.runOpts = append(s.runOpts, opts...) }
 }
 

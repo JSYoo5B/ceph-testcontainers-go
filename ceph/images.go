@@ -40,26 +40,26 @@ func (s ImageSet) normalized() (ImageSet, error) {
 	return s, nil
 }
 
-// RunOptions is the Ceph configuration value that Run recognises among its
+// ImageOptions is the Ceph configuration value that Run recognises among its
 // customizers, the way it recognises an Option: it is applied to the cluster
 // settings and validated before any resource is created, and its Customize does
 // nothing, so it never reaches a container request. The zero value changes
 // nothing. Each With method returns a modified copy of the value.
 //
-//	cluster, err := ceph.Run(ctx, "", ceph.RunOptions{}.WithImageSet(images), ceph.WithOSDCount(1))
+//	cluster, err := ceph.Run(ctx, "", ceph.ImageOptions{}.WithImageSet(images), ceph.WithOSDCount(1))
 //
-// Run takes any number of RunOptions values; at most one of them may select an
+// Run takes any number of ImageOptions values; at most one of them may select an
 // image set, and a second selection is refused with ErrInvalidRequest even when
 // it repeats the first. The composition rules are in
 // docs/design/value-configuration-composition.md.
-type RunOptions struct {
+type ImageOptions struct {
 	images    ImageSet
 	imagesSet bool
 }
 
 // Customize implements testcontainers.ContainerCustomizer. It does nothing:
 // Run applies the value to the cluster settings instead.
-func (RunOptions) Customize(*testcontainers.GenericContainerRequest) error { return nil }
+func (ImageOptions) Customize(*testcontainers.GenericContainerRequest) error { return nil }
 
 // WithImageSet selects explicit role images, replacing an earlier WithImageSet of
 // the same value. The set is the one authoritative image configuration:
@@ -70,13 +70,13 @@ func (RunOptions) Customize(*testcontainers.GenericContainerRequest) error { ret
 // refused, not read as unspecified. Service image options (cephfs.WithMDSImage,
 // rgw.WithImage) replace the matching role whatever the order. The ImageSet is
 // copied.
-func (o RunOptions) WithImageSet(images ImageSet) RunOptions {
+func (o ImageOptions) WithImageSet(images ImageSet) ImageOptions {
 	o.images, o.imagesSet = images, true
 	return o
 }
 
 // apply selects the image set of o in settings.
-func (o RunOptions) apply(settings *options) error {
+func (o ImageOptions) apply(settings *options) error {
 	if !o.imagesSet {
 		return nil
 	}

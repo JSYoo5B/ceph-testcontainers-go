@@ -155,7 +155,7 @@ func nonTestFiles(t *testing.T, dir string) []string {
 
 // movedNameReference matches a qualified use of one of the 16 package-level
 // names that ceph/harness takes over.
-var movedNameReference = regexp.MustCompile(`\bceph\.(SharedCluster|NewShared|RunTests|SharedOption|LeaseOption|WithSharedRunOptions|WithMaxTenants|WithMaxRecycles|WithKeepOnTenantFailure|SharedStats|Tenant|TenantAccess|TenantReadOnly|TenantReadWrite|SharedPool|ObserveTenant)\b`)
+var movedNameReference = regexp.MustCompile(`\bceph\.(SharedCluster|NewShared|RunTests|SharedOption|LeaseOption|WithSharedImageOptions|WithMaxTenants|WithMaxRecycles|WithKeepOnTenantFailure|SharedStats|Tenant|TenantAccess|TenantReadOnly|TenantReadWrite|SharedPool|ObserveTenant)\b`)
 
 // countReferences counts, in the Go files under root that match want, the
 // matches of re and the files that hold at least one.
