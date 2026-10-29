@@ -265,8 +265,6 @@ func TestPoolHandleFromAFailedCreationBindsOnFirstUse(t *testing.T) {
 	}
 }
 
-// sharedHandleReceivers maps the prefix of an entry of sharedHandlePolicies to
-// the handle type whose method it classifies.
 // listingContainer answers each native pool listing from listings in turn, or
 // fails it when the entry is empty, and repeats the last entry.
 type listingContainer struct {

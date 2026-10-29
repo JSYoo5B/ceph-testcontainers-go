@@ -217,7 +217,8 @@ func TestDebugHooks(t *testing.T) {
 		t.Error("the registry waited for the cluster mutex")
 	}
 	servicehook.Unlock(c)
-	if overridehook.DebugWindowRegistry(c) == overridehook.DebugWindowRegistry(shared) {
+	other := testhelper.TestCluster(nil, testhelper.TestConfig{})
+	if overridehook.DebugWindowRegistry(c) == overridehook.DebugWindowRegistry(other) {
 		t.Error("two clusters share one registry")
 	}
 	for name, test := range map[string]struct {
