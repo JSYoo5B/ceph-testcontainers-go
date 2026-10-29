@@ -445,6 +445,36 @@ call exists in them, no public name was added, and no native run was made.
   `O_NOFOLLOW` survives the tests. The mount is read-only and the inspector
   runs only against a stopped store, which is the real protection.
 
+Engine translation status. `ceph/mon_store_inspect_engine.go` implements the
+addendum below as `monStoreMobyEngine`, tested Docker-free in
+`ceph/mon_store_inspect_engine_test.go` with a small fake of the Docker client.
+Nothing constructs it: it has no default client, so the first caller supplies
+the constructor, and the production-caller guards cover its symbols. It holds no
+lock and no state, so the lock order is unchanged.
+
+- `Create` runs `validate` first and then makes one create call: the numeric
+  user, the entrypoint and command, the two labels, a named-volume mount with
+  `ReadOnly` and `NoCopy`, `NetworkMode: none`, all capabilities dropped,
+  `no-new-privileges`, a read-only root file system, no terminal, no
+  auto-remove. Any error is an unknown outcome and is returned without a retry
+  or a removal by guessed name.
+- `Wait` returns the exit code only from the wait reply. A context end, a failed
+  wait request, a reply that carries an error and a closed channel are errors.
+- `Logs` demultiplexes the stream through a fixed buffer (it never allocates
+  from an advertised frame size), keeps at most the limit per stream and reports
+  truncation instead of returning a prefix. A stream that ends inside a frame,
+  a frame of another stream and a context end are errors.
+- `Remove` is forced, passes neither volume nor link removal, and treats a
+  missing container as success. A failed removal keeps the container, which
+  still carries the owned label for the `Terminate` scan.
+
+What this establishes: the translation, the error and truncation handling and
+the cleanup ordering against a fake client. What it does not: that a daemon
+accepts these create options, that the image carries `python3` and runs as the
+given owner, how a daemon ends the log stream, that the read-only named-volume
+mount rejects a write natively, and that the `Terminate` scan (which removes
+with `RemoveVolumes`) leaves a named store volume alone. No native run exists.
+
 Design addendum for the engine, the part that this slice does not implement and
 that only a native run settles:
 
