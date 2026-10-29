@@ -24,13 +24,14 @@ const modulePath = "github.com/JSYoo5B/ceph-testcontainers-go"
 var movedHelpers = map[string]map[string]string{
 	"rbd":    {"bootstrapKind": "internal/servicekind", "validateResourceName": "rbd/internal/resourcename"},
 	"cephfs": {"cephFSBootstrapKind": "internal/servicekind"},
-	"rgw":    {"rgwBootstrapKind": "internal/servicekind"},
+	"rgw":    {"rgwBootstrapKind": "internal/servicekind", "gatewayRegistry": "internal/namedregistry", "gatewaysFrom": "internal/namedregistry"},
 }
 
 // leafHelperPackages are the leaf packages and the only module packages each
 // may import, so none can import a service package or ceph/harness.
 var leafHelperPackages = map[string][]string{
 	"internal/servicekind":      {},
+	"internal/namedregistry":    {},
 	"rbd/internal/resourcename": {"internal/naming"},
 }
 
@@ -107,7 +108,7 @@ func TestAdapterPrivateReachNamesNoMovedHelper(t *testing.T) {
 	want := map[string][]string{
 		"rbd":    {"invalid"},
 		"cephfs": {"invalid"},
-		"rgw":    {"gateways", "gatewaysFrom", "invalid"},
+		"rgw":    {"invalid"},
 	}
 	for service, names := range want {
 		dir := filepath.Join("..", service)
@@ -122,5 +123,24 @@ func TestAdapterPrivateReachNamesNoMovedHelper(t *testing.T) {
 		if !slices.Equal(got, names) {
 			t.Errorf("%s tenant.go private reach = %v, want %v", service, got, names)
 		}
+	}
+}
+
+// TestRGWGatewayStateIsTheGenericRegistry pins the shape of the rgw gateway
+// state: gateways returns the generic registry of internal/namedregistry
+// instantiated with the rgw Gateway, and no rgw type keeps a byName map of
+// its own. The harness reaches the same registry through the leaf package.
+func TestRGWGatewayStateIsTheGenericRegistry(t *testing.T) {
+	src := nonTestSources(t, filepath.Join("..", "rgw"))
+	if !strings.Contains(src["entry.go"], "func gateways(c *ceph.Container) *namedregistry.Registry[*Gateway]") {
+		t.Error("rgw gateways no longer returns *namedregistry.Registry[*Gateway]")
+	}
+	for name, body := range src {
+		if strings.Contains(body, "byName") {
+			t.Errorf("%s keeps a private byName map beside the generic registry", name)
+		}
+	}
+	if src["tenant.go"] == "" || !strings.Contains(src["tenant.go"], "namedregistry.From[*Gateway]") {
+		t.Error("rgw tenant.go does not reach the gateways through the leaf registry")
 	}
 }

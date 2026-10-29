@@ -102,7 +102,7 @@ func TestSerializedGatewayMutationQueuedDeadline(t *testing.T) {
 			control := &clustertest.NativeCallCounter{}
 			cluster := testCluster(control, testhelper.TestConfig{StartupTimeout: time.Second, HostNetwork: name == "StartHost", PublicAddress: "127.0.0.1"}, nil)
 			clustertest.AssertContextLockQueued(t, testhelper.TestState(cluster).Mutex, func(ctx context.Context) error { return operation(ctx, cluster) })
-			if control.Execs.Load() != 0 || testhelper.TestState(cluster).PortLeases != 0 || len(servicehook.Services(cluster)) != 0 || len(gateways(cluster).byName) != 0 {
+			if control.Execs.Load() != 0 || testhelper.TestState(cluster).PortLeases != 0 || len(servicehook.Services(cluster)) != 0 || len(gateways(cluster).ByName) != 0 {
 				t.Fatal("queued caller created containers, port leases or gateway inventory")
 			}
 		})
@@ -112,13 +112,13 @@ func TestSerializedGatewayMutationQueuedDeadline(t *testing.T) {
 func TestGatewaySnapshotsCopyOwnedDescriptors(t *testing.T) {
 	x, y := &Gateway{GatewayName: "x"}, &Gateway{GatewayName: "y"}
 	cluster := testCluster(nil, testhelper.TestConfig{}, nil)
-	gateways(cluster).byName["y"], gateways(cluster).byName["x"] = y, x
+	gateways(cluster).ByName["y"], gateways(cluster).ByName["x"] = y, x
 	snapshot, err := Gateways(t.Context(), cluster)
 	if err != nil || len(snapshot) != 2 || snapshot[0] != x || snapshot[1] != y {
 		t.Fatalf("gateway descriptors/order: %v %v", snapshot, err)
 	}
 	snapshot[0] = nil
-	if gateways(cluster).byName["x"] != x || gateways(cluster).sorted()[0] != x {
+	if gateways(cluster).ByName["x"] != x || gateways(cluster).Sorted()[0] != x {
 		t.Fatal("gateway snapshot modified ownership map")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -144,14 +144,14 @@ func TestContainerShortcutsUseTheEmbeddedCluster(t *testing.T) {
 		t.Fatalf("a cluster without gateways returned an endpoint: %v", err)
 	}
 	only := &Gateway{GatewayName: "default", publicAddress: "192.0.2.10", port: 8000}
-	gateways(cluster.Container).byName["default"] = only
+	gateways(cluster.Container).ByName["default"] = only
 	if got, err := cluster.Gateways(t.Context()); err != nil || len(got) != 1 || got[0] != only {
 		t.Fatalf("Gateways = %v %v", got, err)
 	}
 	if endpoint, err := cluster.S3Endpoint(t.Context()); err != nil || endpoint != "http://192.0.2.10:8000" {
 		t.Fatalf("S3Endpoint = %q, %v", endpoint, err)
 	}
-	gateways(cluster.Container).byName["other"] = &Gateway{GatewayName: "other"}
+	gateways(cluster.Container).ByName["other"] = &Gateway{GatewayName: "other"}
 	if _, err := cluster.S3Endpoint(t.Context()); err == nil || !strings.Contains(err.Error(), "2 RGW gateways") {
 		t.Fatalf("several gateways did not require a choice: %v", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/namedregistry"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
 )
@@ -51,7 +52,7 @@ func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error) {
 	// without handing it out.
 	var g *Gateway
 	_ = port.WithTopology(func() error {
-		g = pickSharedGateway(gatewaysFrom(port.Extension).sorted())
+		g = pickSharedGateway(namedregistry.From[*Gateway](port.Extension, servicekind.RGW).Sorted())
 		return nil
 	})
 	if g == nil {
@@ -209,7 +210,7 @@ func rgwMetadata(ctx context.Context, g *Gateway) (users, buckets []string, err 
 func sharedGateway(c *ceph.Container) *Gateway {
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
-	return pickSharedGateway(gateways(c).sorted())
+	return pickSharedGateway(namedregistry.From[*Gateway](func(kind string, create func() any) any { return servicehook.Extension(c, kind, create) }, servicekind.RGW).Sorted())
 }
 
 // pickSharedGateway returns the gateway named default or else the first of

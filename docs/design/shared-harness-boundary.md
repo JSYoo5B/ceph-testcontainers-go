@@ -535,7 +535,7 @@ files of the directory including tests.
 | private names of package ceph that the harness files name | classify, classifyDocker, clientIDPattern, clusterOps, invalidRequest, newLeasedObserver, sharedBackend, sharedExclusively, sharedInvariants, sharedStarter, sharedWithTenants, startSharedContainer |
 | private names of package rbd that its tenant.go names | invalid |
 | private names of package cephfs that its tenant.go names | invalid |
-| private names of package rgw that its tenant.go names | gateways, gatewaysFrom, invalid |
+| private names of package rgw that its tenant.go names | invalid |
 | references to moved names in rbd | 4 in 1 files |
 | references to moved names in cephfs | 3 in 1 files |
 | references to moved names in rgw | 4 in 1 files |
@@ -1008,7 +1008,7 @@ private name as measured at `8bff17d`, where it is defined, who else calls it
 | cephfs | `cephFSBootstrapKind` (`"cephfs"`) | `cephfs/bootstrap.go` | `bootstrap.go` (1), `entry.go` (3) | `servicekind.CephFS` | Moved; the old name is removed |
 | rgw | `rgwBootstrapKind` (`"rgw"`) | `rgw/bootstrap.go` | `bootstrap.go` (1), `entry.go` (3), one test | `servicekind.RGW` | Moved; the old name is removed |
 | rbd, cephfs, rgw | `invalid` | one copy per package (also two in the `mirror` packages): `&ceph.OperationError{Kind: ceph.ErrInvalidRequest, Err: err}` | call sites in total: rbd 26, cephfs 68, rgw 63 (14 of them in the three `tenant.go` files), plus `mirror` 29 and 16 | One shared construction, owned by the error contract of "Error handling" | Open: about 200 call sites and the owner's error-contract decision, not a pure helper move |
-| rgw | `gateways`, `gatewaysFrom` | `rgw/entry.go`, with `gatewayRegistry` | `gateway.go`, `tenant.go`, tests | A registry in a leaf package, which cannot name `rgw.Gateway` (import cycle) | Open: needs a type-parameterized registry or a narrower value, a design choice |
+| rgw | `gateways`, `gatewaysFrom`, `gatewayRegistry` | `rgw/entry.go` | `gateway.go`, `tenant.go`, tests | `internal/namedregistry.Registry[T any]`, instantiated as `Registry[*Gateway]`; `gatewaysFrom` and the `gatewayRegistry` type are removed; `tenant.go` reads it through `namedregistry.From[*Gateway]` | Moved (settled by the 2026-10-29 owner delegation on #155); `gateways` stays in `rgw` as the writer-side accessor that describes secrets and config targets |
 
 The `servicekind` package is shared by the three services instead of one package
 per service because each part is one string constant and the three kinds are the
@@ -1020,7 +1020,15 @@ remains, and `ceph/service_helper_moves_test.go` fails if a moved name reappears
 if a leaf package imports a service package, or if a `tenant.go` names a
 private name outside the table above.
 
-Why the two open rows stay open. `invalid` has no behavior of its own, but moving
+The registry row was settled by the owner delegation of 2026-10-29 on #155: a
+small generic `Registry[T any]` in a leaf package, with the value type staying in
+`rgw` and no new public name. The credentials and config targets that the cluster
+reads from a service state are described by the owning package with
+`Registry.Describe`, so a registry that a tenant created first reports them once
+the owner takes it for writing (`TestGatewayRegistryCreatedByAReaderIsDescribedByTheOwner`).
+Sorting is by registry key, which `startGateway` sets to the gateway name.
+
+Why the `invalid` row stays open. `invalid` has no behavior of its own, but moving
 it means rewriting about 200 call sites in five packages and choosing where the
 error contract lives (the owner left the internal package to implementation);
 the harness can build the same value from the public `ceph.OperationError` and
@@ -1054,7 +1062,7 @@ itself and are not made here.
 2. Internal: move the service-private helpers into leaf internal packages
    (decision 8). Done for the three service kinds and rbd's resource-name check
    (see "Service harness private reach"); `invalid` and the rgw gateway registry
-   remain, each needing a design choice first.
+   remain: the rgw gateway registry is moved (see the inventory), `invalid` is open.
 3. The move: `ceph/harness`, `internal/harnesshook`, the two slots, the three
    service harnesses, `servicehook`, `ObserveTenant`, direct caller migration,
    catalogue regeneration and the `moves` record, the package-split shard, the
