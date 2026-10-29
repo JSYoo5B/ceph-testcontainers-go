@@ -133,8 +133,8 @@ var mdsRosterMethods = map[string]struct{ calls []string }{
 // mdsRosterWriters maps each mutating method to the only functions that may
 // call it. All of them run with setupMu and the cluster mutex held.
 var mdsRosterWriters = map[string][]string{
-	"reserveIndex": {"startMDSWithAdmission"},
-	"publish":      {"startMDSWithAdmission"},
+	"reserveIndex": {"admitMDSStart"},
+	"publish":      {"publishStartedMDS"},
 	"remove":       {"retireMDS", "removeFilesystem", "removeStoppedMDS"},
 }
 
@@ -142,7 +142,7 @@ var mdsRosterWriters = map[string][]string{
 // callers and do not take it themselves. Every reference to one of them from
 // outside this set must follow a setupMu acquisition in the same function.
 var mdsRosterSetupHeld = map[string]bool{
-	"startMDS": true, "startMDSWithService": true, "startMDSWithAdmission": true, "retireMDS": true,
+	"startMDS": true, "startMDSWithService": true, "startMDSWithAdmission": true, "admitMDSStart": true, "createMDSCredentials": true, "publishStartedMDS": true, "retireMDS": true,
 	"captureColdMDS": true, "scaleColdMDS": true, "verifyColdMDS": true, "checkColdMDSAuth": true,
 }
 

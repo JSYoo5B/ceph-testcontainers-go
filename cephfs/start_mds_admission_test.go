@@ -3,6 +3,9 @@ package cephfs
 import (
 	"context"
 	"errors"
+	"go/ast"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -259,4 +262,116 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 			t.Fatalf("replacement success changed: %v %v", d, err)
 		}
 	})
+}
+
+// TestStartMDSWithAdmissionHasThreePhasesInOrder pins the split: the three
+// phases are called only by startMDSWithAdmission (itself called only by
+// startMDSWithService and addMDSReplacement), in the order admission,
+// credentials, service start, publication; the admission phase takes the
+// topology mutex once and releases it on each of its seven returns before any
+// auth command, and is the only place that consumes cold permission and
+// reserves the name index; the credentials phase takes no lock and reads no
+// registry; the publication phase takes the cluster mutex once and releases it
+// once. No function gains a mutex type.
+func TestStartMDSWithAdmissionHasThreePhasesInOrder(t *testing.T) {
+	phases := []string{"admitMDSStart", "createMDSCredentials", "publishStartedMDS"}
+	callers := map[string][]string{}
+	funcs := map[string]*ast.FuncDecl{}
+	attempted := map[string]int{}
+	for _, parsed := range parseCephFSProductionFiles(t) {
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			funcs[fn.Name.Name] = fn
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				switch node := n.(type) {
+				case *ast.CallExpr:
+					if name := admissionCallee(node); slices.Contains(append([]string{"startMDSWithAdmission"}, phases...), name) {
+						callers[name] = append(callers[name], fn.Name.Name)
+					}
+				case *ast.AssignStmt:
+					for _, lhs := range node.Lhs {
+						if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "attempted" {
+							attempted[fn.Name.Name]++
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+	for _, list := range callers {
+		slices.Sort(list)
+	}
+	want := map[string][]string{
+		"startMDSWithAdmission": {"addMDSReplacement", "startMDSWithService"},
+		"admitMDSStart":         {"startMDSWithAdmission"},
+		"createMDSCredentials":  {"startMDSWithAdmission"},
+		"publishStartedMDS":     {"startMDSWithAdmission"},
+	}
+	if !reflect.DeepEqual(callers, want) {
+		t.Errorf("caller table changed: %v, pinned %v", callers, want)
+	}
+	if !reflect.DeepEqual(attempted, map[string]int{"admitMDSStart": 1}) {
+		t.Errorf("cold permission is consumed outside the admission phase or not exactly once: %v", attempted)
+	}
+	for _, name := range append([]string{"startMDSWithAdmission"}, phases...) {
+		if funcs[name] == nil {
+			t.Fatalf("%s is missing", name)
+		}
+	}
+	var order []string
+	ast.Inspect(funcs["startMDSWithAdmission"].Body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			switch name := admissionCallee(call); name {
+			case "admitMDSStart", "createMDSCredentials", "start", "publishStartedMDS":
+				order = append(order, name)
+			}
+		}
+		return true
+	})
+	if !slices.Equal(order, []string{"admitMDSStart", "createMDSCredentials", "start", "publishStartedMDS"}) {
+		t.Errorf("phase order changed: %v", order)
+	}
+	count := func(fn *ast.FuncDecl, names ...string) int {
+		total := 0
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok && slices.Contains(names, admissionCallee(call)) {
+				total++
+			}
+			return true
+		})
+		return total
+	}
+	admission := funcs["admitMDSStart"]
+	if count(admission, "LockTopology") != 1 || count(admission, "Unlock") != 7 || count(admission, "reserveIndex") != 1 || count(admission, "Lock") != 0 {
+		t.Error("the admission phase must take the topology mutex once, release it on each of its seven returns and reserve the index once")
+	}
+	creds := funcs["createMDSCredentials"]
+	if count(creds, "Lock", "LockTopology", "Unlock", "LockMutex", "reserveIndex", "publish") != 0 {
+		t.Error("the credentials phase takes a lock or touches the roster")
+	}
+	ast.Inspect(creds.Body, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && slices.Contains([]string{"byName", "roster", "coldMDS", "nativeIdentity", "Container", "config"}, sel.Sel.Name) {
+			t.Errorf("the credentials phase reads %s: ownership stays in the admission phase", sel.Sel.Name)
+		}
+		return true
+	})
+	pub := funcs["publishStartedMDS"]
+	if count(pub, "Lock") != 1 || count(pub, "Unlock") != 1 || count(pub, "publish") != 1 || count(pub, "LockTopology") != 0 {
+		t.Error("the publication phase must take the cluster mutex once, publish once and release once")
+	}
+	for _, name := range append([]string{"startMDSWithAdmission"}, phases...) {
+		ast.Inspect(funcs[name].Body, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "Mutex" {
+				t.Errorf("%s names a mutex type", name)
+			}
+			return true
+		})
+		if count(funcs[name], "LockMutex") != 0 {
+			t.Errorf("%s takes setupMu: the caller holds it (cephfs/entry.go:100-102)", name)
+		}
+	}
 }
