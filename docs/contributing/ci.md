@@ -134,7 +134,7 @@ that the text checks below still run. The job names are unchanged.
 A pull request is documentation-only when every changed file is on this
 allowlist, and the allowlist contains only files that no check reads:
 - `README.md`, any other top-level `*.md` file and `LICENSE`;
-- Markdown files directly inside `docs/contributing/`, `docs/design/`, `docs/guides/` and `docs/research/`,
+- Markdown files directly inside `docs/contributing/`, `docs/design/` and `docs/guides/`,
   except the files below.
 
 These documentation files are read by a check and always run the full Code
@@ -1246,8 +1246,7 @@ untested, and no required check should depend on them. On an engine that
 refuses the mount the test fails with the missing requirement (device,
 capability, security profile or engine device mapping); it never skips or
 falls back to libcephfs. Outside the tag runner, build it with the
-`cephfs_fuse` tag (`go test -tags all,cephfs_fuse`). See
-[the feasibility report](../research/ceph-fuse-mount.md).
+`cephfs_fuse` tag (`go test -tags all,cephfs_fuse`).
 
 ## Reading a failing batch
 

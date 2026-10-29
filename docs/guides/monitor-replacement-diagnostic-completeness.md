@@ -9,7 +9,7 @@ unclassified without an actual failing normal-replacement capture.
 ## Bounded traces
 
 Each selected container trace retains at most 300 matching lines and 512
-bytes per retained line. A long line now keeps a UTF-8-safe prefix and tail
+bytes per retained line. A long line keeps a UTF-8-safe prefix and tail
 with ` [...omitted...] ` between them. The authentication result at the end
 of a long line can remain visible, while the omission stays explicit.
 

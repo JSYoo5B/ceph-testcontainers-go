@@ -3,13 +3,11 @@
 `TestRADOSMutationContracts` submits a truncate, a remove and a guarded
 compound write through a two-second client. Its canonical ten-second reader
 then observes their eventual effects while the late writer stays connected.
-A native `TimedOut` in the final `late-compound` stat previously prevented the
-single final receipt from being printed, losing the earlier mutation results
-and reader progress. A later pass of the same cohort does not explain that
-failure; [#2](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/2#issuecomment-6399386489)
-retains the unclassified observation.
+A native `TimedOut` in the final `late-compound` stat must not suppress the
+single final receipt, which carries the earlier mutation results and reader
+progress.
 
-The diagnostic change preserves mutation order and exactly one call for each
+The test preserves mutation order and exactly one call for each
 mutation, their two-second timeout, canonical reader order/ten-second timeout,
 90-second convergence bound and three-minute supervised command. The OSD
 historic-operation and final byte/version assertions remain the acceptance

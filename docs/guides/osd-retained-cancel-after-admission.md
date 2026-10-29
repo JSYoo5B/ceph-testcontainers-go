@@ -21,14 +21,10 @@ Expected outcome of the canceled call:
 - Owner-filtered Docker create events bounded by daemon timestamps show exactly
   one creation, and independent inspection shows that container running.
 - The daemon keeps booting after the cancellation: a fresh context waits for
-  it to be up/in. The first native attempt detached the candidate right after
-  the cancellation, while the daemon was still starting. The stop took the full
-  10 s grace period and `OSDContainer.Detach` then never observed the OSD as down within
-  its 3 minute budget (`exec ceph: context deadline exceeded`). The log does
-  not show the OSD map at that point. A plausible cause is a daemon killed
-  before it could mark itself down in a one-OSD cluster with no peer to report
-  it, but that is not established. This batch therefore detaches only a booted
-  candidate; detaching a still-booting one is unqualified.
+  it to be up/in. Detach only a booted candidate: a still-booting daemon can be
+  killed after the 10 s stop grace period before it marks itself down, and in a
+  one-OSD cluster no peer reports it, so `OSDContainer.Detach` can wait out its
+  3 minute budget.
 - A fresh context then settles the candidate through the ordinary lifecycle:
   `OSDContainer.Detach` stops and removes the canceled candidate, and a second `DetachedOSD.Reopen`
   creates a distinct container with the same ID, registration UUID and cluster

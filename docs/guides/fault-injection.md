@@ -1,7 +1,7 @@
 # Fault injection
 
 Network faults and container pauses use `github.com/JSYoo5B/ceph-testcontainers-go/fault` with the
-existing `*ceph.Container`; see the [API and migration guide](../fault.md).
+existing `*ceph.Container`; see the [API reference](../fault.md).
 
 ## Introduction
 

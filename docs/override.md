@@ -313,6 +313,14 @@ Opens one runtime debug level window on one running OSD that the cluster owns.
 are refused; neither verbose levels nor all daemons are ever selected
 automatically.
 
+There is no generic logging default: no level or duration is a universal
+diagnostic setting, and `0/0` is a control rather than a silence guarantee.
+Pick the daemon and the option relevant to one concrete operation, open the
+window right before it and restore right after it returns. Register a non-nil
+handle even when it comes with an error, and restore with a fresh bounded
+context, never only with the expired workload context. Verbose logging can
+change the CPU use and timing of the operation it observes.
+
 The window changes the daemon's runtime value through its admin socket, as
 [AdminSocket](ceph.md#adminsocket) reaches it, and never the central
 configuration database; `override.SetConfig` is

@@ -1,7 +1,7 @@
 # EC primary loss and admission thresholds
 
 `TestECPrimaryAdmissionBoundaries` is a bounded 2+1 Jerasure
-`reed_sol_van` scenario under issue #59. It adds primary-loss and non-primary-loss
+`reed_sol_van` scenario. It adds primary-loss and non-primary-loss
 controls to the existing non-primary EC outcome and recovered-index recipes.
 Each of the four subcases owns a fresh three-OSD cluster and one overwrite-enabled
 PG. It does not change the existing scenarios or their explicit permissive policy.

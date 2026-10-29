@@ -13,7 +13,7 @@ The profiles below are derived from the ceph-msgr-go integration environment.
 Each row names a test in this repository's `internal/integration` that starts
 the profile with public options and checks it with native clients and daemon
 observations. These prove fixture readiness, not ceph-msgr-go's own protocol
-implementation or its migration to these APIs.
+implementation.
 
 ## Profiles
 

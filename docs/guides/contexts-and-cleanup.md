@@ -100,8 +100,7 @@ their waits by `ctx`:
 | `rgw.Gateways(ctx, cluster)` | Gateway descriptors sorted by name, including partially started ones |
 | `ControlContainer(ctx)` | The control CLI container; the snapshot does not guarantee the process stays alive |
 
-These are the only forms of these accessors: the context-free versions were
-removed without aliases. A refused
+A refused
 or unavailable cluster and a cancelled `ctx` are returned as errors.
 
 ### Waiting in the background

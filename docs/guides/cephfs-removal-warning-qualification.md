@@ -1,9 +1,8 @@
 # CephFS removal with MDS health warnings
 
-[#125](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/125) first
-qualified a real difference in ordinary `fs fail` behavior, then chose a
-general graceful-removal algorithm instead of registering a compatibility tag.
-The public precondition remains: stop target clients, mirrors and subvolume
+Ordinary `fs fail` behaves differently across releases when an MDS health
+warning is raised, so removal uses one graceful algorithm on every release
+instead of a compatibility tag. Stop target clients, mirrors and subvolume
 operations before requesting destructive removal.
 
 ## Ordinary graceful removal
@@ -73,40 +72,3 @@ The optional source-owned batch is `cephfs_removal_warning`. Attempt receipts
 retain ordinary failures even when subsequent assertions fail. A final receipt
 requires all scenario assertions and configuration restoration/disposal.
 No successful receipt follows from a skip or incomplete cleanup.
-
-## Observed initial cohorts
-
-Both observations used implementation source
-`1c6d9847e2ffde6adf25bc8fdb75cb31705f5d88`, Linux/amd64, no bug selection,
-and the official essential/client/cephfs image digests in the
-[checked-in image map](../../.github/ceph-role-images.json). The receipt keeps
-all three resolved image IDs and the actual native daemon build inventory.
-
-| Native build | Actual warning on A alone | Ordinary B removal | Qualification run |
-| --- | --- | --- | --- |
-| 19.2.5, `abc7aa7f2701e5d46878fd5e6bb7e2955f1a395a` | `MDS_CACHE_OVERSIZED`, 57 kB / 1 B | Refused at `fs fail`, native `EPERM` requesting confirmation | Expected-refusal case passed, 68.00 s; cleanup checker passed |
-| 20.2.4, `7f793731f1b39eb4f465e960113d2363c311b964` | `MDS_CACHE_OVERSIZED`, 54 kB / 1 B | Removed B | Success case passed, 66.52 s; cleanup checker passed |
-
-A's active generation, pools and independent file read were preserved in both
-cohorts. The actual runtime limit returned from `134217728` to `1` and back to
-`134217728`. These two image/build observations do not establish all patch
-boundaries or the behavior of a same-release distribution/custom backport.
-
-## Evidence boundaries
-
-The table records the historical `1c6d984` fixture and original `fs fail`
-implementation. That diagnostic baseline required an explicit caller cohort
-expectation (`refused` or `removed`); the maintained final contract no longer
-uses that environment input and expects graceful removal for all controls.
-Historical expected-refusal PASS means the actual public operation refused,
-not that it removed B. Original failures and their source/image provenance
-remain separate from the final algorithm's qualification results.
-
-These observations do not qualify every patch release, all warning classes,
-malicious/active target clients or a same-reported-release fixed custom or
-distribution-backport image. No such custom build has been exercised here.
-
-The general algorithm and its target-warning contract require qualification
-on both build cohorts before native acceptance is reported. No bug tag is registered or selected. Consequently this work
-does not supply #24's separate real ordinary/compatibility implementation-pair
-criterion; a justified real tag case would need independent qualification.
