@@ -995,11 +995,10 @@ confirmed creation can be activated.
 | `StorageClass` | Default class for new objects without a class header. Defaults to `STANDARD`. |
 | `Tags` | `nil` keeps the user's current placement tags; a non-empty list replaces them exactly. An empty non-nil list is rejected because `radosgw-admin` cannot clear tags. To revoke access to a restricted target, replace matching tags with non-matching ones. |
 
-### Shared cluster tenants
+### Independent test fixtures
 
-A tenant of a [shared cluster](ceph-harness.md#shared-cluster) leases an RGW tenant
-of its own through the [rgw/harness](rgw-harness.md) package, which composes this
-package with `ceph/harness`. This package does not import it.
+Start an independent fixture with `Run`, create service resources explicitly,
+and register owned cleanup. See [Independent test fixtures](guides/remove-shared-harness.md).
 
 ## Examples
 

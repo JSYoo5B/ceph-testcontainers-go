@@ -1,5 +1,10 @@
 # Design: extracting fault injection into package `fault`
 
+> Current boundary: the shared-cluster/tenant harness and its core-only policy,
+> lease and hook plumbing have been removed. Harness references and source
+> locations below are historical design evidence, not retained APIs or future
+> extraction requirements. See [independent fixtures](../guides/remove-shared-harness.md).
+
 Status: stage 2's registry and internal hooks and stage 3's network extraction
 are implemented, including container pause as `fault.Pause`, returning
 `*fault.PauseLease`. Admission and phase-3 `Resume` cleanup are preserved.

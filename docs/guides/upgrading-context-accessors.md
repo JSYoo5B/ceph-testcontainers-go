@@ -32,9 +32,8 @@ for _, osd := range osds {
 
 Behavior changes:
 
-- A refused or unavailable cluster is an error. The removed forms returned
-  `nil` when a shared-cluster gate refused the call, so a caller could not tell
-  "no daemons" from "refused". The calls now return `(nil, err)`.
+- An unavailable cluster is an error. The calls return `(nil, err)` rather than
+  conflating failure with an empty daemon set.
 - Waiting for serialized topology work honors `ctx`. A cancelled call returns
   the context error and changes nothing.
 - A nil `*ceph.Container` returns an error.

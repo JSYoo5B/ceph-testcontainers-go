@@ -46,7 +46,7 @@ an owner approval.
    effect: before the topology lock, any registration and any container. A
    refusal changes no state and does not wait for a lock.
 6. **Ordering of checks is part of the contract and is unchanged:** the
-   shared-cluster gate, then the context, then configuration validation, then
+   context, then configuration validation, then
    the topology lock and the existing registration and cleanup path. Existing
    cancellation and error categories are kept.
 7. **Ownership.** A value owns its data. Copies must not share mutable storage:

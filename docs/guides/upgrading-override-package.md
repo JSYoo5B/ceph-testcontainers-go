@@ -51,8 +51,7 @@ of a `Restore` after `Terminate` are the behavior of the former methods. For the
 blocklist that includes the refusal of an existing entry and the expiration check
 at `Restore`. For the OSD flag it includes the supported-flag list, the lease
 without a write when the flag already has the requested state, and the refusal of
-a `Restore` over an outside change. A cluster that a `SharedCluster` lends to
-tenants still refuses the call with `ceph.ErrSharedCluster`; `OperationError.Op`
+a `Restore` over an outside change. `OperationError.Op`
 now reads `override.AddBlocklist` or `override.SetOSDFlag` instead of the former
 method name.
 
@@ -97,9 +96,7 @@ if err != nil {
 steps, the single captured control container and bootstrap identity, the
 deadline that starts before the wait for the topology lock, the overlap refusal
 (including no-op requests), the reconcile rules at `Restore` and the refusal of a
-`Restore` after `Terminate` are the behavior of the former method. A cluster that
-a `SharedCluster` lends to tenants still refuses the call with
-`ceph.ErrSharedCluster`; `OperationError.Op` now reads `override.SetFullRatios`.
+`Restore` after `Terminate` are the behavior of the former method. `OperationError.Op` now reads `override.SetFullRatios`.
 
 What differs is the same as for the blocklist: the handle is never nil, a refused
 or never-applied call returns a handle whose `Restore` does nothing, and a nil
@@ -159,9 +156,7 @@ bootstrap fixes (checked before the topology lock, so it does not wait for it),
 the normalized readback, the refusal to adopt an unknown value after a lost
 readback, the overlap refusal, the lost-reply convergence of apply and restore,
 the refusal of a restore after `Terminate`, and the reverse restore order of the
-policy options are the behavior of the former methods. A cluster that a
-`SharedCluster` lends to tenants still refuses the call with
-`ceph.ErrSharedCluster`; `OperationError.Op` now reads `override.SetConfig` or
+policy options are the behavior of the former methods. `OperationError.Op` now reads `override.SetConfig` or
 `override.SetMessengerPolicy`. The messenger policy is admitted once, under its
 own name; its options are set without a second admission.
 

@@ -70,8 +70,6 @@ Properties of the proposal:
   they are published. The earlier slices do not depend on it.
 - Old names: nothing is renamed or removed. `MonitorContainer.Remove` and
   `AddMonitor` keep their meanings (permanent removal and fresh join).
-- A cluster that a `SharedCluster` shares refuses `Detach`, `Reopen` and the
-  option, as it refuses `WithDaemonImage` and `DetachedOSD.Reopen`.
 
 ## Ownership model
 

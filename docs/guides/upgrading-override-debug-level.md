@@ -2,7 +2,7 @@
 
 0.x: old names are removed without aliases. The runtime debug level override
 moved out of `ceph` into the package `override`. There is no deprecated alias,
-wrapper or forwarder in `ceph`, and `Tenant` never had one. Published releases
+wrapper or forwarder in `ceph`. Published releases
 keep their original API. Update the calls, the type names and the `import` line
 together.
 
@@ -29,9 +29,7 @@ The generation fence, the settling of an unconfirmed set before a restoration,
 the registry that admits one window per daemon and option (with a lock of its
 own), the native fence that `OSDContainer.Remove` and `OSDContainer.Detach` drain,
 the context and timeout behavior, the error texts and classes, and the states
-and transitions of a window are the behavior of the former method. A cluster
-that a `SharedCluster` lends to tenants still refuses the call with
-`ceph.ErrSharedCluster`; `OperationError.Op` now reads `override.SetDebugLevel`
+and transitions of a window are the behavior of the former method. `OperationError.Op` now reads `override.SetDebugLevel`
 instead of `OverrideDebugLevel`.
 
 ## What differs

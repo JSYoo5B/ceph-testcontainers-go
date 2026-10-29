@@ -18,6 +18,8 @@ Releases follow semantic versioning. Before v1.0.0, a minor release may change
 the API; [CHANGELOG.md](CHANGELOG.md) lists every change.
 
 Documentation for a published release is available at its Git tag.
+The shared-cluster and tenant harness has been removed from current source;
+see [Independent test fixtures](docs/guides/remove-shared-harness.md) for migration.
 See [Upgrading to v0.3.0](docs/guides/upgrading-to-v0.3.md) for the new native
 input API, compatibility and the limits of the protocol receipts. For changes
 from v0.1.0, see [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md).

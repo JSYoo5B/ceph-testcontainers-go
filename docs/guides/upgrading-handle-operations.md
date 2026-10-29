@@ -93,10 +93,6 @@ name.
   with an error. That handle is not bound yet and binds to the pool of its name
   at its first successful operation, so use it only to clean up. A handle
   returned without an error is always bound.
-- An error from a handle operation that a shared cluster refuses names the
-  operation as `Type.Method` in `OperationError.Op`, for example
-  `OSDContainer.Remove` or `Pool.Remove`. The shared-cluster policy of each
-  operation is unchanged.
 - Client operations behave as before for the descriptor they are called on,
   including the refusals for stale, replaced, revoked and deleted descriptors.
 - Unchanged: the last-OSD refusal, the registration UUID checks in every removal

@@ -2,7 +2,7 @@
 
 0.x: old names are removed without aliases. The MGR module override moved out of
 `ceph` into the package `override`. There is no deprecated alias, wrapper or
-forwarder in `ceph`, and `Tenant` never had one. Published releases keep their
+forwarder in `ceph`. Published releases keep their
 original API. Update the calls, the type names and the `import` line together.
 
 ```golang
@@ -25,8 +25,7 @@ always-on modules, the protection of `volumes` and `mirroring` before a disable,
 the overlap refusal, the no-op lease when the module is already in the requested
 state, the bounded fresh readback after a change, the retry after a lost reply
 and the refusal of a `Restore` after `Terminate` are the behavior of the former
-method. A cluster that a `SharedCluster` lends to tenants still refuses the call
-with `ceph.ErrSharedCluster`; `OperationError.Op` now reads
+method. `OperationError.Op` now reads
 `override.SetMGRModule` instead of `OverrideMGRModule`. The call still verifies
 membership only, not command readiness.
 

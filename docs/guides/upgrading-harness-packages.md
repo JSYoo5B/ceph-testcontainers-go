@@ -1,5 +1,10 @@
 # Upgrading to the harness packages
 
+> Historical record: the extraction direction below was superseded by complete
+> removal of the shared-cluster/tenant harness. These packages and policies are
+> absent from current source. Use [independent fixtures](remove-shared-harness.md) instead. All snapshots, counts and statements below
+> describe the earlier extraction, not the supported API.
+
 This source break targets the next minor release. Published tags remain
 immutable; main provides no deprecated phase, no compatibility alias and no
 forwarding declaration. 0.x: old names are removed without aliases.

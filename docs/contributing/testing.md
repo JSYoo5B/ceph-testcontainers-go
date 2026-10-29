@@ -711,7 +711,7 @@ Other release differences, kept out of the table on purpose:
 ## Debugging a failing local run
 
 - Read the `-v` output from the top. Tests log the phase they reached, and
-  failed tests that use the shared cluster helpers print daemon log tails.
+  failed tests that use the independent fixture helpers print daemon log tails.
 - `TestMultiClusterMonitorBootstrapRefresh` replaces every MON as named
   phases (`add d`, `remove a`, ...). A passing replacement logs one
   `MON_REPLACEMENT_RECEIPT` line per cluster: each phase's operation and

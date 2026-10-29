@@ -257,8 +257,7 @@ release, err := osd.Version(ctx) // what the running daemon reports, such as "20
 Read this scope before relying on it:
 
 - It overrides one container. The cluster's images, `ClusterFacts` and the
-  other daemons are untouched, and a shared cluster refuses the call to its
-  tenants.
+  other daemons are untouched.
 - `CephVersion` is recorded once from the first MON and the CLI image. It does
   not describe an overridden daemon: use the daemon handle's `Version`, which
   reads the daemon's own admin socket and fails when the reply has no

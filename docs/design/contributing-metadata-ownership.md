@@ -1,5 +1,10 @@
 # Design: contributor metadata ownership and integration cost
 
+> Current boundary: the shared-cluster/tenant harness and its core-only policy,
+> lease and hook plumbing have been removed. Harness references and source
+> locations below are historical design evidence, not retained APIs or future
+> extraction requirements. See [independent fixtures](../guides/remove-shared-harness.md).
+
 Design note for #216. It inventories the shared bookkeeping files that
 concurrent pull requests edit, selects an ownership policy per family, and
 orders the implementation into small reviewable changes. It changes no product

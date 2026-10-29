@@ -44,13 +44,7 @@ and the [MGR module](guides/upgrading-override-mgr-module.md).
   `Restore` after `Terminate` is refused with the error of an operation on a
   terminated cluster.
 
-Every function admits the cluster as a method of `ceph.Container` does. A
-cluster that a `SharedCluster` lends to tenants refuses the call with
-`ceph.ErrSharedCluster` and `OperationError.Op` set to the function name, such as
-`override.AddBlocklist`, `override.SetFullRatios`, `override.SetMGRModule`,
-`override.SetOSDFlag`, `override.SetDebugLevel`, `override.SetConfig` or
-`override.SetMessengerPolicy`; a cluster lent to one exclusive lease accepts it.
-`Tenant` has no forwarder. A nil cluster returns a not-applied handle and an
+Every function admits the cluster as a method of `ceph.Container` does. A nil cluster returns a not-applied handle and an
 error classified `ceph.ErrInvalidRequest`.
 
 ## AddBlocklist
@@ -76,7 +70,6 @@ The verb is `Add` because the call creates one entry that did not exist, and
 | --- | --- | --- |
 | Entry added and read back | Real | nil |
 | Nil cluster | Not applied | `ErrInvalidRequest`, `Op` `override.AddBlocklist` |
-| Shared cluster | Not applied | `ErrSharedCluster`, `Op` `override.AddBlocklist` |
 | Invalid address | Not applied | `ErrInvalidRequest` |
 | Duration below one second | Not applied | plain error |
 | Terminated cluster or no control container | Not applied | the cluster's own error |
@@ -146,7 +139,6 @@ health warning (per-OSD flags raise `OSD_FLAGS` instead).
 | Flag set or cleared and read back | Real | nil |
 | Flag already in the requested state | Real, a lease without a write | nil |
 | Nil cluster | Not applied | `ErrInvalidRequest`, `Op` `override.SetOSDFlag` |
-| Shared cluster | Not applied | `ErrSharedCluster`, `Op` `override.SetOSDFlag` |
 | Unsupported flag | Not applied | plain error |
 | Terminated cluster or no control container | Not applied | the cluster's own error |
 | This flag is already held by another handle | Not applied | plain error |
@@ -210,7 +202,6 @@ so external edits must not race the call or `Restore`.
 | Module changed and read back | Real | nil |
 | Module already in the requested state | Real (a lease with no write) | nil |
 | Nil cluster | Not applied | `ErrInvalidRequest`, `Op` `override.SetMGRModule` |
-| Shared cluster | Not applied | `ErrSharedCluster`, `Op` `override.SetMGRModule` |
 | Invalid module name | Not applied | plain error `invalid Ceph manager module name` |
 | Terminated cluster or no control container | Not applied | the cluster's own error |
 | This module is already held by another handle | Not applied | plain error |
@@ -276,7 +267,6 @@ wait for `OSD_NEARFULL`, `OSD_BACKFILLFULL` or `OSD_FULL` with
 | --- | --- | --- |
 | All three thresholds applied and read back | Real | nil |
 | Nil cluster | Not applied | `ErrInvalidRequest`, `Op` `override.SetFullRatios` |
-| Shared cluster | Not applied | `ErrSharedCluster`, `Op` `override.SetFullRatios` |
 | Context already ended, or ended while waiting for the topology lock | Not applied | the context error |
 | Invalid, unordered or float32-collapsed ratios | Not applied | `ErrInvalidRequest` |
 | This cluster already holds a full ratios override | Not applied | plain error |
@@ -354,7 +344,6 @@ the set has ended.
 | --- | --- | --- |
 | Window applied and read back | Real, `applied-verified` | nil |
 | Nil cluster | Not applied | `ErrInvalidRequest`, `Op` `override.SetDebugLevel` |
-| Shared cluster | Not applied | `ErrSharedCluster`, `Op` `override.SetDebugLevel` |
 | Context already ended | Not applied | the context error |
 | Option or level not supported | Not applied | `ErrInvalidRequest` |
 | Daemon is not an OSD such as `osd.0` | Not applied | `ErrInvalidRequest` |
@@ -474,7 +463,6 @@ preparing OSDs before they start.
 | Entry written and read back | Real | nil |
 | The stored value already equals the request | Real, a lease with no write | nil |
 | Nil cluster | Not applied | `ErrInvalidRequest`, `Op` `override.SetConfig` |
-| Shared cluster | Not applied | `ErrSharedCluster`, `Op` `override.SetConfig` |
 | Context already ended, or ended while waiting for the topology lock | Not applied | the context error |
 | Invalid section, mask, name or value | Not applied | `ErrInvalidRequest` |
 | Option fixed by the `MessengerV2Secure` or `MessengerV2Only` bootstrap | Not applied | `ErrInvalidRequest` |

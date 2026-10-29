@@ -232,7 +232,7 @@ Request additional role routing through the existing review command:
 
 These optional profiles cover constrained ordinary RBD, RGW without a generic
 client, and stopped-link mirror monitor refresh. Other cache, scheduling,
-shared/native and aggregate compatibility checks remain in their ordinary
+native and aggregate compatibility checks remain in their ordinary
 source-owned batches; reviewers can select those batches by the same command.
 
 ### Check names
@@ -1676,7 +1676,7 @@ job's result.
 | Native assertions and completion | `native/native.log`, `native/report.json` | An assertion failed, a Ceph wait hit its deadline, the batch timeout expired, or a test was skipped. For a Go timeout, the `panic: test timed out` block lists the tests still running and for how long. |
 | Docker resource cleanup | `runtime-cleanup-<id>/after.json` | A test left a container, network or named volume behind, for example by not registering cleanup when `Run` returned an error. |
 
-Failed integration tests that use the shared cluster helpers print the last
+Failed integration tests that use the independent fixture helpers print the last
 16 KB of every daemon's log into `native.log` before the cluster is removed.
 Search for `container ... logs:` near the failing test.
 
