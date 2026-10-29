@@ -19,7 +19,7 @@ import (
 //     two cluster-mutex sections of scaleColdMDS, the filesystem registry's
 //     setupMu. Both are enough because every writer holds both.
 //   - A writer holds setupMu and the cluster mutex. The writers are
-//     startMDSWithAdmission (reserveIndex and publish), retireMDS,
+//     admitMDSStart (reserveIndex), publishStartedMDS (publish), retireMDS,
 //     removeFilesystem and removeStoppedMDS (remove). The constructor
 //     newMDSRoster runs before the Filesystem is published.
 //

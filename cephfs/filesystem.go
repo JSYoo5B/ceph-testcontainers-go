@@ -439,10 +439,64 @@ func (fs *Filesystem) startMDSWithService(ctx context.Context, start func(contex
 	return err
 }
 
+// mdsStartAdmission is what the admission phase of startMDSWithAdmission hands
+// to the later phases: the reserved daemon name, the customizers read under the
+// cluster mutex, whether this start consumed cold permission, and the control
+// container selected for the auth command (cold and replacement starts only).
+type mdsStartAdmission struct {
+	id      string
+	opts    []testcontainers.ContainerCustomizer
+	cold    bool
+	control testcontainers.Container
+}
+
 // Admission/publication hooks belong only to explicit replacement. The legacy
 // wrapper above passes nil hooks and preserves ordinary and cold behavior.
 // Admission and publication run under c.mu; auth and startService run unlocked.
+//
+// The function runs three phases: admitMDSStart (under c.mu, released before it
+// returns), createMDSCredentials (unlocked) and publishStartedMDS (under c.mu).
+// The service start between the last two is unlocked. The caller holds setupMu
+// for all of it (R1, cephfs/entry.go:100-102).
 func (fs *Filesystem) startMDSWithAdmission(ctx context.Context, start func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error), admit func(context.Context, string) (testcontainers.Container, error), published func(*MDS)) (*MDS, error) {
+	c := fs.cluster
+	a, err := fs.admitMDSStart(ctx, admit)
+	if err != nil {
+		return nil, err
+	}
+	id, cold := a.id, a.cold
+	keyring, err := fs.createMDSCredentials(ctx, a, admit != nil)
+	if err != nil {
+		return nil, err
+	}
+	moduleOpts := []testcontainers.ContainerCustomizer{
+		testcontainers.WithEnv(map[string]string{"CEPH_MDS_ID": id, "CEPH_FILESYSTEM": fs.FilesystemName}),
+		testcontainers.WithEntrypoint("/bin/sh", "/tc/mds.sh"), testcontainers.WithCmd(),
+		testcontainers.WithFiles(servicehook.ScriptFile("mds"), clusterutil.TextFile("/etc/ceph/mds.keyring", keyring, 0o600)),
+		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mds." + id + ".asok"}).WithStartupTimeout(servicehook.StartupTimeout(c))),
+	}
+	moduleOpts = append(moduleOpts, a.opts...)
+	ctr, err := start(ctx, "mds."+id, servicehook.ServiceImage(c, "cephfs"), moduleOpts...)
+	// Publish only a real handle: a starter may return a typed nil with its
+	// error when no container was created.
+	ctr = servicehook.DiagnosticHandle(ctr)
+	daemon := fs.publishStartedMDS(ctx, id, ctr, err, published)
+	if cold && (err != nil || ctr == nil) {
+		return nil, clusterutil.OperationError(ctx, "start initial MDS service", err)
+	}
+	if admit != nil && (err != nil || ctr == nil || ctx.Err() != nil) {
+		return daemon, clusterutil.OperationError(ctx, "start replacement MDS service", err)
+	}
+	return daemon, err
+}
+
+// admitMDSStart is the admission phase: it takes the topology mutex, checks that
+// the cluster is open and this handle is the registered filesystem, reads the
+// next name and the customizers, runs the cold-start ownership and control
+// checks and consumes cold permission, runs the replacement admission hook, and
+// reserves the name index. The mutex is released on every return, before any
+// auth command. Every refusal text and the order of the checks are unchanged.
+func (fs *Filesystem) admitMDSStart(ctx context.Context, admit func(context.Context, string) (testcontainers.Container, error)) (*mdsStartAdmission, error) {
 	c := fs.cluster
 	if err := servicehook.LockTopology(ctx, c); err != nil {
 		return nil, err
@@ -488,57 +542,57 @@ func (fs *Filesystem) startMDSWithAdmission(ctx context.Context, start func(cont
 	}
 	fs.roster.reserveIndex()
 	servicehook.Unlock(c)
-	args := []string{"auth", "get-or-create", "mds." + id,
+	return &mdsStartAdmission{id: id, opts: opts, cold: cold, control: control}, nil
+}
+
+// createMDSCredentials runs the auth command for the reserved daemon, without
+// any lock. A cold or replacement start sends it through the control container
+// selected during admission; an ordinary start uses the cluster CLI. The three
+// failure texts are the ones the combined function returned.
+func (fs *Filesystem) createMDSCredentials(ctx context.Context, a *mdsStartAdmission, replacement bool) ([]byte, error) {
+	args := []string{"auth", "get-or-create", "mds." + a.id,
 		"mon", "allow profile mds", "mgr", "allow profile mds",
 		"osd", "allow rw tag cephfs *=*", "mds", "allow"}
-	var keyring []byte
-	var err error
-	if cold || admit != nil {
-		keyring, err = servicehook.Command(ctx, control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
+	if a.cold || replacement {
+		keyring, err := servicehook.Command(ctx, a.control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
 		if err != nil {
-			if admit != nil {
+			if replacement {
 				return nil, clusterutil.OperationError(ctx, "create replacement MDS credentials", err)
 			}
 			return nil, clusterutil.OperationError(ctx, "create initial MDS credentials", err)
 		}
-	} else {
-		keyring, err = c.Ceph(ctx, args...)
-		if err != nil {
-			return nil, fmt.Errorf("create mds.%s credentials: %w", id, err)
-		}
+		return keyring, nil
 	}
-	moduleOpts := []testcontainers.ContainerCustomizer{
-		testcontainers.WithEnv(map[string]string{"CEPH_MDS_ID": id, "CEPH_FILESYSTEM": fs.FilesystemName}),
-		testcontainers.WithEntrypoint("/bin/sh", "/tc/mds.sh"), testcontainers.WithCmd(),
-		testcontainers.WithFiles(servicehook.ScriptFile("mds"), clusterutil.TextFile("/etc/ceph/mds.keyring", keyring, 0o600)),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mds." + id + ".asok"}).WithStartupTimeout(servicehook.StartupTimeout(c))),
+	keyring, err := fs.cluster.Ceph(ctx, args...)
+	if err != nil {
+		return nil, fmt.Errorf("create mds.%s credentials: %w", a.id, err)
 	}
-	moduleOpts = append(moduleOpts, opts...)
-	var daemon *MDS
-	ctr, err := start(ctx, "mds."+id, servicehook.ServiceImage(c, "cephfs"), moduleOpts...)
-	// Publish only a real handle: a starter may return a typed nil with its
-	// error when no container was created.
-	ctr = servicehook.DiagnosticHandle(ctr)
-	if ctr != nil {
-		servicehook.Lock(c)
-		daemon = &MDS{Container: ctr, ID: id, FilesystemName: fs.FilesystemName}
-		daemon.identity = fs.captureMDSIdentity(ctx, daemon, ctr, err)
-		fs.roster.publish(daemon)
-		if fs.Container == nil {
-			fs.Container = ctr
-		}
-		if published != nil {
-			published(daemon)
-		}
-		servicehook.Unlock(c)
+	return keyring, nil
+}
+
+// publishStartedMDS is the publication phase: for a real handle (nil means the
+// starter created no container) it takes the cluster mutex, records the daemon
+// with its creation identity in the roster, sets the embedded Container if it
+// was unset, runs the published hook and releases. It returns the published
+// daemon, or nil when there was no handle. A start error does not stop
+// publication: partial handles stay owned.
+func (fs *Filesystem) publishStartedMDS(ctx context.Context, id string, ctr testcontainers.Container, startErr error, published func(*MDS)) *MDS {
+	if ctr == nil {
+		return nil
 	}
-	if cold && (err != nil || ctr == nil) {
-		return nil, clusterutil.OperationError(ctx, "start initial MDS service", err)
+	c := fs.cluster
+	servicehook.Lock(c)
+	daemon := &MDS{Container: ctr, ID: id, FilesystemName: fs.FilesystemName}
+	daemon.identity = fs.captureMDSIdentity(ctx, daemon, ctr, startErr)
+	fs.roster.publish(daemon)
+	if fs.Container == nil {
+		fs.Container = ctr
 	}
-	if admit != nil && (err != nil || ctr == nil || ctx.Err() != nil) {
-		return daemon, clusterutil.OperationError(ctx, "start replacement MDS service", err)
+	if published != nil {
+		published(daemon)
 	}
-	return daemon, err
+	servicehook.Unlock(c)
+	return daemon
 }
 
 func (fs *Filesystem) retireMDS(ctx context.Context, candidate MDSStatus) error {
