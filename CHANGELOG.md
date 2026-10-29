@@ -10,101 +10,26 @@ change the API.
 
 ### API naming
 
-- Add `ceph.FactsOf(cluster) (ceph.ClusterFacts, error)`, an independent
-  snapshot of the ten static cluster facts with exported fields and no new
-  `Container` method. It also works on a terminated cluster, and a nil cluster
-  returns an error and the zero value. The snapshot holds copies only and
-  carries no control path or cleanup state. The ten `Container` accessors are
-  unchanged in this step; their migration is a separate change.
-- Add `ceph.Observe(cluster)` and `cephharness.ObserveTenant(tenant)`, which return
-  one `*ceph.Observer` with `Status`, `ManagerStatus` and `DaemonAddresses`, and
-  no new `Container` method. Construction reads nothing and every query reads
-  the cluster at that moment. A tenant-backed observer validates its lease on
-  every query, so it refuses after release or cluster termination; a nil
-  cluster or tenant returns an error. The `Container` and `Tenant` methods of
-  the same names are unchanged in this step; the other observations and the
-  removal of the `Tenant` forwarders are separate changes.
+Before 1.0, old names are removed without aliases.
 
-- Keep one form of each topology accessor: the one that takes `ctx` and
-  returns an error. `ceph.Container.ConnectionConfig`, `ControlContainer`,
-  `Managers`, `Monitors` and `OSDs`, and `rgw.Gateways`, now take `ctx` and
-  return an error; the `...Context` forms are renamed to these names, and
-  `ClientContainerContext` becomes `ClientContainer`. `(*rgw.Container).Gateways`
-  takes `ctx` and returns an error as well. A refused shared-cluster call is an
-  error instead of an empty result, waiting honors `ctx`, and a nil cluster
-  returns an error. There is no deprecated phase and no alias. See
-  `docs/guides/upgrading-context-accessors.md`.
-- Place each operation on the handle it acts on and take handles instead of
-  names. `OSDContainer` gets `Remove`, `SetIn`, `Detach`, `AdminSocket` and
-  `RotateKey`; `DetachedOSD` gets `Reopen`; `MonitorContainer` gets `Remove` and
-  `AdminSocket`; `ManagerContainer` gets `Remove`, `AdminSocket` and `RotateKey`;
-  `Pool` gets `Status`, `Usage`, `PGs`, `SetPGCount`, `WaitForPGCount`,
-  `SetPlacement`, `SetQuota`, `SetReplication` and `Remove`; `ClientConfig` gets
-  `Capabilities`, `UpdateCaps`, `ReplaceKey`, `Revoke` and `Delete`;
-  `cephfs.Filesystem` gets `Remove`, `cephfs.MDS` gets `RemoveStopped` and
-  `AddReplacement`, and `rgw.Gateway` gets `Remove`. `Container.Pool(ctx, name)`
-  is new and returns the handle of an existing pool. The `ceph.Container` methods
-  `RemoveOSD`, `SetOSDIn`, `DetachOSD`, `ReopenOSD`, `RemoveMonitor`,
-  `RemoveManager`, `AdminSocket`, `RotateDaemonKey`, `PoolStatus`, `PoolUsage`,
-  `PoolPGs`, `SetPoolPGCount`, `WaitForPoolPGCount`, `SetPoolPlacement`,
-  `SetPoolQuota`, `SetPoolReplication`, `RemovePool`, `ClientCapabilities`,
-  `UpdateClientCaps`, `ReplaceClientKey`, `RevokeClient` and `DeleteClient`, the
-  functions `cephfs.Remove` and `rgw.Remove`, and the `cephfs.Filesystem`
-  methods `RemoveStoppedMDS` and `AddMDSReplacement` are removed with no
-  deprecated phase and no alias. A handle acts on its own instance: the handle
-  of a removed, detached, replaced or deleted daemon, pool or identity, and the
-  handle of a terminated cluster, returns an error instead of acting on whatever
-  owns the ID or name now. Daemon names are no longer parsed at run time, and
-  rotating a MON key no longer compiles. `Tenant.PoolStatus` and
-  `Tenant.PoolUsage` are unchanged. See
-  `docs/guides/upgrading-handle-operations.md` for the migration table.
-- Give typed shapes to values that were plain strings or positional byte
-  slices. `ceph.OSDFlag` (with the eleven constants `OSDFlagNoUp`,
-  `OSDFlagNoDown`, `OSDFlagNoOut`, `OSDFlagNoIn`, `OSDFlagNoBackfill`,
-  `OSDFlagNoRebalance`, `OSDFlagNoRecover`, `OSDFlagNoScrub`,
-  `OSDFlagNoDeepScrub`, `OSDFlagNoSnapTrim` and `OSDFlagNoAutoscale`) replaces
-  the `string` flag of `Container.OverrideOSDFlag` and the `[]string` result of
-  `Container.OSDFlags` and `Tenant.OSDFlags`. The type stays open because
-  `OSDFlags` reports flags without a constant; `OverrideOSDFlag` still refuses
-  any other value. `ceph.PGID` with `ParsePGID` and `String` replaces the
-  `string` PG ID of `DeepScrubPG`, `RepairPG`, `PGInconsistencies` and
-  `PGState.PGID`, so a PG from `Pool.PGs` passes straight to the scrub methods.
-  `ceph.ConnectionConfig` (`Conf` and `Keyring`) replaces the two `[]byte`
-  results of `Container.ConnectionConfig(ctx)` and `ClientConfig.ConnectionConfig()`,
-  which now return `(ConnectionConfig, error)` and the zero value on error.
-  Untyped string constants still compile for the flag and PG ID parameters; a
-  value in a `string` variable needs a conversion. Validation, error messages,
-  restoration and copy semantics do not change, and there is no deprecated phase
-  and no alias. See `docs/guides/upgrading-typed-values.md` for the migration
-  table.
-- Finish the staged naming pass: `rbd.TemporaryImmutableObjectCache` becomes
-  `rbd.StartImmutableObjectCache`. The lease, client options, Stop/Restore,
-  error ownership and cleanup stay unchanged; there is no automatic expiry or
-  compatibility alias. See `docs/guides/upgrading-rbd-cache-name.md`.
-- Record the remaining public declaration/member retention decisions, including
-  dependency-role APIs, and bind that review to generated source catalogues.
-  Inventory regeneration alone cannot approve later API changes.
-- Move RGW multisite orchestration from `rgw` to the new public package
-  `rgw/multisite`, which imports `rgw` and reuses `rgw.Gateway`; `rgw` does not
-  import it. The 56 declarations move (`RunMultisite`, `RunTopology`,
-  `Multisite`, `MultisiteConfig`, `TopologyConfig`, `Zone`, `ZoneConfig`,
-  `Zonegroup`, `ZonegroupConfig`, the `Sync*` and status records, the three
-  `Sync*` constants and the methods of `Multisite` and `SyncGroup`).
-  `Multisite` is now `multisite.Fixture`, `RunMultisite` is `multisite.Run` and
-  `MultisiteConfig` is `multisite.Config`; every other name and every method is
-  unchanged. There is no deprecated phase and no alias in `rgw`. Callers,
-  examples and documentation moved, with behavior unchanged. See
-  `docs/guides/upgrading-rgw-multisite.md` for the migration table.
-- Move the RBD mirror fixture from `rbd` to the service-specific package
-  `rbd/mirror`: `rbd.RunMirror` and `rbd.RunMirrorWithImages` become
-  `Run` and `RunWithImages`, `rbd.Mirror` keeps its name, and the `Mirror`
-  prefix is dropped from `Config`, `Mode`, `Scope`, `Daemon`, `DaemonStatus`,
-  `PoolReplayerStatus`, `ImageStatus`, `Namespace`, `NamespaceState`,
-  `Policies`, `ReceiverStatus` and `ReceiverDaemonStatus` (and the mode and
-  scope constants). Methods, embedded container, error kinds, image admission,
-  locking, cancellation and cleanup are unchanged; there is no deprecated alias
-  or forwarding layer. CephFS mirroring is not part of this move yet. See
-  `docs/guides/upgrading-rbd-mirror-package.md`.
+- Keep one form of each topology accessor: the one that takes `ctx` and returns
+  an error. `ceph.Container.ConnectionConfig`, `ControlContainer`, `Managers`,
+  `Monitors` and `OSDs`, `ClientContainer`, and `rgw.Gateways` take `ctx` and
+  return an error; the `...Context` forms are gone.
+- Place each operation on the handle it acts on: `OSDContainer`,
+  `DetachedOSD`, `MonitorContainer`, `ManagerContainer`, `Pool`,
+  `ClientConfig`, `cephfs.Filesystem`, `cephfs.MDS` and `rgw.Gateway` carry
+  their own removal, administration and key operations, and `Container.Pool`
+  returns the handle of an existing pool. A handle acts on its own instance and
+  returns an error once that instance is removed, replaced or terminated.
+- Give typed shapes to plain strings and byte slices: `ceph.OSDFlag`,
+  `ceph.PGID` with `ParsePGID`, and `ceph.ConnectionConfig`.
+- Rename `rbd.TemporaryImmutableObjectCache` to `rbd.StartImmutableObjectCache`.
+- Move RGW multisite orchestration to the new package `rgw/multisite`
+  (`multisite.Run`, `multisite.Fixture`, `multisite.Config`) and the RBD mirror
+  fixture to `rbd/mirror`.
+- Record the public declaration and member retention decisions per package, and
+  bind that review to generated source catalogues.
 
 ### Added
 
@@ -582,28 +507,20 @@ change the API.
   its existing policy, BlueStore, owned OSD, replicated pool and object
   mapping checks, topology serialization, partial-failure results, and the
   one-shot contract with no handle, registry entry or Restore. Recover with
-  `RepairPG` or an OSD restart. See the [migration table](docs/fault.md).
-
-- OSD launch preparation captures immutable input values and reconstructs fresh
-  file Readers and request state. Copies of a launch share one creation-attempt
-  guard, so an uncertain start is not replayed and an existing descriptor is
-  not rebound. Partial containers remain owned for cleanup. This is an internal
-  prerequisite for #6, without a public retained-store or replacement API.
+  `RepairPG` or an OSD restart.
 
 - Network fault APIs use `fault.NetworkProfile`, `NetworkProfileLease` and
   `NetworkProfileStatus`, with `ApplyNetworkProfile`, `ApplyLinkProfile` and
   `rgw.Multisite.ApplyZoneLinkProfile`. This is a source-breaking rename of
   the corresponding delay names; fields, error categories, ownership and
-  `Status`/`Restore` behavior are unchanged. See the
-  [migration guide](docs/guides/upgrading-network-profile-names.md). No aliases
-  or automatic expiry are introduced.
+  `Status`/`Restore` behavior are unchanged.  No aliases or automatic expiry are introduced.
 
 - Rename CephFS policy methods to `OverrideSessionTimeouts`,
   `OverrideSubvolumePin` and `OverrideSubvolumeGroupPin`, returning explicit
   `SessionTimeoutsOverrideHandle` / `PinOverrideHandle` restoration objects.
   Rename schedule creation to `AddSnapshotSchedule`, retaining
   `SnapshotScheduleLease`. Ownership, uncertainty and explicit Restore semantics
-  are unchanged; see `docs/guides/upgrading-cephfs-names.md`.
+  are unchanged.
 
 - Rename `Container.TemporaryConfig`, `TemporaryOSDFlag`, `TemporaryMGRModule`
   and `TemporaryMessengerPolicy` to `OverrideConfig`, `OverrideOSDFlag`,
@@ -613,7 +530,7 @@ change the API.
   `MGRModuleOverrideHandle`, `MessengerPolicyOverrideHandle` and
   `ClientRevocationHandle`. Handle state, explicit `Restore`, admission and
   uncertainty/retry semantics are unchanged. These next-minor source breaks add no compatibility aliases or
-  automatic expiry; see `docs/guides/upgrading-ceph-policy-names.md`.
+  automatic expiry.
 
 - Rename `Container.TemporaryFullRatios` to `Container.OverrideFullRatios`,
   retaining `ceph.FullRatiosOverride` and its retryable `Restore`. This is an
@@ -621,11 +538,6 @@ change the API.
   no expiry and no undo on context cancellation. Query/value types and existing
   ownership/recovery semantics are unchanged. The next-minor source break has
   no compatibility alias; see `docs/ceph.md#overridefullratios`.
-
-- Revert the client-session blocklist extraction into `fault`.
-  `Container.TemporaryBlocklist` and `ceph.BlocklistOverride` stay in `ceph`
-  as session-admission controls, preserving expiration ownership and retryable
-  restoration. Network faults and container pause remain in `fault`.
 
 - The CI commands `batchselect` and `tagcatalog` moved from `tools/` to
   `internal/tools/`. They only serve this repository's CI planner, so they
@@ -696,12 +608,6 @@ change the API.
 
 ### Documentation
 
-- The design document `docs/design/fault-package.md` inventories the fault
-  injection APIs for a separate `fault` package: which APIs and types move
-  and which stay in `ceph`, the apply, undo, overlap, cancellation,
-  shared-cluster and `Terminate` contracts each must keep, the internal
-  boundary that the next stage adds, and the checkpoints of the later
-  stages. No API changes yet; this is stage 1 of the fault-package extraction.
 - The feasibility report `docs/research/crimson-cyanstore.md` records where
   Crimson OSD builds are published (only `main` development builds, not the
   Tentacle or Squid releases), a manual run in which a Crimson OSD with
@@ -799,22 +705,11 @@ change the API.
   two by a test that required a log line the `ceph` CLI can lose and
   by an I/O stall of the runner.
 
-- Split the repository-wide API naming catalogues into package-scoped files
-  under `docs/design/api-naming/<package>/` (`declarations.json`,
-  `members.json`, `review.json`). The rows are unchanged: the per-package files
-  reassemble into the previous global catalogues byte for byte, and the new
-  receipts are issued separately by the explicit approve step. The public
-  package list is discovered instead of kept in a map, and `go run
-  ./internal/tools/apinaming` provides `regenerate` (catalogues only, never a
-  receipt), `approve` (one package's receipt only) and `aggregate` (computed
-  totals, not committed). The old `api-naming-inventory.json`,
-  `api-naming-members.json` and `api-naming-review.json` files are removed. No
-  library API changes.
 
 ## v0.3.0 (2026-10-16)
 
 The v0.3.0 release adds bounded native input and protocol observation
-recipes. See [Upgrading to v0.3.0](docs/guides/upgrading-to-v0.3.md) for
+recipes. See [Upgrading to v0.3.0](https://github.com/JSYoo5B/ceph-testcontainers-go/blob/v0.3.0/docs/guides/upgrading-to-v0.3.md) for
 compatibility and the limits of the completed fixture scope.
 The receipts below are test helpers and native evidence, not new public
 observer APIs or certification of a downstream Messenger implementation.
@@ -912,7 +807,7 @@ observer APIs or certification of a downstream Messenger implementation.
 
 ## v0.2.0 (2026-10-14)
 
-See [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md)
+See [Upgrading to v0.2.0](https://github.com/JSYoo5B/ceph-testcontainers-go/blob/v0.2.0/docs/guides/upgrading-to-v0.2.md)
 for compatibility changes, platform requirements and known native limits.
 The completed fixture scope provides server-side profiles and native receipts;
 it does not certify a
@@ -1067,7 +962,7 @@ downstream client's implementation or migration. Publication checks are in
 - `CreateClient`, `WithClient` and `WithClientIdentity` now take variadic
   options. Existing direct calls still compile, but interfaces, mocks and
   stored method values with the old signatures need to be updated; see
-  [API compatibility](docs/guides/upgrading-to-v0.2.md#api-compatibility).
+  [API compatibility](https://github.com/JSYoo5B/ceph-testcontainers-go/blob/v0.2.0/docs/guides/upgrading-to-v0.2.md#api-compatibility).
 
 - `TemporaryConfig` classifies its refusal of an option that the Messenger mode
   fixes as `ErrInvalidRequest`.

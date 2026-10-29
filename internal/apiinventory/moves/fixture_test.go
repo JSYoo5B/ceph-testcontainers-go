@@ -22,11 +22,9 @@ import (
 const docsDir = "docs"
 
 const (
-	note       = docsDir + "/design/audit.md"
-	changeID   = "9-alpha-mirror"
-	fragment   = docsDir + "/changes/" + changeID + ".md"
-	noteText   = "# Audit\n\nThe " + changeID + " change moves the mirror family.\n"
-	fragmentMD = "---\nchange: " + changeID + "\nkind: api-break\nmigration: " + docsDir + "/guides/upgrading-x.md\n---\nMoved.\n"
+	note     = docsDir + "/design/audit.md"
+	changeID = "9-alpha-mirror"
+	noteText = "# Audit\n\nThe " + changeID + " change moves the mirror family.\n"
 )
 
 type row struct{ name, kind string }
@@ -202,7 +200,6 @@ func baseRepo(t *testing.T) *repo {
 	t.Helper()
 	r := newRepo(t)
 	r.write(note, "# Audit\n")
-	r.write(docsDir+"/guides/upgrading-x.md", "# x\n")
 	r.setPackage("alpha", alphaBase)
 	r.commit("base")
 	return r
@@ -213,7 +210,6 @@ func legitHead(r *repo) {
 	r.setPackage("alpha", alphaHead)
 	r.setPackage("alpha/mirror", mirrorHead)
 	r.write(note, noteText)
-	r.write(fragment, fragmentMD)
 	r.write(moves.RecordsDir+"/"+changeID+".json", legitRecord)
 }
 

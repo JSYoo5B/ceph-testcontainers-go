@@ -39,14 +39,14 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 		{
 			name:  "host-memory-storage",
 			run:   ceph.Run,
-			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(256 << 20), ceph.WithOSDInMemoryStorage(1 << 30)},
+			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithNoInitialOSDs(), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(256 << 20).WithInMemory(1 << 30))},
 			pool:  "tc-combo",
 			small: true,
 		},
 		{
 			name:  "host-small-blocks",
 			run:   ceph.Run,
-			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(128 << 20)},
+			opts:  []testcontainers.ContainerCustomizer{ceph.WithHostNetwork(), ceph.WithNoInitialOSDs(), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(128 << 20))},
 			pool:  "tc-combo",
 			small: true,
 		},

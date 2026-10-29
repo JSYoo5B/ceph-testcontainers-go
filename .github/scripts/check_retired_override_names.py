@@ -72,8 +72,6 @@ ALLOWED = {
 }
 # A path that starts with one of these is a historical record.
 PREFIXES = {
-    "docs/changes/": "release-note fragments",
-    "docs/guides/upgrading-": "migration guides",
     "docs/design/api-naming/moves/": "move records",
 }
 SUFFIXES = (".go", ".md", ".py", ".json", ".yml", ".yaml", ".txt", ".sh", ".mod")

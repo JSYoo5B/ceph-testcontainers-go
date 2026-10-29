@@ -197,7 +197,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 		return nil, errClusterTerminated
 	}
 	if !c.settings.osdVolumeStorage || !c.stores.hasVolume() {
-		return nil, invalidRequest("OSDContainer.Detach retains stores only with WithOSDVolumeStorage")
+		return nil, invalidRequest("OSDContainer.Detach retains stores only with OSDStorage.WithVolume")
 	}
 	if err := c.currentOSD(handle); err != nil {
 		return nil, err

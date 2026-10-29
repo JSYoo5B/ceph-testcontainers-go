@@ -50,9 +50,6 @@ purpose-built synthetic error and belongs in `fault`, although Ceph implements
 the hook as a daemon debug switch. Scrub, repair and inspection of the damaged PG
 stay in `ceph`.
 
-For code already using the extracted `fault` delay names, follow the
-[network profile naming migration](guides/upgrading-network-profile-names.md).
-
 ## Pause
 
 ```golang

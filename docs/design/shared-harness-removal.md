@@ -5,7 +5,7 @@ benefit did not justify lifetime, admission, isolation and recycling complexity.
 This decision supersedes extraction and hardening of the framework. Tests own
 independent `ceph.Run` fixtures and explicitly create and clean their resources.
 There is no replacement sharing facade, deprecated alias or retired mode.
-See the [migration guide](../guides/remove-shared-harness.md).
+See the [current cluster usage](../ceph.md#run).
 
 ## Removal boundary
 
@@ -44,8 +44,7 @@ The package-scoped catalogues and deliberate-removal record account for all
 65 removed declaration rows: 30 in `ceph/harness`, 7 in `rbd/harness`, 11 in
 `cephfs/harness`, 9 in `rgw/harness` and 8 in `ceph` (the shared-policy error
 and seven formerly gated wrappers now inherited from Testcontainers). No
-declaration is added. Regeneration and approval are separate operations. The
-breaking-change fragment links the migration guide. Published release history
+declaration is added. Regeneration and approval are separate operations. Published release history
 and former design/evidence remain historical records and do not establish
 current API support.
 

@@ -20,13 +20,13 @@ import (
 
 func TestOSDMemorySizeAdmission(t *testing.T) {
 	for _, size := range []int64{0, -1} {
-		cluster, err := Run(t.Context(), DefaultImage, WithOSDInMemoryStorage(size))
+		cluster, err := Run(t.Context(), DefaultImage, WithOSDStorage(OSDStorage{}.WithInMemory(size)))
 		if err == nil || cluster != nil {
 			t.Fatalf("invalid RAM ceiling allocated a cluster: size=%d cluster=%v err=%v", size, cluster, err)
 		}
 	}
 	settings := options{blockSize: 1 << 30, osds: 3}
-	if err := WithOSDInMemoryStorage(1)(&settings); err != nil || settings.osdMemorySize != 1 || settings.blockSize != 1<<30 || settings.osds != 3 {
+	if err := WithOSDStorage(OSDStorage{}.WithInMemory(1))(&settings); err != nil || settings.osdMemorySize != 1 || settings.blockSize != 1<<30 || settings.osds != 3 {
 		t.Fatalf("positive backing ceiling changed logical capacity/topology: %+v err=%v", settings, err)
 	}
 }

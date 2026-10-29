@@ -70,8 +70,6 @@ class RetiredOverrideNamesTest(unittest.TestCase):
             subprocess.check_call(["git", "init", "-q", root])
             paths = (
                 "CHANGELOG.md",
-                "docs/changes/146-x.md",
-                "docs/guides/upgrading-x.md",
                 "docs/design/api-naming/moves/146-x.json",
                 "docs/guides/other.md",
                 "docs/design/other.md",

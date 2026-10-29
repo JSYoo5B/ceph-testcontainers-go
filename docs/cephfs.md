@@ -1332,7 +1332,7 @@ Snapshot mirroring between two clusters moved to the `cephfs/mirror` package; se
 ### Independent test fixtures
 
 Start an independent fixture with `Run`, create service resources explicitly,
-and register owned cleanup. See [Independent test fixtures](guides/remove-shared-harness.md).
+and register owned cleanup. See [Independent test fixtures](ceph.md#run).
 
 ## Examples
 

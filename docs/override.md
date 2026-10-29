@@ -10,10 +10,8 @@ central configuration entries and messenger policy. The package and restoration
 boundary follow the [design](design/override-package-boundary.md).
 
 0.x: old names are removed without aliases. The seven `Container` methods and
-their handle types no longer exist in `ceph`; the
-[package migration guide](guides/upgrading-override-package.md) and the
-[debug level guide](guides/upgrading-override-debug-level.md) map each previous
-call and type to its `override` function and handle.
+their handle types no longer exist in `ceph`; each is an `override` function
+with its own handle.
 
 `ceph.BlocklistEntry`, `Observer.BlocklistEntries`, `ceph.OSDFlag`,
 its constants, `Observer.OSDFlags`, `ceph.FullRatios`,
@@ -21,9 +19,7 @@ its constants, `Observer.OSDFlags`, `ceph.FullRatios`,
 `ceph.ConfigEntry`, `Observer.Configuration`, `ceph.MessengerPolicy`,
 `ceph.MessengerConnectionMode`, `ceph.MGRModuleState`,
 `Observer.MGRModules` and `Container.WaitMGRModuleReady` stay in `ceph`: they
-only read cluster state. The package imports `ceph`; `ceph` never imports it. See
-the migration guides for the [blocklist](guides/upgrading-override-package.md)
-and the [MGR module](guides/upgrading-override-mgr-module.md).
+only read cluster state. The package imports `ceph`; `ceph` never imports it.
 
 ## Handle contract
 
@@ -311,14 +307,11 @@ if err := change.Restore(ctx); err != nil {
 func SetDebugLevel(ctx context.Context, c *ceph.Container, setting ceph.DebugLevelSetting) (*override.DebugLevelHandle, error)
 ```
 
-0.x: old names are removed without aliases; the
-[migration guide](guides/upgrading-override-debug-level.md) maps the previous
-call and handle type to `override.SetDebugLevel` and `*override.DebugLevelHandle`.
+0.x: old names are removed without aliases.
 
 `ceph.DebugLevelSetting`, `ceph.DebugLevelReceipt`, `ceph.DebugLevelState` and
 `ceph.DebugLevelTransition` stay in `ceph` because the failure manifest copies
-the receipt; see [Debug level types](ceph.md#debug-level-types) and the
-[migration guide](guides/upgrading-override-debug-level.md).
+the receipt; see [Debug level types](ceph.md#debug-level-types).
 
 Opens one runtime debug level window on one running OSD that the cluster owns.
 `ceph.DebugLevelSetting` has `Daemon` (such as `osd.0`), `Name` (`debug_ms` or

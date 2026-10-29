@@ -36,11 +36,11 @@ func TestInvalidSettingsDoNotCreateResources(t *testing.T) {
 		{"invalid OSD layout", WithInitialOSDs(OSDConfig{Host: "bad host"})},
 		{"conflicting OSD host", WithInitialOSDs(OSDConfig{Host: "host1", Rack: "rack1"}, OSDConfig{Host: "host1", Rack: "rack2"})},
 		{"invalid pool defaults", WithPoolDefaults(2, 3)},
-		{"OSD block size", WithOSDBlockSize(0)},
-		{"negative OSD block size", WithOSDBlockSize(-1)},
-		{"small OSD block size", WithOSDBlockSize((64 << 20) - 1)},
+		{"OSD block size", WithOSDStorage(OSDStorage{}.WithBlockSize(0))},
+		{"negative OSD block size", WithOSDStorage(OSDStorage{}.WithBlockSize(-1))},
+		{"small OSD block size", WithOSDStorage(OSDStorage{}.WithBlockSize((64 << 20) - 1))},
 		{"startup timeout", WithStartupTimeout(0)},
-		{"unknown OSD object store", WithOSDObjectStore("filestore")},
+		{"unknown OSD object store", WithOSDStorage(OSDStorage{}.WithObjectStore("filestore"))},
 		{"host address requires host mode", WithHostAddress("127.0.0.1")},
 		{"host address empty", WithHostAddress("")},
 		{"host address unspecified", WithHostAddress("0.0.0.0")},
@@ -137,7 +137,7 @@ func (c *commandContainer) Exec(context.Context, []string, ...tcexec.ProcessOpti
 }
 
 func TestMemStoreRefusesBlueStoreOnlySettings(t *testing.T) {
-	cluster, err := Run(context.Background(), DefaultImage, WithOSDObjectStore(OSDMemStore), WithOSDInMemoryStorage(1<<30))
+	cluster, err := Run(context.Background(), DefaultImage, WithOSDStorage(OSDStorage{}.WithObjectStore(OSDMemStore).WithInMemory(1<<30)))
 	if err == nil || cluster != nil || !strings.Contains(err.Error(), "OSDMemStore") {
 		t.Fatalf("MemStore with in-memory BlueStore files allocated resources: %v %v", cluster, err)
 	}

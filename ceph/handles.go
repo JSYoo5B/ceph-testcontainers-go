@@ -144,7 +144,7 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 
 // Detach stops and removes this owned OSD's container but keeps its store in
 // the owned volume and its MON registration, so that DetachedOSD.Reopen can
-// start a new container on them. It needs WithOSDVolumeStorage. The OSD is
+// start a new container on them. It needs OSDStorage.WithVolume. The OSD is
 // down, not out or purged, while it is detached; hold noout to keep it in.
 //
 // Detach admits the native identity, refuses an OSD that a held network or

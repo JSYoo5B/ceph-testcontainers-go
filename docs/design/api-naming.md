@@ -144,10 +144,7 @@ policy, while the four policy overrides remain exclusive-only.
 | `ceph.Container.TemporaryOSDFlag` | `ceph.Container.OverrideOSDFlag` | `*ceph.OSDFlagOverrideHandle` / `Restore` | Saves global OSDMap flag state; does not schedule restoration. [osd_policy.go](../../ceph/osd_policy.go) |
 | `ceph.Container.TemporaryMGRModule` | `ceph.Container.OverrideMGRModule` | `*ceph.MGRModuleOverrideHandle` / `Restore` | Owns a change to module enablement, not an expiring module. [mgr_modules.go](../../ceph/mgr_modules.go) |
 | `ceph.Container.TemporaryMessengerPolicy` | `ceph.Container.OverrideMessengerPolicy` | `*ceph.MessengerPolicyOverrideHandle` / `Restore` | Changes allowed runtime policy; does not replace the fixture's fixed bootstrap mode. [messenger_policy.go](../../ceph/messenger_policy.go) |
-| `ceph.Container.TemporaryClientRevocation` | `ceph.Container.RevokeClient` | `*ceph.ClientRevocationHandle` / `Restore` | Removes an owned auth identity, with fenced restoration of its original key/caps; existing authenticated sessions are not all killed immediately. `DeleteClient` remains the permanent deletion operation. [client_revocation.go](../../ceph/client_revocation.go) |
-
-See [the migration guide](../guides/upgrading-ceph-policy-names.md) for the
-source break. This checkpoint fulfills five proposal rows; at that checkpoint the catalogue contained
+| `ceph.Container.TemporaryClientRevocation` | `ceph.Container.RevokeClient` | `*ceph.ClientRevocationHandle` / `Restore` | Removes an owned auth identity, with fenced restoration of its original key/caps; existing authenticated sessions are not all killed immediately. `DeleteClient` remains the permanent deletion operation. [client_revocation.go](../../ceph/client_revocation.go) | This checkpoint fulfills five proposal rows; at that checkpoint the catalogue contained
 13 remaining proposal rows and 678 baseline rows. Baseline still does
 not mean a complete naming approval. At that point the broader audit and
 service/network stages kept #14 open; the final audit below now records those
@@ -168,8 +165,6 @@ No expiry, automatic rollback, compatibility alias or package move is added.
 | `cephfs.SessionTimeoutsOverride` | `cephfs.SessionTimeoutsOverrideHandle` | Stateful management/restoration handle; no successful-apply guarantee. |
 | `cephfs.PinOverride` | `cephfs.PinOverrideHandle` | Stateful management/restoration handle; no successful-apply guarantee. |
 
-See [the migration guide](../guides/upgrading-cephfs-names.md).
-
 ## Implemented network profile family
 
 The three operations and three types are migrated together. Profile describes
@@ -189,8 +184,7 @@ identity/external-edit checks, retryability and cleanup order are preserved.
 Keep `MaxNetworkDelay`: it limits the Delay field. `NetworkRate`, rate units,
 `NetworkPeer`, `NetworkPacketFault`, `NetemHelperImage` and netem sentinels keep
 their names and error categories. No timer, cancellation rollback, permanent
-alias, package move or generic cleanup interface is introduced. See the
-[migration guide](../guides/upgrading-network-profile-names.md).
+alias, package move or generic cleanup interface is introduced.
 
 ## Completed RBD helper and retention audit
 
@@ -198,7 +192,6 @@ The cache operation is now `rbd.StartImmutableObjectCache`, returning the same
 `*rbd.ImmutableObjectCacheLease`. It starts an owned daemon in a caller-owned
 client container without native expiry. `Stop` keeps cached files and `Restore`
 removes the owned daemon/files; those distinct contracts remain unchanged.
-See the [migration guide](../guides/upgrading-rbd-cache-name.md).
 
 Current branch catalogue: 698 declarations/methods, zero remaining proposal
 rows and 698 baseline rows. The separate 932-entry member catalogue and bound

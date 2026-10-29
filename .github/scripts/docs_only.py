@@ -13,15 +13,12 @@ only when the changed files were computed and every one is on the allowlist.
 """
 import argparse
 import os
-import re
 import subprocess
 import sys
 
 # docs/ directories whose direct Markdown children are not read by any check.
 # Exceptions inside them are the files that a check reads.
-# docs/changes holds release-note fragments. Only the fragment validator reads
-# them, and it runs on every head, so they never need the heavy checks.
-UNREAD_DOC_DIRS = ("docs/changes", "docs/contributing", "docs/design", "docs/guides", "docs/research")
+UNREAD_DOC_DIRS = ("docs/contributing", "docs/design", "docs/guides", "docs/research")
 READ_DOC_FILES = frozenset((
     # internal/integration messenger coverage test cross-checks this guide.
     "docs/guides/messenger-client-fixtures.md",
@@ -50,11 +47,6 @@ READ_DOC_PREFIXES = (
 )
 
 
-# A fragment name: <change-id>.md, matched in full (never with a "$" anchor,
-# which also matches before a final newline).
-FRAGMENT_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\.md")
-
-
 def is_unread_doc(path):
     """True when path is documentation that no check reads."""
     if not isinstance(path, str) or not path or path != path.strip():
@@ -71,8 +63,6 @@ def is_unread_doc(path):
         return False
     if path in READ_DOC_FILES or path.startswith(READ_DOC_PREFIXES):
         return False
-    if parts[:-1] == ["docs", "changes"] and not FRAGMENT_NAME.fullmatch(parts[-1]):
-        return False
     return "/".join(parts[:-1]) in UNREAD_DOC_DIRS
 
 
@@ -81,7 +71,7 @@ def decide(event, fork, base, changed, irregular=()):
 
     irregular names changed paths whose old or new Git mode is not an
     ordinary file (a symbolic link, an executable or a submodule). A path name
-    alone cannot show that docs/changes/x.md is a link to a code file, so such
+    alone cannot show that a Markdown path is a link to a code file, so such
     a path always runs the checks.
     """
     if event != "pull_request":

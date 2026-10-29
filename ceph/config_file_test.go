@@ -87,7 +87,7 @@ func TestWithConfigFileRejectsUnsafeInput(t *testing.T) {
 		"mon host":         {"[global]\nmon host = 10.0.0.1\n", "mon_host is managed"},
 		"pool size":        {"[global]\nosd pool default size = 3\n", "use WithPoolDefaults"},
 		"crush rule":       {"[global]\nosd_pool_default_crush_rule = 1\n", "use WithDefaultCRUSHRoot"},
-		"block size":       {"[osd]\nbluestore_block_size = 1\n", "use WithOSDBlockSize"},
+		"block size":       {"[osd]\nbluestore_block_size = 1\n", "use OSDStorage.WithBlockSize"},
 		"auth":             {"[global]\nauth_client_required = none\n", "Cephx setup"},
 		"messenger mode":   {"[global]\nms_mon_client_mode = secure\n", "use WithMessengerMode, WithMessengerPolicy or WithClientMessengerPolicy"},
 		"messenger bind":   {"[global]\nms_bind_ipv6 = true\n", "WithHostNetwork"},

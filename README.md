@@ -15,14 +15,10 @@ its data in a sparse BlueStore file inside its container by default. MemStore
 and memory-backed BlueStore are also available for faster disposable fixtures.
 
 Releases follow semantic versioning. Before v1.0.0, a minor release may change
-the API; [CHANGELOG.md](CHANGELOG.md) lists every change.
+the API without aliases for the old names; [CHANGELOG.md](CHANGELOG.md) lists
+the changes of each release.
 
 Documentation for a published release is available at its Git tag.
-The shared-cluster and tenant harness has been removed from current source;
-see [Independent test fixtures](docs/guides/remove-shared-harness.md) for migration.
-See [Upgrading to v0.3.0](docs/guides/upgrading-to-v0.3.md) for the new native
-input API, compatibility and the limits of the protocol receipts. For changes
-from v0.1.0, see [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md).
 
 ## Modules
 
@@ -47,23 +43,13 @@ reference for every package is also available with `go doc` and on
 pkg.go.dev.
 
 The implemented naming convention, source inventory and current-source retention
-audit are recorded in [API naming](docs/design/api-naming.md). Upgrade guides
-cover [ceph policy names](docs/guides/upgrading-ceph-policy-names.md),
-[CephFS names](docs/guides/upgrading-cephfs-names.md), the
-[RBD mirror package move](docs/guides/upgrading-rbd-mirror-package.md), the
-[CephFS mirror package move](docs/guides/upgrading-cephfs-mirror-package.md),
-[network profiles](docs/guides/upgrading-network-profile-names.md) and the
-[RBD cache operation](docs/guides/upgrading-rbd-cache-name.md), the
-[topology accessors](docs/guides/upgrading-context-accessors.md), the
-[operations that moved onto handles](docs/guides/upgrading-handle-operations.md), the
-[RGW multisite package](docs/guides/upgrading-rgw-multisite.md) and the
-[typed OSD flags, PG IDs and connection config](docs/guides/upgrading-typed-values.md).
+audit are recorded in [API naming](docs/design/api-naming.md).
 
 ## Requirements
 
 - Go 1.26 or later (v0.1.0 needs Go 1.25); use a patched toolchain. The
   repository selects Go 1.26.9 for its own checks. A consumer must select its
-  own toolchain (see [the upgrade guide](docs/guides/upgrading-to-v0.2.md#go-and-client-platforms)).
+  own toolchain; the toolchain line of this repository does not set it.
 - A Docker engine that runs Linux containers. Docker Desktop works. Host
   networking has extra requirements, described in
   [the host network guide](docs/guides/host-network.md).
@@ -164,10 +150,6 @@ Guides for tasks that span packages:
   connecting native clients from the test process.
 - [Releases and images](docs/guides/releases-and-images.md): supported Ceph
   releases, role images and image requirements.
-- [Upgrading to v0.2.0](docs/guides/upgrading-to-v0.2.md): Go requirements,
-  API and error compatibility, Messenger policies and release limitations.
-- [Upgrading to v0.3.0](docs/guides/upgrading-to-v0.3.md): bounded native
-  input, new fixture receipts and what remains unverified.
 - [Contexts and cleanup](docs/guides/contexts-and-cleanup.md): how contexts
   bound calls, what each fixture owns, and how to restore temporary changes.
 - [Running native commands](docs/guides/native-commands.md): how to do anything

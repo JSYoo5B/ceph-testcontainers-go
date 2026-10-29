@@ -111,8 +111,8 @@ type Container struct {
 }
 
 // OSDContainer is one storage daemon backed by a sparse BlueStore file.
-// The file is container-local unless WithOSDInMemoryStorage or
-// WithOSDVolumeStorage is selected.
+// The file is container-local unless OSDStorage.WithInMemory or
+// OSDStorage.WithVolume is selected.
 // Stop/Start can be used for failure injection; OSDContainer.Remove drains and purges it.
 type OSDContainer struct {
 	testcontainers.Container
@@ -177,10 +177,10 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		return nil, invalidRequest("WithAddressFamily(%s) cannot be combined with WithSeparateClusterNetwork", settings.addressFamily)
 	}
 	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
-		return nil, invalidRequest("WithOSDInMemoryStorage keeps BlueStore files in memory and cannot be combined with OSDMemStore")
+		return nil, invalidRequest("OSDStorage.WithInMemory keeps BlueStore files in memory and cannot be combined with OSDMemStore")
 	}
 	if settings.osdVolumeStorage && (settings.osdMemorySize != 0 || settings.osdObjectStore == OSDMemStore) {
-		return nil, invalidRequest("WithOSDVolumeStorage requires classic BlueStore and cannot be combined with WithOSDInMemoryStorage")
+		return nil, invalidRequest("OSDStorage.WithVolume requires classic BlueStore and cannot be combined with OSDStorage.WithInMemory")
 	}
 	if !settings.poolDefaultsSet {
 		settings.poolReplicas, settings.poolMinSize = min(2, settings.osds), 1

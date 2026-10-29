@@ -3,7 +3,7 @@
 > Current boundary: the shared-cluster/tenant harness and its core-only policy,
 > lease and hook plumbing have been removed. Harness references and source
 > locations below are historical design evidence, not retained APIs or future
-> extraction requirements. See [independent fixtures](../../guides/remove-shared-harness.md).
+> extraction requirements. See [independent fixtures](../../ceph.md#run).
 
 Moved without rewriting from the section "Sixteenth internal slice: disposition of the remaining fields" of [container-decomposition.md](../container-decomposition.md) when the decomposition records became one file per component (issue #216, owner decision of 2026-10-28). The ordinal is historical: statements below that cite another slice by its number use the [historical ordinals](../container-decomposition.md#historical-ordinals) of the shared document.
 
@@ -123,7 +123,7 @@ belong to is #248. They stay, as the thirteenth slice recorded.
 
 - The earlier public-harness extraction direction was retired. The harness
   packages, cross-package registration and test-only tenant access are removed,
-  with no replacement framework. The [removal migration](../../guides/remove-shared-harness.md)
+  with no replacement framework. The [ordinary cluster usage](../../ceph.md#run)
   describes the current ownership boundary.
 - For the original acceptance of #146: nothing in this note adds a criterion.
   The remaining items are reconciliation of validation already recorded on the
