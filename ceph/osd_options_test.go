@@ -116,7 +116,7 @@ func TestOSDOptionsDerivedValuesAreIndependent(t *testing.T) {
 }
 
 // A refused configuration is decided before the topology lock and before any
-// registration, and after the shared gate and the context.
+// registration, after checking the context.
 func TestAddOSDRefusesBeforeLockAndRegistration(t *testing.T) {
 	conflicting := []OSDOptions{OSDOptions{}.WithImage("a:1"), OSDOptions{}.WithImage("b:2")}
 	newCluster := func() *Container {

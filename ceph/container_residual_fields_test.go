@@ -306,7 +306,6 @@ var monitorTerminatedReaders = []string{
 	"Container.monitorConfigTargets",
 	"Container.monitorsLocked",
 	"Container.ownsDaemon",
-	"Container.sharedDaemons",
 	"Container.terminate",
 }
 
