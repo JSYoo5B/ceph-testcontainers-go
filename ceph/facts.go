@@ -23,8 +23,8 @@ func (o options) effectiveImages() ImageSet {
 	return o.defaultImages()
 }
 
-// defaultImages is the aggregate selection of a Run without WithImages: the
-// Run image supplies every role, except where a service image option replaced
+// defaultImages is the aggregate selection of a Run without WithImageSet: the
+// selected image supplies every role, except where a service image option replaced
 // the cephfs or rgw role.
 func (o options) defaultImages() ImageSet {
 	images := ImageSet{Essential: o.essentialImage, Client: o.essentialImage, CephFS: o.essentialImage, RBDAux: o.essentialImage, RGW: o.essentialImage}

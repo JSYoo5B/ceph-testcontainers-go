@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"testing"
 	"time"
-
-	"github.com/testcontainers/testcontainers-go"
 )
 
 func TestImageSetSelectionDoesNotFallback(t *testing.T) {
@@ -26,7 +24,7 @@ func TestImageSetSelectionDoesNotFallback(t *testing.T) {
 	}
 }
 
-func TestRunWithImagesAppliesServiceOverridesAfterBaseSet(t *testing.T) {
+func TestRunWithImageSetAppliesServiceOverridesAfterBaseSet(t *testing.T) {
 	for _, role := range []string{"rgw", "cephfs"} {
 		for _, selection := range []string{"missing", "replacement", "aggregate"} {
 			t.Run(role+"/"+selection, func(t *testing.T) {
@@ -42,8 +40,8 @@ func TestRunWithImagesAppliesServiceOverridesAfterBaseSet(t *testing.T) {
 				capture := Option(func(o *options) error { effective = o; return nil })
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				cluster, err := RunWithImages(ctx, images,
-					(serviceHooks{}).WithServiceImage(role, "selected-service"), capture)
+				cluster, err := Run(ctx, RunOptions{}.WithImageSet(images).WithCustomizers(
+					(serviceHooks{}).WithServiceImage(role, "selected-service"), capture))
 				if cluster != nil || !errors.Is(err, context.Canceled) {
 					t.Fatalf("valid role selection did not reach canceled admission: %v %v", cluster, err)
 				}
@@ -160,8 +158,8 @@ func TestManualToolkitAttachmentWaitsForMonitorTopology(t *testing.T) {
 	}
 }
 
-// A service image option replaces its role whichever of it and WithImages came
-// first; the Run image still has to equal the essential image.
+// A service image option replaces its role of the image set whichever of the
+// image selection and the customizers a RunOptions chain applied first.
 func TestServiceImageOptionReplacesItsRoleInEitherOrder(t *testing.T) {
 	for _, role := range []string{"rgw", "cephfs"} {
 		for _, serviceFirst := range []bool{true, false} {
@@ -169,14 +167,14 @@ func TestServiceImageOptionReplacesItsRoleInEitherOrder(t *testing.T) {
 				var effective *options
 				capture := Option(func(o *options) error { effective = o; return nil })
 				service := (serviceHooks{}).WithServiceImage(role, "selected-service")
-				set := WithImages(ImageSet{Essential: "core", Client: "toolkit", CephFS: "set-mds", RGW: "set-rgw"})
-				opts := []testcontainers.ContainerCustomizer{set, service, capture}
+				set := ImageSet{Essential: "core", Client: "toolkit", CephFS: "set-mds", RGW: "set-rgw"}
+				config := RunOptions{}.WithImageSet(set).WithCustomizers(service, capture)
 				if serviceFirst {
-					opts = []testcontainers.ContainerCustomizer{service, set, capture}
+					config = RunOptions{}.WithCustomizers(service, capture).WithImageSet(set)
 				}
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				if c, err := Run(ctx, "core", opts...); c != nil || !errors.Is(err, context.Canceled) {
+				if c, err := Run(ctx, config); c != nil || !errors.Is(err, context.Canceled) {
 					t.Fatalf("selection did not reach canceled admission: %v %v", c, err)
 				}
 				images := effective.effectiveImages()

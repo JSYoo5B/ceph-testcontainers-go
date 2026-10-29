@@ -131,7 +131,7 @@ func TestCaptureFailureArchive(t *testing.T) {
 			if image == "" {
 				image = ceph.DefaultImage
 			}
-			cluster, err := ceph.Run(ctx, image, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))
+			cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithImage(image).WithCustomizers(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)))
 			if cluster != nil {
 				t.Cleanup(func() {
 					c, done := context.WithTimeout(context.Background(), 3*time.Minute)

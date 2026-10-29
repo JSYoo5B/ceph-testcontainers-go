@@ -33,8 +33,8 @@ import (
 func TestPostTestVerification(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
-	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithOSDCount(2), ceph.WithPoolDefaults(1, 1))...)
+	_, opts := integrationImages(t)
+	cluster, err := ceph.Run(ctx, opts.WithCustomizers(ceph.WithOSDCount(2), ceph.WithPoolDefaults(1, 1)))
 	recorder := &finalizationRecorder{TB: t}
 	var finalization *ceph.Finalization
 	archives := t.TempDir()

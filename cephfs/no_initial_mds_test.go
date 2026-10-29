@@ -175,7 +175,7 @@ func TestNoInitialMDSDefaultsAndContradictionsBeforeNative(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		cluster, runErr := Run(ctx, ceph.DefaultImage, WithFilesystems(config))
+		cluster, runErr := Run(ctx, ceph.RunOptions{}.WithCustomizers(WithFilesystems(config)))
 		if cluster != nil || runErr == nil || errors.Is(runErr, context.Canceled) {
 			t.Fatalf("initial config reached runtime: %+v %v", config, runErr)
 		}
@@ -188,7 +188,7 @@ func TestNoInitialMDSDefaultsAndContradictionsBeforeNative(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			c, err := Run(ctx, ceph.DefaultImage, opts...)
+			c, err := Run(ctx, ceph.RunOptions{}.WithCustomizers(opts...))
 			if c != nil || err == nil || errors.Is(err, context.Canceled) {
 				t.Fatalf("cold FS waived existing OSD/MGR composition guard: %v", err)
 			}

@@ -224,12 +224,12 @@ call it before checking the error: a non-nil cluster returned with an error
 still needs to be terminated.
 
 ```golang
-source, err := ceph.Run(ctx, ceph.DefaultImage, rbd.WithPools(ceph.PoolConfig{Name: "images"}))
+source, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(rbd.WithPools(ceph.PoolConfig{Name: "images"})))
 testcontainers.CleanupContainer(t, source)
 if err != nil {
 	t.Fatal(err)
 }
-destination, err := ceph.Run(ctx, ceph.DefaultImage, rbd.WithPools(ceph.PoolConfig{Name: "images"}))
+destination, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(rbd.WithPools(ceph.PoolConfig{Name: "images"})))
 testcontainers.CleanupContainer(t, destination)
 if err != nil {
 	t.Fatal(err)
@@ -473,7 +473,7 @@ var shared *ceph.Container
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage)
+	cluster, err := ceph.Run(ctx)
 	if err != nil {
 		if cluster != nil {
 			_ = cluster.Terminate(ctx)

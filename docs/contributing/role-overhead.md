@@ -39,7 +39,7 @@ retains the warmups with `Warmup=true`; exclude them from summary statistics.
 Pair order alternates all/split then split/all to reduce ordering bias. Each
 trial records:
 
-- `StartSeconds`: `RunWithImages` through its normal core readiness return.
+- `StartSeconds`: `ceph.Run` with `RunOptions.WithImageSet` through its normal core readiness return.
 - `Core`: five seconds settling followed by eleven one-shot cgroup snapshots
   at least one second apart, before any client request.
 - `FirstClientSeconds`: the first `ClientContainer` call. Split mode

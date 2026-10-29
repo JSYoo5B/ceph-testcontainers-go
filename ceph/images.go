@@ -40,45 +40,14 @@ func (s ImageSet) normalized() (ImageSet, error) {
 	return s, nil
 }
 
-// RunWithImages starts a cluster with explicit role images. Service image options
-// in opts (cephfs.WithMDSImage, rgw.WithImage) replace the corresponding role of
-// images, whatever the order of the options.
-func RunWithImages(ctx context.Context, images ImageSet, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
-	images, err := images.normalized()
-	if err != nil {
-		return nil, invalidRequest("image set: %v", err)
-	}
-
-	return Run(ctx, images.Essential, append([]testcontainers.ContainerCustomizer{WithImages(images)}, opts...)...)
-}
-
-// WithImages selects role images. Essential must equal the Run image. A service
-// image option replaces its role of the set whichever came first.
-func WithImages(images ImageSet) Option {
-	return func(o *options) error {
-		normalized, err := images.normalized()
-		if err != nil {
-			return err
-		}
-		if o.imageSet != nil {
-			return fmt.Errorf("image set selected twice")
-		}
-		o.imageSet = &normalized
-		return nil
-	}
-}
-
 func configureImages(o *options) error {
 	if o.imageSet == nil {
 		images := o.defaultImages()
 		o.imageSet = &images
 	}
 	s := o.imageSet
-	if o.essentialImage != s.Essential {
-		return fmt.Errorf("Run image must equal the essential image with WithImages")
-	}
-	// A service image option replaces its role whichever of it and WithImages
-	// came first.
+	// A service image option replaces its role of the selection whatever the
+	// option order.
 	if o.cephfsOverride != "" {
 		s.CephFS = o.cephfsOverride
 	}

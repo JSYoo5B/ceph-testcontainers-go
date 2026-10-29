@@ -27,11 +27,11 @@ func TestScrubInconsistency(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = append(opts, ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
+			opts = opts.WithCustomizers(ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
 			if host {
-				opts = append(opts, ceph.WithHostNetwork())
+				opts = opts.WithCustomizers(ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceClusterWithOptions(t, image, opts...)
+			cluster, client := newServiceClusterWithOptions(t, image, opts)
 			fsid := strings.TrimSpace(string(mustCeph(t, ctx, cluster, "fsid")))
 			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal(err)

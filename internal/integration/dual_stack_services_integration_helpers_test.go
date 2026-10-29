@@ -567,12 +567,12 @@ func testDualStackServices(t *testing.T) {
 	defer cancel()
 	image, roles := integrationImages(t)
 	const filesystem = "tc-cephfs"
-	opts := append(roles, ceph.WithOSDCount(2), ceph.WithManagerCount(2),
+	opts := roles.WithCustomizers(ceph.WithOSDCount(2), ceph.WithManagerCount(2),
 		ceph.WithAddressFamily(ceph.AddressDualStack),
 		ceph.WithConfigFile(dualStackOrderConfig(t, "mgr.b", "osd.1", "mds."+filesystem+"-1")),
 		cephfs.WithFilesystems(cephfs.Config{Name: filesystem, ActiveMDS: 1, StandbyMDS: 1}),
 		rgw.WithGateways(rgw.Config{}))
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, opts...)
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, opts)
 	addresses, endpoints := waitDualStackAddresses(t, ctx, cluster, 1, 2)
 	ipv6First := map[string]bool{"mgr.b": true, "osd.1": true, "mds." + filesystem + "-1": true}
 	checkOrder := func(daemon string, vector []ceph.EntityAddress) {

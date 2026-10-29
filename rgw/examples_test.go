@@ -11,9 +11,7 @@ import (
 
 func ExampleRun() {
 	ctx := context.Background()
-	cluster, err := rgw.Run(ctx, ceph.DefaultImage,
-		rgw.WithGateways(rgw.Config{Name: "s3", SkipUserCreation: true}),
-	)
+	cluster, err := rgw.Run(ctx, ceph.RunOptions{}.WithCustomizers(rgw.WithGateways(rgw.Config{Name: "s3", SkipUserCreation: true})))
 	defer func() {
 		if err := testcontainers.TerminateContainer(cluster); err != nil {
 			log.Printf("failed to terminate container: %s", err)

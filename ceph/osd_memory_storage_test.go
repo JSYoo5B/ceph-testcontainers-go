@@ -20,7 +20,7 @@ import (
 
 func TestOSDMemorySizeAdmission(t *testing.T) {
 	for _, size := range []int64{0, -1} {
-		cluster, err := Run(t.Context(), DefaultImage, WithOSDInMemoryStorage(size))
+		cluster, err := Run(t.Context(), RunOptions{}.WithCustomizers(WithOSDInMemoryStorage(size)))
 		if err == nil || cluster != nil {
 			t.Fatalf("invalid RAM ceiling allocated a cluster: size=%d cluster=%v err=%v", size, cluster, err)
 		}

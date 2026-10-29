@@ -77,7 +77,7 @@ finally:
 func TestCephFS(t *testing.T) {
 	ctx := t.Context()
 
-	cluster, err := cephfs.Run(ctx, ceph.DefaultImage)
+	cluster, err := cephfs.Run(ctx)
 	testcontainers.CleanupContainer(t, cluster)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestCephFS(t *testing.T) {
 The CephFS module exposes one entrypoint function to create the CephFS container, and this function receives three parameters:
 
 ```golang
-func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error)
+func Run(ctx context.Context, configs ...ceph.RunOptions) (*Container, error)
 ```
 
 - `context.Context`, the Go context.
@@ -189,13 +189,13 @@ arguments it selects the default filesystem. Repeating the option replaces the
 earlier list. `Start` adds further filesystems after `Run` returns.
 
 ```golang
-cluster, err := cephfs.Run(ctx, ceph.DefaultImage,
+cluster, err := cephfs.Run(ctx, ceph.RunOptions{}.WithCustomizers(
 	ceph.WithOSDCount(3),
 	cephfs.WithFilesystems(
 		cephfs.Config{Name: "app-fs", ActiveMDS: 2, StandbyMDS: 1},
 		cephfs.Config{Name: "scratch"},
 	),
-)
+))
 ```
 
 `Config` fields:
@@ -238,7 +238,7 @@ for the filesystem. The first MDS is started with `ScaleMDS(ctx, 1, 0)`; after
 that the filesystem behaves like any other.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDCount(2))
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithOSDCount(2)))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
@@ -274,9 +274,9 @@ Selects the image for every MDS container started by `Run`, `Start`,
 Use an image of the same Ceph release.
 
 ```golang
-cluster, err := cephfs.Run(ctx, "registry.example.com/ceph:20.2.4-all",
+cluster, err := cephfs.Run(ctx, ceph.RunOptions{}.WithImage("registry.example.com/ceph:20.2.4-all").WithCustomizers(
 	cephfs.WithMDSImage("registry.example.com/ceph:20.2.4-mds"),
-)
+))
 ```
 
 The generic options of the `testcontainers` package (for example
@@ -1448,8 +1448,9 @@ finally:
     fs.shutdown()
 `
 
-cluster, err := cephfs.Run(ctx, ceph.DefaultImage,
-	cephfs.WithFilesystems(cephfs.Config{Name: "app-fs"}, cephfs.Config{Name: "logs"}))
+cluster, err := cephfs.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+	cephfs.WithFilesystems(cephfs.Config{Name: "app-fs"}, cephfs.Config{Name: "logs"}),
+))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
@@ -1654,8 +1655,9 @@ standby take rank 0. The test then either restarts the old daemon or retires it
 and creates a new one.
 
 ```golang
-cluster, err := cephfs.Run(ctx, ceph.DefaultImage,
-	cephfs.WithFilesystems(cephfs.Config{ActiveMDS: 1, StandbyMDS: 1}))
+cluster, err := cephfs.Run(ctx, ceph.RunOptions{}.WithCustomizers(
+	cephfs.WithFilesystems(cephfs.Config{ActiveMDS: 1, StandbyMDS: 1}),
+))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
@@ -2105,7 +2107,7 @@ on the same release as the `Run` image: `ClusterFacts.CephVersion` reflects only
 image.
 
 ```golang
-cluster, err := cephfs.Run(ctx, "quay.io/ceph/ceph:v19.2.5")
+cluster, err := cephfs.Run(ctx, ceph.RunOptions{}.WithImage("quay.io/ceph/ceph:v19.2.5"))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)

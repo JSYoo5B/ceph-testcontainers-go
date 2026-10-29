@@ -68,7 +68,7 @@ func testManagerMonClients(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(roles), ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs())...)
+	cluster, _ := newServiceClusterWithOptions(t, image, roles.WithCustomizers(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs()))
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	var last string
 	for deadline := time.Now().Add(2 * time.Minute); ; {

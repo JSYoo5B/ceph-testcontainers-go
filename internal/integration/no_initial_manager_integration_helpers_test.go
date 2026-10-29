@@ -33,20 +33,20 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), budget)
 	defer cancel()
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithNoInitialManagers())
+	opts = opts.WithCustomizers(ceph.WithNoInitialManagers())
 	const pool = "tc-cold-manager"
 	if noStorage {
-		opts = append(opts, ceph.WithNoInitialOSDs())
+		opts = opts.WithCustomizers(ceph.WithNoInitialOSDs())
 	} else {
-		opts = append(opts, ceph.WithPools(ceph.PoolConfig{Name: pool, Application: "rados"}))
+		opts = opts.WithCustomizers(ceph.WithPools(ceph.PoolConfig{Name: pool, Application: "rados"}))
 	}
 	if host {
-		opts = append(opts, ceph.WithHostNetwork())
+		opts = opts.WithCustomizers(ceph.WithHostNetwork())
 	}
 	var customizers atomic.Int32
-	opts = append(opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+	opts = opts.WithCustomizers(testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 	oracle := newNoInitialOSDOracle(t, ctx)
-	cluster, err := ceph.Run(ctx, image, opts...)
+	cluster, err := ceph.Run(ctx, opts)
 	noInitialOSDCleanup(t, cluster)
 	if err != nil {
 		t.Fatal(err)

@@ -41,7 +41,7 @@ func TestNoInitialManagersRejectsContradictionsBeforeRuntime(t *testing.T) {
 				// the canonical canceled fallback is distinguishable from rejection.
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
-				cluster, err := Run(ctx, DefaultImage, opts...)
+				cluster, err := Run(ctx, RunOptions{}.WithCustomizers(opts...))
 				if cluster != nil || err == nil || !strings.Contains(err.Error(), test.want) || errors.Is(err, context.Canceled) || customizers.Load() != 0 {
 					t.Fatalf("configuration reached runtime or lost validation: cluster=%v err=%v customizers=%d", cluster, err, customizers.Load())
 				}
@@ -105,7 +105,7 @@ func TestNoInitialManagersPreservesPlacementNetworkAndCombinedStorageGuards(t *t
 	} {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		cluster, err := Run(ctx, DefaultImage, opts...)
+		cluster, err := Run(ctx, RunOptions{}.WithCustomizers(opts...))
 		if cluster != nil || err == nil || errors.Is(err, context.Canceled) {
 			t.Fatalf("zero manager bypassed existing pre-allocation guard: %v", err)
 		}
@@ -123,7 +123,7 @@ func TestNoInitialManagersCanceledRunDoesNotAllocateOrCustomize(t *testing.T) {
 		opts = append(opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		cluster, err := Run(ctx, DefaultImage, opts...)
+		cluster, err := Run(ctx, RunOptions{}.WithCustomizers(opts...))
 		if cluster != nil || !errors.Is(err, context.Canceled) || customizers.Load() != 0 {
 			t.Fatalf("canceled cold constructor reached runtime: cluster=%v err=%v customizers=%d", cluster, err, customizers.Load())
 		}

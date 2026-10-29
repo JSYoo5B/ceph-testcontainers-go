@@ -40,9 +40,9 @@ func TestOSDInMemoryStorageTopology(t *testing.T) {
 	}
 	beforeVolumes, beforeKeepers := osdMemoryLabelInventory(t, ctx, docker.Client)
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithNoInitialOSDs(), ceph.WithOSDInMemoryStorage(osdMemoryBytes))
+	opts = opts.WithCustomizers(ceph.WithNoInitialOSDs(), ceph.WithOSDInMemoryStorage(osdMemoryBytes))
 	started := time.Now()
-	cluster, err := ceph.Run(ctx, image, opts...)
+	cluster, err := ceph.Run(ctx, opts)
 	terminated := false
 	owned := map[string]bool{}
 	volumeName := ""

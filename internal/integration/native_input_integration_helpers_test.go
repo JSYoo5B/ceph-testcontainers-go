@@ -75,7 +75,7 @@ func testNativeCommandInput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	cluster, client := newServiceClusterWithOptions(t, image, append(roles, ceph.WithNoInitialOSDs())...)
+	cluster, client := newServiceClusterWithOptions(t, image, roles.WithCustomizers(ceph.WithNoInitialOSDs()))
 	first := []byte{0x00, 'f', 0xff, 0xfe, 0x00, '\n', 0x80, 0xc3, 0x28}
 	second := make([]byte, 300<<10)
 	if _, err := rand.Read(second); err != nil {
@@ -149,7 +149,7 @@ func testNativeCommandInputCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	cluster, client := newServiceClusterWithOptions(t, image, append(roles, ceph.WithNoInitialOSDs())...)
+	cluster, client := newServiceClusterWithOptions(t, image, roles.WithCustomizers(ceph.WithNoInitialOSDs()))
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	input := ceph.NewNativeInput()

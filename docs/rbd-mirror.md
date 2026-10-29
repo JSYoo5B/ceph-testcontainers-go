@@ -706,9 +706,9 @@ func TestSnapshotMirroring(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	newCluster := func() *ceph.Container {
-		cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+		cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
 			rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
-		)
+		))
 		testcontainers.CleanupContainer(t, cluster)
 		if err != nil {
 			t.Fatal(err)

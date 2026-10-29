@@ -641,7 +641,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	cluster, client := newServiceClusterWithOptions(t, image, append(slices.Clone(roles), ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs())...)
+	cluster, client := newServiceClusterWithOptions(t, image, roles.WithCustomizers(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithNoInitialOSDs()))
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	before, err := cluster.Ceph(ctx, "mon", "dump", "--format", "json")
 	if err != nil {

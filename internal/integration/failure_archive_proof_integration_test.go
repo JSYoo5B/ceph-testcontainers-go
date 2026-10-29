@@ -24,7 +24,7 @@ func TestFailureArchiveProof(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))...)
+			cluster, err := ceph.Run(ctx, opts.WithCustomizers(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)))
 			var finalization *ceph.Finalization
 			if cluster != nil {
 				var registerErr error

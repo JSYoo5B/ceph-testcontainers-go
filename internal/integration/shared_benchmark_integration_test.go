@@ -38,7 +38,7 @@ func TestSharedClusterBenchmark(t *testing.T) {
 		}
 	}
 	image, run := integrationImages(t)
-	run = append(run, ceph.WithOSDCount(1))
+	run = run.WithCustomizers(ceph.WithOSDCount(1))
 	var report []string
 	for _, n := range counts {
 		began := time.Now()
@@ -86,7 +86,7 @@ const benchmarkRADOS = `rados --id "$1" -p "$2" -N "$3" put object /etc/hostname
 func ownClusterRADOSTest(t *testing.T, image string, run []testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, err := ceph.Run(ctx, image, run...)
+	cluster, err := ceph.Run(ctx, run)
 	testcontainers.CleanupContainer(t, cluster)
 	if err != nil {
 		t.Fatal(err)

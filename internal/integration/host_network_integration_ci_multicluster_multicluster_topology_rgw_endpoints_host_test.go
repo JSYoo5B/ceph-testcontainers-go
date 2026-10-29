@@ -24,7 +24,7 @@ func TestHostNetworkRGWEndpoints(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
 	image, opts := integrationImages(t)
-	clusters := hostNetworkRunPair(t, ctx, image, opts)
+	clusters := hostNetworkRunPair(t, ctx, opts)
 	// Occupy the conventional RGW port inside the daemon's host namespace.
 	// This also works when port 7480 was already taken by another service.
 	holder, err := testcontainers.Run(ctx, image, clusters[0].WithClient(),

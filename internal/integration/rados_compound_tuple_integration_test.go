@@ -28,9 +28,9 @@ import (
 func TestRADOSCompoundTupleNoFault(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithOSDCount(1))
-	cluster, err := ceph.Run(ctx, image, opts...)
+	_, opts := integrationImages(t)
+	opts = opts.WithCustomizers(ceph.WithOSDCount(1))
+	cluster, err := ceph.Run(ctx, opts)
 	if cluster != nil {
 		t.Cleanup(func() {
 			cleanup, done := context.WithTimeout(context.Background(), 3*time.Minute)

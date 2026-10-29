@@ -55,7 +55,7 @@ func TestDualStackOrderConfigRequiresDualStack(t *testing.T) {
 		}
 	}
 	for _, family := range []AddressFamily{AddressIPv4, AddressIPv6, AddressIPv4MappedIPv6} {
-		cluster, err := Run(context.Background(), DefaultImage, WithAddressFamily(family), WithConfigFile(path))
+		cluster, err := Run(context.Background(), RunOptions{}.WithCustomizers(WithAddressFamily(family), WithConfigFile(path)))
 		if cluster != nil || !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "ms_bind_prefer_ipv4, which requires WithAddressFamily(dual-stack)") {
 			t.Fatalf("%s: Run accepted ms_bind_prefer_ipv4: %v", family, err)
 		}
@@ -78,7 +78,7 @@ func TestAddressFamilyOptions(t *testing.T) {
 		"dual-stack host network":         {WithAddressFamily(AddressDualStack), WithHostNetwork()},
 		"mapped separate cluster network": {WithAddressFamily(AddressIPv4MappedIPv6), WithSeparateClusterNetwork()},
 	} {
-		cluster, err := Run(context.Background(), DefaultImage, opts[0], opts[1])
+		cluster, err := Run(context.Background(), RunOptions{}.WithCustomizers(opts[0], opts[1]))
 		if err == nil || cluster != nil || !strings.Contains(err.Error(), "WithAddressFamily") {
 			t.Fatalf("%s: Run accepted the combination: %v", name, err)
 		}

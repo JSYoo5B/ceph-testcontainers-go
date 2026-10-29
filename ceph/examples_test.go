@@ -13,7 +13,7 @@ import (
 
 func ExampleRun() {
 	ctx := context.Background()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDCount(2))
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithOSDCount(2)))
 	defer func() {
 		if err := testcontainers.TerminateContainer(cluster); err != nil {
 			log.Printf("failed to terminate container: %s", err)
@@ -35,12 +35,7 @@ func ExampleRun() {
 // CephFS and S3 clients together.
 func ExampleRun_services() {
 	ctx := context.Background()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-		ceph.WithOSDCount(3),
-		rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
-		cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
-		rgw.WithGateways(rgw.Config{Name: "s3"}),
-	)
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithOSDCount(3), rbd.WithPools(ceph.PoolConfig{Name: "volumes"}), cephfs.WithFilesystems(cephfs.Config{Name: "shared"}), rgw.WithGateways(rgw.Config{Name: "s3"})))
 	defer func() {
 		if err := testcontainers.TerminateContainer(cluster); err != nil {
 			log.Printf("failed to terminate container: %s", err)

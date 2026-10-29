@@ -31,10 +31,10 @@ func TestCanceledClusterDiagnostics(t *testing.T) {
 func TestPartialClusterDiagnostics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithStartupTimeout(5*time.Second),
+	_, opts := integrationImages(t)
+	opts = opts.WithCustomizers(ceph.WithStartupTimeout(5*time.Second),
 		testcontainers.WithEntrypoint("/bin/sh", "-c", "exit 17"), testcontainers.WithCmd())
-	cluster, runErr := ceph.Run(ctx, image, opts...)
+	cluster, runErr := ceph.Run(ctx, opts)
 	if cluster != nil {
 		testcontainers.CleanupContainer(t, cluster)
 	}

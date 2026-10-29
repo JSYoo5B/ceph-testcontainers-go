@@ -10,7 +10,7 @@ import (
 
 func ExampleApplyNetworkProfile() {
 	ctx := context.Background()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage)
+	cluster, err := ceph.Run(ctx)
 	if cluster != nil {
 		defer func() { _ = cluster.Terminate(ctx) }()
 	}
@@ -35,7 +35,7 @@ func ExampleApplyNetworkProfile() {
 
 func ExampleInterruptNetwork() {
 	ctx := context.Background()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithSeparateClusterNetwork())
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithSeparateClusterNetwork()))
 	if cluster != nil {
 		defer func() { _ = cluster.Terminate(ctx) }()
 	}
@@ -58,7 +58,7 @@ func ExampleInterruptNetwork() {
 
 func ExamplePause() {
 	ctx := context.Background()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage)
+	cluster, err := ceph.Run(ctx)
 	if cluster != nil {
 		defer func() { _ = cluster.Terminate(ctx) }()
 	}

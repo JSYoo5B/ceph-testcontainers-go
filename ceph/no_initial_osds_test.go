@@ -40,7 +40,7 @@ func TestNoInitialOSDsRejectsContradictionsBeforeRuntime(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				var customizers atomic.Int32
 				opts = append(opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
-				cluster, err := Run(t.Context(), DefaultImage, opts...)
+				cluster, err := Run(t.Context(), RunOptions{}.WithCustomizers(opts...))
 				if cluster != nil || err == nil || customizers.Load() != 0 {
 					t.Fatalf("invalid zero-storage setup reached runtime/customizer: cluster=%v err=%v calls=%d", cluster, err, customizers.Load())
 				}
@@ -95,7 +95,7 @@ func TestNoInitialOSDsCanceledRunDoesNotAllocateOrCustomize(t *testing.T) {
 		opts = append(opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		cluster, err := Run(ctx, DefaultImage, opts...)
+		cluster, err := Run(ctx, RunOptions{}.WithCustomizers(opts...))
 		if cluster != nil || !errors.Is(err, context.Canceled) || customizers.Load() != 0 {
 			t.Fatalf("canceled zero-storage constructor allocated/customized: cluster=%v err=%v calls=%d", cluster, err, customizers.Load())
 		}
@@ -109,7 +109,7 @@ func TestNoInitialOSDsPreservesOldNetworkAndPlacementValidation(t *testing.T) {
 		{WithOSDCount(1), WithPoolDefaults(2, 1)},
 		{WithInitialOSDs(OSDConfig{Root: "storage"})},
 	} {
-		cluster, err := Run(t.Context(), DefaultImage, opts...)
+		cluster, err := Run(t.Context(), RunOptions{}.WithCustomizers(opts...))
 		if cluster != nil || err == nil {
 			t.Fatal("existing invalid network or positive placement reached runtime")
 		}

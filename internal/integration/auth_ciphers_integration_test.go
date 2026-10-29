@@ -4,7 +4,11 @@
 
 package integration_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+)
 
 func TestAuthCiphersAndTicketLifetimes(t *testing.T) {
 	parallelWhenEnabled(t)
@@ -16,5 +20,5 @@ func TestAuthCiphersAndTicketLifetimes(t *testing.T) {
 // for every role, independently of the release under test.
 func TestAuthCiphersWithoutKeyTypeOption(t *testing.T) {
 	parallelWhenEnabled(t)
-	testAuthCiphers(t, tentacleWithoutKeyTypes, nil)
+	testAuthCiphers(t, tentacleWithoutKeyTypes, ceph.RunOptions{}.WithImage(tentacleWithoutKeyTypes))
 }

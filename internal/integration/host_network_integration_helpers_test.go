@@ -26,7 +26,7 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-func hostNetworkRunPair(t *testing.T, ctx context.Context, image string, imageOpts []testcontainers.ContainerCustomizer) []*ceph.Container {
+func hostNetworkRunPair(t *testing.T, ctx context.Context, imageOpts ceph.RunOptions) []*ceph.Container {
 	t.Helper()
 	type result struct {
 		index   int
@@ -36,10 +36,9 @@ func hostNetworkRunPair(t *testing.T, ctx context.Context, image string, imageOp
 	results := make(chan result, 2)
 	for i := range 2 {
 		go func() {
-			opts := append([]testcontainers.ContainerCustomizer(nil), imageOpts...)
-			opts = append(opts, ceph.WithHostNetwork(), ceph.WithHostAddress("127.0.0.1"),
+			config := imageOpts.WithCustomizers(ceph.WithHostNetwork(), ceph.WithHostAddress("127.0.0.1"),
 				ceph.WithOSDCount(2), ceph.WithStartupTimeout(5*time.Minute))
-			cluster, err := ceph.Run(ctx, image, opts...)
+			cluster, err := ceph.Run(ctx, config)
 			results <- result{index: i, cluster: cluster, err: err}
 		}()
 	}

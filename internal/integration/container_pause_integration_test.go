@@ -27,11 +27,11 @@ func TestPausedOSDFaults(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = append(opts, ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
+			opts = opts.WithCustomizers(ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
 			if host {
-				opts = append(opts, ceph.WithHostNetwork())
+				opts = opts.WithCustomizers(ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceClusterWithOptions(t, image, opts...)
+			cluster, client := newServiceClusterWithOptions(t, image, opts)
 			fsid := strings.TrimSpace(string(mustCeph(t, ctx, cluster, "fsid")))
 			// Two OSDs leave one peer to report the other down, and a short
 			// complaint time makes the slow-op report observable within a phase.

@@ -34,11 +34,11 @@ func TestRADOSMutationContracts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image, roles := integrationImages(t)
-	base := append(slices.Clone(roles), ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
+	base := roles.WithCustomizers(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
 		ceph.WithOSDObjectStore(ceph.OSDMemStore), ceph.WithOSDBlockSize(256<<20), legacyPoolFlags(t),
 		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC}))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K})
-	cluster, client := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
+	cluster, client := newServiceClusterWithOptions(t, image, base.WithCustomizers(ceph.WithAuth(auth)))
 	installCRUSHMap(t, ctx, cluster, legacyCRUSHMap)
 	const pool, namespace = "tc-contracts", "suite"
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 1, Replicas: 1, MinSize: 1, NoHashPSPool: true, Application: "rados"}); err != nil {

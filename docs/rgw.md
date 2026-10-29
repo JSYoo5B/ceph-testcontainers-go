@@ -59,7 +59,7 @@ import (
 func TestUploadAndDownload(t *testing.T) {
 	ctx := t.Context()
 
-	cluster, err := rgw.Run(ctx, ceph.DefaultImage)
+	cluster, err := rgw.Run(ctx)
 	testcontainers.CleanupContainer(t, cluster)
 	if err != nil {
 		t.Fatal(err)
@@ -118,12 +118,12 @@ For tests that only need an S3 endpoint, keep one daemon of each kind and
 single-copy pools:
 
 ```golang
-cluster, err := rgw.Run(ctx, ceph.DefaultImage,
+cluster, err := rgw.Run(ctx, ceph.RunOptions{}.WithCustomizers(
 	ceph.WithMonitorCount(1),
 	ceph.WithManagerCount(1),
 	ceph.WithOSDCount(1),
 	ceph.WithPoolDefaults(1, 1),
-)
+))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
@@ -148,7 +148,7 @@ returned in 17 seconds with Ceph 20.2.4 and in 23 seconds with 19.2.5.
 - With one OSD and one copy, nothing can recover from an OSD failure. Tests of
   OSD faults, recovery or separate traffic planes need the default two OSDs or
   more.
-- For role images, add `ceph.WithImages` and `rgw.WithImage`, as described
+- For role images, use `ceph.RunOptions.WithImageSet` and `rgw.WithImage`, as described
   under [Image](#image).
 
 `TestRGWMinimalS3Recipe` in `internal/integration` runs this recipe with a
@@ -162,7 +162,7 @@ delete.
 The Ceph RGW module exposes one entrypoint function to create the Ceph RGW container, and this function receives three parameters:
 
 ```golang
-func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error)
+func Run(ctx context.Context, configs ...ceph.RunOptions) (*Container, error)
 ```
 
 - `context.Context`, the Go context.
@@ -203,15 +203,15 @@ with `ceph.Run`, apply the options with `override.SetConfig`, and then call
 
 #### Image
 
-Use the second argument in the `Run` function to set a valid Docker image. For
-example: `rgw.Run(ctx, ceph.DefaultImage)`.
+Pass `ceph.RunOptions{}.WithImage(image)` to the `Run` function to set a valid
+Docker image. `rgw.Run(ctx)` uses the default image.
 
 - The default image is `ceph.DefaultImage`,
   `quay.io/ceph/ceph:v20.2.4@sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb5a323225a779fd8f9`
   (Ceph Tentacle 20.2.4).
-- The image passed to `Run` is the essential image. It runs the MON, MGR and OSD
+- The image selected by `RunOptions.WithImage` is the essential image. It runs the MON, MGR and OSD
   daemons and the Ceph CLI. Every other role uses the same image unless a role
-  image is selected: `rgw.WithImage` for gateways, `ceph.WithImages` for the
+  image is selected: `rgw.WithImage` for gateways, `ceph.RunOptions.WithImageSet` for the
   client, cephfs, rbd-aux and rgw roles.
 - A gateway image must contain `radosgw` and `radosgw-admin`, because
   `Gateway.Admin` runs inside the gateway container. Multisite setup clients and
@@ -248,13 +248,13 @@ and objects. Multisite scope is configured separately with
 [`rgw/multisite`](rgw-multisite.md) package.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
 	ceph.WithOSDCount(3),
 	rgw.WithGateways(
 		rgw.Config{Name: "gateway-a"},
 		rgw.Config{Name: "gateway-b", SkipUserCreation: true},
 	),
-)
+))
 ```
 
 #### WithImage
@@ -268,9 +268,9 @@ Selects the image for every gateway of the cluster, both the ones started by
 passed to `Run`. Use the same Ceph release as the essential image.
 
 ```golang
-cluster, err := rgw.Run(ctx, "registry.example.com/ceph:20.2.4-all",
+cluster, err := rgw.Run(ctx, ceph.RunOptions{}.WithImage("registry.example.com/ceph:20.2.4-all").WithCustomizers(
 	rgw.WithImage("registry.example.com/ceph:20.2.4-rgw"),
-)
+))
 ```
 
 The cluster options of the `ceph` package also apply. These are the ones that
@@ -1051,7 +1051,7 @@ import (
 // applied before a gateway starts.
 func startCluster(t *testing.T, opts ...testcontainers.ContainerCustomizer) *ceph.Container {
 	t.Helper()
-	cluster, err := ceph.Run(t.Context(), ceph.DefaultImage, opts...)
+	cluster, err := ceph.Run(t.Context(), ceph.RunOptions{}.WithCustomizers(opts...))
 	testcontainers.CleanupContainer(t, cluster)
 	if err != nil {
 		t.Fatal(err)
@@ -1156,12 +1156,12 @@ Gateways of one cluster serve the same data. This tests client failover between
 endpoints, or credentials shared by several gateways:
 
 ```golang
-cluster, err := rgw.Run(ctx, ceph.DefaultImage,
+cluster, err := rgw.Run(ctx, ceph.RunOptions{}.WithCustomizers(
 	rgw.WithGateways(
 		rgw.Config{Name: "a"},
 		rgw.Config{Name: "b", SkipUserCreation: true},
 	),
-)
+))
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)

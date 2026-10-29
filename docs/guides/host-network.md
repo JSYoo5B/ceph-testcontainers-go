@@ -107,10 +107,10 @@ Daemons advertise an address of the Docker host, so a process on that host can
 reach all of them.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
 	ceph.WithHostNetwork(),
 	// ceph.WithHostAddress("192.0.2.10"), // a remote Linux Docker host
-)
+))
 if cluster != nil {
 	testcontainers.CleanupContainer(t, cluster)
 }
@@ -312,7 +312,7 @@ Linux processes. When the setting is off, `Run` fails with
 replication, recovery and heartbeat traffic. Docker selects both subnets.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithSeparateClusterNetwork())
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithSeparateClusterNetwork()))
 if cluster != nil {
 	testcontainers.CleanupContainer(t, cluster)
 }

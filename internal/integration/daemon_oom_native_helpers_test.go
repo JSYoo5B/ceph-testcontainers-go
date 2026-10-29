@@ -63,13 +63,13 @@ func testDaemonMemoryQualification(t *testing.T, pressure bool) {
 		t.Skip("eligibility: less than 4 GiB available runner memory")
 	}
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithMonitorCount(3), ceph.WithNoInitialManagers(), ceph.WithNoInitialOSDs(),
+	opts = opts.WithCustomizers(ceph.WithMonitorCount(3), ceph.WithNoInitialManagers(), ceph.WithNoInitialOSDs(),
 		testcontainers.WithHostConfigModifier(func(h *container.HostConfig) {
 			h.Memory = daemonMemoryBaseline
 			h.MemorySwap = daemonMemoryBaseline
 			h.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyDisabled}
 		}))
-	cluster, client := newServiceClusterWithOptions(t, image, opts...)
+	cluster, client := newServiceClusterWithOptions(t, image, opts)
 	id := cluster.GetContainerID()
 	target, err := daemonMemoryBind(ctx, docker.Client, id)
 	if err != nil {

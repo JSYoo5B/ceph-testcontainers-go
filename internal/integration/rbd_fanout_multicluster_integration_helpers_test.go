@@ -20,7 +20,7 @@ import (
 func rbdFanoutThirdCluster(t *testing.T, ctx context.Context, a, b *ceph.Container, aClient, bClient testcontainers.Container) (*ceph.Container, testcontainers.Container) {
 	t.Helper()
 	image, opts := integrationImages(t)
-	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithOSDCount(1))...)
+	cluster, err := ceph.Run(ctx, opts.WithCustomizers(ceph.WithOSDCount(1)))
 	if cluster != nil {
 		t.Cleanup(func() {
 			if t.Failed() {

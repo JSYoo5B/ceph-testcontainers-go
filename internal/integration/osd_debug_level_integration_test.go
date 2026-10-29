@@ -27,8 +27,8 @@ func TestOSDDebugLevel(t *testing.T) {
 	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
-	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))...)
+	_, opts := integrationImages(t)
+	cluster, err := ceph.Run(ctx, opts.WithCustomizers(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)))
 	var finalization *ceph.Finalization
 	if cluster != nil {
 		var registerErr error

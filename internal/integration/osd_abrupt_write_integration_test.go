@@ -34,9 +34,9 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = docker.Close() })
-	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithNoInitialOSDs(), ceph.WithOSDVolumeStorage())
-	cluster, err := ceph.Run(ctx, image, opts...)
+	_, opts := integrationImages(t)
+	opts = opts.WithCustomizers(ceph.WithNoInitialOSDs(), ceph.WithOSDVolumeStorage())
+	cluster, err := ceph.Run(ctx, opts)
 	terminated := false
 	if cluster != nil {
 		t.Cleanup(func() {

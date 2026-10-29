@@ -25,14 +25,12 @@ func TestRGWMinimalS3Recipe(t *testing.T) {
 	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	_, roles := integrationImages(t)
 	started := time.Now()
-	cluster, err := rgw.Run(ctx, image, append(roles,
-		ceph.WithMonitorCount(1),
+	cluster, err := rgw.Run(ctx, roles.WithCustomizers(ceph.WithMonitorCount(1),
 		ceph.WithManagerCount(1),
 		ceph.WithOSDCount(1),
-		ceph.WithPoolDefaults(1, 1),
-	)...)
+		ceph.WithPoolDefaults(1, 1)))
 	testcontainers.CleanupContainer(t, cluster)
 	if err != nil {
 		t.Fatal(err)

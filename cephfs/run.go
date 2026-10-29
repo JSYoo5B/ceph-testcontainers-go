@@ -5,17 +5,17 @@ import (
 	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/testcontainers/testcontainers-go"
 )
 
-// Run starts a disposable cluster for CephFS clients. It accepts every ceph.Run
-// option and the options of other service packages. When no WithFilesystems option
+// Run starts a disposable cluster for CephFS clients. It takes the same
+// ceph.RunOptions values as ceph.Run, composed the same way; pass the options of
+// other service packages through RunOptions.WithCustomizers. When no WithFilesystems option
 // is given, it creates the default filesystem tc-cephfs with one active MDS.
 // Bootstrap options that leave the cluster without OSDs or managers for the filesystem, such as
 // ceph.WithNoInitialOSDs, are rejected; use ceph.Run for those stages.
 // A non-nil Container returned with an error must still be terminated.
-func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
-	c, err := ceph.Run(ctx, img, append(slices.Clone(opts), defaultFilesystem())...)
+func Run(ctx context.Context, configs ...ceph.RunOptions) (*Container, error) {
+	c, err := ceph.Run(ctx, append(slices.Clone(configs), ceph.RunOptions{}.WithCustomizers(defaultFilesystem()))...)
 	if c == nil {
 		return nil, err
 	}

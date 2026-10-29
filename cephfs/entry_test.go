@@ -39,7 +39,7 @@ func TestFilesystemOptionsRejectInvalidCompositionBeforeRuntime(t *testing.T) {
 			// context separates a rejection from an attempt to start.
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			cluster, err := ceph.Run(ctx, ceph.DefaultImage, opts...)
+			cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(opts...))
 			if cluster != nil || err == nil || errors.Is(err, context.Canceled) || customizers.Load() != 0 {
 				t.Fatalf("invalid filesystem composition reached runtime: cluster=%v err=%v customizers=%d", cluster, err, customizers.Load())
 			}
@@ -163,11 +163,11 @@ func TestContainerFilesystemsUsesTheEmbeddedCluster(t *testing.T) {
 	}
 }
 
-func TestFilesystemImageOptionFillsMissingRoleInRunWithImages(t *testing.T) {
+func TestFilesystemImageOptionFillsMissingRoleInRunWithImageSet(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	cluster, err := ceph.RunWithImages(ctx, ceph.ImageSet{Essential: "core", Client: "toolkit"},
-		WithMDSImage("service-image"), WithFilesystems())
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithImageSet(ceph.ImageSet{Essential: "core", Client: "toolkit"}).
+		WithCustomizers(WithMDSImage("service-image"), WithFilesystems()))
 	if cluster != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("service image option did not reach canceled admission: %v %v", cluster, err)
 	}

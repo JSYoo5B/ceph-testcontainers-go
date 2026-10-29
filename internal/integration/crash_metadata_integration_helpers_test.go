@@ -40,8 +40,8 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	// A cluster whose bootstrap failed is read as far as it got. It starts
 	// after the first cluster, so that no image pull counts against its
 	// short startup timeout.
-	image, imageOpts := integrationImages(t)
-	partial, err := ceph.Run(ctx, image, append(imageOpts, ceph.WithOSDCount(1), ceph.WithStartupTimeout(3*time.Second))...)
+	_, imageOpts := integrationImages(t)
+	partial, err := ceph.Run(ctx, imageOpts.WithCustomizers(ceph.WithOSDCount(1), ceph.WithStartupTimeout(3*time.Second)))
 	if partial == nil || err == nil {
 		if partial != nil {
 			_ = partial.Terminate(context.WithoutCancel(ctx))

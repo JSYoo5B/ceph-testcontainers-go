@@ -209,7 +209,7 @@ endpoint with the same IP address, aliases and gateway priority, so the
 address Ceph advertised stays valid and no daemon restarts.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithSeparateClusterNetwork())
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithSeparateClusterNetwork()))
 if cluster != nil {
 	testcontainers.CleanupContainer(t, cluster)
 }
@@ -290,7 +290,7 @@ a helper container in the target's network namespace and grants `NET_ADMIN` to
 the helper alone; the target keeps its own image and capabilities.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDCount(2))
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(ceph.WithOSDCount(2)))
 if cluster != nil {
 	testcontainers.CleanupContainer(t, cluster)
 }

@@ -700,9 +700,9 @@ if err != nil {
 Use `WithConfigFile` for settings that must exist before daemons start:
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
 	ceph.WithConfigFile(filepath.Join("testdata", "ceph.conf")),
-)
+))
 ```
 
 The file uses native `ceph.conf` syntax and is merged into the bootstrap

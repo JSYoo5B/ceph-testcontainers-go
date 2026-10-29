@@ -13,8 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/testcontainers/testcontainers-go"
-
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/sharedinvariants"
 )
 
@@ -81,7 +79,7 @@ type SharedCluster struct {
 type SharedOption func(*sharedSettings)
 
 type sharedSettings struct {
-	runOpts     []testcontainers.ContainerCustomizer
+	runConfig   RunOptions
 	maxTenants  int
 	maxRecycles int
 	err         error
@@ -97,9 +95,13 @@ type sharedSettings struct {
 	settle time.Duration
 }
 
-// WithSharedRunOptions passes options to the Run that starts each cluster.
-func WithSharedRunOptions(opts ...testcontainers.ContainerCustomizer) SharedOption {
-	return func(s *sharedSettings) { s.runOpts = append(s.runOpts, opts...) }
+// WithSharedRunOptions passes the RunOptions of the Run that starts each
+// cluster. When config selects images (WithImage or WithImageSet), that
+// selection replaces the image given to NewShared; otherwise NewShared's image
+// is the aggregate selection. Several calls append their customizers in call
+// order, and a later call that selects images replaces an earlier selection.
+func WithSharedRunOptions(config RunOptions) SharedOption {
+	return func(s *sharedSettings) { s.runConfig = s.runConfig.merge(config) }
 }
 
 // WithMaxTenants bounds the leases that are held at once; Lease waits for a
@@ -395,7 +397,7 @@ func (s *SharedCluster) instance(ctx context.Context, logf func(string, ...any))
 // failed to start and cannot be terminated stays owned by s for Close.
 func (s *SharedCluster) start(ctx context.Context, inst *sharedInstance) {
 	began := time.Now()
-	backend, err := s.settings.start(ctx, s.image, s.settings.runOpts)
+	backend, err := s.settings.start(ctx, s.image, s.settings.runConfig)
 	if err == nil {
 		err = backend.createPool(ctx, SharedPool)
 	}

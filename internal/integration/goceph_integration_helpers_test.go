@@ -26,7 +26,7 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, imageOpts := integrationImages(t)
+	_, imageOpts := integrationImages(t)
 	type outcome struct {
 		index   int
 		cluster *ceph.Container
@@ -35,12 +35,11 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 	results := make(chan outcome, 2)
 	for i := range 2 {
 		go func() {
-			opts := append([]testcontainers.ContainerCustomizer(nil), imageOpts...)
-			opts = append(opts, ceph.WithOSDCount(2), ceph.WithStartupTimeout(5*time.Minute))
+			config := imageOpts.WithCustomizers(ceph.WithOSDCount(2), ceph.WithStartupTimeout(5*time.Minute))
 			if mode == "host" {
-				opts = append(opts, ceph.WithHostNetwork())
+				config = config.WithCustomizers(ceph.WithHostNetwork())
 			}
-			cluster, err := ceph.Run(ctx, image, opts...)
+			cluster, err := ceph.Run(ctx, config)
 			results <- outcome{i, cluster, err}
 		}()
 	}

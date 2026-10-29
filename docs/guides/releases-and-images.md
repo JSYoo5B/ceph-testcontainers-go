@@ -24,7 +24,7 @@ it starts each container, so any image that meets the
 [requirements](#image-requirements-by-role) can replace the default.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage)
+cluster, err := ceph.Run(ctx)
 ```
 
 ## Supported releases
@@ -45,8 +45,7 @@ daemon stranded without a MON session after its ticket expired, are listed in
 To run against Squid, pass a Squid image to `Run`:
 
 ```golang
-cluster, err := ceph.Run(ctx,
-	"quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b")
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithImage("quay.io/ceph/ceph:v19.2.5@sha256:1bb011052bc6d347d3418adcbf7d88156860d45697bc6323594a11410084064b"))
 ```
 
 ## Detecting the release at run time
@@ -143,8 +142,11 @@ These affect commands or client libraries you run yourself, not the typed API:
 
 `ceph.ImageSet` selects Essential, Client, CephFS, RBDAux and RGW, or an
 exclusive All image. This is the image model used by the module and its CI.
-`Run(ctx, image)` treats the image as an aggregate. Use `RunWithImages` or
-`WithImages` for explicit roles; a missing optional feature image is an error.
+`Run(ctx)` uses the default aggregate image, and
+`RunOptions{}.WithImage(image)` selects another aggregate image. Use
+`RunOptions{}.WithImageSet(set)` for explicit roles; a missing optional feature
+image is an error. The set is the only image configuration: Essential is not
+passed a second time.
 
 | Role | Runtime responsibility |
 | --- | --- |
@@ -156,13 +158,17 @@ exclusive All image. This is the image model used by the module and its CI.
 | all | Aggregate supplying every role |
 
 ```go
-cluster, err := ceph.RunWithImages(ctx, ceph.ImageSet{
-    Essential: essentialRef,
-    Client: clientRef,
-    CephFS: cephFSRef,
-    RGW: rgwRef,
-}, cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
-   rgw.WithGateways(rgw.Config{Name: "s3"}))
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.
+    WithImageSet(ceph.ImageSet{
+        Essential: essentialRef,
+        Client: clientRef,
+        CephFS: cephFSRef,
+        RGW: rgwRef,
+    }).
+    WithCustomizers(
+        cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
+        rgw.WithGateways(rgw.Config{Name: "s3"}),
+    ))
 if cluster != nil { testcontainers.CleanupContainer(t, cluster) }
 if err != nil { t.Fatal(err) }
 ```
@@ -274,7 +280,7 @@ Read this scope before relying on it:
 ## Related APIs
 
 - [ceph.md](../ceph.md): `DefaultImage`, `Run`, `FactsOf`,
-  `ImageSet`, `WithImages`, `WithDaemonImage`, the error categories.
+  `ImageSet`, `RunOptions.WithImageSet`, `WithDaemonImage`, the error categories.
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.
 - [cephfs.md](../cephfs.md): `WithMDSImage`.

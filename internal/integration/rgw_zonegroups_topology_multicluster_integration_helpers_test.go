@@ -22,14 +22,14 @@ import (
 func rgwTopologyClusters(t *testing.T, ctx context.Context, count int, host bool) (string, string, []*ceph.Container) {
 	t.Helper()
 	control, options := integrationImages(t)
-	options = append(options, ceph.WithOSDCount(1))
+	options = options.WithCustomizers(ceph.WithOSDCount(1))
 	if host {
-		options = append(options, ceph.WithHostNetwork())
+		options = options.WithCustomizers(ceph.WithHostNetwork())
 	}
 	clusters := make([]*ceph.Container, count)
 	identities := make(map[string]bool)
 	for i := range clusters {
-		cluster, err := ceph.Run(ctx, control, options...)
+		cluster, err := ceph.Run(ctx, options)
 		if cluster != nil {
 			testcontainers.CleanupContainer(t, cluster)
 		}

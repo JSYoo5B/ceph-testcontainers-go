@@ -25,7 +25,7 @@ func TestInvalidInitialCompositionDoesNotCreateResources(t *testing.T) {
 		{"invalid captured pool", []testcontainers.ContainerCustomizer{WithPools(PoolConfig{Name: "bad name"})}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cluster, err := Run(context.Background(), DefaultImage, test.opts...)
+			cluster, err := Run(context.Background(), RunOptions{}.WithCustomizers(test.opts...))
 			if err == nil || cluster != nil {
 				t.Fatalf("invalid initial composition allocated resources: cluster=%v error=%v", cluster, err)
 			}

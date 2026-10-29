@@ -198,9 +198,8 @@ func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool)
 		if (index == 0) == secureSource {
 			mode = ceph.MessengerV2Secure
 		}
-		options := append([]testcontainers.ContainerCustomizer{}, roleOptions...)
-		options = append(options, ceph.WithNoInitialOSDs(), ceph.WithPoolDefaults(1, 1), ceph.WithOSDBlockSize(512<<20), ceph.WithMessengerMode(mode))
-		cluster, client := newServiceClusterWithOptions(t, image, options...)
+		options := roleOptions.WithCustomizers(ceph.WithNoInitialOSDs(), ceph.WithPoolDefaults(1, 1), ceph.WithOSDBlockSize(512<<20), ceph.WithMessengerMode(mode))
+		cluster, client := newServiceClusterWithOptions(t, image, options)
 		if staticFacts(cluster).MessengerMode != mode {
 			t.Fatal("cluster bootstrap mode changed")
 		}

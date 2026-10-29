@@ -142,13 +142,13 @@ func keyTypeOption(t *testing.T, ctx context.Context, cluster *ceph.Container) b
 // now and then and Ceph aborted it during activation. With key type support it also checks AES256K
 // clients and a second cluster whose service cipher differs from its key
 // type; without it, that AES256K requests are refused before any change.
-func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.ContainerCustomizer) {
+func testAuthCiphers(t *testing.T, image string, imageOpts ceph.RunOptions) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	base := append(slices.Clone(imageOpts), ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))
-	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{
+	base := imageOpts.WithCustomizers(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))
+	cluster, _ := newServiceClusterWithOptions(t, image, base.WithCustomizers(ceph.WithAuth(ceph.AuthConfig{
 		KeyType: ceph.CipherAES, MonTicketTTL: 10500 * time.Millisecond, ServiceTicketTTL: 120 * time.Second,
-	}))...)
+	})))
 	keyTypes := keyTypeOption(t, ctx, cluster)
 
 	// Every key the fixture created is AES, and the daemons run with the
@@ -191,7 +191,7 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 			t.Fatal("the refused AES256K client exists")
 		}
 		started := time.Now()
-		refused, err := ceph.Run(ctx, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K}))...)
+		refused, err := ceph.Run(ctx, base.WithCustomizers(ceph.WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K})))
 		testcontainers.CleanupContainer(t, refused)
 		if !errors.Is(err, ceph.ErrUnsupported) || !strings.Contains(err.Error(), "ceph-authtool --key-type") || time.Since(started) > 2*time.Minute {
 			t.Fatalf("bootstrap with AES256K keys without --key-type: %v after %s", err, time.Since(started))
@@ -224,9 +224,9 @@ func testAuthCiphers(t *testing.T, image string, imageOpts []testcontainers.Cont
 	}
 
 	// A service cipher other than the key type allows both types.
-	mixed, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(base), ceph.WithAuth(ceph.AuthConfig{
+	mixed, _ := newServiceClusterWithOptions(t, image, base.WithCustomizers(ceph.WithAuth(ceph.AuthConfig{
 		KeyType: ceph.CipherAES256K, ServiceCipher: ceph.CipherAES,
-	}))...)
+	})))
 	service, allowed, preferred = readMonMapCiphers(t, ctx, mixed)
 	// The MonMap lists allowed ciphers in its own order.
 	slices.Sort(allowed)

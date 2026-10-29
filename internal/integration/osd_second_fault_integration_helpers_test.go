@@ -376,7 +376,7 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	defer cancel()
 	const ledger, stopFile = "/tmp/tc-second-fault.jsonl", "/tmp/tc-second-fault.stop"
 	image, opts := integrationImages(t)
-	cluster, client := newServiceClusterWithOptions(t, image, append(opts, ceph.WithNoInitialOSDs())...)
+	cluster, client := newServiceClusterWithOptions(t, image, opts.WithCustomizers(ceph.WithNoInitialOSDs()))
 	restore := func(name string, fn func(context.Context) error) {
 		t.Helper()
 		t.Cleanup(func() {

@@ -30,12 +30,12 @@ func testNoInitialMDS(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithOSDCount(2))
+	opts = opts.WithCustomizers(ceph.WithOSDCount(2))
 	if host {
-		opts = append(opts, ceph.WithHostNetwork())
+		opts = opts.WithCustomizers(ceph.WithHostNetwork())
 	}
 	oracle := newNoInitialOSDOracle(t, ctx)
-	cluster, err := ceph.Run(ctx, image, opts...)
+	cluster, err := ceph.Run(ctx, opts)
 	noInitialOSDCleanup(t, cluster) // Install partial ownership cleanup before checking error.
 	coldMDSFailureLogs(t, cluster)  // LIFO: preserve native startup grounds before cluster removal.
 	if err != nil {

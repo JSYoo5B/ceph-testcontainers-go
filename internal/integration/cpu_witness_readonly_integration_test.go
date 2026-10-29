@@ -55,12 +55,12 @@ func TestCPUWitnessReadonly(t *testing.T) {
 	t.Logf("CPU_WITNESS_CONTROLLER euid=%d engine=%s arch=%s ncpu=%d", os.Geteuid(), info.Info.ServerVersion, runtime.GOARCH, info.Info.NCPU)
 
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithNoInitialManagers(), ceph.WithNoInitialOSDs(),
+	opts = opts.WithCustomizers(ceph.WithNoInitialManagers(), ceph.WithNoInitialOSDs(),
 		testcontainers.WithHostConfigModifier(func(h *container.HostConfig) {
 			h.NanoCPUs = cpuReadonlyNano
 			h.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyDisabled}
 		}))
-	cluster, client := newServiceClusterWithOptions(t, image, opts...)
+	cluster, client := newServiceClusterWithOptions(t, image, opts)
 	id := cluster.GetContainerID()
 
 	inspect := cpuEngineInspector(ctx, docker.Client, id)

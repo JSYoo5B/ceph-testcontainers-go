@@ -96,9 +96,9 @@ import (
 
 func TestWithCeph(t *testing.T) {
 	ctx := t.Context()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
 		ceph.WithPools(ceph.PoolConfig{Name: "app"}),
-	)
+	))
 	testcontainers.CleanupContainer(t, cluster)
 	if err != nil {
 		t.Fatal(err)
@@ -120,13 +120,13 @@ The service packages start a cluster with their own defaults:
 
 ```golang
 // An initialized RBD pool named rbd.
-volumes, err := rbd.Run(ctx, ceph.DefaultImage)
+volumes, err := rbd.Run(ctx)
 
 // The filesystem tc-cephfs with one active MDS.
-files, err := cephfs.Run(ctx, ceph.DefaultImage)
+files, err := cephfs.Run(ctx)
 
 // One S3 gateway with a generated test user.
-objects, err := rgw.Run(ctx, ceph.DefaultImage)
+objects, err := rgw.Run(ctx)
 endpoint, err := objects.S3Endpoint(ctx)
 gateways, err := objects.Gateways(ctx)
 if err != nil {
@@ -138,11 +138,11 @@ gateway := gateways[0] // AccessKey, SecretKey and Region
 To serve several services from one cluster, pass their options to `ceph.Run`:
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage,
+cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(
 	rbd.WithPools(ceph.PoolConfig{Name: "volumes"}),
 	cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
 	rgw.WithGateways(rgw.Config{Name: "s3"}),
-)
+))
 ```
 
 ## Documentation
@@ -205,5 +205,5 @@ for Go.
 They do not contain or link Ceph. Tests pull the Ceph container images at run
 time and run the daemons and CLIs inside them; Ceph in those images is under
 its own licenses, mainly LGPL-2.1 and LGPL-3.0 with some GPL-2.0 parts. Images
-that a test selects with `WithImages`, `rgw.WithImage` or
+that a test selects with `RunOptions.WithImageSet`, `rgw.WithImage` or
 `cephfs.WithMDSImage` keep the licenses of whoever publishes them.

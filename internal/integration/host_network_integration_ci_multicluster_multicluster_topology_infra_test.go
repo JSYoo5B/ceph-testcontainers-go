@@ -24,7 +24,7 @@ func TestHostNetworkMultiCluster(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
 	image, imageOpts := integrationImages(t)
-	clusters := hostNetworkRunPair(t, ctx, image, imageOpts)
+	clusters := hostNetworkRunPair(t, ctx, imageOpts)
 
 	fsids := make([]string, 2)
 	keyrings := make([][]byte, 2)

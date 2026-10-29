@@ -64,8 +64,8 @@ func TestMessengerCompressionReceipt(t *testing.T) {
 	if err := os.WriteFile(config, []byte("[osd]\ndebug_ms = 1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cluster, _ := newServiceClusterWithOptions(t, image, append(roles, ceph.WithOSDCount(2),
-		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithConfigFile(config))...)
+	cluster, _ := newServiceClusterWithOptions(t, image, roles.WithCustomizers(ceph.WithOSDCount(2),
+		ceph.WithMessengerMode(ceph.MessengerV2Only), ceph.WithConfigFile(config)))
 	const pool = "tc-compression"
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 8, Replicas: 2, MinSize: 1}); err != nil {
 		t.Fatal(err)

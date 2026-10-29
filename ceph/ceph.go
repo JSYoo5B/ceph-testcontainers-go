@@ -135,13 +135,25 @@ type OSDContainer struct {
 }
 
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
-// img supplies all roles unless WithImages selects explicit role images.
-// Images contain runtime tools; this module supplies cluster setup.
-// A non-nil Container returned with an error must still be terminated.
-func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
+//
+// Run takes any number of RunOptions values. No value selects DefaultImage and
+// every default. Several values compose in argument order: customizers are
+// concatenated, and at most one value may select images (WithImage or
+// WithImageSet); a second selection is refused even when it repeats the first.
+// An explicit selection of an empty image is refused, not read as unspecified.
+// The whole assembled configuration is validated before any container, network
+// or volume is created. Images contain runtime tools; this module supplies
+// cluster setup. A non-nil Container returned with an error must still be
+// terminated.
+func Run(ctx context.Context, configs ...RunOptions) (*Container, error) {
+	plan, err := composeRunOptions(configs)
+	if err != nil {
+		return nil, err
+	}
+	opts := plan.customizers
 	settings := options{
 		osds: 2, monitors: 1, managers: 1, blockSize: 1 << 30, startupTimeout: 3 * time.Minute,
-		essentialImage: img, publicAddress: "127.0.0.1",
+		essentialImage: plan.essential, imageSet: plan.images, publicAddress: "127.0.0.1",
 	}
 	for _, opt := range opts {
 		if opt, ok := opt.(Option); ok {
@@ -189,7 +201,6 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	ctx, cancel := context.WithTimeout(ctx, settings.startupTimeout)
 	defer cancel()
 	var nw *testcontainers.DockerNetwork
-	var err error
 	if settings.hostNetwork {
 		if err := checkHostNetworkEngine(ctx); err != nil {
 			return nil, err

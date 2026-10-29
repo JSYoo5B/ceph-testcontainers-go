@@ -29,8 +29,8 @@ import (
 // died with an open image or a mounted filesystem, and a release that finds
 // a service resource of no tenant poisons the cluster.
 func TestSharedClusterServices(t *testing.T) {
-	shared := newSharedCluster(t, ceph.WithSharedRunOptions(
-		rbd.WithPools(ceph.PoolConfig{Name: sharedRBDPool}), cephfs.WithFilesystems(), rgw.WithGateways()))
+	shared := newSharedCluster(t, ceph.WithSharedRunOptions(ceph.RunOptions{}.WithCustomizers(
+		rbd.WithPools(ceph.PoolConfig{Name: sharedRBDPool}), cephfs.WithFilesystems(), rgw.WithGateways())))
 	var fsid string
 
 	t.Run("rbd", func(t *testing.T) {

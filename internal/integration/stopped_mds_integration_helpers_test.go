@@ -32,12 +32,12 @@ func testStoppedMDSRetirement(t *testing.T, host bool) {
 	// v20.2.4 MON checks this startup value before automatic MDS expiry. The
 	// operation umbrella is shorter than the grace; effective MON readback and
 	// native registration before/after refusal are mandatory, never a skip.
-	opts = append(opts, ceph.WithOSDCount(2), testcontainers.WithEnv(map[string]string{"CEPH_ARGS": "--mds-beacon-grace=3600"}))
+	opts = opts.WithCustomizers(ceph.WithOSDCount(2), testcontainers.WithEnv(map[string]string{"CEPH_ARGS": "--mds-beacon-grace=3600"}))
 	if host {
-		opts = append(opts, ceph.WithHostNetwork())
+		opts = opts.WithCustomizers(ceph.WithHostNetwork())
 	}
 	oracle := newNoInitialOSDOracle(t, ctx)
-	cluster, err := ceph.Run(ctx, image, opts...)
+	cluster, err := ceph.Run(ctx, opts)
 	noInitialOSDCleanup(t, cluster)
 	coldMDSFailureLogs(t, cluster)
 	if err != nil {

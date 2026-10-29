@@ -26,11 +26,11 @@ func TestMonitorManagerTopology(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = append(opts, ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithStartupTimeout(3*time.Minute))
+			opts = opts.WithCustomizers(ceph.WithMonitorCount(3), ceph.WithManagerCount(2), ceph.WithStartupTimeout(3*time.Minute))
 			if host {
-				opts = append(opts, ceph.WithHostNetwork())
+				opts = opts.WithCustomizers(ceph.WithHostNetwork())
 			}
-			cluster, err := ceph.Run(ctx, image, opts...)
+			cluster, err := ceph.Run(ctx, opts)
 			if cluster != nil {
 				testcontainers.CleanupContainer(t, cluster)
 			}

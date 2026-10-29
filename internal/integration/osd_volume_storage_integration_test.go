@@ -44,11 +44,11 @@ func osdVolumeTopology(t *testing.T, host bool) {
 	t.Cleanup(func() { _ = docker.Close() })
 	beforeVolumes, beforeHelpers := osdVolumeInventory(t, ctx, docker.Client)
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithNoInitialOSDs(), ceph.WithOSDVolumeStorage())
+	opts = opts.WithCustomizers(ceph.WithNoInitialOSDs(), ceph.WithOSDVolumeStorage())
 	if host {
-		opts = append(opts, ceph.WithHostNetwork())
+		opts = opts.WithCustomizers(ceph.WithHostNetwork())
 	}
-	cluster, err := ceph.Run(ctx, image, opts...)
+	cluster, err := ceph.Run(ctx, opts)
 	terminated := false
 	if cluster != nil {
 		t.Cleanup(func() {

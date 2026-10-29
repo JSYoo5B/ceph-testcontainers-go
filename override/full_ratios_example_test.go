@@ -9,7 +9,7 @@ import (
 
 func ExampleSetFullRatios() {
 	ctx := context.Background()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage)
+	cluster, err := ceph.Run(ctx)
 	if cluster != nil {
 		defer func() { _ = cluster.Terminate(context.Background()) }()
 	}

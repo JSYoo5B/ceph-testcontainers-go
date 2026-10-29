@@ -269,16 +269,16 @@ func testNoInitialOSDStorage(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithNoInitialOSDs())
+	opts = opts.WithCustomizers(ceph.WithNoInitialOSDs())
 	if host {
-		opts = append(opts, ceph.WithHostNetwork())
+		opts = opts.WithCustomizers(ceph.WithHostNetwork())
 	} else {
-		opts = append(opts, ceph.WithSeparateClusterNetwork())
+		opts = opts.WithCustomizers(ceph.WithSeparateClusterNetwork())
 	}
 	var customizers atomic.Int32
-	opts = append(opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
+	opts = opts.WithCustomizers(testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
 	oracle := newNoInitialOSDOracle(t, ctx)
-	cluster, err := ceph.Run(ctx, image, opts...)
+	cluster, err := ceph.Run(ctx, opts)
 	noInitialOSDCleanup(t, cluster)
 	if err != nil {
 		t.Fatal(err)
@@ -405,13 +405,13 @@ func testNoInitialOSDPartial(t *testing.T, host bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithNoInitialOSDs(), ceph.WithDefaultCRUSHRoot("osd-0"), ceph.WithPoolDefaults(1, 1))
+	_, opts := integrationImages(t)
+	opts = opts.WithCustomizers(ceph.WithNoInitialOSDs(), ceph.WithDefaultCRUSHRoot("osd-0"), ceph.WithPoolDefaults(1, 1))
 	if host {
-		opts = append(opts, ceph.WithHostNetwork())
+		opts = opts.WithCustomizers(ceph.WithHostNetwork())
 	}
 	oracle := newNoInitialOSDOracle(t, ctx)
-	cluster, err := ceph.Run(ctx, image, opts...)
+	cluster, err := ceph.Run(ctx, opts)
 	noInitialOSDCleanup(t, cluster)
 	if err != nil {
 		t.Fatal(err)

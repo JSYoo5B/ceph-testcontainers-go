@@ -82,10 +82,10 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 			defer cancel()
 			image, opts := integrationImages(t)
 			if !test.small {
-				opts = append(opts, ceph.WithOSDCount(2))
+				opts = opts.WithCustomizers(ceph.WithOSDCount(2))
 			}
-			opts = append(opts, test.opts...)
-			cluster, client := newServiceClusterRun(t, test.run, image, opts...)
+			opts = opts.WithCustomizers(test.opts...)
+			cluster, client := newServiceClusterRun(t, test.run, image, opts)
 			if test.small {
 				if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 					t.Fatal(err)

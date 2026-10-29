@@ -54,7 +54,7 @@ func TestOSDVolumeStorageAdmissionBeforeAllocation(t *testing.T) {
 		{WithOSDVolumeStorage(), WithOSDInMemoryStorage(1)}, {WithOSDInMemoryStorage(1), WithOSDVolumeStorage()},
 		{WithOSDVolumeStorage(), WithOSDObjectStore(OSDMemStore)}, {WithOSDObjectStore(OSDMemStore), WithOSDVolumeStorage()},
 	} {
-		c, err := Run(t.Context(), DefaultImage, opts...)
+		c, err := Run(t.Context(), RunOptions{}.WithCustomizers(opts...))
 		if c != nil || !errors.Is(err, ErrInvalidRequest) {
 			t.Fatalf("incompatible storage allocated resources: %v", err)
 		}

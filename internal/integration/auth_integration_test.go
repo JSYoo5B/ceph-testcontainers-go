@@ -24,9 +24,9 @@ func TestClientIdentities(t *testing.T) {
 			defer cancel()
 			image, opts := integrationImages(t)
 			if host {
-				opts = append(opts, ceph.WithHostNetwork())
+				opts = opts.WithCustomizers(ceph.WithHostNetwork())
 			}
-			cluster, err := ceph.Run(ctx, image, opts...)
+			cluster, err := ceph.Run(ctx, opts)
 			if cluster != nil {
 				testcontainers.CleanupContainer(t, cluster)
 			}

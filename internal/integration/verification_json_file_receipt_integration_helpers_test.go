@@ -201,8 +201,8 @@ func jsonFileReadEngineLog(ctx context.Context, docker *mobycl.Client, id string
 func testVerificationJSONFileNativeReceipt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
-	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1))...)
+	_, opts := integrationImages(t)
+	cluster, err := ceph.Run(ctx, opts.WithCustomizers(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)))
 	recorder := &jsonFileFinalizer{TB: t}
 	var finalization *ceph.Finalization
 	if cluster != nil {

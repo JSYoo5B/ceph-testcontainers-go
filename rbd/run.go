@@ -5,17 +5,17 @@ import (
 	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/testcontainers/testcontainers-go"
 )
 
-// Run starts a disposable cluster for RBD clients. It accepts every ceph.Run
-// option and the options of other service packages. When no WithPools option is given,
+// Run starts a disposable cluster for RBD clients. It takes the same
+// ceph.RunOptions values as ceph.Run, composed the same way; pass the options of
+// other service packages through RunOptions.WithCustomizers. When no WithPools option is given,
 // it creates and initializes a replicated pool named rbd.
 // Bootstrap options that leave the cluster without OSDs for the pool, such as
 // ceph.WithNoInitialOSDs, are rejected; use ceph.Run for those stages.
 // A non-nil Container returned with an error must still be terminated.
-func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
-	c, err := ceph.Run(ctx, img, append(slices.Clone(opts), defaultPool())...)
+func Run(ctx context.Context, configs ...ceph.RunOptions) (*Container, error) {
+	c, err := ceph.Run(ctx, append(slices.Clone(configs), ceph.RunOptions{}.WithCustomizers(defaultPool()))...)
 	if c == nil {
 		return nil, err
 	}

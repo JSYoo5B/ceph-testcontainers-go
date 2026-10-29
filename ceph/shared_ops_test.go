@@ -11,8 +11,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/testcontainers/testcontainers-go"
 )
 
 // recordingOps is a clusterOps that records which operation a tenant reached.
@@ -73,8 +71,8 @@ func newOpsShared(ops clusterOps) *SharedCluster {
 	fleet := &fakeFleet{}
 	return newFakeShared(fleet, func(s *sharedSettings) {
 		inner := s.start
-		s.start = func(ctx context.Context, image string, opts []testcontainers.ContainerCustomizer) (sharedBackend, error) {
-			backend, err := inner(ctx, image, opts)
+		s.start = func(ctx context.Context, image string, config RunOptions) (sharedBackend, error) {
+			backend, err := inner(ctx, image, config)
 			if backend == nil {
 				return nil, err
 			}

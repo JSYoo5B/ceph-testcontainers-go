@@ -37,7 +37,7 @@ func TestGatewayOptionsRejectInvalidCompositionBeforeRuntime(t *testing.T) {
 			// context separates a rejection from an attempt to start.
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			cluster, err := ceph.Run(ctx, ceph.DefaultImage, opts...)
+			cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithCustomizers(opts...))
 			if cluster != nil || err == nil || errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), test.want) || customizers.Load() != 0 {
 				t.Fatalf("invalid gateway composition reached runtime: cluster=%v err=%v customizers=%d", cluster, err, customizers.Load())
 			}
@@ -157,11 +157,11 @@ func TestContainerShortcutsUseTheEmbeddedCluster(t *testing.T) {
 	}
 }
 
-func TestGatewayImageOptionFillsMissingRoleInRunWithImages(t *testing.T) {
+func TestGatewayImageOptionFillsMissingRoleInRunWithImageSet(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	cluster, err := ceph.RunWithImages(ctx, ceph.ImageSet{Essential: "core", Client: "toolkit"},
-		WithImage("service-image"), WithGateways())
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithImageSet(ceph.ImageSet{Essential: "core", Client: "toolkit"}).
+		WithCustomizers(WithImage("service-image"), WithGateways()))
 	if cluster != nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("service image option did not reach canceled admission: %v %v", cluster, err)
 	}

@@ -25,13 +25,13 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = append(opts, ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
+			opts = opts.WithCustomizers(ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
 			if host {
-				opts = append(opts, ceph.WithHostNetwork())
+				opts = opts.WithCustomizers(ceph.WithHostNetwork())
 			} else {
-				opts = append(opts, ceph.WithSeparateClusterNetwork())
+				opts = opts.WithCustomizers(ceph.WithSeparateClusterNetwork())
 			}
-			cluster, client := newServiceClusterWithOptions(t, image, opts...)
+			cluster, client := newServiceClusterWithOptions(t, image, opts)
 			if staticFacts(cluster).MessengerMode != ceph.MessengerV2Secure {
 				t.Fatal("bootstrap mode accessor differs from selected policy")
 			}
@@ -95,11 +95,11 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = append(opts, ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
+			opts = opts.WithCustomizers(ceph.WithMessengerMode(ceph.MessengerV2Secure), ceph.WithNoInitialOSDs(), ceph.WithOSDBlockSize(512<<20))
 			if host {
-				opts = append(opts, ceph.WithHostNetwork())
+				opts = opts.WithCustomizers(ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceClusterWithOptions(t, image, opts...)
+			cluster, client := newServiceClusterWithOptions(t, image, opts)
 			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal(err)
 			}

@@ -61,11 +61,11 @@ func TestPausedObjectWatcher(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()
 			image, opts := integrationImages(t)
-			opts = append(opts, ceph.WithOSDCount(2))
+			opts = opts.WithCustomizers(ceph.WithOSDCount(2))
 			if host {
-				opts = append(opts, ceph.WithHostNetwork())
+				opts = opts.WithCustomizers(ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceClusterWithOptions(t, image, opts...)
+			cluster, client := newServiceClusterWithOptions(t, image, opts)
 			const pool, object = "tc-watch", "watched"
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", Replicas: 2, MinSize: 1}); err != nil {
 				t.Fatal(err)

@@ -9,8 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/testcontainers/testcontainers-go"
-
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/sharedinvariants"
 )
 
@@ -43,7 +41,7 @@ type sharedBackend interface {
 	ops() clusterOps
 }
 
-type sharedStarter func(ctx context.Context, image string, opts []testcontainers.ContainerCustomizer) (sharedBackend, error)
+type sharedStarter func(ctx context.Context, image string, config RunOptions) (sharedBackend, error)
 
 // sharedInvariants is the state that a tenant cannot change through its own
 // scope; the comparison logic lives in internal/sharedinvariants.
@@ -57,8 +55,18 @@ var sharedIgnoredHealth = map[string]bool{"MON_DISK_LOW": true}
 // containerBackend shares a *Container.
 type containerBackend struct{ c *Container }
 
-func startSharedContainer(ctx context.Context, image string, opts []testcontainers.ContainerCustomizer) (sharedBackend, error) {
-	return sharedRunResult(Run(ctx, image, opts...))
+func startSharedContainer(ctx context.Context, image string, config RunOptions) (sharedBackend, error) {
+	return sharedRunResult(Run(ctx, sharedRunConfig(image, config)))
+}
+
+// sharedRunConfig is the configuration of the Run that starts a shared
+// cluster: the configured image selection when there is one, else the image of
+// NewShared as an aggregate selection.
+func sharedRunConfig(image string, config RunOptions) RunOptions {
+	if config.selection == imagesUnspecified {
+		return config.WithImage(image)
+	}
+	return config
 }
 
 // sharedRunResult keeps the partial cluster that a failed Run returns: the

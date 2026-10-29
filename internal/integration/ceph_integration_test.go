@@ -24,8 +24,8 @@ func TestClusterLifecycle(t *testing.T) {
 	defer cancel()
 	started := time.Now()
 	image, opts := integrationImages(t)
-	opts = append(opts, ceph.WithOSDCount(2))
-	cluster, err := ceph.Run(ctx, image, opts...)
+	opts = opts.WithCustomizers(ceph.WithOSDCount(2))
+	cluster, err := ceph.Run(ctx, opts)
 	// One finalization archives a failure before the client and the
 	// cluster are removed; go test -artifacts keeps the archive.
 	var finalization *ceph.Finalization
@@ -143,12 +143,10 @@ func TestClusterLifecycle(t *testing.T) {
 }
 
 func TestBootstrapFailureCleanup(t *testing.T) {
-	image, opts := integrationImages(t)
-	opts = append(opts,
-		ceph.WithStartupTimeout(15*time.Second),
-		testcontainers.WithEntrypoint("/bin/sh", "-c", "exit 23"),
-	)
-	cluster, err := ceph.Run(t.Context(), image, opts...)
+	_, opts := integrationImages(t)
+	opts = opts.WithCustomizers(ceph.WithStartupTimeout(15*time.Second),
+		testcontainers.WithEntrypoint("/bin/sh", "-c", "exit 23"))
+	cluster, err := ceph.Run(t.Context(), opts)
 	if cluster != nil {
 		testcontainers.CleanupContainer(t, cluster)
 	}
@@ -171,7 +169,7 @@ func TestRunMissingImage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	const missing = "ceph-testcontainers-go.invalid/missing:0"
-	cluster, err := ceph.Run(ctx, missing)
+	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithImage(missing))
 	if cluster != nil {
 		testcontainers.CleanupContainer(t, cluster)
 	}

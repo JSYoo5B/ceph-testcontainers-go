@@ -8,7 +8,7 @@ import (
 )
 
 func TestSeparateClusterNetworkRejectsHostBeforeCreation(t *testing.T) {
-	cluster, err := Run(t.Context(), DefaultImage, WithSeparateClusterNetwork(), WithHostNetwork())
+	cluster, err := Run(t.Context(), RunOptions{}.WithCustomizers(WithSeparateClusterNetwork(), WithHostNetwork()))
 	if cluster != nil || err == nil {
 		t.Fatal("incompatible traffic planes allocated resources")
 	}
