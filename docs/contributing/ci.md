@@ -124,12 +124,12 @@ status checks of the `main` protection ruleset. A workflow-level
 `paths-ignore` would never start the workflow for a documentation-only
 change and leave those checks pending, which blocks merging. The workflow
 therefore always starts, and its `Detect documentation-only changes` job runs
-`.github/scripts/docs_only.py`. When that reports `docs_only=true`, three
-checks skip themselves and report success; GitHub documents that a job
+`.github/scripts/docs_only.py`. When that reports `docs_only=true`, Unit tests,
+Race detector, `Vet, compile and CI tooling` and Compiled tag coverage and
+helpers skip themselves and report success; GitHub documents that a job
 skipped by a condition reports success. The Vulnerability check matrix jobs
-and `Vet, compile and CI tooling` skip their steps instead of the whole job:
-the matrix so that each keeps its expanded check name, and the vet job so
-that the text checks below still run. The job names are unchanged.
+skip their steps instead of the whole job, so that each keeps its expanded
+check name.
 
 A pull request is documentation-only when every changed file is on this
 allowlist, and the allowlist contains only files that no check reads:
@@ -149,15 +149,14 @@ show that `docs/guides/x.md` is a link to a code file:
   `docs/rgw.md`, `docs/rgw-multisite.md`, `docs/capture.md`, and the page a new
   package's receipt names): the API inventory test requires every exported name
   on its package page;
-- `docs/design/api-naming*`: the API naming audit and review notes, and the
+- `docs/design/api-naming*`: the API naming review note, and the
   package-scoped `docs/design/api-naming/<package>/declarations.json`,
   `members.json` and `review.json` catalogues and receipts, which the
   `internal/apiinventory` tests compare with the code. The catalogue JSON files
   are nested non-Markdown files, so they are never on the allowlist;
-- `docs/design/container-decomposition.md` and every file below
-  `docs/design/container-decomposition/`: the shared decomposition document and
-  the component records, which the `ceph` guards read by listing the directory,
-  so a record added later is covered without a list entry;
+- `docs/design/value-configuration-composition.md`: the review note that the
+  `ceph`, `cephfs/mirror` and `rbd/mirror` receipts name, whose existence the
+  `internal/apiinventory` tests check;
 - `docs/guides/messenger-client-fixtures.md`: cross-checked against the
   messenger coverage manifest by a test in `internal/integration`;
 - `docs/guides/bug-compatibility-tags.md` and `.json`: the tag registry and
@@ -168,33 +167,10 @@ paths they name and fails when one of them is on the allowlist, so a new
 reader of a documentation file has to remove that file from it. Add the
 file to `READ_DOC_FILES` or `READ_DOC_PREFIXES` in `docs_only.py`.
 
-A documentation-only head is still validated by text checks. `Vet, compile and CI
-tooling` runs on every head instead of skipping the whole job: its checkout and
-its last two steps run regardless of `docs_only`. They are `Check the image
-role vocabulary` (`.github/scripts/check_image_vocabulary.py`, which fails when a
-tracked file reintroduces the retired single-broad-role image vocabulary outside
-its list of historical records) and `Check the retired override names`
-(`.github/scripts/check_retired_override_names.py`, which fails when a tracked
-file names a removed `ceph.Container` override method, `ceph` handle type or
-observation method receiver (these are `ceph.Observer` methods now) outside its list of historical records). Vet, lint, tag compilation, the Python tooling tests,
-actionlint and the go-ceph harness test skip themselves on a
-documentation-only head. The job name is unchanged and no required check is
-added. The job's checkout fetches two commits (`fetch-depth: 2`), and a pull
-request head also runs `Check move records against the merge base`
-(`go run ./internal/tools/apinaming moves`, see
-[Testing](testing.md#package-layout-and-the-export-inventory)): the checkout of a pull request is its
-merge commit, whose first parent is the base, so the step passes `HEAD^1` and
-compares the pull request's net change. A checkout that is not a merge commit
-passes no base, and the step prints `SKIPPED` and a warning annotation instead
-of `OK`; the record checks still run, and a skip is never a pass. The step does
-not run on a documentation-only head, which cannot touch a catalogue or a move
-record, and it does not run on pushes or scheduled runs. The step runs under
-`shell: bash` (pipefail) and exits with the checker's status; a workflow control
-in `.github/scripts/test_moves_step.py` runs the step as written. On such a head a green `Vet, compile and CI tooling` means that the
-validator and the identifier check passed (not the tag comparison); vet and tag compilation did not run, and the skip is by
-policy, not a pass of those steps. Unit tests, Race detector and Compiled tag
-coverage and helpers remain skipped jobs, and the Vulnerability check jobs
-execute with every step skipped.
+On a documentation-only head, Unit tests, Race detector, `Vet, compile and CI
+tooling` and Compiled tag coverage and helpers are skipped jobs, and the
+Vulnerability check jobs execute with every step skipped. The skip is by
+policy, not a pass of those checks.
 
 The detection fails open. Every push to `main`, the weekly schedule and
 manual runs always run every check. A pull request from a fork, a missing
@@ -532,61 +508,6 @@ Markdown files, `docs/` and `LICENSE` are ignored. A profile of another
 package, such as the `environment` batch, is always selected. If the tool
 fails, every profile is recorded as selected, with the error.
 
-#### Validating the selection against CI history
-
-`replay_declaration_selection.py` replays the selection over merged pull
-requests. For each of the last pull requests on `origin/main`, merged or
-squashed, it takes the first parent as the base and the pull request head
-(the second parent, or the squash commit) as the head. It exports the head's
-tree, plans it with the head's own planner, and prints a table of selected
-batches per pull request: all runtime profiles, and the `short` ones on
-their own, since Ceph short runs every batch on every pull request.
-
-```sh
-python3 .github/scripts/replay_declaration_selection.py --merges 15
-```
-
-With `--github`, it also reads each pull request's CI history through `gh`:
-every attempt of every runtime run on the pull request's branch while it was
-open, and the push runs of its merge commit. It then checks each failed
-batch job against the selection of the diff that the run tested. A pull
-request run is checked against the diff up to the head it tested, and a push
-run against the pull request's diff. Cancelled jobs are ignored. A failed
-job that the selection excludes is reported as:
-- `explained`, when `batch_selection_explained.json` records its job ID;
-- otherwise an unresolved miss, and the script exits with status 1.
-
-A later attempt of the same run that passed the job is shown next to the
-miss as `(passed on rerun)`, but it does not clear the miss. A regression
-that the diff introduced and that fails only sometimes passes a retry of the
-same commit too, so the retry proves only that the failure is intermittent.
-
-Each entry of `batch_selection_explained.json` records the pull request,
-the batch (`category/batch`, which must match the failed job), a short
-quote of the failure's signature, the evidence that the diff did not cause
-it, and a reference. The evidence is one of:
-- an infrastructure failure before the tests ran, such as an action that
-  could not be downloaded or an artifact upload error;
-- a known intermittent failure whose code path the diff does not touch,
-  with the issue or pull request that investigated or fixed it.
-
-Add an entry only after reading the job's log. A failure that cannot be
-explained this way stays a miss.
-
-```sh
-python3 .github/scripts/replay_declaration_selection.py --merges 60 \
-  --github JSYoo5B/ceph-testcontainers-go --cache gh-cache.json \
-  --output validation.json
-```
-
-`--cache` keeps every API response in a JSON file, so a second run reads
-GitHub only for new pull requests. The replay builds every head's plan and
-type-checks the package once per head, which takes a few minutes for 60
-pull requests. To run it on a host without `gh`, fill the cache on a machine
-that has it, copy the cache and a clone with the pull request heads
-(`git fetch origin '+refs/pull/*/head:refs/remotes/origin/pr/*'`), and pass
-`--offline` and the same `--ref`.
-
 Changes outside `internal/integration`, such as the public packages and
 `.github/`, still select every batch.
 
@@ -616,35 +537,6 @@ pull request to opt in. Without the label, Ceph short runs every batch.
 - Use the label for changes inside `internal/integration`. A change to
   `.github/`, `go.mod`, the public packages or any other fallback path
   selects every batch anyway.
-
-Measured on 2026-10-18 with two measurement pull requests, each adding one
-comment line. The selected run and the full run are of the same commit: the
-label was removed after the selected run, which started a full Ceph short
-run. Execution totals include Code checks (6 jobs), Docker checks (2 jobs) and
-the `Plan` jobs of the three scoped categories (1 job each, no batch
-selected). Job minutes are the sum of each job's start-to-completion time.
-Wall time runs from the run's creation to its last job's completion. For an
-execution it is the longest of its workflows.
-
-| Change | Ceph short | Ceph short jobs | Ceph short job minutes | Ceph short wall time | Execution jobs | Execution job minutes | Execution wall time |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| one batch (`address_family`) | selected | 2 | 2.7 | 4.9 min | 13 | 20.5 | 11.2 min |
-| one batch (`address_family`) | full | 49 | 184.7 | 24.5 min | 60 | 202.5 | 24.5 min |
-| shared helper (`verifyRBDBytes`, 5 batches) | selected | 6 | 20.9 | 10.1 min | 17 | 35.3 | 10.1 min |
-| shared helper (`verifyRBDBytes`, 5 batches) | full | 49 | 185.7 | 17.7 min | 60 | 200.1 | 17.7 min |
-
-Earlier measurements without selection were 50 to 51 jobs, 209 to
-227 job minutes and 17 to 27 minutes of wall time, the same for a one-batch
-and a public-API change. In these measurements the selection cut an
-execution to 13 jobs and 21 job minutes for a one-batch change (about 90%
-fewer job minutes), and to 17 jobs and 35 job minutes for a shared helper
-that five batches reach (about 82% fewer). The wall time became that of Code
-checks (7 to 11 minutes) or of the longest selected batch. The `Plan` job
-took 36 seconds with the analysis included. The two full runs started
-together, and from their eighth minute a third pull request's full Ceph
-short run competed with them for runners. This contention may explain why
-the one-batch full run took longer than the shared-helper full run. Each figure is a single
-run.
 
 ### Running chosen batches from a comment
 
@@ -897,11 +789,8 @@ image preparation and the cleanup check, so total runner time grows.
 
 ### Runner budget
 
-GitHub runs at most 40 jobs of this account's hosted runners at once. The
-limit is measured, not configured: of the jobs that waited more than two
-minutes for a runner, the largest share started when exactly 39 others were
-running, and the limit also covers the account's other repositories. The
-constants in `tag_scenarios.py` divide it:
+GitHub runs at most 40 jobs of this account's hosted runners at once, across
+the account's repositories. The constants in `tag_scenarios.py` divide it:
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
@@ -925,11 +814,7 @@ take the pull request share unnoticed. The pull request entry points stay
 unbounded and use whatever is free.
 
 A bound only delays jobs: every matrix entry and every campaign attempt still
-runs, with `fail-fast: false`, and a started run always finishes. Simulated
-on the periodic runs of 2026-10-16 and 2026-10-17, the bounded matrix takes
-74 to 81 minutes instead of about 40, well within its 3-hour schedule. With
-the representative batches' measured durations, the default campaign (seven
-batches, three repetitions) takes about 27 minutes on 3 runners.
+runs, with `fail-fast: false`, and a started run always finishes.
 
 Runtime batches are not packed into shared jobs, and a compiled binary is not
 passed between jobs. In a pull request execution each batch compiles exactly
@@ -1457,8 +1342,7 @@ download as separate evidence.
 
 This proof covers one healthy cluster's assertion/post-check failure path and
 the tracked debug restore. It does not establish every collector failure,
-partial bootstrap, disk failure, forced process exit or runner-loss path under
-#49/#51, and it does not close either issue by itself.
+partial bootstrap, disk failure, forced process exit or runner-loss path.
 
 ### Retained archive audit
 

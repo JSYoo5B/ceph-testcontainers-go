@@ -45,7 +45,7 @@ what the JSON report holds outside its rows: `schema`, the source kind, ref and
 resolved `commit` of each side (`source.*` for `measure`, `base.*` and `head.*`
 for `delta`), every `scope.measure`, `scope.exclusion` and `scope.caveat` line,
 one `unmeasured_package` line per package without production files (with the
-side for `delta`), and for `delta` the `move_records_read` and `summary` lines.
+side for `delta`), and for `delta` the `summary` line.
 `measure` also lists one `# package:` total line per package. In `delta`,
 package totals are table rows whose first column is `package`; their
 declarations column holds the owner count and their locations are `-`.
@@ -91,19 +91,8 @@ Rules that keep a move from reading as an improvement:
   `unmeasured_packages` and the summary says so. It is not treated as zero
   owners. A package missing on both sides is an error, so a mistyped name cannot
   read as "no change".
-- If the head snapshot has per-change API move records under
-  `docs/design/api-naming/moves/`, a row whose owner name appears in a record
-  (`from`, `to`, `removed` or `added`) carries that record's change identifier
-  in `move_records`. `-moves-dir ""` disables this. An annotation names the
-  record only; it does not show that behavior is equivalent.
 
 With no changed owner the summary is `no measured structural changes`.
-
-A worked example on a merged change, with the base and head commits and the
-rows the tool returned, is kept as a historical record in
-[structural-metrics-sample](../design/structural-metrics-sample.md). It is one
-result on one pair of commits, not a statement about how the tool behaves
-elsewhere.
 
 ## What it does not measure
 

@@ -18,10 +18,9 @@ ceph-testcontainers-images.
 2. Write concise final release notes from the previous release and the final
    source. Describe the net changes users receive compared with the previous
    published release, not the intermediate states of unreleased work; a feature
-   that was introduced and removed before the release has no entry. Put the
-   notes in a `CHANGELOG.md` created only for release preparation. Do not keep
-   that file or an `Unreleased` section on the ongoing development branch.
-   Published tags and release notes remain immutable. Update
+   that was introduced and removed before the release has no entry. Write the
+   notes directly in the GitHub Release; the repository never contains a
+   `CHANGELOG.md`. Published tags and release notes remain immutable. Update
    the module pages and README links together, and state the Go minimum
    separately from this repository's toolchain and native clients' platform
    requirements.
@@ -59,9 +58,8 @@ Before a separately authorized publication:
 
 - Select the final candidate SHA and prepare the release notes, including
   compatibility, support and unresolved native limits.
-- When publishing, make the reviewed section's heading carry the version and
-  the actual release date, and update the README's development-version notice so it does not tell release users to
-  install an older tag.
+- When publishing, update the README's development-version notice so it does
+  not tell release users to install an older tag.
 - Identify the release by its tag and keep the final SHA's validation evidence
   in the release notes.
 - Point the tag and GitHub Release at the reviewed commit, then verify that

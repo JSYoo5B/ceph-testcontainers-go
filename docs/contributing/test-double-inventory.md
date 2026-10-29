@@ -6,11 +6,8 @@ choosing a double is in
 [Test doubles](testing.md#test-doubles). The compilation rules for test-only
 code are in [Test-only code](testing.md#test-only-code).
 
-The inventory was taken from source at the merge of the test-only code
-isolation (`internal/testhelper`, the `ceph/unit_access.go` seam and
-`internal/tools/testsupportcheck`). It is source inspection, not a type-resolved
-analysis and not a linked-binary symbol listing. Counts are of files at that
-point and are context, not a contract.
+The inventory is source inspection, not a type-resolved analysis and not a
+linked-binary symbol listing.
 
 `go run ./internal/tools/testdoublecheck` (part of `make tag-compile`) keeps
 the two tables below in sync with the source, in both directions:
@@ -49,19 +46,18 @@ people.
 
 ## Shared test-support packages
 
-Only `_test.go` files import these packages. `internal/clustertest` is imported
-by 36 test files, `internal/clusteraccess` by 114 and `internal/testhelper` by
-57. None is imported by a non-test file.
+Only `_test.go` files import these packages. None is imported by a non-test
+file.
 
 | Declarations | Class and role | Substitutes | Name assessment |
 | --- | --- | --- | --- |
-| `internal/clustertest/clustertest.go#CannedCommandContainer` | shared double. Answers each Ceph command from a table keyed by the command words, records the calls, and fails one named command. | The control container's `Exec` (the `ceph` CLI). | Accurate. Renamed from `CLI`, which read as a real CLI. States that the answers are canned. |
+| `internal/clustertest/clustertest.go#CannedCommandContainer` | shared double. Answers each Ceph command from a table keyed by the command words, records the calls, and fails one named command. | The control container's `Exec` (the `ceph` CLI). | Accurate. States that the answers are canned. |
 | `internal/clustertest/clustertest.go#StateFake`, `internal/clustertest/clustertest.go#NewStateFake`, `internal/clustertest/clustertest.go#FakePool`, `internal/clustertest/clustertest.go#FakeFilesystem` | shared double. A small model of the OSDMap, CRUSH rules, erasure-code profiles, FSMap and `mon_allow_pool_delete`. Reads render from the state and mutations change it. | The control container's `Exec` for pool and filesystem commands. | Accurate. Keep. |
 | `internal/clustertest/clustertest.go#Quorum`, `internal/clustertest/clustertest.go#ModuleArgs`, `internal/clustertest/clustertest.go#QuorumEnvelope`, `internal/clustertest/clustertest.go#Reply` | shared double support. Recognize the supervised quorum read and encode a command reply in the Docker multiplexed or supervisor envelope format. | The wire format of a command result. | Accurate. Keep. |
 | `internal/clustertest/deadline.go#SignalDeadline`, `internal/clustertest/deadline.go#NewSignalDeadline` | shared double. A context whose deadline passes when the test calls `Expire`. | A wall-clock deadline context. | Accurate enough: the type reports no `Deadline`. Keep. |
-| `internal/clustertest/locks.go#NativeCallCounter` | shared double. Counts `Exec`, `Stop` and `Terminate` calls and fails any `Exec`, so a queued operation provably made no native call. | A running container. | Accurate. Renamed from `ContextLockRuntime`, which suggested a real runtime. |
-| `internal/clustertest/locks.go#ControlQueryCounter` | shared double. Counts container-ID queries that an admission refusal must not reach. | The control container. | Accurate. Renamed from `AdmissionContainer`, which read as a real container. |
-| `internal/clustertest/locks.go#TerminateRecorder` | shared double. Records `Terminate` calls and returns a chosen error. | A container being cleaned up. | Accurate. Renamed from `CleanupContainer`, which read as a real container. |
+| `internal/clustertest/locks.go#NativeCallCounter` | shared double. Counts `Exec`, `Stop` and `Terminate` calls and fails any `Exec`, so a queued operation provably made no native call. | A running container. | Accurate. |
+| `internal/clustertest/locks.go#ControlQueryCounter` | shared double. Counts container-ID queries that an admission refusal must not reach. | The control container. | Accurate. |
+| `internal/clustertest/locks.go#TerminateRecorder` | shared double. Records `Terminate` calls and returns a chosen error. | A container being cleaned up. | Accurate. |
 | `internal/clustertest/locks.go#AssertContextLockQueued` | shared assertion. Holds a mutex and checks that an operation returns its own deadline without taking the gate. | none | Accurate. Keep. |
 | `internal/clusteraccess/clusteraccess.go#OSDs`, `internal/clusteraccess/clusteraccess.go#Monitors`, `internal/clusteraccess/clusteraccess.go#Managers`, `internal/clusteraccess/clusteraccess.go#ControlContainer`, `internal/clusteraccess/clusteraccess.go#Gateways`, `internal/clusteraccess/clusteraccess.go#RGWGateways` | shared assertion. One-line topology accessors that fail the test on an error, so a refused call is not read as an empty topology. | none | Accurate. Keep. |
 | `internal/testhelper/testhelper.go#TestConfig`, `internal/testhelper/testhelper.go#TestStateView`, `internal/testhelper/testhelper.go#TestCluster`, `internal/testhelper/testhelper.go#TestState`, `internal/testhelper/testhelper.go#TestClientState`, `internal/testhelper/testhelper.go#TestApply`, `internal/testhelper/testhelper.go#TestPrepare`, `internal/testhelper/testhelper.go#TestFaults`, `internal/testhelper/testhelper.go#TestHeld` | unit seam client. Build a synthetic `ceph.Container` and read its lock identities, client state, prepared pools, registered fault or override handles. | A bootstrapped cluster. | Accurate in a test-only package. The `Test` prefix is allowed only there. |
@@ -93,11 +89,7 @@ of a package.
 Doubles declared in a `_test.go` file are compiled only by tests of their own
 package and are not listed one by one. A list of names would only restate the
 source and would conflict between concurrent changes. This section describes
-the families. By the name pattern `fake`, `mock`, `stub`, `spy`, `recording`,
-`recorder` or `scripted`, 77 type declarations in test files were found, in
-`ceph` (24), `internal/integration` (23), `fault` (10), `cephfs/mirror` (10),
-`rbd`, `override`, `cephfs` and `capture` (two each), `internal/supervised` and
-`internal/dockerbridge` (one each). The module has no generated mocks and no
+the families. The module has no generated mocks and no
 mock framework; the only `testify` reference is an indirect dependency.
 
 | Family | What it substitutes | Typical shape |
@@ -118,8 +110,6 @@ Confirmed by source inspection:
 - No non-test file imports a test-only package and none declares a
   `fake`, `mock`, `stub` or `spy` type or function. The `testdoublecheck` command
   enforces the second statement.
-- The shared-cluster and tenant harness and its test-only access routes have
-  been removed. They are not injection seams available to current tests.
 - The nil-default hooks and wired operations are fields of runtime structs that
   production never sets to anything but the real operation. They are a
   deliberate, narrow injection style (unexported, assigned by same-package
@@ -135,10 +125,5 @@ Not established:
 
 ## Naming
 
-The "Name assessment" column marks accurate names and, where a name was
-misleading, records the rename. The four shared doubles `CLI`,
-`ContextLockRuntime`, `AdmissionContainer` and `CleanupContainer` were renamed
-to `CannedCommandContainer`, `NativeCallCounter`, `ControlQueryCounter` and
-`TerminateRecorder`, each chosen from what its callers use it for. Every caller
-was updated and no alias was kept (pre-1.0, old names are removed outright). A
-future misleading name is renamed in its own change in the same way.
+The "Name assessment" column says whether a name tells the reader what the
+double substitutes. Rename a misleading double in its own change.
