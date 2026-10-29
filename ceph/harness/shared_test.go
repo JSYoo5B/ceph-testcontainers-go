@@ -42,7 +42,9 @@ type fakeShared struct {
 	// cluster, as a transient engine error does; terminateGate, when set,
 	// holds terminate until it is closed.
 	terminateFailures, terminateCalls int
-	terminateGate                     chan struct{}
+	// modeAtTerminate is the mode seen by each terminate call.
+	modeAtTerminate []sharingMode
+	terminateGate   chan struct{}
 	// services are the service resources that the probes would list,
 	// mapped to their owners; unsettled is what keeps admission waiting.
 	services  map[string]string
@@ -184,6 +186,7 @@ func (f *fakeShared) terminate(ctx context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.terminateCalls++
+	f.modeAtTerminate = append(f.modeAtTerminate, f.sharing)
 	if f.terminateFailures > 0 {
 		f.terminateFailures--
 		return errors.New("transient engine error")

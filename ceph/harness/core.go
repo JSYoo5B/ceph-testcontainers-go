@@ -36,6 +36,7 @@ const (
 	notShared         = harnesshook.NotShared
 	sharedWithTenants = harnesshook.SharedWithTenants
 	sharedExclusively = harnesshook.SharedExclusively
+	sharedRetired     = harnesshook.SharedRetired
 )
 
 // sharedInvariants is the state that a tenant cannot change through its own

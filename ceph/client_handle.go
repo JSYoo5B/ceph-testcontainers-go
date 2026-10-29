@@ -8,7 +8,11 @@ func (client *ClientConfig) cluster(op string) (*Container, error) {
 	if client == nil || client.owner == nil {
 		return nil, invalidRequest("%s: the client descriptor does not come from a cluster; obtain it from Container.CreateClient", op)
 	}
-	if err := client.owner.admitHandle(op); err != nil {
+	admit := client.owner.admitHandle
+	if client.tenant {
+		admit = func(op string) error { return client.owner.admitHandleAs(op, sharedWithTenants) }
+	}
+	if err := admit(op); err != nil {
 		return nil, err
 	}
 	return client.owner, nil

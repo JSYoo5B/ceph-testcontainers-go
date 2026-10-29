@@ -40,6 +40,11 @@ type ClientConfig struct {
 	created bool
 	ready   bool
 	revoked bool
+	// tenant marks a descriptor that a SharedCluster tenant obtained. It is
+	// admitted as for a cluster shared with tenants whatever mode the cluster
+	// has later, so the exclusive lease that takes the cluster after the
+	// tenant does not widen what the descriptor may do.
+	tenant bool
 	// replacedBy is the descriptor of the key that ClientConfig.ReplaceKey gave the
 	// identity in place of this descriptor's key.
 	replacedBy *ClientConfig

@@ -245,7 +245,7 @@ func (c *Container) replaceClientKey(ctx context.Context, client *ClientConfig, 
 		// A descriptor is complete when it is returned, because its
 		// ConnectionConfig reads it without the cluster's lock.
 		client.replacedBy = &ClientConfig{owner: c, name: client.name, config: bytes.Clone(client.config),
-			keyring: bytes.Clone(keyring), created: true, ready: true}
+			keyring: bytes.Clone(keyring), created: true, ready: true, tenant: client.tenant}
 		c.authRecords.confirmKey(client.name, key)
 	})
 	switch {
@@ -255,7 +255,7 @@ func (c *Container) replaceClientKey(ctx context.Context, client *ClientConfig, 
 		// The attempted key, which ConnectionConfig does not return, and
 		// which no operation accepts.
 		return &ClientConfig{owner: c, name: client.name, config: bytes.Clone(client.config),
-			keyring: []byte("[" + client.name + "]\nkey = " + key + "\n")}, err
+			keyring: []byte("[" + client.name + "]\nkey = " + key + "\n"), tenant: client.tenant}, err
 	}
 	return nil, err
 }

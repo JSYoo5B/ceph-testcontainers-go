@@ -133,6 +133,12 @@ const (
 	// sharedExclusively lends the cluster to one exclusive lease, which may
 	// use every method but those that end the cluster.
 	sharedExclusively
+	// sharedRetired is a cluster whose exclusive lease ended. It refuses every
+	// method that is not sharedOpen, so a *Container or a handle that the
+	// lease lent is refused by the gate while the release terminates the
+	// cluster and after a termination that failed. The raw embedded
+	// Container field is not behind the gate.
+	sharedRetired
 )
 
 // sharedGate refuses method while a SharedCluster shares c. Every method
@@ -278,6 +284,8 @@ func admitSharedIn(mode sharingMode, method string, policy sharedPolicy) error {
 		return nil
 	case mode == sharedExclusively && policy != sharedRefused:
 		return nil
+	case mode == sharedRetired:
+		return &OperationError{Kind: ErrSharedCluster, Op: method, Err: fmt.Errorf("%s: the exclusive lease that lent the cluster has ended", ErrSharedCluster)}
 	}
 	return &OperationError{Kind: ErrSharedCluster, Op: method, Err: fmt.Errorf("%s: it %s", ErrSharedCluster, policy.reason())}
 }

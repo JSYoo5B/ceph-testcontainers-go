@@ -109,7 +109,7 @@ func (c *Container) createSharedClient(ctx context.Context, entity string, caps 
 	if err := c.settleClient(ctx, entity); err != nil {
 		return nil, false, err
 	}
-	client := &ClientConfig{owner: c, name: entity}
+	client := &ClientConfig{owner: c, name: entity, tenant: true}
 	client.config = clientConfigBytes(c.bootstrap.rawConfig(), client)
 	result, err := c.runSharedScript(ctx, sharedRequest{CreateAuth: &sharedCreateAuth{Entity: entity, Caps: capArgs, Generate: generate}})
 	if err != nil {

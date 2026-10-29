@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -42,32 +43,61 @@ func TestExclusiveAuditInstanceOfAnExclusiveLeaseIsNeverReused(t *testing.T) {
 		t.Fatal("a lease after the exclusive interval got the exclusive cluster")
 	}
 	laterTB.finish()
-	if first.mode() != sharedExclusively {
-		t.Fatalf("the retired cluster has mode %v, want it unchanged", first.mode())
+	if first.mode() != sharedRetired {
+		t.Fatalf("the retired cluster has mode %v, want the retired mode", first.mode())
 	}
 }
 
-// TestExclusiveAuditKnownGapRetiredClusterKeepsExclusiveMode characterizes
-// gap 1 of the note: the release of an exclusive interval does not lower the
-// cluster's mode. When the termination fails, the cluster stays owned by Close
-// and keeps the mode that admits every cluster-wide handle operation, so a
-// retained Container or handle is admitted by the gate until Close ends the
-// cluster. A change that makes the retired cluster refuse (a retired mode)
-// inverts the mode assertion here.
-func TestExclusiveAuditKnownGapRetiredClusterKeepsExclusiveMode(t *testing.T) {
+// TestExclusiveAuditRetiredClusterRefusesAfterFailedTermination closes gap 1
+// of the note: the release of an exclusive interval marks the cluster retired
+// before it terminates it. When the termination fails, the cluster stays owned
+// by Close and keeps running, but with the mode that makes the gate refuse the
+// retained Container and handles, not the mode that admits them; Close still
+// ends it.
+func TestExclusiveAuditRetiredClusterRefusesAfterFailedTermination(t *testing.T) {
 	fleet := &fakeFleet{prepare: func(f *fakeShared) { f.terminateFailures = 1 }}
 	shared := newFakeShared(fleet)
 	tb := newFakeTB(t)
 	shared.Exclusive(tb)
-	tb.finish()
 	cluster := fleet.clusters()[0]
+	if got := cluster.mode(); got != sharedExclusively {
+		t.Fatalf("the cluster of the interval has mode %v while the lease is held", got)
+	}
+	tb.finish()
 	if cluster.isTerminated() {
 		t.Fatal("the failed termination ended the cluster")
 	}
-	if got := cluster.mode(); got != sharedExclusively {
-		t.Fatalf("the retired, still running cluster has mode %v; gap 1 is closed, update the note and this control", got)
+	if got := cluster.mode(); got != sharedRetired {
+		t.Fatalf("the retired, still running cluster has mode %v, want the retired mode", got)
 	}
 	if err := shared.Close(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	cluster.mu.Lock()
+	seen := slices.Clone(cluster.modeAtTerminate)
+	cluster.mu.Unlock()
+	if want := []sharingMode{sharedRetired, sharedRetired}; !slices.Equal(seen, want) {
+		t.Fatalf("modes seen by the termination attempts = %v, want %v: the release must retire before it terminates", seen, want)
+	}
+	if !cluster.isTerminated() {
+		t.Fatal("Close did not end the retired cluster")
+	}
+}
+
+// TestExclusiveAuditRetiredModeOnlyAfterTheLeaseEnds shows that the retirement
+// does not reach a lease that is still held, or a tenant lease's cluster.
+func TestExclusiveAuditRetiredModeOnlyAfterTheLeaseEnds(t *testing.T) {
+	fleet := &fakeFleet{}
+	shared := newFakeShared(fleet)
+	tenantTB := newFakeTB(t)
+	shared.Lease(tenantTB)
+	tenantTB.finish()
+	later := newFakeTB(t)
+	shared.Lease(later)
+	defer later.finish()
+	for _, c := range fleet.clusters() {
+		if c.mode() == sharedRetired {
+			t.Fatal("a tenant lease marked its cluster retired")
+		}
 	}
 }

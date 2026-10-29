@@ -1,0 +1,5 @@
+---
+change: 155-retire-exclusive-gate
+kind: behavior
+---
+The shared-cluster gate now retires an exclusive lease's cluster. When an `Exclusive` lease is released, the cluster is marked retired before it is terminated, and the gate refuses a retained `*ceph.Container`, and every handle taken from it (OSD, monitor and manager handles, pools, clients, fault and override operations), with `ceph.ErrSharedCluster`, except for the operations that only read state. A termination that fails leaves a running cluster that stays retired until `SharedCluster.Close` ends it, where it used to keep admitting the retained handles. A `ceph.ClientConfig` that a tenant got from `Tenant.Client` or `Tenant.CreateClient` is refused by the gate in every mode, including during an exclusive lease that takes the same cluster. No public name changes. The embedded `Container.Container` field of the lent `*ceph.Container` is not behind the gate and is not covered. This hardening is an implementation-side proposal that awaits the owner's acceptance.

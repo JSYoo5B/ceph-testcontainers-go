@@ -326,13 +326,19 @@ after the release and never gains the privileges of a later exclusive lease.
   an exclusive lease or a cluster of their own.
 - The checks catch what a tenant left behind, not what it did and undid
   before its release.
-- A `*ceph.Container` or a handle taken during an exclusive lease is not
-  refused by the gate after the lease ends: the release terminates the cluster,
-  which is what stops the retained handle, but the cluster keeps its exclusive
-  gate mode, so a termination that failed leaves a running cluster that still
-  admits it until `Close` ends it. A `ceph.ClientConfig` that a tenant got from
-  `Tenant.Client` or `Tenant.CreateClient` reads the cluster's current gate mode
-  as well; the tenant's release revokes the descriptor, which is what ends its
-  use. Both are the behavior of the code before the move, kept as it is and
-  recorded in the [design note](design/shared-harness-boundary.md); enforcing
-  them in the gate is a separate change.
+- The release of an exclusive lease marks the cluster retired before it
+  terminates it. From then on the gate refuses a retained `*ceph.Container`,
+  and a handle taken from it, with `ErrSharedCluster`, except for the
+  operations that only read state; a termination that failed leaves a running
+  cluster that stays retired until `Close` ends it. The gate does not cover the
+  embedded `Container.Container` field of the lent `*ceph.Container`, which is
+  a plain testcontainers container: a caller that kept it reaches the cluster
+  past every gate, and what stops it after a normal release is the terminated
+  container, not an admission check. After a termination that failed it still
+  answers until `Close`. A `ceph.ClientConfig` that a tenant got from
+  `Tenant.Client` or `Tenant.CreateClient` is refused by the gate in every
+  mode, so an exclusive lease that takes the same cluster does not give it
+  more than the tenant had. This enforcement is an implementation-side
+  proposal that awaits the owner's acceptance; the
+  [design note](design/shared-harness-boundary.md) records the mechanism and
+  what it leaves open.

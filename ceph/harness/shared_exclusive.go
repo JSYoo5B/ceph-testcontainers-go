@@ -110,9 +110,13 @@ func (s *SharedCluster) exclusiveLease(ctx context.Context, holder string, logf 
 
 // releaseExclusive retires the cluster of an exclusive lease and then lets
 // the waiting leases in. A cluster that cannot be terminated stays owned by
-// s, so Close tries again and reports it.
+// s, so Close tries again and reports it. The cluster is marked retired
+// before the termination, so the Container and the handles that the lease
+// lent are refused by the gate from then on, also when the termination
+// fails and the cluster keeps running until Close.
 func (s *SharedCluster) releaseExclusive(inst *sharedInstance, logf func(string, ...any)) {
 	defer s.endExclusive()
+	inst.backend.setSharing(sharedRetired)
 	if err := s.terminateDetached(inst); err != nil {
 		logf("ceph: the cluster of an exclusive lease could not be terminated; Close tries again: %v", err)
 	}

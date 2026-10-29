@@ -41,6 +41,9 @@ const (
 	SharedWithTenants
 	// SharedExclusively lends the cluster to one exclusive lease.
 	SharedExclusively
+	// SharedRetired is a cluster whose exclusive lease ended: the gate refuses
+	// every method that only reads state, until the cluster is terminated.
+	SharedRetired
 )
 
 // Prepare readies a cluster that runs a service before its baseline is taken.
