@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -61,10 +62,10 @@ func TestRoleImagesMirrorRefresh(t *testing.T) {
 		if _, err := c.CreatePool(ctx, ceph.PoolConfig{Name: "role-refresh", PGNum: 1, Replicas: 1, MinSize: 1}); err != nil {
 			t.Fatal(err)
 		}
-		if err := InitPool(ctx, c, "role-refresh"); err != nil {
+		if err := rbd.InitPool(ctx, c, "role-refresh"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := CreateNamespace(ctx, c, "role-refresh", "selected"); err != nil {
+		if _, err := rbd.CreateNamespace(ctx, c, "role-refresh", "selected"); err != nil {
 			t.Fatal(err)
 		}
 		return c
@@ -152,7 +153,11 @@ func TestRoleImagesMirrorRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, x := range targets {
-		addresses, err := x.cluster.MonitorBootstrapAddresses(ctx)
+		observer, err := ceph.Observe(x.cluster)
+		if err != nil {
+			t.Fatal(err)
+		}
+		addresses, err := observer.MonitorBootstrapAddresses(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
