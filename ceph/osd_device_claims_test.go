@@ -309,9 +309,12 @@ var osdDeviceClaimMethods = map[string][]string{
 	"claim":   {"creation.Load()", "device.validate()", "osdDeviceLease.MatchString(lease)", "other.device.number()", "device.number()", "device.number()", "s.osds()"},
 	"claimOf": {"r.creation.Load()"},
 	"count":   nil,
-	"osds":    nil,
-	"release": {"r.creation.CompareAndSwap(false, true)", "delete(s.records, osd)"},
-	"settle":  {"s.osds()", "s.release(id, scanRemoved)"},
+	// exclusionOf is the read-only receipt of the chain-release gate
+	// (osd_device_release_gate.go); its caller table is osdChainReleaseCallers.
+	"exclusionOf": {"s.osds()", "other.device.number()", "device.number()"},
+	"osds":        nil,
+	"release":     {"r.creation.CompareAndSwap(false, true)", "delete(s.records, osd)"},
+	"settle":      {"s.osds()", "s.release(id, scanRemoved)"},
 }
 
 // osdDeviceClaimIgnoredCall reports the calls the pin leaves out: error and
