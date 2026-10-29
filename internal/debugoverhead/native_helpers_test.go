@@ -58,7 +58,6 @@ func runDebugOverhead(t *testing.T, option string) {
 		if images.Essential == "" || images.Client == "" {
 			t.Fatal("debug measurement requires explicit essential and client role images")
 		}
-		image = images.Essential
 	}
 	cluster, err := ceph.Run(ctx, ceph.RunOptions{}.WithImageSet(images).WithOptions(ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1)))
 	var finalization *ceph.Finalization
