@@ -500,16 +500,72 @@ that only a native run settles:
 5. Bind time (a running member) is not covered: `observeStopped` refuses a member
    in quorum, and the identity at the first ready check needs its own source.
 
-## Owner decisions with recommendations
+## The model, and what it forces
 
-| ID | Question | Recommendation |
-| --- | --- | --- |
-| D1 | One volume per MON, or one cluster volume with per-name directories like the OSD storage? | One per MON: independent retention, mount and release, and no shared helper. |
-| D2 | Cluster-wide `WithMonitorVolumeStorage` or a per-MON `DaemonOption`? | Cluster-wide, uniform for the initial MON and `AddMonitor`. |
-| D3 | How is the initial MON handled? | First generation stays the embedded container; the reopened generation is a roster entry; no rebinding. |
-| D4 | Does `Reopen` accept `DaemonOption`s (image)? | Yes; default is the image the MON ran from. |
-| D5 | May `Detach` stop a MON whose absence loses quorum? | No, same rule as `Remove`; no override in the first public slice. |
-| D6 | Persistent helper, as for OSDs, or a short-lived read-only inspector per operation? | Inspector: no helper whose loss refuses later operations. It counts as a volume user while it exists and carries the cluster's owned label. |
-| D7 | May a caller-built replacement container be adopted by the cluster? | No. Cluster-owned `Detach` and `Reopen` produce every generation, so the cluster can order removal and release. |
-| D8 | Can a detached MON be permanently discarded without reopening? | Not in the first public slice; `Reopen` then `Remove`, or `Terminate`. |
-| D9 | Which slice ships `StoreVolume`? | Slice 3, with the option, so independent observers can inspect the store. |
+The model is the whole requirement. Every MON has its own volume (never a
+shared cluster volume). The volume outlives the container. A MON upgrade means
+the old container is stopped and removed, and a new container, possibly from a
+new image, mounts the same volume of that MON and rejoins. Nothing else is
+needed for the data to persist.
+
+Only these choices follow from it:
+
+- One volume per MON. This is the only one of the earlier D1 to D9 labels that
+  the model forces. The other labels (a cluster-wide option, how the initial MON
+  is handled, `Detach`/`Reopen` names, discard rules, when `StoreVolume`
+  ships) are not decisions of this note; older sections that mention them are
+  historical.
+- The replacement mounts the volume of that MON, only after the old container is
+  confirmed gone, and never formats: the entrypoint's require-store mode makes
+  a missing store a failure.
+- The new container needs the old address. The monmap pins it, so a replacement
+  that cannot bind it cannot rejoin. That is the host-network and port-lease
+  question below, and it is the real remaining design work.
+
+### Audit of the merged pieces against the model
+
+| Piece | Verdict |
+| --- | --- |
+| Ownership record (`monStoreVolume`, `monStoreState`): create once, publish before create, one volume per MON, release after the containers, never forced | Required. |
+| Metadata validation of the volume, bound store with a missing, changed or foreign volume is never recreated | Required (small). |
+| Attachment record and `confirmGone` (container absent by inspect and by an independent list of volume users) | Required: it is the check that the old container is gone before the new one mounts. |
+| Generation counter | Harmless bookkeeping, not required. |
+| Require-store mode in `mon.sh` and `mon-join.sh` | Required: it stops a replacement from silently formatting an empty volume. |
+| `detached` phase, `detach`, `verify`, `verified`, the monStoreIdentity (keyring digest, shape, fingerprint, FSID, addresses) | Extra for the model. It detects a store that someone changed outside the fixture. It is not needed for persistence or for the safety of the replacement path. |
+| Identity ports, `observeStopped`, `verifyStopped` | Extra, same reason. |
+| Read-only inspector (request, script, listing parser, container driver, moby engine) | Extra, same reason. |
+| Strict monmap JSON decoder and the `mon dump` / `quorum_status` adapter | Extra for persistence. Reading the live monmap may become useful for the address question, but nothing needs it yet. |
+| `Detach`, `Reopen`, `DetachedMonitor` vocabulary (proposal only, no code) | Extra: the model is "replace the container of this MON". |
+
+Nothing was deleted by the slice that adds the replacement path. The pieces
+marked extra are proposed for removal or parking; whether to remove them is a
+separate change.
+
+### Replacement path status
+
+Implemented in `ceph/mon_store_generation.go`, tested Docker-free in
+`ceph/mon_store_generation_test.go` against a small fake of the container side
+(`monStoreGenerations`). Nothing calls it, no public name exists, no Docker
+container call exists in it and no native run was made. 0.x: no old name is
+renamed or removed, and no alias is added.
+
+- `startGeneration`: the first generation formats a new store, a later one
+  requires it. The pending attachment is published before the container is
+  created, and an ID returned with an error is recorded. An unknown outcome is
+  never replayed. A first generation that reaches its ready check marks the
+  store ready (`ready`), without an identity.
+- `stopGeneration`: removes the container and clears the attachment only after
+  `confirmGone`. An attachment with an unknown creation outcome is left to
+  `Terminate`.
+- `replaceGeneration`: checks the next generation first (a ready generation
+  exists, the volume is still the one this record created, an identity-bound
+  store is verified), then stops the old container, then starts the next one
+  from the new image on the same volume. A failure of the new container leaves
+  the volume and the record, and never formats.
+- `dispatch` change: a store marked ready without an identity no longer needs a
+  verification. A store bound with an identity (`bind`) keeps needing it, and
+  `detached` is unchanged.
+- What it does not establish: any real container call, that the new image
+  starts on the old store, that the monmap lets it rejoin, address or port-lease
+  handoff, the production caller (`runMonitor`, `AddMonitor`), the option and
+  `Remove`/`Terminate` wiring, and any native behavior.

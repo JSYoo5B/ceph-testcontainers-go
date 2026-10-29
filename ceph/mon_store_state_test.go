@@ -482,7 +482,7 @@ func TestTerminateReleasesMonStoresInTheirTwoStagesInOrder(t *testing.T) {
 // fields of the same names.
 func TestMonStoreVolumeFieldsAreAssignedOnlyByTheirTransitions(t *testing.T) {
 	allowed := map[string][]string{
-		"phase":           {"create", "dispatch", "bind", "detach", "release"},
+		"phase":           {"create", "dispatch", "bind", "ready", "detach", "release"},
 		"createRequested": {"create"},
 		"generation":      {"dispatch"},
 		"attachment":      {"dispatch", "confirmGone"},

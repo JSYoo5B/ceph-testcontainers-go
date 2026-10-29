@@ -193,7 +193,15 @@ func (s *monStoreVolume) dispatch(ctx context.Context) (monStoreLaunch, error) {
 	switch s.phase {
 	case monStoreCreated:
 		mode = monStoreFormat
-	case monStoreBound, monStoreDetached:
+	case monStoreBound:
+		// A store bound with an identity needs it verified for each generation.
+		// A store marked ready without one (ready) is retained by its volume
+		// and the require-store mode alone: the volume is validated below and a
+		// missing store makes the generation fail instead of formatting.
+		if s.identity != nil && !s.verified {
+			return monStoreLaunch{}, fmt.Errorf("MON %s store identity was not verified for this generation", s.mon)
+		}
+	case monStoreDetached:
 		if s.identity == nil {
 			return monStoreLaunch{}, fmt.Errorf("MON %s store has no recorded identity", s.mon)
 		}
@@ -252,6 +260,20 @@ func (s *monStoreVolume) bind(identity monStoreIdentity) error {
 	}
 	cloned := identity.clone()
 	s.identity = &cloned
+	s.phase = monStoreBound
+	return nil
+}
+
+// ready records that the first generation reached its ready check, without an
+// identity: the store is retained by its volume alone. It needs a known
+// attachment, as bind does.
+func (s *monStoreVolume) ready() error {
+	if s.phase != monStoreFresh {
+		return fmt.Errorf("MON %s store is %s, not fresh", s.mon, s.phase)
+	}
+	if s.attachment == nil || s.attachment.pending || s.attachment.id == "" {
+		return fmt.Errorf("MON %s store has no known attachment to mark ready", s.mon)
+	}
 	s.phase = monStoreBound
 	return nil
 }
