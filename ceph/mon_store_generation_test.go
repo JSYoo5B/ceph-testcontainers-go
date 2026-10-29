@@ -596,6 +596,71 @@ func TestMonStorePartialHoldWhoseReleaseFailsIsRetainedForRetry(t *testing.T) {
 	}
 }
 
+// monStoreHeldFixture leaves a store whose old generation is removed and whose
+// hold is retained after a failed release, in a state that owns its record.
+func monStoreHeldFixture(t *testing.T) (*monStoreState, *monStoreVolume, *monStoreDockerFake, *monStoreGenerationsFake) {
+	t.Helper()
+	st, r, d := newMonStoreFixture()
+	if err := r.create(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	g := &monStoreGenerationsFake{docker: d}
+	if _, err := r.startGeneration(t.Context(), g, "old"); err != nil {
+		t.Fatal(err)
+	}
+	g.holdErr, g.partialHold, g.releaseErr = errors.New("allocator half started"), true, errors.New("removal timed out")
+	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || r.hold == nil || r.attachment != nil {
+		t.Fatalf("setup: %v hold %v attachment %+v", err, r.hold, r.attachment)
+	}
+	return st, r, d, g
+}
+
+func TestMonStoreCleanupKeepsTheRecordWhileAHoldIsNotReleased(t *testing.T) {
+	st, r, d, g := monStoreHeldFixture(t)
+	// The release still fails: the record, the hold and the volume stay.
+	if err := st.releaseStores(t.Context()); err == nil {
+		t.Fatal("the cleanup succeeded while the hold could not be released")
+	}
+	if st.count() != 1 || r.hold == nil || len(g.held) == 0 || d.removals != 0 || r.phase == monStoreReleased {
+		t.Fatalf("records %d hold %v held %v removals %d phase %s", st.count(), r.hold, g.held, d.removals, r.phase)
+	}
+	if err := st.retryStores(t.Context(), errors.New("first stage")); err == nil || st.count() != 1 {
+		t.Fatalf("the retry stage forgot the record: %v", err)
+	}
+	// The release works on retry: the hold goes first, then the volume.
+	g.holdErr, g.partialHold, g.releaseErr = nil, false, nil
+	if err := st.releaseStores(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if st.count() != 0 || r.hold != nil || len(g.held) != 0 || d.removals != 1 || r.phase != monStoreReleased {
+		t.Fatalf("records %d hold %v held %v removals %d phase %s", st.count(), r.hold, g.held, d.removals, r.phase)
+	}
+}
+
+func TestMonStoreDiscardKeepsTheRecordWhileAHoldIsNotReleased(t *testing.T) {
+	st, r, d := newMonStoreFixture()
+	if err := r.create(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	g := &monStoreGenerationsFake{docker: d, releaseErr: errors.New("removal timed out")}
+	// A fresh store whose first generation is gone, with a retained hold.
+	if _, err := r.dispatch(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.recordContainer("ctr-x"); err != nil {
+		t.Fatal(err)
+	}
+	g.held = map[int]bool{3300: true}
+	r.hold = &monStoreHoldFake{g: g, ports: []int{3300}}
+	if err := st.discardFresh(t.Context(), "a"); err == nil || st.count() != 1 || r.hold == nil || d.removals != 0 {
+		t.Fatalf("the discard forgot a retained hold: %v records %d", err, st.count())
+	}
+	g.releaseErr = nil
+	if err := st.discardFresh(t.Context(), "a"); err != nil || st.count() != 0 || len(g.held) != 0 || d.removals != 1 {
+		t.Fatalf("%v records %d held %v removals %d", err, st.count(), g.held, d.removals)
+	}
+}
+
 func TestMonStoreReplaceNeedsARecordedAddressBeforeTouchingTheOldGeneration(t *testing.T) {
 	r, _, g := monStoreRunningFixture(t)
 	r.endpoint = nil
@@ -685,7 +750,7 @@ var monStoreGenerationFiles = []string{monStoreGenerationFile, "mon_store_addres
 // outside it must not mention them until a slice adds a caller and updates this
 // table in its own diff.
 var monStoreGenerationSymbols = []string{"monStoreGenerations", "checkMonStoreGenerations", "startGeneration", "stopGeneration", "replaceGeneration",
-	"observeAddress", "holdAddress", "releaseAddressHold"}
+	"observeAddress", "holdAddress"}
 
 func monStoreGenerationProblems(files map[string]*ast.File) (problems []string) {
 	for file, parsed := range files {
@@ -729,6 +794,48 @@ func TestMonStoreGenerationsHaveNoProductionCaller(t *testing.T) {
 		if !declared[symbol] {
 			t.Errorf("%s is in the table but the file does not declare it", symbol)
 		}
+	}
+}
+
+// releaseAddressHold is the one symbol of the path that production cleanup
+// reaches: monStoreVolume.release calls it, before the volume or the attachment
+// are looked at, and nothing else outside the two files does.
+func TestMonStoreAddressHoldIsReleasedByStoreCleanupBeforeTheVolume(t *testing.T) {
+	var callers []string
+	var releasePos, otherPos token.Pos
+	for file, parsed := range parseProductionFiles(t) {
+		if slices.Contains(monStoreGenerationFiles, file) {
+			continue
+		}
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				if sel.Sel.Name == "releaseAddressHold" {
+					callers = append(callers, file+":"+fn.Name.Name)
+					releasePos = call.Pos()
+				} else if file == "mon_store_volume.go" && fn.Name.Name == "release" && (sel.Sel.Name == "confirmGone" || sel.Sel.Name == "client") && otherPos == token.NoPos {
+					otherPos = call.Pos()
+				}
+				return true
+			})
+		}
+	}
+	if !slices.Equal(callers, []string{"mon_store_volume.go:release"}) {
+		t.Fatalf("callers of releaseAddressHold outside the path: %v", callers)
+	}
+	if !releasePos.IsValid() || !otherPos.IsValid() || releasePos > otherPos {
+		t.Fatalf("release must free the hold before it looks at the attachment or the volume: %v %v", releasePos, otherPos)
 	}
 }
 

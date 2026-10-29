@@ -383,10 +383,15 @@ func (s *monStoreVolume) confirmGone(ctx context.Context, afterScan bool) (err e
 // release removes the volume, never forced. It needs the attachment confirmed
 // gone and the volume to still be the one this record created: a changed or
 // foreign volume is never removed. A volume that is confirmed missing settles
-// the record.
+// the record. A hold on the MON's address is released first (mon_store_address.go).
 func (s *monStoreVolume) release(ctx context.Context, afterScan bool) (err error) {
 	if s.phase == monStoreReleased {
 		return nil
+	}
+	// A retained address hold is released before anything else, and the record
+	// stays owned while that fails.
+	if err := s.releaseAddressHold(ctx); err != nil {
+		return err
 	}
 	if err := s.confirmGone(ctx, afterScan); err != nil {
 		return err
