@@ -33,7 +33,7 @@ type TenantUser struct {
 
 // Lease creates the RGW tenant of tenant t and its S3 user ID$user on the
 // shared cluster's gateway, the one named default or else the first by
-// name. Start gateways with WithGateways in ceph.WithSharedImageOptions. A
+// name. Start gateways with WithGateways in ceph.WithSharedRunOptions. A
 // tenant leases RGW once.
 func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error) {
 	if t == nil {
@@ -57,7 +57,7 @@ func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error) {
 		return nil
 	})
 	if g == nil {
-		return nil, harnesshook.Invalid(errors.New("the shared cluster runs no RGW gateway; start one with rgw.WithGateways in ceph.WithSharedImageOptions"))
+		return nil, harnesshook.Invalid(errors.New("the shared cluster runs no RGW gateway; start one with rgw.WithGateways in ceph.WithSharedRunOptions"))
 	}
 	u := &TenantUser{tenant: t, gateway: g}
 	// Attached first, so that the release also removes a user whose

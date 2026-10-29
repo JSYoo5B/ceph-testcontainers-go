@@ -528,7 +528,7 @@ Mirroring two clusters moved to the `rbd/mirror` package; see [rbd-mirror.md](rb
 
 A tenant of a [shared cluster](ceph.md#shared-cluster) leases an RBD
 namespace of its own. Create the RBD pool with `WithPools` in
-`ceph.WithSharedImageOptions`.
+`ceph.WithSharedRunOptions`.
 
 ```golang
 func Lease(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, error)

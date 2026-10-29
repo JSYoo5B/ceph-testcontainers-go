@@ -998,7 +998,7 @@ confirmed creation can be activated.
 ### Shared cluster tenants
 
 A tenant of a [shared cluster](ceph.md#shared-cluster) leases an RGW tenant of
-its own. Start the gateway with `WithGateways` in `ceph.WithSharedImageOptions`.
+its own. Start the gateway with `WithGateways` in `ceph.WithSharedRunOptions`.
 
 ```golang
 func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error)

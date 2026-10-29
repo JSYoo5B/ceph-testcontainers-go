@@ -1254,7 +1254,7 @@ cluster with other `Run` options, or several clusters, keep using `Run`.
 
 ```golang
 func NewShared(image string, opts ...SharedOption) *SharedCluster
-func WithSharedImageOptions(opts ...testcontainers.ContainerCustomizer) SharedOption
+func WithSharedRunOptions(opts ...testcontainers.ContainerCustomizer) SharedOption
 func WithMaxTenants(n int) SharedOption
 func WithMaxRecycles(n int) SharedOption
 func RunTests(m *testing.M, s ...*SharedCluster) int
@@ -1268,12 +1268,12 @@ func WithKeepOnTenantFailure() LeaseOption
 
 Create the shared cluster in a package variable and end it in `TestMain`.
 `NewShared` starts nothing; the first `Lease` starts the cluster with the
-options of `WithSharedImageOptions`, which are `Run` options. `RunTests` runs the
+options of `WithSharedRunOptions`, which are `Run` options. `RunTests` runs the
 tests and then closes every shared cluster you pass it:
 
 ```golang
 var shared = ceph.NewShared(ceph.DefaultImage,
-	ceph.WithSharedImageOptions(ceph.WithOSDCount(1)))
+	ceph.WithSharedRunOptions(ceph.WithOSDCount(1)))
 
 func TestMain(m *testing.M) { os.Exit(ceph.RunTests(m, shared)) }
 
@@ -1361,11 +1361,11 @@ cluster's health.
 #### Service tenants
 
 A tenant can also lease RBD, CephFS and RGW resources of the shared cluster.
-Start the services with the usual `Run` options in `WithSharedImageOptions`, and
+Start the services with the usual `Run` options in `WithSharedRunOptions`, and
 call the service package's `Lease` with the tenant:
 
 ```golang
-var shared = ceph.NewShared(ceph.DefaultImage, ceph.WithSharedImageOptions(
+var shared = ceph.NewShared(ceph.DefaultImage, ceph.WithSharedRunOptions(
 	ceph.WithOSDCount(1),
 	rbd.WithPools(ceph.PoolConfig{Name: "rbd"}),
 	cephfs.WithFilesystems(),

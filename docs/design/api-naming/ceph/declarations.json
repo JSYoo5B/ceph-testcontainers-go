@@ -2449,10 +2449,10 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithSharedImageOptions",
+      "current": "ceph.WithSharedRunOptions",
       "kind": "function",
       "signature": "func(opts ...testcontainers.ContainerCustomizer) SharedOption",
-      "proposed": "ceph.WithSharedImageOptions",
+      "proposed": "ceph.WithSharedRunOptions",
       "decision": "baseline"
     },
     {

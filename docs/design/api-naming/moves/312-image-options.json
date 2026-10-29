@@ -7,8 +7,8 @@
     "ceph.WithImages"
   ],
   "added": [
-    "ceph.RunOptions",
-    "ceph.RunOptions.Customize",
-    "ceph.RunOptions.WithImageSet"
+    "ceph.ImageOptions",
+    "ceph.ImageOptions.Customize",
+    "ceph.ImageOptions.WithImageSet"
   ]
 }

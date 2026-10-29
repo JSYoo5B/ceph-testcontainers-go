@@ -41,7 +41,7 @@ const tenantPurgeWait = 90 * time.Second
 // client can mount only the group's directory, cannot set layouts, quotas
 // or snapshots, and cannot read other namespaces of the pool. An empty fs
 // selects the cluster's only filesystem. Create filesystems with
-// WithFilesystems in ceph.WithSharedImageOptions. A tenant leases each
+// WithFilesystems in ceph.WithSharedRunOptions. A tenant leases each
 // filesystem once.
 func Lease(ctx context.Context, t *ceph.Tenant, fs string) (*TenantGroup, error) {
 	if t == nil {

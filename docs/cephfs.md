@@ -1333,7 +1333,7 @@ Snapshot mirroring between two clusters moved to the `cephfs/mirror` package; se
 
 A tenant of a [shared cluster](ceph.md#shared-cluster) leases a subvolume
 group of its own. Create the filesystem with `WithFilesystems` in
-`ceph.WithSharedImageOptions`.
+`ceph.WithSharedRunOptions`.
 
 ```golang
 func Lease(ctx context.Context, t *ceph.Tenant, fs string) (*TenantGroup, error)
