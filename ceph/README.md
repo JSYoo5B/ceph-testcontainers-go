@@ -1805,9 +1805,8 @@ Limits:
   completion timing and measured collection-resource defaults remain
   unestablished; the configured limits and their loss accounting are separate
   evidence.
-- Shared-cluster tenants, scrub results, fresh scrubs and fault recovery waits
-  are not verified, and the bug compatibility selection is not known to the
-  report.
+- Scrub results, fresh scrubs and fault recovery waits are not verified, and
+  the bug compatibility selection is not known to the report.
 
 #### Ceph
 
