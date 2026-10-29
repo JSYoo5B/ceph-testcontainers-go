@@ -15,7 +15,7 @@ import (
 // membershipControlFields are the Container fields of the membership and
 // control group that no hook may publish a pointer to. The locks are not in the
 // list: UnitState still publishes the three lock domains, which the lock
-// queueing tests need as lock identities (see the design note).
+// queueing tests need as lock identities.
 var membershipControlFields = map[string]bool{
 	"closed": true, "controlPlane": true, "settings": true, "monitorTerminated": true,
 	"roster":     true,

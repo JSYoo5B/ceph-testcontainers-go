@@ -10,12 +10,8 @@ import (
 
 // memberRoster is the roster of the daemons that a cluster owns beside its
 // first MON and its OSDs: the added MONs, the MGR candidates, the first MGR's
-// container and the optional services. It is a component of the internal
-// state split, recorded in
-// docs/design/container-decomposition/member-roster.md.
-//
-// The type has no mutex. Container.mu guards every field, as it guarded
-// Container.manager, monitors, managers and services before the move: each
+// container and the optional services.//
+// The type has no mutex. Container.mu guards every field: each
 // method is called with it held (the caller table in member_roster_test.go
 // pins every caller and how it holds the lock), apart from the
 // single-threaded constructors that run before the cluster is shared. Because
@@ -24,8 +20,7 @@ import (
 // configMu, controlMu and the leaf locks, and a method never takes a lock or
 // calls into Container.
 //
-// What stays on Container, with the reason, is in the fourteenth slice of the
-// design note: the first MON (the embedded container, which the roster does
+// What stays on Container: the first MON (the embedded container, which the roster does
 // not own), monitorTerminated (it describes that embedded container), closed
 // (read by the terminate gate) and mu.
 //

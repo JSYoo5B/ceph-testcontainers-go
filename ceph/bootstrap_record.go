@@ -9,12 +9,10 @@ import (
 // bootstrapRecord is the bootstrap record of one cluster: the first MON's
 // ceph.conf and admin keyring as read after startup, the Ceph version that
 // MON reported, and the read-write lock that guards the configuration and the
-// keyring. It is a component of the internal state split, recorded in
-// docs/design/container-decomposition/bootstrap-record.md, the bootstrap-record
-// lock domain of the membership and control group.
+// keyring: the bootstrap-record lock domain of the membership and control
+// group.
 //
-// The lock is the former Container.configMu, moved with the data it guards; no
-// mutex was added and no lock order changed. mu is a leaf below Container.mu:
+// mu is a leaf below Container.mu:
 // newOSDLaunchRecipe, currentMonitorBootstrapAddresses, refreshMonitorConfigAfterRemoval
 // and the snapshot readers take it while the topology lock is held, and
 // diagnosticsSnapshot, the health and pool readers and ClusterIdentity take it
@@ -25,8 +23,7 @@ import (
 // take mu and return clones, so a caller never aliases the stored bytes. The
 // raw methods (rawConfig, rawKeyring, rawVersion, hasConfig, isComplete) and
 // the record methods take no lock: their callers hold Container.mu or run
-// during Run, before the cluster value is shared, exactly as the former field
-// reads did. cephVersion has no lock of its own; it is written once during Run
+// during Run, before the cluster value is shared, . cephVersion has no lock of its own; it is written once during Run
 // and only read afterwards. The guards in bootstrap_record_test.go enforce that
 // the fields and the lock are used only by this type and the published lock
 // identity, that the fields have the audited production writers, that the

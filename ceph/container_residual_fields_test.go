@@ -6,7 +6,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -22,9 +21,7 @@ import (
 //	seam     a test seam with one reader and no state of its own
 //	owner    a component with its own type, file and guards
 //
-// A new field must be added here with a verdict and a row in the table of
-// docs/design/container-decomposition/residual-fields.md, or the test fails.
-// This is the "owner or stays" ledger of issue #146, not a method-count target.
+// A new field must be added here with a verdict, or the test fails.
 var residualFieldVerdicts = map[string]string{
 	"testcontainers.Container": "public",
 	"mu":                       "lock",
@@ -98,20 +95,6 @@ func readContainerSource(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return string(b)
-}
-
-// residualDocFields returns the field names that the verdict rows of the
-// residual-field record name in their first column, in backticks. The record
-// is docs/design/container-decomposition/residual-fields.md and holds nothing
-// else with such rows.
-func residualDocFields(doc string) []string {
-	row := regexp.MustCompile("(?m)^\\| `([A-Za-z.]+)` \\|")
-	var names []string
-	for _, m := range row.FindAllStringSubmatch(doc, -1) {
-		names = append(names, m[1])
-	}
-	slices.Sort(names)
-	return names
 }
 
 func sortedKeys[V any](m map[string]V) []string {
@@ -188,30 +171,6 @@ func TestContainerResidualFieldCheckRejectsDrift(t *testing.T) {
 	}
 }
 
-// TestContainerResidualFieldsAreInTheDesignNote requires one table row per
-// field in the residual-field record. The record is found by name in the
-// decomposition directory; its absence fails the test.
-func TestContainerResidualFieldsAreInTheDesignNote(t *testing.T) {
-	got, err := residualRecordFields(repoFS())
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := sortedKeys(residualFieldVerdicts)
-	if !slices.Equal(got, want) {
-		t.Fatalf("the residual-field record's verdict table names %v, the ledger %v", got, want)
-	}
-}
-
-func TestResidualDocFieldsReadsTheVerdictRows(t *testing.T) {
-	doc := "# Residual fields\n| `mu` | y |\n| `closed` | z |\nprose | `x` |\n| Measure | Value |\n"
-	if got := residualDocFields(doc); !slices.Equal(got, []string{"closed", "mu"}) {
-		t.Fatalf("rows = %v", got)
-	}
-	if residualDocFields("no rows") != nil {
-		t.Fatal("a document without rows yielded rows")
-	}
-}
-
 // lifecycleAccess is one use of the closed or monitorTerminated flag.
 type lifecycleAccess struct {
 	field string
@@ -285,10 +244,9 @@ func lifecycleAccesses(files map[string]*ast.File) (accesses []lifecycleAccess, 
 }
 
 // lifecycleWriters are the only functions that assign the two flags. closed is
-// set once, at the top of terminate, under mu (ceph/ceph.go:957);
-// monitorTerminated is set by terminate when it removes the first MON
-// (ceph/ceph.go:1024) and by removeMonitor when the first MON is removed
-// (ceph/topology.go:335).
+// set once, at the top of terminate, under mu. monitorTerminated is set by
+// terminate when it removes the first MON and by removeMonitor when the first
+// MON is removed.
 var lifecycleWriters = []string{
 	"closed:Container.terminate",
 	"monitorTerminated:Container.removeMonitor",

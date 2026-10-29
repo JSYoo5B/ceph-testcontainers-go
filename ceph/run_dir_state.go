@@ -9,10 +9,9 @@ import (
 // runDirState is the shared admin-socket run directory of one cluster: the
 // Docker volume that every MON, MGR, OSD and control container mounts at
 // /var/run/ceph, so that a command in the control container can reach the
-// admin socket of a daemon. It is the sixth component of the internal state
-// split, recorded in docs/design/container-decomposition/run-directory-state.md.
+// admin socket of a daemon.
 //
-// The type has no mutex and Container.mu was not given a new job. The parts
+// The type has no mutex. The parts
 // have two different guards, which the methods name:
 //
 //   - The volume pointer is written once, by create, which only Run calls on a

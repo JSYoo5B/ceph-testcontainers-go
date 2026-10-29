@@ -41,14 +41,13 @@ type Container struct {
 	testcontainers.Container
 	mu sync.Mutex
 	// controlPlane is the separate control container and the lock that guards
-	// it, the former controlMu; see controlPlaneState.
+	// it; see controlPlaneState.
 	controlPlane controlPlaneState
 	// toolkit is the feature-client cache; see featureClientState for what
 	// guards each part.
 	toolkit featureClientState
 	// bootstrap is the first MON's configuration, admin keyring and Ceph
-	// version and the lock that guards the first two, the former configMu; see
-	// bootstrapRecord.
+	// version and the lock that guards the first two; see bootstrapRecord.
 	bootstrap bootstrapRecord
 	// authRecords holds the records of the calls that change an auth entry; see
 	// authState for what guards them.
@@ -66,8 +65,7 @@ type Container struct {
 	// it.
 	roster memberRoster
 	// extensions is the per-cluster state of the service packages, by kind,
-	// and the lock that guards it, the former extensionsMu; see
-	// extensionStore.
+	// and the lock that guards it; see extensionStore.
 	extensions extensionStore
 	// nets is the bridge state; see networkState for what guards each part.
 	nets networkState
@@ -95,7 +93,7 @@ type Container struct {
 	monitorTerminated bool
 
 	// native is the native-command state; see nativeState. It has its own
-	// leaf lock, the former nativeMu.
+	// leaf lock.
 	nativeCmds nativeState
 	// faults holds the network delays, interruptions and pauses, and the
 	// bookkeeping entries of the blocklist, full ratios, configuration, OSD

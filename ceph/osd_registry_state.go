@@ -7,9 +7,7 @@ import (
 
 // osdRegistry is the handle registry of one cluster: the OSD descriptors it
 // owns, keyed by OSD ID, and the detached OSDs that hold a retained store and
-// registration without a container until DetachedOSD.Reopen or Terminate. It
-// is a component of the internal state split, recorded in
-// docs/design/container-decomposition/osd-handle-registry.md.
+// registration without a container until DetachedOSD.Reopen or Terminate.
 //
 // The type has no mutex. Container.mu guards both maps, as it guarded
 // Container.osds and Container.detachedOSDs before the move: every method of

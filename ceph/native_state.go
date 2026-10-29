@@ -24,15 +24,12 @@ const (
 // nativeState is the native-command state of one cluster: the invocations that
 // run or whose command is not confirmed as stopped, whether Terminate refuses
 // new ones, the OSD instances fenced against new ones, and the cancel function
-// of a client-image startup. It is the second component of the internal state
-// split, recorded in docs/design/container-decomposition/native-command-state.md.
-//
-// mu is the former Container.nativeMu, moved with the fields it always
-// guarded, so the split adds no lock. It is a leaf lock: no method here calls
+// of a client-image startup.//
+// mu is a leaf lock: no method here calls
 // out or takes another lock while holding it, and every caller invokes
 // cancellations and stops after the method returned. Terminate therefore
 // calls cancelNativeInvocations before it waits for Container.mu, and
-// featureClientState.mu (the former clientMu) is held around the short
+// featureClientState.mu is held around the short
 // critical sections of the client startup (ceph/images.go), never the other
 // way round.
 //

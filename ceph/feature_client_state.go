@@ -9,14 +9,7 @@ import (
 
 // featureClientState is the cache of the lazily started feature client of one
 // cluster, the container that ClientContainer returns when the client image
-// differs from the essential image. It is the third component of the internal
-// state split, recorded in
-// docs/design/container-decomposition/feature-client-state.md.
-//
-// mu and publishMu are the former Container.clientMu and
-// Container.clientPublishMu, moved with the fields they always guarded, so the
-// split adds no lock.
-//
+// differs from the essential image.//
 //   - mu serializes the startup and the termination of the client. It is held
 //     across the whole startup, which starts a container, and it is the only
 //     lock that guards attempted and ready. A caller that holds mu may also
