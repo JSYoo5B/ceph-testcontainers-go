@@ -291,7 +291,7 @@ acceptance contracts and are not interchangeable.
 | --- | --- | --- |
 | Lenient | `parseCephFSMDSStatus` (`cephfs/filesystem.go:741`), `cephFSMDSAbsent` (`:627`), `readNativePools` (`cephfs/data_pools.go:82`) | `json.Unmarshal` into a plain struct. Only "filesystems missing" and a few identity comparisons are errors. A missing field decodes to its zero value |
 | Pointer-strict | `parseRemovalShutdownState` (`cephfs/removal_shutdown.go:23`) | Every field is a pointer; a missing or negative id, wrong name, missing `max_mds` or `up`, or a malformed `mds_<n>` rank key is an error |
-| Strict with duplicate-key rejection | `validateColdMDSMap` (`cephfs/no_initial_mds.go:217`), `decodeStoppedMDSScope` (`cephfs/stopped_mds.go:274`), `readMDSReplacementScope` (`cephfs/mds_replacement.go:361`) | All via `coldMDSJSON` (`cephfs/no_initial_mds.go:293`): input limited to 4 MiB, duplicate object keys and trailing documents rejected, raw decode errors never returned (native auth input can contain credentials). Pointer fields so absent differs from zero. Cross-checks: unique names and GIDs, `gid_<n>` keys, `up` versus `info` agreement, policy flags |
+| Strict with duplicate-key rejection | `decodeColdMDSMap` (`cephfs/cold_mds_decode.go`, formerly `validateColdMDSMap`), `decodeStoppedMDSMap` (`cephfs/stopped_mds_decode.go`), `decodeMDSReplacementMap` (`cephfs/mds_replacement_decode.go`, split from `readMDSReplacementScope`) | All via `coldMDSJSON` (`cephfs/no_initial_mds.go`): input limited to 4 MiB, duplicate object keys and trailing documents rejected, raw decode errors never returned (native auth input can contain credentials). Pointer fields so absent differs from zero. Cross-checks: unique names and GIDs, `gid_<n>` keys, `up` versus `info` agreement, policy flags |
 
 Invariants that any change to a decoder must keep, from the code and the
 pinned Ceph source:
@@ -801,7 +801,7 @@ untyped; see [Structural metrics](../contributing/structural-metrics.md)):
 | 1. MDS roster | Delivered | [Step 1 as implemented](#step-1-as-implemented-the-mds-roster) |
 | 2. Shared admission | Not started. Needs the per-operation controls above | |
 | 3. Decoder boundary | Partly delivered: one shared state list, and the stopped-MDS decoder split from survivor verification | [Stopped-MDS native-state decoder](filesystem-decomposition/stopped-mds-decoder.md) |
-| 3, remaining | The cold-start and replacement decoders are still inline in `validateColdMDSMap` and `readMDSReplacementScope`; the replacement one also reads native state, so it needs the same read/decode split | |
+| 3, remaining | Delivered: the cold-start decoder is an argument-only function and the replacement decoder is split from its two native reads | [Cold-start and replacement decoders](filesystem-decomposition/cold-replacement-decoder.md) |
 | 4. Ownership proofs | Not started | |
 | 5. Public handles, embedded `Container` | Owner decision | |
 

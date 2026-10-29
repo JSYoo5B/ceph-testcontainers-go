@@ -336,8 +336,8 @@ func (fs *Filesystem) observeMDSReplacement(ctx context.Context, stopped *MDS, r
 
 // readMDSReplacementScope reads the native pools and the global map (two
 // commands) and returns the decoded scope. The decoding itself is
-// decodeMDSReplacementMap, a function of its arguments. The caller holds the
-// topology lock, as before the split.
+// decodeMDSReplacementMap, a function of its arguments. The cluster mutex is
+// held by its callers, as before the split.
 func (fs *Filesystem) readMDSReplacementScope(ctx context.Context, old *cephFSMDSIdentity, r *cephFSMDSReplacement) (*cephFSMDSRemovalScope, bool, error) {
 	pools, err := fs.readNativePools(ctx)
 	if err != nil {
