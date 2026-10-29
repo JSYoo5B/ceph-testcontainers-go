@@ -9,7 +9,7 @@ import (
 )
 
 // monStoreAdapterFiles are the production files of the MON store adapters.
-var monStoreAdapterFiles = []string{"mon_store_monmap.go", "mon_store_inspect_container.go", "mon_store_json.go"}
+var monStoreAdapterFiles = []string{"mon_store_monmap.go", "mon_store_inspect_container.go", "mon_store_inspect_engine.go", "mon_store_json.go"}
 
 // monStoreAdapterSymbols are the package-level names the adapter files add.
 // Production code outside those files must not mention them until a slice adds
@@ -19,6 +19,7 @@ var monStoreAdapterSymbols = []string{
 	"monStoreMonDumpArgv", "monStoreQuorumStatusArgv", "monStoreInspectScript", "monStoreInspectScriptSource", "monStoreInspectRequest",
 	"newMonStoreInspectRequest", "monStoreInspectEngine", "monStoreInspectLogs", "monStoreContainerInspector", "parseMonStoreListing",
 	"monStoreJSONObject", "monStoreObjectOf", "monStoreJSONCheck", "monStoreInspectorLabel",
+	"monStoreInspectDocker", "monStoreMobyEngine", "monStoreInspectCreateOptions", "readMonStoreInspectFrames",
 }
 
 func monStoreAdapterProblems(files map[string]*ast.File) (problems []string) {
@@ -94,17 +95,25 @@ func TestMonStoreAdaptersDeclareEverySymbolOfTheTable(t *testing.T) {
 	}
 }
 
+// monStoreEngineFile is the one adapter file that may import the moby client.
+const monStoreEngineFile = "mon_store_inspect_engine.go"
+
 // TestMonStoreAdaptersHaveNoLockAndNoDockerClient pins that the adapters add
-// no mutex and import no Docker client: the engine is an interface and the
-// first implementation is a later slice.
+// no mutex, that only the engine file imports the moby client, and that none
+// imports testcontainers: the engine has no default client, so its first caller
+// supplies the constructor.
 func TestMonStoreAdaptersHaveNoLockAndNoDockerClient(t *testing.T) {
 	files := parseProductionFiles(t)
 	for _, name := range monStoreAdapterFiles {
 		parsed := files[name]
 		for _, imp := range parsed.Imports {
 			switch imp.Path.Value {
-			case `"sync"`, `"github.com/moby/moby/client"`, `"github.com/testcontainers/testcontainers-go"`:
+			case `"sync"`, `"github.com/testcontainers/testcontainers-go"`:
 				t.Errorf("%s imports %s", name, imp.Path.Value)
+			case `"github.com/moby/moby/client"`:
+				if name != monStoreEngineFile {
+					t.Errorf("%s imports %s", name, imp.Path.Value)
+				}
 			}
 		}
 		ast.Inspect(parsed, func(n ast.Node) bool {
