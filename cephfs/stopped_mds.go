@@ -13,6 +13,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
@@ -191,7 +192,7 @@ func (fs *Filesystem) checkStoppedMDSOwner(handle *MDS, i *cephFSMDSIdentity) er
 		return errors.New("original stopped MDS ownership changed or startup is unconfirmed")
 	}
 	if i.descriptor.ID != i.name || i.descriptor.FilesystemName != fs.config.Name || i.descriptor.Container != i.container {
-		return invalid(errors.New("original stopped MDS descriptor was edited"))
+		return harnesshook.Invalid(errors.New("original stopped MDS descriptor was edited"))
 	}
 	count, embedded := 0, false
 	for _, owned := range fs.roster.members() {
@@ -203,7 +204,7 @@ func (fs *Filesystem) checkStoppedMDSOwner(handle *MDS, i *cephFSMDSIdentity) er
 		}
 	}
 	if !embedded {
-		return invalid(errors.New("filesystem compatibility container is not an original owned MDS"))
+		return harnesshook.Invalid(errors.New("filesystem compatibility container is not an original owned MDS"))
 	}
 	service := servicehook.Service(c, "mds."+i.name)
 	if (!i.removed && (count != 1 || service != i.container)) || (i.removed && (count != 0 || service != nil)) {

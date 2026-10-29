@@ -11,6 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -392,7 +393,7 @@ func (fs *Filesystem) RemoveUnusedDataPool(ctx context.Context, attachment *Data
 			identity.removed = true
 			return nil
 		}
-		return invalid(errors.New("data pool was detached externally; refusing removal"))
+		return harnesshook.Invalid(errors.New("data pool was detached externally; refusing removal"))
 	}
 	if !identity.confirmed {
 		return errors.New("attachment must be confirmed before removal; retry AddDataPool first")

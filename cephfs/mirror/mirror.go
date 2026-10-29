@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/google/uuid"
 	mobycl "github.com/moby/moby/client"
@@ -508,7 +509,7 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 		return nil, err
 	}
 	if mirror.closed {
-		return nil, invalid(errors.New("CephFS mirror has been terminated"))
+		return nil, harnesshook.Invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	if mirror.source == nil || mirror.destination == nil || mirror.daemonImage == "" || len(mirror.daemonKeyring) == 0 {
 		return nil, errors.New("CephFS mirror is not initialized")
@@ -518,7 +519,7 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 	}
 	for _, existing := range mirror.daemons {
 		if existing.DaemonName == daemonName {
-			return nil, invalid(fmt.Errorf("CephFS mirror daemon %q already exists", daemonName))
+			return nil, harnesshook.Invalid(fmt.Errorf("CephFS mirror daemon %q already exists", daemonName))
 		}
 	}
 	sourceFacts, err := ceph.FactsOf(mirror.source)
@@ -586,7 +587,7 @@ func (mirror *Mirror) RemoveDaemon(ctx context.Context, daemonName string, opts 
 	}
 	defer mirror.mu.Unlock()
 	if mirror.closed {
-		return invalid(errors.New("CephFS mirror has been terminated"))
+		return harnesshook.Invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	for index, daemon := range mirror.daemons {
 		if daemon.DaemonName != daemonName {
@@ -606,11 +607,11 @@ func (mirror *Mirror) RemoveDaemon(ctx context.Context, daemonName string, opts 
 
 func validateCephFSMirrorDaemonName(name string) error {
 	if name == "" || len(name) > 63 {
-		return invalid(errors.New("CephFS mirror daemon name must contain 1 to 63 letters, digits, dots, underscores or hyphens"))
+		return harnesshook.Invalid(errors.New("CephFS mirror daemon name must contain 1 to 63 letters, digits, dots, underscores or hyphens"))
 	}
 	for _, character := range name {
 		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '.' || character == '_' || character == '-') {
-			return invalid(errors.New("CephFS mirror daemon name must contain 1 to 63 letters, digits, dots, underscores or hyphens"))
+			return harnesshook.Invalid(errors.New("CephFS mirror daemon name must contain 1 to 63 letters, digits, dots, underscores or hyphens"))
 		}
 	}
 	return nil
@@ -647,7 +648,7 @@ func (mirror *Mirror) AttachManagers(ctx context.Context) error {
 // cannot close while a topology reconciliation is using it.
 func (mirror *Mirror) attachManagers(ctx context.Context) error {
 	if mirror.closed {
-		return invalid(errors.New("CephFS mirror has been terminated"))
+		return harnesshook.Invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	if mirror.source == nil || mirror.destination == nil {
 		return errors.New("CephFS mirror is not initialized")
@@ -945,7 +946,7 @@ func (mirror *Mirror) RebalanceDirectories(ctx context.Context) error {
 		return err
 	}
 	if mirror.closed {
-		return invalid(errors.New("CephFS mirror has been terminated"))
+		return harnesshook.Invalid(errors.New("CephFS mirror has been terminated"))
 	}
 	if mirror.source == nil || mirror.peerID == "" {
 		return errors.New("CephFS mirror is not initialized")
@@ -1322,7 +1323,7 @@ func matchPendingCephFSPeer(peers map[string]json.RawMessage, expected *cephFSPe
 
 func normalizeMirrorDirectory(directory string) (string, error) {
 	if !path.IsAbs(directory) || strings.ContainsRune(directory, 0) {
-		return "", invalid(fmt.Errorf("CephFS mirror directory %q must be an absolute path", directory))
+		return "", harnesshook.Invalid(fmt.Errorf("CephFS mirror directory %q must be an absolute path", directory))
 	}
 	return path.Clean(directory), nil
 }
@@ -1335,17 +1336,17 @@ func normalizeCephFSMirrorConfig(config Config) (Config, error) {
 	config.DaemonCount = count
 	for _, name := range []string{config.SourceFilesystem, config.DestinationFilesystem} {
 		if !validCephFSMirrorFilesystemName(name) {
-			return config, invalid(errors.New("source and destination CephFS names must use letters, digits, underscores, dots or hyphens, starting with a letter, digit or underscore"))
+			return config, harnesshook.Invalid(errors.New("source and destination CephFS names must use letters, digits, underscores, dots or hyphens, starting with a letter, digit or underscore"))
 		}
 	}
 	if config.DestinationSite == "" {
 		config.DestinationSite = "destination"
 	}
 	if strings.ContainsAny(config.DestinationSite, "@/\x00\r\n\t ") {
-		return config, invalid(errors.New("CephFS destination site cannot contain separators or whitespace"))
+		return config, harnesshook.Invalid(errors.New("CephFS destination site cannot contain separators or whitespace"))
 	}
 	if len(config.Directories) == 0 {
-		return config, invalid(errors.New("at least one CephFS mirror directory is required"))
+		return config, harnesshook.Invalid(errors.New("at least one CephFS mirror directory is required"))
 	}
 	directories := make([]string, 0, len(config.Directories))
 	for _, directory := range config.Directories {
@@ -1356,7 +1357,7 @@ func normalizeCephFSMirrorConfig(config Config) (Config, error) {
 		}
 		for _, previous := range directories {
 			if directory == previous || directory == "/" || previous == "/" || strings.HasPrefix(directory, previous+"/") || strings.HasPrefix(previous, directory+"/") {
-				return config, invalid(fmt.Errorf("CephFS mirror directories %q and %q overlap", previous, directory))
+				return config, harnesshook.Invalid(fmt.Errorf("CephFS mirror directories %q and %q overlap", previous, directory))
 			}
 		}
 		directories = append(directories, directory)
@@ -1380,7 +1381,7 @@ func validCephFSMirrorFilesystemName(name string) bool {
 // RunWithImages selects the source cluster's CephFS daemon runtime.
 func RunWithImages(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
 	if config.Source == nil || config.Destination == nil {
-		return nil, invalid(fmt.Errorf("roles clusters are required"))
+		return nil, harnesshook.Invalid(fmt.Errorf("roles clusters are required"))
 	}
 	facts, err := ceph.FactsOf(config.Source)
 	if err != nil {
@@ -1388,7 +1389,7 @@ func RunWithImages(ctx context.Context, config Config, opts ...testcontainers.Co
 	}
 	image := facts.Images.CephFS
 	if image == "" {
-		return nil, invalid(fmt.Errorf("cephfs image is required"))
+		return nil, harnesshook.Invalid(fmt.Errorf("cephfs image is required"))
 	}
 	return Run(ctx, image, config, opts...)
 }

@@ -262,7 +262,14 @@ func classify(kind, err error) error {
 
 // invalidRequest is a refusal before any change.
 func invalidRequest(format string, args ...any) error {
-	return &OperationError{Kind: ErrInvalidRequest, Err: fmt.Errorf(format, args...)}
+	return newInvalid(fmt.Errorf(format, args...))
+}
+
+// newInvalid marks err as a refused request with ErrInvalidRequest and keeps
+// err as the cause, as it is, also when it is nil. It is the one construction
+// that invalidRequest and the shared harness error contract use.
+func newInvalid(err error) error {
+	return &OperationError{Kind: ErrInvalidRequest, Err: err}
 }
 
 // linuxErrnos maps the Linux errno values that Ceph's tools print as "(N)

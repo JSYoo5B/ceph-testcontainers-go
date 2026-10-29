@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/google/uuid"
@@ -60,14 +61,14 @@ func removeGateway(ctx context.Context, c *ceph.Container, handle *Gateway) erro
 	}
 	defer servicehook.Unlock(c)
 	if servicehook.Closed(c) {
-		return invalid(errors.New("ceph cluster is terminated"))
+		return harnesshook.Invalid(errors.New("ceph cluster is terminated"))
 	}
 	if name == "" {
 		name = "default"
 	}
 	gateway, ok := gateways(c).ByName[name]
 	if !ok || gateway != handle || gateway.Container == nil {
-		return invalid(fmt.Errorf("RGW gateway %q is not owned by this cluster, or this descriptor is stale", name))
+		return harnesshook.Invalid(fmt.Errorf("RGW gateway %q is not owned by this cluster, or this descriptor is stale", name))
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 	defer cancel()
@@ -88,7 +89,7 @@ func startGateway(ctx context.Context, c *ceph.Container, config Config, opts ..
 		return nil, err
 	}
 	if facts.Images.RGW == "" {
-		return nil, invalid(fmt.Errorf("rgw image is required before gateway setup"))
+		return nil, harnesshook.Invalid(fmt.Errorf("rgw image is required before gateway setup"))
 	}
 	config, err = normalizeRGWConfig(config)
 	if err != nil {
@@ -152,14 +153,14 @@ func normalizeRGWConfig(config Config) (Config, error) {
 		config.Name = "default"
 	}
 	if !naming.DaemonName.MatchString(config.Name) {
-		return Config{}, invalid(errors.New("RGW name must use letters, digits, dots, underscores or hyphens"))
+		return Config{}, harnesshook.Invalid(errors.New("RGW name must use letters, digits, dots, underscores or hyphens"))
 	}
 	if config.Region == "" {
 		config.Region = "us-east-1"
 	}
 	for _, value := range []string{config.Realm, config.Zonegroup, config.Zone, config.Region} {
 		if strings.TrimSpace(value) != value || strings.HasPrefix(value, "-") || strings.IndexFunc(value, unicode.IsControl) != -1 {
-			return Config{}, invalid(errors.New("invalid RGW realm, zonegroup, zone or region"))
+			return Config{}, harnesshook.Invalid(errors.New("invalid RGW realm, zonegroup, zone or region"))
 		}
 	}
 	if config.TLS != nil {

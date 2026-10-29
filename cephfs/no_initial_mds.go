@@ -11,6 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/google/uuid"
@@ -87,7 +88,7 @@ func (fs *Filesystem) scaleColdMDS(parent context.Context, active, standby int, 
 	valid := !servicehook.Closed(c) && filesystems(c).byName[fs.FilesystemName] == fs && fs.FilesystemName == fs.config.Name && fs.Container == nil && fs.roster.count() == 0 && cap != nil && !cap.attempted && cap.identity == fs.nativeIdentity
 	servicehook.Unlock(c)
 	if !valid {
-		return invalid(errors.New("cold filesystem is unavailable, incomplete or already attempted"))
+		return harnesshook.Invalid(errors.New("cold filesystem is unavailable, incomplete or already attempted"))
 	}
 	if err := fs.verifyColdMDS(ctx, cap); err != nil {
 		return err
@@ -200,7 +201,7 @@ func (fs *Filesystem) checkColdMDSAuth(ctx context.Context) error {
 		}
 		seen[*entry.Entity] = true
 		if *entry.Entity == reserved {
-			return invalid(errors.New("initial MDS identity already exists"))
+			return harnesshook.Invalid(errors.New("initial MDS identity already exists"))
 		}
 	}
 	return ctx.Err()

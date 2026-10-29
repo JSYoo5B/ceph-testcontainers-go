@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -218,7 +219,7 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 		return nil
 	}
 	if value != change.state.applied {
-		return invalid(errors.New("directory pin policy changed outside this override; refusing restoration"))
+		return harnesshook.Invalid(errors.New("directory pin policy changed outside this override; refusing restoration"))
 	}
 	if _, err := fs.pinCommand(ctx, change.target, change.setting.Type, change.state.previous); err != nil {
 		return err
@@ -237,23 +238,23 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 
 func validateCephFSPinSetting(setting PinSetting) error {
 	if math.IsNaN(setting.Value) || math.IsInf(setting.Value, 0) {
-		return invalid(errors.New("directory pin value must be finite"))
+		return harnesshook.Invalid(errors.New("directory pin value must be finite"))
 	}
 	switch setting.Type {
 	case PinExport:
 		if setting.Value < -1 || setting.Value > math.MaxInt32 || setting.Value != math.Trunc(setting.Value) {
-			return invalid(errors.New("export pin must be an integer rank or -1"))
+			return harnesshook.Invalid(errors.New("export pin must be an integer rank or -1"))
 		}
 	case PinDistributed:
 		if setting.Value != 0 && setting.Value != 1 {
-			return invalid(errors.New("distributed pin must be 0 or 1"))
+			return harnesshook.Invalid(errors.New("distributed pin must be 0 or 1"))
 		}
 	case PinRandom:
 		if setting.Value < 0 || setting.Value > 1 {
-			return invalid(errors.New("random pin probability must be between 0 and 1"))
+			return harnesshook.Invalid(errors.New("random pin probability must be between 0 and 1"))
 		}
 	default:
-		return invalid(errors.New("directory pin type must be export, distributed or random"))
+		return harnesshook.Invalid(errors.New("directory pin type must be export, distributed or random"))
 	}
 	return nil
 }
@@ -288,7 +289,7 @@ func (fs *Filesystem) checkPinTarget(ctx context.Context, fsID int64, target cep
 	closed := servicehook.Closed(fs.cluster)
 	servicehook.Unlock(fs.cluster)
 	if closed {
-		return "", invalid(errors.New("CephFS cluster is terminated"))
+		return "", harnesshook.Invalid(errors.New("CephFS cluster is terminated"))
 	}
 	if err := fs.validateVolumeHandle(target.identity); err != nil || target.identity.removed {
 		return "", errors.New("directory pin target must remain a confirmed owned resource")

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/namedregistry"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
@@ -36,17 +37,17 @@ type TenantUser struct {
 // tenant leases RGW once.
 func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error) {
 	if t == nil {
-		return nil, invalid(errors.New("tenant is required"))
+		return nil, harnesshook.Invalid(errors.New("tenant is required"))
 	}
 	port, err := servicehook.Tenant(t)
 	if err != nil {
-		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
+		return nil, harnesshook.Invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
 	if err := port.RequireService(servicekind.RGW); err != nil {
 		return nil, err
 	}
 	if err := port.Live(); err != nil {
-		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
+		return nil, harnesshook.Invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
 	// The gateway state is keyed by the cluster, which the port reaches
 	// without handing it out.
@@ -56,7 +57,7 @@ func Lease(ctx context.Context, t *ceph.Tenant) (*TenantUser, error) {
 		return nil
 	})
 	if g == nil {
-		return nil, invalid(errors.New("the shared cluster runs no RGW gateway; start one with rgw.WithGateways in ceph.WithSharedRunOptions"))
+		return nil, harnesshook.Invalid(errors.New("the shared cluster runs no RGW gateway; start one with rgw.WithGateways in ceph.WithSharedRunOptions"))
 	}
 	u := &TenantUser{tenant: t, gateway: g}
 	// Attached first, so that the release also removes a user whose
