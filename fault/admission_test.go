@@ -34,24 +34,6 @@ func TestNetworkDelayReservationRefusesClusterClosedDuringAdmission(t *testing.T
 	}
 }
 
-// The public package-level entry points must gate before validating zero
-// requests or touching Docker, just as their former Container methods did.
-func TestPublicFaultsRefuseSharedCluster(t *testing.T) {
-	c := testhelper.TestCluster(nil, testhelper.TestConfig{Shared: true})
-	for name, apply := range map[string]func() error{
-		"fault.ApplyNetworkProfile":   func() error { _, err := ApplyNetworkProfile(t.Context(), c, nil, NetworkProfile{}); return err },
-		"fault.Pause":                 func() error { _, err := Pause(t.Context(), c, nil); return err },
-		"fault.InterruptNetwork":      func() error { _, err := InterruptNetwork(t.Context(), c, nil, ""); return err },
-		"fault.InjectObjectDataError": func() error { return InjectObjectDataError(t.Context(), c, "", "", 0) },
-	} {
-		err := apply()
-		var op *ceph.OperationError
-		if !errors.Is(err, ceph.ErrSharedCluster) || !errors.As(err, &op) || op.Op != name {
-			t.Errorf("%s bypassed admission: %v", name, err)
-		}
-	}
-}
-
 func TestClosedClusterRefusesNetworkDelayReservation(t *testing.T) {
 	c := testhelper.TestCluster(nil, testhelper.TestConfig{Closed: true})
 	_, terminated := faulthook.Terminated()

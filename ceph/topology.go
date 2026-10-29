@@ -129,9 +129,6 @@ func (c *Container) WaitForQuorum(ctx context.Context) error {
 // essential image. Options are validated before the topology lock is taken or
 // anything is created.
 func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonOption) (*MonitorContainer, error) {
-	if gateErr := c.sharedGate("AddMonitor"); gateErr != nil {
-		return nil, gateErr
-	}
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid monitor name")
 	}
@@ -249,7 +246,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 }
 
 // removeMonitor implements MonitorContainer.Remove, which documents the behavior. The caller
-// admitted the shared-cluster policy; the handle is checked under the lock.
+// checks the handle under the topology lock.
 func (c *Container) removeMonitor(ctx context.Context, handle *MonitorContainer) error {
 	if err := c.lockTopology(ctx); err != nil {
 		return err
@@ -357,9 +354,6 @@ func (c *Container) refreshMonitorConfig(ctx context.Context) error {
 // refresh reads each current file and skips copies that are already up to date.
 // External config writers must not race this operation: Docker has no file CAS.
 func (c *Container) RefreshMonitorConfig(ctx context.Context) error {
-	if gateErr := c.sharedGate("RefreshMonitorConfig"); gateErr != nil {
-		return gateErr
-	}
 	if c == nil {
 		return errors.New("ceph cluster is unavailable")
 	}
@@ -699,9 +693,6 @@ func monitorConfigComment(line string) (int, error) {
 // essential image. Options are validated before the topology lock is taken or
 // any identity is created.
 func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonOption) (*ManagerContainer, error) {
-	if gateErr := c.sharedGate("AddManager"); gateErr != nil {
-		return nil, gateErr
-	}
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid manager name")
 	}
@@ -804,7 +795,7 @@ func (c *Container) waitManagerRegistered(ctx context.Context, name string) erro
 }
 
 // removeManager implements ManagerContainer.Remove, which documents the behavior. The caller
-// admitted the shared-cluster policy; the handle is checked under the lock.
+// checks the handle under the topology lock.
 func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer) error {
 	name := handle.DaemonName
 	if !daemonNamePattern.MatchString(name) {

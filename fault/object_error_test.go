@@ -105,14 +105,8 @@ func TestInjectObjectDataErrorNeedsBlueStore(t *testing.T) {
 	}
 }
 
-func TestInjectObjectDataErrorRefusesSharedAndClosedClusters(t *testing.T) {
+func TestInjectObjectDataErrorRefusesClosedClusters(t *testing.T) {
 	ctr := injectFixture()
-	err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{Shared: true}), "fixture", "victim", 0)
-	var op *ceph.OperationError
-	if !errors.Is(err, ceph.ErrSharedCluster) || !errors.As(err, &op) || op.Op != "fault.InjectObjectDataError" || len(ctr.Calls) != 0 {
-		t.Fatalf("shared cluster bypassed admission: %v %v", err, ctr.Calls)
-	}
-	ctr = injectFixture()
 	_, terminated := faulthook.Terminated()
 	if err := InjectObjectDataError(t.Context(), injectCluster(ctr, testhelper.TestConfig{Closed: true}), "fixture", "victim", 0); !errors.Is(err, terminated) || len(ctr.Calls) != 0 {
 		t.Fatalf("terminated cluster ran a native command: %v %v (want %v)", err, ctr.Calls, terminated)

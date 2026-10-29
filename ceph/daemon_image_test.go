@@ -108,38 +108,6 @@ func TestDaemonImageRefusalHappensBeforeLockAndState(t *testing.T) {
 	}
 }
 
-// The shared gate is checked first, valid option or not, so a tenant of a
-// shared cluster cannot use the option.
-func TestDaemonImageOptionIsRefusedForTenantsOfASharedCluster(t *testing.T) {
-	for _, image := range []string{"example.invalid/ceph:new", " "} {
-		shared := &Container{settings: options{essentialImage: "example.invalid/ceph:cluster"}}
-		shared.sharing.Store(int32(sharedWithTenants))
-		option := WithDaemonImage(image)
-		ctx := t.Context()
-		_, monErr := shared.AddMonitor(ctx, "b", option)
-		_, mgrErr := shared.AddManager(ctx, "b", option)
-		_, osdErr := shared.AddOSD(ctx, OSDOptions{}.WithImage(image))
-		for name, err := range map[string]error{"AddMonitor": monErr, "AddManager": mgrErr, "AddOSD": osdErr} {
-			if !errors.Is(err, ErrSharedCluster) {
-				t.Errorf("%s with image %q: %v, want ErrSharedCluster", name, image, err)
-			}
-		}
-		if shared.roster.monitorCount()+shared.roster.managerCount()+shared.osdHandles.count() != 0 {
-			t.Fatal("a refused tenant call changed the topology")
-		}
-	}
-	for _, op := range []string{"AddMonitor", "AddManager", "AddOSD"} {
-		if sharedMethodPolicies[op] != sharedRecycle {
-			t.Errorf("%s is no longer a topology change in the shared gate", op)
-		}
-	}
-	for _, op := range []string{"OSDContainer.Version", "MonitorContainer.Version", "ManagerContainer.Version"} {
-		if sharedHandlePolicies[op] != sharedExclusive {
-			t.Errorf("%s must be refused to tenants", op)
-		}
-	}
-}
-
 // AddOSD with a placement and an image end to end against the registration fakes: the overridden
 // OSD starts from its image and the cluster, and a second OSD, keep the default.
 func TestOverriddenOSDRecordsItsImageWithoutChangingTheClusterOrOtherOSDs(t *testing.T) {
@@ -290,8 +258,8 @@ func TestParseDaemonVersion(t *testing.T) {
 	}
 }
 
-// Version goes through the admin socket admission, so a stale or foreign handle
-// and a shared cluster are refused before any command runs.
+// Version uses admin socket admission, so stale, foreign and terminated
+// handles are refused before any command runs.
 func TestDaemonVersionRefusesLikeTheAdminSocket(t *testing.T) {
 	c, control := adminSocketCluster()
 	ctx := t.Context()
@@ -305,11 +273,7 @@ func TestDaemonVersionRefusesLikeTheAdminSocket(t *testing.T) {
 	if _, err := (&ManagerContainer{DaemonName: "a"}).Version(ctx); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("handle without a cluster: %v", err)
 	}
-	shared, _ := adminSocketCluster()
-	shared.sharing.Store(int32(sharedWithTenants))
-	if _, err := managerHandle(t, ctx, shared, "a").Version(ctx); !errors.Is(err, ErrSharedCluster) {
-		t.Fatalf("shared cluster: %v", err)
-	}
+
 }
 
 // managerImageControl adds the key creation that startManager performs.

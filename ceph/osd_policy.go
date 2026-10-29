@@ -37,7 +37,7 @@ func (c *Container) osdStates(ctx context.Context) ([]OSDState, error) {
 }
 
 // setOSDIn implements OSDContainer.SetIn, which documents the behavior. The caller
-// admitted the shared-cluster policy; the handle is checked under the lock.
+// checks the handle under the topology lock.
 func (c *Container) setOSDIn(ctx context.Context, handle *OSDContainer, in bool) error {
 	id := handle.ID
 	c.mu.Lock()

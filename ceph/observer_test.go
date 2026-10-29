@@ -60,12 +60,6 @@ func newObserverCluster() (*Container, *observerControl) {
 	return &Container{Container: ctr}, ctr
 }
 
-func leaseObservable(t *testing.T) (*leaseDouble, *observerControl) {
-	t.Helper()
-	cluster, ctr := newObserverCluster()
-	return newLeaseDouble(cluster), ctr
-}
-
 func TestObserverClusterFormReadsActualStateOnEveryQuery(t *testing.T) {
 	cluster, ctr := newObserverCluster()
 	observer, err := Observe(cluster)
@@ -148,61 +142,6 @@ func TestObserverRefusesNilInputAndUnconstructedObservers(t *testing.T) {
 		if _, err := o.DaemonAddresses(t.Context()); !errors.Is(err, ErrInvalidRequest) {
 			t.Errorf("%s observer DaemonAddresses: %v", name, err)
 		}
-	}
-}
-
-func TestObserverTenantFormValidatesTheLeaseOnEveryQuery(t *testing.T) {
-	lease, ctr := leaseObservable(t)
-	observer := lease.observer()
-	if got := ctr.commands(); len(got) != 0 {
-		t.Fatalf("construction ran commands: %q", got)
-	}
-	if s, err := observer.Status(t.Context()); err != nil || s.FSID != "f1" {
-		t.Fatalf("live tenant status = %+v, %v", s, err)
-	}
-	ctr.set(observerStatusKey, observerStatusWarn)
-	if s, err := observer.Status(t.Context()); err != nil || s.FSID != "f2" {
-		t.Fatalf("tenant observer returned an earlier result: %+v, %v", s, err)
-	}
-	if _, err := observer.ManagerStatus(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	before := len(ctr.commands())
-
-	lease.release()
-	for name, query := range map[string]func() error{
-		"Status":          func() error { _, err := observer.Status(t.Context()); return err },
-		"ManagerStatus":   func() error { _, err := observer.ManagerStatus(t.Context()); return err },
-		"DaemonAddresses": func() error { _, err := observer.DaemonAddresses(t.Context()); return err },
-	} {
-		if err := query(); !errors.Is(err, ErrInvalidRequest) {
-			t.Errorf("%s after release returned %v, want ErrInvalidRequest", name, err)
-		}
-	}
-	if after := len(ctr.commands()); after != before {
-		t.Fatalf("a released tenant's observer still ran %d commands", after-before)
-	}
-}
-
-func TestObserverTenantFormRefusesAfterClusterTermination(t *testing.T) {
-	lease, ctr := leaseObservable(t)
-	observer := lease.observer()
-	if _, err := observer.Status(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	lease.terminate()
-	before := len(ctr.commands())
-	for name, query := range map[string]func() error{
-		"Status":          func() error { _, err := observer.Status(t.Context()); return err },
-		"ManagerStatus":   func() error { _, err := observer.ManagerStatus(t.Context()); return err },
-		"DaemonAddresses": func() error { _, err := observer.DaemonAddresses(t.Context()); return err },
-	} {
-		if err := query(); !errors.Is(err, ErrInvalidRequest) {
-			t.Errorf("%s after cluster termination returned %v, want ErrInvalidRequest", name, err)
-		}
-	}
-	if after := len(ctr.commands()); after != before {
-		t.Fatalf("a terminated cluster's tenant observer ran %d commands", after-before)
 	}
 }
 

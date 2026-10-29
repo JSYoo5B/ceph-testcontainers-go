@@ -126,38 +126,3 @@ func TestObserverControlQueriesKeepTheirLivenessAndLockBehavior(t *testing.T) {
 		})
 	}
 }
-
-// TestObserverControlQueriesRefuseAfterReleaseAndAfterTerminationSeparately
-// isolates the two reasons a retained tenant-backed observer must refuse: the
-// lease ended while the cluster lives, and the cluster ended while the lease is
-// still held.
-func TestObserverControlQueriesRefuseAfterReleaseAndAfterTerminationSeparately(t *testing.T) {
-	for _, subject := range controlSubjects() {
-		t.Run(subject.name+"/released", func(t *testing.T) {
-			cluster, commands := subject.build()
-			lease := newLeaseDouble(cluster)
-			observer := lease.observer()
-			if err := subject.query(t.Context(), observer); err != nil {
-				t.Fatalf("live lease: %v", err)
-			}
-			before := commands()
-			lease.release() // the cluster is not terminated
-			if err := subject.query(t.Context(), observer); !errors.Is(err, ErrInvalidRequest) || commands() != before {
-				t.Fatalf("after release: %v, %d new commands", err, commands()-before)
-			}
-		})
-		t.Run(subject.name+"/terminated", func(t *testing.T) {
-			cluster, commands := subject.build()
-			lease := newLeaseDouble(cluster)
-			observer := lease.observer()
-			if err := subject.query(t.Context(), observer); err != nil {
-				t.Fatalf("live lease: %v", err)
-			}
-			before := commands()
-			lease.terminate() // the lease is still held
-			if err := subject.query(t.Context(), observer); !errors.Is(err, ErrInvalidRequest) || commands() != before {
-				t.Fatalf("after termination: %v, %d new commands", err, commands()-before)
-			}
-		})
-	}
-}

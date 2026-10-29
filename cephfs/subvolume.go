@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -110,7 +109,7 @@ func validateCephFSVolumeName(name string, optional bool) error {
 	if (name == "" && optional) || cephFSVolumeName.MatchString(name) {
 		return nil
 	}
-	return harnesshook.Invalid(errors.New("subvolume and group names must start with a letter or digit and use at most 128 letters, digits, dots, underscores or dashes"))
+	return servicehook.Invalid(errors.New("subvolume and group names must start with a letter or digit and use at most 128 letters, digits, dots, underscores or dashes"))
 }
 
 func (fs *Filesystem) validateSubvolumeConfig(name, group, dataPool string, size int64) error {
@@ -121,10 +120,10 @@ func (fs *Filesystem) validateSubvolumeConfig(name, group, dataPool string, size
 		return err
 	}
 	if size < 0 {
-		return harnesshook.Invalid(errors.New("subvolume quota must not be negative; zero means unlimited"))
+		return servicehook.Invalid(errors.New("subvolume quota must not be negative; zero means unlimited"))
 	}
 	if fs == nil || fs.cluster == nil {
-		return harnesshook.Invalid(errors.New("CephFS filesystem is unavailable"))
+		return servicehook.Invalid(errors.New("CephFS filesystem is unavailable"))
 	}
 	if dataPool == "" {
 		return nil
@@ -282,7 +281,7 @@ func (fs *Filesystem) CreateSubvolumeGroup(ctx context.Context, config Subvolume
 		return nil, err
 	}
 	if slices.Contains(names, config.Name) {
-		return nil, harnesshook.Invalid(fmt.Errorf("subvolume group %q already exists", config.Name))
+		return nil, servicehook.Invalid(fmt.Errorf("subvolume group %q already exists", config.Name))
 	}
 	group := &SubvolumeGroup{Name: config.Name, FilesystemName: fs.config.Name,
 		identity: &cephFSVolumeIdentity{filesystem: fs, filesystemID: fsID, name: config.Name}}
@@ -323,7 +322,7 @@ func (fs *Filesystem) CreateSubvolume(ctx context.Context, config SubvolumeConfi
 		return nil, err
 	}
 	if slices.Contains(names, config.Name) {
-		return nil, harnesshook.Invalid(fmt.Errorf("subvolume %q in group %q already exists", config.Name, config.GroupName))
+		return nil, servicehook.Invalid(fmt.Errorf("subvolume %q in group %q already exists", config.Name, config.GroupName))
 	}
 	subvolume := &Subvolume{Name: config.Name, GroupName: config.GroupName, FilesystemName: fs.config.Name,
 		identity: &cephFSVolumeIdentity{filesystem: fs, filesystemID: fsID, name: config.Name, group: config.GroupName}}
@@ -482,7 +481,7 @@ func (fs *Filesystem) subvolumeInfo(ctx context.Context, name, group string) (*S
 
 func (fs *Filesystem) validateVolumeHandle(identity *cephFSVolumeIdentity) error {
 	if fs == nil || identity == nil || identity.filesystem != fs || !identity.ready {
-		return harnesshook.Invalid(errors.New("subvolume or group must be a confirmed resource created by this filesystem"))
+		return servicehook.Invalid(errors.New("subvolume or group must be a confirmed resource created by this filesystem"))
 	}
 	return nil
 }
@@ -590,7 +589,7 @@ func (fs *Filesystem) RemoveSubvolumeGroup(ctx context.Context, group *Subvolume
 		return nil
 	}
 	if group.identity.filesystemID != fsID {
-		return harnesshook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
+		return servicehook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
 	}
 	if group.identity.removalAttempted {
 		names, err := fs.subvolumeGroupNames(ctx)
@@ -643,7 +642,7 @@ func (fs *Filesystem) RemoveSubvolume(ctx context.Context, subvolume *Subvolume)
 		}
 	}
 	if subvolume.identity.filesystemID != fsID {
-		return harnesshook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
+		return servicehook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
 	}
 	if subvolume.identity.removalAttempted {
 		names, err := fs.subvolumeNames(ctx, subvolume.identity.group)

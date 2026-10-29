@@ -445,8 +445,8 @@ The filesystem methods below share these rules:
   canceled while waiting returns without changing Ceph and can be retried with a
   new context.
 
-Explicit cleanup is optional for a cluster that is terminated after the test,
-but helps when a long-lived cluster is shared by several tests.
+Fixture termination removes the owned resources after the test. Use explicit
+resource cleanup to assert removal behavior or inspect intermediate state.
 
 ### Filesystem Methods: MDS topology
 
@@ -1329,11 +1329,10 @@ been terminated.
 
 Snapshot mirroring between two clusters moved to the `cephfs/mirror` package; see [cephfs-mirror.md](cephfs-mirror.md).
 
-### Shared cluster tenants
+### Independent test fixtures
 
-A tenant of a [shared cluster](ceph-harness.md#shared-cluster) leases a CephFS subvolume group
-of its own through the [cephfs/harness](cephfs-harness.md) package, which composes this
-package with `ceph/harness`. This package does not import it.
+Start an independent fixture with `Run`, create service resources explicitly,
+and register owned cleanup. See [Independent test fixtures](ceph.md#usage-example).
 
 ## Examples
 

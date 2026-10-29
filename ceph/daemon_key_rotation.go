@@ -209,7 +209,7 @@ type keyRotationExecClient interface {
 }
 
 // rotateDaemonKey implements RotateKey, which documents the behavior. The caller
-// admitted the shared-cluster policy; the handle is checked under the lock.
+// checks the handle under the topology lock.
 func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (err error) {
 	kind, id := handle.daemonRef()
 	daemon := kind + "." + id

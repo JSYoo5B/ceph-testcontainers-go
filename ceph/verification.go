@@ -337,7 +337,6 @@ type Verification struct {
 	images  ImageSet
 
 	// The cluster's operations, replaced in tests.
-	admit    func() error
 	snapshot func(context.Context) (diagnosticsSnapshot, error)
 	docker   func(context.Context) (verificationDocker, func(), error)
 	now      func() time.Time
@@ -488,9 +487,7 @@ func verificationName(name string) bool {
 // config.AdditionalContainers), the crash IDs already in their crash
 // directories, and the start of the window on the Docker engine's clock.
 // It returns an error when the configuration is invalid, when the engine
-// cannot be reached, after finalization has started, and with
-// ErrSharedCluster for a cluster that a SharedCluster shares: cluster-wide
-// events cannot be attributed to one tenant.
+// cannot be reached or after finalization has started.
 //
 // The check fails the test both for an unexpected and for an incomplete
 // verification. It never changes the cluster: it restarts, archives and
@@ -557,7 +554,6 @@ func (c *Container) startVerification(ctx context.Context, config VerificationCo
 		return nil, err
 	}
 	v.cluster, v.images = c.startup.ownerID(), c.staticFacts().Images
-	v.admit = func() error { return c.admitShared("Finalization.Verify", sharedRefused) }
 	v.snapshot = func(ctx context.Context) (diagnosticsSnapshot, error) {
 		return c.diagnosticsSnapshot(ctx, DiagnosticsConfig{MaxContainers: 128, AdditionalContainers: v.config.AdditionalContainers, RedactValues: v.config.RedactValues})
 	}
@@ -576,9 +572,6 @@ func newVerification(config VerificationConfig) (*Verification, error) {
 
 // activate records the baseline.
 func (v *Verification) activate(ctx context.Context) error {
-	if err := v.admit(); err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(ctx, v.config.Timeout)
 	defer cancel()
 	snapshot, err := v.snapshot(ctx)
@@ -604,13 +597,10 @@ func (v *Verification) activate(ctx context.Context) error {
 // its report. It changes nothing and can be repeated; each evaluation starts
 // from the activation's baseline. Gaps make a report incomplete instead of
 // returning an error: Evaluate returns an error only when it cannot evaluate
-// at all, as for a cluster that a SharedCluster shares now.
+// at all.
 func (v *Verification) Evaluate(ctx context.Context) (*VerificationReport, error) {
 	if v == nil {
 		return nil, invalid(errors.New("verification is nil"))
-	}
-	if err := v.admit(); err != nil {
-		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, v.config.Timeout)
 	defer cancel()
@@ -779,7 +769,7 @@ var verificationNotes = []string{
 	"The window starts at the activation and ends at the evaluation, on the Docker engine's clock; bootstrap before it and the cleanups and termination after it are outside the window.",
 	"Log coverage is the Docker log stream of each container generation selected at activation, read only with the json-file driver without rotation; lines that a daemon did not write to its output, such as those below its log level, are not covered. A cluster log entry is an event by the severity of its log envelope, and only the daemon log and cluster log forms of the pinned Tentacle source are recognized; a line with a severity marker in another form is a gap.",
 	"A crash is new when its crash ID was not in that container's crash directory at activation. Crashes of removed containers and of containers added after the activation are not covered, and are reported as gaps.",
-	"Clean is evidence for these sources and this window, not proof that no daemon failed. Shared-cluster tenants, scrub results and recovery waits are not verified.",
+	"Clean is evidence for these sources and this window, not proof that no daemon failed. Scrub results and recovery waits are not verified.",
 	"The bug compatibility selection is a build property that the library does not see.",
 }
 

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -154,7 +153,7 @@ func (fs *Filesystem) CreateSubvolumeSnapshot(ctx context.Context, subvolume *Su
 		return nil, err
 	}
 	if slices.Contains(names, name) {
-		return nil, harnesshook.Invalid(fmt.Errorf("subvolume snapshot %q already exists", name))
+		return nil, servicehook.Invalid(fmt.Errorf("subvolume snapshot %q already exists", name))
 	}
 	identity := &cephFSSnapshotIdentity{subvolume: subvolume.identity, name: name}
 	snapshot := &SubvolumeSnapshot{Name: name, SubvolumeName: subvolume.identity.name, GroupName: subvolume.identity.group, FilesystemName: fs.config.Name, identity: identity}
@@ -244,7 +243,7 @@ func (fs *Filesystem) subvolumeSnapshotInfo(ctx context.Context, subvolumeName, 
 
 func (fs *Filesystem) validateSnapshotHandle(snapshot *SubvolumeSnapshot) error {
 	if snapshot == nil || snapshot.identity == nil || !snapshot.identity.ready {
-		return harnesshook.Invalid(errors.New("snapshot must be a confirmed resource created by this filesystem"))
+		return servicehook.Invalid(errors.New("snapshot must be a confirmed resource created by this filesystem"))
 	}
 	return fs.validateVolumeHandle(snapshot.identity.subvolume)
 }
@@ -301,7 +300,7 @@ func (fs *Filesystem) RemoveSubvolumeSnapshot(ctx context.Context, snapshot *Sub
 		return err
 	}
 	if info.HasPendingClones || info.OrphanClonesCount > 0 {
-		return harnesshook.Invalid(errors.New("subvolume snapshot has pending or orphan clones; refusing removal"))
+		return servicehook.Invalid(errors.New("subvolume snapshot has pending or orphan clones; refusing removal"))
 	}
 	args := appendSubvolumeGroup([]string{"fs", "subvolume", "snapshot", "rm", fs.config.Name, identity.subvolume.name, identity.name}, identity.subvolume.group)
 	identity.removalAttempted = true
@@ -347,7 +346,7 @@ func (fs *Filesystem) CloneSubvolumeSnapshot(ctx context.Context, snapshot *Subv
 		return nil, err
 	}
 	if slices.Contains(names, config.Name) {
-		return nil, harnesshook.Invalid(fmt.Errorf("clone target subvolume %q already exists", config.Name))
+		return nil, servicehook.Invalid(fmt.Errorf("clone target subvolume %q already exists", config.Name))
 	}
 	identity := &cephFSCloneIdentity{filesystem: fs, filesystemID: fsID, source: snapshot.identity, name: config.Name, group: config.GroupName, dataPool: config.DataPool}
 	clone := &SubvolumeClone{Name: config.Name, GroupName: config.GroupName, FilesystemName: fs.config.Name, identity: identity}
@@ -419,10 +418,10 @@ func decodeCephFSCloneStatus(data []byte) (*SubvolumeCloneStatus, error) {
 
 func (fs *Filesystem) validateCloneHandle(clone *SubvolumeClone) error {
 	if fs == nil || fs.cluster == nil || clone == nil || clone.identity == nil || clone.identity.filesystem != fs || !clone.identity.submitted || clone.identity.removed {
-		return harnesshook.Invalid(errors.New("clone must be a successfully submitted resource created by this filesystem"))
+		return servicehook.Invalid(errors.New("clone must be a successfully submitted resource created by this filesystem"))
 	}
 	if clone.identity.incarnation == nil {
-		return harnesshook.Invalid(errors.New("clone has no submission-confirmed native incarnation; inspect it through Ceph"))
+		return servicehook.Invalid(errors.New("clone has no submission-confirmed native incarnation; inspect it through Ceph"))
 	}
 	return nil
 }

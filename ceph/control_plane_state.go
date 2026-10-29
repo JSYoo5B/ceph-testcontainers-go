@@ -16,10 +16,10 @@ import (
 //
 // The lock is the former Container.controlMu, moved with the handle it
 // guards; no mutex was added and no lock order changed. controlMu is a leaf
-// below Container.mu and the shared-gate admission: ensureControlPlane and
+// below Container.mu: ensureControlPlane and
 // terminate take it while the topology lock is held, and the readers
 // take it either after releasing the topology lock (diagnosticsSnapshot,
-// admitNativeTarget and sharedDaemons) or may be called with it held
+// admitNativeTarget) or may be called with it held
 // (cliContainer and controlContainerContext). No method of the type takes another lock or calls
 // into Container, so a reader or writer that holds this lock never waits for
 // Container.mu: the only wait inside it is the Docker call that terminate makes

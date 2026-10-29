@@ -109,11 +109,7 @@ const (
 // never skip the cleanups or Terminate. A check's error and Terminate's error
 // fail the test; collection and storage errors are logged and recorded in the
 // manifest. Nothing runs after a forced process exit or a lost runner.
-// A cluster that a SharedCluster shares refuses it with ErrSharedCluster.
 func (c *Container) TerminateOnCleanup(t testing.TB, config FinalizationConfig) (*Finalization, error) {
-	if err := c.sharedGate("TerminateOnCleanup"); err != nil {
-		return nil, err
-	}
 	if c == nil || t == nil {
 		return nil, invalid(errors.New("TerminateOnCleanup needs a cluster and a test"))
 	}

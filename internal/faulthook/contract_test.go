@@ -5,16 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
 )
-
-type onlyAdmit struct {
-	hooks
-	admitted *int
-}
-
-func (o onlyAdmit) Admit(*ceph.Container, string) error { *o.admitted++; return nil }
 
 func TestAssertedHooksHaveNoTestAccessMethod(t *testing.T) {
 	typ := reflect.TypeFor[hooks]()
@@ -22,17 +14,6 @@ func TestAssertedHooksHaveNoTestAccessMethod(t *testing.T) {
 		if name := typ.Method(i).Name; strings.HasPrefix(name, "Test") {
 			t.Errorf("test-only method %s re-entered the asserted production interface", name)
 		}
-	}
-}
-
-func TestProductionCallDoesNotNeedTestAccess(t *testing.T) {
-	saved := hookreg.Fault
-	defer func() { hookreg.Fault = saved }()
-
-	calls := 0
-	hookreg.Fault = onlyAdmit{admitted: &calls}
-	if err := Admit(nil, "op"); err != nil || calls != 1 {
-		t.Fatalf("Admit: err=%v calls=%d", err, calls)
 	}
 }
 

@@ -33,10 +33,10 @@ func (c *delayTestCluster) faultsOf(kind faulthook.Kind) (result map[string]any)
 }
 func nativeTerminated() error { native, _ := faulthook.Terminated(); return native }
 
-var categories = []error{ceph.ErrInvalidRequest, ceph.ErrUnsupported, ceph.ErrImageCapability, ceph.ErrEnvironmentUnavailable, ceph.ErrNativeFailure, ceph.ErrSharedCluster}
+var categories = []error{ceph.ErrInvalidRequest, ceph.ErrUnsupported, ceph.ErrImageCapability, ceph.ErrEnvironmentUnavailable, ceph.ErrNativeFailure}
 
 func classifiedError(err error) bool {
-	for _, kind := range []error{ceph.ErrInvalidRequest, ceph.ErrUnsupported, ceph.ErrImageCapability, ceph.ErrEnvironmentUnavailable, ceph.ErrNativeFailure, ceph.ErrSharedCluster} {
+	for _, kind := range []error{ceph.ErrInvalidRequest, ceph.ErrUnsupported, ceph.ErrImageCapability, ceph.ErrEnvironmentUnavailable, ceph.ErrNativeFailure} {
 		if errors.Is(err, kind) {
 			return true
 		}

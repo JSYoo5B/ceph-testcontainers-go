@@ -1,5 +1,10 @@
 # Design: public package for the reversible override operations
 
+> Current boundary: the shared-cluster/tenant harness and its core-only policy,
+> lease and hook plumbing have been removed. Harness references and source
+> locations below are historical design evidence, not retained APIs or future
+> extraction requirements. See [independent fixtures](../ceph.md#usage-example).
+
 Design note for the `ceph.Container` size reduction (Refs #146). It records the
 owner decisions of 2026-10-27 on the override group as decided, including the
 owner answers Q1 to Q9 to the first revision of this note (section 12), and

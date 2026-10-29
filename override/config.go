@@ -65,8 +65,7 @@ func notAppliedConfig(setting ceph.ConfigSetting, cause error) (*ConfigHandle, e
 //
 // The handle is non-nil for every outcome. A refusal returns a not-applied
 // handle whose Restore is a no-op (see ConfigHandle). A nil cluster is refused
-// with ceph.ErrInvalidRequest and a cluster that a SharedCluster shares with
-// ceph.ErrSharedCluster, both with Op "override.SetConfig". A call that fails
+// with ceph.ErrInvalidRequest and Op "override.SetConfig". A call that fails
 // after the entry was tracked, or whose write may have been applied, returns
 // the real handle with the error.
 func SetConfig(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) (*ConfigHandle, error) {
@@ -74,9 +73,7 @@ func SetConfig(ctx context.Context, c *ceph.Container, setting ceph.ConfigSettin
 	if c == nil {
 		return notAppliedConfig(setting, &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: op, Err: errors.New("the cluster is nil")})
 	}
-	if err := overridehook.Admit(c, op); err != nil {
-		return notAppliedConfig(setting, err)
-	}
+
 	return setConfig(ctx, c, setting)
 }
 

@@ -39,9 +39,6 @@ func (c *Container) monitorBootstrapAddresses(ctx context.Context) (string, erro
 // context. External configuration writers must not race this operation: Docker
 // has no file compare-and-swap. Callers own clients and their cleanup.
 func (c *Container) RefreshClientMonitorConfig(ctx context.Context, client testcontainers.Container) error {
-	if gateErr := c.sharedGate("RefreshClientMonitorConfig"); gateErr != nil {
-		return gateErr
-	}
 	if c == nil || client == nil || client.GetContainerID() == "" {
 		return errors.New("ceph cluster and explicit client container are required")
 	}

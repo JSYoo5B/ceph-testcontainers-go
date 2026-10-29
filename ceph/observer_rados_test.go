@@ -277,33 +277,6 @@ func TestObserverManagerMetricsReachesTheSupervisedScrapeAtTheAdvertisedEndpoint
 	}
 }
 
-func TestObserverRadosQueriesValidateTheTenantLeaseOnEveryQuery(t *testing.T) {
-	cluster, ctr := newObserverRadosCluster()
-	lease := newLeaseDouble(cluster)
-	observer := lease.observer()
-	if found, err := observer.PGInconsistencies(t.Context(), "1.0"); err != nil || len(found) != 1 {
-		t.Fatalf("live tenant inconsistencies = %+v, %v", found, err)
-	}
-	if watchers, err := observer.ObjectWatchers(t.Context(), "app-data", "", "notify-object"); err != nil || len(watchers) != 1 {
-		t.Fatalf("live tenant watchers = %+v, %v", watchers, err)
-	}
-	before := len(ctr.commands())
-	lease.release()
-	check := func(when string) {
-		for name, query := range radosQueries(observer) {
-			if err := query(t.Context()); !errors.Is(err, ErrInvalidRequest) {
-				t.Errorf("%s %s returned %v, want ErrInvalidRequest", name, when, err)
-			}
-		}
-		if after := len(ctr.commands()); after != before {
-			t.Fatalf("%s: %d commands ran", when, after-before)
-		}
-	}
-	check("after release")
-	lease.terminate()
-	check("after release and termination")
-}
-
 func TestObserverRadosQueriesRefuseNilAndUnconstructedObservers(t *testing.T) {
 	var nilObserver *Observer
 	for name, observer := range map[string]*Observer{"nil": nilObserver, "zero": {}} {

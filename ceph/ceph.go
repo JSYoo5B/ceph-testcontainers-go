@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
@@ -109,9 +108,6 @@ type Container struct {
 	debugLevels debugLevelRegistry
 	// daemonRunner replaces runContainer for AddMonitor and AddManager containers in tests.
 	daemonRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
-	// sharing is a sharingMode: whether a SharedCluster shares the cluster
-	// with tenants or lends it to one exclusive lease; see sharedGate.
-	sharing atomic.Int32
 }
 
 // OSDContainer is one storage daemon backed by a sparse BlueStore file.
@@ -459,9 +455,6 @@ func (c *Container) trackHostPortLease(lease *hostPortLease) {
 // Managers and ManagerStatus for the current candidates and active identity.
 // The cluster owns its cleanup.
 func (c *Container) ManagerContainer() testcontainers.Container {
-	if c.sharedGate("ManagerContainer") != nil {
-		return nil
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.roster.initialManager()
@@ -472,9 +465,6 @@ func (c *Container) ManagerContainer() testcontainers.Container {
 // Caller owns and terminates that container before terminating the cluster.
 // The options customize the container's ceph.conf.
 func (c *Container) WithClient(opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
-	if err := c.sharedGate("WithClient"); err != nil {
-		return func(*testcontainers.GenericContainerRequest) error { return err }
-	}
 	return c.adminClient(opts...)
 }
 
@@ -505,14 +495,10 @@ func (c *Container) adminClient(opts ...ClientContainerOption) testcontainers.Cu
 // Ceph runs the Ceph CLI in the control container. Arguments are passed directly,
 // without shell interpolation. Use --format json for machine-readable responses.
 func (c *Container) Ceph(ctx context.Context, args ...string) ([]byte, error) {
-	if err := c.sharedGate("Ceph"); err != nil {
-		return nil, err
-	}
 	return c.cephCLI(ctx, args...)
 }
 
-// cephCLI runs the Ceph CLI for the module's own operations, which a shared
-// cluster's gate does not refuse.
+// cephCLI runs the Ceph CLI for the module's own operations.
 func (c *Container) cephCLI(ctx context.Context, args ...string) ([]byte, error) {
 	control, err := c.controlContainerContext(ctx)
 	if err != nil {
@@ -529,16 +515,13 @@ func (c *Container) cephCLI(ctx context.Context, args ...string) ([]byte, error)
 // host names resolve to osd-ID; logical hosts/racks are simulated placement
 // domains on the same Docker engine, not physical failure domains.
 //
-// The shared-cluster gate is checked first, then the context, and the assembled
-// configuration is validated once before the topology lock is taken, before any
+// The context is checked first, then the assembled configuration is validated
+// once before the topology lock is taken, before any
 // OSD is registered and before any container exists. Topology operations are
 // serialized. An OSD returned with an error is tracked for cleanup and may be
 // inspected; no data is silently purged on failure. The image override is kept
 // in the OSD's recipe for DetachedOSD.Reopen.
 func (c *Container) AddOSD(ctx context.Context, configs ...OSDOptions) (*OSDContainer, error) {
-	if gateErr := c.sharedGate("AddOSD"); gateErr != nil {
-		return nil, gateErr
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -718,7 +701,7 @@ func (c *Container) assignOSDDeviceClass(ctx context.Context, osd *OSDContainer)
 }
 
 // removeOSD implements OSDContainer.Remove, which documents the behavior. The caller
-// admitted the shared-cluster policy; the handle is checked under the lock.
+// checks the handle under the topology lock.
 func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -907,9 +890,6 @@ func (c *Container) osdsLocked() []*OSDContainer {
 // ServiceContainers returns owned optional services (such as RGW or MDS),
 // sorted by service name. The cluster owns their cleanup.
 func (c *Container) ServiceContainers() []testcontainers.Container {
-	if c.sharedGate("ServiceContainers") != nil {
-		return nil
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.roster.sortedServices()
@@ -955,13 +935,7 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 // passed by the caller still takes precedence. From its start, also when it
 // then fails, Terminate refuses new native commands and cancels the running
 // ones, including the command of an rgw.Gateway.Admin call.
-//
-// A cluster that a SharedCluster shares refuses Terminate with
-// ErrSharedCluster; SharedCluster.Close ends it.
 func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
-	if err := c.sharedGate("Terminate"); err != nil {
-		return err
-	}
 	return c.terminate(ctx, opts...)
 }
 

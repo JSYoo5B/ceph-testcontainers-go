@@ -26,7 +26,7 @@ with rados.Rados(conffile="/etc/ceph/ceph.conf", conf={"rados_mon_op_timeout": "
 print("independent namespace image bytes verified in fresh native session")
 `
 
-const rbdNamespaceScopedProbe = `import rados, rbd, sys
+const rbdNamespaceScopedProbe = `import rados, rbd, subprocess, sys
 pool, entity, keyring = sys.argv[1:]
 patch = b"namespace-scoped-client-write"
 with rados.Rados(conffile="/etc/ceph/ceph.conf", name=entity,
@@ -52,7 +52,37 @@ with rados.Rados(conffile="/etc/ceph/ceph.conf", name=entity,
             pass
         else:
             raise AssertionError("namespace-scoped client wrote foreign namespace")
+    for command in (["rbd", "ls", "--pool", pool, "--namespace", "red"],
+                    ["rbd", "rm", "--no-progress", pool + "/red/shared"],
+                    ["rbd", "create", "--size", "8M", pool + "/denied-default"],
+                    ["rbd", "namespace", "create", "--pool", pool, "--namespace", "denied-namespace"],
+                    ["ceph", "osd", "blocklist", "add", "192.0.2.1:0/1", "60"]):
+        result = subprocess.run([command[0], "--id", entity.removeprefix("client."),
+                                 "--keyring", keyring, *command[1:]],
+                                capture_output=True, text=True, timeout=10)
+        output = result.stdout + result.stderr
+        assert result.returncode != 0 and any(denial in output for denial in
+            ("Operation not permitted", "EACCES", "EPERM", "access denied", "Permission denied")), output
 print("scoped native RBD write/read succeeded and cross-namespace operations were denied")
+`
+
+// A separate owned client dies with a native image open and its exclusive lock
+// held. The standalone test observes its watch before stopping it and waits
+// for that watch to disappear before explicitly removing the owned image.
+const rbdNamespaceKilledHolder = `import rados, rbd, sys, time
+pool, user = sys.argv[1:]
+cluster = rados.Rados(conffile="/etc/ceph/ceph.conf", rados_id=user)
+cluster.connect(timeout=10)
+io = cluster.open_ioctx(pool)
+io.set_namespace("blue")
+api = rbd.RBD()
+api.create(io, "held", 8 << 20, old_format=False,
+           features=rbd.RBD_FEATURE_LAYERING | rbd.RBD_FEATURE_EXCLUSIVE_LOCK)
+image = rbd.Image(io, "held")
+assert image.write(b"held" * 1024, 0) == 4096
+image.flush()
+print("RBD_NAMESPACE_HELD", flush=True)
+time.sleep(3600)
 `
 
 const rbdNamespaceReadOnlyProbe = `import errno, hashlib, json, rados, rbd, sys

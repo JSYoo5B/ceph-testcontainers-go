@@ -13,9 +13,6 @@ import (
 // keyring copies, waiting for topology and the configuration cache only while
 // ctx remains active. On error it returns the zero ConnectionConfig.
 func (c *Container) ConnectionConfig(ctx context.Context) (ConnectionConfig, error) {
-	if gateErr := c.sharedGate("ConnectionConfig"); gateErr != nil {
-		return ConnectionConfig{}, gateErr
-	}
 	if c == nil {
 		return ConnectionConfig{}, errors.New("ceph cluster is unavailable")
 	}
@@ -39,9 +36,6 @@ func (c *Container) ConnectionConfig(ctx context.Context) (ConnectionConfig, err
 // Managers returns sorted owned candidate descriptors. The slice is
 // independent; descriptors and their containers retain fixture ownership.
 func (c *Container) Managers(ctx context.Context) ([]*ManagerContainer, error) {
-	if gateErr := c.sharedGate("Managers"); gateErr != nil {
-		return nil, gateErr
-	}
 	if c == nil {
 		return nil, errors.New("ceph cluster is unavailable")
 	}
@@ -60,9 +54,6 @@ func (c *Container) Managers(ctx context.Context) ([]*ManagerContainer, error) {
 // Monitors returns the owned MON membership sorted by daemon name,
 // like Monitors, waiting for the topology only while ctx remains active.
 func (c *Container) Monitors(ctx context.Context) ([]*MonitorContainer, error) {
-	if gateErr := c.sharedGate("Monitors"); gateErr != nil {
-		return nil, gateErr
-	}
 	if c == nil {
 		return nil, errors.New("ceph cluster is unavailable")
 	}
@@ -76,9 +67,6 @@ func (c *Container) Monitors(ctx context.Context) ([]*MonitorContainer, error) {
 // OSDs returns the owned OSD descriptors sorted by ID, like OSDs,
 // waiting for the topology only while ctx remains active.
 func (c *Container) OSDs(ctx context.Context) ([]*OSDContainer, error) {
-	if gateErr := c.sharedGate("OSDs"); gateErr != nil {
-		return nil, gateErr
-	}
 	if c == nil {
 		return nil, errors.New("ceph cluster is unavailable")
 	}
@@ -93,9 +81,6 @@ func (c *Container) OSDs(ctx context.Context) ([]*OSDContainer, error) {
 // concurrent control-plane creation or termination publication wait by ctx.
 // The cluster owns the handle; this snapshot does not promise it remains live.
 func (c *Container) ControlContainer(ctx context.Context) (testcontainers.Container, error) {
-	if err := c.sharedGate("ControlContainer"); err != nil {
-		return nil, err
-	}
 	return c.controlContainerContext(ctx)
 }
 
