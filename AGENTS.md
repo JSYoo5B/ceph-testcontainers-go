@@ -11,7 +11,8 @@ For changes to Ceph behavioral bug compatibility, follow the
 
 ## Release notes
 
-A pull request does not edit `CHANGELOG.md` and does not add release-note
+Development branches do not carry `CHANGELOG.md`. Do not create, update or
+review development changelog entries. A pull request does not add release-note
 fragments, no-note declarations, compatibility ledgers, migration tables or
 upgrade guides. Record intent and validation in the pull request description.
 Before 1.0, a breaking change removes the old names without aliases. The

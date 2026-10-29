@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # (path, expected is_unread_doc). Every "read by a check" row names the check.
 TABLE = [
     # Documentation that no check reads.
-    ("README.md", True), ("CHANGELOG.md", True), ("AGENTS.md", True), ("LICENSE", True),
+    ("README.md", True), ("NOTES.md", True), ("AGENTS.md", True), ("LICENSE", True),
     ("docs/contributing/ci.md", True), ("docs/contributing/testing.md", True),
     ("docs/research/ceph-fuse-mount.md", True),
     ("docs/guides/errors.md", True),

@@ -30,7 +30,6 @@ PATTERNS = (
 # check them. A path ending in "/" is a prefix.
 ALLOWED = {
     "docs/design/api-naming/moves/227-image-role-overhaul.json": "historical API removal/addition accounting",
-    "CHANGELOG.md": "published release history",
     "docs/research/ceph-fuse-mount.md": "recorded measurement with the tag that ran",
     "docs/design/image-role-terminology.md": "design record that quotes the retired names",
     ".github/scripts/fixtures/cephfs-quiescence-native.source.go.txt": "retained producer source",

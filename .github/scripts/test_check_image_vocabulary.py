@@ -42,7 +42,7 @@ class VocabularyTest(unittest.TestCase):
     def test_historical_records_are_skipped_and_everything_else_is_scanned(self):
         with tempfile.TemporaryDirectory() as root:
             subprocess.check_call(["git", "init", "-q", root])
-            for path in ("CHANGELOG.md", "docs/guide.md", "ceph/a.go"):
+            for path in ("docs/design/api-naming/moves/227-image-role-overhaul.json", "docs/guide.md", "ceph/a.go"):
                 os.makedirs(os.path.dirname(os.path.join(root, path)) or root, exist_ok=True)
                 with open(os.path.join(root, path), "w") as handle:
                     handle.write("the control " + "image\n")

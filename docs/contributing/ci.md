@@ -42,8 +42,7 @@ default [network mode](#network-modes):
 
 Two things run every batch of those categories on the pull request instead:
 the `ci:full` label (adding it starts the run), and a release phase. A change
-that touches nothing but `docs/`, the top-level Markdown files (`README.md`,
-`CHANGELOG.md`), `LICENSE` or the go-ceph probe under
+that touches nothing but `docs/`, the top-level Markdown files (such as `README.md`), `LICENSE` or the go-ceph probe under
 `internal/integration/goceph/` runs only Code checks: no runtime batch reads
 those paths. Code checks skips most of its jobs for a smaller set of
 documentation (see [Documentation-only changes](#documentation-only-changes)).
@@ -134,7 +133,7 @@ that the text checks below still run. The job names are unchanged.
 
 A pull request is documentation-only when every changed file is on this
 allowlist, and the allowlist contains only files that no check reads:
-- `README.md`, `CHANGELOG.md`, any other top-level `*.md` file and `LICENSE`;
+- `README.md`, any other top-level `*.md` file and `LICENSE`;
 - Markdown files directly inside `docs/contributing/`, `docs/design/`, `docs/guides/` and `docs/research/`,
   except the files below.
 
