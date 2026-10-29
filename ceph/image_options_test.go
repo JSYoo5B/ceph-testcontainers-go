@@ -207,14 +207,20 @@ func TestRunImageSetMissingRoleIsRefusedWithoutFallback(t *testing.T) {
 func TestDocumentedSnippetsDoNotWrapGroupedOptionsTwice(t *testing.T) {
 	doubleWrap := regexp.MustCompile(`With(?:ImageOptions|OSDStorage|NetworkConfig)\(\s*(?:ceph\.)?With(?:ImageOptions|OSDStorage|NetworkConfig)\(`)
 	var files []string
-	for _, pattern := range []string{"*.go", "../docs/*.md", "../docs/guides/*.md"} {
+	// The upgrade guides that show grouped-carrier snippets are named one by one
+	// so that .github/scripts/docs_only.py can see that this test reads them.
+	for _, pattern := range []string{"*.go", "../docs/*.md",
+		"../docs/guides/upgrading-image-options.md",
+		"../docs/guides/upgrading-osd-storage.md",
+		"../docs/guides/upgrading-network-config.md",
+	} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			t.Fatal(err)
 		}
 		files = append(files, matches...)
 	}
-	if len(files) < 10 {
+	if len(files) < 13 {
 		t.Fatalf("scanned only %d files", len(files))
 	}
 	for _, file := range files {

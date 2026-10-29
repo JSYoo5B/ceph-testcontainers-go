@@ -56,7 +56,7 @@ func TestDualStackOrderConfigRequiresDualStack(t *testing.T) {
 	}
 	for _, family := range []AddressFamily{AddressIPv4, AddressIPv6, AddressIPv4MappedIPv6} {
 		cluster, err := Run(context.Background(), DefaultImage, WithNetworkConfig(NetworkConfig{}.WithAddressFamily(family)), WithConfigFile(path))
-		if cluster != nil || !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "ms_bind_prefer_ipv4, which requires WithNetworkConfig(NetworkConfig{}.WithAddressFamily(dual-stack))") {
+		if cluster != nil || !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "ms_bind_prefer_ipv4, which requires NetworkConfig.WithAddressFamily(dual-stack)") {
 			t.Fatalf("%s: Run accepted ms_bind_prefer_ipv4: %v", family, err)
 		}
 	}
@@ -76,7 +76,7 @@ func TestAddressFamilyOptions(t *testing.T) {
 	for name, opts := range map[string][]Option{
 		"host network":                    {WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressIPv6)), WithHostNetwork()},
 		"dual-stack host network":         {WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressDualStack)), WithHostNetwork()},
-		"mapped separate cluster network": {WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressIPv4MappedIPv6).WithSeparateClusterNetwork())},
+		"mapped separate cluster network": {WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressIPv4MappedIPv6)), WithNetworkConfig(NetworkConfig{}.WithSeparateClusterNetwork())},
 	} {
 		cluster, err := Run(context.Background(), DefaultImage, opts[0], opts[1])
 		if err == nil || cluster != nil || !strings.Contains(err.Error(), "NetworkConfig.WithAddressFamily") {

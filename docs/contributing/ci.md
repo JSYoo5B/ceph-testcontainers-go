@@ -162,6 +162,9 @@ show that `docs/changes/x.md` is a link to a code file:
   so a record added later is covered without a list entry;
 - `docs/guides/messenger-client-fixtures.md`: cross-checked against the
   messenger coverage manifest by a test in `internal/integration`;
+- `docs/guides/upgrading-image-options.md`, `upgrading-osd-storage.md` and
+  `upgrading-network-config.md`: scanned for a grouped option wrapped inside
+  another by `ceph.TestDocumentedSnippetsDoNotWrapGroupedOptionsTwice`;
 - `docs/guides/bug-compatibility-tags.md` and `.json`: the tag registry and
   its catalogue, read by `tag_scenarios.py` and its tests.
 

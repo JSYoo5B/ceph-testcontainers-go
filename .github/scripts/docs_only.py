@@ -25,6 +25,11 @@ UNREAD_DOC_DIRS = ("docs/changes", "docs/contributing", "docs/design", "docs/gui
 READ_DOC_FILES = frozenset((
     # internal/integration messenger coverage test cross-checks this guide.
     "docs/guides/messenger-client-fixtures.md",
+    # ceph.TestDocumentedSnippetsDoNotWrapGroupedOptionsTwice scans the upgrade
+    # guides that show grouped-option snippets.
+    "docs/guides/upgrading-image-options.md",
+    "docs/guides/upgrading-osd-storage.md",
+    "docs/guides/upgrading-network-config.md",
     # tag_scenarios tests compare the catalogue with the tag registry.
     "docs/guides/bug-compatibility-tags.md",
     # internal/tools/testdoublecheck reads the test-double inventory.
