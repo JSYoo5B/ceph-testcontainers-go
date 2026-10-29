@@ -146,12 +146,7 @@ func TestAddOSDRefusesBeforeLockAndRegistration(t *testing.T) {
 	if osd, err := newCluster().AddOSD(canceled, conflicting...); osd != nil || !errors.Is(err, context.Canceled) || errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("canceled context: %v %v", osd, err)
 	}
-	// The shared gate is checked before both.
-	shared := newCluster()
-	shared.sharing.Store(int32(sharedWithTenants))
-	if osd, err := shared.AddOSD(canceled, conflicting...); osd != nil || !errors.Is(err, ErrSharedCluster) {
-		t.Fatalf("shared gate: %v %v", osd, err)
-	}
+
 }
 
 // No argument and an explicit default placement resolve to the same location.

@@ -31,8 +31,7 @@ func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
 		kind    error
 		want    string
 	}{
-		"nil cluster":    {nilC: true, setting: good, kind: ceph.ErrInvalidRequest, want: "the cluster is nil"},
-		"shared cluster": {config: &testhelper.TestConfig{Shared: true}, setting: good, kind: ceph.ErrSharedCluster},
+		"nil cluster": {nilC: true, setting: good, kind: ceph.ErrInvalidRequest, want: "the cluster is nil"},
 		"ended context": {setting: good, want: "context canceled", ctx: func() context.Context {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
@@ -71,7 +70,7 @@ func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
 			if test.want != "" && !strings.Contains(err.Error(), test.want) {
 				t.Errorf("error %q lacks %q", err, test.want)
 			}
-			if test.nilC || errors.Is(test.kind, ceph.ErrSharedCluster) {
+			if test.nilC {
 				var op *ceph.OperationError
 				if !errors.As(err, &op) || op.Op != "override.SetDebugLevel" {
 					t.Errorf("error %v does not carry the operation", err)

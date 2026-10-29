@@ -13,28 +13,26 @@ import (
 )
 
 // This file guards the shared construction of the invalid-request error
-// (docs/design/shared-harness-boundary.md, "Error handling"). The rbd, cephfs,
+// used by the rbd, cephfs,
 // rgw and the two mirror packages each used to keep a copy of
 //
 //	func invalid(err error) error { return &ceph.OperationError{Kind: ceph.ErrInvalidRequest, Err: err} }
 //
-// and now call internal/harnesshook.Invalid, which reaches the one construction
+// and now call internal/servicehook.Invalid, which reaches the one construction
 // in package ceph. The tests run without Docker.
 
 // invalidCallSites is the number of non-test call sites of the former
 // per-package invalid function, measured by AST at the commit before the
 // replacement. The replacement keeps every call site.
 //
-// The tenant adapters moved to the service harness packages, so each count is
-// split between the service package and its harness package; the sums are
-// those of the commit before the replacement (32, 67 and 62).
+// Counts cover the retained standalone service callers.
 var invalidCallSites = map[string]int{
-	"rbd": 28, "rbd/harness": 4, "cephfs": 60, "cephfs/harness": 7, "rgw": 58, "rgw/harness": 4,
+	"rbd": 28, "cephfs": 60, "rgw": 58,
 	"rbd/mirror": 28, "cephfs/mirror": 15,
 }
 
 // countInvalidCalls counts, in the non-test files of dir, the calls of a bare
-// invalid(...) and of harnesshook.Invalid(...).
+// invalid(...) and of servicehook.Invalid(...).
 func countInvalidCalls(t *testing.T, dir string) (bare, shared int) {
 	t.Helper()
 	for name, src := range nonTestSources(t, dir) {
@@ -53,7 +51,7 @@ func countInvalidCalls(t *testing.T, dir string) (bare, shared int) {
 					bare++
 				}
 			case *ast.SelectorExpr:
-				if id, ok := fn.X.(*ast.Ident); ok && id.Name == "harnesshook" && fn.Sel.Name == "Invalid" {
+				if id, ok := fn.X.(*ast.Ident); ok && id.Name == "servicehook" && fn.Sel.Name == "Invalid" {
 					shared++
 				}
 			}
@@ -67,11 +65,11 @@ func TestInvalidCallSitesAllUseTheSharedConstruction(t *testing.T) {
 	for dir, want := range invalidCallSites {
 		bare, shared := countInvalidCalls(t, filepath.Join("..", filepath.FromSlash(dir)))
 		if bare != 0 || shared != want {
-			t.Errorf("%s: bare invalid calls = %d, harnesshook.Invalid calls = %d, want 0 and %d", dir, bare, shared, want)
+			t.Errorf("%s: bare invalid calls = %d, servicehook.Invalid calls = %d, want 0 and %d", dir, bare, shared, want)
 		}
 	}
 	// Negative controls: the counter sees both shapes.
-	bare, shared := countCallsIn(t, "package p\nfunc f() { _ = invalid(nil); _ = harnesshook.Invalid(nil) }")
+	bare, shared := countCallsIn(t, "package p\nfunc f() { _ = invalid(nil); _ = servicehook.Invalid(nil) }")
 	if bare != 1 || shared != 1 {
 		t.Fatalf("the counter missed a call shape: %d %d", bare, shared)
 	}
@@ -119,11 +117,11 @@ func TestInvalidConstructionBodiesAreTheFormerCopy(t *testing.T) {
 	if got, want := bodyOf(t, read(".", "errors.go"), "invalidRequest"), "{ return newInvalid(fmt.Errorf(format, args...)) }"; got != want {
 		t.Errorf("invalidRequest body = %q, want %q", got, want)
 	}
-	if got, want := bodyOf(t, read(".", "harness_hooks.go"), "Invalid"), "{ return newInvalid(err) }"; got != want {
-		t.Errorf("harnessHooks.Invalid body = %q, want %q", got, want)
+	if got, want := bodyOf(t, read(".", "service_hooks.go"), "Invalid"), "{ return newInvalid(err) }"; got != want {
+		t.Errorf("serviceHooks.Invalid body = %q, want %q", got, want)
 	}
-	if got, want := bodyOf(t, read(filepath.Join("..", "internal", "harnesshook"), "harnesshook.go"), "Invalid"), "{ return get().Invalid(err) }"; got != want {
-		t.Errorf("harnesshook.Invalid body = %q, want %q", got, want)
+	if got, want := bodyOf(t, read(filepath.Join("..", "internal", "servicehook"), "servicehook.go"), "Invalid"), "{ return get().Invalid(err) }"; got != want {
+		t.Errorf("servicehook.Invalid body = %q, want %q", got, want)
 	}
 	// Negative control: the comparison tells a classify-based body (which
 	// returns nil for a nil error) from the construction.
@@ -132,8 +130,8 @@ func TestInvalidConstructionBodiesAreTheFormerCopy(t *testing.T) {
 	}
 }
 
-func TestCoreDoesNotImportTheHarnessContract(t *testing.T) {
-	if slices.Contains(moduleImports(t, "."), "internal/harnesshook") {
-		t.Fatal("package ceph imports internal/harnesshook; the contract is registered through internal/hookreg")
+func TestCoreDoesNotImportTheServiceContract(t *testing.T) {
+	if slices.Contains(moduleImports(t, "."), "internal/servicehook") {
+		t.Fatal("package ceph imports internal/servicehook; the contract is registered through internal/hookreg")
 	}
 }

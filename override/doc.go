@@ -14,9 +14,6 @@
 // native command may have been applied) returns a real handle together with
 // the error, and its Restore still undoes the change.
 //
-// Every function admits the cluster like a method of ceph.Container does: a
-// cluster that a SharedCluster lends to tenants refuses the call with
-// ceph.ErrSharedCluster, and a cluster lent to one exclusive lease accepts it.
 // A nil cluster is refused with ceph.ErrInvalidRequest.
 //
 // The package imports ceph; ceph never imports it.

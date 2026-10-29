@@ -120,27 +120,3 @@ func TestObserverLockedQueriesKeepTheirOwnTopologyLockAcquisition(t *testing.T) 
 		}
 	}
 }
-
-func TestObserverLockedQueriesValidateTheTenantLeaseOnEveryQuery(t *testing.T) {
-	lease, ctr := leaseObservable(t)
-	ctr.set(observerOSDDumpKey, observerOSDDump)
-	observer := lease.observer()
-	if flags, err := observer.OSDFlags(t.Context()); err != nil || len(flags) != 2 {
-		t.Fatalf("live tenant flags = %v, %v", flags, err)
-	}
-	before := len(ctr.commands())
-	lease.release()
-	check := func(when string) {
-		for name, query := range lockedQueries(observer) {
-			if err := query(t.Context()); !errors.Is(err, ErrInvalidRequest) {
-				t.Errorf("%s %s returned %v, want ErrInvalidRequest", name, when, err)
-			}
-		}
-		if after := len(ctr.commands()); after != before {
-			t.Fatalf("%s: %d commands ran", when, after-before)
-		}
-	}
-	check("after release")
-	lease.terminate()
-	check("after release and termination")
-}

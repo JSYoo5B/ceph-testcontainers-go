@@ -231,19 +231,6 @@ func TestAddBlocklistNilClusterReturnsNotAppliedHandle(t *testing.T) {
 	}
 }
 
-func TestAddBlocklistSharedClusterIsRefusedBeforeAnyEffect(t *testing.T) {
-	native := &blocklistFixture{entries: map[string]time.Time{}}
-	c := testhelper.TestCluster(native, testhelper.TestConfig{Shared: true, StartupTimeout: time.Second})
-	handle, err := AddBlocklist(t.Context(), c, "not an address", 0)
-	var op *ceph.OperationError
-	if !errors.Is(err, ceph.ErrSharedCluster) || !errors.As(err, &op) || op.Op != "override.AddBlocklist" {
-		t.Fatalf("a shared cluster was not refused with its class and Op: %v", err)
-	}
-	if handle == nil || handle.state.refused == nil || native.commands != 0 {
-		t.Fatalf("a refusal returned %+v after %d commands", handle, native.commands)
-	}
-}
-
 func TestNotAppliedBlocklistRestoreIsANoOpThatTakesNoLock(t *testing.T) {
 	c, native := newBlocklistFixture(t)
 	native.entries[blocklistTestAddress] = time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)

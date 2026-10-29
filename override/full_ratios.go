@@ -58,8 +58,7 @@ func notAppliedFullRatios(cause error) (*FullRatiosHandle, error) {
 //
 // The handle is non-nil for every outcome. A refusal returns a not-applied
 // handle whose Restore is a no-op (see FullRatiosHandle). A nil cluster is
-// refused with ceph.ErrInvalidRequest and a cluster that a SharedCluster shares
-// with ceph.ErrSharedCluster, both with Op "override.SetFullRatios". A call that
+// refused with ceph.ErrInvalidRequest and Op "override.SetFullRatios". A call that
 // fails after the override was tracked, from the first native step on, returns
 // the real handle with the error.
 func SetFullRatios(ctx context.Context, c *ceph.Container, requested ceph.FullRatios) (*FullRatiosHandle, error) {
@@ -67,9 +66,7 @@ func SetFullRatios(ctx context.Context, c *ceph.Container, requested ceph.FullRa
 	if c == nil {
 		return notAppliedFullRatios(&ceph.OperationError{Kind: ceph.ErrInvalidRequest, Op: op, Err: errors.New("the cluster is nil")})
 	}
-	if err := overridehook.Admit(c, op); err != nil {
-		return notAppliedFullRatios(err)
-	}
+
 	if err := ctx.Err(); err != nil {
 		return notAppliedFullRatios(err)
 	}

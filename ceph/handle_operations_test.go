@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
@@ -269,102 +267,6 @@ func TestPoolHandleFromAFailedCreationBindsOnFirstUse(t *testing.T) {
 
 // sharedHandleReceivers maps the prefix of an entry of sharedHandlePolicies to
 // the handle type whose method it classifies.
-var sharedHandleReceivers = map[string]reflect.Type{
-	"OSDContainer":     reflect.TypeFor[*OSDContainer](),
-	"DetachedOSD":      reflect.TypeFor[*DetachedOSD](),
-	"MonitorContainer": reflect.TypeFor[*MonitorContainer](),
-	"ManagerContainer": reflect.TypeFor[*ManagerContainer](),
-	"Pool":             reflect.TypeFor[*Pool](),
-	"ClientConfig":     reflect.TypeFor[*ClientConfig](),
-	"Observer":         reflect.TypeFor[*Observer](),
-}
-
-// TestSharedGateClassifiesEveryHandleOperation fails for an operation of a
-// handle that has no policy, and checks that a shared cluster refuses every
-// operation that is not open before it touches the cluster.
-func TestSharedGateClassifiesEveryHandleOperation(t *testing.T) {
-	embedded := reflect.TypeFor[testcontainers.Container]()
-	for prefix, typ := range sharedHandleReceivers {
-		for method := range typ.Methods() {
-			if _, promoted := embedded.MethodByName(method.Name); promoted {
-				continue
-			}
-			switch method.Name {
-			case "ID", "UUID", "ClusterFSID", "Placement", "ConnectionConfig", "Name", "User", "KeyringPath", "String", "GoString":
-				continue // read accessors that never touch the cluster
-			}
-			if _, ok := sharedHandlePolicies[prefix+"."+method.Name]; !ok {
-				t.Errorf("(%s).%s has no shared-cluster policy in sharedHandlePolicies", typ, method.Name)
-			}
-		}
-	}
-	shared := &Container{}
-	shared.sharing.Store(int32(sharedWithTenants))
-	handles := map[string]reflect.Value{
-		"OSDContainer":     reflect.ValueOf(&OSDContainer{ID: 1, owner: shared}),
-		"DetachedOSD":      reflect.ValueOf(&DetachedOSD{cluster: shared, id: 1}),
-		"MonitorContainer": reflect.ValueOf(&MonitorContainer{DaemonName: "b", owner: shared}),
-		"ManagerContainer": reflect.ValueOf(&ManagerContainer{DaemonName: "b", owner: shared}),
-		"Pool":             reflect.ValueOf(&Pool{PoolConfig: PoolConfig{Name: "p"}, owner: shared, ident: &poolIdentity{}}),
-		"ClientConfig":     reflect.ValueOf(&ClientConfig{owner: shared, name: "client.x"}),
-		"Observer":         reflect.ValueOf(&Observer{}),
-	}
-	errorType := reflect.TypeFor[error]()
-	for op, policy := range sharedHandlePolicies {
-		prefix, name, _ := strings.Cut(op, ".")
-		method := handles[prefix].MethodByName(name)
-		if !method.IsValid() {
-			t.Errorf("sharedHandlePolicies classifies %s, which does not exist", op)
-			continue
-		}
-		if policy == sharedOpen {
-			continue
-		}
-		t.Run(op, func(t *testing.T) {
-			var results []reflect.Value
-			func() {
-				defer func() {
-					if recovered := recover(); recovered != nil {
-						t.Fatalf("%s ran past the gate on a shared cluster: %v", op, recovered)
-					}
-				}()
-				results = method.Call(zeroArguments(method.Type()))
-			}()
-			refused := false
-			for _, result := range results {
-				if result.Type() != errorType {
-					if !result.IsZero() {
-						t.Fatalf("%s returned %v on a shared cluster", op, result)
-					}
-					continue
-				}
-				err, _ := result.Interface().(error)
-				var operation *OperationError
-				if !errors.Is(err, ErrSharedCluster) || !errors.As(err, &operation) || operation.Op != op {
-					t.Fatalf("%s returned %v, want ErrSharedCluster naming the operation", op, err)
-				}
-				refused = true
-			}
-			if !refused {
-				t.Fatalf("%s was not refused", op)
-			}
-		})
-	}
-	// An exclusive lease may use every operation but those that end the cluster.
-	shared.sharing.Store(int32(sharedExclusively))
-	for op := range sharedHandlePolicies {
-		if err := shared.admitHandle(op); err != nil {
-			t.Errorf("an exclusive lease was refused %s: %v", op, err)
-		}
-	}
-	if err := shared.admitHandle("Pool.Unclassified"); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("an unclassified operation was admitted: %v", err)
-	}
-	if sharedHandlePolicies["Pool.Status"] != sharedOpen {
-		t.Fatal("reading a pool is open on a shared cluster")
-	}
-}
-
 // listingContainer answers each native pool listing from listings in turn, or
 // fails it when the entry is empty, and repeats the last entry.
 type listingContainer struct {

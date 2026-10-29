@@ -56,7 +56,6 @@ const (
 type Token struct{ entry any }
 
 type hooks interface {
-	Admit(c *ceph.Container, op string) error
 	WithTopology(ctx context.Context, c *ceph.Container, fn func() error) error
 	WithTopologyNoContext(c *ceph.Container, fn func())
 	Ready(c *ceph.Container) error
@@ -133,12 +132,6 @@ func get() hooks {
 	}
 	return h
 }
-
-// Admit refuses the override operation op ("override.AddBlocklist" and so
-// on) while a SharedCluster shares c, with the policy of the method that it
-// replaced. An operation without a policy is refused, even on a cluster of
-// its own, with ceph.ErrInvalidRequest. A nil cluster is not refused here.
-func Admit(c *ceph.Container, op string) error { return get().Admit(c, op) }
 
 // WithTopology runs fn with the cluster mutex held, unless ctx ends first.
 func WithTopology(ctx context.Context, c *ceph.Container, fn func() error) error {

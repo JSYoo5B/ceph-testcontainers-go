@@ -2,15 +2,12 @@ package ceph
 
 import "context"
 
-// cluster admits op for the shared-cluster policy and returns the cluster
-// that created the identity.
+// cluster returns the cluster that created the identity.
 func (client *ClientConfig) cluster(op string) (*Container, error) {
 	if client == nil || client.owner == nil {
 		return nil, invalidRequest("%s: the client descriptor does not come from a cluster; obtain it from Container.CreateClient", op)
 	}
-	if err := client.owner.admitHandle(op); err != nil {
-		return nil, err
-	}
+
 	return client.owner, nil
 }
 

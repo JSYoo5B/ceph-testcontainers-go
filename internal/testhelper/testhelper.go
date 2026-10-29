@@ -18,7 +18,6 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/faulthook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/overridehook"
@@ -28,7 +27,7 @@ import (
 // unitHooks is the seam that package ceph registers in hookreg.Test.
 type unitHooks interface {
 	UnitCluster(control testcontainers.Container, startupTimeout time.Duration, closed, hostNetwork bool,
-		publicAddress, networkName string, shared bool, osds int, placement ceph.OSDConfig, memStore bool,
+		publicAddress, networkName string, osds int, placement ceph.OSDConfig, memStore bool,
 		mode ceph.MessengerMode, images *ceph.ImageSet) *ceph.Container
 	UnitState(c *ceph.Container) (mu *sync.Mutex, control, config *sync.RWMutex, portLeases int)
 	UnitSetClosed(c *ceph.Container, closed bool)
@@ -66,7 +65,6 @@ type TestConfig struct {
 	HostNetwork    bool
 	PublicAddress  string
 	NetworkName    string
-	Shared         bool
 	// OSDs adds owned OSD descriptors 0..OSDs-1 whose container is control
 	// and whose CRUSH location is OSDPlacement.
 	OSDs         int
@@ -92,7 +90,7 @@ type TestStateView struct {
 // TestCluster builds a cluster value for unit tests: control runs the CLI.
 func TestCluster(control testcontainers.Container, c TestConfig) *ceph.Container {
 	return get().UnitCluster(control, c.StartupTimeout, c.Closed, c.HostNetwork, c.PublicAddress, c.NetworkName,
-		c.Shared, c.OSDs, c.OSDPlacement, c.MemStore, c.MessengerMode, c.Images)
+		c.OSDs, c.OSDPlacement, c.MemStore, c.MessengerMode, c.Images)
 }
 
 // TestState exposes a cluster's lock identities to unit tests.
@@ -164,19 +162,6 @@ func TestSetCephFSImage(c *ceph.Container, image string) { get().UnitSetCephFSIm
 // TestClientState returns a client identity's owner and lifecycle flags.
 func TestClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool) {
 	return get().UnitClientState(client)
-}
-
-// TestTenantCluster returns the shared cluster of a live tenant, or nil. Its
-// gate refuses the methods that a tenant cannot use. The service adapters use
-// servicehook.Tenant and never this.
-func TestTenantCluster(t *harness.Tenant) *ceph.Container {
-	h, ok := hookreg.HarnessTenant.(interface {
-		TenantCluster(t *harness.Tenant) *ceph.Container
-	})
-	if !ok {
-		panic("testhelper: package ceph/harness did not register its tenant hooks")
-	}
-	return h.TenantCluster(t)
 }
 
 // TestApply applies options to empty settings and returns the service

@@ -261,7 +261,6 @@ func (fx *verifyFixture) activate(t *testing.T) *Verification {
 
 func (fx *verifyFixture) wire(v *Verification) {
 	v.cluster, v.images = "cluster-id", ImageSet{Essential: "example.invalid/ceph:test"}
-	v.admit = func() error { return nil }
 	v.snapshot = func(context.Context) (diagnosticsSnapshot, error) { return fx.snapshot, nil }
 	v.docker = func(context.Context) (verificationDocker, func(), error) { return fx.docker, func() {}, nil }
 }
@@ -932,26 +931,6 @@ func TestFinalizationVerifyRefusals(t *testing.T) {
 	}
 	if _, err := (&Finalization{}).Verify(t.Context(), VerificationConfig{}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("finalization without a cluster: %v", err)
-	}
-}
-
-// A shared cluster refuses activation, even when one test holds it
-// exclusively, and refuses evaluation once it becomes shared.
-func TestVerificationRefusesSharedClusters(t *testing.T) {
-	for _, mode := range []sharingMode{sharedWithTenants, sharedExclusively} {
-		cluster := &Container{startup: newStartupIdentity("owner")}
-		cluster.sharing.Store(int32(mode))
-		if _, err := cluster.startVerification(t.Context(), VerificationConfig{}); !errors.Is(err, ErrSharedCluster) {
-			t.Fatalf("mode %d: %v", mode, err)
-		}
-	}
-	cluster := &Container{startup: newStartupIdentity("owner")}
-	fx := newVerifyFixture()
-	v := fx.activate(t)
-	v.admit = func() error { return cluster.admitShared("Finalization.Verify", sharedRefused) }
-	cluster.sharing.Store(int32(sharedWithTenants))
-	if _, err := v.Evaluate(t.Context()); !errors.Is(err, ErrSharedCluster) {
-		t.Fatalf("evaluation on a shared cluster: %v", err)
 	}
 }
 

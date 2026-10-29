@@ -33,11 +33,6 @@ var overrideKindNames = map[string]faultKind{
 	"OSDFlag":    faultOSDFlag,
 }
 
-// Admit refuses the override operation op while a SharedCluster shares c,
-// with the policy of sharedOverridePolicies. An operation without a policy
-// is refused.
-func (overrideHooks) Admit(c *Container, op string) error { return c.admitOverride(op) }
-
 // WithTopology runs fn with the cluster mutex held, unless ctx ends first.
 func (overrideHooks) WithTopology(ctx context.Context, c *Container, fn func() error) error {
 	if err := c.lockTopology(ctx); err != nil {

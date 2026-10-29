@@ -26,18 +26,11 @@ import (
 func TestRegistryThroughHooks(t *testing.T) {
 	c := testhelper.TestCluster(nil, testhelper.TestConfig{StartupTimeout: 3 * time.Second})
 	ctx := t.Context()
-	if err := overridehook.Admit(c, "override.AddBlocklist"); err != nil {
-		t.Fatalf("a cluster of its own refused an override: %v", err)
-	}
-	if err := overridehook.Admit(c, "override.SetMGRModule"); err != nil {
-		t.Fatalf("a cluster of its own refused the MGR module override: %v", err)
-	}
+
 	if !overridehook.ValidMGRModuleName("mirroring") || overridehook.ValidMGRModuleName("--force") {
 		t.Fatal("the MGR module name check changed")
 	}
-	if err := overridehook.Admit(c, "override.Unclassified"); !errors.Is(err, ceph.ErrInvalidRequest) {
-		t.Fatalf("an unclassified override was admitted: %v", err)
-	}
+
 	if got := overridehook.StartupTimeout(c); got != 3*time.Second {
 		t.Fatalf("startup timeout %v", got)
 	}
@@ -175,13 +168,7 @@ type inertControl struct{ testcontainers.Container }
 func TestDebugHooks(t *testing.T) {
 	ctx := t.Context()
 	c := testhelper.TestCluster(inertControl{}, testhelper.TestConfig{StartupTimeout: time.Second, OSDs: 1})
-	if err := overridehook.Admit(c, "override.SetDebugLevel"); err != nil {
-		t.Fatalf("a cluster of its own refused SetDebugLevel: %v", err)
-	}
-	shared := testhelper.TestCluster(nil, testhelper.TestConfig{Shared: true})
-	if err := overridehook.Admit(shared, "override.SetDebugLevel"); !errors.Is(err, ceph.ErrSharedCluster) {
-		t.Fatalf("a shared cluster admitted SetDebugLevel: %v", err)
-	}
+
 	if target, err := overridehook.OpenDebugTarget(ctx, c, "osd.0"); err != nil || target == nil {
 		t.Fatalf("an owned OSD: %v %v", target, err)
 	}

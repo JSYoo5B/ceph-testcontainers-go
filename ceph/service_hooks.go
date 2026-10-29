@@ -271,3 +271,6 @@ func (serviceHooks) SettleClient(ctx context.Context, c *Container, client *Clie
 func (serviceHooks) MonitorAddresses(status QuorumStatus) (string, error) {
 	return monitorBootstrapAddresses(status)
 }
+
+// Invalid classifies a refused request from a service package.
+func (serviceHooks) Invalid(err error) error { return newInvalid(err) }

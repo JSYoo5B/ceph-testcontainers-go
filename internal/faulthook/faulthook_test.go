@@ -13,12 +13,7 @@ import (
 func TestRegistryThroughHooks(t *testing.T) {
 	c := testhelper.TestCluster(nil, testhelper.TestConfig{})
 	ctx := t.Context()
-	if err := faulthook.Admit(c, "fault.Pause"); err != nil {
-		t.Fatalf("a cluster of its own refused a fault: %v", err)
-	}
-	if err := faulthook.Admit(c, "fault.Unclassified"); !errors.Is(err, ceph.ErrInvalidRequest) {
-		t.Fatalf("an unclassified fault was admitted: %v", err)
-	}
+
 	type handle struct{ done bool }
 	var first faulthook.Token
 	held := &handle{}

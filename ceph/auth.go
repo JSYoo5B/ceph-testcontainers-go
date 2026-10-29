@@ -118,9 +118,6 @@ func clientCapArgs(caps ClientCaps) ([]string, error) {
 // The key has the cluster's AuthConfig.KeyType, the release default without
 // one, or the type that WithClientKeyType selects.
 func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCaps, opts ...ClientOption) (*ClientConfig, error) {
-	if err := c.sharedGate("CreateClient"); err != nil {
-		return nil, err
-	}
 	return c.createClient(ctx, name, caps, opts...)
 }
 
@@ -234,9 +231,6 @@ func clientConfigBytes(base []byte, client *ClientConfig) []byte {
 // Caller owns the attached container and must terminate it before the cluster.
 // The options customize the container's ceph.conf.
 func (c *Container) WithClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption {
-	if err := c.sharedGate("WithClientIdentity"); err != nil {
-		return func(*testcontainers.GenericContainerRequest) error { return err }
-	}
 	return c.withClientIdentity(client, opts...)
 }
 
