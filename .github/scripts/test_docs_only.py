@@ -19,7 +19,7 @@ TABLE = [
     ("docs/contributing/ci.md", True), ("docs/contributing/testing.md", True),
     ("docs/guides/host-network.md", True),
     ("docs/guides/errors.md", True),
-    ("docs/design/osd-storage.md", True), ("docs/design/messenger-evidence.md", True),
+    ("docs/design/osd-storage.md", True), ("docs/design/mon-volume-storage.md", True),
     # Read by internal/apiinventory (package pages name every export).
     ("ceph/README.md", False), ("fault/README.md", False), ("rbd/mirror/README.md", False),
     ("cephfs/README.md", False), ("rgw/multisite/README.md", False), ("capture/README.md", False),
@@ -36,7 +36,7 @@ TABLE = [
     # Read by internal/apiinventory (the review note that a receipt names).
     ("docs/design/value-configuration-composition.md", False),
     # Read by tag_scenarios (registry) and its tests (catalogue).
-    ("docs/guides/bug-compatibility-tags.json", False), ("docs/guides/bug-compatibility-tags.md", False),
+    ("docs/guides/bug-compatibility-tags.json", False), ("docs/guides/bug-compatibility.md", False),
     # Not on the allowlist: data files, new top-level pages, nested paths, other trees.
     ("docs/contributing/results.json", False), ("docs/new-package.md", False),
     ("docs/research/notes.md", False),

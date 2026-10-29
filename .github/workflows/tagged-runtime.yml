@@ -60,7 +60,7 @@ on:
         default: 256
         type: number
       bug_compatibility:
-        description: Comma-separated registered ceph_bug_<id> tags (docs/guides/bug-compatibility-tags.md); empty selects every ordinary path. Plan refuses an invalid selection before any runtime job starts
+        description: Comma-separated registered ceph_bug_<id> tags (docs/guides/bug-compatibility.md); empty selects every ordinary path. Plan refuses an invalid selection before any runtime job starts
         default: ''
         type: string
 

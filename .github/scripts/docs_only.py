@@ -22,8 +22,8 @@ UNREAD_DOC_DIRS = ("docs/contributing", "docs/design", "docs/guides")
 READ_DOC_FILES = frozenset((
     # internal/integration messenger coverage test cross-checks this guide.
     "docs/guides/messenger-client-fixtures.md",
-    # tag_scenarios tests compare the catalogue with the tag registry.
-    "docs/guides/bug-compatibility-tags.md",
+    # tag_scenarios tests compare its registered tags with the tag registry.
+    "docs/guides/bug-compatibility.md",
     # internal/tools/testdoublecheck reads the test-double inventory.
     "docs/contributing/test-double-inventory.md",
     # The ceph, cephfs/mirror and rbd/mirror catalogue receipts name this note

@@ -9,8 +9,7 @@ observes one endpoint, not a cluster.
 
 A capture supports one explicitly selected endpoint on a user-defined bridge,
 one file, no rotation and no host-network capture. It never follows its target
-across a restart. The session lifecycle and the file check are described in the
-[design note](../docs/design/packet-capture.md).
+across a restart.
 
 ## Start
 
@@ -140,6 +139,12 @@ than `FileValid`. `ByteOrder`, `TimestampUnit`, `VersionMajor`, `VersionMinor`,
 and `TruncatedPackets` those captured shorter than their original length,
 which is snaplen truncation, not a malformed file. `SHA256` covers exactly
 `BytesRead`; only when `Complete` is true does it identify the whole file.
+
+The check reads with two bounds, the file size and one record's captured
+length. A record's declared length is compared with them before anything is
+read, and record data streams through the digest without being held, so a
+hostile length can neither allocate nor read its declared size. Read errors are
+returned as errors, never as a verdict.
 
 The report carries JSON field tags for delivery. A pcap holds payloads,
 addresses and identifiers; text and JSON redaction do not sanitize it, so

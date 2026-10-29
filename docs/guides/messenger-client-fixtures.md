@@ -619,8 +619,9 @@ python3 .github/scripts/messenger_reference.py generate --source ~/ceph \
   --output internal/integration/testdata/messenger_reference.json
 ```
 
-The [declaration/native-case evidence join](../design/messenger-evidence.md)
-connects reference declarations to validated receipts.
+The declaration/native-case evidence join, which connects reference
+declarations to validated receipts, is documented in
+[`messenger_evidence.py`](../../.github/scripts/messenger_evidence.py).
 
 ## Differences from a single-container bootstrap
 

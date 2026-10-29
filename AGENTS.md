@@ -34,7 +34,7 @@ a new version when needed. Use maintained source paths, test names and release
 tags when explaining behavior.
 
 For changes to Ceph behavioral bug compatibility, follow the
-[compatibility policy](docs/contributing/bug-compatibility.md).
+[compatibility policy](docs/guides/bug-compatibility.md).
 
 ## Release notes
 

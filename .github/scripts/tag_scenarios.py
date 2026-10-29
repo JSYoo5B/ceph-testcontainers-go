@@ -88,7 +88,7 @@ GO_TOOL_TAGS = frozenset(("cgo", "gc", "gccgo", "unix", "race", "msan", "asan", 
 # the same lines for per-test durations.
 RUN_LINE = re.compile(r"=== RUN\s+(Test\S+)")
 RESULT_LINE = re.compile(r"\s*--- (PASS|FAIL|SKIP): (Test\S+) \(([0-9.]+)s\)")
-# Ceph bug compatibility tags (docs/contributing/bug-compatibility.md) select
+# Ceph bug compatibility tags (docs/guides/bug-compatibility.md) select
 # an implementation path, never tests. Only an explicit, registered selection
 # enables one; discovery never collects them as capabilities.
 BUG_TAG_PREFIX = "ceph_bug_"

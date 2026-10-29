@@ -1,26 +1,3 @@
-// Command lintcalibration runs the metric linters of issue #226 (cyclop, dupl,
-// funlen, gocognit) through golangci-lint with a report-only configuration that
-// keeps every diagnostic, and prints them grouped by source location.
-//
-//	lintcalibration report [-dir MODULE_ROOT] [-golangci-lint PATH] [-format json|tsv] [PACKAGE_PATTERN...]
-//	lintcalibration pair -base RAW.json -head RAW.json -base-ref ID -head-ref ID [-base-dir SNAPSHOT] [-head-dir SNAPSHOT] [-format json|tsv]
-//
-// Why a separate configuration: golangci-lint's uniq-by-line processor keys
-// only by file and line, not by linter, and its default caps drop issues beyond
-// 50 per linter and three identical texts. A combined comparison made through
-// those defaults can hide a second metric reported at the same location. The
-// embedded configuration turns all three off. It does not touch the
-// repository's own .golangci.yml and nothing gates on its output.
-//
-// The report records the golangci-lint version that ran, whether it equals the
-// version pinned by Code CI, and a digest of the configuration, and lists the
-// linters the binary reported as enabled. Nothing is committed or written to
-// the module.
-//
-// The pair subcommand (pair.go) joins two such raw collections into a focused
-// delta and keeps the raw collections as the evidence.
-//
-// See docs/contributing/lint-calibration.md.
 package main
 
 import (

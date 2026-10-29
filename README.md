@@ -159,6 +159,8 @@ Guides for tasks that span packages:
 - [Classified errors](docs/guides/errors.md): telling a refused request, a
   feature the release lacks, a missing image tool, an engine limit and a
   failed native command apart with `errors.Is` and `errors.As`.
+- [Bug compatibility](docs/guides/bug-compatibility.md): the registered
+  `ceph_bug_<id>` tags and the policy for adding one.
 
 For contributors:
 
@@ -166,8 +168,6 @@ For contributors:
   integration tests.
 - [CI](docs/contributing/ci.md): the GitHub Actions workflows and how to read a
   failing batch.
-- [Behavioral bug compatibility](docs/contributing/bug-compatibility.md): explicit
-  bug-ID selection policy.
 - [Preparing a release](docs/contributing/releasing.md): the scope, evidence
   and publication checks for a candidate.
 

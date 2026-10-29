@@ -107,7 +107,7 @@ allowlist:
   catalogues that `internal/apiinventory` compares with the code),
   `docs/design/value-configuration-composition.md`,
   `docs/guides/messenger-client-fixtures.md`,
-  `docs/guides/bug-compatibility-tags.md` and
+  `docs/guides/bug-compatibility.md` and
   `docs/contributing/test-double-inventory.md`.
 
 Every other path runs the full Code checks, including a package's
@@ -226,7 +226,7 @@ planner requires the batches of a checker to cover every mode and kind.
 ### Bug compatibility selection
 
 A `ceph_bug_<id>` tag selects the compatibility path of one Ceph bug (see the
-[policy](bug-compatibility.md)); it never selects tests. The planner never
+[policy](../guides/bug-compatibility.md)); it never selects tests. The planner never
 collects it as a capability, and `all` or `native_regression` never enable
 it. Only `--bug-compatibility TAGS`, accepted by `plan`, `verify`, `compile`,
 `run`, `code`, `optional` and `buildcache`, selects one:

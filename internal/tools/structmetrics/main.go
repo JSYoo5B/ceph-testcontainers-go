@@ -1,17 +1,3 @@
-// Command structmetrics reports a fixed structural measurement of named struct
-// types: declared methods (split by exported-name and private) and direct
-// fields per type, for chosen package directories of one source snapshot, and
-// the per-type difference between a base and a head snapshot.
-//
-// It is a reference measurement for triage, not an acceptance threshold. It
-// parses source lexically with the standard library, never type-checks, builds,
-// imports or executes the code it inspects, and needs no Docker. The output is
-// deterministic: it holds no timestamps, host details or local paths.
-//
-//	structmetrics measure -packages ceph,override [-ref REF | -dir DIR]
-//	structmetrics delta   -packages ceph,override -base-ref REF [-head-ref REF | -head-dir DIR]
-//
-// See docs/contributing/structural-metrics.md for what is and is not measured.
 package main
 
 import (
@@ -383,13 +369,13 @@ func subtract(head, base counts) delta {
 }
 
 type ownerDelta struct {
-	Owner   string    `json:"owner"`
-	Package string    `json:"package"`
-	Type    string    `json:"type"`
-	Status  string    `json:"status"` // introduced, removed or changed
-	Base    *side     `json:"base"`
-	Head    *side     `json:"head"`
-	Delta   delta     `json:"delta"`
+	Owner   string `json:"owner"`
+	Package string `json:"package"`
+	Type    string `json:"type"`
+	Status  string `json:"status"` // introduced, removed or changed
+	Base    *side  `json:"base"`
+	Head    *side  `json:"head"`
+	Delta   delta  `json:"delta"`
 }
 
 type packageDelta struct {

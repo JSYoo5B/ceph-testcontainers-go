@@ -1,10 +1,58 @@
-# Ceph behavioral bug compatibility policy
+# Ceph bug compatibility
 
-The CI planner implements explicit selection and its validation, and the
-tagged runtime workflow carries one selection input through every job (see
-[Bug compatibility selection](ci.md#bug-compatibility-selection)). No caller
-sets that input. The [supported-tag catalogue](../guides/bug-compatibility-tags.md)
-has no registered tags.
+A `ceph_bug_<id>` build tag selects a compatibility path for one behavioral
+Ceph defect. The CI planner validates a selection, and the tagged runtime
+workflow carries one selection input through every job (see
+[Bug compatibility selection](../contributing/ci.md#bug-compatibility-selection)).
+No caller sets that input. This page lists the registered tags and the policy
+for adding one; see also the [release/image guide](releases-and-images.md).
+
+## Registered tags
+
+No tag is registered yet, so there is no supported tag to enable and no
+ordinary/compatibility build pair exists.
+
+The machine-readable record is
+[`bug-compatibility-tags.json`](bug-compatibility-tags.json). The CI planner
+reads it to validate a selection, including the `bug_compatibility` input of
+the tagged runtime workflow, whose history rows and job summaries record the
+selection (see
+[Bug compatibility selection](../contributing/ci.md#bug-compatibility-selection)).
+Each entry has exactly these fields:
+
+| Field | Content |
+| --- | --- |
+| `tag` | The exact `ceph_bug_<id>` tag: lowercase letters and digits in `_`-separated words. |
+| `tracker` | The authoritative `https` tracker link for the bug. |
+| `status` | `supported`, or `retired` for a tag that can no longer be selected and must not guard a test. |
+| `sources` | The repository Go files of its ordinary and compatibility paths. Each must have one `//go:build` line that names the tag. Required for a supported tag. |
+
+`conflicts` lists pairs of registered tags that cannot be selected together.
+A unit test keeps this section and the record in agreement: every registered tag
+is listed here, and nothing else is.
+
+The naming template is `ceph_bug_<id>`; it is not a literal tag. Existing integration tags such as `all` and
+`native_regression` are test selectors, not entries in this catalogue.
+
+## Required record for a supported tag
+
+| Field | Required content |
+| --- | --- |
+| Identity | Exact tag, bug ID, authoritative tracker link and affected operation. Unassigned-ID, namespace and retirement decisions must be explicit. |
+| Defect evidence | Observed symptom, trigger and supporting evidence; distinguish confirmed observations from hypotheses. |
+| Image boundaries | Confirmed affected/fixed versions and actual builds, immutable image IDs and platform; list unverified boundaries separately. A release string alone is insufficient. |
+| Behavior | Ordinary versus tag-enabled operation, preserved final success criteria, and why the alternate path may fail on fixed/unaffected images. |
+| Selection | When to enable or omit it, including custom/partially patched images, valid build/test invocations and independently selected combinations. |
+| Conflicts and scope | Incompatible tags and their diagnostics, plus limitations when one binary must operate on differently patched targets. |
+| Verification | No-tag/tag/composition checks and evidence that the intended path was selected; compilation and native results reported separately. |
+| Execution provenance | Active compatibility selection, source/build, actual image identities, attempt and cleanup outcome. |
+| Maintenance | Current support, unresolved limitations and any reviewed deprecation/retirement decision. |
+
+Add entries only with their implementation and scoped validation. Do not list
+an invented upstream ID or an unverified workaround as supported. A successful
+build with an unused custom tag is not selection evidence. Planner tests use
+synthetic `ceph_bug_synthetic_*` tags only in their own fixtures; those are not
+registered.
 
 ## Classify the difference first
 
@@ -15,7 +63,7 @@ has no registered tags.
 | Behavioral bug or fix | Use an explicitly selected bug-ID compatibility path with evidence for the defect and the ordinary/alternate behavior. |
 
 This policy covers behavioral compatibility; security fixes are a separate
-consideration. The [release/image guide](../guides/releases-and-images.md)
+consideration. The [release/image guide](releases-and-images.md)
 continues to describe existing behavior and image requirements.
 
 A reported release is not proof of a behavioral bug or fix. A custom image can
@@ -105,7 +153,7 @@ it lives and which edits change it.
 ### Where the binding and its history live
 
 - The canonical binding is the `tag` and `tracker` pair of that tag's entry in
-  [`bug-compatibility-tags.json`](../guides/bug-compatibility-tags.json). The
+  [`bug-compatibility-tags.json`](bug-compatibility-tags.json). The
   v1 entry permits exactly `tag`, `tracker`, `status` and `sources`, and this
   policy adds no identity or alias field to it. The tag spelling is the key; the
   tracker is the one canonical link of the defect it names.
@@ -113,8 +161,7 @@ it lives and which edits change it.
   same `tag` and `tracker`. Its spelling is never deleted or reassigned.
 - Alias history is not stored in the entry. A reviewed alias (for example a
   moved or redirected tracker URL for the same defect) is recorded in that
-  tag's identity record on the
-  [supported-tag catalogue page](../guides/bug-compatibility-tags.md), and the
+  tag's identity record under [Registered tags](#registered-tags), and the
   edit history of both files on the maintained branch is the immutable ledger.
   The prior link is added to the identity record in the same change that
   replaces the entry's `tracker`.
@@ -184,5 +231,5 @@ with its own earlier snapshot. Review applies these decisions:
 6. Review the catalogue, testing instructions, release implications and
    maintenance burden together. Published release tags remain immutable.
 
-Use the existing [testing workflow](testing.md) and
-[release process](releasing.md).
+Use the existing [testing workflow](../contributing/testing.md) and
+[release process](../contributing/releasing.md).

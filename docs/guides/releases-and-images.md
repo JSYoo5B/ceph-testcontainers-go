@@ -79,11 +79,11 @@ that outcome instead of skipping on the version string; see
 
 Feature availability, release command/output differences and behavioral bugs
 are separate compatibility questions. For future bug-specific paths, the
-[contributor policy](../contributing/bug-compatibility.md) requires explicit
+[bug compatibility policy](bug-compatibility.md) requires explicit
 bug-ID build selection rather than inferring a fix from a release or image-tag
 suffix. Custom images can contain backports without changing the reported
-release. The [supported-tag catalogue](bug-compatibility-tags.md) currently
-has no registered entries; this documentation does not add selectors or change
+release. No tag is
+[registered](bug-compatibility.md#registered-tags) yet; this documentation does not add selectors or change
 the existing runtime adaptations described below.
 
 ## Behaviour that differs on Squid

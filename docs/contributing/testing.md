@@ -95,7 +95,7 @@ CI tags: `-tags=all,ci,ci_short` filters nothing. To run one batch, use the
 [tag runner](#one-ci-batch-exactly-as-ci-runs-it). The `all` tag is unrelated
 to the Ceph `all` role image.
 
-`ceph_bug_` tags for [bug-ID compatibility](bug-compatibility.md) are not test
+`ceph_bug_` tags for [bug-ID compatibility](../guides/bug-compatibility.md) are not test
 selectors: `all` never selects them, and the CI runner takes them only through
 an explicit `--bug-compatibility` selection (see
 [Bug compatibility selection](ci.md#bug-compatibility-selection)).
