@@ -998,7 +998,7 @@ confirmed creation can be activated.
 ### Independent test fixtures
 
 Start an independent fixture with `Run`, create service resources explicitly,
-and register owned cleanup. See [Independent test fixtures](ceph.md#usage-example).
+and register owned cleanup. See [Independent test fixtures](ceph.md#independent-test-fixtures).
 
 ## Examples
 

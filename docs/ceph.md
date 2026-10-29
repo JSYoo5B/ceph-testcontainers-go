@@ -34,7 +34,7 @@ The `ceph` package provides:
   and bounded diagnostics reports.
 
 Each test owns an independent `Run` fixture and explicitly creates its pools,
-namespaces and Cephx identities. See [Independent test fixtures](ceph.md#usage-example).
+namespaces and Cephx identities. See [Independent test fixtures](#independent-test-fixtures).
 
 RBD, CephFS and RGW (S3) live in their own packages: [rbd](rbd.md),
 [cephfs](cephfs.md) and [rgw](rgw.md). Their options plug into the same
@@ -1308,7 +1308,20 @@ bootstraps, start with `ceph.Run` and add the service later.
 Call `Run` for each test, register owned cleanup before checking its error, and
 create the resources and restricted identities that the test needs. The shared
 cluster and tenant harness has been removed without aliases or a replacement
-sharing framework. See [the migration guide](ceph.md#usage-example).
+sharing framework. See the [usage example](#usage-example) for a complete
+fixture.
+
+RADOS namespaces are selected by the client operation; naming one in Cephx caps
+does not write an object. Isolation tests must perform real I/O and verify both
+allowed access and sibling namespace or identity denial.
+
+A test owns every external client it attaches, so stop those clients before
+fixture termination and register resource cleanup in reverse dependency order.
+Cleanup needs a fresh bounded background context because `t.Context()` has
+ended when Go runs test cleanups. Keep non-nil handles returned with errors:
+an uncertain operation may still own a resource, and failed cleanup remains
+retryable. See [Contexts and cleanup](guides/contexts-and-cleanup.md) and
+[TerminateOnCleanup](#terminateoncleanup).
 
 ### Container Methods
 
