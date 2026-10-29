@@ -306,7 +306,7 @@ var osdStorageCallers = map[string]string{
 // osdStorageHoldersTake names the functions that take Container.mu around the
 // "holds" callers above.
 var osdStorageHoldersTake = map[string][]string{
-	"registerOSD":        {"startInitialOSDs", "AddOSDWithConfig"},
+	"registerOSD":        {"startInitialOSDs", "AddOSD"},
 	"reopenPreflight":    {"reopenOSD"},
 	"newOSDLaunchRecipe": {"registerOSD"},
 }

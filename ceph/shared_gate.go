@@ -114,10 +114,9 @@ var sharedMethodPolicies = map[string]sharedPolicy{
 	"Stop":                  sharedExclusive,
 
 	// Topology changes and injected damage.
-	"AddManager":       sharedRecycle,
-	"AddMonitor":       sharedRecycle,
-	"AddOSD":           sharedRecycle,
-	"AddOSDWithConfig": sharedRecycle,
+	"AddManager": sharedRecycle,
+	"AddMonitor": sharedRecycle,
+	"AddOSD":     sharedRecycle,
 
 	"Terminate":          sharedRefused,
 	"TerminateOnCleanup": sharedRefused,
