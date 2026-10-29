@@ -6,5 +6,5 @@
   "declarations": 35,
   "members": 64,
   "review": "api-naming.md",
-  "page": "docs/fault.md"
+  "page": "fault/README.md"
 }

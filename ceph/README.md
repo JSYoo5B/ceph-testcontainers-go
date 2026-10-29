@@ -36,8 +36,8 @@ The `ceph` package provides:
 Each test owns an independent `Run` fixture and explicitly creates its pools,
 namespaces and Cephx identities. See [Independent test fixtures](#independent-test-fixtures).
 
-RBD, CephFS and RGW (S3) live in their own packages: [rbd](rbd.md),
-[cephfs](cephfs.md) and [rgw](rgw.md). Their options plug into the same
+RBD, CephFS and RGW (S3) live in their own packages: [rbd](../rbd/README.md),
+[cephfs](../cephfs/README.md) and [rgw](../rgw/README.md). Their options plug into the same
 `ceph.Run`; see [Service packages](#service-packages).
 
 Requirements:
@@ -205,7 +205,7 @@ Docker host, or the test process cannot reach the first MON.
 `ceph.DefaultImage`. `ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(set))`, passed to `Run` with
 an empty image argument, selects the `ImageSet` role model. Essential supplies MON/MGR/OSD; Client, CephFS,
 RBDAux and RGW are required only by their selected features. Missing optional
-roles never fall back to essential. See [image selection](guides/releases-and-images.md#role-images).
+roles never fall back to essential. See [image selection](../docs/guides/releases-and-images.md#role-images).
 
 ### Container Options
 
@@ -454,7 +454,7 @@ benchmark that can write about 100 objects of 4 MiB (400 MiB) before deleting
 them. That alone fills a 64 to 256 MiB file, BlueStore aborts the OSD, and `Run`
 times out waiting for it. For small OSDs, start with
 [WithNoInitialOSDs](#withnoinitialosds), set `osd_mclock_skip_benchmark` with
-[override.SetConfig](override.md#setconfig), then add OSDs. The option itself never
+[override.SetConfig](../override/README.md#setconfig), then add OSDs. The option itself never
 changes the scheduler or the benchmark. See
 [Run small OSDs](#run-small-osds).
 
@@ -522,8 +522,8 @@ There is no caller-supplied volume, host path, device or driver option.
 [OSDContainer.Detach](#osdcontainerdetach) and [DetachedOSD.Reopen](#detachedosdreopen) restart a retained store in
 a new container; this backend gives no host-reboot durability. `Terminate`
 always discards its owned volume, including detached stores. See
-[the storage design](design/osd-volume-storage.md) and
-[retained reopen](design/osd-retained-reopen.md).
+[the storage design](../docs/design/osd-volume-storage.md) and
+[retained reopen](../docs/design/osd-retained-reopen.md).
 
 #### OSDStorage.WithObjectStore
 
@@ -545,7 +545,7 @@ argument is a `ceph.OSDObjectStore`:
   killed, or whose container is removed, loses it.
 - MemStore cannot be combined with
   [OSDStorage.WithInMemory](#osdstoragewithinmemory) or
-  [OSDStorage.WithVolume](#osdstoragewithvolume), which use BlueStore files, and [fault.InjectObjectDataError](fault.md#injectobjectdataerror)
+  [OSDStorage.WithVolume](#osdstoragewithvolume), which use BlueStore files, and [fault.InjectObjectDataError](../fault/README.md#injectobjectdataerror)
   needs BlueStore.
 - `ceph osd metadata` reports `osd_objectstore` as `memstore`.
 
@@ -573,7 +573,7 @@ rados_osd_op_timeout = 25
 - The merged file becomes `/etc/ceph/ceph.conf` before the first MON creates its
   store. Every MON, MGR, OSD, MDS and RGW, every `WithClient` container and
   [ConnectionConfig](#connectionconfig) get it, so bootstrap-only settings work.
-  It does not change a running cluster; use [override.SetConfig](override.md#setconfig)
+  It does not change a running cluster; use [override.SetConfig](../override/README.md#setconfig)
   for that.
 - An entry replaces the fixture's default for the same section and key. Spaces,
   `-` and `_` in key names are equivalent, as in Ceph. Several files are merged in
@@ -666,7 +666,7 @@ immutable for the lifetime of the cluster.
 
 | Mode | Listeners and addresses | Connection modes |
 | --- | --- | --- |
-| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [NetworkConfig.WithMessengerPolicy](#networkconfigwithmessengerpolicy), [override.SetMessengerPolicy](override.md#setmessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
+| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [NetworkConfig.WithMessengerPolicy](#networkconfigwithmessengerpolicy), [override.SetMessengerPolicy](../override/README.md#setmessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
 | `ceph.MessengerV2Only` | v2 only | As with `MessengerDefault`: CRC, secure or a per-daemon-type mix, changeable later. |
 | `ceph.MessengerV2Secure` | v2 only | Fixed to encrypted Messenger v2 (`secure`, AES-GCM) for every connection; no CRC mode. |
 
@@ -693,7 +693,7 @@ To express a `ceph.conf` with `ms_bind_msgr1 = false` with these options:
 | All six `ms_*_mode` and `ms_mon_*_mode` options `secure` | `NetworkConfig.WithMessengerMode(ceph.MessengerV2Secure)` |
 | `ms_mon_service_mode` of the MONs or MGRs, `ms_service_mode` of the OSDs | `NetworkConfig.WithMessengerMode(ceph.MessengerV2Only)` and the matching fields of `NetworkConfig.WithMessengerPolicy` |
 | `ms_mon_client_mode` and `ms_client_mode` of a client | `WithClientMessengerPolicy` on that client's container |
-| `ms_cluster_mode` and `ms_mon_cluster_mode` between daemons | Ceph's defaults: the policy options leave them alone; with `MessengerV2Only`, [override.SetConfig](override.md#setconfig) can change them |
+| `ms_cluster_mode` and `ms_mon_cluster_mode` between daemons | Ceph's defaults: the policy options leave them alone; with `MessengerV2Only`, [override.SetConfig](../override/README.md#setconfig) can change them |
 | `mon_host` with only v2 addresses, port 3300 | [MonitorBootstrapAddresses](#monitorbootstrapaddresses), or `MappedPort(ctx, "3300/tcp")` in bridge mode; there is no 6789 to map |
 
 With `MessengerV2Secure`, the global `ceph.conf` sets `ms_cluster_mode`,
@@ -710,7 +710,7 @@ In both v2 modes:
 - Later daemons, `WithClient` and `WithClientIdentity` containers and
   [ConnectionConfig](#connectionconfig) inherit the policy. MON refreshes only
   rewrite `mon_host` and keep it.
-- [override.SetConfig](override.md#setconfig) refuses `ms_bind_msgr1` and
+- [override.SetConfig](../override/README.md#setconfig) refuses `ms_bind_msgr1` and
   `ms_bind_msgr2` in every section and mask with `ErrInvalidRequest`, because
   the local file would override them anyway. With `MessengerV2Secure` it also
   refuses the six mode options.
@@ -721,7 +721,7 @@ With `MessengerV2Secure`:
   rather than timing out.
 - Cephx authentication and Messenger encryption are separate settings; Cephx is
   always required.
-- This option does not enable HTTPS for RGW (see [rgw](rgw.md)).
+- This option does not enable HTTPS for RGW (see [rgw](../rgw/README.md)).
 
 `ClusterFacts.MessengerMode` ([FactsOf](#factsof)) reports the selected mode. It does not inspect
 live connections. To verify encryption on Tentacle, query a daemon's
@@ -768,7 +768,7 @@ records its type: the first two bytes, little-endian, are 1 for `aes` and 2 for
 - Lifetimes keep fractions of a second and are written to the `[global]` section
   of the bootstrap `ceph.conf`. Every daemon, `WithClient` container and
   [ConnectionConfig](#connectionconfig) gets them, and
-  [override.SetConfig](override.md#setconfig) cannot change them later. MONs rotate
+  [override.SetConfig](../override/README.md#setconfig) cannot change them later. MONs rotate
   service secrets on their tick, so lifetimes of a few seconds also need a
   shorter `mon_tick_interval`, which [WithConfigFile](#withconfigfile) can set.
 - Keep `MonTicketTTL` at ten seconds or more. MON clients check their tickets
@@ -824,7 +824,7 @@ daemon accepts, so a daemon cannot force `secure` on a client that prefers
   daemon restarts.
 - Connections between daemons keep their defaults, so the cluster itself and the
   fixture's own CLI keep working under every policy.
-- [override.SetMessengerPolicy](override.md#setmessengerpolicy) changes the policy on a
+- [override.SetMessengerPolicy](../override/README.md#setmessengerpolicy) changes the policy on a
   running cluster. The daemons apply it to new connections without a restart.
 - It cannot be combined with `MessengerV2Secure`, whose local configuration
   fixes every mode.
@@ -902,12 +902,12 @@ Linux) can reach MONs and OSDs directly.
   later), and its network behaviour differs from a Linux engine. A test process
   that itself runs in a bridge-network container cannot use host mode.
 - Cannot be combined with [NetworkConfig.WithSeparateClusterNetwork](#networkconfigwithseparateclusternetwork),
-  and Docker endpoint interruption ([fault.InterruptNetwork](fault.md#interruptnetwork)) and
-  packet delay ([fault.ApplyNetworkProfile](fault.md#applynetworkprofile)) are not
+  and Docker endpoint interruption ([fault.InterruptNetwork](../fault/README.md#interruptnetwork)) and
+  packet delay ([fault.ApplyNetworkProfile](../fault/README.md#applynetworkprofile)) are not
   available.
 
 `ClusterFacts.UsesHostNetwork` and `ClusterFacts.PublicAddress` ([FactsOf](#factsof))
-report the mode and address. See [Host networking](guides/host-network.md) for native
+report the mode and address. See [Host networking](../docs/guides/host-network.md) for native
 clients, Docker Desktop, remote engines and port behaviour.
 
 #### NetworkConfig.WithHostAddress
@@ -933,7 +933,7 @@ traffic. Docker selects both IPv4 subnets, and Ceph's `public network` and
 `cluster network` settings make OSDs use them. Only OSDs join both bridges;
 MON, MGR, MDS, RGW and `WithClient` containers use only the public bridge.
 `ClusterFacts.NetworkName` and `ClusterFacts.ClusterNetworkName` ([FactsOf](#factsof))
-return the two bridges, and [fault.InterruptNetwork](fault.md#interruptnetwork) with
+return the two bridges, and [fault.InterruptNetwork](../fault/README.md#interruptnetwork) with
 `ceph.ClusterNetworkPlane` disconnects one OSD's replication endpoint only.
 Requires bridge mode.
 
@@ -1140,7 +1140,7 @@ container on a CephFS cluster with two MONs, one MGR, two OSDs and one MDS:
 1. [AddMonitor](#addmonitor) `c`, then [MonitorContainer.Remove](#monitorcontainerremove) `b`;
 2. [AddOSD](#addosd) (osd.2), then [OSDContainer.Remove](#osdcontainerremove) `0`;
 3. the MDS container stopped, its GID failed with `ceph mds fail` and a new
-   MDS started with `MDS.AddReplacement` (see [cephfs](cephfs.md#mdsaddreplacement));
+   MDS started with `MDS.AddReplacement` (see [cephfs](../cephfs/README.md#mdsaddreplacement));
 4. [AddManager](#addmanager) `b`, then [ManagerContainer.Remove](#managercontainerremove) `a`.
 
 `[osd.2]`, `[mds.tc-cephfs-1]` and `[mgr.b]` set `ms bind prefer ipv4 =
@@ -1183,7 +1183,7 @@ identified by its name in the monmap.
 
 ###### Cutting one family of a path
 
-[fault.ApplyNetworkProfile](fault.md#applynetworkprofile) with a `Peer`, a `PeerPort`
+[fault.ApplyNetworkProfile](../fault/README.md#applynetworkprofile) with a `Peer`, a `PeerPort`
 and `Loss: 100` drops every packet that one container sends to one address
 and port. On a dual-stack cluster, a `Peer` that is a daemon's IPv6 address
 cuts only that family of the path: the same daemon stays reachable over IPv4,
@@ -1278,9 +1278,9 @@ if err != nil {
 
 | Option | Creates during `Run` | Add to a running cluster | Details |
 | --- | --- | --- | --- |
-| `rbd.WithPools(configs...)` | Replicated pools initialized with `rbd pool init` (application `rbd`) | `rbd.InitPool` on a pool from `CreatePool` | [rbd](rbd.md) |
-| `cephfs.WithFilesystems(configs...)` | Filesystems with their pools and MDS daemons | `cephfs.Start` | [cephfs](cephfs.md) |
-| `rgw.WithGateways(configs...)` | Named gateways sharing the cluster's zone, each with a test S3 user unless `SkipUserCreation` is set | `rgw.Start` | [rgw](rgw.md) |
+| `rbd.WithPools(configs...)` | Replicated pools initialized with `rbd pool init` (application `rbd`) | `rbd.InitPool` on a pool from `CreatePool` | [rbd](../rbd/README.md) |
+| `cephfs.WithFilesystems(configs...)` | Filesystems with their pools and MDS daemons | `cephfs.Start` | [cephfs](../cephfs/README.md) |
+| `rgw.WithGateways(configs...)` | Named gateways sharing the cluster's zone, each with a test S3 user unless `SkipUserCreation` is set | `rgw.Start` | [rgw](../rgw/README.md) |
 
 `Run` creates `WithPools` pools first, then RBD pools, filesystems and gateways.
 All names, including the pools a filesystem creates, are validated together.
@@ -1314,7 +1314,7 @@ fixture termination and register resource cleanup in reverse dependency order.
 Cleanup needs a fresh bounded background context because `t.Context()` has
 ended when Go runs test cleanups. Keep non-nil handles returned with errors:
 an uncertain operation may still own a resource, and failed cleanup remains
-retryable. See [Contexts and cleanup](guides/contexts-and-cleanup.md) and
+retryable. See [Contexts and cleanup](../docs/guides/contexts-and-cleanup.md) and
 [TerminateOnCleanup](#terminateoncleanup).
 
 ### Container Methods
@@ -1362,15 +1362,15 @@ Methods that change cluster state temporarily return a restoration handle:
 
 | Handle | Returned by | Ends with |
 | --- | --- | --- |
-| `*override.ConfigHandle` | [override.SetConfig](override.md#setconfig) | `Restore` |
-| `*override.DebugLevelHandle` | [override.SetDebugLevel](override.md#setdebuglevel) | `Restore` |
-| `*override.OSDFlagHandle` | [override.SetOSDFlag](override.md#setosdflag) | `Restore` |
-| `*override.MGRModuleHandle` | [override.SetMGRModule](override.md#setmgrmodule) | `Restore` |
-| `*override.FullRatiosHandle` | [override.SetFullRatios](override.md#setfullratios) | `Restore` |
-| `*override.BlocklistHandle` | [override.AddBlocklist](override.md#addblocklist) | `Restore` |
-| `*fault.PauseLease` | [fault.Pause](fault.md#pause) | `Resume` |
-| `*fault.NetworkInterruption` | [fault.InterruptNetwork](fault.md#interruptnetwork) | `Restore` |
-| `*fault.NetworkProfileLease` | [fault.ApplyNetworkProfile](fault.md#applynetworkprofile) | `Restore` |
+| `*override.ConfigHandle` | [override.SetConfig](../override/README.md#setconfig) | `Restore` |
+| `*override.DebugLevelHandle` | [override.SetDebugLevel](../override/README.md#setdebuglevel) | `Restore` |
+| `*override.OSDFlagHandle` | [override.SetOSDFlag](../override/README.md#setosdflag) | `Restore` |
+| `*override.MGRModuleHandle` | [override.SetMGRModule](../override/README.md#setmgrmodule) | `Restore` |
+| `*override.FullRatiosHandle` | [override.SetFullRatios](../override/README.md#setfullratios) | `Restore` |
+| `*override.BlocklistHandle` | [override.AddBlocklist](../override/README.md#addblocklist) | `Restore` |
+| `*fault.PauseLease` | [fault.Pause](../fault/README.md#pause) | `Resume` |
+| `*fault.NetworkInterruption` | [fault.InterruptNetwork](../fault/README.md#interruptnetwork) | `Restore` |
+| `*fault.NetworkProfileLease` | [fault.ApplyNetworkProfile](../fault/README.md#applynetworkprofile) | `Restore` |
 | `*ceph.ClientRevocationHandle` | [ClientConfig.Revoke](#clientconfigrevoke) | `Restore` |
 
 All handles follow the same contract:
@@ -1407,7 +1407,7 @@ if err != nil {
 }
 ```
 
-See [Contexts and cleanup](guides/contexts-and-cleanup.md) for cancellation,
+See [Contexts and cleanup](../docs/guides/contexts-and-cleanup.md) for cancellation,
 retry and cleanup ordering in detail.
 
 ### Container Methods: Lifecycle and control
@@ -1512,7 +1512,7 @@ Invalid fields are rejected before anything is registered.
 ##### Settling a capture
 
 `Finalization.Capture(name, session)` hands a running [packet
-capture](capture.md) (a `*capture.Session`, through the `ceph.CaptureSettler`
+capture](../capture/README.md) (a `*capture.Session`, through the `ceph.CaptureSettler`
 interface that the `capture` package implements) to the finalization. The
 capture is settled after the checks and before the failure archive and the
 cleanups, so a failed test body that never reached its own `Stop` still ends
@@ -1595,7 +1595,7 @@ or writing a file are logged and recorded, never retried in a loop, and do
 not stop the later phases. If `ArtifactDir` itself cannot be created, Go
 fails the test, and the cleanups and `Terminate` still run.
 
-`Finalization.TrackDebugLevel` registers an [override.SetDebugLevel](override.md#setdebuglevel)
+`Finalization.TrackDebugLevel` registers an [override.SetDebugLevel](../override/README.md#setdebuglevel)
 handle, including the non-nil handle that comes with an apply error. Each call
 is one window in registration order (`debug_windows[].sequence`); windows on the
 same daemon, option and generation are never merged or deduplicated. The
@@ -1825,7 +1825,7 @@ lines, with keys redacted. `errors.Is(err, fs.ErrNotExist)` holds for
 before it sends the command; `Ceph` then connects again, until a MON
 answers, `ctx` ends or a minute has passed, so a stalled or electing MON
 delays the command instead of failing it, and the command runs once. See
-[Classified errors](guides/errors.md).
+[Classified errors](../docs/guides/errors.md).
 
 ```golang
 out, err := cluster.Ceph(ctx, "osd", "pool", "set", "app-data", "noscrub", "true")
@@ -1899,10 +1899,10 @@ result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
   the command was sent matches no category, since the command may have run.
   Context errors, `ErrNativeCommandIncomplete`, `ErrNativeInputClosed` and
   `*NativeCommandUnstoppedError` belong to no category. See
-  [Classified errors](guides/errors.md).
+  [Classified errors](../docs/guides/errors.md).
 
-See [Bounded commands with confirmed cleanup](guides/native-commands.md#bounded-commands-with-confirmed-cleanup)
-for cancellation details, [standard input](guides/native-commands.md#standard-input),
+See [Bounded commands with confirmed cleanup](../docs/guides/native-commands.md#bounded-commands-with-confirmed-cleanup)
+for cancellation details, [standard input](../docs/guides/native-commands.md#standard-input),
 and an oracle recipe with `rados_stat2` and `ceph-dencoder`.
 
 #### NativeInput
@@ -1961,7 +1961,7 @@ code, reader, err := control.Exec(ctx,
 	[]string{"ceph", "--connect-timeout", "5", "fsid"}, tcexec.Multiplexed())
 ```
 
-Do not pause or stop it; [fault.Pause](fault.md#pause) refuses it.
+Do not pause or stop it; [fault.Pause](../fault/README.md#pause) refuses it.
 
 #### ClientContainer
 
@@ -2083,7 +2083,7 @@ A MON binds the address that the monmap records for it. On a bridge network,
 each MON returns at that address whatever the order of `Start` calls: before
 a stopped MON starts, the fixture requests its original address from Docker
 again. A MON whose endpoint is interrupted with
-[fault.InterruptNetwork](fault.md#interruptnetwork) does not start until the interruption is
+[fault.InterruptNetwork](../fault/README.md#interruptnetwork) does not start until the interruption is
 restored. MON a's container waits for a quorum when it starts, so after all
 MONs were stopped, start the others first.
 
@@ -2356,8 +2356,8 @@ stores without a regular ready marker before copying the launch keyring or
 running mkfs. A ready store must have matching numeric ID, OSD UUID and configured
 cluster FSID, with non-empty regular identity/keyring files, before daemon
 startup. Failed initialization is not automatically replayed. See
-[bootstrap admission](design/osd-bootstrap-admission.md) for the exact checks
-and limits. [Launch recipes](design/osd-launch-recipes.md) capture file/config
+[bootstrap admission](../docs/design/osd-bootstrap-admission.md) for the exact checks
+and limits. [Launch recipes](../docs/design/osd-launch-recipes.md) capture file/config
 inputs and rebuild fresh Readers without replaying container creation.
 
 #### AddOSD
@@ -2407,7 +2407,7 @@ selection. `AddOSD` composes several values in argument order: each field may be
 set by at most one value, and setting it in two is refused with
 `ErrInvalidRequest` even when both agree. Within one value a later call replaces
 the earlier one. The rules are in
-[value-configuration-composition](design/value-configuration-composition.md).
+[value-configuration-composition](../docs/design/value-configuration-composition.md).
 
 #### OSDContainer.Remove
 
@@ -2460,7 +2460,7 @@ Stops and removes an owned OSD's container but keeps its store in the owned
 volume and its MON registration, so that [DetachedOSD.Reopen](#detachedosdreopen) can start a
 new container on them. It needs [OSDStorage.WithVolume](#osdstoragewithvolume);
 other storage is an invalid request. The OSD is down while it is detached, not
-out or purged: hold `noout` with [override.SetOSDFlag](override.md#setosdflag) if Ceph
+out or purged: hold `noout` with [override.SetOSDFlag](../override/README.md#setosdflag) if Ceph
 must not mark it out.
 
 Detach checks the registration UUID, refuses an OSD whose container a held
@@ -2712,7 +2712,7 @@ Success means the pool references the rule; data moves asynchronously. Until PG
 reports reflect the new map, [WaitForClean](#waitforclean) can succeed on the old
 placement, so poll [Pool.PGs](#poolpgs) for the expected up/acting sets. To hold
 the move incomplete, set both `nobackfill` and `norecover` with
-[override.SetOSDFlag](override.md#setosdflag): small PGs recover through the PG log
+[override.SetOSDFlag](../override/README.md#setosdflag): small PGs recover through the PG log
 instead of backfill, so `nobackfill` alone does not stop them. EC pools are
 refused because their rule is bound to the EC profile.
 
@@ -3058,7 +3058,7 @@ an error, or the old one. When settling itself fails, the outcome stays open:
 [ClientConfig.UpdateCaps](#clientconfigupdatecaps) and [ClientConfig.Delete](#clientconfigdelete) are
 fenced the same way, so none of these operations races a command of another
 one that may still apply. The CephFS subvolume grants of the
-[cephfs](cephfs.md) package settle these commands before they change a
+[cephfs](../cephfs/README.md) package settle these commands before they change a
 client. Their own commands go through the MGR, though, which this settling
 cannot fence, and the module cannot tell when a failed one has ended: the
 volumes module may still create or change the identity later. Do not replace
@@ -3213,7 +3213,7 @@ key, err := cluster.Ceph(ctx, "auth", "get-key", "osd.0") // the new key
     Settling needs every MON in the monmap to answer. A call that cannot
     settle records its commands, and the next call settles them first.
 - How to observe keys and rotating service secrets from the daemon side is in
-  [Running native commands](guides/native-commands.md#observing-cephx-keys-from-the-daemon-side).
+  [Running native commands](../docs/guides/native-commands.md#observing-cephx-keys-from-the-daemon-side).
 
 #### ConnectionConfig
 
@@ -3270,7 +3270,7 @@ already current. Do not edit the file concurrently.
 ### Container Methods: Configuration
 
 The override that sets one stored entry for a while is
-[override.SetConfig](override.md#setconfig). `ceph.ConfigSetting`,
+[override.SetConfig](../override/README.md#setconfig). `ceph.ConfigSetting`,
 `ceph.ConfigEntry` and `Observer.Configuration` describe and read the database.
 
 #### Configuration
@@ -3288,7 +3288,7 @@ effective value. Entries can contain sensitive values.
 #### Debug level types
 
 The runtime debug level window is the package function
-[override.SetDebugLevel](override.md#setdebuglevel) and its
+[override.SetDebugLevel](../override/README.md#setdebuglevel) and its
 `*override.DebugLevelHandle`; the call and its restoration rules are documented
 there. These types are in `ceph` because the failure manifest copies the
 receipt:
@@ -3323,7 +3323,7 @@ module metadata: `Name`, `Enabled`, `AlwaysOn`, `ForceDisabled`, `Available`
 a module's commands are ready.
 
 The module membership override that enables or disables one manager module is
-[override.SetMGRModule](override.md#setmgrmodule). `Observer.MGRModules`,
+[override.SetMGRModule](../override/README.md#setmgrmodule). `Observer.MGRModules`,
 `ceph.MGRModuleState` and `WaitMGRModuleReady` are documented here.
 
 #### WaitMGRModuleReady
@@ -3360,7 +3360,7 @@ func (o *Observer) ManagerMetrics(ctx context.Context) (ceph.ManagerMetrics, err
 
 Scrapes the active manager's `prometheus` module once and returns its
 samples parsed from the Prometheus text exposition format. It never enables
-the module: enable it with [override.SetMGRModule](override.md#setmgrmodule) and wait
+the module: enable it with [override.SetMGRModule](../override/README.md#setmgrmodule) and wait
 until [ManagerServices](#managerservices) lists `prometheus`; until then the
 call fails with `ErrInvalidRequest`. The scrape runs with `python3` in the
 control container, at the address that `ManagerServices` advertises, and is
@@ -3506,7 +3506,7 @@ about health or daemon availability.
 ### Container Methods: Messenger mode
 
 The override that changes the policy of a running cluster is
-[override.SetMessengerPolicy](override.md#setmessengerpolicy).
+[override.SetMessengerPolicy](../override/README.md#setmessengerpolicy).
 `ceph.MessengerPolicy` and `ceph.MessengerConnectionMode` are in `ceph` because `NetworkConfig.WithMessengerPolicy` takes them
 at `Run`.
 
@@ -3540,7 +3540,7 @@ CIDR range) and `Until` (the MON's absolute expiration time). Listing grants no
 ownership to remove an entry.
 
 The blocklist entry that fences a client session is added by
-[override.AddBlocklist](override.md#addblocklist). `Observer.BlocklistEntries`
+[override.AddBlocklist](../override/README.md#addblocklist). `Observer.BlocklistEntries`
 and `ceph.BlocklistEntry` only read the OSDMap.
 
 ### Container Methods: Full ratios
@@ -3562,14 +3562,14 @@ configuration and pool quotas, and do not say whether any OSD has reported
 fullness.
 
 The override that lowers or raises these thresholds is
-[override.SetFullRatios](override.md#setfullratios). `Observer.FullRatios`,
+[override.SetFullRatios](../override/README.md#setfullratios). `Observer.FullRatios`,
 `ceph.FullRatios` and `ceph.FullRatioSnapshot` describe and read the OSDMap.
 See [Fill the cluster with low full ratios](#fill-the-cluster-with-low-full-ratios).
 
 ### Container Methods: Scrub inconsistencies
 
 These methods scrub, inspect and repair PGs. A damaged replica to observe with
-them comes from [fault.InjectObjectDataError](fault.md#injectobjectdataerror),
+them comes from [fault.InjectObjectDataError](../fault/README.md#injectobjectdataerror),
 which makes it possible to test monitoring, client behaviour on an inconsistent
 PG, or repair automation without corrupting a disk or stopping an OSD. Get an
 object's PG and acting set with
@@ -3616,20 +3616,20 @@ PG still inconsistent.
 
 Daemon handles (from `Monitors`, `Managers` and `OSDs`, and the MDS and RGW handles
 of the service packages) support `Stop` and `Start`: the process ends and peers
-see the connection close. The dedicated operations in [`fault`](fault.md) add other failure shapes. For
+see the connection close. The dedicated operations in [`fault`](../fault/README.md) add other failure shapes. For
 Messenger-level delays and dropped messages (`ms_blackhole_*`,
 `ms_inject_delay_*` through `override.SetConfig`), OSD flags, client blocklisting
-and full ratios, see [Fault injection](guides/fault-injection.md).
+and full ratios, see [Fault injection](../docs/guides/fault-injection.md).
 
 #### Container pause faults
 
-[`fault.Pause`](fault.md#pause) freezes a daemon or client
+[`fault.Pause`](../fault/README.md#pause) freezes a daemon or client
 with the existing cluster's ownership and cleanup lifetime. Its
 `*fault.PauseLease` handle resumes the process with `Resume`.
 
 #### Object read errors
 
-[`fault.InjectObjectDataError`](fault.md#injectobjectdataerror) marks one
+[`fault.InjectObjectDataError`](../fault/README.md#injectobjectdataerror) marks one
 replica of an object so that scrub and recovery see a read error. It is a
 one-shot injection with no handle; observe it with
 [DeepScrubPG](#deepscrubpg) and [PGInconsistencies](#pginconsistencies) and
@@ -3637,14 +3637,14 @@ rewrite the replica with [RepairPG](#repairpg).
 
 #### Network faults
 
-Network fault functions and handles are in [`fault`](fault.md). Use
+Network fault functions and handles are in [`fault`](../fault/README.md). Use
 `fault.InterruptNetwork(ctx, cluster, target, plane)` and
 `fault.ApplyNetworkProfile(ctx, cluster, target, delay)` with the existing
 cluster; its `Terminate` restores cluster-bound faults.
 
 ### Container Methods: Networking
 
-See [Host networking](guides/host-network.md) for the networking modes in detail.
+See [Host networking](../docs/guides/host-network.md) for the networking modes in detail.
 
 #### DaemonAddresses
 
@@ -3735,7 +3735,7 @@ volume belongs to the cluster and `Terminate` removes it.
 - The daemon must be running. A stopped or removed daemon returns an error. A
   daemon that has just started can answer before it registers all of its
   commands (`no valid command found`); poll with a deadline.
-- A paused daemon (see [fault.Pause](fault.md#pause)) accepts the
+- A paused daemon (see [fault.Pause](../fault/README.md#pause)) accepts the
   connection but does not answer, so the call waits until the context ends.
 - A nonzero exit returns the command's output together with an error.
 - The call is bounded by the context and by
@@ -3746,7 +3746,7 @@ volume belongs to the cluster and `Terminate` removes it.
   behind and other calls keep running. An effect that the daemon has already
   applied stays.
 - MDS and RGW daemons are not included; reach them with `ceph tell` (see
-  [Running native commands](guides/native-commands.md#daemon-admin-sockets)).
+  [Running native commands](../docs/guides/native-commands.md#daemon-admin-sockets)).
 
 ### Container Methods: Diagnostics
 
@@ -3988,7 +3988,7 @@ type OSDFlag string
 ```
 
 A global OSDMap flag token. The constants name the eleven flags that
-[override.SetOSDFlag](override.md#setosdflag) can change: `OSDFlagNoUp` (`noup`),
+[override.SetOSDFlag](../override/README.md#setosdflag) can change: `OSDFlagNoUp` (`noup`),
 `OSDFlagNoDown` (`nodown`), `OSDFlagNoOut` (`noout`), `OSDFlagNoIn` (`noin`),
 `OSDFlagNoBackfill` (`nobackfill`), `OSDFlagNoRebalance` (`norebalance`),
 `OSDFlagNoRecover` (`norecover`), `OSDFlagNoScrub` (`noscrub`),
@@ -4056,8 +4056,8 @@ client, err := testcontainers.Run(ctx, facts.Images.Client,
 
 #### Standalone network faults
 
-[`fault.InterruptLink`](fault.md#standalone-bridge-functions) and
-[`fault.ApplyLinkProfile`](fault.md#standalone-bridge-functions) operate on
+[`fault.InterruptLink`](../fault/README.md#standalone-bridge-functions) and
+[`fault.ApplyLinkProfile`](../fault/README.md#standalone-bridge-functions) operate on
 caller-owned bridges. The caller restores their handles before removing the
 container or bridge.
 
@@ -4117,7 +4117,7 @@ category; a call that `ctx` ended is never classified by what it could not
 finish. An error that matches no category is a failed check of the fixture's
 own, such as native output that it could not parse, or a failure whose
 outcome is unknown, such as a container that disappeared after a native
-command was sent to it. Only `ErrInvalidRequest` promises that nothing changed. See [Classified errors](guides/errors.md).
+command was sent to it. Only `ErrInvalidRequest` promises that nothing changed. See [Classified errors](../docs/guides/errors.md).
 
 ```golang
 _, err := cluster.CreateClient(ctx, "modern", ceph.ClientCaps{Mon: "allow r"},
@@ -4238,7 +4238,7 @@ const (
 ```
 
 Selects the client/public network or the OSD replication network for
-[fault.InterruptNetwork](fault.md#interruptnetwork).
+[fault.InterruptNetwork](../fault/README.md#interruptnetwork).
 
 #### Daemon handles
 
@@ -4270,13 +4270,13 @@ The cluster owns the auth database; containers you attach with it are yours.
 
 | Type | Methods | Created by |
 | --- | --- | --- |
-| `override.ConfigHandle` | `Restore(ctx) error`; `String()`, `GoString()` for logging | [override.SetConfig](override.md#setconfig) |
-| `override.OSDFlagHandle` | `Restore(ctx) error` | [override.SetOSDFlag](override.md#setosdflag) |
-| `override.MGRModuleHandle` | `Restore(ctx) error` | [override.SetMGRModule](override.md#setmgrmodule) |
-| `override.FullRatiosHandle` | `Restore(ctx) error` | [override.SetFullRatios](override.md#setfullratios) |
-| `override.BlocklistHandle` | `Address() string`, `Restore(ctx) error` | [override.AddBlocklist](override.md#addblocklist) |
-| `fault.PauseLease` | `ContainerID`; `Resume(ctx) error` | [fault.Pause](fault.md#pause) |
-| `fault.NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [fault.InterruptNetwork](fault.md#interruptnetwork) (cluster-bound or standalone) |
+| `override.ConfigHandle` | `Restore(ctx) error`; `String()`, `GoString()` for logging | [override.SetConfig](../override/README.md#setconfig) |
+| `override.OSDFlagHandle` | `Restore(ctx) error` | [override.SetOSDFlag](../override/README.md#setosdflag) |
+| `override.MGRModuleHandle` | `Restore(ctx) error` | [override.SetMGRModule](../override/README.md#setmgrmodule) |
+| `override.FullRatiosHandle` | `Restore(ctx) error` | [override.SetFullRatios](../override/README.md#setfullratios) |
+| `override.BlocklistHandle` | `Address() string`, `Restore(ctx) error` | [override.AddBlocklist](../override/README.md#addblocklist) |
+| `fault.PauseLease` | `ContainerID`; `Resume(ctx) error` | [fault.Pause](../fault/README.md#pause) |
+| `fault.NetworkInterruption` | `ContainerID`, `NetworkName`, `OriginalAddress`; `Restore(ctx) error` | [fault.InterruptNetwork](../fault/README.md#interruptnetwork) (cluster-bound or standalone) |
 | `ClientRevocationHandle` | `Name() string`, `Restore(ctx) error`; `String()`, `GoString()` for logging | [ClientConfig.Revoke](#clientconfigrevoke) |
 
 See the [handle contract](#container-methods).
@@ -4295,7 +4295,7 @@ See the [handle contract](#container-methods).
 | `PoolPGSnapshot`, `PGState`, `PGStats` | [Pool.PGs](#poolpgs) |
 | `ClientCaps` | [CreateClient](#createclient), [ClientConfig.Capabilities](#clientconfigcapabilities), [ClientConfig.UpdateCaps](#clientconfigupdatecaps) |
 | `ClientOption` | [CreateClient](#createclient), [ClientConfig.ReplaceKey](#clientconfigreplacekey) |
-| `ConfigSetting` | [override.SetConfig](override.md#setconfig) |
+| `ConfigSetting` | [override.SetConfig](../override/README.md#setconfig) |
 | `ConfigEntry` | [Configuration](#configuration) |
 | `MGRModuleState` | [MGRModules](#mgrmodules) |
 | `Status` | [Status](#status) |
@@ -4304,7 +4304,7 @@ See the [handle contract](#container-methods).
 | `HealthSnapshot`, `HealthCheck`, `HealthMute` | [HealthDetails](#healthdetails) |
 | `ObjectWatcher` | [ObjectWatchers](#objectwatchers) |
 | `BlocklistEntry` | [BlocklistEntries](#blocklistentries) |
-| `FullRatios`, `FullRatioSnapshot` | [FullRatios](#fullratios), [override.SetFullRatios](override.md#setfullratios) |
+| `FullRatios`, `FullRatioSnapshot` | [FullRatios](#fullratios), [override.SetFullRatios](../override/README.md#setfullratios) |
 | `InconsistentObject`, `InconsistentShard` | [PGInconsistencies](#pginconsistencies) |
 | `DiagnosticsConfig`, `DiagnosticsContainer`, `DiagnosticsReport`, `DiagnosticArtifact` | [CollectDiagnostics](#collectdiagnostics) |
 | `FinalizationConfig`, `Finalization` | [TerminateOnCleanup](#terminateoncleanup) |
@@ -4693,7 +4693,7 @@ t.Log("mon_host =", addresses)
 ```
 
 For RBD and CephFS mirror links between clusters, refresh the link as described
-in [rbd](rbd.md) and [cephfs](cephfs.md).
+in [rbd](../rbd/README.md) and [cephfs](../cephfs/README.md).
 
 ### Keep an OSD down without data movement
 
@@ -4866,7 +4866,7 @@ if err := fence.Restore(ctx); err != nil {
 
 `BlocklistEntries` shows the entry and its expiry. For RBD exclusive-lock
 handover, the lock owner's address comes from `rbd.ImageClients` (see
-[rbd](rbd.md)).
+[rbd](../rbd/README.md)).
 
 ### Detect a stuck watcher
 
@@ -4934,7 +4934,7 @@ manager's URL.
 
 In host mode all managers share the host network, so give each manager its own
 port and bind the public address before enabling the module (using
-[override.SetConfig](override.md#setconfig)). With the default settings and two
+[override.SetConfig](../override/README.md#setconfig)). With the default settings and two
 managers, `ManagerServices` stayed empty and no manager served metrics:
 
 ```golang
@@ -4964,7 +4964,7 @@ cfg, err := cluster.ConnectionConfig(ctx)
 // Write cfg.Conf and cfg.Keyring to files and point librados at them (see ConnectionConfig).
 ```
 
-See [Host networking](guides/host-network.md) for remote engines, Docker
+See [Host networking](../docs/guides/host-network.md) for remote engines, Docker
 Desktop and port selection.
 
 ### Run a cluster that accepts only encrypted connections
@@ -5016,15 +5016,15 @@ cluster's containers:
 | A command with bounded run time and output that must not outlive the call | [RunNativeCommand](#runnativecommand) |
 | Daemon admin socket commands | `cluster.Ceph(ctx, "tell", "osd.0", "dump_ops_in_flight")` |
 | A daemon's effective configuration | `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_op_queue")` |
-| Any central option | [override.SetConfig](override.md#setconfig), so it is restored |
+| Any central option | [override.SetConfig](../override/README.md#setconfig), so it is restored |
 | Commands inside one daemon's container | `Exec` on an element of `cluster.OSDs(ctx)` (the daemon image need not contain the `ceph` CLI the control container uses) |
-| `radosgw-admin` | `gateway.Admin(ctx, args...)` from the [rgw](rgw.md) package |
+| `radosgw-admin` | `gateway.Admin(ctx, args...)` from the [rgw](../rgw/README.md) package |
 
 Arguments are passed without a shell. `cluster.Ceph` adds `--connect-timeout 5`
 and returns stdout; on failure the error contains the output. Raw commands can
 change anything, so do not race them against a helper that changes the same
 state, and prefer typed helpers when they exist because they restore state and
-check identities. See [Native commands](guides/native-commands.md) for more
+check identities. See [Native commands](../docs/guides/native-commands.md) for more
 examples.
 
 ## Limitations and release differences
@@ -5063,7 +5063,7 @@ examples.
   `MessengerV2Secure`).
   Native RADOS, RBD and CephFS clients must run in a `WithClient` container; a
   host process cannot reach the OSDs. RGW's HTTP endpoint is published and
-  reachable from the host (see [rgw](rgw.md)).
+  reachable from the host (see [rgw](../rgw/README.md)).
 - Host mode needs a Linux engine, or Docker Desktop with host networking enabled,
   and cannot be combined with a separate cluster network or Docker network
   interruption.
@@ -5093,17 +5093,17 @@ a helper applies or restores it.
 - Tentacle 20.2.4 (`DefaultImage`) is the default and is tested on every change.
 - Squid 19.2.5 is supported and its role images run the short test category on
   every change, with the longer categories weekly. The `ceph` package behaves the
-  same on Squid; release-specific behaviour is in the [rbd](rbd.md),
-  [cephfs](cephfs.md) and [rgw](rgw.md) packages.
+  same on Squid; release-specific behaviour is in the [rbd](../rbd/README.md),
+  [cephfs](../cephfs/README.md) and [rgw](../rgw/README.md) packages.
 - Squid has no `messenger dump` admin command, so encryption of individual
   connections cannot be inspected there (see
   [NetworkConfig.WithMessengerMode](#networkconfigwithmessengermode)).
 - Squid 19.2.6 has an RGW multisite regression; use 19.2.5 for multisite tests
-  (see [rgw](rgw.md)).
+  (see [rgw](../rgw/README.md)).
 - `ClusterFacts.CephVersion` reflects only the first MON's image (essential). Mixing releases across role
   images is not supported.
 
-See [Releases and images](guides/releases-and-images.md) for details.
+See [Releases and images](../docs/guides/releases-and-images.md) for details.
 
 ### Common pitfalls
 
@@ -5154,7 +5154,7 @@ func (f *Finalization) CaptureWithFile(name string, session CaptureFileSource, m
 
 This is the raw-packet consent form of `Capture`. Settlement and metadata
 handling are identical; only a failure archive opens and verifies the selected
-file. See [capture file retention](capture.md#raw-files-in-a-failure-archive)
+file. See [capture file retention](../capture/README.md#raw-files-in-a-failure-archive)
 for byte/count budgets, identity checks, privacy and retention outcomes.
 `CaptureFileSource` embeds `CaptureSettler` and provides
 `CaptureFile(context.Context) (io.ReadCloser, int64, string, error)` for a

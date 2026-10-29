@@ -6,5 +6,5 @@
   "declarations": 95,
   "members": 153,
   "review": "api-naming.md",
-  "page": "docs/cephfs.md"
+  "page": "cephfs/README.md"
 }

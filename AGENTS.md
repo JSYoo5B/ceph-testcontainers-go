@@ -1,5 +1,32 @@
 # Agent instructions
 
+## Testcontainers modules
+
+This repository is a set of Testcontainers for Go modules, and every package
+that runs containers keeps the testcontainers-go module conventions. A change
+that breaks them is not allowed, however convenient it looks:
+
+- `Run(ctx, img, opts ...testcontainers.ContainerCustomizer)` returns a
+  `Container` that embeds `testcontainers.Container` (a service package embeds
+  `*ceph.Container`). The two-cluster fixtures add only a `Config` before the
+  variadic. Never change an existing `Run` signature or add a second entry point
+  for the same fixture; carry new configuration through the existing variadic
+  (a module `Option` or one value-group carrier).
+- `Run` returns the partially started container together with its error, so the
+  caller's `testcontainers.CleanupContainer` still terminates it.
+- Container settings are testcontainers customizers. Do not build a parallel
+  option, lifecycle or cleanup framework next to them.
+- Assume the reader knows Testcontainers for Go and Go. Do not explain its basics
+  in code comments or documentation.
+
+## Pull requests (for agents)
+
+Implement a task as one pull request, even when it has many steps. Every pull
+request runs the full CI, which is expensive, so a series of small pull
+requests only repeats CI without adding value. Review is done by an agent, so
+the size of a pull request is not a review problem. Do not split work to avoid
+merge conflicts; resolve conflicts yourself.
+
 ## Release compatibility
 
 Keep published release tags immutable. Make corrections on `main` and publish

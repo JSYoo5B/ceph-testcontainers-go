@@ -5,7 +5,7 @@ package-scoped API catalogues and the naming convention for public API.
 
 ## Catalogues
 
-The `declarations.json` file of each public package in [api-naming/](api-naming/)
+The `declarations.json` file of each public package in [api-naming/](api-naming)
 is a source-derived catalogue of package-level exports and declared methods on exported receiver
 types in the public packages. Every row names
 the current identifier, kind, proposed identifier and decision. Functions and

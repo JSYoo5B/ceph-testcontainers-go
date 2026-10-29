@@ -137,7 +137,7 @@ These affect commands or client libraries you run yourself, not the typed API:
   Failover to a surviving daemon still works. Call
   `cephfsmirror.Mirror.RebalanceDirectories` after `AddDaemon`. Ceph's Tentacle
   documentation also marks deployments with several CephFS mirror daemons as
-  untested upstream. See [cephfs-mirror.md](../cephfs-mirror.md).
+  untested upstream. See [`cephfs/mirror`](../../cephfs/mirror/README.md).
 - **Both releases, MON paused past the ticket lifetime.** A MON paused for
   longer than the MON ticket lifetime can strand a daemon whose MON session was
   on it: its reconnect is refused with `EACCES`, and it stops authenticating
@@ -146,7 +146,7 @@ These affect commands or client libraries you run yourself, not the typed API:
   [Daemon controls](messenger-client-fixtures.md#daemon-controls).
 - **Both releases, CephFS directory rebalancing.** External directory changes or
   mirror daemons joining or leaving can still trigger the upstream MGR hang; see
-  [CephFS limitations](../cephfs.md#limitations-and-release-differences).
+  [CephFS limitations](../../cephfs/README.md#limitations-and-release-differences).
 
 ## Role images
 
@@ -255,7 +255,7 @@ provided.
 `WithDaemonImage` starts one new MON or MGR, and `OSDOptions.WithImage` one new
 OSD, from an image other than the cluster's essential image. They are options of
 `AddMonitor`, `AddManager` and `AddOSD`; see
-[Per-daemon images](../ceph.md#per-daemon-images) for the full contract.
+[Per-daemon images](../../ceph/README.md#per-daemon-images) for the full contract.
 
 ```golang
 osd, err := cluster.AddOSD(ctx, ceph.OSDOptions{}.WithImage("registry.example/ceph:other"))
@@ -283,15 +283,15 @@ Read this scope before relying on it:
 
 ## Related APIs
 
-- [ceph.md](../ceph.md): `DefaultImage`, `Run`, `FactsOf`,
+- [`ceph`](../../ceph/README.md): `DefaultImage`, `Run`, `FactsOf`,
   `ImageSet`, `ImageOptions.WithImageSet`, `WithDaemonImage`, the error categories.
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.
-- [cephfs.md](../cephfs.md): `WithMDSImage`.
-- [cephfs-mirror.md](../cephfs-mirror.md): `Run`, `Mirror.RebalanceDirectories`.
-- [rgw.md](../rgw.md): `WithImage`.
-- [rgw-multisite.md](../rgw-multisite.md): `Run`, `RunTopology`,
+- [`cephfs`](../../cephfs/README.md): `WithMDSImage`.
+- [`cephfs/mirror`](../../cephfs/mirror/README.md): `Run`, `Mirror.RebalanceDirectories`.
+- [`rgw`](../../rgw/README.md): `WithImage`.
+- [`rgw/multisite`](../../rgw/multisite/README.md): `Run`, `RunTopology`,
   `Config.SetupImage`.
-- [rbd-mirror.md](../rbd-mirror.md): `Run`, namespace mapping.
+- [`rbd/mirror`](../../rbd/mirror/README.md): `Run`, namespace mapping.
 - [Testing this repository](../contributing/testing.md): running the module's
   own suites against another image or release.

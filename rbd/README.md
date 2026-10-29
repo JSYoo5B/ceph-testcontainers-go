@@ -14,7 +14,7 @@ package starts such a cluster and prepares the server side of RBD tests:
 - observation of the clients that watch an image and hold its locks (`ImageClients`), for exclusive-lock and fencing tests;
 - full and incremental backup transport between independent clusters (`ExportBackup`, `ExportIncremental`, `RestoreBackup`, `RestoreIncremental`);
 - the RBD immutable object cache daemon in a client container, with its cached objects and RADOS reads (`StartImmutableObjectCache`);
-- native `rbd-mirror` replication between two clusters, in snapshot or journal mode, with image or pool scope, default or named namespaces, any number of receiver daemons, and typed readiness observation (the separate `rbd/mirror` package, documented in [rbd-mirror.md](rbd-mirror.md)).
+- native `rbd-mirror` replication between two clusters, in snapshot or journal mode, with image or pool scope, default or named namespaces, any number of receiver daemons, and typed readiness observation (the separate `rbd/mirror` package, documented in [`rbd/mirror`](mirror/README.md)).
 
 Image CRUD (create, clone, flatten, trash, migration, group snapshots,
 encryption, locks) belongs to the RBD client under test. The module does not
@@ -23,7 +23,7 @@ as shown in [Running native commands](#running-native-commands). The Go module
 itself has no cgo or go-ceph dependency; every Ceph client runs inside a Linux
 container.
 
-The returned cluster is a `ceph` cluster. Everything in [ceph.md](ceph.md)
+The returned cluster is a `ceph` cluster. Everything in [`ceph`](../ceph/README.md)
 (clients and Cephx, pools, configuration, health, fault injection, topology
 changes) applies to it.
 
@@ -93,7 +93,7 @@ monitors advertise, so in the default bridge network mode the client must run
 in a container attached with `WithClient` or `WithClientIdentity`. A process on
 a macOS or Windows host cannot reach the whole cluster through a mapped MON
 port. For native clients outside Docker, see
-[the host network guide](guides/host-network.md).
+[the host network guide](../docs/guides/host-network.md).
 
 ## Module Reference
 
@@ -147,7 +147,7 @@ The default is `ceph.DefaultImage`, the pruned Tentacle aggregate image
 An aggregate supplies all roles. For explicit roles pass `ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(set))` to `Run`, with an empty image argument:
 essential supplies the daemons and client supplies ordinary RBD commands.
 RBD mirror/cache additionally select rbd-aux. Keep Ceph releases and native
-architectures consistent. See the [image guide](guides/releases-and-images.md).
+architectures consistent. See the [image guide](../docs/guides/releases-and-images.md).
 
 ### Container Options
 
@@ -203,7 +203,7 @@ cluster, err := rbd.Run(ctx, ceph.DefaultImage,
 
 Every `ceph.Run` option is accepted as well (`ceph.WithOSDCount`,
 `ceph.WithHostNetwork`, `ceph.WithImageOptions`, `ceph.WithConfigFile`,
-`NetworkConfig.WithMessengerMode`, ...); see [ceph.md](ceph.md). The generic options of
+`NetworkConfig.WithMessengerMode`, ...); see [`ceph`](../ceph/README.md). The generic options of
 the `testcontainers` package (for example `testcontainers.WithEnv`,
 `testcontainers.WithLogger` or any `testcontainers.CustomizeRequestOption`)
 also apply, but they customise only the MON/control container. Module options
@@ -213,7 +213,7 @@ internal paths through a generic option breaks bootstrap.
 ### Container Methods
 
 The `Container` returned by `Run` embeds `*ceph.Container`, so every method in
-[ceph.md](ceph.md) is available. RBD-specific operations are package-level
+[`ceph`](../ceph/README.md) is available. RBD-specific operations are package-level
 functions (below) because they also apply to clusters started by other
 packages. The `ceph.Container` methods most RBD tests use are:
 
@@ -522,12 +522,12 @@ for name, value := range lease.ClientOptions() {
 
 ### Mirroring
 
-Mirroring between two clusters is provided by the `rbd/mirror` package; see [rbd-mirror.md](rbd-mirror.md).
+Mirroring between two clusters is provided by the `rbd/mirror` package; see [`rbd/mirror`](mirror/README.md).
 
 ### Independent test fixtures
 
 Start an independent fixture with `Run`, create service resources explicitly,
-and register owned cleanup. See [Independent test fixtures](ceph.md#independent-test-fixtures).
+and register owned cleanup. See [Independent test fixtures](../ceph/README.md#independent-test-fixtures).
 
 ## Examples
 
@@ -536,7 +536,7 @@ and register owned cleanup. See [Independent test fixtures](ceph.md#independent-
 The examples share these helpers. `run` executes a command in any container and
 returns its exit code and combined output. `poll` repeats a check every two
 seconds until it holds or the context ends. The mirroring examples have their
-own helpers in [rbd-mirror.md](rbd-mirror.md#helpers-used-by-the-examples).
+own helpers in [`rbd/mirror`](mirror/README.md#helpers-used-by-the-examples).
 
 ```golang
 import (
@@ -690,7 +690,7 @@ which fail with `EPERM`/`EACCES`.
 
 Cephx changes apply to new connections; an existing session can keep tickets
 with the old capabilities. Change capabilities with `ClientConfig.UpdateCaps` and
-revoke identities with `ClientConfig.Delete` (see [ceph.md](ceph.md)).
+revoke identities with `ClientConfig.Delete` (see [`ceph`](../ceph/README.md)).
 
 To remove the namespace before the cluster ends, delete its images (and empty
 its trash) through the client, then call
@@ -807,7 +807,7 @@ Behaviour to rely on:
 
 Fault injection primitives (`fault.Pause`, `override.AddBlocklist`, network
 interruptions, messenger delays) are described in
-[the fault injection guide](guides/fault-injection.md).
+[the fault injection guide](../docs/guides/fault-injection.md).
 
 ### Back up an image and restore it on another cluster
 
@@ -900,8 +900,8 @@ configuration (`client` section) when it starts. You can set them with
 particular `rbd-mirror` tuning.
 
 More patterns (exec helpers, JSON parsing, attaching clients) are in
-[the native commands guide](guides/native-commands.md). Context handling and
-cleanup order are in [the contexts and cleanup guide](guides/contexts-and-cleanup.md).
+[the native commands guide](../docs/guides/native-commands.md). Context handling and
+cleanup order are in [the contexts and cleanup guide](../docs/guides/contexts-and-cleanup.md).
 
 ## Limitations and release differences
 
@@ -909,7 +909,7 @@ cleanup order are in [the contexts and cleanup guide](guides/contexts-and-cleanu
 
 - No image CRUD wrappers. Clone, flatten, trash, migration, group snapshots, encryption and locks are client APIs; test them through your client or the `rbd` CLI.
 - No kernel RBD mapping, `rbd-nbd` or `/dev/mapper`. Containers run unprivileged and use no host block devices.
-- Native clients on the test host need host network mode on a Linux Docker host (see [the host network guide](guides/host-network.md)). In bridge mode, run clients in attached containers.
+- Native clients on the test host need host network mode on a Linux Docker host (see [the host network guide](../docs/guides/host-network.md)). In bridge mode, run clients in attached containers.
 - Namespaces have no generation identity; do not delete and re-create a namespace that a descriptor still refers to.
 - Incremental restore checks that the baseline snapshot exists by name, not that its content matches.
 

@@ -48,7 +48,7 @@ Fences one specific client session for `duration` (at least one second). The
 address must be the session's exact `IP:port/nonce` with a nonzero nonce, so
 other clients on the same host are unaffected. Get it from the client after it
 connects (librados `rados_getaddrs`, go-ceph `Conn.GetAddrs`), from
-[ObjectWatchers](ceph.md#objectwatchers), from an RBD lock owner or from a CephFS
+[ObjectWatchers](../ceph/README.md#objectwatchers), from an RBD lock owner or from a CephFS
 session. A v1/v2 address vector is accepted only when all entries denote the same
 IP, port and nonce; protocol types become native `ANY` entries. Bare IPs, CIDR
 ranges, nonce zero and existing entries are refused, and an existing entry is
@@ -105,7 +105,7 @@ if err := fence.Restore(ctx); err != nil {
 
 `ceph.Observer.BlocklistEntries` shows the entry and its expiry. For RBD
 exclusive-lock handover, the lock owner's address comes from `rbd.ImageClients`
-(see [rbd](rbd.md)).
+(see [rbd](../rbd/README.md)).
 
 ## SetOSDFlag
 
@@ -184,7 +184,7 @@ call refuses:
 A module change can restart the active manager; the call waits for a coherent
 module snapshot before it reads and before it writes, and reconciles the result
 with a fresh bounded read. It verifies membership, not command readiness: use
-[WaitMGRModuleReady](ceph.md#waitmgrmoduleready) or probe the module with your
+[WaitMGRModuleReady](../ceph/README.md#waitmgrmoduleready) or probe the module with your
 intended command afterwards. Ceph has no compare-and-swap for module membership,
 so external edits must not race the call or `Restore`.
 
@@ -251,8 +251,8 @@ is the cluster's startup timeout and is set before the wait for the topology loc
 Low ratios reproduce full conditions with a small amount of existing data; the
 module does not fill real devices. Success verifies the map, not OSD reports:
 wait for `OSD_NEARFULL`, `OSD_BACKFILLFULL` or `OSD_FULL` with
-[HealthDetails](ceph.md#healthdetails). See
-[Fill the cluster with low full ratios](ceph.md#fill-the-cluster-with-low-full-ratios).
+[HealthDetails](../ceph/README.md#healthdetails). See
+[Fill the cluster with low full ratios](../ceph/README.md#fill-the-cluster-with-low-full-ratios).
 
 | Outcome | Handle | Error |
 | --- | --- | --- |
@@ -304,7 +304,7 @@ func SetDebugLevel(ctx context.Context, c *ceph.Container, setting ceph.DebugLev
 
 `ceph.DebugLevelSetting`, `ceph.DebugLevelReceipt`, `ceph.DebugLevelState` and
 `ceph.DebugLevelTransition` stay in `ceph` because the failure manifest copies
-the receipt; see [Debug level types](ceph.md#debug-level-types).
+the receipt; see [Debug level types](../ceph/README.md#debug-level-types).
 
 Opens one runtime debug level window on one running OSD that the cluster owns.
 `ceph.DebugLevelSetting` has `Daemon` (such as `osd.0`), `Name` (`debug_ms` or
@@ -321,7 +321,7 @@ context, never only with the expired workload context. Verbose logging can
 change the CPU use and timing of the operation it observes.
 
 The window changes the daemon's runtime value through its admin socket, as
-[AdminSocket](ceph.md#adminsocket) reaches it, and never the central
+[AdminSocket](../ceph/README.md#adminsocket) reaches it, and never the central
 configuration database; `override.SetConfig` is
 the stored-entry model. A daemon restart drops a runtime value. The call reads
 the effective prior level, sets the requested level and verifies the normalized
@@ -354,7 +354,7 @@ whose `Receipt` has the state `not-applied`, the request as given and the
 refusal as `Reason`; a real handle never reports `not-applied`. A set or readback
 that fails returns a real handle with the error, because a lost reply can still
 have applied. Readbacks after a set use a fresh context bounded by
-[WithStartupTimeout](ceph.md#withstartuptimeout).
+[WithStartupTimeout](../ceph/README.md#withstartuptimeout).
 
 ## DebugLevelHandle
 
@@ -385,7 +385,7 @@ is reported as a changed target instead of a level to restore. Restored, conflic
 and target-changed are terminal and release the admission; `Restore` then
 returns nil or the same error again.
 
-With [TerminateOnCleanup](ceph.md#terminateoncleanup), register the removal of
+With [TerminateOnCleanup](../ceph/README.md#terminateoncleanup), register the removal of
 clients first and the restoration afterward. The cleanups run in reverse order
 after the failure archive, so a known failure is archived while the level is
 still raised, and the level is restored before the clients are removed. A
@@ -436,20 +436,20 @@ with the apply or the restore: Ceph has no compare-and-set for configuration.
 The helper verifies the stored value, not its effect:
 
 - Local `ceph.conf` entries (including
-  [WithConfigFile](ceph.md#withconfigfile)), command-line arguments and runtime
+  [WithConfigFile](../ceph/README.md#withconfigfile)), command-line arguments and runtime
   overrides take precedence over the database.
 - Some options need a daemon restart; for example `osd_op_queue` only applies when
   an OSD starts.
 - Check the effective value of a running daemon with
   `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_max_backfills")`.
-- With [MessengerV2Secure](ceph.md#networkconfigwithmessengermode), the Messenger mode and bind
+- With [MessengerV2Secure](../ceph/README.md#networkconfigwithmessengermode), the Messenger mode and bind
   options are refused; with `MessengerV2Only`, the `ms_bind_msgr1` and
   `ms_bind_msgr2` options. The refusal does not depend on the section or mask.
 
 Configuration output can contain secrets; log only selected fields. Typical uses:
 lowering thresholds such as `osd_op_complaint_time` (when `SLOW_OPS` is
 reported), enabling Messenger fault injection (`ms_blackhole_client`,
-`ms_inject_delay_*`, see [Fault injection](guides/fault-injection.md)), and
+`ms_inject_delay_*`, see [Fault injection](../docs/guides/fault-injection.md)), and
 preparing OSDs before they start.
 
 | Outcome | Handle | Error |
@@ -503,7 +503,7 @@ func SetMessengerPolicy(ctx context.Context, c *ceph.Container, policy ceph.Mess
 ```
 
 Changes the connection modes that the running daemons accept from clients (see
-[NetworkConfig.WithMessengerPolicy](ceph.md#networkconfigwithmessengerpolicy) for the fields). Each non-nil
+[NetworkConfig.WithMessengerPolicy](../ceph/README.md#networkconfigwithmessengerpolicy) for the fields). Each non-nil
 field becomes a [SetConfig](#setconfig) override of its option; nil fields stay as
 they are. The call is admitted once under its own name and then sets the options
 in the order monitors, managers, OSDs.

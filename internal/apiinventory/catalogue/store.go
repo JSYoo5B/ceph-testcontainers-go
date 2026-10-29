@@ -23,10 +23,10 @@ func PackageDir(root, pkg string) string {
 	return filepath.Join(root, filepath.FromSlash(Dir), filepath.FromSlash(pkg))
 }
 
-// DefaultPage is the API reference page a new receipt names:
-// docs/<package with slashes replaced by dashes>.md.
+// DefaultPage is the API reference page of a package: the README.md in the
+// package directory.
 func DefaultPage(pkg string) string {
-	return "docs/" + strings.ReplaceAll(pkg, "/", "-") + ".md"
+	return pkg + "/README.md"
 }
 
 // Directories returns the packages that have a catalogue directory: every
@@ -245,9 +245,9 @@ func checkReferences(root string, receipt Receipt) error {
 	if err := requireFile(root, "docs/design", receipt.Review, ".md"); err != nil {
 		problems = append(problems, fmt.Errorf("review note: %w", err))
 	}
-	if !strings.HasPrefix(receipt.Page, "docs/") {
-		problems = append(problems, fmt.Errorf("page %q is not below docs/", receipt.Page))
-	} else if err := requireFile(root, "docs", strings.TrimPrefix(receipt.Page, "docs/"), ".md"); err != nil {
+	if want := DefaultPage(receipt.Package); receipt.Page != want {
+		problems = append(problems, fmt.Errorf("page %q is not %s", receipt.Page, want))
+	} else if err := requireFile(root, ".", receipt.Page, ".md"); err != nil {
 		problems = append(problems, fmt.Errorf("page: %w", err))
 	}
 	return errors.Join(problems...)
@@ -329,9 +329,6 @@ func Approve(c Config, named []string, review string) ([]string, error) {
 			continue
 		}
 		page := DefaultPage(pkg)
-		if prior, err := LoadReceipt(c.Root, pkg); err == nil && prior.Page != "" {
-			page = prior.Page
-		}
 		declarations, err := digest(surface.Declarations)
 		if err != nil {
 			return nil, err

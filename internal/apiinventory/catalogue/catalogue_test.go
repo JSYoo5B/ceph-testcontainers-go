@@ -81,8 +81,8 @@ func tree(t *testing.T) (string, catalogue.Config) {
 	write(t, root, "internal/hidden/hidden.go", "package hidden\nfunc Exported() {}\n")
 	write(t, root, "alpha/testdata/data.go", "package data\nfunc Exported() {}\n")
 	write(t, root, ".github/tool/tool.go", "package tool\nfunc Exported() {}\n")
-	for _, page := range []string{"alpha", "alpha-sub", "beta"} {
-		write(t, root, "docs/"+page+".md", "page\n")
+	for _, pkg := range []string{"alpha", "alpha/sub", "beta"} {
+		write(t, root, pkg+"/README.md", "page\n")
 	}
 	write(t, root, "docs/design/api-naming.md", "review\n")
 	cfg := catalogue.Config{Root: root, Proposals: map[string]string{}}
@@ -453,7 +453,7 @@ func TestApprovalNeedsExistingNotesAndPages(t *testing.T) {
 	if _, err := catalogue.Approve(cfg, []string{"alpha"}, "."); err == nil {
 		t.Fatal("a directory is not a review note")
 	}
-	if err := os.Remove(filepath.Join(root, "docs/beta.md")); err != nil {
+	if err := os.Remove(filepath.Join(root, "beta/README.md")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := catalogue.Approve(cfg, []string{"beta"}, ""); err == nil {
@@ -495,8 +495,8 @@ func TestReceiptIsReadStrictly(t *testing.T) {
 		"wrong schema":     strings.Replace(good, "review/v2", "review/v1", 1),
 		"empty review":     strings.Replace(good, `"review": "api-naming.md"`, `"review": ""`, 1),
 		"review traversal": strings.Replace(good, `"review": "api-naming.md"`, `"review": "../design/api-naming.md"`, 1),
-		"page outside":     strings.Replace(good, `"page": "docs/beta.md"`, `"page": "README.md"`, 1),
-		"missing page":     strings.Replace(good, `"page": "docs/beta.md"`, `"page": "docs/none.md"`, 1),
+		"page outside":     strings.Replace(good, `"page": "beta/README.md"`, `"page": "docs/beta.md"`, 1),
+		"another page":     strings.Replace(good, `"page": "beta/README.md"`, `"page": "alpha/README.md"`, 1),
 		"wrong hash":       strings.Replace(good, `"declarations_sha256": "`, `"declarations_sha256": "0`, 1),
 		"wrong count":      strings.Replace(good, `"declarations": 2`, `"declarations": 3`, 1),
 		"empty receipt":    "{}\n",
@@ -596,7 +596,7 @@ func TestSummarizeRefusesAMismatchedCount(t *testing.T) {
 }
 
 func TestDefaultPageFollowsThePackageDirectory(t *testing.T) {
-	for pkg, want := range map[string]string{"ceph": "docs/ceph.md", "rbd/mirror": "docs/rbd-mirror.md", "rgw/multisite": "docs/rgw-multisite.md"} {
+	for pkg, want := range map[string]string{"ceph": "ceph/README.md", "rbd/mirror": "rbd/mirror/README.md", "rgw/multisite": "rgw/multisite/README.md"} {
 		if got := catalogue.DefaultPage(pkg); got != want {
 			t.Errorf("%s: %s, want %s", pkg, got, want)
 		}

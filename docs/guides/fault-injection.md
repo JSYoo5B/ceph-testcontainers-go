@@ -1,7 +1,7 @@
 # Fault injection
 
 Network faults and container pauses use `github.com/JSYoo5B/ceph-testcontainers-go/fault` with the
-existing `*ceph.Container`; see the [API reference](../fault.md).
+existing `*ceph.Container`; see the [API reference](../../fault/README.md).
 
 ## Introduction
 
@@ -1084,7 +1084,7 @@ if err != nil {
 
 ## Damaging a replica
 
-[`fault.InjectObjectDataError`](../fault.md#injectobjectdataerror) makes one replica of one object unreadable for scrub
+[`fault.InjectObjectDataError`](../../fault/README.md#injectobjectdataerror) makes one replica of one object unreadable for scrub
 and recovery, using Ceph's `injectdataerr` debug command. No disk is touched
 and no OSD stops. Combine it with `DeepScrubPG`, `PGInconsistencies` and
 `RepairPG` to test monitoring of `OSD_SCRUB_ERRORS` and `PG_DAMAGED`, client
@@ -1298,16 +1298,16 @@ func waitForHealthCheck(ctx context.Context, cluster *ceph.Container, code strin
 
 ## Related APIs
 
-- [fault.md](../fault.md): `fault.Pause`, `InterruptNetwork` and network profiles.
-- [ceph.md](../ceph.md):
+- [`fault`](../../fault/README.md): `fault.Pause`, `InterruptNetwork` and network profiles.
+- [`ceph`](../../ceph/README.md):
   scrub helpers, `OSDContainer.Remove`, `OSDContainer.SetIn`.
-- [override.md](../override.md): `override.SetConfig`, `override.SetMessengerPolicy`, `override.AddBlocklist`, `override.SetFullRatios`, `override.SetOSDFlag`.
-- [rbd.md](../rbd.md): `ImageClients`.
-- [rbd-mirror.md](../rbd-mirror.md): `Mirror.InterruptPeerLink`.
-- [cephfs.md](../cephfs.md): `Filesystem.OverrideSessionTimeouts`,
+- [`override`](../../override/README.md): `override.SetConfig`, `override.SetMessengerPolicy`, `override.AddBlocklist`, `override.SetFullRatios`, `override.SetOSDFlag`.
+- [`rbd`](../../rbd/README.md): `ImageClients`.
+- [`rbd/mirror`](../../rbd/mirror/README.md): `Mirror.InterruptPeerLink`.
+- [`cephfs`](../../cephfs/README.md): `Filesystem.OverrideSessionTimeouts`,
   `Filesystem.Sessions`.
-- [cephfs-mirror.md](../cephfs-mirror.md): `Mirror.InterruptPeerLink`.
-- [rgw.md](../rgw.md): `Multisite.InterruptZoneLink`, `Multisite.ApplyZoneLinkProfile`.
+- [`cephfs/mirror`](../../cephfs/mirror/README.md): `Mirror.InterruptPeerLink`.
+- [`rgw`](../../rgw/README.md): `Multisite.InterruptZoneLink`, `Multisite.ApplyZoneLinkProfile`.
 - [Host network and native clients](host-network.md): which faults are
   available in host mode.
 - [Contexts, ownership and cleanup](contexts-and-cleanup.md): handles returned

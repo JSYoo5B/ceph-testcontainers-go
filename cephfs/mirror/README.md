@@ -5,7 +5,7 @@
 The `cephfs/mirror` package mirrors snapshots of selected directories from a
 filesystem in one Ceph cluster to a filesystem in another, with a native
 `cephfs-mirror` daemon. The clusters, filesystems and data stay in the
-[cephfs package](cephfs.md); RBD mirroring is a separate fixture in
+[cephfs package](../README.md); RBD mirroring is a separate fixture in
 `rbd/mirror` with its own semantics. The two services share no public mirror
 interface.
 
@@ -791,7 +791,7 @@ Notes:
 - For a native client in the test process, start the cluster with
   `ceph.WithHostNetwork()` on a Linux Docker host and pass the bytes from
   `cluster.ConnectionConfig(ctx)` to the client. See
-  [Host network](guides/host-network.md).
+  [Host network](../../docs/guides/host-network.md).
 
 ### Test quota enforcement (EDQUOT)
 
@@ -1069,7 +1069,7 @@ Instead of a replacement, the same container can be started again with
 `old.Start(ctx)` after `mds fail`. The restarted daemon takes rank 0 with a
 new GID, and a client that stayed mounted reconnects: its session keeps the
 same client ID, PID and address, and a file it opened before the failure keeps
-working. See [MDS sessions](guides/messenger-client-fixtures.md#mds-sessions).
+working. See [MDS sessions](../../docs/guides/messenger-client-fixtures.md#mds-sessions).
 
 ### Evict a frozen client
 
@@ -1201,7 +1201,7 @@ standby takes over. To test a client against an MDS that stays `up:active` but
 does not answer, enable the
 messenger option `ms_blackhole_client` on that daemon. The MDS keeps talking to
 the MON, no failover happens, and new client sessions cannot open. See
-[Fault injection](guides/fault-injection.md) for the other messenger options.
+[Fault injection](../../docs/guides/fault-injection.md) for the other messenger options.
 
 ```golang
 const mountProbe = `import cephfs, sys

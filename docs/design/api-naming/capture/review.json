@@ -6,5 +6,5 @@
   "declarations": 36,
   "members": 56,
   "review": "api-naming.md",
-  "page": "docs/capture.md"
+  "page": "capture/README.md"
 }

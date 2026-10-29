@@ -6,5 +6,5 @@
   "declarations": 40,
   "members": 74,
   "review": "value-configuration-composition.md",
-  "page": "docs/rbd-mirror.md"
+  "page": "rbd/mirror/README.md"
 }

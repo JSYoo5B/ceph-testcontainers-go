@@ -9,7 +9,7 @@ delivery belong here. Messenger decoding, decryption, protocol assertions and
 dissectors belong to consumers.
 
 `internal/pcapfile` checks the classic pcap structure. The public
-[`capture`](../capture.md) package runs one capture session on one explicitly
+[`capture`](../../capture/README.md) package runs one capture session on one explicitly
 selected endpoint.
 
 ## Capture session

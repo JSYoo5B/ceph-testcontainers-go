@@ -6,5 +6,5 @@
   "declarations": 56,
   "members": 113,
   "review": "api-naming.md",
-  "page": "docs/rgw-multisite.md"
+  "page": "rgw/multisite/README.md"
 }

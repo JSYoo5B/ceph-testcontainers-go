@@ -15,7 +15,7 @@ filesystems and prepares the server side of CephFS client tests:
 - subvolume snapshots and asynchronous clones;
 - Cephx principals restricted to one subvolume;
 - directory pins, quiesce sets and MDS client session limits;
-- one-way snapshot mirroring of directories between two clusters (the separate `cephfs/mirror` package, documented in [cephfs-mirror.md](cephfs-mirror.md)).
+- one-way snapshot mirroring of directories between two clusters (the separate `cephfs/mirror` package, documented in [`cephfs/mirror`](mirror/README.md)).
 
 The Go module does not link go-ceph or cgo and never mounts CephFS on the test
 host. File I/O is done by the client under test: libcephfs, go-ceph or another
@@ -24,7 +24,7 @@ test process itself when the cluster uses host networking on Linux. The fixture
 drives Ceph through the `ceph` CLI in the cluster's control container.
 
 The cluster itself (MON, MGR, OSD, pools, Cephx, central configuration, fault
-injection, health) is documented in [Ceph](ceph.md).
+injection, health) is documented in [Ceph](../ceph/README.md).
 
 ## Adding this module to your project dependencies
 
@@ -128,7 +128,7 @@ that option it creates the default filesystem `tc-cephfs` with the pools
 returns after rank 0 is `up:active`.
 
 The returned `*cephfs.Container` embeds `*ceph.Container`, so every method
-documented in [Ceph](ceph.md) is available on it. Package functions that take a
+documented in [Ceph](../ceph/README.md) is available on it. Package functions that take a
 `*ceph.Container` (`Start`, `Filesystems`, and the `Source` and
 `Destination` fields of `cephfsmirror.Config`) take the embedded value, for example
 `cephfs.Start(ctx, cluster.Container, config)`. The container's `Filesystems`
@@ -171,7 +171,7 @@ release of the `Run` image, which the fixture uses to pick release-specific
 commands. Squid 19.2.5 is supported (see
 [Limitations and release differences](#limitations-and-release-differences)).
 Role images and release selection are covered in
-[Releases and images](guides/releases-and-images.md).
+[Releases and images](../docs/guides/releases-and-images.md).
 
 ### Container Options
 
@@ -213,7 +213,7 @@ cluster, err := cephfs.Run(ctx, ceph.DefaultImage,
 
 Every pool gets `application=cephfs`; another application value is rejected.
 Pool placement, replica counts and PG counts follow `ceph.PoolConfig` (see
-[Ceph](ceph.md)). All pools and OSD placements are validated before anything is
+[Ceph](../ceph/README.md)). All pools and OSD placements are validated before anything is
 created.
 
 MDS daemon names are fixed by the fixture. The first MDS of the default
@@ -286,7 +286,7 @@ customise only the MON container. To customise MDS containers, pass customizers
 to `Start`; mirror daemons take customizers from `cephfsmirror.Run` and
 `Mirror.AddDaemon`. The cluster options of `ceph.Run` (`ceph.WithOSDCount`,
 `ceph.WithHostNetwork`, `ceph.WithStartupTimeout`, `ceph.WithConfigFile`, ...)
-are documented in [Ceph](ceph.md).
+are documented in [Ceph](../ceph/README.md).
 
 ### Container Methods
 
@@ -301,7 +301,7 @@ Returns the cluster's filesystems sorted by name, like
 `WithFilesystems` has one, `tc-cephfs`.
 
 The returned container also embeds `*ceph.Container`; its methods are
-documented in [Ceph](ceph.md). The ones CephFS tests use most are:
+documented in [Ceph](../ceph/README.md). The ones CephFS tests use most are:
 
 | Method | Use in CephFS tests |
 | --- | --- |
@@ -371,7 +371,7 @@ Deletes this owned filesystem. It gracefully stops its ranks and removes the fil
 terminates its MDS daemons, deletes their Cephx keys, and deletes the metadata,
 default data and `AdditionalDataPools` pools created from its `Config`, together
 with their CRUSH rules and erasure-code profiles. Pools attached later with
-`AddDataPool` are detached but kept; delete them with [Pool.Remove](ceph.md#poolremove).
+`AddDataPool` are detached but kept; delete them with [Pool.Remove](../ceph/README.md#poolremove).
 
 All file data in the deleted pools is destroyed. Stop clients, mirrors and
 subvolume operations on the filesystem first; their handles fail afterwards. A
@@ -417,7 +417,7 @@ On a `ceph.AddressDualStack` cluster every MDS advertises a concrete IPv4 and
 IPv6 address, IPv4 first. Clients reach an MDS through the first entry, so
 `ms_bind_prefer_ipv4 = false` in its `[mds.<ID>]` section of a
 `ceph.WithConfigFile` file makes them use IPv6; see
-[Dual-stack clusters](ceph.md#dual-stack-clusters).
+[Dual-stack clusters](../ceph/README.md#dual-stack-clusters).
 
 ### Handles and ownership
 
@@ -963,11 +963,11 @@ directory's `.snap`.
 
 The call sets nothing up by itself, and refuses with `ErrInvalidRequest`:
 - while the `snap_schedule` module is disabled. Enable it with
-  [override.SetMGRModule](override.md#setmgrmodule), and wait until the active
+  [override.SetMGRModule](../override/README.md#setmgrmodule), and wait until the active
   MGR, which restarts to load the module, answers again;
 - a minute `Repeat` while `mgr/snap_schedule/allow_m_granularity` is not
   `true`. The module refuses minutes otherwise; set it with
-  [override.SetConfig](override.md#setconfig) for a test;
+  [override.SetConfig](../override/README.md#setconfig) for a test;
 - a directory that already has a schedule, which the lease would not own,
   or another lease from this filesystem value.
 
@@ -1326,12 +1326,12 @@ been terminated.
 
 ### Snapshot mirroring
 
-Snapshot mirroring between two clusters is provided by the `cephfs/mirror` package; see [cephfs-mirror.md](cephfs-mirror.md).
+Snapshot mirroring between two clusters is provided by the `cephfs/mirror` package; see [`cephfs/mirror`](mirror/README.md).
 
 ### Independent test fixtures
 
 Start an independent fixture with `Run`, create service resources explicitly,
-and register owned cleanup. See [Independent test fixtures](ceph.md#independent-test-fixtures).
+and register owned cleanup. See [Independent test fixtures](../ceph/README.md#independent-test-fixtures).
 
 ## Examples
 
@@ -1420,7 +1420,7 @@ Notes:
 - For a native client in the test process, start the cluster with
   `ceph.WithHostNetwork()` on a Linux Docker host and pass the bytes from
   `cluster.ConnectionConfig(ctx)` to the client. See
-  [Host network](guides/host-network.md).
+  [Host network](../docs/guides/host-network.md).
 
 ### Test quota enforcement (EDQUOT)
 
@@ -1698,7 +1698,7 @@ Instead of a replacement, the same container can be started again with
 `old.Start(ctx)` after `mds fail`. The restarted daemon takes rank 0 with a
 new GID, and a client that stayed mounted reconnects: its session keeps the
 same client ID, PID and address, and a file it opened before the failure keeps
-working. See [MDS sessions](guides/messenger-client-fixtures.md#mds-sessions).
+working. See [MDS sessions](../docs/guides/messenger-client-fixtures.md#mds-sessions).
 
 ### Evict a frozen client
 
@@ -1830,7 +1830,7 @@ standby takes over. To test a client against an MDS that stays `up:active` but
 does not answer, enable the
 messenger option `ms_blackhole_client` on that daemon. The MDS keeps talking to
 the MON, no failover happens, and new client sessions cannot open. See
-[Fault injection](guides/fault-injection.md) for the other messenger options.
+[Fault injection](../docs/guides/fault-injection.md) for the other messenger options.
 
 ```golang
 const mountProbe = `import cephfs, sys
@@ -1994,7 +1994,7 @@ refused.
 Raw commands on resources that typed handles own are outside the handles'
 contract. Fence other writers and do not run fixture operations on the same
 resources at the same time. More escape hatches are listed in
-[Native commands](guides/native-commands.md).
+[Native commands](../docs/guides/native-commands.md).
 
 ## Limitations and release differences
 
@@ -2044,8 +2044,8 @@ above (MGR directory redistribution, pending clone UUIDs, retained snapshots)
 describe Tentacle behaviour.
 
 Other release-dependent behaviour lives in the cluster and the RBD and RGW
-packages; see [Ceph](ceph.md), [RBD](rbd.md), [RGW](rgw.md) and
-[Releases and images](guides/releases-and-images.md). Keep MDS and mirror images
+packages; see [Ceph](../ceph/README.md), [RBD](../rbd/README.md), [RGW](../rgw/README.md) and
+[Releases and images](../docs/guides/releases-and-images.md). Keep MDS and mirror images
 on the same release as the `Run` image: `ClusterFacts.CephVersion` reflects only the `Run`
 image.
 
@@ -2072,4 +2072,4 @@ if strings.HasPrefix(facts.CephVersion, "19.") {
 | Cluster startup timeout | 3 min | Bounds `Start`, `WaitReady` and `WaitForSubvolumeClone`; change with `ceph.WithStartupTimeout`. |
 
 Context handling, cleanup ordering and partial results are covered in
-[Contexts and cleanup](guides/contexts-and-cleanup.md).
+[Contexts and cleanup](../docs/guides/contexts-and-cleanup.md).

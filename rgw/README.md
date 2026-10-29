@@ -18,7 +18,7 @@ and prepares the server-side state that S3 client tests need:
 
 Multisite orchestration (one realm across independent clusters, zones and
 zonegroups, period transfer, sync status and sync policies) lives in the
-separate `rgw/multisite` package, documented in [rgw-multisite.md](rgw-multisite.md).
+separate `rgw/multisite` package, documented in [`rgw/multisite`](multisite/README.md).
 
 The module configures Ceph through the CLIs inside its containers
 (`radosgw-admin` and `ceph`). It does not wrap S3 object operations and adds no
@@ -27,8 +27,8 @@ and credentials that the module returns. Anything without a typed method is
 available through `Gateway.Admin` (see [Running native commands](#running-native-commands)).
 
 The cluster underneath (pools, central configuration, health, daemons,
-networking) is documented in [ceph.md](ceph.md). The same cluster can also host
-RBD ([rbd.md](rbd.md)) and CephFS ([cephfs.md](cephfs.md)).
+networking) is documented in [`ceph`](../ceph/README.md). The same cluster can also host
+RBD ([`rbd`](../rbd/README.md)) and CephFS ([`cephfs`](../cephfs/README.md)).
 
 ## Adding this module to your project dependencies
 
@@ -175,7 +175,7 @@ keys are in `Gateway.AccessKey` and `Gateway.SecretKey`. It returns when the
 gateway answers HTTP requests.
 
 The returned `Container` embeds `*ceph.Container`, so every cluster method from
-[ceph.md](ceph.md) is available on it, including `Terminate`, which removes the
+[`ceph`](../ceph/README.md) is available on it, including `Terminate`, which removes the
 gateways together with the rest of the cluster. Gateways are owned by the
 cluster: you never terminate a gateway separately.
 
@@ -192,7 +192,7 @@ before the error check handles this.
 
 The package-level functions that act on a cluster (`Start`,
 `Gateways`) and the cluster fields of the
-[multisite configuration](rgw-multisite.md) take a `*ceph.Container`. Pass `cluster.Container` for a cluster
+[multisite configuration](multisite/README.md) take a `*ceph.Container`. Pass `cluster.Container` for a cluster
 returned by `rgw.Run` (or by `rbd.Run` or `cephfs.Run`), or pass the value
 returned by `ceph.Run` directly.
 
@@ -223,7 +223,7 @@ example: `rgw.Run(ctx, ceph.DefaultImage)`.
 - The module reads no environment variables. Image selection is always
   explicit.
 
-See [guides/releases-and-images.md](guides/releases-and-images.md) for role
+See [guides/releases-and-images.md](../docs/guides/releases-and-images.md) for role
 images and release selection.
 
 ### Container Options
@@ -245,7 +245,7 @@ by default every gateway gets its own generated S3 test user; set
 All gateways of one cluster serve the same zone, so they share users, buckets
 and objects. Multisite scope is configured separately with
 `multisite.Run` and `multisite.RunTopology` from the
-[`rgw/multisite`](rgw-multisite.md) package.
+[`rgw/multisite`](multisite/README.md) package.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
@@ -279,7 +279,7 @@ matter most for RGW tests:
 | Option | Effect on gateways |
 | --- | --- |
 | `ceph.WithOSDCount(n)` | One OSD is enough for most S3 tests and starts faster. Erasure-coded storage classes need at least K+M OSDs. |
-| `ceph.WithHostNetwork()` | Gateways bind ports on the Docker host. Ports are reserved automatically, so several clusters can share a host. See [guides/host-network.md](guides/host-network.md). |
+| `ceph.WithHostNetwork()` | Gateways bind ports on the Docker host. Ports are reserved automatically, so several clusters can share a host. See [guides/host-network.md](../docs/guides/host-network.md). |
 | `NetworkConfig.WithHostAddress(addr)` | The address gateways bind and advertise in host mode. `S3Endpoint` returns it directly. |
 | `ceph.WithConfigFile(path)` | Native `ceph.conf` entries for every daemon. RGW runs as `client.admin`, so RGW options belong in `[client]` or `[client.admin]`. |
 | `ceph.WithStartupTimeout(d)` | Bounds gateway startup and each `Gateway.Admin` call. |
@@ -291,7 +291,7 @@ The generic options of the `testcontainers` package (for example
 customise only the MON/control container. To customise a gateway container,
 pass them to [`Start`](#start), or to `multisite.Run`, `multisite.RunTopology`,
 `Fixture.AddZone` or `Fixture.AddZonegroup` from
-[`rgw/multisite`](rgw-multisite.md), where they are applied last. Do not replace
+[`rgw/multisite`](multisite/README.md), where they are applied last. Do not replace
 the gateway's entrypoint, command, network or listener settings.
 
 ### Container Methods
@@ -312,7 +312,7 @@ gateway from `Gateways` instead.
 The `Container` also embeds `*ceph.Container`. Its cluster methods
 (`override.SetConfig`, `CreatePool`, `Ceph`, `ControlContainer`, `WithClient`,
 `ceph.FactsOf` and so on) are documented in
-[ceph.md](ceph.md).
+[`ceph`](../ceph/README.md).
 
 The RGW-specific methods live on each gateway. A gateway is a `*rgw.Gateway`,
 obtained from `Gateways`, `Start`, or the `Source`, `Destination` and
@@ -379,7 +379,7 @@ process, which uses `S3Endpoint`.
 On a `ceph.AddressDualStack` cluster it returns the gateway's IPv4 address.
 The gateway listens on `0.0.0.0:7480` and `[::]:7480`, so clients in the
 cluster's network reach it over its IPv6 address on port 7480 as well; see
-[Dual-stack clusters](ceph.md#dual-stack-clusters).
+[Dual-stack clusters](../ceph/README.md#dual-stack-clusters).
 
 ### Container Methods: Native commands
 
@@ -998,7 +998,7 @@ confirmed creation can be activated.
 ### Independent test fixtures
 
 Start an independent fixture with `Run`, create service resources explicitly,
-and register owned cleanup. See [Independent test fixtures](ceph.md#independent-test-fixtures).
+and register owned cleanup. See [Independent test fixtures](../ceph/README.md#independent-test-fixtures).
 
 ## Examples
 
@@ -1838,7 +1838,7 @@ See Ceph's [placement and storage classes](https://docs.ceph.com/en/tentacle/rad
 ## Running native commands
 
 The typed API covers fixture preparation. Everything else is available through
-the native CLIs. See also [guides/native-commands.md](guides/native-commands.md).
+the native CLIs. See also [guides/native-commands.md](../docs/guides/native-commands.md).
 
 ### radosgw-admin through a gateway
 
@@ -1876,7 +1876,7 @@ code, out, err := gateway.Exec(ctx,
 ```
 
 For a multisite gateway add `--rgw-realm`, `--rgw-zonegroup` and `--rgw-zone`,
-or use the fixture methods of [`rgw/multisite`](rgw-multisite.md#running-native-commands). The control container also has
+or use the fixture methods of [`rgw/multisite`](multisite/README.md#running-native-commands). The control container also has
 `radosgw-admin` (`Exec` on `cluster.ControlContainer(ctx)`), which works for the
 default zone of a standalone cluster even when no gateway is running.
 
@@ -1953,7 +1953,7 @@ by the master gateway with HTTP 403. The RGW debug log reports
 such requests. No setting disables the check. Use 19.2.5 for multisite tests
 on Squid; the rest of the module works on 19.2.6.
 
-See [guides/releases-and-images.md](guides/releases-and-images.md).
+See [guides/releases-and-images.md](../docs/guides/releases-and-images.md).
 
 ### Out of scope
 

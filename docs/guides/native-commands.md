@@ -711,7 +711,7 @@ Keys the fixture manages (identity, addresses, networks, Cephx, messenger
 modes, logging, data paths, pool size defaults, BlueStore file size) are
 rejected with a hint to the option to use instead. RGW runs as `client.admin`,
 so RGW settings belong in `[client]` or `[client.admin]`. See
-[ceph.md](../ceph.md) for the full contract.
+[`ceph`](../../ceph/README.md) for the full contract.
 
 ## Running your own client container
 
@@ -792,7 +792,7 @@ Every daemon has an admin socket with commands for status, performance
 counters and debugging.
 
 For MON, MGR and OSD daemons, use
-the `AdminSocket` method of `OSDContainer`, `MonitorContainer` and `ManagerContainer` (see [AdminSocket](../ceph.md#adminsocket)). It reaches the socket of
+the `AdminSocket` method of `OSDContainer`, `MonitorContainer` and `ManagerContainer` (see [AdminSocket](../../ceph/README.md#adminsocket)). It reaches the socket of
 any owned daemon, whatever its image, without the Messenger or Cephx:
 
 ```golang
@@ -847,7 +847,7 @@ No admin socket command prints a daemon's own key or the rotating service
 secrets that it holds. Observe them in two ways instead.
 
 **The daemon's key.** After
-[`RotateKey`](../ceph.md#rotatekey) of `OSDContainer` and `ManagerContainer`, `auth get-key` on
+[`RotateKey`](../../ceph/README.md#rotatekey) of `OSDContainer` and `ManagerContainer`, `auth get-key` on
 the MONs returns the new key, and a restart of the daemon proves that it
 authenticates with the key in its keyring files.
 
@@ -875,7 +875,7 @@ logs, err := osds[0].Logs(ctx)
 
 - With short tickets, for example `AuthConfig.ServiceTicketTTL` of 10 seconds
   and a `mon_tick_interval` of 1 second through
-  [WithConfigFile](../ceph.md#withconfigfile), the highest held secret ID grows
+  [WithConfigFile](../../ceph/README.md#withconfigfile), the highest held secret ID grows
   by one per lifetime. The daemon holds three secrets: the previous, the
   current and the next one.
 - The log contains the secrets themselves. Keep it to disposable test
@@ -1007,7 +1007,7 @@ report, err := cluster.CollectDiagnostics(ctx, ceph.DiagnosticsConfig{
 `CollectCrashMetadata` adds the crash reports that daemons wrote into
 `/var/lib/ceph/crash`: daemon, version, time, assertion and backtrace, read
 through Docker's archive API also from stopped containers. Crash logs and
-dumps are not collected. See [ceph.md](../ceph.md#collectcrashmetadata).
+dumps are not collected. See [`ceph`](../../ceph/README.md#collectcrashmetadata).
 
 ## Avoiding conflicts with fixture bookkeeping
 
@@ -1063,15 +1063,15 @@ and refuse to overwrite outside edits.
 
 ## Related APIs
 
-- [ceph.md](../ceph.md): `Ceph`, `RunNativeCommand`, `RedactSecrets`,
+- [`ceph`](../../ceph/README.md): `Ceph`, `RunNativeCommand`, `RedactSecrets`,
   `ControlContainer`, `ClientContainer`, `FactsOf`, `Observer.Configuration`, `override.SetConfig`,
   `WithConfigFile`, `WithClient`, `WithClientIdentity`, `CreateClient`,
   `ConnectionConfig`, `CollectDiagnostics`.
-- [rbd-mirror.md](../rbd-mirror.md): `Mirror.SourceRBD`, `Mirror.DestinationRBD`,
+- [`rbd/mirror`](../../rbd/mirror/README.md): `Mirror.SourceRBD`, `Mirror.DestinationRBD`,
   `Daemon.Status`.
-- [cephfs.md](../cephfs.md): `Filesystem.Sessions`.
-- [cephfs-mirror.md](../cephfs-mirror.md): `Mirror.DirectoryStatus`.
-- [rgw.md](../rgw.md): `Gateway.Admin`, `Multisite.SourceAdmin`,
+- [`cephfs`](../../cephfs/README.md): `Filesystem.Sessions`.
+- [`cephfs/mirror`](../../cephfs/mirror/README.md): `Mirror.DirectoryStatus`.
+- [`rgw`](../../rgw/README.md): `Gateway.Admin`, `Multisite.SourceAdmin`,
   `DestinationAdmin`, `ZoneAdmin`.
 - [Fault injection](fault-injection.md): messenger options and other faults set
   through `override.SetConfig`.

@@ -21,8 +21,8 @@ TABLE = [
     ("docs/guides/errors.md", True),
     ("docs/design/osd-retained-reopen.md", True), ("docs/design/messenger-evidence.md", True),
     # Read by internal/apiinventory (package pages name every export).
-    ("docs/ceph.md", False), ("docs/fault.md", False), ("docs/rbd.md", False),
-    ("docs/cephfs.md", False), ("docs/rgw.md", False), ("docs/capture.md", False),
+    ("ceph/README.md", False), ("fault/README.md", False), ("rbd/mirror/README.md", False),
+    ("cephfs/README.md", False), ("rgw/multisite/README.md", False), ("capture/README.md", False),
     # Read by internal/apiinventory (package-scoped naming catalogues, receipts and the review note it stats).
     ("docs/design/api-naming/rgw/multisite/declarations.json", False),
     ("docs/design/api-naming/rgw/multisite/members.json", False),
@@ -88,7 +88,7 @@ class NegativeControlTests(unittest.TestCase):
 
     @staticmethod
     def package_pages_allowed(path):
-        return docs_only.is_unread_doc(path) or path in ("docs/ceph.md", "docs/rgw.md")
+        return docs_only.is_unread_doc(path) or path in ("ceph/README.md", "rgw/README.md")
 
     @staticmethod
     def never(path):
@@ -114,7 +114,7 @@ class DecideTests(unittest.TestCase):
         self.assertTrue(only)
 
     def test_one_code_file_runs_everything(self):
-        for extra in ("ceph/ceph.go", "docs/ceph.md", "docs/design/api-naming/ceph/declarations.json",
+        for extra in ("ceph/ceph.go", "ceph/README.md", "docs/design/api-naming/ceph/declarations.json",
                       ".github/workflows/code.yml"):
             with self.subTest(extra):
                 self.assertFalse(docs_only.decide("pull_request", False, "abc", ["README.md", extra])[0])
@@ -277,7 +277,7 @@ class GitTests(unittest.TestCase):
         self.assertEqual(self.classify(), "docs_only=false\n")
 
     def test_read_doc_commit(self):
-        self.write("docs/ceph.md", "b\n")
+        self.write("ceph/README.md", "b\n")
         self.commit()
         self.assertEqual(self.run_main("--event", "pull_request", "--base", self.base), "docs_only=false\n")
 

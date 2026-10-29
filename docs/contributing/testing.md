@@ -741,7 +741,7 @@ Other release differences, kept out of the table on purpose:
   timeout variable only after checking that the test was making progress.
 - Ceph reports health and placement changes with a delay. Wait with the
   fixture's `Wait...` methods instead of reading state once (see
-  [Ceph](../ceph.md)).
+  [Ceph](../../ceph/README.md)).
 - To check that a run leaked nothing, record the labelled resources before and
   compare after. The checker never deletes anything and assumes that no other
   testcontainers-go session uses the same engine:

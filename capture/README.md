@@ -10,7 +10,7 @@ observes one endpoint, not a cluster.
 A capture supports one explicitly selected endpoint on a user-defined bridge,
 one file, no rotation and no host-network capture. It never follows its target
 across a restart. The session lifecycle and the file check are described in the
-[design note](design/packet-capture.md).
+[design note](../docs/design/packet-capture.md).
 
 ## Start
 
@@ -99,7 +99,7 @@ func (s *Session) Settle(ctx context.Context) (any, error)
 ```
 
 These implement `ceph.CaptureSettler` for
-[`Finalization.Capture`](ceph.md#settling-a-capture). `Settle` is `Stop` with
+[`Finalization.Capture`](../ceph/README.md#settling-a-capture). `Settle` is `Stop` with
 the report returned as an `any` holding a `capture.Report` whose `Output` is
 reduced to its base name, so that an archived report names no host path. It
 inherits `Stop`'s behavior: the context's cancellation does not shorten it, a

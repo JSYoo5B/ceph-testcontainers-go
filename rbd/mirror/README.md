@@ -5,7 +5,7 @@
 The `rbd/mirror` package connects two Ceph clusters with native RBD mirroring.
 It starts the setup CLI containers and the `rbd-mirror` receiver daemons and
 observes their readiness. RBD pools, namespaces, images and backups stay in the
-[rbd package](rbd.md); CephFS snapshot mirroring is a separate fixture in the
+[rbd package](../README.md); CephFS snapshot mirroring is a separate fixture in the
 `cephfs` package with its own semantics. The two services share no public
 mirror interface.
 
@@ -28,7 +28,7 @@ and no other role substitutes. A non-empty image is used as given. The setup CLI
 clients are not started from it: each cluster's `Images.Client` supplies them. `Run`
 refuses an image that a cluster selects for another role, such as its essential
 image, when that cluster has a separate rbd-aux image. See the
-[image guide](guides/releases-and-images.md).
+[image guide](../../docs/guides/releases-and-images.md).
 
 ## Module Reference
 
@@ -356,7 +356,7 @@ namespace policies must still match. Successful file updates are kept when
 another copy fails; retry with a new context. Do not run it concurrently with
 topology changes or external configuration writers. Refresh your own client
 containers with `cluster.RefreshClientMonitorConfig(ctx, client)` (see
-[ceph.md](ceph.md)).
+[`ceph`](../../ceph/README.md)).
 
 #### InterruptPeerLink
 
@@ -387,7 +387,7 @@ if err := cut.Restore(ctx); err != nil {
 - `Restore` reconnects the original IP address and aliases and can be retried. It does not overwrite an endpoint someone reconnected differently.
 - The link also restores outstanding interruptions during cleanup.
 - Host network mode has no bridge endpoint, so the call is rejected.
-- This disconnects a whole endpoint; it is not a per-peer packet filter. For message delays and drops, see [the fault injection guide](guides/fault-injection.md).
+- This disconnects a whole endpoint; it is not a per-peer packet filter. For message delays and drops, see [the fault injection guide](../../docs/guides/fault-injection.md).
 
 #### SourceRBD and DestinationRBD
 
@@ -1159,7 +1159,7 @@ case err != nil:
 }
 ```
 
-See [Classified errors](guides/errors.md#unsupported-features).
+See [Classified errors](../../docs/guides/errors.md#unsupported-features).
 
 ### Common pitfalls
 

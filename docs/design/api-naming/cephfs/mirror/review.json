@@ -6,5 +6,5 @@
   "declarations": 49,
   "members": 94,
   "review": "value-configuration-composition.md",
-  "page": "docs/cephfs-mirror.md"
+  "page": "cephfs/mirror/README.md"
 }

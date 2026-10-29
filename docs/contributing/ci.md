@@ -144,10 +144,8 @@ checks, as does every other path (including any non-Markdown file under
 path whose old or new Git mode is not an ordinary file (a symbolic link, an
 executable or a submodule) also runs them, because the path name alone cannot
 show that `docs/guides/x.md` is a link to a code file:
-- The API reference page of every public package (`docs/ceph.md`,
-  `docs/fault.md`, `docs/override.md`, `docs/rbd.md`, `docs/rbd-mirror.md`, `docs/cephfs.md`,
-  `docs/rgw.md`, `docs/rgw-multisite.md`, `docs/capture.md`, and the page a new
-  package's receipt names): the API inventory test requires every exported name
+- The API reference page of every public package, its `README.md`
+  (`ceph/README.md`, `rbd/mirror/README.md` and so on): the API inventory test requires every exported name
   on its package page;
 - `docs/design/api-naming*`: the API naming review note, and the
   package-scoped `docs/design/api-naming/<package>/declarations.json`,
@@ -1255,7 +1253,7 @@ The runner passes Go's artifact flags in both execution modes: `-artifacts
 -outputdir=<native>/test-artifacts` to `go test`, and `-test.artifacts
 -test.outputdir=<native>/test-artifacts` to the compiled test binary. A test
 that finalizes its cluster with
-[`TerminateOnCleanup`](../ceph.md#terminateoncleanup) and `Archive` writes
+[`TerminateOnCleanup`](../../ceph/README.md#terminateoncleanup) and `Archive` writes
 its failure archive into its `ArtifactDir`, so the archive lands under
 `native/test-artifacts/_artifacts/<package>/<test>/<random>/ceph-<cluster>-<execution>/`
 with `diagnostics.json`, `crash-metadata.json` and `manifest.json`. Parallel

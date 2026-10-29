@@ -7,7 +7,7 @@ clusters: one realm spanning two or more clusters, adding and removing zones
 and zonegroups, period transfer for planned failover, sync status observation,
 and selective replication with sync policies.
 
-Ordinary gateway use stays in the `rgw` package ([rgw.md](rgw.md)). `rgw/multisite`
+Ordinary gateway use stays in the `rgw` package ([`rgw`](../README.md)). `rgw/multisite`
 imports `rgw` and reuses `rgw.Gateway` and its lifecycle; `rgw` does not import
 `rgw/multisite`. Gateways, S3 users, tenants, quotas and placement keep their
 `rgw` documentation.
@@ -316,7 +316,7 @@ the original IP and aliases. A non-nil handle returned with an error must also
 be restored, because a transport failure cannot prove that Docker did not
 disconnect the endpoint. The fixture restores remaining interruptions during
 `Terminate`. Host mode has no Docker endpoint to disconnect and is rejected.
-See [guides/fault-injection.md](guides/fault-injection.md).
+See [guides/fault-injection.md](../../docs/guides/fault-injection.md).
 
 #### ApplyZoneLinkProfile
 
@@ -334,8 +334,8 @@ notifications. Connections that `peerZone` opens to `zoneName` answer from
 Local S3 endpoints, the clusters and other zones' links are untouched.
 
 It is an opt-in extension like
-[ApplyNetworkProfile](fault.md#applynetworkprofile), applied through
-[fault.ApplyLinkProfile](fault.md#standalone-bridge-functions): `delay` names the netem
+[ApplyNetworkProfile](../../fault/README.md#applynetworkprofile), applied through
+[fault.ApplyLinkProfile](../../fault/README.md#standalone-bridge-functions): `delay` names the netem
 helper image and the delay, jitter or loss, and leaves `Plane`, `Peer`,
 `PeerPort` and `Peers` empty; the fixture selects the network and the peer and
 returns them in the lease. The checks, errors, `Status` and `Restore` are
@@ -885,7 +885,7 @@ if _, err := ms.WaitSyncReady(ctx, "west", "east"); err != nil {
 ```
 
 The link is cut as a whole: there is no per-pair packet filtering or loss
-injection. See [guides/fault-injection.md](guides/fault-injection.md).
+injection. See [guides/fault-injection.md](../../docs/guides/fault-injection.md).
 
 ### More zones and zonegroups
 
@@ -1007,7 +1007,7 @@ Variations:
 - Storage class: `DestinationStorageClass: "STANDARD_IA"` with
   `DestinationPlacements: map[string]*rgw.Placement{"west": westPlacement}`.
   Create, publish, import and reload the placement in both zones first (see
-  [Placement targets and storage classes](rgw.md#placement-targets-and-storage-classes)).
+  [Placement targets and storage classes](../README.md#placement-targets-and-storage-classes)).
   Check the actual class in the S3 listing and the data in the destination
   pool, not only the stored policy.
 - User mode: `User: replicator` replicates with that user's permissions. The
