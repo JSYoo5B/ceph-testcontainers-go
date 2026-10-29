@@ -398,6 +398,8 @@ var monStoreInspectSymbols = []string{
 // mon_store_adapters_test.go for the guard of the adapters themselves.
 var monStoreInspectHomes = []string{
 	"mon_store_inspect.go", "mon_store_monmap.go", "mon_store_inspect_container.go", "mon_store_inspect_engine.go", "mon_store_json.go",
+	// mon_store_generation.go only reuses isNilPort for its nil check.
+	"mon_store_generation.go",
 }
 
 // monStoreInspectProblems returns the references to the symbols from files
