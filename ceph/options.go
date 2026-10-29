@@ -27,9 +27,12 @@ type options struct {
 	blockSize            int64
 	osdMemorySize        int64
 	osdVolumeStorage     bool
-	auth                 AuthConfig
-	osdObjectStore       OSDObjectStore
-	startupTimeout       time.Duration
+	// osdStorageSet records which OSDStorage fields a carrier already set, so a
+	// second carrier setting the same field is refused.
+	osdStorageSet  osdStorageField
+	auth           AuthConfig
+	osdObjectStore OSDObjectStore
+	startupTimeout time.Duration
 	// essentialImage is the Run image. It starts every MON, MGR and OSD and the
 	// control-plane CLI executor. Role images come from imageSet.
 	essentialImage string
@@ -229,21 +232,6 @@ func WithPoolDefaults(replicas, minSize int) Option {
 	}
 }
 
-// WithOSDBlockSize sets each sparse BlueStore file's logical size in bytes.
-// The minimum is 64 MiB and the default remains 1 GiB. These are disposable
-// files, not real disks. Small functional fixtures can use WithNoInitialOSDs
-// and override.SetConfig to skip mClock's startup capacity benchmark before
-// AddOSD; the benchmark can exhaust a small file even without client data.
-func WithOSDBlockSize(size int64) Option {
-	return func(o *options) error {
-		if size < 64<<20 {
-			return fmt.Errorf("OSD block size must be at least 64 MiB")
-		}
-		o.blockSize = size
-		return nil
-	}
-}
-
 // OSDObjectStore names the object store that OSDs keep their data in.
 type OSDObjectStore string
 
@@ -252,58 +240,11 @@ const (
 	// default.
 	OSDBlueStore OSDObjectStore = "bluestore"
 	// OSDMemStore keeps each OSD's data in the OSD process's memory, with
-	// WithOSDBlockSize as its capacity. A clean stop saves the store to the
+	// OSDStorage.WithBlockSize as its capacity. A clean stop saves the store to the
 	// OSD's data directory and Start loads it again; a killed OSD loses it.
 	// It is Ceph's test backend and needs no block file.
 	OSDMemStore OSDObjectStore = "memstore"
 )
-
-// WithOSDObjectStore selects the object store of every OSD in the cluster,
-// including OSDs added later. WithOSDBlockSize sets the capacity of a
-// MemStore OSD. MemStore cannot be combined with WithOSDInMemoryStorage or
-// WithOSDVolumeStorage, which place BlueStore files in shared volumes.
-// fault.InjectObjectDataError needs BlueStore.
-func WithOSDObjectStore(store OSDObjectStore) Option {
-	return func(o *options) error {
-		if store != OSDBlueStore && store != OSDMemStore {
-			return fmt.Errorf("unknown OSD object store %q", store)
-		}
-		o.osdObjectStore = store
-		return nil
-	}
-}
-
-// WithOSDInMemoryStorage keeps all OSD stores in one Docker-managed tmpfs
-// volume. maxBytes is a positive cluster-wide filesystem allocation ceiling,
-// independent of each sparse file's logical WithOSDBlockSize. It does not
-// reserve RAM or limit daemon RSS; tmpfs may swap, and a full volume fails I/O.
-// An owned helper using the essential image preserves data across OSD Stop/Start.
-// Cluster termination discards the volume. Helper loss or Docker host/VM
-// restart can lose data. Requires a Linux Docker engine with local tmpfs
-// volume support, including compatible Docker Desktop engines. No host mount,
-// privileged container or additional image is required. The default remains
-// container-local sparse files. NoInitialOSDs defers allocation until AddOSD.
-func WithOSDInMemoryStorage(maxBytes int64) Option {
-	return func(o *options) error {
-		if maxBytes <= 0 {
-			return fmt.Errorf("OSD in-memory storage size must be positive")
-		}
-		o.osdMemorySize = maxBytes
-		return nil
-	}
-}
-
-// WithOSDVolumeStorage keeps classic BlueStore OSD directories in one ordinary
-// Docker-managed local named volume owned by the cluster. Allocation is lazy
-// until the first OSD registration. Unlike tmpfs it needs no live keeper to
-// preserve bytes; an isolated essential-image helper manages fresh/purged paths.
-// Terminate removes the volume after its users; a busy/failed removal is retryable.
-// It cannot be combined with MemStore or WithOSDInMemoryStorage. No caller-owned
-// volumes, host mounts or devices are adopted. This does not provide retained
-// detach/reopen, host-reboot durability or a public replacement-container API.
-func WithOSDVolumeStorage() Option {
-	return func(o *options) error { o.osdVolumeStorage = true; return nil }
-}
 
 // WithStartupTimeout bounds bootstrap, readiness and topology operations.
 // Each operation is also bounded by the caller's context. Default: 3 minutes.

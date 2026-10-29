@@ -198,13 +198,14 @@ func TestRunImageSetMissingRoleIsRefusedWithoutFallback(t *testing.T) {
 	}
 }
 
-// WithImageOptions returns an Option and takes an ImageOptions, so wrapping its
-// result in a second WithImageOptions does not compile. Documentation snippets
+// A grouped carrier (WithImageOptions, WithOSDStorage) returns an Option and
+// takes its plain value, so wrapping its result in a second carrier does not
+// compile. Documentation snippets
 // are not compiled, so scan the godoc comments of this package and the package
-// reference pages for that mistake. ExampleWithImageOptions covers the correct
-// form at compile time.
-func TestDocumentedSnippetsDoNotWrapImageOptionsTwice(t *testing.T) {
-	doubleWrap := regexp.MustCompile(`WithImageOptions\(\s*(?:ceph\.)?WithImageOptions\(`)
+// reference pages for that mistake. ExampleWithImageOptions and
+// ExampleWithOSDStorage cover the correct form at compile time.
+func TestDocumentedSnippetsDoNotWrapGroupedOptionsTwice(t *testing.T) {
+	doubleWrap := regexp.MustCompile(`With(?:ImageOptions|OSDStorage)\(\s*(?:ceph\.)?With(?:ImageOptions|OSDStorage)\(`)
 	var files []string
 	for _, pattern := range []string{"*.go", "../docs/*.md"} {
 		matches, err := filepath.Glob(pattern)
@@ -225,7 +226,7 @@ func TestDocumentedSnippetsDoNotWrapImageOptionsTwice(t *testing.T) {
 			t.Fatal(err)
 		}
 		if loc := doubleWrap.FindIndex(text); loc != nil {
-			t.Errorf("%s wraps WithImageOptions inside WithImageOptions at byte %d", file, loc[0])
+			t.Errorf("%s wraps a grouped option inside another at byte %d", file, loc[0])
 		}
 	}
 }

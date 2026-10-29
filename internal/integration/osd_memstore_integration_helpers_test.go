@@ -84,7 +84,7 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	opts = append([]testcontainers.ContainerCustomizer{ceph.WithOSDCount(1), ceph.WithPoolDefaults(1, 1),
-		ceph.WithOSDObjectStore(ceph.OSDMemStore), ceph.WithOSDBlockSize(256 << 20), legacyPoolFlags(t)}, opts...)
+		ceph.WithOSDStorage(ceph.OSDStorage{}.WithObjectStore(ceph.OSDMemStore).WithBlockSize(256 << 20)), legacyPoolFlags(t)}, opts...)
 	cluster, client := newServiceCluster(t, opts...)
 
 	installCRUSHMap(t, ctx, cluster, legacyCRUSHMap)

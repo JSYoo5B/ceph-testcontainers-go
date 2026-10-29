@@ -15,7 +15,7 @@ import (
 // cannot disagree about the path BlueStore is told to use.
 const osdBlockDeviceContainerPath = "/dev/tc-osd-block"
 
-// osdBlockDeviceMinBytes matches the WithOSDBlockSize floor.
+// osdBlockDeviceMinBytes matches the OSDStorage.WithBlockSize floor.
 const osdBlockDeviceMinBytes = 64 << 20
 
 // osdBlockDeviceHostPath admits only a stable device-mapper name. It is not a
