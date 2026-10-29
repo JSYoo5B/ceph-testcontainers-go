@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 355,
+  "count": 327,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -1050,12 +1050,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.LeaseOption",
-      "kind": "type",
-      "proposed": "ceph.LeaseOption",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.LogAssertion",
       "kind": "const",
       "proposed": "ceph.LogAssertion",
@@ -1407,13 +1401,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.NewShared",
-      "kind": "function",
-      "signature": "func(image string, opts ...SharedOption) *SharedCluster",
-      "proposed": "ceph.NewShared",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.OSDAddress",
       "kind": "type",
       "proposed": "ceph.OSDAddress",
@@ -1632,13 +1619,6 @@
       "kind": "function",
       "signature": "func(cluster *Container) (*Observer, error)",
       "proposed": "ceph.Observe",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.ObserveTenant",
-      "kind": "function",
-      "signature": "func(tenant *Tenant) (*Observer, error)",
-      "proposed": "ceph.ObserveTenant",
       "decision": "baseline"
     },
     {
@@ -1994,13 +1974,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.RunTests",
-      "kind": "function",
-      "signature": "func(m *testing.M, s ...*SharedCluster) int",
-      "proposed": "ceph.RunTests",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.RunWithImages",
       "kind": "function",
       "signature": "func(ctx context.Context, images ImageSet, opts ...testcontainers.ContainerCustomizer) (*Container, error)",
@@ -2008,153 +1981,9 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.SharedCluster",
-      "kind": "type",
-      "proposed": "ceph.SharedCluster",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.SharedCluster.Close",
-      "kind": "method",
-      "signature": "func(ctx context.Context) error",
-      "receiver": "*SharedCluster",
-      "proposed": "ceph.SharedCluster.Close",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.SharedCluster.Exclusive",
-      "kind": "method",
-      "signature": "func(t testing.TB) *Container",
-      "receiver": "*SharedCluster",
-      "proposed": "ceph.SharedCluster.Exclusive",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.SharedCluster.Lease",
-      "kind": "method",
-      "signature": "func(t testing.TB, opts ...LeaseOption) *Tenant",
-      "receiver": "*SharedCluster",
-      "proposed": "ceph.SharedCluster.Lease",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.SharedCluster.Stats",
-      "kind": "method",
-      "signature": "func() SharedStats",
-      "receiver": "*SharedCluster",
-      "proposed": "ceph.SharedCluster.Stats",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.SharedOption",
-      "kind": "type",
-      "proposed": "ceph.SharedOption",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.SharedPool",
-      "kind": "const",
-      "proposed": "ceph.SharedPool",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.SharedStats",
-      "kind": "type",
-      "proposed": "ceph.SharedStats",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.Status",
       "kind": "type",
       "proposed": "ceph.Status",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant",
-      "kind": "type",
-      "proposed": "ceph.Tenant",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.Client",
-      "kind": "method",
-      "signature": "func() *ClientConfig",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.Client",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.CreateClient",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string, access TenantAccess) (*ClientConfig, error)",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.CreateClient",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.ID",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.ID",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.Namespace",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.Namespace",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.Pool",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.Pool",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.RunNativeCommand",
-      "kind": "method",
-      "signature": "func(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error)",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.RunNativeCommand",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.WithClient",
-      "kind": "method",
-      "signature": "func(opts ...ClientContainerOption) testcontainers.CustomizeRequestOption",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.WithClient",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Tenant.WithClientIdentity",
-      "kind": "method",
-      "signature": "func(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption",
-      "receiver": "*Tenant",
-      "proposed": "ceph.Tenant.WithClientIdentity",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.TenantAccess",
-      "kind": "type",
-      "proposed": "ceph.TenantAccess",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.TenantReadOnly",
-      "kind": "const",
-      "proposed": "ceph.TenantReadOnly",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.TenantReadWrite",
-      "kind": "const",
-      "proposed": "ceph.TenantReadWrite",
       "decision": "baseline"
     },
     {
@@ -2322,31 +2151,10 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithKeepOnTenantFailure",
-      "kind": "function",
-      "signature": "func() LeaseOption",
-      "proposed": "ceph.WithKeepOnTenantFailure",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.WithManagerCount",
       "kind": "function",
       "signature": "func(count int) Option",
       "proposed": "ceph.WithManagerCount",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithMaxRecycles",
-      "kind": "function",
-      "signature": "func(n int) SharedOption",
-      "proposed": "ceph.WithMaxRecycles",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithMaxTenants",
-      "kind": "function",
-      "signature": "func(n int) SharedOption",
-      "proposed": "ceph.WithMaxTenants",
       "decision": "baseline"
     },
     {
@@ -2438,13 +2246,6 @@
       "kind": "function",
       "signature": "func() Option",
       "proposed": "ceph.WithSeparateClusterNetwork",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithSharedRunOptions",
-      "kind": "function",
-      "signature": "func(opts ...testcontainers.ContainerCustomizer) SharedOption",
-      "proposed": "ceph.WithSharedRunOptions",
       "decision": "baseline"
     },
     {

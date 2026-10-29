@@ -23,7 +23,7 @@ import (
 // inverts the matching test in the same change.
 
 // sharingModeWrites returns "callee(argument)" for every call in src that
-// stores a cluster's sharing mode: setSharing, setSharingMode and the atomic
+// stores a cluster's sharing mode: setSharing, SetSharing, setSharingMode and the atomic
 // Store of the sharing field.
 func sharingModeWrites(t *testing.T, name, src string) []string {
 	t.Helper()
@@ -42,7 +42,7 @@ func sharingModeWrites(t *testing.T, name, src string) []string {
 			return true
 		}
 		switch callee := types.ExprString(sel); {
-		case sel.Sel.Name == "setSharing", sel.Sel.Name == "setSharingMode", strings.HasSuffix(callee, "sharing.Store"):
+		case sel.Sel.Name == "setSharing", sel.Sel.Name == "SetSharing", sel.Sel.Name == "setSharingMode", strings.HasSuffix(callee, "sharing.Store"):
 			writes = append(writes, callee+"("+types.ExprString(call.Args[0])+")")
 		}
 		return true
@@ -56,19 +56,26 @@ func sharingModeWrites(t *testing.T, name, src string) []string {
 // the cluster of a tenant interval after an exclusive interval and generation
 // reuse of the same cluster handle cannot happen.
 func TestExclusiveAuditSharingModeOnlyMovesForward(t *testing.T) {
-	// The only writers: the two orchestration sites, the backend method that
-	// forwards, the core setter, and the unit-test cluster builder.
+	// The only writers: the two orchestration sites in ceph/harness, the
+	// adapter and the backend method that forward, the core setter, and the
+	// unit-test cluster builder.
 	want := map[string][]string{
-		"shared.go":              {"backend.setSharing(sharedWithTenants)"},
-		"shared_exclusive.go":    {"inst.backend.setSharing(sharedExclusively)"},
-		"shared_backend.go":      {"b.c.setSharingMode(mode)"},
-		"shared_cluster_port.go": {"c.sharing.Store(int32(mode))"},
-		"unit_access.go":         {"c.sharing.Store(int32(sharedWithTenants))"},
+		"harness/shared.go":           {"backend.setSharing(sharedWithTenants)"},
+		"harness/shared_exclusive.go": {"inst.backend.setSharing(sharedExclusively)"},
+		"harness/core.go":             {"h.b.SetSharing(int32(mode))"},
+		"shared_backend.go":           {"b.c.setSharingMode(sharingMode(mode))"},
+		"shared_cluster_port.go":      {"c.sharing.Store(int32(mode))"},
+		"unit_access.go":              {"c.sharing.Store(int32(sharedWithTenants))"},
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
+	more, err := filepath.Glob("harness/*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, more...)
 	for _, name := range files {
 		if strings.HasSuffix(name, "_test.go") {
 			continue
@@ -103,69 +110,6 @@ func (s *SharedCluster) releaseExclusive(inst *sharedInstance) {
 	}
 	if slices.Equal(got, []string{"inst.backend.setSharing(sharedExclusively)"}) {
 		t.Fatal("a demoting release is indistinguishable from the real one")
-	}
-}
-
-// TestExclusiveAuditInstanceOfAnExclusiveLeaseIsNeverReused follows one
-// cluster through a tenant lease, the exclusive interval and a later lease, and
-// shows the model evidence for the audited properties: the exclusive interval
-// takes the cluster that tenants used (so a tenant-held handle can meet an
-// exclusive mode, see the handle controls below), and afterwards no lease gets
-// that cluster again.
-func TestExclusiveAuditInstanceOfAnExclusiveLeaseIsNeverReused(t *testing.T) {
-	fleet := &fakeFleet{}
-	shared := newFakeShared(fleet)
-	tenantTB := newFakeTB(t)
-	tenant := shared.Lease(tenantTB)
-	first := backendOf(tenant)
-	tenantTB.finish()
-	if first.mode() != sharedWithTenants {
-		t.Fatalf("the tenant cluster has mode %v", first.mode())
-	}
-
-	exclusiveTB := newFakeTB(t)
-	shared.Exclusive(exclusiveTB)
-	if got := fleet.clusters(); len(got) != 1 || got[0] != first || first.mode() != sharedExclusively {
-		t.Fatalf("the exclusive interval did not take the cluster that tenants used: %d clusters, mode %v", len(got), first.mode())
-	}
-	exclusiveTB.finish()
-	if !first.isTerminated() {
-		t.Fatal("the cluster of the exclusive interval was not terminated by its release")
-	}
-
-	laterTB := newFakeTB(t)
-	later := shared.Lease(laterTB)
-	if backendOf(later) == first || backendOf(later).mode() != sharedWithTenants {
-		t.Fatal("a lease after the exclusive interval got the exclusive cluster")
-	}
-	laterTB.finish()
-	if first.mode() != sharedExclusively {
-		t.Fatalf("the retired cluster has mode %v, want it unchanged", first.mode())
-	}
-}
-
-// TestExclusiveAuditKnownGapRetiredClusterKeepsExclusiveMode characterizes
-// gap 1 of the note: the release of an exclusive interval does not lower the
-// cluster's mode. When the termination fails, the cluster stays owned by Close
-// and keeps the mode that admits every cluster-wide handle operation, so a
-// retained Container or handle is admitted by the gate until Close ends the
-// cluster. A change that makes the retired cluster refuse (a retired mode)
-// inverts the mode assertion here.
-func TestExclusiveAuditKnownGapRetiredClusterKeepsExclusiveMode(t *testing.T) {
-	fleet := &fakeFleet{prepare: func(f *fakeShared) { f.terminateFailures = 1 }}
-	shared := newFakeShared(fleet)
-	tb := newFakeTB(t)
-	shared.Exclusive(tb)
-	tb.finish()
-	cluster := fleet.clusters()[0]
-	if cluster.isTerminated() {
-		t.Fatal("the failed termination ended the cluster")
-	}
-	if got := cluster.mode(); got != sharedExclusively {
-		t.Fatalf("the retired, still running cluster has mode %v; gap 1 is closed, update the note and this control", got)
-	}
-	if err := shared.Close(t.Context()); err != nil {
-		t.Fatal(err)
 	}
 }
 

@@ -62,24 +62,24 @@ func TestContainerBackendReach(t *testing.T) {
 	// containerBackend reaches the cluster through three exported methods
 	// that wait for or create state, and purpose-named methods declared in
 	// shared_cluster_port.go. It names no Container field and takes no lock.
-	// The pointer itself goes to the registered service prepare and probe
-	// functions, which take the cluster.
+	// The pointer itself goes to the service prepare and probe functions that
+	// the shared harness hands in, which take the cluster.
 	want := []string{
-		"createClient: createSharedClient",
-		"createPool: CreatePool",
-		"daemonsRunning: sharedDaemons",
-		"deleteClient: deleteSharedClient",
-		"invariants: runSharedScript",
-		"prepareServices: <pointer>",
-		"purgeNamespace: runSharedScript",
-		"ready: WaitForPGClean",
-		"ready: WaitForQuorum",
-		"resources: <pointer>",
-		"setSharing: setSharingMode",
-		"terminate: terminate",
+		"CreateClient: createSharedClient",
+		"CreatePool: CreatePool",
+		"DaemonsRunning: sharedDaemons",
+		"DeleteClient: deleteSharedClient",
+		"Invariants: runSharedScript",
+		"PrepareServices: <pointer>",
+		"PurgeNamespace: runSharedScript",
+		"Ready: WaitForPGClean",
+		"Ready: WaitForQuorum",
+		"Resources: <pointer>",
+		"SetSharing: setSharingMode",
+		"Terminate: terminate",
 	}
 	var got []string
-	for _, file := range []string{"shared_backend.go", "shared_services.go"} {
+	for _, file := range []string{"shared_backend.go"} {
 		src, err := os.ReadFile(file)
 		if err != nil {
 			t.Fatal(err)
@@ -96,7 +96,7 @@ func TestContainerBackendReach(t *testing.T) {
 // pointer, so a regression of the narrowing would fail the test above.
 func TestBackendReachCheckerSeesARegression(t *testing.T) {
 	bad := `package ceph
-type containerBackend struct{ c *Container }
+type containerBackend struct{ c *ceph.Container }
 func (b containerBackend) deleteClient() { b.c.mu.Lock(); _ = b.c.closed }
 func (b containerBackend) daemonsRunning() { c := b.c; _ = c.monitors }
 func (b containerBackend) ok() { b.c.terminate() }

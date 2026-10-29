@@ -5,7 +5,8 @@ immutable; main provides no deprecated phase and no compatibility alias.
 
 The read-only observations of a cluster are methods of `ceph.Observer` only.
 `ceph.Observe(cluster)` returns the `Observer` of a `*ceph.Container` and
-`ceph.ObserveTenant(tenant)` returns the one of a `*ceph.Tenant`. Both have the
+`cephharness.ObserveTenant(tenant)` (package `ceph/harness`) returns the one of a
+`*cephharness.Tenant`. Both have the
 same type and queries, and the tenant form checks the lease on every query. The
 `Container` methods of these names and the `Tenant` forwarders are removed.
 Pools are individual objects: `Observer.Pools` lists them as `*ceph.Pool`, and
@@ -36,7 +37,7 @@ the reads of one pool are the methods of that `Pool`.
 | `tenant.PoolUsage(ctx, name)` | find `name` in `observer.Pools(ctx)`, then `pool.Usage(ctx)` |
 
 `observer` is the result of `ceph.Observe(c)` for a cluster or of
-`ceph.ObserveTenant(tenant)` for a tenant. Keep it as long as you like: it
+`cephharness.ObserveTenant(tenant)` for a tenant. Keep it as long as you like: it
 holds no result and every query reads the cluster again.
 
 ```golang

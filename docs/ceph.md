@@ -1246,249 +1246,17 @@ bootstraps, start with `ceph.Run` and add the service later.
 ### Shared cluster
 
 A cluster takes 15 to 25 seconds to start, so a package with many small RADOS
-tests spends most of its time starting clusters. A `SharedCluster` starts one
-cluster for the whole test binary and lends each test a tenant: a RADOS
-namespace of one shared pool and a Cephx client that can reach nothing else.
-A test that needs the whole cluster takes it with `Exclusive`. Tests that need a
-cluster with other `Run` options, or several clusters, keep using `Run`.
+tests spends most of its time starting clusters. The
+[ceph/harness package](ceph-harness.md) starts one cluster for the whole test
+binary and lends each test a tenant: a RADOS namespace of one shared pool and a
+Cephx client that can reach nothing else. A test that needs the whole cluster
+takes it with `Exclusive`, which returns this package's `*ceph.Container`. The
+service harness packages ([rbd/harness](rbd-harness.md),
+[cephfs/harness](cephfs-harness.md) and [rgw/harness](rgw-harness.md)) lease RBD,
+CephFS and RGW resources of the same tenant. Core `ceph` keeps the cluster, its
+operations and the gate that the next section describes; the harness packages
+own sharing, leasing and reuse.
 
-```golang
-func NewShared(image string, opts ...SharedOption) *SharedCluster
-func WithSharedRunOptions(opts ...testcontainers.ContainerCustomizer) SharedOption
-func WithMaxTenants(n int) SharedOption
-func WithMaxRecycles(n int) SharedOption
-func RunTests(m *testing.M, s ...*SharedCluster) int
-
-func (s *SharedCluster) Lease(t testing.TB, opts ...LeaseOption) *Tenant
-func (s *SharedCluster) Exclusive(t testing.TB) *Container
-func (s *SharedCluster) Close(ctx context.Context) error
-func (s *SharedCluster) Stats() SharedStats
-func WithKeepOnTenantFailure() LeaseOption
-```
-
-Create the shared cluster in a package variable and end it in `TestMain`.
-`NewShared` starts nothing; the first `Lease` starts the cluster with the
-options of `WithSharedRunOptions`, which are `Run` options. `RunTests` runs the
-tests and then closes every shared cluster you pass it:
-
-```golang
-var shared = ceph.NewShared(ceph.DefaultImage,
-	ceph.WithSharedRunOptions(ceph.WithOSDCount(1)))
-
-func TestMain(m *testing.M) { os.Exit(ceph.RunTests(m, shared)) }
-
-func TestStoresObject(t *testing.T) {
-	t.Parallel()
-	tenant := shared.Lease(t)
-	client, err := testcontainers.Run(t.Context(), ceph.DefaultImage,
-		tenant.WithClient(), ceph.WithIdleEntrypoint())
-	testcontainers.CleanupContainer(t, client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// rados --id <tenant.Client().User()> -p <tenant.Pool()> -N <tenant.Namespace()> ...
-}
-```
-
-Each test binary has its own shared cluster: `go test` runs every package in a
-process of its own, and Ryuk removes what a process leaves. A shared cluster
-that `RunTests` does not close stays until the process exits, and the first
-`Lease` logs a warning about it. Call `Close` yourself when you do not use
-`RunTests`.
-
-`Lease` fails the test when the cluster cannot start or the tenant cannot be
-set up, and releases the tenant in `t.Cleanup`. Leases are safe under
-`t.Parallel`. `WithMaxTenants` bounds the leases held at once (4 by default);
-`Lease` waits for a free one, so a test that holds a lease must not wait for a
-second one when the running tests can hold all of them. `Lease` also waits while
-a test holds the [exclusive lease](#exclusive-lease), and behind an `Exclusive`
-that asked first.
-
-#### Tenant
-
-```golang
-func (t *Tenant) ID() string
-func (t *Tenant) Pool() string
-func (t *Tenant) Namespace() string
-func (t *Tenant) Client() *ClientConfig
-func (t *Tenant) WithClient(opts ...ClientContainerOption) testcontainers.CustomizeRequestOption
-func (t *Tenant) WithClientIdentity(client *ClientConfig, opts ...ClientContainerOption) testcontainers.CustomizeRequestOption
-func (t *Tenant) CreateClient(ctx context.Context, name string, access TenantAccess) (*ClientConfig, error)
-func (t *Tenant) RunNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error)
-
-const SharedPool = "tenants"
-const (
-	TenantReadOnly TenantAccess = iota + 1
-	TenantReadWrite
-)
-```
-
-`ID` is `t` and 8 hex digits. The tenant owns the namespace `ID` of the pool
-`SharedPool`, which the shared cluster creates once with the cluster's pool
-defaults. `Client` is `client.ID` with these capabilities:
-
-| Service | Capability |
-| --- | --- |
-| mon | `allow r` |
-| osd | `allow rw pool=tenants namespace=ID` |
-
-`CreateClient` creates `client.ID-name` with `mon 'allow r'` and
-`TenantReadOnly` (`allow r`) or `TenantReadWrite` (`allow rw`) on the same
-namespace only. `WithClient` and `WithClientIdentity` attach a container like
-the `Container` methods of the same names: it gets `ceph.conf` and the
-client's keyring, never the admin keyring, and a label that marks it as the
-tenant's. `RunNativeCommand` runs a command only in a container with that
-label. The tenant has no read-only views of its own: `ceph.ObserveTenant(tenant)`
-returns the [Observer](#observer) that reads the shared cluster for it.
-
-What a tenant can do:
-
-- read and write objects of its own namespace, through its clients;
-- create read-only and read-write clients of that namespace;
-- read the cluster's status, health, pools, usage, watchers, OSD flags and
-  blocklist through `ceph.ObserveTenant(tenant)`.
-
-What it cannot do, checked natively:
-
-- read, write or list another tenant's namespace, every namespace (`ls --all`),
-  the default namespace of the shared pool or another pool: Ceph returns
-  `EPERM`;
-- change configuration, OSD flags or the blocklist: Ceph returns `EACCES`.
-
-Tenancy is isolation, not secrecy: a tenant sees pool names, usage and the
-cluster's health.
-
-#### Service tenants
-
-A tenant can also lease RBD, CephFS and RGW resources of the shared cluster.
-Start the services with the usual `Run` options in `WithSharedRunOptions`, and
-call the service package's `Lease` with the tenant:
-
-```golang
-var shared = ceph.NewShared(ceph.DefaultImage, ceph.WithSharedRunOptions(
-	ceph.WithOSDCount(1),
-	rbd.WithPools(ceph.PoolConfig{Name: "rbd"}),
-	cephfs.WithFilesystems(),
-	rgw.WithGateways(),
-))
-
-func TestUsesEveryService(t *testing.T) {
-	tenant := shared.Lease(t)
-	images, err := rbd.Lease(t.Context(), tenant, "rbd")      // RBD namespace ID of pool rbd
-	files, err := cephfs.Lease(t.Context(), tenant, "")       // subvolume group ID
-	objects, err := rgw.Lease(t.Context(), tenant)            // RGW tenant ID, user ID$user
-	...
-}
-```
-
-| Lease | The tenant owns | Its client or credentials |
-| --- | --- | --- |
-| `rbd.Lease(ctx, tenant, pool)` | RBD namespace `ID` of `pool` | `client.ID-rbd-POOL`: `mon 'allow r'`, `osd` and `mgr 'profile rbd pool=POOL namespace=ID'` |
-| `cephfs.Lease(ctx, tenant, fs)` | subvolume group `ID`, directory `/volumes/ID`, data in namespace `fsns-ID` of the default data pool | `client.ID-cephfs-FS`: `mon 'allow r'`, `mds 'allow rw fsname=FS path=/volumes/ID'`, `osd 'allow rw pool=DATA namespace=fsns-ID'` |
-| `rgw.Lease(ctx, tenant)` | RGW tenant `ID` and its buckets | S3 keys of user `ID$user` |
-
-The service leases are described in [RBD](rbd.md#shared-cluster-tenants),
-[CephFS](cephfs.md#shared-cluster-tenants) and
-[RGW](rgw.md#shared-cluster-tenants). A tenant leases each RBD pool, each
-filesystem and RGW once. The clients are the tenant's: `Tenant.WithClientIdentity`
-and `RunNativeCommand` accept them, and the release deletes them.
-
-Before the baseline, the shared cluster creates what a service would
-otherwise create on a tenant's first use: the pools of the RGW zone, such as
-the bucket index and data pools. It also waits until the MGR `volumes` module
-answers.
-
-#### Release, verification and poisoning
-
-When the shared cluster starts, it waits for active+clean PGs and records a
-baseline: auth entities and their capabilities, pools and their policies, OSD
-flags, the configuration database, the blocklist, the unmuted health checks
-the objects of each namespace of the shared pool, and the service resources
-that tenants could create: the RBD namespaces of every RBD pool, the subvolume
-groups of every filesystem, and the RGW users and buckets. `MON_DISK_LOW` is left
-out, because it reports the free space of the Docker host, which changes
-whatever the tests do. Before a lease, it
-checks that the daemon containers run, PGs are active+clean, and health, OSD
-flags and the blocklist match the baseline, waiting up to 30 seconds.
-
-A release first removes the tenant's service resources, in reverse order of
-their leases: each service checks that nothing of the tenant's remains. It then
-deletes the tenant's clients, removes the objects of its namespace, and
-compares the cluster with the baseline, ignoring the scopes of the other
-tenants. Health gets 30 seconds to settle. A difference means that the test
-changed something outside its scope, for example through a raw admin path;
-the release then fails the test and names what changed, without config values.
-
-These poison the cluster:
-
-- a release that finds a difference or a service resource that remains, or
-  that cannot finish its removals and checks;
-- a failed test of a tenant, unless the lease used `WithKeepOnTenantFailure`
-  and the release found the cluster clean;
-- a daemon container that exited, found by a lease or a release.
-
-A poisoned cluster takes no new leases. It is terminated when its last lease
-ends, and the next `Lease` starts a fresh cluster. `WithMaxRecycles` bounds
-these restarts (2 by default); a `Lease` after that fails the test. A cluster
-that fails to start is not retried: every later `Lease` fails with the same
-error.
-
-`Stats` returns `SharedStats`: the clusters started and recycled, the leases,
-exclusive leases and poisonings, and the total time spent starting clusters,
-waiting for and setting up leases, releasing them, and waiting for exclusive
-leases.
-
-#### Exclusive lease
-
-`Exclusive` lends a test the whole shared cluster: the `*ceph.Container`, with
-every method available except `Terminate`. Use it for a test that needs what
-the tenant gate refuses, such as `override.SetConfig`, OSD flags, pool changes,
-the raw `Ceph` CLI or `AddOSD`, in a package whose other tests share the
-cluster:
-
-```golang
-func TestRecoversWithNoout(t *testing.T) {
-	cluster := shared.Exclusive(t)
-	if _, err := override.SetOSDFlag(t.Context(), cluster, ceph.OSDFlagNoOut, true); err != nil {
-		t.Fatal(err)
-	}
-	osd, err := cluster.AddOSD(t.Context())
-	...
-}
-```
-
-- **Waiting.** `Exclusive` waits until no tenant holds a lease. From the moment
-  it asks, new leases wait behind it, so a stream of leases cannot starve it;
-  leases that asked before it go first. While the exclusive lease is held, every
-  `Lease` and other `Exclusive` waits. A test that already holds a lease can
-  still take a second one while an `Exclusive` waits, because the `Exclusive`
-  waits for that test's first lease. The same holds for a test whose parallel
-  subtest (`t.Parallel`) holds a lease: the subtest releases it only after
-  its parent returns, so the parent's lease goes before the waiting
-  `Exclusive`.
-- **Admission.** The cluster is checked against its baseline as for a lease. A
-  cluster that drifted is poisoned and replaced first.
-- **Release.** The release, in `t.Cleanup`, does not try to restore the
-  cluster. It retires and terminates it, and the next `Lease` or `Exclusive`
-  starts a fresh cluster. The baseline comparison cannot see everything an
-  exclusive test can change: MGR modules, network shaping, paused containers,
-  daemon keys, data, or what the service packages' functions do with the
-  `Container`. These restarts do not count against `WithMaxRecycles`.
-  Each `Exclusive` therefore costs one cluster start, so group the exclusive
-  tests of a package or keep them few. A cluster that cannot be terminated
-  stays with the shared cluster, and `Close` tries again and reports it.
-- **Failing fast.** A test that holds a lease, or whose parent test holds one,
-  cannot take the exclusive lease, because the exclusive lease would wait for
-  that lease forever; `Exclusive` fails the test at once. `Lease` and
-  `Exclusive` in the test that holds the exclusive lease, or in its subtests,
-  also fail at once. So do `Exclusive` in a test whose parallel subtest
-  (`t.Parallel`) still holds a lease, and `Lease` or `Exclusive` in a test
-  whose parallel subtest holds the exclusive lease: the subtest is paused
-  until its parent returns, so it cannot release before the parent's request
-  would be granted.
-- **Cancellation.** `Exclusive` fails the test when the test's context ends
-  while it waits, also while the cluster starts, and the leases behind it go
-  on.
 
 #### The shared Container
 
@@ -1506,24 +1274,11 @@ methods that only read state stay available, including `Container.Pool`.
 | `AddOSD`, `OSDContainer.Remove`, `OSDContainer.Detach`, `DetachedOSD.Reopen`, `AddMonitor`, `MonitorContainer.Remove`, `AddManager`, `ManagerContainer.Remove` | Change the topology. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
 
-Under an [exclusive lease](#exclusive-lease) the gate refuses only `Terminate`.
+Under an [exclusive lease](ceph-harness.md#exclusive-lease) the gate refuses only `Terminate`.
 
 `*ceph.Container` overrides those promoted methods of the MON's
 `testcontainers.Container` only to apply this gate; on a cluster of your own
 they behave as before.
-
-#### Limits
-
-- An exclusive lease costs a cluster start, because its release retires the
-  cluster instead of restoring it.
-- Service tenants get the scoped operations listed in their packages. The
-  other service functions take a `*ceph.Container`, which a tenant never
-  gets.
-- Tenants share daemons, so a busy neighbour can slow a timing-sensitive test.
-- Tests that inject faults, change ratios or quotas, or exercise recovery need
-  an exclusive lease or a cluster of their own.
-- The checks catch what a tenant left behind, not what it did and undid
-  before its release.
 
 ### Container Methods
 
@@ -2480,12 +2235,12 @@ restarts.
 
 ```golang
 func Observe(cluster *Container) (*Observer, error)
-func ObserveTenant(tenant *Tenant) (*Observer, error)
 ```
 
-Return an `Observer`, which groups read-only live queries of one cluster or one
-tenant lease. Both forms have the same type and queries. There is no `Container`
-accessor for it. A nil cluster or tenant returns an error and a nil `Observer`.
+Returns an `Observer`, which groups read-only live queries of one cluster. A nil
+cluster returns an error and a nil `Observer`. The Observer of a tenant lease is
+built by `ObserveTenant` in [ceph/harness](ceph-harness.md#observe-a-tenant); it
+has the same type and queries. There is no `Container` accessor for it.
 
 #### Observer
 
@@ -2512,7 +2267,7 @@ func (o *Observer) Pools(ctx context.Context) ([]*ceph.Pool, error)
 Each query reads the cluster when it is called; constructing an `Observer`
 captures nothing and a retained one never returns an earlier result. A query is
 not an atomic cluster-wide snapshot. These queries are methods of the
-`Observer` only: the `Container` and the `Tenant` have no method of the same
+`Observer` only: the `Container` and the harness `Tenant` have no method of the same
 names. A tenant-backed `Observer` checks its lease on every query, so after
 the tenant is released or the shared cluster is terminated every query returns
 an error that matches `ErrInvalidRequest`. A cluster-backed `Observer` has no lease, and its

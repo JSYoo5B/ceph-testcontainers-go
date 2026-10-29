@@ -1,0 +1,76 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "rgw/harness",
+  "count": 9,
+  "entries": [
+    {
+      "current": "rgw/harness.Lease",
+      "kind": "function",
+      "signature": "func(ctx context.Context, t *cephharness.Tenant) (*TenantUser, error)",
+      "proposed": "rgw/harness.Lease",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/harness.Support",
+      "kind": "function",
+      "signature": "func() cephharness.ServiceSupport",
+      "proposed": "rgw/harness.Support",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/harness.TenantUser",
+      "kind": "type",
+      "proposed": "rgw/harness.TenantUser",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/harness.TenantUser.Credentials",
+      "kind": "method",
+      "signature": "func() (accessKey, secretKey string)",
+      "receiver": "*TenantUser",
+      "proposed": "rgw/harness.TenantUser.Credentials",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/harness.TenantUser.DaemonEndpoint",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*TenantUser",
+      "proposed": "rgw/harness.TenantUser.DaemonEndpoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/harness.TenantUser.Region",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantUser",
+      "proposed": "rgw/harness.TenantUser.Region",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/harness.TenantUser.S3Endpoint",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (string, error)",
+      "receiver": "*TenantUser",
+      "proposed": "rgw/harness.TenantUser.S3Endpoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/harness.TenantUser.Tenant",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantUser",
+      "proposed": "rgw/harness.TenantUser.Tenant",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/harness.TenantUser.UserID",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantUser",
+      "proposed": "rgw/harness.TenantUser.UserID",
+      "decision": "baseline"
+    }
+  ]
+}

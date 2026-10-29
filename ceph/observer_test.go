@@ -60,22 +60,10 @@ func newObserverCluster() (*Container, *observerControl) {
 	return &Container{Container: ctr}, ctr
 }
 
-// observerBackend lets a fake shared cluster expose a real *Container.
-type observerBackend struct {
-	*fakeShared
-	c *Container
-}
-
-func (b *observerBackend) ops() clusterOps { return containerOps{c: b.c} }
-
-func leaseObservable(t *testing.T) (*SharedCluster, *Tenant, *fakeTB, *observerControl) {
+func leaseObservable(t *testing.T) (*leaseDouble, *observerControl) {
 	t.Helper()
 	cluster, ctr := newObserverCluster()
-	shared := newFakeShared(&fakeFleet{})
-	tb := newFakeTB(t)
-	tenant := shared.Lease(tb)
-	tenant.inst.backend = &observerBackend{fakeShared: backendOf(tenant), c: cluster}
-	return shared, tenant, tb, ctr
+	return newLeaseDouble(cluster), ctr
 }
 
 func TestObserverClusterFormReadsActualStateOnEveryQuery(t *testing.T) {
@@ -149,9 +137,6 @@ func TestObserverRefusesNilInputAndUnconstructedObservers(t *testing.T) {
 	if o, err := Observe(nil); o != nil || !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("Observe(nil) = %v, %v", o, err)
 	}
-	if o, err := ObserveTenant(nil); o != nil || !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("ObserveTenant(nil) = %v, %v", o, err)
-	}
 	var nilObserver *Observer
 	for name, o := range map[string]*Observer{"nil": nilObserver, "zero": {}} {
 		if s, err := o.Status(t.Context()); !errors.Is(err, ErrInvalidRequest) || !reflect.DeepEqual(s, Status{}) {
@@ -167,11 +152,8 @@ func TestObserverRefusesNilInputAndUnconstructedObservers(t *testing.T) {
 }
 
 func TestObserverTenantFormValidatesTheLeaseOnEveryQuery(t *testing.T) {
-	_, tenant, tb, ctr := leaseObservable(t)
-	observer, err := ObserveTenant(tenant)
-	if err != nil {
-		t.Fatal(err)
-	}
+	lease, ctr := leaseObservable(t)
+	observer := lease.observer()
 	if got := ctr.commands(); len(got) != 0 {
 		t.Fatalf("construction ran commands: %q", got)
 	}
@@ -187,10 +169,7 @@ func TestObserverTenantFormValidatesTheLeaseOnEveryQuery(t *testing.T) {
 	}
 	before := len(ctr.commands())
 
-	tb.finish() // releases the lease
-	if tb.Failed() {
-		t.Fatalf("release failed: %s", tb.errorText())
-	}
+	lease.release()
 	for name, query := range map[string]func() error{
 		"Status":          func() error { _, err := observer.Status(t.Context()); return err },
 		"ManagerStatus":   func() error { _, err := observer.ManagerStatus(t.Context()); return err },
@@ -206,14 +185,12 @@ func TestObserverTenantFormValidatesTheLeaseOnEveryQuery(t *testing.T) {
 }
 
 func TestObserverTenantFormRefusesAfterClusterTermination(t *testing.T) {
-	shared, tenant, tb, ctr := leaseObservable(t)
-	observer, _ := ObserveTenant(tenant)
+	lease, ctr := leaseObservable(t)
+	observer := lease.observer()
 	if _, err := observer.Status(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := shared.Close(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	lease.terminate()
 	before := len(ctr.commands())
 	for name, query := range map[string]func() error{
 		"Status":          func() error { _, err := observer.Status(t.Context()); return err },
@@ -227,21 +204,6 @@ func TestObserverTenantFormRefusesAfterClusterTermination(t *testing.T) {
 	if after := len(ctr.commands()); after != before {
 		t.Fatalf("a terminated cluster's tenant observer ran %d commands", after-before)
 	}
-	tb.finish()
-}
-
-func TestObserverTenantFormWithoutClusterIsRefused(t *testing.T) {
-	shared := newFakeShared(&fakeFleet{})
-	tb := newFakeTB(t)
-	tenant := shared.Lease(tb) // the fake backend has no *Container
-	observer, err := ObserveTenant(tenant)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := observer.Status(t.Context()); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("a tenant without a cluster answered: %v", err)
-	}
-	tb.finish()
 }
 
 func TestObserverKeepsTheCallerContext(t *testing.T) {

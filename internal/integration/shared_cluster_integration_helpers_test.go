@@ -11,16 +11,27 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	cephharness "github.com/JSYoo5B/ceph-testcontainers-go/ceph/harness"
+	cephfsharness "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/harness"
+	rbdharness "github.com/JSYoo5B/ceph-testcontainers-go/rbd/harness"
+	rgwharness "github.com/JSYoo5B/ceph-testcontainers-go/rgw/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
 
+// integrationServices gives a shared cluster the support of every service that
+// the native tests lease. The service packages register nothing at import, so
+// a cluster that is not given a service neither prepares nor probes it.
+func integrationServices() cephharness.SharedOption {
+	return cephharness.WithServices(rbdharness.Support(), cephfsharness.Support(), rgwharness.Support())
+}
+
 // newSharedCluster describes a shared cluster of the integration images with
-// one OSD and closes it after t, as ceph.RunTests would after TestMain.
-func newSharedCluster(t *testing.T, opts ...ceph.SharedOption) *ceph.SharedCluster {
+// one OSD and closes it after t, as cephharness.RunTests would after TestMain.
+func newSharedCluster(t *testing.T, opts ...cephharness.SharedOption) *cephharness.SharedCluster {
 	t.Helper()
 	image, run := integrationImages(t)
-	opts = append([]ceph.SharedOption{ceph.WithSharedRunOptions(append(run, ceph.WithOSDCount(1))...)}, opts...)
-	shared := ceph.NewShared(image, opts...)
+	opts = append([]cephharness.SharedOption{integrationServices(), cephharness.WithSharedRunOptions(append(run, ceph.WithOSDCount(1))...)}, opts...)
+	shared := cephharness.NewShared(image, opts...)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
@@ -32,7 +43,7 @@ func newSharedCluster(t *testing.T, opts ...ceph.SharedOption) *ceph.SharedClust
 	return shared
 }
 
-func sharedFSID(t *testing.T, ctx context.Context, tenant *ceph.Tenant) string {
+func sharedFSID(t *testing.T, ctx context.Context, tenant *cephharness.Tenant) string {
 	t.Helper()
 	status, err := observeTenant(tenant).Status(ctx)
 	if err != nil || status.FSID == "" {
@@ -42,7 +53,7 @@ func sharedFSID(t *testing.T, ctx context.Context, tenant *ceph.Tenant) string {
 }
 
 // startTenantClient starts a client container with the tenant's client.
-func startTenantClient(t *testing.T, ctx context.Context, tenant *ceph.Tenant) testcontainers.Container {
+func startTenantClient(t *testing.T, ctx context.Context, tenant *cephharness.Tenant) testcontainers.Container {
 	t.Helper()
 	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, essentialImage(t)), tenant.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
@@ -54,7 +65,7 @@ func startTenantClient(t *testing.T, ctx context.Context, tenant *ceph.Tenant) t
 
 // startTenantClientAs starts a client container with one of the tenant's
 // clients.
-func startTenantClientAs(t *testing.T, ctx context.Context, tenant *ceph.Tenant, client *ceph.ClientConfig) testcontainers.Container {
+func startTenantClientAs(t *testing.T, ctx context.Context, tenant *cephharness.Tenant, client *ceph.ClientConfig) testcontainers.Container {
 	t.Helper()
 	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, essentialImage(t)), tenant.WithClientIdentity(client), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
@@ -65,14 +76,14 @@ func startTenantClientAs(t *testing.T, ctx context.Context, tenant *ceph.Tenant,
 }
 
 // tenantExpect runs a ceph or rados command as the tenant's client in ctr.
-func tenantExpect(t *testing.T, ctx context.Context, tenant *ceph.Tenant, ctr testcontainers.Container, wantOK bool, label string, argv ...string) {
+func tenantExpect(t *testing.T, ctx context.Context, tenant *cephharness.Tenant, ctr testcontainers.Container, wantOK bool, label string, argv ...string) {
 	t.Helper()
 	tenantExpectAs(t, ctx, tenant, ctr, tenant.Client(), wantOK, label, argv...)
 }
 
 // tenantExpectAs runs a ceph or rados command as client and checks that it
 // succeeds, or that Ceph denies it.
-func tenantExpectAs(t *testing.T, ctx context.Context, tenant *ceph.Tenant, ctr testcontainers.Container, client *ceph.ClientConfig, wantOK bool, label string, argv ...string) {
+func tenantExpectAs(t *testing.T, ctx context.Context, tenant *cephharness.Tenant, ctr testcontainers.Container, client *ceph.ClientConfig, wantOK bool, label string, argv ...string) {
 	t.Helper()
 	command := append([]string{argv[0], "--id", client.User(), "--connect-timeout", "10"}, argv[1:]...)
 	if argv[0] == "rados" {

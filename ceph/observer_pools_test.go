@@ -54,24 +54,18 @@ func TestObserverPoolsRefusesAMalformedListingAndAnUnconstructedObserver(t *test
 
 // leasePools leases a tenant of a shared cluster whose cluster is a pool
 // fixture, and returns the pool that the tenant's Observer lists.
-func leasePools(t *testing.T) (*Tenant, *fakeTB, *Container, *poolFixtureContainer, *Pool) {
+func leasePools(t *testing.T) (*leaseDouble, *Container, *poolFixtureContainer, *Pool) {
 	t.Helper()
 	ctr := policyFixture("2", "1", "1")
 	cluster := poolFixtureCluster(ctr, 3)
 	cluster.sharing.Store(int32(sharedWithTenants))
-	shared := newFakeShared(&fakeFleet{})
-	tb := newFakeTB(t)
-	tenant := shared.Lease(tb)
-	tenant.inst.backend = &observerBackend{fakeShared: backendOf(tenant), c: cluster}
-	observer, err := ObserveTenant(tenant)
-	if err != nil {
-		t.Fatal(err)
-	}
+	lease := newLeaseDouble(cluster)
+	observer := lease.observer()
 	pools, err := observer.Pools(t.Context())
 	if err != nil || len(pools) != 1 {
 		t.Fatalf("Pools = %v, %v", pools, err)
 	}
-	return tenant, tb, cluster, ctr, pools[0]
+	return lease, cluster, ctr, pools[0]
 }
 
 // poolOperations runs every operation of a Pool and returns the error of each.
@@ -103,29 +97,27 @@ func requireNoPoolOperationRuns(t *testing.T, pool *Pool, ctr *poolFixtureContai
 }
 
 func TestTenantDerivedPoolRefusesEveryOperationAfterRelease(t *testing.T) {
-	_, tb, _, ctr, pool := leasePools(t)
-	tb.finish()
+	lease, _, ctr, pool := leasePools(t)
+	lease.release()
 	requireNoPoolOperationRuns(t, pool, ctr, ErrInvalidRequest)
 }
 
 func TestTenantDerivedPoolRefusesEveryOperationAfterTermination(t *testing.T) {
-	tenant, _, _, ctr, pool := leasePools(t)
-	tenant.owner.mu.Lock()
-	tenant.inst.terminated = true
-	tenant.owner.mu.Unlock()
+	lease, _, ctr, pool := leasePools(t)
+	lease.terminate()
 	requireNoPoolOperationRuns(t, pool, ctr, ErrInvalidRequest)
 }
 
 func TestTenantDerivedPoolDoesNotInheritALaterExclusiveLease(t *testing.T) {
-	_, tb, cluster, ctr, pool := leasePools(t)
-	tb.finish()
+	lease, cluster, ctr, pool := leasePools(t)
+	lease.release()
 	// A later Exclusive lease lends the cluster to another holder.
 	cluster.sharing.Store(int32(sharedExclusively))
 	requireNoPoolOperationRuns(t, pool, ctr, ErrInvalidRequest)
 }
 
 func TestTenantDerivedPoolKeepsTheTenantPolicyWhileTheLeaseIsLive(t *testing.T) {
-	_, _, cluster, ctr, pool := leasePools(t)
+	_, cluster, ctr, pool := leasePools(t)
 	if _, err := pool.Status(t.Context()); err != nil {
 		t.Fatalf("a read through a live tenant's pool failed: %v", err)
 	}

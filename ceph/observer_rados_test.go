@@ -279,8 +279,8 @@ func TestObserverManagerMetricsReachesTheSupervisedScrapeAtTheAdvertisedEndpoint
 
 func TestObserverRadosQueriesValidateTheTenantLeaseOnEveryQuery(t *testing.T) {
 	cluster, ctr := newObserverRadosCluster()
-	shared, tenant, tb := leaseWith(t, cluster)
-	observer, _ := ObserveTenant(tenant)
+	lease := newLeaseDouble(cluster)
+	observer := lease.observer()
 	if found, err := observer.PGInconsistencies(t.Context(), "1.0"); err != nil || len(found) != 1 {
 		t.Fatalf("live tenant inconsistencies = %+v, %v", found, err)
 	}
@@ -288,7 +288,7 @@ func TestObserverRadosQueriesValidateTheTenantLeaseOnEveryQuery(t *testing.T) {
 		t.Fatalf("live tenant watchers = %+v, %v", watchers, err)
 	}
 	before := len(ctr.commands())
-	tb.finish()
+	lease.release()
 	check := func(when string) {
 		for name, query := range radosQueries(observer) {
 			if err := query(t.Context()); !errors.Is(err, ErrInvalidRequest) {
@@ -300,10 +300,8 @@ func TestObserverRadosQueriesValidateTheTenantLeaseOnEveryQuery(t *testing.T) {
 		}
 	}
 	check("after release")
-	if err := shared.Close(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	check("after release and Close")
+	lease.terminate()
+	check("after release and termination")
 }
 
 func TestObserverRadosQueriesRefuseNilAndUnconstructedObservers(t *testing.T) {

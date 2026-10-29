@@ -22,6 +22,13 @@ var Override any
 // service packages and, later, ceph/harness share.
 var Harness any
 
+// HarnessTenant is set once, during the initialization of package
+// ceph/harness, to the tenant hooks that internal/servicehook and
+// internal/testhelper type: the tenant port lookup of the service harnesses
+// and the test-only cluster lookup. Each consumer asserts only the method it
+// uses.
+var HarnessTenant any
+
 // Test is set once, during the initialization of package ceph, to the
 // unit-test access seam that internal/testhelper types. It is the only link
 // between test helper code and the unexported state of a cluster.

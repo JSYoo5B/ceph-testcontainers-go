@@ -14,77 +14,44 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/sharedinvariants"
 )
 
-// sharedBackend is what a SharedCluster needs from one cluster. The
-// container backend implements it with the module's unexported paths, which
-// the shared gate does not refuse; unit tests replace it with a model.
-type sharedBackend interface {
-	createPool(ctx context.Context, name string) error
-	// prepareServices runs the services' preparation, given by the
-	// SharedCluster's own set, before the baseline.
-	prepareServices(ctx context.Context, prepares []sharedPrepare) error
-	// ready waits for quorum and active+clean PGs.
-	ready(ctx context.Context) error
-	// invariants reads the cluster's state except Resources, which
-	// resources reads: the services' probes are slower and only the
-	// baseline and releases compare them.
-	invariants(ctx context.Context, pool string) (sharedInvariants, error)
-	resources(ctx context.Context, probes []sharedProbe) (map[string]string, error)
-	// daemonsRunning fails when a daemon container of the cluster exited.
-	daemonsRunning(ctx context.Context) error
-	createClient(ctx context.Context, entity string, caps ClientCaps) (client *ClientConfig, created bool, err error)
-	deleteClient(ctx context.Context, client *ClientConfig) error
-	// purgeNamespace removes every object of one namespace of pool.
-	purgeNamespace(ctx context.Context, pool, namespace string) error
-	// setSharing sets the gate of the cluster's *Container.
-	setSharing(mode sharingMode)
-	terminate(ctx context.Context) error
-	// ops returns the cluster operations that a Tenant may use, or nil for a
-	// model that has no cluster.
-	ops() clusterOps
-}
-
-type sharedStarter func(ctx context.Context, image string, opts []testcontainers.ContainerCustomizer) (sharedBackend, error)
-
-// sharedInvariants is the state that a tenant cannot change through its own
-// scope; the comparison logic lives in internal/sharedinvariants.
-type sharedInvariants = sharedinvariants.Invariants
-
 // sharedIgnoredHealth lists the health checks that report the Docker host
 // rather than the cluster: the free space of the engine's disk flaps around
 // the MON's warning threshold whatever the tenants do.
 var sharedIgnoredHealth = map[string]bool{"MON_DISK_LOW": true}
 
-// containerBackend shares a *Container.
+// containerBackend shares a *Container. It implements harnesshook.Backend
+// structurally; ceph cannot name that type.
 type containerBackend struct{ c *Container }
 
-func startSharedContainer(ctx context.Context, image string, opts []testcontainers.ContainerCustomizer) (sharedBackend, error) {
+// startSharedContainer starts a cluster with Run for a shared harness.
+func startSharedContainer(ctx context.Context, image string, opts []testcontainers.ContainerCustomizer) (any, error) {
 	return sharedRunResult(Run(ctx, image, opts...))
 }
 
 // sharedRunResult keeps the partial cluster that a failed Run returns: the
-// SharedCluster owns it and terminates it, and when that fails a later Close
-// tries again.
-func sharedRunResult(c *Container, err error) (sharedBackend, error) {
+// shared harness owns it and terminates it, and when that fails a later Close
+// tries again. It returns a nil value when there is no cluster at all.
+func sharedRunResult(c *Container, err error) (any, error) {
 	if c == nil {
 		return nil, err
 	}
 	return containerBackend{c: c}, err
 }
 
-func (b containerBackend) createPool(ctx context.Context, name string) error {
+func (b containerBackend) CreatePool(ctx context.Context, name string) error {
 	_, err := b.c.CreatePool(ctx, PoolConfig{Name: name, Application: "rados"})
 	return err
 }
 
-func (b containerBackend) ready(ctx context.Context) error {
+func (b containerBackend) Ready(ctx context.Context) error {
 	if err := b.c.WaitForQuorum(ctx); err != nil {
 		return err
 	}
 	return b.c.WaitForPGClean(ctx)
 }
 
-func (b containerBackend) invariants(ctx context.Context, pool string) (sharedInvariants, error) {
-	var state sharedInvariants
+func (b containerBackend) Invariants(ctx context.Context, pool string) (sharedinvariants.Invariants, error) {
+	var state sharedinvariants.Invariants
 	result, err := b.c.runSharedScript(ctx, sharedRequest{Pool: pool, Count: true, Commands: sharedInvariantCommands})
 	if err != nil {
 		return state, err
@@ -299,7 +266,7 @@ finally:
     cluster.shutdown()
 `
 
-func (b containerBackend) daemonsRunning(ctx context.Context) error {
+func (b containerBackend) DaemonsRunning(ctx context.Context) error {
 	daemons, err := b.c.sharedDaemons(ctx)
 	if err != nil {
 		return err
@@ -320,29 +287,56 @@ func (b containerBackend) daemonsRunning(ctx context.Context) error {
 	return nil
 }
 
-func (b containerBackend) createClient(ctx context.Context, entity string, caps ClientCaps) (*ClientConfig, bool, error) {
+func (b containerBackend) CreateClient(ctx context.Context, entity string, caps ClientCaps) (*ClientConfig, bool, error) {
 	return b.c.createSharedClient(ctx, entity, caps)
 }
 
-func (b containerBackend) deleteClient(ctx context.Context, client *ClientConfig) error {
+func (b containerBackend) DeleteClient(ctx context.Context, client *ClientConfig) error {
 	return b.c.deleteSharedClient(ctx, client)
 }
 
-func (b containerBackend) purgeNamespace(ctx context.Context, pool, namespace string) error {
+func (b containerBackend) PurgeNamespace(ctx context.Context, pool, namespace string) error {
 	_, err := b.c.runSharedScript(ctx, sharedRequest{Pool: pool, Purge: []string{namespace}})
 	return err
 }
 
-func (b containerBackend) prepareServices(ctx context.Context, prepares []sharedPrepare) error {
+func (b containerBackend) PrepareServices(ctx context.Context, prepares []func(context.Context, *Container) error) error {
 	return runPrepares(ctx, b.c, prepares)
 }
 
-func (b containerBackend) resources(ctx context.Context, probes []sharedProbe) (map[string]string, error) {
+func (b containerBackend) Resources(ctx context.Context, probes []func(context.Context, *Container) (map[string]string, error)) (map[string]string, error) {
 	return runProbes(ctx, b.c, probes)
 }
 
-func (b containerBackend) setSharing(mode sharingMode) { b.c.setSharingMode(mode) }
+func (b containerBackend) SetSharing(mode int32) { b.c.setSharingMode(sharingMode(mode)) }
 
-func (b containerBackend) terminate(ctx context.Context) error { return b.c.terminate(ctx) }
+func (b containerBackend) Terminate(ctx context.Context) error { return b.c.terminate(ctx) }
 
-func (b containerBackend) ops() clusterOps { return containerOps(b) }
+func (b containerBackend) Ops() any { return containerOps(b) }
+
+// runPrepares runs the services' preparation on c in order and stops at the
+// first failure.
+func runPrepares(ctx context.Context, c *Container, prepares []func(context.Context, *Container) error) error {
+	for _, prepare := range prepares {
+		if err := prepare(ctx, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runProbes merges the probes' listings in order; a later service wins a key
+// that two list. The first failure stops the run.
+func runProbes(ctx context.Context, c *Container, probes []func(context.Context, *Container) (map[string]string, error)) (map[string]string, error) {
+	resources := map[string]string{}
+	for _, probe := range probes {
+		found, err := probe(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		for key, owner := range found {
+			resources[key] = owner
+		}
+	}
+	return resources, nil
+}

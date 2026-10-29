@@ -24,7 +24,14 @@ import (
 // invalidCallSites is the number of non-test call sites of the former
 // per-package invalid function, measured by AST at the commit before the
 // replacement. The replacement keeps every call site.
-var invalidCallSites = map[string]int{"rbd": 32, "cephfs": 67, "rgw": 62, "rbd/mirror": 28, "cephfs/mirror": 15}
+//
+// The tenant adapters moved to the service harness packages, so each count is
+// split between the service package and its harness package; the sums are
+// those of the commit before the replacement (32, 67 and 62).
+var invalidCallSites = map[string]int{
+	"rbd": 28, "rbd/harness": 4, "cephfs": 60, "cephfs/harness": 7, "rgw": 58, "rgw/harness": 4,
+	"rbd/mirror": 28, "cephfs/mirror": 15,
+}
 
 // countInvalidCalls counts, in the non-test files of dir, the calls of a bare
 // invalid(...) and of harnesshook.Invalid(...).

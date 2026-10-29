@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rbd",
-  "count": 36,
+  "count": 30,
   "entries": [
     {
       "current": "rbd.Container",
@@ -140,13 +140,6 @@
       "decision": "baseline"
     },
     {
-      "current": "rbd.Lease",
-      "kind": "function",
-      "signature": "func(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, error)",
-      "proposed": "rbd.Lease",
-      "decision": "baseline"
-    },
-    {
       "current": "rbd.ListNamespaces",
       "kind": "function",
       "signature": "func(ctx context.Context, c *ceph.Container, pool string) ([]string, error)",
@@ -208,44 +201,6 @@
       "kind": "function",
       "signature": "func(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (*ImmutableObjectCacheLease, error)",
       "proposed": "rbd.StartImmutableObjectCache",
-      "decision": "baseline"
-    },
-    {
-      "current": "rbd.TenantNamespace",
-      "kind": "type",
-      "proposed": "rbd.TenantNamespace",
-      "decision": "baseline"
-    },
-    {
-      "current": "rbd.TenantNamespace.Client",
-      "kind": "method",
-      "signature": "func() *ceph.ClientConfig",
-      "receiver": "*TenantNamespace",
-      "proposed": "rbd.TenantNamespace.Client",
-      "decision": "baseline"
-    },
-    {
-      "current": "rbd.TenantNamespace.Namespace",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*TenantNamespace",
-      "proposed": "rbd.TenantNamespace.Namespace",
-      "decision": "baseline"
-    },
-    {
-      "current": "rbd.TenantNamespace.Pool",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*TenantNamespace",
-      "proposed": "rbd.TenantNamespace.Pool",
-      "decision": "baseline"
-    },
-    {
-      "current": "rbd.TenantNamespace.WithClient",
-      "kind": "method",
-      "signature": "func(opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption",
-      "receiver": "*TenantNamespace",
-      "proposed": "rbd.TenantNamespace.WithClient",
       "decision": "baseline"
     },
     {

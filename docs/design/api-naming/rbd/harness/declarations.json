@@ -1,0 +1,60 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "rbd/harness",
+  "count": 7,
+  "entries": [
+    {
+      "current": "rbd/harness.Lease",
+      "kind": "function",
+      "signature": "func(ctx context.Context, t *cephharness.Tenant, pool string) (*TenantNamespace, error)",
+      "proposed": "rbd/harness.Lease",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/harness.Support",
+      "kind": "function",
+      "signature": "func() cephharness.ServiceSupport",
+      "proposed": "rbd/harness.Support",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/harness.TenantNamespace",
+      "kind": "type",
+      "proposed": "rbd/harness.TenantNamespace",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/harness.TenantNamespace.Client",
+      "kind": "method",
+      "signature": "func() *ceph.ClientConfig",
+      "receiver": "*TenantNamespace",
+      "proposed": "rbd/harness.TenantNamespace.Client",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/harness.TenantNamespace.Namespace",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantNamespace",
+      "proposed": "rbd/harness.TenantNamespace.Namespace",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/harness.TenantNamespace.Pool",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "*TenantNamespace",
+      "proposed": "rbd/harness.TenantNamespace.Pool",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/harness.TenantNamespace.WithClient",
+      "kind": "method",
+      "signature": "func(opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption",
+      "receiver": "*TenantNamespace",
+      "proposed": "rbd/harness.TenantNamespace.WithClient",
+      "decision": "baseline"
+    }
+  ]
+}

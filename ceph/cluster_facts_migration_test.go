@@ -6,14 +6,14 @@ import (
 )
 
 // TestContainerHasNoStaticFactAccessors fails when an exported method of
-// *Container or *Tenant returns again a fact that ClusterFacts carries: the
+// *Container returns again a fact that ClusterFacts carries: the
 // facts are read only through FactsOf.
 func TestContainerHasNoStaticFactAccessors(t *testing.T) {
 	removed := []string{
 		"AddressFamily", "CephVersion", "ClusterNetworkName", "EssentialImage", "HasSeparateClusterNetwork",
 		"Images", "MessengerMode", "NetworkName", "PublicAddress", "UsesHostNetwork",
 	}
-	for _, typ := range []reflect.Type{reflect.TypeOf(&Container{}), reflect.TypeOf(&Tenant{})} {
+	for _, typ := range []reflect.Type{reflect.TypeOf(&Container{})} {
 		for _, name := range removed {
 			if _, ok := typ.MethodByName(name); ok {
 				t.Errorf("%s has the static fact accessor %s; read it through FactsOf", typ, name)

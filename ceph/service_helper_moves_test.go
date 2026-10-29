@@ -3,6 +3,7 @@ package ceph
 import (
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -113,15 +114,11 @@ func TestAdapterPrivateReachNamesNoMovedHelper(t *testing.T) {
 		"rgw":    {},
 	}
 	for service, names := range want {
-		dir := filepath.Join("..", service)
-		rest := map[string]string{}
-		for name, src := range nonTestSources(t, dir) {
-			if name != "tenant.go" {
-				rest[name] = src
-			}
-		}
-		adapter := map[string]string{"tenant.go": nonTestSources(t, dir)["tenant.go"]}
-		got := privateReach(t, adapter, rest)
+		// The adapter lives in the service's harness package, which cannot
+		// name the service package's private names at all; the check keeps
+		// the table honest if one of them is ever declared in both.
+		adapter := map[string]string{"tenant.go": nonTestSources(t, filepath.Join("..", service, "harness"))["tenant.go"]}
+		got := privateReach(t, adapter, nonTestSources(t, filepath.Join("..", service)))
 		if !slices.Equal(got, names) {
 			t.Errorf("%s tenant.go private reach = %v, want %v", service, got, names)
 		}
@@ -142,7 +139,28 @@ func TestRGWGatewayStateIsTheGenericRegistry(t *testing.T) {
 			t.Errorf("%s keeps a private byName map beside the generic registry", name)
 		}
 	}
-	if src["tenant.go"] == "" || !strings.Contains(src["tenant.go"], "namedregistry.From[*Gateway]") {
-		t.Error("rgw tenant.go does not reach the gateways through the leaf registry")
+	if tenant := nonTestSources(t, filepath.Join("..", "rgw", "harness"))["tenant.go"]; tenant == "" || !strings.Contains(tenant, "namedregistry.From[*rgw.Gateway]") {
+		t.Error("rgw/harness tenant.go does not reach the gateways through the leaf registry")
 	}
+}
+
+// nonTestSources returns the non-test Go files of dir by base name.
+func nonTestSources(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := map[string]string{}
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src[filepath.Base(file)] = string(b)
+	}
+	return src
 }

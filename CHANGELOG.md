@@ -16,7 +16,7 @@ change the API.
   returns an error and the zero value. The snapshot holds copies only and
   carries no control path or cleanup state. The ten `Container` accessors are
   unchanged in this step; their migration is a separate change.
-- Add `ceph.Observe(cluster)` and `ceph.ObserveTenant(tenant)`, which return
+- Add `ceph.Observe(cluster)` and `cephharness.ObserveTenant(tenant)`, which return
   one `*ceph.Observer` with `Status`, `ManagerStatus` and `DaemonAddresses`, and
   no new `Container` method. Construction reads nothing and every query reads
   the cluster at that moment. A tenant-backed observer validates its lease on
@@ -336,9 +336,9 @@ change the API.
   vectors list IPv6 first so that the MGR advertises a concrete IPv6 address
   instead of `[::]`, and `Run`, `AddManager` and `RemoveManager` fail with
   `ErrUnsupported` when a daemon advertises a wildcard or lacks a family.
-- `ceph.NewShared` lends one lazily started cluster to the tests of a test
+- `cephharness.NewShared` lends one lazily started cluster to the tests of a test
   binary. `SharedCluster.Lease` gives each test a `Tenant`: the RADOS
-  namespace of its ID in the pool `ceph.SharedPool` and a client with
+  namespace of its ID in the pool `cephharness.SharedPool` and a client with
   `mon 'allow r'` and `osd 'allow rw pool=tenants namespace=ID'`, more clients
   of that namespace with `CreateClient`, `WithClient` and `RunNativeCommand`
   for its own client containers, and read-only views. A release removes the
@@ -361,11 +361,11 @@ change the API.
   fails at once instead of waiting for itself, as does a lease of the test
   that holds the exclusive lease. `SharedStats` gains `Exclusives` and
   `ExclusiveWait`.
-- Service tenants of a shared cluster: `rbd.Lease` gives a tenant the RBD
+- Service tenants of a shared cluster: `rbdharness.Lease` gives a tenant the RBD
   namespace of its ID and a client with `profile rbd` limited to it,
-  `cephfs.Lease` the subvolume group of its ID, with its file data in the
+  `cephfsharness.Lease` the subvolume group of its ID, with its file data in the
   namespace `fsns-ID` and a client limited to `/volumes/ID` and that
-  namespace, and `rgw.Lease` the RGW tenant of its ID with the S3 user
+  namespace, and `rgwharness.Lease` the RGW tenant of its ID with the S3 user
   `ID$user`. A release removes them, evicting leftover CephFS sessions and
   waiting out leftover RBD watchers, and the baseline and releases also
   compare the RBD namespaces, subvolume groups and RGW users and buckets.
