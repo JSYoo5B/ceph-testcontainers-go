@@ -1,9 +1,7 @@
 # Supported Ceph bug compatibility tags
 
 No bug-ID compatibility tags are registered. There is no supported tag to
-enable from this page. The [audit](../design/bug-compatibility-audit.md) of the
-current source classifies every release-specific branch and found none that
-needs a tag; no ordinary/compatibility build pair exists.
+enable from this page, and no ordinary/compatibility build pair exists.
 
 The machine-readable record is
 [`bug-compatibility-tags.json`](bug-compatibility-tags.json). The CI planner
@@ -48,8 +46,6 @@ build with an unused custom tag is not selection evidence. Planner tests use
 synthetic `ceph_bug_synthetic_*` tags only in their own fixtures; those are not
 registered.
 
-See the [contributor policy](../contributing/bug-compatibility.md),
-[release/image guide](releases-and-images.md) and
-[#24](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/24) for the
-implementation roadmap. This catalogue does not establish a workaround or
+See the [contributor policy](../contributing/bug-compatibility.md) and the
+[release/image guide](releases-and-images.md). This catalogue does not establish a workaround or
 validate any new image configuration.

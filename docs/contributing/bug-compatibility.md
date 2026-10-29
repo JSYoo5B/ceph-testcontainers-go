@@ -1,13 +1,10 @@
 # Ceph behavioral bug compatibility policy
 
-This records the policy in [#24](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/24).
 The CI planner implements explicit selection and its validation, and the
 tagged runtime workflow carries one selection input through every job (see
 [Bug compatibility selection](ci.md#bug-compatibility-selection)). No caller
-sets that input, and no paired implementation or native compatibility result
-exists yet.
-The [supported-tag catalogue](../guides/bug-compatibility-tags.md) currently has
-no registered tags. Existing runtime behavior is unchanged.
+sets that input. The [supported-tag catalogue](../guides/bug-compatibility-tags.md)
+has no registered tags.
 
 ## Classify the difference first
 
@@ -127,9 +124,7 @@ it lives and which edits change it.
 ### Transitions between two revisions
 
 A candidate ledger is compared with a named maintained-base revision, never
-with its own earlier snapshot. The decisions below are the policy; the
-synthetic controls behind them are recorded in
-[#24](https://github.com/JSYoo5B/ceph-testcontainers-go/issues/24).
+with its own earlier snapshot. Review applies these decisions:
 
 | Transition of an existing tag | Decision |
 | --- | --- |
@@ -151,27 +146,28 @@ synthetic controls behind them are recorded in
   review of whether a fixed-then-regressed or re-qualified defect reuses the
   tombstone or takes a new spelling, and what evidence that requires.
 
-### What exists today and what does not
+### Checks
 
-| Check | State |
-| --- | --- |
-| Single-snapshot validator (`bug_registry`): exact v1 fields, one `https` tracker string, no repeated spelling | Implemented. It accepts two distinct tags with the same tracker URL, so it does not prove identity. |
-| Registered-source check (`bug_registry_sources`) and the retired-source guard, which refuses a retired tag still guarding a test | Implemented. A valid retirement must also remove those source references. |
-| Retired-source scan (`bug_retired_sources`): refuses a retired tag in the `//go:build` or `// +build` header of any maintained Go file, including production, inactive platform and test-helper files, and names each path | Implemented. `testdata`, `vendor` and dot or underscore directories are outside its scope, and tag words in comments or string literals are not constraints. It runs in every planner command. |
-| Selection refusal of unregistered, retired, repeated and conflicting tags | Implemented. |
-| Revision-to-revision comparison against a named maintained base (`bug_binding_history.py --base <revision>`) | Implemented as a standalone script. It reads the base registry from the named revision, and an unresolvable or invalid base is inconclusive, never an empty base. No workflow runs it yet, and `tag_scenarios.py` does not call it. |
-| Reporting the exact refused transition from the table above | Implemented by the same script: each refused tag is printed with its base and candidate state and the rule names. A deleted supported entry is also refused, since retirement keeps a tombstone. A reviewed alias is an explicit input, not parsed from the catalogue page, and covers only a link edit that leaves status unchanged. |
-| Deriving a defect key (tracker namespace and project plus issue ID) from `tracker` so a link edit can be told apart from reassignment mechanically | Not decided. It may need a reviewed schema change, which this document does not make. |
-
-The production catalogue is empty, so none of these transitions has occurred.
-A later enforcement change needs its own review and authorization.
+- The single-snapshot validator (`bug_registry`) requires the exact v1 fields,
+  one `https` tracker string and no repeated spelling. It accepts two distinct
+  tags with the same tracker URL, so it does not prove identity.
+- The registered-source check (`bug_registry_sources`) and the retired-source
+  guard refuse a retired tag that still guards a test. A valid retirement must
+  also remove those source references.
+- The retired-source scan (`bug_retired_sources`) refuses a retired tag in the
+  `//go:build` or `// +build` header of any maintained Go file and names each
+  path. `testdata`, `vendor` and dot or underscore directories are outside its
+  scope, and tag words in comments or string literals are not constraints. It
+  runs in every planner command.
+- Selection refuses unregistered, retired, repeated and conflicting tags.
 
 ## Implementation and review checklist
 
-1. Audit existing bug-specific version assumptions separately from capability
-   checks and release-format adaptations. Record evidence and affected operations
-   before migrating a branch. The [audit](../design/bug-compatibility-audit.md)
-   of the current source found no branch that needs a bug tag.
+1. Classify each release or capability branch as the
+   [policy](#classify-the-difference-first) does. A release-syntax,
+   representation or detected-capability branch is ordinary code; only a branch
+   that needs a different path for an image with a behavioral defect, where that
+   path fails on a fixed image, becomes a registered `ceph_bug_<id>` tag.
 2. Register a concrete tag in the catalogue with its authoritative bug link,
    ordinary/alternate contract, confirmed image boundaries and selection advice.
    Do not invent an upstream issue number or register this naming template.
@@ -189,5 +185,4 @@ A later enforcement change needs its own review and authorization.
    maintenance burden together. Published release tags remain immutable.
 
 Use the existing [testing workflow](testing.md) and
-[release process](releasing.md). Future implementation and native validation
-remain work under #24; this document does not close those acceptance items.
+[release process](releasing.md).
