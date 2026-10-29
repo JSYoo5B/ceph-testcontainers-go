@@ -543,7 +543,7 @@ type finalizationManifest struct {
 	Scenario      string                `json:"scenario,omitempty"`
 	Cluster       string                `json:"cluster"`
 	Execution     finalizationExecution `json:"execution"`
-	// Images are the cluster's role images; a daemon started with WithDaemonImage
+	// Images are the cluster's role images; a daemon started with DaemonOptions.WithImage
 	// is not reflected, the diagnostics archive records each container's image.
 	Images       ImageSet                     `json:"images"`
 	Missing      []string                     `json:"missing_provenance"`

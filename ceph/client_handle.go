@@ -40,7 +40,7 @@ func (client *ClientConfig) UpdateCaps(ctx context.Context, caps ClientCaps) err
 // Cephx key and keeps its name and its exact capabilities, in one auth
 // import, so that the MONs never lack the identity. The identity needs a
 // capability, as auth import refuses an entry without any. The new key has
-// the type of the old one unless WithClientKeyType selects another. It
+// the type of the old one unless ClientOptions.WithKeyType selects another. It
 // returns a new descriptor for the new key, and the old descriptor goes
 // stale: its ConnectionConfig still returns the old credentials, for tests
 // that check their rejection, while every other operation on it fails.

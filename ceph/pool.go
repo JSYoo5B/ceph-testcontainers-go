@@ -25,7 +25,7 @@ type PoolConfig struct {
 	// FailureDomain selects distinct osd, host or rack buckets. Empty uses osd.
 	FailureDomain string
 	// CRUSHRoot selects the hierarchy root; empty uses the cluster's default
-	// root, which is default unless WithDefaultCRUSHRoot selects another.
+	// root, which is default unless ClusterConfig.WithDefaultCRUSHRoot selects another.
 	// DeviceClass optionally limits placement to OSDs explicitly configured
 	// with that class.
 	CRUSHRoot   string

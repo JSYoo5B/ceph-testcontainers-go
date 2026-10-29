@@ -252,7 +252,7 @@ provided.
 
 ## One daemon from another image
 
-`WithDaemonImage` starts one new MON or MGR, and `OSDOptions.WithImage` one new
+`DaemonOptions.WithImage` starts one new MON or MGR, and `OSDOptions.WithImage` one new
 OSD, from an image other than the cluster's essential image. They are options of
 `AddMonitor`, `AddManager` and `AddOSD`; see
 [Per-daemon images](../../ceph/README.md#per-daemon-images) for the full contract.
@@ -284,12 +284,11 @@ Read this scope before relying on it:
 ## Related APIs
 
 - [`ceph`](../../ceph/README.md): `DefaultImage`, `Run`, `FactsOf`,
-  `ImageSet`, `ImageOptions.WithImageSet`, `WithDaemonImage`, the error categories.
+  `ImageSet`, `ImageOptions` (`WithImageSet`, `WithCephFSImage`, `WithRGWImage`),
+  `DaemonOptions.WithImage`, the error categories.
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.
-- [`cephfs`](../../cephfs/README.md): `WithMDSImage`.
 - [`cephfs/mirror`](../../cephfs/mirror/README.md): `Run`, `Mirror.RebalanceDirectories`.
-- [`rgw`](../../rgw/README.md): `WithImage`.
 - [`rgw/multisite`](../../rgw/multisite/README.md): `Run`, `RunTopology`,
   `Config.SetupImage`.
 - [`rbd/mirror`](../../rbd/mirror/README.md): `Run`, namespace mapping.

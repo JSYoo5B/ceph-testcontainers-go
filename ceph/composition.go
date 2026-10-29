@@ -101,7 +101,7 @@ func prepareInitialComposition(settings *options) error {
 		needed = min(2, settings.osds)
 	}
 	if !settings.noInitialOSDs && (eligible < needed || eligible == 0) {
-		return fmt.Errorf("default CRUSH root %q needs %d initial OSDs for automatically created pools, requested layout has %d; select a populated root with WithDefaultCRUSHRoot", settings.defaultCRUSHRoot, needed, eligible)
+		return fmt.Errorf("default CRUSH root %q needs %d initial OSDs for automatically created pools, requested layout has %d; select a populated root with ClusterConfig.WithDefaultCRUSHRoot", settings.defaultCRUSHRoot, needed, eligible)
 	}
 	names := make(map[string]bool)
 	validatePool := func(config PoolConfig) error {

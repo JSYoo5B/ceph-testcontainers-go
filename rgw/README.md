@@ -145,8 +145,8 @@ returned in 17 seconds with Ceph 20.2.4 and in 23 seconds with 19.2.5.
 - With one OSD and one copy, nothing can recover from an OSD failure. Tests of
   OSD faults, recovery or separate traffic planes need the default two OSDs or
   more.
-- For role images, add `ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(...))` and `rgw.WithImage`, as described
-  under [Image](#image).
+- For role images, add `ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(...))`
+  or `ImageOptions.WithRGWImage`, as described under [Image](#image) and [Gateway image](#gateway-image).
 
 `TestRGWMinimalS3Recipe` in `internal/integration` runs this recipe with a
 signed bucket create, a binary PUT and GET, deletes, and a 404 after the
@@ -179,7 +179,7 @@ cluster: you never terminate a gateway separately.
 `Run` accepts every `ceph.Run` option and the options of the other service
 packages, so one cluster can also carry RBD pools and CephFS filesystems.
 Bootstrap options that leave the cluster without OSDs or managers for the
-gateway, such as `ceph.WithNoInitialOSDs` and `ceph.WithNoInitialManagers`, are
+gateway, such as `ceph.ClusterConfig.WithNoInitialOSDs` and `ceph.ClusterConfig.WithNoInitialManagers`, are
 rejected; build those clusters with `ceph.Run` and add gateways later with
 [`Start`](#start).
 
@@ -208,7 +208,7 @@ example: `rgw.Run(ctx, ceph.DefaultImage)`.
   (Ceph Tentacle 20.2.4).
 - The image passed to `Run` is the essential image. It runs the MON, MGR and OSD
   daemons and the Ceph CLI. Every other role uses the same image unless a role
-  image is selected: `rgw.WithImage` for gateways, `ceph.ImageOptions.WithImageSet` for the
+  image is selected: `ceph.ImageOptions.WithRGWImage` for gateways, `ceph.ImageOptions.WithImageSet` for the
   client, cephfs, rbd-aux and rgw roles.
 - A gateway image must contain `radosgw` and `radosgw-admin`, because
   `Gateway.Admin` runs inside the gateway container. Multisite setup clients and
@@ -254,15 +254,12 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 )
 ```
 
-#### WithImage
+#### Gateway image
 
-```golang
-func ceph.WithImageOptions(ceph.ImageOptions{}.WithRGWImage(image string)) ceph.Option
-```
-
-Selects the image for every gateway of the cluster, both the ones started by
-`Run` and the ones added later with `Start`. Without it, gateways use the image
-passed to `Run`. Use the same Ceph release as the essential image.
+`ceph.ImageOptions.WithRGWImage` selects the image for every gateway of the
+cluster, both the ones started by `Run` and the ones added later with `Start`.
+Without it, gateways use the image passed to `Run`. Use the same Ceph release as
+the essential image.
 
 ```golang
 cluster, err := rgw.Run(ctx, "registry.example.com/ceph:20.2.4-all",

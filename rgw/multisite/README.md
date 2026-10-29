@@ -1115,8 +1115,7 @@ are therefore not evidence that these conditions work.
   destination bucket policy that denies `s3:ReplicateObject`.
 
 Both limitations are native RGW behaviour. They can only be removed with a
-patched gateway image supplied through `WithImage` or the `image` argument of
-`Run`; this project does not build such images.
+patched gateway image supplied through the `image` argument of `Run`; this project does not build such images.
 
 Further native behaviour of sync policies:
 

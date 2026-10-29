@@ -118,7 +118,7 @@ so every `ceph.Container` method is available on it.
 `Run` accepts every `ceph.Run` option and the options of the other service
 packages, so one cluster can serve RBD, CephFS and RGW tests at once. It rejects
 bootstrap options that leave the cluster without OSDs for its pool, such as
-`ceph.WithNoInitialOSDs`; start those staged clusters with `ceph.Run` and call
+`ceph.ClusterConfig.WithNoInitialOSDs`; start those staged clusters with `ceph.Run` and call
 `InitPool` later.
 
 `Run` returns after the pools exist and their RBD metadata is initialized. PG
@@ -201,7 +201,7 @@ cluster, err := rbd.Run(ctx, ceph.DefaultImage,
 
 `AllowOverwrites` is required for RBD data pools.
 
-Every `ceph.Run` option is accepted as well (`ceph.WithOSDCount`,
+Every `ceph.Run` option is accepted as well (`ceph.WithClusterConfig`,
 `ceph.WithHostNetwork`, `ceph.WithImageOptions`, `ceph.WithConfigFile`,
 `NetworkConfig.WithMessengerMode`, ...); see [`ceph`](../ceph/README.md). The generic options of
 the `testcontainers` package (for example `testcontainers.WithEnv`,

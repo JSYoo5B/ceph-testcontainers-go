@@ -37,7 +37,7 @@ func validCephxCipher(cipher CephxCipher) bool {
 // the defaults of the image's Ceph release.
 type AuthConfig struct {
 	// KeyType is the type of the keys the fixture generates itself: the
-	// mon., client.admin and OSD keys and, unless WithClientKeyType selects
+	// mon., client.admin and OSD keys and, unless ClientOptions.WithKeyType selects
 	// another, CreateClient keys.
 	KeyType CephxCipher
 	// ServiceCipher encrypts service tickets. AllowedCiphers are the key

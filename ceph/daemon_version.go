@@ -59,7 +59,7 @@ func (c *Container) daemonVersion(ctx context.Context, handle daemonHandle) (str
 // Version returns the release that this running OSD reports itself, such as
 // "20.2.4", read from its own admin socket. It does not use CephVersion, which
 // describes the first MON and the CLI, so it is the way to see the release of a
-// daemon that WithDaemonImage started from another image. It works under the
+// daemon that DaemonOptions.WithImage started from another image. It works under the
 // same conditions as AdminSocket, and a stopped daemon, a stale handle or an
 // unrecognized reply returns an error.
 func (o *OSDContainer) Version(ctx context.Context) (string, error) {

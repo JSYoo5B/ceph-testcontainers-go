@@ -32,7 +32,7 @@ func (o OSDOptions) WithPlacement(config OSDConfig) OSDOptions {
 }
 
 // WithImage starts the one new OSD from image instead of the cluster's
-// essential image, with the same contract as WithDaemonImage: the image must
+// essential image, with the same contract as DaemonOptions.WithImage: the image must
 // contain the daemon's binary and the tools of the fixture's startup scripts,
 // nothing here checks its release or compatibility with the running cluster,
 // DetachedOSD.Reopen starts the same OSD from the same image again, and the

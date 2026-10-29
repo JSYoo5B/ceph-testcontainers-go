@@ -186,5 +186,5 @@ for Go.
 They do not contain or link Ceph. Tests pull the Ceph container images at run
 time and run the daemons and CLIs inside them; Ceph in those images is under
 its own licenses, mainly LGPL-2.1 and LGPL-3.0 with some GPL-2.0 parts. Images
-that a test selects with `ImageOptions.WithImageSet`, `rgw.WithImage` or
-`cephfs.WithMDSImage` keep the licenses of whoever publishes them.
+that a test selects with `ImageOptions.WithImageSet`, `ImageOptions.WithRGWImage` or
+`ImageOptions.WithCephFSImage` keep the licenses of whoever publishes them.

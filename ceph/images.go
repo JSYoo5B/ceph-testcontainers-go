@@ -240,7 +240,7 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 			version, parseErr := parseCephVersion(string(output))
 			if parseErr != nil {
 				err = parseErr
-			} else if version != c.staticFacts().CephVersion { // Unchanged: daemons with WithDaemonImage do not take part.
+			} else if version != c.staticFacts().CephVersion { // Unchanged: daemons with DaemonOptions.WithImage do not take part.
 				err = fmt.Errorf("client Ceph release %s differs from core %s", version, c.staticFacts().CephVersion)
 			}
 		}

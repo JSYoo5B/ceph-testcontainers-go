@@ -125,7 +125,7 @@ func (c *Container) WaitForQuorum(ctx context.Context) error {
 
 // AddMonitor joins a new named MON from the live quorum's map and shared key.
 // Existing daemon data is retained; a partial new member remains owned on error.
-// WithDaemonImage starts this one MON from another image; the default is the
+// DaemonOptions.WithImage starts this one MON from another image; the default is the
 // essential image. Options are validated before the topology lock is taken or
 // anything is created.
 func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonOptions) (*MonitorContainer, error) {
@@ -689,7 +689,7 @@ func monitorConfigComment(line string) (int, error) {
 // active ownership away from an existing MGR.
 // With AddressDualStack it then checks the active MGR's advertised addresses
 // and fails with ErrUnsupported when one family has no concrete address.
-// WithDaemonImage starts this one MGR from another image; the default is the
+// DaemonOptions.WithImage starts this one MGR from another image; the default is the
 // essential image. Options are validated before the topology lock is taken or
 // any identity is created.
 func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonOptions) (*ManagerContainer, error) {

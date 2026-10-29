@@ -116,7 +116,7 @@ func clientCapArgs(caps ClientCaps) ([]string, error) {
 // creation; inspect auth state or terminate the cluster rather than retrying with
 // broader caps. ClientConfig.Delete can revoke a confirmed successful creation.
 // The key has the cluster's AuthConfig.KeyType, the release default without
-// one, or the type that WithClientKeyType selects.
+// one, or the type that ClientOptions.WithKeyType selects.
 func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCaps, opts ...ClientOptions) (*ClientConfig, error) {
 	return c.createClient(ctx, name, caps, opts...)
 }

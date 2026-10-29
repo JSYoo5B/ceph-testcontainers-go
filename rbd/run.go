@@ -12,7 +12,7 @@ import (
 // option and the options of other service packages. When no WithPools option is given,
 // it creates and initializes a replicated pool named rbd.
 // Bootstrap options that leave the cluster without OSDs for the pool, such as
-// ceph.WithNoInitialOSDs, are rejected; use ceph.Run for those stages.
+// ceph.ClusterConfig.WithNoInitialOSDs, are rejected; use ceph.Run for those stages.
 // A non-nil Container returned with an error must still be terminated.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	c, err := ceph.Run(ctx, img, append(slices.Clone(opts), defaultPool())...)

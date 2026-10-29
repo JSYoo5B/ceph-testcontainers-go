@@ -115,7 +115,7 @@ allocation. No existing volume, host mount, device or driver option is adopted.
 
 ### Allocation and ownership
 
-Allocation is lazy, including `WithNoInitialOSDs`. Before the first native OSD
+Allocation is lazy, including `ClusterConfig.WithNoInitialOSDs`. Before the first native OSD
 registration, the cluster records a UUID-derived volume name and ownership token,
 then creates the ordinary local volume without driver options. A partial or
 uncertain create stays owned and is not replayed. An isolated idle essential-image
