@@ -1204,12 +1204,19 @@ Findings:
 
 ### Hardening of slice 2
 
-This is an implementation-side proposal made under the owner's delegation of
-2026-10-29. It is not owner approval: the owner has said that neither the
-relocation nor green native consumers approves a hardening mechanism, so the
-mechanism below needs the owner's acceptance.
+Principle: whether a handle is admitted is decided by the handle's provenance,
+not by the cluster's current mode. A handle that a tenant made stays a tenant
+handle and is refused when the cluster is exclusive; only the exclusive owner's
+own handles are admitted in the exclusive interval. The retired mode only
+permits read-only operations, while the cluster is terminated and after a
+termination that failed.
 
-- Gap 1: a fourth gate mode, retired (`sharedRetired` in the core,
+Status: the owner accepts this mechanism as the fallback unless a better
+mechanism is found. It is an implementation-side mechanism under the owner's
+delegation of 2026-10-29, not a formal approval beyond that. Neither the
+relocation nor green native consumers approves it.
+
+- Gap 1 (owner handles): a fourth gate mode, retired (`sharedRetired` in the core,
   `harnesshook.SharedRetired` in the internal contract). `releaseExclusive`
   sets it first, before the termination
   (`TestExclusiveAuditReleaseRetiresBeforeTerminating`, with a control for a
@@ -1221,7 +1228,7 @@ mechanism below needs the owner's acceptance.
   fails now leaves a running cluster in the retired mode until `Close`
   ends it
   (`TestExclusiveAuditRetiredClusterRefusesAfterFailedTermination`).
-- Gap 2: a `ClientConfig` created through `createSharedClient`, the only
+- Gap 2 (tenant handles, provenance): a `ClientConfig` created through `createSharedClient`, the only
   creation that a tenant's release deletes, carries a `tenant` mark that its
   `ReplaceKey` copies keep. `ClientConfig.cluster` admits a marked descriptor as
   for a cluster shared with tenants whatever the owner's mode is, as the tenant's
@@ -1233,24 +1240,26 @@ mechanism below needs the owner's acceptance.
 - `TestExclusiveAuditModeValuesMatchTheHarnessContract` ties the harness
   contract's mode numbers to the gate's.
 
-Behavior that changes: a `*Container`, handle or fault/override operation that
-an exclusive interval lent is refused by the gate after the interval's release,
-except the read-only operations; a client descriptor that a tenant obtained is
-refused by the gate during an exclusive interval of its cluster.
+What is blocked: a client descriptor that a tenant obtained is refused by the
+gate in every mode, including during an exclusive interval of its cluster; a
+`*Container`, handle or fault/override operation that an exclusive interval
+lent is refused by the gate after the interval's release, except the read-only
+operations. A pool a tenant obtained keeps its own lease check, which runs
+before the gate and returns the released-tenant error, not `ErrSharedCluster`
+(`TestExclusiveAuditLeasedPoolRefusesByLeaseBeforeTheGate`).
 
-### What slice 2 does not close
+### Known constraint of testcontainers compatibility
 
 The embedded `Container.Container` field is a plain field of the lent
 `*Container`. A caller that retained it calls the testcontainers container
-directly, past every shared gate, so a retired mode cannot revoke it. After a
-normal release the terminated container refuses the call; after a termination
-that failed, the running container still answers until `Close` ends it. Closing
-that needs a different design (a facade or a lease-bound handle instead of the
-raw pointer), which the owner's `Exclusive` decision (the core `*Container`
-stays the handle) excluded. The read-only operations also still pass the gate
-on a retired cluster and rely on the terminated cluster to fail. Handles that
-are not reachable through any gate (a value copied out of one, such as a
-retained keyring or config file) are outside this mechanism.
+directly, past every shared gate. This cannot be blocked while the module stays
+a testcontainers-compatible module, so it is a known constraint and not an open
+item. After a normal release the terminated container refuses the call; after a
+termination that failed, the running container still answers until `Close` ends
+it. The read-only operations also still pass the gate on a retired cluster and
+rely on the terminated cluster to fail. Handles that are not reachable through
+any gate (a value copied out of one, such as a retained keyring or config file)
+are outside this mechanism.
 
 ### Native observation
 
@@ -1260,19 +1269,22 @@ descriptors and pool, takes the same cluster with an `Exclusive`, retains the
 lent Container and handles derived from it, and calls them during the interval
 and after the release, logging each outcome. The embedded container's outcome is
 recorded, with the only requirement that a terminated cluster does not run the
-command. Written without Docker: it was compiled under every tag set and was not
-executed by the author. Native acceptance needs a run of the exact head; one
-run on one runner is an observation, not stability.
+command. The scenario is part of the acceptance evidence for this issue (the
+native retained-handle observation) and runs wherever the CI planner selects it.
+It was written without Docker and compiled under every tag set; the author did
+not execute it. Its result counts only for the exact head and attempt that ran
+it, and one run on one runner is an observation, not stability.
 
 Not established: the audit does not show that every operation behind the gate
-also fails safely on a terminated cluster, and the native scenario has not run.
+also fails safely on a terminated cluster, and no native result is claimed here.
 
-## Implementation plan (proposal)
+## Implementation plan
 
-This section is an implementation-side proposal made under the owner's
+This section was an implementation-side proposal made under the owner's
 delegation of 2026-10-29 on issue 155 (decisions 5 and 10, the generic registry).
-It is not owner approval of the slice order, the exported names or the behavior
-changes of slice 2. Call-site counts are those of the inventory at `83de22a` before the move
+It is not owner approval of the slice order or the exported names; for slice 2 the
+owner accepts the retired mode and the provenance-based admission as the
+fallback unless a better mechanism is found. Call-site counts are those of the inventory at `83de22a` before the move
 (guarded by the inventory test) and a fresh search for what that table does not
 count.
 
@@ -1294,7 +1306,7 @@ Constraints that shape the order:
 | Slice | Content | Behavior | Files | Size | Guards | Build stays green because |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 (this change) | Exclusive stale-handle audit and this plan | Preserved; no production change | `ceph/shared_exclusive_audit_test.go`, this note | about 230 test lines, no generated catalogue | 5 audit tests (one is the scanner's negative control; the others were also shown to fail against a deliberately broken release or pool admission); `TestSharedHarnessInventoryMatchesTheNote` unchanged | Tests and a note only |
-| 2 (implementation-side proposal, delivered for the owner's acceptance; see "Hardening of slice 2") | Close gap 1 and gap 2: a retired mode that refuses every handle operation but the open ones, set at the start of `releaseExclusive` before the termination; tenant-obtained `ClientConfig` descriptors admitted as shared-with-tenants (no lease check, they are refused in every mode) | Hardening: a retained handle is refused after the interval and a tenant descriptor is refused in an exclusive interval. Needs the owner's yes | `ceph/shared_gate.go`, `ceph/shared_exclusive.go`, `ceph/client_handle.go`, `ceph/tenant.go`, `ceph/shared_backend.go`; `docs/changes` fragment | about 250 lines | The two characterization controls are inverted; `TestSharedGateClassifiesEveryMethod` extended to the new mode; a native control retains a handle across a real interval | The change is inside `ceph`, public names unchanged |
+| 2 (implemented; accepted by the owner as the fallback mechanism, see "Hardening of slice 2") | Close gap 1 and gap 2: a retired mode that refuses every handle operation but the open ones, set at the start of `releaseExclusive` before the termination; tenant-obtained `ClientConfig` descriptors admitted as shared-with-tenants (no lease check, they are refused in every mode) | Hardening: a tenant descriptor is refused in an exclusive interval and a retained handle is refused after the interval | `ceph/shared_gate.go`, `ceph/shared_exclusive.go`, `ceph/client_handle.go`, `ceph/tenant.go`, `ceph/shared_backend.go`; `docs/changes` fragment | about 250 lines | The two characterization controls are inverted; `TestSharedGateClassifiesEveryMethod` extended to the new mode; a native control retains a handle across a real interval | The change is inside `ceph`, public names unchanged |
 | 3 (done by the change that adds "Implementation of the move") | The move: `ceph/harness` with `SharedCluster`, `Tenant`, the options, `SharedStats`, `RunTests`, `SharedPool`, `TenantAccess`, `ObserveTenant`, `ServiceSupport`, `WithServices`; `internal/harnesshook` grows `Core`, `Backend`, `Ops`, `Mode` and the two `hookreg` slots; `rbd/harness`, `cephfs/harness` and `rgw/harness` with `Lease`, the namespace/group/user entry points and `Support()`; `internal/servicehook` retargeted at `*harness.Tenant`; the registry, the three `init` registrations and `RegisterSharedService` deleted | Preserved, except the documented link effect: a binary that relied on importing a service now lists `WithServices(...)` | 28 declarations; `ceph/shared*.go`, `tenant*.go` and their model tests (about 2,600 prod and 2,600 test lines, relocated); rbd 4, cephfs 3, rgw 4 and `internal/servicehook` 2 references; `internal/integration` 36 references in 6 files, 2 `NewShared`, 1 `RunTests`, 2 `Exclusive`, 10 `ceph.SharedPool`, 4 `TestTenantCluster` calls in 2 files; `docs/ceph.md`, `docs/rbd.md`, `docs/cephfs.md`, `docs/rgw.md`; catalogues for `ceph`, `rbd`, `cephfs`, `rgw` and the new `ceph/harness` page, then a separate approve commit; a `moves` record; a package-split shard; the release fragment and the v0.4 upgrade mapping | Mostly relocation; well above 600 changed lines by diff, and small by content once renames are followed | The guards of "Guards the move adds"; the inventory test retargeted; the error-equivalence checks; every moved model test unchanged except its package name | Everything that names `ceph.Tenant` moves in the same change, because `ceph` cannot keep a forwarder. Inside the change the order of commits is: `internal/harnesshook` contract and `ceph` registration (additive), then `ceph/harness`, `servicehook` and the three service harnesses together (they cannot compile apart), then callers and docs |
 | 4 | Extraction-specific native acceptance on the Linux runner: the shared-cluster and service-package jobs retargeted at the new packages, plus the stale-handle control of slice 2 | Evidence only | `internal/integration` scenarios with their `//ci:` header | small | Real CI of the exact head; one run on one runner is not stability | Not a code change of its own |
 
@@ -1311,13 +1323,13 @@ Decisions this proposal could not take, and how they were answered:
    owner in chat: one large change, no series, no temporary `Support()`.
 2. Whether slice 2 is wanted before the move and whether a retired mode is the
    mechanism the owner accepts for gap 1. Answered: the move is strictly a
-   relocation; slice 2 stays a separate follow-up that needs the owner's yes. Gap 1
-   and gap 2 were recorded as carried-over behavior. Slice 2 is now implemented as
-   a proposal that awaits that yes.
+   relocation; slice 2 stays a separate follow-up. Gap 1 and gap 2 were recorded
+   as carried-over behavior. Slice 2 is now implemented, and the owner accepts the
+   retired mode as the fallback mechanism unless a better one is found.
 3. Whether tenant `ClientConfig` descriptors should be lease-bound like `Pool`
-   (gap 2) or the identity-state protection is accepted. Slice 2 proposes a fixed
-   tenant admission instead of a lease check; the owner's acceptance of that
-   choice is open.
+   (gap 2) or the identity-state protection is accepted. Slice 2 admits a
+   tenant-made descriptor by provenance (a fixed tenant admission) instead of a
+   lease check, and the owner accepts that as the fallback.
 
 ## Decisions for the owner
 
@@ -1355,7 +1367,7 @@ part.
 | 8 (done) | Service-private helpers used by the adapters | Leaf internal packages, moved before the harness; the moves are done (service kinds, the RBD name check, `invalid`, the rgw gateway registry) | Exporting them adds public names to rbd, cephfs and rgw |
 | 9 (done) | Exported names and signatures beyond the settled ones | The old-to-new map: same names in the new packages, no renames, no new options other than the service-support input; any rename is a later change | Renaming during the move mixes a mechanical migration with an API review |
 | 10 (done) | Shape of the service-support input and its validation (the instance-owned set, its validation and `RequireService` are implemented behind unexported names; see "Instance-owned service set: first slice" for the exact exported spelling proposed) | An opaque `ceph/harness` value built by each service harness through an internal route and passed to `NewShared` as an option, validated at construction (duplicate kind, foreign value) and checked by a tenant-port method before a service `Lease` creates anything | A positional `NewShared` argument changes the signature for every caller; a plain callback struct would show the cluster-receiving callbacks in public API |
-| 11 (audit done, enforcement proposed, not accepted) | Stale-handle audit result for `Exclusive` | Done as slice 1 ("Exclusive stale-handle audit": Docker-free controls, two gaps recorded); the enforcement of the gaps is slice 2, implemented as an unaccepted proposal, and its native scenario is unexecuted until a run of the exact head. Do the audit as the first step of the move, as a Docker-free test over the access paths plus a native control, and record every gap | Deferring it until after the move would accept a handle whose enforcement is unproven |
+| 11 (audit done, enforcement implemented, accepted as the fallback) | Stale-handle audit result for `Exclusive` | Done as slice 1 ("Exclusive stale-handle audit": Docker-free controls, two gaps recorded); the enforcement of the gaps is slice 2, accepted by the owner as the fallback unless a better mechanism is found, and its native scenario is part of the acceptance evidence and has no result until the CI runs the exact head. Do the audit as the first step of the move, as a Docker-free test over the access paths plus a native control, and record every gap | Deferring it until after the move would accept a handle whose enforcement is unproven |
 
 Overlap: #285 and #286 (renames and the test-only lookup move) are merged and
 composed into this note.
@@ -1371,8 +1383,9 @@ head of the pull request and slice 4 of the plan; one run on one runner is not a
 claim of stability.
 
 Not changed by the move: the two enforcement gaps of "Exclusive stale-handle
-audit". Slice 2 closes them for the handles that reach the gate, as a proposal
-that needs the owner's yes, and leaves the raw embedded container open. The sections from
+audit". Slice 2 closes them for the handles that reach the gate. The raw
+embedded container stays open as a known constraint of testcontainers
+compatibility. The sections from
 "Method and limits" to "Refresh at `1a158b9`" and the design sections that describe
 the state before the move are history and keep their older counts and names; the
 "Cross-package registration design" text names the shape that was proposed, and

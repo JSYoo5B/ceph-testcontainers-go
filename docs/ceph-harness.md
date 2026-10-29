@@ -330,15 +330,15 @@ after the release and never gains the privileges of a later exclusive lease.
   terminates it. From then on the gate refuses a retained `*ceph.Container`,
   and a handle taken from it, with `ErrSharedCluster`, except for the
   operations that only read state; a termination that failed leaves a running
-  cluster that stays retired until `Close` ends it. The gate does not cover the
-  embedded `Container.Container` field of the lent `*ceph.Container`, which is
-  a plain testcontainers container: a caller that kept it reaches the cluster
-  past every gate, and what stops it after a normal release is the terminated
-  container, not an admission check. After a termination that failed it still
-  answers until `Close`. A `ceph.ClientConfig` that a tenant got from
-  `Tenant.Client` or `Tenant.CreateClient` is refused by the gate in every
+  cluster that stays retired until `Close` ends it. A
+  `ceph.ClientConfig` that a tenant got from `Tenant.Client` or
+  `Tenant.CreateClient` stays a tenant handle: the gate refuses it in every
   mode, so an exclusive lease that takes the same cluster does not give it
-  more than the tenant had. This enforcement is an implementation-side
-  proposal that awaits the owner's acceptance; the
-  [design note](design/shared-harness-boundary.md) records the mechanism and
-  what it leaves open.
+  more than the tenant had. Admission follows the handle's provenance, not the
+  cluster's current mode.
+- The embedded `Container.Container` field of the lent `*ceph.Container` is a
+  plain testcontainers container, so a caller that kept it reaches the cluster
+  past every gate. This is a known constraint of staying compatible with
+  testcontainers. After a normal release the terminated container refuses the
+  call; after a termination that failed it still answers until `Close`. The
+  [design note](design/shared-harness-boundary.md) records the mechanism.
