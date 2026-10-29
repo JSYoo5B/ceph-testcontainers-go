@@ -29,8 +29,6 @@ READ_DOC_FILES = frozenset((
     "docs/guides/bug-compatibility-tags.md",
     # internal/tools/testdoublecheck reads the test-double inventory.
     "docs/contributing/test-double-inventory.md",
-    # ceph/shared_harness_inventory_test.go compares this note's inventory with the source.
-    "docs/design/shared-harness-boundary.md",
     # The ceph catalogue receipt (docs/design/api-naming/ceph/review.json)
     # names this note as its review, and the move record 312-add-osd-options
     # must find the change identifier in it; internal/apiinventory reads both.
