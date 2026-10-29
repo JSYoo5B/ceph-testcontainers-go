@@ -98,7 +98,7 @@ func rgwCreateBucketProbe(client s3HTTPClient, source rgwReplicaSource, inspect 
 		}
 		seen.Source.InspectErrors = inspectErrors
 		if terminal != nil {
-			return seen, false, terminal
+			return seen, false, rgwCreateBucketSourceError{terminal}
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPut, client.endpoint+path, bytes.NewReader(payload))
 		if err != nil {
@@ -115,9 +115,24 @@ func rgwCreateBucketProbe(client s3HTTPClient, source rgwReplicaSource, inspect 
 		_ = response.Body.Close()
 		seen.Attempt = rgwCreateBucketAttempt{Status: response.StatusCode, Body: body, Err: err}
 		last = seen.Attempt
-		return seen, err == nil && response.StatusCode == http.StatusOK && ctx.Err() == nil, nil
+		if err != nil {
+			// A response whose body cannot be read is terminal and the PUT
+			// is not replayed: the creation may already be accepted.
+			return seen, false, rgwCreateBucketReadError{err}
+		}
+		return seen, response.StatusCode == http.StatusOK && ctx.Err() == nil, nil
 	}
 }
+
+// rgwCreateBucketSourceError marks a terminal state of the bound source
+// gateway; rgwCreateBucketReadError marks a response body that failed to read.
+type rgwCreateBucketSourceError struct{ error }
+
+func (e rgwCreateBucketSourceError) Unwrap() error { return e.error }
+
+type rgwCreateBucketReadError struct{ error }
+
+func (e rgwCreateBucketReadError) Unwrap() error { return e.error }
 
 type rgwCreateBucketObservation struct {
 	Attempt rgwCreateBucketAttempt
@@ -139,6 +154,14 @@ func rgwCreateBucketConverged(ctx context.Context, client s3HTTPClient, source r
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return fmt.Errorf("realm gateway did not reload placement: %s; last %s; source %s %s; timeline: %s", err, seen.Value.Attempt, source.ID, seen.Value.Source, timeline)
+	}
+	var readErr rgwCreateBucketReadError
+	if errors.As(err, &readErr) {
+		return fmt.Errorf("bucket creation response body read failed; the request may have been accepted and is not replayed: %w; last %s; source %s %s; timeline: %s", err, seen.Value.Attempt, source.ID, seen.Value.Source, timeline)
+	}
+	var sourceErr rgwCreateBucketSourceError
+	if !errors.As(err, &sourceErr) {
+		return fmt.Errorf("bucket creation aborted: %w; last %s; source %s %s; timeline: %s", err, seen.Value.Attempt, source.ID, seen.Value.Source, timeline)
 	}
 	return fmt.Errorf("source gateway %s is not running, so bucket creation at its endpoint cannot succeed; this is not a placement-reload failure (the cause of the exit is not established here): %w; last %s; timeline: %s", source.ID, err, seen.Value.Attempt, timeline)
 }

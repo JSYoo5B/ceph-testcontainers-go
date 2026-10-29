@@ -229,3 +229,40 @@ func TestRGWGatewayTimelineRecordsStatesAndFailedInspections(t *testing.T) {
 		t.Fatalf("timeline: %s", got)
 	}
 }
+
+type createBucketFailingBody struct{}
+
+func (createBucketFailingBody) Read([]byte) (int, error) {
+	return 0, errors.New("connection reset while reading the body")
+}
+func (createBucketFailingBody) Close() error { return nil }
+
+// A response whose body cannot be read is terminal, as before: an accepted
+// creation (here HTTP 200) must not be replayed, and the read error is not a
+// source crash while the source is still running.
+func TestRGWCreateBucketBodyReadFailureIsTerminalNotReplayed(t *testing.T) {
+	source := createBucketSource(t, func(context.Context, int) (*container.State, error) { return liveSourceRunning(), nil })
+	var requests atomic.Int32
+	client := createBucketClient(&requests, func(*http.Request) (*http.Response, error) {
+		if requests.Load() == 1 {
+			return replicaResponse(http.StatusOK, createBucketFailingBody{}), nil
+		}
+		return replicaResponse(http.StatusOK, strings.NewReader("")), nil
+	})
+	bounds := createBucketFixtureBounds
+	bounds.Wait = time.Minute
+	err := rgwCreateBucketConverged(t.Context(), client, source, "/bucket", nil, bounds, nil)
+	if err == nil || requests.Load() != 1 {
+		t.Fatalf("%d PUTs, %v", requests.Load(), err)
+	}
+	for _, want := range []string{"response body read failed", "connection reset while reading the body", "status=running", "HTTP=200"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error lacks %q: %v", want, err)
+		}
+	}
+	for _, bad := range []string{"is not running", "did not reload placement"} {
+		if strings.Contains(err.Error(), bad) {
+			t.Fatalf("read failure relabelled %q: %v", bad, err)
+		}
+	}
+}
