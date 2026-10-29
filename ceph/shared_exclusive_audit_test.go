@@ -447,3 +447,28 @@ func TestExclusiveAuditModeValuesMatchTheHarnessContract(t *testing.T) {
 		}
 	}
 }
+
+// TestExclusiveAuditLeasedPoolRefusesByLeaseBeforeTheGate pins the two distinct
+// refusals: a Pool a tenant obtained checks its lease before the gate, so once
+// the tenant is released it returns the lease's ErrInvalidRequest in every
+// mode (retired included), while a handle admitted through the gate returns
+// ErrSharedCluster on a retired cluster. A live lease is refused by the gate.
+func TestExclusiveAuditLeasedPoolRefusesByLeaseBeforeTheGate(t *testing.T) {
+	cluster := &Container{}
+	released := &Pool{owner: cluster, ident: &poolIdentity{bound: true}, lease: &poolLease{live: func() error { return invalidRequest("tenant t1 is released") }}}
+	live := &Pool{owner: cluster, ident: &poolIdentity{bound: true}, lease: &poolLease{live: func() error { return nil }}}
+	for _, mode := range []sharingMode{sharedWithTenants, sharedExclusively, sharedRetired} {
+		cluster.sharing.Store(int32(mode))
+		_, err := released.cluster("Pool.SetQuota")
+		if !errors.Is(err, ErrInvalidRequest) || errors.Is(err, ErrSharedCluster) {
+			t.Errorf("mode %d: a released tenant's Pool returned %v, want the lease's ErrInvalidRequest", mode, err)
+		}
+		if _, err := live.cluster("Pool.SetQuota"); !errors.Is(err, ErrSharedCluster) {
+			t.Errorf("mode %d: a live tenant Pool returned %v, want the gate's ErrSharedCluster", mode, err)
+		}
+	}
+	cluster.sharing.Store(int32(sharedRetired))
+	if _, err := (&Pool{owner: cluster, ident: &poolIdentity{bound: true}}).cluster("Pool.SetQuota"); !errors.Is(err, ErrSharedCluster) || errors.Is(err, ErrInvalidRequest) {
+		t.Errorf("a gate-admitted Pool on a retired cluster returned %v, want only ErrSharedCluster", err)
+	}
+}

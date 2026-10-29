@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,11 +97,17 @@ func TestSharedClusterRetainedHandles(t *testing.T) {
 			t.Errorf("a descriptor from %s gained the exclusive interval: %v", name, err)
 		}
 	}
-	err = tenantPools[0].SetQuota(ctx, ceph.PoolQuota{MaxObjects: 1})
-	t.Logf("exclusive interval, retained tenant pool: Pool.SetQuota = %v", err)
-	if err == nil {
-		t.Error("a pool that a tenant listed gained the exclusive interval")
+	requireLeaseExpired := func(phase string) {
+		t.Helper()
+		err := tenantPools[0].SetQuota(ctx, ceph.PoolQuota{MaxObjects: 1})
+		t.Logf("%s, retained tenant pool: Pool.SetQuota = %v", phase, err)
+		// The Pool keeps its tenant lease check, which runs before the gate:
+		// the refusal is the lease's, not the gate's.
+		if !errors.Is(err, ceph.ErrInvalidRequest) || errors.Is(err, ceph.ErrSharedCluster) || !strings.Contains(err.Error(), "released") {
+			t.Errorf("%s: a pool that a tenant listed returned %v, want the released-tenant refusal (ErrInvalidRequest), not the gate's", phase, err)
+		}
 	}
+	requireLeaseExpired("exclusive interval")
 	// The interval's own handles work.
 	if err := pool.SetQuota(ctx, ceph.PoolQuota{MaxObjects: 100}); err != nil {
 		t.Errorf("the interval's pool during the interval: %v", err)
@@ -124,7 +131,6 @@ func TestSharedClusterRetainedHandles(t *testing.T) {
 		"OSDContainer.SetIn":             func() error { return osds[0].SetIn(ctx, true) },
 		"Pool.SetQuota":                  func() error { return pool.SetQuota(ctx, ceph.PoolQuota{MaxObjects: 200}) },
 		"ClientConfig.UpdateCaps":        func() error { return client.UpdateCaps(ctx, ceph.ClientCaps{Mon: "allow r"}) },
-		"tenant pool Pool.SetQuota":      func() error { return tenantPools[0].SetQuota(ctx, ceph.PoolQuota{MaxObjects: 1}) },
 		"Tenant.Client UpdateCaps":       func() error { return own.UpdateCaps(ctx, ceph.ClientCaps{Mon: "allow r"}) },
 		"Tenant.CreateClient UpdateCaps": func() error { return created.UpdateCaps(ctx, ceph.ClientCaps{Mon: "allow r"}) },
 	}
@@ -135,6 +141,8 @@ func TestSharedClusterRetainedHandles(t *testing.T) {
 			t.Errorf("%s after the release returned %v, want the gate's ErrSharedCluster", name, err)
 		}
 	}
+
+	requireLeaseExpired("after release")
 
 	// Gap not closed by the gate: the embedded container is a plain field.
 	state, stateErr := cluster.Container.State(ctx)
