@@ -144,15 +144,23 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	if _, err := fixture.Source.Admin(ctx, "period", "update"); err != nil {
 		t.Fatal(err)
 	}
+	timeline := &rgwGatewayTimeline{}
+	gateways := map[string]rgwContainerStateReader{"source": fixture.Source, "destination": fixture.Destination}
+	checkpoint := func(label string) {
+		t.Log(timeline.Gateways(ctx, label, rgwPlacementReplicaBounds.Inspect, gateways, []string{"source", "destination"}))
+	}
 	if err := fixture.Source.ApplyPlacement(ctx, sourcePlacement); err != nil {
 		t.Fatal(err)
 	}
+	checkpoint("after source ApplyPlacement")
 	if err := fixture.PullDestinationPeriod(ctx); err != nil {
 		t.Fatal(err)
 	}
+	checkpoint("after PullDestinationPeriod")
 	if err := fixture.Destination.ReloadPlacement(ctx, destinationPlacement); err != nil {
 		t.Fatal(err)
 	}
+	checkpoint("after destination ReloadPlacement")
 	for _, option := range []string{"rgw_sync_lease_period", "rgw_meta_sync_poll_interval", "rgw_data_sync_poll_interval"} {
 		value, err := clusters[1].Ceph(ctx, "config", "get", "client.admin", option)
 		if err != nil {
@@ -170,7 +178,9 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	clients := []s3HTTPClient{{endpoint: endpoints[0], accessKey: fixture.Source.AccessKey, secretKey: fixture.Source.SecretKey, region: fixture.Source.Region, http: &http.Client{Timeout: 30 * time.Second}}, {endpoint: endpoints[1], accessKey: fixture.Source.AccessKey, secretKey: fixture.Source.SecretKey, region: fixture.Destination.Region, http: &http.Client{Timeout: 30 * time.Second}}}
 	const bucket = "/tc-realm-placement-bucket"
 	body := []byte(`<CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><LocationConstraint>` + sourcePlacement.LocationConstraint + `</LocationConstraint></CreateBucketConfiguration>`)
-	rgwPlacementWaitCreateBucket(t, ctx, clients[0], bucket, body)
+	checkpoint("before the first source request")
+	createSource := rgwBindCreateSource(t, ctx, fixture.Source, rgwPlacementReplicaBounds.Inspect, timeline)
+	rgwPlacementWaitCreateBucketFrom(t, ctx, clients[0], createSource, bucket, body, timeline)
 	payload := bytes.Repeat([]byte("realm-selected-storage-class\n"), 4096)
 	source := rgwPlacementBindSource(t, ctx, fixture.Source)
 	rgwPlacementRequest(t, ctx, clients[0], http.MethodPut, bucket+"/replicated", payload, "STANDARD_IA", http.StatusOK)
