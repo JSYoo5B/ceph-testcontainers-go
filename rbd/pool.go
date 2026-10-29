@@ -8,7 +8,6 @@ import (
 	"slices"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/resourcename"
 )
@@ -45,7 +44,7 @@ func (ns *Namespace) PoolName() string { return ns.poolName }
 // clean PGs before client I/O. Partial initialization never deletes pool data.
 func initPool(ctx context.Context, c *ceph.Container, poolName string) error {
 	if err := resourcename.Check("pool", poolName); err != nil {
-		return harnesshook.Invalid(err)
+		return servicehook.Invalid(err)
 	}
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
@@ -75,10 +74,10 @@ func initPool(ctx context.Context, c *ceph.Container, poolName string) error {
 // state or dispose of the cluster after an uncertain creation failure.
 func createNamespace(ctx context.Context, c *ceph.Container, poolName, name string) (*Namespace, error) {
 	if err := resourcename.Check("pool", poolName); err != nil {
-		return nil, harnesshook.Invalid(err)
+		return nil, servicehook.Invalid(err)
 	}
 	if err := resourcename.Check("namespace", name); err != nil {
-		return nil, harnesshook.Invalid(err)
+		return nil, servicehook.Invalid(err)
 	}
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
@@ -96,7 +95,7 @@ func createNamespace(ctx context.Context, c *ceph.Container, poolName, name stri
 		return nil, err
 	}
 	if slices.Contains(names, name) {
-		return nil, harnesshook.Invalid(fmt.Errorf("RBD namespace %q in pool %q already exists", name, poolName))
+		return nil, servicehook.Invalid(fmt.Errorf("RBD namespace %q in pool %q already exists", name, poolName))
 	}
 	ns := &Namespace{owner: c, poolName: poolName, name: name, poolID: poolID, state: &rbdNamespaceState{}}
 	if _, err := servicehook.ClientCommand(ctx, c, "rbd", "namespace", "create", "--pool", poolName, "--namespace", name); err != nil {
@@ -111,7 +110,7 @@ func createNamespace(ctx context.Context, c *ceph.Container, poolName, name stri
 // is omitted by Ceph. Listing does not grant ownership for removal.
 func listNamespaces(ctx context.Context, c *ceph.Container, poolName string) ([]string, error) {
 	if err := resourcename.Check("pool", poolName); err != nil {
-		return nil, harnesshook.Invalid(err)
+		return nil, servicehook.Invalid(err)
 	}
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)
@@ -152,7 +151,7 @@ func removeNamespace(ctx context.Context, c *ceph.Container, ns *Namespace) erro
 		return err
 	}
 	if poolID != ns.poolID {
-		return harnesshook.Invalid(fmt.Errorf("RBD pool %q was replaced; namespace removal refused", ns.poolName))
+		return servicehook.Invalid(fmt.Errorf("RBD pool %q was replaced; namespace removal refused", ns.poolName))
 	}
 	names, err := nativeNamespaces(ctx, c, ns.poolName)
 	if err != nil {
@@ -180,13 +179,13 @@ func controlReady(ctx context.Context, c *ceph.Container) error {
 		return err
 	}
 	if facts.Images.Client == "" {
-		return harnesshook.Invalid(errors.New("client image is required for this operation"))
+		return servicehook.Invalid(errors.New("client image is required for this operation"))
 	}
 	if servicehook.Closed(c) {
-		return harnesshook.Invalid(errors.New("ceph cluster is terminated"))
+		return servicehook.Invalid(errors.New("ceph cluster is terminated"))
 	}
 	if servicehook.CLI(c) == nil {
-		return harnesshook.Invalid(errors.New("ceph control container is unavailable"))
+		return servicehook.Invalid(errors.New("ceph control container is unavailable"))
 	}
 	return nil
 }
@@ -217,7 +216,7 @@ func inspectPool(ctx context.Context, c *ceph.Container, poolName string, initia
 		}
 		for app := range pool.Applications {
 			if app != "rbd" {
-				return 0, harnesshook.Invalid(fmt.Errorf("pool %q is registered to application %q; RBD initialization refused", poolName, app))
+				return 0, servicehook.Invalid(fmt.Errorf("pool %q is registered to application %q; RBD initialization refused", poolName, app))
 			}
 		}
 		if initialized {
@@ -303,4 +302,4 @@ func RemoveNamespace(ctx context.Context, c *ceph.Container, ns *Namespace) erro
 	return removeNamespace(ctx, c, ns)
 }
 
-var errNilCluster = harnesshook.Invalid(errors.New("ceph cluster is unavailable"))
+var errNilCluster = servicehook.Invalid(errors.New("ceph cluster is unavailable"))

@@ -17,7 +17,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/google/uuid"
 )
@@ -28,7 +27,7 @@ var rgwIAMUserName = regexp.MustCompile(`^[A-Za-z0-9_+=,.@-]{1,64}$`)
 
 func validateRGWTenant(tenant string) error {
 	if tenant != "" && (!rgwTenantName.MatchString(tenant) || rgwAccountID.MatchString(tenant)) {
-		return harnesshook.Invalid(errors.New("RGW tenant must use letters, digits or underscores and must not be formatted as an account ID"))
+		return servicehook.Invalid(errors.New("RGW tenant must use letters, digits or underscores and must not be formatted as an account ID"))
 	}
 	return nil
 }
@@ -97,12 +96,12 @@ func normalizeRGWAccountConfig(config AccountConfig) (AccountConfig, error) {
 	if config.ID == "" {
 		number, err := rand.Int(rand.Reader, big.NewInt(100000000000000000))
 		if err != nil {
-			return config, harnesshook.Invalid(errors.New("generate RGW account ID"))
+			return config, servicehook.Invalid(errors.New("generate RGW account ID"))
 		}
 		config.ID = fmt.Sprintf("RGW%017d", number)
 	}
 	if !rgwAccountID.MatchString(config.ID) {
-		return config, harnesshook.Invalid(errors.New("RGW account ID must be RGW followed by 17 digits"))
+		return config, servicehook.Invalid(errors.New("RGW account ID must be RGW followed by 17 digits"))
 	}
 	if config.Name == "" {
 		config.Name = "tc-" + uuid.NewString()
@@ -112,15 +111,15 @@ func normalizeRGWAccountConfig(config AccountConfig) (AccountConfig, error) {
 	}
 	for _, value := range []string{config.Name, config.Email} {
 		if !utf8.ValidString(value) || strings.TrimSpace(value) != value || strings.IndexFunc(value, unicode.IsControl) != -1 {
-			return config, harnesshook.Invalid(errors.New("RGW account name and email must be valid UTF-8 without control characters or surrounding whitespace"))
+			return config, servicehook.Invalid(errors.New("RGW account name and email must be valid UTF-8 without control characters or surrounding whitespace"))
 		}
 	}
 	if strings.ContainsAny(config.Name, "$:") {
-		return config, harnesshook.Invalid(errors.New("RGW account name must not contain $ or a colon"))
+		return config, servicehook.Invalid(errors.New("RGW account name must not contain $ or a colon"))
 	}
 	if config.MaxBuckets != nil {
 		if *config.MaxBuckets < -1 {
-			return config, harnesshook.Invalid(errors.New("RGW account max buckets must be -1, zero or positive"))
+			return config, servicehook.Invalid(errors.New("RGW account max buckets must be -1, zero or positive"))
 		}
 		value := *config.MaxBuckets
 		config.MaxBuckets = &value
@@ -140,7 +139,7 @@ func (g *Gateway) CreateAccount(ctx context.Context, config AccountConfig) (*Acc
 		return nil, err
 	}
 	if g == nil || g.owner == nil {
-		return nil, harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return nil, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)
@@ -162,7 +161,7 @@ func (g *Gateway) CreateAccount(ctx context.Context, config AccountConfig) (*Acc
 		return nil, err
 	}
 	if exists {
-		return nil, harnesshook.Invalid(errors.New("RGW account ID already exists"))
+		return nil, servicehook.Invalid(errors.New("RGW account ID already exists"))
 	}
 	args := []string{"account", "create", "--account-id", a.id, "--account-name", config.Name}
 	if config.Tenant != "" {
@@ -301,7 +300,7 @@ func (g *Gateway) ownedAccount(ctx context.Context, a *Account) (*rgwNativeAccou
 // AccountInfo reads the owned account's authoritative native policy.
 func (g *Gateway) AccountInfo(ctx context.Context, a *Account) (AccountInfo, error) {
 	if g == nil || g.owner == nil {
-		return AccountInfo{}, harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return AccountInfo{}, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)
@@ -343,7 +342,7 @@ func (g *Gateway) setAccountQuota(ctx context.Context, a *Account, scope string,
 		return errors.New("RGW account quota limits must be -1, zero or positive; byte limits must be multiples of 1024")
 	}
 	if g == nil || g.owner == nil {
-		return harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)
@@ -389,12 +388,12 @@ func (g *Gateway) setAccountQuota(ctx context.Context, a *Account, scope string,
 // copies. Native external account edits must not race these fixture helpers.
 func (g *Gateway) RemoveAccount(ctx context.Context, a *Account) error {
 	if g == nil || g.owner == nil {
-		return harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)
 	if a == nil || a.owner != g.owner || a.state == nil || !a.state.confirmed {
-		return harnesshook.Invalid(errors.New("RGW account was not confirmed as created by this cluster"))
+		return servicehook.Invalid(errors.New("RGW account was not confirmed as created by this cluster"))
 	}
 	if a.state.removed {
 		return nil

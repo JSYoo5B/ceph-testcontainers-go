@@ -17,7 +17,6 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -90,10 +89,10 @@ var errRGWPlacementScopePending = errors.New("running RGW gateway has not regist
 
 func normalizeRGWPlacementConfig(config PlacementConfig) (PlacementConfig, error) {
 	if !naming.PoolResource.MatchString(config.Name) || len(config.Name) > 128 {
-		return config, harnesshook.Invalid(errors.New("invalid RGW placement name"))
+		return config, servicehook.Invalid(errors.New("invalid RGW placement name"))
 	}
 	if config.Name == "default-placement" {
-		return config, harnesshook.Invalid(errors.New("RGW placement creation requires a new non-default name"))
+		return config, servicehook.Invalid(errors.New("RGW placement creation requires a new non-default name"))
 	}
 	for _, pool := range []string{config.IndexPool, config.DataExtraPool} {
 		if err := validateExistingPool(pool); err != nil {
@@ -109,7 +108,7 @@ func normalizeRGWPlacementConfig(config PlacementConfig) (PlacementConfig, error
 	seen := make(map[string]bool)
 	for _, class := range config.StorageClasses {
 		if !rgwStorageClassName.MatchString(class.Name) || seen[class.Name] {
-			return config, harnesshook.Invalid(errors.New("RGW storage classes must have distinct uppercase names"))
+			return config, servicehook.Invalid(errors.New("RGW storage classes must have distinct uppercase names"))
 		}
 		if err := validateExistingPool(class.DataPool); err != nil {
 			return config, err
@@ -117,7 +116,7 @@ func normalizeRGWPlacementConfig(config PlacementConfig) (PlacementConfig, error
 		seen[class.Name] = true
 	}
 	if !seen["STANDARD"] {
-		return config, harnesshook.Invalid(errors.New("RGW placement requires a STANDARD data pool"))
+		return config, servicehook.Invalid(errors.New("RGW placement requires a STANDARD data pool"))
 	}
 	slices.SortFunc(config.StorageClasses, func(a, b StorageClassConfig) int {
 		if a.Name == b.Name {
@@ -150,7 +149,7 @@ func (g *Gateway) CreatePlacement(ctx context.Context, config PlacementConfig) (
 		return nil, err
 	}
 	if g == nil || g.owner == nil {
-		return nil, harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return nil, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)
@@ -168,11 +167,11 @@ func (g *Gateway) CreatePlacement(ctx context.Context, config PlacementConfig) (
 		return nil, err
 	}
 	if rgwPlacementTarget(group, config.Name) != nil || rgwZonePlacement(zone, config.Name) != nil {
-		return nil, harnesshook.Invalid(fmt.Errorf("RGW placement %q already exists in its zonegroup or zone", config.Name))
+		return nil, servicehook.Invalid(fmt.Errorf("RGW placement %q already exists in its zonegroup or zone", config.Name))
 	}
 	defaultName, _ := group["default_placement"].(string)
 	if defaultName == "" {
-		return nil, harnesshook.Invalid(errors.New("RGW zonegroup has no default placement; refusing implicit default mutation"))
+		return nil, servicehook.Invalid(errors.New("RGW zonegroup has no default placement; refusing implicit default mutation"))
 	}
 	states, err := servicehook.PoolStates(ctx, g.owner)
 	if err != nil {
@@ -257,7 +256,7 @@ func (g *Gateway) CreatePlacement(ctx context.Context, config PlacementConfig) (
 // inspection. It does not claim a running gateway reloaded this configuration.
 func (g *Gateway) PlacementStatus(ctx context.Context, p *Placement) (PlacementState, error) {
 	if g == nil || g.owner == nil {
-		return PlacementState{}, harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return PlacementState{}, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)
@@ -286,7 +285,7 @@ func (g *Gateway) PlacementStatus(ctx context.Context, p *Placement) (PlacementS
 // changes defaults, deletes resources or silently rolls back a partial failure.
 func (g *Gateway) ApplyPlacement(ctx context.Context, p *Placement) error {
 	if g == nil || g.owner == nil {
-		return harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)
@@ -306,7 +305,7 @@ func (g *Gateway) ApplyPlacement(ctx context.Context, p *Placement) error {
 		return err
 	}
 	if !reflect.DeepEqual(group, p.group) || !reflect.DeepEqual(zone, p.zone) {
-		return harnesshook.Invalid(errors.New("RGW zone or zonegroup changed since placement creation; refusing activation"))
+		return servicehook.Invalid(errors.New("RGW zone or zonegroup changed since placement creation; refusing activation"))
 	}
 	if p.scope.realmID == "" {
 		// An unscoped gateway originally chose native defaults at startup.
@@ -333,7 +332,7 @@ func (g *Gateway) ApplyPlacement(ctx context.Context, p *Placement) error {
 		return err
 	}
 	if !reflect.DeepEqual(current, p.previousPeriod) {
-		return harnesshook.Invalid(errors.New("RGW current period changed since placement creation; refusing publication"))
+		return servicehook.Invalid(errors.New("RGW current period changed since placement creation; refusing publication"))
 	}
 	if current["master_zone"] != p.scope.zoneID {
 		return errors.New("RGW placement period publication requires its realm metadata master")
@@ -344,7 +343,7 @@ func (g *Gateway) ApplyPlacement(ctx context.Context, p *Placement) error {
 	}
 	if pending != nil && !reflect.DeepEqual(rgwPlacementPeriodPolicy(current), rgwPlacementPeriodPolicy(pending)) {
 		if err := rgwPlacementPeriodChange(current, pending, p.scope.groupID, rgwPlacementTarget(group, p.config.Name)); err != nil {
-			return harnesshook.Invalid(errors.New("RGW existing staging period contains unrelated policy; refusing to overwrite it"))
+			return servicehook.Invalid(errors.New("RGW existing staging period contains unrelated policy; refusing to overwrite it"))
 		}
 	}
 	data, err = g.placementCommand(ctx, p.scope, "period", "update")
@@ -384,7 +383,7 @@ func (g *Gateway) ApplyPlacement(ctx context.Context, p *Placement) error {
 // Resolve S3Endpoint again because Docker may assign a new mapped host port.
 func (g *Gateway) ReloadPlacement(ctx context.Context, p *Placement) error {
 	if g == nil || g.owner == nil {
-		return harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)
@@ -475,7 +474,7 @@ func (g *Gateway) placementRestartScope(ctx context.Context, scope rgwPlacementS
 			return err
 		}
 		if native["id"] != resource.id || native["realm_id"] != scope.realmID {
-			return harnesshook.Invalid(errors.New("RGW startup scope resolves to different native defaults; refusing gateway restart"))
+			return servicehook.Invalid(errors.New("RGW startup scope resolves to different native defaults; refusing gateway restart"))
 		}
 	}
 	return nil
@@ -486,7 +485,7 @@ func (g *Gateway) validatePlacementHandle(p *Placement) error {
 		return err
 	}
 	if p == nil || p.owner != g.owner {
-		return harnesshook.Invalid(errors.New("RGW placement is not owned by this cluster"))
+		return servicehook.Invalid(errors.New("RGW placement is not owned by this cluster"))
 	}
 	return nil
 }
@@ -845,7 +844,7 @@ func rgwPlacementPeriodChange(previous, next map[string]any, groupID string, tar
 
 func validateExistingPool(name string) error {
 	if !naming.ExistingPool.MatchString(name) {
-		return harnesshook.Invalid(errors.New("invalid native pool name"))
+		return servicehook.Invalid(errors.New("invalid native pool name"))
 	}
 	return nil
 }

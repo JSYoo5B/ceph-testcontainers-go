@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/resourcename"
 )
@@ -67,15 +66,15 @@ func ImageClients(ctx context.Context, c *ceph.Container, pool, namespace, image
 
 func imageClients(ctx context.Context, c *ceph.Container, pool, namespace, image string) (*ImageClientStatus, error) {
 	if err := resourcename.Check("pool", pool); err != nil {
-		return nil, harnesshook.Invalid(err)
+		return nil, servicehook.Invalid(err)
 	}
 	if namespace != "" {
 		if err := resourcename.Check("namespace", namespace); err != nil {
-			return nil, harnesshook.Invalid(err)
+			return nil, servicehook.Invalid(err)
 		}
 	}
 	if err := resourcename.Check("image", image); err != nil {
-		return nil, harnesshook.Invalid(err)
+		return nil, servicehook.Invalid(err)
 	}
 	servicehook.Lock(c)
 	defer servicehook.Unlock(c)

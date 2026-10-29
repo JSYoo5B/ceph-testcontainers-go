@@ -1,7 +1,5 @@
-// Package resourcename validates the pool, namespace and image names that the
-// rbd package accepts. It is a leaf package that does not import rbd, so the
-// service and its harness package can both call the same check
-// (docs/design/shared-harness-boundary.md, decision 8).
+// Package resourcename validates the pool, namespace and image names accepted
+// by standalone RBD operations.
 package resourcename
 
 import (
