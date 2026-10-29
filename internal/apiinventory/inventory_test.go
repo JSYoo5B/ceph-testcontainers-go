@@ -1,5 +1,5 @@
 // Package apiinventory checks the package-scoped API catalogues under
-// docs/design/api-naming and that each public package's page in docs names
+// internal/apiinventory/catalogues and that each public package's page in docs names
 // every identifier the package exports: functions, types, constants,
 // variables and the methods of its types.
 //

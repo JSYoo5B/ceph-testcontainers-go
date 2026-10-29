@@ -6,13 +6,10 @@ import (
 )
 
 // authState holds the records that the calls changing an auth entry keep
-// between calls, for clients and for daemons. It is the fourth component of the
-// internal state split, recorded in
-// docs/design/container-decomposition/auth-records.md.
+// between calls, for clients and for daemons.
 //
-// The records have no lock of their own and no new lock was added for them:
-// Container.mu guards every part, as it did when they were fields of
-// Container. The methods therefore say "mu held", and the caller either takes
+// The records have no lock of their own: Container.mu guards every part. The
+// methods therefore say "mu held", and the caller either takes
 // Container.mu itself or is a helper whose doc comment names that contract.
 // The set of those helpers is pinned by the guards in auth_state_test.go, which
 // also check that no field is used outside this type, that the methods call

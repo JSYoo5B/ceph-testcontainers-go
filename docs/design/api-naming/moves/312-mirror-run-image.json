@@ -1,9 +1,0 @@
-{
-  "schema": "ceph-api-move/v1",
-  "change": "312-mirror-run-image",
-  "review": "value-configuration-composition.md",
-  "removed": [
-    "cephfs/mirror.RunWithImages",
-    "rbd/mirror.RunWithImages"
-  ]
-}

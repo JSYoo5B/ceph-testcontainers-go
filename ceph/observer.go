@@ -171,7 +171,7 @@ func (o *Observer) ManagerServices(ctx context.Context) (map[string]string, erro
 // read; MonitorBootstrapAddresses, HealthDetails and FullRatios wait for the
 // topology lock under the caller's context. HealthDetails and FullRatios choose
 // one control handle under that lock and read the original FSID and keyring
-// presence under configMu, so a replacement control container is never used
+// presence under the bootstrap-record lock, so a replacement control container is never used
 // mid-query; MonitorBootstrapAddresses compares the same original FSID.
 
 // QuorumStatus reads the monitor quorum and monmap. It takes no topology lock

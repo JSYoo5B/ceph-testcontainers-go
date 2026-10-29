@@ -55,7 +55,8 @@ type faultKindSpec struct {
 }
 
 // The families disagree on purpose: delay refusals are ErrInvalidRequest,
-// the others plain errors; see docs/design/fault-package.md.
+// the others plain errors. Interruption and pause return the incomplete
+// handle with the error, so a caller can still restore it.
 var faultKinds = map[faultKind]faultKindSpec{
 	faultNetworkDelay: {phase: faultShaping, undone: "restore network delay", refuse: func(reserved bool) error {
 		if reserved {
@@ -113,9 +114,7 @@ type faultEntry struct {
 	replaced *faultEntry
 }
 
-// faultRegistry holds the faults of one cluster. It is the state component
-// recorded in docs/design/container-decomposition/fault-registry.md and is
-// guarded by Container.mu: it has no mutex and takes none. The
+// faultRegistry holds the faults of one cluster. It is guarded by Container.mu: it has no mutex and takes none. The
 // one lock operation it performs is the release of the caller's lock around
 // a network-shaping undo, through the sync.Locker that undo receives. It
 // calls into no Container method and reads no Container field; the closed

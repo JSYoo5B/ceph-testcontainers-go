@@ -21,7 +21,7 @@ The digest is a multi-architecture manifest for `linux/amd64` and
 The module needs no image of its own. It supplies the FSID, keys,
 configuration, daemon IDs, addresses, bootstrap commands and entrypoints when
 it starts each container, so any image that meets the
-[requirements](#image-requirements-by-role) can replace the default.
+[requirements](#role-images) can replace the default.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage)
@@ -79,11 +79,11 @@ that outcome instead of skipping on the version string; see
 
 Feature availability, release command/output differences and behavioral bugs
 are separate compatibility questions. For future bug-specific paths, the
-[contributor policy](../contributing/bug-compatibility.md) requires explicit
+[bug compatibility policy](bug-compatibility.md) requires explicit
 bug-ID build selection rather than inferring a fix from a release or image-tag
 suffix. Custom images can contain backports without changing the reported
-release. The [supported-tag catalogue](bug-compatibility-tags.md) currently
-has no registered entries; this documentation does not add selectors or change
+release. No tag is
+[registered](bug-compatibility.md#registered-tags) yet; this documentation does not add selectors or change
 the existing runtime adaptations described below.
 
 ## Behaviour that differs on Squid
@@ -137,7 +137,7 @@ These affect commands or client libraries you run yourself, not the typed API:
   Failover to a surviving daemon still works. Call
   `cephfsmirror.Mirror.RebalanceDirectories` after `AddDaemon`. Ceph's Tentacle
   documentation also marks deployments with several CephFS mirror daemons as
-  untested upstream. See [cephfs-mirror.md](../cephfs-mirror.md).
+  untested upstream. See [`cephfs/mirror`](../../cephfs/mirror/README.md).
 - **Both releases, MON paused past the ticket lifetime.** A MON paused for
   longer than the MON ticket lifetime can strand a daemon whose MON session was
   on it: its reconnect is refused with `EACCES`, and it stops authenticating
@@ -146,7 +146,7 @@ These affect commands or client libraries you run yourself, not the typed API:
   [Daemon controls](messenger-client-fixtures.md#daemon-controls).
 - **Both releases, CephFS directory rebalancing.** External directory changes or
   mirror daemons joining or leaving can still trigger the upstream MGR hang; see
-  [CephFS limitations](../cephfs.md#limitations-and-release-differences).
+  [CephFS limitations](../../cephfs/README.md#limitations-and-release-differences).
 
 ## Role images
 
@@ -255,7 +255,7 @@ provided.
 `WithDaemonImage` starts one new MON or MGR, and `OSDOptions.WithImage` one new
 OSD, from an image other than the cluster's essential image. They are options of
 `AddMonitor`, `AddManager` and `AddOSD`; see
-[Per-daemon images](../ceph.md#per-daemon-images) for the full contract.
+[Per-daemon images](../../ceph/README.md#per-daemon-images) for the full contract.
 
 ```golang
 osd, err := cluster.AddOSD(ctx, ceph.OSDOptions{}.WithImage("registry.example/ceph:other"))
@@ -283,15 +283,15 @@ Read this scope before relying on it:
 
 ## Related APIs
 
-- [ceph.md](../ceph.md): `DefaultImage`, `Run`, `FactsOf`,
+- [`ceph`](../../ceph/README.md): `DefaultImage`, `Run`, `FactsOf`,
   `ImageSet`, `ImageOptions.WithImageSet`, `WithDaemonImage`, the error categories.
 - [Classified errors](errors.md): `ErrUnsupported`, `ErrImageCapability` and
   how to write tests that hold on every release.
-- [cephfs.md](../cephfs.md): `WithMDSImage`.
-- [cephfs-mirror.md](../cephfs-mirror.md): `Run`, `Mirror.RebalanceDirectories`.
-- [rgw.md](../rgw.md): `WithImage`.
-- [rgw-multisite.md](../rgw-multisite.md): `Run`, `RunTopology`,
+- [`cephfs`](../../cephfs/README.md): `WithMDSImage`.
+- [`cephfs/mirror`](../../cephfs/mirror/README.md): `Run`, `Mirror.RebalanceDirectories`.
+- [`rgw`](../../rgw/README.md): `WithImage`.
+- [`rgw/multisite`](../../rgw/multisite/README.md): `Run`, `RunTopology`,
   `Config.SetupImage`.
-- [rbd-mirror.md](../rbd-mirror.md): `Run`, namespace mapping.
+- [`rbd/mirror`](../../rbd/mirror/README.md): `Run`, namespace mapping.
 - [Testing this repository](../contributing/testing.md): running the module's
   own suites against another image or release.

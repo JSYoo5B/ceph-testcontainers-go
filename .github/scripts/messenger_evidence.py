@@ -1,9 +1,123 @@
 #!/usr/bin/env python3
-"""Join pinned declarations, requirements and post-cleanup native case receipts.
+r"""Join pinned declarations, requirements and post-cleanup native case receipts.
 
 A receipt is native-state evidence, never proof of consumer implementation or
 per-message wire coverage. Inputs are local source and a complete go test -json
 stream. This validator performs no network access and never retries a mutation.
+
+Scope: of the 357 reference declarations, MSG_COMMAND and MSG_COMMAND_REPLY map
+to targeted-command/osd-pg-mds (TestTargetedCommandRecipe); all others stay
+explicitly unmapped. A mapping, an available recipe or a passing parser is not
+native execution, wire coverage or consumer implementation.
+
+Binding catalogue (internal/integration/testdata/messenger_evidence.json,
+schema ceph-messenger-evidence/v2; a v1 catalogue is refused). Each binding has:
+  - (kind, symbol) declarations and a requirement ID;
+  - an exact top-level test selector and a repository-relative source;
+  - a code-owned assertion contract and parent/case receipt markers;
+  - evidence class (only native-state; never elevated to a wire claim);
+  - execution context: roles, plane, authentication, placement and path.
+Rules:
+  - one binding per exact top-level Go test; subtest/regexp selectors and
+    multiple records per test are refused;
+  - several declarations in one binding only when its contract supports every
+    edge; sharing a parent PASS is insufficient;
+  - numeric aliases are never merged across namespaces;
+  - unknown declarations, unrelated requirement symbols, missing cases, stale
+    markers, duplicate links/IDs and a changed Ceph reference are errors;
+  - source must be a canonical, nonsymlink internal/integration/*_test.go file
+    whose test is registered by the AST indexer (see the package doc of
+    internal/tools/messengercases). That helper is trusted validator source;
+    --root selects data to inspect, not Go code to run.
+Contracts are a closed Python dispatch. Only targeted-command/v1 exists: the
+OSD/PG/MDS generation, placement and refusal validator, limited to the
+MSG_COMMAND/MSG_COMMAND_REPLY edges. JSON cannot import or invent a contract;
+a new declaration family needs a reviewed validator first.
+
+Runtime receipt (ceph-messenger-case/v1). TestTargetedCommandRecipe keeps its
+TARGETED_COMMAND_RECEIPT parent marker and registers before creating resources.
+Its MSGR_CASE_RECEIPT is emitted only by the last cleanup callback, after owned
+cleanup; any test or cleanup failure suppresses it. It records:
+  - binding/case, unique run ID and cluster generation (FSID);
+  - exact parent SHA-256;
+  - source snapshot: SHA-256 of the embedded reference, coverage and binding
+    JSON, plus an aggregate over internal/integration/*.go computed as SHA-256
+    of sorted rows "path NUL file-sha256 newline" (inclusion does not mean all
+    build-tag alternatives ran);
+  - native Ceph version, Go build and the inspected immutable image IDs of
+    every executor container (cluster/daemon, client toolkit, limited client;
+    an aggregate image once). Inspection failure blocks the receipt; an unused
+    client is never started for metadata.
+Source digests bind the exact catalogue bytes, so an older receipt never counts
+as current-source execution. JSON validation is not CI attestation; keep the CI
+head/attempt or local build record with the report.
+
+Cohort file (--expected-cohort), declared before execution from engine-resolved
+images, never derived from a receipt:
+    {"release": "20.2.4", "platform": "linux/amd64",
+     "images": ["sha256:<64 hex>", ...]}
+Images are sorted and unique. Mismatched IDs, release, platform or pinned native
+build are refused. Only the manifest-pinned 20.2.4 cohort is supported.
+
+Usage (Go 1.26+ and Python):
+    # Source mapping only; every case stays unexecuted.
+    python3 .github/scripts/messenger_evidence.py --output mapping.json
+
+    # Run the case on an authorized Linux runner with the selected images.
+    go test -tags=all -count=1 -timeout=25m -json \
+      -run '^TestTargetedCommandRecipe$' ./internal/integration > native-events.jsonl
+    python3 .github/scripts/messenger_evidence.py \
+      --events native-events.jsonl --expected-cohort cohort.json \
+      --require-execution --output evidence.json
+
+    python3 -m unittest discover -s .github/scripts -p test_messenger_evidence.py
+A retained verbose log may be converted with go tool test2json -p <package>;
+keep its exit status and log. Never rerun an uncertain mutation to obtain a
+receipt.
+
+The validator checks:
+  - duplicate JSON keys, source identity and complete, SHA-256-bound markers;
+  - unique execution with a pending/running/finished lifecycle: output must
+    follow the unique run and precede terminal pass/skip; split parent and case
+    chunks are reassembled only within that interval; exactly one test pass and
+    package pass are required;
+  - matching FSID/OSD UUIDs, PG/acting and MDS generation, native/auth refusal
+    outcomes and cleanup;
+  - a skipped case never supplies a receipt; missing, repeated, stale,
+    truncated or mixed evidence fails; streams over 64 MiB are refused;
+    unknown case receipts are never counted as another case.
+Reports keep unexecuted_bindings when nothing ran, always list unmapped
+declarations, and set wire and consumer implementation claims to false. The
+unit tests are synthetic offline controls, not stored native receipts.
+
+Scenario history join (scenario_history.py). Tagged-runtime normalization adds a
+messenger field when the compiled inventory or retained log selects a mapped
+case; other profiles record not_selected without indexing or conversion. It runs
+no native command: trusted go tool test2json converts the saved log (30 s limit,
+64 MiB input/output bounds), then this validator checks the events. Acceptance
+requires:
+  - successful job phases and owned cleanup;
+  - matching compile/native binary and build key, checked-out source file
+    hashes and the case's embedded source snapshot;
+  - each accepted selector in the validated nonempty, unique compiled test
+    inventory;
+  - receipt completion and any strict-completion check passing, exit code zero
+    and terminal classification passed; strict_completion is always recorded
+    (null when not required); timed_out, if supplied, must be false; missing
+    terminal fields are not success, and a valid log cannot override
+    contradictory native metadata;
+  - release, platform and image set from the separately saved pre-native image
+    preparation summary, with compiled Go and image platforms agreeing.
+States:
+  - accepted: validated native-state cases;
+  - unexecuted: failed, canceled, skipped or incomplete jobs (mapping kept);
+  - unsupported_cohort: unsupported pinned release;
+  - invalid: inconsistent or missing case/source/build/cohort evidence;
+  - not_recorded: older rows without the field (never backfilled).
+A passing scenario never makes a missing receipt accepted, and case states never
+rewrite the scenario outcome or failure category. Summaries count attempts by
+case-evidence status, not unique declaration coverage or a new release/platform
+qualification.
 """
 import argparse
 import hashlib

@@ -1,5 +1,13 @@
 // Command messengercases indexes top-level integration test declarations and
 // their literal log markers. It parses source without importing or running it.
+//
+// It is the source-registration step of .github/scripts/messenger_evidence.py.
+// A binding's test is registered only when its source file holds exactly one
+// unambiguous func TestX(t *testing.T) definition with a literal parent-marker
+// log call in its body. Comments, unused string literals, wrong signatures and
+// duplicate definitions cannot register a test; duplicate names are rejected
+// even across build-tag alternatives. Indexing proves neither reachability nor
+// execution.
 package main
 
 import (

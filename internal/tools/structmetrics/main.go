@@ -1,17 +1,3 @@
-// Command structmetrics reports a fixed structural measurement of named struct
-// types: declared methods (split by exported-name and private) and direct
-// fields per type, for chosen package directories of one source snapshot, and
-// the per-type difference between a base and a head snapshot.
-//
-// It is a reference measurement for triage, not an acceptance threshold. It
-// parses source lexically with the standard library, never type-checks, builds,
-// imports or executes the code it inspects, and needs no Docker. The output is
-// deterministic: it holds no timestamps, host details or local paths.
-//
-//	structmetrics measure -packages ceph,override [-ref REF | -dir DIR]
-//	structmetrics delta   -packages ceph,override -base-ref REF [-head-ref REF | -head-dir DIR]
-//
-// See docs/contributing/structural-metrics.md for what is and is not measured.
 package main
 
 import (
@@ -36,7 +22,6 @@ import (
 const (
 	measureSchema = "ceph-structure-metrics/v1"
 	deltaSchema   = "ceph-structure-metrics-delta/v1"
-	defaultMoves  = "docs/design/api-naming/moves"
 )
 
 // scope is printed in every report so that a reader sees what was and was not
@@ -383,20 +368,14 @@ func subtract(head, base counts) delta {
 	}
 }
 
-type moveRef struct {
-	Change string `json:"change"`
-	Role   string `json:"role"`
-}
-
 type ownerDelta struct {
-	Owner   string    `json:"owner"`
-	Package string    `json:"package"`
-	Type    string    `json:"type"`
-	Status  string    `json:"status"` // introduced, removed or changed
-	Base    *side     `json:"base"`
-	Head    *side     `json:"head"`
-	Delta   delta     `json:"delta"`
-	Moves   []moveRef `json:"move_records"`
+	Owner   string `json:"owner"`
+	Package string `json:"package"`
+	Type    string `json:"type"`
+	Status  string `json:"status"` // introduced, removed or changed
+	Base    *side  `json:"base"`
+	Head    *side  `json:"head"`
+	Delta   delta  `json:"delta"`
 }
 
 type packageDelta struct {
@@ -411,7 +390,6 @@ type deltaReport struct {
 	Scope      scope          `json:"scope"`
 	Base       sourceInfo     `json:"base"`
 	Head       sourceInfo     `json:"head"`
-	MoveRecord string         `json:"move_records_read"`
 	Unmeasured []unmeasured   `json:"unmeasured_packages"`
 	Summary    string         `json:"summary"`
 	Packages   []packageDelta `json:"changed_packages"`
@@ -433,7 +411,7 @@ func (p packageRow) counts() counts {
 // kept on both sides of the comparison: an owner present on one side only is
 // reported as removed or introduced, never dropped. An owner whose values are
 // equal is omitted, so a pure relocation inside a package yields no row.
-func diff(base, head *snapshot, moves map[string][]moveRef) *deltaReport {
+func diff(base, head *snapshot) *deltaReport {
 	report := &deltaReport{
 		Schema: deltaSchema, Scope: reportScope, Base: base.Source, Head: head.Source,
 		Unmeasured: []unmeasured{}, Packages: []packageDelta{}, Owners: []ownerDelta{},
@@ -462,10 +440,7 @@ func diff(base, head *snapshot, moves map[string][]moveRef) *deltaReport {
 	for name := range names {
 		b, inBase := baseOwners[name]
 		h, inHead := headOwners[name]
-		row := ownerDelta{Owner: name, Moves: moves[name]}
-		if row.Moves == nil {
-			row.Moves = []moveRef{}
-		}
+		row := ownerDelta{Owner: name}
 		switch {
 		case inBase && inHead:
 			if b.counts == h.counts {
@@ -503,64 +478,6 @@ func diff(base, head *snapshot, moves map[string][]moveRef) *deltaReport {
 		report.Summary += "; some listed packages are unmeasured on one side"
 	}
 	return report
-}
-
-// moveRecords reads the per-change API move records of a snapshot, if the
-// directory exists, and maps declaration names ("pkg.Type") to the records
-// that name them. Annotations only explain a disappearance; they are not
-// evidence that behavior is equivalent.
-func moveRecords(src source, dir string) (map[string][]moveRef, string, error) {
-	out := map[string][]moveRef{}
-	if dir == "" {
-		return out, "disabled", nil
-	}
-	names, err := src.list(dir)
-	if err != nil {
-		return nil, "", err
-	}
-	read := 0
-	for _, name := range names {
-		if !strings.HasSuffix(name, ".json") {
-			continue
-		}
-		data, err := src.read(dir + "/" + name)
-		if err != nil {
-			return nil, "", err
-		}
-		var record struct {
-			Change string `json:"change"`
-			Moves  []struct{ From, To string }
-			Remove []string `json:"removed"`
-			Add    []string `json:"added"`
-		}
-		dec := json.NewDecoder(bytes.NewReader(data))
-		if err := dec.Decode(&record); err != nil {
-			return nil, "", fmt.Errorf("move record %s: %w", name, err)
-		}
-		if record.Change == "" {
-			return nil, "", fmt.Errorf("move record %s: missing change", name)
-		}
-		read++
-		for _, m := range record.Moves {
-			out[m.From] = append(out[m.From], moveRef{record.Change, "from"})
-			out[m.To] = append(out[m.To], moveRef{record.Change, "to"})
-		}
-		for _, n := range record.Remove {
-			out[n] = append(out[n], moveRef{record.Change, "removed"})
-		}
-		for _, n := range record.Add {
-			out[n] = append(out[n], moveRef{record.Change, "added"})
-		}
-	}
-	for _, refs := range out {
-		sort.Slice(refs, func(i, j int) bool {
-			if refs[i].Change != refs[j].Change {
-				return refs[i].Change < refs[j].Change
-			}
-			return refs[i].Role < refs[j].Role
-		})
-	}
-	return out, fmt.Sprintf("%d", read), nil
 }
 
 func writeJSON(w io.Writer, v any) error {
@@ -635,24 +552,20 @@ func packageCells(p packageRow) string {
 func writeDeltaTSV(out io.Writer, r *deltaReport) error {
 	var w bytes.Buffer
 	writeHeader(&w, r.Schema, map[string]sourceInfo{"base": r.Base, "head": r.Head}, []string{"base", "head"}, r.Scope)
-	fmt.Fprintf(&w, "# move_records_read: %s\n# summary: %s\n", r.MoveRecord, r.Summary)
+	fmt.Fprintf(&w, "# summary: %s\n", r.Summary)
 	for _, u := range r.Unmeasured {
 		fmt.Fprintf(&w, "# unmeasured_package: %s %s\n", u.Package, u.Side)
 	}
 	fmt.Fprintln(&w, "status\towner\tbase_exported\tbase_private\tbase_fields\tbase_declarations\tbase_locations\t"+
 		"head_exported\thead_private\thead_fields\thead_declarations\thead_locations\t"+
-		"delta_exported\tdelta_private\tdelta_fields\tdelta_declarations\tmove_records")
+		"delta_exported\tdelta_private\tdelta_fields\tdelta_declarations")
 	for _, o := range r.Owners {
-		var moves []string
-		for _, m := range o.Moves {
-			moves = append(moves, m.Change+":"+m.Role)
-		}
-		fmt.Fprintf(&w, "%s\t%s\t%s\t%s\t%+d\t%+d\t%+d\t%+d\t%s\n", o.Status, o.Owner, sideCells(o.Base), sideCells(o.Head),
-			o.Delta.ExportedMethods, o.Delta.PrivateMethods, o.Delta.Fields, o.Delta.Declarations, strings.Join(moves, ","))
+		fmt.Fprintf(&w, "%s\t%s\t%s\t%s\t%+d\t%+d\t%+d\t%+d\n", o.Status, o.Owner, sideCells(o.Base), sideCells(o.Head),
+			o.Delta.ExportedMethods, o.Delta.PrivateMethods, o.Delta.Fields, o.Delta.Declarations)
 	}
 	// Package totals: the declarations column holds the owner count.
 	for _, p := range r.Packages {
-		fmt.Fprintf(&w, "package\t%s\t%s\t%s\t%+d\t%+d\t%+d\t%+d\t\n", p.Package, packageCells(p.Base), packageCells(p.Head),
+		fmt.Fprintf(&w, "package\t%s\t%s\t%s\t%+d\t%+d\t%+d\t%+d\n", p.Package, packageCells(p.Base), packageCells(p.Head),
 			p.Delta.ExportedMethods, p.Delta.PrivateMethods, p.Delta.Fields, p.Delta.Declarations)
 	}
 	_, err := out.Write(w.Bytes())
@@ -674,7 +587,6 @@ func run(args []string, stdout io.Writer) error {
 	baseDir := fs.String("base-dir", "", "delta: base module root")
 	headRef := fs.String("head-ref", "", "delta: head git ref")
 	headDir := fs.String("head-dir", "", "delta: head module root (default \".\" when -head-ref is not given)")
-	moves := fs.String("moves-dir", defaultMoves, "delta: move-record directory read from the head snapshot (empty disables)")
 	fs.SetOutput(io.Discard)
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
@@ -746,12 +658,7 @@ func run(args []string, stdout io.Writer) error {
 			return fmt.Errorf("package %q has no production Go files in base or head", pkg)
 		}
 	}
-	records, read, err := moveRecords(headSrc, *moves)
-	if err != nil {
-		return err
-	}
-	report := diff(base, head, records)
-	report.MoveRecord = read
+	report := diff(base, head)
 	if *format == "tsv" {
 		return writeDeltaTSV(stdout, report)
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 // monStoreState is the owned MON store volumes of one cluster, by MON name: the
-// ownership primitive of docs/design/mon-volume-storage.md. It sits beside
+// ownership primitive of docs/internals/mon-volume-storage.md. It sits beside
 // osdStorageState and is shaped like it.
 //
 // In this slice nothing publishes a record: no option, no AddMonitor or Run

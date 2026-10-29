@@ -6,7 +6,7 @@
 // unconfined AppArmor profile, which no required CI environment is proven
 // to allow, so this is an optional batch: build it with the cephfs_fuse tag
 // (go test -tags all,cephfs_fuse) or run it with tag_scenarios.py optional
-// --batch cephfs_fuse. See docs/research/ceph-fuse-mount.md.
+// --batch cephfs_fuse.
 
 package integration_test
 

@@ -18,33 +18,21 @@ import sys
 
 # docs/ directories whose direct Markdown children are not read by any check.
 # Exceptions inside them are the files that a check reads.
-UNREAD_DOC_DIRS = ("docs/contributing", "docs/design", "docs/guides", "docs/research")
+UNREAD_DOC_DIRS = ("docs/contributing", "docs/guides", "docs/internals")
 READ_DOC_FILES = frozenset((
     # internal/integration messenger coverage test cross-checks this guide.
     "docs/guides/messenger-client-fixtures.md",
-    # tag_scenarios tests compare the catalogue with the tag registry.
-    "docs/guides/bug-compatibility-tags.md",
+    # tag_scenarios tests compare its registered tags with the tag registry.
+    "docs/guides/bug-compatibility.md",
     # internal/tools/testdoublecheck reads the test-double inventory.
     "docs/contributing/test-double-inventory.md",
-    # The ceph catalogue receipt (docs/design/api-naming/ceph/review.json)
-    # names this note as its review, and the move record 312-add-osd-options
-    # must find the change identifier in it; internal/apiinventory reads both.
-    "docs/design/value-configuration-composition.md",
+    # The API catalogue receipts name these notes as their review;
+    # internal/apiinventory checks that they exist.
+    "docs/contributing/api-naming.md",
+    "docs/contributing/configuration-composition.md",
 ))
 # Git file modes of an ordinary file and of an absent side (added or deleted).
 REGULAR_MODES = frozenset(("100644", "000000"))
-# internal/apiinventory reads the audit, the review notes and the package-scoped
-# declaration, member and review files below docs/design/api-naming/.
-# ceph/container_decomposition_records_test.go and
-# ceph/container_residual_fields_test.go read the shared decomposition document
-# and every component record in the docs/design/container-decomposition/
-# directory (discovered by listing it), so any path below it, including a
-# record that does not exist yet, runs the checks.
-READ_DOC_PREFIXES = (
-    "docs/design/api-naming",
-    "docs/design/container-decomposition.md",
-    "docs/design/container-decomposition/",
-)
 
 
 def is_unread_doc(path):
@@ -61,7 +49,7 @@ def is_unread_doc(path):
         return path == "LICENSE" or path.endswith(".md")
     if not path.endswith(".md"):
         return False
-    if path in READ_DOC_FILES or path.startswith(READ_DOC_PREFIXES):
+    if path in READ_DOC_FILES:
         return False
     return "/".join(parts[:-1]) in UNREAD_DOC_DIRS
 

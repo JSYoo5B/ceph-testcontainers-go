@@ -1886,7 +1886,8 @@ class BugCompatibilityRegistryTests(unittest.TestCase):
         registry = engine.load_bug_registry()
         engine.bug_registry_sources(registry)
         engine.bug_retired_sources(registry)
-        catalogue = (engine.ROOT / "docs/guides/bug-compatibility-tags.md").read_text()
+        page = (engine.ROOT / "docs/guides/bug-compatibility.md").read_text()
+        catalogue = page.split("\n## Registered tags\n", 1)[1].split("\n## ", 1)[0]
         documented = set(re.findall(r"`(ceph_bug_[a-z0-9_]+)`", catalogue))
         self.assertEqual(documented, set(registry["tags"]))
 
@@ -1895,7 +1896,7 @@ class ChangedComparisonGitTests(unittest.TestCase):
     """Real Git ancestry, independent base advancement and fail-closed proof."""
 
     PR_PATHS = (".github/scripts/scenario_history.py", ".github/scripts/test_scenario_history.py",
-                "docs/design/messenger-evidence.md")
+                "docs/internals/osd-storage.md")
     INCOMING_PATHS = ("internal/integration/ec_four_two_integration_test.go",
                       "internal/integration/osd_retained_concurrency_integration_test.go")
 

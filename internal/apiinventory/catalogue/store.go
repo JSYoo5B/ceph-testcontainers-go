@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,18 +15,18 @@ import (
 )
 
 // DefaultReview is the review note a new receipt names unless told otherwise.
-// It is resolved relative to docs/design.
-const DefaultReview = "api-naming-audit.md"
+// It is resolved relative to docs/contributing.
+const DefaultReview = "api-naming.md"
 
 // PackageDir returns the catalogue directory of a package.
 func PackageDir(root, pkg string) string {
 	return filepath.Join(root, filepath.FromSlash(Dir), filepath.FromSlash(pkg))
 }
 
-// DefaultPage is the API reference page a new receipt names:
-// docs/<package with slashes replaced by dashes>.md.
+// DefaultPage is the API reference page of a package: the README.md in the
+// package directory.
 func DefaultPage(pkg string) string {
-	return "docs/" + strings.ReplaceAll(pkg, "/", "-") + ".md"
+	return pkg + "/README.md"
 }
 
 // Directories returns the packages that have a catalogue directory: every
@@ -241,12 +242,12 @@ func requireFile(root, base, name, suffix string) error {
 
 func checkReferences(root string, receipt Receipt) error {
 	var problems []error
-	if err := requireFile(root, "docs/design", receipt.Review, ".md"); err != nil {
+	if err := requireFile(root, "docs/contributing", receipt.Review, ".md"); err != nil {
 		problems = append(problems, fmt.Errorf("review note: %w", err))
 	}
-	if !strings.HasPrefix(receipt.Page, "docs/") {
-		problems = append(problems, fmt.Errorf("page %q is not below docs/", receipt.Page))
-	} else if err := requireFile(root, "docs", strings.TrimPrefix(receipt.Page, "docs/"), ".md"); err != nil {
+	if want := DefaultPage(receipt.Package); receipt.Page != want {
+		problems = append(problems, fmt.Errorf("page %q is not %s", receipt.Page, want))
+	} else if err := requireFile(root, ".", receipt.Page, ".md"); err != nil {
 		problems = append(problems, fmt.Errorf("page: %w", err))
 	}
 	return errors.Join(problems...)
@@ -328,9 +329,6 @@ func Approve(c Config, named []string, review string) ([]string, error) {
 			continue
 		}
 		page := DefaultPage(pkg)
-		if prior, err := LoadReceipt(c.Root, pkg); err == nil && prior.Page != "" {
-			page = prior.Page
-		}
 		declarations, err := digest(surface.Declarations)
 		if err != nil {
 			return nil, err
@@ -364,4 +362,15 @@ func Approve(c Config, named []string, review string) ([]string, error) {
 		written = append(written, filepath.ToSlash(filepath.Join(Dir, pkg, ReceiptFile)))
 	}
 	return written, nil
+}
+
+// requireEOF refuses anything after the first JSON value. Decoder.More is not
+// an end-of-input check: a stray closing delimiter makes it report false.
+// Decoding again must return io.EOF exactly, which rejects a second value and
+// any trailing syntax error alike. Whitespace after the value is accepted.
+func requireEOF(dec *json.Decoder) error {
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("trailing data after the JSON value")
+	}
+	return nil
 }

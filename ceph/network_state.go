@@ -8,10 +8,8 @@ import (
 
 // networkState is the Docker bridge state of one cluster: the public bridge,
 // the optional replication bridge, the Ceph subnets of both planes and whether
-// Terminate has removed each bridge. It is the first component of the internal
-// state split, recorded in
-// docs/design/container-decomposition/networking-state.md, and owns no lock of
-// its own, so every lock-order rule of Container applies unchanged.
+// Terminate has removed each bridge. It owns no lock of its
+// own, so every lock-order rule of Container applies.
 //
 // Guards, per field group:
 //   - public, cluster, publicSubnet and clusterSubnet are the recorded

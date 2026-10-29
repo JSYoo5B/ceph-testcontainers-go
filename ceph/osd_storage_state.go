@@ -9,12 +9,9 @@ import (
 // osdStorageState is the owned OSD storage of one cluster: the tmpfs volume
 // that OSDStorage.WithInMemory selects, the ordinary volume that
 // OSDStorage.WithVolume selects, and the test seams that replace the Docker
-// collaborators of their allocation and of the OSD containers. It is the
-// fourth component of the internal state split, recorded in
-// docs/design/container-decomposition/osd-storage-state.md.
+// collaborators of their allocation and of the OSD containers.
 //
-// The type has no mutex. Container.mu guards every field, as it guarded
-// Container.osdMemory and Container.osdVolume before the move: registerOSD,
+// The type has no mutex. Container.mu guards every field: registerOSD,
 // removeOSD, detachOSD, reopenOSD, startInitialOSDs and terminate run with it
 // held, and the ensure helpers run inside registerOSD. The seams are written
 // only by tests, before a cluster is used; startOSD, which runs without

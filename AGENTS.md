@@ -1,5 +1,32 @@
 # Agent instructions
 
+## Testcontainers modules
+
+This repository is a set of Testcontainers for Go modules, and every package
+that runs containers keeps the testcontainers-go module conventions. A change
+that breaks them is not allowed, however convenient it looks:
+
+- `Run(ctx, img, opts ...testcontainers.ContainerCustomizer)` returns a
+  `Container` that embeds `testcontainers.Container` (a service package embeds
+  `*ceph.Container`). The two-cluster fixtures add only a `Config` before the
+  variadic. Never change an existing `Run` signature or add a second entry point
+  for the same fixture; carry new configuration through the existing variadic
+  (a module `Option` or one value-group carrier).
+- `Run` returns the partially started container together with its error, so the
+  caller's `testcontainers.CleanupContainer` still terminates it.
+- Container settings are testcontainers customizers. Do not build a parallel
+  option, lifecycle or cleanup framework next to them.
+- Assume the reader knows Testcontainers for Go and Go. Do not explain its basics
+  in code comments or documentation.
+
+## Pull requests (for agents)
+
+Implement a task as one pull request, even when it has many steps. Every pull
+request runs the full CI, which is expensive, so a series of small pull
+requests only repeats CI without adding value. Review is done by an agent, so
+the size of a pull request is not a review problem. Do not split work to avoid
+merge conflicts; resolve conflicts yourself.
+
 ## Release compatibility
 
 Keep published release tags immutable. Make corrections on `main` and publish
@@ -7,17 +34,27 @@ a new version when needed. Use maintained source paths, test names and release
 tags when explaining behavior.
 
 For changes to Ceph behavioral bug compatibility, follow the
-[compatibility policy](docs/contributing/bug-compatibility.md).
+[compatibility policy](docs/guides/bug-compatibility.md).
 
 ## Release notes
 
-Development branches do not carry `CHANGELOG.md`. Do not create, update or
-review development changelog entries. A pull request does not add release-note
+The repository never contains a `CHANGELOG.md`. Do not create, update or
+review changelog entries. A pull request does not add release-note
 fragments, no-note declarations, compatibility ledgers, migration tables or
 upgrade guides. Record intent and validation in the pull request description.
 Before 1.0, a breaking change removes the old names without aliases. The
 maintainer writes concise final release notes at release time, from the previous
-release and the final source (see [Preparing a release](docs/contributing/releasing.md)).
+release and the final source, directly in the GitHub Release (see
+[Preparing a release](docs/contributing/releasing.md)).
+
+## Historical documentation
+
+Documentation describes current behavior, current usage and current
+operational requirements. Do not add chronology, increment or slice status,
+retired designs, abandoned proposals or rename and migration accounting;
+Git history, issues and pull requests keep that. A concise warning about a
+concrete, easy-to-make mistake (the trap and its consequence) may stay. Delete
+local review artifacts, logs and scratch notes once they have been used.
 
 ## Privacy review
 
@@ -45,24 +82,14 @@ pull request and issue descriptions, reviews and comments.
 ## API catalogues
 
 Public API names are catalogued per package in
-`docs/design/api-naming/<package>/` (`declarations.json`, `members.json`,
+`internal/apiinventory/catalogues/<package>/` (`declarations.json`, `members.json`,
 `review.json`). Do not edit them by hand and do not look for a global
 inventory, count or hash file: none exists. After a public API change run
 `go run ./internal/tools/apinaming regenerate <package>` and then, as a
 separate deliberate step, `go run ./internal/tools/apinaming approve <package>`.
 Regeneration never approves a changed API. After a `git merge` that conflicts in these
 files, run `go run ./internal/tools/apinaming resolve`; it rewrites them only when the merge
-just composes the rows of two approved parents (see [Testing](docs/contributing/testing.md)). A move of API between packages, or
-a deliberate removal or addition of a declaration row, needs a record under
-`docs/design/api-naming/moves/`. Check with `go run ./internal/tools/apinaming moves -base origin/main`; `SKIPPED`
-means no base was available and is not a pass. See
-[Testing](docs/contributing/testing.md).
-
-## Package-split rewrites
-
-A package move that renames API used by a retained native producer adds its own
-shard under `.github/scripts/fixtures/package-split/`; it does not edit a shared
-file. See [Package-split rewrite shards](docs/contributing/package-split-shards.md).
+just composes the rows of two approved parents (see [Testing](docs/contributing/testing.md)).
 
 ## Test doubles
 

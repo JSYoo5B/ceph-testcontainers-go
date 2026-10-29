@@ -81,10 +81,10 @@ func tree(t *testing.T) (string, catalogue.Config) {
 	write(t, root, "internal/hidden/hidden.go", "package hidden\nfunc Exported() {}\n")
 	write(t, root, "alpha/testdata/data.go", "package data\nfunc Exported() {}\n")
 	write(t, root, ".github/tool/tool.go", "package tool\nfunc Exported() {}\n")
-	for _, page := range []string{"alpha", "alpha-sub", "beta"} {
-		write(t, root, "docs/"+page+".md", "page\n")
+	for _, pkg := range []string{"alpha", "alpha/sub", "beta"} {
+		write(t, root, pkg+"/README.md", "page\n")
 	}
-	write(t, root, "docs/design/api-naming-audit.md", "review\n")
+	write(t, root, "docs/contributing/api-naming.md", "review\n")
 	cfg := catalogue.Config{Root: root, Proposals: map[string]string{}}
 	if _, err := catalogue.Regenerate(cfg, nil); err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestFreshTreeVerifies(t *testing.T) {
 
 func TestLayoutRefusesAPackageDirectoryWithoutAReceipt(t *testing.T) {
 	root, _ := tree(t)
-	if err := os.Remove(filepath.Join(root, "docs/design/api-naming/beta/review.json")); err != nil {
+	if err := os.Remove(filepath.Join(root, "internal/apiinventory/catalogues/beta/review.json")); err != nil {
 		t.Fatal(err)
 	}
 	err := catalogue.CheckLayout(root)
@@ -168,7 +168,7 @@ func TestLayoutRefusesAnEmptyCatalogueOfANewPackage(t *testing.T) {
 
 func TestLayoutRefusesACatalogueDirectoryWithoutAPackage(t *testing.T) {
 	root, _ := tree(t)
-	write(t, root, "docs/design/api-naming/ghost/declarations.json", "{}\n")
+	write(t, root, "internal/apiinventory/catalogues/ghost/declarations.json", "{}\n")
 	err := catalogue.CheckLayout(root)
 	if err == nil || !strings.Contains(err.Error(), "ghost has no public package") {
 		t.Fatalf("an orphan catalogue directory must be refused, got %v", err)
@@ -177,7 +177,7 @@ func TestLayoutRefusesACatalogueDirectoryWithoutAPackage(t *testing.T) {
 
 func TestLayoutRefusesAMissingCatalogueFile(t *testing.T) {
 	root, _ := tree(t)
-	if err := os.Remove(filepath.Join(root, "docs/design/api-naming/alpha/members.json")); err != nil {
+	if err := os.Remove(filepath.Join(root, "internal/apiinventory/catalogues/alpha/members.json")); err != nil {
 		t.Fatal(err)
 	}
 	if err := catalogue.CheckLayout(root); err == nil || !strings.Contains(err.Error(), "members.json") {
@@ -187,12 +187,12 @@ func TestLayoutRefusesAMissingCatalogueFile(t *testing.T) {
 
 func TestRegenerationDoesNotApproveAChangedAPI(t *testing.T) {
 	root, cfg := tree(t)
-	before := read(t, root, "docs/design/api-naming/alpha/review.json")
+	before := read(t, root, "internal/apiinventory/catalogues/alpha/review.json")
 	replace(t, root, "alpha/alpha.go", "func New() Widget", "func Make() Widget")
 	if _, err := catalogue.Regenerate(cfg, nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := read(t, root, "docs/design/api-naming/alpha/review.json"); got != before {
+	if got := read(t, root, "internal/apiinventory/catalogues/alpha/review.json"); got != before {
 		t.Fatal("regeneration rewrote a receipt")
 	}
 	failures := verify(t, cfg)
@@ -212,23 +212,23 @@ func TestRegenerationDoesNotApproveAChangedAPI(t *testing.T) {
 
 func TestApprovalOfOnePackageLeavesOthersAlone(t *testing.T) {
 	root, cfg := tree(t)
-	other := read(t, root, "docs/design/api-naming/beta/review.json")
-	declarations := read(t, root, "docs/design/api-naming/alpha/declarations.json")
+	other := read(t, root, "internal/apiinventory/catalogues/beta/review.json")
+	declarations := read(t, root, "internal/apiinventory/catalogues/alpha/declarations.json")
 	replace(t, root, "alpha/alpha.go", "const Version", "const Release")
 	if _, err := catalogue.Regenerate(cfg, []string{"alpha"}); err != nil {
 		t.Fatal(err)
 	}
-	changed := read(t, root, "docs/design/api-naming/alpha/declarations.json")
+	changed := read(t, root, "internal/apiinventory/catalogues/alpha/declarations.json")
 	if changed == declarations {
 		t.Fatal("regeneration did not update the changed package")
 	}
 	if _, err := catalogue.Approve(cfg, []string{"alpha"}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if read(t, root, "docs/design/api-naming/alpha/declarations.json") != changed {
+	if read(t, root, "internal/apiinventory/catalogues/alpha/declarations.json") != changed {
 		t.Fatal("approval rewrote a catalogue")
 	}
-	if read(t, root, "docs/design/api-naming/beta/review.json") != other {
+	if read(t, root, "internal/apiinventory/catalogues/beta/review.json") != other {
 		t.Fatal("approving alpha rewrote the receipt of beta")
 	}
 }
@@ -254,7 +254,7 @@ func TestMissingDeclarationAndMemberRowsAreDetected(t *testing.T) {
 	if _, err := catalogue.Regenerate(cfg, nil); err != nil {
 		t.Fatal(err)
 	}
-	replace(t, root, "docs/design/api-naming/beta/declarations.json", `"current": "beta.Run"`, `"current": "beta.Gone"`)
+	replace(t, root, "internal/apiinventory/catalogues/beta/declarations.json", `"current": "beta.Run"`, `"current": "beta.Gone"`)
 	failures = verify(t, cfg)
 	if failures["beta"] == nil || !strings.Contains(failures["beta"].Error(), "declarations.json is stale") {
 		t.Fatalf("a vanished or renamed row must be detected, got %v", failures)
@@ -263,7 +263,7 @@ func TestMissingDeclarationAndMemberRowsAreDetected(t *testing.T) {
 
 func TestMissingCatalogueFilesAreDetected(t *testing.T) {
 	root, cfg := tree(t)
-	if err := os.Remove(filepath.Join(root, "docs/design/api-naming/beta/declarations.json")); err != nil {
+	if err := os.Remove(filepath.Join(root, "internal/apiinventory/catalogues/beta/declarations.json")); err != nil {
 		t.Fatal(err)
 	}
 	if failures := verify(t, cfg); failures["beta"] == nil {
@@ -303,17 +303,17 @@ func TestPendingProposalBlocksAnyApproval(t *testing.T) {
 	if _, err := catalogue.Regenerate(cfg, []string{"alpha"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(read(t, root, "docs/design/api-naming/alpha/declarations.json"), `"decision": "proposal"`) {
+	if !strings.Contains(read(t, root, "internal/apiinventory/catalogues/alpha/declarations.json"), `"decision": "proposal"`) {
 		t.Fatal("proposal rows were not recorded")
 	}
-	if !strings.Contains(read(t, root, "docs/design/api-naming/alpha/declarations.json"), `"proposed": "alpha.Gadget.Render"`) {
+	if !strings.Contains(read(t, root, "internal/apiinventory/catalogues/alpha/declarations.json"), `"proposed": "alpha.Gadget.Render"`) {
 		t.Fatal("the receiver proposal did not reach its method")
 	}
-	before := read(t, root, "docs/design/api-naming/alpha/review.json")
+	before := read(t, root, "internal/apiinventory/catalogues/alpha/review.json")
 	if _, err := catalogue.Approve(cfg, []string{"alpha"}, ""); err == nil || !strings.Contains(err.Error(), "pending proposals") {
 		t.Fatalf("approval must refuse a pending proposal, got %v", err)
 	}
-	if read(t, root, "docs/design/api-naming/alpha/review.json") != before {
+	if read(t, root, "internal/apiinventory/catalogues/alpha/review.json") != before {
 		t.Fatal("a refused approval changed the receipt")
 	}
 	if failures := verify(t, cfg); failures["alpha"] == nil {
@@ -323,12 +323,12 @@ func TestPendingProposalBlocksAnyApproval(t *testing.T) {
 
 func TestConflictingDuplicateDeclarationsAreRefusedAndNothingIsWritten(t *testing.T) {
 	root, cfg := tree(t)
-	before := read(t, root, "docs/design/api-naming/beta/declarations.json")
+	before := read(t, root, "internal/apiinventory/catalogues/beta/declarations.json")
 	write(t, root, "beta/beta_linux.go", "package beta\n\nfunc Run(extra int) {}\n")
 	if _, err := catalogue.Regenerate(cfg, nil); err == nil || !strings.Contains(err.Error(), "conflicting API declarations: beta.Run") {
 		t.Fatalf("conflicting build-tag alternatives must be refused, got %v", err)
 	}
-	if read(t, root, "docs/design/api-naming/beta/declarations.json") != before {
+	if read(t, root, "internal/apiinventory/catalogues/beta/declarations.json") != before {
 		t.Fatal("a refused regeneration wrote a catalogue")
 	}
 }
@@ -339,7 +339,7 @@ func TestIdenticalDuplicateDeclarationsAreOneRow(t *testing.T) {
 	if _, err := catalogue.Regenerate(cfg, nil); err != nil {
 		t.Fatal(err)
 	}
-	if count := strings.Count(read(t, root, "docs/design/api-naming/beta/declarations.json"), `"current": "beta.Run"`); count != 1 {
+	if count := strings.Count(read(t, root, "internal/apiinventory/catalogues/beta/declarations.json"), `"current": "beta.Run"`); count != 1 {
 		t.Fatalf("identical alternatives produced %d rows", count)
 	}
 }
@@ -362,13 +362,13 @@ func TestEmptyAndNonemptyMemberAlternativesConflict(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			root, cfg := tree(t)
-			before := read(t, root, "docs/design/api-naming/beta/members.json")
+			before := read(t, root, "internal/apiinventory/catalogues/beta/members.json")
 			write(t, root, "beta/record_linux.go", "package beta\n\ntype Record "+files[0]+"\n")
 			write(t, root, "beta/record_darwin.go", "package beta\n\ntype Record "+files[1]+"\n")
 			if _, err := catalogue.Regenerate(cfg, nil); err == nil || !strings.Contains(err.Error(), "conflicting public member declarations: beta.Record") {
 				t.Fatalf("empty and nonempty alternatives must be refused, got %v", err)
 			}
-			if read(t, root, "docs/design/api-naming/beta/members.json") != before {
+			if read(t, root, "internal/apiinventory/catalogues/beta/members.json") != before {
 				t.Fatal("a refused regeneration wrote a catalogue")
 			}
 		})
@@ -399,25 +399,25 @@ func TestRemovingOneAlternativesMembersIsRefusedAfterApproval(t *testing.T) {
 
 func TestEmptyMemberSetIsComparedButNotCatalogued(t *testing.T) {
 	root, cfg := tree(t)
-	before := read(t, root, "docs/design/api-naming/beta/members.json")
+	before := read(t, root, "internal/apiinventory/catalogues/beta/members.json")
 	write(t, root, "beta/record_linux.go", "package beta\n\ntype Record struct{}\n")
 	write(t, root, "beta/record_darwin.go", "package beta\n\ntype Record struct{}\n")
 	if _, err := catalogue.Regenerate(cfg, nil); err != nil {
 		t.Fatalf("identical empty alternatives must regenerate: %v", err)
 	}
-	if after := read(t, root, "docs/design/api-naming/beta/members.json"); after != before {
+	if after := read(t, root, "internal/apiinventory/catalogues/beta/members.json"); after != before {
 		t.Fatalf("an empty member set must not add a members row:\n%s", after)
 	}
 }
 
 func TestApprovalRefusesAStaleCatalogue(t *testing.T) {
 	root, cfg := tree(t)
-	before := read(t, root, "docs/design/api-naming/alpha/review.json")
+	before := read(t, root, "internal/apiinventory/catalogues/alpha/review.json")
 	replace(t, root, "alpha/alpha.go", "func New() Widget", "func Make() Widget")
 	if _, err := catalogue.Approve(cfg, []string{"alpha"}, ""); err == nil || !strings.Contains(err.Error(), "is stale") {
 		t.Fatalf("approval must not bless a catalogue that is behind the source, got %v", err)
 	}
-	if read(t, root, "docs/design/api-naming/alpha/review.json") != before {
+	if read(t, root, "internal/apiinventory/catalogues/alpha/review.json") != before {
 		t.Fatal("a refused approval changed the receipt")
 	}
 }
@@ -432,12 +432,12 @@ func TestApprovalIsAllOrNothing(t *testing.T) {
 	if _, err := catalogue.Regenerate(cfg, []string{"beta"}); err != nil {
 		t.Fatal(err)
 	}
-	beta := read(t, root, "docs/design/api-naming/beta/review.json")
+	beta := read(t, root, "internal/apiinventory/catalogues/beta/review.json")
 	// alpha's catalogue is stale, beta's is fresh but unapproved.
 	if _, err := catalogue.Approve(cfg, []string{"beta", "alpha"}, ""); err == nil {
 		t.Fatal("approval of a stale package must fail")
 	}
-	if read(t, root, "docs/design/api-naming/beta/review.json") != beta {
+	if read(t, root, "internal/apiinventory/catalogues/beta/review.json") != beta {
 		t.Fatal("a refused approval still wrote the receipt of a valid package")
 	}
 }
@@ -448,12 +448,12 @@ func TestApprovalNeedsExistingNotesAndPages(t *testing.T) {
 		t.Fatal("a review note that does not exist must be refused")
 	}
 	if _, err := catalogue.Approve(cfg, []string{"alpha"}, "../escape.md"); err == nil {
-		t.Fatal("a review note outside docs/design must be refused")
+		t.Fatal("a review note outside docs/contributing must be refused")
 	}
 	if _, err := catalogue.Approve(cfg, []string{"alpha"}, "."); err == nil {
 		t.Fatal("a directory is not a review note")
 	}
-	if err := os.Remove(filepath.Join(root, "docs/beta.md")); err != nil {
+	if err := os.Remove(filepath.Join(root, "beta/README.md")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := catalogue.Approve(cfg, []string{"beta"}, ""); err == nil {
@@ -476,7 +476,7 @@ func TestApprovalNeedsNamedKnownPackages(t *testing.T) {
 
 func TestReceiptIsReadStrictly(t *testing.T) {
 	root, cfg := tree(t)
-	path := "docs/design/api-naming/beta/review.json"
+	path := "internal/apiinventory/catalogues/beta/review.json"
 	good := read(t, root, path)
 	packages, _ := catalogue.Discover(root)
 	surfaces, err := catalogue.Generate(cfg, packages)
@@ -493,10 +493,10 @@ func TestReceiptIsReadStrictly(t *testing.T) {
 		"trailing comma":   good + ",",
 		"wrong package":    strings.Replace(good, `"package": "beta"`, `"package": "alpha"`, 1),
 		"wrong schema":     strings.Replace(good, "review/v2", "review/v1", 1),
-		"empty review":     strings.Replace(good, `"review": "api-naming-audit.md"`, `"review": ""`, 1),
-		"review traversal": strings.Replace(good, `"review": "api-naming-audit.md"`, `"review": "../design/api-naming-audit.md"`, 1),
-		"page outside":     strings.Replace(good, `"page": "docs/beta.md"`, `"page": "README.md"`, 1),
-		"missing page":     strings.Replace(good, `"page": "docs/beta.md"`, `"page": "docs/none.md"`, 1),
+		"empty review":     strings.Replace(good, `"review": "api-naming.md"`, `"review": ""`, 1),
+		"review traversal": strings.Replace(good, `"review": "api-naming.md"`, `"review": "../design/api-naming.md"`, 1),
+		"page outside":     strings.Replace(good, `"page": "beta/README.md"`, `"page": "docs/beta.md"`, 1),
+		"another page":     strings.Replace(good, `"page": "beta/README.md"`, `"page": "alpha/README.md"`, 1),
 		"wrong hash":       strings.Replace(good, `"declarations_sha256": "`, `"declarations_sha256": "0`, 1),
 		"wrong count":      strings.Replace(good, `"declarations": 2`, `"declarations": 3`, 1),
 		"empty receipt":    "{}\n",
@@ -524,7 +524,7 @@ func TestReceiptIsReadStrictly(t *testing.T) {
 
 func TestLoadReceiptRefusesTrailingDelimiters(t *testing.T) {
 	root, _ := tree(t)
-	path := "docs/design/api-naming/beta/review.json"
+	path := "internal/apiinventory/catalogues/beta/review.json"
 	good := read(t, root, path)
 	if _, err := catalogue.LoadReceipt(root, "beta"); err != nil {
 		t.Fatal(err)
@@ -543,7 +543,7 @@ func TestCatalogueFilesAreReadToEOF(t *testing.T) {
 	root, _ := tree(t)
 	for _, file := range []string{catalogue.DeclarationsFile, catalogue.MembersFile} {
 		t.Run(file, func(t *testing.T) {
-			path := "docs/design/api-naming/beta/" + file
+			path := "internal/apiinventory/catalogues/beta/" + file
 			good := read(t, root, path)
 			defer write(t, root, path, good)
 			write(t, root, path, good+"]")
@@ -582,21 +582,21 @@ func TestAggregateIsComputedAndNotCommitted(t *testing.T) {
 	if !slices.Equal(before, after) {
 		t.Fatal("summarizing changed the tree")
 	}
-	if entries, _ := os.ReadDir(filepath.Join(root, "docs/design/api-naming")); len(entries) != 2 {
+	if entries, _ := os.ReadDir(filepath.Join(root, "internal/apiinventory/catalogues")); len(entries) != 2 {
 		t.Fatalf("an aggregate file appeared: %v", entries)
 	}
 }
 
 func TestSummarizeRefusesAMismatchedCount(t *testing.T) {
 	root, _ := tree(t)
-	replace(t, root, "docs/design/api-naming/beta/declarations.json", `"count": 2`, `"count": 7`)
+	replace(t, root, "internal/apiinventory/catalogues/beta/declarations.json", `"count": 2`, `"count": 7`)
 	if _, _, err := catalogue.Summarize(root); err == nil {
 		t.Fatal("a count that disagrees with its rows must be refused")
 	}
 }
 
 func TestDefaultPageFollowsThePackageDirectory(t *testing.T) {
-	for pkg, want := range map[string]string{"ceph": "docs/ceph.md", "rbd/mirror": "docs/rbd-mirror.md", "rgw/multisite": "docs/rgw-multisite.md"} {
+	for pkg, want := range map[string]string{"ceph": "ceph/README.md", "rbd/mirror": "rbd/mirror/README.md", "rgw/multisite": "rgw/multisite/README.md"} {
 		if got := catalogue.DefaultPage(pkg); got != want {
 			t.Errorf("%s: %s, want %s", pkg, got, want)
 		}

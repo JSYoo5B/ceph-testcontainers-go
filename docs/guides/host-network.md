@@ -337,10 +337,10 @@ _, _ = public, backend
 
 ## Related APIs
 
-- [ceph.md](../ceph.md): `WithHostNetwork`, `NetworkConfig.WithHostAddress`,
+- [`ceph`](../../ceph/README.md): `WithHostNetwork`, `NetworkConfig.WithHostAddress`,
   `NetworkConfig.WithSeparateClusterNetwork`, `ConnectionConfig`, `WithClient`,
   `WithClientIdentity`, `CreateClient`, `ErrHostNetworkUnavailable`.
-- [rgw.md](../rgw.md): `S3Endpoint`, `S3SecureEndpoint`, `DaemonEndpoint`.
+- [`rgw`](../../rgw/README.md): `S3Endpoint`, `S3SecureEndpoint`, `DaemonEndpoint`.
 - [Running native commands](native-commands.md): client containers and the
   CLIs available in them.
 - [Contexts, ownership and cleanup](contexts-and-cleanup.md): who terminates

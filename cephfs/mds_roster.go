@@ -8,11 +8,10 @@ import (
 
 // mdsRoster is the list of the metadata daemons one Filesystem owns, with the
 // customizers every one of them is started with and the index of the next
-// daemon name. It is the first component of the internal split of Filesystem
-// described in docs/design/filesystem-decomposition.md.
+// daemon name.
 //
-// The roster owns no lock and adds none. The fields moved here keep the guard
-// they had on Filesystem, which is the two-key invariant of the type:
+// The roster owns no lock and adds none. Its fields are guarded by the
+// two-key invariant of the type:
 //
 //   - A reader holds the cluster mutex (servicehook.Lock or LockTopology,
 //     ceph.Container.mu) or, for the two cold-start reads that run between the

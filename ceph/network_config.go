@@ -37,7 +37,7 @@ const (
 // family, a host address without WithHostNetwork, a Messenger policy with
 // MessengerV2Secure) are refused before any resource is created. Docker
 // execution policy such as WithHostNetwork stays a separate option function.
-// The composition rules are in docs/design/value-configuration-composition.md.
+// The composition rules are in docs/contributing/configuration-composition.md.
 type NetworkConfig struct {
 	set             networkField
 	addressFamily   AddressFamily

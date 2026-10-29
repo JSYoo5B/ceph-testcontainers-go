@@ -17,7 +17,7 @@ import (
 // mon_store_inspect_container.go: one request becomes one create call, and the
 // start, wait, log and remove calls follow. It holds no lock and no state
 // between calls (so it adds no entry to the lock order of
-// docs/design/mon-volume-storage.md): every call opens a client through the
+// docs/internals/mon-volume-storage.md): every call opens a client through the
 // injected constructor and closes it before it returns.
 //
 // What is checked Docker-free is the translation (the create options, the

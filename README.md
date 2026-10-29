@@ -16,39 +16,43 @@ and memory-backed BlueStore are also available for faster disposable fixtures.
 
 Releases follow semantic versioning. Before v1.0.0, a minor release may change
 the API without aliases for the old names. Final release notes are available
-with the [published releases](https://github.com/JSYoo5B/ceph-testcontainers-go/releases);
-there is no development CHANGELOG.
+with the [published releases](https://github.com/JSYoo5B/ceph-testcontainers-go/releases).
 
 Documentation for a published release is available at its Git tag.
 
-## Modules
+## Packages
 
-| Package | Import path | What it provides | Documentation |
-| --- | --- | --- | --- |
-| `ceph` | `github.com/JSYoo5B/ceph-testcontainers-go/ceph` | The cluster: MON, MGR and OSD topology, pools, Cephx identities, configuration, health, fault injection and diagnostics | [docs/ceph.md](docs/ceph.md) |
-| `fault` | `github.com/JSYoo5B/ceph-testcontainers-go/fault` | Container pause, network delay, loss, rate, packet faults and endpoint interruption on existing fixtures | [docs/fault.md](docs/fault.md) |
-| `override` | `github.com/JSYoo5B/ceph-testcontainers-go/override` | Reversible cluster-wide overrides with restoration handles; the client blocklist entry, the OSDMap full ratios, the MGR module state, the global OSD flag, the runtime debug level window, central configuration and messenger policy | [docs/override.md](docs/override.md) |
-| `rbd` | `github.com/JSYoo5B/ceph-testcontainers-go/rbd` | RBD pools and namespaces, image watchers and locks, mirroring between clusters, backup and restore | [docs/rbd.md](docs/rbd.md) |
-| `cephfs` | `github.com/JSYoo5B/ceph-testcontainers-go/cephfs` | Filesystems and MDS topology, subvolumes, snapshots and clones, client authorization and sessions, snapshot mirroring | [docs/cephfs.md](docs/cephfs.md) |
-| `rgw` | `github.com/JSYoo5B/ceph-testcontainers-go/rgw` | S3 and Swift gateways, users, accounts and quotas, placement and storage classes | [docs/rgw.md](docs/rgw.md) |
-| `rgw/multisite` | `github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite` | RGW multisite realms, zones and zonegroups, period transfer, sync status and sync policy | [docs/rgw-multisite.md](docs/rgw-multisite.md) |
-| `capture` | `github.com/JSYoo5B/ceph-testcontainers-go/capture` | Opt-in packet capture on one container endpoint, with a caller-selected helper image, delivering a structurally checked classic pcap and a report | [docs/capture.md](docs/capture.md) |
+- [`ceph`](ceph/README.md): the cluster. MON, MGR and OSD topology, pools,
+  Cephx identities, configuration, health and diagnostics.
+- [`rbd`](rbd/README.md): RBD pools and namespaces, image watchers and locks,
+  backup and restore.
+  - [`rbd/mirror`](rbd/mirror/README.md): `rbd-mirror` replication between two
+    clusters.
+- [`cephfs`](cephfs/README.md): filesystems and MDS topology, subvolumes,
+  snapshots and clones, client authorization and sessions.
+  - [`cephfs/mirror`](cephfs/mirror/README.md): snapshot mirroring between two
+    clusters.
+- [`rgw`](rgw/README.md): S3 and Swift gateways, users, accounts and quotas,
+  placement and storage classes.
+  - [`rgw/multisite`](rgw/multisite/README.md): realms, zonegroups and zones,
+    period transfer, sync status and sync policy.
+- [`fault`](fault/README.md): container pause, network delay, loss, rate,
+  packet faults and endpoint interruption on existing fixtures.
+- [`override`](override/README.md): reversible cluster-wide changes with
+  restoration handles (blocklist, full ratios, MGR modules, OSD flags, debug
+  levels, central configuration, messenger policy).
+- [`capture`](capture/README.md): opt-in packet capture on one container
+  endpoint.
 
-Every fixture package follows the Testcontainers for Go module conventions: a `Run`
-function that takes a context, an image and options, and a `Container` that
-embeds `testcontainers.Container`. `capture` starts no fixture of its own: it
-observes a container that the caller or a fixture already owns. The service packages build on `ceph`: their
-`Run` starts a cluster with the service's defaults, their options can be passed
-to `ceph.Run` together, and their `Container` embeds `*ceph.Container`. The API
-reference for every package is also available with `go doc` and on
-pkg.go.dev.
-
-The implemented naming convention, source inventory and current-source retention
-audit are recorded in [API naming](docs/design/api-naming.md).
+Every fixture package is a Testcontainers for Go module: `Run(ctx, image,
+opts...)` returns a `Container` that embeds `testcontainers.Container`. The
+service packages build on `ceph`: their `Container` embeds `*ceph.Container`,
+and their options can be passed to `ceph.Run` together. `capture` starts no
+fixture of its own; it observes a container that already exists.
 
 ## Requirements
 
-- Go 1.26 or later (v0.1.0 needs Go 1.25); use a patched toolchain. The
+- Go 1.26 or later; use a patched toolchain. The
   repository selects Go 1.26.9 for its own checks. A consumer must select its
   own toolchain; the toolchain line of this repository does not set it.
 - A Docker engine that runs Linux containers. Docker Desktop works. Host
@@ -136,12 +140,6 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 
 ## Documentation
 
-Module pages, one per package, in the format of the Testcontainers for Go
-module catalogue:
-
-- [Ceph](docs/ceph.md): the cluster, its options and every `ceph.Container` method.
-- [RBD](docs/rbd.md), [CephFS](docs/cephfs.md) and [RGW](docs/rgw.md).
-
 Guides for tasks that span packages:
 
 - [Fault injection](docs/guides/fault-injection.md): stopping, pausing and
@@ -161,6 +159,8 @@ Guides for tasks that span packages:
 - [Classified errors](docs/guides/errors.md): telling a refused request, a
   feature the release lacks, a missing image tool, an engine limit and a
   failed native command apart with `errors.Is` and `errors.As`.
+- [Bug compatibility](docs/guides/bug-compatibility.md): the registered
+  `ceph_bug_<id>` tags and the policy for adding one.
 
 For contributors:
 
@@ -168,10 +168,6 @@ For contributors:
   integration tests.
 - [CI](docs/contributing/ci.md): the GitHub Actions workflows and how to read a
   failing batch.
-- [Package-split rewrite shards](docs/contributing/package-split-shards.md): add
-  one shard per package move for the retained producer rewrites.
-- [Behavioral bug compatibility](docs/contributing/bug-compatibility.md): explicit
-  bug-ID selection policy and the planned supported-tag catalogue.
 - [Preparing a release](docs/contributing/releasing.md): the scope, evidence
   and publication checks for a candidate.
 

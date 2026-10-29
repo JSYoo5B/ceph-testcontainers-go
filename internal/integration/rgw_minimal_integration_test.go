@@ -20,7 +20,7 @@ import (
 )
 
 // The smallest S3 fixture that rgw.Run builds: one MON, one MGR, one OSD and
-// one gateway, with every pool at size 1. It is the recipe in docs/rgw.md.
+// one gateway, with every pool at size 1. It is the recipe in rgw/README.md.
 func TestRGWMinimalS3Recipe(t *testing.T) {
 	parallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)

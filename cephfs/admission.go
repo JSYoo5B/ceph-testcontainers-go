@@ -32,8 +32,9 @@ type admissionSpec struct {
 // through the returned done, for the whole operation.
 //
 // Every operation keeps its own predicate in spec.check. admitOperation has no notion of
-// a valid filesystem: the three flows differ on purpose (see
-// docs/design/filesystem-decomposition.md, R4 and R5), and merging them would
+// a valid filesystem: the three flows differ on purpose: subvolume and session
+// operations require FilesystemName to equal the recorded name, data-pool
+// operations do not, and MDSStatus takes no admission. Merging them would
 // change which edits of an exported field are refused.
 //
 // On any error the returned done is a no-op and no lock is held. On success the

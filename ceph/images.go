@@ -51,7 +51,7 @@ func (s ImageSet) normalized() (ImageSet, error) {
 // Run takes at most one WithImageOptions that selects an image set, and a
 // second selection is refused with ErrInvalidRequest even when it repeats the
 // first. The pattern for every configuration group, and the composition rules,
-// are in docs/design/value-configuration-composition.md.
+// are in docs/contributing/configuration-composition.md.
 type ImageOptions struct {
 	images    ImageSet
 	imagesSet bool

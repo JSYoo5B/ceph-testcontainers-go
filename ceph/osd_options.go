@@ -11,7 +11,7 @@ package ceph
 //	second := base.WithImage(imageB)
 //
 // AddOSD composes any number of values; the rules are in
-// docs/design/value-configuration-composition.md. Every field tracks whether
+// docs/contributing/configuration-composition.md. Every field tracks whether
 // it was set, so an explicit empty setting differs from an unspecified one, and
 // the value holds only strings, so a copy never shares mutable storage.
 type OSDOptions struct {

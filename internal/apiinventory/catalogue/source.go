@@ -1,7 +1,7 @@
 // Package catalogue derives, stores and checks the package-scoped public API
-// catalogues under docs/design/api-naming.
+// catalogues under internal/apiinventory/catalogues.
 //
-// Every public package owns three files in docs/design/api-naming/<package>:
+// Every public package owns three files in internal/apiinventory/catalogues/<package>:
 //
 //   - declarations.json and members.json are source-derived output. Only
 //     Regenerate writes them.
@@ -26,7 +26,7 @@ import (
 )
 
 // Dir is the catalogue directory, relative to the module root.
-const Dir = "docs/design/api-naming"
+const Dir = "internal/apiinventory/catalogues"
 
 // The three files of a package directory.
 const (

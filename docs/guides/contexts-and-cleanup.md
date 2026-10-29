@@ -100,8 +100,7 @@ their waits by `ctx`:
 | `rgw.Gateways(ctx, cluster)` | Gateway descriptors sorted by name, including partially started ones |
 | `ControlContainer(ctx)` | The control CLI container; the snapshot does not guarantee the process stays alive |
 
-These are the only forms of these accessors: the context-free versions were
-removed without aliases. A refused
+A refused
 or unavailable cluster and a cancelled `ctx` are returned as errors.
 
 ### Waiting in the background
@@ -341,7 +340,7 @@ result:
 | `AddMonitor`, `AddManager`, `AddOSD`, `rgw.Start`, `cephfs.Start` | Partial daemon or service, owned by the cluster | Inspect it, or let `Terminate` remove it |
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
-| `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](../ceph.md#clientconfigreplacekey)) |
+| `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](../../ceph/README.md#clientconfigreplacekey)) |
 | `override.SetConfig`, `override.SetMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `cephfs` `OverrideSessionTimeouts`, `OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
 | `fault.Pause` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
@@ -518,10 +517,10 @@ func TestSomething(t *testing.T) {
 
 ## Related APIs
 
-- [ceph.md](../ceph.md): `Run`, `Terminate`, `WithStartupTimeout`,
+- [`ceph`](../../ceph/README.md): `Run`, `Terminate`, `WithStartupTimeout`,
   `Temporary*`, `RunNativeCommand`, `CollectDiagnostics`, context-aware
   getters.
-- [rbd.md](../rbd.md), [cephfs.md](../cephfs.md), [rgw.md](../rgw.md): service
+- [`rbd`](../../rbd/README.md), [`cephfs`](../../cephfs/README.md), [`rgw`](../../rgw/README.md): service
   and multicluster fixtures and their `Terminate`.
 - [Fault injection](fault-injection.md): pauses, interruptions and overrides
   in practice.
