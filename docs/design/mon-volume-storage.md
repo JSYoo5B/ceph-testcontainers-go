@@ -593,6 +593,10 @@ the start of the new one.
   assignment, every container of the cluster is created under `Container.mu`, and
   a taken IP fails the creation. The container side's `Hold` only has to verify
   that the address is free.
+- Ownership of a hold is taken before its error is handled: `Hold` may return a
+  releasable hold together with an error (a partial allocator), so a non-nil
+  hold is kept on the record, released at once, and kept for a retry if that
+  release fails. A typed nil hold is still refused.
 - A failed release keeps the hold on the record. The next generation releases it
   first, so there is never more than one, and `Terminate` will release it
   (not wired).

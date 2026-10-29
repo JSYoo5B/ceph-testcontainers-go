@@ -112,18 +112,24 @@ func (s *monStoreVolume) observeAddress(ctx context.Context, g monStoreGeneratio
 
 // holdAddress takes the exact hold on the recorded address. A hold whose
 // release failed earlier is released first, so there is never more than one.
+// A hold that comes back with an error stays owned: it is released at once, and
+// kept for a retry if that release fails.
 func (s *monStoreVolume) holdAddress(ctx context.Context, g monStoreGenerations) error {
 	if err := s.releaseAddressHold(ctx); err != nil {
 		return err
 	}
 	hold, err := g.Hold(ctx, s.endpoint.clone())
+	// A hold returned together with an error may own reserved ports, so it is
+	// kept before the error is handled and released like any other.
+	if !isNilPort(hold) {
+		s.hold = hold
+	}
 	if err != nil {
-		return fmt.Errorf("hold the address of MON %s: %w", s.mon, err)
+		return errors.Join(fmt.Errorf("hold the address of MON %s: %w", s.mon, err), s.releaseAddressHold(ctx))
 	}
 	if isNilPort(hold) {
 		return fmt.Errorf("hold the address of MON %s: the container side returned no hold", s.mon)
 	}
-	s.hold = hold
 	return nil
 }
 

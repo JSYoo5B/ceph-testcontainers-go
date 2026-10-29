@@ -41,6 +41,8 @@ type monStoreGenerationsFake struct {
 	releaseErr error
 	holdCalls  int
 	nilHold    bool
+	// partialHold makes Hold return a releasable hold together with holdErr.
+	partialHold bool
 	// onEvent runs after every recorded event: a third party acting in a gap.
 	onEvent func(event string)
 }
@@ -89,6 +91,15 @@ func (h *monStoreHoldFake) Release(context.Context) error {
 func (g *monStoreGenerationsFake) Hold(_ context.Context, a monStoreEndpoint) (monStoreEndpointHold, error) {
 	g.holdCalls++
 	g.record(fmt.Sprintf("hold %v", a.ports))
+	if g.holdErr != nil && g.partialHold {
+		if g.held == nil {
+			g.held = map[int]bool{}
+		}
+		for _, p := range a.ports {
+			g.held[p] = true
+		}
+		return &monStoreHoldFake{g: g, ports: a.ports}, g.holdErr
+	}
 	if g.holdErr != nil {
 		return nil, g.holdErr
 	}
@@ -554,6 +565,34 @@ func TestMonStoreFailedCreationReleasesTheHold(t *testing.T) {
 	r.endpoint = &monStoreEndpoint{ip: "192.0.2.10", ports: []int{3300}}
 	if _, err := r.startGeneration(t.Context(), g, "new"); err == nil || r.hold != nil || len(g.held) != 0 || g.holdCalls != 1 {
 		t.Fatalf("%v hold %v held %v holds %d", err, r.hold, g.held, g.holdCalls)
+	}
+}
+
+func TestMonStorePartialHoldReturnedWithAnErrorStaysOwnedAndIsReleased(t *testing.T) {
+	r, _, g := monStoreRunningFixture(t)
+	g.holdErr, g.partialHold = errors.New("allocator half started"), true
+	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || len(g.launches) != 1 {
+		t.Fatalf("a partial hold went on: %v", err)
+	}
+	if r.hold != nil || len(g.held) != 0 || !slices.Contains(g.events, "release") {
+		t.Fatalf("the partial hold was dropped: hold %v held %v events %v", r.hold, g.held, g.events)
+	}
+}
+
+func TestMonStorePartialHoldWhoseReleaseFailsIsRetainedForRetry(t *testing.T) {
+	r, _, g := monStoreRunningFixture(t)
+	g.holdErr, g.partialHold, g.releaseErr = errors.New("allocator half started"), true, errors.New("removal timed out")
+	if _, err := r.replaceGeneration(t.Context(), g, "new"); err == nil || len(g.launches) != 1 {
+		t.Fatalf("%v", err)
+	}
+	if r.hold == nil || len(g.held) == 0 {
+		t.Fatalf("a hold whose release failed was forgotten: hold %v held %v", r.hold, g.held)
+	}
+	// The next attempt releases the leftover first, so the ports are free again
+	// before a new hold is taken.
+	g.holdErr, g.partialHold, g.releaseErr = nil, false, nil
+	if _, err := r.startGeneration(t.Context(), g, "new"); err != nil || r.hold != nil || len(g.held) != 0 {
+		t.Fatalf("%v hold %v held %v", err, r.hold, g.held)
 	}
 }
 
