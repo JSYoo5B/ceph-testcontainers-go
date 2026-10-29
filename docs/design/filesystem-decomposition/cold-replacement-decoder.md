@@ -119,13 +119,14 @@ reduced to two queries and one call.
   the three callers.
 
 Negative controls (each applied to the source, run, and reverted): dropping the
-standby/boot refusal, the exact-member name check, the laggy check, the
-foreign-standby check or the `ctx.Err()` of the reader fails the replacement
-characterization or the reader test; dropping the joinable flag or the no-worker
-requirement fails the cold or replacement characterization; accepting
-`up:oneshot-replay` fails the list test; a forbidden identifier in either
-decoder file, a second caller of a decoder and a reordered reader each fail
-their guard.
+`up:boot` refusal, the laggy check, the foreign-standby check, the joinable flag
+or the no-worker requirement of the replacement decoder fails the replacement
+characterization; dropping the joinable flag or the no-rank requirement of the
+cold decoder fails the cold characterization; dropping `ctx.Err()` from the
+reader fails the reader tests; reading the map before the pools fails the
+characterization; adding `up:oneshot-replay` to the list fails the list tests; a
+forbidden identifier in a decoder file and a second caller of a decoder each
+fail their guard.
 
 ## Not covered
 
