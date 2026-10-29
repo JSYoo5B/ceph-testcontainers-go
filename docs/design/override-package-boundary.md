@@ -204,7 +204,7 @@ structs move with the handle.
 
 | Stays | Reason |
 | --- | --- |
-| `ConfigSetting`, `ConfigEntry`, `MessengerPolicy`, `MessengerConnectionMode`, `OSDFlag` and its constants, `MGRModuleState`, `BlocklistEntry`, `FullRatios`, `FullRatioSnapshot` | Read by observations (`Observer.Configuration`, `Observer.OSDFlags`, `Observer.MGRModules`, `Observer.BlocklistEntries`, `Observer.FullRatios`) and by options and bootstrap (`WithMessengerPolicy`, `ceph.go` validation). Moving them would force `ceph` to import `override`. |
+| `ConfigSetting`, `ConfigEntry`, `MessengerPolicy`, `MessengerConnectionMode`, `OSDFlag` and its constants, `MGRModuleState`, `BlocklistEntry`, `FullRatios`, `FullRatioSnapshot` | Read by observations (`Observer.Configuration`, `Observer.OSDFlags`, `Observer.MGRModules`, `Observer.BlocklistEntries`, `Observer.FullRatios`) and by options and bootstrap (`NetworkConfig.WithMessengerPolicy`, `ceph.go` validation). Moving them would force `ceph` to import `override`. |
 | `DebugLevelSetting`, `DebugLevelState`, `DebugLevelReceipt`, `DebugLevelTransition` | D3: the receipt value types stay, because `Finalization` copies the receipt. |
 | every unexported helper that `ceph` still uses | Section 5. |
 

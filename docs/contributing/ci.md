@@ -841,7 +841,7 @@ The default is `host` for the RADOS products (`ceph`, `rbd`, `cephfs`): their
 clients reach every daemon at the address that the maps advertise, which a
 native client in the test process can use only on the host network. It is
 `bridge` for RGW, whose one HTTP endpoint a port mapping serves. A test that
-uses a bridge-only feature (`WithSeparateClusterNetwork`, `InterruptNetwork`,
+uses a bridge-only feature (`NetworkConfig.WithSeparateClusterNetwork`, `InterruptNetwork`,
 `ApplyNetworkProfile`) declares `bridge` alone, or keeps that part in the
 bridge subtest.
 

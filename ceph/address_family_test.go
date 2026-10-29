@@ -55,31 +55,31 @@ func TestDualStackOrderConfigRequiresDualStack(t *testing.T) {
 		}
 	}
 	for _, family := range []AddressFamily{AddressIPv4, AddressIPv6, AddressIPv4MappedIPv6} {
-		cluster, err := Run(context.Background(), DefaultImage, WithAddressFamily(family), WithConfigFile(path))
-		if cluster != nil || !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "ms_bind_prefer_ipv4, which requires WithAddressFamily(dual-stack)") {
+		cluster, err := Run(context.Background(), DefaultImage, WithNetworkConfig(NetworkConfig{}.WithAddressFamily(family)), WithConfigFile(path))
+		if cluster != nil || !errors.Is(err, ErrInvalidRequest) || !strings.Contains(err.Error(), "ms_bind_prefer_ipv4, which requires WithNetworkConfig(NetworkConfig{}.WithAddressFamily(dual-stack))") {
 			t.Fatalf("%s: Run accepted ms_bind_prefer_ipv4: %v", family, err)
 		}
 	}
 }
 
 func TestAddressFamilyOptions(t *testing.T) {
-	if err := WithAddressFamily(AddressFamily(7))(&options{}); err == nil {
+	if err := WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressFamily(7)))(&options{}); err == nil {
 		t.Fatal("unknown family accepted")
 	}
 	var settings options
-	if err := WithAddressFamily(AddressIPv6)(&settings); err != nil || settings.addressFamily != AddressIPv6 || settings.bridgeFamily() == 0 {
+	if err := WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressIPv6))(&settings); err != nil || settings.addressFamily != AddressIPv6 || settings.bridgeFamily() == 0 {
 		t.Fatalf("IPv6: %v %+v", err, settings.addressFamily)
 	}
 	if AddressIPv4MappedIPv6.String() != "ipv4-mapped" {
 		t.Fatal("names changed")
 	}
 	for name, opts := range map[string][]Option{
-		"host network":                    {WithAddressFamily(AddressIPv6), WithHostNetwork()},
-		"dual-stack host network":         {WithAddressFamily(AddressDualStack), WithHostNetwork()},
-		"mapped separate cluster network": {WithAddressFamily(AddressIPv4MappedIPv6), WithSeparateClusterNetwork()},
+		"host network":                    {WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressIPv6)), WithHostNetwork()},
+		"dual-stack host network":         {WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressDualStack)), WithHostNetwork()},
+		"mapped separate cluster network": {WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressIPv4MappedIPv6).WithSeparateClusterNetwork())},
 	} {
 		cluster, err := Run(context.Background(), DefaultImage, opts[0], opts[1])
-		if err == nil || cluster != nil || !strings.Contains(err.Error(), "WithAddressFamily") {
+		if err == nil || cluster != nil || !strings.Contains(err.Error(), "NetworkConfig.WithAddressFamily") {
 			t.Fatalf("%s: Run accepted the combination: %v", name, err)
 		}
 	}

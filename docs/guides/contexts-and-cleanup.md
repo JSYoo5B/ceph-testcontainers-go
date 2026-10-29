@@ -177,7 +177,7 @@ resources from calls that failed halfway:
 | RGW gateways | `rgw.WithGateways`, `rgw.Start` |
 | MDS daemons | `cephfs.WithFilesystems`, `cephfs.Start`, `ScaleMDS` |
 | Host-port reservation helpers | Host mode MON and RGW startup |
-| The public bridge and the separate cluster bridge | `Run`, `WithSeparateClusterNetwork` |
+| The public bridge and the separate cluster bridge | `Run`, `NetworkConfig.WithSeparateClusterNetwork` |
 | Network delays and their netem helper containers | `ApplyNetworkProfile` (removed first, also on your client containers) |
 | Container pauses | `fault.Pause` (resumed before the teardown) |
 | Network interruptions | `cluster.InterruptNetwork` (restored before the teardown, also on your client containers) |

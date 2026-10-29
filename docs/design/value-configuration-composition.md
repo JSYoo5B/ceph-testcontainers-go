@@ -174,6 +174,55 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithOSDStorage(storage))
 - **No slice or map member**, so a struct copy is independent. A member that holds
   one must use `slices.Clone`, which keeps nil and non-nil empty apart.
 
+### Network and messenger group (change `312-network-config`)
+
+Proposal of the implementation side, not an owner approval. The third group
+follows the carrier pattern above:
+
+```go
+network := ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack).WithSeparateClusterNetwork()
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithNetworkConfig(network))
+```
+
+| Old (removed, no alias) | New |
+| --- | --- |
+| `WithAddressFamily(family)` | `NetworkConfig.WithAddressFamily(family)` |
+| `WithSeparateClusterNetwork()` | `NetworkConfig.WithSeparateClusterNetwork()` |
+| `WithHostAddress(address)` | `NetworkConfig.WithHostAddress(address)` |
+| `WithMessengerMode(mode)` | `NetworkConfig.WithMessengerMode(mode)` |
+| `WithMessengerPolicy(policy)` | `NetworkConfig.WithMessengerPolicy(policy)` |
+
+- **Why this group next.** It is the smallest cohesive group left: five settings
+  with about 130 references in 45 files, against about 300 call sites in 150
+  files for the topology group (whose cohesive subsets are not independent: the
+  counts, the no-initial flags and the initial layouts refuse each other) and
+  three separate packages for the service settings. All five settings decide
+  which addresses the daemons bind and advertise and over which Messenger
+  protocol and connection modes they talk, and their combination rules already
+  live together in `Run` (host address needs host network, host network excludes
+  a separate cluster network and non-IPv4 families, the mapped family excludes a
+  separate cluster network, a policy excludes `MessengerV2Secure`). Those rules
+  are unchanged and still refuse before any resource is created.
+- **What stays out.** `WithHostNetwork` is Docker execution policy and stays a
+  testcontainers-style function. `WithClientMessengerPolicy` is a
+  `ClientContainerOption` of `WithClient`, not a `Run` setting. `WithConfigFile`
+  stays with the later configuration group.
+- **Rules applied.** The zero value changes nothing. Every field records that it
+  was set, so the default family `AddressIPv4` and `MessengerDefault` are settings
+  (a second carrier cannot override them), while `WithHostAddress("")`, an unknown
+  family or mode and an empty list in a policy are refused as explicit invalid
+  settings. Two `WithNetworkConfig` options that set the same field are refused
+  even when equal; different fields compose in any order. Within one value a
+  later call replaces the earlier one. A value is validated as a whole before any
+  of its fields is written, so a refused value changes no setting. Repeating a
+  legacy option used to mean last wins; across carriers it is now a refusal,
+  which is the only behavior change.
+- **Copies (rule 7).** `MessengerPolicy` holds three slices. The value clones them
+  with `slices.Clone` when the policy enters it and again when the settings are
+  written, so a caller reusing its slices, a derived value and the settings never
+  share storage, a nil list stays nil (Ceph's default) and a non-nil empty list
+  stays empty and is refused.
+
 ### `WithConfigFile` (proposal)
 
 `WithConfigFile(path)` is Ceph configuration, not container-execution policy:
@@ -195,7 +244,7 @@ spellings. Docker and container execution policy stays testcontainers-style
 | Images (`ImageOptions`, `WithImageOptions`) | `WithImageSet`; later the service image roles | done (`312-image-options`) |
 | OSD storage (`OSDStorage`, `WithOSDStorage`) | block size, object store, in-memory, volume | done (`312-osd-storage`) |
 | Topology (`ClusterConfig`, `WithClusterConfig`) | `WithMonitorCount`, `WithManagerCount`, `WithNoInitialManagers`, `WithOSDCount`, `WithInitialOSDs`, `WithNoInitialOSDs`, `WithPoolDefaults`, `WithDefaultCRUSHRoot`, `WithPools`, `WithStartupTimeout`, `WithAuth`, `WithConfigFile` | next, probably split by cohesion (counts and layout; pools and defaults; auth and config) |
-| Network and messenger (`NetworkConfig`, `WithNetworkConfig`) | `WithAddressFamily`, `WithSeparateClusterNetwork`, `WithHostAddress`, `WithMessengerMode`, `WithMessengerPolicy` | after |
+| Network and messenger (`NetworkConfig`, `WithNetworkConfig`) | address family, separate cluster network, host address, Messenger mode, Messenger policy | done (`312-network-config`) |
 | Services (own packages, own value types) | `rbd.WithPools`, `cephfs.WithFilesystems`, `rgw.WithGateways` | per package |
 | Stay functional (Docker or container execution) | `WithHostNetwork`, `WithIdleEntrypoint` | none |
 

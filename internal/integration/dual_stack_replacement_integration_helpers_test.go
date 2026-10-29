@@ -314,7 +314,7 @@ func testDualStackReplacement(t *testing.T) {
 	replacementMDS := filesystem + "-1"
 	ipv6First := map[string]bool{"osd.2": true, "mds." + replacementMDS: true, "mgr.b": true}
 	opts := append(roles, ceph.WithOSDCount(2), ceph.WithMonitorCount(2), ceph.WithManagerCount(1),
-		ceph.WithAddressFamily(ceph.AddressDualStack),
+		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack)),
 		ceph.WithConfigFile(dualStackOrderConfig(t, "osd.2", "mds."+replacementMDS, "mgr.b")),
 		cephfs.WithFilesystems(cephfs.Config{Name: filesystem, ActiveMDS: 1}))
 	cluster, client := newServiceClusterRun(t, cephfsRun, image, opts...)

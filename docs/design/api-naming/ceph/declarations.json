@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 330,
+  "count": 332,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -1402,6 +1402,52 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.NetworkConfig",
+      "kind": "type",
+      "proposed": "ceph.NetworkConfig",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NetworkConfig.WithAddressFamily",
+      "kind": "method",
+      "signature": "func(family AddressFamily) NetworkConfig",
+      "receiver": "NetworkConfig",
+      "proposed": "ceph.NetworkConfig.WithAddressFamily",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NetworkConfig.WithHostAddress",
+      "kind": "method",
+      "signature": "func(address string) NetworkConfig",
+      "receiver": "NetworkConfig",
+      "proposed": "ceph.NetworkConfig.WithHostAddress",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NetworkConfig.WithMessengerMode",
+      "kind": "method",
+      "signature": "func(mode MessengerMode) NetworkConfig",
+      "receiver": "NetworkConfig",
+      "proposed": "ceph.NetworkConfig.WithMessengerMode",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NetworkConfig.WithMessengerPolicy",
+      "kind": "method",
+      "signature": "func(policy MessengerPolicy) NetworkConfig",
+      "receiver": "NetworkConfig",
+      "proposed": "ceph.NetworkConfig.WithMessengerPolicy",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.NetworkConfig.WithSeparateClusterNetwork",
+      "kind": "method",
+      "signature": "func() NetworkConfig",
+      "receiver": "NetworkConfig",
+      "proposed": "ceph.NetworkConfig.WithSeparateClusterNetwork",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.NetworkPlane",
       "kind": "type",
       "proposed": "ceph.NetworkPlane",
@@ -2112,13 +2158,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithAddressFamily",
-      "kind": "function",
-      "signature": "func(family AddressFamily) Option",
-      "proposed": "ceph.WithAddressFamily",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.WithAuth",
       "kind": "function",
       "signature": "func(config AuthConfig) Option",
@@ -2161,13 +2200,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithHostAddress",
-      "kind": "function",
-      "signature": "func(address string) Option",
-      "proposed": "ceph.WithHostAddress",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.WithHostNetwork",
       "kind": "function",
       "signature": "func() Option",
@@ -2203,24 +2235,17 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.WithMessengerMode",
-      "kind": "function",
-      "signature": "func(mode MessengerMode) Option",
-      "proposed": "ceph.WithMessengerMode",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithMessengerPolicy",
-      "kind": "function",
-      "signature": "func(policy MessengerPolicy) Option",
-      "proposed": "ceph.WithMessengerPolicy",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.WithMonitorCount",
       "kind": "function",
       "signature": "func(count int) Option",
       "proposed": "ceph.WithMonitorCount",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithNetworkConfig",
+      "kind": "function",
+      "signature": "func(network NetworkConfig) Option",
+      "proposed": "ceph.WithNetworkConfig",
       "decision": "baseline"
     },
     {
@@ -2263,13 +2288,6 @@
       "kind": "function",
       "signature": "func(configs ...PoolConfig) Option",
       "proposed": "ceph.WithPools",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.WithSeparateClusterNetwork",
-      "kind": "function",
-      "signature": "func() Option",
-      "proposed": "ceph.WithSeparateClusterNetwork",
       "decision": "baseline"
     },
     {

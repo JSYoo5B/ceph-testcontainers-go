@@ -35,7 +35,7 @@ func ExampleApplyNetworkProfile() {
 
 func ExampleInterruptNetwork() {
 	ctx := context.Background()
-	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithSeparateClusterNetwork())
+	cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()))
 	if cluster != nil {
 		defer func() { _ = cluster.Terminate(ctx) }()
 	}

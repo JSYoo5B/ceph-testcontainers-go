@@ -77,22 +77,6 @@ func (policy MessengerPolicy) settings() ([]ConfigSetting, error) {
 	return settings, nil
 }
 
-// WithMessengerPolicy selects the connection modes that MONs, MGRs and OSDs
-// accept from clients. Run stores the policy in the central configuration
-// right after the first MON starts, before any other daemon, so every daemon
-// starts with it. override.SetMessengerPolicy changes it on a running cluster.
-// It cannot be combined with MessengerV2Secure, whose local configuration
-// fixes every mode.
-func WithMessengerPolicy(policy MessengerPolicy) Option {
-	return func(o *options) error {
-		if _, err := policy.settings(); err != nil {
-			return fmt.Errorf("messenger policy: %w", err)
-		}
-		o.messengerPolicy = MessengerPolicy{Monitors: slices.Clone(policy.Monitors), Managers: slices.Clone(policy.Managers), OSDs: slices.Clone(policy.OSDs)}
-		return nil
-	}
-}
-
 // applyMessengerPolicy stores the bootstrap policy in the central
 // configuration.
 func (c *Container) applyMessengerPolicy(ctx context.Context) error {

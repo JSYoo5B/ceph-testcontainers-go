@@ -150,7 +150,7 @@ and by [WithStartupTimeout](#withstartuptimeout) (3 minutes by default):
 1. Validate all options together. Contradictory combinations fail before any
    Docker resource is created (see the table below).
 2. Create a dedicated bridge network (two with
-   [WithSeparateClusterNetwork](#withseparateclusternetwork)), or verify the
+   [NetworkConfig.WithSeparateClusterNetwork](#networkconfigwithseparateclusternetwork)), or verify the
    engine in host mode.
 3. Start MON `a`, record `ClusterFacts.CephVersion` (see [FactsOf](#factsof)), and read the generated
    `ceph.conf` and the `client.admin` keyring.
@@ -184,11 +184,11 @@ of option order:
 
 | Combination | Result |
 | --- | --- |
-| `WithHostAddress` without `WithHostNetwork` | `WithHostAddress requires WithHostNetwork` |
-| `WithHostNetwork` with `WithSeparateClusterNetwork` | `WithSeparateClusterNetwork requires bridge mode` |
-| `WithMessengerPolicy` with `MessengerV2Secure` | rejected; `MessengerV2Secure` fixes every connection mode |
-| `WithAddressFamily` with any family but `AddressIPv4`, and `WithHostNetwork` | `WithAddressFamily(...) requires bridge mode` |
-| `WithAddressFamily(AddressIPv4MappedIPv6)` with `WithSeparateClusterNetwork` | rejected |
+| `NetworkConfig.WithHostAddress` without `WithHostNetwork` | `NetworkConfig.WithHostAddress requires WithHostNetwork` |
+| `WithHostNetwork` with `NetworkConfig.WithSeparateClusterNetwork` | `NetworkConfig.WithSeparateClusterNetwork requires bridge mode` |
+| `NetworkConfig.WithMessengerPolicy` with `MessengerV2Secure` | rejected; `MessengerV2Secure` fixes every connection mode |
+| `NetworkConfig.WithAddressFamily` with any family but `AddressIPv4`, and `WithHostNetwork` | `NetworkConfig.WithAddressFamily(...) requires bridge mode` |
+| `NetworkConfig.WithAddressFamily(AddressIPv4MappedIPv6)` with `NetworkConfig.WithSeparateClusterNetwork` | rejected |
 | `WithNoInitialOSDs` with `WithOSDCount` or `WithInitialOSDs` | rejected; pick one initial layout |
 | `WithNoInitialOSDs` with initial pools, filesystems or gateways | rejected; add OSDs before provisioning them |
 | `WithNoInitialManagers` with `WithManagerCount` | rejected |
@@ -600,9 +600,9 @@ rejected with the option to use instead:
 | Keys | Use instead |
 | --- | --- |
 | `fsid`, `mon_host`, `mon_initial_members`, `mon_addr` | generated; `WithMonitorCount` |
-| `public_network`, `cluster_network`, `public_addr`, `cluster_addr`, `*_bind_addr` | `WithHostNetwork`, `WithSeparateClusterNetwork`, `WithHostAddress` |
+| `public_network`, `cluster_network`, `public_addr`, `cluster_addr`, `*_bind_addr` | `WithHostNetwork`, `NetworkConfig.WithSeparateClusterNetwork`, `NetworkConfig.WithHostAddress` |
 | `auth_*`, `keyring`, `key`, `keyfile` | `WithAuth`; fixture Cephx setup |
-| `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` except `ms_bind_prefer_ipv4` | `WithMessengerMode`, `WithMessengerPolicy`, `WithClientMessengerPolicy`, `WithAddressFamily`, `WithHostNetwork` |
+| `ms_*_mode`, `ms_mon_*_mode`, `ms_bind_*` except `ms_bind_prefer_ipv4` | `NetworkConfig.WithMessengerMode`, `NetworkConfig.WithMessengerPolicy`, `WithClientMessengerPolicy`, `NetworkConfig.WithAddressFamily`, `WithHostNetwork` |
 | `osd_pool_default_size`, `osd_pool_default_min_size` | `WithPoolDefaults` |
 | `osd_pool_default_crush_rule` | `WithDefaultCRUSHRoot` |
 | `bluestore_block_size` | `OSDStorage.WithBlockSize` |
@@ -624,10 +624,45 @@ file, NUL bytes or invalid UTF-8, and files (or merged results) larger than
 64 KiB. Ceph treats `#` and `;` as comment starts even inside quotes, so a value
 such as `"a;b"` is rejected; escape literal characters as `\#` and `\;`.
 
-#### WithMessengerMode
+#### NetworkConfig
 
 ```golang
-ceph.WithMessengerMode(ceph.MessengerV2Secure)
+type NetworkConfig struct { /* unexported */ }
+
+func (NetworkConfig) WithAddressFamily(family AddressFamily) NetworkConfig
+func (NetworkConfig) WithSeparateClusterNetwork() NetworkConfig
+func (NetworkConfig) WithHostAddress(address string) NetworkConfig
+func (NetworkConfig) WithMessengerMode(mode MessengerMode) NetworkConfig
+func (NetworkConfig) WithMessengerPolicy(policy MessengerPolicy) NetworkConfig
+func WithNetworkConfig(network NetworkConfig) Option
+```
+
+The network and Messenger group: the address family, the separate cluster
+network, the host-mode address, the Messenger protocol mode and the Messenger
+connection policy. `NetworkConfig` is a plain value with chainable,
+value-returning methods; `WithNetworkConfig` is its one option function. The zero
+value changes nothing, and each field records whether it was set, so an explicit
+setting differs from an unspecified one (`WithAddressFamily(ceph.AddressIPv4)`
+and `WithMessengerMode(ceph.MessengerDefault)` are settings, `WithHostAddress("")`
+is refused). Within one value a later call of the same method replaces the earlier
+one. `Run` refuses a field that two `WithNetworkConfig` options both set, even
+when they agree; different fields in different options compose in any order. The
+value copies the lists of a `MessengerPolicy`, so changing them afterwards does
+not change it, and a non-nil empty list is still refused. Incompatible
+combinations (see the table above) fail before resource allocation.
+`WithHostNetwork` is container execution policy and stays its own option. It
+replaces `WithAddressFamily`, `WithSeparateClusterNetwork`, `WithHostAddress`,
+`WithMessengerMode` and `WithMessengerPolicy`.
+
+```golang
+network := ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack).WithSeparateClusterNetwork()
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithNetworkConfig(network))
+```
+
+#### NetworkConfig.WithMessengerMode
+
+```golang
+ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure))
 ```
 
 Selects, at bootstrap, the Messenger protocols that every daemon listens on and
@@ -636,7 +671,7 @@ immutable for the lifetime of the cluster.
 
 | Mode | Listeners and addresses | Connection modes |
 | --- | --- | --- |
-| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [WithMessengerPolicy](#withmessengerpolicy), [override.SetMessengerPolicy](override.md#setmessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
+| `ceph.MessengerDefault` | v1 and v2 | Ceph's defaults, changeable with [NetworkConfig.WithMessengerPolicy](#networkconfigwithmessengerpolicy), [override.SetMessengerPolicy](override.md#setmessengerpolicy) and [WithClientMessengerPolicy](#withclientmessengerpolicy). Not every connection is encrypted. |
 | `ceph.MessengerV2Only` | v2 only | As with `MessengerDefault`: CRC, secure or a per-daemon-type mix, changeable later. |
 | `ceph.MessengerV2Secure` | v2 only | Fixed to encrypted Messenger v2 (`secure`, AES-GCM) for every connection; no CRC mode. |
 
@@ -646,8 +681,7 @@ and `ms_bind_msgr2` to `true` and nothing else, so a CRC-only cluster is:
 ```golang
 crc := []ceph.MessengerConnectionMode{ceph.MessengerCRC}
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithMessengerMode(ceph.MessengerV2Only),
-	ceph.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc}),
+	ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only).WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc})),
 )
 // Native clients attached with WithClient(ceph.WithClientMessengerPolicy(
 // ceph.ClientMessengerPolicy{MonitorsAndManagers: crc, OtherDaemons: crc}))
@@ -662,8 +696,8 @@ describe to these options:
 
 | `ceph.conf` | Options |
 | --- | --- |
-| All six `ms_*_mode` and `ms_mon_*_mode` options `secure` | `WithMessengerMode(ceph.MessengerV2Secure)` |
-| `ms_mon_service_mode` of the MONs or MGRs, `ms_service_mode` of the OSDs | `WithMessengerMode(ceph.MessengerV2Only)` and the matching fields of `WithMessengerPolicy` |
+| All six `ms_*_mode` and `ms_mon_*_mode` options `secure` | `NetworkConfig.WithMessengerMode(ceph.MessengerV2Secure)` |
+| `ms_mon_service_mode` of the MONs or MGRs, `ms_service_mode` of the OSDs | `NetworkConfig.WithMessengerMode(ceph.MessengerV2Only)` and the matching fields of `NetworkConfig.WithMessengerPolicy` |
 | `ms_mon_client_mode` and `ms_client_mode` of a client | `WithClientMessengerPolicy` on that client's container |
 | `ms_cluster_mode` and `ms_mon_cluster_mode` between daemons | Ceph's defaults: the policy options leave them alone; with `MessengerV2Only`, [override.SetConfig](override.md#setconfig) can change them |
 | `mon_host` with only v2 addresses, port 3300 | [MonitorBootstrapAddresses](#monitorbootstrapaddresses), or `MappedPort(ctx, "3300/tcp")` in bridge mode; there is no 6789 to map |
@@ -768,13 +802,13 @@ records its type: the first two bytes, little-endian, are 1 for `aes` and 2 for
   `aes256k`.
 - `WithConfigFile` rejects `auth_*` keys, so set the lifetimes here.
 
-#### WithMessengerPolicy
+#### NetworkConfig.WithMessengerPolicy
 
 ```golang
-ceph.WithMessengerPolicy(ceph.MessengerPolicy{
+ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerPolicy(ceph.MessengerPolicy{
 	Monitors: []ceph.MessengerConnectionMode{ceph.MessengerSecure},
 	Managers: []ceph.MessengerConnectionMode{ceph.MessengerCRC},
-})
+}))
 ```
 
 Selects, for each daemon type, the Messenger v2 connection modes that it accepts
@@ -864,7 +898,7 @@ Linux) can reach MONs and OSDs directly.
   Ceph's dynamic port selection. MON port reservation is retried up to five times
   when another process takes a port.
 - The advertised address defaults to `127.0.0.1`; use
-  [WithHostAddress](#withhostaddress) for a remote Docker host.
+  [NetworkConfig.WithHostAddress](#networkconfigwithhostaddress) for a remote Docker host.
 - `Run` checks that the engine runs Linux containers and that the test process
   reaches the first MON's advertised v2 endpoint (retried for up to 5 seconds)
   before creating MGRs and OSDs. Otherwise it returns an error wrapping
@@ -873,7 +907,7 @@ Linux) can reach MONs and OSDs directly.
 - Docker Desktop needs host networking enabled in its settings (version 4.34 or
   later), and its network behaviour differs from a Linux engine. A test process
   that itself runs in a bridge-network container cannot use host mode.
-- Cannot be combined with [WithSeparateClusterNetwork](#withseparateclusternetwork),
+- Cannot be combined with [NetworkConfig.WithSeparateClusterNetwork](#networkconfigwithseparateclusternetwork),
   and Docker endpoint interruption ([fault.InterruptNetwork](fault.md#interruptnetwork)) and
   packet delay ([fault.ApplyNetworkProfile](fault.md#applynetworkprofile)) are not
   available.
@@ -882,10 +916,10 @@ Linux) can reach MONs and OSDs directly.
 report the mode and address. See [Host networking](guides/host-network.md) for native
 clients, Docker Desktop, remote engines and port behaviour.
 
-#### WithHostAddress
+#### NetworkConfig.WithHostAddress
 
 ```golang
-ceph.WithHostAddress("192.0.2.10")
+ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithHostAddress("192.0.2.10"))
 ```
 
 Selects the IPv4 address that daemons bind and advertise in host mode, typically
@@ -894,10 +928,10 @@ the Docker host and reachable from the test process; `Run` verifies both and
 fails with `ErrHostNetworkUnavailable` otherwise. Requires
 [WithHostNetwork](#withhostnetwork).
 
-#### WithSeparateClusterNetwork
+#### NetworkConfig.WithSeparateClusterNetwork
 
 ```golang
-ceph.WithSeparateClusterNetwork()
+ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork())
 ```
 
 Creates a second owned bridge for OSD replication, recovery and heartbeat
@@ -909,7 +943,7 @@ return the two bridges, and [fault.InterruptNetwork](fault.md#interruptnetwork) 
 `ceph.ClusterNetworkPlane` disconnects one OSD's replication endpoint only.
 Requires bridge mode.
 
-With `WithAddressFamily(ceph.AddressIPv6)`, both bridges are dual-stack and
+With `NetworkConfig.WithAddressFamily(ceph.AddressIPv6)`, both bridges are dual-stack and
 Ceph's `public network` and `cluster network` are their IPv6 subnets. The
 MONs, MGRs and OSDs then advertise only IPv6 addresses: MONs, MGRs and the
 public and heartbeat front addresses of OSDs from the public subnet, and the
@@ -919,7 +953,7 @@ cluster endpoint, IPv4 and IPv6, and keeps its public endpoint.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithAddressFamily(ceph.AddressIPv6), ceph.WithSeparateClusterNetwork())
+	ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv6).WithSeparateClusterNetwork()))
 observer, err := ceph.Observe(cluster)
 if err != nil {
 	t.Fatal(err)
@@ -930,15 +964,15 @@ addresses, err := observer.DaemonAddresses(ctx)
 // addresses.OSDs[0].Cluster[0].Addr == "[fd62:93fe:2c9e:1::2]:6800"
 ```
 
-With `WithAddressFamily(ceph.AddressDualStack)`, both bridges are dual-stack
+With `NetworkConfig.WithAddressFamily(ceph.AddressDualStack)`, both bridges are dual-stack
 as well, and `public network` and `cluster network` each list both subnets of
 their bridge. Every daemon then advertises one address of each family from
 the matching bridge.
 
-#### WithAddressFamily
+#### NetworkConfig.WithAddressFamily
 
 ```golang
-ceph.WithAddressFamily(ceph.AddressIPv6)
+ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv6))
 ```
 
 Selects the addresses that the Messenger of every MON, MGR, OSD and MDS binds
@@ -963,7 +997,7 @@ selected family for every daemon, including the heartbeat addresses of OSDs.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithAddressFamily(ceph.AddressIPv4MappedIPv6))
+	ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv4MappedIPv6)))
 observer, err := ceph.Observe(cluster)
 if err != nil {
 	t.Fatal(err)
@@ -973,7 +1007,7 @@ addresses, err := observer.DaemonAddresses(ctx)
 ```
 
 - Bridge mode only. `AddressIPv6` and `AddressDualStack` work with
-  [WithSeparateClusterNetwork](#withseparateclusternetwork), which then makes
+  [NetworkConfig.WithSeparateClusterNetwork](#networkconfigwithseparateclusternetwork), which then makes
   both bridges dual-stack; `AddressIPv4MappedIPv6` cannot be combined with it.
 - `AddressIPv6` and `AddressDualStack` need a Docker Engine that allocates an IPv6 subnet for a new
   IPv6 bridge without an explicit subnet, from its default pool of unique local
@@ -998,11 +1032,11 @@ The generated `ceph.conf` sets `ms_bind_ipv4`, `ms_bind_ipv6` and
 `ms_bind_prefer_ipv4` to `true` and `public network` to both subnets of the
 bridge, such as `172.19.0.0/16,fd62:93fe:2c9e::/64`. Every address vector
 then has one entry of each family for each enabled Messenger protocol: v2,
-and v1 unless [WithMessengerMode](#withmessengermode) removes it.
+and v1 unless [NetworkConfig.WithMessengerMode](#networkconfigwithmessengermode) removes it.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithAddressFamily(ceph.AddressDualStack))
+	ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack)))
 observer, err := ceph.Observe(cluster)
 if err != nil {
 	t.Fatal(err)
@@ -1082,7 +1116,7 @@ families, which the admission check accepts.
   the Messenger v2 banner.
 
 `TestDualStackSeparateClusterNetwork` checks the same with
-`WithSeparateClusterNetwork`, with OSD cluster and heartbeat back addresses of
+`NetworkConfig.WithSeparateClusterNetwork`, with OSD cluster and heartbeat back addresses of
 both families from the replication bridge.
 
 `TestDualStackServices` starts CephFS and RGW with two MGRs, two OSDs, an
@@ -2887,7 +2921,7 @@ the cluster's public network; in host mode it joins the host network.
   which you run commands with `Exec`.
 - Options change the copied `ceph.conf`: `ceph.WithClientMessengerPolicy` sets
   the client's Messenger connection modes (see
-  [WithMessengerPolicy](#withmessengerpolicy)).
+  [NetworkConfig.WithMessengerPolicy](#networkconfigwithmessengerpolicy)).
 - You own the container. Terminate it before the cluster (register its cleanup
   after the cluster's).
 
@@ -3528,7 +3562,7 @@ about health or daemon availability.
 The override that changes the policy of a running cluster is
 [override.SetMessengerPolicy](override.md#setmessengerpolicy). It moved out of
 `ceph` with its handle type; `ceph.MessengerPolicy` and
-`ceph.MessengerConnectionMode` stay here because `WithMessengerPolicy` takes them
+`ceph.MessengerConnectionMode` stay here because `NetworkConfig.WithMessengerPolicy` takes them
 at `Run`.
 
 ### Container Methods: Object watchers and client fencing
@@ -4091,7 +4125,7 @@ var ErrHostNetworkUnavailable error
 ```
 
 Wrapped by the error that `Run` returns in host mode when the engine does not run
-Linux containers, the [WithHostAddress](#withhostaddress) address is not assigned
+Linux containers, the [NetworkConfig.WithHostAddress](#networkconfigwithhostaddress) address is not assigned
 on the Docker host, or the test process cannot reach the first MON's advertised
 endpoint. `Run` returns it before creating managers and OSDs; later MON and RGW
 port reservations can also return it. The error message explains the likely
@@ -4249,7 +4283,7 @@ const (
 )
 ```
 
-The bootstrap protocols and connection policy for [WithMessengerMode](#withmessengermode).
+The bootstrap protocols and connection policy for [NetworkConfig.WithMessengerMode](#networkconfigwithmessengermode).
 Unknown values are rejected by `Run`.
 
 #### NetworkPlane
@@ -5021,7 +5055,7 @@ Desktop and port selection.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage,
-	ceph.WithMessengerMode(ceph.MessengerV2Secure),
+	ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)),
 )
 testcontainers.CleanupContainer(t, cluster)
 if err != nil {
@@ -5089,7 +5123,7 @@ examples.
   Test data paths with user-space clients (librados, librbd, libcephfs, S3).
 - The module prepares and observes server-side conditions. It is not an
   operations SDK and does not wrap data APIs.
-- IPv4 is the default. [WithAddressFamily](#withaddressfamily) selects IPv6
+- IPv4 is the default. [NetworkConfig.WithAddressFamily](#networkconfigwithaddressfamily) selects IPv6
   or IPv4-mapped IPv6 on a bridge network; the host network is IPv4 only.
 
 ### Fixture defaults that differ from a stock cluster
@@ -5147,7 +5181,7 @@ a helper applies or restores it.
   [cephfs](cephfs.md) and [rgw](rgw.md) packages.
 - Squid has no `messenger dump` admin command, so encryption of individual
   connections cannot be inspected there (see
-  [WithMessengerMode](#withmessengermode)).
+  [NetworkConfig.WithMessengerMode](#networkconfigwithmessengermode)).
 - Squid 19.2.6 has an RGW multisite regression; use 19.2.5 for multisite tests
   (see [rgw](rgw.md)).
 - `ClusterFacts.CephVersion` reflects only the first MON's image (essential). Mixing releases across role

@@ -41,7 +41,7 @@ func TestMessengerModeListsRefuseInvalidModes(t *testing.T) {
 			if _, err := (ClientMessengerPolicy{OtherDaemons: modes}).configLines(); err == nil {
 				t.Fatal("client policy accepted")
 			}
-			if err := WithMessengerPolicy(MessengerPolicy{Managers: modes})(&options{}); err == nil {
+			if err := WithNetworkConfig(NetworkConfig{}.WithMessengerPolicy(MessengerPolicy{Managers: modes}))(&options{}); err == nil {
 				t.Fatal("option accepted")
 			}
 		})
@@ -51,7 +51,7 @@ func TestMessengerModeListsRefuseInvalidModes(t *testing.T) {
 func TestWithMessengerPolicyKeepsCallerSlices(t *testing.T) {
 	modes := []MessengerConnectionMode{MessengerSecure}
 	var settings options
-	if err := WithMessengerPolicy(MessengerPolicy{Monitors: modes})(&settings); err != nil {
+	if err := WithNetworkConfig(NetworkConfig{}.WithMessengerPolicy(MessengerPolicy{Monitors: modes}))(&settings); err != nil {
 		t.Fatal(err)
 	}
 	modes[0] = MessengerCRC
@@ -61,8 +61,7 @@ func TestWithMessengerPolicyKeepsCallerSlices(t *testing.T) {
 }
 
 func TestMessengerPolicyRefusesMessengerV2Secure(t *testing.T) {
-	cluster, err := Run(context.Background(), DefaultImage, WithMessengerMode(MessengerV2Secure),
-		WithMessengerPolicy(MessengerPolicy{Monitors: []MessengerConnectionMode{MessengerSecure}}))
+	cluster, err := Run(context.Background(), DefaultImage, WithNetworkConfig(NetworkConfig{}.WithMessengerMode(MessengerV2Secure).WithMessengerPolicy(MessengerPolicy{Monitors: []MessengerConnectionMode{MessengerSecure}})))
 	if err == nil || cluster != nil || !strings.Contains(err.Error(), "MessengerV2Secure") {
 		t.Fatalf("Run accepted a policy with MessengerV2Secure: %v", err)
 	}

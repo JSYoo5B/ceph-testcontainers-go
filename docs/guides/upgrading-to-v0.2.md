@@ -100,7 +100,7 @@ CLI or a host client's configuration.
 `TemporaryConfig` refuses `ms_bind_msgr1` and `ms_bind_msgr2` in both v2-only
 modes. Secure-only also refuses the six mode settings; these refusals match
 `ErrInvalidRequest`. For field definitions, precedence and native checks,
-see [WithMessengerMode](../ceph.md#withmessengermode).
+see [NetworkConfig.WithMessengerMode](../ceph.md#networkconfigwithmessengermode).
 
 ## Authentication and storage choices
 

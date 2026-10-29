@@ -90,7 +90,7 @@ func TestDualStackOptionsAndSubnets(t *testing.T) {
 		t.Fatal("dual-stack value or name changed")
 	}
 	var settings options
-	if err := WithAddressFamily(AddressDualStack)(&settings); err != nil || settings.addressFamily != AddressDualStack {
+	if err := WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressDualStack))(&settings); err != nil || settings.addressFamily != AddressDualStack {
 		t.Fatalf("dual-stack: %v %v", err, settings.addressFamily)
 	}
 	if settings.bridgeFamily() == (options{}).bridgeFamily() {

@@ -36,7 +36,7 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	} else {
-		opts = append(opts, ceph.WithSeparateClusterNetwork())
+		opts = append(opts, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()))
 	}
 	cluster, client := newServiceCluster(t, opts...)
 	if err := cluster.WaitForClean(ctx); err != nil {

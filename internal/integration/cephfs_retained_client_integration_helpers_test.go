@@ -423,7 +423,7 @@ func testCephFSRetainedClient(t *testing.T, failover cephFSFailover, opts ...tes
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, imageOpts := integrationImages(t)
-	opts = append(append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure)), opts...)
+	opts = append(append(imageOpts, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure))), opts...)
 	activeRanks, failedRank, pin := 1, 0, "-"
 	path, renamed := "/retained", "/retained-renamed"
 	switch failover {
@@ -812,7 +812,7 @@ func testCephFSCapabilityHandoff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, imageOpts := integrationImages(t)
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure))...)
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)))...)
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)
@@ -985,7 +985,7 @@ func testCephFSLateReconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, imageOpts := integrationImages(t)
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure),
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)),
 		cephfs.WithFilesystems(cephfs.Config{StandbyMDS: 1}))...)
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
@@ -1406,7 +1406,7 @@ func testCephFSLiveRankMigration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	image, imageOpts := integrationImages(t)
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure),
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(imageOpts, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)),
 		cephfs.WithFilesystems(cephfs.Config{ActiveMDS: 2}))...)
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
@@ -1832,7 +1832,7 @@ type cephFSSingleMDS struct {
 func startCephFSSingleMDS(t *testing.T, ctx context.Context, opts ...testcontainers.ContainerCustomizer) *cephFSSingleMDS {
 	t.Helper()
 	image, imageOpts := integrationImages(t)
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(append(imageOpts, ceph.WithMessengerMode(ceph.MessengerV2Secure)), opts...)...)
+	cluster, client := newServiceClusterRun(t, cephfsRun, image, append(append(imageOpts, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure))), opts...)...)
 	fs := cephfs.Filesystems(cluster)[0]
 	if err := fs.WaitReady(ctx); err != nil {
 		t.Fatal(err)

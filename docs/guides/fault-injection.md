@@ -65,7 +65,7 @@ Neither the baseline nor the extension offers:
 Without the extension, use one of these instead:
 
 - `InterruptNetwork` to cut one container off one network entirely;
-- `WithSeparateClusterNetwork` plus `ceph.ClusterNetworkPlane` to cut only OSD
+- `NetworkConfig.WithSeparateClusterNetwork` plus `ceph.ClusterNetworkPlane` to cut only OSD
   replication and heartbeat traffic;
 - the Ceph messenger options described below to make one daemon drop or delay
   messages from one kind of peer (clients, OSDs, MONs, MDSs or MGRs).
@@ -209,7 +209,7 @@ endpoint with the same IP address, aliases and gateway priority, so the
 address Ceph advertised stays valid and no daemon restarts.
 
 ```golang
-cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithSeparateClusterNetwork())
+cluster, err := ceph.Run(ctx, ceph.DefaultImage, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()))
 if cluster != nil {
 	testcontainers.CleanupContainer(t, cluster)
 }
@@ -240,7 +240,7 @@ Typical uses:
   off while the other three keep quorum, then rejoin after `Restore`.
 - `ceph.PublicNetworkPlane` on a client container attached with `WithClient`:
   the client loses the whole cluster.
-- `ceph.ClusterNetworkPlane` with `WithSeparateClusterNetwork`: the OSD keeps
+- `ceph.ClusterNetworkPlane` with `NetworkConfig.WithSeparateClusterNetwork`: the OSD keeps
   serving its public listener while replication and heartbeats on the backend
   fail. With two OSDs that lasts, because one reporter is not enough to mark an
   OSD down (`mon_osd_min_down_reporters` is 2). With three or more OSDs on

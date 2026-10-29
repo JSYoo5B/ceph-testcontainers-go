@@ -2,7 +2,6 @@ package ceph
 
 import (
 	"fmt"
-	"net"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -47,23 +46,9 @@ type options struct {
 	messengerPolicy             MessengerPolicy
 	addressFamily               AddressFamily
 	userConfig                  []userConfigSection
-}
-
-// WithMessengerMode selects the Messenger policy at bootstrap. MessengerDefault
-// retains Ceph's image defaults and v1/v2 addresses. MessengerV2Secure requires
-// encrypted v2 connections without CRC-mode or v1 fallback, including later
-// daemons and WithClient containers. MessengerV2Only removes the v1 listeners
-// and addresses in the same way but leaves the connection modes to Ceph's
-// defaults and the Messenger policy options. This option does not enable RGW
-// HTTP TLS.
-func WithMessengerMode(mode MessengerMode) Option {
-	return func(o *options) error {
-		if mode != MessengerDefault && mode != MessengerV2Secure && mode != MessengerV2Only {
-			return fmt.Errorf("unsupported Messenger mode %d", mode)
-		}
-		o.messengerMode = mode
-		return nil
-	}
+	// networkSet records which NetworkConfig fields a carrier already set, so a
+	// second carrier setting the same field is refused.
+	networkSet networkField
 }
 
 // WithMonitorCount selects the initial monitor count. Three enables quorum
@@ -119,34 +104,6 @@ func (Option) Customize(*testcontainers.GenericContainerRequest) error { return 
 func WithHostNetwork() Option {
 	return func(o *options) error {
 		o.hostNetwork = true
-		return nil
-	}
-}
-
-// WithSeparateClusterNetwork creates a second owned bridge for OSD replication,
-// recovery and heartbeat traffic. MON/MGR/MDS/RGW and WithClient use only the
-// public bridge. Docker selects both subnets; with WithAddressFamily(AddressIPv6)
-// both bridges are dual-stack and Ceph uses their IPv6 subnets. This option
-// requires bridge mode.
-func WithSeparateClusterNetwork() Option {
-	return func(o *options) error {
-		o.separateClusterNetwork = true
-		return nil
-	}
-}
-
-// WithHostAddress selects a local IPv4 address to bind and advertise in host
-// mode, typically the Docker host's address when Docker is remote. The address
-// must be assigned on the Docker daemon host and reachable from the test
-// process; Run verifies both. Requires WithHostNetwork.
-func WithHostAddress(address string) Option {
-	return func(o *options) error {
-		ip := net.ParseIP(address)
-		if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Equal(net.IPv4bcast) {
-			return fmt.Errorf("host address must be a specific IPv4 address")
-		}
-		o.publicAddress = ip.String()
-		o.hostAddressSet = true
 		return nil
 	}
 }

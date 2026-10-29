@@ -258,10 +258,10 @@ func (overrideHooks) NormalizeConfigSetting(setting ConfigSetting) (ConfigSettin
 // construction and needs no lock.
 func (overrideHooks) CheckConfigAllowed(c *Container, setting ConfigSetting) error {
 	if c.settings.messengerMode == MessengerV2Secure && messengerBootstrapSetting(setting.Name) {
-		return invalid(fmt.Errorf("%s is fixed in the MessengerV2Secure bootstrap configuration for every section and mask; choose WithMessengerMode when creating a new cluster", setting.Name))
+		return invalid(fmt.Errorf("%s is fixed in the MessengerV2Secure bootstrap configuration for every section and mask; choose NetworkConfig.WithMessengerMode when creating a new cluster", setting.Name))
 	}
 	if c.settings.messengerMode == MessengerV2Only && messengerProtocolSetting(setting.Name) {
-		return invalid(fmt.Errorf("%s is fixed in the MessengerV2Only bootstrap configuration for every section and mask; choose WithMessengerMode when creating a new cluster", setting.Name))
+		return invalid(fmt.Errorf("%s is fixed in the MessengerV2Only bootstrap configuration for every section and mask; choose NetworkConfig.WithMessengerMode when creating a new cluster", setting.Name))
 	}
 	return nil
 }

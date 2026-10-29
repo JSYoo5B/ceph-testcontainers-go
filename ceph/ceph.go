@@ -163,22 +163,22 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		return nil, invalidRequest("image set: %v", err)
 	}
 	if settings.hostAddressSet && !settings.hostNetwork {
-		return nil, invalidRequest("WithHostAddress requires WithHostNetwork")
+		return nil, invalidRequest("NetworkConfig.WithHostAddress requires WithHostNetwork")
 	}
 	if settings.hostNetwork && settings.separateClusterNetwork {
-		return nil, invalidRequest("WithSeparateClusterNetwork requires bridge mode")
+		return nil, invalidRequest("NetworkConfig.WithSeparateClusterNetwork requires bridge mode")
 	}
 	if settings.messengerMode == MessengerV2Secure && (settings.messengerPolicy.Monitors != nil || settings.messengerPolicy.Managers != nil || settings.messengerPolicy.OSDs != nil) {
-		return nil, invalidRequest("WithMessengerPolicy cannot be combined with MessengerV2Secure, which fixes every connection mode")
+		return nil, invalidRequest("NetworkConfig.WithMessengerPolicy cannot be combined with MessengerV2Secure, which fixes every connection mode")
 	}
 	if settings.addressFamily != AddressIPv4 && settings.hostNetwork {
-		return nil, invalidRequest("WithAddressFamily(%s) requires bridge mode", settings.addressFamily)
+		return nil, invalidRequest("WithNetworkConfig(NetworkConfig{}.WithAddressFamily(%s)) requires bridge mode", settings.addressFamily)
 	}
 	if settings.addressFamily != AddressDualStack && userConfigSets(settings.userConfig, dualStackOrderKey) {
-		return nil, invalidRequest("WithConfigFile sets %s, which requires WithAddressFamily(%s)", dualStackOrderKey, AddressDualStack)
+		return nil, invalidRequest("WithConfigFile sets %s, which requires WithNetworkConfig(NetworkConfig{}.WithAddressFamily(%s))", dualStackOrderKey, AddressDualStack)
 	}
 	if settings.addressFamily == AddressIPv4MappedIPv6 && settings.separateClusterNetwork {
-		return nil, invalidRequest("WithAddressFamily(%s) cannot be combined with WithSeparateClusterNetwork", settings.addressFamily)
+		return nil, invalidRequest("WithNetworkConfig(NetworkConfig{}.WithAddressFamily(%s)) cannot be combined with NetworkConfig.WithSeparateClusterNetwork", settings.addressFamily)
 	}
 	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
 		return nil, invalidRequest("OSDStorage.WithInMemory keeps BlueStore files in memory and cannot be combined with OSDMemStore")

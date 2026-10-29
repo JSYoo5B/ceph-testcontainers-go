@@ -459,7 +459,7 @@ The helper verifies the stored value, not its effect:
   an OSD starts.
 - Check the effective value of a running daemon with
   `cluster.Ceph(ctx, "config", "show", "osd.0", "osd_max_backfills")`.
-- With [MessengerV2Secure](ceph.md#withmessengermode), the Messenger mode and bind
+- With [MessengerV2Secure](ceph.md#networkconfigwithmessengermode), the Messenger mode and bind
   options are refused; with `MessengerV2Only`, the `ms_bind_msgr1` and
   `ms_bind_msgr2` options. The refusal does not depend on the section or mask.
 
@@ -521,7 +521,7 @@ func SetMessengerPolicy(ctx context.Context, c *ceph.Container, policy ceph.Mess
 ```
 
 Changes the connection modes that the running daemons accept from clients (see
-[WithMessengerPolicy](ceph.md#withmessengerpolicy) for the fields). Each non-nil
+[NetworkConfig.WithMessengerPolicy](ceph.md#networkconfigwithmessengerpolicy) for the fields). Each non-nil
 field becomes a [SetConfig](#setconfig) override of its option; nil fields stay as
 they are. The call is admitted once under its own name and then sets the options
 in the order monitors, managers, OSDs.

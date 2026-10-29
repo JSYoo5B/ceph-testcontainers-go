@@ -25,21 +25,21 @@ func TestMessengerModeValidationSelectionAndSnapshot(t *testing.T) {
 		t.Fatal("Messenger policy values changed")
 	}
 	settings := options{}
-	if err := WithMessengerMode(MessengerV2Only)(&settings); err != nil || settings.messengerMode != MessengerV2Only {
+	if err := WithNetworkConfig(NetworkConfig{}.WithMessengerMode(MessengerV2Only))(&settings); err != nil || settings.messengerMode != MessengerV2Only {
 		t.Fatal("MessengerV2Only was refused", err)
 	}
-	if err := WithMessengerMode(MessengerV2Secure)(&settings); err != nil {
+	if err := WithNetworkConfig(NetworkConfig{}.WithMessengerMode(MessengerV2Secure))(&settings); err != nil {
 		t.Fatal(err)
 	}
 	for _, unknown := range []MessengerMode{-1, 3, 256} {
-		if err := WithMessengerMode(unknown)(&settings); err == nil || settings.messengerMode != MessengerV2Secure {
+		if err := WithNetworkConfig(NetworkConfig{}.WithMessengerMode(unknown))(&settings); err == nil || settings.messengerMode != MessengerV2Secure {
 			t.Fatal("unknown Messenger mode was accepted or replaced the selected policy")
 		}
-		if cluster, err := Run(t.Context(), "not-a-runnable-image", WithMessengerMode(unknown)); err == nil || cluster != nil {
+		if cluster, err := Run(t.Context(), "not-a-runnable-image", WithNetworkConfig(NetworkConfig{}.WithMessengerMode(unknown))); err == nil || cluster != nil {
 			t.Fatal("unknown Messenger mode reached Docker allocation")
 		}
 	}
-	if err := WithMessengerMode(MessengerDefault)(&settings); err != nil || settings.messengerMode != MessengerDefault {
+	if err := WithNetworkConfig(NetworkConfig{}.WithMessengerMode(MessengerDefault))(&settings); err != nil || settings.messengerMode != MessengerDefault {
 		t.Fatal("explicit default did not replace the previous option")
 	}
 	for _, mode := range []MessengerMode{MessengerDefault, MessengerV2Secure, MessengerV2Only} {
@@ -73,7 +73,7 @@ func TestMessengerBootstrapAndLateMonitorAddressPolicy(t *testing.T) {
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			settings := options{}
-			if err := WithMessengerMode(fixture.mode)(&settings); err != nil {
+			if err := WithNetworkConfig(NetworkConfig{}.WithMessengerMode(fixture.mode))(&settings); err != nil {
 				t.Fatal(err)
 			}
 			env := map[string]string{
