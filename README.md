@@ -15,8 +15,9 @@ its data in a sparse BlueStore file inside its container by default. MemStore
 and memory-backed BlueStore are also available for faster disposable fixtures.
 
 Releases follow semantic versioning. Before v1.0.0, a minor release may change
-the API without aliases for the old names; [CHANGELOG.md](CHANGELOG.md) lists
-the changes of each release.
+the API without aliases for the old names. Final release notes are available
+with the [published releases](https://github.com/JSYoo5B/ceph-testcontainers-go/releases);
+there is no development CHANGELOG.
 
 Documentation for a published release is available at its Git tag.
 

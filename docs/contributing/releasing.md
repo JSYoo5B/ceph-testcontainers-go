@@ -19,8 +19,9 @@ ceph-testcontainers-images.
    source. Describe the net changes users receive compared with the previous
    published release, not the intermediate states of unreleased work; a feature
    that was introduced and removed before the release has no entry. Put the
-   notes in `CHANGELOG.md`, replacing the stale `Unreleased` content, and do not
-   rewrite published sections. Update
+   notes in a `CHANGELOG.md` created only for release preparation. Do not keep
+   that file or an `Unreleased` section on the ongoing development branch.
+   Published tags and release notes remain immutable. Update
    the module pages and README links together, and state the Go minimum
    separately from this repository's toolchain and native clients' platform
    requirements.

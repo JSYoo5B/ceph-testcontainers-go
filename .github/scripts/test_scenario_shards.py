@@ -127,7 +127,7 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
         # run-time input, so changing it alone must still run the batches.
         patterns = [self.github_glob(path.strip("'")) for path in self.RUNTIME_PATHS_IGNORE]
         ignored = lambda path: any(pattern.match(path) for pattern in patterns)
-        for path in ("README.md", "CHANGELOG.md", "docs/ceph.md", "docs/guides/messenger-client-fixtures.md",
+        for path in ("README.md", "NOTES.md", "docs/ceph.md", "docs/guides/messenger-client-fixtures.md",
                      "LICENSE", "internal/integration/goceph/README.md"):
             with self.subTest(path=path):
                 self.assertTrue(ignored(path))

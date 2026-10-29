@@ -62,7 +62,6 @@ PATTERNS = (
 # Historical records and the files that must name the retired spellings to
 # check them.
 ALLOWED = {
-    "CHANGELOG.md": "published release history",
     "docs/design/api-naming.md": "naming inventory of the retired names, marked as a historical record",
     "docs/design/api-naming-audit.md": "naming audit of the retired names, marked as a historical record",
     "docs/design/override-package-boundary.md": "design record that quotes the retired names and maps them",
