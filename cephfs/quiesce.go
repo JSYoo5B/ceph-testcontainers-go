@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 )
 
 // QuiesceConfig bounds reaching the I/O pause and its lifetime. Both
@@ -184,7 +186,7 @@ func (q *Quiesce) Release(ctx context.Context) error {
 		return nil
 	}
 	if current.State != "QUIESCED" || current.Version != q.state.version {
-		return invalid(fmt.Errorf("quiesce state/version changed (%s/%d); checkpoint release refused", current.State, current.Version))
+		return harnesshook.Invalid(fmt.Errorf("quiesce state/version changed (%s/%d); checkpoint release refused", current.State, current.Version))
 	}
 	q.state.releaseAttempted = true
 	_, setErr := fs.cluster.Ceph(ctx, "fs", "quiesce", fs.config.Name, "--set-id", q.state.id,

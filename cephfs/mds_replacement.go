@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
@@ -225,11 +226,11 @@ func (fs *Filesystem) checkMDSReplacementOwner(stopped *MDS, i *cephFSMDSIdentit
 		return err
 	}
 	if fs.config.ActiveMDS != 1 || fs.config.StandbyMDS != 0 || fs.config.StandbyReplay || i.removalAttempted && (!i.removed || r == nil || !r.completed) {
-		return invalid(errors.New("MDS replacement requires one active, zero standby and original stopped ownership"))
+		return harnesshook.Invalid(errors.New("MDS replacement requires one active, zero standby and original stopped ownership"))
 	}
 	if r == nil {
 		if i.removed || fs.roster.count() != 1 || fs.roster.at(0) != i.descriptor {
-			return invalid(errors.New("MDS replacement requires the sole original member"))
+			return harnesshook.Invalid(errors.New("MDS replacement requires the sole original member"))
 		}
 		return nil
 	}
@@ -287,7 +288,7 @@ func (fs *Filesystem) checkMDSReplacementAuth(ctx context.Context, control testc
 		}
 		seen[*entry.Entity] = true
 		if *entry.Entity == "mds."+name {
-			return invalid(errors.New("reserved replacement MDS identity already exists"))
+			return harnesshook.Invalid(errors.New("reserved replacement MDS identity already exists"))
 		}
 	}
 	return ctx.Err()

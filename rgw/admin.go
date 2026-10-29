@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/google/uuid"
@@ -131,7 +132,7 @@ func (g *Gateway) Admin(ctx context.Context, args ...string) ([]byte, error) {
 		return nil, err
 	}
 	if g == nil || g.owner == nil {
-		return nil, invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return nil, harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)
@@ -152,22 +153,22 @@ func (g *Gateway) adminContext(ctx context.Context) (context.Context, context.Ca
 
 func (g *Gateway) validateAdminGateway() error {
 	if servicehook.Closed(g.owner) {
-		return invalid(errors.New("ceph cluster is terminated"))
+		return harnesshook.Invalid(errors.New("ceph cluster is terminated"))
 	}
 	service := servicehook.Service(g.owner, rgwServiceName(g.config))
 	if g.Container == nil || service == nil || service.GetContainerID() != g.GetContainerID() {
-		return invalid(errors.New("RGW gateway is no longer owned by this cluster"))
+		return harnesshook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
 	}
 	return nil
 }
 
 func validateRGWAdminArgs(args []string) error {
 	if len(args) == 0 {
-		return invalid(errors.New("radosgw-admin operation is required"))
+		return harnesshook.Invalid(errors.New("radosgw-admin operation is required"))
 	}
 	for _, arg := range args {
 		if strings.IndexFunc(arg, unicode.IsControl) != -1 {
-			return invalid(errors.New("radosgw-admin arguments must not contain control characters"))
+			return harnesshook.Invalid(errors.New("radosgw-admin arguments must not contain control characters"))
 		}
 		flag, _, _ := strings.Cut(strings.ReplaceAll(arg, "_", "-"), "=")
 		switch flag {
@@ -175,11 +176,11 @@ func validateRGWAdminArgs(args []string) error {
 			"--rgw-zonegroup", "--rgw-zonegroup-id", "--zonegroup-id", "--zonegroup-name",
 			"--rgw-zone", "--rgw-zone-id", "--zone-id", "--zone-name",
 			"--conf", "--cluster", "--keyring", "--keyfile", "--key-file", "--key", "--id", "--name", "--client-id", "--mon-host", "--monmap", "--no-config-file":
-			return invalid(errors.New("radosgw-admin cannot override the gateway scope or Ceph connection"))
+			return harnesshook.Invalid(errors.New("radosgw-admin cannot override the gateway scope or Ceph connection"))
 		}
 		for _, short := range []string{"-c", "-m", "-n", "-k"} {
 			if strings.HasPrefix(arg, short) && !strings.HasPrefix(arg, "--") {
-				return invalid(errors.New("radosgw-admin cannot override the gateway Ceph connection"))
+				return harnesshook.Invalid(errors.New("radosgw-admin cannot override the gateway Ceph connection"))
 			}
 		}
 	}
@@ -251,7 +252,7 @@ func normalizeRGWUserConfig(config UserConfig) (UserConfig, error) {
 		config.ID = "tc-" + uuid.NewString()
 	}
 	if !naming.ClientID.MatchString(config.ID) {
-		return config, invalid(errors.New("RGW user ID must use letters, digits, dots, underscores or hyphens"))
+		return config, harnesshook.Invalid(errors.New("RGW user ID must use letters, digits, dots, underscores or hyphens"))
 	}
 	if err := validateRGWTenant(config.Tenant); err != nil {
 		return config, err
@@ -261,11 +262,11 @@ func normalizeRGWUserConfig(config UserConfig) (UserConfig, error) {
 	}
 	for _, value := range []string{config.DisplayName, config.Email, config.AdminCaps} {
 		if strings.TrimSpace(value) != value || strings.IndexFunc(value, unicode.IsControl) != -1 {
-			return config, invalid(errors.New("RGW user display name, email and capabilities must not contain control characters or surrounding whitespace"))
+			return config, harnesshook.Invalid(errors.New("RGW user display name, email and capabilities must not contain control characters or surrounding whitespace"))
 		}
 	}
 	if config.MaxBuckets != nil && *config.MaxBuckets < -1 {
-		return config, invalid(errors.New("RGW max buckets must be -1, zero or positive"))
+		return config, harnesshook.Invalid(errors.New("RGW max buckets must be -1, zero or positive"))
 	}
 	if config.MaxBuckets != nil {
 		value := *config.MaxBuckets
@@ -275,11 +276,11 @@ func normalizeRGWUserConfig(config UserConfig) (UserConfig, error) {
 		for _, expression := range strings.Split(config.AdminCaps, ";") {
 			kind, perms, ok := strings.Cut(expression, "=")
 			if !ok || !rgwCapTypePattern.MatchString(strings.TrimSpace(kind)) {
-				return config, invalid(errors.New("invalid RGW Admin Ops capability expression"))
+				return config, harnesshook.Invalid(errors.New("invalid RGW Admin Ops capability expression"))
 			}
 			for _, perm := range strings.Split(perms, ",") {
 				if !slices.Contains([]string{"read", "write", "*"}, strings.TrimSpace(perm)) {
-					return config, invalid(errors.New("RGW Admin Ops permissions must be read, write or *"))
+					return config, harnesshook.Invalid(errors.New("RGW Admin Ops permissions must be read, write or *"))
 				}
 			}
 		}
@@ -309,7 +310,7 @@ func (g *Gateway) createUser(ctx context.Context, config UserConfig, account *Ac
 		return nil, err
 	}
 	if g == nil || g.owner == nil {
-		return nil, invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return nil, harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)
@@ -347,7 +348,7 @@ func (g *Gateway) createUser(ctx context.Context, config UserConfig, account *Ac
 		return nil, err
 	}
 	if exists {
-		return nil, invalid(fmt.Errorf("RGW user %q already exists", id))
+		return nil, harnesshook.Invalid(fmt.Errorf("RGW user %q already exists", id))
 	}
 	args := []string{"user", "create", "--uid", id, "--display-name", config.DisplayName}
 	if account != nil {
@@ -432,7 +433,7 @@ func (g *Gateway) ownedUser(ctx context.Context, user *User) (*rgwNativeUser, er
 	if native.info.ID != user.id || !slices.ContainsFunc(native.keys, func(key rgwNativeKey) bool {
 		return user.accessKey != "" && key.AccessKey == user.accessKey && key.SecretKey == user.secretKey
 	}) {
-		return nil, invalid(errors.New("RGW user has different credentials; refusing owned-user operation"))
+		return nil, harnesshook.Invalid(errors.New("RGW user has different credentials; refusing owned-user operation"))
 	}
 	if err := g.validateUserCreationIdentity(ctx, user, native); err != nil {
 		return nil, err
@@ -474,7 +475,7 @@ func (g *Gateway) validateUserCreationIdentity(ctx context.Context, user *User, 
 
 func (g *Gateway) withOwnedUser(ctx context.Context, user *User, fn func(context.Context, *rgwNativeUser) error) error {
 	if g == nil || g.owner == nil {
-		return invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)
@@ -595,7 +596,7 @@ func (g *Gateway) SuspendUser(ctx context.Context, user *User, suspended bool) e
 // present remains tracked and its created key is verified before retrying.
 func (g *Gateway) RemoveUser(ctx context.Context, user *User) error {
 	if g == nil || g.owner == nil {
-		return invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)

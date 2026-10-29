@@ -22,9 +22,11 @@ const modulePath = "github.com/JSYoo5B/ceph-testcontainers-go"
 // movedHelpers lists, per service directory, the old private names that were
 // removed without an alias and the leaf package that took each one.
 var movedHelpers = map[string]map[string]string{
-	"rbd":    {"bootstrapKind": "internal/servicekind", "validateResourceName": "rbd/internal/resourcename"},
-	"cephfs": {"cephFSBootstrapKind": "internal/servicekind"},
-	"rgw":    {"rgwBootstrapKind": "internal/servicekind", "gatewayRegistry": "internal/namedregistry", "gatewaysFrom": "internal/namedregistry"},
+	"rbd":           {"bootstrapKind": "internal/servicekind", "validateResourceName": "rbd/internal/resourcename", "invalid": "internal/harnesshook"},
+	"cephfs":        {"cephFSBootstrapKind": "internal/servicekind", "invalid": "internal/harnesshook"},
+	"rbd/mirror":    {"invalid": "internal/harnesshook"},
+	"cephfs/mirror": {"invalid": "internal/harnesshook"},
+	"rgw":           {"rgwBootstrapKind": "internal/servicekind", "invalid": "internal/harnesshook", "gatewayRegistry": "internal/namedregistry", "gatewaysFrom": "internal/namedregistry"},
 }
 
 // leafHelperPackages are the leaf packages and the only module packages each
@@ -106,9 +108,9 @@ func TestMovedHelpersLiveInLeafPackagesThatImportNoService(t *testing.T) {
 // ones the design note lists as not moved yet.
 func TestAdapterPrivateReachNamesNoMovedHelper(t *testing.T) {
 	want := map[string][]string{
-		"rbd":    {"invalid"},
-		"cephfs": {"invalid"},
-		"rgw":    {"invalid"},
+		"rbd":    {},
+		"cephfs": {},
+		"rgw":    {},
 	}
 	for service, names := range want {
 		dir := filepath.Join("..", service)

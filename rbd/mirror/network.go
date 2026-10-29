@@ -7,6 +7,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 )
 
@@ -37,5 +38,5 @@ func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*fau
 			return multicluster.InterruptOwnedPeerLink(ctx, &m.owned, daemon, facts.NetworkName)
 		}
 	}
-	return nil, invalid(fmt.Errorf("RBD mirror daemon %s is not owned", daemonName))
+	return nil, harnesshook.Invalid(fmt.Errorf("RBD mirror daemon %s is not owned", daemonName))
 }

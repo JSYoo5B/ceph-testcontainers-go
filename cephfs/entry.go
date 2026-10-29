@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
@@ -172,7 +173,7 @@ func clonePoolConfig(config ceph.PoolConfig) ceph.PoolConfig {
 
 func validateExistingPool(name string) error {
 	if !naming.ExistingPool.MatchString(name) {
-		return invalid(errors.New("invalid native pool name"))
+		return harnesshook.Invalid(errors.New("invalid native pool name"))
 	}
 	return nil
 }
