@@ -15,7 +15,7 @@ import (
 )
 
 // DefaultReview is the review note a new receipt names unless told otherwise.
-// It is resolved relative to docs/design.
+// It is resolved relative to docs/contributing.
 const DefaultReview = "api-naming.md"
 
 // PackageDir returns the catalogue directory of a package.
@@ -242,7 +242,7 @@ func requireFile(root, base, name, suffix string) error {
 
 func checkReferences(root string, receipt Receipt) error {
 	var problems []error
-	if err := requireFile(root, "docs/design", receipt.Review, ".md"); err != nil {
+	if err := requireFile(root, "docs/contributing", receipt.Review, ".md"); err != nil {
 		problems = append(problems, fmt.Errorf("review note: %w", err))
 	}
 	if want := DefaultPage(receipt.Package); receipt.Page != want {

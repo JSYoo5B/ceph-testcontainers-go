@@ -16,7 +16,7 @@ import (
 // implement) and no native run, so what is checked is the order of the steps
 // and the refusals, against a fake. It adds no lock: every method runs under
 // Container.mu like the rest of monStoreVolume, and calls no method that takes
-// a lock (see docs/design/mon-volume-storage.md).
+// a lock (see docs/internals/mon-volume-storage.md).
 
 // monStoreGenerations is the container side of one MON generation.
 type monStoreGenerations interface {

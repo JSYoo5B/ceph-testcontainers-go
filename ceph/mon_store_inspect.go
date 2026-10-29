@@ -14,7 +14,7 @@ import (
 )
 
 // This file is the read-only observation side of the MON store identity
-// binding of docs/design/mon-volume-storage.md. It defines two ports and the
+// binding of docs/internals/mon-volume-storage.md. It defines two ports and the
 // computation that turns what they report into a monStoreIdentity:
 //
 //   - monStoreInspector: a short-lived read-only inspector of the volume (design

@@ -101,11 +101,11 @@ its expanded check name. The skip is by policy, not a pass of those checks.
 A pull request is documentation-only when every changed file is on this
 allowlist:
 - `README.md`, any other top-level `*.md` file and `LICENSE`;
-- Markdown files directly inside `docs/contributing/`, `docs/design/` and
-  `docs/guides/`, except the files a check reads:
-  `docs/design/api-naming*` (the API naming note and the per-package
-  catalogues that `internal/apiinventory` compares with the code),
-  `docs/design/value-configuration-composition.md`,
+- Markdown files directly inside `docs/contributing/`, `docs/guides/` and
+  `docs/internals/`, except the files a check reads:
+  `docs/contributing/api-naming.md` and
+  `docs/contributing/configuration-composition.md` (the review notes that the
+  API catalogue receipts name),
   `docs/guides/messenger-client-fixtures.md`,
   `docs/guides/bug-compatibility.md` and
   `docs/contributing/test-double-inventory.md`.

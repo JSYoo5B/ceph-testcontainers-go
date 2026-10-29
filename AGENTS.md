@@ -82,7 +82,7 @@ pull request and issue descriptions, reviews and comments.
 ## API catalogues
 
 Public API names are catalogued per package in
-`docs/design/api-naming/<package>/` (`declarations.json`, `members.json`,
+`internal/apiinventory/catalogues/<package>/` (`declarations.json`, `members.json`,
 `review.json`). Do not edit them by hand and do not look for a global
 inventory, count or hash file: none exists. After a public API change run
 `go run ./internal/tools/apinaming regenerate <package>` and then, as a

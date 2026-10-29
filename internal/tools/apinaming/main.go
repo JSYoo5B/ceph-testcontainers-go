@@ -1,5 +1,5 @@
 // Command apinaming maintains the package-scoped API catalogues under
-// docs/design/api-naming.
+// internal/apiinventory/catalogues.
 //
 //	apinaming regenerate [package...]    rewrite declarations.json and members.json
 //	apinaming approve [-review note] package...   write review.json only
@@ -67,7 +67,7 @@ func run(args []string) error {
 	}
 	cfg := catalogue.Config{Root: root, Proposals: catalogue.Proposals}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
-	review := flags.String("review", catalogue.DefaultReview, "approve: review note below docs/design")
+	review := flags.String("review", catalogue.DefaultReview, "approve: review note below docs/contributing")
 	base := flags.String("base", "", "resolve: the merge base (default: the merge base of -ours and -theirs)")
 	ours := flags.String("ours", "HEAD", "resolve: the branch being merged into")
 	theirs := flags.String("theirs", "MERGE_HEAD", "resolve: the branch being merged in")

@@ -5,7 +5,7 @@ package-scoped API catalogues and the naming convention for public API.
 
 ## Catalogues
 
-The `declarations.json` file of each public package in [api-naming/](api-naming)
+The `declarations.json` file of each public package in [internal/apiinventory/catalogues/](../../internal/apiinventory/catalogues)
 is a source-derived catalogue of package-level exports and declared methods on exported receiver
 types in the public packages. Every row names
 the current identifier, kind, proposed identifier and decision. Functions and
@@ -24,7 +24,7 @@ Testcontainers or standard-library APIs. Implementing a rename still requires
 compilation of the resulting method sets and affected callers.
 
 `baseline` means the current name was recorded. Each package's separately issued
-receipt (`api-naming/<package>/review.json`) binds that package's two catalogues;
+receipt (`catalogues/<package>/review.json`) binds that package's two catalogues;
 regenerating them cannot silently extend that review to future names. `proposal` means a candidate source
 rename, not a compatibility alias or approval to change behavior.
 

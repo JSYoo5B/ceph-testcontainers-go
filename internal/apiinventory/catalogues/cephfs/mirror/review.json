@@ -5,6 +5,6 @@
   "members_sha256": "f997ae62db209d46fe424f48437633e54c642824a5e5fd81b11af1780457ab7f",
   "declarations": 49,
   "members": 94,
-  "review": "value-configuration-composition.md",
+  "review": "configuration-composition.md",
   "page": "cephfs/mirror/README.md"
 }

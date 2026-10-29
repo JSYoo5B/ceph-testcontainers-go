@@ -5,6 +5,6 @@
   "members_sha256": "d427816144c6f1d52a4f0e8951b877451b0a7ea62d72bc80906ccf670d582f1e",
   "declarations": 40,
   "members": 74,
-  "review": "value-configuration-composition.md",
+  "review": "configuration-composition.md",
   "page": "rbd/mirror/README.md"
 }

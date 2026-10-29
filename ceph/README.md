@@ -522,8 +522,8 @@ There is no caller-supplied volume, host path, device or driver option.
 [OSDContainer.Detach](#osdcontainerdetach) and [DetachedOSD.Reopen](#detachedosdreopen) restart a retained store in
 a new container; this backend gives no host-reboot durability. `Terminate`
 always discards its owned volume, including detached stores. See
-[the storage design](../docs/design/osd-storage.md#volume-storage) and
-[retained reopen](../docs/design/osd-storage.md#retained-detach-and-reopen).
+[the storage design](../docs/internals/osd-storage.md#volume-storage) and
+[retained reopen](../docs/internals/osd-storage.md#retained-detach-and-reopen).
 
 #### OSDStorage.WithObjectStore
 
@@ -2355,8 +2355,8 @@ stores without a regular ready marker before copying the launch keyring or
 running mkfs. A ready store must have matching numeric ID, OSD UUID and configured
 cluster FSID, with non-empty regular identity/keyring files, before daemon
 startup. Failed initialization is not automatically replayed. See
-[bootstrap admission](../docs/design/osd-storage.md#bootstrap-admission) for the exact checks
-and limits. [Launch recipes](../docs/design/osd-storage.md#launch-recipes) capture file/config
+[bootstrap admission](../docs/internals/osd-storage.md#bootstrap-admission) for the exact checks
+and limits. [Launch recipes](../docs/internals/osd-storage.md#launch-recipes) capture file/config
 inputs and rebuild fresh Readers without replaying container creation.
 
 #### AddOSD
@@ -2406,7 +2406,7 @@ selection. `AddOSD` composes several values in argument order: each field may be
 set by at most one value, and setting it in two is refused with
 `ErrInvalidRequest` even when both agree. Within one value a later call replaces
 the earlier one. The rules are in
-[value-configuration-composition](../docs/design/value-configuration-composition.md).
+[configuration composition](../docs/contributing/configuration-composition.md).
 
 #### OSDContainer.Remove
 

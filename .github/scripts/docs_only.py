@@ -18,7 +18,7 @@ import sys
 
 # docs/ directories whose direct Markdown children are not read by any check.
 # Exceptions inside them are the files that a check reads.
-UNREAD_DOC_DIRS = ("docs/contributing", "docs/design", "docs/guides")
+UNREAD_DOC_DIRS = ("docs/contributing", "docs/guides", "docs/internals")
 READ_DOC_FILES = frozenset((
     # internal/integration messenger coverage test cross-checks this guide.
     "docs/guides/messenger-client-fixtures.md",
@@ -26,18 +26,13 @@ READ_DOC_FILES = frozenset((
     "docs/guides/bug-compatibility.md",
     # internal/tools/testdoublecheck reads the test-double inventory.
     "docs/contributing/test-double-inventory.md",
-    # The ceph, cephfs/mirror and rbd/mirror catalogue receipts name this note
-    # as their review; internal/apiinventory checks that it exists.
-    "docs/design/value-configuration-composition.md",
+    # The API catalogue receipts name these notes as their review;
+    # internal/apiinventory checks that they exist.
+    "docs/contributing/api-naming.md",
+    "docs/contributing/configuration-composition.md",
 ))
 # Git file modes of an ordinary file and of an absent side (added or deleted).
 REGULAR_MODES = frozenset(("100644", "000000"))
-# internal/apiinventory reads the review note docs/design/api-naming.md and the
-# package-scoped declaration, member and review files below
-# docs/design/api-naming/.
-READ_DOC_PREFIXES = (
-    "docs/design/api-naming",
-)
 
 
 def is_unread_doc(path):
@@ -54,7 +49,7 @@ def is_unread_doc(path):
         return path == "LICENSE" or path.endswith(".md")
     if not path.endswith(".md"):
         return False
-    if path in READ_DOC_FILES or path.startswith(READ_DOC_PREFIXES):
+    if path in READ_DOC_FILES:
         return False
     return "/".join(parts[:-1]) in UNREAD_DOC_DIRS
 

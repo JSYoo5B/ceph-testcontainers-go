@@ -1896,7 +1896,7 @@ class ChangedComparisonGitTests(unittest.TestCase):
     """Real Git ancestry, independent base advancement and fail-closed proof."""
 
     PR_PATHS = (".github/scripts/scenario_history.py", ".github/scripts/test_scenario_history.py",
-                "docs/design/osd-storage.md")
+                "docs/internals/osd-storage.md")
     INCOMING_PATHS = ("internal/integration/ec_four_two_integration_test.go",
                       "internal/integration/osd_retained_concurrency_integration_test.go")
 

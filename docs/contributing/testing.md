@@ -584,7 +584,7 @@ identifier and method of the package. Mention a new export there, usually under
 its own heading, in the same change.
 
 The same tests check the per-package catalogues in
-`docs/design/api-naming/<package>/` (`declarations.json`, `members.json`,
+`internal/apiinventory/catalogues/<package>/` (`declarations.json`, `members.json`,
 `review.json`). Packages are discovered from the source tree; there is no
 shared index, count or hash file. Never edit these files by hand. After a
 public API change, run two separate steps and review each diff:

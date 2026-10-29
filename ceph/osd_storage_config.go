@@ -27,7 +27,7 @@ const (
 // agree, so argument order never decides a conflict. Incompatible combinations
 // (MemStore with in-memory or volume storage, in-memory with volume storage) are
 // refused before any resource is created. The composition rules are in
-// docs/design/value-configuration-composition.md.
+// docs/contributing/configuration-composition.md.
 type OSDStorage struct {
 	set        osdStorageField
 	blockSize  int64
