@@ -63,7 +63,7 @@ func (fs *Filesystem) captureColdMDS(ctx context.Context, originalFSID string) e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if servicehook.Closed(fs.cluster) || filesystems(fs.cluster).byName[fs.FilesystemName] != fs || fs.nativeIdentity != cap.identity || fs.Container != nil || fs.roster.count() != 0 {
+	if servicehook.Closed(fs.cluster) || filesystems(fs.cluster).byName[fs.name] != fs || fs.nativeIdentity != cap.identity || fs.Container != nil || fs.roster.count() != 0 {
 		return errors.New("cold filesystem ownership changed before confirmation")
 	}
 	fs.coldMDS = cap
@@ -83,7 +83,7 @@ func (fs *Filesystem) scaleColdMDS(parent context.Context, active, standby int, 
 		return err
 	}
 	cap := fs.coldMDS
-	valid := !servicehook.Closed(c) && filesystems(c).byName[fs.FilesystemName] == fs && fs.FilesystemName == fs.config.Name && fs.Container == nil && fs.roster.count() == 0 && cap != nil && !cap.attempted && cap.identity == fs.nativeIdentity
+	valid := !servicehook.Closed(c) && filesystems(c).byName[fs.name] == fs && fs.FilesystemName == fs.name && fs.Container == nil && fs.roster.count() == 0 && cap != nil && !cap.attempted && cap.identity == fs.nativeIdentity
 	servicehook.Unlock(c)
 	if !valid {
 		return servicehook.Invalid(errors.New("cold filesystem is unavailable, incomplete or already attempted"))
@@ -171,7 +171,7 @@ func (fs *Filesystem) verifyColdMDS(ctx context.Context, cap *cephFSColdMDS) err
 	if err != nil {
 		return err
 	}
-	if err := decodeColdMDSMap(data, coldMDSMapExpectation{filesystem: fs.config.Name, reservedName: fs.roster.nextID(fs.FilesystemName), native: cap.identity, dataPools: cap.dataPools}); err != nil {
+	if err := decodeColdMDSMap(data, coldMDSMapExpectation{filesystem: fs.name, reservedName: fs.roster.nextID(fs.name), native: cap.identity, dataPools: cap.dataPools}); err != nil {
 		return err
 	}
 	_, err = fs.readColdFSID(ctx, cap)
@@ -192,7 +192,7 @@ func (fs *Filesystem) checkColdMDSAuth(ctx context.Context) error {
 		return errors.New("decode initial MDS identity names")
 	}
 	seen := map[string]bool{}
-	reserved := "mds." + fs.roster.nextID(fs.FilesystemName)
+	reserved := "mds." + fs.roster.nextID(fs.name)
 	for _, entry := range *auth.Entities {
 		if entry.Entity == nil || *entry.Entity == "" || strings.TrimSpace(*entry.Entity) != *entry.Entity || seen[*entry.Entity] {
 			return errors.New("initial MDS identity names are incomplete or duplicated")

@@ -175,7 +175,7 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 	if !schedule.Start.IsZero() {
 		args = append(args, lease.Start.Format(snapshotScheduleTime))
 	}
-	if _, err := fs.cluster.Ceph(ctx, append(args, "--fs", fs.config.Name)...); err != nil {
+	if _, err := fs.cluster.Ceph(ctx, append(args, "--fs", fs.name)...); err != nil {
 		// A lost reply may have added it; Restore reads the directory back.
 		return lease, fmt.Errorf("add the snapshot schedule of %s: %w", schedule.Path, err)
 	}
@@ -193,7 +193,7 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 	for _, period := range slices.Sorted(maps.Keys(schedule.Retention)) {
 		lease.rules[period] = schedule.Retention[period]
 		if _, err := fs.cluster.Ceph(ctx, "fs", "snap-schedule", "retention", "add", schedule.Path, period,
-			strconv.Itoa(schedule.Retention[period]), "--fs", fs.config.Name); err != nil {
+			strconv.Itoa(schedule.Retention[period]), "--fs", fs.name); err != nil {
 			return lease, fmt.Errorf("add the snapshot retention %s of %s: %w", period, schedule.Path, err)
 		}
 	}
@@ -225,7 +225,7 @@ func (l *SnapshotScheduleLease) release() {
 
 // snapshotScheduleStatuses reads every schedule of one directory.
 func (fs *Filesystem) snapshotScheduleStatuses(ctx context.Context, dir string) ([]SnapshotScheduleStatus, error) {
-	data, err := fs.cluster.Ceph(ctx, "fs", "snap-schedule", "status", dir, "--fs", fs.config.Name, "--format", "json")
+	data, err := fs.cluster.Ceph(ctx, "fs", "snap-schedule", "status", dir, "--fs", fs.name, "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("read the snapshot schedules of %s: %w", dir, err)
 	}
@@ -343,7 +343,7 @@ func (l *SnapshotScheduleLease) Snapshots(ctx context.Context) ([]string, error)
 	if err != nil {
 		return nil, fmt.Errorf("select the CephFS CLI container: %w", err)
 	}
-	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSSnapshotListScript, l.filesystem.config.Name, l.Path)
+	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSSnapshotListScript, l.filesystem.name, l.Path)
 	if err != nil {
 		return nil, fmt.Errorf("list the snapshots of %s: %w", l.Path, err)
 	}
@@ -422,7 +422,7 @@ func (l *SnapshotScheduleLease) Restore(ctx context.Context) error {
 	if owned != nil {
 		// The start selects this schedule among those with its repeat.
 		if _, err := l.filesystem.cluster.Ceph(ctx, "fs", "snap-schedule", "remove", l.Path, l.Repeat, owned.start,
-			"--fs", l.filesystem.config.Name); err != nil {
+			"--fs", l.filesystem.name); err != nil {
 			return fmt.Errorf("remove the snapshot schedule of %s: %w", l.Path, err)
 		}
 		// Bind an unconfirmed add, so the read back looks for this schedule.
@@ -474,7 +474,7 @@ func (l *SnapshotScheduleLease) removeRules(ctx context.Context, statuses []Snap
 	}
 	for _, period := range pending {
 		_, err := l.filesystem.cluster.Ceph(ctx, "fs", "snap-schedule", "retention", "remove", l.Path, period,
-			strconv.Itoa(l.rules[period]), "--fs", l.filesystem.config.Name)
+			strconv.Itoa(l.rules[period]), "--fs", l.filesystem.name)
 		if err != nil && (len(statuses) > 0 || !snapshotRetentionAbsent(err)) {
 			return fmt.Errorf("remove the snapshot retention %s of %s: %w", period, l.Path, err)
 		}

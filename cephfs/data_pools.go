@@ -89,7 +89,7 @@ func (fs *Filesystem) readNativePools(ctx context.Context) (*cephFSNativePools, 
 	}
 	var result *cephFSNativePools
 	for _, native := range fsmap.Filesystems {
-		if native.MDSMap.Name != fs.config.Name {
+		if native.MDSMap.Name != fs.name {
 			continue
 		}
 		if result != nil || native.ID < 0 || native.MDSMap.MetadataPool < 0 || len(native.MDSMap.DataPools) == 0 {
@@ -148,7 +148,7 @@ func (fs *Filesystem) beginDataPoolOperation(ctx context.Context) (context.Conte
 		refusal:         "filesystem must have a confirmed creation identity in this active cluster",
 		check: func(ctx context.Context) (bool, error) {
 			c := fs.cluster
-			if servicehook.Closed(c) || filesystems(c).byName[fs.config.Name] != fs || fs.nativeIdentity == nil {
+			if servicehook.Closed(c) || filesystems(c).byName[fs.name] != fs || fs.nativeIdentity == nil {
 				return false, nil
 			}
 			control, err := c.ControlContainer(ctx)
@@ -197,7 +197,7 @@ func (fs *Filesystem) poolApplications(ctx context.Context, name string) (map[st
 }
 
 func cephFSPoolHandle(identity *cephFSDataPoolIdentity) *DataPool {
-	return &DataPool{Name: identity.name, ID: identity.id, FilesystemName: identity.filesystem.config.Name, identity: identity}
+	return &DataPool{Name: identity.name, ID: identity.id, FilesystemName: identity.filesystem.name, identity: identity}
 }
 
 // AddDataPool attaches an existing pool with application=cephfs and no prior
@@ -262,7 +262,7 @@ func (fs *Filesystem) AddDataPool(ctx context.Context, name string) (*DataPool, 
 		fs.nativeIdentity.attachments[name] = identity
 	}
 	handle := cephFSPoolHandle(identity)
-	if _, err := fs.cluster.Ceph(ctx, "fs", "add_data_pool", fs.config.Name, strconv.FormatInt(pool.ID, 10)); err != nil {
+	if _, err := fs.cluster.Ceph(ctx, "fs", "add_data_pool", fs.name, strconv.FormatInt(pool.ID, 10)); err != nil {
 		return handle, fmt.Errorf("attach CephFS data pool: %w", err)
 	}
 	if err := fs.confirmDataPoolAttachment(ctx, identity); err != nil {
@@ -284,7 +284,7 @@ func (fs *Filesystem) confirmDataPoolAttachment(ctx context.Context, identity *c
 	if err != nil {
 		return err
 	}
-	if len(apps) != 1 || apps["cephfs"]["data"] != fs.config.Name || apps["cephfs"]["metadata"] != "" {
+	if len(apps) != 1 || apps["cephfs"]["data"] != fs.name || apps["cephfs"]["metadata"] != "" {
 		return errors.New("attached pool's native application role was not confirmed")
 	}
 	identity.confirmed = true
@@ -382,7 +382,7 @@ func (fs *Filesystem) RemoveUnusedDataPool(ctx context.Context, attachment *Data
 		return err
 	}
 	identity.removalAttempted = true
-	if _, err := fs.cluster.Ceph(ctx, "fs", "rm_data_pool", fs.config.Name, strconv.FormatInt(identity.id, 10)); err != nil {
+	if _, err := fs.cluster.Ceph(ctx, "fs", "rm_data_pool", fs.name, strconv.FormatInt(identity.id, 10)); err != nil {
 		return err
 	}
 	state, err = fs.readNativePools(ctx)

@@ -181,10 +181,10 @@ func (fs *Filesystem) removeStoppedMDS(parent context.Context, daemon *MDS) erro
 // Owner held; exported fields cannot redirect either target or survivor reads.
 func (fs *Filesystem) checkStoppedMDSOwner(handle *MDS, i *cephFSMDSIdentity) error {
 	c := fs.cluster
-	if servicehook.Closed(c) || fs.FilesystemName != fs.config.Name || fs.MetadataPool != fs.config.MetadataPool.Name || fs.DataPool != fs.config.DataPool.Name || filesystems(c).byName[fs.config.Name] != fs || i.filesystem != fs || !i.confirmed || i.native == nil || i.native != fs.nativeIdentity || i.container == nil || i.container.GetContainerID() != i.cid || i.descriptor == nil || i.descriptor.identity != i || handle.ID != i.name || handle.FilesystemName != fs.config.Name || handle.Container != i.container {
+	if servicehook.Closed(c) || fs.FilesystemName != fs.name || fs.MetadataPool != fs.config.MetadataPool.Name || fs.DataPool != fs.config.DataPool.Name || filesystems(c).byName[fs.name] != fs || i.filesystem != fs || !i.confirmed || i.native == nil || i.native != fs.nativeIdentity || i.container == nil || i.container.GetContainerID() != i.cid || i.descriptor == nil || i.descriptor.identity != i || handle.ID != i.name || handle.FilesystemName != fs.name || handle.Container != i.container {
 		return errors.New("original stopped MDS ownership changed or startup is unconfirmed")
 	}
-	if i.descriptor.ID != i.name || i.descriptor.FilesystemName != fs.config.Name || i.descriptor.Container != i.container {
+	if i.descriptor.ID != i.name || i.descriptor.FilesystemName != fs.name || i.descriptor.Container != i.container {
 		return servicehook.Invalid(errors.New("original stopped MDS descriptor was edited"))
 	}
 	count, embedded := 0, false
@@ -268,7 +268,7 @@ func (fs *Filesystem) readStoppedMDSScope(ctx context.Context, target *cephFSMDS
 func (fs *Filesystem) decodeStoppedMDSScope(ctx context.Context, target *cephFSMDSIdentity, pools *cephFSNativePools, data []byte) (*cephFSMDSRemovalScope, error) {
 	state, err := decodeStoppedMDSMap(data, stoppedMDSMapExpectation{
 		targetName:    target.name,
-		filesystem:    fs.config.Name,
+		filesystem:    fs.name,
 		native:        target.native,
 		pools:         pools,
 		activeMDS:     fs.config.ActiveMDS,

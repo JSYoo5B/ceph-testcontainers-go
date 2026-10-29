@@ -49,11 +49,11 @@ func parseRemovalShutdownState(data []byte, name string) (removalShutdownState, 
 // unhealthy daemon to fail nor changes the filesystem back to up on error.
 func drainFilesystemForRemoval(ctx context.Context, c *ceph.Container, fs *Filesystem) error {
 	read := func() (removalShutdownState, error) {
-		data, err := c.Ceph(ctx, "fs", "get", fs.FilesystemName, "--format", "json")
+		data, err := c.Ceph(ctx, "fs", "get", fs.name, "--format", "json")
 		if err != nil {
 			return removalShutdownState{}, err
 		}
-		return parseRemovalShutdownState(data, fs.FilesystemName)
+		return parseRemovalShutdownState(data, fs.name)
 	}
 	before, err := read()
 	if err != nil {
@@ -62,7 +62,7 @@ func drainFilesystemForRemoval(ctx context.Context, c *ceph.Container, fs *Files
 	if fs.nativeIdentity != nil && before.id != fs.nativeIdentity.id {
 		return errors.New("filesystem identity changed before shutdown")
 	}
-	if _, err := c.Ceph(ctx, "fs", "set", fs.FilesystemName, "down", "true"); err != nil {
+	if _, err := c.Ceph(ctx, "fs", "set", fs.name, "down", "true"); err != nil {
 		return fmt.Errorf("request graceful shutdown: %w", err)
 	}
 	ticker := time.NewTicker(100 * time.Millisecond)

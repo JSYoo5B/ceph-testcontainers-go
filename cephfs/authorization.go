@@ -112,14 +112,14 @@ func (fs *Filesystem) AuthorizeSubvolume(ctx context.Context, volume *Subvolume,
 	// Fresh-key auth add prevents native get-or-create from silently reusing a
 	// concurrently created external principal. Initial caps contain no file-data
 	// access; volumes adds both exact MDS and OSD clauses after key verification.
-	client, err := fs.cluster.CreateClient(ctx, entity, ceph.ClientCaps{Mon: "allow r fsname=" + fs.config.Name})
+	client, err := fs.cluster.CreateClient(ctx, entity, ceph.ClientCaps{Mon: "allow r fsname=" + fs.name})
 	if client == nil {
 		return nil, err
 	}
 	identity := &cephFSAuthorizationIdentity{volume: volume.identity, client: client, poolID: pool.ID,
 		dataPool: info.DataPool, namespace: info.PoolNamespace, access: config.Access}
 	grant := &SubvolumeAuthorization{Client: client, AuthID: client.User(), Access: config.Access,
-		FilesystemName: fs.config.Name, SubvolumeName: volume.identity.name, GroupName: volume.identity.group,
+		FilesystemName: fs.name, SubvolumeName: volume.identity.name, GroupName: volume.identity.group,
 		Path: volume.identity.path, DataPool: info.DataPool, PoolNamespace: info.PoolNamespace, identity: identity}
 	if err != nil {
 		return grant, err
@@ -140,7 +140,7 @@ func (fs *Filesystem) AuthorizeSubvolume(ctx context.Context, volume *Subvolume,
 	}
 	volume.identity.authorizations[identity] = struct{}{}
 	identity.authorizeAttempted = true
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "authorize", fs.config.Name, volume.identity.name, client.User()}, volume.identity.group)
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "authorize", fs.name, volume.identity.name, client.User()}, volume.identity.group)
 	args = append(args, "--access_level", config.Access, "--allow_existing_id")
 	if _, err := servicehook.AuthCommand(ctx, fs.cluster, "authorize owned subvolume client", args...); err != nil {
 		return grant, err
@@ -188,7 +188,7 @@ func decodeSubvolumeAuthorizedClients(data []byte) ([]SubvolumeAuthorizedClient,
 }
 
 func (fs *Filesystem) nativeAuthorizedClients(ctx context.Context, name, group string) ([]SubvolumeAuthorizedClient, error) {
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "authorized_list", fs.config.Name, name}, group)
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "authorized_list", fs.name, name}, group)
 	data, err := fs.cluster.Ceph(ctx, args...)
 	if err != nil {
 		return nil, err
@@ -444,7 +444,7 @@ func (fs *Filesystem) DeauthorizeSubvolume(ctx context.Context, grant *Subvolume
 		return err
 	}
 	identity.remainingCaps, identity.deauthAttempted = remaining, true
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "deauthorize", fs.config.Name, identity.volume.name, identity.client.User()}, identity.volume.group)
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "deauthorize", fs.name, identity.volume.name, identity.client.User()}, identity.volume.group)
 	if _, err := servicehook.AuthCommand(ctx, fs.cluster, "deauthorize owned subvolume client", args...); err != nil {
 		return err
 	}
@@ -495,7 +495,7 @@ func (fs *Filesystem) EvictSubvolumeClients(ctx context.Context, grant *Subvolum
 	if err := fs.checkNativeAuthorization(ctx, identity, false); err != nil {
 		return err
 	}
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "evict", fs.config.Name, identity.volume.name, identity.client.User()}, identity.volume.group)
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "evict", fs.name, identity.volume.name, identity.client.User()}, identity.volume.group)
 	_, err = servicehook.AuthCommand(ctx, fs.cluster, fmt.Sprintf("evict owned %s sessions at subvolume root", identity.client.Name()), args...)
 	return err
 }

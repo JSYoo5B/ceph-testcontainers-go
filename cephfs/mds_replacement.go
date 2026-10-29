@@ -100,7 +100,7 @@ func (fs *Filesystem) addMDSReplacement(parent context.Context, stopped *MDS, st
 		servicehook.Unlock(c)
 		return nil, clusterutil.OperationError(ctx, "inspect original MDS before replacement", err)
 	}
-	r := &cephFSMDSReplacement{name: fs.roster.nextID(fs.FilesystemName)}
+	r := &cephFSMDSReplacement{name: fs.roster.nextID(fs.name)}
 	r.scope, _, err = fs.readMDSReplacementScope(ctx, i, r)
 	if err == nil {
 		err = fs.checkMDSReplacementAuth(ctx, control, r.name)
@@ -256,7 +256,7 @@ func (fs *Filesystem) checkMDSReplacementPartial(old *cephFSMDSIdentity, r *ceph
 		return nil
 	}
 	i := r.identity
-	if i == nil || r.daemon.identity != i || i.createdByReplacement != r || i.descriptor != r.daemon || i.filesystem != fs || i.native != old.native || i.name != r.name || r.daemon.ID != r.name || r.daemon.FilesystemName != fs.config.Name || r.daemon.Container != i.container || i.container == nil || i.container.GetContainerID() != i.cid || servicehook.Service(fs.cluster, "mds."+r.name) != i.container || fs.roster.count() != 2 || fs.roster.at(0) != old.descriptor || fs.roster.at(1) != r.daemon {
+	if i == nil || r.daemon.identity != i || i.createdByReplacement != r || i.descriptor != r.daemon || i.filesystem != fs || i.native != old.native || i.name != r.name || r.daemon.ID != r.name || r.daemon.FilesystemName != fs.name || r.daemon.Container != i.container || i.container == nil || i.container.GetContainerID() != i.cid || servicehook.Service(fs.cluster, "mds."+r.name) != i.container || fs.roster.count() != 2 || fs.roster.at(0) != old.descriptor || fs.roster.at(1) != r.daemon {
 		return errors.New("cleanup-only original MDS replacement handle changed")
 	}
 	return nil
@@ -345,7 +345,7 @@ func (fs *Filesystem) readMDSReplacementScope(ctx context.Context, old *cephFSMD
 		return nil, false, clusterutil.OperationError(ctx, "read original MDS replacement map", err)
 	}
 	state, err := decodeMDSReplacementMap(data, replacementMDSMapExpectation{
-		oldName: old.name, filesystem: fs.config.Name, reservedName: r.name, workerExists: r.daemon != nil, native: old.native, pools: pools,
+		oldName: old.name, filesystem: fs.name, reservedName: r.name, workerExists: r.daemon != nil, native: old.native, pools: pools,
 	})
 	if err != nil {
 		return nil, false, err

@@ -172,7 +172,7 @@ func stoppedMDSFixture(t *testing.T) (*Filesystem, *stoppedMDSControl, *MDS, *st
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs := &Filesystem{cluster: c, config: config, FilesystemName: config.Name, MetadataPool: config.MetadataPool.Name, DataPool: config.DataPool.Name}
+	fs := &Filesystem{cluster: c, config: config, FilesystemName: config.Name, name: config.Name, MetadataPool: config.MetadataPool.Name, DataPool: config.DataPool.Name}
 	filesystems(c).byName = map[string]*Filesystem{"target": fs}
 	if err := fs.captureNativePoolIdentity(t.Context()); err != nil {
 		t.Fatal(err)

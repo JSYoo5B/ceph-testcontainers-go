@@ -38,7 +38,7 @@ func dataPoolsFixture(t *testing.T) (*Filesystem, *cephFSDataPoolsFixture) {
 	ctr := &cephFSDataPoolsFixture{fsID: 41, metadataID: 1, defaultID: 2, targetID: 3, poolType: 1,
 		apps: map[string]map[string]string{"cephfs": {}}, output: make(map[string]string)}
 	c := testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second})
-	fs := &Filesystem{FilesystemName: "fixture", MetadataPool: "metadata", DataPool: "data", cluster: c,
+	fs := &Filesystem{FilesystemName: "fixture", name: "fixture", MetadataPool: "metadata", DataPool: "data", cluster: c,
 		config: Config{Name: "fixture", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}}}
 	filesystems(c).byName["fixture"] = fs
 	if err := fs.captureNativePoolIdentity(t.Context()); err != nil {

@@ -91,7 +91,7 @@ func newReplacementMDSFixture(t *testing.T) *replacementMDSFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.fs = &Filesystem{cluster: c, config: config, FilesystemName: "target", MetadataPool: config.MetadataPool.Name, DataPool: config.DataPool.Name}
+	r.fs = &Filesystem{cluster: c, config: config, FilesystemName: "target", name: "target", MetadataPool: config.MetadataPool.Name, DataPool: config.DataPool.Name}
 	filesystems(c).byName = map[string]*Filesystem{"target": r.fs}
 	if err := r.fs.captureNativePoolIdentity(t.Context()); err != nil {
 		t.Fatal(err)

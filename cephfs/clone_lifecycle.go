@@ -39,7 +39,7 @@ func (fs *Filesystem) readCloneIncarnation(ctx context.Context, identity *cephFS
 	if err != nil {
 		return nil, fmt.Errorf("select CephFS clone CLI container: %w", err)
 	}
-	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSCloneIdentityScript, fs.config.Name, base)
+	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSCloneIdentityScript, fs.name, base)
 	if err != nil {
 		return nil, fmt.Errorf("read native clone incarnation: %w", err)
 	}
@@ -57,7 +57,7 @@ func (fs *Filesystem) readCloneIncarnation(ctx context.Context, identity *cephFS
 		return nil, errors.New("unsupported native clone incarnation state")
 	}
 	source := identity.source.subvolume
-	if len(metadata.Source) != 0 && (metadata.Source["volume"] != fs.config.Name || metadata.Source["group"] != source.group || metadata.Source["subvolume"] != source.name || metadata.Source["snapshot"] != identity.source.name) {
+	if len(metadata.Source) != 0 && (metadata.Source["volume"] != fs.name || metadata.Source["group"] != source.group || metadata.Source["subvolume"] != source.name || metadata.Source["snapshot"] != identity.source.name) {
 		return nil, errors.New("native clone metadata source does not match this request")
 	}
 	if metadata.State != "complete" && len(metadata.Source) == 0 {
@@ -162,7 +162,7 @@ func (fs *Filesystem) cancelSubvolumeCloneStep(ctx context.Context, identity *ce
 		return false, err
 	}
 	if request {
-		args := appendSubvolumeGroup([]string{"fs", "clone", "cancel", fs.config.Name, identity.name}, identity.group)
+		args := appendSubvolumeGroup([]string{"fs", "clone", "cancel", fs.name, identity.name}, identity.group)
 		if _, err := fs.cluster.Ceph(ctx, args...); err != nil {
 			return false, err
 		}
@@ -227,7 +227,7 @@ func (fs *Filesystem) RemovePartialSubvolumeClone(ctx context.Context, clone *Su
 		return errors.New("clone source snapshot is still protected; await cancellation/worker detachment before cleanup")
 	}
 	identity.removalAttempted = true
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "rm", fs.config.Name, identity.name}, identity.group)
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "rm", fs.name, identity.name}, identity.group)
 	if _, err := fs.cluster.Ceph(ctx, append(args, "--force")...); err != nil {
 		return err
 	}

@@ -192,9 +192,9 @@ func (fs *Filesystem) Sessions(ctx context.Context) ([]Session, error) {
 	}
 	var sessions []Session
 	for _, mds := range status.Active {
-		data, err := fs.cluster.Ceph(ctx, "tell", "mds."+fs.FilesystemName+":"+strconv.Itoa(mds.Rank), "session", "ls", "--format", "json")
+		data, err := fs.cluster.Ceph(ctx, "tell", "mds."+fs.name+":"+strconv.Itoa(mds.Rank), "session", "ls", "--format", "json")
 		if err != nil {
-			return nil, fmt.Errorf("list sessions of CephFS %q rank %d: %w", fs.FilesystemName, mds.Rank, err)
+			return nil, fmt.Errorf("list sessions of CephFS %q rank %d: %w", fs.name, mds.Rank, err)
 		}
 		ranked, err := parseCephFSSessions(data, mds.Rank)
 		if err != nil {
@@ -248,7 +248,7 @@ func (fs *Filesystem) beginSessionOperation(ctx context.Context) (context.Contex
 		refusal: "CephFS filesystem must be an active filesystem created by this cluster",
 		check: func(context.Context) (bool, error) {
 			c := fs.cluster
-			if servicehook.Closed(c) || filesystems(c).byName[fs.config.Name] != fs || fs.FilesystemName != fs.config.Name || fs.nativeIdentity == nil {
+			if servicehook.Closed(c) || filesystems(c).byName[fs.name] != fs || fs.FilesystemName != fs.name || fs.nativeIdentity == nil {
 				return false, nil
 			}
 			fsID = fs.nativeIdentity.id
@@ -262,9 +262,9 @@ func (fs *Filesystem) beginSessionOperation(ctx context.Context) (context.Contex
 }
 
 func (fs *Filesystem) readSessionTimeouts(ctx context.Context, fsID int64) (SessionTimeouts, error) {
-	data, err := fs.cluster.Ceph(ctx, "fs", "get", fs.FilesystemName, "--format", "json")
+	data, err := fs.cluster.Ceph(ctx, "fs", "get", fs.name, "--format", "json")
 	if err != nil {
-		return SessionTimeouts{}, fmt.Errorf("read CephFS %q session timeouts: %w", fs.FilesystemName, err)
+		return SessionTimeouts{}, fmt.Errorf("read CephFS %q session timeouts: %w", fs.name, err)
 	}
 	return parseCephFSSessionTimeouts(data, fsID)
 }
@@ -293,8 +293,8 @@ func (fs *Filesystem) writeSessionTimeouts(ctx context.Context, fsID int64, curr
 		if field.current == field.want {
 			continue
 		}
-		if _, err := fs.cluster.Ceph(ctx, "fs", "set", fs.FilesystemName, field.name, strconv.FormatInt(int64(field.want/time.Second), 10)); err != nil {
-			return fmt.Errorf("set CephFS %q %s: %w", fs.FilesystemName, field.name, err)
+		if _, err := fs.cluster.Ceph(ctx, "fs", "set", fs.name, field.name, strconv.FormatInt(int64(field.want/time.Second), 10)); err != nil {
+			return fmt.Errorf("set CephFS %q %s: %w", fs.name, field.name, err)
 		}
 	}
 	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
