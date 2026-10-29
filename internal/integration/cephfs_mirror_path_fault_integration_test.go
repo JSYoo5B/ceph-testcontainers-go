@@ -80,11 +80,11 @@ func testCephFSMirrorPeerPathCut(t *testing.T) {
 	fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
 	first := cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, "/federation", "backup-1")
 	archive("backup-1")
-	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.Config{
+	mirror, err := cephfsmirror.Run(ctx, cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: []string{"/federation"},
-	})
+	}, cephfsmirror.WithImageOptions(cephfsmirror.ImageOptions{}.WithDaemonImage(nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS))))
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

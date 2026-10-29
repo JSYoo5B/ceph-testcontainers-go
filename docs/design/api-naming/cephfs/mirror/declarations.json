@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs/mirror",
-  "count": 50,
+  "count": 54,
   "entries": [
     {
       "current": "cephfs/mirror.Config",
@@ -106,6 +106,20 @@
       "current": "cephfs/mirror.DirectoryStatus",
       "kind": "type",
       "proposed": "cephfs/mirror.DirectoryStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.ImageOptions",
+      "kind": "type",
+      "proposed": "cephfs/mirror.ImageOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.ImageOptions.WithDaemonImage",
+      "kind": "method",
+      "signature": "func(image string) ImageOptions",
+      "receiver": "ImageOptions",
+      "proposed": "cephfs/mirror.ImageOptions.WithDaemonImage",
       "decision": "baseline"
     },
     {
@@ -275,6 +289,20 @@
       "decision": "baseline"
     },
     {
+      "current": "cephfs/mirror.Option",
+      "kind": "type",
+      "proposed": "cephfs/mirror.Option",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Option.Customize",
+      "kind": "method",
+      "signature": "func(*testcontainers.GenericContainerRequest) error",
+      "receiver": "Option",
+      "proposed": "cephfs/mirror.Option.Customize",
+      "decision": "baseline"
+    },
+    {
       "current": "cephfs/mirror.OriginalProcessStatus",
       "kind": "type",
       "proposed": "cephfs/mirror.OriginalProcessStatus",
@@ -351,21 +379,21 @@
     {
       "current": "cephfs/mirror.Run",
       "kind": "function",
-      "signature": "func(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
-      "proposed": "cephfs/mirror.Run",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs/mirror.RunWithImages",
-      "kind": "function",
       "signature": "func(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
-      "proposed": "cephfs/mirror.RunWithImages",
+      "proposed": "cephfs/mirror.Run",
       "decision": "baseline"
     },
     {
       "current": "cephfs/mirror.Snapshot",
       "kind": "type",
       "proposed": "cephfs/mirror.Snapshot",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.WithImageOptions",
+      "kind": "function",
+      "signature": "func(config ImageOptions) Option",
+      "proposed": "cephfs/mirror.WithImageOptions",
       "decision": "baseline"
     }
   ]

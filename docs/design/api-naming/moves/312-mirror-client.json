@@ -1,0 +1,21 @@
+{
+  "schema": "ceph-api-move/v1",
+  "change": "312-mirror-client",
+  "review": "value-configuration-composition.md",
+  "removed": [
+    "cephfs/mirror.RunWithImages",
+    "rbd/mirror.RunWithImages"
+  ],
+  "added": [
+    "cephfs/mirror.ImageOptions",
+    "cephfs/mirror.ImageOptions.WithDaemonImage",
+    "cephfs/mirror.Option",
+    "cephfs/mirror.Option.Customize",
+    "cephfs/mirror.WithImageOptions",
+    "rbd/mirror.ImageOptions",
+    "rbd/mirror.ImageOptions.WithDaemonImage",
+    "rbd/mirror.Option",
+    "rbd/mirror.Option.Customize",
+    "rbd/mirror.WithImageOptions"
+  ]
+}

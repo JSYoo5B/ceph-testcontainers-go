@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rbd/mirror",
-  "count": 41,
+  "count": 45,
   "entries": [
     {
       "current": "rbd/mirror.Config",
@@ -36,6 +36,20 @@
       "current": "rbd/mirror.DaemonStatus",
       "kind": "type",
       "proposed": "rbd/mirror.DaemonStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ImageOptions",
+      "kind": "type",
+      "proposed": "rbd/mirror.ImageOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.ImageOptions.WithDaemonImage",
+      "kind": "method",
+      "signature": "func(image string) ImageOptions",
+      "receiver": "ImageOptions",
+      "proposed": "rbd/mirror.ImageOptions.WithDaemonImage",
       "decision": "baseline"
     },
     {
@@ -241,6 +255,20 @@
       "decision": "baseline"
     },
     {
+      "current": "rbd/mirror.Option",
+      "kind": "type",
+      "proposed": "rbd/mirror.Option",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Option.Customize",
+      "kind": "method",
+      "signature": "func(*testcontainers.GenericContainerRequest) error",
+      "receiver": "Option",
+      "proposed": "rbd/mirror.Option.Customize",
+      "decision": "baseline"
+    },
+    {
       "current": "rbd/mirror.Policies",
       "kind": "type",
       "proposed": "rbd/mirror.Policies",
@@ -267,15 +295,8 @@
     {
       "current": "rbd/mirror.Run",
       "kind": "function",
-      "signature": "func(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
-      "proposed": "rbd/mirror.Run",
-      "decision": "baseline"
-    },
-    {
-      "current": "rbd/mirror.RunWithImages",
-      "kind": "function",
       "signature": "func(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
-      "proposed": "rbd/mirror.RunWithImages",
+      "proposed": "rbd/mirror.Run",
       "decision": "baseline"
     },
     {
@@ -294,6 +315,13 @@
       "current": "rbd/mirror.ScopePool",
       "kind": "const",
       "proposed": "rbd/mirror.ScopePool",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.WithImageOptions",
+      "kind": "function",
+      "signature": "func(config ImageOptions) Option",
+      "proposed": "rbd/mirror.WithImageOptions",
       "decision": "baseline"
     }
   ]

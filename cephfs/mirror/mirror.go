@@ -128,24 +128,34 @@ type cephFSPeerIdentity struct {
 
 // Run configures one-way directory snapshot mirroring between two
 // existing filesystems and starts each initial cephfs-mirror in a separate
-// container. NoInitialDaemons retains setup without launching a daemon. image
-// is the mirror daemon image: it must meet the cephfs (or all) role
-// requirements, including cephfs-mirror and the ceph CLI used to query its
-// local admin socket, and is refused when it is known to be another role of a
-// cluster. RunWithImages uses the source's Images().CephFS; the setup commands
-// run in each cluster's client toolkit, not in this image. MGRs must supply mirroring.
+// container. NoInitialDaemons retains setup without launching a daemon. Run
+// derives the mirror daemon image from the source's Images().CephFS and refuses a
+// source that has none; WithImageOptions(ImageOptions{}.WithDaemonImage(image))
+// replaces it. Either image must meet the cephfs (or all) role requirements,
+// including cephfs-mirror and the ceph CLI used to query its local admin socket,
+// and an explicit image is refused when it is known to be another role of a
+// cluster. The setup commands run in each cluster's client toolkit, not in this
+// image. Options are consumed by Run and never reach a daemon. MGRs must supply mirroring.
 // A non-nil result returned with an error must be terminated for partial cleanup.
 // Terminate leaves Ceph auth, peer and directory policies in the caller-owned
 // disposable clusters; it does not undo configuration or delete mirrored data.
 // Both clusters must use the same network mode. Host mode requires no extra
 // daemon or manager attachment; bridge mode joins the peer cluster network.
 // Initial daemon names are a through z, then node-27 and onward.
-func Run(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
+func Run(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
 	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("configure CephFS mirror: %w", err)
+	}
+	settings, daemonOpts, err := splitRunOptions(opts)
+	if err != nil {
 		return nil, fmt.Errorf("configure CephFS mirror: %w", err)
 	}
 	if _, err := multicluster.NormalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons); err != nil {
 		return nil, fmt.Errorf("CephFS %w", err)
+	}
+	image, err := settings.resolveDaemonImage(config)
+	if err != nil {
+		return nil, err
 	}
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, err
@@ -153,7 +163,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	if err := multicluster.RequireRoleImage(image, multicluster.RoleCephFS, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure CephFS mirror daemon image: %w", err)
 	}
-	config, err := normalizeCephFSMirrorConfig(config)
+	config, err = normalizeCephFSMirrorConfig(config)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +177,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 		SourceClientEntity: "client." + sourceID, DestinationClientEntity: "client." + destinationID,
 		Directories: append([]string(nil), config.Directories...),
 		source:      config.Source, destination: config.Destination, destinationSite: config.DestinationSite,
-		daemonImage: image, sourceID: sourceID, daemonOptions: append([]testcontainers.ContainerCustomizer(nil), opts...),
+		daemonImage: image, sourceID: sourceID, daemonOptions: daemonOpts,
 		ownedDirectories:             make(map[string]bool),
 		originalProcessClientFactory: config.OriginalProcessClientFactory,
 	}
@@ -1378,18 +1388,30 @@ func validCephFSMirrorFilesystemName(name string) bool {
 	return true
 }
 
-// RunWithImages selects the source cluster's CephFS daemon runtime.
-func RunWithImages(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
+// resolveDaemonImage returns the explicit daemon image, or derives it from the
+// source's cephfs role when none was selected.
+func (s runSettings) resolveDaemonImage(config Config) (string, error) {
+	if s.daemonImageSet {
+		return s.daemonImage, nil
+	}
 	if config.Source == nil || config.Destination == nil {
-		return nil, servicehook.Invalid(fmt.Errorf("roles clusters are required"))
+		return "", servicehook.Invalid(fmt.Errorf("roles clusters are required"))
 	}
 	facts, err := ceph.FactsOf(config.Source)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	image := facts.Images.CephFS
-	if image == "" {
-		return nil, servicehook.Invalid(fmt.Errorf("cephfs image is required"))
+	return s.daemonImageFor(facts.Images)
+}
+
+// daemonImageFor returns the explicit daemon image, or the cephfs role of the
+// source cluster's images, which a cluster without that role refuses.
+func (s runSettings) daemonImageFor(images ceph.ImageSet) (string, error) {
+	if s.daemonImageSet {
+		return s.daemonImage, nil
 	}
-	return Run(ctx, image, config, opts...)
+	if images.CephFS == "" {
+		return "", servicehook.Invalid(fmt.Errorf("cephfs image is required"))
+	}
+	return images.CephFS, nil
 }

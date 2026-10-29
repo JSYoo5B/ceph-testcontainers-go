@@ -130,7 +130,7 @@ only place for configuration.
   argument order, after the module's own request options and before the
   messenger environment, the `WithConfigFile` file and the ownership label.
 - `RunWithImages` and `WithImages` are removed without aliases. The mirror
-  `RunWithImages` functions are separate and unchanged.
+  `RunWithImages` functions are removed by `312-mirror-client` (below).
 
 ### OSD storage group (change `312-osd-storage`)
 
@@ -247,8 +247,80 @@ spellings. Docker and container execution policy stays testcontainers-style
 Open for the owner: whether `ceph.WithPools` belongs with topology or with the
 service packages.
 
+## Mirror `Run` (change `312-mirror-client`)
+
+Proposal of the implementation side, not an owner approval. `rbd/mirror.Run` and
+`cephfs/mirror.Run` each had a `RunWithImages` sibling that only derived the
+daemon image from the clusters and forwarded to `Run`. Premise: one `Run` path
+per package, the derived role image as the default, an explicit image as a
+grouped value.
+
+```go
+link, err := rbdmirror.Run(ctx, cfg)                                  // image from the destination's RBDAux
+link, err = rbdmirror.Run(ctx, cfg, rbdmirror.WithImageOptions(
+    rbdmirror.ImageOptions{}.WithDaemonImage("registry.example.com/rbd-aux:20.2.4")))
+```
+
+| Old (removed, no alias) | New |
+| --- | --- |
+| `rbdmirror.RunWithImages(ctx, cfg, opts...)` | `rbdmirror.Run(ctx, cfg, opts...)` |
+| `rbdmirror.Run(ctx, image, cfg, opts...)` | `rbdmirror.Run(ctx, cfg, rbdmirror.WithImageOptions(rbdmirror.ImageOptions{}.WithDaemonImage(image)), opts...)` |
+| `cephfsmirror.RunWithImages` and `cephfsmirror.Run(ctx, image, ...)` | the same two forms in `cephfs/mirror` |
+
+- **Why the positional `image` leaves.** It was the only image input, but it was
+  also the only way to ask for the derived image (through the sibling), so two
+  entry points existed for one setting. These `Run` functions are not the
+  testcontainers `Run`: they take a `Config` and are module API, so the
+  testcontainers signature rule does not apply. The remaining variadic keeps the
+  raw daemon customizers.
+- **Carrier.** `ImageOptions` is a plain value with a single chainable
+  `WithDaemonImage`; `WithImageOptions(ImageOptions) Option` is the one carrier.
+  `Option` has a no-op `Customize` like `ceph.Option`, so it satisfies the
+  variadic's type, is consumed by `Run` before any effect and is never recorded
+  among the daemon customizers that later `AddDaemon` calls reuse. The type and
+  carrier exist once per package because the role differs; they are not shared
+  with `ceph.ImageOptions`, which selects a cluster `ImageSet`.
+- **Role inference is unchanged.** RBD derives the daemon image from the
+  destination's `Images().RBDAux`, CephFS from the source's `Images().CephFS`.
+  A cluster without that role is refused with `ErrInvalidRequest`; no other role
+  substitutes. Explicit images still go through `RequireRoleImage`, so an image
+  that a cluster selects for another role is refused. Setup clients still come
+  from each cluster's `Images().Client`, and `AddDaemon` and the relaunch recipe
+  keep using the image `Run` resolved (`Mirror.image`, `daemonImage`).
+- **Composition (rules 1 to 5).** Unspecified is not empty: the zero value
+  selects nothing, `WithDaemonImage("")` is a selection and is refused instead of
+  being read as "derive". Two selections across values are refused even when
+  equal; an unset value never conflicts. Within one value a later
+  `WithDaemonImage` replaces the earlier one. A typed-nil `Option` is refused.
+  Options are resolved right after the context check, before the topology
+  checks, the cluster pair validation and every container or client call.
+- **Copies (rule 7).** The value holds a string, so a struct copy is independent.
+  The raw customizer list is a fresh slice in argument order and stays nil when
+  no raw customizer was passed.
+
+### Client entry points stay separate
+
+`Container.WithClient` and `Container.WithClientIdentity` are not configuration
+variants of one operation, so this change leaves them as they are. The source
+shows two privilege contracts:
+
+- `WithClient` copies the cluster's admin keyring and `ceph.conf` into the
+  request. It takes no topology lock, does not check that the cluster is open and
+  validates no identity.
+- `WithClientIdentity` copies only a scoped keyring and a `ceph.conf` that
+  references it. It takes the topology lock, refuses a terminated cluster, and
+  refuses a descriptor that another cluster created, an incomplete creation, a
+  revoked identity or a key that is no longer current. Its input is a live
+  `*ClientConfig` handle whose pointer identity the ownership check compares,
+  not a value to configure.
+
+Folding them into one option would make "admin credentials" a default-looking
+setting of an identity call. The issue requires admin access to stay visibly
+distinct, so the two names stay. The shared tenant harness that the original
+candidate named was removed, and `Tenant.WithClient` no longer exists.
+
 ## Not decided here
 
-- How tenant attachment keeps the `*ClientConfig` identity while cloning its
-  owned collections.
-- How the mirror `Run` functions keep source/destination role inference.
+- How a future tenant-like attachment would keep a `*ClientConfig` identity
+  while cloning its owned collections (no such API exists after the harness
+  removal).

@@ -203,11 +203,11 @@ func TestRunImageSetMissingRoleIsRefusedWithoutFallback(t *testing.T) {
 // compile. Documentation snippets
 // are not compiled, so scan the godoc comments of this package and the package
 // reference pages for that mistake. ExampleWithImageOptions,
-// ExampleWithOSDStorage and ExampleWithNetworkConfig cover the correct form at compile time.
+// ExampleWithOSDStorage and ExampleWithNetworkConfig (and the mirror packages' ExampleWithImageOptions) cover the correct form at compile time.
 func TestDocumentedSnippetsDoNotWrapGroupedOptionsTwice(t *testing.T) {
-	doubleWrap := regexp.MustCompile(`With(?:ImageOptions|OSDStorage|NetworkConfig)\(\s*(?:ceph\.)?With(?:ImageOptions|OSDStorage|NetworkConfig)\(`)
+	doubleWrap := regexp.MustCompile(`With(?:ImageOptions|OSDStorage|NetworkConfig)\(\s*(?:\w+\.)?With(?:ImageOptions|OSDStorage|NetworkConfig)\(`)
 	var files []string
-	for _, pattern := range []string{"*.go", "../docs/*.md"} {
+	for _, pattern := range []string{"*.go", "../docs/*.md", "../docs/guides/*.md", "../rbd/mirror/*.go", "../cephfs/mirror/*.go", "../internal/integration/*.go"} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			t.Fatal(err)

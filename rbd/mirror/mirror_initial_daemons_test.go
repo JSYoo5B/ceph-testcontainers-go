@@ -67,7 +67,7 @@ func TestMirrorInitialDaemonRejectionPrecedesRuntimeAndCustomization(t *testing.
 				})
 				var nonnil bool
 				var err error
-				fixture, e := Run(t.Context(), "example/ceph:version", Config{Source: source, Destination: destination, Pool: "rbd", DaemonCount: count, NoInitialDaemons: zero}, customizer)
+				fixture, e := Run(t.Context(), Config{Source: source, Destination: destination, Pool: "rbd", DaemonCount: count, NoInitialDaemons: zero}, daemonImage, customizer)
 				nonnil, err = fixture != nil, e
 
 				if err == nil || nonnil || controlCalls.Load() != 0 || customizerCalls.Load() != 0 || factoryCalls.Load() != 0 {
@@ -102,7 +102,7 @@ func TestMirrorInitialDaemonCanceledAdmissionHasNoRuntimeEffects(t *testing.T) {
 				customizer := testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customized.Add(1); return nil })
 				var err error
 				var nonnil bool
-				result, e := Run(ctx, "example/ceph:version", Config{Source: source, Destination: destination, Pool: "rbd", NoInitialDaemons: zero}, customizer)
+				result, e := Run(ctx, Config{Source: source, Destination: destination, Pool: "rbd", NoInitialDaemons: zero}, daemonImage, customizer)
 				nonnil, err = result != nil, e
 
 				if !errors.Is(err, wanted) || nonnil || native.Load() != 0 || customized.Load() != 0 || factory.Load() != 0 {
@@ -136,3 +136,7 @@ func TestMirrorInitialZeroRBDObserverDoesNotLaunchDaemons(t *testing.T) {
 		t.Fatalf("zero wait changed topology: %+v %v", status, err)
 	}
 }
+
+// daemonImage selects an explicit daemon image for fixtures whose clusters carry
+// no image facts, so admission tests reach the checks they target.
+var daemonImage = WithImageOptions(ImageOptions{}.WithDaemonImage("example/ceph:version"))

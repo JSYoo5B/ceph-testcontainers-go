@@ -38,7 +38,7 @@ so the mirror is terminated first.
 #### Run
 
 ```golang
-func Run(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)
+func Run(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)
 ```
 
 Configures one-way snapshot mirroring between two existing filesystems and
@@ -56,9 +56,10 @@ starts the initial daemons. It:
 5. starts the daemons (named `a` through `z`, then `node-27`, ...), waits for
    them to register, then registers `Directories`.
 
-`image` is the mirror daemon image: it must contain `cephfs-mirror` and the `ceph`
-CLI (the cephfs role or `all`); `FactsOf(source).Images.CephFS` is the usual choice, and
-`RunWithImages` uses it. `Run` refuses an image that a cluster selects for
+The mirror daemon image must contain `cephfs-mirror` and the `ceph` CLI (the
+cephfs role or `all`). `Run` derives it from the source's `Images.CephFS` and
+refuses a source that has none; `WithImageOptions(ImageOptions{}.WithDaemonImage(image))`
+replaces it. `Run` refuses an explicit image that a cluster selects for
 another role, such as its essential image, when that cluster has a separate
 cephfs image. The setup commands run in each cluster's client toolkit. The customizers apply to every daemon, including daemons
 added later. Both clusters must use the same network mode. In bridge mode each
@@ -70,7 +71,7 @@ in the caller's clusters.
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-mirror, err := cephfsmirror.Run(ctx, sourceFacts.Images.CephFS, cephfsmirror.Config{
+mirror, err := cephfsmirror.Run(ctx, cephfsmirror.Config{
 	Source:                source.Container,
 	Destination:           destination.Container,
 	SourceFilesystem:      sourceFS.FilesystemName,
@@ -1310,7 +1311,7 @@ func TestCephFSMirror(t *testing.T) {
 
 	// Registered after the clusters, so it is terminated before them.
 	sourceClusterFacts, err := ceph.FactsOf(sourceCluster)
-	mirror, err := cephfsmirror.Run(ctx, sourceClusterFacts.Images.CephFS, cephfsmirror.Config{
+	mirror, err := cephfsmirror.Run(ctx, cephfsmirror.Config{
 		Source:                sourceCluster.Container,
 		Destination:           destinationCluster.Container,
 		SourceFilesystem:      sourceFS.FilesystemName,
@@ -1383,8 +1384,22 @@ Notes:
 - `Released`, `Drained` and the process-quiescence acknowledgement do not prove
   remote unlock, checkpoint completion or unchanged destination metadata.
 
-### RunWithImages
+### Daemon image options
 
-`RunWithImages` selects the receiving cluster's `cephfs` image and
-preserves the same runtime for later daemon additions. Setup clients use each
-cluster's client image. `Run` accepts an explicit daemon image.
+```golang
+type ImageOptions struct{ /* unexported */ }
+func (ImageOptions) WithDaemonImage(image string) ImageOptions
+type Option func(*runSettings) error
+func (Option) Customize(*testcontainers.GenericContainerRequest) error
+func WithImageOptions(config ImageOptions) Option
+```
+
+`ImageOptions` is a plain chainable value. `WithDaemonImage` selects the
+cephfs image that runs the daemons; a later call on the same value replaces the
+earlier one and never changes the value it was derived from. `WithImageOptions`
+is the one option function that carries the value to `Run`. The returned
+`Option` is consumed by `Run` before any effect: `Customize` does nothing, so it
+never reaches a daemon container and later `AddDaemon` calls do not replay it.
+The value itself is not a customizer. A second selection is refused even when
+equal, and an explicit empty image is refused instead of being read as "derive
+the image".

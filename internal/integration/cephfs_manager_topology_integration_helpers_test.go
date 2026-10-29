@@ -98,11 +98,11 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
 	archiveSnapshot("backup-1")
 	image := staticFacts(source).Images.CephFS
-	mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", image), cephfsmirror.Config{
+	mirror, err := cephfsmirror.Run(ctx, cephfsmirror.Config{
 		Source: source, Destination: destination,
 		SourceFilesystem: sourceFS.FilesystemName, DestinationFilesystem: destinationFS.FilesystemName,
 		Directories: []string{"/federation"},
-	})
+	}, cephfsmirror.WithImageOptions(cephfsmirror.ImageOptions{}.WithDaemonImage(nativeMirrorImage(t, "cephfs", image))))
 	if mirror != nil {
 		t.Cleanup(func() {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)

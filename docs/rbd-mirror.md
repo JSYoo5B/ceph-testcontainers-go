@@ -21,11 +21,13 @@ Two clusters need the pool and namespaces prepared with `rbd.WithPools`,
 `*ceph.Container`, so it works with a cluster from `ceph.Run` and with any
 other service package's `Run`.
 
-`Run` takes the mirror daemon image: the rbd-aux role (or the aggregate `all`
-image). The daemons run for the destination cluster, so
-`RunWithImages` uses the destination's `Images.RBDAux`. The setup CLI clients
-are not started from it: each cluster's `Images.Client` supplies them. `Run`
-refuses an image that a cluster selects for another role, such as its essential
+`Run` runs the mirror daemons from the rbd-aux role image (or the aggregate
+`all` image). The daemons run for the destination cluster, so `Run` derives the
+image from the destination's `Images.RBDAux` and refuses a destination that has
+none. The setup CLI clients are not started from it: each cluster's
+`Images.Client` supplies them. An explicit daemon image replaces the derived one
+through `WithImageOptions(ImageOptions{}.WithDaemonImage(image))`; `Run` refuses
+an explicit image that a cluster selects for another role, such as its essential
 image, when that cluster has a separate rbd-aux image. See the
 [image guide](guides/releases-and-images.md).
 
@@ -34,13 +36,12 @@ image, when that cluster has a separate rbd-aux image. See the
 ### Run function
 
 ```golang
-func Run(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)
+func Run(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)
 ```
 
 - `context.Context`, the Go context.
-- `string`, the image for the `rbd-mirror` daemons (rbd-aux or `all` role; use `FactsOf(destination).Images.RBDAux`). The setup clients use each cluster's `Images.Client`.
 - `Config`, the two clusters and the mirroring policy.
-- `testcontainers.ContainerCustomizer`, options applied to every `rbd-mirror` daemon container (not to the setup clients).
+- `testcontainers.ContainerCustomizer`, raw customizers applied to every `rbd-mirror` daemon container (not to the setup clients). `WithImageOptions` is the one grouped option: `ImageOptions{}.WithDaemonImage(image)` selects the daemon image (rbd-aux or `all` role) instead of the destination's `Images.RBDAux`. It is consumed by `Run` and never reaches a container. A second image selection and an explicit empty image are refused before any effect.
 
 `Run` connects two existing, independent clusters with native RBD
 mirroring. Replication is one-way, from `Source` to `Destination`; the
@@ -86,7 +87,7 @@ the link is terminated before the clusters:
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 })
 testcontainers.CleanupContainer(t, link)
@@ -718,7 +719,7 @@ func TestSnapshotMirroring(t *testing.T) {
 	source, destination := newCluster(), newCluster()
 
 	sourceFacts, err := ceph.FactsOf(source)
-	link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+	link, err := rbdmirror.Run(ctx, rbdmirror.Config{
 		Source: source, Destination: destination, Pool: "volumes",
 	})
 	testcontainers.CleanupContainer(t, link) // runs before the clusters' cleanup
@@ -770,7 +771,7 @@ Journal mirroring replays every write. No mirror snapshots are involved.
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	Mode: rbdmirror.ModeJournal,
 })
@@ -799,7 +800,7 @@ without `EnableImage` (which is rejected in pool scope):
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	Scope: rbdmirror.ScopePool, // Mode defaults to journal
 })
@@ -824,7 +825,7 @@ for the other. Give each cluster one site name and keep it in both links.
 
 ```golang
 aFacts, err := ceph.FactsOf(a)
-forward, err := rbdmirror.Run(ctx, aFacts.Images.RBDAux, rbdmirror.Config{
+forward, err := rbdmirror.Run(ctx, rbdmirror.Config{
 	Source: a, Destination: b, Pool: "volumes",
 	SourceSite: "site-a", DestinationSite: "site-b",
 })
@@ -833,7 +834,7 @@ if err != nil {
 	t.Fatal(err)
 }
 bFacts, err := ceph.FactsOf(b)
-reverse, err := rbdmirror.Run(ctx, bFacts.Images.RBDAux, rbdmirror.Config{
+reverse, err := rbdmirror.Run(ctx, rbdmirror.Config{
 	Source: b, Destination: a, Pool: "volumes",
 	SourceSite: "site-b", DestinationSite: "site-a",
 })
@@ -978,7 +979,7 @@ can prepare data on the source and choose when replication begins.
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	NoInitialDaemons: true,
 })
@@ -1023,7 +1024,7 @@ controls only this link's daemons; it does not prove that no other
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+link, err := rbdmirror.Run(ctx, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	DaemonCount: 2, // daemons "a" and "b"
 })
@@ -1069,7 +1070,7 @@ Ceph 20.
 ```golang
 // The namespaces exist on both clusters (rbd.CreateNamespace on each).
 sourceFacts, err := ceph.FactsOf(source)
-owner, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+owner, err := rbdmirror.Run(ctx, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "volumes",
 	SourceNamespace: "app", DestinationNamespace: "app-replica",
 })
@@ -1144,7 +1145,7 @@ the test:
 
 ```golang
 sourceFacts, err := ceph.FactsOf(source)
-link, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, config)
+link, err := rbdmirror.Run(ctx, config)
 if link != nil {
 	t.Cleanup(func() { _ = link.Terminate(context.Background()) })
 }
@@ -1160,6 +1161,26 @@ case err != nil:
 
 See [Classified errors](guides/errors.md#unsupported-features).
 
+### Daemon image options
+
+```golang
+type ImageOptions struct{ /* unexported */ }
+func (ImageOptions) WithDaemonImage(image string) ImageOptions
+type Option func(*runSettings) error
+func (Option) Customize(*testcontainers.GenericContainerRequest) error
+func WithImageOptions(config ImageOptions) Option
+```
+
+`ImageOptions` is a plain chainable value. `WithDaemonImage` selects the
+rbd-aux image that runs the daemons; a later call on the same value replaces the
+earlier one and never changes the value it was derived from. `WithImageOptions`
+is the one option function that carries the value to `Run`. The returned
+`Option` is consumed by `Run` before any effect: `Customize` does nothing, so it
+never reaches a daemon container and later `AddDaemon` calls do not replay it.
+The value itself is not a customizer. A second selection is refused even when
+equal, and an explicit empty image is refused instead of being read as "derive
+the image".
+
 ### Common pitfalls
 
 - **Enabling snapshot mirroring too early.** Until a daemon has connected, the source does not know the destination as a transmit peer, and a mirror snapshot taken then is not addressed to it. Wait until `rbd mirror pool info` on the source lists the destination site with direction `tx-only` or `rx-tx` and a non-empty `mirror_uuid` (`waitTransmitPeer` above) before enabling images or taking checkpoints you rely on.
@@ -1168,8 +1189,3 @@ See [Classified errors](guides/errors.md#unsupported-features).
 - **Waiting on a stopped daemon.** `WaitReceiverReady()` without names expects every owned daemon, including stopped ones. Name the survivors.
 - **Cleanup order.** Register the clusters' cleanup before the link's, so the link terminates first. Terminate a non-nil `*Mirror` even after an error.
 
-### RunWithImages
-
-`RunWithImages` selects the receiving cluster's `rbd-aux` image and
-preserves the same runtime for later daemon additions. Setup clients use each
-cluster's client image. `Run` accepts an explicit daemon image.

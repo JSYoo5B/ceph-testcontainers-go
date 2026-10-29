@@ -48,9 +48,9 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", staticFacts(source).Images.RBDAux), rbdmirror.Config{
+			mirror, err := rbdmirror.Run(ctx, rbdmirror.Config{
 				Source: source, Destination: destination, Pool: pool,
-			})
+			}, rbdmirror.WithImageOptions(rbdmirror.ImageOptions{}.WithDaemonImage(nativeMirrorImage(t, "rbd-aux", staticFacts(source).Images.RBDAux))))
 			if mirror != nil {
 				t.Cleanup(func() {
 					cleanup, done := context.WithTimeout(context.Background(), time.Minute)
@@ -136,10 +136,10 @@ func TestCephFSMessengerSecureDefaultMix(t *testing.T) {
 				}
 			}
 			mixedMessengerExec(t, ctx, sourceClient, "python3", script, filesystems[0].FilesystemName, "write", "initial")
-			mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.Config{
+			mirror, err := cephfsmirror.Run(ctx, cephfsmirror.Config{
 				Source: source, Destination: destination, SourceFilesystem: filesystems[0].FilesystemName,
 				DestinationFilesystem: filesystems[1].FilesystemName, DestinationSite: "messenger-destination", Directories: []string{"/messenger"},
-			})
+			}, cephfsmirror.WithImageOptions(cephfsmirror.ImageOptions{}.WithDaemonImage(nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS))))
 			if mirror != nil {
 				t.Cleanup(func() {
 					cleanup, done := context.WithTimeout(context.Background(), time.Minute)

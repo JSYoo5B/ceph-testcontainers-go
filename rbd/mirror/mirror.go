@@ -157,12 +157,14 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 // to both clusters. NoInitialDaemons retains setup without launching a daemon.
 // A new peer is rx-only; an existing tx-only peer becomes rx-tx so creating a
 // reverse link preserves the transmission already used by the first link.
-// image is the mirror daemon image: it must meet the rbd-aux (or all) role
-// requirements, including rbd-mirror, the rbd and ceph CLIs and the common
-// utilities, and is refused when it is known to be another role of a cluster
-// (for example its essential image). The daemons run for the destination, so
-// RunWithImages uses the destination's Images().RBDAux. Setup clients are not
-// started from it: each cluster's Images().Client supplies them. Enable each intended source
+// The daemons run for the destination, so Run derives the mirror daemon image
+// from the destination's Images().RBDAux and refuses a destination that has
+// none. WithImageOptions(ImageOptions{}.WithDaemonImage(image)) replaces that
+// image. Either image must meet the rbd-aux (or all) role requirements,
+// including rbd-mirror, the rbd and ceph CLIs and the common utilities, and an
+// explicit image is refused when it is known to be another role of a cluster
+// (for example its essential image). Setup clients are not started from it:
+// each cluster's Images().Client supplies them. Enable each intended source
 // image through EnableImage or the RBD CLI in image scope. Pool scope
 // automatically enrolls journal-enabled images. Snapshot images need subsequent
 // mirror checkpoints; journal images replay writes without mirror snapshots.
@@ -170,8 +172,9 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 // The caller must Terminate a non-nil result even when setup returns an error.
 // Terminate removes runtime containers but leaves mirroring mode, peer and auth
 // configuration in the disposable clusters; it never destroys pools or data.
-// Customizers apply to the daemon only and must preserve its networking, Ceph
-// configuration, credentials and entrypoint.
+// Options are consumed by Run and never reach a daemon. Raw customizers apply to
+// the daemon only and must preserve its networking, Ceph configuration,
+// credentials and entrypoint.
 // Both clusters must use the same network mode. Host-mode clusters share the
 // Docker host namespace; bridge-mode daemons attach to both cluster networks.
 // Initial daemon names are a through z, then node-27 and onward. A process's
@@ -186,12 +189,20 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 // enabling pool scope. PolicyStatus reports the current native mapping.
 // Successful setup captures default/selected namespace mirror UUIDs, scopes and
 // mappings. Later typed mutations reject replacement or changed policies.
-func Run(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
+func Run(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
 	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("configure RBD mirror: %w", err)
+	}
+	settings, daemonOpts, err := splitRunOptions(opts)
+	if err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
 	}
 	if _, err := multicluster.NormalizeInitialMirrorDaemonCount(config.DaemonCount, config.NoInitialDaemons); err != nil {
 		return nil, servicehook.Invalid(fmt.Errorf("configure RBD mirror: RBD %w", err))
+	}
+	image, err := settings.resolveDaemonImage(config)
+	if err != nil {
+		return nil, err
 	}
 	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
@@ -199,7 +210,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	if err := multicluster.RequireRoleImage(image, multicluster.RoleRBDAux, config.Source, config.Destination); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror daemon image: %w", err)
 	}
-	config, err := normalizeRBDMirrorConfig(config)
+	config, err = normalizeRBDMirrorConfig(config)
 	if err != nil {
 		return nil, servicehook.Invalid(fmt.Errorf("configure RBD mirror: %w", err))
 	}
@@ -223,7 +234,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 	if err != nil {
 		return nil, fmt.Errorf("preflight RBD mirror pools/namespaces: %w", err)
 	}
-	mirror := &Mirror{config: config, image: image, daemonOpts: slices.Clone(opts), poolIdentities: identities, receiverClusters: receiverClusters}
+	mirror := &Mirror{config: config, image: image, daemonOpts: daemonOpts, poolIdentities: identities, receiverClusters: receiverClusters}
 	sourceClient, err := multicluster.RunClient(ctx, sourceImage, config.Source, destinationFacts.NetworkName, &mirror.owned)
 	if err != nil {
 		return mirror, fmt.Errorf("run source RBD setup client: %w", err)
@@ -738,19 +749,30 @@ func normalizeRBDMirrorMode(mode Mode) (Mode, error) {
 	}
 }
 
-// RunWithImages selects the receiving cluster's rbd-aux runtime and each
-// cluster's independent client runtime. Later AddDaemon uses the same runtime.
-func RunWithImages(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
+// resolveDaemonImage returns the explicit daemon image, or derives it from the
+// destination's rbd-aux role when none was selected.
+func (s runSettings) resolveDaemonImage(config Config) (string, error) {
+	if s.daemonImageSet {
+		return s.daemonImage, nil
+	}
 	if config.Source == nil || config.Destination == nil {
-		return nil, servicehook.Invalid(fmt.Errorf("roles clusters are required"))
+		return "", servicehook.Invalid(fmt.Errorf("roles clusters are required"))
 	}
 	facts, err := ceph.FactsOf(config.Destination)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	image := facts.Images.RBDAux
-	if image == "" {
-		return nil, servicehook.Invalid(fmt.Errorf("rbd-aux image is required"))
+	return s.daemonImageFor(facts.Images)
+}
+
+// daemonImageFor returns the explicit daemon image, or the rbd-aux role of the
+// destination cluster's images, which a cluster without that role refuses.
+func (s runSettings) daemonImageFor(images ceph.ImageSet) (string, error) {
+	if s.daemonImageSet {
+		return s.daemonImage, nil
 	}
-	return Run(ctx, image, config, opts...)
+	if images.RBDAux == "" {
+		return "", servicehook.Invalid(fmt.Errorf("rbd-aux image is required"))
+	}
+	return images.RBDAux, nil
 }

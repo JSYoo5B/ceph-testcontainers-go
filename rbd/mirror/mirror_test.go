@@ -18,7 +18,7 @@ import (
 )
 
 func TestRunRBDMirrorRejectsMissingClusters(t *testing.T) {
-	mirror, err := Run(context.Background(), "example/ceph:version", Config{Pool: "rbd"})
+	mirror, err := Run(context.Background(), Config{Pool: "rbd"}, daemonImage)
 	if err == nil || mirror != nil {
 		t.Fatalf("missing cluster pair must fail before resource allocation: mirror=%v error=%v", mirror, err)
 	}

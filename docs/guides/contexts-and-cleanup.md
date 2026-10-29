@@ -242,7 +242,7 @@ if err != nil {
 	t.Fatal(err)
 }
 
-mirror, err := rbdmirror.Run(ctx, sourceFacts.Images.RBDAux, rbdmirror.Config{
+mirror, err := rbdmirror.Run(ctx, rbdmirror.Config{
 	Source: source, Destination: destination, Pool: "images",
 })
 testcontainers.CleanupContainer(t, mirror) // runs first
