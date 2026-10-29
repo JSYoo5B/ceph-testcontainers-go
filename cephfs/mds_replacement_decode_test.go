@@ -351,3 +351,49 @@ func TestMDSReplacementDecodeNativeReadFailuresKeepTheirContext(t *testing.T) {
 		})
 	}
 }
+
+// TestMDSReplacementDecoderRefusesInvalidPoolIdentity pins the two guards on the
+// native pool identity that the reader fixture cannot reach, because the
+// identity is read from the same document: it calls the decoder directly.
+func TestMDSReplacementDecoderRefusesInvalidPoolIdentity(t *testing.T) {
+	r := newReplacementMDSFixture(t)
+	pools, err := r.fs.readNativePools(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(coldMDSTestJSON(r.n.native))
+	want := func(dataPools []int64) replacementMDSMapExpectation {
+		clone := *pools
+		clone.dataPools = dataPools
+		return replacementMDSMapExpectation{oldName: "target-0", filesystem: "target", reservedName: "target-1", native: r.old.identity.native, pools: &clone}
+	}
+	// The document attaches pool 1; the identity must agree for the policy
+	// guard to pass before the pool guards run.
+	if state, err := decodeMDSReplacementMap(data, want([]int64{1})); err != nil || state == nil || state.ready {
+		t.Fatalf("baseline decode changed: %+v %v", state, err)
+	}
+	for _, tc := range []struct {
+		name      string
+		dataPools []int64
+		want      string
+	}{
+		{"identity-differs-from-document", []int64{2}, "original MDS replacement filesystem policy changed"},
+	} {
+		if _, err := decodeMDSReplacementMap(data, want(tc.dataPools)); err == nil || err.Error() != tc.want {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+	}
+	// Duplicated and negative attachments need the document to attach them too.
+	for name, attached := range map[string][]int64{"duplicate": {1, 1}, "negative": {-1}} {
+		m := r.n.target()
+		m["data_pools"] = attached
+		if _, err := decodeMDSReplacementMap([]byte(coldMDSTestJSON(r.n.native)), want(attached)); err == nil || err.Error() != "MDS replacement data attachments are invalid or duplicated" {
+			t.Fatalf("%s attachment: %v", name, err)
+		}
+	}
+	m := r.n.target()
+	m["data_pools"] = []int64{9}
+	if _, err := decodeMDSReplacementMap([]byte(coldMDSTestJSON(r.n.native)), want([]int64{9})); err == nil || err.Error() != "MDS replacement attached pool is unavailable" {
+		t.Fatalf("absent attached pool: %v", err)
+	}
+}

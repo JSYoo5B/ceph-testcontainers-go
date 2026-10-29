@@ -1,8 +1,8 @@
 package cephfs
 
 // cephFSMDSRowStateAccepted reports whether state is a daemon state the strict
-// native-map decoders accept in a daemon row: validateColdMDSMap,
-// decodeStoppedMDSMap and readMDSReplacementScope. It is the single copy of the
+// native-map decoders accept in a daemon row: decodeColdMDSMap,
+// decodeStoppedMDSMap and decodeMDSReplacementMap. It is the single copy of the
 // list that each of them used to write out.
 //
 // The twelve names are the "up:" names of ceph_mds_state_name in the pinned
