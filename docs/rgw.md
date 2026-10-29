@@ -148,7 +148,7 @@ returned in 17 seconds with Ceph 20.2.4 and in 23 seconds with 19.2.5.
 - With one OSD and one copy, nothing can recover from an OSD failure. Tests of
   OSD faults, recovery or separate traffic planes need the default two OSDs or
   more.
-- For role images, add `ceph.ImageOptions{}.WithImageSet` and `rgw.WithImage`, as described
+- For role images, add `ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(...))` and `rgw.WithImage`, as described
   under [Image](#image).
 
 `TestRGWMinimalS3Recipe` in `internal/integration` runs this recipe with a

@@ -59,7 +59,7 @@ func TestRunImageArgumentWithImageSet(t *testing.T) {
 		"set without essential":    {"", ImageSet{Client: "toolkit"}, true, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
-			effective, err := admit(t, test.img, ImageOptions{}.WithImageSet(test.set))
+			effective, err := admit(t, test.img, WithImageOptions(ImageOptions{}.WithImageSet(test.set)))
 			if test.refused {
 				wantRefused(t, err)
 				return
@@ -77,7 +77,7 @@ func TestRunImageArgumentWithImageSet(t *testing.T) {
 		t.Fatalf("single image: %+v", got)
 	}
 	// An unrelated zero ImageOptions changes nothing.
-	effective, err = admit(t, "single", ImageOptions{})
+	effective, err = admit(t, "single", WithImageOptions(ImageOptions{}))
 	wantAdmitted(t, err)
 	if effective.imageSet == nil || effective.imageSet.Client != "single" {
 		t.Fatalf("zero ImageOptions changed the images: %+v", effective.imageSet)
@@ -90,16 +90,16 @@ func TestImageOptionsRefuseRepeatedImageSetSelection(t *testing.T) {
 	a := ImageSet{Essential: "core", Client: "toolkit"}
 	b := ImageSet{Essential: "core", Client: "other"}
 	for name, opts := range map[string][]testcontainers.ContainerCustomizer{
-		"different sets": {ImageOptions{}.WithImageSet(a), ImageOptions{}.WithImageSet(b)},
-		"equal sets":     {ImageOptions{}.WithImageSet(a), ImageOptions{}.WithImageSet(a)},
-		"gap between":    {ImageOptions{}.WithImageSet(a), ImageOptions{}, ImageOptions{}.WithImageSet(a)},
+		"different sets": {WithImageOptions(ImageOptions{}.WithImageSet(a)), WithImageOptions(ImageOptions{}.WithImageSet(b))},
+		"equal sets":     {WithImageOptions(ImageOptions{}.WithImageSet(a)), WithImageOptions(ImageOptions{}.WithImageSet(a))},
+		"gap between":    {WithImageOptions(ImageOptions{}.WithImageSet(a)), WithImageOptions(ImageOptions{}), WithImageOptions(ImageOptions{}.WithImageSet(a))},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := admit(t, "", opts...)
 			wantRefused(t, err)
 		})
 	}
-	effective, err := admit(t, "", ImageOptions{}.WithImageSet(a).WithImageSet(b), ImageOptions{})
+	effective, err := admit(t, "", WithImageOptions(ImageOptions{}.WithImageSet(a).WithImageSet(b)), WithImageOptions(ImageOptions{}))
 	wantAdmitted(t, err)
 	if effective.imageSet.Client != "other" {
 		t.Fatalf("later selection of one value did not replace the earlier: %+v", effective.imageSet)
@@ -118,7 +118,7 @@ func TestImageOptionsDerivedValuesAreIndependent(t *testing.T) {
 	images := ImageSet{Essential: "core", Client: "toolkit"}
 	config := ImageOptions{}.WithImageSet(images)
 	images.Client = "changed"
-	effective, err := admit(t, "", config)
+	effective, err := admit(t, "", WithImageOptions(config))
 	wantAdmitted(t, err)
 	effective.imageSet.Client = "mutated"
 	if config.images.Client != "toolkit" {
@@ -126,18 +126,26 @@ func TestImageOptionsDerivedValuesAreIndependent(t *testing.T) {
 	}
 }
 
-// ImageOptions never reaches a container request, and a refused configuration
-// reaches neither a later option nor a raw customizer.
-func TestImageOptionsHaveNoContainerEffectAndRefuseBeforeAnyEffect(t *testing.T) {
+// ImageOptions is a plain value, not a customizer: it enters Run only through
+// the grouped option function, which has no effect on a container request. A
+// refused configuration reaches neither a later option nor a raw customizer.
+func TestImageOptionsEnterRunOnlyThroughTheGroupedOption(t *testing.T) {
+	if _, ok := any(ImageOptions{}).(testcontainers.ContainerCustomizer); ok {
+		t.Fatal("ImageOptions is itself a customizer; it must be carried by WithImageOptions")
+	}
+	if _, ok := any(ImageOptions{}).(Option); ok {
+		t.Fatal("ImageOptions is itself an Option")
+	}
+	var carrier testcontainers.ContainerCustomizer = WithImageOptions(ImageOptions{}.WithImageSet(ImageSet{Essential: "core"}))
 	request := &testcontainers.GenericContainerRequest{}
-	if err := (ImageOptions{}.WithImageSet(ImageSet{Essential: "core"})).Customize(request); err != nil || request.Image != "" || request.Env != nil {
-		t.Fatalf("Customize changed the request: %v %+v", err, request)
+	if err := carrier.Customize(request); err != nil || request.Image != "" || request.Env != nil {
+		t.Fatalf("the carrier changed the request: %v %+v", err, request)
 	}
 	calls := 0
 	raw := testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { calls++; return nil })
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	c, err := Run(ctx, "other", ImageOptions{}.WithImageSet(ImageSet{Essential: "core"}), raw)
+	c, err := Run(ctx, "other", WithImageOptions(ImageOptions{}.WithImageSet(ImageSet{Essential: "core"})), raw)
 	if c != nil || calls != 0 {
 		t.Fatalf("refused configuration reached a customizer: %v calls=%d", c, calls)
 	}
@@ -147,7 +155,7 @@ func TestImageOptionsHaveNoContainerEffectAndRefuseBeforeAnyEffect(t *testing.T)
 // A service setting passed with an image set is applied, and the service image
 // replaces its role of the set.
 func TestImageOptionsKeepServiceSettings(t *testing.T) {
-	effective, err := admit(t, "", ImageOptions{}.WithImageSet(ImageSet{Essential: "core", Client: "toolkit", RGW: "set-rgw"}),
+	effective, err := admit(t, "", WithImageOptions(ImageOptions{}.WithImageSet(ImageSet{Essential: "core", Client: "toolkit", RGW: "set-rgw"})),
 		(serviceHooks{}).WithServiceImage("rgw", "selected"), WithOSDCount(3))
 	wantAdmitted(t, err)
 	if effective.rgwOverride != "selected" || effective.imageSet.RGW != "selected" || effective.osds != 3 {

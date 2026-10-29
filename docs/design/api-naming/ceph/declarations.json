@@ -1038,14 +1038,6 @@
       "decision": "baseline"
     },
     {
-      "current": "ceph.ImageOptions.Customize",
-      "kind": "method",
-      "signature": "func(*testcontainers.GenericContainerRequest) error",
-      "receiver": "ImageOptions",
-      "proposed": "ceph.ImageOptions.Customize",
-      "decision": "baseline"
-    },
-    {
       "current": "ceph.ImageOptions.WithImageSet",
       "kind": "method",
       "signature": "func(images ImageSet) ImageOptions",
@@ -2320,6 +2312,13 @@
       "kind": "function",
       "signature": "func() testcontainers.CustomizeRequestOption",
       "proposed": "ceph.WithIdleEntrypoint",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithImageOptions",
+      "kind": "function",
+      "signature": "func(config ImageOptions) Option",
+      "proposed": "ceph.WithImageOptions",
       "decision": "baseline"
     },
     {

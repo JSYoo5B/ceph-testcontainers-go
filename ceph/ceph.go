@@ -135,14 +135,16 @@ type OSDContainer struct {
 }
 
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
-// img supplies all roles unless a ImageOptions value selects explicit role images
-// with WithImageSet, in which case img must be empty or the set's essential
-// image. Run recognises the Option and ImageOptions values among opts, applies and
-// validates them before it creates anything, and passes the rest, in argument
-// order, to the first MON's container request after the module's own request
-// options and before the messenger environment, the WithConfigFile file and the
-// ownership label. Option and ImageOptions have no effect on that request, so a
-// setting passed as one of them is never lost and never reaches a container.
+// img supplies all roles unless WithImageOptions selects explicit role images
+// with ImageOptions.WithImageSet, in which case img must be empty or the set's
+// essential image. Run recognises the Option values among opts (every Ceph
+// setting, including each grouped configuration value carried by its option
+// function), applies and validates them before it creates anything, and passes
+// all of opts, in argument order, to the first MON's container request after
+// the module's own request options and before the messenger environment, the
+// WithConfigFile file and the ownership label. An Option has no effect on that
+// request, so a setting passed as one is never lost and never reaches a
+// container.
 // Images contain runtime tools; this module supplies cluster setup.
 // A non-nil Container returned with an error must still be terminated.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
@@ -151,15 +153,10 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 		essentialImage: img, publicAddress: "127.0.0.1",
 	}
 	for _, opt := range opts {
-		var err error
-		switch opt := opt.(type) {
-		case Option:
-			err = opt(&settings)
-		case ImageOptions:
-			err = opt.apply(&settings)
-		}
-		if err != nil {
-			return nil, classify(ErrInvalidRequest, fmt.Errorf("configure ceph: %w", err))
+		if opt, ok := opt.(Option); ok {
+			if err := opt(&settings); err != nil {
+				return nil, classify(ErrInvalidRequest, fmt.Errorf("configure ceph: %w", err))
+			}
 		}
 	}
 	if err := configureImages(&settings); err != nil {

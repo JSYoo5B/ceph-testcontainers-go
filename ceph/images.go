@@ -40,26 +40,29 @@ func (s ImageSet) normalized() (ImageSet, error) {
 	return s, nil
 }
 
-// ImageOptions is the Ceph configuration value that Run recognises among its
-// customizers, the way it recognises an Option: it is applied to the cluster
-// settings and validated before any resource is created, and its Customize does
-// nothing, so it never reaches a container request. The zero value changes
-// nothing. Each With method returns a modified copy of the value.
+// ImageOptions is the image group of the Ceph configuration: a plain value with
+// chainable, value-returning methods. It is not a customizer. Pass it to Run
+// through its one grouped option function, WithImageOptions, which Run applies
+// and validates like any Option before it creates a resource. The zero value
+// changes nothing.
 //
-//	cluster, err := ceph.Run(ctx, "", ceph.ImageOptions{}.WithImageSet(images), ceph.WithOSDCount(1))
+//	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images))), ceph.WithOSDCount(1))
 //
-// Run takes any number of ImageOptions values; at most one of them may select an
-// image set, and a second selection is refused with ErrInvalidRequest even when
-// it repeats the first. The composition rules are in
-// docs/design/value-configuration-composition.md.
+// Run takes at most one WithImageOptions that selects an image set, and a
+// second selection is refused with ErrInvalidRequest even when it repeats the
+// first. The pattern for every configuration group, and the composition rules,
+// are in docs/design/value-configuration-composition.md.
 type ImageOptions struct {
 	images    ImageSet
 	imagesSet bool
 }
 
-// Customize implements testcontainers.ContainerCustomizer. It does nothing:
-// Run applies the value to the cluster settings instead.
-func (ImageOptions) Customize(*testcontainers.GenericContainerRequest) error { return nil }
+// WithImageOptions is the grouped option function that carries an ImageOptions
+// to Run. Like every Option it changes the cluster settings only and never
+// reaches a container request.
+func WithImageOptions(config ImageOptions) Option {
+	return func(o *options) error { return config.apply(o) }
+}
 
 // WithImageSet selects explicit role images, replacing an earlier WithImageSet of
 // the same value. The set is the one authoritative image configuration:

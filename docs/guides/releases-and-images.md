@@ -144,7 +144,7 @@ These affect commands or client libraries you run yourself, not the typed API:
 `ceph.ImageSet` selects Essential, Client, CephFS, RBDAux and RGW, or an
 exclusive All image. This is the image model used by the module and its CI.
 `Run(ctx, image)` treats the image as an aggregate. Pass
-`ceph.ImageOptions{}.WithImageSet(set)` to `Run` for explicit roles, with an empty
+`ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(set))` to `Run` for explicit roles, with an empty
 image argument (or the set's essential image, which is not a second input); a
 missing optional feature image is an error.
 
@@ -158,12 +158,12 @@ missing optional feature image is an error.
 | all | Aggregate supplying every role |
 
 ```go
-cluster, err := ceph.Run(ctx, "", ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{
+cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(ceph.ImageSet{
     Essential: essentialRef,
     Client: clientRef,
     CephFS: cephFSRef,
     RGW: rgwRef,
-}), cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
+})), cephfs.WithFilesystems(cephfs.Config{Name: "shared"}),
    rgw.WithGateways(rgw.Config{Name: "s3"}))
 if cluster != nil { testcontainers.CleanupContainer(t, cluster) }
 if err != nil { t.Fatal(err) }

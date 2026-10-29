@@ -8,7 +8,7 @@
   ],
   "added": [
     "ceph.ImageOptions",
-    "ceph.ImageOptions.Customize",
-    "ceph.ImageOptions.WithImageSet"
+    "ceph.ImageOptions.WithImageSet",
+    "ceph.WithImageOptions"
   ]
 }

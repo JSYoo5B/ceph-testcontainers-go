@@ -95,12 +95,17 @@ the `rbd`, `cephfs` and `rgw` `Run` signatures are unchanged: `Run` is the
 testcontainers-compatible entry point and its single trailing variadic stays the
 only place for configuration.
 
-- **A configuration value inside the existing variadic.** `ceph.ImageOptions` is a
-  value with a chainable `WithImageSet`. It implements
-  `testcontainers.ContainerCustomizer` with a `Customize` that does nothing, and
-  `Run` recognises it the way it recognises `ceph.Option`: it applies it to the
-  cluster settings and validates it before any resource is created. Docker and
-  container execution policy remains the functional customizers.
+- **The grouped-carrier pattern (used by every Ceph configuration group).** A
+  group is a plain value type with unexported fields and chainable,
+  value-returning methods (`ImageOptions`, later `ClusterConfig`, `OSDConfig`,
+  `NetworkConfig`). The value is **not** a customizer and has no `Customize`
+  method; passing it straight to `Run` does not compile. Each group has exactly
+  one carrier option function, `With<Group>(value) Option` (here
+  `WithImageOptions(ImageOptions)`), a `ceph.Option` that `Run` already
+  recognises, applies to the cluster settings and validates before any effect.
+  The carrier's `Customize` does nothing, so a group never reaches a container
+  request. The carrier is not a `WithX` per field: one function per group.
+  Docker and container execution policy remains testcontainers-style `WithX`.
 - **Service inputs are not forwarded.** `rbd.WithPools`, `cephfs.WithFilesystems`,
   `cephfs.WithMDSImage`, `rgw.WithGateways`, `rgw.WithImage` and every
   `ceph.WithX` setting stay `ceph.Option` values that `Run` applies to the
@@ -112,7 +117,7 @@ only place for configuration.
   argument is the aggregate image as before.
 - **Composition (rules 1 to 5).** The zero value selects nothing. An explicit set
   is a selection: an explicit empty set is refused, not read as unspecified. At
-  most one `ImageOptions` value in the variadic selects a set; a second selection
+  most one `WithImageOptions` in the variadic selects a set; a second selection
   is refused even when equal, so argument order never decides a conflict. Within
   one value the later `WithImageSet` replaces the earlier one. Everything is
   validated once, before any container, network or volume is created, and
@@ -143,7 +148,7 @@ and the proposed owner of each:
 
 | Group (value type) | Settings | Slice |
 | --- | --- | --- |
-| Images (`ImageOptions`, this change) | `WithImageSet`; later the service image roles (`cephfs.WithMDSImage`, `rgw.WithImage`) | 1 (this change) |
+| Images (`ImageOptions` via `WithImageOptions`, this change) | `WithImageSet`; later the service image roles (`cephfs.WithMDSImage`, `rgw.WithImage`) | 1 (this change) |
 | Topology (`ClusterConfig`) | `WithMonitorCount`, `WithManagerCount`, `WithNoInitialManagers`, `WithOSDCount`, `WithInitialOSDs`, `WithNoInitialOSDs`, `WithPoolDefaults`, `WithDefaultCRUSHRoot`, `WithPools`, `WithStartupTimeout`, `WithAuth` | 2 |
 | OSD storage (`OSDConfig` made chainable; reconciled with `OSDOptions` of AddOSD so placement and storage are not duplicated) | `WithOSDBlockSize`, `WithOSDObjectStore`, `WithOSDInMemoryStorage`, `WithOSDVolumeStorage` | 3 |
 | Network and messenger (`NetworkConfig`) | `WithAddressFamily`, `WithSeparateClusterNetwork`, `WithHostAddress`, `WithMessengerMode`, `WithMessengerPolicy` | 4 |
