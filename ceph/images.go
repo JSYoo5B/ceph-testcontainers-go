@@ -46,7 +46,7 @@ func (s ImageSet) normalized() (ImageSet, error) {
 // and validates like any Option before it creates a resource. The zero value
 // changes nothing.
 //
-//	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images))), ceph.WithOSDCount(1))
+//	cluster, err := ceph.Run(ctx, "", ceph.WithImageOptions(ceph.ImageOptions{}.WithImageSet(images)), ceph.WithOSDCount(1))
 //
 // Run takes at most one WithImageOptions that selects an image set, and a
 // second selection is refused with ErrInvalidRequest even when it repeats the

@@ -3,6 +3,9 @@ package ceph
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -191,6 +194,38 @@ func TestRunImageSetMissingRoleIsRefusedWithoutFallback(t *testing.T) {
 		}
 		if err := configureImages(&o); (err != nil) != test.wantErr {
 			t.Fatalf("%s with %+v: err=%v, wantErr=%t", test.kind, test.set, err, test.wantErr)
+		}
+	}
+}
+
+// WithImageOptions returns an Option and takes an ImageOptions, so wrapping its
+// result in a second WithImageOptions does not compile. Documentation snippets
+// are not compiled, so scan the godoc comments of this package and the package
+// reference pages for that mistake. ExampleWithImageOptions covers the correct
+// form at compile time.
+func TestDocumentedSnippetsDoNotWrapImageOptionsTwice(t *testing.T) {
+	doubleWrap := regexp.MustCompile(`WithImageOptions\(\s*(?:ceph\.)?WithImageOptions\(`)
+	var files []string
+	for _, pattern := range []string{"*.go", "../docs/*.md"} {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, matches...)
+	}
+	if len(files) < 10 {
+		t.Fatalf("scanned only %d files", len(files))
+	}
+	for _, file := range files {
+		if filepath.Base(file) == "image_options_test.go" {
+			continue // names the mistake in this test's own pattern
+		}
+		text, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loc := doubleWrap.FindIndex(text); loc != nil {
+			t.Errorf("%s wraps WithImageOptions inside WithImageOptions at byte %d", file, loc[0])
 		}
 	}
 }
