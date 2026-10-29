@@ -1007,7 +1007,7 @@ Variations:
 - Storage class: `DestinationStorageClass: "STANDARD_IA"` with
   `DestinationPlacements: map[string]*rgw.Placement{"west": westPlacement}`.
   Create, publish, import and reload the placement in both zones first (see
-  [Placement targets and storage classes](#placement-targets-and-storage-classes)).
+  [Placement targets and storage classes](rgw.md#placement-targets-and-storage-classes)).
   Check the actual class in the S3 listing and the data in the destination
   pool, not only the stored policy.
 - User mode: `User: replicator` replicates with that user's permissions. The

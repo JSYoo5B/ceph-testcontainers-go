@@ -21,7 +21,7 @@ The digest is a multi-architecture manifest for `linux/amd64` and
 The module needs no image of its own. It supplies the FSID, keys,
 configuration, daemon IDs, addresses, bootstrap commands and entrypoints when
 it starts each container, so any image that meets the
-[requirements](#image-requirements-by-role) can replace the default.
+[requirements](#role-images) can replace the default.
 
 ```golang
 cluster, err := ceph.Run(ctx, ceph.DefaultImage)

@@ -9,7 +9,8 @@ observes one endpoint, not a cluster.
 
 A capture supports one explicitly selected endpoint on a user-defined bridge,
 one file, no rotation and no host-network capture. It never follows its target
-across a restart.
+across a restart. The session lifecycle and the file check are described in the
+[design note](design/packet-capture.md).
 
 ## Start
 

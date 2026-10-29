@@ -16,8 +16,7 @@ and memory-backed BlueStore are also available for faster disposable fixtures.
 
 Releases follow semantic versioning. Before v1.0.0, a minor release may change
 the API without aliases for the old names. Final release notes are available
-with the [published releases](https://github.com/JSYoo5B/ceph-testcontainers-go/releases);
-there is no development CHANGELOG.
+with the [published releases](https://github.com/JSYoo5B/ceph-testcontainers-go/releases).
 
 Documentation for a published release is available at its Git tag.
 
@@ -43,8 +42,8 @@ to `ceph.Run` together, and their `Container` embeds `*ceph.Container`. The API
 reference for every package is also available with `go doc` and on
 pkg.go.dev.
 
-The implemented naming convention, source inventory and current-source retention
-audit are recorded in [API naming](docs/design/api-naming.md).
+The API naming convention and the per-package API catalogues are described in
+[API naming](docs/design/api-naming.md).
 
 ## Requirements
 
@@ -168,8 +167,6 @@ For contributors:
   integration tests.
 - [CI](docs/contributing/ci.md): the GitHub Actions workflows and how to read a
   failing batch.
-- [Package-split rewrite shards](docs/contributing/package-split-shards.md): add
-  one shard per package move for the retained producer rewrites.
 - [Behavioral bug compatibility](docs/contributing/bug-compatibility.md): explicit
   bug-ID selection policy.
 - [Preparing a release](docs/contributing/releasing.md): the scope, evidence

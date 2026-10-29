@@ -11,13 +11,23 @@ For changes to Ceph behavioral bug compatibility, follow the
 
 ## Release notes
 
-Development branches do not carry `CHANGELOG.md`. Do not create, update or
-review development changelog entries. A pull request does not add release-note
+The repository never contains a `CHANGELOG.md`. Do not create, update or
+review changelog entries. A pull request does not add release-note
 fragments, no-note declarations, compatibility ledgers, migration tables or
 upgrade guides. Record intent and validation in the pull request description.
 Before 1.0, a breaking change removes the old names without aliases. The
 maintainer writes concise final release notes at release time, from the previous
-release and the final source (see [Preparing a release](docs/contributing/releasing.md)).
+release and the final source, directly in the GitHub Release (see
+[Preparing a release](docs/contributing/releasing.md)).
+
+## Historical documentation
+
+Documentation describes current behavior, current usage and current
+operational requirements. Do not add chronology, increment or slice status,
+retired designs, abandoned proposals or rename and migration accounting;
+Git history, issues and pull requests keep that. A concise warning about a
+concrete, easy-to-make mistake (the trap and its consequence) may stay. Delete
+local review artifacts, logs and scratch notes once they have been used.
 
 ## Privacy review
 
@@ -52,17 +62,7 @@ inventory, count or hash file: none exists. After a public API change run
 separate deliberate step, `go run ./internal/tools/apinaming approve <package>`.
 Regeneration never approves a changed API. After a `git merge` that conflicts in these
 files, run `go run ./internal/tools/apinaming resolve`; it rewrites them only when the merge
-just composes the rows of two approved parents (see [Testing](docs/contributing/testing.md)). A move of API between packages, or
-a deliberate removal or addition of a declaration row, needs a record under
-`docs/design/api-naming/moves/`. Check with `go run ./internal/tools/apinaming moves -base origin/main`; `SKIPPED`
-means no base was available and is not a pass. See
-[Testing](docs/contributing/testing.md).
-
-## Package-split rewrites
-
-A package move that renames API used by a retained native producer adds its own
-shard under `.github/scripts/fixtures/package-split/`; it does not edit a shared
-file. See [Package-split rewrite shards](docs/contributing/package-split-shards.md).
+just composes the rows of two approved parents (see [Testing](docs/contributing/testing.md)).
 
 ## Test doubles
 

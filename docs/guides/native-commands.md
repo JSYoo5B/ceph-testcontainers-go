@@ -812,7 +812,7 @@ sessions, err := cluster.Ceph(ctx, "tell", "mds."+fs.FilesystemName+":0",
 `ceph --admin-daemon <socket>` inside the daemon's own container reaches the
 socket directly. It needs the `ceph` CLI in that container. Control and `all`
 images always have it; OSD, MDS and RGW role images are not required to (see
-[image requirements](releases-and-images.md#image-requirements-by-role)).
+[image requirements](releases-and-images.md#role-images)).
 
 | Daemon | Socket inside its container | Handle |
 | --- | --- | --- |

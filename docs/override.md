@@ -6,8 +6,7 @@ while and puts it back. Each operation is a function that takes the cluster and
 returns a handle; the handle owns the change and its `Restore` undoes only what
 the call did. This page documents seven operations: the client blocklist entry,
 OSDMap full ratios, MGR module state, global OSD flags, runtime debug levels,
-central configuration entries and messenger policy. The package and restoration
-boundary follow the [design](design/override-package-boundary.md).
+central configuration entries and messenger policy.
 
 `ceph.BlocklistEntry`, `Observer.BlocklistEntries`, `ceph.OSDFlag`,
 its constants, `Observer.OSDFlags`, `ceph.FullRatios`,
