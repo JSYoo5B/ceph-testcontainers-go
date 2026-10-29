@@ -31,8 +31,6 @@ PATTERNS = (
 ALLOWED = {
     "docs/design/api-naming/moves/227-image-role-overhaul.json": "historical API removal/addition accounting",
     "CHANGELOG.md": "published release history",
-    "docs/guides/upgrading-to-v0.2.md": "migration guide of a published release",
-    "docs/guides/upgrading-to-v0.3.md": "migration guide of a published release",
     "docs/research/ceph-fuse-mount.md": "recorded measurement with the tag that ran",
     "docs/design/image-role-terminology.md": "design record that quotes the retired names",
     ".github/scripts/fixtures/cephfs-quiescence-native.source.go.txt": "retained producer source",

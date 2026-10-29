@@ -5,8 +5,7 @@ recorded before the public API moved between packages. The scenario tests that
 compare a retained producer with today's source first rewrite the retained text
 to the current names. The rewrites live in
 `.github/scripts/fixtures/package-split/`, one shard file per package move, so
-two moves never edit the same file. This is step 5 of the plan for issue #216
-(see the [design](../design/contributing-metadata-ownership.md)).
+two moves never edit the same file.
 
 ## Add a shard for a move
 
@@ -83,19 +82,3 @@ python3 -m unittest discover -s .github/scripts -p 'test_package_split.py' -v
 The first command loads and validates the layout and exits non-zero with every
 problem on failure. The unit tests run in the existing Python test step of the
 Code checks, so no workflow or CI configuration refers to this directory.
-
-## Migration from the single file
-
-The layout replaces `.github/scripts/fixtures/package-split.json`, which every
-package move used to edit (#210, #212 and #224 all did). The shards were
-produced from that file as it stood at `7015c62`, and a one-time pin test proved
-that they lost and added nothing. The change `146-static-facts-accessors`
-deliberately retargeted the replacement of an existing call in
-`cephfs-mirror.json`, as the rule above prescribes, and so deleted the baseline
-file and the pin test together.
-
-An open pull request that still edits `package-split.json` has to move its
-entries into a shard of its own after rebasing: take the entries it added or
-changed, put them in `<move-id>.json` (or edit the earlier move's shard when it
-retargets an existing key), and drop its edit of the old file, which no longer
-exists.

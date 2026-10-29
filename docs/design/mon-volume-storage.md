@@ -227,8 +227,7 @@ adds a data race with lock-free readers and is not recommended.
    validation, release stages and guards, Docker-free, with negative controls.
    Landed in the slice 2 change; its status is below.
 3. `WithMonitorVolumeStorage`, the mount in `runMonitor` and `AddMonitor`,
-   `StoreVolume`, `Remove` discard and `Terminate` release, catalogue and
-   release-note fragment.
+   `StoreVolume`, `Remove` discard and `Terminate` release, and catalogue.
 4. Address retention and exact port lease (own decision).
 5. `Detach`, `Reopen` and the initial-MON special case.
 6. A same-release native retention batch, only after the owner authorizes native

@@ -26,7 +26,6 @@ func TestMovesLegitimateMove(t *testing.T) {
 	r.commit("move")
 	r.git("switch", "-q", "main")
 	r.setPackage("beta", pkgFiles{rows: []row{{"beta.Other", "function"}}})
-	r.write(docsDir+"/changes/9-beta.md", "---\nchange: 9-beta\nkind: none\nreason: test\n---\n")
 	r.commit("main advances with an unrelated package")
 	r.git("switch", "-q", "topic")
 	if result := r.check("main"); result.Status() != "OK" {
@@ -125,15 +124,6 @@ func TestMovesControlTable(t *testing.T) {
 			legitHead(r)
 			r.write(note, "# Audit\n\n"+changeID+"x is unrelated\n")
 		}, []string{"does not mention the change " + changeID}},
-		{"release-note fragment missing", func(r *repo) {
-			legitHead(r)
-			r.remove(fragment)
-		}, []string{"no release-note fragment"}},
-		{"fragment with a newline in its name is not a fragment", func(r *repo) {
-			legitHead(r)
-			r.remove(fragment)
-			r.write(fragment+"\n", fragmentMD)
-		}, []string{"no release-note fragment"}},
 		{"record file name with a trailing newline", func(r *repo) {
 			legitHead(r)
 			r.write(moves.RecordsDir+"/"+changeID+".json\n", legitRecord)
@@ -174,7 +164,6 @@ func TestMovesReviewedRemovalAndAddition(t *testing.T) {
 	removal := `{"schema": "ceph-api-move/v1", "change": "9-drop", "review": "audit.md", "removed": ["alpha.Keep"]}` + "\n"
 	apply := func(r *repo) {
 		r.setPackage("alpha", pkgFiles{rows: alphaBase.rows[1:], members: alphaBase.members})
-		r.write(fragment, fragmentMD)
 	}
 	t.Run("listed and discussed", func(t *testing.T) {
 		r := baseRepo(t)
@@ -203,7 +192,6 @@ func TestMovesReviewedRemovalAndAddition(t *testing.T) {
 	t.Run("added row is listed", func(t *testing.T) {
 		r := baseRepo(t)
 		r.setPackage("alpha", pkgFiles{rows: append([]row{{"alpha.Extra", "function"}}, alphaBase.rows...), members: alphaBase.members})
-		r.write(fragment, fragmentMD)
 		r.write(moves.RecordsDir+"/9-add.json", `{"schema": "ceph-api-move/v1", "change": "9-add", "review": "audit.md", "added": ["alpha.Extra"]}`+"\n")
 		r.write(note, "# Audit\n\n9-add introduces Extra.\n")
 		if result := r.check("main"); result.Status() != "OK" {
@@ -231,41 +219,28 @@ func TestMovesNoChangeAndHistoricalRecords(t *testing.T) {
 	r.setPackage("alpha", pkgFiles{rows: append([]row{{"alpha.Later", "function"}}, alphaHead.rows...)})
 	r.write(moves.RecordsDir+"/9-later.json", `{"schema": "ceph-api-move/v1", "change": "9-later", "review": "audit.md", "added": ["alpha.Later"]}`+"\n")
 	r.write(note, noteText+"9-later adds Later.\n")
-	r.write(docsDir+"/changes/9-later.md", "---\nchange: 9-later\nkind: none\nreason: test\n---\n")
 	if result := r.check("main"); result.Status() != "OK" {
 		t.Fatalf("a later change must not be judged against the old record: %+v", result)
 	}
 }
 
 // A package reference page (docs/<package>.md) is authored prose. Editing it
-// needs neither a release-note fragment nor a "kind none" justification: the
-// fragment requirement follows a changed API catalogue, not a documentation
-// path. The paired controls show the independent catalogue rule still holds
-// when a page edit accompanies a real API change.
-func TestMovesPackagePageEditNeedsNoFragment(t *testing.T) {
+// is independent of the catalogue accounting, alone and together with a real
+// API change.
+func TestMovesPackagePageEditIsIndependent(t *testing.T) {
 	r := baseRepo(t)
 	r.write(docsDir+"/alpha.md", "# alpha\n\nA typo fixed and an example reworded.\n")
 	r.write(docsDir+"/alpha-mirror.md", "# alpha/mirror\n\nNew wording.\n")
 	result := r.check("main")
 	if result.Status() != "OK" || len(result.Problems) != 0 {
-		t.Fatalf("a package page edit alone must not demand a fragment: %+v", result)
+		t.Fatalf("a package page edit alone must pass: %+v", result)
 	}
 	r.commit("page edit")
 	r.write(docsDir+"/alpha.md", "# alpha\n\nMore wording.\n")
 	if result := r.check("main"); result.Status() != "OK" {
 		t.Fatalf("a page edit committed earlier and edited again must pass: %+v", result)
 	}
-
-	// Negative control: the same page edit together with a real catalogue change
-	// and no fragment is refused for the missing fragment.
 	legitHead(r)
-	r.remove(fragment)
-	if result := r.check("main"); !contains(result.Problems, "no release-note fragment") {
-		t.Fatalf("a catalogue change with a page edit must still need a fragment: %+v", result)
-	}
-	// An unrelated fragment added by the change satisfies the catalogue rule, so
-	// the page edit does not substitute for it and does not conflict with it.
-	r.write(fragment, fragmentMD)
 	if result := r.check("main"); result.Status() != "OK" {
 		t.Fatalf("a complete change with a page edit must pass: %+v", result)
 	}

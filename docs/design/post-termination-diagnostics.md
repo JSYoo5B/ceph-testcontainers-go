@@ -191,8 +191,8 @@ func WithCrashMetadata(report *CrashMetadataReport, err error) RecordOption
   that forgets to collect gets facts only (explicitly reported as such, but still
   nothing to diagnose with); the value must be kept by the caller across the
   cluster's life.
-- Migration cost: one type family, one function, API catalogue entries and a
-  release fragment, docs. No change to `terminate`.
+- Migration cost: one type family, one function, API catalogue entries and
+  docs. No change to `terminate`.
 
 ### Option B: obtain the snapshot through the existing handle
 
@@ -374,7 +374,7 @@ a released tenant. C costs one unexported field and an instrumented `terminate`.
 - A part that never ran is distinguishable from one that found nothing, and a
   complete-looking empty record is impossible.
 - The value exposes no handle, lock, credential, executor or unredacted secret.
-- The API catalogue, package pages, CHANGELOG fragment and upgrade mapping are
+- The API catalogue and package pages are
   updated together and checked at the implementation head.
 
 ## Limits of this note
@@ -382,4 +382,4 @@ a released tenant. C costs one unexported field and an instrumented `terminate`.
 Source reading only at the commit above. No Docker, native Ceph or timing
 behavior was run. The statement that a post-termination `CollectDiagnostics`
 returns an incomplete report with per-artifact errors is read from the code, not
-executed. This revision adds no product code, test, fragment or API change.
+executed. This revision adds no product code, test or API change.
