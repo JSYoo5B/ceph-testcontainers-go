@@ -12,7 +12,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
@@ -173,7 +172,7 @@ func (fs *Filesystem) verifyColdMDS(ctx context.Context, cap *cephFSColdMDS) err
 	if err != nil {
 		return err
 	}
-	if err := validateColdMDSMap(data, fs.config.Name, cap, fs.roster.nextID(fs.FilesystemName)); err != nil {
+	if err := decodeColdMDSMap(data, coldMDSMapExpectation{filesystem: fs.config.Name, reservedName: fs.roster.nextID(fs.FilesystemName), native: cap.identity, dataPools: cap.dataPools}); err != nil {
 		return err
 	}
 	_, err = fs.readColdFSID(ctx, cap)
@@ -213,80 +212,6 @@ type coldMDSRow struct {
 	Rank  *int    `json:"rank"`
 	State *string `json:"state"`
 	Join  *int64  `json:"join_fscid"`
-}
-
-func validateColdMDSMap(data []byte, name string, cap *cephFSColdMDS, reserved string) error {
-	var native struct {
-		Standbys    *[]coldMDSRow `json:"standbys"`
-		Filesystems *[]struct {
-			ID  *int64 `json:"id"`
-			Map *struct {
-				Name     *string                `json:"fs_name"`
-				Max      *int                   `json:"max_mds"`
-				Wanted   *int                   `json:"standby_count_wanted"`
-				Metadata *int64                 `json:"metadata_pool"`
-				Data     *[]int64               `json:"data_pools"`
-				Info     *map[string]coldMDSRow `json:"info"`
-				Up       *map[string]uint64     `json:"up"`
-				In       *[]int                 `json:"in"`
-				Failed   *[]int                 `json:"failed"`
-				Damaged  *[]int                 `json:"damaged"`
-				Stopped  *[]int                 `json:"stopped"`
-				Flags    *struct {
-					Joinable *bool `json:"joinable"`
-					Replay   *bool `json:"allow_standby_replay"`
-					Refuse   *bool `json:"refuse_standby_for_another_fs"`
-				} `json:"flags_state"`
-			} `json:"mdsmap"`
-		} `json:"filesystems"`
-	}
-	if coldMDSJSON(data, &native) != nil || native.Standbys == nil || native.Filesystems == nil {
-		return errors.New("decode cold MDS map")
-	}
-	gids, names := map[uint64]bool{}, map[string]bool{}
-	rowValid := func(row coldMDSRow) bool {
-		if row.Name == nil || !naming.PoolResource.MatchString(*row.Name) || row.GID == nil || *row.GID == 0 || row.Rank == nil || row.State == nil || !slices.Contains([]string{"up:boot", "up:standby", "up:standby-replay", "up:creating", "up:starting", "up:replay", "up:resolve", "up:reconnect", "up:rejoin", "up:clientreplay", "up:active", "up:stopping"}, *row.State) || row.Join == nil || *row.Join < -1 || gids[*row.GID] || names[*row.Name] || *row.Name == reserved {
-			return false
-		}
-		gids[*row.GID], names[*row.Name] = true, true
-		return true
-	}
-	found := 0
-	fsNames, fsIDs := map[string]bool{}, map[int64]bool{}
-	for _, fs := range *native.Filesystems {
-		if fs.ID == nil || *fs.ID < 0 || fs.Map == nil || fs.Map.Name == nil || *fs.Map.Name == "" || fsIDs[*fs.ID] || fsNames[*fs.Map.Name] || fs.Map.Info == nil {
-			return errors.New("cold filesystem map entries are incomplete or duplicated")
-		}
-		fsIDs[*fs.ID], fsNames[*fs.Map.Name] = true, true
-		if *fs.Map.Name != name {
-			for _, row := range *fs.Map.Info {
-				if !rowValid(row) || *row.Rank < 0 || *row.State == "up:boot" || *row.State == "up:standby" {
-					return errors.New("foreign MDS map is incomplete or conflicts with initial identity")
-				}
-			}
-			continue
-		}
-		found++
-		m := fs.Map
-		if *fs.ID != cap.identity.id || m.Metadata == nil || *m.Metadata != cap.identity.metadataPool || m.Data == nil || !slices.Equal(*m.Data, cap.dataPools) || m.Max == nil || *m.Max != 1 || m.Wanted == nil || *m.Wanted != 0 || m.Flags == nil || m.Flags.Joinable == nil || !*m.Flags.Joinable || m.Flags.Replay == nil || *m.Flags.Replay || m.Flags.Refuse == nil || !*m.Flags.Refuse {
-			return errors.New("original cold filesystem policy or identity changed")
-		}
-		if m.Up == nil || m.In == nil || m.Failed == nil || m.Damaged == nil || m.Stopped == nil || len(*m.Info) != 0 || len(*m.Up) != 0 || len(*m.In) != 0 || len(*m.Failed) != 0 || len(*m.Damaged) != 0 || len(*m.Stopped) != 0 {
-			return errors.New("cold filesystem already has MDS rank or worker state")
-		}
-	}
-	if found != 1 {
-		return errors.New("original cold filesystem map is absent")
-	}
-	for _, row := range *native.Standbys {
-		if !rowValid(row) || *row.Rank != -1 || *row.State != "up:standby" {
-			return errors.New("native standby map is incomplete or conflicting")
-		}
-		if *row.Join == -1 || *row.Join == cap.identity.id || !fsIDs[*row.Join] {
-			return errors.New("foreign standby can join the cold filesystem")
-		}
-	}
-	return nil
 }
 
 // New cold absence guards reject duplicate fields and trailing documents. Never

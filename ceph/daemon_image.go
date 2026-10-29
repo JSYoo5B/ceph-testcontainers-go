@@ -9,8 +9,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// DaemonOption adjusts one daemon that AddMonitor, AddManager, AddOSD or
-// AddOSDWithConfig creates. It applies to that daemon only and never changes
+// DaemonOption adjusts one daemon that AddMonitor or AddManager creates (AddOSD
+// takes OSDOptions). It applies to that daemon only and never changes
 // the cluster's settings or any other daemon.
 type DaemonOption func(*daemonOptions) error
 
@@ -39,11 +39,8 @@ func WithDaemonImage(image string) DaemonOption {
 		if o.imageSet {
 			return fmt.Errorf("daemon image selected twice")
 		}
-		if image == "" {
-			return fmt.Errorf("daemon image must not be empty")
-		}
-		if strings.ContainsFunc(image, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
-			return fmt.Errorf("daemon image must not contain whitespace or control characters")
+		if err := validateDaemonImage(image); err != nil {
+			return err
 		}
 		o.image, o.imageSet = image, true
 		return nil
@@ -117,4 +114,16 @@ func (d *DetachedOSD) Image() string {
 		return ""
 	}
 	return d.image
+}
+
+// validateDaemonImage is the one validation of a per-daemon image reference,
+// shared by WithDaemonImage and OSDOptions.WithImage.
+func validateDaemonImage(image string) error {
+	if image == "" {
+		return fmt.Errorf("daemon image must not be empty")
+	}
+	if strings.ContainsFunc(image, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return fmt.Errorf("daemon image must not contain whitespace or control characters")
+	}
+	return nil
 }

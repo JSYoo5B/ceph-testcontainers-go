@@ -71,11 +71,11 @@ func TestDaemonImageRefusalHappensBeforeLockAndState(t *testing.T) {
 			return m, err
 		},
 		"AddOSD": func(ctx context.Context, c *Container) (any, error) {
-			o, err := c.AddOSD(ctx, bad)
+			o, err := c.AddOSD(ctx, OSDOptions{}.WithImage(" "))
 			return o, err
 		},
-		"AddOSDWithConfig": func(ctx context.Context, c *Container) (any, error) {
-			o, err := c.AddOSDWithConfig(ctx, OSDConfig{Host: "host-a"}, bad)
+		"AddOSD with placement": func(ctx context.Context, c *Container) (any, error) {
+			o, err := c.AddOSD(ctx, OSDOptions{}.WithPlacement(OSDConfig{Host: "host-a"}).WithImage(" "))
 			return o, err
 		},
 	}
@@ -118,9 +118,8 @@ func TestDaemonImageOptionIsRefusedForTenantsOfASharedCluster(t *testing.T) {
 		ctx := t.Context()
 		_, monErr := shared.AddMonitor(ctx, "b", option)
 		_, mgrErr := shared.AddManager(ctx, "b", option)
-		_, osdErr := shared.AddOSD(ctx, option)
-		_, cfgErr := shared.AddOSDWithConfig(ctx, OSDConfig{}, option)
-		for name, err := range map[string]error{"AddMonitor": monErr, "AddManager": mgrErr, "AddOSD": osdErr, "AddOSDWithConfig": cfgErr} {
+		_, osdErr := shared.AddOSD(ctx, OSDOptions{}.WithImage(image))
+		for name, err := range map[string]error{"AddMonitor": monErr, "AddManager": mgrErr, "AddOSD": osdErr} {
 			if !errors.Is(err, ErrSharedCluster) {
 				t.Errorf("%s with image %q: %v, want ErrSharedCluster", name, image, err)
 			}
@@ -129,7 +128,7 @@ func TestDaemonImageOptionIsRefusedForTenantsOfASharedCluster(t *testing.T) {
 			t.Fatal("a refused tenant call changed the topology")
 		}
 	}
-	for _, op := range []string{"AddMonitor", "AddManager", "AddOSD", "AddOSDWithConfig"} {
+	for _, op := range []string{"AddMonitor", "AddManager", "AddOSD"} {
 		if sharedMethodPolicies[op] != sharedRecycle {
 			t.Errorf("%s is no longer a topology change in the shared gate", op)
 		}
@@ -141,7 +140,7 @@ func TestDaemonImageOptionIsRefusedForTenantsOfASharedCluster(t *testing.T) {
 	}
 }
 
-// AddOSDWithConfig end to end against the registration fakes: the overridden
+// AddOSD with a placement and an image end to end against the registration fakes: the overridden
 // OSD starts from its image and the cluster, and a second OSD, keep the default.
 func TestOverriddenOSDRecordsItsImageWithoutChangingTheClusterOrOtherOSDs(t *testing.T) {
 	c, _, runner := newInitialOSDCluster(options{essentialImage: "example.invalid/ceph:cluster", osds: 2})
@@ -152,7 +151,7 @@ func TestOverriddenOSDRecordsItsImageWithoutChangingTheClusterOrOtherOSDs(t *tes
 		images = append(images, image)
 		return inner(ctx, image, opts...)
 	}
-	overridden, err := c.AddOSDWithConfig(t.Context(), OSDConfig{Host: "host-a"}, WithDaemonImage("example.invalid/ceph:new"))
+	overridden, err := c.AddOSD(t.Context(), OSDOptions{}.WithPlacement(OSDConfig{Host: "host-a"}), OSDOptions{}.WithImage("example.invalid/ceph:new"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,6 +161,9 @@ func TestOverriddenOSDRecordsItsImageWithoutChangingTheClusterOrOtherOSDs(t *tes
 	}
 	if len(images) != 2 || images[0] != "example.invalid/ceph:new" || images[1] != "example.invalid/ceph:cluster" {
 		t.Fatalf("container images %v", images)
+	}
+	if overridden.Placement().Host != "host-a" || ordinary.Placement().Host == "host-a" {
+		t.Fatalf("placements %+v %+v", overridden.Placement(), ordinary.Placement())
 	}
 	if overridden.Image() != "example.invalid/ceph:new" || ordinary.Image() != "example.invalid/ceph:cluster" {
 		t.Fatalf("handle images %q %q", overridden.Image(), ordinary.Image())
@@ -176,7 +178,7 @@ func TestOverriddenOSDRecordsItsImageWithoutChangingTheClusterOrOtherOSDs(t *tes
 		t.Fatal("the overridden OSD has no container")
 	}
 	// A refusal after the override keeps the first OSD intact.
-	if refused, err := c.AddOSD(t.Context(), WithDaemonImage("")); refused != nil || !errors.Is(err, ErrInvalidRequest) || c.osdHandles.count() != 2 {
+	if refused, err := c.AddOSD(t.Context(), OSDOptions{}.WithImage("")); refused != nil || !errors.Is(err, ErrInvalidRequest) || c.osdHandles.count() != 2 {
 		t.Fatalf("refused add: %v %v owned=%d", refused, err, c.osdHandles.count())
 	}
 }

@@ -13,9 +13,9 @@ const initialOSDStarts = 4
 
 // startInitialOSDs adds the initial OSDs of Run. It registers them one after
 // another, so that their IDs, keys and CRUSH host buckets are allocated in
-// the order of the layout as with sequential AddOSDWithConfig calls, then
+// the order of the layout as with sequential AddOSD calls, then
 // creates and starts their containers concurrently and waits for all of them
-// to be up and in. It holds c.mu throughout, like AddOSDWithConfig; the
+// to be up and in. It holds c.mu throughout, like AddOSD; the
 // concurrent container starts do not take it. Every registered OSD stays in
 // c.osdHandles, with its container when one was created, also when another OSD
 // fails, so that Terminate removes them all.

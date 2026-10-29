@@ -44,11 +44,11 @@ func TestPoolPGRelocation(t *testing.T) {
 			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal("prepare small OSDs without startup benchmark", err)
 			}
-			fast, err := cluster.AddOSDWithConfig(ctx, ceph.OSDConfig{DeviceClass: "fast"})
+			fast, err := cluster.AddOSD(ctx, ceph.OSDOptions{}.WithPlacement(ceph.OSDConfig{DeviceClass: "fast"}))
 			if err != nil {
 				t.Fatal("add fast OSD", err)
 			}
-			slow, err := cluster.AddOSDWithConfig(ctx, ceph.OSDConfig{DeviceClass: "slow"})
+			slow, err := cluster.AddOSD(ctx, ceph.OSDOptions{}.WithPlacement(ceph.OSDConfig{DeviceClass: "slow"}))
 			if err != nil {
 				t.Fatal("add slow OSD", err)
 			}

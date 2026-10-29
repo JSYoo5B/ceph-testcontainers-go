@@ -364,14 +364,14 @@ func TestNoInitialMDSStrictNativeAbsenceSchema(t *testing.T) {
 				} else {
 					m[field] = nil
 				}
-				if err := validateColdMDSMap([]byte(coldMDSTestJSON(native)), fs.config.Name, fs.coldMDS, "cold-target-0"); err == nil {
+				if err := decodeColdMDSMap([]byte(coldMDSTestJSON(native)), coldMDSMapExpectation{filesystem: fs.config.Name, reservedName: "cold-target-0", native: fs.coldMDS.identity, dataPools: fs.coldMDS.dataPools}); err == nil {
 					t.Fatal("missing/null absence authority accepted")
 				}
 			})
 		}
 	}
 	for _, bad := range []string{good + " {}", `{"standbys":[],"standbys":[],"filesystems":[]}`, "null", "[]", `{"standbys":null,"filesystems":[]}`, `{"standbys":[],"filesystems":null}`, "never-log-this-native-secret"} {
-		if err := validateColdMDSMap([]byte(bad), fs.config.Name, fs.coldMDS, "cold-target-0"); err == nil || strings.Contains(err.Error(), "never-log") {
+		if err := decodeColdMDSMap([]byte(bad), coldMDSMapExpectation{filesystem: fs.config.Name, reservedName: "cold-target-0", native: fs.coldMDS.identity, dataPools: fs.coldMDS.dataPools}); err == nil || strings.Contains(err.Error(), "never-log") {
 			t.Fatalf("malformed map accepted or leaked: %v", err)
 		}
 	}

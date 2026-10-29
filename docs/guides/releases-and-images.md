@@ -247,13 +247,13 @@ provided.
 
 ## One daemon from another image
 
-`WithDaemonImage` starts one new MON, MGR or OSD from an image other than the
-cluster's essential image. It is an option of `AddMonitor`, `AddManager`,
-`AddOSD` and `AddOSDWithConfig`; see
+`WithDaemonImage` starts one new MON or MGR, and `OSDOptions.WithImage` one new
+OSD, from an image other than the cluster's essential image. They are options of
+`AddMonitor`, `AddManager` and `AddOSD`; see
 [Per-daemon images](../ceph.md#per-daemon-images) for the full contract.
 
 ```golang
-osd, err := cluster.AddOSD(ctx, ceph.WithDaemonImage("registry.example/ceph:other"))
+osd, err := cluster.AddOSD(ctx, ceph.OSDOptions{}.WithImage("registry.example/ceph:other"))
 // osd.Image() is "registry.example/ceph:other"; FactsOf(cluster).Images.Essential is unchanged.
 release, err := osd.Version(ctx) // what the running daemon reports, such as "20.2.4"
 ```

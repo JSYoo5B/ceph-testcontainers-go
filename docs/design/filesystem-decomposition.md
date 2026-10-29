@@ -8,6 +8,12 @@ public handle. It is the analogue of
 package. It changes no code, no public signature, no catalogue and no
 dependency.
 
+Status (issue #313): Step 1 is delivered, and the stopped-MDS decoder slice of
+Step 3 is delivered. [Refresh at fb2e760](#refresh-at-fb2e760-issue-313) reconciles
+this record with main and lists what remains. The sections before it keep the
+findings of their snapshots; a count or citation there is historical unless the
+refresh restates it.
+
 Every shape below is a proposal. The final boundaries and any public API are
 not decided by counts. Each extraction step gets its own child issue with exact
 signatures, call-site counts, caller migration and acceptance evidence before
@@ -285,7 +291,7 @@ acceptance contracts and are not interchangeable.
 | --- | --- | --- |
 | Lenient | `parseCephFSMDSStatus` (`cephfs/filesystem.go:741`), `cephFSMDSAbsent` (`:627`), `readNativePools` (`cephfs/data_pools.go:82`) | `json.Unmarshal` into a plain struct. Only "filesystems missing" and a few identity comparisons are errors. A missing field decodes to its zero value |
 | Pointer-strict | `parseRemovalShutdownState` (`cephfs/removal_shutdown.go:23`) | Every field is a pointer; a missing or negative id, wrong name, missing `max_mds` or `up`, or a malformed `mds_<n>` rank key is an error |
-| Strict with duplicate-key rejection | `validateColdMDSMap` (`cephfs/no_initial_mds.go:217`), `decodeStoppedMDSScope` (`cephfs/stopped_mds.go:274`), `readMDSReplacementScope` (`cephfs/mds_replacement.go:361`) | All via `coldMDSJSON` (`cephfs/no_initial_mds.go:293`): input limited to 4 MiB, duplicate object keys and trailing documents rejected, raw decode errors never returned (native auth input can contain credentials). Pointer fields so absent differs from zero. Cross-checks: unique names and GIDs, `gid_<n>` keys, `up` versus `info` agreement, policy flags |
+| Strict with duplicate-key rejection | `decodeColdMDSMap` (`cephfs/cold_mds_decode.go`, formerly `validateColdMDSMap`), `decodeStoppedMDSMap` (`cephfs/stopped_mds_decode.go`), `decodeMDSReplacementMap` (`cephfs/mds_replacement_decode.go`, split from `readMDSReplacementScope`) | All via `coldMDSJSON` (`cephfs/no_initial_mds.go`): input limited to 4 MiB, duplicate object keys and trailing documents rejected, raw decode errors never returned (native auth input can contain credentials). Pointer fields so absent differs from zero. Cross-checks: unique names and GIDs, `gid_<n>` keys, `up` versus `info` agreement, policy flags |
 
 Invariants that any change to a decoder must keep, from the code and the
 pinned Ceph source:
@@ -740,6 +746,84 @@ and public handles; the embedded `Container` and its re-seat sites; the
 exported method; `config` and F1, F5, F6. No Docker, no native Ceph and no native
 MDS scenario was run, so nothing here is native evidence. Native scale and
 stopped-MDS scenarios are for the owner to request on the exact head.
+
+## Refresh at fb2e760 (issue #313)
+
+Source snapshot: `main` at `fb2e76034d132d7d09c846a338b82b76b671928c` (merge of
+#311). Citations in this section are at that commit unless they name a file this
+change adds. Source reading and Docker-free unit tests only; nothing here is
+native evidence.
+
+### Measured with the repository tool
+
+`go run ./internal/tools/structmetrics measure -packages cephfs` (lexical,
+untyped; see [Structural metrics](../contributing/structural-metrics.md)):
+
+| Owner | Exported methods | Private methods | Fields | Where |
+| --- | ---: | ---: | ---: | --- |
+| `cephfs.Filesystem` | 40 | 72 | 14 | `cephfs/filesystem.go:58` |
+| `cephfs.mdsRoster` | 0 | 10 | 3 | `cephfs/mds_roster.go:37` |
+| `cephfs.MDS` | 2 | 0 | 4 | `cephfs/filesystem.go:47` |
+| `cephfs.cephFSMDSIdentity` | 0 | 0 | 13 | `cephfs/stopped_mds.go:24` |
+| package `cephfs` (66 owners, 21 files) | 68 | 93 | 348 | |
+
+### Reconciliation with the measurements above
+
+- The method totals match the first snapshot (40 exported, 72 unexported, 112).
+  The field count is 14, not 16: Step 1 moved `mdss`, `nextMDSIndex` and `mdsOpts`
+  into `mdsRoster` and added `roster` (16 - 3 + 1). That is a relocation of three
+  fields behind one, not removal of the state; the roster still holds the same
+  three values under the same two locks.
+- Historical, not reused: "82 of 112 methods touch no mutable state" was not
+  reproducible (see Step 1 as implemented) and is not an acceptance basis. The
+  cognitive and cyclomatic scores of `decodeStoppedMDSScope` (92/127), `ScaleMDS`
+  (74/54) and `readMDSReplacementScope` (81/101) are pinned observations of an
+  older tool run on `7df1094`/`0b6e6c2`. They were not re-measured here: the
+  repository has no complexity tool and none was added.
+- Admission call sites by textual search over non-test `cephfs` files:
+  `beginSubvolumeOperation` 29, `beginDataPoolOperation` 3,
+  `beginSessionOperation` 4, and 12 lines that read `byName[`. Unchanged from R4
+  and R5.
+- R1 to R8 and F1 to F6 were not re-derived. Step 3 touched none of the lock
+  paths they cite; the line numbers in them have drifted and are not restated.
+- Owner characterization of F1 at `964aaea` (issue #313, comment of 2026-10-29): with
+  only the exported `FilesystemName` changed to a sibling name, `MDSStatus`
+  follows the sibling while the stored config and native identity stay put, the
+  session admission refuses the edited descriptor, and the data-pool admission
+  admits it. This is the offline control that a shared admission step must keep
+  per operation. It does not establish that a whole data-pool operation
+  succeeds, and F5 stays untested.
+
+### Status of the extraction order
+
+| Step | Status | Where |
+| --- | --- | --- |
+| 1. MDS roster | Delivered | [Step 1 as implemented](#step-1-as-implemented-the-mds-roster) |
+| 2. Shared admission | Not started. Needs the per-operation controls above | |
+| 3. Decoder boundary | Partly delivered: one shared state list, and the stopped-MDS decoder split from survivor verification | [Stopped-MDS native-state decoder](filesystem-decomposition/stopped-mds-decoder.md) |
+| 3, remaining | Delivered: the cold-start decoder is an argument-only function and the replacement decoder is split from its two native reads | [Cold-start and replacement decoders](filesystem-decomposition/cold-replacement-decoder.md) |
+| 4. Ownership proofs | Not started | |
+| 5. Public handles, embedded `Container` | Owner decision | |
+
+### Proposals that need an owner decision (not approvals)
+
+These are labelled proposals from the implementation side. None changes code in
+this slice.
+
+- P1, embedded `Container`: keep it as documented compatibility until a public
+  change is chosen; do not unify the four re-seat sites. Unchanged from the
+  recommendation above; the decoder slice does not depend on it.
+- P2, name authority (F1): keep both sources until the owner decides which is
+  authoritative. A shared admission step takes the predicate as a parameter per
+  operation, so deciding later does not block it.
+- P3, public handles: no signature changes are proposed in the internal slices.
+  Moving the 20 handle-targeted operations needs the old-to-new map from the
+  Public-handle numbers above and its own issue.
+- P4, `up:oneshot-replay`: it is refused today by all three strict decoders and the
+  shared list preserves that. Supporting it needs evidence from the pinned Ceph
+  source of when a filesystem can report it and a separate semantic decision.
+- P5, admission and locking: any change to which section holds `c.mu` across I/O
+  (R3) or to the admission predicates stays a separate behavior change.
 
 ## Limits of this note
 
