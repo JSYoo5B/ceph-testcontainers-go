@@ -272,8 +272,7 @@ names it. Every registered OSD, and every container that was created, stays
 owned by the returned cluster, and `Terminate` removes them. On
 `quay.io/ceph/ceph:v20.2.4`, starting the OSDs together cuts `Run` from about 17
 to 11 seconds for three OSDs and from about 27 to 16 seconds for five.
-[AddOSD](#addosd) and [AddOSDWithConfig](#addosdwithconfig) still add one OSD
-at a time.
+[AddOSD](#addosd) still adds one OSD at a time.
 
 #### WithNoInitialOSDs
 
@@ -282,7 +281,7 @@ ceph.WithNoInitialOSDs()
 ```
 
 Starts only the MON and MGR topology. Add storage later with
-[AddOSD](#addosd) or [AddOSDWithConfig](#addosdwithconfig), then create pools.
+[AddOSD](#addosd), then create pools.
 
 - Initial pools, filesystems and gateways, and an explicit `WithOSDCount` or
   `WithInitialOSDs`, are rejected before allocation.
@@ -1504,7 +1503,7 @@ methods that only read state stay available, including `Container.Pool`.
 | `CreateClient`, `ClientConfig.Delete`, `ClientConfig.UpdateCaps`, `ClientConfig.ReplaceKey`, `ClientConfig.Revoke`, `ClientConfig.Capabilities`, `WithClientIdentity`, `RefreshClientMonitorConfig`, `RunNativeCommand` | Act on any identity or container; use the `Tenant` methods. |
 | `override.SetConfig`, `override.SetDebugLevel`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetMessengerPolicy`, `override.AddBlocklist` and `override.SetFullRatios` (see [override](override.md)), `OSDContainer.SetIn`, `CreatePool`, `Pool.Remove`, `Pool.SetQuota`, `Pool.SetReplication`, `Pool.SetPGCount`, `Pool.SetPlacement`, `DeepScrubPG`, `RepairPG`, `OSDContainer.RotateKey`, `ManagerContainer.RotateKey`, `RefreshMonitorConfig` | Change cluster-wide state. |
 | `Ceph`, `OSDContainer.AdminSocket`, `MonitorContainer.AdminSocket`, `ManagerContainer.AdminSocket`, `OSDContainer.Version`, `MonitorContainer.Version`, `ManagerContainer.Version`, `ControlContainer`, `ClientContainer`, `ConnectionConfig`, `WithClient`, `ManagerContainer`, `Monitors`, `Managers`, `OSDs`, `ServiceContainers`, and the `Exec`, `CopyToContainer`, `CopyDirToContainer`, `CopyFileToContainer`, `CopyFileFromContainer`, `Start` and `Stop` of the primary MON container | Give raw admin access. Methods without an error result return nil; those with one return the error. |
-| `AddOSD`, `AddOSDWithConfig`, `OSDContainer.Remove`, `OSDContainer.Detach`, `DetachedOSD.Reopen`, `AddMonitor`, `MonitorContainer.Remove`, `AddManager`, `ManagerContainer.Remove` | Change the topology. |
+| `AddOSD`, `OSDContainer.Remove`, `OSDContainer.Detach`, `DetachedOSD.Reopen`, `AddMonitor`, `MonitorContainer.Remove`, `AddManager`, `ManagerContainer.Remove` | Change the topology. |
 | `Terminate` | Only `SharedCluster.Close` ends a shared cluster. |
 
 Under an [exclusive lease](#exclusive-lease) the gate refuses only `Terminate`.
@@ -2208,10 +2207,10 @@ func (m *ManagerContainer) Version(ctx context.Context) (string, error)
 func (o *OSDContainer) Version(ctx context.Context) (string, error)
 ```
 
-`WithDaemonImage` is an option of [AddMonitor](#addmonitor),
-[AddManager](#addmanager), [AddOSD](#addosd) and
-[AddOSDWithConfig](#addosdwithconfig). It starts that one new daemon from the
-given image instead of the essential image. Nothing else changes: the option
+`WithDaemonImage` is an option of [AddMonitor](#addmonitor) and
+[AddManager](#addmanager); `OSDOptions.WithImage` does the same for
+[AddOSD](#addosd). It starts that one new daemon from the given image instead of
+the essential image. Nothing else changes: the option
 does not touch the cluster's settings, `ClusterFacts` or any other daemon.
 
 - Validation. The reference must be non-empty with no whitespace or control
@@ -2588,35 +2587,51 @@ change introduces retained-store detach/reopen support.
 #### AddOSD
 
 ```golang
-func (c *Container) AddOSD(ctx context.Context, opts ...ceph.DaemonOption) (*ceph.OSDContainer, error)
+func (c *Container) AddOSD(ctx context.Context, configs ...ceph.OSDOptions) (*ceph.OSDContainer, error)
 ```
 
-Registers, formats and starts a new OSD with the default CRUSH location and waits
-until it is up and in. It uses the OSD image, block size and storage options
-selected at `Run`. An OSD returned with an error is tracked for cleanup and can be
+Registers, formats and starts a new OSD and waits until it is up and in. With no
+argument the OSD gets the default CRUSH location and the essential image. It uses
+the block size and storage options selected at `Run`. The optional
+[OSDOptions](#osdoptions) values select an explicit location or another image. An OSD returned with an error is tracked for cleanup and can be
 inspected; nothing is purged automatically. `AddOSD` is refused while an
 earlier [OSDContainer.Remove](#osdcontainerremove) has not finished its cleanup, so a reused numeric
 ID cannot be confused with the old handle. Adding OSDs does not change existing
-pool sizes. [WithDaemonImage](#per-daemon-images) starts this one OSD from
-another image.
+pool sizes. The shared-cluster gate is checked first, then the context, and the
+assembled configuration is validated once before the topology lock, any OSD
+registration and any container.
 
-#### AddOSDWithConfig
-
-```golang
-func (c *Container) AddOSDWithConfig(ctx context.Context, config ceph.OSDConfig, opts ...ceph.DaemonOption) (*ceph.OSDContainer, error)
-```
-
-Like [AddOSD](#addosd), with an explicit logical CRUSH location
-([OSDConfig](#withinitialosds)). An omitted host resolves to `osd-<ID>` after
-native registration. If that name then conflicts with the selected root or rack,
-the registered descriptor is returned with an error before its container starts;
-terminate the cluster in that case.
+An omitted host resolves to `osd-<ID>` after native registration. If that name
+then conflicts with the selected root or rack, the registered descriptor is
+returned with an error before its container starts; terminate the cluster in
+that case.
 
 ```golang
-osd, err := cluster.AddOSDWithConfig(ctx, ceph.OSDConfig{
+osd, err := cluster.AddOSD(ctx, ceph.OSDOptions{}.WithPlacement(ceph.OSDConfig{
 	Host: "host-d", Rack: "rack-b", DeviceClass: "fast",
-})
+}))
 ```
+
+#### OSDOptions
+
+```golang
+type OSDOptions struct { /* unexported */ }
+
+func (OSDOptions) WithPlacement(config OSDConfig) OSDOptions
+func (OSDOptions) WithImage(image string) OSDOptions
+```
+
+`OSDOptions` is a value; the zero value selects every default and each `With`
+method returns a modified copy, so one base can derive independent
+configurations. `WithPlacement` takes an [OSDConfig](#withinitialosds) whole.
+`WithImage` starts this one OSD from another image with the contract of
+[WithDaemonImage](#per-daemon-images): the reference must be non-empty with no
+whitespace or control characters, and an empty image is an explicit invalid
+selection. `AddOSD` composes several values in argument order: each field may be
+set by at most one value, and setting it in two is refused with
+`ErrInvalidRequest` even when both agree. Within one value a later call replaces
+the earlier one. The rules are in
+[value-configuration-composition](design/value-configuration-composition.md).
 
 #### OSDContainer.Remove
 
@@ -4513,7 +4528,7 @@ See the [handle contract](#container-methods).
 
 | Type | Used by |
 | --- | --- |
-| `OSDConfig` | [WithInitialOSDs](#withinitialosds), [AddOSDWithConfig](#addosdwithconfig), `OSDContainer.Placement` |
+| `OSDConfig` | [WithInitialOSDs](#withinitialosds), [OSDOptions](#osdoptions), `OSDContainer.Placement` |
 | `OSDState` | [OSDStates](#osdstates) |
 | `PoolConfig`, `ErasureCodeConfig` | [WithPools](#withpools), [CreatePool](#createpool) |
 | `Pool` | [CreatePool](#createpool), [Pool](#pool); its methods are [Status](#poolstatus), [Usage](#poolusage), [PGs](#poolpgs), [SetReplication](#poolsetreplication), [SetQuota](#poolsetquota), [SetPlacement](#poolsetplacement), [SetPGCount](#poolsetpgcount), [WaitForPGCount](#poolwaitforpgcount) and [Remove](#poolremove) |

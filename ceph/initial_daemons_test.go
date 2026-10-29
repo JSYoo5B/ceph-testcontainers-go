@@ -223,7 +223,7 @@ func TestInitialOSDsKeepSequentialIDsAndPlacement(t *testing.T) {
 	// reference: the order the module used before the concurrent start.
 	sequential, _, _ := newInitialOSDCluster(options{osds: len(layout)})
 	for _, config := range layout {
-		if _, err := sequential.AddOSDWithConfig(t.Context(), config); err != nil {
+		if _, err := sequential.AddOSD(t.Context(), OSDOptions{}.WithPlacement(config)); err != nil {
 			t.Fatal(err)
 		}
 	}

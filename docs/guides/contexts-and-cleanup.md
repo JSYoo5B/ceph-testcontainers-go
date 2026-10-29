@@ -172,7 +172,7 @@ resources from calls that failed halfway:
 | --- | --- |
 | MON containers and the separate control CLI container (multi-MON clusters) | `Run`, `AddMonitor` |
 | MGR containers | `Run`, `AddManager` |
-| OSD containers and the in-memory OSD volume with its keeper container | `Run`, `AddOSD`, `AddOSDWithConfig`, `WithOSDInMemoryStorage` |
+| OSD containers and the in-memory OSD volume with its keeper container | `Run`, `AddOSD`, `WithOSDInMemoryStorage` |
 | Shared `/var/run/ceph` volume | `Run`; MON/MGR/OSD and the control container share admin sockets |
 | RGW gateways | `rgw.WithGateways`, `rgw.Start` |
 | MDS daemons | `cephfs.WithFilesystems`, `cephfs.Start`, `ScaleMDS` |
@@ -339,7 +339,7 @@ result:
 | Call | Non-nil result on error | What to do |
 | --- | --- | --- |
 | `Run` (all service `Run`s) | Partially created cluster | `Terminate` it (`CleanupContainer` does) |
-| `AddMonitor`, `AddManager`, `AddOSD`, `AddOSDWithConfig`, `rgw.Start`, `cephfs.Start` | Partial daemon or service, owned by the cluster | Inspect it, or let `Terminate` remove it |
+| `AddMonitor`, `AddManager`, `AddOSD`, `rgw.Start`, `cephfs.Start` | Partial daemon or service, owned by the cluster | Inspect it, or let `Terminate` remove it |
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](../ceph.md#clientconfigreplacekey)) |

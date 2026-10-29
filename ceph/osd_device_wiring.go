@@ -19,12 +19,12 @@ func (r *osdLaunchRecipe) seal() { r.started.CompareAndSwap(false, true) }
 // the only caller of osdLaunchRecipe.attachBlockDevice and of
 // osdDeviceClaims.claim. It is internal: no option, no exported name and no
 // production caller (osdDeviceWiringCallers is empty). The default OSD launch,
-// AddOSDWithConfig and the initial OSDs do not reach it, so their behavior is
+// AddOSD and the initial OSDs do not reach it, so their behavior is
 // unchanged, and nothing here opens a native claim.
 //
 // Lock. The caller holds Container.mu, taken with lockTopology
 // (ceph/topology.go:380, ceph/context_lock.go:11), and keeps it through
-// startOSD, exactly as AddOSDWithConfig does between ceph/ceph.go:548 (acquire,
+// startOSD, exactly as AddOSD does between ceph/ceph.go:548 (acquire,
 // released by the defer at :551), registerOSD (:560) and startOSD (:564);
 // startOSD itself runs without the lock (:668-669). This function takes no
 // lock, starts no goroutine and adds no mutex, so the order is the existing one:

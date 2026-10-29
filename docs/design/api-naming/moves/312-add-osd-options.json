@@ -1,0 +1,13 @@
+{
+  "schema": "ceph-api-move/v1",
+  "change": "312-add-osd-options",
+  "review": "value-configuration-composition.md",
+  "removed": [
+    "ceph.Container.AddOSDWithConfig"
+  ],
+  "added": [
+    "ceph.OSDOptions",
+    "ceph.OSDOptions.WithImage",
+    "ceph.OSDOptions.WithPlacement"
+  ]
+}

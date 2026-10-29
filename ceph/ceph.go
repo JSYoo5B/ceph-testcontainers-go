@@ -513,37 +513,37 @@ func (c *Container) cephCLI(ctx context.Context, args ...string) ([]byte, error)
 }
 
 // AddOSD registers, formats and starts a new OSD, then waits for it to be up/in.
-// Topology operations are serialized. An OSD returned with an error is tracked
-// for cleanup and may be inspected; no data is silently purged on failure.
-// WithDaemonImage starts this one OSD from another image, which its recipe
-// keeps for DetachedOSD.Reopen.
-func (c *Container) AddOSD(ctx context.Context, opts ...DaemonOption) (*OSDContainer, error) {
+// With no argument the OSD takes the cluster defaults: host osd-ID under the
+// default root and the essential image. OSDOptions values select an explicit
+// logical CRUSH location (WithPlacement) or start this one OSD from another
+// image (WithImage); several values compose as described at OSDOptions. Omitted
+// host names resolve to osd-ID; logical hosts/racks are simulated placement
+// domains on the same Docker engine, not physical failure domains.
+//
+// The shared-cluster gate is checked first, then the context, and the assembled
+// configuration is validated once before the topology lock is taken, before any
+// OSD is registered and before any container exists. Topology operations are
+// serialized. An OSD returned with an error is tracked for cleanup and may be
+// inspected; no data is silently purged on failure. The image override is kept
+// in the OSD's recipe for DetachedOSD.Reopen.
+func (c *Container) AddOSD(ctx context.Context, configs ...OSDOptions) (*OSDContainer, error) {
 	if gateErr := c.sharedGate("AddOSD"); gateErr != nil {
-		return nil, gateErr
-	}
-	return c.AddOSDWithConfig(ctx, OSDConfig{}, opts...)
-}
-
-// AddOSDWithConfig starts an OSD in an explicit logical CRUSH location.
-// Omitted host names resolve to osd-ID; logical hosts/racks are simulated
-// placement domains on the same Docker engine, not physical failure domains.
-// WithDaemonImage starts this one OSD from another image. Options are
-// validated before the topology lock is taken, before any OSD is registered
-// and before any container exists.
-func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig, opts ...DaemonOption) (*OSDContainer, error) {
-	if gateErr := c.sharedGate("AddOSDWithConfig"); gateErr != nil {
 		return nil, gateErr
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	daemon, err := resolveDaemonOptions(opts)
+	plan, err := composeOSDOptions(configs)
 	if err != nil {
 		return nil, err
 	}
-	config, err = normalizeOSDConfig(resolveOSDDefaults(c.settings, config))
+	config, err := normalizeOSDConfig(resolveOSDDefaults(c.settings, plan.placement))
 	if err != nil {
 		return nil, err
+	}
+	image := c.settings.essentialImage
+	if plan.imageSet {
+		image = plan.image
 	}
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
@@ -557,7 +557,7 @@ func (c *Container) AddOSDWithConfig(ctx context.Context, config OSDConfig, opts
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	launch, err := c.registerOSD(ctx, config, c.daemonImage(daemon), nil)
+	launch, err := c.registerOSD(ctx, config, image, nil)
 	if err != nil {
 		return launch.osd, err
 	}

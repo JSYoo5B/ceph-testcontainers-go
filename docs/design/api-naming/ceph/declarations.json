@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 353,
+  "count": 355,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -295,17 +295,9 @@
     {
       "current": "ceph.Container.AddOSD",
       "kind": "method",
-      "signature": "func(ctx context.Context, opts ...DaemonOption) (*OSDContainer, error)",
+      "signature": "func(ctx context.Context, configs ...OSDOptions) (*OSDContainer, error)",
       "receiver": "*Container",
       "proposed": "ceph.Container.AddOSD",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.AddOSDWithConfig",
-      "kind": "method",
-      "signature": "func(ctx context.Context, config OSDConfig, opts ...DaemonOption) (*OSDContainer, error)",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.AddOSDWithConfig",
       "decision": "baseline"
     },
     {
@@ -1599,6 +1591,28 @@
       "current": "ceph.OSDObjectStore",
       "kind": "type",
       "proposed": "ceph.OSDObjectStore",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDOptions",
+      "kind": "type",
+      "proposed": "ceph.OSDOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDOptions.WithImage",
+      "kind": "method",
+      "signature": "func(image string) OSDOptions",
+      "receiver": "OSDOptions",
+      "proposed": "ceph.OSDOptions.WithImage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.OSDOptions.WithPlacement",
+      "kind": "method",
+      "signature": "func(config OSDConfig) OSDOptions",
+      "receiver": "OSDOptions",
+      "proposed": "ceph.OSDOptions.WithPlacement",
       "decision": "baseline"
     },
     {
