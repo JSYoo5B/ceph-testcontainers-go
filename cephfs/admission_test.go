@@ -1,0 +1,215 @@
+package cephfs
+
+import (
+	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+)
+
+// TestAdmissionKeepsEachOperationsOwnNameAuthority is the offline
+// characterization from the owner's comment on issue #313 (synthetic FSMap with
+// an owned filesystem41 and a sibling99; no native cluster). Only the exported
+// FilesystemName is edited: MDSStatus follows it, the session admission refuses
+// the edited descriptor, the data-pool admission admits it without a native
+// command, and restoring the name admits the session again. It must keep
+// passing when the begin*Operation lifetime is shared: the shared part must not
+// become one "valid filesystem" Boolean. Changing which name MDSStatus follows
+// is a separate semantic decision. It does not show that a whole data-pool
+// operation succeeds, and it says nothing about concurrent access to config.
+func TestAdmissionKeepsEachOperationsOwnNameAuthority(t *testing.T) {
+	fs, control, _, _ := cephFSContextAdmissionFixture()
+	control.Output["fs dump --format json"] = `{"filesystems":[` +
+		`{"id":41,"mdsmap":{"fs_name":"fixture","max_mds":1,"metadata_pool":1,"data_pools":[2,3],"info":{"gid_101":{"name":"a","rank":0,"gid":101,"state":"up:active","join_fscid":41}}}},` +
+		`{"id":99,"mdsmap":{"fs_name":"sibling","max_mds":1,"metadata_pool":1,"data_pools":[2],"info":{"gid_202":{"name":"b","rank":0,"gid":202,"state":"up:active","join_fscid":99}}}}],"standbys":[]}`
+
+	status, err := fs.MDSStatus(t.Context())
+	if err != nil || len(status.Active) != 1 || status.Active[0].Name != "a" || !status.Active[0].Owned {
+		t.Fatalf("original descriptor does not report the owned filesystem41 daemon: %+v %v", status, err)
+	}
+
+	fs.FilesystemName = "sibling"
+	status, err = fs.MDSStatus(t.Context())
+	if err != nil || len(status.Active) != 1 || status.Active[0].Name != "b" || status.Active[0].Owned {
+		t.Fatalf("MDSStatus no longer follows the exported FilesystemName (a separate decision): %+v %v", status, err)
+	}
+	if fs.config.Name != "fixture" || fs.nativeIdentity.id != 41 {
+		t.Fatal("the stored config or native identity changed with the descriptor")
+	}
+
+	if _, _, done, err := fs.beginSessionOperation(t.Context()); err == nil {
+		done()
+		t.Fatal("session admission accepted an edited descriptor")
+	}
+	assertCephFSContextAdmissionReleased(t, fs.cluster)
+
+	before := len(control.Calls)
+	_, done, err := fs.beginDataPoolOperation(t.Context())
+	if err != nil {
+		t.Fatalf("data-pool admission refused the edited descriptor: %v", err)
+	}
+	done()
+	if len(control.Calls) != before {
+		t.Fatalf("data-pool admission issued native commands: %v", control.Calls[before:])
+	}
+	assertCephFSContextAdmissionReleased(t, fs.cluster)
+
+	fs.FilesystemName = "fixture"
+	_, id, done, err := fs.beginSessionOperation(t.Context())
+	if err != nil || id != 41 {
+		t.Fatalf("restored descriptor was refused or lost the FSMap id: %d %v", id, err)
+	}
+	done()
+	assertCephFSContextAdmissionReleased(t, fs.cluster)
+}
+
+// The shared lifetime keeps the two differences that are not predicates: the
+// cancellation recheck after the setup gate, and the refusal text.
+func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
+	fs, _, _, _ := cephFSContextAdmissionFixture()
+	fs.nativeIdentity = nil
+	_, _, _, err := fs.beginSubvolumeOperation(t.Context())
+	if err == nil || err.Error() != "CephFS filesystem must be an active filesystem created by this cluster" {
+		t.Fatalf("subvolume refusal changed: %v", err)
+	}
+	_, _, _, err = fs.beginSessionOperation(t.Context())
+	if err == nil || err.Error() != "CephFS filesystem must be an active filesystem created by this cluster" {
+		t.Fatalf("session refusal changed: %v", err)
+	}
+	ctx, done, err := fs.beginDataPoolOperation(t.Context())
+	if err == nil || err.Error() != "filesystem must have a confirmed creation identity in this active cluster" || ctx == nil || done == nil {
+		t.Fatalf("data-pool refusal changed: %v", err)
+	}
+	done() // a no-op on refusal
+	assertCephFSContextAdmissionReleased(t, fs.cluster)
+	var nilFS *Filesystem
+	if _, done, err := nilFS.beginDataPoolOperation(t.Context()); err == nil || err.Error() != "CephFS filesystem is unavailable" {
+		t.Fatalf("nil handle refusal changed: %v", err)
+	} else {
+		done()
+	}
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	for name, begin := range map[string]func() error{
+		"subvolume": func() error { _, _, _, err := fs.beginSubvolumeOperation(canceled); return err },
+		"data pool": func() error { _, _, err := fs.beginDataPoolOperation(canceled); return err },
+		"session":   func() error { _, _, _, err := fs.beginSessionOperation(canceled); return err },
+	} {
+		if err := begin(); err != context.Canceled {
+			t.Fatalf("%s admission did not return the cancellation: %v", name, err)
+		}
+	}
+	assertCephFSContextAdmissionReleased(t, fs.cluster)
+}
+
+// TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal pins the caller table
+// and the division of work. Only admitOperation takes setupMu through LockMutex and the
+// topology mutex inside the begin*Operation family, and it takes them in the
+// package order (setupMu first). admitOperation is called only by the three flows, each
+// flow passes its own check function and none takes either lock itself. admitOperation
+// holds no predicate: it does not read the registry, the native identity or an
+// exported field.
+func TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
+	begins := []string{"beginSubvolumeOperation", "beginDataPoolOperation", "beginSessionOperation"}
+	callers := map[string][]string{}
+	lockCalls := map[string][]string{}
+	var admitOperation *ast.FuncDecl
+	files := parseCephFSProductionFiles(t)
+	for _, parsed := range files {
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			if fn.Name.Name == "admitOperation" && rosterReceiverName(fn) == "Filesystem" {
+				admitOperation = fn
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				name := admissionCallee(call)
+				if name == "admitOperation" {
+					callers[name] = append(callers[name], fn.Name.Name)
+				}
+				if slices.Contains(begins, fn.Name.Name) || fn.Name.Name == "admitOperation" {
+					switch {
+					case isSetupMuAcquire(call):
+						lockCalls[fn.Name.Name] = append(lockCalls[fn.Name.Name], "setupMu")
+					case isClusterLockAcquire(call):
+						lockCalls[fn.Name.Name] = append(lockCalls[fn.Name.Name], "topology")
+					}
+				}
+				return true
+			})
+		}
+	}
+	slices.Sort(callers["admitOperation"])
+	if !reflect.DeepEqual(callers, map[string][]string{"admitOperation": {"beginDataPoolOperation", "beginSessionOperation", "beginSubvolumeOperation"}}) {
+		t.Errorf("admitOperation caller table changed: %v", callers)
+	}
+	if !reflect.DeepEqual(lockCalls, map[string][]string{"admitOperation": {"setupMu", "topology"}}) {
+		t.Errorf("lock acquisitions of the admission family changed (setupMu must come first, only in admitOperation): %v", lockCalls)
+	}
+	if admitOperation == nil {
+		t.Fatal("admitOperation is missing")
+	}
+	ast.Inspect(admitOperation.Body, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && slices.Contains([]string{"byName", "nativeIdentity", "FilesystemName", "MetadataPool", "DataPool", "config", "roster"}, sel.Sel.Name) {
+			t.Errorf("admitOperation reads %s: ownership predicates stay in each operation", sel.Sel.Name)
+		}
+		if id, ok := n.(*ast.Ident); ok && id.Name == "Closed" {
+			t.Error("admitOperation tests Closed: that belongs to each operation's predicate")
+		}
+		return true
+	})
+	for _, parsed := range files {
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || !slices.Contains(begins, fn.Name.Name) {
+				continue
+			}
+			checks := 0
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if kv, ok := n.(*ast.KeyValueExpr); ok {
+					if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "check" {
+						if _, lit := kv.Value.(*ast.FuncLit); lit {
+							checks++
+						}
+					}
+				}
+				if call, ok := n.(*ast.CallExpr); ok && admissionCallee(call) == "Unlock" {
+					t.Errorf("%s unlocks directly; release belongs to admitOperation", fn.Name.Name)
+				}
+				return true
+			})
+			if checks != 1 {
+				t.Errorf("%s must pass exactly one own check function, has %d", fn.Name.Name, checks)
+			}
+		}
+	}
+	src, err := parser.ParseFile(token.NewFileSet(), "admission.go", nil, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, imp := range src.Imports {
+		if strings.Contains(imp.Path.Value, "sync") {
+			t.Error("admission adds a mutex type")
+		}
+	}
+}
+
+func admissionCallee(call *ast.CallExpr) string {
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		return fun.Name
+	case *ast.SelectorExpr:
+		return fun.Sel.Name
+	}
+	return ""
+}
