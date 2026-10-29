@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	cephharness "github.com/JSYoo5B/ceph-testcontainers-go/ceph/harness"
 )
 
 // observeCluster returns the Observer of cluster. A nil cluster yields a nil
@@ -17,8 +18,8 @@ func observeCluster(cluster *ceph.Container) *ceph.Observer {
 
 // observeTenant returns the Observer of tenant. A nil tenant yields a nil
 // Observer, whose queries return an error instead of a result.
-func observeTenant(tenant *ceph.Tenant) *ceph.Observer {
-	observer, _ := ceph.ObserveTenant(tenant)
+func observeTenant(tenant *cephharness.Tenant) *ceph.Observer {
+	observer, _ := cephharness.ObserveTenant(tenant)
 	return observer
 }
 

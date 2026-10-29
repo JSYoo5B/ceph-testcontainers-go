@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs",
-  "count": 105,
+  "count": 95,
   "entries": [
     {
       "current": "cephfs.CloneConfig",
@@ -382,13 +382,6 @@
       "decision": "baseline"
     },
     {
-      "current": "cephfs.Lease",
-      "kind": "function",
-      "signature": "func(ctx context.Context, t *ceph.Tenant, fs string) (*TenantGroup, error)",
-      "proposed": "cephfs.Lease",
-      "decision": "baseline"
-    },
-    {
       "current": "cephfs.MDS",
       "kind": "type",
       "proposed": "cephfs.MDS",
@@ -672,76 +665,6 @@
       "current": "cephfs.SubvolumeSnapshotInfo",
       "kind": "type",
       "proposed": "cephfs.SubvolumeSnapshotInfo",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.TenantGroup",
-      "kind": "type",
-      "proposed": "cephfs.TenantGroup",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.TenantGroup.Client",
-      "kind": "method",
-      "signature": "func() *ceph.ClientConfig",
-      "receiver": "*TenantGroup",
-      "proposed": "cephfs.TenantGroup.Client",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.TenantGroup.CreateSubvolume",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string, sizeBytes int64) (string, error)",
-      "receiver": "*TenantGroup",
-      "proposed": "cephfs.TenantGroup.CreateSubvolume",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.TenantGroup.DataPool",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*TenantGroup",
-      "proposed": "cephfs.TenantGroup.DataPool",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.TenantGroup.FilesystemName",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*TenantGroup",
-      "proposed": "cephfs.TenantGroup.FilesystemName",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.TenantGroup.Group",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*TenantGroup",
-      "proposed": "cephfs.TenantGroup.Group",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.TenantGroup.Path",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*TenantGroup",
-      "proposed": "cephfs.TenantGroup.Path",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.TenantGroup.PoolNamespace",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*TenantGroup",
-      "proposed": "cephfs.TenantGroup.PoolNamespace",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.TenantGroup.WithClient",
-      "kind": "method",
-      "signature": "func(opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption",
-      "receiver": "*TenantGroup",
-      "proposed": "cephfs.TenantGroup.WithClient",
       "decision": "baseline"
     },
     {

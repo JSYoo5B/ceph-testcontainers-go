@@ -50,15 +50,6 @@ func controlSubjects() []controlSubject {
 	}
 }
 
-func leaseWith(t *testing.T, cluster *Container) (*SharedCluster, *Tenant, *fakeTB) {
-	t.Helper()
-	shared := newFakeShared(&fakeFleet{})
-	tb := newFakeTB(t)
-	tenant := shared.Lease(tb)
-	tenant.inst.backend = &observerBackend{fakeShared: backendOf(tenant), c: cluster}
-	return shared, tenant, tb
-}
-
 func TestObserverControlQueriesReadWithoutCaptureAtConstruction(t *testing.T) {
 	for _, subject := range controlSubjects() {
 		t.Run(subject.name, func(t *testing.T) {
@@ -144,48 +135,29 @@ func TestObserverControlQueriesRefuseAfterReleaseAndAfterTerminationSeparately(t
 	for _, subject := range controlSubjects() {
 		t.Run(subject.name+"/released", func(t *testing.T) {
 			cluster, commands := subject.build()
-			shared, tenant, tb := leaseWith(t, cluster)
-			observer, _ := ObserveTenant(tenant)
+			lease := newLeaseDouble(cluster)
+			observer := lease.observer()
 			if err := subject.query(t.Context(), observer); err != nil {
 				t.Fatalf("live lease: %v", err)
 			}
 			before := commands()
-			tb.finish() // the shared cluster is not closed
-			if shared.Stats().Starts != 1 || backendOf2(tenant).isTerminated() {
-				t.Fatal("the cluster ended with the lease")
-			}
+			lease.release() // the cluster is not terminated
 			if err := subject.query(t.Context(), observer); !errors.Is(err, ErrInvalidRequest) || commands() != before {
 				t.Fatalf("after release: %v, %d new commands", err, commands()-before)
 			}
 		})
 		t.Run(subject.name+"/terminated", func(t *testing.T) {
 			cluster, commands := subject.build()
-			shared, tenant, tb := leaseWith(t, cluster)
-			observer, _ := ObserveTenant(tenant)
+			lease := newLeaseDouble(cluster)
+			observer := lease.observer()
 			if err := subject.query(t.Context(), observer); err != nil {
 				t.Fatalf("live lease: %v", err)
 			}
 			before := commands()
-			if err := shared.Close(t.Context()); err != nil { // the lease is still held
-				t.Fatal(err)
-			}
-			tenant.mu.Lock()
-			held := !tenant.releasing
-			tenant.mu.Unlock()
-			tenant.owner.mu.Lock()
-			held = held && !tenant.released
-			tenant.owner.mu.Unlock()
-			if !held {
-				t.Fatal("the lease was released before the cluster ended")
-			}
+			lease.terminate() // the lease is still held
 			if err := subject.query(t.Context(), observer); !errors.Is(err, ErrInvalidRequest) || commands() != before {
 				t.Fatalf("after termination: %v, %d new commands", err, commands()-before)
 			}
-			tb.finish()
 		})
 	}
-}
-
-func backendOf2(tenant *Tenant) *fakeShared {
-	return tenant.inst.backend.(*observerBackend).fakeShared
 }

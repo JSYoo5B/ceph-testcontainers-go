@@ -526,50 +526,9 @@ Mirroring two clusters moved to the `rbd/mirror` package; see [rbd-mirror.md](rb
 
 ### Shared cluster tenants
 
-A tenant of a [shared cluster](ceph.md#shared-cluster) leases an RBD
-namespace of its own. Create the RBD pool with `WithPools` in
-`ceph.WithSharedRunOptions`.
-
-```golang
-func Lease(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, error)
-
-func (n *TenantNamespace) Pool() string
-func (n *TenantNamespace) Namespace() string
-func (n *TenantNamespace) Client() *ceph.ClientConfig
-func (n *TenantNamespace) WithClient(opts ...ceph.ClientContainerOption) testcontainers.CustomizeRequestOption
-```
-
-`Lease` creates the namespace `ID` (the tenant's ID) in `pool` and the client
-`client.ID-rbd-POOL` with `mon 'allow r'` and `osd` and `mgr 'profile rbd
-pool=POOL namespace=ID'`. It fails with `ErrInvalidRequest` for a pool without
-the `rbd` application, and when the tenant already leased the pool.
-`WithClient` attaches a container with that client, which the tenant's
-`RunNativeCommand` accepts:
-
-```golang
-tenant := shared.Lease(t)
-images, err := rbd.Lease(t.Context(), tenant, "rbd")
-if err != nil {
-	t.Fatal(err)
-}
-client, err := testcontainers.Run(t.Context(), ceph.DefaultImage, images.WithClient(), ceph.WithIdleEntrypoint())
-testcontainers.CleanupContainer(t, client)
-// rbd --id <images.Client().User()> create --size 8M rbd/<images.Namespace()>/image
-```
-
-The client can create, clone, snapshot, trash and remove images in its
-namespace. Checked natively, it cannot list or open another tenant's images,
-create images in the default namespace, create namespaces or add blocklist
-entries. It has no blocklist capability, so it cannot break another client's
-exclusive lock either.
-
-The tenant's release removes everything in the namespace: groups, trash,
-snapshots (unprotected first), clones before their parents, and images. An
-image that a client which ended without closing it still watches is retried
-for up to 60 seconds, until the OSDs drop the watch, and its exclusive lock is
-broken without a blocklist entry. Then the release removes the namespace and
-any raw object left in it, and fails the test and poisons the cluster if
-anything remains.
+A tenant of a [shared cluster](ceph-harness.md#shared-cluster) leases an RBD namespace
+of its own through the [rbd/harness](rbd-harness.md) package, which composes this
+package with `ceph/harness`. This package does not import it.
 
 ## Examples
 

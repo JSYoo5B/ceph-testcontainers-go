@@ -15,7 +15,9 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	cephharness "github.com/JSYoo5B/ceph-testcontainers-go/ceph/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephfsharness "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
@@ -29,7 +31,7 @@ import (
 // died with an open image or a mounted filesystem, and a release that finds
 // a service resource of no tenant poisons the cluster.
 func TestSharedClusterServices(t *testing.T) {
-	shared := newSharedCluster(t, ceph.WithSharedRunOptions(
+	shared := newSharedCluster(t, cephharness.WithSharedRunOptions(
 		rbd.WithPools(ceph.PoolConfig{Name: sharedRBDPool}), cephfs.WithFilesystems(), rgw.WithGateways()))
 	var fsid string
 
@@ -99,7 +101,7 @@ func TestSharedClusterServices(t *testing.T) {
 			t.Fatalf("subvolume path %s is outside the group", subvolume)
 		}
 		ctrA, ctrB := startTenantClientWith(t, ctx, groupA.WithClient()), startTenantClientWith(t, ctx, groupB.WithClient())
-		fsArgs := func(group *cephfs.TenantGroup, phase, root, path string) []string {
+		fsArgs := func(group *cephfsharness.TenantGroup, phase, root, path string) []string {
 			return []string{"python3", "-c", cephFSTenantScript, group.Client().User(), group.FilesystemName(), phase, root, path}
 		}
 		tenantExpectArgv(t, ctx, a, ctrA, true, "write the group directory", fsArgs(groupA, "write", groupA.Path(), "/top")...)

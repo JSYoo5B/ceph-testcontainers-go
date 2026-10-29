@@ -1,0 +1,10 @@
+{
+  "schema": "ceph-api-naming-review/v2",
+  "package": "rgw/harness",
+  "declarations_sha256": "7a82c1c3abcb0b59d0f705b76625c21e708c73aa56d9b6e8197dc4b1bae1d6d5",
+  "members_sha256": "fe07b5aa68e2952c3d76a4159aab67bc5b340f809bc3fe688dc6da7838449e3d",
+  "declarations": 9,
+  "members": 0,
+  "review": "api-naming-audit.md",
+  "page": "docs/rgw-harness.md"
+}

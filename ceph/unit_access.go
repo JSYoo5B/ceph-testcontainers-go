@@ -128,16 +128,15 @@ func (unitAccess) UnitReplaceOSDs(c *Container, osds map[int]*OSDContainer) {
 // goroutine uses.
 func (unitAccess) UnitOSDCount(c *Container) int { return c.osdHandles.count() }
 
-// UnitTenantCluster returns the shared cluster of a live tenant, whose gate
-// still refuses the methods a tenant cannot use, or nil. Only the unit tests and
-// the native gate and release tests use it; the service adapters use the tenant
-// port.
-func (unitAccess) UnitTenantCluster(t *Tenant) *Container {
-	c, err := t.cluster()
-	if err != nil {
-		return nil
-	}
-	return c.raw()
+// UnitBackend returns the shared-harness backend value of c, as Start returns
+// it, so that ceph/harness can prove that the real types satisfy the
+// internal/harnesshook contract without starting Docker.
+func (unitAccess) UnitBackend(c *Container) any { return containerBackend{c: c} }
+
+// UnitNewClient builds a client descriptor for a model backend of the shared
+// harness's unit tests, which cannot set the private fields.
+func (unitAccess) UnitNewClient(name string, created, ready bool) *ClientConfig {
+	return &ClientConfig{name: name, created: created, ready: ready}
 }
 
 // UnitClientState returns a client identity's owner and lifecycle flags.

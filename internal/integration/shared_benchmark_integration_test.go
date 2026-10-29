@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	cephharness "github.com/JSYoo5B/ceph-testcontainers-go/ceph/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -49,7 +50,7 @@ func TestSharedClusterBenchmark(t *testing.T) {
 		})
 		report = append(report, fmt.Sprintf("N=%-2d own clusters, sequential:   %8s", n, time.Since(began).Round(time.Second)))
 		for _, parallel := range []bool{false, true} {
-			shared := ceph.NewShared(image, ceph.WithSharedRunOptions(run...), ceph.WithMaxTenants(4))
+			shared := cephharness.NewShared(image, integrationServices(), cephharness.WithSharedRunOptions(run...), cephharness.WithMaxTenants(4))
 			began := time.Now()
 			t.Run(fmt.Sprintf("shared-%d-parallel-%v", n, parallel), func(t *testing.T) {
 				for i := range n {
@@ -115,7 +116,7 @@ func ownClusterRADOSTest(t *testing.T, image string, run []testcontainers.Contai
 }
 
 // tenantRADOSTest is the same test as a tenant of a shared cluster.
-func tenantRADOSTest(t *testing.T, tenant *ceph.Tenant) {
+func tenantRADOSTest(t *testing.T, tenant *cephharness.Tenant) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	ctr := startTenantClient(t, ctx, tenant)

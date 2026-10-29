@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "ceph",
-  "count": 437,
+  "count": 427,
   "types": {
     "ceph.AuthConfig": [
       "AuthConfig.AllowedCiphers field []CephxCipher",
@@ -495,18 +495,6 @@
       "QuorumStatus.MonMap.Mons[].PublicAddrs.Addrvec[].Addr field string `json:\"addr\"`",
       "QuorumStatus.MonMap.Mons[].PublicAddrs.Addrvec[].Type field string `json:\"type\"`",
       "QuorumStatus.QuorumNames field []string `json:\"quorum_names\"`"
-    ],
-    "ceph.SharedStats": [
-      "SharedStats.ExclusiveWait field time.Duration",
-      "SharedStats.Exclusives field int",
-      "SharedStats.LeaseSetup field time.Duration",
-      "SharedStats.LeaseWait field time.Duration",
-      "SharedStats.Leases field int",
-      "SharedStats.Poisonings field int",
-      "SharedStats.Recycles field int",
-      "SharedStats.Release field time.Duration",
-      "SharedStats.StartTime field time.Duration",
-      "SharedStats.Starts field int"
     ],
     "ceph.Status": [
       "Status.FSID field string `json:\"fsid\"`",

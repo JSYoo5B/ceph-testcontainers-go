@@ -16,9 +16,10 @@ import (
 )
 
 // This file keeps the inventory section of docs/design/shared-harness-boundary.md
-// equal to the source. The note freezes nothing: it records what the public move
-// to ceph/harness has to carry, and a count that is copied by hand into a design
-// note rots with the next refactor. Every row of the section is measured here,
+// equal to the source. The note freezes nothing: it records what ceph/harness
+// carries after the public move of issue 155 and what still names the old
+// qualified ceph names, and a count that is copied by hand into a design note
+// rots with the next refactor. Every row of the section is measured here,
 // from the files, and compared with the table. The test runs without Docker.
 //
 // Refresh the table with
@@ -27,9 +28,9 @@ import (
 //
 // which logs each measured row, then edit the pinned commit of the section.
 
-// harnessFiles are the non-test files of package ceph that declare the shared
-// cluster and tenant harness that issue 155 moves to ceph/harness.
-var harnessFiles = []string{"shared.go", "shared_exclusive.go", "shared_services.go", "tenant.go", "tenant_observe.go"}
+// harnessPackage is the directory of the shared-cluster and tenant harness,
+// relative to the module root.
+const harnessPackage = "ceph/harness"
 
 // declaredNames returns the package-level names that src declares, and the
 // exported declarations by kind. A method is counted as "<Receiver> method".
@@ -123,38 +124,9 @@ func privateReach(t *testing.T, harness map[string]string, others map[string]str
 	return sortedKeys(reach)
 }
 
-func readFiles(t *testing.T, dir string, names []string) map[string]string {
-	t.Helper()
-	out := map[string]string{}
-	for _, name := range names {
-		b, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		out[name] = string(b)
-	}
-	return out
-}
-
-// nonTestFiles lists the non-test Go files directly in dir.
-func nonTestFiles(t *testing.T, dir string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, e := range entries {
-		n := e.Name()
-		if strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
-			names = append(names, n)
-		}
-	}
-	return names
-}
-
 // movedNameReference matches a qualified use of one of the 16 package-level
-// names that ceph/harness takes over.
+// names that ceph/harness took over, under their old package. After the move no
+// file may use one, because the names were removed without an alias.
 var movedNameReference = regexp.MustCompile(`\bceph\.(SharedCluster|NewShared|RunTests|SharedOption|LeaseOption|WithSharedRunOptions|WithMaxTenants|WithMaxRecycles|WithKeepOnTenantFailure|SharedStats|Tenant|TenantAccess|TenantReadOnly|TenantReadWrite|SharedPool|ObserveTenant)\b`)
 
 // countReferences counts, in the Go files under root that match want, the
@@ -185,16 +157,35 @@ func countReferences(t *testing.T, root string, want func(path string) bool, re 
 	return matches, files
 }
 
+// moduleImportsOf returns the module-internal import paths (without the module
+// prefix) of the non-test files of dir, sorted.
+func moduleImportsOf(t *testing.T, dir string) []string {
+	t.Helper()
+	set := map[string]bool{}
+	for name, src := range nonTestSources(t, dir) {
+		f, err := parser.ParseFile(token.NewFileSet(), name, src, parser.ImportsOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, imp := range f.Imports {
+			path, _ := strconv.Unquote(imp.Path.Value)
+			if rest, ok := strings.CutPrefix(path, modulePath+"/"); ok {
+				set[rest] = true
+			}
+		}
+	}
+	return sortedKeys(set)
+}
+
 // measureHarnessInventory returns the rows of the inventory table, measured at
-// repoRoot (the module root) and ceph (the directory of package ceph).
+// repoRoot (the module root).
 func measureHarnessInventory(t *testing.T, repoRoot string) map[string]string {
 	t.Helper()
-	ceph := filepath.Join(repoRoot, "ceph")
+	harnessDir := filepath.Join(repoRoot, filepath.FromSlash(harnessPackage))
 	rows := map[string]string{}
 
-	harness := readFiles(t, ceph, harnessFiles)
 	exported := map[string]int{}
-	for name, src := range harness {
+	for name, src := range nonTestSources(t, harnessDir) {
 		_, e := declaredNames(t, name, src)
 		for k, v := range e {
 			exported[k] += v
@@ -208,66 +199,75 @@ func measureHarnessInventory(t *testing.T, repoRoot string) map[string]string {
 		{"SharedCluster method", "exported SharedCluster methods"},
 		{"Tenant method", "exported Tenant methods"},
 	} {
-		rows[kind.row+" that move"] = strconv.Itoa(exported[kind.key])
+		rows[kind.row+" in ceph/harness"] = strconv.Itoa(exported[kind.key])
 		total += exported[kind.key]
 	}
-	rows["exported declarations that move"] = strconv.Itoa(total)
+	rows["exported declarations in ceph/harness"] = strconv.Itoa(total)
 
-	others := map[string]string{}
-	for _, name := range nonTestFiles(t, ceph) {
-		if !slices.Contains(harnessFiles, name) {
-			b, err := os.ReadFile(filepath.Join(ceph, name))
-			if err != nil {
-				t.Fatal(err)
-			}
-			others[name] = string(b)
+	rows["module packages that ceph/harness imports"] = strings.Join(moduleImportsOf(t, harnessDir), ", ")
+
+	var importers []string
+	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
+		if d.IsDir() {
+			if strings.HasPrefix(d.Name(), ".") && path != repoRoot {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(b), "\""+modulePath+"/"+harnessPackage+"\"") {
+			rel, _ := filepath.Rel(repoRoot, filepath.Dir(path))
+			if rel = filepath.ToSlash(rel); !slices.Contains(importers, rel) {
+				importers = append(importers, rel)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	rows["private names of package ceph that the harness files name"] = strings.Join(privateReach(t, harness, others), ", ")
+	slices.Sort(importers)
+	rows["module packages that import ceph/harness"] = strings.Join(importers, ", ")
 
 	for _, service := range []string{"rbd", "cephfs", "rgw"} {
-		dir := filepath.Join(repoRoot, service)
-		adapter := readFiles(t, dir, []string{"tenant.go"})
-		rest := map[string]string{}
-		for _, name := range nonTestFiles(t, dir) {
-			if name != "tenant.go" {
-				b, err := os.ReadFile(filepath.Join(dir, name))
-				if err != nil {
-					t.Fatal(err)
-				}
-				rest[name] = string(b)
-			}
-		}
-		rows["private names of package "+service+" that its tenant.go names"] = strings.Join(privateReach(t, adapter, rest), ", ")
+		adapter := map[string]string{"tenant.go": nonTestSources(t, filepath.Join(repoRoot, service, "harness"))["tenant.go"]}
+		rest := nonTestSources(t, filepath.Join(repoRoot, service))
+		rows["private names of package "+service+" that its harness tenant.go names"] = strings.Join(privateReach(t, adapter, rest), ", ")
 	}
 
 	under := func(prefix string) func(string) bool {
 		return func(path string) bool { return strings.Contains(path, prefix) }
 	}
-	for _, dir := range []string{"rbd", "cephfs", "rgw", "internal/servicehook", "internal/integration"} {
+	for _, dir := range []string{"ceph", "rbd", "cephfs", "rgw", "internal/servicehook", "internal/integration"} {
 		matches, files := countReferences(t, filepath.Join(repoRoot, filepath.FromSlash(dir)), under(dir+"/"), movedNameReference)
-		rows["references to moved names in "+dir] = fmt.Sprintf("%d in %d files", matches, files)
+		rows["references to moved names under the old package in "+dir] = fmt.Sprintf("%d in %d files", matches, files)
 	}
 
 	tenantCluster := regexp.MustCompile(`\btesthelper\.TestTenantCluster\(`)
 	matches, files := countReferences(t, filepath.Join(repoRoot, "internal", "integration"), func(string) bool { return true }, tenantCluster)
 	rows["testhelper.TestTenantCluster calls in internal/integration"] = fmt.Sprintf("%d in %d files", matches, files)
 
-	register := regexp.MustCompile(`\bservicehook\.RegisterSharedService\(`)
-	total = 0
-	for _, service := range []string{"rbd", "cephfs", "rgw"} {
-		n, _ := countReferences(t, filepath.Join(repoRoot, service), func(path string) bool { return !strings.HasSuffix(path, "_test.go") }, register)
-		total += n
+	nonTest := func(path string) bool { return !strings.HasSuffix(path, "_test.go") }
+	count := func(re *regexp.Regexp, dirs ...string) string {
+		total := 0
+		for _, dir := range dirs {
+			n, _ := countReferences(t, filepath.Join(repoRoot, filepath.FromSlash(dir)), nonTest, re)
+			total += n
+		}
+		return strconv.Itoa(total)
 	}
-	rows["servicehook.RegisterSharedService calls in rbd, cephfs and rgw"] = strconv.Itoa(total)
-
-	require := regexp.MustCompile(`\.RequireService\(`)
-	total = 0
-	for _, service := range []string{"rbd", "cephfs", "rgw"} {
-		n, _ := countReferences(t, filepath.Join(repoRoot, service), func(path string) bool { return !strings.HasSuffix(path, "_test.go") }, require)
-		total += n
-	}
-	rows["port RequireService calls in rbd, cephfs and rgw"] = strconv.Itoa(total)
+	rows["servicehook.RegisterSharedService calls in rbd, cephfs and rgw"] = count(regexp.MustCompile(`\bRegisterSharedService\(`), "rbd", "cephfs", "rgw", "internal", "ceph")
+	rows["servicehook.Support calls in rbd, cephfs and rgw harness packages"] = count(regexp.MustCompile(`\bservicehook\.Support\(`), "rbd/harness", "cephfs/harness", "rgw/harness")
+	rows["port RequireService calls in rbd, cephfs and rgw harness packages"] = count(regexp.MustCompile(`\.RequireService\(`), "rbd/harness", "cephfs/harness", "rgw/harness")
 	return rows
 }
 

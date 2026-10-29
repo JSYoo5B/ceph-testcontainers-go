@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	cephharness "github.com/JSYoo5B/ceph-testcontainers-go/ceph/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
@@ -37,22 +38,22 @@ func TestSharedCluster(t *testing.T) {
 		}
 		ctrA, ctrB := startTenantClient(t, ctx, a), startTenantClient(t, ctx, b)
 		for _, tenant := range []struct {
-			tenant *ceph.Tenant
+			tenant *cephharness.Tenant
 			ctr    testcontainers.Container
 		}{{a, ctrA}, {b, ctrB}} {
-			tenantExpect(t, ctx, tenant.tenant, tenant.ctr, true, "write own namespace", "rados", "-p", ceph.SharedPool, "-N", tenant.tenant.Namespace(), "put", "own", "/etc/hostname")
-			tenantExpect(t, ctx, tenant.tenant, tenant.ctr, true, "list own namespace", "rados", "-p", ceph.SharedPool, "-N", tenant.tenant.Namespace(), "ls")
+			tenantExpect(t, ctx, tenant.tenant, tenant.ctr, true, "write own namespace", "rados", "-p", cephharness.SharedPool, "-N", tenant.tenant.Namespace(), "put", "own", "/etc/hostname")
+			tenantExpect(t, ctx, tenant.tenant, tenant.ctr, true, "list own namespace", "rados", "-p", cephharness.SharedPool, "-N", tenant.tenant.Namespace(), "ls")
 		}
 		other := b.Namespace()
 		for _, denied := range []struct {
 			label string
 			argv  []string
 		}{
-			{"read the other tenant's object", []string{"rados", "-p", ceph.SharedPool, "-N", other, "get", "own", "/dev/null"}},
-			{"write the other tenant's namespace", []string{"rados", "-p", ceph.SharedPool, "-N", other, "put", "intruder", "/etc/hostname"}},
-			{"list the other tenant's namespace", []string{"rados", "-p", ceph.SharedPool, "-N", other, "ls"}},
-			{"list every namespace", []string{"rados", "-p", ceph.SharedPool, "ls", "--all"}},
-			{"write the default namespace", []string{"rados", "-p", ceph.SharedPool, "put", "intruder", "/etc/hostname"}},
+			{"read the other tenant's object", []string{"rados", "-p", cephharness.SharedPool, "-N", other, "get", "own", "/dev/null"}},
+			{"write the other tenant's namespace", []string{"rados", "-p", cephharness.SharedPool, "-N", other, "put", "intruder", "/etc/hostname"}},
+			{"list the other tenant's namespace", []string{"rados", "-p", cephharness.SharedPool, "-N", other, "ls"}},
+			{"list every namespace", []string{"rados", "-p", cephharness.SharedPool, "ls", "--all"}},
+			{"write the default namespace", []string{"rados", "-p", cephharness.SharedPool, "put", "intruder", "/etc/hostname"}},
 			{"write another pool", []string{"rados", "-p", ".mgr", "-N", a.Namespace(), "put", "intruder", "/etc/hostname"}},
 			{"set a config option", []string{"ceph", "config", "set", "global", "mon_max_pg_per_osd", "500"}},
 			{"set an OSD flag", []string{"ceph", "osd", "set", "noout"}},
@@ -60,13 +61,13 @@ func TestSharedCluster(t *testing.T) {
 		} {
 			tenantExpect(t, ctx, a, ctrA, false, denied.label, denied.argv...)
 		}
-		reader, err := a.CreateClient(ctx, "reader", ceph.TenantReadOnly)
+		reader, err := a.CreateClient(ctx, "reader", cephharness.TenantReadOnly)
 		if err != nil {
 			t.Fatal(err)
 		}
 		readerCtr := startTenantClientAs(t, ctx, a, reader)
-		tenantExpectAs(t, ctx, a, readerCtr, reader, true, "read-only client reads", "rados", "-p", ceph.SharedPool, "-N", a.Namespace(), "get", "own", "/dev/null")
-		tenantExpectAs(t, ctx, a, readerCtr, reader, false, "read-only client writes", "rados", "-p", ceph.SharedPool, "-N", a.Namespace(), "put", "x", "/etc/hostname")
+		tenantExpectAs(t, ctx, a, readerCtr, reader, true, "read-only client reads", "rados", "-p", cephharness.SharedPool, "-N", a.Namespace(), "get", "own", "/dev/null")
+		tenantExpectAs(t, ctx, a, readerCtr, reader, false, "read-only client writes", "rados", "-p", cephharness.SharedPool, "-N", a.Namespace(), "put", "x", "/etc/hostname")
 		if _, err := a.RunNativeCommand(ctx, ctrB, ceph.NativeCommand{Argv: []string{"true"}}); !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Fatalf("tenant A ran a command in tenant B's container: %v", err)
 		}
@@ -147,7 +148,7 @@ func TestSharedCluster(t *testing.T) {
 		tenant := shared.Lease(dirty)
 		cluster := testhelper.TestTenantCluster(tenant)
 		// An internal admin path that bypasses the public shared-cluster gate.
-		if _, err := servicehook.ClientCommand(ctx, cluster, "rados", "-p", ceph.SharedPool, "put", "stray", "/etc/hostname"); err != nil {
+		if _, err := servicehook.ClientCommand(ctx, cluster, "rados", "-p", cephharness.SharedPool, "put", "stray", "/etc/hostname"); err != nil {
 			t.Fatal(err)
 		}
 		dirty.finish()
@@ -201,7 +202,7 @@ func TestSharedClusterExclusive(t *testing.T) {
 	case <-time.After(3 * time.Second):
 	}
 	lateTB := newNamedTB(t, "late")
-	leased := make(chan *ceph.Tenant, 1)
+	leased := make(chan *cephharness.Tenant, 1)
 	go func() { leased <- shared.Lease(lateTB) }()
 	select {
 	case <-leased:
@@ -248,7 +249,7 @@ func TestSharedClusterExclusive(t *testing.T) {
 	if exclusiveTB.Failed() {
 		t.Fatalf("exclusive release: %s", exclusiveTB.errorText())
 	}
-	var late *ceph.Tenant
+	var late *cephharness.Tenant
 	select {
 	case late = <-leased:
 	case <-ctx.Done():

@@ -376,3 +376,28 @@ that was absent. The names follow the decisions D7 to D9 of
 `override-package-boundary.md`. The reviewed mapping is in
 [the upgrade guide](../guides/upgrading-override-package.md). No alias remains.
 The receipts of `ceph` and `override` were approved separately for this move.
+
+## 155-harness-package-move
+
+The change moves the shared-cluster and tenant harness out of `ceph` and the
+service packages into harness packages under the domains that own them, on the
+owner's layout decision of 2026-10-27 (`design/shared-harness-boundary.md`).
+`ceph.SharedCluster` and its methods, `ceph.NewShared`, `ceph.RunTests`,
+`ceph.SharedOption`, `ceph.LeaseOption`, `ceph.SharedStats`, the options
+`WithSharedRunOptions`, `WithMaxTenants`, `WithMaxRecycles` and
+`WithKeepOnTenantFailure`, `ceph.Tenant` with `TenantAccess` and its methods,
+`ceph.SharedPool` and `ceph.ObserveTenant` move to `ceph/harness` under the
+same names. `rbd.Lease` and `rbd.TenantNamespace`, `cephfs.Lease` and
+`cephfs.TenantGroup`, and `rgw.Lease` and `rgw.TenantUser` move to
+`rbd/harness`, `cephfs/harness` and `rgw/harness`. No name changes: the
+mapping is a package change only, as the note's old-to-new map says.
+
+Five declarations are new. `ceph/harness.ServiceSupport` and
+`ceph/harness.WithServices` are the single grouped carrier of the service
+selection that replaces the removed `init` registration: one opaque value and
+one option, not one option per service or per field. Each service harness
+offers `Support`, which returns that value. `ceph.ErrSharedCluster` stays in
+`ceph`, with the gate. The reviewed mapping is in
+[the upgrade guide](../guides/upgrading-harness-packages.md). No alias or
+forwarding declaration remains. The receipts of `ceph`, `rbd`, `cephfs`, `rgw`
+and the four harness packages were approved separately for this move.

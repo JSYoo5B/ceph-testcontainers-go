@@ -11,10 +11,11 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
-	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	cephharness "github.com/JSYoo5B/ceph-testcontainers-go/ceph/harness"
+	cephfsharness "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	rbdharness "github.com/JSYoo5B/ceph-testcontainers-go/rbd/harness"
+	rgwharness "github.com/JSYoo5B/ceph-testcontainers-go/rgw/harness"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -22,36 +23,36 @@ import (
 // sharedRBDPool is the RBD pool of the shared cluster of the services test.
 const sharedRBDPool = "rbd"
 
-func leaseRBD(t *testing.T, ctx context.Context, tenant *ceph.Tenant) *rbd.TenantNamespace {
+func leaseRBD(t *testing.T, ctx context.Context, tenant *cephharness.Tenant) *rbdharness.TenantNamespace {
 	t.Helper()
 	began := time.Now()
-	namespace, err := rbd.Lease(ctx, tenant, sharedRBDPool)
+	namespace, err := rbdharness.Lease(ctx, tenant, sharedRBDPool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("rbd.Lease of %s took %s", tenant.ID(), time.Since(began).Round(time.Millisecond))
+	t.Logf("rbdharness.Lease of %s took %s", tenant.ID(), time.Since(began).Round(time.Millisecond))
 	return namespace
 }
 
-func leaseCephFS(t *testing.T, ctx context.Context, tenant *ceph.Tenant) *cephfs.TenantGroup {
+func leaseCephFS(t *testing.T, ctx context.Context, tenant *cephharness.Tenant) *cephfsharness.TenantGroup {
 	t.Helper()
 	began := time.Now()
-	group, err := cephfs.Lease(ctx, tenant, "")
+	group, err := cephfsharness.Lease(ctx, tenant, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("cephfs.Lease of %s took %s", tenant.ID(), time.Since(began).Round(time.Millisecond))
+	t.Logf("cephfsharness.Lease of %s took %s", tenant.ID(), time.Since(began).Round(time.Millisecond))
 	return group
 }
 
-func leaseRGW(t *testing.T, ctx context.Context, tenant *ceph.Tenant) *rgw.TenantUser {
+func leaseRGW(t *testing.T, ctx context.Context, tenant *cephharness.Tenant) *rgwharness.TenantUser {
 	t.Helper()
 	began := time.Now()
-	user, err := rgw.Lease(ctx, tenant)
+	user, err := rgwharness.Lease(ctx, tenant)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("rgw.Lease of %s took %s", tenant.ID(), time.Since(began).Round(time.Millisecond))
+	t.Logf("rgwharness.Lease of %s took %s", tenant.ID(), time.Since(began).Round(time.Millisecond))
 	return user
 }
 
@@ -88,7 +89,7 @@ func testcontainersStopNow() testcontainers.TerminateOption { return testcontain
 
 // tenantExpectArgv runs argv as given in a tenant's client container and
 // checks that it succeeds, or that Ceph denies it.
-func tenantExpectArgv(t *testing.T, ctx context.Context, tenant *ceph.Tenant, ctr testcontainers.Container, wantOK bool, label string, argv ...string) {
+func tenantExpectArgv(t *testing.T, ctx context.Context, tenant *cephharness.Tenant, ctr testcontainers.Container, wantOK bool, label string, argv ...string) {
 	t.Helper()
 	result, err := tenant.RunNativeCommand(ctx, ctr, ceph.NativeCommand{Argv: argv, Timeout: 2 * time.Minute,
 		MaxStdout: 1 << 16, MaxStderr: 1 << 16, Label: label})
@@ -107,7 +108,7 @@ func tenantExpectArgv(t *testing.T, ctx context.Context, tenant *ceph.Tenant, ct
 	}
 }
 
-func tenantS3(t *testing.T, ctx context.Context, user *rgw.TenantUser) s3HTTPClient {
+func tenantS3(t *testing.T, ctx context.Context, user *rgwharness.TenantUser) s3HTTPClient {
 	t.Helper()
 	endpoint, err := user.S3Endpoint(ctx)
 	if err != nil {

@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw",
-  "count": 69,
+  "count": 61,
   "entries": [
     {
       "current": "rgw.Account",
@@ -294,13 +294,6 @@
       "decision": "baseline"
     },
     {
-      "current": "rgw.Lease",
-      "kind": "function",
-      "signature": "func(ctx context.Context, t *ceph.Tenant) (*TenantUser, error)",
-      "proposed": "rgw.Lease",
-      "decision": "baseline"
-    },
-    {
       "current": "rgw.Placement",
       "kind": "type",
       "proposed": "rgw.Placement",
@@ -380,60 +373,6 @@
       "signature": "func() string",
       "receiver": "TLSConfig",
       "proposed": "rgw.TLSConfig.String",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.TenantUser",
-      "kind": "type",
-      "proposed": "rgw.TenantUser",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.TenantUser.Credentials",
-      "kind": "method",
-      "signature": "func() (accessKey, secretKey string)",
-      "receiver": "*TenantUser",
-      "proposed": "rgw.TenantUser.Credentials",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.TenantUser.DaemonEndpoint",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (string, error)",
-      "receiver": "*TenantUser",
-      "proposed": "rgw.TenantUser.DaemonEndpoint",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.TenantUser.Region",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*TenantUser",
-      "proposed": "rgw.TenantUser.Region",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.TenantUser.S3Endpoint",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (string, error)",
-      "receiver": "*TenantUser",
-      "proposed": "rgw.TenantUser.S3Endpoint",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.TenantUser.Tenant",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*TenantUser",
-      "proposed": "rgw.TenantUser.Tenant",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.TenantUser.UserID",
-      "kind": "method",
-      "signature": "func() string",
-      "receiver": "*TenantUser",
-      "proposed": "rgw.TenantUser.UserID",
       "decision": "baseline"
     },
     {

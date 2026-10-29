@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/ceph/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/testcontainers/testcontainers-go"
@@ -38,8 +39,6 @@ type hooks interface {
 	ClientCommand(ctx context.Context, c *ceph.Container, args ...string) ([]byte, error)
 	CLI(c *ceph.Container) testcontainers.Container
 	Closed(c *ceph.Container) bool
-	TenantPort(t *ceph.Tenant) (TenantPort, error)
-	RegisterSharedService(kind string, prepare func(context.Context, *ceph.Container) error, probe func(context.Context, *ceph.Container) (map[string]string, error))
 	Command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error)
 	RunOwnedShell(ctx context.Context, c *ceph.Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error)
 	ServiceBootstrap(kind string, fallback bool, build func() (Bootstrap, error)) ceph.Option
@@ -76,6 +75,22 @@ type hooks interface {
 	ClientRevoked(client *ceph.ClientConfig) bool
 	SetClientRevoked(client *ceph.ClientConfig, revoked bool)
 	SettleClient(ctx context.Context, c *ceph.Container, client *ceph.ClientConfig) error
+}
+
+// harnessTenant is the seam that package ceph/harness registers in
+// hookreg.HarnessTenant. It is typed here, not in ceph/harness, because the
+// service harnesses reach it through this package.
+type harnessTenant interface {
+	TenantPort(t *harness.Tenant) (TenantPort, error)
+	NewServiceSupport(kind string, prepare func(context.Context, *ceph.Container) error, probe func(context.Context, *ceph.Container) (map[string]string, error)) harness.ServiceSupport
+}
+
+func tenantHooks() harnessTenant {
+	h, ok := hookreg.HarnessTenant.(harnessTenant)
+	if !ok {
+		panic("servicehook: package ceph/harness did not register its tenant hooks")
+	}
+	return h
 }
 
 func get() hooks {
@@ -144,17 +159,19 @@ type TenantPort = interface {
 
 // Tenant returns the port of a live tenant, or the error that says it is
 // released.
-func Tenant(t *ceph.Tenant) (TenantPort, error) { return get().TenantPort(t) }
+func Tenant(t *harness.Tenant) (TenantPort, error) { return tenantHooks().TenantPort(t) }
 
-// RegisterSharedService records a service package's shared-cluster hooks.
-// prepare runs on each shared cluster before its baseline is taken, while
-// the cluster is not shared yet, to create what the service would create
-// lazily on a tenant's first use; it does nothing on a cluster without the
-// service. probe lists the service's resources that a tenant could create,
-// each mapped to the tenant ID that owns it (or to another name); releases
-// compare the listing with the baseline.
-func RegisterSharedService(kind string, prepare func(context.Context, *ceph.Container) error, probe func(context.Context, *ceph.Container) (map[string]string, error)) {
-	get().RegisterSharedService(kind, prepare, probe)
+// Support builds the shared-cluster support of one service for its harness
+// package to offer (for example rbd/harness.Support). prepare runs on each
+// shared cluster that was given the support, before its baseline is taken and
+// while the cluster is not shared yet, to create what the service would
+// create lazily on a tenant's first use; it does nothing on a cluster without
+// the service, and may be nil. probe lists the service's resources that a
+// tenant could create, each mapped to the tenant ID that owns it (or to
+// another name); releases compare the listing with the baseline. Nothing is
+// registered: the program passes the value to harness.WithServices.
+func Support(kind string, prepare func(context.Context, *ceph.Container) error, probe func(context.Context, *ceph.Container) (map[string]string, error)) harness.ServiceSupport {
+	return tenantHooks().NewServiceSupport(kind, prepare, probe)
 }
 
 // Command runs a CLI command in ctr and returns its standard output.
