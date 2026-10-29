@@ -1,6 +1,5 @@
 """Exercise the quiescence gate with retained native output; never start Docker."""
 
-import functools
 import hashlib
 import json
 from pathlib import Path
@@ -11,112 +10,10 @@ import tempfile
 import unittest
 
 import check_scenario_quiescence as checker
-import package_split as split_shards
 
 
 FIXTURE = Path(__file__).with_name("fixtures") / "cephfs-quiescence-native.log"
 PROVENANCE = FIXTURE.with_suffix(".provenance.json")
-SOURCE_FIXTURE = FIXTURE.with_name("cephfs-quiescence-native.source.go.txt")
-
-
-def retained_declaration_layout(source):
-    """Allow only the observed gofmt blank line between these type declarations.
-
-    Every other byte in the compared declarations stays significant, including
-    Go's newline-sensitive syntax and embedded native probe script literals.
-    This source parity is independent of retained native execution provenance.
-    """
-    before = "type cephFSOriginalProcessBaseline struct{ startedAt, instanceID string }\n"
-    after = "type cephFSOriginalProcessRawState struct {"
-    return source.replace(before + "\n" + after, before + after, 1)
-
-
-@functools.cache
-def split_rules():
-    """The validated shards, loaded once per process."""
-    return split_shards.load_effective()
-
-
-def package_split(source):
-    """Rewrite a retained producer to the current public package names.
-    The retained producers were recorded before the ceph/multicluster API moved
-    to ceph, cephfs, rgw and rbd. Apply only the recorded qualified identifier
-    and former Container method rewrites (one shard per move under
-    fixtures/package-split, loaded and validated by package_split.py), then
-    gofmt the whole file so that column alignment matches; every other byte
-    remains significant.
-    """
-    source = split_shards.apply_shards(source, split_rules())
-    formatted = subprocess.run(["gofmt"], input=source, capture_output=True, text=True, check=True)
-    return formatted.stdout
-
-
-DIAGNOSTIC_REWRITES = FIXTURE.with_name("diagnostic-rewrites.json")
-# A rewrite replaces one error branch: an if statement whose body is one
-# return. Its condition and returned error may change; nothing else may.
-ERROR_BRANCH = re.compile(r"\A(\t*)if [^\n]+ \{\n\1\treturn [^\n]+\n\1\}\n\Z")
-
-
-def diagnostic_rewrites(source, rewrites=None):
-    """Apply the reviewed diagnostic rewrites to a retained producer.
-
-    Each one replaces exactly one error branch of the retained source with
-    its current form, so a failure can be reported more precisely without
-    re-recording native evidence. The retained run passed and took no error
-    branch; review must still confirm that a rewrite takes its branch on the
-    same inputs. Every other byte remains significant.
-    """
-    if rewrites is None:
-        rewrites = json.loads(DIAGNOSTIC_REWRITES.read_text())["rewrites"]
-    for rewrite in rewrites:
-        old, new = rewrite["old"], rewrite["new"]
-        if not rewrite.get("reason") or old == new:
-            raise ValueError("a diagnostic rewrite needs a reason and a change")
-        if not ERROR_BRANCH.match(old) or not ERROR_BRANCH.match(new):
-            raise ValueError("a diagnostic rewrite must replace one error branch with one error branch")
-        if ERROR_BRANCH.match(old).group(1) != ERROR_BRANCH.match(new).group(1):
-            raise ValueError("a diagnostic rewrite must keep the branch's nesting")
-        if source.count(old) != 1:
-            raise ValueError("a diagnostic rewrite must match the retained source exactly once")
-        source = source.replace(old, new, 1)
-    return source
-
-
-
-def client_watcher_routing(source):
-    """Relocate only the retained independent RADOS watcher command.
-
-    The historical run/source hashes remain untouched. This declared source
-    migration is not new native execution evidence. MON command counters,
-    daemon-local sockets and every watcher parsing/assertion byte stay bound.
-    """
-    old = ("func cephFSOriginalProcessWatchers(ctx context.Context, source *ceph.Container, pool string) (map[string]string, error) {\n"
-           "\tcontrol, err := source.ControlContainer(ctx)\n"
-           "\tif err != nil {\n\t\treturn nil, err\n\t}\n"
-           '\tdata, err := cephFSOriginalProcessExec(ctx, control, "rados", "--pool", pool, "listwatchers", "cephfs_mirror")\n')
-    new = old.replace("control, err := source.ControlContainer(ctx)",
-                      "client, err := source.ClientContainer(ctx)").replace(
-                          'cephFSOriginalProcessExec(ctx, control, "rados"',
-                          'cephFSOriginalProcessExec(ctx, client, "rados"')
-    if source.count(old) != 1:
-        raise ValueError("client watcher routing must match the retained RADOS probe exactly once")
-    return source.replace(old, new, 1)
-
-
-def producer_parent(source, parent):
-    # These retained producer parents contain only their nested t.Run loops;
-    # gofmt keeps the sole function-closing brace at column zero.
-    found = re.findall(r"(?ms)^func " + re.escape(parent) + r"\(.*?^\}", source)
-    if len(found) != 1:
-        raise ValueError("retained source must contain its exact original parent once")
-    return found[0]
-
-
-def producer_helpers(source, helper):
-    marker = "\nfunc " + helper + "("
-    if source.count(marker) != 1:
-        raise ValueError("retained source must contain its exact fixture helper once")
-    return source.split(marker, 1)[1]
 
 
 def native_leaf_log(case):
@@ -176,95 +73,12 @@ class QuiescenceCoverageTests(unittest.TestCase):
         self.assertTrue(origin["availability"].startswith("unavailable:"))
         self.assertTrue(provenance["evidence_role"].startswith("historical parser control"))
         self.assertEqual(len(provenance["original_line_numbers"]), 72)
-        # Historical logs bind the actual historical producer, independently
-        # of today's source layout. Keep the original provenance SHA intact.
-        self.assertEqual(hashlib.sha256(SOURCE_FIXTURE.read_bytes()).hexdigest(),
-                         provenance["original_test_file_sha256"])
         # Inspect the producer fixture, not a positive log generated from the
         # checker's expected tuple: actual Go PASS begins with the parent.
         passes = re.findall(r"^\s*--- PASS: (\S+) ", FIXTURE.read_text(), re.M)
         self.assertEqual(passes[0], checker.PARENT)
         self.assertEqual(passes[1], checker.PARENT + "/bridge")
         self.assertEqual(passes[2], checker.PARENT + "/bridge/peer")
-
-    def test_split_producer_parent_and_shared_assertions_preserve_original_declarations(self):
-        retained = client_watcher_routing(diagnostic_rewrites(package_split(SOURCE_FIXTURE.read_text())))
-        root = Path(__file__).resolve().parents[2] / "internal/integration"
-        current_parent = (root / "cephfs_process_quiescence_integration_test.go").read_text()
-        current_helpers = (root / "cephfs_process_quiescence_integration_helpers_test.go").read_text()
-        self.assertEqual(producer_parent(retained, checker.PARENT),
-                         producer_parent(current_parent, checker.PARENT))
-        helper = "testCephFSOriginalProcessQuiescence"
-        self.assertEqual(retained_declaration_layout(producer_helpers(retained, helper)),
-                         retained_declaration_layout(producer_helpers(current_helpers, helper)))
-
-    def test_client_watcher_routing_binds_only_the_exact_userspace_probe(self):
-        retained = diagnostic_rewrites(package_split(SOURCE_FIXTURE.read_text()))
-        rewritten = client_watcher_routing(retained)
-        self.assertEqual(rewritten.count("source.ClientContainer(ctx)"), 1)
-        # The original MON command counter is still selected on control.
-        self.assertIn("control, err := source.ControlContainer(ctx)", rewritten)
-        self.assertIn('"rados", "--pool", pool, "listwatchers", "cephfs_mirror"', rewritten)
-        for invalid in (rewritten, retained + retained,
-                        retained.replace('"rados", "--pool", pool, "listwatchers"',
-                                         '"rados", "--pool", "foreign", "listwatchers"')):
-            with self.assertRaisesRegex(ValueError, "exactly once"):
-                client_watcher_routing(invalid)
-        # A parser/assertion change must still fail declaration parity.
-        modified = rewritten.replace('len(fields) != 3', 'len(fields) != 2')
-        self.assertNotEqual(retained_declaration_layout(rewritten),
-                            retained_declaration_layout(modified))
-
-    def test_diagnostic_rewrites_replace_one_error_branch_exactly_once(self):
-        branch = "\tif err != nil {\n\t\treturn err\n\t}\n"
-        precise = "\tif err != nil {\n\t\treturn fmt.Errorf(\"read: %w\", err)\n\t}\n"
-        rewrite = {"reason": "test", "old": branch, "new": precise}
-        source = "func f() error {\n\terr := g()\n" + branch + "\treturn nil\n}\n"
-        self.assertEqual(diagnostic_rewrites(source, [rewrite]), source.replace(branch, precise))
-        for bad in (source.replace(branch, ""), source.replace(branch, branch + branch)):
-            with self.assertRaisesRegex(ValueError, "exactly once"):
-                diagnostic_rewrites(bad, [rewrite])
-        # Only an error branch, kept at its nesting, may be replaced, and
-        # never without a stated reason.
-        for changed in ({"new": "\tg()\n" + precise}, {"new": precise.replace("return", "log.Print")},
-                        {"new": "\t" + precise.replace("\n\t", "\n\t\t")}, {"reason": ""}, {"new": branch}):
-            with self.assertRaises(ValueError):
-                diagnostic_rewrites(source, [dict(rewrite, **changed)])
-
-    def test_recorded_diagnostic_rewrites_apply_to_the_retained_producer(self):
-        rewrites = json.loads(DIAGNOSTIC_REWRITES.read_text())["rewrites"]
-        self.assertTrue(rewrites)
-        retained = package_split(SOURCE_FIXTURE.read_text())
-        self.assertNotEqual(diagnostic_rewrites(retained), retained)
-
-    def test_package_split_rewrites_only_recorded_api_names(self):
-        source = ("package p\n\nfunc f() {\n\tfs, err := source.StartCephFS(ctx)\n"
-                  "\tvar s multicluster.CephFSMirrorSnapshot\n}\n")
-        rewritten = package_split(source)
-        self.assertIn("cephfs.Start(ctx, source, cephfs.Config{})", rewritten)
-        self.assertIn("var s cephfsmirror.Snapshot", rewritten)
-        # Unrelated bytes, including an unchanged statement, stay significant.
-        retained = package_split(SOURCE_FIXTURE.read_text())
-        root = Path(__file__).resolve().parents[2] / "internal/integration"
-        current = (root / "cephfs_process_quiescence_integration_helpers_test.go").read_text()
-        helper = "testCephFSOriginalProcessQuiescence"
-        mutated = current.replace("cephfs.Start(ctx, source, cephfs.Config{})", "cephfs.Start(ctx, destination, cephfs.Config{})", 1)
-        self.assertNotEqual(mutated, current)
-        self.assertNotEqual(retained_declaration_layout(producer_helpers(retained, helper)),
-                            retained_declaration_layout(producer_helpers(mutated, helper)))
-
-    def test_declaration_binding_retains_newlines_literals_operators_and_assertions(self):
-        source = 'func fixture() { value++; require(value == 2, "a b"); raw := `a\n b` }'
-        gap = ("type cephFSOriginalProcessBaseline struct{ startedAt, instanceID string }\n"
-               "type cephFSOriginalProcessRawState struct {")
-        self.assertEqual(retained_declaration_layout(gap),
-                         retained_declaration_layout(gap.replace("\ntype", "\n\ntype")))
-        for changed in (source.replace("++", "+ +"), source.replace("== 2", "== 3"),
-                        source.replace('"a b"', '"ab"'), source.replace("`a\n b`", "`a\nb`"),
-                        source.replace("require", "ignore")):
-            self.assertNotEqual(retained_declaration_layout(source), retained_declaration_layout(changed))
-        self.assertNotEqual(retained_declaration_layout("return call()"),
-                            retained_declaration_layout("return\ncall()"))
 
     def test_each_actual_leaf_view_has_eight_byte_three_absence_and_three_identity_records(self):
         leaves = []

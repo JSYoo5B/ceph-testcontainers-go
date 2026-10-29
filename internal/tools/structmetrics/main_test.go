@@ -387,42 +387,6 @@ func TestDeltaFailsWhenPackageIsMissingOnBothSides(t *testing.T) {
 	}
 }
 
-func TestDeltaMoveRecordAnnotationsExplainButDoNotHideRows(t *testing.T) {
-	base, head := pairedTrees()
-	head["docs/design/api-naming/moves/146-example.json"] = `{"schema":"ceph-api-move/v1","change":"146-example","moves":[{"from":"p.Handle","to":"q.Flag"}],"removed":["p.Gone"],"added":["p.Flag"]}`
-	head["docs/design/api-naming/moves/notes.txt"] = "ignored"
-	report := deltaOf(t, base, head)
-	roles := map[string][]moveRef{}
-	for _, row := range report.Owners {
-		roles[row.Owner] = row.Moves
-	}
-	if len(roles["p.Handle"]) != 1 || roles["p.Handle"][0] != (moveRef{"146-example", "from"}) {
-		t.Fatalf("Handle = %+v", roles["p.Handle"])
-	}
-	if len(roles["p.Gone"]) != 1 || roles["p.Gone"][0].Role != "removed" || len(roles["p.Flag"]) != 1 || roles["p.Flag"][0].Role != "added" {
-		t.Fatalf("roles = %+v", roles)
-	}
-	if len(roles["p.Container"]) != 0 || report.MoveRecord != "1" {
-		t.Fatalf("an owner without a record has none: %+v, read %q", roles["p.Container"], report.MoveRecord)
-	}
-	if len(report.Owners) != 5 {
-		t.Fatal("annotations must not remove rows")
-	}
-	disabled := deltaOf(t, base, head, "-moves-dir", "")
-	if disabled.MoveRecord != "disabled" || len(disabled.Owners[0].Moves) != 0 {
-		t.Fatalf("disabled = %+v", disabled.MoveRecord)
-	}
-}
-
-func TestMalformedMoveRecordFails(t *testing.T) {
-	base, head := pairedTrees()
-	head["docs/design/api-naming/moves/bad.json"] = `{"moves":[]}`
-	b, h := writeTree(t, base), writeTree(t, head)
-	if _, err := runCLI(t, "delta", "-packages", "p", "-base-dir", b, "-head-dir", h); err == nil {
-		t.Fatal("a record without a change identifier must fail")
-	}
-}
-
 // splitTSV separates the "# key: value" header block from the table rows.
 func splitTSV(out string) (comments, rows []string) {
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
@@ -539,7 +503,7 @@ func TestTSVHasOneRowPerOwner(t *testing.T) {
 			t.Fatalf("ragged row %q", line)
 		}
 	}
-	if !strings.HasPrefix(lines[1], "changed\tp.Container\t2\t1\t2\t1\t") || !strings.Contains(lines[1], "\t-1\t+0\t+0\t+0\t") {
+	if !strings.HasPrefix(lines[1], "changed\tp.Container\t2\t1\t2\t1\t") || !strings.HasSuffix(lines[1], "\t-1\t+0\t+0\t+0") {
 		t.Fatalf("row = %q", lines[1])
 	}
 }

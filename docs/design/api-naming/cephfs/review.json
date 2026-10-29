@@ -5,6 +5,6 @@
   "members_sha256": "b403b67d0bcfabc3482f9a42c9d02260b989362e43f515105ede00c5f27d73d3",
   "declarations": 95,
   "members": 153,
-  "review": "api-naming-audit.md",
+  "review": "api-naming.md",
   "page": "docs/cephfs.md"
 }

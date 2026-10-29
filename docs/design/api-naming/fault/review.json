@@ -5,6 +5,6 @@
   "members_sha256": "1064ca592f3fefe875bf1fd4a5755a5f284daf6837e2d241aa8ee4803cad509a",
   "declarations": 35,
   "members": 64,
-  "review": "api-naming-audit.md",
+  "review": "api-naming.md",
   "page": "docs/fault.md"
 }

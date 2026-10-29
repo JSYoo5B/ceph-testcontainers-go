@@ -1,9 +1,0 @@
-{
-  "schema": "ceph-api-move/v1",
-  "change": "146-debug-level-receipter",
-  "review": "api-naming-audit.md",
-  "added": [
-    "ceph.DebugLevelNotApplied",
-    "ceph.DebugLevelReceipter"
-  ]
-}

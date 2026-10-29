@@ -5,6 +5,6 @@
   "members_sha256": "6bf2036b981cf3abcdfdf17539996149625aabc61d4cfd7cf0c88f1fc3b93a77",
   "declarations": 27,
   "members": 0,
-  "review": "api-naming-audit.md",
+  "review": "api-naming.md",
   "page": "docs/override.md"
 }

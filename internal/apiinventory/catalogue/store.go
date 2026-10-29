@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 
 // DefaultReview is the review note a new receipt names unless told otherwise.
 // It is resolved relative to docs/design.
-const DefaultReview = "api-naming-audit.md"
+const DefaultReview = "api-naming.md"
 
 // PackageDir returns the catalogue directory of a package.
 func PackageDir(root, pkg string) string {
@@ -364,4 +365,15 @@ func Approve(c Config, named []string, review string) ([]string, error) {
 		written = append(written, filepath.ToSlash(filepath.Join(Dir, pkg, ReceiptFile)))
 	}
 	return written, nil
+}
+
+// requireEOF refuses anything after the first JSON value. Decoder.More is not
+// an end-of-input check: a stray closing delimiter makes it report false.
+// Decoding again must return io.EOF exactly, which rejects a second value and
+// any trailing syntax error alike. Whitespace after the value is accepted.
+func requireEOF(dec *json.Decoder) error {
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("trailing data after the JSON value")
+	}
+	return nil
 }

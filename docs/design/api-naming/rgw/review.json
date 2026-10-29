@@ -5,6 +5,6 @@
   "members_sha256": "26552c969468ab759193b553dd2632a0a7e441d5e334bd1dc07f3511c0f3d261",
   "declarations": 61,
   "members": 91,
-  "review": "api-naming-audit.md",
+  "review": "api-naming.md",
   "page": "docs/rgw.md"
 }

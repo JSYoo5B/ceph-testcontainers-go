@@ -8,14 +8,9 @@
 //	                                     that both parents changed, if the merge only composes approved rows
 //	apinaming aggregate                  print the computed totals (nothing is committed)
 //	apinaming check                      verify layout, catalogues and receipts like the tests
-//	apinaming moves [-base rev] [-require-base]   check move records and account for removed/added rows against the merge base
-//	apinaming migrate-split -base rev    one-time split of the global catalogues
-//	apinaming migrate-verify -base rev   one-time byte-equality proof against the global files
 //
 // Regenerate never touches review.json and approve never touches the
-// catalogues. CI runs neither: it only runs the tests and the moves check. The
-// moves check prints OK, SKIPPED (no base available: the comparison did not
-// run) or FAILED; SKIPPED is never a pass, and -require-base fails it.
+// catalogues. CI runs neither: it only runs the tests.
 package main
 
 import (
@@ -28,10 +23,7 @@ import (
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/apiinventory/catalogue"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/apiinventory/moves"
 )
-
-const legacyDir = "docs/design/"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -67,7 +59,7 @@ func gitShow(root, rev, path string) ([]byte, error) {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: apinaming regenerate|approve|resolve|aggregate|check|moves|migrate-split|migrate-verify")
+		return errors.New("usage: apinaming regenerate|approve|resolve|aggregate|check")
 	}
 	root, err := moduleRoot()
 	if err != nil {
@@ -76,10 +68,9 @@ func run(args []string) error {
 	cfg := catalogue.Config{Root: root, Proposals: catalogue.Proposals}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	review := flags.String("review", catalogue.DefaultReview, "approve: review note below docs/design")
-	base := flags.String("base", "", "migrate-*: Git revision that holds the global catalogues; moves: revision to compare with (its merge base with HEAD is used)")
+	base := flags.String("base", "", "resolve: the merge base (default: the merge base of -ours and -theirs)")
 	ours := flags.String("ours", "HEAD", "resolve: the branch being merged into")
 	theirs := flags.String("theirs", "MERGE_HEAD", "resolve: the branch being merged in")
-	requireBase := flags.Bool("require-base", false, "moves: fail instead of reporting SKIPPED when no base is available")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -107,49 +98,6 @@ func run(args []string) error {
 		return nil
 	case "check":
 		return check(cfg)
-	case "moves":
-		if flags.NArg() != 0 {
-			return errors.New("moves takes no arguments")
-		}
-		return checkMoves(root, *base, *requireBase)
-	case "migrate-split", "migrate-verify":
-		if *base == "" {
-			return errors.New("-base is required")
-		}
-		files := make([][]byte, 3)
-		for i, name := range []string{"api-naming-inventory.json", "api-naming-members.json", "api-naming-review.json"} {
-			if files[i], err = gitShow(root, *base, legacyDir+name); err != nil {
-				return err
-			}
-		}
-		if args[0] == "migrate-verify" {
-			if err := catalogue.VerifyLegacy(root, files[0], files[1], files[2]); err != nil {
-				return err
-			}
-			fmt.Println("per-package catalogues reproduce the global catalogues byte for byte")
-			return nil
-		}
-		surfaces, err := catalogue.SplitLegacy(files[0], files[1])
-		if err != nil {
-			return err
-		}
-		for pkg, surface := range surfaces {
-			for name, value := range map[string]any{catalogue.DeclarationsFile: surface.Declarations, catalogue.MembersFile: surface.Members} {
-				data, err := catalogue.Marshal(value)
-				if err != nil {
-					return err
-				}
-				dir := catalogue.PackageDir(root, pkg)
-				if err := os.MkdirAll(dir, 0o755); err != nil {
-					return err
-				}
-				if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
-					return err
-				}
-			}
-			fmt.Println("split", pkg)
-		}
-		return nil
 	}
 	return fmt.Errorf("unknown command %q", args[0])
 }
@@ -171,25 +119,6 @@ func check(cfg catalogue.Config) error {
 		problems = append(problems, catalogue.CheckCatalogue(cfg.Root, pkg, surfaces[pkg]), catalogue.CheckReceipt(cfg.Root, pkg, surfaces[pkg]))
 	}
 	return errors.Join(problems...)
-}
-
-// checkMoves prints the outcome of the moves check on stdout. A skipped
-// comparison is reported as SKIPPED with its reason and is not an error
-// unless requireBase is set.
-func checkMoves(root, base string, requireBase bool) error {
-	result := moves.Check(moves.Options{Root: root, Base: base, RequireBase: requireBase})
-	for _, problem := range result.Problems {
-		fmt.Println("problem:", problem)
-	}
-	switch result.Status() {
-	case "FAILED":
-		return fmt.Errorf("moves: FAILED with %d problem(s)", len(result.Problems))
-	case "SKIPPED":
-		fmt.Printf("moves: SKIPPED (%s); record checks ran, the base comparison did not\n", result.Reason)
-	default:
-		fmt.Printf("moves: OK (compared with merge base %s)\n", result.Base)
-	}
-	return nil
 }
 
 func gitRead(root string) catalogue.Reader {

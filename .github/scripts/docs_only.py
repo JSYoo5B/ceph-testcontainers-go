@@ -18,7 +18,7 @@ import sys
 
 # docs/ directories whose direct Markdown children are not read by any check.
 # Exceptions inside them are the files that a check reads.
-UNREAD_DOC_DIRS = ("docs/contributing", "docs/design", "docs/guides", "docs/research")
+UNREAD_DOC_DIRS = ("docs/contributing", "docs/design", "docs/guides")
 READ_DOC_FILES = frozenset((
     # internal/integration messenger coverage test cross-checks this guide.
     "docs/guides/messenger-client-fixtures.md",
@@ -26,24 +26,17 @@ READ_DOC_FILES = frozenset((
     "docs/guides/bug-compatibility-tags.md",
     # internal/tools/testdoublecheck reads the test-double inventory.
     "docs/contributing/test-double-inventory.md",
-    # The ceph catalogue receipt (docs/design/api-naming/ceph/review.json)
-    # names this note as its review, and the move record 312-add-osd-options
-    # must find the change identifier in it; internal/apiinventory reads both.
+    # The ceph, cephfs/mirror and rbd/mirror catalogue receipts name this note
+    # as their review; internal/apiinventory checks that it exists.
     "docs/design/value-configuration-composition.md",
 ))
 # Git file modes of an ordinary file and of an absent side (added or deleted).
 REGULAR_MODES = frozenset(("100644", "000000"))
-# internal/apiinventory reads the audit, the review notes and the package-scoped
-# declaration, member and review files below docs/design/api-naming/.
-# ceph/container_decomposition_records_test.go and
-# ceph/container_residual_fields_test.go read the shared decomposition document
-# and every component record in the docs/design/container-decomposition/
-# directory (discovered by listing it), so any path below it, including a
-# record that does not exist yet, runs the checks.
+# internal/apiinventory reads the review note docs/design/api-naming.md and the
+# package-scoped declaration, member and review files below
+# docs/design/api-naming/.
 READ_DOC_PREFIXES = (
     "docs/design/api-naming",
-    "docs/design/container-decomposition.md",
-    "docs/design/container-decomposition/",
 )
 
 

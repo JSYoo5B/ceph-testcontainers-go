@@ -17,9 +17,9 @@ TABLE = [
     # Documentation that no check reads.
     ("README.md", True), ("NOTES.md", True), ("AGENTS.md", True), ("LICENSE", True),
     ("docs/contributing/ci.md", True), ("docs/contributing/testing.md", True),
-    ("docs/research/ceph-fuse-mount.md", True),
+    ("docs/guides/host-network.md", True),
     ("docs/guides/errors.md", True),
-    ("docs/design/fault-package.md", True), ("docs/design/messenger-evidence.md", True),
+    ("docs/design/osd-retained-reopen.md", True), ("docs/design/messenger-evidence.md", True),
     # Read by internal/apiinventory (package pages name every export).
     ("docs/ceph.md", False), ("docs/fault.md", False), ("docs/rbd.md", False),
     ("docs/cephfs.md", False), ("docs/rgw.md", False), ("docs/capture.md", False),
@@ -28,26 +28,18 @@ TABLE = [
     ("docs/design/api-naming/rgw/multisite/members.json", False),
     ("docs/design/api-naming/rgw/multisite/review.json", False),
     ("docs/design/api-naming/ceph/declarations.json", False), ("docs/design/api-naming/capture/review.json", False),
-    ("docs/design/api-naming/review-note.md", False), ("docs/design/api-naming-audit.md", False),
-    ("docs/design/api-naming.md", False),
+    ("docs/design/api-naming/review-note.md", False), ("docs/design/api-naming.md", False),
     # Read by the messenger coverage fixture test.
     ("docs/guides/messenger-client-fixtures.md", False),
     # Read by internal/tools/testdoublecheck (the test-double inventory).
     ("docs/contributing/test-double-inventory.md", False),
+    # Read by internal/apiinventory (the review note that a receipt names).
     ("docs/design/value-configuration-composition.md", False),
-    # Read by ceph/container_decomposition_records_test.go and ceph/container_residual_fields_test.go:
-    # the shared document and every component record of the directory, including one that is added later.
-    ("docs/design/container-decomposition.md", False),
-    ("docs/design/container-decomposition/member-roster.md", False),
-    ("docs/design/container-decomposition/residual-fields.md", False),
-    ("docs/design/container-decomposition/a-record-added-later.md", False),
-    ("docs/design/container-decomposition/sub/deeper.md", False),
-    # Neighbours of the directory that no check reads stay documentation.
-    ("docs/design/container-decompositions.md", True), ("docs/design/filesystem-decomposition.md", True),
     # Read by tag_scenarios (registry) and its tests (catalogue).
     ("docs/guides/bug-compatibility-tags.json", False), ("docs/guides/bug-compatibility-tags.md", False),
     # Not on the allowlist: data files, new top-level pages, nested paths, other trees.
-    ("docs/contributing/role-overhead-results.json", False), ("docs/new-package.md", False),
+    ("docs/contributing/results.json", False), ("docs/new-package.md", False),
+    ("docs/research/notes.md", False),
     ("docs/guides/sub/page.md", False), ("docs/guides/page.txt", False), ("docs/guides/.md", True),
     ("internal/integration/testdata/expected.md", False), ("internal/integration/goceph/README.md", False),
     ("ceph/notes.md", False), (".github/scripts/docs_only.py", False), (".github/workflows/code.yml", False),
@@ -91,17 +83,6 @@ class NegativeControlTests(unittest.TestCase):
         return docs_only.is_unread_doc(path) or (isinstance(path, str) and path.startswith("docs/design/api-naming"))
 
     @staticmethod
-    def decomposition_document_only(path):
-        # Registers the shared document but not the directory of component records.
-        return docs_only.is_unread_doc(path) or path == "docs/design/container-decomposition.md"
-
-    @staticmethod
-    def decomposition_directory_only(path):
-        # Registers the records but forgets the shared document the residual guard also reads.
-        return docs_only.is_unread_doc(path) or (isinstance(path, str)
-                                                 and path.startswith("docs/design/container-decomposition/"))
-
-    @staticmethod
     def design_subtrees_allowed(path):
         return docs_only.is_unread_doc(path) or (isinstance(path, str) and path.startswith("docs/design/"))
 
@@ -115,7 +96,7 @@ class NegativeControlTests(unittest.TestCase):
 
     def test_wrong_classifiers_fail_the_table(self):
         for name in ("paths_ignore", "any_markdown", "no_read_exceptions", "naming_receipts_allowed",
-                     "decomposition_document_only", "decomposition_directory_only", "design_subtrees_allowed",
+                     "design_subtrees_allowed",
                      "package_pages_allowed", "never"):
             with self.subTest(name):
                 self.assertNotEqual(mismatches(getattr(self, name)), [], name)
@@ -343,7 +324,7 @@ class ReaderInventoryTests(unittest.TestCase):
 
     # A Go source names a document file, or the whole package-scoped catalogue
     # directory that internal/apiinventory/catalogue reads.
-    REFERENCE = re.compile(r"docs/[A-Za-z0-9_./-]*\.(?:md|json)|docs/design/api-naming/?|docs/design/container-decomposition/?")
+    REFERENCE = re.compile(r"docs/[A-Za-z0-9_./-]*\.(?:md|json)|docs/design/api-naming/?")
 
     def sources(self):
         for path in sorted(ROOT.rglob("*.go")):
@@ -362,8 +343,7 @@ class ReaderInventoryTests(unittest.TestCase):
                 for match in self.REFERENCE.findall(line):
                     found.setdefault(match, "%s:%d" % (relative, number))
         # The scan must keep seeing the known readers, or it proves nothing.
-        for known in ("docs/design/api-naming", "docs/design/container-decomposition.md",
-                      "docs/design/container-decomposition", "docs/guides/messenger-client-fixtures.md",
+        for known in ("docs/design/api-naming", "docs/guides/messenger-client-fixtures.md",
                       "docs/guides/bug-compatibility-tags.json"):
             self.assertIn(known, found)
         for path, where in sorted(found.items()):
@@ -379,16 +359,6 @@ class ReaderInventoryTests(unittest.TestCase):
             for path in (data["page"], "docs/design/" + data["review"]):
                 self.assertTrue((ROOT / path).is_file(), "%s names a missing file %s" % (receipt.relative_to(ROOT), path))
                 self.assertFalse(docs_only.is_unread_doc(path), "%s names %s, which is skipped as unread" % (receipt.relative_to(ROOT), path))
-
-    def test_the_scan_sees_a_reader_of_the_decomposition_directory(self):
-        # A Go guard that lists the record directory names it by a literal; a
-        # path built from parts would hide the reader from this scan.
-        with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory) / "reader_test.go"
-            source.write_text('const dir = "docs/design/container-decomposition"\n')
-            found = self.REFERENCE.findall(source.read_text())
-        self.assertEqual(found, ["docs/design/container-decomposition"])
-        self.assertFalse(docs_only.is_unread_doc(found[0] + "/any-record.md"))
 
     def test_the_scan_catches_a_reader_of_an_allowlisted_file(self):
         self.assertTrue(docs_only.is_unread_doc("docs/guides/errors.md"))
@@ -418,35 +388,12 @@ class WorkflowWiringTests(unittest.TestCase):
             self.assertIn(needle, block)
 
     def test_only_an_explicit_true_skips_and_failure_does_not_skip(self):
-        for name in ("unit", "race", "tag-coverage"):
+        for name in ("unit", "race", "static", "tag-coverage"):
             condition = re.search(r"(?m)^    if: (.*)$", self.job(name)).group(1)
             self.assertIn("!cancelled()", condition, name)
             self.assertIn(self.GATE, condition, name)
-        # The static job always runs; its steps carry the gate instead.
-        condition = re.search(r"(?m)^    if: (.*)$", self.job("static")).group(1)
-        self.assertIn("!cancelled()", condition)
-        self.assertNotIn("docs_only", condition)
         header = self.job("vulncheck").split("    steps:", 1)[0]
         self.assertIn("    if: ${{ !cancelled() }}\n", header)
-
-    def test_static_job_gates_every_step_except_the_text_checks(self):
-        steps = re.split(r"(?m)^      - ", self.job("static").split("    steps:\n", 1)[1])[1:]
-        ungated = []
-        for step in steps:
-            if self.GATE not in step:
-                ungated.append(step.splitlines()[0])
-        # Checkout stays ungated (the checks need the tree); nothing else but the
-        # image role vocabulary check and the retired override names check,
-        # which read text.
-        self.assertEqual(ungated, ["uses: actions/checkout@v7",
-                                   "name: Check the image role vocabulary",
-                                   "name: Check the retired override names"])
-        vocabulary = [step for step in steps if "check_image_vocabulary.py" in step]
-        self.assertEqual(len(vocabulary), 1)
-        self.assertIn("if: ${{ !cancelled() }}", vocabulary[0])
-        retired = [step for step in steps if "check_retired_override_names.py" in step]
-        self.assertEqual(len(retired), 1)
-        self.assertIn("if: ${{ !cancelled() }}", retired[0])
 
     def test_required_check_names_are_unchanged(self):
         names = re.findall(r"(?m)^    name: (.*)$", self.text)

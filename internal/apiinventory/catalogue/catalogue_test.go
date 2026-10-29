@@ -84,7 +84,7 @@ func tree(t *testing.T) (string, catalogue.Config) {
 	for _, page := range []string{"alpha", "alpha-sub", "beta"} {
 		write(t, root, "docs/"+page+".md", "page\n")
 	}
-	write(t, root, "docs/design/api-naming-audit.md", "review\n")
+	write(t, root, "docs/design/api-naming.md", "review\n")
 	cfg := catalogue.Config{Root: root, Proposals: map[string]string{}}
 	if _, err := catalogue.Regenerate(cfg, nil); err != nil {
 		t.Fatal(err)
@@ -493,8 +493,8 @@ func TestReceiptIsReadStrictly(t *testing.T) {
 		"trailing comma":   good + ",",
 		"wrong package":    strings.Replace(good, `"package": "beta"`, `"package": "alpha"`, 1),
 		"wrong schema":     strings.Replace(good, "review/v2", "review/v1", 1),
-		"empty review":     strings.Replace(good, `"review": "api-naming-audit.md"`, `"review": ""`, 1),
-		"review traversal": strings.Replace(good, `"review": "api-naming-audit.md"`, `"review": "../design/api-naming-audit.md"`, 1),
+		"empty review":     strings.Replace(good, `"review": "api-naming.md"`, `"review": ""`, 1),
+		"review traversal": strings.Replace(good, `"review": "api-naming.md"`, `"review": "../design/api-naming.md"`, 1),
 		"page outside":     strings.Replace(good, `"page": "docs/beta.md"`, `"page": "README.md"`, 1),
 		"missing page":     strings.Replace(good, `"page": "docs/beta.md"`, `"page": "docs/none.md"`, 1),
 		"wrong hash":       strings.Replace(good, `"declarations_sha256": "`, `"declarations_sha256": "0`, 1),
