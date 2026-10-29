@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rbd/mirror",
-  "count": 41,
+  "count": 40,
   "entries": [
     {
       "current": "rbd/mirror.Config",
@@ -269,13 +269,6 @@
       "kind": "function",
       "signature": "func(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
       "proposed": "rbd/mirror.Run",
-      "decision": "baseline"
-    },
-    {
-      "current": "rbd/mirror.RunWithImages",
-      "kind": "function",
-      "signature": "func(ctx context.Context, config Config, opts ...testcontainers.ContainerCustomizer) (*Mirror, error)",
-      "proposed": "rbd/mirror.RunWithImages",
       "decision": "baseline"
     },
     {

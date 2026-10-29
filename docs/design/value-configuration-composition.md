@@ -129,8 +129,8 @@ only place for configuration.
 - **Raw customizers.** They reach the first MON's container request only, in
   argument order, after the module's own request options and before the
   messenger environment, the `WithConfigFile` file and the ownership label.
-- `RunWithImages` and `WithImages` are removed without aliases. The mirror
-  `RunWithImages` functions are separate and unchanged.
+- `RunWithImages` and `WithImages` do not exist. The mirror packages select the
+  role image through an empty `image` argument (see "Mirror `Run`" below).
 
 ### OSD storage group (change `312-osd-storage`)
 
@@ -247,8 +247,24 @@ spellings. Docker and container execution policy stays testcontainers-style
 Open for the owner: whether `ceph.WithPools` belongs with topology or with the
 service packages.
 
-## Not decided here
+## Mirror `Run` (change `312-mirror-run-image`)
 
-- How tenant attachment keeps the `*ClientConfig` identity while cloning its
-  owned collections.
-- How the mirror `Run` functions keep source/destination role inference.
+`rbd/mirror.Run` and `cephfs/mirror.Run` keep the testcontainers-style signature
+`Run(ctx, image string, config Config, opts ...testcontainers.ContainerCustomizer)`.
+The image is a single setting that already has its positional argument, so no
+grouped carrier exists next to it: a second input for the same field would give
+the setting two spellings.
+
+Only the exact empty string derives the role image; a blank string such as a
+single space is an explicit selection and is still refused by pair validation.
+A cluster without the role is refused with `ErrInvalidRequest` and no other role
+substitutes.
+
+### Client entry points stay separate
+
+`Container.WithClient` copies the admin keyring and takes no lock, closed check
+or identity validation. `Container.WithClientIdentity` copies a scoped keyring,
+takes the topology lock, and refuses a terminated cluster, a descriptor from
+another cluster, an incomplete creation, a revoked identity and a stale key; its
+input is a live `*ClientConfig` handle compared by pointer. They are different
+privilege contracts, not configuration variants, so both names stay.

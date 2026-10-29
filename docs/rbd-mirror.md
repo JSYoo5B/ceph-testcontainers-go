@@ -22,9 +22,10 @@ Two clusters need the pool and namespaces prepared with `rbd.WithPools`,
 other service package's `Run`.
 
 `Run` takes the mirror daemon image: the rbd-aux role (or the aggregate `all`
-image). The daemons run for the destination cluster, so
-`RunWithImages` uses the destination's `Images.RBDAux`. The setup CLI clients
-are not started from it: each cluster's `Images.Client` supplies them. `Run`
+image). The daemons run for the destination cluster, so an empty image selects
+the destination's `Images.RBDAux`; a destination without that role is refused
+and no other role substitutes. A non-empty image is used as given. The setup CLI
+clients are not started from it: each cluster's `Images.Client` supplies them. `Run`
 refuses an image that a cluster selects for another role, such as its essential
 image, when that cluster has a separate rbd-aux image. See the
 [image guide](guides/releases-and-images.md).
@@ -38,7 +39,7 @@ func Run(ctx context.Context, image string, config Config, opts ...testcontainer
 ```
 
 - `context.Context`, the Go context.
-- `string`, the image for the `rbd-mirror` daemons (rbd-aux or `all` role; use `FactsOf(destination).Images.RBDAux`). The setup clients use each cluster's `Images.Client`.
+- `string`, the image for the `rbd-mirror` daemons (rbd-aux or `all` role). Empty selects `FactsOf(destination).Images.RBDAux`; a blank non-empty string is refused. The setup clients use each cluster's `Images.Client`.
 - `Config`, the two clusters and the mirroring policy.
 - `testcontainers.ContainerCustomizer`, options applied to every `rbd-mirror` daemon container (not to the setup clients).
 
@@ -1167,9 +1168,3 @@ See [Classified errors](guides/errors.md#unsupported-features).
 - **Treating readiness as delivery.** `WaitReplayReady` can succeed before your latest checkpoint arrives. Compare data.
 - **Waiting on a stopped daemon.** `WaitReceiverReady()` without names expects every owned daemon, including stopped ones. Name the survivors.
 - **Cleanup order.** Register the clusters' cleanup before the link's, so the link terminates first. Terminate a non-nil `*Mirror` even after an error.
-
-### RunWithImages
-
-`RunWithImages` selects the receiving cluster's `rbd-aux` image and
-preserves the same runtime for later daemon additions. Setup clients use each
-cluster's client image. `Run` accepts an explicit daemon image.
