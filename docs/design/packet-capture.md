@@ -1,6 +1,6 @@
 # Packet capture: session and minimal file validation
 
-This note records the increments of #52. The module collects packet captures
+The module collects packet captures
 from a capture helper image whose contract is defined with
 [ceph-testcontainers-images#8](https://github.com/JSYoo5B/ceph-testcontainers-images/issues/8)
 and fixed as packet-capture contract 1 in that repository's
@@ -8,9 +8,9 @@ and fixed as packet-capture contract 1 in that repository's
 delivery belong here. Messenger decoding, decryption, protocol assertions and
 dissectors belong to consumers.
 
-The first increment added the classic pcap structure check in
-`internal/pcapfile`. The second adds the public [`capture`](../capture.md)
-package: one capture session on one explicitly selected endpoint.
+`internal/pcapfile` checks the classic pcap structure. The public
+[`capture`](../capture.md) package runs one capture session on one explicitly
+selected endpoint.
 
 ## Capture session
 
@@ -185,10 +185,3 @@ This is an external `SIGKILL` of the helper, not an `EndKilled` capture. It
 does not show where the cut falls (a clean end is the likely result of
 `tcpdump -U`), that a cut final record occurs, stability across runs,
 `linux/arm64`, other engines or a published helper.
-
-## Next steps
-
-1. Each declared architecture separately, `linux/arm64` included, once the
-   helper is published.
-2. Integration with #49's failure bundle, keeping raw pcap retention and upload
-   deliberate and capture usable on its own.

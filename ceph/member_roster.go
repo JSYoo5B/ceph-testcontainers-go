@@ -15,9 +15,9 @@ import (
 // method is called with it held (the caller table in member_roster_test.go
 // pins every caller and how it holds the lock), apart from the
 // single-threaded constructors that run before the cluster is shared. Because
-// the lock is Container.mu, the roster sits at the position of the fields it
-// replaced: after the topology gate, before
-// configMu, controlMu and the leaf locks, and a method never takes a lock or
+// the lock is Container.mu, the roster sits after the topology gate and
+// before the bootstrap-record lock, the control-plane lock and the leaf
+// locks, and a method never takes a lock or
 // calls into Container.
 //
 // What stays on Container: the first MON (the embedded container, which the roster does

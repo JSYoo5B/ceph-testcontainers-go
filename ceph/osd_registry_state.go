@@ -9,15 +9,14 @@ import (
 // owns, keyed by OSD ID, and the detached OSDs that hold a retained store and
 // registration without a container until DetachedOSD.Reopen or Terminate.
 //
-// The type has no mutex. Container.mu guards both maps, as it guarded
-// Container.osds and Container.detachedOSDs before the move: every method of
+// The type has no mutex. Container.mu guards both maps: every method of
 // the type is called with it held (the caller table in
 // osd_registry_state_test.go pins each caller and how it holds the lock), apart
 // from the single-threaded constructors, which run before the cluster is
 // shared: Run's composition planner and the unit-test cluster builder. Because
-// the lock is Container.mu, the registry sits at the same position in the lock
-// order as the fields it replaced: under the topology lock and before
-// configMu, controlMu and the leaf locks, and a method never takes a lock or
+// the lock is Container.mu, the registry sits under the topology lock and
+// before the bootstrap-record lock, the control-plane lock and the leaf
+// locks, and a method never takes a lock or
 // calls into Container.
 //
 // park and unpark are the only methods that touch both maps. A handle is in

@@ -1,18 +1,13 @@
 # OSD bootstrap admission before writes
 
-This is a bounded implementation step of #6. It hardens the existing fresh
-bootstrap and same-container Stop/Start path. It does not add retained-store
-descriptors, detach/reopen, attachment leases, instance/fault fencing, current
-MON-registration checks or a supported replacement-container API.
-
-The previous `osd.sh` used `ready` alone to decide whether to copy the launch
-keyring and invoke mkfs. A non-empty store without that marker could therefore
-have its existing keyring overwritten before mkfs failed. A marker with foreign
-local identities skipped initialization and entered the daemon directly.
+`osd.sh` decides before any write whether an OSD directory is initialized or
+started. A non-empty store without a ready marker must never have its keyring
+overwritten, and a marker with foreign local identities must never start the
+daemon. Retained-store reopen has its own checks; see
+[OSD retained reopen](osd-retained-reopen.md).
 
 The [launch recipe](osd-launch-recipes.md) separately reconstructs fresh file
-Readers and admits one container-creation attempt. Neither preparation rule
-establishes retained-store ownership.
+Readers and admits one container-creation attempt.
 
 ## Admission rules
 
@@ -35,8 +30,7 @@ establishes retained-store ownership.
 The keyring check establishes presence and file kind, not key/capability equality
 or current authentication. Local FSID matching is not a MON-registration or
 exclusive-attachment check. External edits/concurrent starts must not race this
-preflight; a future retained descriptor still needs those separate conditions
-before any launch. A ready marker alone is never retained-store admission.
+preflight. A ready marker alone is never retained-store admission.
 
 ## Validation layers
 
@@ -49,6 +43,5 @@ shell control flow, not real formatting, storage exclusion or native reopen.
 
 Selected native checks must separately exercise fresh initialization and
 same-container Stop/Start with known-byte readback. Disk-backed and tmpfs-backed
-BlueStore profiles, supported releases and legacy MemStore are different cohorts;
-compilation or a stub success cannot substitute for those executions. The #6
-single-replica/different-container retained-data oracle remains outstanding.
+BlueStore profiles, supported releases and MemStore are different cohorts;
+compilation or a stub success cannot substitute for those executions.

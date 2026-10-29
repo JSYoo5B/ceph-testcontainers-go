@@ -1,84 +1,49 @@
-# Cluster-owned MON data volumes (API proposal)
+# Cluster-owned MON data volumes
 
-This note records the API boundary and the lifecycle for the owner's option 1c
-decision on #64 (2026-10-28): optional MON data-volume support in the ordinary
-`ceph` fixture, covering the initial MON and `AddMonitor`, with the source and
-the replacement MON generation mounting the same cluster-owned store. The note
-itself added no code, no public name and no native run; the status of the
-internal slice 2 that followed is at the end of the slice plan. Every name and
-signature below is a proposal for the owner to accept or change; none is frozen, and the API
-catalogue is untouched until a later slice implements an accepted shape.
-
-What it does not decide: mixed-version compatibility, the Squid to Tentacle
-upgrade, MGR or OSD steps, address preservation and host-port lease handoff
-(separate decisions, with a seam named below), and any native acceptance. The
-rejected copy-based retention stays rejected. The merged per-daemon image
-override (`WithDaemonImage`) is reused as it is; no cluster-wide image setting
-is mutated.
+Every MON of a cluster can keep its store in its own cluster-owned Docker volume,
+so that a replacement container (possibly from another image) mounts the same
+store and rejoins. The internal primitives below exist and are tested
+Docker-free; no public option selects them and no production path calls them.
+Mixed-version compatibility and native acceptance are outside this page.
 
 Pinned source: Ceph 7f793731f1b39eb4f465e960113d2363c311b964 (Tentacle 20.2.4).
-Repository references are to main at the time of writing.
+
+## The model, and what it forces
+
+The model is the whole requirement. Every MON has its own volume (never a
+shared cluster volume). The volume outlives the container. A MON upgrade means
+the old container is stopped and removed, and a new container, possibly from a
+new image, mounts the same volume of that MON and rejoins. Nothing else is
+needed for the data to persist.
+
+Only these choices follow from it:
+
+- One volume per MON.
+- The replacement mounts the volume of that MON, only after the old container is
+  confirmed gone, and never formats: the entrypoint's require-store mode makes
+  a missing store a failure.
+- The new container needs the old address. The monmap pins it, so a replacement
+  that cannot bind it cannot rejoin. See "Address handoff" below.
 
 ## Facts the design rests on
 
 | Fact | Source | Consequence |
 | --- | --- | --- |
 | The first MON runs `mon.sh`; an added MON runs `mon-join.sh`. Both run mkfs only when `<data>/store.db` is absent, otherwise they `exec ceph-mon -f`. | `ceph/internal/scripts/mon.sh`, `mon-join.sh` | A fresh empty volume mounted where a retained store was required would silently format a new store and join as a new member. The retained launch needs a mode that fails closed when `store.db` is missing. |
-| Neither MON path mounts a data volume. The only mount is the run volume. | `runMonitor` in `ceph/ceph.go`, `AddMonitor` in `ceph/topology.go` | The store lives in the container's writable layer today; a new container starts empty. |
+| Neither MON path mounts a data volume. The only mount is the run volume. | `runMonitor` in `ceph/ceph.go`, `AddMonitor` in `ceph/topology.go` | Without the volume the store lives in the container's writable layer, and a new container starts empty. |
 | `ceph-mon --mkfs` refuses a data directory that holds anything except `kv_backend`; `ceph-mon` without mkfs exits when the directory is missing or empty. | `ceph_mon.cc` (`check_mon_data_empty`, `check_mon_data_exists`) | A half-formatted store is detectable by shape, and a failed first start cannot be retried on the same bytes without inspection. |
 | `Monitor::mkfs` writes the cluster UUID, the seed monmap and the mon. key into the store, and moves the mon. key into `<data>/keyring`. | `Monitor.cc` (`mkfs`, `write_fsid`, `extract_save_mon_key`) | The identity inside `store.db` (`cluster_uuid`, monmap) is not readable with plain file operations. Offline file checks can bind the `keyring` bytes and the store shape; fsid and rank binding come from the live monmap while the member is down. Whether an image tool can read `store.db` offline is not established. |
 | The first MON is the embedded `testcontainers.Container` of `*ceph.Container`. `Terminate` on it is cluster-wide, and `RemoveMonitor("a")` only sets `monitorTerminated`. | `ceph/ceph.go`, `ceph/handles.go` | The initial MON cannot be replaced by swapping a container into that field without a data race on a field users read without a lock. |
-| OSD storage is one cluster-owned volume with a persistent helper, per-ID directories, publish-before-create, owner labels, a creation timestamp check, non-forced release and a second release stage after the label scan. | `ceph/osd_volume_storage.go`, `ceph/osd_storage_state.go`, `ceph/osd_storage_release.go`, [OSD volume storage](osd-volume-storage.md) | The ownership vocabulary is reused. The topology (one volume, one helper) is not, see decisions D1 and D6. |
-
-## Proposed public API
-
-All of it is package `ceph`. Nothing below exists yet.
-
-```go
-// Option: the cluster owns one ordinary Docker local named volume per MON.
-func WithMonitorVolumeStorage() Option
-
-// Handle information.
-func (m *MonitorContainer) StoreVolume() string // "" without the option
-
-// Retained lifecycle (a later slice, after the address decision).
-func (m *MonitorContainer) Detach(ctx context.Context) (*DetachedMonitor, error)
-func (d *DetachedMonitor) Reopen(ctx context.Context, opts ...DaemonOption) (*MonitorContainer, error)
-func (d *DetachedMonitor) Name() string
-func (d *DetachedMonitor) StoreVolume() string
-func (d *DetachedMonitor) ClusterFSID() string
-func (d *DetachedMonitor) Image() string
-```
-
-Properties of the proposal:
-
-- `WithMonitorVolumeStorage` is cluster-wide, so every MON (the initial one and
-  each `AddMonitor`) gets a store volume. There is no per-MON opt-out, which
-  keeps "which MONs are retained" a single fact (D2). Unlike the OSD option it has
-  no tmpfs or MemStore conflict to refuse. Admission happens in `Run` before any
-  Docker allocation.
-- `MonitorContainer.StoreVolume` reports the Docker volume name so that an
-  independent observer can inspect or mount it. It does not grant ownership.
-- `DetachedMonitor` mirrors `DetachedOSD`: the store and the native membership
-  stay, the container is gone, and the handle is consumed by the first
-  `Reopen` that dispatches a creation request.
-- `Reopen` takes the merged `DaemonOption`s. The default image is the one the
-  MON ran from (the same rule as `DetachedOSD.Reopen`); `WithDaemonImage` selects
-  the replacement's image for that one generation (D4). It never touches
-  cluster settings or other daemons.
-- `Detach` and `Reopen` need the address seam below to be implemented before
-  they are published. The earlier slices do not depend on it.
-- Old names: nothing is renamed or removed. `MonitorContainer.Remove` and
-  `AddMonitor` keep their meanings (permanent removal and fresh join).
+| OSD storage is one cluster-owned volume with a persistent helper, per-ID directories, publish-before-create, owner labels, a creation timestamp check, non-forced release and a second release stage after the label scan. | `ceph/osd_volume_storage.go`, `ceph/osd_storage_state.go`, `ceph/osd_storage_release.go`, [OSD volume storage](osd-volume-storage.md) | The ownership vocabulary is reused. The topology (one volume, one helper) is not: a MON store has one volume per MON and no helper. |
 
 ## Ownership model
 
-One record per MON name, owned by the cluster, kept in a new internal state
+One record per MON name, owned by the cluster, kept in an internal state
 component beside `osdStorageState` and `memberRoster`. Like those it has no
 mutex: `Container.mu` guards it, and `Run` writes it only before the cluster is
 shared. One volume per MON, not one volume with per-name directories, because a
 MON generation must be retained, mounted and released independently of its
-siblings (D1). The volume is mounted with no-copy at the MON's data directory,
+siblings. The volume is mounted with no-copy at the MON's data directory,
 `/var/lib/ceph/mon/ceph-<name>`, so the volume root is the data directory.
 
 Record fields: MON name; volume name derived from a UUID owner token; owner
@@ -99,8 +64,8 @@ timestamp unchanged. A volume that fails them is never removed or mounted.
 | planned | Record published, create not yet requested | yes | no |
 | created | Volume exists and passed the metadata checks | yes | first generation only |
 | fresh | A first generation was requested; mkfs may have run | yes, only after the attachment is confirmed gone | no |
-| bound | The first generation reached its ready check and the identity was recorded | only by `MonitorContainer.Remove` after native removal, or by `Terminate` | only through `Reopen` with a matching identity |
-| detached | `bound`, no attachment | `Terminate` only | `Reopen` only |
+| bound | The first generation reached its ready check and the identity was recorded | only after native removal of the MON, or by `Terminate` | only by a replacement generation with a matching identity |
+| detached | `bound`, no attachment | `Terminate` only | a replacement generation only |
 | released | Volume removal confirmed | n/a | no |
 
 Rules:
@@ -109,7 +74,7 @@ Rules:
    the create call, so a lost reply stays owned. A later call never allocates a
    second volume to resolve the uncertainty.
 2. A store is `fresh` until its first generation passes the same readiness check
-   the MON has today (admin socket for an added MON, `ceph status` for the first).
+   the MON has (admin socket for an added MON, `ceph status` for the first).
    A `fresh` store holds no state anyone needs. After a failed first start with
    a confirmed-gone container, it is discarded and the retry creates a new
    record and volume. This keeps the host-port retry loop of `AddMonitor` and
@@ -126,159 +91,30 @@ Rules:
    reopened until the label scan of `Terminate` settles it. Creation is never
    replayed.
 
-## Operations and lock order
+## Lock position and release order
 
-Every operation runs under the topology lock `Container.mu` (taken by
-`lockTopology`) with a bounded context, as the OSD operations do. No new mutex
-is added: the state component sits at the position of `osdStorageState` in the
-existing order (shared-gate admission, topology lock, then the config, control
-and leaf locks), calls no method that takes a lock above it, and Docker calls
-are made with `Container.mu` held, exactly as `registerOSD` does for the OSD
-volume. The guards that pin this for the OSD state (no field touched outside the
-type, callers hold `Container.mu`, no production writer of a test seam, release
-stages keep their order, no mutex added) are copied for the new component in the
-slice that adds it.
+Every operation runs under the topology lock `Container.mu` with a bounded
+context, as the OSD operations do. `monStoreState` has no mutex and sits at the
+position of `osdStorageState` (`TestNativeStateAddsNoMutex` scans it); Docker
+calls are made with `Container.mu` held, as `registerOSD` does for the OSD
+volume. `Terminate` releases the stores in a first stage after the added and
+primary MON containers are terminated (they are the volume users), then retries
+after the labelled-container scan together with the OSD retry stages. Release
+is never forced: a store with a live or unknown attachment, a changed or foreign
+volume, or a busy removal stays owned and is reported. A confirmed missing
+volume settles cleanup.
 
-| Operation | Order of effects | Failure rule |
-| --- | --- | --- |
-| Initial MON | admission, `runDir.create`, store record published, volume created and validated, `runMonitor` with the mount, ready check, store bound | Record stays published on every error. A returned partial first MON stays the cluster's container; `Terminate` removes it, then the store. |
-| `AddMonitor` | existing name and quorum preflight, key and monmap reads, then record published and volume created, roster entry added, container created, ready and quorum check, store bound | The roster entry and the record are published before the container, as today. A failed attempt leaves the descriptor owned. Host-port retry discards the `fresh` store of the failed attempt after its container is confirmed gone. |
-| `MonitorContainer.Remove` | existing quorum check, native `mon remove`, container removal, then discard the store | A store that cannot be discarded keeps the descriptor and refuses a new MON of that name until the retry succeeds. Sibling stores are untouched. |
-| `Detach` | admit; refuse a held network or pause fault on this instance; refuse when stopping this MON would leave no quorum majority of the map; fence native commands to the instance; stop; wait until native quorum no longer lists it; remove the container; confirm no volume user; read the store identity; record `detached` | Same retry shape as `OSDContainer.Detach`: a failure after the fence keeps the MON owned with the fence, and a retry resumes after a completed removal. Native membership is not changed. |
-| `Reopen` | read-only preflight (store identity equals the detach record, served FSID equals, monmap member present with the retained address vector and out of quorum, no volume user); consume the detached handle; publish the new descriptor; create the container with the same volume and the require-store mode | A preflight refusal leaves the MON detached. Once creation is requested the handle is consumed; an error returns the new owned descriptor. No start ever formats a store. |
-| `Terminate` | existing order, then new stage 1 after the added and primary MON containers are terminated: release every store whose attachment is gone; then, after the labelled-container scan, stage 2 retries the stores whose release failed | Never forced. A store with a live or unknown attachment, a changed or foreign volume, or a busy removal stays owned and is reported. A confirmed missing volume settles cleanup. |
-
-Release ordering in `Terminate`, in full: faults undone, port leases released,
-services, OSDs and the OSD storage, MGRs, added MONs, the primary MON, control
-plane and toolkit containers, labelled-container scan, MON store release stage 2
-together with the OSD retry stages, run volume, networks. The MON stage 1
-placement (after the primary MON) is needed because the primary MON and the
-added MONs are the volume users. A detached store has no user and is released
-in stage 1.
-
-## Identity binding
-
-A store is bound to (cluster FSID, MON name, owner token, creation timestamp,
-keyring digest, store shape). Digests are of secrets and are not logged or
-returned; only equality is reported. The preflight of `Reopen` compares, without
-writing:
-
-1. Docker volume metadata as above.
-2. Through a short-lived inspector container (D6) mounted read-only: `store.db`
-   is a directory, `kv_backend` reads `rocksdb`, `keyring` is a regular non-symlink
-   file whose SHA-256 equals the recorded one, and the fingerprint (mode, inode,
-   size and modification time of every entry, SHA-256 of every regular file)
-   equals the one taken at detach.
-3. Live monmap: the name is a member, its address vector equals the retained
-   vector, and it is not in quorum while detached.
-
-A mismatch refuses before any write and leaves the MON detached. The fingerprint
-is a change detector for the fixture's own store, not a statement that
-`ceph-mon` accepts it. Whether the destination binary reads the source store is
-a native question outside this note.
-
-## The initial-MON special case
-
-The first MON is `Container.Container`. Recommendation (D3): treat that
-embedded container as the first generation only and never rebind it.
-`Detach` of `a` removes its container, sets the existing `monitorTerminated`
-state, and keeps the store and membership. `Reopen` publishes the replacement
-as the roster entry for `a`; the promoted container methods of `*ceph.Container`
-keep naming the first generation, as they already name the removed container
-after `RemoveMonitor("a")`. Internal code reaches the CLI through `cliContainer`,
-which prefers the independent control plane once one exists and otherwise uses
-the embedded container, so the CLI path needs the control plane to be started
-before the embedded MON is detached (to be settled in that slice). The sites that special-case the name `a` (`AddMonitor`'s
-"primary monitor name a cannot be reused", `currentMonitor`, `monitorsLocked`,
-`refreshMonitorConfigAfterRemoval`) change in the Detach/Reopen slice, not
-before. The alternative, rebinding the embedded field under `Container.mu`,
-adds a data race with lock-free readers and is not recommended.
-
-## Seams with the separate decisions
-
-- Address preservation: the retained monmap pins the MON's address vector, so
-  `DetachedMonitor` carries it and `Reopen` rejects a missing or different
-  reservation before launch. How the destination obtains the same endpoint is
-  the host-network and exact port-lease slice (host first, bridge after). It is
-  not designed here. Until it exists, `Detach` and `Reopen` are not published,
-  and the store option stands alone.
-- Per-daemon image: reused as merged. Version identity of the replacement is its
-  own native report, never the cluster's recorded `CephVersion`.
-
-## Failure paths
-
-| Failure | Result |
-| --- | --- |
-| Create reply lost | Record stays; the next operation neither allocates nor removes; `Terminate` retries release after the label scan. |
-| Volume metadata changed or foreign | Operation fails; the volume is never mounted or removed. |
-| First start fails before ready | Container confirmed gone, then the `fresh` store is discarded; the descriptor stays owned for retry or `Terminate`. |
-| Volume missing for a `bound` store | Start refused; no fresh store; descriptor owned. |
-| Container creation reply lost during Reopen | Handle consumed, descriptor owned without a container, attachment pending-unknown; only `Terminate` recovers it. |
-| Release busy | Store stays owned and is retried in stage 2; never forced. |
-| Detach fails after the fence | MON stays owned and fenced; retry resumes after a completed removal. |
-| Context cancelled | No state moves backward; unconfirmed work stays recorded as pending. |
-
-## Slice plan
-
-1. This note (merged).
-2. Internal ownership primitive: the unexported record, state machine, volume
-   validation, release stages and guards, Docker-free, with negative controls.
-   Landed in the slice 2 change; its status is below.
-3. `WithMonitorVolumeStorage`, the mount in `runMonitor` and `AddMonitor`,
-   `StoreVolume`, `Remove` discard and `Terminate` release, and catalogue.
-4. Address retention and exact port lease (own decision).
-5. `Detach`, `Reopen` and the initial-MON special case.
-6. A same-release native retention batch, only after the owner authorizes native
-   runs. Upgrade evidence is a later, separate step.
-
-### Slice 2 status
-
-Implemented in `ceph/mon_store_volume.go`, `ceph/mon_store_identity.go` and
-`ceph/mon_store_state.go`, with Docker-free tests. Nothing is public and no
-production path publishes a record, so a cluster holds no store and default
-behavior is unchanged. 0.x: no old name is renamed or removed, and no alias is
-added.
-
-What the slice follows from this note: the phases planned, created, fresh,
-bound, detached and released; one volume per MON (D1, followed because the
-owner has not answered it); no persistent helper (D6, followed for the same
-reason: the record carries no helper and the volume-user check is an
-independent container list); publish before create, also for the attachment;
-an unknown volume or container creation outcome is never replayed and is
-settled only by `Terminate` after its labeled-container scan; a bound store
-whose volume is missing, changed or foreign fails instead of being recreated;
-a retained generation is dispatched only after its identity was verified; the
-volume is never removed with force; `Terminate` releases the stores after the
-added and primary MON containers and again after the labeled-container scan.
-The identity inputs (keyring digest, shape, fingerprint, FSID, address
-vector) are validated and compared but not observed: nothing reads a store or a
-monmap yet (the observation ports landed afterwards, see below).
-
-Not in the slice: the require-store mode of `mon.sh` and `mon-join.sh` (it
-landed afterwards, see the status below); the inspector container (D6) that
-would observe the identity (its ports and the identity computation landed
-afterwards, see the identity observation status below); every public name; the option,
-the mounts, `StoreVolume`, `Remove` discard, `Detach`, `Reopen`; address and
-port-lease handoff; any native run. The `fresh` to `bound` transition and the
-discard of a fresh store are exercised only by the unit tests, since no
-production caller starts a MON generation yet.
-
-The mutex count is unchanged: `monStoreState` has no lock and sits at the position
-of `osdStorageState` under `Container.mu` (`TestNativeStateAddsNoMutex` scans it).
-
-### Require-store mode status
+## Require-store mode
 
 Implemented in `ceph/internal/scripts/mon.sh` and `mon-join.sh`, tested
-Docker-free in `ceph/mon_require_store_test.go`. It has no Go caller: nothing
-sets the selector yet, no public name exists and no native run is claimed. 0.x:
-no old name is renamed or removed, and no alias is added.
+Docker-free in `ceph/mon_require_store_test.go`. No Go caller sets the selector
+and no native run is claimed.
 
-- Selector: the environment variable `CEPH_MON_STORE_MODE`. Unset keeps the
-  historical behavior unchanged (mkfs when `store.db` is absent). The value
+- Selector: the environment variable `CEPH_MON_STORE_MODE`. Unset runs mkfs
+  when `store.db` is absent. The value
   `require` selects the mode. Any other value, also an empty one, exits 2
   before any command or write, so a misspelled mode cannot fall back to
-  formatting a store. The Go side that sets it comes with the slice that
-  mounts the volume.
+  formatting a store.
 - Behavior of `require`: the check runs before the scripts create any
   directory or run any tool. A missing or non-directory data directory, a
   missing, symlinked or empty `store.db`, a `kv_backend` that is not a plain
@@ -296,24 +132,20 @@ no old name is renamed or removed, and no alias is added.
 - What it does not establish: the checks detect foreign or half-provisioned
   content by shape. They cannot tell a complete store from one whose mkfs was
   interrupted after `store.db` was created, or a damaged one; `ceph-mon`
-  still opens and validates the store, and the identity binding of this note
-  (fingerprint, FSID, monmap) is a later slice. The default fixture
-  `TestAddressFamilyBootstrapRenderingGolden` still pins the unchanged
-  rendering of the default mode.
+  still opens and validates the store. The default fixture
+  `TestAddressFamilyBootstrapRenderingGolden` pins the rendering of the default
+  mode.
 - The `require_store` function is duplicated in both scripts between marker
   comments because each script runs alone in the container;
   `TestMonRequireStoreBlocksAreIdentical` keeps the two copies equal.
 
-### Identity observation status
+## Identity observation
 
 Implemented in `ceph/mon_store_inspect.go`, tested Docker-free in
-`ceph/mon_store_inspect_test.go`. Nothing calls it and nothing implements its
-ports in production: no inspector container, no monmap adapter, no public name,
-no native run. 0.x: no old name is renamed or removed, and no alias is added.
+`ceph/mon_store_inspect_test.go`. Nothing calls it in production and no native
+run exists.
 
-- Ports: `monStoreInspector` (D6 recommendation, a short-lived read-only
-  inspector; the owner has not answered D6, so this is the recommended shape,
-  not a decision) reports the entries of the data directory (kind, mode, inode,
+- Ports: `monStoreInspector` (a short-lived read-only inspector) reports the entries of the data directory (kind, mode, inode,
   size, modification time, SHA-256 of regular files) and the `kv_backend`
   marker. `monStoreMonmap` reports one member: name, FSID, address vector and
   quorum. A nil inspector, monmap view or typed nil is refused.
@@ -345,21 +177,15 @@ no native run. 0.x: no old name is renamed or removed, and no alias is added.
   while the cluster's labels, ordering and release rules hold; how the monmap
   adapter decodes `mon dump` and the quorum status (its missing or null fields
   must map to an absent value here); an identity at bind time, when the member
-  runs and the store is being written (this slice observes a stopped member
-  only; the bind-time source is part of the inspector slice); whether
+  runs and the store is being written (the observation covers a stopped member
+  only); whether
   `ceph-mon`, in particular a different release, accepts the store.
-- Open decisions it leans on: D6 (inspector, recommended) and D1 (one volume per
-  MON, recommended). Both stay recommendations until the owner answers; the
-  ports take a volume name and a MON name only, so neither answer changes their
-  shape.
-
-### Identity adapters status
+## Identity adapters
 
 Implemented in `ceph/mon_store_monmap.go`, `ceph/mon_store_inspect_container.go`
 and `ceph/mon_store_json.go`, tested Docker-free. They are the concrete
-adapters behind the two ports above. Nothing calls them, no Docker or moby
-call exists in them, no public name was added, and no native run was made.
-0.x: no old name is renamed or removed, and no alias is added.
+adapters behind the two ports above. Nothing calls them in production and no
+native run exists.
 
 - Monmap adapter. `monStoreMonmapCLI` runs `ceph mon dump --format json` and
   then `ceph quorum_status --format json` through a `monStoreCLI` function (stdout
@@ -435,19 +261,19 @@ call exists in them, no public name was added, and no native run was made.
   outside the adapter files mentions the adapter symbols, that the symbol table
   matches the declarations, that the adapters import no `sync`, moby client or
   testcontainers package, and that the guard detects a synthetic caller. The
-  port guard of `mon_store_inspect_test.go` now exempts the adapter files.
+  port guard of `mon_store_inspect_test.go` exempts the adapter files.
 - Known gap of the script. A regular file swapped for a symlink between the
   `lstat` and the `open` is refused by `O_NOFOLLOW` and the inode comparison,
   but no Docker-free test can force that race, so the mutation that removes
   `O_NOFOLLOW` survives the tests. The mount is read-only and the inspector
   runs only against a stopped store, which is the real protection.
 
-Engine translation status. `ceph/mon_store_inspect_engine.go` implements the
-addendum below as `monStoreMobyEngine`, tested Docker-free in
+Engine translation. `ceph/mon_store_inspect_engine.go` implements the engine
+as `monStoreMobyEngine`, tested Docker-free in
 `ceph/mon_store_inspect_engine_test.go` with a small fake of the Docker client.
 Nothing constructs it: it has no default client, so the first caller supplies
 the constructor, and the production-caller guards cover its symbols. It holds no
-lock and no state, so the lock order is unchanged.
+lock and no state.
 
 - `Create` runs `validate` first and then makes one create call: the numeric
   user, the entrypoint and command, the two labels, a named-volume mount with
@@ -472,79 +298,18 @@ given owner, how a daemon ends the log stream, that the read-only named-volume
 mount rejects a write natively, and that the `Terminate` scan (which removes
 with `RemoveVolumes`) leaves a named store volume alone. No native run exists.
 
-Design addendum for the engine, the part that this slice does not implement and
-that only a native run settles:
+The inspector image must carry `python3` and run as the numeric owner of the
+store; whether that uid:gid is read from the retained store or taken from the
+image's `ceph` user is a native question and must not be guessed in code. The
+inspector is a volume user while it exists, so a caller must keep a second
+replacement from starting while an inspection runs, under `Container.mu`.
 
-1. A moby-backed `monStoreInspectEngine` translates `monStoreInspectRequest` one
-   to one into the create call (user, entrypoint, command, labels, a read-only
-   mount of the named volume, `NetworkMode: none`, `CapDrop: ALL`,
-   `no-new-privileges`, read-only root file system, no auto-remove). Its
-   `validate` runs on the request first.
-2. `Wait` must return the exit code of the stopped container and must not treat a
-   context end as an exit. `Logs` must demultiplex stdout and stderr, stop
-   reading at the limit and report truncation instead of returning a prefix as a
-   listing. `Remove` must be forced, must not pass `RemoveVolumes`, and must treat
-   a missing container as success.
-3. The image must be a cluster image that carries `python3` and runs as the
-   numeric owner given. The uid:gid is read from the retained store at bind time
-   or taken from the image's `ceph` user; which of the two is correct is a native
-   question and must not be guessed in code.
-4. The inspector is a volume user while it exists. The attachment bookkeeping
-   (`requireRetained`, `inspect`) already refuses an inspection while a MON
-   generation is attached; the caller slice must also keep a second `Reopen` or
-   `Detach` from starting while an inspection runs, under the existing
-   `Container.mu`, with no new mutex.
-5. Bind time (a running member) is not covered: `observeStopped` refuses a member
-   in quorum, and the identity at the first ready check needs its own source.
-
-## The model, and what it forces
-
-The model is the whole requirement. Every MON has its own volume (never a
-shared cluster volume). The volume outlives the container. A MON upgrade means
-the old container is stopped and removed, and a new container, possibly from a
-new image, mounts the same volume of that MON and rejoins. Nothing else is
-needed for the data to persist.
-
-Only these choices follow from it:
-
-- One volume per MON. This is the only one of the earlier D1 to D9 labels that
-  the model forces. The other labels (a cluster-wide option, how the initial MON
-  is handled, `Detach`/`Reopen` names, discard rules, when `StoreVolume`
-  ships) are not decisions of this note; older sections that mention them are
-  historical.
-- The replacement mounts the volume of that MON, only after the old container is
-  confirmed gone, and never formats: the entrypoint's require-store mode makes
-  a missing store a failure.
-- The new container needs the old address. The monmap pins it, so a replacement
-  that cannot bind it cannot rejoin. That is the host-network and port-lease
-  question below, and it is the real remaining design work.
-
-### Audit of the merged pieces against the model
-
-| Piece | Verdict |
-| --- | --- |
-| Ownership record (`monStoreVolume`, `monStoreState`): create once, publish before create, one volume per MON, release after the containers, never forced | Required. |
-| Metadata validation of the volume, bound store with a missing, changed or foreign volume is never recreated | Required (small). |
-| Attachment record and `confirmGone` (container absent by inspect and by an independent list of volume users) | Required: it is the check that the old container is gone before the new one mounts. |
-| Generation counter | Harmless bookkeeping, not required. |
-| Require-store mode in `mon.sh` and `mon-join.sh` | Required: it stops a replacement from silently formatting an empty volume. |
-| `detached` phase, `detach`, `verify`, `verified`, the monStoreIdentity (keyring digest, shape, fingerprint, FSID, addresses) | Extra for the model. It detects a store that someone changed outside the fixture. It is not needed for persistence or for the safety of the replacement path. |
-| Identity ports, `observeStopped`, `verifyStopped` | Extra, same reason. |
-| Read-only inspector (request, script, listing parser, container driver, moby engine) | Extra, same reason. |
-| Strict monmap JSON decoder and the `mon dump` / `quorum_status` adapter | Extra for persistence. Reading the live monmap may become useful for the address question, but nothing needs it yet. |
-| `Detach`, `Reopen`, `DetachedMonitor` vocabulary (proposal only, no code) | Extra: the model is "replace the container of this MON". |
-
-Nothing was deleted by the slice that adds the replacement path. The pieces
-marked extra are proposed for removal or parking; whether to remove them is a
-separate change.
-
-### Replacement path status
+## Replacement path
 
 Implemented in `ceph/mon_store_generation.go`, tested Docker-free in
 `ceph/mon_store_generation_test.go` against a small fake of the container side
-(`monStoreGenerations`). Nothing calls it, no public name exists, no Docker
-container call exists in it and no native run was made. 0.x: no old name is
-renamed or removed, and no alias is added.
+(`monStoreGenerations`). Nothing calls it in production and no native run
+exists.
 
 - `startGeneration`: the first generation formats a new store, a later one
   requires it. The pending attachment is published before the container is
@@ -559,15 +324,14 @@ renamed or removed, and no alias is added.
   store is verified), then stops the old container, then starts the next one
   from the new image on the same volume. A failure of the new container leaves
   the volume and the record, and never formats.
-- `dispatch` change: a store marked ready without an identity no longer needs a
-  verification. A store bound with an identity (`bind`) keeps needing it, and
-  `detached` is unchanged.
+- `dispatch`: a store marked ready without an identity needs no verification;
+  a store bound with an identity (`bind`) needs it.
 - What it does not establish: any real container call, that the new image
   starts on the old store, that the monmap lets it rejoin, that the address
   handoff below works against a real engine, the production caller (`runMonitor`, `AddMonitor`), the option and
   `Remove`/`Terminate` wiring, and any native behavior.
 
-### Address handoff
+## Address handoff
 
 Implemented in `ceph/mon_store_address.go` and `startGeneration`, uncalled and
 tested Docker-free against the fake of the container side. The monmap pins the

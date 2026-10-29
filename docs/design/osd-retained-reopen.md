@@ -1,19 +1,19 @@
 # Retained OSD detach and reopen
 
-This is the first retained lifecycle increment for #6. `OSDContainer.Detach` and
-`DetachedOSD.Reopen` restart one classic BlueStore store from the owned ordinary volume
-of [WithOSDVolumeStorage](osd-volume-storage.md) in a different container,
+`OSDContainer.Detach` and `DetachedOSD.Reopen` restart one classic BlueStore
+store from the owned ordinary volume of
+[OSDStorage.WithVolume](osd-volume-storage.md) in a different container,
 with the same numeric OSD ID, OSD UUID and cluster FSID. `AddOSD` and
-`OSDContainer.Remove` keep their meanings: fresh registration and permanent purge.
+`OSDContainer.Remove` mean fresh registration and permanent purge.
 
 ## States
 
 | State | Owner | Container | MON registration |
 | --- | --- | --- | --- |
-| Owned | `c.osds` | the running instance | up |
-| Detaching | `c.osds`, `detaching` | fenced; stopped or removed (`detachRemoved`) | down |
-| Detached | `c.detachedOSDs` | none | down, same UUID |
-| Reopened | `c.osds`, a new descriptor | a new instance | up, same UUID |
+| Owned | the registry's owned map | the running instance | up |
+| Detaching | the owned map, `detaching` | fenced; stopped or removed (`detachRemoved`) | down |
+| Detached | the registry's detached map | none | down, same UUID |
+| Reopened | the owned map, a new descriptor | a new instance | up, same UUID |
 
 Every transition holds the topology mutex, so two reopens of one store are
 serialized and the second finds it consumed. `OSDContainer.Remove` refuses a detaching or
@@ -66,7 +66,7 @@ BlueStore's own lock on its block file is an additional safeguard. None of
 these revokes a raw Docker handle that a caller copied; the old container
 is gone, so such a handle cannot start it.
 
-## Validation and remaining scope
+## Validation
 
 Unit tests use a fake control, a store-backed helper and a fake runner. They
 cover the reopen identity and the distinct handle, every preflight refusal
@@ -106,8 +106,7 @@ MemStore backends, a held network delay or interruption at detach, cancelled
 or partially failed native detach and reopen after admission, or several retained
 stores in one native run. Unit tests cover a
 cancelled reopen, partial detach and a failed reopen start with fakes only. A
-pending-resource ledger for a lost creation reply still relies on the existing
-owner-label scan.
+lost creation reply is settled by the owner-label scan.
 
 ## Concurrent native admission and saved instances
 

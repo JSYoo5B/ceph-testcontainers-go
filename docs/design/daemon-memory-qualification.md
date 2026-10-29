@@ -1,6 +1,6 @@
 # Container-local MON memory qualification
 
-This opt-in research fixture separates finite-limit restoration, a possible
+This opt-in fixture separates finite-limit restoration, a possible
 Ceph daemon OOM, native quorum recovery and resource cleanup. It adds no public
 fault API or supported memory defaults. CPU throttling, other daemon roles,
 other engines and data durability are separate experiments.
@@ -95,21 +95,3 @@ native OOM, pressure or recovery evidence.
 References: [Docker memory/swap semantics](https://docs.docker.com/engine/containers/resource_constraints/),
 [kernel cgroup-v2 memory events](https://docs.kernel.org/admin-guide/cgroup-v2.html),
 and [existing resource accounting adapter](../../internal/integration/container_accounting_helpers_test.go).
-
-## Initial observed boundary
-
-An unprivileged controller attempt at `7037e497b9eef7d19fc9e6a9cdd1c3e4a3fff020`
-failed PID1-executable admission before any resource update. A separate,
-checksum-verified privileged attempt at `0f0f20590c8c318f8ddbf59768f0727e028f2733`
-on Linux amd64 / Docker 29.9.1 / the official Ceph 20.2.4 image observed the
-finite same-generation round trip and three-member native quorum. The complete
-OOM test still failed: current MON usage was at or below the predeclared 32 MiB
-pressure ceiling, so no pressure update was dispatched. Owned containers were
-removed. No limit was progressively reduced to obtain a kill.
-
-Those observations qualify the finite controller prerequisite only. Actual OOM,
-Ceph-victim attribution, the event-file behavior after a real cgroup teardown,
-and OOM recovery remain unqualified. The separately selectable finite-roundtrip
-entry lets that useful prerequisite run without disguising the experimental
-OOM admission failure as a passing native OOM test. Exact final-source checks
-and immutable image/build receipts belong with each execution report.

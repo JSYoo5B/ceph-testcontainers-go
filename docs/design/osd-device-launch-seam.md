@@ -1,27 +1,27 @@
-# OSD device launch seam (design note)
+# OSD device launch seam
 
-This note scopes the internal launch seam that issue #7 lists as still open: map
-one verified, owned block device into one OSD before `mkfs`. It adds no code,
-no public host-device option and no native experiment. It records what the
-current launch path does, what the pinned Ceph source does with a device path,
-and the questions a later implementation must answer or leave to the owner.
+The internal launch seam maps one verified, owned block device into one OSD
+before `mkfs`. There is no public host-device option and no native device run:
+nothing shows yet that Docker maps a DM node into the OSD container or that
+`ceph-osd --mkfs` succeeds on it. This page records what the launch path does,
+what the pinned Ceph source does with a device path, and the internal claim
+table and wiring step.
 
 Pinned source: Ceph 7f793731f1b39eb4f465e960113d2363c311b964 (Tentacle 20.2.4).
-Repository references are to main at the time of writing.
 
-## Current launch path
+## Launch path
 
 | Step | Where | Fact |
 | --- | --- | --- |
 | Request | `osdLaunchRecipe.Customize` (`ceph/osd_launch.go`) | Adds network, config and keyring files, the bootstrap script, env, wait strategy and the three optional volumes (memory, ordinary OSD volume, run). It has no device, host-config or capability input. |
 | Bootstrap | `ceph/internal/scripts/osd.sh` | Takes the fresh branch only for an empty `/var/lib/ceph/osd/ceph-<id>`, copies the keyring, then runs `ceph-osd --mkfs -i <id> --osd-uuid <uuid>`. A present regular `ready` marker takes the restart branch and never runs `mkfs`. |
-| Block config | `ceph/internal/scripts/mon.sh` (rendered `[osd]` section) | `bluestore block create = true` and `bluestore block size = <WithOSDBlockSize>`, shared by every OSD through the one cluster config. |
+| Block config | `ceph/internal/scripts/mon.sh` (rendered `[osd]` section) | `bluestore block create = true` and `bluestore block size = <OSDStorage.WithBlockSize>`, shared by every OSD through the one cluster config. |
 | Reserved keys | `ceph/config_file.go` | `bluestore_block_path`, `bluestore_block_create` and `bluestore_block_size` are rejected from user overrides as fixture-managed. |
 | Retained store | `retainedStore` (`ceph/osd_retained.go`) | Requires `block` to be a regular, non-symlink file in the volume directory. |
 
-Consequences: a device cannot reach the daemon today, the cluster-wide config
-cannot carry a per-OSD path, and a symlinked block entry is refused by the
-retained-store admission on purpose (#6 policy).
+Consequences: a device cannot reach the daemon through the ordinary launch, the
+cluster-wide config cannot carry a per-OSD path, and a symlinked block entry is
+refused by the retained-store admission on purpose.
 
 ## What the pinned source does with a device path
 
@@ -49,7 +49,7 @@ bluestore_block_path, bluestore_block_size, bluestore_block_create)`
    map a device that holds data the fixture does not own.
 5. On later starts `block` is the persisted symlink; `_open_bdev(false)` opens
    it through `KernelDevice::open`, which opens several descriptors for one
-   device (see the issue's pinned references). A restart or reopen therefore
+   device. A restart or reopen therefore
    needs the same node at the same container path, or an updated link.
 
 ## What a seam must carry
@@ -73,8 +73,7 @@ inputs that are plain strings, with these parts:
   only), validated like `CEPH_OSD_UUID`. It must not be reachable from user
   config overrides, which keep rejecting the three reserved keys.
 - Metadata separation: the OSD metadata directory, keyring and MON registration
-  remain on the existing storage backend. Only `block` comes from the lease, as
-  the issue requires.
+  remain on the ordinary storage backend. Only `block` comes from the lease.
 - Admission order: verify the lease identity, create the container with the
   device, check inside the container that the path is the expected
   block device (type and major:minor), then run `mkfs`, then start the daemon.
@@ -93,16 +92,14 @@ inputs that are plain strings, with these parts:
   regular-file check in `retainedStore` is out of scope.
 - A `mkfs` that ran on the device makes the device contents the OSD's data. The
   lease owner, not the OSD handle, decides whether the chain is destroyed, and
-  retains the whole chain when any control is uncertain, as the report criterion
-  already requires.
-- The one-creation-attempt rule of `startOSD` applies unchanged: the seam does
-  not authorize replaying a device launch.
+  retains the whole chain when any control is uncertain.
+- The one-creation-attempt rule of `startOSD` applies: the seam does not
+  authorize replaying a device launch.
 
 ## Cluster-wide device claim table (internal primitive)
 
 `ceph/osd_device_claims.go` (`osdDeviceClaims`, `Container.deviceClaims`) is the
-claim table that the launch seam left to its first production caller. It is a
-primitive: only the unexported wiring step below calls `claim` and it has no production caller, so no cluster holds a claim and the two
+claim table of the launch seam. It is a primitive: only the unexported wiring step below calls `claim` and it has no production caller, so no cluster holds a claim and the two
 Terminate hooks and the `removeOSD` hook are no-ops.
 
 - **What a claim is.** Exclusion bookkeeping in the Go cluster: OSD ID, an opaque
@@ -114,7 +111,7 @@ Terminate hooks and the `removeOSD` hook are no-ops.
 - **Uniqueness.** One claim per OSD ID, lease token, `/dev/mapper` node and
   major:minor, each compared with every held claim. A refused claim changes
   nothing and repeating a request is a conflict with itself.
-- **Lock.** `Container.mu` guards the table; no mutex was added. `claim` is
+- **Lock.** `Container.mu` guards the table; it has no mutex of its own. `claim` is
   meant to run where `registerOSD` runs, before the recipe can start. The only
   state shared with `startOSD` (which runs without `mu`) is the recipe's atomic
   one-shot.
@@ -128,10 +125,8 @@ Terminate hooks and the `removeOSD` hook are no-ops.
   `terminate` drops it per OSD after `osd.Terminate` and before the handle is
   forgotten, and `settle` drops the rest only after the labeled-container removal
   succeeded for an owned cluster. A claim that survives Terminate is named in its
-  error so the lease owner keeps the whole chain. The existing Terminate order is
-  unchanged.
-- **Unchanged.** `Detach`, `Reopen` and the retained-store admission still refuse a
-  device OSD; the file-backed tmpfs capacity oracle is untouched.
+  error so the lease owner keeps the whole chain.
+- `Detach`, `Reopen` and the retained-store admission refuse a device OSD.
 
 ## Wiring step (internal, no production caller)
 
@@ -140,49 +135,25 @@ step that registers an OSD, builds its recipe, attaches a verified
 `osdBlockDevice`, claims it under the caller's opaque lease token and returns the
 launch for `startOSD`. The caller holds `Container.mu`; the step takes no lock.
 It is the only caller of `attachBlockDevice` and of `claim`, and nothing in
-production calls it, so default launches are unchanged. A failure after
+production calls it, so default launches do not use it. A failure after
 registration seals the recipe (never attempted) and leaves the claim table
 unchanged; an attempted or uncertain `startOSD` keeps the claim by the table's
 rules. The caller keeps the external lease through uncertain startup and owned
-cleanup; no result of the step releases it. Lock position, failure table and
-guards are in [OSD device claims](container-decomposition/osd-device-claims.md).
-It establishes no attachment observer, native device opening, effect window,
+cleanup; no result of the step releases it. The step's call order and guards
+are pinned by `ceph/osd_device_wiring_test.go`. It establishes no attachment observer, native device opening, effect window,
 restart/reopen or cross-process exclusion.
 
-## Composition with the existing Python observers
+## Composition with the Python observers
 
-The three merged units map onto launch phases and stay separate from it:
+The three observer units map onto launch phases and stay separate from it:
 
 | Phase | Unit | Provides | Does not provide |
 | --- | --- | --- | --- |
 | Before `mkfs` | lease record (join input) | Owned chain identity recorded before the daemon starts | Any statement about the daemon |
-| Daemon running | `block_fd_observer.py` (#136) | Flag-aware FD classification; O_PATH diagnostics kept apart from read/write direct and buffered FDs | Exclusivity or workload exposure |
-| During observation | `block_fd_borrow.py` (#139) | Scoped borrow with a closure lease | Teardown evidence |
-| After start | `block_attachment_join.py` (#153) | Point-in-time join of lease, DM/loop/file, container generation, PID start identity and snapshot | Fault effects |
+| Daemon running | `block_fd_observer.py` | Flag-aware FD classification; O_PATH diagnostics kept apart from read/write direct and buffered FDs | Exclusivity or workload exposure |
+| During observation | `block_fd_borrow.py` | Scoped borrow with a closure lease | Teardown evidence |
+| After start | `block_attachment_join.py` | Point-in-time join of lease, DM/loop/file, container generation, PID start identity and snapshot | Fault effects |
 
 The Go seam supplies the lease and the container/daemon generation records; it
 does not interpret descriptors. The observers run on the Linux runner against
 real `/proc` and are native evidence only when a CI job runs them on an exact head.
-
-## Questions for the owner
-
-1. Should the first native experiment drive the seam through a test-only
-   internal hook, or does the owner want an exported but explicitly unstable
-   option? This note assumes internal only.
-2. Is `--device` style mapping acceptable on the runner, or must the OSD receive
-   the node by a bind mount of a prepared path? The two differ in the cgroup
-   device rule and in what Docker removes at container removal. Neither is
-   exercised here.
-3. Which pre-`mkfs` check is acceptable inside the container: an exec of
-   `test -b` plus a major:minor read, or a check folded into `osd.sh`?
-4. Does the seam run with the default capability set? Opening a mapped block
-   device read/write may need privileges the fixture does not currently grant;
-   this note does not claim it works unprivileged.
-
-## What this note does not establish
-
-No code, test or native run accompanies it. It does not show that Docker maps a
-DM node into the OSD container, that `ceph-osd --mkfs` succeeds on it, that a
-second replica is unnecessary, or that any fault can be injected. The
-`_setup_block_symlink_or_file` behavior above is read from the pinned source,
-not executed.

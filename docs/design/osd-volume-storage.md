@@ -1,8 +1,7 @@
 # Owned ordinary OSD volume storage
 
-This is a bounded storage-backend increment for #6. `WithOSDVolumeStorage`
-selects classic BlueStore files in one cluster-owned ordinary Docker local named
-volume. The default remains per-container writable-layer files. The tmpfs and
+`OSDStorage.WithVolume()` selects classic BlueStore files in one cluster-owned ordinary Docker local named
+volume. The default is per-container writable-layer files. The tmpfs and
 MemStore options cannot be combined with this option; admission precedes Docker
 allocation. No existing volume, host mount, device or driver option is adopted.
 
@@ -26,14 +25,14 @@ while the helper is stopped. There is no automatic repair or replacement.
 
 ## Purge and termination
 
-`OSDContainer.Remove` keeps its existing drain, native UUID/purge and target-command fences.
+`OSDContainer.Remove` keeps its drain, native UUID/purge and target-command fences.
 Only after purge and confirmed container removal does it delete that numeric
 ID's directory. A cleanup failure retains the purged descriptor and refuses new
 registrations until cleanup is retried; sibling OSD directories remain intact.
 
 `Terminate` first removes every tracked OSD, then the helper and ordinary volume.
 It never forces volume deletion. A busy mount or uncertain error retains the
-storage owner for retry. The existing cluster-label scan removes owned containers
+storage owner for retry. The cluster-label scan removes owned containers
 whose creation reply was lost, followed by another release attempt. A foreign
 volume, changed metadata or unknown inspect failure is not treated as absent.
 A confirmed missing volume settles cleanup.
@@ -45,7 +44,7 @@ labels and creation timestamps are conservative checks, not a security boundary.
 Docker refusing a busy deletion is necessary cleanup behavior, not exclusive
 attachment validation.
 
-## Validation and remaining #6 scope
+## Validation
 
 Unit controls cover incompatible admission, lazy/uncertain allocation, partial
 helper ownership, changed metadata, stale helpers, fresh paths, sibling-preserving

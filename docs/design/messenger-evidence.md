@@ -1,7 +1,7 @@
 # Messenger declaration and native-case evidence join
 
-This is the first executable increment of #3. The reference inventory has 357
-Ceph declarations; this join maps two message declarations (`MSG_COMMAND` and
+The reference inventory has 357 Ceph declarations; this join maps two message
+declarations (`MSG_COMMAND` and
 `MSG_COMMAND_REPLY`) to `targeted-command/osd-pg-mds` and the existing
 `TestTargetedCommandRecipe`. The other 355 declarations remain explicitly
 unmapped. A mapping, available recipe or passing parser is not native execution,
@@ -19,10 +19,10 @@ to one declaration or requirement; numeric aliases are never merged across
 namespaces. Unknown declarations, unrelated requirement symbols, missing cases,
 stale markers, duplicate links/IDs and a changed Ceph reference are errors.
 
-This increment permits **one binding per exact top-level Go test**, even when
+The catalogue permits **one binding per exact top-level Go test**, even when
 separate binding IDs would use different declarations. Subtest/regular-expression
-selectors and multiple binding records per test require a future producer/join
-contract; the current producer retains one pending record. A single binding may
+selectors and multiple binding records per test are refused; the producer
+retains one pending record. A single binding may
 name several declarations only when its reviewed assertion contract explicitly
 supports every edge. Sharing a parent test PASS is insufficient.
 
@@ -43,16 +43,14 @@ families must add a reviewed validator with their own assertions before any
 native-state receipt can count. Validated reports retain the selected source and
 contract alongside the case.
 
-The binding catalogue moves from v1 to v2 with explicit source/contract fields;
-old catalogues are refused rather than silently assigned the first recipe's
-semantics. The runtime `ceph-messenger-case/v1` envelope and the existing test's
-assertions stay unchanged. Its source digests already bind the exact catalogue
-bytes, so historical receipts do not become current-source executions merely by
-adding these fields.
+The binding catalogue is v2 with explicit source/contract fields; a v1
+catalogue is refused rather than silently assigned the first recipe's
+semantics. The runtime envelope is `ceph-messenger-case/v1`. Its source digests
+bind the exact catalogue bytes, so an older receipt never counts as a
+current-source execution.
 
-The first evidence class is `native-state`. The validator deliberately refuses
-to elevate it to a wire claim. Future wire/opcode joins require their own actual
-protocol observations and validators; fixture capability cannot supply them.
+The only evidence class is `native-state`. The validator deliberately refuses
+to elevate it to a wire claim; fixture capability cannot supply one.
 
 ## Runtime receipt
 
@@ -99,11 +97,11 @@ the emitted receipt or remove the client ID to make a mismatch pass.
 
 The receipt records actual inspected image IDs and the full native
 version; mismatched IDs, release, platform or pinned native build are refused.
-No Squid or additional platform support is established by this first increment.
+No Squid or additional platform support is established.
 
 ## Validation and reports
 
-Source registration now requires Go 1.26 or later as well as Python, matching
+Source registration requires Go 1.26 or later as well as Python, matching
 the repository toolchain. The AST helper is this validator's own trusted source;
 `--root` selects data to inspect, not Go code to run.
 
@@ -141,13 +139,11 @@ are not silently counted as another case. Without execution, reports keep
 explicitly set wire and consumer implementation claims to false.
 
 The synthetic validator tests are offline controls, not stored native receipts.
-Other reference families, release/image cohorts and unsupported-case descriptions
-remain follow-up work under #3. No new workflow or workflow per opcode is introduced.
 
 
 ## Automatic scenario history join
 
-The existing tagged-runtime history normalization now adds a `messenger` field
+The tagged-runtime history normalization adds a `messenger` field
 when the compiled test inventory or retained log selects a mapped case. It runs
 no native command: the trusted Go `test2json` tool converts the saved verbose log,
 then the existing source/receipt validator checks those events. Conversion has a
