@@ -36,6 +36,7 @@ TABLE = [
     ("docs/contributing/test-double-inventory.md", False),
     # Read by ceph/shared_harness_inventory_test.go (the shared harness inventory).
     ("docs/design/shared-harness-boundary.md", False),
+    ("docs/design/value-configuration-composition.md", False),
     # Read by ceph/container_decomposition_records_test.go and ceph/container_residual_fields_test.go:
     # the shared document and every component record of the directory, including one that is added later.
     ("docs/design/container-decomposition.md", False),
