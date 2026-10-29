@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd/internal/resourcename"
@@ -39,14 +40,14 @@ const tenantWatchWait = 60
 // removes everything in the namespace.
 func Lease(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, error) {
 	if t == nil {
-		return nil, invalid(errors.New("tenant is required"))
+		return nil, harnesshook.Invalid(errors.New("tenant is required"))
 	}
 	if err := resourcename.Check("pool", pool); err != nil {
-		return nil, invalid(err)
+		return nil, harnesshook.Invalid(err)
 	}
 	port, err := servicehook.Tenant(t)
 	if err != nil {
-		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
+		return nil, harnesshook.Invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
 	if err := port.RequireService(servicekind.RBD); err != nil {
 		return nil, err
@@ -62,7 +63,7 @@ func Lease(ctx context.Context, t *ceph.Tenant, pool string) (*TenantNamespace, 
 		return nil, errors.New("decode the applications of an RBD pool")
 	}
 	if _, ok := applications["rbd"]; !ok {
-		return nil, invalid(fmt.Errorf("pool %q is not an RBD pool; create it with rbd.WithPools in ceph.WithSharedRunOptions", pool))
+		return nil, harnesshook.Invalid(fmt.Errorf("pool %q is not an RBD pool; create it with rbd.WithPools in ceph.WithSharedRunOptions", pool))
 	}
 	namespace := t.ID()
 	// Attached first, so that the release also removes a namespace whose

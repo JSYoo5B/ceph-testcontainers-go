@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"io"
 	"os"
@@ -25,7 +26,7 @@ func ExportBackup(ctx context.Context, client testcontainers.Container, image st
 // can include @snapshot). Restore requires the matching baseline snapshot.
 func ExportIncremental(ctx context.Context, client testcontainers.Container, image, fromSnapshot string, destination io.Writer) error {
 	if fromSnapshot == "" || strings.ContainsAny(fromSnapshot, "/@\x00\r\n") || strings.HasPrefix(fromSnapshot, "-") {
-		return invalid(errors.New("incremental backup requires a valid baseline snapshot name"))
+		return harnesshook.Invalid(errors.New("incremental backup requires a valid baseline snapshot name"))
 	}
 	return exportRBDArchive(ctx, client, image, fromSnapshot, destination)
 }
@@ -44,10 +45,10 @@ func RestoreIncremental(ctx context.Context, client testcontainers.Container, im
 
 func validateRBDArchiveClient(client testcontainers.Container, image string) error {
 	if client == nil {
-		return invalid(errors.New("RBD archive operation requires a client container"))
+		return harnesshook.Invalid(errors.New("RBD archive operation requires a client container"))
 	}
 	if image == "" || strings.HasPrefix(image, "-") || strings.ContainsAny(image, "\x00\r\n") {
-		return invalid(errors.New("RBD archive operation requires a valid image specification"))
+		return harnesshook.Invalid(errors.New("RBD archive operation requires a valid image specification"))
 	}
 	return nil
 }
@@ -57,7 +58,7 @@ func exportRBDArchive(ctx context.Context, client testcontainers.Container, imag
 		return err
 	}
 	if destination == nil {
-		return invalid(errors.New("RBD archive destination writer is required"))
+		return harnesshook.Invalid(errors.New("RBD archive destination writer is required"))
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -84,7 +85,7 @@ func restoreRBDArchive(ctx context.Context, client testcontainers.Container, ima
 		return err
 	}
 	if archive == nil {
-		return invalid(errors.New("RBD archive reader is required"))
+		return harnesshook.Invalid(errors.New("RBD archive reader is required"))
 	}
 	if err := ctx.Err(); err != nil {
 		return err

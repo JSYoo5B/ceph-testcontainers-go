@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicekind"
@@ -44,14 +45,14 @@ const tenantPurgeWait = 90 * time.Second
 // filesystem once.
 func Lease(ctx context.Context, t *ceph.Tenant, fs string) (*TenantGroup, error) {
 	if t == nil {
-		return nil, invalid(errors.New("tenant is required"))
+		return nil, harnesshook.Invalid(errors.New("tenant is required"))
 	}
 	if fs != "" && !naming.ClientID.MatchString(fs) {
-		return nil, invalid(errors.New("filesystem name must use letters, digits, dots, underscores or hyphens"))
+		return nil, harnesshook.Invalid(errors.New("filesystem name must use letters, digits, dots, underscores or hyphens"))
 	}
 	port, err := servicehook.Tenant(t)
 	if err != nil {
-		return nil, invalid(fmt.Errorf("tenant %s is released", t.ID()))
+		return nil, harnesshook.Invalid(fmt.Errorf("tenant %s is released", t.ID()))
 	}
 	if err := port.RequireService(servicekind.CephFS); err != nil {
 		return nil, err
@@ -63,7 +64,7 @@ func Lease(ctx context.Context, t *ceph.Tenant, fs string) (*TenantGroup, error)
 		return nil, err
 	}
 	if found.Error != "" {
-		return nil, invalid(errors.New(found.Error))
+		return nil, harnesshook.Invalid(errors.New(found.Error))
 	}
 	g := &TenantGroup{tenant: port, fs: found.Filesystem, dataPool: found.DataPool}
 	// Attached first, so that the release also removes a group whose
@@ -125,13 +126,13 @@ func (g *TenantGroup) WithClient(opts ...ceph.ClientContainerOption) testcontain
 // removes it.
 func (g *TenantGroup) CreateSubvolume(ctx context.Context, name string, sizeBytes int64) (string, error) {
 	if !naming.ClientID.MatchString(name) {
-		return "", invalid(errors.New("subvolume name must use letters, digits, dots, underscores or hyphens"))
+		return "", harnesshook.Invalid(errors.New("subvolume name must use letters, digits, dots, underscores or hyphens"))
 	}
 	if sizeBytes < 0 {
-		return "", invalid(errors.New("subvolume size must not be negative"))
+		return "", harnesshook.Invalid(errors.New("subvolume size must not be negative"))
 	}
 	if g.tenant.Live() != nil {
-		return "", invalid(fmt.Errorf("tenant %s is released", g.tenant.ID()))
+		return "", harnesshook.Invalid(fmt.Errorf("tenant %s is released", g.tenant.ID()))
 	}
 	ctx, cancel := context.WithTimeout(ctx, g.tenant.StartupTimeout())
 	defer cancel()

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/harnesshook"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -26,13 +27,13 @@ func normalizeRGWPlacementTags(tags []string) ([]string, error) {
 	tags = slices.Clone(tags)
 	for _, tag := range tags {
 		if tag == "" || len(tag) > 128 || strings.Contains(tag, ",") || strings.IndexFunc(tag, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) != -1 {
-			return nil, invalid(errors.New("RGW placement tags must be nonempty, at most 128 bytes, and contain no whitespace, commas or control characters"))
+			return nil, harnesshook.Invalid(errors.New("RGW placement tags must be nonempty, at most 128 bytes, and contain no whitespace, commas or control characters"))
 		}
 	}
 	slices.Sort(tags)
 	for i := 1; i < len(tags); i++ {
 		if tags[i] == tags[i-1] {
-			return nil, invalid(errors.New("RGW placement tags must be distinct"))
+			return nil, harnesshook.Invalid(errors.New("RGW placement tags must be distinct"))
 		}
 	}
 	return tags, nil
@@ -82,7 +83,7 @@ func (g *Gateway) SetUserPlacement(ctx context.Context, user *User, p *Placement
 		return err
 	}
 	if g == nil || g.owner == nil {
-		return invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+		return harnesshook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
 	}
 	servicehook.Lock(g.owner)
 	defer servicehook.Unlock(g.owner)
@@ -159,7 +160,7 @@ func (g *Gateway) placementOwnedUser(ctx context.Context, user *User, scope rgwP
 		return nil, err
 	}
 	if native.info.ID != user.id || !slices.ContainsFunc(native.keys, func(key rgwNativeKey) bool { return key.AccessKey == user.accessKey && key.SecretKey == user.secretKey }) {
-		return nil, invalid(errors.New("RGW user has different credentials in the actual native scope; refusing placement update"))
+		return nil, harnesshook.Invalid(errors.New("RGW user has different credentials in the actual native scope; refusing placement update"))
 	}
 	if err := g.validateUserCreationIdentity(ctx, user, native); err != nil {
 		return nil, err
