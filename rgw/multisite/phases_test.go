@@ -49,8 +49,8 @@ func (c *rgwScriptCLI) Exec(_ context.Context, args []string, _ ...tcexec.Proces
 
 func newPhaseFixture(source, destination *rgwScriptCLI) *Fixture {
 	f := newPairFixture(Config{Realm: "realm", Zonegroup: "us", SourceZone: "a", DestinationZone: "b", destinationZonegroup: "us"})
-	f.sourceClient, f.destinationClient = source, destination
-	f.systemAccess, f.systemSecret = "ACCESS", "SECRET"
+	f.realm.sourceClient, f.realm.destinationClient = source, destination
+	f.realm.systemAccess, f.realm.systemSecret = "ACCESS", "SECRET"
 	return f
 }
 
@@ -79,19 +79,19 @@ func TestRGWPairConfigFillsDefaultsAndRefusesMisreadNames(t *testing.T) {
 
 func TestRGWPairFixtureRecordsEachZonegroupMaster(t *testing.T) {
 	same := newPairFixture(Config{Zonegroup: "us", SourceZone: "a", DestinationZone: "b", destinationZonegroup: "us"})
-	if len(same.groupMasters) != 1 || same.groupMasters["us"] != "a" || same.zoneGroupName("b") != "us" || !same.bootstrapStagingPending {
-		t.Fatalf("one zonegroup: masters %v", same.groupMasters)
+	if len(same.topology.groupMasters) != 1 || same.topology.groupMasters["us"] != "a" || same.realm.zoneGroupName("b") != "us" || !same.topology.bootstrapStagingPending {
+		t.Fatalf("one zonegroup: masters %v", same.topology.groupMasters)
 	}
 	split := newPairFixture(Config{Zonegroup: "us", SourceZone: "a", DestinationZone: "b", destinationZonegroup: "eu"})
-	if split.groupMasters["us"] != "a" || split.groupMasters["eu"] != "b" || split.zoneGroupName("b") != "eu" {
-		t.Fatalf("two zonegroups: masters %v", split.groupMasters)
+	if split.topology.groupMasters["us"] != "a" || split.topology.groupMasters["eu"] != "b" || split.realm.zoneGroupName("b") != "eu" {
+		t.Fatalf("two zonegroups: masters %v", split.topology.groupMasters)
 	}
 }
 
 func TestRGWJoinZoneCreatesAGroupOnlyForANewGroup(t *testing.T) {
 	cli := &rgwScriptCLI{}
 	f := newPhaseFixture(cli, cli)
-	if err := f.joinZone(t.Context(), zoneJoin{client: cli, zone: "b", masterURL: "http://a:7480", endpoint: "http://b:7480"}); err != nil {
+	if err := f.realm.joinZone(t.Context(), zoneJoin{client: cli, zone: "b", masterURL: "http://a:7480", endpoint: "http://b:7480"}); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
@@ -105,7 +105,7 @@ func TestRGWJoinZoneCreatesAGroupOnlyForANewGroup(t *testing.T) {
 	}
 	cli.ops = nil
 	// Host mode commits no endpoint before the gateway listens.
-	if err := f.joinZone(t.Context(), zoneJoin{client: cli, zone: "c", masterURL: "http://a:7480", newGroup: "eu"}); err != nil {
+	if err := f.realm.joinZone(t.Context(), zoneJoin{client: cli, zone: "c", masterURL: "http://a:7480", newGroup: "eu"}); err != nil {
 		t.Fatal(err)
 	}
 	want = []string{
@@ -123,7 +123,7 @@ func TestRGWJoinZoneCreatesAGroupOnlyForANewGroup(t *testing.T) {
 func TestRGWZoneCommandsStopAtTheFirstFailure(t *testing.T) {
 	cli := &rgwScriptCLI{fail: map[string]bool{"realm default": true}}
 	f := newPhaseFixture(cli, cli)
-	if err := f.joinZone(t.Context(), zoneJoin{client: cli, zone: "b", masterURL: "http://a:7480"}); err == nil {
+	if err := f.realm.joinZone(t.Context(), zoneJoin{client: cli, zone: "b", masterURL: "http://a:7480"}); err == nil {
 		t.Fatal("a failed realm default was ignored")
 	}
 	if len(cli.ops) != 2 {
@@ -134,14 +134,14 @@ func TestRGWZoneCommandsStopAtTheFirstFailure(t *testing.T) {
 func TestRGWPublishZoneEndpointCommitsTheGroupEndpointOnlyForAGroupMaster(t *testing.T) {
 	cli := &rgwScriptCLI{}
 	f := newPhaseFixture(cli, cli)
-	if err := f.publishZoneEndpoint(t.Context(), cli, "b", "http://host:1", false); err != nil {
+	if err := f.realm.publishZoneEndpoint(t.Context(), cli, "b", "http://host:1", false); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"zone modify --endpoints http://host:1", "period update --commit"}; !slices.Equal(cli.ops, want) {
 		t.Fatalf("member endpoint: %q", cli.ops)
 	}
 	cli.ops = nil
-	if err := f.publishZoneEndpoint(t.Context(), cli, "a", "http://host:2", true); err != nil {
+	if err := f.realm.publishZoneEndpoint(t.Context(), cli, "a", "http://host:2", true); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"zone modify --endpoints http://host:2", "zonegroup modify --endpoints http://host:2", "period update --commit"}; !slices.Equal(cli.ops, want) {
@@ -161,8 +161,8 @@ func TestRGWPairIdentitiesRequireOneRealmAndDistinctZones(t *testing.T) {
 	if err := f.recordPairIdentities(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if f.RealmID != "realm-id" || f.SourceZoneID != "a-id" || f.DestinationZoneID != "b-id" || f.groupIDs["us"] != "us-id" {
-		t.Fatalf("identities: realm %q zones %q/%q groups %v", f.RealmID, f.SourceZoneID, f.DestinationZoneID, f.groupIDs)
+	if f.RealmID != "realm-id" || f.SourceZoneID != "a-id" || f.DestinationZoneID != "b-id" || f.topology.groupIDs["us"] != "us-id" {
+		t.Fatalf("identities: realm %q zones %q/%q groups %v", f.RealmID, f.SourceZoneID, f.DestinationZoneID, f.topology.groupIDs)
 	}
 	for name, change := range map[string]func(source, destination *rgwScriptCLI){
 		"malformed zone":       func(_, d *rgwScriptCLI) { d.replies["zone get"] = `not json` },
@@ -205,7 +205,7 @@ func TestRGWNativeIDTreatsAnUnreadableDocumentAsMissing(t *testing.T) {
 	cli := &rgwScriptCLI{replies: map[string]string{"zone get": `{"name":"a"}`, "realm get": `[`}, fail: map[string]bool{"zonegroup get": true}}
 	f := newPhaseFixture(cli, cli)
 	for entity, wantErr := range map[string]bool{"zone": false, "realm": false, "zonegroup": true} {
-		id, err := f.nativeID(t.Context(), cli, "a", entity)
+		id, err := f.realm.nativeID(t.Context(), cli, "a", entity)
 		if id != "" || (err != nil) != wantErr {
 			t.Fatalf("%s: id %q err %v", entity, id, err)
 		}
@@ -222,20 +222,20 @@ func TestRGWZoneAdditionRefusesBeforeCreatingAnything(t *testing.T) {
 	}{
 		"invalid name":    {config: ZoneConfig{Name: " d"}, want: "invalid RGW zone"},
 		"invalid group":   {config: ZoneConfig{Name: "d", Zonegroup: "-g"}, want: "invalid RGW zone"},
-		"detached name":   {config: ZoneConfig{Name: "b"}, change: func(f *Fixture) { f.removedZones = map[string]*rgwZoneRemoval{"b": {state: &rgwZoneState{}}} }, want: "retain configuration"},
-		"pending removal": {config: ZoneConfig{Name: "d"}, change: func(f *Fixture) { f.removedZones = map[string]*rgwZoneRemoval{"x": {state: &rgwZoneState{}}} }, want: "pending"},
+		"detached name":   {config: ZoneConfig{Name: "b"}, change: func(f *Fixture) { f.topology.removed = map[string]*rgwZoneRemoval{"b": {state: &rgwZoneState{}}} }, want: "retain configuration"},
+		"pending removal": {config: ZoneConfig{Name: "d"}, change: func(f *Fixture) { f.topology.removed = map[string]*rgwZoneRemoval{"x": {state: &rgwZoneState{}}} }, want: "pending"},
 		"detached cluster": {config: ZoneConfig{Name: "d", Cluster: cluster}, change: func(f *Fixture) {
-			f.removedZones = map[string]*rgwZoneRemoval{"x": {state: &rgwZoneState{cluster: cluster}, converged: true, gatewayRemoved: true, clientRemoved: true}}
+			f.topology.removed = map[string]*rgwZoneRemoval{"x": {state: &rgwZoneState{cluster: cluster}, converged: true, gatewayRemoved: true, clientRemoved: true}}
 		}, want: "storage clusters retain"},
 		"unknown group":   {config: ZoneConfig{Name: "d", Zonegroup: "asia"}, want: "requires an owned zonegroup"},
 		"known new group": {config: ZoneConfig{Name: "d", Zonegroup: "eu"}, createGroup: true, want: "requires an owned zonegroup"},
 		"closed":          {config: ZoneConfig{Name: "d"}, change: func(f *Fixture) { f.closed = true }, want: "initialized and running"},
-		"no credentials":  {config: ZoneConfig{Name: "d"}, change: func(f *Fixture) { f.systemSecret = "" }, want: "initialized and running"},
+		"no credentials":  {config: ZoneConfig{Name: "d"}, change: func(f *Fixture) { f.realm.systemSecret = "" }, want: "initialized and running"},
 		"already owned":   {config: ZoneConfig{Name: "a"}, want: "already owned"},
 	}
 	for name, tc := range cases {
 		f, cli, _, _, _ := rgwRemovalFixture()
-		f.systemAccess, f.systemSecret = "ACCESS", "SECRET"
+		f.realm.systemAccess, f.realm.systemSecret = "ACCESS", "SECRET"
 		if tc.change != nil {
 			tc.change(f)
 		}
@@ -243,7 +243,7 @@ func TestRGWZoneAdditionRefusesBeforeCreatingAnything(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("%s: got %v, want %q", name, err, tc.want)
 		}
-		if len(cli.calls) != 0 || len(f.additionalZones) != 1 {
+		if len(cli.calls) != 0 || len(f.topology.additional) != 1 {
 			t.Fatalf("%s: a refused addition ran commands or registered a zone", name)
 		}
 	}
@@ -256,11 +256,11 @@ func TestRGWAdditionMasterRefusesANameInTheCommittedPeriod(t *testing.T) {
 		t.Fatalf("master = %v, %v", master, err)
 	}
 	// An external zone the fixture does not own is still in the period.
-	f.removedZones = map[string]*rgwZoneRemoval{"b": {state: f.zoneStates()[1], detached: true}}
+	f.topology.removed = map[string]*rgwZoneRemoval{"b": {state: f.zoneStates()[1], detached: true}}
 	if _, err := f.additionMaster(t.Context(), "b"); err == nil {
 		t.Fatal("a zone name already in the committed period was accepted")
 	}
-	f.removedZones = nil
+	f.topology.removed = nil
 	f.SourceZoneID = "renamed"
 	if _, err := f.additionMaster(t.Context(), "d"); err == nil || !strings.Contains(err.Error(), "not an owned zone") {
 		t.Fatalf("an unowned metadata master was accepted: %v", err)
@@ -270,7 +270,7 @@ func TestRGWAdditionMasterRefusesANameInTheCommittedPeriod(t *testing.T) {
 func TestRGWAddedZoneIsOwnedBeforeItsFirstContainer(t *testing.T) {
 	f, _, _, _, _ := rgwRemovalFixture()
 	state := f.registerAddedZone(ZoneConfig{Name: "d", Zonegroup: "eu"})
-	if f.additionalZones["d"] != state || f.zoneGroupName("d") != "eu" {
+	if f.topology.additional["d"] != state || f.realm.zoneGroupName("d") != "eu" {
 		t.Fatal("the added zone was not registered")
 	}
 	if !slices.ContainsFunc(f.Zones(), func(zone Zone) bool { return zone.Name == "d" && zone.ID == "" }) {
@@ -278,7 +278,7 @@ func TestRGWAddedZoneIsOwnedBeforeItsFirstContainer(t *testing.T) {
 	}
 	empty := &Fixture{}
 	empty.registerAddedZone(ZoneConfig{Name: "z", Zonegroup: "g"})
-	if empty.zoneGroupName("z") != "g" {
+	if empty.realm.zoneGroupName("z") != "g" {
 		t.Fatal("registration into an empty fixture lost the zonegroup")
 	}
 }
@@ -291,13 +291,13 @@ func TestRGWAddedZoneIdentityRecordsANewGroupMaster(t *testing.T) {
 	if err := f.recordAddedZoneIdentity(t.Context(), state, true); err != nil {
 		t.Fatal(err)
 	}
-	if state.ID != "d-id" || f.groupIDs["asia"] != "asia-id" || f.groupMasters["asia"] != "d" {
-		t.Fatalf("identity %q groups %v masters %v", state.ID, f.groupIDs, f.groupMasters)
+	if state.ID != "d-id" || f.topology.groupIDs["asia"] != "asia-id" || f.topology.groupMasters["asia"] != "d" {
+		t.Fatalf("identity %q groups %v masters %v", state.ID, f.topology.groupIDs, f.topology.groupMasters)
 	}
 	member := f.registerAddedZone(ZoneConfig{Name: "e", Zonegroup: "us"})
 	member.client = cli
 	cli.ops = nil
-	if err := f.recordAddedZoneIdentity(t.Context(), member, false); err != nil || slices.Contains(cli.ops, "zonegroup get") || f.groupMasters["us"] != "a" {
+	if err := f.recordAddedZoneIdentity(t.Context(), member, false); err != nil || slices.Contains(cli.ops, "zonegroup get") || f.topology.groupMasters["us"] != "a" {
 		t.Fatalf("a member zone changed its group: %v %q", err, cli.ops)
 	}
 	cli.replies["zone get"] = `{}`
@@ -319,7 +319,7 @@ func TestRGWZoneRemovalRefusesAZoneThatBecameAMaster(t *testing.T) {
 	}
 	master := rgwPeriodMaster(period, states)
 	removal, err := f.zoneRemoval(period, master, states, "b")
-	if err != nil || removal.state.Name != "b" || f.removedZones["b"] != removal {
+	if err != nil || removal.state.Name != "b" || f.topology.removed["b"] != removal {
 		t.Fatalf("removal = %v, %v", removal, err)
 	}
 	again, err := f.zoneRemoval(period, master, states, "b")
@@ -390,7 +390,7 @@ func TestRGWPeriodPullRequiresSystemCredentialsAndThePeerEndpoint(t *testing.T) 
 	if err := f.PullSourcePeriod(t.Context()); err == nil {
 		t.Fatal("a pull without the destination endpoint was accepted")
 	}
-	f.sourceURL, f.destinationURL = "http://a:7480", "http://b:7480"
+	f.realm.sourceURL, f.realm.destinationURL = "http://a:7480", "http://b:7480"
 	if err := f.PullSourcePeriod(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +404,7 @@ func TestRGWPeriodPullRequiresSystemCredentialsAndThePeerEndpoint(t *testing.T) 
 	if !slices.Equal(cli.ops, want) {
 		t.Fatalf("pulls: %q", cli.ops)
 	}
-	f.systemSecret = ""
+	f.realm.systemSecret = ""
 	if err := f.PullDestinationPeriod(t.Context()); err == nil {
 		t.Fatal("a pull without system credentials was accepted")
 	}
@@ -422,7 +422,7 @@ func TestRGWMetadataBootstrapWaitsOnlyForRunningSecondaries(t *testing.T) {
 		{Zone: Zone{Name: "c", ID: "c-id", Gateway: &rgw.Gateway{Container: &rgwLifecycleContainer{}}}, client: stopped},
 	}
 	f := newPhaseFixture(master, ready)
-	if err := f.waitZoneMetadataBootstrap(t.Context(), states[0], states); err != nil {
+	if err := f.realm.waitZoneMetadataBootstrap(t.Context(), states[0], states); err != nil {
 		t.Fatal(err)
 	}
 	if len(master.ops) != 0 || len(stopped.ops) != 0 || len(ready.ops) != 1 {
@@ -431,14 +431,14 @@ func TestRGWMetadataBootstrapWaitsOnlyForRunningSecondaries(t *testing.T) {
 	ready.replies["metadata sync status --format json"] = `{"sync_status":{"info":{"status":"building-full-sync-maps","num_shards":1}}}`
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := f.waitZoneMetadataBootstrap(ctx, states[0], states); err == nil || !strings.Contains(err.Error(), "did not complete") {
+	if err := f.realm.waitZoneMetadataBootstrap(ctx, states[0], states); err == nil || !strings.Contains(err.Error(), "did not complete") {
 		t.Fatalf("an unfinished bootstrap was accepted after cancellation: %v", err)
 	}
 }
 
 func TestRGWZoneLinkInterruptionRequiresAnOwnedBridgeZone(t *testing.T) {
 	probe := &clustertest.NativeCallCounter{}
-	f := &Fixture{sourceClient: probe, destinationClient: probe, config: Config{SourceZone: "a", DestinationZone: "b"}}
+	f := &Fixture{realm: rgwRealmAccess{sourceClient: probe, destinationClient: probe, config: Config{SourceZone: "a", DestinationZone: "b"}}}
 	if _, err := f.InterruptZoneLink(t.Context(), "a"); err == nil || !strings.Contains(err.Error(), "bridge") {
 		t.Fatalf("a host-mode fixture interrupted a zone link: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestRGWZoneLinkInterruptionRequiresAnOwnedBridgeZone(t *testing.T) {
 	}
 	f.Source = &rgw.Gateway{Container: &rgwLifecycleContainer{running: true}}
 	f.Destination = &rgw.Gateway{Container: &rgwLifecycleContainer{running: true}}
-	f.destinationURL = "http://b"
+	f.realm.destinationURL = "http://b"
 	if _, err := f.ApplyZoneLinkProfile(t.Context(), "a", "b", loss); err == nil || !strings.Contains(err.Error(), "port") {
 		t.Fatalf("a peer endpoint without a port was accepted: %v", err)
 	}

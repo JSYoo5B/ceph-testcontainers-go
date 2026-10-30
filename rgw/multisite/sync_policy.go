@@ -151,9 +151,9 @@ func (f *Fixture) CreateSyncGroup(ctx context.Context, scope SyncPolicyScope, co
 		return nil, err
 	}
 	if scope.Zonegroup == "" {
-		scope.Zonegroup = f.zoneGroupName(f.config.SourceZone)
+		scope.Zonegroup = f.realm.zoneGroupName(f.realm.config.SourceZone)
 	}
-	gid := f.groupIDs[scope.Zonegroup]
+	gid := f.topology.groupIDs[scope.Zonegroup]
 	if gid == "" {
 		return nil, multisiteInvalid(errors.New("RGW sync policy requires an attached owned zonegroup"))
 	}
@@ -429,7 +429,7 @@ func (f *Fixture) validateSyncGroup(g *SyncGroup, allowRemoved bool) error {
 	if g == nil || g.owner != f || g.state == nil || !g.state.confirmed || (!allowRemoved && g.state.removed) {
 		return multisiteInvalid(errors.New("RGW sync group must be active and confirmed as created by this fixture"))
 	}
-	if g.realmID != f.RealmID || g.groupID != f.groupIDs[g.scope.Zonegroup] {
+	if g.realmID != f.RealmID || g.groupID != f.topology.groupIDs[g.scope.Zonegroup] {
 		return errors.New("RGW sync group realm/zonegroup identity changed")
 	}
 	return nil
@@ -587,7 +587,7 @@ func (f *Fixture) syncPolicyMaster(ctx context.Context) (*rgwZoneState, map[stri
 }
 
 func (f *Fixture) syncPolicyAdmin(ctx context.Context, zone *rgwZoneState, group string, args ...string) ([]byte, error) {
-	argv := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--realm-id", f.RealmID, "--zonegroup-id", f.groupIDs[group], "--zone-id", zone.ID, "--format", "json"}
+	argv := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--realm-id", f.RealmID, "--zonegroup-id", f.topology.groupIDs[group], "--zone-id", zone.ID, "--format", "json"}
 	status := (len(args) >= 2 && args[0] == "sync" && args[1] == "status") || (len(args) >= 3 && args[0] == "bucket" && args[1] == "sync" && args[2] == "status")
 	data, err := syncNativeExecMode(ctx, zone.client, status, append(argv, args...)...)
 	return data, err

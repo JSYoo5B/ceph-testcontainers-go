@@ -278,7 +278,7 @@ func newRGWSyncTestFixture() (*Fixture, *rgwSyncCLI, *rgwLifecycleContainer, *rg
 	period := map[string]any{"id": "period-original", "epoch": json.Number("1"), "realm_epoch": json.Number("1"), "realm_id": "realm", "master_zone": "source-id", "master_zonegroup": "group-id", "period_map": map[string]any{"id": "period-original", "zonegroups": []any{syncJSONClone(group)}}, "period_config": map[string]any{}}
 	cli := &rgwSyncCLI{group: group, current: period, bucketID: "bucket-original", bucketPolicy: map[string]any{"groups": []any{}}}
 	source, dest := &rgwLifecycleContainer{running: true}, &rgwLifecycleContainer{running: true}
-	f := &Fixture{RealmID: "realm", SourceZoneID: "source-id", DestinationZoneID: "dest-id", config: Config{Zonegroup: "group", SourceZone: "source", DestinationZone: "destination"}, sourceURL: "http://source:7480", destinationURL: "http://destination:7480", sourceClient: cli, destinationClient: cli, groupIDs: map[string]string{"group": "group-id"}, Source: &rgw.Gateway{Container: source}, Destination: &rgw.Gateway{Container: dest}}
+	f := &Fixture{RealmID: "realm", SourceZoneID: "source-id", DestinationZoneID: "dest-id", Source: &rgw.Gateway{Container: source}, Destination: &rgw.Gateway{Container: dest}, realm: rgwRealmAccess{config: Config{Zonegroup: "group", SourceZone: "source", DestinationZone: "destination"}, sourceURL: "http://source:7480", destinationURL: "http://destination:7480", sourceClient: cli, destinationClient: cli}, topology: rgwZoneTopology{groupIDs: map[string]string{"group": "group-id"}}}
 	return f, cli, source, dest
 }
 

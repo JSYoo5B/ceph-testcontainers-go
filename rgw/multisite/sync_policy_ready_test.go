@@ -122,7 +122,7 @@ func newRGWPolicyImportFixture(t *testing.T) (*Fixture, *rgwPolicyImportCLI, *Sy
 	t.Helper()
 	f, cli, g := newRGWSyncBucketStatusFixture(t)
 	observer := &rgwPolicyImportCLI{rgwSyncCLI: cli, localPolicy: syncJSONClone(cli.bucketPolicy)}
-	f.sourceClient, f.destinationClient = observer, observer
+	f.realm.sourceClient, f.realm.destinationClient = observer, observer
 	return f, observer, g
 }
 
@@ -165,7 +165,7 @@ func TestRGWBucketSyncPolicyReadyKeepsTenantAndRequiredSideInstances(t *testing.
 		t.Fatal(err)
 	}
 	cli := &rgwPolicyImportCLI{rgwSyncCLI: native, localPolicy: syncJSONClone(native.bucketPolicy)}
-	f.sourceClient, f.destinationClient = cli, cli
+	f.realm.sourceClient, f.realm.destinationClient = cli, cli
 	before := len(cli.calls)
 	status, err := g.WaitBucketPolicyReady(t.Context(), "destination")
 	want := []SyncBucketIdentity{{Name: "bucket", Tenant: "tenant-a", ID: "bucket-original"}, {Name: "output", Tenant: "tenant-b", ID: "output-original"}}
@@ -285,7 +285,7 @@ func TestRGWBucketSyncPolicyReadyRejectsInvalidAdmissionBeforeCommands(t *testin
 			case "wrong-direction":
 				zone = "source"
 			case "unattached":
-				f.destinationClient = nil
+				f.realm.destinationClient = nil
 			case "canceled":
 				cancel()
 			}

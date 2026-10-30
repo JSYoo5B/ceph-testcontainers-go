@@ -135,7 +135,7 @@ func (f *Fixture) syncStatus(ctx context.Context, zoneName string) (SyncStatus, 
 	if err != nil {
 		return SyncStatus{}, err
 	}
-	result := SyncStatus{RealmID: f.RealmID, PeriodID: id, RealmEpoch: epoch, Zone: zone.Name, ZoneID: zone.ID, ZonegroupID: f.groupIDs[zone.Zonegroup], MetadataMaster: master.ID == zone.ID}
+	result := SyncStatus{RealmID: f.RealmID, PeriodID: id, RealmEpoch: epoch, Zone: zone.Name, ZoneID: zone.ID, ZonegroupID: f.topology.groupIDs[zone.Zonegroup], MetadataMaster: master.ID == zone.ID}
 	data, err := f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "period", "get")
 	if err != nil {
 		return result, err

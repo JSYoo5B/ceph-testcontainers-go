@@ -425,22 +425,25 @@ func legacyBehindShards(line string, behind int) ([]legacyBehindShard, error) {
 	return shards, nil
 }
 
+// nativeBucketSyncSource is one source comparison of `bucket sync status`.
+type nativeBucketSyncSource struct {
+	SourceZone     string `json:"source_zone"`
+	SourceName     string `json:"source_name"`
+	SourceBucket   string `json:"source_bucket"`
+	SourceBucketID string `json:"source_bucket_id"`
+	Status, Error  string
+	TotalShards    *int `json:"total_shards"`
+	BehindShards   *[]struct {
+		ShardID int `json:"shard_id"`
+	} `json:"behind_shards"`
+}
+
 func decodeBucketSyncStatus(data []byte, result BucketSyncStatus) (BucketSyncStatus, error) {
 	var native struct {
 		Realm, Zonegroup, Zone, Bucket string
 		BucketInstanceID               string `json:"bucket_instance_id"`
 		Error                          string
-		Sources                        []struct {
-			SourceZone     string `json:"source_zone"`
-			SourceName     string `json:"source_name"`
-			SourceBucket   string `json:"source_bucket"`
-			SourceBucketID string `json:"source_bucket_id"`
-			Status, Error  string
-			TotalShards    *int `json:"total_shards"`
-			BehindShards   *[]struct {
-				ShardID int `json:"shard_id"`
-			} `json:"behind_shards"`
-		}
+		Sources                        []nativeBucketSyncSource
 	}
 	if json.Unmarshal(data, &native) != nil || native.Realm != result.RealmID || native.Zonegroup != result.ZonegroupID || native.Zone != result.ZoneID || native.Bucket != result.DestinationBucket.Name || native.BucketInstanceID != result.DestinationBucket.ID {
 		return result, errors.New("RGW native bucket checkpoint identity is malformed or differs")
@@ -463,48 +466,59 @@ func decodeBucketSyncStatus(data []byte, result BucketSyncStatus) (BucketSyncSta
 	allReady := true
 	behind := map[int]bool{}
 	for _, source := range native.Sources {
-		if source.SourceZone != result.SourceZoneID || source.SourceName != result.SourceZone {
-			return result, errors.New("RGW native bucket checkpoint source zone differs")
+		ready, err := mergeBucketSyncSource(&result, source, behind)
+		if err != nil {
+			return result, err
 		}
-		if source.Error != "" {
-			result.State, allReady = "error", false
-			continue
-		}
-		if source.SourceBucket != result.SourceBucket.Name || source.SourceBucketID != result.SourceBucket.ID {
-			return result, errors.New("RGW native bucket checkpoint source instance differs")
-		}
-		if source.Status != "" {
-			state := ""
-			for _, candidate := range []string{"init", "stopped", "full sync"} {
-				if strings.HasPrefix(source.Status, candidate+":") {
-					state = strings.TrimSuffix(candidate, " sync")
-				}
-			}
-			if state == "" {
-				return result, errors.New("RGW native bucket checkpoint state is unrecognized")
-			}
-			if result.State == "incremental" {
-				result.State = state
-			}
-			allReady = false
-			continue
-		}
-		if source.TotalShards == nil || *source.TotalShards <= 0 || source.BehindShards == nil {
-			return result, errors.New("RGW native bucket checkpoint shard comparison is incomplete")
-		}
-		if result.Shards != 0 && result.Shards != *source.TotalShards {
-			return result, errors.New("RGW native bucket checkpoint shard count changed between pipe comparisons")
-		}
-		result.Shards = *source.TotalShards
-		seen := map[int]bool{}
-		for _, shard := range *source.BehindShards {
-			if shard.ShardID < 0 || seen[shard.ShardID] {
-				return result, errors.New("RGW native bucket checkpoint behind shard IDs are malformed")
-			}
-			seen[shard.ShardID], behind[shard.ShardID] = true, true
-		}
+		allReady = allReady && ready
 	}
 	result.BehindShards = len(behind)
 	result.CaughtUp = allReady && result.Shards > 0 && result.BehindShards == 0
 	return result, nil
+}
+
+// mergeBucketSyncSource folds one source comparison into result and the
+// behind shard union. ready is false for a source in error or not yet in
+// incremental sync; the first such state found replaces "incremental".
+func mergeBucketSyncSource(result *BucketSyncStatus, source nativeBucketSyncSource, behind map[int]bool) (bool, error) {
+	if source.SourceZone != result.SourceZoneID || source.SourceName != result.SourceZone {
+		return false, errors.New("RGW native bucket checkpoint source zone differs")
+	}
+	if source.Error != "" {
+		result.State = "error"
+		return false, nil
+	}
+	if source.SourceBucket != result.SourceBucket.Name || source.SourceBucketID != result.SourceBucket.ID {
+		return false, errors.New("RGW native bucket checkpoint source instance differs")
+	}
+	if source.Status != "" {
+		state := ""
+		for _, candidate := range []string{"init", "stopped", "full sync"} {
+			if strings.HasPrefix(source.Status, candidate+":") {
+				state = strings.TrimSuffix(candidate, " sync")
+			}
+		}
+		if state == "" {
+			return false, errors.New("RGW native bucket checkpoint state is unrecognized")
+		}
+		if result.State == "incremental" {
+			result.State = state
+		}
+		return false, nil
+	}
+	if source.TotalShards == nil || *source.TotalShards <= 0 || source.BehindShards == nil {
+		return false, errors.New("RGW native bucket checkpoint shard comparison is incomplete")
+	}
+	if result.Shards != 0 && result.Shards != *source.TotalShards {
+		return false, errors.New("RGW native bucket checkpoint shard count changed between pipe comparisons")
+	}
+	result.Shards = *source.TotalShards
+	seen := map[int]bool{}
+	for _, shard := range *source.BehindShards {
+		if shard.ShardID < 0 || seen[shard.ShardID] {
+			return false, errors.New("RGW native bucket checkpoint behind shard IDs are malformed")
+		}
+		seen[shard.ShardID], behind[shard.ShardID] = true, true
+	}
+	return true, nil
 }

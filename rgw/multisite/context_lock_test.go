@@ -11,7 +11,7 @@ import (
 
 func TestSerializedMultisiteMutationQueuedDeadline(t *testing.T) {
 	probe := &clustertest.NativeCallCounter{}
-	f := &Fixture{sourceClient: probe, destinationClient: probe}
+	f := &Fixture{realm: rgwRealmAccess{sourceClient: probe, destinationClient: probe}}
 	group := &SyncGroup{owner: f, state: &rgwSyncGroupState{id: "queued"}}
 	operations := map[string]func(context.Context) error{
 		"AddZone": func(ctx context.Context) error {
