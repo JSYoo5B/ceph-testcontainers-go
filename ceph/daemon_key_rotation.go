@@ -250,96 +250,162 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 			err = errors.Join(err, settleErr)
 		}
 	}()
+	r := daemonRotation{c: c, call: call, daemon: daemon, ctr: ctr, keyrings: keyrings}
 
 	before, err := c.authKeys(ctx, "get", daemon)
 	if err != nil {
 		return err
 	}
-	// A pending key from an earlier call may already be in the daemon or its
-	// keyring files, so a resumed rotation must not take it away.
-	resumed := before.PendingKey != ""
-	if fence := c.authRecords.fence(daemon); fence != nil && fence.handedKey != "" && before.PendingKey != fence.handedKey {
-		if before.PendingKey == "" && before.Key == fence.handedKey && !fence.handedDone {
-			// The daemon authenticated with the handed key, and the MONs
-			// committed it: the rotation has finished with it.
-			if err := c.writeDaemonKeyrings(ctx, ctr, daemon, before.Key, keyrings); err != nil {
-				return err
-			}
-			fence.handedDone = true
-			return nil
-		}
-		return fmt.Errorf("an earlier handoff of a key to %s may still reach the running daemon, so RotateKey gives it no other key until its container restarts", daemon)
+	if done, err := r.finishEarlierHandoff(ctx, before); done || err != nil {
+		return err
 	}
-	keys, err := call.keys(ctx)
+	current, next, err := r.pendingKey(ctx, before)
 	if err != nil {
 		return err
 	}
-	if keys.PendingKey == "" || keys.Key != before.Key || (resumed && keys.PendingKey != before.PendingKey) {
-		return fmt.Errorf("the keys of %s changed during the rotation; inspect ceph auth get %s", daemon, daemon)
-	}
-	current, next := keys.Key, keys.PendingKey
-	// A failure before the handoff keeps the pending key and whatever the
-	// keyring files hold. Undoing it would race with a restart: a daemon that
-	// restarts from a file with the new key authenticates with it, and the
-	// MONs then commit the pending key on their own, which finishes the
-	// rotation.
-	abandon := func(cause error) error {
-		readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
-		defer readCancel()
-		if keys, err := c.authKeys(readCtx, "get", daemon); err == nil && keys.Key == next && keys.PendingKey == "" {
-			if err := c.writeDaemonKeyrings(readCtx, ctr, daemon, next, keyrings); err != nil {
-				return errors.Join(cause, fmt.Errorf("%s restarted with the new key, which the MONs committed, but not all of its keyring files could get it: %w", daemon, err))
-			}
-			return nil
-		}
-		return fmt.Errorf("%w; the MONs keep accepting both keys of %s, and its keyring files may hold the new key, which the MONs commit on their own once the daemon authenticates with it. Call RotateKey again to finish the rotation", cause, daemon)
-	}
 	if err := c.writeDaemonKeyrings(ctx, ctr, daemon, next, keyrings); err != nil {
-		return abandon(err)
+		return r.abandon(ctx, next, err)
 	}
-	control := c.cliContainer()
-	keyPath := "/tmp/tc-rotate-" + uuid.NewString() + ".key"
-	// A copy that Docker completes after an error only creates this file,
-	// which later calls remove.
+	control, keyPath, err := r.stageKeyFile(ctx, next)
+	if err != nil {
+		return r.abandon(ctx, next, err)
+	}
+	removeErr, err := r.handOff(ctx, control, keyPath, next)
+	if err != nil {
+		return err
+	}
+	return r.commit(ctx, current, next, removeErr)
+}
+
+// daemonRotation is one RotateKey call on an owned daemon after its admission:
+// the daemon, its container and keyring files, and the authCall that collects
+// the call's MON mutations. Its methods are the phases of rotateDaemonKey and
+// run inside its critical section. The caller holds c.mu.
+type daemonRotation struct {
+	c        *Container
+	call     *authCall
+	daemon   string
+	ctr      testcontainers.Container
+	keyrings []string
+}
+
+// finishEarlierHandoff settles a key that an earlier call handed to the
+// daemon, before reads the auth entry now. It reports done when the MONs
+// committed the handed key, which then only needs to reach the keyring files.
+// It refuses a rotation while an earlier handoff may still reach the running
+// daemon with another key. A pending key from an earlier call may already be
+// in the daemon or its keyring files, so a resumed rotation keeps it.
+func (r daemonRotation) finishEarlierHandoff(ctx context.Context, before struct{ Key, PendingKey string }) (done bool, err error) {
+	fence := r.c.authRecords.fence(r.daemon)
+	if fence == nil || fence.handedKey == "" || before.PendingKey == fence.handedKey {
+		return false, nil
+	}
+	if before.PendingKey == "" && before.Key == fence.handedKey && !fence.handedDone {
+		// The daemon authenticated with the handed key, and the MONs
+		// committed it: the rotation has finished with it.
+		if err := r.c.writeDaemonKeyrings(ctx, r.ctr, r.daemon, before.Key, r.keyrings); err != nil {
+			return true, err
+		}
+		fence.handedDone = true
+		return true, nil
+	}
+	return true, fmt.Errorf("an earlier handoff of a key to %s may still reach the running daemon, so RotateKey gives it no other key until its container restarts", r.daemon)
+}
+
+// pendingKey makes the MONs hold a pending key next beside the current key
+// and returns both. A rotation that resumes an earlier pending key keeps it.
+func (r daemonRotation) pendingKey(ctx context.Context, before struct{ Key, PendingKey string }) (current, next string, err error) {
+	resumed := before.PendingKey != ""
+	keys, err := r.call.keys(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	if keys.PendingKey == "" || keys.Key != before.Key || (resumed && keys.PendingKey != before.PendingKey) {
+		return "", "", fmt.Errorf("the keys of %s changed during the rotation; inspect ceph auth get %s", r.daemon, r.daemon)
+	}
+	return keys.Key, keys.PendingKey, nil
+}
+
+// abandon reports a failure before the handoff of next. It keeps the pending
+// key and whatever the keyring files hold. Undoing it would race with a
+// restart: a daemon that restarts from a file with the new key authenticates
+// with it, and the MONs then commit the pending key on their own, which
+// finishes the rotation.
+func (r daemonRotation) abandon(ctx context.Context, next string, cause error) error {
+	readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
+	defer readCancel()
+	if keys, err := r.c.authKeys(readCtx, "get", r.daemon); err == nil && keys.Key == next && keys.PendingKey == "" {
+		if err := r.c.writeDaemonKeyrings(readCtx, r.ctr, r.daemon, next, r.keyrings); err != nil {
+			return errors.Join(cause, fmt.Errorf("%s restarted with the new key, which the MONs committed, but not all of its keyring files could get it: %w", r.daemon, err))
+		}
+		return nil
+	}
+	return fmt.Errorf("%w; the MONs keep accepting both keys of %s, and its keyring files may hold the new key, which the MONs commit on their own once the daemon authenticates with it. Call RotateKey again to finish the rotation", cause, r.daemon)
+}
+
+// stageKeyFile copies next into a new file in the control container, from
+// which handOff gives it to the daemon. A copy that Docker completes after an
+// error only creates this file, which later calls remove.
+func (r daemonRotation) stageKeyFile(ctx context.Context, next string) (control testcontainers.Container, keyPath string, err error) {
+	control = r.c.cliContainer()
+	keyPath = "/tmp/tc-rotate-" + uuid.NewString() + ".key"
 	if err := control.CopyToContainer(ctx, []byte(next), keyPath, 0o600); err != nil {
-		c.authRecords.addStray(keyPath, true)
-		return abandon(fmt.Errorf("copy the new key of %s: %w", daemon, err))
+		r.c.authRecords.addStray(keyPath, true)
+		return nil, "", fmt.Errorf("copy the new key of %s: %w", r.daemon, err)
 	}
+	return control, keyPath, nil
+}
+
+// handOff gives next to the running daemon through ceph tell rotate-key from
+// keyPath in control, and removes that file. removeErr is the failure to
+// remove it, which later calls remove. A failed handoff records in the
+// daemon's fence that next may still reach the daemon.
+func (r daemonRotation) handOff(ctx context.Context, control testcontainers.Container, keyPath, next string) (removeErr, err error) {
+	c, daemon := r.c, r.daemon
 	_, tellErr := c.rotationCommand(ctx, "ceph", "--connect-timeout", "5", "tell", daemon, "rotate-key", "-i", keyPath)
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
 	defer cleanupCancel()
-	_, removeErr := c.rotationCommand(cleanupCtx, "rm", "-f", keyPath)
+	_, removeErr = c.rotationCommand(cleanupCtx, "rm", "-f", keyPath)
 	if removeErr != nil {
 		c.authRecords.addStray(keyPath, false)
 	}
-	if tellErr != nil {
-		fence := c.authRecords.fenceFor(daemon)
-		// While the CLI may run, it may deliver the key to any later process
-		// too, so handedTo stays unknown until a later call stops it.
-		fence.handedKey, fence.handedTo, fence.handedDone = next, "", false
-		if !c.fenceUnstopped(fence, control, tellErr) {
-			// The handoff has ended, so it can reach only the process that
-			// runs now, or none.
-			if after, err := ctr.State(cleanupCtx); err == nil && after != nil {
-				fence.handedTo = daemonIdentity(ctr, after)
-			}
-		}
-		return errors.Join(fmt.Errorf("hand the new key to %s: %w; it is unknown whether the daemon holds it, so the MONs keep accepting both keys and its keyring files hold the new key. Call RotateKey again to finish with the same key; a different key needs a restart of %s first", daemon, tellErr, daemon), removeErr)
+	if tellErr == nil {
+		return removeErr, nil
 	}
-	// The daemon and its files hold the new key, which the MONs accept
-	// whether or not the commit applies. The MONs also commit a pending key
-	// on their own once the daemon authenticates with it, and answer a commit
-	// that meets such a change without applying it, so the outcome is read
-	// back in any case, after settling when the commit failed.
-	_, commitErr := call.mutate(ctx, "commit-pending")
+	fence := c.authRecords.fenceFor(daemon)
+	// While the CLI may run, it may deliver the key to any later process
+	// too, so handedTo stays unknown until a later call stops it.
+	fence.handedKey, fence.handedTo, fence.handedDone = next, "", false
+	if !c.fenceUnstopped(fence, control, tellErr) {
+		// The handoff has ended, so it can reach only the process that
+		// runs now, or none.
+		if after, err := r.ctr.State(cleanupCtx); err == nil && after != nil {
+			fence.handedTo = daemonIdentity(r.ctr, after)
+		}
+	}
+	return removeErr, errors.Join(fmt.Errorf("hand the new key to %s: %w; it is unknown whether the daemon holds it, so the MONs keep accepting both keys and its keyring files hold the new key. Call RotateKey again to finish with the same key; a different key needs a restart of %s first", daemon, tellErr, daemon), removeErr)
+}
+
+// commit commits next, which the daemon and its files hold, and reads the
+// outcome back. The MONs accept next whether or not the commit applies. They
+// also commit a pending key on their own once the daemon authenticates with
+// it, and answer a commit that meets such a change without applying it, so
+// the outcome is read back in any case, after settling when the commit
+// failed. removeErr, the handoff's key-file removal failure, is part of every
+// result.
+func (r daemonRotation) commit(ctx context.Context, current, next string, removeErr error) error {
+	daemon := r.daemon
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
+	defer cleanupCancel()
+	_, commitErr := r.call.mutate(ctx, "commit-pending")
 	if commitErr != nil {
-		if settleErr := call.settle(cleanupCtx); settleErr != nil {
+		if settleErr := r.call.settle(cleanupCtx); settleErr != nil {
 			return errors.Join(fmt.Errorf("commit the new key of %s, which the daemon holds: %w; the commit may still apply, and the MONs accept the new key either way", daemon, commitErr), settleErr, removeErr)
 		}
 	}
-	after, readErr := c.authKeys(cleanupCtx, "get", daemon)
+	after, readErr := r.c.authKeys(cleanupCtx, "get", daemon)
 	if readErr == nil && after.Key == next && after.PendingKey == "" {
-		if fence := c.authRecords.fence(daemon); fence != nil && fence.handedKey == next {
+		if fence := r.c.authRecords.fence(daemon); fence != nil && fence.handedKey == next {
 			fence.handedDone = true
 		}
 		return removeErr
