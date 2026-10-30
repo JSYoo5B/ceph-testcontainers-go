@@ -61,6 +61,13 @@ resulting state afterwards.
 - Refuse service-operation APIs and conveniences that only repeat what the SUT,
   the test or a native command already does. Performance measurement, tuning
   and large-scale experiments are out of scope.
+- The fixture works through the CLIs in its containers. This module, its tests
+  included, imports no Ceph or object-storage client library (go-ceph, an S3 or
+  Swift SDK) and no cgo. A test that needs a real client to play the SUT goes
+  in its own Go module, like `internal/integration/goceph/probe`. See
+  [Client dependencies](docs/guides/api-purpose.md#client-dependencies);
+  `TestModuleRequiresNoClientLibrary` and
+  `TestModuleImportsNoClientLibraryOrCgo` enforce it.
 
 ## Pull requests (for agents)
 

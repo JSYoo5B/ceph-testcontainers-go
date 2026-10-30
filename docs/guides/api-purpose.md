@@ -26,6 +26,31 @@ This repository is a test tool. Every public API is judged against two rules.
 APIs that make a condition easier to build or a state easier to assert may keep
 being added; the boundary is the test purpose, not a method count.
 
+## Client dependencies
+
+The fixture and the SUT reach Ceph from opposite sides, and the dependency
+graph keeps them apart.
+
+- **The fixture uses the server's own tools.** It builds and checks state
+  through the Ceph CLIs, radosgw-admin and admin sockets inside the containers
+  it owns. The module imports no Ceph or object-storage client library
+  (go-ceph, librados bindings, an S3 or Swift SDK) and no cgo, and it builds
+  with `CGO_ENABLED=0`. A fixture API that needs a client library to work is
+  doing the SUT's side of the job.
+- **The SUT brings its own client.** The application under test connects with
+  whatever client it ships with, using what a **Hand-off** API gives it. The
+  fixture does not wrap, choose or pin that client.
+- **A test that plays the SUT uses a client from its own module.** A test may
+  need a real client to drive the fixture the way the SUT would, for example
+  to prove that a go-ceph consumer can use a hand-off. That test, or the probe
+  it runs, lives in a separate Go module (such as
+  `internal/integration/goceph/probe`) or in a consumer repository. It does
+  not go into this module's tests: go.mod lists test dependencies too, so the
+  client would join every consumer's module graph.
+
+`TestModuleRequiresNoClientLibrary` and `TestModuleImportsNoClientLibraryOrCgo`
+in `internal/apiinventory` enforce the module side of these rules.
+
 ## Purpose tags
 
 A purpose tag names one test purpose an API serves. One API often serves
