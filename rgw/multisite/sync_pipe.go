@@ -100,14 +100,14 @@ func syncPipeFilter(config SyncPipeConfig) ([]string, map[string]any, error) {
 // in src and dst and returns the bucket arguments with the native info of
 // both sides. Without a destination selector, a bucket-scoped group's own
 // bucket is the destination.
-func (f *Fixture) syncPipeBuckets(ctx context.Context, master *rgwZoneState, g *SyncGroup, config SyncPipeConfig, src, dst map[string]any) ([]string, map[string]any, map[string]any, error) {
+func (f *Fixture) syncPipeBuckets(ctx context.Context, master *rgwZoneState, g *SyncGroup, config SyncPipeConfig, src, dst map[string]any) ([]string, *rgwBucketInstance, *rgwBucketInstance, error) {
 	var args []string
-	var sourceInfo, destinationInfo map[string]any
+	var sourceInfo, destinationInfo *rgwBucketInstance
 	for _, side := range []struct {
 		selector *SyncBucketSelector
 		native   map[string]any
 		flag     string
-		info     *map[string]any
+		info     **rgwBucketInstance
 	}{{config.SourceBucket, src, "--source", &sourceInfo}, {config.DestinationBucket, dst, "--dest", &destinationInfo}} {
 		if side.selector == nil {
 			continue
@@ -139,7 +139,7 @@ func (f *Fixture) syncPipeBuckets(ctx context.Context, master *rgwZoneState, g *
 // syncPipePrincipals confirms the destination owner and the user-mode
 // principal of a pipe, records them in params and destParams and returns
 // their arguments.
-func (f *Fixture) syncPipePrincipals(ctx context.Context, g *SyncGroup, config SyncPipeConfig, sourceInfo, destinationInfo, params, destParams map[string]any) ([]string, error) {
+func (f *Fixture) syncPipePrincipals(ctx context.Context, g *SyncGroup, config SyncPipeConfig, sourceInfo, destinationInfo *rgwBucketInstance, params, destParams map[string]any) ([]string, error) {
 	var args []string
 	if config.DestinationOwner != nil {
 		info, err := f.syncOwnedPrincipal(ctx, g, config.DestinationOwner)
@@ -155,7 +155,7 @@ func (f *Fixture) syncPipePrincipals(ctx context.Context, g *SyncGroup, config S
 		if destinationInfo == nil {
 			return nil, multisiteInvalid(errors.New("RGW owner translation requires a concrete destination bucket"))
 		}
-		if config.User != nil && destinationInfo["owner"] != info.ID {
+		if config.User != nil && !destinationInfo.Owner.is(info.ID) {
 			return nil, multisiteInvalid(errors.New("RGW user-mode owner translation must select the destination bucket owner"))
 		}
 		destParams["acl_translation"] = map[string]any{"owner": info.ID}
@@ -219,7 +219,7 @@ func normalizeSyncTags(tags []SyncObjectTag) ([]SyncObjectTag, error) {
 	return result, nil
 }
 
-func (f *Fixture) syncSelectedBucket(ctx context.Context, master *rgwZoneState, g *SyncGroup, selector SyncBucketSelector) (string, map[string]any, error) {
+func (f *Fixture) syncSelectedBucket(ctx context.Context, master *rgwZoneState, g *SyncGroup, selector SyncBucketSelector) (string, *rgwBucketInstance, error) {
 	if !validRGWSyncID(selector.Name) || selector.Name == "*" || (selector.Tenant != "" && !validRGWSyncID(selector.Tenant)) {
 		return "", nil, multisiteInvalid(errors.New("RGW sync bucket selector requires an existing concrete bucket and valid tenant"))
 	}
@@ -257,7 +257,7 @@ func (f *Fixture) syncOwnedPrincipal(ctx context.Context, g *SyncGroup, user *rg
 	return info, nil
 }
 
-func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, info rgw.UserInfo, source, destination map[string]any) error {
+func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, info rgw.UserInfo, source, destination *rgwBucketInstance) error {
 	if err := checkSyncPrincipalTenants(scope, config, info.Tenant); err != nil {
 		return err
 	}
@@ -269,18 +269,17 @@ func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, in
 	}
 	// Native --uid is the canonical root user's ID, never the account ID.
 	// User.Info has already checked its private creation account and lifetime.
-	if info.Type != "root" || config.DestinationOwner != nil || config.SourceBucket == nil || config.DestinationBucket == nil || source == nil || destination == nil || source["owner"] != info.AccountID || destination["owner"] != info.AccountID {
+	if info.Type != "root" || config.DestinationOwner != nil || config.SourceBucket == nil || config.DestinationBucket == nil || source == nil || destination == nil || !source.Owner.is(info.AccountID) || !destination.Owner.is(info.AccountID) {
 		return multisiteInvalid(errors.New("RGW account user mode requires its confirmed root, concrete buckets owned by the same account and no owner translation; IAM or cross-account modes are unproven"))
 	}
 	return nil
 }
 
-func (f *Fixture) syncDestinationClass(ctx context.Context, g *SyncGroup, config SyncPipeConfig, info map[string]any) error {
+func (f *Fixture) syncDestinationClass(ctx context.Context, g *SyncGroup, config SyncPipeConfig, info *rgwBucketInstance) error {
 	if info == nil || len(config.DestinationPlacements) != len(config.DestinationZones) || slices.Contains(config.DestinationZones, "*") {
 		return multisiteInvalid(errors.New("RGW storage-class translation requires a concrete bucket and confirmed placements for concrete destination zones"))
 	}
-	rule, _ := info["placement_rule"].(string)
-	target := strings.SplitN(rule, "/", 2)[0]
+	target := strings.SplitN(info.PlacementRule.value, "/", 2)[0]
 	if target == "" {
 		return multisiteInvalid(errors.New("RGW destination bucket native placement is missing"))
 	}
