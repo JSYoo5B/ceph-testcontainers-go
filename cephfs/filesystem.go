@@ -131,18 +131,9 @@ func startFilesystem(ctx context.Context, c *ceph.Container, config Config, opts
 	}
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 	defer cancel()
-	data, err := c.Ceph(ctx, "fs", "dump", "--format", "json")
+	existing, err := readExistingFilesystems(ctx, c, config.Name)
 	if err != nil {
-		return nil, fmt.Errorf("check existing cephfs filesystems: %w", err)
-	}
-	var existing cephFSMap
-	if err := json.Unmarshal(data, &existing); err != nil || existing.Filesystems == nil {
-		return nil, fmt.Errorf("decode existing cephfs filesystems: invalid FSMap (decode error: %v)", err)
-	}
-	for _, fs := range existing.Filesystems {
-		if fs.MDSMap.Name == config.Name {
-			return nil, servicehook.Invalid(fmt.Errorf("cephfs filesystem %q already exists", config.Name))
-		}
+		return nil, err
 	}
 	fs := &Filesystem{
 		FilesystemName: config.Name, name: config.Name, MetadataPool: config.MetadataPool.Name,
@@ -167,47 +158,8 @@ func startFilesystem(ctx context.Context, c *ceph.Container, config Config, opts
 	}
 	filesystems(c).byName[config.Name] = fs
 	servicehook.Unlock(c)
-	for _, pool := range cephFSConfiguredPools(config) {
-		if _, err := c.CreatePool(ctx, pool); err != nil {
-			return fs, fmt.Errorf("create cephfs pool: %w", err)
-		}
-	}
-	if len(existing.Filesystems) > 0 && !existing.FeatureFlags.EnableMultiple {
-		if _, err := c.Ceph(ctx, "fs", "flag", "set", "enable_multiple", "true"); err != nil {
-			return fs, fmt.Errorf("enable multiple cephfs filesystems: %w", err)
-		}
-	}
-	// Set rank counts at creation, avoiding a later max_mds change while the
-	// filesystem has no active daemon. Ceph 20.2.4's inline replay/affinity setters
-	// look up an FSMap entry before fs-new commits it, so apply those afterward.
-	// Ceph 19 has no inline setters; it sets the counts right after fs new,
-	// still before any MDS starts.
-	settings := [][2]string{
-		{"allow_standby_replay", strconv.FormatBool(config.StandbyReplay)},
-		{"refuse_standby_for_another_fs", "true"},
-	}
-	create := []string{"fs", "new", config.Name, fs.MetadataPool, fs.DataPool}
-	counts := [][2]string{{"max_mds", strconv.Itoa(config.ActiveMDS)}, {"standby_count_wanted", strconv.Itoa(config.StandbyMDS)}}
-	if servicehook.CephBefore(c, 20) {
-		settings = append(counts, settings...)
-	} else {
-		create = append(create, "set", counts[0][0], counts[0][1], counts[1][0], counts[1][1])
-	}
-	if _, err := c.Ceph(ctx, create...); err != nil {
-		return fs, fmt.Errorf("create cephfs: %w", err)
-	}
-	for _, setting := range settings {
-		if _, err := c.Ceph(ctx, "fs", "set", config.Name, setting[0], setting[1]); err != nil {
-			return fs, fmt.Errorf("set cephfs %s: %w", setting[0], err)
-		}
-	}
-	if err := fs.captureNativePoolIdentity(ctx); err != nil {
-		return fs, fmt.Errorf("capture created cephfs identity: %w", err)
-	}
-	for _, pool := range fs.AdditionalDataPools {
-		if _, err := c.Ceph(ctx, "fs", "add_data_pool", config.Name, pool); err != nil {
-			return fs, fmt.Errorf("add cephfs data pool %q: %w", pool, err)
-		}
+	if err := fs.createNative(ctx, config, existing); err != nil {
+		return fs, err
 	}
 	if config.NoInitialMDS {
 		if err := fs.captureColdMDS(ctx, coldFSID); err != nil {
@@ -224,6 +176,75 @@ func startFilesystem(ctx context.Context, c *ceph.Container, config Config, opts
 		return fs, err
 	}
 	return fs, nil
+}
+
+// readExistingFilesystems reads the FSMap before setup and refuses a
+// filesystem of the same name.
+func readExistingFilesystems(ctx context.Context, c *ceph.Container, name string) (cephFSMap, error) {
+	var existing cephFSMap
+	data, err := c.Ceph(ctx, "fs", "dump", "--format", "json")
+	if err != nil {
+		return existing, fmt.Errorf("check existing cephfs filesystems: %w", err)
+	}
+	if err := json.Unmarshal(data, &existing); err != nil || existing.Filesystems == nil {
+		return existing, fmt.Errorf("decode existing cephfs filesystems: invalid FSMap (decode error: %v)", err)
+	}
+	for _, fs := range existing.Filesystems {
+		if fs.MDSMap.Name == name {
+			return existing, servicehook.Invalid(fmt.Errorf("cephfs filesystem %q already exists", name))
+		}
+	}
+	return existing, nil
+}
+
+// createNative creates the registered filesystem's pools and native
+// filesystem, applies its policy and records its native pool identity before
+// any MDS starts. Setup held. config is the validated setup configuration and
+// existing is the FSMap read before registration.
+func (fs *Filesystem) createNative(ctx context.Context, config Config, existing cephFSMap) error {
+	for _, pool := range cephFSConfiguredPools(config) {
+		if _, err := fs.cluster.CreatePool(ctx, pool); err != nil {
+			return fmt.Errorf("create cephfs pool: %w", err)
+		}
+	}
+	if len(existing.Filesystems) > 0 && !existing.FeatureFlags.EnableMultiple {
+		if _, err := fs.cluster.Ceph(ctx, "fs", "flag", "set", "enable_multiple", "true"); err != nil {
+			return fmt.Errorf("enable multiple cephfs filesystems: %w", err)
+		}
+	}
+	// Set rank counts at creation, avoiding a later max_mds change while the
+	// filesystem has no active daemon. Ceph 20.2.4's inline replay/affinity setters
+	// look up an FSMap entry before fs-new commits it, so apply those afterward.
+	// Ceph 19 has no inline setters; it sets the counts right after fs new,
+	// still before any MDS starts.
+	settings := [][2]string{
+		{"allow_standby_replay", strconv.FormatBool(config.StandbyReplay)},
+		{"refuse_standby_for_another_fs", "true"},
+	}
+	create := []string{"fs", "new", config.Name, fs.MetadataPool, fs.DataPool}
+	counts := [][2]string{{"max_mds", strconv.Itoa(config.ActiveMDS)}, {"standby_count_wanted", strconv.Itoa(config.StandbyMDS)}}
+	if servicehook.CephBefore(fs.cluster, 20) {
+		settings = append(counts, settings...)
+	} else {
+		create = append(create, "set", counts[0][0], counts[0][1], counts[1][0], counts[1][1])
+	}
+	if _, err := fs.cluster.Ceph(ctx, create...); err != nil {
+		return fmt.Errorf("create cephfs: %w", err)
+	}
+	for _, setting := range settings {
+		if _, err := fs.cluster.Ceph(ctx, "fs", "set", config.Name, setting[0], setting[1]); err != nil {
+			return fmt.Errorf("set cephfs %s: %w", setting[0], err)
+		}
+	}
+	if err := fs.captureNativePoolIdentity(ctx); err != nil {
+		return fmt.Errorf("capture created cephfs identity: %w", err)
+	}
+	for _, pool := range fs.AdditionalDataPools {
+		if _, err := fs.cluster.Ceph(ctx, "fs", "add_data_pool", config.Name, pool); err != nil {
+			return fmt.Errorf("add cephfs data pool %q: %w", pool, err)
+		}
+	}
+	return nil
 }
 
 // MDSs returns a snapshot of this filesystem's owned daemons in creation order.

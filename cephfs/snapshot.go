@@ -492,46 +492,8 @@ func (clone *SubvolumeClone) Wait(ctx context.Context) (*Subvolume, error) {
 	timeout := servicehook.StartupTimeout(fs.cluster)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	identity := clone.identity
 	for {
-		// Each poll holds the subvolume operation gate only for its own step.
-		subvolume, complete, err := func() (*Subvolume, bool, error) {
-			ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
-			if err != nil {
-				return nil, false, err
-			}
-			defer done()
-			if err := fs.checkCloneIncarnation(ctx, identity); err != nil {
-				return nil, false, err
-			}
-			status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
-			if err != nil {
-				return nil, false, err
-			}
-			if status.State == "failed" || status.State == "canceled" {
-				return nil, false, fmt.Errorf("CephFS clone %q is %s (errno %d): %s", identity.name, status.State, status.FailureErrno, status.FailureMessage)
-			}
-			if status.State != "complete" {
-				return nil, false, nil
-			}
-			if identity.subvolume == nil {
-				info, err := fs.volumes().subvolumeInfo(ctx, identity.name, identity.group)
-				if err != nil {
-					return nil, false, err
-				}
-				if info.Type != "clone" || info.State != "complete" || (identity.dataPool != "" && info.DataPool != identity.dataPool) {
-					return nil, false, errors.New("completed subvolume clone does not match requested native type, state or pool")
-				}
-				if identity.incarnation != nil && info.Path != identity.incarnation.Path {
-					return nil, false, errors.New("completed clone incarnation differs from its submission identity")
-				}
-				identity.subvolume = &Subvolume{Name: identity.name, GroupName: identity.group, FilesystemName: fs.name, Path: info.Path,
-					identity: &cephFSVolumeIdentity{filesystem: fs, filesystemID: fsID, name: identity.name, group: identity.group, path: info.Path, createdAt: info.CreatedAt, ready: true}}
-			}
-			// Return a separate public descriptor while retaining shared private lifecycle.
-			result := *identity.subvolume
-			return &result, true, nil
-		}()
+		subvolume, complete, err := clone.waitStep(ctx, fs)
 		if err != nil {
 			return nil, err
 		}
@@ -547,4 +509,56 @@ func (clone *SubvolumeClone) Wait(ctx context.Context) (*Subvolume, error) {
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+// waitStep is one poll of Wait. It holds the subvolume operation gate only for
+// its own step and reports the completed subvolume once the native clone is
+// complete.
+func (clone *SubvolumeClone) waitStep(ctx context.Context, fs *Filesystem) (*Subvolume, bool, error) {
+	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer done()
+	identity := clone.identity
+	if err := fs.checkCloneIncarnation(ctx, identity); err != nil {
+		return nil, false, err
+	}
+	status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
+	if err != nil {
+		return nil, false, err
+	}
+	if status.State == "failed" || status.State == "canceled" {
+		return nil, false, fmt.Errorf("CephFS clone %q is %s (errno %d): %s", identity.name, status.State, status.FailureErrno, status.FailureMessage)
+	}
+	if status.State != "complete" {
+		return nil, false, nil
+	}
+	if identity.subvolume == nil {
+		if err := clone.adoptCompleted(ctx, fs, fsID); err != nil {
+			return nil, false, err
+		}
+	}
+	// Return a separate public descriptor while retaining shared private lifecycle.
+	result := *identity.subvolume
+	return &result, true, nil
+}
+
+// adoptCompleted records the subvolume of a complete clone once its native
+// type, state, pool and path match the submission.
+func (clone *SubvolumeClone) adoptCompleted(ctx context.Context, fs *Filesystem, fsID int64) error {
+	identity := clone.identity
+	info, err := fs.volumes().subvolumeInfo(ctx, identity.name, identity.group)
+	if err != nil {
+		return err
+	}
+	if info.Type != "clone" || info.State != "complete" || (identity.dataPool != "" && info.DataPool != identity.dataPool) {
+		return errors.New("completed subvolume clone does not match requested native type, state or pool")
+	}
+	if identity.incarnation != nil && info.Path != identity.incarnation.Path {
+		return errors.New("completed clone incarnation differs from its submission identity")
+	}
+	identity.subvolume = &Subvolume{Name: identity.name, GroupName: identity.group, FilesystemName: fs.name, Path: info.Path,
+		identity: &cephFSVolumeIdentity{filesystem: fs, filesystemID: fsID, name: identity.name, group: identity.group, path: info.Path, createdAt: info.CreatedAt, ready: true}}
+	return nil
 }
