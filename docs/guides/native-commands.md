@@ -384,7 +384,7 @@ with `override.SetOSDFlag` meanwhile. `TestRADOSErasureCodedOutcomes` in
 | Need | Use |
 | --- | --- |
 | Inspect stored central configuration | `Observer.Configuration(ctx)` |
-| Change any option for a test and restore it | [override.SetConfig](../../override/README.md#setconfig) |
+| Change any option for a test and restore it | [override.SetConfig](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/override#SetConfig) |
 | Options that must exist at bootstrap | [WithConfigFile](../../ceph/README.md#withconfigfile) |
 | A daemon's effective value | `cluster.Ceph(ctx, "config", "show", "osd.0", name)` |
 
