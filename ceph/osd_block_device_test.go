@@ -183,7 +183,7 @@ func TestOSDLaunchStartsOneContainerWithTheMappedBlockDevice(t *testing.T) {
 	var calls int
 	var host container.HostConfig
 	created := &initialOSDDaemon{id: launch.osd.ID}
-	c.stores.runner = func(_ context.Context, _ string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	c.fleet.stores.runner = func(_ context.Context, _ string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		calls++
 		var req testcontainers.GenericContainerRequest
 		for _, opt := range opts {

@@ -306,7 +306,7 @@ func TestTerminateStopsACommandWithInput(t *testing.T) {
 	command.Input, command.MaxInput = input, 1024
 	done := startNative(t.Context(), cluster, target, command)
 	pid := target.published(t, "terminated", "command")
-	if errs := cluster.stopNativeInvocations(t.Context()); len(errs) != 0 {
+	if errs := cluster.native.stopAll(t.Context()); len(errs) != 0 {
 		t.Fatal(errs)
 	}
 	if run := <-done; !errors.Is(run.err, errNativeTerminated) {
@@ -490,7 +490,7 @@ func TestNativeCommandInputCancellationAtCompletion(t *testing.T) {
 		t.Fatalf("left markers %v or a registration", markers)
 	}
 	terminated := make(chan []error, 1)
-	go func() { terminated <- cluster.stopNativeInvocations(t.Context()) }()
+	go func() { terminated <- cluster.native.stopAll(t.Context()) }()
 	select {
 	case errs := <-terminated:
 		if len(errs) != 0 {

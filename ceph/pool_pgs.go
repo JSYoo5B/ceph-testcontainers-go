@@ -1,12 +1,9 @@
 package ceph
 
 import (
-	"context"
 	"errors"
 	"strconv"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 // PoolPGSnapshot contains one pool's reported PGs, bracketed by two native
@@ -46,121 +43,6 @@ type PGState struct {
 type PGStats struct {
 	Objects, Bytes, ObjectCopies                      int64
 	ObjectsDegraded, ObjectsMisplaced, ObjectsUnfound int64
-}
-
-// poolPGs implements Pool.PGs. It observes one existing pool through one captured control CLI handle.
-// It checks the original bootstrap FSID and the exact pool name/ID before and
-// after pg ls-by-pool, using five CLI reads and no per-PG mapping fanout. It
-// works before any OSD is started when a native pool has been prepared through
-// Ceph. Successful empty/unready/unknown reports are retained as observations;
-// no clean, health, owned-OSD membership or expected PG-count predicate applies.
-//
-// All failures, including post-query cancellation, return a zero snapshot and
-// static errors that omit native output. There are no writes, retries or
-// workers. External native/configuration writers must not race these separate
-// reads. Compare original fixture identities and data when asserting movement;
-// these reported PGs are not current mappings or read-after-write evidence.
-func (c *Container) poolPGs(ctx context.Context, name string, handle *Pool) (PoolPGSnapshot, error) {
-	if err := ctx.Err(); err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	if c == nil {
-		return PoolPGSnapshot{}, errors.New("ceph cluster is unavailable")
-	}
-	if err := validateExistingPoolName(name); err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	if err := c.lockTopology(ctx); err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	defer c.mu.Unlock()
-	if c.closed {
-		return PoolPGSnapshot{}, clientOperationError(ctx, "ceph cluster is terminated", nil)
-	}
-	if err := handle.matchLocked(name, -1); err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	control, err := c.conn().controlContainer(ctx)
-	if err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	if control == nil {
-		return PoolPGSnapshot{}, clientOperationError(ctx, "ceph control container is unavailable", nil)
-	}
-	identity, err := c.bootstrap.identity(ctx)
-	if err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	fsid, identityErr := identity.fsid, identity.err
-	if identityErr != nil || !identity.confirmed {
-		return PoolPGSnapshot{}, clientOperationError(ctx, "ceph original bootstrap identity is unavailable", identityErr)
-	}
-	query := func(args ...string) ([]byte, error) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		data, err := command(ctx, control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
-		if err != nil || ctx.Err() != nil {
-			return nil, clientOperationError(ctx, "observe pool PGs: native query failed", err)
-		}
-		return data, nil
-	}
-	checkFSID := func() error {
-		data, err := query("fsid")
-		if err != nil {
-			return err
-		}
-		native := strings.TrimSpace(string(data))
-		parsed, err := uuid.Parse(native)
-		if err != nil || parsed == uuid.Nil || parsed.String() != native || native != fsid {
-			return clientOperationError(ctx, "native pool PG FSID differs from the original cluster", err)
-		}
-		return ctx.Err()
-	}
-	readPool := func() (PoolState, uint32, error) {
-		data, err := query("osd", "dump", "--format", "json")
-		if err != nil {
-			return PoolState{}, 0, err
-		}
-		pool, epoch, err := decodePoolPGOSDMap(data, fsid, name)
-		if err != nil || ctx.Err() != nil {
-			return PoolState{}, 0, clientOperationError(ctx, "decode native pool PG identity failed", err)
-		}
-		return pool, epoch, nil
-	}
-	if err := checkFSID(); err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	before, beforeEpoch, err := readPool()
-	if err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	if err := handle.matchLocked(name, before.ID); err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	data, err := query("pg", "ls-by-pool", name, "--format", "json")
-	if err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	ready, pgs, err := decodePoolPGReports(data, before.ID)
-	if err != nil || ctx.Err() != nil {
-		return PoolPGSnapshot{}, clientOperationError(ctx, "decode native pool PG reports failed", err)
-	}
-	after, afterEpoch, err := readPool()
-	if err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	if after.ID != before.ID {
-		return PoolPGSnapshot{}, clientOperationError(ctx, "native pool was replaced during PG observation", nil)
-	}
-	if err := checkFSID(); err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	if err := ctx.Err(); err != nil {
-		return PoolPGSnapshot{}, err
-	}
-	return PoolPGSnapshot{FSID: fsid, PoolBefore: before, PoolAfter: after,
-		OSDMapEpochBefore: beforeEpoch, OSDMapEpochAfter: afterEpoch, PGReady: ready, PGs: pgs}, nil
 }
 
 func decodePoolPGOSDMap(data []byte, fsid, name string) (PoolState, uint32, error) {

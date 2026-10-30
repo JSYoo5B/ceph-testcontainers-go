@@ -84,7 +84,7 @@ func assertSnapshotReadLockQueued(t *testing.T, mutex *sync.RWMutex, operation f
 
 func TestTopologySnapshotContextsPreserveCopiesAndOwnedDescriptors(t *testing.T) {
 	a, b := &ManagerContainer{DaemonName: "a"}, &ManagerContainer{DaemonName: "b"}
-	cluster := &Container{bootstrap: bootstrapRecord{config: []byte("config"), keyring: []byte("keyring")}, roster: memberRoster{managers: map[string]*ManagerContainer{"b": b, "a": a}}}
+	cluster := &Container{bootstrap: bootstrapRecord{config: []byte("config"), keyring: []byte("keyring")}, members: membershipState{roster: memberRoster{managers: map[string]*ManagerContainer{"b": b, "a": a}}}}
 	cc, err := cluster.ConnectionConfig(t.Context())
 	config := cc.Conf
 	keyring := cc.Keyring
@@ -100,7 +100,7 @@ func TestTopologySnapshotContextsPreserveCopiesAndOwnedDescriptors(t *testing.T)
 		t.Fatalf("manager descriptors/order: %v %v", managers, err)
 	}
 	managers[0] = nil
-	if cluster.roster.manager("a") != a {
+	if cluster.members.roster.manager("a") != a {
 		t.Fatal("manager snapshot modified ownership map")
 	}
 	cluster.closed = true
@@ -117,10 +117,13 @@ func TestMonitorAndOSDSnapshotsMatchTheLockedListings(t *testing.T) {
 	primary := &testcontainers.DockerContainer{}
 	c, b := &MonitorContainer{DaemonName: "c"}, &MonitorContainer{DaemonName: "b"}
 	osd0, osd2 := &OSDContainer{ID: 0}, &OSDContainer{ID: 2}
-	cluster := &Container{Container: primary, roster: memberRoster{monitors: map[string]*MonitorContainer{"c": c, "b": b}},
-		osdHandles: osdRegistry{owned: map[int]*OSDContainer{2: osd2, 0: osd0}}}
+	cluster := &Container{
+		Container: primary,
+		fleet:     osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{2: osd2, 0: osd0}}},
+		members:   membershipState{roster: memberRoster{monitors: map[string]*MonitorContainer{"c": c, "b": b}}},
+	}
 	for _, terminated := range []bool{false, true} {
-		cluster.monitorTerminated = terminated
+		cluster.members.monitorTerminated = terminated
 		monitors, err := cluster.Monitors(t.Context())
 		if err != nil {
 			t.Fatal(err)
@@ -143,7 +146,7 @@ func TestMonitorAndOSDSnapshotsMatchTheLockedListings(t *testing.T) {
 		t.Fatalf("osd descriptors/order: %v %v", osds, err)
 	}
 	osds[0] = nil
-	if cluster.osdHandles.get(0) != osd0 {
+	if cluster.fleet.osdHandles.get(0) != osd0 {
 		t.Fatal("osd snapshot modified ownership map")
 	}
 }

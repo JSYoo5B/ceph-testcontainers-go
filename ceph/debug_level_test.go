@@ -37,8 +37,8 @@ func TestOpenDebugTargetRefusesBeforeCommands(t *testing.T) {
 		"malformed":      {nil, "osd.01", "must be an OSD"},
 		"unknown OSD":    {nil, "osd.7", "not a running-capable OSD"},
 		"purged OSD":     {nil, "osd.1", "not a running-capable OSD"},
-		"detaching OSD":  {func(c *Container) { c.osdHandles.get(0).detaching = true }, "osd.0", "not a running-capable OSD"},
-		"purge issued":   {func(c *Container) { c.osdHandles.get(0).purgeIssued = true }, "osd.0", "not a running-capable OSD"},
+		"detaching OSD":  {func(c *Container) { c.fleet.osdHandles.get(0).detaching = true }, "osd.0", "not a running-capable OSD"},
+		"purge issued":   {func(c *Container) { c.fleet.osdHandles.get(0).purgeIssued = true }, "osd.0", "not a running-capable OSD"},
 		"closed cluster": {func(c *Container) { c.closed = true }, "osd.0", "terminated"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestOpenDebugTargetRefusesBeforeCommands(t *testing.T) {
 	t.Run("owned running-capable OSD", func(t *testing.T) {
 		c, control := adminSocketCluster()
 		target, err := c.openDebugTarget(t.Context(), "osd.0")
-		if err != nil || target == nil || target.daemon != "osd.0" || target.id != 0 || target.osd != c.osdHandles.get(0) || len(control.Calls) != 0 {
+		if err != nil || target == nil || target.daemon != "osd.0" || target.id != 0 || target.osd != c.fleet.osdHandles.get(0) || len(control.Calls) != 0 {
 			t.Fatalf("target %+v err %v calls %v", target, err, control.Calls)
 		}
 		// The topology lock is released again.
@@ -173,8 +173,8 @@ func (o *debugLevelOSD) State(context.Context) (*container.State, error) {
 func TestOSDDebugTargetGeneration(t *testing.T) {
 	c, _ := adminSocketCluster()
 	ctr := &debugLevelOSD{id: "osd-container", state: container.State{Running: true, StartedAt: "start-1"}}
-	c.osdHandles.register(0, &OSDContainer{ID: 0, Container: ctr})
-	target := &osdDebugTarget{c: c, id: 0, daemon: "osd.0", osd: c.osdHandles.get(0)}
+	c.fleet.osdHandles.register(0, &OSDContainer{ID: 0, Container: ctr})
+	target := &osdDebugTarget{c: c, id: 0, daemon: "osd.0", osd: c.fleet.osdHandles.get(0)}
 	gen, err := target.generation(t.Context())
 	if err != nil || gen != (debugLevelGeneration{owned: true, identity: "osd-container@start-1", running: true}) {
 		t.Fatalf("generation %+v %v", gen, err)
@@ -184,16 +184,16 @@ func TestOSDDebugTargetGeneration(t *testing.T) {
 		t.Fatalf("paused generation %+v", gen)
 	}
 	for name, edit := range map[string]func(){
-		"reopened":   func() { c.osdHandles.register(0, &OSDContainer{ID: 0, Container: ctr}) },
-		"purged":     func() { c.osdHandles.get(0).purged = true },
-		"purging":    func() { c.osdHandles.get(0).purgeIssued = true },
-		"detaching":  func() { c.osdHandles.get(0).detaching = true },
+		"reopened":   func() { c.fleet.osdHandles.register(0, &OSDContainer{ID: 0, Container: ctr}) },
+		"purged":     func() { c.fleet.osdHandles.get(0).purged = true },
+		"purging":    func() { c.fleet.osdHandles.get(0).purgeIssued = true },
+		"detaching":  func() { c.fleet.osdHandles.get(0).detaching = true },
 		"terminated": func() { c.closed = true },
 	} {
 		t.Run(name, func(t *testing.T) {
-			saved, closed := *c.osdHandles.get(0), c.closed
-			original := c.osdHandles.get(0)
-			defer func() { *original, c.closed = saved, closed; c.osdHandles.register(0, original) }()
+			saved, closed := *c.fleet.osdHandles.get(0), c.closed
+			original := c.fleet.osdHandles.get(0)
+			defer func() { *original, c.closed = saved, closed; c.fleet.osdHandles.register(0, original) }()
 			edit()
 			if gen, err := target.generation(t.Context()); err != nil || gen.owned {
 				t.Fatalf("generation %+v %v", gen, err)
@@ -206,15 +206,17 @@ func TestOSDDebugTargetSetAdmission(t *testing.T) {
 	newTarget := func() (*Container, *poolFixtureContainer, *debugLevelOSD, *osdDebugTarget) {
 		c, control := adminSocketCluster()
 		ctr := &debugLevelOSD{id: "osd-container", state: container.State{Running: true, StartedAt: "start-1"}}
-		c.osdHandles.register(0, &OSDContainer{ID: 0, Container: ctr})
-		return c, control, ctr, &osdDebugTarget{c: c, id: 0, daemon: "osd.0", osd: c.osdHandles.get(0)}
+		c.fleet.osdHandles.register(0, &OSDContainer{ID: 0, Container: ctr})
+		return c, control, ctr, &osdDebugTarget{c: c, id: 0, daemon: "osd.0", osd: c.fleet.osdHandles.get(0)}
 	}
 	for name, test := range map[string]struct {
 		edit    func(*Container, *debugLevelOSD)
 		changed bool
 	}{
-		"restarted":  {func(_ *Container, o *debugLevelOSD) { o.state.StartedAt = "start-2" }, true},
-		"replaced":   {func(c *Container, o *debugLevelOSD) { c.osdHandles.register(0, &OSDContainer{ID: 0, Container: o}) }, true},
+		"restarted": {func(_ *Container, o *debugLevelOSD) { o.state.StartedAt = "start-2" }, true},
+		"replaced": {func(c *Container, o *debugLevelOSD) {
+			c.fleet.osdHandles.register(0, &OSDContainer{ID: 0, Container: o})
+		}, true},
 		"stopped":    {func(_ *Container, o *debugLevelOSD) { o.state.Running = false }, true},
 		"terminated": {func(c *Container, _ *debugLevelOSD) { c.closed = true }, true},
 		"paused":     {func(_ *Container, o *debugLevelOSD) { o.state.Paused = true }, false},
@@ -258,8 +260,8 @@ func debugLevelNativeCluster(t *testing.T) (*Container, *nativeTarget, *osdDebug
 	c := nativeCluster()
 	c.Container, c.runDir.volume = control, &runVolume{name: "run"}
 	osd := &debugLevelOSD{id: "osd-container", state: container.State{Running: true, StartedAt: "start-1"}}
-	c.osdHandles.replace(map[int]*OSDContainer{0: {ID: 0, Container: osd}})
-	return c, control, &osdDebugTarget{c: c, id: 0, daemon: "osd.0", osd: c.osdHandles.get(0)}, log
+	c.fleet.osdHandles.replace(map[int]*OSDContainer{0: {ID: 0, Container: osd}})
+	return c, control, &osdDebugTarget{c: c, id: 0, daemon: "osd.0", osd: c.fleet.osdHandles.get(0)}, log
 }
 
 func cephCalls(t *testing.T, log string) string {
@@ -309,14 +311,14 @@ func TestOSDDebugTargetUnconfirmedSetHoldsTheRemovalFence(t *testing.T) {
 			t.Fatalf("settled with a refused cancellation: %v", err)
 		}
 		// RemoveOSD and DetachOSD fence the instance before they replace it.
-		if err := c.fenceNativeTarget(t.Context(), "osd-container"); err == nil || registered(c) != 1 {
+		if err := c.native.fence(t.Context(), "osd-container"); err == nil || registered(c) != 1 {
 			t.Fatalf("the fence admitted a replacement while the set may run: %v", err)
 		}
 		control.set(func(f *nativeTarget) { f.refuseCancel = false })
 		if err := settle(t.Context()); err != nil || registered(c) != 0 {
 			t.Fatalf("settle: %v registered %d", err, registered(c))
 		}
-		if err := c.fenceNativeTarget(t.Context(), "osd-container"); err != nil {
+		if err := c.native.fence(t.Context(), "osd-container"); err != nil {
 			t.Fatal(err)
 		}
 		start()
@@ -328,7 +330,7 @@ func TestOSDDebugTargetUnconfirmedSetHoldsTheRemovalFence(t *testing.T) {
 	t.Run("drained by the fence", func(t *testing.T) {
 		c, control, settle, log, start := unconfirmedSet(t)
 		control.set(func(f *nativeTarget) { f.refuseCancel = false })
-		if err := c.fenceNativeTarget(t.Context(), "osd-container"); err != nil || registered(c) != 0 {
+		if err := c.native.fence(t.Context(), "osd-container"); err != nil || registered(c) != 0 {
 			t.Fatalf("fence: %v registered %d", err, registered(c))
 		}
 		if err := settle(t.Context()); err != nil {
@@ -342,7 +344,7 @@ func TestOSDDebugTargetUnconfirmedSetHoldsTheRemovalFence(t *testing.T) {
 	})
 	t.Run("fenced instance", func(t *testing.T) {
 		c, _, target, log := debugLevelNativeCluster(t)
-		if err := c.fenceNativeTarget(t.Context(), "osd-container"); err != nil {
+		if err := c.native.fence(t.Context(), "osd-container"); err != nil {
 			t.Fatal(err)
 		}
 		var refusal *debugLevelRefusal

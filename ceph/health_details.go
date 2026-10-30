@@ -1,7 +1,6 @@
 package ceph
 
 import (
-	"context"
 	"errors"
 	"regexp"
 	"strconv"
@@ -9,7 +8,6 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
-	"github.com/google/uuid"
 )
 
 // HealthSnapshot is one MON health observation. Status reflects the worst
@@ -39,78 +37,6 @@ type HealthMute struct {
 	Code, Summary, ExpiresAt string
 	Count                    int64
 	Sticky                   bool
-}
-
-// healthDetails implements Observer.HealthDetails.
-func (c *Container) healthDetails(ctx context.Context) (HealthSnapshot, error) {
-	if err := ctx.Err(); err != nil {
-		return HealthSnapshot{}, err
-	}
-	if c == nil {
-		return HealthSnapshot{}, errors.New("ceph cluster is unavailable")
-	}
-	if err := c.lockTopology(ctx); err != nil {
-		return HealthSnapshot{}, err
-	}
-	defer c.mu.Unlock()
-	if c.closed {
-		return HealthSnapshot{}, errClusterTerminated
-	}
-	control, err := c.conn().controlContainer(ctx)
-	if err != nil {
-		return HealthSnapshot{}, err
-	}
-	if control == nil {
-		return HealthSnapshot{}, errors.New("ceph control container is unavailable")
-	}
-	identity, err := c.bootstrap.identity(ctx)
-	if err != nil {
-		return HealthSnapshot{}, err
-	}
-	fsid, identityErr := identity.fsid, identity.err
-	if identityErr != nil || !identity.confirmed {
-		return HealthSnapshot{}, clientOperationError(ctx, "ceph original bootstrap identity is unavailable", identityErr)
-	}
-	query := func(args ...string) ([]byte, error) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		data, err := command(ctx, control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
-		if err != nil || ctx.Err() != nil {
-			return nil, clientOperationError(ctx, "observe Ceph health: native query failed", err)
-		}
-		return data, nil
-	}
-	checkFSID := func() error {
-		data, err := query("fsid")
-		if err != nil {
-			return err
-		}
-		native := strings.TrimSpace(string(data))
-		parsed, err := uuid.Parse(native)
-		if err != nil || parsed == uuid.Nil || parsed.String() != native || native != fsid {
-			return clientOperationError(ctx, "native health FSID differs from the original cluster", err)
-		}
-		return ctx.Err()
-	}
-	if err := checkFSID(); err != nil {
-		return HealthSnapshot{}, err
-	}
-	data, err := query("health", "detail", "--format", "json")
-	if err != nil {
-		return HealthSnapshot{}, err
-	}
-	snapshot, err := decodeHealthDetails(data, fsid)
-	if err != nil || ctx.Err() != nil {
-		return HealthSnapshot{}, clientOperationError(ctx, "decode native Ceph health details failed", err)
-	}
-	if err := checkFSID(); err != nil {
-		return HealthSnapshot{}, err
-	}
-	if err := ctx.Err(); err != nil {
-		return HealthSnapshot{}, err
-	}
-	return snapshot, nil
 }
 
 func decodeHealthDetails(data []byte, fsid string) (HealthSnapshot, error) {

@@ -40,10 +40,14 @@ func consumeOSDLaunchFiles(t *testing.T, req testcontainers.GenericContainerRequ
 }
 
 func TestOSDLaunchRecipeRebuildsConsumedFilesAndRequestState(t *testing.T) {
-	c := &Container{settings: options{essentialImage: "synthetic-osd-image", startupTimeout: time.Minute},
-		bootstrap: bootstrapRecord{config: []byte("[global]\nfsid = synthetic-cluster\n"), keyring: []byte("synthetic-admin-keyring")}, startup: newStartupIdentity("synthetic-owner"),
-		nets:   networkState{public: &testcontainers.DockerNetwork{Name: "synthetic-public"}, cluster: &testcontainers.DockerNetwork{Name: "synthetic-cluster"}},
-		runDir: runDirState{volume: &runVolume{name: "synthetic-run"}}, stores: osdStorageState{memory: &osdMemoryStorage{name: "synthetic-memory"}}}
+	c := &Container{
+		settings:  options{essentialImage: "synthetic-osd-image", startupTimeout: time.Minute},
+		bootstrap: bootstrapRecord{config: []byte("[global]\nfsid = synthetic-cluster\n"), keyring: []byte("synthetic-admin-keyring")},
+		startup:   newStartupIdentity("synthetic-owner"),
+		nets:      networkState{public: &testcontainers.DockerNetwork{Name: "synthetic-public"}, cluster: &testcontainers.DockerNetwork{Name: "synthetic-cluster"}},
+		runDir:    runDirState{volume: &runVolume{name: "synthetic-run"}},
+		fleet:     osdFleetState{stores: osdStorageState{memory: &osdMemoryStorage{name: "synthetic-memory"}}},
+	}
 	osd := &OSDContainer{ID: 7, nativeUUID: "synthetic-osd-uuid", placement: OSDConfig{Host: "synthetic-host", Root: "default", Rack: "rack-a", DeviceClass: "fast"}}
 	key := []byte("synthetic-osd-keyring")
 	r := c.newOSDLaunchRecipe(osd, key)
@@ -66,7 +70,7 @@ func TestOSDLaunchRecipeRebuildsConsumedFilesAndRequestState(t *testing.T) {
 	c.bootstrap.config[0], c.bootstrap.keyring[0], key[0] = 'X', 'X', 'X'
 	c.settings.essentialImage, c.settings.hostNetwork = "other-image", true
 	c.nets.public.Name, c.nets.cluster.Name = "other-public", "other-cluster"
-	c.runDir.volume.name, c.stores.memory.name, c.startup.owner = "other-run", "other-memory", "other-owner"
+	c.runDir.volume.name, c.fleet.stores.memory.name, c.startup.owner = "other-run", "other-memory", "other-owner"
 	first.Env["CEPH_OSD_UUID"], first.Labels[clusterOwnerLabel] = "foreign", "foreign"
 	first.Networks[0] = "foreign"
 	first.Mounts[0].Source.(testcontainers.DockerVolumeMountSource).VolumeOptions.NoCopy = false
@@ -128,7 +132,7 @@ func TestOSDLaunchNeverReplaysCreationOrLosesPartialHandle(t *testing.T) {
 			creationErr := errors.New("synthetic uncertain create/readiness failure")
 			calls := 0
 			c.settings.essentialImage = "changed-after-preparation"
-			c.stores.runner = func(_ context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+			c.fleet.stores.runner = func(_ context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 				calls++
 				if image != "synthetic-osd-image" {
 					t.Fatal("launch did not preserve its image reference")
@@ -156,13 +160,13 @@ func TestOSDLaunchNeverReplaysCreationOrLosesPartialHandle(t *testing.T) {
 			if err := c.osdFleet().startOSD(t.Context(), copyOfLaunch); err == nil || !strings.Contains(err.Error(), "already attempted") || calls != 1 {
 				t.Fatal("a copied launch replayed container creation")
 			}
-			if c.osdHandles.get(saved.ID) != saved || (saved.Container == created) != (outcome != "no-handle-error") {
+			if c.fleet.osdHandles.get(saved.ID) != saved || (saved.Container == created) != (outcome != "no-handle-error") {
 				t.Fatal("original descriptor/partial container ownership was lost")
 			}
 			if err := c.Terminate(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if c.osdHandles.count() != 0 || (outcome != "no-handle-error" && created.terminations != 1) {
+			if c.fleet.osdHandles.count() != 0 || (outcome != "no-handle-error" && created.terminations != 1) {
 				t.Fatal("partial handle was not cleaned up through the original owner")
 			}
 		})
@@ -173,7 +177,7 @@ func TestOSDLaunchConcurrentCopiesCreateOnlyOneContainer(t *testing.T) {
 	c, launch := preparedOSDLaunch(t)
 	var calls atomic.Int32
 	entered, release := make(chan struct{}), make(chan struct{})
-	c.stores.runner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	c.fleet.stores.runner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		calls.Add(1)
 		close(entered)
 		<-release
@@ -207,7 +211,7 @@ func TestOSDLaunchRefusesRebindingAndIncompletePreparation(t *testing.T) {
 	c, launch := preparedOSDLaunch(t)
 	previous := &initialOSDDaemon{id: launch.osd.ID}
 	launch.osd.Container = previous
-	c.stores.runner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	c.fleet.stores.runner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		t.Fatal("refused launch reached container creation")
 		return nil, nil
 	}
@@ -255,7 +259,7 @@ func TestOSDLaunchRecipeConcurrentRequestsHaveIndependentReaders(t *testing.T) {
 
 func TestOSDLaunchCancelledBeforeCreationDoesNotConsumeAttempt(t *testing.T) {
 	c, launch := preparedOSDLaunch(t)
-	c.stores.runner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	c.fleet.stores.runner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		t.Fatal("cancelled launch reached container creation")
 		return nil, nil
 	}

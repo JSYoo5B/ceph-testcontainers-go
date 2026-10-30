@@ -145,7 +145,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	if c.closed {
 		return nil, errClusterTerminated
 	}
-	if (name == "a" && !c.monitorTopology().firstMonitorTerminated()) || c.roster.monitor(name) != nil {
+	if (name == "a" && !c.monitorTopology().firstMonitorTerminated()) || c.members.roster.monitor(name) != nil {
 		return nil, fmt.Errorf("monitor %s is already owned", name)
 	}
 	if name == "a" {
@@ -178,7 +178,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 		return nil, err
 	}
 	mon := &MonitorContainer{DaemonName: name, owner: c, image: c.settings.daemonImage(daemon)}
-	c.roster.addMonitor(name, mon)
+	c.members.roster.addMonitor(name, mon)
 	attempts := 1
 	if c.settings.hostNetwork {
 		attempts = hostPortAttempts

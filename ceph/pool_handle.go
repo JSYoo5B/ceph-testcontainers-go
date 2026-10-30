@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // errStalePool marks an operation through a Pool handle that no longer
@@ -149,7 +152,107 @@ func (p *Pool) Usage(ctx context.Context) (PoolUsageSnapshot, error) {
 	if err != nil {
 		return PoolUsageSnapshot{}, err
 	}
-	return c.poolUsage(ctx, p.Name, p)
+	// It reads ceph df detail through the fixture's control CLI. It checks
+	// the original bootstrap FSID and exact native pool ID/name before and after
+	// the observation. A pool without a statistics row is unavailable, not empty.
+	// All failures, including cancellation after a query, return a zero snapshot.
+	// This method makes no writes, retries or background workers. External pool or
+	// control configuration writers must not race it; the native reads are not an
+	// atomic transaction. Poll with a caller deadline for eventual assertions.
+	name, handle := p.Name, p
+	if err := ctx.Err(); err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	if c == nil {
+		return PoolUsageSnapshot{}, errors.New("ceph cluster is unavailable")
+	}
+	if err := validateExistingPoolName(name); err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	if err := c.lockTopology(ctx); err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	defer c.mu.Unlock()
+	if c.closed {
+		return PoolUsageSnapshot{}, errClusterTerminated
+	}
+	if err := handle.matchLocked(name, -1); err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	control, err := c.conn().controlContainer(ctx)
+	if err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	if control == nil {
+		return PoolUsageSnapshot{}, errors.New("ceph control container is unavailable")
+	}
+	identity, err := c.bootstrap.identity(ctx)
+	if err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	fsid, identityErr := identity.fsid, identity.err
+	if identityErr != nil || !identity.confirmed {
+		return PoolUsageSnapshot{}, errors.New("ceph original bootstrap identity is unavailable")
+	}
+	query := func(args ...string) ([]byte, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := command(ctx, control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
+		if err = errors.Join(err, ctx.Err()); err != nil {
+			return nil, fmt.Errorf("observe pool usage: %w", err)
+		}
+		return data, nil
+	}
+	checkFSID := func() error {
+		data, err := query("fsid")
+		if err != nil {
+			return err
+		}
+		native := strings.TrimSpace(string(data))
+		parsed, err := uuid.Parse(native)
+		if err != nil || parsed == uuid.Nil || parsed.String() != native || native != fsid {
+			return errors.New("native pool usage FSID differs from the original cluster")
+		}
+		return ctx.Err()
+	}
+	readID := func() (int64, error) {
+		data, err := query("osd", "pool", "ls", "detail", "--format", "json")
+		if err != nil {
+			return 0, err
+		}
+		id, err := poolUsageID(data, name)
+		return id, errors.Join(err, ctx.Err())
+	}
+	if err := checkFSID(); err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	id, err := readID()
+	if err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	if err := handle.matchLocked(name, id); err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	data, err := query("df", "detail", "--format", "json")
+	if err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	usage, err := decodePoolUsage(data, fsid, name, id)
+	if err = errors.Join(err, ctx.Err()); err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	afterID, err := readID()
+	if err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	if afterID != id {
+		return PoolUsageSnapshot{}, fmt.Errorf("pool %q was replaced during usage observation", name)
+	}
+	if err := checkFSID(); err != nil {
+		return PoolUsageSnapshot{}, err
+	}
+	return usage, nil
 }
 
 // PGs observes the PGs that Ceph reports for this pool; PoolPGSnapshot
@@ -164,7 +267,119 @@ func (p *Pool) PGs(ctx context.Context) (PoolPGSnapshot, error) {
 	if err != nil {
 		return PoolPGSnapshot{}, err
 	}
-	return c.poolPGs(ctx, p.Name, p)
+	// It observes one existing pool through one captured control CLI handle.
+	// It checks the original bootstrap FSID and the exact pool name/ID before and
+	// after pg ls-by-pool, using five CLI reads and no per-PG mapping fanout. It
+	// works before any OSD is started when a native pool has been prepared through
+	// Ceph. Successful empty/unready/unknown reports are retained as observations;
+	// no clean, health, owned-OSD membership or expected PG-count predicate applies.
+	//
+	// All failures, including post-query cancellation, return a zero snapshot and
+	// static errors that omit native output. There are no writes, retries or
+	// workers. External native/configuration writers must not race these separate
+	// reads. Compare original fixture identities and data when asserting movement;
+	// these reported PGs are not current mappings or read-after-write evidence.
+	name, handle := p.Name, p
+	if err := ctx.Err(); err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	if c == nil {
+		return PoolPGSnapshot{}, errors.New("ceph cluster is unavailable")
+	}
+	if err := validateExistingPoolName(name); err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	if err := c.lockTopology(ctx); err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	defer c.mu.Unlock()
+	if c.closed {
+		return PoolPGSnapshot{}, clientOperationError(ctx, "ceph cluster is terminated", nil)
+	}
+	if err := handle.matchLocked(name, -1); err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	control, err := c.conn().controlContainer(ctx)
+	if err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	if control == nil {
+		return PoolPGSnapshot{}, clientOperationError(ctx, "ceph control container is unavailable", nil)
+	}
+	identity, err := c.bootstrap.identity(ctx)
+	if err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	fsid, identityErr := identity.fsid, identity.err
+	if identityErr != nil || !identity.confirmed {
+		return PoolPGSnapshot{}, clientOperationError(ctx, "ceph original bootstrap identity is unavailable", identityErr)
+	}
+	query := func(args ...string) ([]byte, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := command(ctx, control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
+		if err != nil || ctx.Err() != nil {
+			return nil, clientOperationError(ctx, "observe pool PGs: native query failed", err)
+		}
+		return data, nil
+	}
+	checkFSID := func() error {
+		data, err := query("fsid")
+		if err != nil {
+			return err
+		}
+		native := strings.TrimSpace(string(data))
+		parsed, err := uuid.Parse(native)
+		if err != nil || parsed == uuid.Nil || parsed.String() != native || native != fsid {
+			return clientOperationError(ctx, "native pool PG FSID differs from the original cluster", err)
+		}
+		return ctx.Err()
+	}
+	readPool := func() (PoolState, uint32, error) {
+		data, err := query("osd", "dump", "--format", "json")
+		if err != nil {
+			return PoolState{}, 0, err
+		}
+		pool, epoch, err := decodePoolPGOSDMap(data, fsid, name)
+		if err != nil || ctx.Err() != nil {
+			return PoolState{}, 0, clientOperationError(ctx, "decode native pool PG identity failed", err)
+		}
+		return pool, epoch, nil
+	}
+	if err := checkFSID(); err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	before, beforeEpoch, err := readPool()
+	if err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	if err := handle.matchLocked(name, before.ID); err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	data, err := query("pg", "ls-by-pool", name, "--format", "json")
+	if err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	ready, pgs, err := decodePoolPGReports(data, before.ID)
+	if err != nil || ctx.Err() != nil {
+		return PoolPGSnapshot{}, clientOperationError(ctx, "decode native pool PG reports failed", err)
+	}
+	after, afterEpoch, err := readPool()
+	if err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	if after.ID != before.ID {
+		return PoolPGSnapshot{}, clientOperationError(ctx, "native pool was replaced during PG observation", nil)
+	}
+	if err := checkFSID(); err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return PoolPGSnapshot{}, err
+	}
+	return PoolPGSnapshot{FSID: fsid, PoolBefore: before, PoolAfter: after,
+		OSDMapEpochBefore: beforeEpoch, OSDMapEpochAfter: afterEpoch, PGReady: ready, PGs: pgs}, nil
 }
 
 // SetPGCount requests a new PG count for this pool with autoscaling off or

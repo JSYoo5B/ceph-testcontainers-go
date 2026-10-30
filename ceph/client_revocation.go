@@ -74,7 +74,7 @@ func (r *ClientRevocationHandle) Restore(ctx context.Context) error {
 	}
 	finish := func() {
 		state.restored = true
-		c.authRecords.dropRevocationIf(state.client.name, state)
+		c.ledger.authRecords.dropRevocationIf(state.client.name, state)
 	}
 	switch {
 	case current.equal(state.original):

@@ -82,17 +82,17 @@ func TestCleanupRetainsFailuresAndAcceptsMissingDaemons(t *testing.T) {
 	missing := &hostNetworkFixtureContainer{terminationErr: errdefs.ErrNotFound}
 	manager := &hostNetworkFixtureContainer{failTerminationOnce: true}
 	cluster := &Container{
-		Container:  missing,
-		roster:     memberRoster{firstMgr: manager, services: map[string]testcontainers.Container{"rgw": missing}},
-		osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {Container: missing}}},
+		Container: missing,
+		fleet:     osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {Container: missing}}}},
+		members:   membershipState{roster: memberRoster{firstMgr: manager, services: map[string]testcontainers.Container{"rgw": missing}}},
 	}
-	if err := cluster.Terminate(t.Context()); err == nil || cluster.roster.initialManager() != manager {
+	if err := cluster.Terminate(t.Context()); err == nil || cluster.members.roster.initialManager() != manager {
 		t.Fatal("failed manager cleanup lost ownership")
 	}
-	if !cluster.monitorTerminated || cluster.osdHandles.count() != 0 || cluster.roster.serviceCount() != 0 {
+	if !cluster.members.monitorTerminated || cluster.fleet.osdHandles.count() != 0 || cluster.members.roster.serviceCount() != 0 {
 		t.Fatal("missing daemons remained owned after cleanup")
 	}
-	if err := cluster.Terminate(t.Context()); err != nil || cluster.roster.initialManager() != nil {
+	if err := cluster.Terminate(t.Context()); err != nil || cluster.members.roster.initialManager() != nil {
 		t.Fatalf("failed manager cleanup did not recover: %v", err)
 	}
 	if missing.terminations != 3 || manager.terminations != 2 {

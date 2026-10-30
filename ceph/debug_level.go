@@ -173,7 +173,7 @@ func (c *Container) openDebugTarget(ctx context.Context, daemon string) (*osdDeb
 	if err := c.lockTopology(ctx); err != nil {
 		return nil, err
 	}
-	closed, osd := c.closed, c.osdHandles.get(n)
+	closed, osd := c.closed, c.fleet.osdHandles.get(n)
 	owns := c.monitorTopology().ownsDaemon(kind, id) && osd != nil && !osd.purgeIssued && !osd.detaching
 	c.mu.Unlock()
 	switch {
@@ -204,7 +204,7 @@ func (t *osdDebugTarget) generation(ctx context.Context) (debugLevelGeneration, 
 // generationLocked is generation for a caller that holds c.mu.
 func (t *osdDebugTarget) generationLocked(ctx context.Context) (debugLevelGeneration, error) {
 	c := t.c
-	osd := c.osdHandles.get(t.id)
+	osd := c.fleet.osdHandles.get(t.id)
 	owned := !c.closed && osd == t.osd && osd != nil && osd.Container != nil && !osd.purged && !osd.purgeIssued && !osd.detaching
 	if !owned {
 		return debugLevelGeneration{}, nil
@@ -254,7 +254,7 @@ func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) 
 	// its fence names.
 	inv := &nativeInvocation{owner: c, target: control, targetID: t.osd.GetContainerID(), label: "admin socket",
 		cancel: cancel, stopCommand: supervised.Cancel, done: make(chan struct{})}
-	switch c.nativeCmds.admit(inv, nil) {
+	switch c.native.calls.admit(inv, nil) {
 	case nativeRefusedClosed:
 		return nil, &debugLevelRefusal{changed: true, err: errClusterTerminated}
 	case nativeRefusedFenced:
@@ -263,7 +263,7 @@ func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) 
 
 	_, err = c.adminSocketCommand(runCtx, control, t.daemon, "config", "set", name, value)
 	marker, unconfirmed := supervised.Unconfirmed(err)
-	c.nativeCmds.finish(inv, marker, unconfirmed)
+	c.native.calls.finish(inv, marker, unconfirmed)
 	close(inv.done)
 	if !unconfirmed {
 		return nil, err
@@ -272,7 +272,7 @@ func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) 
 		if err := inv.stop(ctx); err != nil {
 			return err
 		}
-		c.nativeCmds.forget(inv)
+		c.native.calls.forget(inv)
 		return nil
 	}, err
 }

@@ -19,7 +19,7 @@ func osdHandle(t testing.TB, _ context.Context, c *Container, id int) *OSDContai
 	if c.mu.TryLock() {
 		defer c.mu.Unlock()
 	}
-	if osd := c.osdHandles.get(id); osd != nil {
+	if osd := c.fleet.osdHandles.get(id); osd != nil {
 		if osd.owner == nil {
 			osd.owner = c
 		}
@@ -33,13 +33,13 @@ func monitorHandle(t testing.TB, _ context.Context, c *Container, name string) *
 	if c.mu.TryLock() {
 		defer c.mu.Unlock()
 	}
-	if mon := c.roster.monitor(name); mon != nil {
+	if mon := c.members.roster.monitor(name); mon != nil {
 		if mon.owner == nil {
 			mon.owner = c
 		}
 		return mon
 	}
-	if name == "a" && c.Container != nil && !c.monitorTerminated {
+	if name == "a" && c.Container != nil && !c.members.monitorTerminated {
 		return &MonitorContainer{Container: c.Container, DaemonName: "a", owner: c}
 	}
 	return &MonitorContainer{DaemonName: name, owner: c}
@@ -50,7 +50,7 @@ func managerHandle(t testing.TB, _ context.Context, c *Container, name string) *
 	if c.mu.TryLock() {
 		defer c.mu.Unlock()
 	}
-	if mgr := c.roster.manager(name); mgr != nil {
+	if mgr := c.members.roster.manager(name); mgr != nil {
 		if mgr.owner == nil {
 			mgr.owner = c
 		}

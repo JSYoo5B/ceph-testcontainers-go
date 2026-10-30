@@ -63,12 +63,12 @@ func TestOSDMembershipRejectsAbsentAndPostMutationReplacement(t *testing.T) {
 	}
 	ctr := &osdPolicyFixture{osds: []OSDState{{ID: 3, UUID: osdPolicyUUID, Up: true, In: true, Weight: 1}}}
 	c := osdPolicyCluster(ctr)
-	c.osdHandles.get(3).nativeUUID = ""
+	c.fleet.osdHandles.get(3).nativeUUID = ""
 	if err := osdHandle(t, t.Context(), c, 3).SetIn(t.Context(), false); err == nil || len(ctr.calls) != 1 {
 		t.Fatal("missing captured UUID adopted from current native state")
 	}
-	c.osdHandles.get(3).nativeUUID = osdPolicyUUID
-	c.osdHandles.get(3).purged = true
+	c.fleet.osdHandles.get(3).nativeUUID = osdPolicyUUID
+	c.fleet.osdHandles.get(3).purged = true
 	if _, err := c.osdStates(t.Context()); err == nil {
 		t.Fatal("purged registration treated as active")
 	}
@@ -77,7 +77,7 @@ func TestOSDMembershipRejectsAbsentAndPostMutationReplacement(t *testing.T) {
 func TestOSDFlagMalformedDump(t *testing.T) {
 	for _, raw := range []string{`null`, `{}`, `{"flags":[],"osds":[]}`, `{"flags":"noout,noout","osds":[]}`, `{"flags":"noout,","osds":[]}`, `{"flags":"","osds":[{"osd":3,"up":1,"in":2,"weight":1}]}`, `{"flags":"","osds":[{"osd":3,"up":1,"in":1,"weight":1},{"osd":3,"up":1,"in":1,"weight":1}]}`} {
 		ctr := &osdPolicyFixture{raw: raw}
-		if _, err := osdPolicyCluster(ctr).osdFlags(t.Context()); err == nil {
+		if _, err := (&Observer{target: osdPolicyCluster(ctr)}).OSDFlags(t.Context()); err == nil {
 			t.Fatal("malformed native dump accepted", raw)
 		}
 	}
@@ -115,7 +115,7 @@ func TestWaitForPGCleanRejectsClosedOrUnavailableControlImmediately(t *testing.T
 }
 
 func osdPolicyCluster(ctr *osdPolicyFixture) *Container {
-	return &Container{Container: ctr, settings: options{startupTimeout: time.Second}, osdHandles: osdRegistry{owned: map[int]*OSDContainer{3: {ID: 3, nativeUUID: osdPolicyUUID}}}}
+	return &Container{Container: ctr, settings: options{startupTimeout: time.Second}, fleet: osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{3: {ID: 3, nativeUUID: osdPolicyUUID}}}}}
 }
 
 type osdPolicyFixture struct {

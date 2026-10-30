@@ -104,8 +104,8 @@ func TestDaemonImageRefusalHappensBeforeLockAndState(t *testing.T) {
 			case *OSDContainer:
 				isNil = v == nil
 			}
-			if !isNil || c.roster.monitorCount() != 0 || c.roster.managerCount() != 0 || c.osdHandles.count() != 0 || c.closed {
-				t.Fatalf("refusal left state: %v monitors=%d managers=%d osds=%d", got, c.roster.monitorCount(), c.roster.managerCount(), c.osdHandles.count())
+			if !isNil || c.members.roster.monitorCount() != 0 || c.members.roster.managerCount() != 0 || c.fleet.osdHandles.count() != 0 || c.closed {
+				t.Fatalf("refusal left state: %v monitors=%d managers=%d osds=%d", got, c.members.roster.monitorCount(), c.members.roster.managerCount(), c.fleet.osdHandles.count())
 			}
 		})
 	}
@@ -117,8 +117,8 @@ func TestOverriddenOSDRecordsItsImageWithoutChangingTheClusterOrOtherOSDs(t *tes
 	c, _, runner := newInitialOSDCluster(options{essentialImage: "example.invalid/ceph:cluster", osds: 2})
 	c.bootstrap.config, c.bootstrap.keyring = []byte("[global]\nfsid = synthetic-cluster\n"), []byte("synthetic-admin-keyring")
 	var images []string
-	inner := c.stores.runner
-	c.stores.runner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	inner := c.fleet.stores.runner
+	c.fleet.stores.runner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		images = append(images, image)
 		return inner(ctx, image, opts...)
 	}
@@ -149,8 +149,8 @@ func TestOverriddenOSDRecordsItsImageWithoutChangingTheClusterOrOtherOSDs(t *tes
 		t.Fatal("the overridden OSD has no container")
 	}
 	// A refusal after the override keeps the first OSD intact.
-	if refused, err := c.AddOSD(t.Context(), OSDOptions{}.WithImage("")); refused != nil || !errors.Is(err, ErrInvalidRequest) || c.osdHandles.count() != 2 {
-		t.Fatalf("refused add: %v %v owned=%d", refused, err, c.osdHandles.count())
+	if refused, err := c.AddOSD(t.Context(), OSDOptions{}.WithImage("")); refused != nil || !errors.Is(err, ErrInvalidRequest) || c.fleet.osdHandles.count() != 2 {
+		t.Fatalf("refused add: %v %v owned=%d", refused, err, c.fleet.osdHandles.count())
 	}
 }
 
@@ -180,11 +180,11 @@ func TestOSDLaunchRecipeKeepsTheOSDImageNotTheClusterImage(t *testing.T) {
 func TestReopenKeepsTheOverriddenImage(t *testing.T) {
 	f := newRetainedFixture(t)
 	f.cluster.settings.essentialImage = "example.invalid/ceph:cluster"
-	f.cluster.osdHandles.get(3).image = "example.invalid/ceph:new"
-	otherBefore := f.cluster.osdHandles.get(4).image
+	f.cluster.fleet.osdHandles.get(3).image = "example.invalid/ceph:new"
+	otherBefore := f.cluster.fleet.osdHandles.get(4).image
 	var images []string
-	inner := f.cluster.stores.runner
-	f.cluster.stores.runner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	inner := f.cluster.fleet.stores.runner
+	f.cluster.fleet.stores.runner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		images = append(images, image)
 		return inner(ctx, image, opts...)
 	}
@@ -203,7 +203,7 @@ func TestReopenKeepsTheOverriddenImage(t *testing.T) {
 	if len(images) != 1 || images[0] != "example.invalid/ceph:new" || reopened.Image() != "example.invalid/ceph:new" {
 		t.Fatalf("reopen images %v handle %q", images, reopened.Image())
 	}
-	if f.cluster.osdHandles.get(4).image != otherBefore || f.cluster.settings.essentialImage != "example.invalid/ceph:changed-later" {
+	if f.cluster.fleet.osdHandles.get(4).image != otherBefore || f.cluster.settings.essentialImage != "example.invalid/ceph:changed-later" {
 		t.Fatal("reopening one OSD changed another daemon or the cluster")
 	}
 }

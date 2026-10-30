@@ -322,8 +322,10 @@ func TestTerminateUndoesFaultsFirstUnderTheClusterMutex(t *testing.T) {
 								t.Fatalf("faults.undo must receive &c.mu, got %v", x.Args)
 							}
 						}
-					case "stopNativeInvocations":
-						stop = append(stop, x.Pos())
+					case "stopAll":
+						if types.ExprString(sel.X) == "c.native" {
+							stop = append(stop, x.Pos())
+						}
 					case "release":
 						if recv, ok := sel.X.(*ast.SelectorExpr); ok && portLeaseUse(recv) {
 							release = append(release, x.Pos())

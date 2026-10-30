@@ -80,22 +80,22 @@ func prepareInitialComposition(settings *options) error {
 		if config.Host == "" {
 			config.Host = fmt.Sprintf("osd-%d", i)
 		}
-		planned.osdHandles.register(i, &OSDContainer{ID: i, placement: config})
+		planned.fleet.osdHandles.register(i, &OSDContainer{ID: i, placement: config})
 		if len(settings.initialOSDs) != 0 {
 			// Keep host omission until a real OSD ID is assigned at startup.
 			config.Host = settings.initialOSDs[i].Host
 			settings.initialOSDs[i] = config
 		}
 	}
-	locations := make([]OSDConfig, 0, planned.osdHandles.count())
-	for _, osd := range planned.osdHandles.each() {
+	locations := make([]OSDConfig, 0, planned.fleet.osdHandles.count())
+	for _, osd := range planned.fleet.osdHandles.each() {
 		locations = append(locations, osd.Placement())
 	}
 	if err := validateCRUSHHierarchy(settings.defaultCRUSHRoot, locations); err != nil {
 		return err
 	}
 	defaults := PoolConfig{CRUSHRoot: settings.defaultCRUSHRoot, FailureDomain: "osd"}
-	eligible := planned.osdHandles.placementDomains(defaults)
+	eligible := planned.fleet.osdHandles.placementDomains(defaults)
 	needed := settings.poolReplicas
 	if needed == 0 {
 		needed = min(2, settings.osds)
@@ -113,7 +113,7 @@ func prepareInitialComposition(settings *options) error {
 		if ec := config.ErasureCode; ec != nil {
 			needed = ec.K + ec.M
 		}
-		if domains := planned.osdHandles.placementDomains(config); domains < needed {
+		if domains := planned.fleet.osdHandles.placementDomains(config); domains < needed {
 			return fmt.Errorf("initial pool %q needs %d distinct %s domains, requested layout has %d", config.Name, needed, config.FailureDomain, domains)
 		}
 		return nil

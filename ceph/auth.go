@@ -163,7 +163,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	if err := c.authLedger().settleClient(ctx, entity); err != nil {
 		return nil, err
 	}
-	if c.authRecords.revocation(entity) != nil {
+	if c.ledger.authRecords.revocation(entity) != nil {
 		return nil, fmt.Errorf("cephx identity %q is revoked temporarily; restore it or delete it first", entity)
 	}
 	data, err := authStore{c.conn()}.clientCommand(ctx, "check existing identity", "auth", "ls", "--format", "json")
@@ -193,7 +193,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	if err != nil || len(bytes.TrimSpace(secret)) == 0 {
 		return client, clientOperationError(ctx, "generate fresh Cephx key: command failed", err)
 	}
-	c.authRecords.addSecret(string(bytes.TrimSpace(secret)))
+	c.ledger.authRecords.addSecret(string(bytes.TrimSpace(secret)))
 	client.keyring = []byte("[" + entity + "]\nkey = " + string(bytes.TrimSpace(secret)) + "\n")
 	keyringPath := "/tmp/tc-client-" + uuid.NewString() + ".keyring"
 	defer func() {
@@ -211,7 +211,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 		return client, err
 	}
 	client.created = true
-	c.authRecords.confirmKey(entity, clientKey(client.keyring, entity))
+	c.ledger.authRecords.confirmKey(entity, clientKey(client.keyring, entity))
 	keyring, err := authStore{c.conn()}.clientCommand(ctx, "retrieve "+entity, "auth", "get", entity)
 	if err != nil {
 		return client, err

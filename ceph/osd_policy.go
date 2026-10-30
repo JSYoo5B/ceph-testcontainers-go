@@ -34,8 +34,8 @@ func (c *Container) osdStates(ctx context.Context) ([]OSDState, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	owned := make(map[int]*osdRegistration, c.osdHandles.count())
-	for id, osd := range c.osdHandles.each() {
+	owned := make(map[int]*osdRegistration, c.fleet.osdHandles.count())
+	for id, osd := range c.fleet.osdHandles.each() {
 		owned[id] = registrationOf(osd)
 	}
 	return readOwnedOSDStates(ctx, c.conn().ceph, owned)
@@ -66,16 +66,6 @@ const (
 
 // String returns the native flag token.
 func (f OSDFlag) String() string { return string(f) }
-
-// osdFlags implements Observer.OSDFlags.
-func (c *Container) osdFlags(ctx context.Context) ([]OSDFlag, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return nil, err
-	}
-	return readOSDFlags(ctx, c.conn().ceph)
-}
 
 func (om osdMap) setFlag(ctx context.Context, flag OSDFlag, enabled bool) error {
 	op := "unset"

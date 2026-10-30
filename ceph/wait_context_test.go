@@ -291,13 +291,13 @@ func TestWaitContextLateReadyCancellationNeverPublishesSuccess(t *testing.T) {
 
 func TestWaitContextCleanRetainsInitialOwnedCount(t *testing.T) {
 	f := newWaitContextFixture(t, "Clean")
-	original := f.cluster.osdHandles.get(0)
+	original := f.cluster.fleet.osdHandles.get(0)
 	f.control.after = func(args []string) {
 		if strings.Join(monitorQuorumTestModuleArgs(args), " ") == f.finalQuery {
-			f.cluster.osdHandles.register(1, &OSDContainer{ID: 1})
+			f.cluster.fleet.osdHandles.register(1, &OSDContainer{ID: 1})
 		}
 	}
-	if err := f.wait(t.Context()); err != nil || f.cluster.osdHandles.get(0) != original || f.cluster.osdHandles.count() != 2 {
+	if err := f.wait(t.Context()); err != nil || f.cluster.fleet.osdHandles.get(0) != original || f.cluster.fleet.osdHandles.count() != 2 {
 		t.Fatalf("wait adopted later count or changed original descriptor: %v", err)
 	}
 }

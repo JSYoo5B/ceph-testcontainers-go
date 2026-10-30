@@ -210,7 +210,7 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 		return nil, err
 	}
 	defer c.toolkit.unlock()
-	if c.nativeCmds.isClosed() {
+	if c.native.calls.isClosed() {
 		return nil, errClusterTerminated
 	}
 	if c.toolkit.startupAttempted() {
@@ -220,11 +220,11 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 		return c.toolkit.current(), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	if !c.nativeCmds.beginClientStartup(cancel) {
+	if !c.native.calls.beginClientStartup(cancel) {
 		cancel()
 		return nil, errClusterTerminated
 	}
-	defer func() { c.nativeCmds.endClientStartup(); cancel() }()
+	defer func() { c.native.calls.endClientStartup(); cancel() }()
 	c.toolkit.markAttempted()
 	ctr, err := testcontainers.Run(ctx, images.Client, append([]testcontainers.ContainerCustomizer{
 		c.adminClient(), c.startup.ownedLabel(), WithIdleEntrypoint(),
@@ -244,7 +244,7 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 			}
 		}
 	}
-	if c.nativeCmds.isClosed() {
+	if c.native.calls.isClosed() {
 		err = errClusterTerminated
 	}
 	if err == nil && ctr == nil {

@@ -70,21 +70,21 @@ func TestOSDVolumeLazyAllocationAndUncertainCreateOwnership(t *testing.T) {
 	d := &osdVolumeDockerFake{}
 	lost := errors.New("synthetic lost create reply")
 	d.createErr = lost
-	c.stores.volumeDocker = func(context.Context) (osdMemoryVolumeClient, error) { return d, nil }
-	if err := c.startInitialOSDs(t.Context()); err != nil || c.stores.volume != nil || d.creates != 0 {
+	c.fleet.stores.volumeDocker = func(context.Context) (osdMemoryVolumeClient, error) { return d, nil }
+	if err := c.startInitialOSDs(t.Context()); err != nil || c.fleet.stores.volume != nil || d.creates != 0 {
 		t.Fatal("zero-OSD bootstrap allocated storage")
 	}
-	if err := c.osdFleet().ensureOSDVolume(t.Context()); !errors.Is(err, lost) || c.stores.volume == nil || d.creates != 1 {
+	if err := c.osdFleet().ensureOSDVolume(t.Context()); !errors.Is(err, lost) || c.fleet.stores.volume == nil || d.creates != 1 {
 		t.Fatal("uncertain create lost ownership")
 	}
-	s := c.stores.volume
-	if err := c.osdFleet().ensureOSDVolume(t.Context()); err == nil || c.stores.volume != s || d.creates != 1 {
+	s := c.fleet.stores.volume
+	if err := c.osdFleet().ensureOSDVolume(t.Context()); err == nil || c.fleet.stores.volume != s || d.creates != 1 {
 		t.Fatal("uncertain create was replayed")
 	}
 	if d.createOptions.Driver != "local" || len(d.createOptions.DriverOpts) != 0 || d.createOptions.Labels[osdVolumeOwnerLabel] != s.owner {
 		t.Fatal("not an owned ordinary local volume")
 	}
-	if err := c.Terminate(t.Context()); err != nil || c.stores.volume != nil || d.removals != 1 || d.removeOptions.Force {
+	if err := c.Terminate(t.Context()); err != nil || c.fleet.stores.volume != nil || d.removals != 1 || d.removeOptions.Force {
 		t.Fatal("uncertain allocation not safely released", err)
 	}
 }
@@ -145,19 +145,19 @@ func TestOSDVolumeReleaseWaitsForOSDsAndRetriesBusyOrFailedCleanup(t *testing.T)
 	s, d, h := osdVolumeFixture()
 	fail := errors.New("synthetic OSD still owns mount")
 	osd := &osdMemoryContainerFake{terminateErr: fail}
-	c := &Container{stores: osdStorageState{volume: s}, osdHandles: osdRegistry{owned: map[int]*OSDContainer{7: {Container: osd}}}}
-	if err := c.Terminate(t.Context()); !errors.Is(err, fail) || c.stores.volume != s || h.terminations != 0 || d.removals != 0 {
+	c := &Container{fleet: osdFleetState{stores: osdStorageState{volume: s}, osdHandles: osdRegistry{owned: map[int]*OSDContainer{7: {Container: osd}}}}}
+	if err := c.Terminate(t.Context()); !errors.Is(err, fail) || c.fleet.stores.volume != s || h.terminations != 0 || d.removals != 0 {
 		t.Fatal("storage released before OSD removal")
 	}
 	osd.terminateErr = nil
 	busy := errors.New("synthetic referenced volume")
 	d.removeErr = busy
-	if err := c.Terminate(t.Context()); !errors.Is(err, busy) || c.stores.volume != s || s.removed || d.removeOptions.Force {
+	if err := c.Terminate(t.Context()); !errors.Is(err, busy) || c.fleet.stores.volume != s || s.removed || d.removeOptions.Force {
 		t.Fatal("busy volume lost retry ownership")
 	}
 	attempts := d.removals
 	d.removeErr = nil
-	if err := c.Terminate(t.Context()); err != nil || c.stores.volume != nil || d.removals != attempts+1 || d.creates != 0 {
+	if err := c.Terminate(t.Context()); err != nil || c.fleet.stores.volume != nil || d.removals != attempts+1 || d.creates != 0 {
 		t.Fatal("cleanup retry recreated or lost volume", err)
 	}
 }
@@ -176,8 +176,8 @@ func TestOSDVolumeHelperFailureDoesNotClaimDataLossOrRepair(t *testing.T) {
 			case "removed":
 				s.removed = true
 			}
-			c := &Container{settings: options{osdVolumeStorage: true}, stores: osdStorageState{volume: s}}
-			if err := c.osdFleet().ensureOSDVolume(t.Context()); err == nil || c.stores.volume != s || d.creates != 0 || d.removals != 0 {
+			c := &Container{settings: options{osdVolumeStorage: true}, fleet: osdFleetState{stores: osdStorageState{volume: s}}}
+			if err := c.osdFleet().ensureOSDVolume(t.Context()); err == nil || c.fleet.stores.volume != s || d.creates != 0 || d.removals != 0 {
 				t.Fatal("unavailable storage was recreated or admitted")
 			}
 		})
@@ -200,7 +200,7 @@ func TestOSDVolumeReleaseAcceptsMissingButPreservesOtherErrors(t *testing.T) {
 func TestOSDVolumeLaunchMountIsDistinctFromTmpfs(t *testing.T) {
 	c, launch := preparedOSDLaunch(t)
 	s, _, _ := osdVolumeFixture()
-	c.stores.volume = s
+	c.fleet.stores.volume = s
 	r := c.newOSDLaunchRecipe(launch.osd, []byte("synthetic-keyring"))
 	var req testcontainers.GenericContainerRequest
 	if err := r.Customize(&req); err != nil || len(req.Mounts) != 1 {
@@ -220,9 +220,9 @@ func TestOSDVolumePartialHelperRemainsOwnedUntilCleanup(t *testing.T) {
 	d := &osdVolumeDockerFake{}
 	h := &osdVolumeHelperFake{}
 	failed := errors.New("synthetic helper start reply lost")
-	c.stores.volumeDocker = func(context.Context) (osdMemoryVolumeClient, error) { return d, nil }
+	c.fleet.stores.volumeDocker = func(context.Context) (osdMemoryVolumeClient, error) { return d, nil }
 	calls := 0
-	c.stores.volumeRunner = func(_ context.Context, _ string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	c.fleet.stores.volumeRunner = func(_ context.Context, _ string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		calls++
 		var req testcontainers.GenericContainerRequest
 		for _, opt := range opts {
@@ -235,18 +235,18 @@ func TestOSDVolumePartialHelperRemainsOwnedUntilCleanup(t *testing.T) {
 		}
 		return h, failed
 	}
-	if err := c.osdFleet().ensureOSDVolume(t.Context()); !errors.Is(err, failed) || c.stores.volume == nil || c.stores.volume.helper != h || c.stores.volume.ready {
+	if err := c.osdFleet().ensureOSDVolume(t.Context()); !errors.Is(err, failed) || c.fleet.stores.volume == nil || c.fleet.stores.volume.helper != h || c.fleet.stores.volume.ready {
 		t.Fatal("partial helper lost ownership", err)
 	}
 	if err := c.osdFleet().ensureOSDVolume(t.Context()); err == nil || calls != 1 || d.creates != 1 {
 		t.Fatal("partial helper setup was replayed")
 	}
 	h.terminateErr = failed
-	if err := c.Terminate(t.Context()); !errors.Is(err, failed) || c.stores.volume == nil || d.removals != 0 {
+	if err := c.Terminate(t.Context()); !errors.Is(err, failed) || c.fleet.stores.volume == nil || d.removals != 0 {
 		t.Fatal("failed helper cleanup lost volume")
 	}
 	h.terminateErr = nil
-	if err := c.Terminate(t.Context()); err != nil || c.stores.volume != nil || d.removals != 1 || d.removeOptions.Force {
+	if err := c.Terminate(t.Context()); err != nil || c.fleet.stores.volume != nil || d.removals != 1 || d.removeOptions.Force {
 		t.Fatal("partial helper cleanup not retryable", err)
 	}
 }

@@ -28,22 +28,18 @@ var residualFieldVerdicts = map[string]string{
 	"controlPlane":             "owner",
 	"toolkit":                  "owner",
 	"bootstrap":                "owner",
-	"authRecords":              "owner",
-	"daemonExecs":              "owner",
 	"startup":                  "owner",
 	"settings":                 "options",
-	"roster":                   "owner",
+	"ledger":                   "owner",
+	"members":                  "owner",
+	"fleet":                    "owner",
 	"extensions":               "owner",
 	"nets":                     "owner",
-	"osdHandles":               "owner",
-	"stores":                   "owner",
 	"monStores":                "owner",
-	"deviceClaims":             "owner",
 	"runDir":                   "owner",
 	"portLeases":               "owner",
 	"closed":                   "flag",
-	"monitorTerminated":        "flag",
-	"nativeCmds":               "owner",
+	"native":                   "owner",
 	"faults":                   "owner",
 	"debugLevels":              "owner",
 	"daemonRunner":             "seam",
@@ -156,7 +152,7 @@ func TestContainerResidualFieldCheckRejectsDrift(t *testing.T) {
 	}
 	cases := map[string]map[string]string{
 		"a new field":           with(func(m map[string]string) { m["extra"] = "int" }),
-		"a removed field":       with(func(m map[string]string) { delete(m, "roster") }),
+		"a removed field":       with(func(m map[string]string) { delete(m, "members") }),
 		"a second mutex":        with(func(m map[string]string) { m["controlPlane"] = "sync.RWMutex" }),
 		"mu as an RWMutex":      with(func(m map[string]string) { m["mu"] = "sync.RWMutex" }),
 		"the flag as an atomic": with(func(m map[string]string) { m["closed"] = "atomic.Bool" }),
@@ -230,6 +226,11 @@ func lifecycleAccesses(files map[string]*ast.File) (accesses []lifecycleAccess, 
 					if sel, ok := n.X.(*ast.SelectorExpr); ok && n.Op == token.AND && flags[sel.Sel.Name] {
 						written[sel] = true
 					}
+					// monitorTerminated lives in Container.members: handing
+					// out that struct's address hands out the flag's.
+					if sel, ok := n.X.(*ast.SelectorExpr); ok && n.Op == token.AND && sel.Sel.Name == "members" && isContainerReceiver(sel.X) {
+						accesses = append(accesses, lifecycleAccess{"monitorTerminated", name, true})
+					}
 				}
 				return true
 			})
@@ -260,8 +261,9 @@ func lifecycleAccesses(files map[string]*ast.File) (accesses []lifecycleAccess, 
 }
 
 // lifecycleWriters are the only functions that assign the two flags. closed is
-// set once, at the top of terminate, under mu. monitorTerminated is bound by
-// address only in Container.monitorTopology, assigned only in
+// set once, at the top of terminate, under mu. monitorTerminated lives in
+// Container.members, whose address is bound only in Container.monitorTopology;
+// it is assigned only in
 // markFirstMonitorTerminated, and that is called by terminate when it removes
 // the first MON and by retireMonitor when the first MON is removed.
 var lifecycleWriters = []string{

@@ -137,20 +137,32 @@ func (a *authState) dropRevocationIf(entity string, state *clientRevocationState
 
 // authLedger runs the native auth changes whose outcome the records track:
 // client key, caps and removal changes, their settling, and the daemon key
-// rotation's handoff to keyring files. It binds the records to the command
-// transport and the daemon exec runner, and holds no state of its own.
+// rotation's handoff to keyring files. It owns the records and the daemon exec
+// runner (authLedgerState, held in Container.ledger) and binds them to the
+// command transport.
 //
 // Every method needs Container.mu held, the lock that guards the records, for
 // the whole call; the guards in auth_state_test.go prove that for each
 // caller. A ledger is obtained only through Container.authLedger.
 type authLedger struct {
-	conn        cephConn
-	authRecords *authState
-	daemonExecs *daemonExecutor
+	*authLedgerState
+	conn cephConn
+}
+
+// authLedgerState is the auth state that authLedger owns. Container holds it
+// as the field ledger, whose whole value only authLedger's constructor names.
+type authLedgerState struct {
+	// authRecords holds the records of the calls that change an auth entry;
+	// see authState for what guards them.
+	authRecords authState
+	// daemonExecs runs RotateKey's commands in daemon containers through the
+	// Docker exec API; see daemonExecutor. It has no lock: it is set before
+	// the cluster is shared and never changes.
+	daemonExecs daemonExecutor
 }
 
 // authLedger returns the ledger of the cluster's auth records. The caller
 // holds c.mu while it uses the ledger.
 func (c *Container) authLedger() authLedger {
-	return authLedger{conn: c.conn(), authRecords: &c.authRecords, daemonExecs: &c.daemonExecs}
+	return authLedger{authLedgerState: &c.ledger, conn: c.conn()}
 }

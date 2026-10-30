@@ -19,7 +19,7 @@ import (
 // queueing tests need as lock identities.
 var membershipControlFields = map[string]bool{
 	"closed": true, "controlPlane": true, "settings": true, "monitorTerminated": true,
-	"roster":     true,
+	"roster": true, "members": true,
 	"extensions": true, "bootstrap": true,
 }
 
@@ -121,16 +121,16 @@ func unitStateResults(t *testing.T) []string {
 // and the control plane without a lock. The bindings are exactly one each:
 // Container.conn binds &c.controlPlane into the transport, whose use of it is
 // pinned by TestCephConnReachesTheControlPlaneOnlyThroughItsReaders, and
-// Container.monitorTopology binds &c.roster, &c.monitorTerminated and
-// &c.bootstrap into the topology, pinned by TestMonitorTopologyBindsEachStateOnce
+// Container.monitorTopology binds &c.members (the roster and the first-MON
+// flag) and &c.bootstrap into the topology, pinned by TestMonitorTopologyBindsEachStateOnce
 // and reached afterwards only through the roster, bootstrap and lifecycle
 // guards. Every other address of membership state fails.
 func TestMembershipControlStateIsNeverAddressed(t *testing.T) {
 	var problems []string
 	bindings := map[string]int{}
 	allowed := map[string]string{
-		"controlPlane": "Container.conn", "roster": "Container.monitorTopology",
-		"monitorTerminated": "Container.monitorTopology", "bootstrap": "Container.monitorTopology",
+		"controlPlane": "Container.conn", "members": "Container.monitorTopology",
+		"bootstrap": "Container.monitorTopology",
 	}
 	for file, parsed := range parseProductionFiles(t) {
 		for _, decl := range parsed.Decls {

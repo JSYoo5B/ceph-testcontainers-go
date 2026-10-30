@@ -27,9 +27,13 @@ func TestAdminSocketDaemonNames(t *testing.T) {
 // mgr.b terminated. Its control fake records every command it runs.
 func adminSocketCluster() (*Container, *poolFixtureContainer) {
 	control := &poolFixtureContainer{Output: map[string]string{}}
-	c := &Container{Container: control, settings: options{startupTimeout: time.Second}, runDir: runDirState{volume: &runVolume{name: "run"}},
-		roster:     memberRoster{managers: map[string]*ManagerContainer{"a": {Container: control, DaemonName: "a"}, "b": {Container: control, DaemonName: "b", terminated: true}}},
-		osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {ID: 0, Container: control}, 1: {ID: 1, Container: control, purged: true}}}}
+	c := &Container{
+		Container: control,
+		settings:  options{startupTimeout: time.Second},
+		runDir:    runDirState{volume: &runVolume{name: "run"}},
+		fleet:     osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{0: {ID: 0, Container: control}, 1: {ID: 1, Container: control, purged: true}}}},
+		members:   membershipState{roster: memberRoster{managers: map[string]*ManagerContainer{"a": {Container: control, DaemonName: "a"}, "b": {Container: control, DaemonName: "b", terminated: true}}}},
+	}
 	return c, control
 }
 
@@ -46,7 +50,7 @@ func TestAdminSocketRefusesBeforeRunningCommands(t *testing.T) {
 		"unknown OSD":        {nil, "osd.7", []string{"status"}, "not owned"},
 		"purged OSD":         {nil, "osd.1", []string{"status"}, "not owned"},
 		"terminated MGR":     {nil, "mgr.b", []string{"status"}, "not owned"},
-		"terminated MON a":   {func(c *Container) { c.monitorTerminated = true }, "mon.a", []string{"version"}, "not owned"},
+		"terminated MON a":   {func(c *Container) { c.members.monitorTerminated = true }, "mon.a", []string{"version"}, "not owned"},
 		"closed cluster":     {func(c *Container) { c.closed = true }, "osd.0", []string{"status"}, "terminated"},
 		"no run volume":      {func(c *Container) { c.runDir.volume = nil }, "osd.0", []string{"status"}, "shared run directory"},
 		"removed run volume": {func(c *Container) { c.runDir.volume.removed = true }, "osd.0", []string{"status"}, "shared run directory"},

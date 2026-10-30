@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -214,7 +213,7 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 	if !handle.ownedBy(c) {
 		return invalid(fmt.Errorf("daemon %s is not owned by this cluster, or this handle is stale", daemon))
 	}
-	ctr, keyrings := c.daemonKeyrings(kind, id)
+	ctr, keyrings := c.monitorTopology().daemonKeyrings(kind, id)
 	if err := c.authLedger().stopEarlierAuthCommands(ctx, daemon); err != nil {
 		return err
 	}
@@ -557,14 +556,4 @@ func (l authLedger) daemonExec(ctx context.Context, ctr testcontainers.Container
 		fence.running = append(fence.running, rotationRun{ctr: ctr, execID: unended})
 	}
 	return code, err
-}
-
-// daemonKeyrings returns the container of an owned daemon and the keyring
-// files from which it authenticates when it starts. The caller holds c.mu.
-func (c *Container) daemonKeyrings(kind, id string) (testcontainers.Container, []string) {
-	if kind == "mgr" {
-		return c.roster.manager(id).Container, []string{"/etc/ceph/mgr.keyring", "/var/lib/ceph/mgr/ceph-" + id + "/keyring"}
-	}
-	n, _ := strconv.Atoi(id)
-	return c.osdHandles.get(n).Container, []string{"/etc/ceph/osd.keyring", "/var/lib/ceph/osd/ceph-" + id + "/keyring"}
 }

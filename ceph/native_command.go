@@ -212,7 +212,7 @@ func (e *NativeCommandUnstoppedError) Stop(ctx context.Context) error {
 	if err := inv.stop(ctx); err != nil {
 		return err
 	}
-	inv.owner.nativeCmds.forget(inv)
+	inv.owner.native.calls.forget(inv)
 	return nil
 }
 
@@ -421,7 +421,7 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 	if command.Input != nil {
 		claim = func() bool { return command.Input.claimed.CompareAndSwap(false, true) }
 	}
-	switch c.nativeCmds.admit(inv, claim) {
+	switch c.native.calls.admit(inv, claim) {
 	case nativeRefusedClosed:
 		return NativeCommandResult{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
 	case nativeRefusedFenced:
@@ -450,7 +450,7 @@ func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.
 		}
 	}
 	var exit *supervised.ExitError
-	c.nativeCmds.finish(inv, unstopped, unstopped != "")
+	c.native.calls.finish(inv, unstopped, unstopped != "")
 	close(inv.done)
 	if cause := context.Cause(runCtx); err != nil && ctx.Err() == nil &&
 		(errors.Is(cause, errNativeTerminated) || errors.Is(cause, errNativeTargetRemoved)) {
@@ -497,7 +497,7 @@ func (c *Container) admitNativeTarget(ctx context.Context, target testcontainers
 		c.mu.Unlock()
 		return errClusterTerminated
 	}
-	owned, err := c.ownsNativeTargetContext(ctx, target.GetContainerID())
+	owned, err := c.monitorTopology().ownsNativeTarget(ctx, target.GetContainerID())
 	if err != nil {
 		c.mu.Unlock()
 		return err
@@ -553,53 +553,36 @@ func classifyNativeBackend(err error, dispatched bool) error {
 	return classify(ErrEnvironmentUnavailable, err)
 }
 
-// ownsNativeTarget reports whether id is a container of this cluster. The
-// caller holds c.mu.
-func (c *Container) ownsNativeTarget(id string) bool {
-	owned, _ := c.ownsNativeTargetContext(context.Background(), id)
-	return owned
-}
-
-// ownsNativeTargetContext is ownsNativeTarget with a context. The caller holds
-// c.mu.
-func (c *Container) ownsNativeTargetContext(ctx context.Context, id string) (bool, error) {
-	matches := func(ctr testcontainers.Container) bool { return ctr != nil && ctr.GetContainerID() == id }
-	if matches(c.Container) || matches(c.roster.initialManager()) {
-		return true, nil
-	}
-	for _, mon := range c.roster.eachMonitor() {
-		if mon != nil && matches(mon.Container) {
-			return true, nil
-		}
-	}
-	for _, mgr := range c.roster.eachManager() {
-		if mgr != nil && matches(mgr.Container) {
-			return true, nil
-		}
-	}
-	for _, osd := range c.osdHandles.each() {
-		if osd != nil && matches(osd.Container) {
-			return true, nil
-		}
-	}
-	for _, ctr := range c.roster.eachService() {
-		if matches(ctr) {
-			return true, nil
-		}
-	}
-	client, err := c.toolkit.snapshot(ctx)
+// RedactSecrets returns a copy of data in which the secrets that the cluster
+// knows, and values, are replaced by [REDACTED], as in CollectDiagnostics:
+// keyring keys, service credentials, and the private keys, secret assignments
+// and bearer tokens that it recognizes. It is meant for output that a test
+// logs or reports; an oracle compares the raw bytes. Redaction is best effort.
+func (c *Container) RedactSecrets(ctx context.Context, data []byte, values ...string) ([]byte, error) {
+	snapshot, err := c.diagnosticsSnapshot(ctx, DiagnosticsConfig{RedactValues: values})
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return matches(client), nil
+	return []byte(diagnosticsRedactor(snapshot.secrets)(string(data))), nil
 }
 
-// cancelNativeInvocations refuses new native commands, cancels the running
+// nativeCommands owns the native-command state and the blocking half of its
+// lifecycle: cancelling every call when the cluster terminates, fencing the
+// calls of one removed target and waiting for cancelled calls to return.
+// nativeState keeps the leaf-locked bookkeeping and never blocks while it
+// holds its lock; these methods block and so live here, calling nativeState
+// only for its bookkeeping. They take no other lock.
+type nativeCommands struct {
+	// calls is the bookkeeping of the running calls; see nativeState.
+	calls nativeState
+}
+
+// cancelAll refuses new native commands, cancels the running
 // ones and returns every tracked invocation. It takes only the native lock, so
 // Terminate calls it before it waits for the cluster mutex, which an
 // invocation's caller may hold.
-func (c *Container) cancelNativeInvocations() []*nativeInvocation {
-	pending, clientCancel := c.nativeCmds.close()
+func (n *nativeCommands) cancelAll() []*nativeInvocation {
+	pending, clientCancel := n.calls.close()
 	if clientCancel != nil {
 		clientCancel()
 	}
@@ -609,33 +592,33 @@ func (c *Container) cancelNativeInvocations() []*nativeInvocation {
 	return pending
 }
 
-// stopNativeInvocations refuses new native commands, cancels the running
+// stopAll refuses new native commands, cancels the running
 // ones, waits until their calls have returned and stops the commands that
 // they could not confirm as stopped. It keeps those it cannot stop and returns
 // their errors.
-func (c *Container) stopNativeInvocations(ctx context.Context) []error {
-	return c.stopNativeCalls(ctx, c.cancelNativeInvocations())
+func (n *nativeCommands) stopAll(ctx context.Context) []error {
+	return n.waitStopped(ctx, n.cancelAll())
 }
 
-// fenceNativeTarget closes admission and drains exactly one Docker instance.
+// fence closes admission and drains exactly one Docker instance.
 // It never closes native admission: unrelated targets and later distinct instances
 // remain usable. An unconfirmed stop stays tracked and the fence remains for
 // retry. The caller serializes the removal under the cluster topology lock.
-func (c *Container) fenceNativeTarget(ctx context.Context, id string) error {
+func (n *nativeCommands) fence(ctx context.Context, id string) error {
 	if id == "" {
 		return invalidRequest("OSD removal needs an identified container")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	pending := c.nativeCmds.fence(id)
+	pending := n.calls.fence(id)
 	for _, inv := range pending {
 		inv.cancel(errNativeTargetRemoved)
 	}
-	return errors.Join(c.stopNativeCalls(ctx, pending)...)
+	return errors.Join(n.waitStopped(ctx, pending)...)
 }
 
-func (c *Container) stopNativeCalls(ctx context.Context, pending []*nativeInvocation) []error {
+func (n *nativeCommands) waitStopped(ctx context.Context, pending []*nativeInvocation) []error {
 	var errs []error
 	for _, inv := range pending {
 		// A canceled call returns within its own stop budget.
@@ -658,20 +641,7 @@ func (c *Container) stopNativeCalls(ctx context.Context, pending []*nativeInvoca
 			errs = append(errs, err)
 			continue
 		}
-		c.nativeCmds.forget(inv)
+		n.calls.forget(inv)
 	}
 	return errs
-}
-
-// RedactSecrets returns a copy of data in which the secrets that the cluster
-// knows, and values, are replaced by [REDACTED], as in CollectDiagnostics:
-// keyring keys, service credentials, and the private keys, secret assignments
-// and bearer tokens that it recognizes. It is meant for output that a test
-// logs or reports; an oracle compares the raw bytes. Redaction is best effort.
-func (c *Container) RedactSecrets(ctx context.Context, data []byte, values ...string) ([]byte, error) {
-	snapshot, err := c.diagnosticsSnapshot(ctx, DiagnosticsConfig{RedactValues: values})
-	if err != nil {
-		return nil, err
-	}
-	return []byte(diagnosticsRedactor(snapshot.secrets)(string(data))), nil
 }

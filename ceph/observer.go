@@ -1,6 +1,12 @@
 package ceph
 
-import "context"
+import (
+	"context"
+	"errors"
+	"strings"
+
+	"github.com/google/uuid"
+)
 
 // Observer groups the read-only live observations of one cluster. Each query
 // reads current state rather than retaining a snapshot. It owns no resource
@@ -151,7 +157,12 @@ func (o *Observer) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
 	if err != nil {
 		return nil, err
 	}
-	return c.osdFlags(ctx)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return nil, err
+	}
+	return readOSDFlags(ctx, c.conn().ceph)
 }
 
 // OSDStates returns owned OSD states sorted by native ID. It refuses an owned
@@ -208,7 +219,17 @@ func (o *Observer) MonitorBootstrapAddresses(ctx context.Context) (string, error
 	if err != nil {
 		return "", err
 	}
-	return c.monitorBootstrapAddresses(ctx)
+	if c == nil {
+		return "", errors.New("ceph cluster is unavailable")
+	}
+	ctx, cancel := c.monitorClientRefreshContext(ctx)
+	defer cancel()
+	if err := c.lockTopology(ctx); err != nil {
+		return "", err
+	}
+	defer c.mu.Unlock()
+	addresses, _, err := c.currentMonitorBootstrapAddresses(ctx)
+	return addresses, err
 }
 
 // HealthDetails reads the original cluster's health through one captured
@@ -224,7 +245,74 @@ func (o *Observer) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
 	if err != nil {
 		return HealthSnapshot{}, err
 	}
-	return c.healthDetails(ctx)
+	if err := ctx.Err(); err != nil {
+		return HealthSnapshot{}, err
+	}
+	if c == nil {
+		return HealthSnapshot{}, errors.New("ceph cluster is unavailable")
+	}
+	if err := c.lockTopology(ctx); err != nil {
+		return HealthSnapshot{}, err
+	}
+	defer c.mu.Unlock()
+	if c.closed {
+		return HealthSnapshot{}, errClusterTerminated
+	}
+	control, err := c.conn().controlContainer(ctx)
+	if err != nil {
+		return HealthSnapshot{}, err
+	}
+	if control == nil {
+		return HealthSnapshot{}, errors.New("ceph control container is unavailable")
+	}
+	identity, err := c.bootstrap.identity(ctx)
+	if err != nil {
+		return HealthSnapshot{}, err
+	}
+	fsid, identityErr := identity.fsid, identity.err
+	if identityErr != nil || !identity.confirmed {
+		return HealthSnapshot{}, clientOperationError(ctx, "ceph original bootstrap identity is unavailable", identityErr)
+	}
+	query := func(args ...string) ([]byte, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := command(ctx, control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
+		if err != nil || ctx.Err() != nil {
+			return nil, clientOperationError(ctx, "observe Ceph health: native query failed", err)
+		}
+		return data, nil
+	}
+	checkFSID := func() error {
+		data, err := query("fsid")
+		if err != nil {
+			return err
+		}
+		native := strings.TrimSpace(string(data))
+		parsed, err := uuid.Parse(native)
+		if err != nil || parsed == uuid.Nil || parsed.String() != native || native != fsid {
+			return clientOperationError(ctx, "native health FSID differs from the original cluster", err)
+		}
+		return ctx.Err()
+	}
+	if err := checkFSID(); err != nil {
+		return HealthSnapshot{}, err
+	}
+	data, err := query("health", "detail", "--format", "json")
+	if err != nil {
+		return HealthSnapshot{}, err
+	}
+	snapshot, err := decodeHealthDetails(data, fsid)
+	if err != nil || ctx.Err() != nil {
+		return HealthSnapshot{}, clientOperationError(ctx, "decode native Ceph health details failed", err)
+	}
+	if err := checkFSID(); err != nil {
+		return HealthSnapshot{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return HealthSnapshot{}, err
+	}
+	return snapshot, nil
 }
 
 // FullRatios reads native thresholds through one captured control CLI handle,
@@ -238,7 +326,21 @@ func (o *Observer) FullRatios(ctx context.Context) (FullRatioSnapshot, error) {
 	if err != nil {
 		return FullRatioSnapshot{}, err
 	}
-	return c.fullRatios(ctx)
+	if err := ctx.Err(); err != nil {
+		return FullRatioSnapshot{}, err
+	}
+	if c == nil {
+		return FullRatioSnapshot{}, errors.New("ceph cluster is unavailable")
+	}
+	if err := c.lockTopology(ctx); err != nil {
+		return FullRatioSnapshot{}, err
+	}
+	defer c.mu.Unlock()
+	session, err := c.fullRatiosSession(ctx)
+	if err != nil {
+		return FullRatioSnapshot{}, err
+	}
+	return session.read(ctx)
 }
 
 // The queries below run `rados` in the client container or a supervised scrape
@@ -256,7 +358,17 @@ func (o *Observer) PGInconsistencies(ctx context.Context, pgid PGID) ([]Inconsis
 	if err != nil {
 		return nil, err
 	}
-	return c.pgInconsistencies(ctx, pgid)
+	if err := validatePGID(string(pgid)); err != nil {
+		return nil, err
+	}
+	if err := c.lockTopology(ctx); err != nil {
+		return nil, err
+	}
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return nil, err
+	}
+	return readPGInconsistencies(ctx, c.clientRadosLookup(), pgid)
 }
 
 // ObjectWatchers lists the clients watching one object, including clients
@@ -267,7 +379,23 @@ func (o *Observer) ObjectWatchers(ctx context.Context, pool, namespace, object s
 	if err != nil {
 		return nil, err
 	}
-	return c.objectWatchers(ctx, pool, namespace, object)
+	if err := validateExistingPoolName(pool); err != nil {
+		return nil, err
+	}
+	if err := validateRADOSArgument("namespace", namespace, true); err != nil {
+		return nil, err
+	}
+	if err := validateRADOSArgument("object", object, false); err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	defer cancel()
+	return readObjectWatchers(ctx, c.clientRadosLookup(), pool, namespace, object)
 }
 
 // ManagerMetrics scrapes the active manager's prometheus module once and

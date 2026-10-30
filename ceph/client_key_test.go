@@ -25,7 +25,7 @@ func clientWorld() (*rotationWorld, *Container, *ClientConfig) {
 	c.startup.recordKeyTypeOption(true)
 	client := &ClientConfig{owner: c, name: "client.app", config: []byte("[global]\n"),
 		keyring: []byte(fakeClientKeyring("client.app", w.clients["client.app"])), created: true, ready: true}
-	c.authRecords.confirmKey("client.app", w.clients["client.app"].key)
+	c.ledger.authRecords.confirmKey("client.app", w.clients["client.app"].key)
 	return w, c, client
 }
 
@@ -534,7 +534,7 @@ func requireRedacted(t *testing.T, c *Container, keys ...string) {
 	t.Helper()
 	// The fake cluster has no Docker containers to list.
 	c.Container = nil
-	c.osdHandles.replace(nil)
+	c.fleet.osdHandles.replace(nil)
 	snapshot, err := c.diagnosticsSnapshot(t.Context(), diagnosticsUnitConfig(t))
 	if err != nil {
 		t.Fatal(err)
