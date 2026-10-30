@@ -1,6 +1,6 @@
 //go:build all || integration
 
-package integration_test
+package cephfs_test
 
 import (
 	"bytes"

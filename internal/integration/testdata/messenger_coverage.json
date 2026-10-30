@@ -986,9 +986,24 @@
           "test": "TestCephFSLiveQuota",
           "receipt": "CEPHFS_LIVE_QUOTA_RECEIPT",
           "asserts": "one retained libcephfs client and fd observe directory max_files at its recursive entry count then EDQUOT, one additional slot then one successful create; independent clients verify absent/created files and known bytes before quota restoration"
+        },
+        {
+          "test": "TestCephFSLiveByteQuota",
+          "receipt": "CEPHFS_LIVE_BYTE_QUOTA_RECEIPT",
+          "asserts": "one retained libcephfs client and fd read the administrator's 4 MiB max_bytes, then chunked write and fsync series end in EDQUOT after every chunk below the limit and within 32 MiB beyond it; an independent client reads exactly the acknowledged bytes, and after the quota is removed the same fd writes one more chunk that is read back too"
+        },
+        {
+          "test": "TestCephFSClientMetrics",
+          "receipt": "CEPHFS_CLIENT_METRICS_RECEIPT",
+          "asserts": "the active MDS's mds_client_metrics rows of a writer and an idle live client with client metrics enabled are both zero before the work gate; after only the writer's acknowledged 128 KiB write and fsync, its rank-0 row covers the acknowledged bytes while the idle row stays zero under one MDS generation, and a third client reads the exact bytes"
+        },
+        {
+          "test": "TestCephFSReclaimReset",
+          "receipt": "RECLAIM_RESET_RECEIPT",
+          "asserts": "a killed client's session and flock stand; a fresh handle's RESET of an unused UUID returns -ENOENT and changes nothing; a second fresh handle's RESET of the killed client's UUID returns 0 and removes that session and frees its lock before any replacement mounts while an unrelated live session and lock stay; the replacement, a new client, reads the original bytes"
         }
       ],
-      "gap": "Only live directory max_files enforcement and relaxation are exercised. Byte quotas, client metrics and session reclaim have no recipe; no quota wire-message or consumer implementation claim.",
+      "gap": "Quota receipts cover directory max_files and max_bytes enforcement and relaxation on one live client; client metrics cover cumulative write counters of one writer and one idle client on rank 0; reclaim covers RESET of a dead client's session, not state-preserving reclaim. Quota and metrics messages are not decoded or counted, and other metrics, reporting latency, MDS or rank changes, blocklist effects and consumer implementations are not claimed.",
       "owner": "#60"
     },
     {

@@ -2,7 +2,7 @@
 
 //ci: timeout=20m job-timeout=30
 
-package integration_test
+package cephfs_test
 
 import (
 	"fmt"

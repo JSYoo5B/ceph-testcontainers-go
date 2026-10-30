@@ -14,3 +14,13 @@ import "testing"
 func TestCephFSLiveQuota(t *testing.T) {
 	testCephFSLiveQuota(t)
 }
+
+// A single libcephfs mount retains a file descriptor while an independent
+// administrator sets max_bytes on its directory. Once the client reads the
+// limit, its chunked writes end in EDQUOT within a bounded overshoot, and the
+// administrator reads back exactly the acknowledged bytes. After the quota is
+// removed, the same fd writes again and the administrator reads that back
+// too. The quota is removed before client/cluster teardown.
+func TestCephFSLiveByteQuota(t *testing.T) {
+	testCephFSLiveByteQuota(t)
+}
