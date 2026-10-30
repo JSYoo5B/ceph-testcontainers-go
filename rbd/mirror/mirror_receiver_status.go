@@ -127,7 +127,7 @@ func waitRBDReceiverReady(ctx context.Context, interval time.Duration, observe f
 }
 
 func (m *Mirror) receiverWitness(scope *rbdReceiverScope, names []string, previous *rbdReceiverWitness) (*rbdReceiverWitness, error) {
-	if m.closed || !m.receiverSetupConfirmed || m.sourceClient == nil || m.destinationClient == nil || m.config.Source == nil || m.config.Destination == nil || m.receiverClusters == nil || m.receiverPeer == nil || m.poolIdentities == nil || m.policyIdentities == nil {
+	if m.closed || !m.receiver.setupConfirmed || m.pair.sourceClient == nil || m.pair.destinationClient == nil || m.pair.config.Source == nil || m.pair.config.Destination == nil || m.receiver.clusters == nil || m.receiver.peer == nil || m.pair.poolIdentities == nil || m.pair.policyIdentities == nil {
 		return nil, rbdReceiverGuard("RBD receiver bootstrap capability is unavailable or unconfirmed")
 	}
 	if err := scope.guard(m); err != nil {
@@ -135,7 +135,7 @@ func (m *Mirror) receiverWitness(scope *rbdReceiverScope, names []string, previo
 	}
 	all := len(names) == 0
 	owned := make(map[string]*Daemon)
-	for _, d := range m.daemons {
+	for _, d := range m.roster.daemons {
 		if d == nil || d.DaemonName == "" || owned[d.DaemonName] != nil {
 			return nil, rbdReceiverGuard("RBD owned receiver inventory is malformed")
 		}
@@ -154,7 +154,7 @@ func (m *Mirror) receiverWitness(scope *rbdReceiverScope, names []string, previo
 			return nil, rbdReceiverGuard("RBD expected receiver names must be distinct owned daemons")
 		}
 	}
-	w := &rbdReceiverWitness{peer: m.receiverPeer, clusters: m.receiverClusters, pools: m.poolIdentities, policies: scope.policies, names: names, members: make(map[string]rbdReceiverMemberWitness), allOwned: all, scope: scope.selection, binding: scope.binding}
+	w := &rbdReceiverWitness{peer: m.receiver.peer, clusters: m.receiver.clusters, pools: m.pair.poolIdentities, policies: scope.policies, names: names, members: make(map[string]rbdReceiverMemberWitness), allOwned: all, scope: scope.selection, binding: scope.binding}
 	for _, name := range names {
 		d := owned[name]
 		if d.Container == nil || d.receiverHandle == nil || !sameRBDReceiverHandle(d.Container, d.receiverHandle) || !rbdReceiverContainerID(d.receiverContainerID) || d.receiverDaemonName != name || d.Container.GetContainerID() != d.receiverContainerID || d.ClientName != d.receiverClientName {
@@ -163,7 +163,7 @@ func (m *Mirror) receiverWitness(scope *rbdReceiverScope, names []string, previo
 		w.members[name] = rbdReceiverMemberWitness{d, d.receiverHandle, d.receiverContainerID, d.receiverClientName}
 	}
 	if previous != nil {
-		if previous.peer != w.peer || previous.peer.generation != m.receiverPeerGeneration || previous.clusters != w.clusters || previous.pools != w.pools || previous.policies != w.policies || previous.binding != w.binding || previous.allOwned != w.allOwned || previous.scope != w.scope || !slices.Equal(previous.names, w.names) {
+		if previous.peer != w.peer || previous.peer.generation != m.receiver.generation || previous.clusters != w.clusters || previous.pools != w.pools || previous.policies != w.policies || previous.binding != w.binding || previous.allOwned != w.allOwned || previous.scope != w.scope || !slices.Equal(previous.names, w.names) {
 			return nil, rbdReceiverGuard("RBD original receiver scope or cohort changed while waiting")
 		}
 		for name, current := range w.members {
@@ -192,7 +192,7 @@ func (m *Mirror) receiverStatusForScope(ctx context.Context, scope *rbdReceiverS
 	}
 	defer m.mu.Unlock()
 	if scope == nil {
-		scope = m.originalReceiverScope()
+		scope = m.pair.originalReceiverScope()
 	}
 	w, err := m.receiverWitness(scope, names, previous)
 	if err != nil {
@@ -283,7 +283,7 @@ func (m *Mirror) readRBDReceiver(ctx context.Context, scope *rbdReceiverScope, m
 		result.problem = "receiver-status-query-failed"
 		return result, err
 	}
-	selected, present, err := decodeRBDReceiverDiscovery(data, scope.selection[0], m.receiverPeer, multicluster.CephBefore(m.config.Destination, 20))
+	selected, present, err := decodeRBDReceiverDiscovery(data, scope.selection[0], m.receiver.peer, multicluster.CephBefore(m.pair.config.Destination, 20))
 	if err != nil {
 		result.problem = "receiver-status-invalid"
 		return result, err

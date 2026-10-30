@@ -108,7 +108,7 @@ func namespaceImageReadOnly(t *testing.T, h *namespaceImageHarness) {
 
 func TestRBDNamespaceImageStatusUsesBoundScopesAndActualModes(t *testing.T) {
 	h := newNamespaceImageHarness(t, 1)
-	config, policies, peer := h.m.config, h.m.policyIdentities, h.m.receiverPeer
+	config, policies, peer := h.m.pair.config, h.m.pair.policyIdentities, h.m.receiver.peer
 	for i, mapping := range [][2]string{{"ns-a", "ns-b"}, {"ns-c", "ns-d"}, {"ns-e", "ns-f"}} {
 		view := namespaceBindingMustBind(t, h.receiverHarness, mapping[0], mapping[1])
 		status, err := view.ImageStatus(t.Context(), "volume")
@@ -130,7 +130,7 @@ func TestRBDNamespaceImageStatusUsesBoundScopesAndActualModes(t *testing.T) {
 		t.Fatalf("image policy native journal: %+v %v", status, err)
 	}
 	owner, err := h.m.ImageStatus(t.Context(), "volume")
-	if err != nil || !owner.ReplayReady || owner.SourceNamespace != "ns-a" || owner.Mode != ModeSnapshot || h.m.config != config || h.m.policyIdentities != policies || h.m.receiverPeer != peer || len(h.m.daemons) != 1 {
+	if err != nil || !owner.ReplayReady || owner.SourceNamespace != "ns-a" || owner.Mode != ModeSnapshot || h.m.pair.config != config || h.m.pair.policyIdentities != policies || h.m.receiver.peer != peer || len(h.m.roster.daemons) != 1 {
 		t.Fatal("view changed original owner contract", err)
 	}
 	namespaceImageReadOnly(t, h)
@@ -252,9 +252,9 @@ func TestRBDNamespaceImageStatusAttributedOwnedProcess(t *testing.T) {
 			case "dead":
 				h.daemons[0].state.Dead = true
 			case "terminated":
-				h.m.daemons[0].terminated = true
+				h.m.roster.daemons[0].terminated = true
 			case "startup":
-				h.m.daemons[0].receiverStartupConfirmed = false
+				h.m.roster.daemons[0].receiverStartupConfirmed = false
 			case "foreign-service":
 				h.statuses["images/ns-d/volume"] = strings.ReplaceAll(h.statuses["images/ns-d/volume"], "tc-a", "tc-foreign")
 			case "wrong-instance":
@@ -266,7 +266,7 @@ func TestRBDNamespaceImageStatusAttributedOwnedProcess(t *testing.T) {
 			case "process-changed":
 				h.daemons[0].hook = func(_ context.Context, _ int) { h.daemons[0].state.Pid++ }
 			case "handle-swapped":
-				h.daemons[0].hook = func(_ context.Context, _ int) { h.m.daemons[0].Container = h.daemons[1] }
+				h.daemons[0].hook = func(_ context.Context, _ int) { h.m.roster.daemons[0].Container = h.daemons[1] }
 			case "unrelated-stopped":
 				h.daemons[1].state.Running = false
 			case "no-election":
@@ -322,11 +322,11 @@ func TestRBDNamespaceImageStatusReattestsAllOriginalAuthority(t *testing.T) {
 			case "catalog":
 				delete(h.source.policies, "images/ns-c")
 			case "setup-handle-late":
-				h.daemons[0].hook = func(_ context.Context, _ int) { h.m.sourceClient = h.destination }
+				h.daemons[0].hook = func(_ context.Context, _ int) { h.m.pair.sourceClient = h.destination }
 			case "closed":
 				h.m.closed = true
 			case "partial-setup":
-				h.m.receiverSetupConfirmed = false
+				h.m.receiver.setupConfirmed = false
 			}
 			status, err := view.ImageStatus(t.Context(), "volume")
 			if err == nil || !scopedRBDImagePermanent(err) || status.ReplayReady {
@@ -355,7 +355,7 @@ func TestRBDNamespaceImageWaitPinsFirstCohortBeforeAnyImage(t *testing.T) {
 				if len(args) > 2 && args[1] == "info" {
 					calls++
 					if calls == 1 {
-						h.m.daemons = fresh.m.daemons
+						h.m.roster.daemons = fresh.m.roster.daemons
 						return errors.New("private pending image query")
 					}
 				}
@@ -427,12 +427,12 @@ func TestRBDNamespaceImageWaitAllowsOriginalRestartAndRejectsReplacement(t *test
 							h.daemons[0].status = strings.ReplaceAll(h.daemons[0].status, `"100"`, `"200"`)
 							h.statuses["images/ns-d/volume"] = strings.ReplaceAll(h.statuses["images/ns-d/volume"], `"instance_id":"100"`, `"instance_id":"200"`)
 						case "replacement":
-							h.m.daemons = newReceiverHarness(t, "ns-a", "ns-b", 1).m.daemons
+							h.m.roster.daemons = newReceiverHarness(t, "ns-a", "ns-b", 1).m.roster.daemons
 						case "remove":
-							h.m.daemons = nil
+							h.m.roster.daemons = nil
 						case "add":
 							fresh := newReceiverHarness(t, "ns-a", "ns-b", 2)
-							h.m.daemons = append(h.m.daemons, fresh.m.daemons[1])
+							h.m.roster.daemons = append(h.m.roster.daemons, fresh.m.roster.daemons[1])
 						}
 					}
 				}
@@ -459,8 +459,8 @@ func TestRBDNamespaceImageObserverPreservesCanonicalCausesAndGates(t *testing.T)
 			if gate == "owner" {
 				h.m.mu.Lock()
 			} else {
-				h.m.daemons[0].mu.Lock()
-				unlock = h.m.daemons[0].mu.Unlock
+				h.m.roster.daemons[0].mu.Lock()
+				unlock = h.m.roster.daemons[0].mu.Unlock
 			}
 			type observed struct {
 				status ImageStatus
@@ -555,7 +555,7 @@ func TestRBDNamespaceImageObserverInvalidatesActualBootstrapAttempt(t *testing.T
 		t.Run(outcome, func(t *testing.T) {
 			h := newNamespaceImageHarness(t, 1)
 			view := namespaceBindingMustBind(t, h.receiverHarness, "ns-c", "ns-d")
-			peer := h.m.receiverPeer
+			peer := h.m.receiver.peer
 			ctx := t.Context()
 			if outcome == "canceled" {
 				c, cancel := context.WithCancel(ctx)
@@ -584,10 +584,10 @@ func TestRBDNamespaceImageObserverInvalidatesActualBootstrapAttempt(t *testing.T
 			h.source.failure = nil
 			status, observeErr := view.ImageStatus(t.Context(), "volume")
 			if outcome == "success" || outcome == "create-fault" {
-				if observeErr == nil || !scopedRBDImagePermanent(observeErr) || status.ReplayReady || h.m.receiverPeer == peer {
+				if observeErr == nil || !scopedRBDImagePermanent(observeErr) || status.ReplayReady || h.m.receiver.peer == peer {
 					t.Fatal("old view adopted actual bootstrap attempt")
 				}
-			} else if observeErr != nil || !status.ReplayReady || h.m.receiverPeer != peer {
+			} else if observeErr != nil || !status.ReplayReady || h.m.receiver.peer != peer {
 				t.Fatalf("native-zero rejection invalidated view: %+v %v", status, observeErr)
 			}
 			if outcome == "success" {
@@ -645,7 +645,7 @@ func TestRBDNamespaceImageWaitAcceptsPendingDestinationAndCurrentOneShotCohort(t
 		t.Fatalf("zero owner observation: %+v %v", s, e)
 	}
 	fresh := newNamespaceImageHarness(t, 1)
-	zero.m.daemons = fresh.m.daemons
+	zero.m.roster.daemons = fresh.m.roster.daemons
 	if s, e := bound.ImageStatus(t.Context(), "volume"); e != nil || !s.ReplayReady {
 		t.Fatalf("new one-shot did not use explicit current cohort: %+v %v", s, e)
 	}

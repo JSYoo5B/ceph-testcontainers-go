@@ -121,10 +121,10 @@ func TestRBDMirrorNamespacePolicyPlannerPreservesDefaultAndExistingScope(t *test
 
 func TestRBDMirrorNamespaceProvisionUsesExplicitEmptyRemote(t *testing.T) {
 	source, destination := newRBDNamespacePolicyFixture(), newRBDNamespacePolicyFixture()
-	link := &Mirror{sourceClient: source, destinationClient: destination, config: Config{
+	link := &Mirror{pair: rbdMirrorPair{sourceClient: source, destinationClient: destination, config: Config{
 		Pool: "images", Scope: ScopePool, SourceNamespace: "ns-a", SourceSite: "source", DestinationSite: "destination",
-	}}
-	if err := link.provisionRBDMirrorPolicies(t.Context()); err != nil {
+	}}}
+	if err := link.pair.provisionPolicies(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if len(source.mutations) != 2 || len(destination.mutations) != 1 {
@@ -134,7 +134,7 @@ func TestRBDMirrorNamespaceProvisionUsesExplicitEmptyRemote(t *testing.T) {
 		t.Fatalf("default namespace was treated as an omitted mapping: source=%v destination=%v", source.mutations, destination.mutations)
 	}
 	// Repeating composition preserves matching policy, UUIDs and enrollment.
-	if err := link.provisionRBDMirrorPolicies(t.Context()); err != nil || len(source.mutations) != 2 || len(destination.mutations) != 1 {
+	if err := link.pair.provisionPolicies(t.Context()); err != nil || len(source.mutations) != 2 || len(destination.mutations) != 1 {
 		t.Fatalf("matching policies were rewritten: error=%v", err)
 	}
 }
@@ -172,14 +172,14 @@ func TestRBDNamespaceMappingRefusalNamesTheSideThatLacksIt(t *testing.T) {
 			destinationCluster := testhelper.TestCluster(fixture("destination"), testhelper.TestConfig{})
 			testhelper.TestSetCephVersion(sourceCluster, tc.source)
 			testhelper.TestSetCephVersion(destinationCluster, tc.destination)
-			link := &Mirror{sourceClient: source, destinationClient: destination, config: Config{
+			link := &Mirror{pair: rbdMirrorPair{sourceClient: source, destinationClient: destination, config: Config{
 				Pool: "images", Scope: ScopeImage, SourceNamespace: "ns-a", DestinationNamespace: "ns-b", SourceSite: "source", DestinationSite: "destination",
 				Source: sourceCluster, Destination: destinationCluster,
-			}}
-			if err := link.detectNamespaceMapping(t.Context()); err != nil {
+			}}}
+			if err := link.pair.detectNamespaceMapping(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			err := link.provisionRBDMirrorPolicies(t.Context())
+			err := link.pair.provisionPolicies(t.Context())
 			if tc.target == "" {
 				if err != nil || len(destination.mutations) == 0 || !slices.Contains(destination.mutations[len(destination.mutations)-1], "--remote-namespace") {
 					t.Fatalf("a supported mapping returned %v after %v", err, destination.mutations)
@@ -203,9 +203,9 @@ func TestRBDMirrorNamespaceProvisionRejectsBothEndpointsBeforeMutation(t *testin
 	for _, scenario := range []string{"destination scope", "destination mapping", "site on another pool", "outside edit", "bad readback"} {
 		t.Run(scenario, func(t *testing.T) {
 			source, destination := newRBDNamespacePolicyFixture(), newRBDNamespacePolicyFixture()
-			link := &Mirror{sourceClient: source, destinationClient: destination, config: Config{
+			link := &Mirror{pair: rbdMirrorPair{sourceClient: source, destinationClient: destination, config: Config{
 				Pool: "images", Scope: ScopePool, SourceNamespace: "ns-a", DestinationNamespace: "ns-b", SourceSite: "source", DestinationSite: "destination",
-			}}
+			}}}
 			switch scenario {
 			case "destination scope":
 				destination.policies["images/ns-b"] = nativeRBDMirrorPolicy{Mode: "image", MirrorUUID: "uuid", RemoteNamespace: stringPointer("ns-a")}
@@ -222,7 +222,7 @@ func TestRBDMirrorNamespaceProvisionRejectsBothEndpointsBeforeMutation(t *testin
 			case "bad readback":
 				source.falseSuccess = true
 			}
-			if err := link.provisionRBDMirrorPolicies(t.Context()); err == nil {
+			if err := link.pair.provisionPolicies(t.Context()); err == nil {
 				t.Fatal("incompatible or changed native policy accepted")
 			}
 			wantSource := 0
@@ -239,8 +239,8 @@ func TestRBDMirrorNamespaceProvisionRejectsBothEndpointsBeforeMutation(t *testin
 func TestRBDMirrorNamespacePartialSetupCanBeReadAfterLostReply(t *testing.T) {
 	source, destination := newRBDNamespacePolicyFixture(), newRBDNamespacePolicyFixture()
 	source.lostReply = true
-	link := &Mirror{sourceClient: source, destinationClient: destination, config: Config{Pool: "images", Scope: ScopePool, SourceSite: "source", DestinationSite: "destination"}}
-	if err := link.provisionRBDMirrorPolicies(t.Context()); err == nil {
+	link := &Mirror{pair: rbdMirrorPair{sourceClient: source, destinationClient: destination, config: Config{Pool: "images", Scope: ScopePool, SourceSite: "source", DestinationSite: "destination"}}}
+	if err := link.pair.provisionPolicies(t.Context()); err == nil {
 		t.Fatal("lost native reply unexpectedly succeeded")
 	}
 	status, err := link.PolicyStatus(t.Context())
@@ -248,7 +248,7 @@ func TestRBDMirrorNamespacePartialSetupCanBeReadAfterLostReply(t *testing.T) {
 		t.Fatalf("partial native state was hidden or rolled back: %+v %v", status, err)
 	}
 	source.lostReply = false
-	if err := link.provisionRBDMirrorPolicies(t.Context()); err != nil || len(source.mutations) != 1 || len(destination.mutations) != 1 {
+	if err := link.pair.provisionPolicies(t.Context()); err != nil || len(source.mutations) != 1 || len(destination.mutations) != 1 {
 		t.Fatalf("reconciliation rewrote completed native policy: source=%v destination=%v error=%v", source.mutations, destination.mutations, err)
 	}
 }
@@ -282,12 +282,12 @@ func TestRBDMirrorNamespaceReadRequiresNativeModeUUIDAndRemote(t *testing.T) {
 
 func TestRBDMirrorNamespaceImageEnrollmentAndPoolIdentity(t *testing.T) {
 	client := &rbdEnableFixture{info: `{"features":["exclusive-lock"]}`}
-	link := &Mirror{sourceClient: client, config: Config{Pool: "images", SourceNamespace: "ns-a", Mode: ModeSnapshot}}
+	link := &Mirror{pair: rbdMirrorPair{sourceClient: client, config: Config{Pool: "images", SourceNamespace: "ns-a", Mode: ModeSnapshot}}}
 	if err := link.EnableImage(t.Context(), "volume"); err != nil || len(client.calls) != 2 || client.calls[0][2] != "images/ns-a/volume" || client.calls[1][4] != "images/ns-a/volume" {
 		t.Fatalf("enrollment lost source namespace: %v error=%v", client.calls, err)
 	}
 	client.calls = nil
-	link.config.Scope = ScopePool
+	link.pair.config.Scope = ScopePool
 	if err := link.EnableImage(t.Context(), "volume"); err == nil || len(client.calls) != 0 {
 		t.Fatal("pool enrollment should require journal features, without per-image enable")
 	}
@@ -299,12 +299,12 @@ func TestRBDMirrorNamespaceImageEnrollmentAndPoolIdentity(t *testing.T) {
 		t.Fatal("terminated fixture reported policy")
 	}
 	source, destination := newRBDNamespacePolicyFixture(), newRBDNamespacePolicyFixture()
-	link = &Mirror{config: Config{Pool: "images", Source: &ceph.Container{Container: source}, Destination: &ceph.Container{Container: destination}}, poolIdentities: &rbdMirrorPoolIdentities{source: 42, destination: 42}}
-	if err := link.checkRBDMirrorPools(t.Context()); err != nil {
+	link = &Mirror{pair: rbdMirrorPair{config: Config{Pool: "images", Source: &ceph.Container{Container: source}, Destination: &ceph.Container{Container: destination}}, poolIdentities: &rbdMirrorPoolIdentities{source: 42, destination: 42}}}
+	if err := link.pair.checkPools(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	destination.poolID = 43
-	if err := link.checkRBDMirrorPools(t.Context()); err == nil {
+	if err := link.pair.checkPools(t.Context()); err == nil {
 		t.Fatal("same-name replacement pool was adopted")
 	}
 }
@@ -313,14 +313,14 @@ func TestRBDMirrorNativePolicyIdentityGuardsLaterMutations(t *testing.T) {
 	for _, scenario := range []string{"source base UUID", "source namespace UUID", "destination namespace UUID", "namespace scope", "namespace mapping", "default mapping", "site identity"} {
 		t.Run(scenario, func(t *testing.T) {
 			source, destination := newRBDNamespacePolicyFixture(), newRBDNamespacePolicyFixture()
-			link := &Mirror{sourceClient: source, destinationClient: destination, config: Config{
+			link := &Mirror{pair: rbdMirrorPair{sourceClient: source, destinationClient: destination, config: Config{
 				Pool: "images", Scope: ScopeImage, SourceNamespace: "ns-a", DestinationNamespace: "ns-b", SourceSite: "source", DestinationSite: "destination",
 				Source: &ceph.Container{Container: source}, Destination: &ceph.Container{Container: destination},
-			}}
-			if err := link.provisionRBDMirrorPolicies(t.Context()); err != nil {
+			}}}
+			if err := link.pair.provisionPolicies(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			captured := link.policyIdentities
+			captured := link.pair.policyIdentities
 			client, spec := source, "images/ns-a"
 			if scenario == "source base UUID" || scenario == "default mapping" {
 				spec = "images"
@@ -353,10 +353,10 @@ func TestRBDMirrorNativePolicyIdentityGuardsLaterMutations(t *testing.T) {
 				}
 			}
 			status, err := link.PolicyStatus(t.Context())
-			if err != nil || status.Source.MirrorUUID == "" || link.policyIdentities != captured || len(source.mutations) != 2 || len(destination.mutations) != 2 {
+			if err != nil || status.Source.MirrorUUID == "" || link.pair.policyIdentities != captured || len(source.mutations) != 2 || len(destination.mutations) != 2 {
 				t.Fatalf("read-only status adopted replacement policy or hid native state: %+v error=%v", status, err)
 			}
-			if err := link.checkRBDMirrorPolicyIdentities(t.Context()); err == nil {
+			if err := link.pair.checkPolicyIdentities(t.Context()); err == nil {
 				t.Fatal("PolicyStatus adopted an outside policy change")
 			}
 		})

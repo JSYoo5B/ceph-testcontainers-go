@@ -102,15 +102,12 @@ func newRBDImageStatusFixture(t *testing.T, mode Mode, sourceNS, destinationNS s
 	source := &rbdImageStatusFixture{rbdNamespacePolicyFixture: newRBDNamespacePolicyFixture(), imageInfo: rbdImageStatusInfo("source-local", string(mode), "global-image", true)}
 	destination := &rbdImageStatusFixture{rbdNamespacePolicyFixture: newRBDNamespacePolicyFixture(), imageInfo: rbdImageStatusInfo("destination-local", string(mode), "global-image", false), imageStatus: `{"name":"volume","global_id":"global-image","state":"up+replaying","description":"replaying","last_update":"2026-10-07 00:00:00","daemon_service":{"service_id":"22","instance_id":"123","daemon_id":"tc-owned"}}`}
 	link := &Mirror{
-		sourceClient: source, destinationClient: destination,
-		config:         Config{Pool: "images", SourceNamespace: sourceNS, DestinationNamespace: destinationNS, Mode: mode, Scope: ScopeImage, SourceSite: "source", DestinationSite: "destination", Source: &ceph.Container{Container: source}, Destination: &ceph.Container{Container: destination}},
-		poolIdentities: &rbdMirrorPoolIdentities{source: 42, destination: 42},
-	}
-	if err := link.provisionRBDMirrorPolicies(t.Context()); err != nil {
+		pair: rbdMirrorPair{sourceClient: source, destinationClient: destination, config: Config{Pool: "images", SourceNamespace: sourceNS, DestinationNamespace: destinationNS, Mode: mode, Scope: ScopeImage, SourceSite: "source", DestinationSite: "destination", Source: &ceph.Container{Container: source}, Destination: &ceph.Container{Container: destination}}, poolIdentities: &rbdMirrorPoolIdentities{source: 42, destination: 42}}}
+	if err := link.pair.provisionPolicies(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	daemon := &rbdImageStatusDaemon{running: true, status: `{"pool_replayers":[{"pool":"images","peer":"peer","state":"running","instance_id":"123"}]}`}
-	link.daemons = []*Daemon{{Container: daemon, DaemonName: "a", ClientName: "client.rbd-mirror.tc-owned"}}
+	link.roster.daemons = []*Daemon{{Container: daemon, DaemonName: "a", ClientName: "client.rbd-mirror.tc-owned"}}
 	return link, source, destination, daemon
 }
 
@@ -388,19 +385,19 @@ func TestRBDMirrorImageStatusRejectsUnavailableFixtureBeforeImageReads(t *testin
 			case "closed":
 				link.closed = true
 			case "missing source client":
-				link.sourceClient = nil
+				link.pair.sourceClient = nil
 			case "missing destination client":
-				link.destinationClient = nil
+				link.pair.destinationClient = nil
 			case "missing pools":
-				link.poolIdentities = nil
+				link.pair.poolIdentities = nil
 			case "missing policies":
-				link.policyIdentities = nil
+				link.pair.policyIdentities = nil
 			case "missing source cluster":
-				link.config.Source = nil
+				link.pair.config.Source = nil
 			case "missing destination cluster":
-				link.config.Destination = nil
+				link.pair.config.Destination = nil
 			case "invalid mode":
-				link.config.Mode = "future-mode"
+				link.pair.config.Mode = "future-mode"
 			}
 			status, err := link.ImageStatus(t.Context(), "volume")
 			var observation *rbdImageObservationError
@@ -580,7 +577,7 @@ func TestRBDMirrorImageStatusDoesNotSubstituteAnotherHealthyOwnedReceiver(t *tes
 	link, _, destination, daemon := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
 	daemon.running = false
 	second := &rbdImageStatusDaemon{running: true, status: daemon.status}
-	link.daemons = append(link.daemons, &Daemon{Container: second, DaemonName: "b", ClientName: "client.rbd-mirror.tc-other"})
+	link.roster.daemons = append(link.roster.daemons, &Daemon{Container: second, DaemonName: "b", ClientName: "client.rbd-mirror.tc-other"})
 	status, err := link.ImageStatus(t.Context(), "volume")
 	if err != nil || status.ReplayReady || status.DaemonName != "a" {
 		t.Fatalf("healthy receiver b was substituted for stopped report owner a: %+v %v", status, err)
@@ -611,7 +608,7 @@ func TestRBDMirrorImageStatusMatchesExactNativeOwnedDaemonIdentity(t *testing.T)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			link, _, destination, _ := newRBDImageStatusFixture(t, ModeSnapshot, "", "")
-			link.daemons[0].ClientName = tc.clientName
+			link.roster.daemons[0].ClientName = tc.clientName
 			destination.imageStatus = strings.Replace(destination.imageStatus, "\"daemon_id\":\"tc-owned\"", fmt.Sprintf("\"daemon_id\":%q", tc.nativeID), 1)
 			status, err := link.ImageStatus(t.Context(), "volume")
 			if err != nil || status.ReplayReady != tc.ready {

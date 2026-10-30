@@ -50,23 +50,23 @@ func (m *Mirror) refreshRBDMirrorMonitorConfig(ctx context.Context, refresh func
 		return err
 	}
 	defer m.mu.Unlock()
-	if m.closed || m.config.Source == nil || m.config.Destination == nil || m.sourceClient == nil || m.destinationClient == nil || m.poolIdentities == nil || m.policyIdentities == nil {
+	if m.closed || m.pair.config.Source == nil || m.pair.config.Destination == nil || m.pair.sourceClient == nil || m.pair.destinationClient == nil || m.pair.poolIdentities == nil || m.pair.policyIdentities == nil {
 		return errors.New("RBD mirror bootstrap pool and policy identities are not confirmed")
 	}
 	targets := []rbdMonitorConfigTarget{
-		{"source setup client", m.config.Source, m.sourceClient},
-		{"destination setup client", m.config.Destination, m.destinationClient},
+		{"source setup client", m.pair.config.Source, m.pair.sourceClient},
+		{"destination setup client", m.pair.config.Destination, m.pair.destinationClient},
 	}
-	for _, daemon := range m.daemons {
+	for _, daemon := range m.roster.daemons {
 		if daemon == nil || daemon.Container == nil {
 			return errors.New("owned RBD mirror daemon container is unavailable")
 		}
-		targets = append(targets, rbdMonitorConfigTarget{"daemon " + daemon.DaemonName, m.config.Destination, daemon.Container})
+		targets = append(targets, rbdMonitorConfigTarget{"daemon " + daemon.DaemonName, m.pair.config.Destination, daemon.Container})
 	}
 	// A fresh CLI process in an old setup client may no longer find any monitor
 	// after full rolling replacement. Verify policy through the cluster's current
 	// toolkit instead of requiring the file being repaired to work beforehand.
-	if err := m.checkRBDMonitorRefreshIdentities(ctx); err != nil {
+	if err := m.pair.checkMonitorRefreshIdentities(ctx); err != nil {
 		return err
 	}
 	var problems []error
@@ -79,7 +79,7 @@ func (m *Mirror) refreshRBDMirrorMonitorConfig(ctx context.Context, refresh func
 			problems = append(problems, fmt.Errorf("refresh RBD mirror %s monitor configuration: %w", target.name, err))
 		}
 	}
-	if err := m.checkRBDMonitorRefreshIdentities(ctx); err != nil {
+	if err := m.pair.checkMonitorRefreshIdentities(ctx); err != nil {
 		problems = append(problems, err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -91,7 +91,7 @@ func (m *Mirror) refreshRBDMirrorMonitorConfig(ctx context.Context, refresh func
 // Called under m.mu. Toolkit selection may wait for cluster topology; policy
 // reads do not depend on a setup client whose bootstrap is being repaired.
 // Keep the original pool, base and selected namespace identity guards.
-func (m *Mirror) checkRBDMonitorRefreshIdentities(ctx context.Context) error {
+func (p *rbdMirrorPair) checkMonitorRefreshIdentities(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -101,8 +101,8 @@ func (m *Mirror) checkRBDMonitorRefreshIdentities(ctx context.Context) error {
 		namespace string
 		identity  rbdMirrorSitePolicyIdentity
 	}{
-		{m.config.Source, m.poolIdentities.source, m.config.SourceNamespace, m.policyIdentities.source},
-		{m.config.Destination, m.poolIdentities.destination, m.config.DestinationNamespace, m.policyIdentities.destination},
+		{p.config.Source, p.poolIdentities.source, p.config.SourceNamespace, p.policyIdentities.source},
+		{p.config.Destination, p.poolIdentities.destination, p.config.DestinationNamespace, p.policyIdentities.destination},
 	} {
 		control, err := site.cluster.ClientContainer(ctx)
 		if err != nil {
@@ -111,16 +111,16 @@ func (m *Mirror) checkRBDMonitorRefreshIdentities(ctx context.Context) error {
 		if control == nil {
 			return errors.New("RBD mirror cluster toolkit container is unavailable")
 		}
-		if err := readRBDMirrorObservedPool(ctx, control, m.config.Pool, site.poolID); err != nil {
+		if err := readRBDMirrorObservedPool(ctx, control, p.config.Pool, site.poolID); err != nil {
 			return err
 		}
-		base, err := readRBDMirrorObservedPolicy(ctx, control, m.config.Pool, "", m.legacyCluster(site.cluster))
+		base, err := readRBDMirrorObservedPolicy(ctx, control, p.config.Pool, "", p.legacyCluster(site.cluster))
 		if err != nil {
 			return err
 		}
 		selected := base
 		if site.namespace != "" {
-			selected, err = readRBDMirrorObservedPolicy(ctx, control, m.config.Pool, site.namespace, m.legacyCluster(site.cluster))
+			selected, err = readRBDMirrorObservedPolicy(ctx, control, p.config.Pool, site.namespace, p.legacyCluster(site.cluster))
 			if err != nil {
 				return err
 			}
@@ -128,7 +128,7 @@ func (m *Mirror) checkRBDMonitorRefreshIdentities(ctx context.Context) error {
 		if !sameRBDMirrorPolicy(base, site.identity.base) || !sameRBDMirrorPolicy(selected, site.identity.selected) {
 			return errors.New("RBD mirror UUID, scope, remote mapping or site identity changed; refusing monitor refresh")
 		}
-		if err := readRBDMirrorObservedPool(ctx, control, m.config.Pool, site.poolID); err != nil {
+		if err := readRBDMirrorObservedPool(ctx, control, p.config.Pool, site.poolID); err != nil {
 			return err
 		}
 	}

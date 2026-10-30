@@ -66,7 +66,7 @@ func TestRBDMirrorDaemonRemovalOwnsMembershipAndRetriesFailedCleanup(t *testing.
 	initial := &Daemon{Container: initialContainer, DaemonName: "a"}
 	failedContainer := &clustertest.TerminateRecorder{Err: errors.New("temporary cleanup failure")}
 	standby := &Daemon{Container: failedContainer, DaemonName: "b"}
-	link := &Mirror{Container: initial, daemons: []*Daemon{standby, initial}, initialDaemonName: "a"}
+	link := &Mirror{Container: initial, roster: rbdDaemonRoster{daemons: []*Daemon{standby, initial}, initialName: "a"}}
 	initial.owner, standby.owner = link, link
 	link.owned.AddContainer(initial)
 	link.owned.AddContainer(standby)
@@ -102,7 +102,7 @@ func TestRBDMirrorDaemonRemovalOwnsMembershipAndRetriesFailedCleanup(t *testing.
 func TestRBDMirrorTerminateClosesAdditionsButAllowsCleanupRetry(t *testing.T) {
 	ctr := &clustertest.TerminateRecorder{Err: errors.New("temporary cleanup failure")}
 	daemon := &Daemon{Container: ctr, DaemonName: "a"}
-	link := &Mirror{Container: daemon, initialDaemonName: "a", daemons: []*Daemon{daemon}}
+	link := &Mirror{Container: daemon, roster: rbdDaemonRoster{initialName: "a", daemons: []*Daemon{daemon}}}
 	link.owned.AddContainer(daemon)
 	if err := link.Terminate(t.Context()); err == nil || len(link.Daemons()) != 1 {
 		t.Fatal("failed fixture cleanup lost retained membership")
@@ -181,7 +181,7 @@ func TestRBDMirrorDaemonStatusUsesNativeElectionFields(t *testing.T) {
 
 func TestEnableRBDJournalImageRequiresExplicitExclusiveLock(t *testing.T) {
 	client := &rbdEnableFixture{info: `{"features":["layering"]}`}
-	link := &Mirror{sourceClient: client, config: Config{Pool: "rbd", Mode: ModeJournal}}
+	link := &Mirror{pair: rbdMirrorPair{sourceClient: client, config: Config{Pool: "rbd", Mode: ModeJournal}}}
 	if err := link.EnableImage(t.Context(), "volume"); err == nil || !strings.Contains(err.Error(), "exclusive-lock") || len(client.calls) != 1 {
 		t.Fatalf("journal setup changed an image without exclusive-lock: calls=%v error=%v", client.calls, err)
 	}
@@ -197,11 +197,11 @@ func TestEnableRBDJournalImageRequiresExplicitExclusiveLock(t *testing.T) {
 
 func TestEnableRBDImagePreservesExistingModeAndRejectsAmbiguousSpec(t *testing.T) {
 	client := &rbdEnableFixture{info: `{"features":["exclusive-lock","journaling"],"mirroring":{"mode":"journal","state":"enabled"}}`}
-	link := &Mirror{sourceClient: client, config: Config{Pool: "rbd", Mode: ModeJournal}}
+	link := &Mirror{pair: rbdMirrorPair{sourceClient: client, config: Config{Pool: "rbd", Mode: ModeJournal}}}
 	if err := link.EnableImage(t.Context(), "volume"); err != nil || len(client.calls) != 1 {
 		t.Fatalf("already enabled image should remain unchanged: calls=%v error=%v", client.calls, err)
 	}
-	link.config.Mode = ModeSnapshot
+	link.pair.config.Mode = ModeSnapshot
 	client.calls = nil
 	if err := link.EnableImage(t.Context(), "volume"); err == nil || !strings.Contains(err.Error(), "already uses journal") || len(client.calls) != 1 {
 		t.Fatalf("existing journal mode was implicitly changed: calls=%v error=%v", client.calls, err)

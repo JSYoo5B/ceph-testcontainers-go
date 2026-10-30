@@ -51,12 +51,12 @@ func (m *Mirror) ImageStatus(ctx context.Context, imageName string) (ImageStatus
 		return result, err
 	}
 	defer m.mu.Unlock()
-	if m.closed || m.sourceClient == nil || m.destinationClient == nil || m.config.Source == nil || m.config.Destination == nil {
+	if m.closed || m.pair.sourceClient == nil || m.pair.destinationClient == nil || m.pair.config.Source == nil || m.pair.config.Destination == nil {
 		return result, rbdImageGuardError("RBD mirror fixture is unavailable or terminated")
 	}
 	// Do not allow a hand-constructed or partially bootstrapped public handle
 	// to claim readiness without a confirmed pool/policy identity.
-	if m.poolIdentities == nil || m.policyIdentities == nil {
+	if m.pair.poolIdentities == nil || m.pair.policyIdentities == nil {
 		return result, rbdImageGuardError("RBD mirror pool and policies are not confirmed")
 	}
 	return m.observeRBDMirrorImageLocked(ctx, imageName, nil, nil)
@@ -66,9 +66,9 @@ func (m *Mirror) ImageStatus(ctx context.Context, imageName string) (ImageStatus
 // scope belongs to a retained view; it never replaces the owner's config.
 func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness) (ImageStatus, error) {
 	var result ImageStatus
-	pool, sourceNS, destinationNS := m.config.Pool, m.config.SourceNamespace, m.config.DestinationNamespace
-	mode := m.config.Mode
-	checkIdentities := m.checkRBDMirrorObservedIdentities
+	pool, sourceNS, destinationNS := m.pair.config.Pool, m.pair.config.SourceNamespace, m.pair.config.DestinationNamespace
+	mode := m.pair.config.Mode
+	checkIdentities := m.pair.checkObservedIdentities
 	if scope != nil {
 		pool, sourceNS, destinationNS = scope.selection[0], scope.selection[1], scope.selection[2]
 		mode = "" // The source image, not the owner's original mode, is authoritative.
@@ -87,7 +87,7 @@ func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName stri
 		}
 		result.Mode = mode
 	}
-	source, err := readRBDMirrorImageInfoForScope(ctx, m.sourceClient, rbdMirrorImageSpec(pool, sourceNS, imageName), imageName, mode, scope != nil)
+	source, err := readRBDMirrorImageInfoForScope(ctx, m.pair.sourceClient, rbdMirrorImageSpec(pool, sourceNS, imageName), imageName, mode, scope != nil)
 	if err != nil {
 		return result, err
 	}
@@ -99,7 +99,7 @@ func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName stri
 			return result, rbdImageGuardError("RBD pool-scoped image must use journal mirroring")
 		}
 	}
-	destination, err := readRBDMirrorImageInfoForScope(ctx, m.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), imageName, mode, scope != nil)
+	destination, err := readRBDMirrorImageInfoForScope(ctx, m.pair.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), imageName, mode, scope != nil)
 	if errors.Is(err, errRBDImageMirroringDisabled) {
 		// rbd-mirror creates the destination image first and enables mirroring
 		// on it right after. Its identity is kept, so that a wait pins it.
@@ -128,7 +128,7 @@ func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName stri
 	var status rbdObservedStatus
 	if source.State == "enabled" && destination.State == "enabled" {
 		var err error
-		status, err = readRBDMirrorImageStatusForScope(ctx, m.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), imageName, source.GlobalID, scope != nil)
+		status, err = readRBDMirrorImageStatusForScope(ctx, m.pair.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), imageName, source.GlobalID, scope != nil)
 		if err != nil {
 			return result, err
 		}
@@ -153,7 +153,7 @@ func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName stri
 				break
 			}
 		} else {
-			for _, daemon := range m.daemons {
+			for _, daemon := range m.roster.daemons {
 				if daemon == nil || daemon.Container == nil {
 					continue
 				}
@@ -177,7 +177,7 @@ func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName stri
 					return result, err
 				}
 				result.ReplayReady = slices.ContainsFunc(native.PoolReplayers, func(pool PoolReplayerStatus) bool {
-					return pool.Pool == m.config.Pool && pool.State == "running" && pool.InstanceID == status.Service.InstanceID
+					return pool.Pool == m.pair.config.Pool && pool.State == "running" && pool.InstanceID == status.Service.InstanceID
 				})
 				break
 			}
@@ -191,8 +191,8 @@ func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName stri
 		spec   string
 		before rbdObservedInfo
 	}{
-		{m.sourceClient, rbdMirrorImageSpec(pool, sourceNS, imageName), source},
-		{m.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), destination},
+		{m.pair.sourceClient, rbdMirrorImageSpec(pool, sourceNS, imageName), source},
+		{m.pair.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), destination},
 	} {
 		after, err := readRBDMirrorImageInfoForScope(ctx, site.client, site.spec, imageName, mode, scope != nil)
 		if err != nil {
@@ -459,26 +459,26 @@ func validRBDMirrorObservedState(state string) bool {
 // Observer guards distinguish unavailable native queries from a successful
 // read proving identity drift. Setup clients avoid taking a cluster mutation
 // mutex that could outlive this observation's caller deadline.
-func (m *Mirror) checkRBDMirrorObservedIdentities(ctx context.Context) error {
+func (p *rbdMirrorPair) checkObservedIdentities(ctx context.Context) error {
 	for _, site := range []struct {
 		client    testcontainers.Container
 		poolID    int64
 		namespace string
 		identity  rbdMirrorSitePolicyIdentity
 	}{
-		{m.sourceClient, m.poolIdentities.source, m.config.SourceNamespace, m.policyIdentities.source},
-		{m.destinationClient, m.poolIdentities.destination, m.config.DestinationNamespace, m.policyIdentities.destination},
+		{p.sourceClient, p.poolIdentities.source, p.config.SourceNamespace, p.policyIdentities.source},
+		{p.destinationClient, p.poolIdentities.destination, p.config.DestinationNamespace, p.policyIdentities.destination},
 	} {
-		if err := readRBDMirrorObservedPool(ctx, site.client, m.config.Pool, site.poolID); err != nil {
+		if err := readRBDMirrorObservedPool(ctx, site.client, p.config.Pool, site.poolID); err != nil {
 			return err
 		}
-		base, err := readRBDMirrorObservedPolicy(ctx, site.client, m.config.Pool, "", m.legacyClient(site.client))
+		base, err := readRBDMirrorObservedPolicy(ctx, site.client, p.config.Pool, "", p.legacyClient(site.client))
 		if err != nil {
 			return err
 		}
 		selected := base
 		if site.namespace != "" {
-			selected, err = readRBDMirrorObservedPolicy(ctx, site.client, m.config.Pool, site.namespace, m.legacyClient(site.client))
+			selected, err = readRBDMirrorObservedPolicy(ctx, site.client, p.config.Pool, site.namespace, p.legacyClient(site.client))
 			if err != nil {
 				return err
 			}
@@ -486,7 +486,7 @@ func (m *Mirror) checkRBDMirrorObservedIdentities(ctx context.Context) error {
 		if !sameRBDMirrorPolicy(base, site.identity.base) || !sameRBDMirrorPolicy(selected, site.identity.selected) {
 			return rbdImageGuardError("RBD mirror UUID, scope, remote mapping or site identity changed during observation")
 		}
-		if err := readRBDMirrorObservedPool(ctx, site.client, m.config.Pool, site.poolID); err != nil {
+		if err := readRBDMirrorObservedPool(ctx, site.client, p.config.Pool, site.poolID); err != nil {
 			return err
 		}
 	}
