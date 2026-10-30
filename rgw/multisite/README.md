@@ -6,7 +6,7 @@ check how its S3 application behaves with replication: objects written in one
 zone appearing in another, a zone outage, a planned metadata master failover,
 selective sync with sync policies. Ordinary gateway use (users, tenants,
 quotas, placement) stays in [`rgw`](../README.md). See
-[API purpose and classification](../../docs/guides/api-purpose.md).
+[API purpose and purpose tags](../../docs/guides/api-purpose.md).
 
 ## Order of use
 

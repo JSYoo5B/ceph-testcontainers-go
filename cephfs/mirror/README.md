@@ -7,7 +7,7 @@ can check how its application behaves with snapshot replication: a checkpoint
 arriving on the other side, directory reassignment when a daemon is lost, peer
 replacement. The clusters, filesystems and data stay in the
 [cephfs package](../README.md). See
-[API purpose and classification](../../docs/guides/api-purpose.md).
+[API purpose and purpose tags](../../docs/guides/api-purpose.md).
 
 Import it with an alias, because the RBD family also uses the package name
 `mirror`:

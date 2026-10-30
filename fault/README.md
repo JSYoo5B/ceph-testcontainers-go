@@ -5,7 +5,7 @@ put a running cluster into a failure condition that a test wants to observe
 its SUT under: a frozen daemon, a cut or slowed network path, a damaged
 replica. Faults reproduce conditions for integration tests; they are not a
 chaos platform or a performance tool. See
-[API purpose and classification](../docs/guides/api-purpose.md).
+[API purpose and purpose tags](../docs/guides/api-purpose.md).
 
 The package has no fixture lifetime of its own: cluster-bound faults use the
 cluster created by `ceph.Run` and are restored by its `Terminate`.

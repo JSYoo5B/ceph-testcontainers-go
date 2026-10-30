@@ -7,7 +7,7 @@ filesystems and their MDS topology, data pools, subvolume groups and
 subvolumes, snapshots and clones, principals restricted to one subvolume,
 directory pins, quiesce sets and client session limits. File I/O belongs to the
 client under test; the package never mounts CephFS on the test host. See
-[API purpose and classification](../docs/guides/api-purpose.md).
+[API purpose and purpose tags](../docs/guides/api-purpose.md).
 
 ```
 go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs

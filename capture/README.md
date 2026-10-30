@@ -6,7 +6,7 @@ can check afterwards what went over the wire. The package starts an opt-in
 `tcpdump` helper in the target's network namespace, retrieves one classic pcap
 file and checks its structure. It never decodes or judges the packets;
 interpreting Messenger traffic is the test's job. See
-[API purpose and classification](../docs/guides/api-purpose.md) for where this
+[API purpose and purpose tags](../docs/guides/api-purpose.md) for where this
 fits.
 
 ## Order of use

@@ -7,7 +7,7 @@ failover and failback, split-brain recovery, the loss of a receiver. The
 package starts the setup CLI containers and the `rbd-mirror` receiver daemons
 and observes their readiness; it does not wrap mirroring commands such as
 promote, demote or resync. See
-[API purpose and classification](../../docs/guides/api-purpose.md).
+[API purpose and purpose tags](../../docs/guides/api-purpose.md).
 
 Import it with an alias, because the CephFS family also uses the package name
 `mirror`:

@@ -7,7 +7,7 @@ reach (optionally native HTTPS), users with explicit Admin Ops capabilities,
 tenants and accounts, quotas and suspension, storage counters, and placement
 targets with storage classes. Object operations belong to the S3 client under
 test; the package adds no S3 SDK. See
-[API purpose and classification](../docs/guides/api-purpose.md).
+[API purpose and purpose tags](../docs/guides/api-purpose.md).
 
 ```
 go get github.com/JSYoo5B/ceph-testcontainers-go/rgw

@@ -12,7 +12,7 @@ conditions as it can, including some injected faults, but it is not a full Ceph
 deployment: large-scale experiments, performance measurement and tuning are out
 of scope, and it does not wrap object, image, file or S3 data APIs. Your service
 talks to the cluster with its own client (librados, go-ceph, librbd, libcephfs,
-the Ceph CLI or an S3 SDK). See [API purpose and classification](../docs/guides/api-purpose.md).
+the Ceph CLI or an S3 SDK). See [API purpose and purpose tags](../docs/guides/api-purpose.md).
 
 Real `ceph-mon`, `ceph-mgr` and `ceph-osd` daemons run in separate containers on
 an isolated Docker network: one MON, one MGR and two OSDs by default, each OSD

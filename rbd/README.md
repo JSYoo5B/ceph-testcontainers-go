@@ -7,7 +7,7 @@ observation of image watchers and locks, backup transport between clusters and
 the immutable object cache. Image operations themselves (create, clone,
 snapshot, trash, migration, encryption, locks) belong to the client under test
 and are not wrapped. See
-[API purpose and classification](../docs/guides/api-purpose.md).
+[API purpose and purpose tags](../docs/guides/api-purpose.md).
 
 ```
 go get github.com/JSYoo5B/ceph-testcontainers-go/rbd

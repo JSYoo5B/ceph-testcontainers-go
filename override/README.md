@@ -6,7 +6,7 @@ while, and to put it back: fence one client session, hold an OSD flag, enable
 or disable an MGR module, lower the full ratios, raise one OSD's debug level,
 set a central configuration entry or change the messenger policy. Overrides
 build test conditions; they are not a cluster administration tool. See
-[API purpose and classification](../docs/guides/api-purpose.md).
+[API purpose and purpose tags](../docs/guides/api-purpose.md).
 
 ## Order of use
 
