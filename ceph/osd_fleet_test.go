@@ -16,6 +16,14 @@ func osdFleetBinding(fn *ast.FuncDecl) bool {
 	return fn != nil && receiverTypeName(fn) == "Container" && fn.Name.Name == "osdFleet"
 }
 
+// stateBinding reports whether fn is an owner constructor that binds the run
+// directory and the startup identity: Container.osdFleet or
+// Container.featureClient. Each binds them once (TestOSDFleetBindsEachStateOnce,
+// TestFeatureClientBindsEachStateOnce).
+func stateBinding(fn *ast.FuncDecl) bool {
+	return osdFleetBinding(fn) || fn != nil && receiverTypeName(fn) == "Container" && fn.Name.Name == "featureClient"
+}
+
 // inOSDFleetBinding reports whether pos lies in Container.osdFleet of file.
 func inOSDFleetBinding(file *ast.File, pos token.Pos) bool {
 	for _, decl := range file.Decls {
@@ -251,5 +259,74 @@ func TestOwnerStatesAreNamedOnlyByTheirConstructors(t *testing.T) {
 	if len(problems) != 0 {
 		slices.Sort(problems)
 		t.Fatalf("an owner state escapes its owner: %v", problems)
+	}
+}
+
+// featureClientBound is the state that Container.featureClient binds by
+// address. Each keeps its own field guard, which also holds for the feature
+// client's methods because they reach the state under the same field names.
+var featureClientBound = []string{"native", "runDir", "startup", "toolkit"}
+
+// TestFeatureClientBindsEachStateOnce guards the feature client's
+// construction: Container.featureClient binds each state in
+// featureClientBound once, as &c.<same field>, in its one featureClient
+// literal, and no other function builds a featureClient.
+func TestFeatureClientBindsEachStateOnce(t *testing.T) {
+	var problems []string
+	literals := 0
+	for file, parsed := range parseProductionFiles(t) {
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				lit, ok := n.(*ast.CompositeLit)
+				if !ok {
+					return true
+				}
+				if id, ok := lit.Type.(*ast.Ident); !ok || id.Name != "featureClient" || len(lit.Elts) == 0 {
+					return true
+				}
+				literals++
+				if funcKey(fn) != "Container.featureClient" {
+					problems = append(problems, file+": "+funcKey(fn)+" builds a featureClient")
+					return true
+				}
+				seen := map[string]int{}
+				for _, elt := range lit.Elts {
+					kv, ok := elt.(*ast.KeyValueExpr)
+					if !ok {
+						problems = append(problems, "featureClient literal must be keyed")
+						continue
+					}
+					key := kv.Key.(*ast.Ident).Name
+					if !slices.Contains(featureClientBound, key) {
+						continue
+					}
+					address, ok := kv.Value.(*ast.UnaryExpr)
+					sel, selOK := (*ast.SelectorExpr)(nil), false
+					if ok && address.Op == token.AND {
+						sel, selOK = address.X.(*ast.SelectorExpr)
+					}
+					if !selOK || sel.Sel.Name != key || !isContainerReceiver(sel.X) {
+						problems = append(problems, "featureClient binds "+key+" to "+types.ExprString(kv.Value)+", want &c."+key)
+					}
+					seen[key]++
+				}
+				for _, field := range featureClientBound {
+					if seen[field] != 1 {
+						problems = append(problems, fmt.Sprintf("featureClient binds %s %d times, want once", field, seen[field]))
+					}
+				}
+				return true
+			})
+		}
+	}
+	if literals != 1 {
+		problems = append(problems, fmt.Sprintf("want exactly one featureClient literal, got %d", literals))
+	}
+	if len(problems) != 0 {
+		t.Fatalf("the feature client binding is not pinned: %v", problems)
 	}
 }

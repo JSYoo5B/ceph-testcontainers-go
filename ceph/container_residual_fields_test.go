@@ -269,9 +269,9 @@ func lifecycleAccesses(files map[string]*ast.File) (accesses []lifecycleAccess, 
 var lifecycleWriters = []string{
 	"closed:Container.terminate",
 	"monitorTerminated:Container.monitorTopology",
-	"monitorTerminated:Container.terminate",
 	"monitorTerminated:monitorTopology.markFirstMonitorTerminated",
 	"monitorTerminated:monitorTopology.retireMonitor",
+	"monitorTerminated:monitorTopology.terminateMembers",
 }
 
 // monitorTerminatedReaders are the Container methods that read the flag, each
@@ -280,14 +280,14 @@ var lifecycleWriters = []string{
 // in lifecycleWriters and not here.
 var monitorTerminatedReaders = []string{
 	"Container.AddMonitor",
-	"Container.diagnosticsSnapshot",
-	"Container.terminate",
 	"monitorTopology.currentMonitor",
+	"monitorTopology.diagnosticDaemons",
 	"monitorTopology.firstMonitorStands",
 	"monitorTopology.firstMonitorTerminated",
 	"monitorTopology.monitorConfigTargets",
 	"monitorTopology.monitorsLocked",
 	"monitorTopology.ownsDaemon",
+	"monitorTopology.terminateMembers",
 }
 
 // unitClusterLiteral is the only Container literal that names a flag; the

@@ -398,15 +398,17 @@ var memberRosterCallers = map[string]memberRosterCaller{
 	"DeleteService": {"hook", []string{"dropService"}},
 	"Services":      {"hook", []string{"serviceCopy"}},
 
-	"ManagerContainer":    {"takes", []string{"initialManager"}},
-	"ServiceContainers":   {"takes", []string{"sortedServices"}},
-	"Managers":            {"takes", []string{"eachManager", "managerCount"}},
-	"AddMonitor":          {"takes", []string{"addMonitor", "monitor"}},
-	"retireMonitor":       {"holds", []string{"dropMonitor"}},
-	"retireManager":       {"holds", []string{"currentManager", "dropManager", "eachManager", "managerCount"}},
-	"startService":        {"takes", []string{"hasService", "setService"}},
-	"terminate":           {"takes", []string{"clearInitialManager", "dropManager", "dropMonitor", "dropService", "eachManager", "eachMonitor", "eachService", "initialManager"}},
-	"diagnosticsSnapshot": {"takes", []string{"eachManager", "eachMonitor", "eachService", "initialManager"}},
+	"ManagerContainer":   {"takes", []string{"initialManager"}},
+	"ServiceContainers":  {"takes", []string{"sortedServices"}},
+	"Managers":           {"takes", []string{"eachManager", "managerCount"}},
+	"AddMonitor":         {"takes", []string{"addMonitor", "monitor"}},
+	"retireMonitor":      {"holds", []string{"dropMonitor"}},
+	"retireManager":      {"holds", []string{"currentManager", "dropManager", "eachManager", "managerCount"}},
+	"startService":       {"takes", []string{"hasService", "setService"}},
+	"terminateServices":  {"holds", []string{"dropService", "eachService"}},
+	"terminateMembers":   {"holds", []string{"clearInitialManager", "dropManager", "dropMonitor", "eachManager", "eachMonitor", "initialManager"}},
+	"diagnosticDaemons":  {"holds", []string{"eachManager", "eachMonitor", "initialManager"}},
+	"diagnosticServices": {"holds", []string{"eachService"}},
 
 	"startManager":                     {"holds", []string{"addManager", "manager", "recordInitialManager"}},
 	"currentMonitor":                   {"holds", []string{"monitor"}},
@@ -571,7 +573,7 @@ func TestMemberRosterHasNoAddressTaken(t *testing.T) {
 // roster), the other MGRs and the added MONs, all after the storage release
 // stage and before the first MON.
 func TestTerminateStopsServicesBeforeOSDsAndMembersAfterThem(t *testing.T) {
-	for _, parsed := range parseProductionFiles(t) {
+	for _, parsed := range parseProductionFilesWithTerminateSteps(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil || !isContainerTerminate(fn) {

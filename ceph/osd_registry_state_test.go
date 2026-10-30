@@ -283,7 +283,8 @@ var osdRegistryCallers = map[string]osdRegistryCaller{
 	"removeOSD":                        {"takes", []string{"current", "forget"}},
 	"checkOSDRemovable":                {"holds", []string{"each", "ownedState"}},
 	"drainAndPurgeOSD":                 {"holds", nil},
-	"terminate":                        {"takes", []string{"count", "each", "forget"}},
+	"terminate":                        {"takes", []string{"count"}},
+	"terminateOSDs":                    {"holds", []string{"each", "forget"}},
 	"detachOSD":                        {"takes", []string{"current", "park"}},
 	"reopenOSD":                        {"takes", []string{"detachedOf", "get", "unpark"}},
 	"ownedBy":                          {"holds", []string{"get"}},
@@ -299,7 +300,7 @@ var osdRegistryCallers = map[string]osdRegistryCaller{
 	"OSDs":                             {"takes", []string{"sorted"}},
 	"CreatePool":                       {"takes", []string{"placementDomains"}},
 	"SetIn":                            {"takes", []string{"current", "ownedState"}},
-	"diagnosticsSnapshot":              {"takes", []string{"each"}},
+	"diagnosticOSDs":                   {"holds", []string{"each"}},
 	"openDebugTarget":                  {"takes", []string{"get"}},
 	"PoolPlacementDomains":             {"hook", []string{"placementDomains"}},
 	"Owns":                             {"hook", nil},
@@ -559,7 +560,7 @@ func TestOSDRegistryReplaceHasTheSingleCallerTheTestHook(t *testing.T) {
 // whether the registry is empty, and the second stage reads the count again
 // after the labeled containers are gone.
 func TestTerminateDropsTheOSDsBeforeTheStorageReleaseDecidesOnTheirCount(t *testing.T) {
-	for _, parsed := range parseProductionFiles(t) {
+	for _, parsed := range parseProductionFilesWithTerminateSteps(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil || !isContainerTerminate(fn) {

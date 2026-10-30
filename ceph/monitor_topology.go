@@ -2,7 +2,9 @@ package ceph
 
 import (
 	"context"
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -123,4 +125,106 @@ func (t monitorTopology) daemonKeyrings(kind, id string) (testcontainers.Contain
 	}
 	n, _ := strconv.Atoi(id)
 	return t.osds.osdHandles.get(n).Container, []string{"/etc/ceph/osd.keyring", "/var/lib/ceph/osd/ceph-" + id + "/keyring"}
+}
+
+// diagnosticDaemons passes each MON and MGR container of the cluster to add,
+// for a diagnostics snapshot: the first MON while it stands (or, once the
+// cluster is closed, to report its remains), the added MONs, the MGR
+// candidates and the first MGR. The caller holds Container.mu.
+func (t monitorTopology) diagnosticDaemons(closed bool, add func(role, name string, ctr testcontainers.Container)) {
+	if t.first != nil && (!t.firstMonitorTerminated() || closed) {
+		add("mon", "a", t.first)
+	}
+	for name, mon := range t.roster.eachMonitor() {
+		if mon != nil {
+			add("mon", name, mon.Container)
+		}
+	}
+	for name, mgr := range t.roster.eachManager() {
+		if mgr != nil {
+			add("mgr", name, mgr.Container)
+		}
+	}
+	if first := t.roster.initialManager(); first != nil {
+		add("mgr", "a", first)
+	}
+}
+
+// diagnosticServices passes each service container (MDS, RGW or another
+// service) to add, with its role, for a diagnostics snapshot. The caller
+// holds Container.mu.
+func (t monitorTopology) diagnosticServices(add func(role, name string, ctr testcontainers.Container)) {
+	for name, ctr := range t.roster.eachService() {
+		role := "service"
+		if strings.HasPrefix(name, "mds.") {
+			role = "mds"
+		}
+		if name == "rgw" || strings.HasPrefix(name, "rgw:") {
+			role = "rgw"
+		}
+		add(role, name, ctr)
+	}
+}
+
+// terminateServices stops the service containers (gateways, metadata
+// servers) for Terminate, while their backing OSDs are still alive, and
+// drops each one that is gone. The caller holds Container.mu.
+func (t monitorTopology) terminateServices(ctx context.Context, opts []testcontainers.TerminateOption) []error {
+	var errs []error
+	for name, ctr := range t.roster.eachService() {
+		if err := ctr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+			errs = append(errs, fmt.Errorf("terminate service %s: %w", name, err))
+		} else {
+			t.roster.dropService(name)
+		}
+	}
+	return errs
+}
+
+// terminateMembers stops the MGRs (the first one, then the candidates) and
+// the MONs (the added ones, then the embedded first MON) for Terminate,
+// after the services and OSDs, and drops each one that is gone. The first
+// MGR's candidate entry "a" is dropped once the first MGR is gone. The
+// caller holds Container.mu.
+func (t monitorTopology) terminateMembers(ctx context.Context, opts []testcontainers.TerminateOption) []error {
+	var errs []error
+	if first := t.roster.initialManager(); first != nil {
+		if err := first.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+			errs = append(errs, err)
+		} else {
+			t.roster.clearInitialManager()
+		}
+	}
+	for name, mgr := range t.roster.eachManager() {
+		if name == "a" {
+			if t.roster.initialManager() == nil {
+				t.roster.dropManager(name)
+			}
+			continue
+		}
+		if mgr.Container != nil {
+			if err := mgr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		t.roster.dropManager(name)
+	}
+	for name, mon := range t.roster.eachMonitor() {
+		if mon.Container != nil {
+			if err := mon.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		t.roster.dropMonitor(name)
+	}
+	if t.first != nil && !t.firstMonitorTerminated() {
+		if err := t.first.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+			errs = append(errs, err)
+		} else {
+			t.markFirstMonitorTerminated()
+		}
+	}
+	return errs
 }

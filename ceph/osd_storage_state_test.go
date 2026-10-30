@@ -519,7 +519,7 @@ func TestOSDStorageStateCallersHoldTheTopologyLock(t *testing.T) {
 // retry of a failed release, memory before volume in both stages.
 func TestTerminateReleasesOSDStorageInItsTwoStagesInOrder(t *testing.T) {
 	order := []string{"lockTopology", "releaseMemory", "releaseVolume", "removeLabeledContainers", "retryMemory", "retryVolume"}
-	for _, parsed := range parseProductionFiles(t) {
+	for _, parsed := range parseProductionFilesWithTerminateSteps(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil || !isContainerTerminate(fn) {

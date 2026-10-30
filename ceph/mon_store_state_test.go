@@ -428,7 +428,7 @@ func TestMonStoreStateCallersHoldTheTopologyLock(t *testing.T) {
 // labeled-container removal and after the OSD retry stages, before the run
 // volume.
 func TestTerminateReleasesMonStoresInTheirTwoStagesInOrder(t *testing.T) {
-	for _, parsed := range parseProductionFiles(t) {
+	for _, parsed := range parseProductionFilesWithTerminateSteps(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil || !isContainerTerminate(fn) {

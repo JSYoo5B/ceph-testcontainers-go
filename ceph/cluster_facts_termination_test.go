@@ -134,8 +134,9 @@ func TestClusterFactsUnrecordedStaysUnavailable(t *testing.T) {
 // synchronized read to FactsOf and update this allowlist.
 func TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup(t *testing.T) {
 	allowed := map[string]bool{
-		"Run":               true, // builds the cluster before returning it
-		"recordCephVersion": true, // called only from Run before publication
+		"newCluster":            true, // builds the cluster value for Run
+		"bootstrapFirstMonitor": true, // records the first MON's facts for Run before publication
+		"recordCephVersion":     true, // called only from bootstrapFirstMonitor before publication
 		// The unit-test setter of the recorded version, a plain write for a cluster the
 		// caller owns or holds the lock of.
 		"UnitSetCephVersion": true,

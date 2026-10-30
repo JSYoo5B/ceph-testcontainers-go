@@ -35,7 +35,7 @@ func (serviceHooks) StartupTimeout(c *Container) time.Duration { return c.settin
 
 // CLI returns the container that runs Ceph CLI commands, or nil.
 func (serviceHooks) ClientCommand(ctx context.Context, c *Container, args ...string) ([]byte, error) {
-	target, err := c.clientContainerContext(ctx)
+	target, err := c.featureClient().startedContainer(ctx)
 	if err != nil {
 		return nil, err
 	}

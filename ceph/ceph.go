@@ -191,6 +191,31 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	}
 	ctx, cancel := context.WithTimeout(ctx, settings.startupTimeout)
 	defer cancel()
+	c, err := newCluster(ctx, settings)
+	if err != nil {
+		return c, err
+	}
+	if err := c.bootstrapFirstMonitor(ctx, opts); err != nil {
+		return c, err
+	}
+	if err := c.configureDefaultCRUSHRoot(ctx); err != nil {
+		return c, fmt.Errorf("configure default CRUSH placement: %w", err)
+	}
+	if err := c.applyMessengerPolicy(ctx); err != nil {
+		return c, fmt.Errorf("apply messenger policy: %w", err)
+	}
+	if err := c.startInitialTopology(ctx); err != nil {
+		return c, err
+	}
+	return c, nil
+}
+
+// newCluster builds the cluster value of Run: its bridges (unless it uses the
+// host network), its startup identity and its shared run directory. A
+// returned cluster owns whatever was created, also with an error, so that
+// Terminate removes it. Run is its only caller.
+func newCluster(ctx context.Context, settings options) (*Container, error) {
+	var err error
 	var nw *testcontainers.DockerNetwork
 	if settings.hostNetwork {
 		if err := checkHostNetworkEngine(ctx); err != nil {
@@ -225,42 +250,42 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err := c.runDir.create(ctx); err != nil {
 		return c, err
 	}
-	mon, err := c.runMonitor(ctx, settings.essentialImage, uuid.NewString(), opts...)
+	return c, nil
+}
+
+// bootstrapFirstMonitor starts the first MON as the cluster's embedded
+// container and records what it bootstraps: the configuration, the Ceph
+// version, the key-type option, the image and the admin keyring. Each
+// record is written even with an error, so that a partial cluster reports
+// what it got. Run is its only caller, before the cluster is returned.
+func (c *Container) bootstrapFirstMonitor(ctx context.Context, opts []testcontainers.ContainerCustomizer) error {
+	mon, err := c.runMonitor(ctx, c.settings.essentialImage, uuid.NewString(), opts...)
 	if mon != nil {
 		c.Container = mon
 	}
 	if err != nil {
-		return c, fmt.Errorf("run ceph monitor: %w", err)
+		return fmt.Errorf("run ceph monitor: %w", err)
 	}
 	config, err := readFile(ctx, mon, "/etc/ceph/ceph.conf")
 	c.bootstrap.recordConfig(config)
 	if err != nil {
-		return c, err
+		return err
 	}
 	if err := c.recordCephVersion(ctx); err != nil {
-		return c, err
+		return err
 	}
 	keyTypeOption, err := detectKeyTypeOption(ctx, mon)
 	c.startup.recordKeyTypeOption(keyTypeOption)
 	if err != nil {
-		return c, err
+		return err
 	}
 	c.startup.recordFirstMonitorImage(containerImageID(ctx, mon))
 	keyring, err := readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring")
 	c.bootstrap.recordKeyring(keyring)
 	if err != nil {
-		return c, err
+		return err
 	}
-	if err := c.configureDefaultCRUSHRoot(ctx); err != nil {
-		return c, fmt.Errorf("configure default CRUSH placement: %w", err)
-	}
-	if err := c.applyMessengerPolicy(ctx); err != nil {
-		return c, fmt.Errorf("apply messenger policy: %w", err)
-	}
-	if err := c.startInitialTopology(ctx); err != nil {
-		return c, err
-	}
-	return c, nil
+	return nil
 }
 
 // startInitialTopology brings a cluster whose first MON is configured to the
@@ -986,63 +1011,11 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	_ = c.native.stopAll(ctx)
 	errs = append(errs, c.portLeases.release(ctx)...)
 	// Stop gateways and metadata servers while their backing OSDs are alive.
-	for name, ctr := range c.members.roster.eachService() {
-		if err := ctr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-			errs = append(errs, fmt.Errorf("terminate service %s: %w", name, err))
-		} else {
-			c.members.roster.dropService(name)
-		}
-	}
-	for id, osd := range c.fleet.osdHandles.each() {
-		if osd.Container != nil {
-			if err := osd.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-				errs = append(errs, err)
-				continue
-			}
-		}
-		c.fleet.deviceClaims.release(id, osd.Container != nil)
-		c.fleet.osdHandles.forget(id)
-	}
+	errs = append(errs, c.monitorTopology().terminateServices(ctx, opts)...)
+	errs = append(errs, c.osdFleet().terminateOSDs(ctx, opts)...)
 	memoryErr := c.fleet.stores.releaseMemory(ctx, c.fleet.osdHandles.count() == 0)
 	volumeErr := c.fleet.stores.releaseVolume(ctx, c.fleet.osdHandles.count() == 0)
-	if first := c.members.roster.initialManager(); first != nil {
-		if err := first.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-			errs = append(errs, err)
-		} else {
-			c.members.roster.clearInitialManager()
-		}
-	}
-	for name, mgr := range c.members.roster.eachManager() {
-		if name == "a" {
-			if c.members.roster.initialManager() == nil {
-				c.members.roster.dropManager(name)
-			}
-			continue
-		}
-		if mgr.Container != nil {
-			if err := mgr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-				errs = append(errs, err)
-				continue
-			}
-		}
-		c.members.roster.dropManager(name)
-	}
-	for name, mon := range c.members.roster.eachMonitor() {
-		if mon.Container != nil {
-			if err := mon.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-				errs = append(errs, err)
-				continue
-			}
-		}
-		c.members.roster.dropMonitor(name)
-	}
-	if topology := c.monitorTopology(); c.Container != nil && !topology.firstMonitorTerminated() {
-		if err := c.Container.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-			errs = append(errs, err)
-		} else {
-			topology.markFirstMonitorTerminated()
-		}
-	}
+	errs = append(errs, c.monitorTopology().terminateMembers(ctx, opts)...)
 	// The added and the primary MON containers are the users of the MON store
 	// volumes; release the stores whose attachment is gone.
 	monStoreErr := c.monStores.releaseStores(ctx)

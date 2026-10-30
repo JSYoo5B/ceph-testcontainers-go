@@ -276,7 +276,7 @@ func TestPortLeaseStateCallersAreAudited(t *testing.T) {
 // and the native commands are stopped, and before the services, the OSDs and
 // the monitors are terminated, exactly once.
 func TestTerminateReleasesPortLeasesAfterNativeCommandsAndBeforeTheServices(t *testing.T) {
-	for _, parsed := range parseProductionFiles(t) {
+	for _, parsed := range parseProductionFilesWithTerminateSteps(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil || !isContainerTerminate(fn) {

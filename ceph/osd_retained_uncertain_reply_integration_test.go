@@ -64,7 +64,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 	if err := c.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	client, err := c.clientContainerContext(ctx)
+	client, err := c.featureClient().startedContainer(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
