@@ -198,7 +198,9 @@ func TestFeatureClientStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "toolkit" {
-					if allowed[sel] {
+					// Container.featureClient binds the state once
+					// (TestFeatureClientBindsEachStateOnce).
+					if allowed[sel] || stateBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.toolkit outside a featureClientState method call")
@@ -286,7 +288,7 @@ func isTopologyAcquire(call *ast.CallExpr) bool {
 // a function that uses a "mu held" method has taken toolkit.lock before and
 // releases it after, never takes Container.mu once it holds it, and Terminate
 // takes the topology lock before the startup lock. Only terminate and
-// clientContainerContext may hold it.
+// featureClient.startedContainer may hold it.
 func TestFeatureClientStateCallersHoldTheStartupLockInOrder(t *testing.T) {
 	holders := map[string]bool{}
 	var problems []string
@@ -355,7 +357,7 @@ func TestFeatureClientStateCallersHoldTheStartupLockInOrder(t *testing.T) {
 			}
 		}
 	}
-	if len(holders) != 2 || !holders["terminate"] || !holders["clientContainerContext"] {
+	if len(holders) != 2 || !holders["terminate"] || !holders["startedContainer"] {
 		problems = append(problems, "the holders of the startup lock changed: "+join(slices.Sorted(maps.Keys(holders))))
 	}
 	if len(problems) != 0 {

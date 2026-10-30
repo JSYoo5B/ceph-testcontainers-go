@@ -368,7 +368,7 @@ func (o *Observer) PGInconsistencies(ctx context.Context, pgid PGID) ([]Inconsis
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	return readPGInconsistencies(ctx, c.clientRadosLookup(), pgid)
+	return readPGInconsistencies(ctx, c.featureClient().radosLookup(), pgid)
 }
 
 // ObjectWatchers lists the clients watching one object, including clients
@@ -395,7 +395,7 @@ func (o *Observer) ObjectWatchers(ctx context.Context, pool, namespace, object s
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	return readObjectWatchers(ctx, c.clientRadosLookup(), pool, namespace, object)
+	return readObjectWatchers(ctx, c.featureClient().radosLookup(), pool, namespace, object)
 }
 
 // ManagerMetrics scrapes the active manager's prometheus module once and

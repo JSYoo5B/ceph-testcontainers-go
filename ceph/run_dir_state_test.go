@@ -78,18 +78,18 @@ var runDirMethods = map[string][]string{
 //	"takes"    calls lockTopology before its first mu-guarded use
 //	"holds"    its doc comment requires the caller to hold Container.mu
 var runDirCallers = map[string]map[string]string{
-	"newCluster":             {"create": "init"},
-	"runMonitor":             {"mounts": "free"},
-	"clientContainerContext": {"mounts": "free"},
-	"ensureControlPlane":     {"mounts": "free"},
-	"AddMonitor":             {"mounts": "free"},
-	"startManager":           {"mounts": "free"},
-	"clearAdminSocket":       {"published": "free"},
-	"clearStaleOSDSocket":    {"published": "free"},
-	"newOSDLaunchRecipe":     {"volumeName": "free"},
-	"adminSocket":            {"shared": "takes"},
-	"set":                    {"shared": "takes"},
-	"terminate":              {"release": "takes"},
+	"newCluster":          {"create": "init"},
+	"runMonitor":          {"mounts": "free"},
+	"startedContainer":    {"mounts": "free"},
+	"ensureControlPlane":  {"mounts": "free"},
+	"AddMonitor":          {"mounts": "free"},
+	"startManager":        {"mounts": "free"},
+	"clearAdminSocket":    {"published": "free"},
+	"clearStaleOSDSocket": {"published": "free"},
+	"newOSDLaunchRecipe":  {"volumeName": "free"},
+	"adminSocket":         {"shared": "takes"},
+	"set":                 {"shared": "takes"},
+	"terminate":           {"release": "takes"},
 }
 
 // runDirMuGuarded names the methods that read or write the removed mark and
@@ -128,7 +128,7 @@ func TestRunDirStateFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if sel, ok := n.(*ast.SelectorExpr); ok && runDirUse(sel) {
-					if allowed[sel] || osdFleetBinding(fn) {
+					if allowed[sel] || stateBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.runDir outside a runDirState method call")

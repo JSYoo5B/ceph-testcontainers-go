@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // ImageSet selects the roles runtime contract. All explicitly supplies every
@@ -191,65 +190,5 @@ func (c *Container) ClientContainer(ctx context.Context) (testcontainers.Contain
 		}
 		defer c.mu.Unlock()
 	}
-	return c.clientContainerContext(ctx)
-}
-
-// Uses its own mutex: service callers can already hold the topology mutex.
-func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.Container, error) {
-	if c == nil {
-		return nil, fmt.Errorf("ceph cluster is unavailable")
-	}
-	images := c.staticFacts().Images
-	if images.Client == images.Essential {
-		return c.conn().controlContainer(ctx)
-	}
-	if images.Client == "" {
-		return nil, invalidRequest("client image is required for this operation")
-	}
-	if err := c.toolkit.lock(ctx); err != nil {
-		return nil, err
-	}
-	defer c.toolkit.unlock()
-	if c.native.calls.isClosed() {
-		return nil, errClusterTerminated
-	}
-	if c.toolkit.startupAttempted() {
-		if !c.toolkit.startupReady() {
-			return nil, fmt.Errorf("client startup failed; terminate the partial cluster")
-		}
-		return c.toolkit.current(), nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	if !c.native.calls.beginClientStartup(cancel) {
-		cancel()
-		return nil, errClusterTerminated
-	}
-	defer func() { c.native.calls.endClientStartup(); cancel() }()
-	c.toolkit.markAttempted()
-	ctr, err := testcontainers.Run(ctx, images.Client, append([]testcontainers.ContainerCustomizer{
-		c.adminClient(), c.startup.ownedLabel(), WithIdleEntrypoint(),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
-	}, c.runDir.mounts()...)...)
-	c.toolkit.publish(ctr) // A partial start remains owned and is never retried.
-	if err == nil && ctr != nil {
-		output, versionErr := command(ctx, ctr, "ceph", "--version")
-		if versionErr != nil {
-			err = versionErr
-		} else {
-			version, parseErr := parseCephVersion(string(output))
-			if parseErr != nil {
-				err = parseErr
-			} else if version != c.staticFacts().CephVersion { // Unchanged: daemons with DaemonOptions.WithImage do not take part.
-				err = fmt.Errorf("client Ceph release %s differs from core %s", version, c.staticFacts().CephVersion)
-			}
-		}
-	}
-	if c.native.calls.isClosed() {
-		err = errClusterTerminated
-	}
-	if err == nil && ctr == nil {
-		err = fmt.Errorf("client startup returned no container")
-	}
-	c.toolkit.markReady(err == nil && ctr != nil)
-	return ctr, err
+	return c.featureClient().startedContainer(ctx)
 }
