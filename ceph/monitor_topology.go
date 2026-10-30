@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -112,4 +113,14 @@ func (t monitorTopology) ownsNativeTarget(ctx context.Context, id string) (bool,
 		return false, err
 	}
 	return matches(client), nil
+}
+
+// daemonKeyrings returns the container of an owned daemon and the keyring
+// files from which it authenticates when it starts. The caller holds c.mu.
+func (t monitorTopology) daemonKeyrings(kind, id string) (testcontainers.Container, []string) {
+	if kind == "mgr" {
+		return t.roster.manager(id).Container, []string{"/etc/ceph/mgr.keyring", "/var/lib/ceph/mgr/ceph-" + id + "/keyring"}
+	}
+	n, _ := strconv.Atoi(id)
+	return t.osds.osdHandles.get(n).Container, []string{"/etc/ceph/osd.keyring", "/var/lib/ceph/osd/ceph-" + id + "/keyring"}
 }
