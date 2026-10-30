@@ -36,10 +36,10 @@ func (g *SyncGroup) Apply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := f.finishPendingSyncGroup(ctx, master, g); err != nil {
+	if err := g.finishPending(ctx, master); err != nil {
 		return err
 	}
-	policy, _, err := f.syncPolicyDocument(ctx, master, g)
+	policy, _, err := g.policyDocument(ctx, master)
 	if err != nil {
 		return err
 	}

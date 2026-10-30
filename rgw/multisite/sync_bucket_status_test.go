@@ -289,7 +289,7 @@ func TestRGWBucketCheckpointRechecksCommittedPolicyOnEveryPoll(t *testing.T) {
 	if err := g.Apply(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err := f.syncBucketCheckpoint(t.Context(), g, "selected", "source", "destination")
+	checkpoint, err := g.bucketCheckpoint(t.Context(), "selected", "source", "destination")
 	if err != nil {
 		t.Fatal(err)
 	}

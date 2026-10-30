@@ -73,7 +73,7 @@ func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone s
 		status.PeriodID, status.RealmEpoch, err = syncCommittedPeriodIdentity(period)
 	}
 	if err == nil {
-		err = f.checkSyncPolicyReadyMaster(attempt, g, period, buckets)
+		err = g.checkPolicyReadyMaster(attempt, period, buckets)
 	}
 	stop()
 	if err != nil {
@@ -83,7 +83,7 @@ func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone s
 	wantGroup := syncJSONClone(g.state.group)
 	for {
 		attempt, stop := context.WithTimeout(ctx, 30*time.Second)
-		last, fatal, readErr := f.syncPolicyReadyStatus(attempt, g, master, destination, period, wantGroup, status)
+		last, fatal, readErr := g.policyReadyStatus(attempt, master, destination, period, wantGroup, status)
 		stop()
 		if err := ctx.Err(); err != nil {
 			return last, fmt.Errorf("wait RGW bucket policy import: %w", err)
@@ -151,7 +151,8 @@ func syncPolicyReadyBuckets(g *SyncGroup, destinationID string) ([]SyncBucketIde
 	return buckets, nil
 }
 
-func (f *Fixture) checkSyncPolicyReadyMaster(ctx context.Context, g *SyncGroup, period map[string]any, buckets []SyncBucketIdentity) error {
+func (g *SyncGroup) checkPolicyReadyMaster(ctx context.Context, period map[string]any, buckets []SyncBucketIdentity) error {
+	f := g.owner
 	master, current, err := f.syncPolicyMaster(ctx)
 	if err != nil {
 		return err
@@ -159,7 +160,7 @@ func (f *Fixture) checkSyncPolicyReadyMaster(ctx context.Context, g *SyncGroup, 
 	if !reflect.DeepEqual(current, period) {
 		return errors.New("RGW master committed period changed during policy import observation")
 	}
-	policy, _, err := f.syncPolicyDocument(ctx, master, g)
+	policy, _, err := g.policyDocument(ctx, master)
 	if err != nil {
 		return err
 	}
@@ -167,17 +168,18 @@ func (f *Fixture) checkSyncPolicyReadyMaster(ctx context.Context, g *SyncGroup, 
 		return errors.New("RGW owned master bucket policy changed during import observation")
 	}
 	for _, bucket := range buckets {
-		if err := f.checkSyncBucketInstance(ctx, master, g, bucket); err != nil {
+		if err := g.checkBucketInstance(ctx, master, bucket); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (f *Fixture) syncPolicyReadyStatus(ctx context.Context, g *SyncGroup, master, destination *rgwZoneState, period, wantGroup map[string]any, result BucketSyncPolicyStatus) (BucketSyncPolicyStatus, bool, error) {
+func (g *SyncGroup) policyReadyStatus(ctx context.Context, master, destination *rgwZoneState, period, wantGroup map[string]any, result BucketSyncPolicyStatus) (BucketSyncPolicyStatus, bool, error) {
+	f := g.owner
 	result.Buckets = slices.Clone(result.Buckets)
 	result.PeriodImported, result.PolicyImported, result.BucketsImported, result.Imported = false, false, false, false
-	if err := f.checkSyncPolicyReadyMaster(ctx, g, period, result.Buckets); err != nil {
+	if err := g.checkPolicyReadyMaster(ctx, period, result.Buckets); err != nil {
 		return result, true, err
 	}
 	// Read the attached metadata master's own pointer as well, so an older
@@ -205,7 +207,7 @@ func (f *Fixture) syncPolicyReadyStatus(ctx context.Context, g *SyncGroup, maste
 		return result, false, nil
 	}
 	result.PeriodImported = true
-	found, fatal, err := f.syncPolicyReadyBucket(ctx, destination, g, result.Bucket)
+	found, fatal, err := g.policyReadyBucket(ctx, destination, result.Bucket)
 	if err != nil || !found {
 		return result, fatal, err
 	}
@@ -223,7 +225,7 @@ func (f *Fixture) syncPolicyReadyStatus(ctx context.Context, g *SyncGroup, maste
 	}
 	result.PolicyImported = reflect.DeepEqual(syncNativeGroup(instance.policy, g.ID()), wantGroup)
 	for _, bucket := range result.Buckets {
-		found, fatal, err := f.syncPolicyReadyBucket(ctx, destination, g, bucket)
+		found, fatal, err := g.policyReadyBucket(ctx, destination, bucket)
 		if err != nil || !found {
 			return result, fatal, err
 		}
@@ -236,7 +238,8 @@ func (f *Fixture) syncPolicyReadyStatus(ctx context.Context, g *SyncGroup, maste
 	return result, false, nil
 }
 
-func (f *Fixture) syncPolicyReadyBucket(ctx context.Context, zone *rgwZoneState, g *SyncGroup, bucket SyncBucketIdentity) (bool, bool, error) {
+func (g *SyncGroup) policyReadyBucket(ctx context.Context, zone *rgwZoneState, bucket SyncBucketIdentity) (bool, bool, error) {
+	f := g.owner
 	data, err := f.syncPolicyAdmin(ctx, zone, g.scope.Zonegroup, "bucket", "stats", "--bucket", syncScopedBucketName(SyncPolicyScope{Bucket: bucket.Name, Tenant: bucket.Tenant}))
 	if err != nil {
 		return false, false, err

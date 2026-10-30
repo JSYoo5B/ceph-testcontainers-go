@@ -55,7 +55,7 @@ func (g *SyncGroup) BucketSyncStatus(ctx context.Context, pipeID, sourceZone, de
 		return BucketSyncStatus{}, err
 	}
 	defer f.topologyMu.Unlock()
-	checkpoint, err := f.syncBucketCheckpoint(ctx, g, pipeID, sourceZone, destinationZone)
+	checkpoint, err := g.bucketCheckpoint(ctx, pipeID, sourceZone, destinationZone)
 	if err != nil {
 		return BucketSyncStatus{}, err
 	}
@@ -80,7 +80,7 @@ func (g *SyncGroup) WaitBucketSyncReady(ctx context.Context, pipeID, sourceZone,
 	}
 	defer f.topologyMu.Unlock()
 	// Resolve once: the checkpoint keeps value copies of the selected identities.
-	checkpoint, err := f.syncBucketCheckpoint(ctx, g, pipeID, sourceZone, destinationZone)
+	checkpoint, err := g.bucketCheckpoint(ctx, pipeID, sourceZone, destinationZone)
 	if err != nil {
 		return BucketSyncStatus{}, err
 	}
@@ -110,7 +110,8 @@ func (g *SyncGroup) WaitBucketSyncReady(ctx context.Context, pipeID, sourceZone,
 	}
 }
 
-func (f *Fixture) syncBucketCheckpoint(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (*rgwSyncBucketCheckpoint, error) {
+func (g *SyncGroup) bucketCheckpoint(ctx context.Context, pipeID, sourceZone, destinationZone string) (*rgwSyncBucketCheckpoint, error) {
+	f := g.owner
 	if err := f.validateSyncGroup(g, false); err != nil {
 		return nil, err
 	}
@@ -124,7 +125,7 @@ func (f *Fixture) syncBucketCheckpoint(ctx context.Context, g *SyncGroup, pipeID
 	if _, _, err := syncCommittedPeriodIdentity(current); err != nil {
 		return nil, err
 	}
-	policy, _, err := f.syncPolicyDocument(ctx, master, g)
+	policy, _, err := g.policyDocument(ctx, master)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +168,7 @@ func (f *Fixture) syncBucketCheckpoint(ctx context.Context, g *SyncGroup, pipeID
 		if err != nil {
 			return nil, err
 		}
-		if err := f.checkSyncBucketInstance(ctx, master, g, *side.bucket); err != nil {
+		if err := g.checkBucketInstance(ctx, master, *side.bucket); err != nil {
 			return nil, err
 		}
 	}
@@ -205,9 +206,9 @@ func syncPipeBucketIdentity(g *SyncGroup, key string) (SyncBucketIdentity, error
 	return identity, nil
 }
 
-func (f *Fixture) checkSyncBucketInstance(ctx context.Context, zone *rgwZoneState, g *SyncGroup, bucket SyncBucketIdentity) error {
-	selected := &SyncGroup{scope: SyncPolicyScope{Zonegroup: g.scope.Zonegroup, Bucket: bucket.Name, Tenant: bucket.Tenant}, groupID: g.groupID}
-	id, err := f.syncBucketID(ctx, zone, selected)
+func (g *SyncGroup) checkBucketInstance(ctx context.Context, zone *rgwZoneState, bucket SyncBucketIdentity) error {
+	selected := &SyncGroup{owner: g.owner, scope: SyncPolicyScope{Zonegroup: g.scope.Zonegroup, Bucket: bucket.Name, Tenant: bucket.Tenant}, groupID: g.groupID}
+	id, err := selected.bucketInstanceID(ctx, zone)
 	if err != nil {
 		return err
 	}
@@ -231,7 +232,7 @@ func (f *Fixture) syncBucketStatus(ctx context.Context, checkpoint *rgwSyncBucke
 	if err := checkPublishedSyncBucketGroup(current, g); err != nil {
 		return result, err
 	}
-	policy, _, err := f.syncPolicyDocument(ctx, master, g)
+	policy, _, err := g.policyDocument(ctx, master)
 	if err != nil {
 		return result, err
 	}
@@ -242,7 +243,7 @@ func (f *Fixture) syncBucketStatus(ctx context.Context, checkpoint *rgwSyncBucke
 		zone   *rgwZoneState
 		bucket SyncBucketIdentity
 	}{{checkpoint.source, checkpoint.sourceBucket}, {checkpoint.destination, checkpoint.destBucket}} {
-		if err := f.checkSyncBucketInstance(ctx, side.zone, g, side.bucket); err != nil {
+		if err := g.checkBucketInstance(ctx, side.zone, side.bucket); err != nil {
 			return result, err
 		}
 	}

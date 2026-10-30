@@ -550,7 +550,7 @@ func TestRGWDestinationClassRequiresConcreteOwnedPlacements(t *testing.T) {
 		"unattached zone":   {SyncPipeConfig{DestinationZones: []string{"elsewhere"}, DestinationPlacements: map[string]*rgw.Placement{"elsewhere": {}}}, info},
 		"unowned placement": {SyncPipeConfig{DestinationZones: []string{"destination"}, DestinationPlacements: placement}, info},
 	} {
-		if err := f.syncDestinationClass(t.Context(), g, tc.config, tc.info); !errors.Is(err, ceph.ErrInvalidRequest) {
+		if err := g.destinationClass(t.Context(), tc.config, tc.info); !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
