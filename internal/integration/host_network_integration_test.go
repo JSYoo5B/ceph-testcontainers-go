@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Verify the actual Python wire transport without starting a Ceph cluster.
@@ -55,8 +57,8 @@ func TestHostNetworkHTTPTransportPreservesSignedRequest(t *testing.T) {
 				_, _ = w.Write(responseBody)
 			}))
 			defer server.Close()
-			gateway := s3HTTPClient{endpoint: server.URL, accessKey: "test-access", secretKey: "test-secret", region: "us-east-1"}
-			input, err := hostNetworkS3RequestInput(t.Context(), gateway, tc.method, tc.path, tc.payload)
+			gateway := harness.S3HTTPClient{Endpoint: server.URL, AccessKey: "test-access", SecretKey: "test-secret", Region: "us-east-1"}
+			input, err := harness.HostNetworkS3RequestInput(t.Context(), gateway, tc.method, tc.path, tc.payload)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -73,7 +75,7 @@ func TestHostNetworkHTTPTransportPreservesSignedRequest(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			output, err := exec.CommandContext(ctx, python, "-c", hostNetworkHTTPScript, inputPath).CombinedOutput()
+			output, err := exec.CommandContext(ctx, python, "-c", harness.HostNetworkHTTPScript, inputPath).CombinedOutput()
 			if err != nil {
 				t.Fatalf("Python HTTP transport: %v: %s", err, output)
 			}

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -79,7 +80,7 @@ func TestCPUPressureScratchMechanism(t *testing.T) {
 	t.Logf("CPU_PRESSURE_CONTROLLER euid=%d engine=%s arch=%s ncpu=%d", os.Geteuid(), info.Info.ServerVersion, runtime.GOARCH, info.Info.NCPU)
 
 	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
-		Image: essentialImage(t), Entrypoint: []string{"sleep"}, Cmd: []string{"infinity"},
+		Image: harness.EssentialImage(t), Entrypoint: []string{"sleep"}, Cmd: []string{"infinity"},
 		HostConfigModifier: func(h *container.HostConfig) {
 			h.NetworkMode = "none"
 			h.NanoCPUs = cpuPressureBaseline
@@ -122,7 +123,7 @@ func TestCPUPressureScratchMechanism(t *testing.T) {
 	if err != nil {
 		t.Skipf("eligibility incomplete before any update: %v", err)
 	}
-	t.Log(target.receipt())
+	t.Log(target.Receipt())
 
 	// update dispatches one request after the stale-generation guard and
 	// records the transition from the reply, a fresh inspection and the kernel

@@ -8,15 +8,16 @@ import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // The policy of TestMessengerPolicy on a cluster without Messenger v1.
 func TestMessengerPolicyV2Only(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testMessengerPolicy(t, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only)))
 }
 
 func TestMessengerV2OnlyCRC(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testMessengerV2OnlyCRC(t)
 }

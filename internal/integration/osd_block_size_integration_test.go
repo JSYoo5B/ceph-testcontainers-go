@@ -7,6 +7,8 @@ package integration_test
 import (
 	"fmt"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Small logical devices use an explicit preparation profile that skips mClock's
@@ -21,7 +23,7 @@ func TestSmallOSDBlockSizeTopology(t *testing.T) {
 				name = "ram"
 			}
 			t.Run(fmt.Sprintf("%s-%dMiB-skip-benchmark", name, mib), func(t *testing.T) {
-				parallelWhenEnabled(t)
+				harness.ParallelWhenEnabled(t)
 				testSmallOSDBlockSize(t, mib<<20, ram, true)
 			})
 		}
@@ -32,7 +34,7 @@ func TestSmallOSDBlockSizeTopology(t *testing.T) {
 			name = "ram"
 		}
 		t.Run(name+"-512MiB-native-benchmark", func(t *testing.T) {
-			parallelWhenEnabled(t)
+			harness.ParallelWhenEnabled(t)
 			testSmallOSDBlockSize(t, 512<<20, ram, false)
 		})
 	}

@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
@@ -118,7 +119,7 @@ type ecContributionReceipt struct {
 func testECRecoveredContribution(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 		Name: "tc-ec-contribution", Application: "rados", PGNum: 1, MinSize: 2,
 		ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true},
@@ -264,7 +265,7 @@ func testECRecoveredContribution(t *testing.T) {
 
 	// Second outage: a different holder, so exactly K indices remain.
 	receipt.Stage = "second outage"
-	states, err := observeCluster(cluster).OSDStates(ctx)
+	states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

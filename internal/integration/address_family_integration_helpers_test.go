@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -47,16 +48,16 @@ func addressOfFamily(family ceph.AddressFamily, addr string) bool {
 func testAddressFamily(t *testing.T, family ceph.AddressFamily, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1).WithMonitorCount(3)), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(family)), cephfs.WithFilesystems(cephfs.Config{Name: "tc-family-fs"})}, opts...)...)
-	if staticFacts(cluster).AddressFamily != family {
-		t.Fatalf("cluster reports %s", staticFacts(cluster).AddressFamily)
+	cluster, _ := harness.NewServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1).WithMonitorCount(3)), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(family)), cephfs.WithFilesystems(cephfs.Config{Name: "tc-family-fs"})}, opts...)...)
+	if harness.StaticFacts(cluster).AddressFamily != family {
+		t.Fatalf("cluster reports %s", harness.StaticFacts(cluster).AddressFamily)
 	}
 
 	var addresses ceph.DaemonAddresses
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		var err error
-		addresses, err = observeCluster(cluster).DaemonAddresses(ctx)
+		addresses, err = harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 		if err == nil && addresses.ManagerAvailable && len(addresses.OSDs) == 1 && addresses.OSDs[0].Up {
 			break
 		}
@@ -125,7 +126,7 @@ func testAddressFamily(t *testing.T, family ceph.AddressFamily, opts ...testcont
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-family", Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, harness.StaticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, client)
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +253,7 @@ func osdEndpoint(t *testing.T, ctx context.Context, cluster *ceph.Container, ctr
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := inspection.NetworkSettings.Networks[staticFacts(cluster).NetworkName]
+	endpoint := inspection.NetworkSettings.Networks[harness.StaticFacts(cluster).NetworkName]
 	if endpoint == nil {
 		t.Fatal("the OSD is not attached to the public network")
 	}

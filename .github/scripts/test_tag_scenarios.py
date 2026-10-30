@@ -566,8 +566,8 @@ class TagPlannerTests(unittest.TestCase):
         one, two = (profile["id"] for profile in plan["include"])
         calls = []
 
-        def tool(batches, base, root):
-            calls.append((batches, base))
+        def tool(batches, base, root, package):
+            calls.append((batches, base, package))
             return {"merge_base": "abc", "fallback": [], "changed_declarations": ["x_test.go: func helper"],
                     "batches": [{"id": one, "selected": True, "reason": "func TestOne reaches func helper"},
                                 {"id": two, "selected": False, "reason": "none of 1 roots reaches a changed declaration"}]}
@@ -580,7 +580,7 @@ class TagPlannerTests(unittest.TestCase):
             report = json.loads(output.read_text())
             matrix = json.loads(github_outputs(github)["matrix"])
         self.assertEqual(calls, [([{"id": profile["id"], "tags": profile["tags"]} for profile in plan["include"]],
-                                  "origin/main")])
+                                  "origin/main", "./internal/integration")])
         # Advisory: both batches still run.
         self.assertEqual([entry["batch"] for entry in matrix["include"]], ["one", "two"])
         self.assertEqual([profile["batch"] for profile in report["include"]], ["one", "two"])
@@ -628,6 +628,31 @@ class TagPlannerTests(unittest.TestCase):
                                "--changed-since", "base"]):
                 self.assertEqual(engine.main(["plan", *arguments]), 1, arguments)
 
+    def test_declaration_selection_analyses_each_integration_package(self):
+        catalog = [fixture(path="internal/integration/one_test.go", category="short", batch="one", tests=("TestOne",)),
+                   fixture(path="internal/integration/rbd/rbd_test.go", category="short", batch="one", tests=("TestRBD",)),
+                   fixture(path="internal/integration/rgw/rgw_test.go", category="short", batch="two", tests=("TestRGW",))]
+        profiles = engine.discover(catalog)["include"]
+        self.assertTrue(all(profile["requires_ceph"] for profile in profiles))
+        ids = {profile["package"]: profile["id"] for profile in profiles}
+        calls = []
+
+        def tool(batches, base, root, package):
+            calls.append(package)
+            if package == "./internal/integration/rgw":
+                return {"merge_base": "abc", "fallback": ["go.mod changed"],
+                        "batches": [{"id": batch["id"], "selected": True, "reason": "every batch: go.mod changed"}
+                                    for batch in batches]}
+            return {"merge_base": "abc", "fallback": [], "changed_declarations": [],
+                    "batches": [{"id": batch["id"], "selected": False, "reason": "none"} for batch in batches]}
+
+        selection = engine.declaration_selection(profiles, "main", runner=tool)
+        self.assertEqual(calls, ["./internal/integration", "./internal/integration/rbd", "./internal/integration/rgw"])
+        self.assertEqual(selection["packages"], calls)
+        self.assertEqual(selection["selected"], {ids["./internal/integration/rgw"]: "every batch: go.mod changed"})
+        self.assertEqual(sorted(selection["excluded"]),
+                         sorted([ids["./internal/integration"], ids["./internal/integration/rbd"]]))
+
     def test_declaration_summary_names_the_fallback(self):
         selection = {"base": "main", "fallback": ["go.mod changed"], "selected": {"short-a": "every batch: go.mod changed"},
                      "excluded": {}, "selected_profiles": 1, "total_profiles": 1, "error": "x | y"}
@@ -643,12 +668,12 @@ class TagPlannerTests(unittest.TestCase):
         profiles = engine.discover(catalog)["include"]
         ids = {profile["batch"]: profile["id"] for profile in profiles}
         for runner, reason in (
-                (lambda batches, base, root: {"fallback": ["go.mod changed"], "batches": [
+                (lambda batches, base, root, package: {"fallback": ["go.mod changed"], "batches": [
                     {"id": ids["one"], "selected": True, "reason": "every batch: go.mod changed"}]},
                  "every batch: go.mod changed"),
-                (lambda batches, base, root: {"fallback": [], "batches": []}, "analysis unavailable"),
-                (lambda batches, base, root: (_ for _ in ()).throw(ValueError("type check")), "analysis unavailable"),
-                (lambda batches, base, root: (_ for _ in ()).throw(subprocess.TimeoutExpired("go", 1)),
+                (lambda batches, base, root, package: {"fallback": [], "batches": []}, "analysis unavailable"),
+                (lambda batches, base, root, package: (_ for _ in ()).throw(ValueError("type check")), "analysis unavailable"),
+                (lambda batches, base, root, package: (_ for _ in ()).throw(subprocess.TimeoutExpired("go", 1)),
                  "analysis unavailable")):
             with self.subTest(reason=reason):
                 selection = engine.declaration_selection(profiles, "main", runner=runner)
@@ -671,6 +696,7 @@ class TagPlannerTests(unittest.TestCase):
             self.assertEqual(command[command.index("-head") + 1], "abc")
             self.assertEqual(command[command.index("-repo") + 1], str(engine.ROOT))
             self.assertEqual(command[command.index("-package") + 1], "./internal/integration")
+            self.assertEqual(command[command.index("-with") + 1], "internal/integration/harness")
             engine.run_batchselect([], "base", tool="/bin/tool")
             self.assertEqual(run.call_args.args[0][0], "/bin/tool")
             self.assertNotIn("-head", run.call_args.args[0])

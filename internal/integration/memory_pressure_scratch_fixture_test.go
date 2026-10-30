@@ -431,7 +431,7 @@ func TestMemoryScratchWitnessReadIsFencedAndListsMembers(t *testing.T) {
 	if _, _, err := readMemoryScratchWitness(target3, fixedState(goodState()), tick()); !errors.Is(err, errMemoryScratch) {
 		t.Fatalf("malformed cgroup.procs: %v", err)
 	}
-	if strings.Contains(target3.receipt(), b3.roots.Cgroup) {
+	if strings.Contains(target3.Receipt(), b3.roots.Cgroup) {
 		t.Fatal("receipt leaks the cgroup path")
 	}
 }

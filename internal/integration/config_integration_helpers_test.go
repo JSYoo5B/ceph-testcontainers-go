@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -33,7 +34,7 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
 	}
-	cluster, client := newServiceCluster(t, opts...)
+	cluster, client := harness.NewServiceCluster(t, opts...)
 	checkNativeConfigFile(t, ctx, cluster)
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-config", Application: "rados"}); err != nil {
 		t.Fatal(err)
@@ -47,10 +48,10 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 		bValue, bErr := strconv.ParseFloat(b, 64)
 		return aErr == nil && bErr == nil && aValue == bValue
 	}
-	cephCommand(t, ctx, cluster, "config", "set", "global", option, "3600")
+	harness.CephCommand(t, ctx, cluster, "config", "set", "global", option, "3600")
 	lookup := func(section, mask string) *ceph.ConfigEntry {
 		t.Helper()
-		entries, err := observeCluster(cluster).Configuration(ctx)
+		entries, err := harness.ObserveCluster(cluster).Configuration(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -134,18 +135,18 @@ func testConfigurationOverrides(t *testing.T, host bool) {
 		t.Fatal("existing entry was removed or failed restoration")
 	}
 	guard := apply(ceph.ConfigSetting{Section: who, Name: option, Value: "1800"})
-	cephCommand(t, ctx, cluster, "config", "set", who, option, "900")
+	harness.CephCommand(t, ctx, cluster, "config", "set", who, option, "900")
 	if err := guard.Restore(ctx); err == nil {
 		t.Fatal("outside config edit overwritten")
 	}
 	if entry := lookup(who, ""); entry == nil || !equalSeconds(entry.Value, "900") {
 		t.Fatal("outside value lost")
 	}
-	cephCommand(t, ctx, cluster, "config", "set", who, option, "1800")
+	harness.CephCommand(t, ctx, cluster, "config", "set", who, option, "1800")
 	restore(guard)
 	checkRuntime(osds[0], "3600")
 	// Observe actual native object I/O after all policy changes/restorations.
-	execCommand(t, ctx, client, "python3", "-c", `import rados
+	harness.ExecCommand(t, ctx, client, "python3", "-c", `import rados
 c=rados.Rados(conffile="/etc/ceph/ceph.conf")
 c.conf_set("rados_osd_op_timeout","5")
 c.connect(timeout=10)
@@ -156,7 +157,7 @@ try:
         assert io.read("shared",len(payload))==payload
 finally: c.shutdown()
 `)
-	entries, err := observeCluster(cluster).Configuration(ctx)
+	entries, err := harness.ObserveCluster(cluster).Configuration(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

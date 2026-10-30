@@ -8,6 +8,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 func waitOSDPolicyState(t *testing.T, ctx context.Context, cluster *ceph.Container, id int, matches func(ceph.OSDState) bool) ceph.OSDState {
@@ -16,7 +17,7 @@ func waitOSDPolicyState(t *testing.T, ctx context.Context, cluster *ceph.Contain
 	defer cancel()
 	var last ceph.OSDState
 	for {
-		states, err := observeCluster(cluster).OSDStates(ctx)
+		states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

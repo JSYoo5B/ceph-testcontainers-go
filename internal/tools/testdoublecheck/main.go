@@ -1,23 +1,32 @@
-// Command testdoublecheck keeps docs/contributing/test-double-inventory.md in
-// sync with the test-only code it describes, without Docker. It reads Go
-// syntax only (no type information), so it states what it can see and no more:
+// Command testdoublecheck checks, without Docker, that every test double and
+// test-only access point of the module says what it is, next to its
+// declaration. It reads Go syntax only (no type information), so it states
+// what it can see and no more:
 //
 //   - every exported top-level declaration of a package listed in the
-//     testsupportcheck manifest's test_only_packages has a row in the
-//     inventory's "Shared test-support packages" table;
+//     testsupportcheck manifest's test_only_packages carries a
+//     "//testdouble:<class>" directive in its doc comment;
 //   - every non-test declaration outside those packages whose comment says it
 //     exists for tests (a type, struct field, interface method, function or
 //     variable whose doc or trailing comment says, for example, "replaced in
-//     tests", "tests replace it" or "test-only"; the pattern is testComment) has a row in the "Runtime injection seams" table. A seam
-//     without such a comment is not found, and the document says so;
-//   - every symbol an inventory row names still exists, in the file the row
-//     names;
+//     tests", "tests replace it" or "test-only"; the pattern is testComment)
+//     carries the directive. A seam without such a comment and without the
+//     directive is not found, and docs/contributing/test-double-inventory.md
+//     says so;
+//   - every directive names a class of docs/contributing/test-double-inventory.md,
+//     once, in the doc comment of a declaration;
 //   - no non-test file outside the test-only packages declares a type or
 //     function whose name contains fake, mock, stub or spy (case-insensitive):
 //     such doubles are _test.go declarations or live in a test-only package.
 //
-// It does not enumerate package-local doubles in _test.go files: those are
-// described by family, and a per-name list would only restate the source.
+// The harness_packages of the manifest hold integration test code that is
+// outside _test.go files only so that several test packages can share it;
+// they are read like _test.go files and not checked.
+//
+// The class lives next to the declaration rather than in a table, so changes
+// that add doubles in different packages do not edit a shared file. Package-
+// local doubles in _test.go files are not checked: they are described by
+// family in the inventory page.
 package main
 
 import (
@@ -37,12 +46,14 @@ import (
 	"strings"
 )
 
-const (
-	defaultInventory = "docs/contributing/test-double-inventory.md"
-	defaultManifest  = "internal/tools/testsupportcheck/manifest.json"
-	sharedHeading    = "Shared test-support packages"
-	seamHeading      = "Runtime injection seams"
-)
+const defaultManifest = "internal/tools/testsupportcheck/manifest.json"
+
+// classes are the test-double classes of
+// docs/contributing/test-double-inventory.md, in directive spelling.
+var classes = []string{
+	"shared-double", "shared-assertion", "unit-seam", "unit-seam-client",
+	"dependency-port", "nil-default-hook", "wired-operation", "test-mutator",
+}
 
 var (
 	// testComment matches the phrases the module uses for an injection seam:
@@ -51,22 +62,20 @@ var (
 	// check ...") does not match.
 	testComment = regexp.MustCompile(`(?i)\b(in|for the|for) (unit )?tests([.,;)]|\s*$)|\b(unit )?tests replace\b|\btest[- ]seams?\b|\btest-only\b|\bunit-test hook\b`)
 	doubleName  = regexp.MustCompile(`(?i)fake|mock|stub|spy`)
-	// rowSymbol is a code span of the form path/to/file.go#Symbol.
-	rowSymbol = regexp.MustCompile("`([A-Za-z0-9_./-]+\\.go)#([A-Za-z0-9_.]+)`")
+	// directive is the spelling of a class directive; mention is anything
+	// that tries to be one.
+	directive = regexp.MustCompile(`^//testdouble:([a-z-]+)$`)
+	mention   = regexp.MustCompile(`^//\s*testdouble\s*:`)
 )
 
 func main() {
 	root := flag.String("root", ".", "module root")
-	inventory := flag.String("inventory", "", "inventory file (default: "+defaultInventory+" under the root)")
 	manifest := flag.String("manifest", "", "testsupportcheck manifest (default: "+defaultManifest+" under the root)")
 	flag.Parse()
-	if *inventory == "" {
-		*inventory = filepath.Join(*root, filepath.FromSlash(defaultInventory))
-	}
 	if *manifest == "" {
 		*manifest = filepath.Join(*root, filepath.FromSlash(defaultManifest))
 	}
-	problems, err := Check(*root, *inventory, *manifest)
+	problems, err := Check(*root, *manifest)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "testdoublecheck:", err)
 		os.Exit(2)
@@ -77,7 +86,7 @@ func main() {
 		}
 		os.Exit(1)
 	}
-	fmt.Println("test-double inventory matches the source")
+	fmt.Println("every test double declares its class")
 }
 
 // symbol is one declaration site: a module-relative file and a name.
@@ -85,15 +94,16 @@ type symbol struct{ file, name string }
 
 func (s symbol) String() string { return s.file + "#" + s.name }
 
-// Check returns the differences between the inventory and the source under
-// root, or an error when the check could not run.
-func Check(root, inventoryPath, manifestPath string) ([]string, error) {
+// Check returns the test-double problems of the source under root, or an
+// error when the check could not run.
+func Check(root, manifestPath string) ([]string, error) {
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return nil, err
 	}
 	var manifest struct {
 		TestOnlyPackages []string `json:"test_only_packages"`
+		HarnessPackages  []string `json:"harness_packages"`
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return nil, fmt.Errorf("manifest: %v", err)
@@ -101,32 +111,30 @@ func Check(root, inventoryPath, manifestPath string) ([]string, error) {
 	if len(manifest.TestOnlyPackages) == 0 {
 		return nil, fmt.Errorf("manifest: test_only_packages is empty")
 	}
-	doc, err := os.ReadFile(inventoryPath)
-	if err != nil {
-		return nil, err
-	}
-	shared, seams, err := parseInventory(string(doc))
-	if err != nil {
-		return nil, err
-	}
 
 	var problems []string
-	declared := map[symbol]bool{}  // every symbol of every non-test file
-	exported := map[symbol]bool{}  // exported top-level declarations of test-only packages
-	annotated := map[symbol]bool{} // test-purpose declarations outside them
+	exported := map[symbol]bool{}   // exported top-level declarations of test-only packages
+	annotated := map[symbol]bool{}  // test-purpose declarations outside them
+	classified := map[symbol]bool{} // declarations with a class directive
 	files, err := goFiles(root)
 	if err != nil {
 		return nil, err
 	}
 	for _, file := range files {
 		dir := path.Dir(file)
+		if slices.Contains(manifest.HarnessPackages, dir) {
+			// Integration test code outside _test.go files only because
+			// other test packages share it; it is read like a _test.go file.
+			continue
+		}
 		helper := slices.Contains(manifest.TestOnlyPackages, dir)
 		found, err := scanFile(filepath.Join(root, filepath.FromSlash(file)), file)
 		if err != nil {
 			return nil, err
 		}
-		for _, s := range found.all {
-			declared[s] = true
+		problems = append(problems, found.problems...)
+		for _, s := range found.classified {
+			classified[s] = true
 		}
 		if helper {
 			for _, s := range found.exported {
@@ -142,20 +150,13 @@ func Check(root, inventoryPath, manifestPath string) ([]string, error) {
 		}
 	}
 	for _, s := range sortedKeys(exported) {
-		if !shared[s] {
-			problems = append(problems, fmt.Sprintf("%s is exported by a test-only package but has no row in the %q table", s, sharedHeading))
+		if !classified[s] {
+			problems = append(problems, fmt.Sprintf("%s is exported by a test-only package but has no //testdouble:<class> directive", s))
 		}
 	}
 	for _, s := range sortedKeys(annotated) {
-		if !seams[s] {
-			problems = append(problems, fmt.Sprintf("%s says it exists for tests but has no row in the %q table", s, seamHeading))
-		}
-	}
-	for table, rows := range map[string]map[symbol]bool{sharedHeading: shared, seamHeading: seams} {
-		for _, s := range sortedKeys(rows) {
-			if !declared[s] {
-				problems = append(problems, fmt.Sprintf("the %q table names %s, which no non-test file declares", table, s))
-			}
+		if !classified[s] {
+			problems = append(problems, fmt.Sprintf("%s says it exists for tests but has no //testdouble:<class> directive", s))
 		}
 	}
 	sort.Strings(problems)
@@ -169,45 +170,6 @@ func sortedKeys(m map[symbol]bool) []symbol {
 	}
 	slices.SortFunc(keys, func(a, b symbol) int { return strings.Compare(a.String(), b.String()) })
 	return keys
-}
-
-// parseInventory returns the symbols named in the first column of each table.
-// A table belongs to the "##" heading above it.
-func parseInventory(doc string) (shared, seams map[symbol]bool, err error) {
-	shared, seams = map[symbol]bool{}, map[symbol]bool{}
-	var current map[symbol]bool
-	seen := map[string]bool{}
-	for _, line := range strings.Split(doc, "\n") {
-		if heading, ok := strings.CutPrefix(line, "## "); ok {
-			current = nil
-			switch strings.TrimSpace(heading) {
-			case sharedHeading:
-				current, seen[sharedHeading] = shared, true
-			case seamHeading:
-				current, seen[seamHeading] = seams, true
-			}
-			continue
-		}
-		if current == nil || !strings.HasPrefix(line, "|") {
-			continue
-		}
-		cells := strings.Split(line, "|")
-		if len(cells) < 3 {
-			continue
-		}
-		for _, m := range rowSymbol.FindAllStringSubmatch(cells[1], -1) {
-			current[symbol{m[1], m[2]}] = true
-		}
-	}
-	for _, heading := range []string{sharedHeading, seamHeading} {
-		if !seen[heading] {
-			return nil, nil, fmt.Errorf("inventory has no %q section", heading)
-		}
-	}
-	if len(shared) == 0 || len(seams) == 0 {
-		return nil, nil, fmt.Errorf("inventory tables name no symbols: the rule would be vacuous")
-	}
-	return shared, seams, nil
 }
 
 // goFiles lists the module-relative non-test Go files outside internal/tools
@@ -237,10 +199,40 @@ func goFiles(root string) ([]string, error) {
 }
 
 type scanned struct {
-	all       []symbol
-	exported  []symbol
-	annotated []symbol
-	doubles   []symbol
+	exported   []symbol
+	annotated  []symbol
+	classified []symbol
+	doubles    []symbol
+	problems   []string
+}
+
+// classify records the class directives of the doc comments of one
+// declaration and marks them as owned.
+func (out *scanned) classify(s symbol, fset *token.FileSet, owned map[*ast.Comment]bool, docs ...*ast.CommentGroup) {
+	var found []string
+	for _, doc := range docs {
+		if doc == nil {
+			continue
+		}
+		for _, c := range doc.List {
+			if !mention.MatchString(c.Text) {
+				continue
+			}
+			owned[c] = true
+			m := directive.FindStringSubmatch(c.Text)
+			if m == nil || !slices.Contains(classes, m[1]) {
+				out.problems = append(out.problems, fmt.Sprintf("%s: %s: %q is not //testdouble:<class> with a class of %v", fset.Position(c.Pos()), s, c.Text, classes))
+				continue
+			}
+			found = append(found, m[1])
+		}
+	}
+	switch {
+	case len(found) == 1:
+		out.classified = append(out.classified, s)
+	case len(found) > 1:
+		out.problems = append(out.problems, fmt.Sprintf("%s has %d //testdouble directives; give it one class", s, len(found)))
+	}
 }
 
 func hasTestComment(groups ...*ast.CommentGroup) bool {
@@ -253,14 +245,16 @@ func hasTestComment(groups ...*ast.CommentGroup) bool {
 }
 
 func scanFile(abs, rel string) (scanned, error) {
-	parsed, err := parser.ParseFile(token.NewFileSet(), abs, nil, parser.ParseComments)
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, abs, nil, parser.ParseComments)
 	if err != nil {
 		return scanned{}, err
 	}
 	var out scanned
-	add := func(name string, annotated bool, exportedTop bool) {
+	owned := map[*ast.Comment]bool{}
+	add := func(name string, annotated bool, exportedTop bool, docs ...*ast.CommentGroup) {
 		s := symbol{rel, name}
-		out.all = append(out.all, s)
+		out.classify(s, fset, owned, docs...)
 		if annotated {
 			out.annotated = append(out.annotated, s)
 		}
@@ -279,36 +273,52 @@ func scanFile(abs, rel string) (scanned, error) {
 			name := decl.Name.Name
 			if decl.Recv != nil {
 				name = recvName(decl.Recv) + "." + name
-				add(name, hasTestComment(decl.Doc), false)
+				add(name, hasTestComment(decl.Doc), false, decl.Doc)
 				continue
 			}
-			add(name, hasTestComment(decl.Doc), decl.Name.IsExported())
+			add(name, hasTestComment(decl.Doc), decl.Name.IsExported(), decl.Doc)
 			topDouble(name)
 		case *ast.GenDecl:
 			for _, spec := range decl.Specs {
 				switch spec := spec.(type) {
 				case *ast.TypeSpec:
 					name := spec.Name.Name
-					add(name, hasTestComment(spec.Doc, spec.Comment) || (len(decl.Specs) == 1 && hasTestComment(decl.Doc)), spec.Name.IsExported())
+					add(name, hasTestComment(spec.Doc, spec.Comment) || (len(decl.Specs) == 1 && hasTestComment(decl.Doc)), spec.Name.IsExported(), specDocs(decl, spec.Doc)...)
 					topDouble(name)
-					members(spec, name, rel, &out)
+					members(spec, name, rel, fset, owned, &out)
 				case *ast.ValueSpec:
 					for _, id := range spec.Names {
 						if id.Name == "_" {
 							continue
 						}
-						add(id.Name, hasTestComment(spec.Doc, spec.Comment) || (len(decl.Specs) == 1 && hasTestComment(decl.Doc)), id.IsExported())
+						add(id.Name, hasTestComment(spec.Doc, spec.Comment) || (len(decl.Specs) == 1 && hasTestComment(decl.Doc)), id.IsExported(), specDocs(decl, spec.Doc)...)
 					}
 				}
+			}
+		}
+	}
+	for _, group := range parsed.Comments {
+		for _, c := range group.List {
+			if mention.MatchString(c.Text) && !owned[c] {
+				out.problems = append(out.problems, fmt.Sprintf("%s: %q is not in the doc comment of a declaration", fset.Position(c.Pos()), c.Text))
 			}
 		}
 	}
 	return out, nil
 }
 
+// specDocs returns the doc comments a directive of one spec may be in: its
+// own, and the declaration's when the declaration has only that spec.
+func specDocs(decl *ast.GenDecl, doc *ast.CommentGroup) []*ast.CommentGroup {
+	if len(decl.Specs) == 1 {
+		return []*ast.CommentGroup{doc, decl.Doc}
+	}
+	return []*ast.CommentGroup{doc}
+}
+
 // members records the fields of a struct and the methods of an interface as
 // Type.Name.
-func members(spec *ast.TypeSpec, typeName, rel string, out *scanned) {
+func members(spec *ast.TypeSpec, typeName, rel string, fset *token.FileSet, owned map[*ast.Comment]bool, out *scanned) {
 	var fields *ast.FieldList
 	switch t := spec.Type.(type) {
 	case *ast.StructType:
@@ -322,7 +332,7 @@ func members(spec *ast.TypeSpec, typeName, rel string, out *scanned) {
 	for _, f := range fields.List {
 		for _, id := range f.Names {
 			s := symbol{rel, typeName + "." + id.Name}
-			out.all = append(out.all, s)
+			out.classify(s, fset, owned, f.Doc)
 			if hasTestComment(f.Doc, f.Comment) {
 				out.annotated = append(out.annotated, s)
 			}

@@ -39,7 +39,7 @@ type containerGeneration struct {
 	StartedAt string
 }
 
-func (g containerGeneration) valid() bool { return g.ID != "" && g.StartedAt != "" }
+func (g containerGeneration) Valid() bool { return g.ID != "" && g.StartedAt != "" }
 
 // accountingUnit names the unit a retained counter is expressed in.
 type accountingUnit string
@@ -138,7 +138,7 @@ func lookupCounter(root map[string]json.RawMessage, unit accountingUnit, path ..
 // generation, or has no parseable "read" time is refused outright. Counter
 // problems are retained per field and surface as inconclusive at delta time.
 func parseAccountingSample(gen containerGeneration, body []byte) (accountingSample, error) {
-	if !gen.valid() {
+	if !gen.Valid() {
 		return accountingSample{}, fmt.Errorf("%w: frozen generation %+v is incomplete", errAccountingGeneration, gen)
 	}
 	var root map[string]json.RawMessage
@@ -181,7 +181,7 @@ type cpuThrottleDelta struct {
 func (d cpuThrottleDelta) Throttled() bool { return d.ThrottledPeriods > 0 && d.ThrottledNanos > 0 }
 
 func computeCPUThrottleDelta(prev, cur accountingSample, checks accountingChecks) (cpuThrottleDelta, error) {
-	if !checks.skipGeneration && (!prev.Generation.valid() || prev.Generation != cur.Generation) {
+	if !checks.skipGeneration && (!prev.Generation.Valid() || prev.Generation != cur.Generation) {
 		return cpuThrottleDelta{}, fmt.Errorf("%w: %+v vs %+v", errAccountingGeneration, prev.Generation, cur.Generation)
 	}
 	if prev.Source != cur.Source {
@@ -251,7 +251,7 @@ func classifyOOM(sample accountingSample, evidence *localMemoryEvidence) oomObse
 	if evidence == nil {
 		return oomUnsupported
 	}
-	if !sample.Generation.valid() || evidence.Generation != sample.Generation ||
+	if !sample.Generation.Valid() || evidence.Generation != sample.Generation ||
 		!evidence.Local || evidence.OomKill == nil || !evidence.VictimIsTarget || evidence.Source == "" {
 		return oomIncomplete
 	}

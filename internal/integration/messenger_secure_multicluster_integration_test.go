@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	cephfsmirror "github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 	rbdmirror "github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror"
@@ -48,7 +49,7 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			mirror, err := rbdmirror.Run(ctx, nativeMirrorImage(t, "rbd-aux", staticFacts(source).Images.RBDAux), rbdmirror.WithConfig(rbdmirror.Config{
+			mirror, err := rbdmirror.Run(ctx, harness.NativeMirrorImage(t, "rbd-aux", harness.StaticFacts(source).Images.RBDAux), rbdmirror.WithConfig(rbdmirror.Config{
 				Source: source, Destination: destination, Pool: pool,
 			}))
 			if mirror != nil {
@@ -63,7 +64,7 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload := rbdMultiClusterPayload(1<<20, 37)
+			payload := harness.RBDMultiClusterPayload(1<<20, 37)
 			if err := sourceClient.CopyToContainer(ctx, payload, "/tmp/messenger-rbd-payload", 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -72,8 +73,8 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 			if err := mirror.EnableImage(ctx, name); err != nil {
 				t.Fatal(err)
 			}
-			rbdMirrorReplayReady(t, ctx, mirror, name, rbdmirror.ModeSnapshot, "", "")
-			rbdMultiClusterWaitMirror(t, ctx, destinationClient, image, payload)
+			harness.RBDMirrorReplayReady(t, ctx, mirror, name, rbdmirror.ModeSnapshot, "", "")
+			harness.RBDMultiClusterWaitMirror(t, ctx, destinationClient, image, payload)
 			// Native bootstrap names the remote CephX user separately from the
 			// destination-owned daemon. Observe those exact authenticated users.
 			var policy struct {
@@ -92,14 +93,14 @@ func TestRBDMessengerSecureDefaultMix(t *testing.T) {
 			checkMixedMessengerPeers(t, ctx, source, policy.Peers[0].ClientName, daemons[0], nil)
 			checkMixedMessengerPeers(t, ctx, destination, daemons[0].ClientName, daemons[0], nil)
 			mixedMessengerCatalog(t, ctx, source, daemons[0], "/tmp/rbd-mirror.asok")
-			patch := rbdMultiClusterPayload(16<<10, 83)
+			patch := harness.RBDMultiClusterPayload(16<<10, 83)
 			copy(payload[256<<10:], patch)
-			rbdMultiClusterWriteRange(t, ctx, sourceClient, image, uint64(len(payload)), 256<<10, patch)
+			harness.RBDMultiClusterWriteRange(t, ctx, sourceClient, image, uint64(len(payload)), 256<<10, patch)
 			if _, err := mirror.SourceRBD(ctx, "mirror", "image", "snapshot", image); err != nil {
 				t.Fatal(err)
 			}
-			rbdMirrorReplayReady(t, ctx, mirror, name, rbdmirror.ModeSnapshot, "", "")
-			rbdMultiClusterWaitMirror(t, ctx, destinationClient, image, payload)
+			harness.RBDMirrorReplayReady(t, ctx, mirror, name, rbdmirror.ModeSnapshot, "", "")
+			harness.RBDMultiClusterWaitMirror(t, ctx, destinationClient, image, payload)
 			checkMixedMessengerPeers(t, ctx, source, policy.Peers[0].ClientName, daemons[0], nil)
 			checkMixedMessengerPeers(t, ctx, destination, daemons[0].ClientName, daemons[0], nil)
 			t.Logf("MSGR_MIX_RBD direction=%s bytes=%d checkpoints=2 elapsed=%s", mixedMessengerDirection(secureSource), len(payload), time.Since(started))
@@ -136,7 +137,7 @@ func TestCephFSMessengerSecureDefaultMix(t *testing.T) {
 				}
 			}
 			mixedMessengerExec(t, ctx, sourceClient, "python3", script, filesystems[0].FilesystemName, "write", "initial")
-			mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.WithConfig(cephfsmirror.Config{
+			mirror, err := cephfsmirror.Run(ctx, harness.NativeMirrorImage(t, "cephfs", harness.StaticFacts(source).Images.CephFS), cephfsmirror.WithConfig(cephfsmirror.Config{
 				Source: source, Destination: destination, SourceFilesystem: filesystems[0].FilesystemName,
 				DestinationFilesystem: filesystems[1].FilesystemName, DestinationSite: "messenger-destination", Directories: []string{"/messenger"},
 			}))
@@ -152,7 +153,7 @@ func TestCephFSMessengerSecureDefaultMix(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			expected := cephFSObservedFilesystemIdentity(t, ctx, filesystems[0], filesystems[1])
+			expected := harness.CephFSObservedFilesystemIdentity(t, ctx, filesystems[0], filesystems[1])
 			peers, err := mirror.PeerIDs(ctx)
 			if err != nil || len(peers) != 1 {
 				t.Fatal("owned CephFS mirror peer unavailable", err)
@@ -166,8 +167,8 @@ func TestCephFSMessengerSecureDefaultMix(t *testing.T) {
 				if index != 0 {
 					mixedMessengerExec(t, ctx, sourceClient, "python3", script, filesystems[0].FilesystemName, "write", checkpointName)
 				}
-				checkpoint := cephFSReadSourceSnapshot(t, ctx, sourceClient, filesystems[0].FilesystemName, script, "/messenger", checkpointName)
-				cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, "/messenger", checkpoint)
+				checkpoint := harness.CephFSReadSourceSnapshot(t, ctx, sourceClient, filesystems[0].FilesystemName, script, "/messenger", checkpointName)
+				harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, "/messenger", checkpoint)
 				mixedMessengerExec(t, ctx, destinationClient, "python3", script, filesystems[1].FilesystemName, "verify", checkpointName)
 				checkMixedMessengerPeers(t, ctx, source, mirror.SourceClientEntity, daemons[0], filesystems[0])
 				checkMixedMessengerPeers(t, ctx, destination, mirror.DestinationClientEntity, daemons[0], filesystems[1])
@@ -188,7 +189,7 @@ func mixedMessengerDirection(secureSource bool) string {
 
 func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool) (*ceph.Container, *ceph.Container, testcontainers.Container, testcontainers.Container) {
 	t.Helper()
-	image, roleOptions := integrationImages(t)
+	image, roleOptions := harness.IntegrationImages(t)
 	clusters := make([]*ceph.Container, 2)
 	clients := make([]testcontainers.Container, 2)
 	identities := make([]string, 2)
@@ -200,8 +201,8 @@ func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool)
 		}
 		options := append([]testcontainers.ContainerCustomizer{}, roleOptions...)
 		options = append(options, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithPoolDefaults(1, 1)), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(mode)))
-		cluster, client := newServiceClusterWithOptions(t, image, options...)
-		if staticFacts(cluster).MessengerMode != mode {
+		cluster, client := harness.NewServiceClusterWithOptions(t, image, options...)
+		if harness.StaticFacts(cluster).MessengerMode != mode {
 			t.Fatal("cluster bootstrap mode changed")
 		}
 		if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
@@ -210,7 +211,7 @@ func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool)
 		if _, err := cluster.AddOSD(ctx); err != nil {
 			t.Fatal(err)
 		}
-		status, err := observeCluster(cluster).Status(ctx)
+		status, err := harness.ObserveCluster(cluster).Status(ctx)
 		parsed, parseErr := uuid.Parse(status.FSID)
 		if err != nil || parseErr != nil || parsed == uuid.Nil || parsed.String() != status.FSID || status.OSDMap.NumOSDs != 1 {
 			t.Fatal("independent one-OSD native identity unavailable", err)
@@ -228,10 +229,10 @@ func newMixedMessengerPair(t *testing.T, ctx context.Context, secureSource bool)
 		}
 		clusters[index], clients[index], identities[index], keyrings[index] = cluster, client, status.FSID, keyring
 	}
-	if identities[0] == identities[1] || staticFacts(clusters[0]).NetworkName == staticFacts(clusters[1]).NetworkName || bytes.Equal(keyrings[0], keyrings[1]) {
+	if identities[0] == identities[1] || harness.StaticFacts(clusters[0]).NetworkName == harness.StaticFacts(clusters[1]).NetworkName || bytes.Equal(keyrings[0], keyrings[1]) {
 		t.Fatal("mixed-policy fixtures do not have independent FSIDs, networks and credentials")
 	}
-	t.Logf("MSGR_MIX_PAIR source_fsid=%s destination_fsid=%s source_mode=%d destination_mode=%d osds_per_cluster=1 block_size=536870912 replicas=1 min_size=1", identities[0], identities[1], staticFacts(clusters[0]).MessengerMode, staticFacts(clusters[1]).MessengerMode)
+	t.Logf("MSGR_MIX_PAIR source_fsid=%s destination_fsid=%s source_mode=%d destination_mode=%d osds_per_cluster=1 block_size=536870912 replicas=1 min_size=1", identities[0], identities[1], harness.StaticFacts(clusters[0]).MessengerMode, harness.StaticFacts(clusters[1]).MessengerMode)
 	return clusters[0], clusters[1], clients[0], clients[1]
 }
 
@@ -255,7 +256,7 @@ sys.exit(result.returncode if result.returncode>=0 else 128-result.returncode)`}
 
 func checkMixedMessengerPeers(t *testing.T, ctx context.Context, cluster *ceph.Container, clientName string, mirror testcontainers.Container, filesystem *cephfs.Filesystem) {
 	t.Helper()
-	status, err := observeCluster(cluster).Status(ctx)
+	status, err := harness.ObserveCluster(cluster).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,18 +275,18 @@ func checkMixedMessengerPeers(t *testing.T, ctx context.Context, cluster *ceph.C
 		}
 	}
 	mode := "default"
-	if staticFacts(cluster).MessengerMode == ceph.MessengerV2Secure {
+	if harness.StaticFacts(cluster).MessengerMode == ceph.MessengerV2Secure {
 		mode = "secure"
 	}
 	for _, daemon := range daemons {
-		data := mixedMessengerExec(t, ctx, toolkitContainer(t, cluster), "python3", "-c", mixedMessengerPeerProbe, status.FSID, mode, daemon, clientName, string(encodedAddresses), messengerDumpArg(t, ctx, cluster))
+		data := mixedMessengerExec(t, ctx, harness.ToolkitContainer(t, cluster), "python3", "-c", mixedMessengerPeerProbe, status.FSID, mode, daemon, clientName, string(encodedAddresses), harness.MessengerDumpArg(t, ctx, cluster))
 		t.Logf("MSGR_MIX_NATIVE %s", data)
 	}
 }
 
 func mixedMessengerCatalog(t *testing.T, ctx context.Context, cluster *ceph.Container, daemon testcontainers.Container, socket string) {
 	t.Helper()
-	if messengerDumpArg(t, ctx, cluster) != "1" {
+	if harness.MessengerDumpArg(t, ctx, cluster) != "1" {
 		// Ceph 19 has no messenger dump; prove the owned socket answers.
 		data := mixedMessengerExec(t, ctx, daemon, "ceph", "--admin-daemon", socket, "version")
 		t.Logf("MSGR_MIX_MIRROR socket=%s native_version=%s", socket, bytes.TrimSpace(data))

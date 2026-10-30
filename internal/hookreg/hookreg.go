@@ -20,6 +20,8 @@ var Override any
 // Test is set once, during the initialization of package ceph, to the
 // unit-test access seam that internal/testhelper types. It is the only link
 // between test helper code and the unexported state of a cluster.
+//
+//testdouble:unit-seam
 var Test any
 
 // RGW is set once, during the initialization of package rgw, to the handle

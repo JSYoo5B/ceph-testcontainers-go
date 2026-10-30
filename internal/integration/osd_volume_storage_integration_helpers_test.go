@@ -11,6 +11,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -126,7 +127,7 @@ func osdVolumeWaitState(t *testing.T, parent context.Context, cluster *ceph.Cont
 				}
 			}
 		}
-		states, err := observeCluster(cluster).OSDStates(ctx)
+		states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

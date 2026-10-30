@@ -12,6 +12,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // monSession is one entry of a MON's "sessions" admin socket command.
@@ -27,7 +28,7 @@ func managerMonSessions(t *testing.T, ctx context.Context, cluster *ceph.Contain
 	t.Helper()
 	sessions := map[string][]monSession{}
 	for _, monitor := range clusteraccess.Monitors(t, cluster) {
-		out, err := monitorHandle(t, ctx, cluster, monitor.DaemonName).AdminSocket(ctx, "sessions")
+		out, err := harness.MonitorHandle(t, ctx, cluster, monitor.DaemonName).AdminSocket(ctx, "sessions")
 		if err != nil {
 			t.Fatalf("sessions of mon.%s: %v", monitor.DaemonName, err)
 		}
@@ -67,12 +68,12 @@ func splitManagerSessions(sessions []monSession) (beacon []monSession, others []
 func testManagerMonClients(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
-	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithNoInitialOSDs()))...)
+	image, roles := harness.IntegrationImages(t)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithNoInitialOSDs()))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	var last string
 	for deadline := time.Now().Add(2 * time.Minute); ; {
-		status, err := observeCluster(cluster).ManagerStatus(ctx)
+		status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
@@ -23,7 +24,7 @@ func TestFailureArchiveProof(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 			defer cancel()
-			image, opts := integrationImages(t)
+			image, opts := harness.IntegrationImages(t)
 			cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))...)
 			var finalization *ceph.Finalization
 			if cluster != nil {
@@ -78,7 +79,7 @@ func TestFailureArchiveProof(t *testing.T) {
 			}
 			ready, err := json.Marshal(map[string]any{
 				"mode": mode, "fsid": identity.FSID, "osds": nativeOSDs,
-				"osd_container": clusteraccess.OSDs(t, cluster)[0].GetContainerID(), "ceph_version": staticFacts(cluster).CephVersion,
+				"osd_container": clusteraccess.OSDs(t, cluster)[0].GetContainerID(), "ceph_version": harness.StaticFacts(cluster).CephVersion,
 				"debug_state": window.Receipt().State,
 			})
 			if err != nil {

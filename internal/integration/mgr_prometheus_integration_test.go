@@ -17,6 +17,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -25,7 +26,7 @@ import (
 // networking needs a bindable address and one port per manager, because the
 // active and standby managers share the host network.
 func TestManagerPrometheusExporter(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
@@ -34,7 +35,7 @@ func TestManagerPrometheusExporter(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceCluster(t, opts...)
+			cluster, client := harness.NewServiceCluster(t, opts...)
 			managers := clusteraccess.Managers(t, cluster)
 			if len(managers) != 2 {
 				t.Fatalf("two managers expected, got %d", len(managers))
@@ -43,11 +44,11 @@ func TestManagerPrometheusExporter(t *testing.T) {
 			expected := map[string]string{}
 			var settings []ceph.ConfigSetting
 			if host {
-				ports := strings.Fields(execOutput(t, ctx, client, "python3", "-c", freeHostPorts, strconv.Itoa(len(managers))))
-				settings = append(settings, ceph.ConfigSetting{Section: "mgr", Name: "mgr/prometheus/server_addr", Value: staticFacts(cluster).PublicAddress})
+				ports := strings.Fields(harness.ExecOutput(t, ctx, client, "python3", "-c", freeHostPorts, strconv.Itoa(len(managers))))
+				settings = append(settings, ceph.ConfigSetting{Section: "mgr", Name: "mgr/prometheus/server_addr", Value: harness.StaticFacts(cluster).PublicAddress})
 				for i, manager := range managers {
 					settings = append(settings, ceph.ConfigSetting{Section: "mgr", Name: "mgr/prometheus/" + manager.DaemonName + "/server_port", Value: ports[i]})
-					expected[manager.DaemonName] = staticFacts(cluster).PublicAddress + ":" + ports[i]
+					expected[manager.DaemonName] = harness.StaticFacts(cluster).PublicAddress + ":" + ports[i]
 				}
 			} else {
 				for _, manager := range managers {
@@ -87,7 +88,7 @@ func TestManagerPrometheusExporter(t *testing.T) {
 			if first.Host != expected[active] {
 				t.Fatalf("active manager %s advertises %s, want %s", active, first.Host, expected[active])
 			}
-			mustCeph(t, ctx, cluster, "mgr", "fail")
+			harness.MustCeph(t, ctx, cluster, "mgr", "fail")
 			second := waitPrometheusService(t, ctx, cluster, first.Host)
 			scrapePrometheus(t, ctx, client, second)
 			promoted := activeManager(t, ctx, cluster)
@@ -104,7 +105,7 @@ func TestManagerPrometheusExporter(t *testing.T) {
 			deadline, stop := context.WithTimeout(ctx, 2*time.Minute)
 			defer stop()
 			for {
-				services, err := observeCluster(cluster).ManagerServices(deadline)
+				services, err := harness.ObserveCluster(cluster).ManagerServices(deadline)
 				if _, found := services["prometheus"]; err == nil && !found {
 					break
 				}
@@ -128,7 +129,7 @@ print(' '.join(str(s.getsockname()[1]) for s in sockets))
 
 func activeManager(t *testing.T, ctx context.Context, cluster *ceph.Container) string {
 	t.Helper()
-	status, err := observeCluster(cluster).ManagerStatus(ctx)
+	status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil || !status.Available || status.ActiveName == "" {
 		t.Fatal("active manager unavailable", err)
 	}
@@ -140,7 +141,7 @@ func waitPrometheusService(t *testing.T, ctx context.Context, cluster *ceph.Cont
 	deadline, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	for {
-		services, err := observeCluster(cluster).ManagerServices(deadline)
+		services, err := harness.ObserveCluster(cluster).ManagerServices(deadline)
 		if address, found := services["prometheus"]; err == nil && found {
 			parsed, err := url.Parse(address)
 			if err != nil {
@@ -161,7 +162,7 @@ func waitPrometheusService(t *testing.T, ctx context.Context, cluster *ceph.Cont
 func scrapePrometheus(t *testing.T, ctx context.Context, client testcontainers.Container, service *url.URL) {
 	t.Helper()
 	metrics := service.JoinPath("metrics").String()
-	output := execOutput(t, ctx, client, "python3", "-c", `import sys,urllib.request
+	output := harness.ExecOutput(t, ctx, client, "python3", "-c", `import sys,urllib.request
 body=urllib.request.urlopen(sys.argv[1],timeout=10).read().decode()
 assert 'ceph_health_status' in body and 'ceph_osd_up' in body,body[:200]
 print(len(body))`, metrics)
@@ -178,11 +179,11 @@ print(len(body))`, metrics)
 func TestManagerMetrics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithManagerCount(2).WithPoolDefaults(1, 1)))
-	if _, err := observeCluster(cluster).ManagerMetrics(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithManagerCount(2).WithPoolDefaults(1, 1)))
+	if _, err := harness.ObserveCluster(cluster).ManagerMetrics(ctx); !errors.Is(err, ceph.ErrInvalidRequest) {
 		t.Fatalf("metrics without the module: %v", err)
 	}
-	modules, err := observeCluster(cluster).MGRModules(ctx)
+	modules, err := harness.ObserveCluster(cluster).MGRModules(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +204,7 @@ func TestManagerMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := waitPrometheusService(t, ctx, cluster, "")
-	before, err := observeCluster(cluster).ManagerMetrics(ctx)
+	before, err := harness.ObserveCluster(cluster).ManagerMetrics(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +225,7 @@ func TestManagerMetrics(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-metrics", PGNum: 1, Replicas: 1, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	out := mustCeph(t, ctx, cluster, "osd", "pool", "stats", "tc-metrics", "--format", "json")
+	out := harness.MustCeph(t, ctx, cluster, "osd", "pool", "stats", "tc-metrics", "--format", "json")
 	var stats []struct {
 		PoolID int `json:"pool_id"`
 	}
@@ -236,7 +237,7 @@ func TestManagerMetrics(t *testing.T) {
 	var start float64
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		current, err := observeCluster(cluster).ManagerMetrics(ctx)
+		current, err := harness.ObserveCluster(cluster).ManagerMetrics(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -249,11 +250,11 @@ func TestManagerMetrics(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 	const objects = 20
-	execOutput(t, ctx, client, "sh", "-c", fmt.Sprintf(`head -c 4096 /dev/urandom > /tmp/m && for i in $(seq 1 %d); do rados -p tc-metrics put object-$i /tmp/m || exit 1; done`, objects))
+	harness.ExecOutput(t, ctx, client, "sh", "-c", fmt.Sprintf(`head -c 4096 /dev/urandom > /tmp/m && for i in $(seq 1 %d); do rados -p tc-metrics put object-$i /tmp/m || exit 1; done`, objects))
 	var writes, stored float64
 	deadline = time.Now().Add(2 * time.Minute)
 	for {
-		after, err := observeCluster(cluster).ManagerMetrics(ctx)
+		after, err := harness.ObserveCluster(cluster).ManagerMetrics(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -269,12 +270,12 @@ func TestManagerMetrics(t *testing.T) {
 	}
 
 	active := activeManager(t, ctx, cluster)
-	mustCeph(t, ctx, cluster, "mgr", "fail")
+	harness.MustCeph(t, ctx, cluster, "mgr", "fail")
 	second := waitPrometheusService(t, ctx, cluster, first.Host)
 	var failover ceph.ManagerMetrics
 	deadline = time.Now().Add(2 * time.Minute)
 	for {
-		failover, err = observeCluster(cluster).ManagerMetrics(ctx)
+		failover, err = harness.ObserveCluster(cluster).ManagerMetrics(ctx)
 		if err == nil && strings.Contains(failover.URL, second.Host) {
 			break
 		}

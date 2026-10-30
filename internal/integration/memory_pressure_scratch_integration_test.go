@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -87,7 +88,7 @@ func TestMemoryPressureScratchMechanism(t *testing.T) {
 	t.Logf("MEMORY_PRESSURE_CONTROLLER euid=%d engine=%s arch=%s", os.Geteuid(), info.Info.ServerVersion, runtime.GOARCH)
 
 	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
-		Image: essentialImage(t), Entrypoint: []string{"sleep"}, Cmd: []string{"infinity"},
+		Image: harness.EssentialImage(t), Entrypoint: []string{"sleep"}, Cmd: []string{"infinity"},
 		HostConfigModifier: func(h *container.HostConfig) {
 			h.NetworkMode = "none"
 			h.Memory = memoryScratchCeilingBytes
@@ -138,7 +139,7 @@ func TestMemoryPressureScratchMechanism(t *testing.T) {
 	if err != nil {
 		t.Skipf("eligibility incomplete before any allocation: %v", err)
 	}
-	t.Log(target.receipt())
+	t.Log(target.Receipt())
 
 	expected := memoryLimit{Bytes: uint64(memoryScratchCeilingBytes)}
 	// window runs the bounded allocator between two fenced kernel readings and

@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // The types below model, without Ceph or Docker, how a private mixed-version
@@ -93,7 +95,7 @@ func decodeUpgradeCounts(role string, raw json.RawMessage) (map[string]int, erro
 	}
 	counts := map[string]int{}
 	for description, rawCount := range described {
-		match := daemonVersionPattern.FindStringSubmatch(description + " ")
+		match := harness.DaemonVersionPattern.FindStringSubmatch(description + " ")
 		if match == nil {
 			return nil, fmt.Errorf("ceph versions role %q has unrecognized release %s", role, strconv.Quote(description))
 		}
@@ -111,7 +113,7 @@ func decodeUpgradeCounts(role string, raw json.RawMessage) (map[string]int, erro
 type upgradeCheckpoint map[string]map[string]int
 
 // check compares a fresh inventory with the checkpoint.
-func (c upgradeCheckpoint) check(got upgradeInventory) error {
+func (c upgradeCheckpoint) Check(got upgradeInventory) error {
 	var problems []string
 	for role, want := range c {
 		have, ok := got[role]
@@ -185,7 +187,7 @@ type upgradePhase struct {
 	caps      map[upgradeCapKey]bool
 }
 
-func (p *upgradePhase) open() error {
+func (p *upgradePhase) Open() error {
 	if p.owner.phase != p.seq {
 		return fmt.Errorf("%w: %q was superseded by a later phase", errUpgradePhaseClosed, p.name)
 	}
@@ -194,7 +196,7 @@ func (p *upgradePhase) open() error {
 
 // current rejects the phase when any target moved since it began.
 func (p *upgradePhase) current() error {
-	if err := p.open(); err != nil {
+	if err := p.Open(); err != nil {
 		return err
 	}
 	var moved []string
@@ -220,7 +222,7 @@ func (p *upgradePhase) observeInventory(data []byte, want upgradeCheckpoint) err
 	if err != nil {
 		return err
 	}
-	if err := want.check(got); err != nil {
+	if err := want.Check(got); err != nil {
 		return err
 	}
 	p.inventory = got
@@ -243,7 +245,7 @@ func (p *upgradePhase) satisfied() (upgradeInventory, error) {
 // probe error is returned and never cached, so an unavailable observation is
 // not a false answer.
 func (p *upgradePhase) capability(target, id string, probe func() (bool, error)) (bool, error) {
-	if err := p.open(); err != nil {
+	if err := p.Open(); err != nil {
 		return false, err
 	}
 	g, ok := p.owner.generation[target]
@@ -263,7 +265,7 @@ func (p *upgradePhase) capability(target, id string, probe func() (bool, error))
 	}
 	// The probe may have moved the target or opened a later phase; its answer
 	// then describes a state that no longer belongs to this phase.
-	if err := p.open(); err != nil {
+	if err := p.Open(); err != nil {
 		return false, err
 	}
 	if p.owner.generation[target] != g {

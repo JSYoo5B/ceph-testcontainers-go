@@ -16,6 +16,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
@@ -32,7 +33,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), budget)
 	defer cancel()
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers()))
 	const pool = "tc-cold-manager"
 	if noStorage {
@@ -45,13 +46,13 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	var customizers atomic.Int32
 	opts = append(opts, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers.Add(1); return nil }))
-	oracle := newNoInitialOSDOracle(t, ctx)
+	oracle := harness.NewNoInitialOSDOracle(t, ctx)
 	cluster, err := ceph.Run(ctx, image, opts...)
-	noInitialOSDCleanup(t, cluster)
+	harness.NoInitialOSDCleanup(t, cluster)
 	if err != nil {
 		t.Fatal(err)
 	}
-	q, err := observeCluster(cluster).QuorumStatus(ctx)
+	q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal("original MON quorum unavailable", err)
 	}
@@ -66,12 +67,12 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	noInitialManagerMap(t, ctx, cluster, false)
 	noInitialManagerAuth(t, ctx, cluster, nil)
-	states, err := observeCluster(cluster).OSDStates(ctx)
+	states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 	wantOSDs := 2
 	if noStorage {
 		wantOSDs = 0
 	}
-	if err != nil || len(states) != wantOSDs || len(clusteraccess.OSDs(t, cluster)) != wantOSDs || len(noInitialOSDNativeDump(t, ctx, cluster)) != wantOSDs {
+	if err != nil || len(states) != wantOSDs || len(clusteraccess.OSDs(t, cluster)) != wantOSDs || len(harness.NoInitialOSDNativeDump(t, ctx, cluster)) != wantOSDs {
 		t.Fatal("cold constructor changed selected storage inventory", err)
 	}
 	for _, state := range states {
@@ -85,7 +86,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	noInitialManagerResources(t, ctx, oracle, cluster, nil, "cold")
 	noInitialManagerHealth(t, ctx, cluster, "cold", false)
-	integrationHealthDetails(t, ctx, cluster, fsid, "cold-manager")
+	harness.IntegrationHealthDetails(t, ctx, cluster, fsid, "cold-manager")
 	var restoreHealthCondition, restoreHealthMute func()
 	if !noStorage {
 		restoreHealthCondition, restoreHealthMute = noInitialManagerHealthMutes(t, ctx, cluster, fsid)
@@ -103,7 +104,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		t.Fatal("canceled first manager changed owned state", err)
 	}
 	noInitialManagerAuth(t, ctx, cluster, nil)
-	client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(), ceph.WithIdleEntrypoint(), testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})))
+	client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), cluster.WithClient(), ceph.WithIdleEntrypoint(), testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})))
 	clientRemoved := false
 	if client != nil {
 		t.Cleanup(func() {
@@ -120,13 +121,13 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oracle.owned = append(oracle.owned, client.GetContainerID())
-	topologyExecOutput(t, ctx, client, "python3", "-c", noInitialManagerMonProbe, fsid, fmt.Sprint(wantOSDs))
+	oracle.Owned = append(oracle.Owned, client.GetContainerID())
+	harness.TopologyExecOutput(t, ctx, client, "python3", "-c", noInitialManagerMonProbe, fsid, fmt.Sprint(wantOSDs))
 	t.Logf("NO_INITIAL_MGR_AUTH fsid=%s osds=%d client_cid=%s", fsid, wantOSDs, client.GetContainerID())
 	nonce := uuid.NewString()
 	var originalPoolID int64
 	if !noStorage {
-		p, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
+		p, err := harness.PoolHandle(t, ctx, cluster, pool).Status(ctx)
 		if err != nil || p.ID <= 0 || p.Size != 2 || p.MinSize != 1 {
 			t.Fatal("initial pool before MGR lost native identity/defaults", err)
 		}
@@ -141,7 +142,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	if err != nil || manager == nil || manager.Container == nil || manager.DaemonName != "a" || clusteraccess.InitialManager(t, cluster) != manager.Container {
 		t.Fatal("first explicit manager lost initial-a ownership", err)
 	}
-	oracle.owned = append(oracle.owned, manager.GetContainerID())
+	oracle.Owned = append(oracle.Owned, manager.GetContainerID())
 	originalMGRCID := manager.GetContainerID()
 	ownedManagers := clusteraccess.Managers(t, cluster)
 	if len(ownedManagers) != 1 || ownedManagers[0] != manager {
@@ -151,7 +152,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	noInitialManagerAuth(t, ctx, cluster, []string{"mgr.a"})
 	managerLifecycleRBDReady(t, ctx, cluster)
 	if noStorage {
-		if len(clusteraccess.OSDs(t, cluster)) != 0 || len(noInitialOSDNativeDump(t, ctx, cluster)) != 0 {
+		if len(clusteraccess.OSDs(t, cluster)) != 0 || len(harness.NoInitialOSDNativeDump(t, ctx, cluster)) != 0 {
 			t.Fatal("first manager implicitly provisioned storage")
 		}
 		noInitialManagerResources(t, ctx, oracle, cluster, client, "manager-before-storage")
@@ -161,13 +162,13 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 			if err != nil || osd == nil || osd.Container == nil {
 				t.Fatal("late explicit OSD failed", err)
 			}
-			oracle.owned = append(oracle.owned, osd.GetContainerID())
+			oracle.Owned = append(oracle.Owned, osd.GetContainerID())
 		}
 		created, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados"})
 		if err != nil || created == nil || created.Replicas != 2 || created.MinSize != 1 {
 			t.Fatal("late pool lost prospective defaults", err)
 		}
-		p, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
+		p, err := harness.PoolHandle(t, ctx, cluster, pool).Status(ctx)
 		if err != nil || p.ID <= 0 || p.Size != 2 || p.MinSize != 1 {
 			t.Fatal("late pool native identity unavailable", err)
 		}
@@ -192,8 +193,8 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		})
 		restoreHealthMute()
 	}
-	topologyWait(t, healthCtx, func() bool { return noInitialManagerHealth(t, healthCtx, cluster, "after-provision", true) })
-	health := integrationHealthDetails(t, healthCtx, cluster, fsid, "recovered-manager")
+	harness.TopologyWait(t, healthCtx, func() bool { return noInitialManagerHealth(t, healthCtx, cluster, "after-provision", true) })
+	health := harness.IntegrationHealthDetails(t, healthCtx, cluster, fsid, "recovered-manager")
 	if health.Status != "HEALTH_OK" || len(health.Checks) != 0 || len(health.Mutes) != 0 {
 		t.Fatal("recovered health did not retain strict closure and mute restoration")
 	}
@@ -201,11 +202,11 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		noInitialManagerBytes(t, ctx, client, fsid, pool, nonce, "seed", "after-provision", originalPoolID)
 	}
 	noInitialManagerBytes(t, ctx, client, fsid, pool, nonce, "readback", "after-provision", originalPoolID)
-	p, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
+	p, err := harness.PoolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil || p.ID != originalPoolID || p.Size != 2 || p.MinSize != 1 {
 		t.Fatal("manager/storage addition replaced original pool", err)
 	}
-	q, err = observeCluster(cluster).QuorumStatus(ctx)
+	q, err = harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil || q.MonMap.FSID != fsid || cluster.GetContainerID() != originalMONCID || manager.GetContainerID() != originalMGRCID || clusteraccess.InitialManager(t, cluster) != manager.Container || noInitialManagerMap(t, ctx, cluster, true) != gid || customizers.Load() != 1 {
 		t.Fatal("provisioning replaced original MON/MGR identity", err)
 	}
@@ -213,7 +214,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		finalOSDCIDs = append(finalOSDCIDs, osd.GetContainerID())
 	}
-	finalStates, err := observeCluster(cluster).OSDStates(ctx)
+	finalStates, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 	if err != nil || len(finalStates) != 2 || !noStorage && (!slices.Equal(states, finalStates) || !slices.Equal(originalOSDCIDs, finalOSDCIDs)) {
 		t.Fatal("first management provisioning changed original storage", err)
 	}
@@ -222,7 +223,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 			t.Fatal("late storage is not up/in")
 		}
 	}
-	if err := managerHandle(t, ctx, cluster, "a").Remove(ctx); err == nil || !strings.Contains(err.Error(), "cannot remove the last manager") || noInitialManagerMap(t, ctx, cluster, true) != gid {
+	if err := harness.ManagerHandle(t, ctx, cluster, "a").Remove(ctx); err == nil || !strings.Contains(err.Error(), "cannot remove the last manager") || noInitialManagerMap(t, ctx, cluster, true) != gid {
 		t.Fatal("zero-initial option bypassed last-manager protection", err)
 	}
 	noInitialManagerResources(t, ctx, oracle, cluster, client, "after-provision")
@@ -235,17 +236,17 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	if err := cluster.Terminate(cleanup); err != nil {
 		t.Fatal(err)
 	}
-	for _, cid := range oracle.owned {
-		if _, err := oracle.client.ContainerInspect(cleanup, cid, mobycl.ContainerInspectOptions{}); !errdefs.IsNotFound(err) {
+	for _, cid := range oracle.Owned {
+		if _, err := oracle.Client.ContainerInspect(cleanup, cid, mobycl.ContainerInspectOptions{}); !errdefs.IsNotFound(err) {
 			t.Fatal("owned original container remains after cleanup", err)
 		}
 	}
-	for _, nid := range oracle.networks {
-		if _, err := oracle.client.NetworkInspect(cleanup, nid, mobycl.NetworkInspectOptions{}); !errdefs.IsNotFound(err) {
+	for _, nid := range oracle.Networks {
+		if _, err := oracle.Client.NetworkInspect(cleanup, nid, mobycl.NetworkInspectOptions{}); !errdefs.IsNotFound(err) {
 			t.Fatal("owned original bridge remains after cleanup", err)
 		}
 	}
-	t.Logf("NO_INITIAL_MGR_CLEANUP owned_containers=%d owned_networks=%d remaining=0", len(oracle.owned), len(oracle.networks))
+	t.Logf("NO_INITIAL_MGR_CLEANUP owned_containers=%d owned_networks=%d remaining=0", len(oracle.Owned), len(oracle.Networks))
 	t.Logf("NO_INITIAL_MGR_COMPLETE combined_zero=%t fsid=%s mgr_gid=%d pool_id=%d", noStorage, fsid, gid, originalPoolID)
 }
 
@@ -254,7 +255,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 // both the flag and mute are restored before the original strict closure.
 func noInitialManagerHealthMutes(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid string) (func(), func()) {
 	t.Helper()
-	flags, err := observeCluster(cluster).OSDFlags(ctx)
+	flags, err := harness.ObserveCluster(cluster).OSDFlags(ctx)
 	if err != nil || slices.Contains(flags, "noout") {
 		t.Fatal("fresh fixture has no exact unmodified noout baseline", err)
 	}
@@ -301,7 +302,7 @@ func noInitialManagerHealthMutes(t *testing.T, ctx context.Context, cluster *cep
 	})
 	// Mark the mutation before issuing it so an ambiguous reply still restores.
 	active = true
-	cephCommand(t, probe, cluster, "health", "mute", "OSDMAP_FLAGS", "20s")
+	harness.CephCommand(t, probe, cluster, "health", "mute", "OSDMAP_FLAGS", "20s")
 	noInitialManagerAwaitHealth(t, probe, cluster, fsid, "ttl-muted", func(snapshot ceph.HealthSnapshot) bool {
 		mute := noInitialManagerMute(snapshot, "OSDMAP_FLAGS")
 		check, present := snapshot.Checks["OSDMAP_FLAGS"]
@@ -314,7 +315,7 @@ func noInitialManagerHealthMutes(t *testing.T, ctx context.Context, cluster *cep
 		check, present := snapshot.Checks["OSDMAP_FLAGS"]
 		return present && !check.Muted && len(snapshot.Mutes) == 0
 	})
-	cephCommand(t, probe, cluster, "health", "mute", "OSDMAP_FLAGS", "--sticky")
+	harness.CephCommand(t, probe, cluster, "health", "mute", "OSDMAP_FLAGS", "--sticky")
 	noInitialManagerAwaitHealth(t, probe, cluster, fsid, "sticky-muted", func(snapshot ceph.HealthSnapshot) bool {
 		mute := noInitialManagerMute(snapshot, "OSDMAP_FLAGS")
 		check, present := snapshot.Checks["OSDMAP_FLAGS"]
@@ -328,8 +329,8 @@ func noInitialManagerHealthMutes(t *testing.T, ctx context.Context, cluster *cep
 
 func noInitialManagerAwaitHealth(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid, phase string, ready func(ceph.HealthSnapshot) bool) {
 	t.Helper()
-	topologyWait(t, ctx, func() bool {
-		snapshot := integrationHealthDetails(t, ctx, cluster, fsid, phase)
+	harness.TopologyWait(t, ctx, func() bool {
+		snapshot := harness.IntegrationHealthDetails(t, ctx, cluster, fsid, phase)
 		for code := range snapshot.Checks {
 			if code != "OSDMAP_FLAGS" && code != "MGR_DOWN" && code != "TOO_FEW_OSDS" && code != "PG_AVAILABILITY" && code != "PG_DEGRADED" && code != "POOL_NO_REDUNDANCY" {
 				t.Fatal("unexpected native health check during mute fixture", code)
@@ -350,7 +351,7 @@ func noInitialManagerMute(snapshot ceph.HealthSnapshot, code string) *ceph.Healt
 
 func noInitialManagerMap(t *testing.T, ctx context.Context, cluster *ceph.Container, active bool) uint64 {
 	t.Helper()
-	data := topologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--connect-timeout", "5", "mgr", "dump", "--format", "json")
+	data := harness.TopologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--connect-timeout", "5", "mgr", "dump", "--format", "json")
 	var status struct {
 		Available  *bool              `json:"available"`
 		ActiveName *string            `json:"active_name"`
@@ -401,7 +402,7 @@ func noInitialManagerAuth(t *testing.T, parent context.Context, cluster *ceph.Co
 
 func noInitialManagerHealth(t *testing.T, ctx context.Context, cluster *ceph.Container, phase string, wantOK bool) bool {
 	t.Helper()
-	data := topologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--connect-timeout", "5", "health", "detail", "--format", "json")
+	data := harness.TopologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--connect-timeout", "5", "health", "detail", "--format", "json")
 	t.Logf("NO_INITIAL_MGR_HEALTH phase=%s detail=%s", phase, data)
 	var health struct {
 		Status string                     `json:"status"`
@@ -411,7 +412,7 @@ func noInitialManagerHealth(t *testing.T, ctx context.Context, cluster *ceph.Con
 		t.Fatalf("native health schema/severity unavailable: %v", err)
 	}
 	for code, check := range health.Checks {
-		if code == "POOL_APP_NOT_ENABLED" && poolApplicationHealthLags(t, ctx, cluster, check) {
+		if code == "POOL_APP_NOT_ENABLED" && harness.PoolApplicationHealthLags(t, ctx, cluster, check) {
 			continue
 		}
 		if code != "MGR_DOWN" && code != "TOO_FEW_OSDS" && code != "PG_AVAILABILITY" && code != "PG_DEGRADED" && code != "POOL_NO_REDUNDANCY" {
@@ -435,7 +436,7 @@ func noInitialManagerHealth(t *testing.T, ctx context.Context, cluster *ceph.Con
 
 func noInitialManagerBytes(t *testing.T, ctx context.Context, client testcontainers.Container, fsid, pool, nonce, phase, stage string, poolID int64) {
 	t.Helper()
-	data := topologyExecOutput(t, ctx, client, "python3", "-c", noInitialOSDBytesProbe, fsid, pool, nonce, phase)
+	data := harness.TopologyExecOutput(t, ctx, client, "python3", "-c", harness.NoInitialOSDBytesProbe, fsid, pool, nonce, phase)
 	var result struct {
 		FSID, SHA256 string
 		Bytes        int
@@ -447,10 +448,10 @@ func noInitialManagerBytes(t *testing.T, ctx context.Context, client testcontain
 	t.Logf("NO_INITIAL_MGR_BYTES stage=%s phase=%s fsid=%s pool_id=%d bytes=%d sha256=%s client_cid=%s", stage, phase, fsid, poolID, result.Bytes, result.SHA256, client.GetContainerID())
 }
 
-func noInitialManagerResources(t *testing.T, ctx context.Context, o *noInitialOSDOracle, cluster *ceph.Container, client testcontainers.Container, phase string) {
+func noInitialManagerResources(t *testing.T, ctx context.Context, o *harness.NoInitialOSDOracle, cluster *ceph.Container, client testcontainers.Container, phase string) {
 	t.Helper()
-	info, err := o.client.Info(ctx, mobycl.InfoOptions{})
-	if err != nil || info.Info.ID != o.engine {
+	info, err := o.Client.Info(ctx, mobycl.InfoOptions{})
+	if err != nil || info.Info.ID != o.Engine {
 		t.Fatal("original native engine changed", err)
 	}
 	expected := map[string]string{cluster.GetContainerID(): "mon"}
@@ -469,21 +470,21 @@ func noInitialManagerResources(t *testing.T, ctx context.Context, o *noInitialOS
 	if client != nil {
 		add(client, "client")
 	}
-	mon, err := o.client.ContainerInspect(ctx, cluster.GetContainerID(), mobycl.ContainerInspectOptions{})
+	mon, err := o.Client.ContainerInspect(ctx, cluster.GetContainerID(), mobycl.ContainerInspectOptions{})
 	if err != nil || mon.Container.Config == nil || mon.Container.Config.Labels["org.testcontainers.sessionId"] == "" {
 		t.Fatal("original MON/session inspection unavailable", err)
 	}
 	session := mon.Container.Config.Labels["org.testcontainers.sessionId"]
-	listed, err := o.client.ContainerList(ctx, mobycl.ContainerListOptions{All: true})
+	listed, err := o.Client.ContainerList(ctx, mobycl.ContainerListOptions{All: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	seen, auxiliary := map[string]bool{}, 0
 	for _, item := range listed.Items {
-		if o.before[item.ID] {
+		if o.Before[item.ID] {
 			continue
 		}
-		fresh, err := o.client.ContainerInspect(ctx, item.ID, mobycl.ContainerInspectOptions{})
+		fresh, err := o.Client.ContainerInspect(ctx, item.ID, mobycl.ContainerInspectOptions{})
 		if err != nil || len(item.ID) != 64 || fresh.Container.ID != item.ID || fresh.Container.Config == nil || fresh.Container.State == nil {
 			t.Fatal("fresh fullCID construction inspection unavailable", err)
 		}
@@ -510,21 +511,21 @@ func noInitialManagerResources(t *testing.T, ctx context.Context, o *noInitialOS
 			t.Fatal("owned role entrypoint changed", role)
 		}
 		seen[item.ID] = true
-		if !slices.Contains(o.owned, item.ID) {
-			o.owned = append(o.owned, item.ID)
+		if !slices.Contains(o.Owned, item.ID) {
+			o.Owned = append(o.Owned, item.ID)
 		}
 	}
 	if len(seen) != len(expected) {
 		t.Fatal("construction lost an original owned container")
 	}
-	if len(o.networks) == 0 && !staticFacts(cluster).UsesHostNetwork {
-		network, err := o.client.NetworkInspect(ctx, staticFacts(cluster).NetworkName, mobycl.NetworkInspectOptions{})
-		if err != nil || network.Network.ID == "" || network.Network.Name != staticFacts(cluster).NetworkName {
+	if len(o.Networks) == 0 && !harness.StaticFacts(cluster).UsesHostNetwork {
+		network, err := o.Client.NetworkInspect(ctx, harness.StaticFacts(cluster).NetworkName, mobycl.NetworkInspectOptions{})
+		if err != nil || network.Network.ID == "" || network.Network.Name != harness.StaticFacts(cluster).NetworkName {
 			t.Fatal("original owned bridge identity unavailable", err)
 		}
-		o.networks = append(o.networks, network.Network.ID)
+		o.Networks = append(o.Networks, network.Network.ID)
 	}
-	t.Logf("NO_INITIAL_MGR_RESOURCES phase=%s engine=%s session=%s owned=%d auxiliary=%d mon_cid=%s", phase, o.engine, session, len(expected), auxiliary, cluster.GetContainerID())
+	t.Logf("NO_INITIAL_MGR_RESOURCES phase=%s engine=%s session=%s owned=%d auxiliary=%d mon_cid=%s", phase, o.Engine, session, len(expected), auxiliary, cluster.GetContainerID())
 }
 
 const noInitialManagerMonProbe = `import json, rados, sys

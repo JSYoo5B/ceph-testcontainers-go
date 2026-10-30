@@ -18,6 +18,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
@@ -80,8 +81,8 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 	}
 	t.Logf("OSD_CPU_CONTROLLER euid=%d engine=%s arch=%s ncpu=%d", os.Geteuid(), info.Info.ServerVersion, runtime.GOARCH, info.Info.NCPU)
 
-	image, opts := integrationImages(t)
-	cluster, client := newServiceClusterWithOptions(t, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
+	image, opts := harness.IntegrationImages(t)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
 	if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +139,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 	if err != nil {
 		t.Skipf("eligibility incomplete before any mutation: %v", err)
 	}
-	t.Log(target.receipt())
+	t.Log(target.Receipt())
 	unlimited, err := target.read(inspect, time.Now)
 	if err != nil {
 		t.Fatalf("creation-state witness: %v", err)
@@ -259,7 +260,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 		} else {
 			v.PGState, v.ActingPrimary, v.PGRead = snap.PGs[0].State, snap.PGs[0].ActingPrimary, true
 		}
-		if h, err := cluster.HealthDetails(c); err != nil {
+		if h, err := harness.ObserveCluster(cluster).HealthDetails(c); err != nil {
 			v.Errs = append(v.Errs, "health unreadable")
 		} else {
 			v.HealthCodes, v.HealthRead = []string{}, true
@@ -325,7 +326,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 		case outcome.result.ExitCode != 0 || !outcome.result.Complete():
 			w.LoadErr = "workload exit or incomplete output"
 		default:
-			if report, err := parseOSDCPULoadReport([]byte(lastJSONLine(string(outcome.result.Stdout)))); err != nil {
+			if report, err := parseOSDCPULoadReport([]byte(harness.LastJSONLine(string(outcome.result.Stdout)))); err != nil {
 				w.LoadErr = err.Error()
 			} else {
 				w.Load = &report
@@ -423,7 +424,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 	// Close the writer and the data oracle: every acknowledged object must read
 	// back byte for byte from an independent client, and unknown outcomes are
 	// inspected, never replayed.
-	execCommand(t, ctx, client, "touch", stopFile)
+	harness.ExecCommand(t, ctx, client, "touch", stopFile)
 	select {
 	case outcome := <-actor.done:
 		actorDone = true
@@ -446,7 +447,7 @@ func TestOSDCPUPressureSlowLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	read, err := cluster.RunNativeCommand(ctx, toolkitContainer(t, cluster), secondFaultCommand("cpu independent read", 3*time.Minute, "read", osdCPUPool, string(encodedNames)))
+	read, err := cluster.RunNativeCommand(ctx, harness.ToolkitContainer(t, cluster), secondFaultCommand("cpu independent read", 3*time.Minute, "read", osdCPUPool, string(encodedNames)))
 	if err != nil || read.ExitCode != 0 || !read.Complete() {
 		t.Fatalf("independent read of the writer's objects: exit %d: %v: %.2048s", read.ExitCode, err, read.Stderr)
 	}

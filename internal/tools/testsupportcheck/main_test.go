@@ -202,3 +202,48 @@ func TestManifestIsStrict(t *testing.T) {
 		}
 	}
 }
+
+// withHarness adds a harness package: integration test code in non-test
+// files, built only under the extra tag, importing a test-only helper and
+// imported by a test file.
+func withHarness(f map[string]string) {
+	f["kit/kit.go"] = "//go:build extra\n\npackage kit\n\nimport \"example.test/fixture/helper\"\n\nfunc Cluster() any { return helper.TestCluster() }\n"
+	f["consumer/kit_test.go"] = "//go:build extra\n\npackage consumer\n\nimport (\n\t\"testing\"\n\n\t\"example.test/fixture/kit\"\n)\n\nfunc TestKit(t *testing.T) { _ = kit.Cluster() }\n"
+	f["manifest.json"] = strings.Replace(f["manifest.json"], `"test_only_packages": ["helper"],`,
+		`"test_only_packages": ["helper", "kit"],
+  "harness_packages": ["kit"],`, 1)
+}
+
+func TestHarnessBuiltUnderSomeTagsPasses(t *testing.T) {
+	if problems := run(t, variant(withHarness)); len(problems) != 0 {
+		t.Fatalf("problems %q", problems)
+	}
+}
+
+func TestHarnessTestFunctionFails(t *testing.T) {
+	problems := run(t, variant(func(f map[string]string) {
+		withHarness(f)
+		f["kit/kit.go"] += "\nfunc TestNeverRuns() {}\n"
+	}))
+	requireProblem(t, problems, "kit/kit.go", "TestNeverRuns")
+}
+
+func TestHarnessNeverBuiltFails(t *testing.T) {
+	problems := run(t, variant(func(f map[string]string) {
+		withHarness(f)
+		f["kit/kit.go"] = strings.Replace(f["kit/kit.go"], "//go:build extra", "//go:build never", 1)
+		f["consumer/kit_test.go"] = strings.Replace(f["consumer/kit_test.go"], "//go:build extra", "//go:build never", 1)
+	}))
+	requireProblem(t, problems, "kit", "no selected file in any tag set")
+}
+
+func TestHarnessOutsideTestOnlyPackagesIsRefused(t *testing.T) {
+	files := variant(func(f map[string]string) {
+		withHarness(f)
+		f["manifest.json"] = strings.Replace(f["manifest.json"], `["helper", "kit"]`, `["helper"]`, 1)
+	})
+	root := write(t, files)
+	if _, err := Check(root, filepath.Join(root, "manifest.json"), []string{"", "extra"}); err == nil {
+		t.Fatal("want an error for a harness package that is not test-only")
+	}
+}

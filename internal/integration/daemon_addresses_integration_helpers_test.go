@@ -11,6 +11,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -20,11 +21,11 @@ func testDaemonAddresses(t *testing.T, opts ...testcontainers.ContainerCustomize
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	opts = append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(2).WithManagerCount(2).WithOSDCount(1).WithPoolDefaults(1, 1))}, opts...)
-	cluster, client := newServiceCluster(t, opts...)
+	cluster, client := harness.NewServiceCluster(t, opts...)
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	addresses, err := observeCluster(cluster).DaemonAddresses(ctx)
+	addresses, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,8 +33,8 @@ func testDaemonAddresses(t *testing.T, opts ...testcontainers.ContainerCustomize
 	// Each advertised address names the daemon's own container, or the
 	// advertised host address in host mode.
 	expectedIP := func(ctr testcontainers.Container) string {
-		if staticFacts(cluster).UsesHostNetwork {
-			return staticFacts(cluster).PublicAddress
+		if harness.StaticFacts(cluster).UsesHostNetwork {
+			return harness.StaticFacts(cluster).PublicAddress
 		}
 		ip, err := ctr.ContainerIP(ctx)
 		if err != nil {
@@ -84,11 +85,11 @@ func testDaemonAddresses(t *testing.T, opts ...testcontainers.ContainerCustomize
 	// and writes through the OSD at the address it learns from the OSDMap.
 	second := addresses.Monitors[1]
 	v2 := second.Addrs[slices.IndexFunc(second.Addrs, func(entry ceph.EntityAddress) bool { return entry.Type == "v2" })]
-	execCommand(t, ctx, client, "ceph", "-m", "v2:"+v2.Addr, "--connect-timeout", "10", "mon", "stat")
+	harness.ExecCommand(t, ctx, client, "ceph", "-m", "v2:"+v2.Addr, "--connect-timeout", "10", "mon", "stat")
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-addresses", Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	execCommand(t, ctx, client, "sh", "-c", "head -c 4096 /dev/urandom > /tmp/object && rados -p tc-addresses put probe /tmp/object && rados -p tc-addresses stat probe")
+	harness.ExecCommand(t, ctx, client, "sh", "-c", "head -c 4096 /dev/urandom > /tmp/object && rados -p tc-addresses put probe /tmp/object && rados -p tc-addresses stat probe")
 
 	// Failing the active MGR advertises the standby at its own address.
 	previous := active.Name
@@ -97,7 +98,7 @@ func testDaemonAddresses(t *testing.T, opts ...testcontainers.ContainerCustomize
 	}
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		addresses, err = observeCluster(cluster).DaemonAddresses(ctx)
+		addresses, err = harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 		if err == nil && addresses.ActiveManager != nil && addresses.ActiveManager.Name != previous && addresses.ManagerAvailable {
 			break
 		}

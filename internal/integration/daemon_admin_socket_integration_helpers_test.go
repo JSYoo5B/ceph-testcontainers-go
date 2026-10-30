@@ -16,6 +16,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -25,18 +26,18 @@ import (
 func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1))}, opts...)...)
+	cluster, _ := harness.NewServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1))}, opts...)...)
 
 	for _, daemon := range []string{"mon.a", "mgr.a", "osd.0"} {
-		out, err := adminSocket(t, ctx, cluster, daemon, "version")
+		out, err := harness.AdminSocket(t, ctx, cluster, daemon, "version")
 		var version struct {
 			Version string `json:"version"`
 		}
-		if err != nil || json.Unmarshal(out, &version) != nil || !strings.HasPrefix(version.Version, staticFacts(cluster).CephVersion) {
-			t.Fatalf("%s admin socket version %q, err=%v, cluster release %s", daemon, out, err, staticFacts(cluster).CephVersion)
+		if err != nil || json.Unmarshal(out, &version) != nil || !strings.HasPrefix(version.Version, harness.StaticFacts(cluster).CephVersion) {
+			t.Fatalf("%s admin socket version %q, err=%v, cluster release %s", daemon, out, err, harness.StaticFacts(cluster).CephVersion)
 		}
 	}
-	out, err := monitorHandle(t, ctx, cluster, "a").AdminSocket(ctx, "mon_status")
+	out, err := harness.MonitorHandle(t, ctx, cluster, "a").AdminSocket(ctx, "mon_status")
 	var monStatus struct {
 		Name  string `json:"name"`
 		State string `json:"state"`
@@ -99,7 +100,7 @@ func testDaemonAdminSocket(t *testing.T, opts ...testcontainers.ContainerCustomi
 	if err := osd.Stop(ctx, &stop); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "status"); err == nil {
+	if _, err := harness.OSDHandle(t, ctx, cluster, 0).AdminSocket(ctx, "status"); err == nil {
 		t.Fatal("a stopped OSD answered its admin socket")
 	}
 	if err := osd.Start(ctx); err != nil {
@@ -132,7 +133,7 @@ func waitAdminSocketOSDEpoch(t *testing.T, ctx context.Context, cluster *ceph.Co
 	defer cancel()
 	var last string
 	for {
-		out, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "status")
+		out, err := harness.OSDHandle(t, ctx, cluster, 0).AdminSocket(ctx, "status")
 		var status struct {
 			State     string `json:"state"`
 			NewestMap string `json:"newest_map"`
@@ -175,7 +176,7 @@ func startAdminSocketCall(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	t.Cleanup(cancel)
 	call := &adminSocketCall{cancel: cancel, done: make(chan error, 1)}
 	// Resolve the handle in the test goroutine, before the call can be canceled.
-	osd := osdHandle(t, ctx, cluster, 0)
+	osd := harness.OSDHandle(t, ctx, cluster, 0)
 	go func() {
 		_, err := osd.AdminSocket(callCtx, "status")
 		call.done <- err
@@ -236,7 +237,7 @@ func cancelAdminSocketCallAfter(t *testing.T, ctx context.Context, cluster *ceph
 	defer cancel()
 	// Resolve the handle with the parent context: callCtx may be canceled
 	// before the goroutine runs, and a fatal helper must not run in it.
-	osd := osdHandle(t, ctx, cluster, 0)
+	osd := harness.OSDHandle(t, ctx, cluster, 0)
 	done := make(chan error, 1)
 	go func() {
 		_, err := osd.AdminSocket(callCtx, "status")

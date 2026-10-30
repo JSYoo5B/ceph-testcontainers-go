@@ -15,6 +15,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 const (
@@ -37,7 +38,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	for i, host := range hosts {
 		layout = append(layout, ceph.OSDConfig{Host: host, Rack: "rack-" + string(rune('a'+i)), Root: "tc-storage", DeviceClass: "fast"})
 	}
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2)), ceph.WithStartupTimeout(3*time.Minute),
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2)), ceph.WithStartupTimeout(3*time.Minute),
 		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(layout...).WithPoolDefaults(3, 2).WithDefaultCRUSHRoot("tc-storage")))
 	for _, pg := range []struct {
 		name string
@@ -71,7 +72,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	if len(osds) != 3 || len(clusteraccess.Monitors(t, cluster)) != 3 || len(clusteraccess.Managers(t, cluster)) != 2 {
 		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(clusteraccess.Monitors(t, cluster)), len(clusteraccess.Managers(t, cluster)))
 	}
-	states, err := observeCluster(cluster).OSDStates(ctx)
+	states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 	if err != nil || len(states) != 3 {
 		t.Fatalf("initial OSD identities: %v %+v", err, states)
 	}
@@ -105,7 +106,7 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		Names  []string `json:"quorum_names"`
 	}
 	outageJSON(t, ctx, cluster, &quorum, "quorum_status")
-	managerBefore, err := observeCluster(cluster).ManagerStatus(ctx)
+	managerBefore, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil || !managerBefore.Available || len(managerBefore.Standbys) != 1 || len(quorum.Names) != 3 {
 		t.Fatalf("initial MON/MGR identities: %+v %+v %v", quorum, managerBefore, err)
 	}
@@ -206,14 +207,14 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 		defer stop()
 		outageFinish(cleanup, plan, t.Logf, t.Errorf)
 	})
-	version := staticFacts(cluster).CephVersion
-	platform := strings.TrimSpace(string(topologyExecOutput(t, ctx, client, "uname", "-sm")))
+	version := harness.StaticFacts(cluster).CephVersion
+	platform := strings.TrimSpace(string(harness.TopologyExecOutput(t, ctx, client, "uname", "-sm")))
 	manifestJSON, _ := json.Marshal(manifest)
 	t.Logf("CORRELATED_OUTAGE_MANIFEST ceph=%s platform=%s essential_image=%s client_image=%s plan=osd.%s,mgr.%s,mon.%s election_leader=%s election_epoch=%d active_mgr_gid=%d manifest=%s",
-		version, platform, imageID(t, ctx, cluster.Container), imageID(t, ctx, client), osdA.Name, mgrA.Name, monA.Name, quorum.Leader, quorum.Epoch, managerBefore.ActiveGID, manifestJSON)
+		version, platform, harness.ImageID(t, ctx, cluster.Container), harness.ImageID(t, ctx, client), osdA.Name, mgrA.Name, monA.Name, quorum.Leader, quorum.Epoch, managerBefore.ActiveGID, manifestJSON)
 
 	// Baseline: seed the placement pool, then run the retained client.
-	execCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, outageBaselinePool, "seed")
+	harness.ExecCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, outageBaselinePool, "seed")
 	run := "r" + strconv.FormatInt(time.Now().Unix(), 10)
 	outageToken(t, ctx, cluster, client, outageLedgerPool, run, outagePhaseBaseline)
 	actor := startNative(ctx, cluster, client, outageCommand(outageLedgerPool, run, "actor"))
@@ -295,13 +296,13 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 			}
 		}
 		if !observed["mgr"] {
-			if m, err := observeCluster(cluster).ManagerStatus(ctx); err == nil && m.Available && m.ActiveName == standbyName && m.ActiveGID != managerBefore.ActiveGID {
+			if m, err := harness.ObserveCluster(cluster).ManagerStatus(ctx); err == nil && m.Available && m.ActiveName == standbyName && m.ActiveGID != managerBefore.ActiveGID {
 				observed["mgr"], managerDuring = true, m
 				plan.Observe("mgr", mgrA.Name)
 			}
 		}
 		if !observed["osd"] {
-			if current, err := observeCluster(cluster).OSDStates(ctx); err == nil {
+			if current, err := harness.ObserveCluster(cluster).OSDStates(ctx); err == nil {
 				for _, state := range current {
 					if state.ID == osdAID && !state.Up && state.In {
 						observed["osd"] = true
@@ -330,10 +331,10 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	if err := plan.Restore(ctx, "primary"); err != nil {
 		t.Fatal(err)
 	}
-	topologyWait(t, ctx, func() bool {
-		q, qerr := observeCluster(cluster).QuorumStatus(ctx)
-		m, merr := observeCluster(cluster).ManagerStatus(ctx)
-		s, serr := observeCluster(cluster).OSDStates(ctx)
+	harness.TopologyWait(t, ctx, func() bool {
+		q, qerr := harness.ObserveCluster(cluster).QuorumStatus(ctx)
+		m, merr := harness.ObserveCluster(cluster).ManagerStatus(ctx)
+		s, serr := harness.ObserveCluster(cluster).OSDStates(ctx)
 		return qerr == nil && merr == nil && serr == nil && len(q.QuorumNames) == 3 && m.Available && len(m.Standbys) == 1 &&
 			slices.EqualFunc(states, s, func(a, b ceph.OSDState) bool { return a.ID == b.ID && a.UUID == b.UUID && b.Up && b.In })
 	})
@@ -382,8 +383,8 @@ func TestCorrelatedLogicalHostOutageLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	execCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, outageBaselinePool, "outage")
-	execCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, outageBaselinePool, "verify")
+	harness.ExecCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, outageBaselinePool, "outage")
+	harness.ExecCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, outageBaselinePool, "verify")
 	tally := outageTally(ops)
 	if tally[outagePhaseOutage+"/acked"] < 3 || tally[outagePhaseBaseline+"/acked"] < 3 {
 		t.Fatalf("tally %v", tally)

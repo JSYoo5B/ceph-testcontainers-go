@@ -24,8 +24,6 @@ READ_DOC_FILES = frozenset((
     "docs/guides/messenger-client-fixtures.md",
     # tag_scenarios tests compare its registered tags with the tag registry.
     "docs/guides/bug-compatibility.md",
-    # internal/tools/testdoublecheck reads the test-double inventory.
-    "docs/contributing/test-double-inventory.md",
     # The API catalogue receipts name these notes as their review;
     # internal/apiinventory checks that they exist.
     "docs/contributing/api-naming.md",

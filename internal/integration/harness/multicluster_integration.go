@@ -1,0 +1,204 @@
+//go:build all || (integration && multicluster)
+
+package harness
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"testing"
+	"time"
+
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/testcontainers/testcontainers-go"
+	tcexec "github.com/testcontainers/testcontainers-go/exec"
+	"github.com/testcontainers/testcontainers-go/wait"
+)
+
+// Both clusters own separate MON/MGR/OSDs, FSIDs and credentials. Bridge-mode
+// clusters have separate networks; host-mode clusters share the host namespace.
+// Federation links own the
+// additional networking needed by mirror daemons and CephFS MGR peer validation. A client's FSID and credentials are
+// checked so copying cannot succeed by accidentally reading the source's pool.
+func NewMultiClusterPair(t *testing.T, customizers ...testcontainers.ContainerCustomizer) (*ceph.Container, *ceph.Container, testcontainers.Container, testcontainers.Container) {
+	t.Helper()
+	return NewMultiClusterPairWithContext(t, t.Context(), customizers...)
+}
+
+func NewMultiClusterPairWithContext(t *testing.T, ctx context.Context, customizers ...testcontainers.ContainerCustomizer) (*ceph.Container, *ceph.Container, testcontainers.Container, testcontainers.Container) {
+	t.Helper()
+	image, opts := IntegrationImages(t)
+	opts = append(opts, customizers...)
+	clusters := make([]*ceph.Container, 2)
+	for i := range clusters {
+		cluster, err := ceph.Run(ctx, image, opts...)
+		if cluster != nil {
+			t.Cleanup(func() {
+				if t.Failed() {
+					// The current MONs and MGRs too: after a MON replacement the
+					// first MON is gone, and MGR modules serve mirror commands.
+					ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.ControlContainer(t, cluster)}, cluster.ServiceContainers()...)
+					for _, monitor := range clusteraccess.Monitors(t, cluster) {
+						if monitor != nil && monitor.Container != nil {
+							ctrs = append(ctrs, monitor.Container)
+						}
+					}
+					ctrs = append(ctrs, OSDContainers(t, cluster)...)
+					ctrs = append(ctrs, clusteraccess.InitialManager(t, cluster))
+					for _, mgr := range clusteraccess.Managers(t, cluster) {
+						if mgr != nil && mgr.Container != nil {
+							ctrs = append(ctrs, mgr.Container)
+						}
+					}
+					seen := make(map[string]bool)
+					for _, ctr := range ctrs {
+						if ctr == nil || seen[ctr.GetContainerID()] {
+							continue
+						}
+						seen[ctr.GetContainerID()] = true
+						logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
+						MultiClusterLogContainer(t, logCtx, ctr)
+						logCancel()
+					}
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+				defer cancel()
+				if err := cluster.Terminate(ctx); err != nil {
+					t.Errorf("terminate multicluster fixture: %v", err)
+				}
+			})
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		clusters[i] = cluster
+	}
+	source, destination := clusters[0], clusters[1]
+	a, err := ObserveCluster(source).Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ObserveCluster(destination).Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedIsolatedNetwork := StaticFacts(source).NetworkName == StaticFacts(destination).NetworkName && !(StaticFacts(source).UsesHostNetwork && StaticFacts(destination).UsesHostNetwork)
+	if a.FSID == "" || b.FSID == "" || a.FSID == b.FSID || sharedIsolatedNetwork {
+		t.Fatal("source and destination are not independent Ceph clusters")
+	}
+	t.Logf("independent clusters: source FSID=%s OSDs=%d; destination FSID=%s OSDs=%d", a.FSID, a.OSDMap.NumOSDs, b.FSID, b.OSDMap.NumOSDs)
+	clients := make([]testcontainers.Container, 2)
+	for i, cluster := range clusters {
+		client, err := testcontainers.Run(ctx, NativeClientImage(t, image), cluster.WithClient(),
+			ceph.WithIdleEntrypoint(),
+			testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
+		)
+		if client != nil {
+			CleanupMultiClusterContainer(t, client)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		clients[i] = client
+		var status ceph.Status
+		if err := json.Unmarshal(MultiClusterExecOutput(t, ctx, client, "ceph", "status", "--format", "json"), &status); err != nil {
+			t.Fatal(err)
+		}
+		expected := []string{a.FSID, b.FSID}[i]
+		if status.FSID != expected {
+			t.Fatalf("client %d connected to FSID %s instead of %s", i, status.FSID, expected)
+		}
+	}
+	if bytes.Equal(MultiClusterReadFile(t, ctx, clients[0], "/etc/ceph/ceph.client.admin.keyring"),
+		MultiClusterReadFile(t, ctx, clients[1], "/etc/ceph/ceph.client.admin.keyring")) {
+		t.Fatal("independent clusters unexpectedly share admin credentials")
+	}
+	return source, destination, clients[0], clients[1]
+}
+
+func CleanupMultiClusterContainer(t *testing.T, ctr testcontainers.Container) {
+	t.Helper()
+	t.Cleanup(func() {
+		if t.Failed() {
+			logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			MultiClusterLogContainer(t, logCtx, ctr)
+			logCancel()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := ctr.Terminate(ctx); err != nil {
+			t.Errorf("terminate multicluster client/daemon: %v", err)
+		}
+	})
+}
+
+func MultiClusterLogContainer(t *testing.T, ctx context.Context, ctr testcontainers.Container) {
+	t.Helper()
+	if ctr == nil {
+		return
+	}
+	if state, err := ctr.State(ctx); err == nil && state != nil {
+		t.Logf("container %s state: status=%s exit=%d oom=%t started=%s finished=%s", ctr.GetContainerID(), state.Status, state.ExitCode, state.OOMKilled, state.StartedAt, state.FinishedAt)
+	}
+	logs, err := ctr.Logs(ctx)
+	if err != nil {
+		return
+	}
+	data, _ := io.ReadAll(logs)
+	_ = logs.Close()
+	if len(data) > 8000 {
+		data = data[len(data)-8000:]
+	}
+	t.Logf("container %s logs:\n%s", ctr.GetContainerID(), data)
+}
+
+func MultiClusterExecOutput(t *testing.T, ctx context.Context, ctr testcontainers.Container, args ...string) []byte {
+	t.Helper()
+	code, reader, err := ctr.Exec(ctx, args, tcexec.Multiplexed())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 {
+		t.Fatalf("%s exited %d: %s", args[0], code, data)
+	}
+	return data
+}
+
+func MultiClusterReadFile(t *testing.T, ctx context.Context, ctr testcontainers.Container, path string) []byte {
+	t.Helper()
+	reader, err := ctr.CopyFileFromContainer(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// Stop source data/control daemons without removing its network, which is still
+// attached to multicluster link resources. The isolated MGR may remain
+// running, but no source MON, OSD, MDS or RGW can serve or replicate data.
+func StopMultiClusterSource(t *testing.T, ctx context.Context, source *ceph.Container) {
+	t.Helper()
+	ctrs := append(source.ServiceContainers(), OSDContainers(t, source)...)
+	ctrs = append(ctrs, source.Container)
+	for _, ctr := range ctrs {
+		timeout := 3 * time.Second
+		if err := ctr.Stop(ctx, &timeout); err != nil {
+			t.Fatal(err)
+		}
+		if ctr.IsRunning() {
+			t.Fatalf("source container %s still running after Stop", ctr.GetContainerID())
+		}
+	}
+	t.Log("source MON/OSDs and optional MDS/RGW stopped; destination reads must use its own data")
+}

@@ -2,7 +2,11 @@
   "test_only_packages": [
     "internal/clusteraccess",
     "internal/clustertest",
+    "internal/integration/harness",
     "internal/testhelper"
+  ],
+  "harness_packages": [
+    "internal/integration/harness"
   ],
   "seam_selector": "internal/hookreg.Test",
   "seam_files": [

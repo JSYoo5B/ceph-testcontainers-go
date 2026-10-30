@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -640,8 +641,8 @@ func collectAuthFirstFailureBundle(parent context.Context, cluster authSources, 
 func testAuthFirstFailureBundle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
-	cluster, client := newServiceClusterWithOptions(t, image, append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithNoInitialOSDs()))...)
+	image, roles := harness.IntegrationImages(t)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithNoInitialOSDs()))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	before, err := cluster.Ceph(ctx, "mon", "dump", "--format", "json")
 	if err != nil {
@@ -676,7 +677,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		}
 		deadline := time.Now().Add(time.Minute)
 		for {
-			out, err := monitorHandle(t, ctx, cluster, name).AdminSocket(ctx, "mon_status")
+			out, err := harness.MonitorHandle(t, ctx, cluster, name).AdminSocket(ctx, "mon_status")
 			if err == nil {
 				if observed, err := parseMonStatusObservation(out); err == nil && observed.MonmapEpoch > monmap.Epoch {
 					break
@@ -689,10 +690,10 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		}
 	}
 	// A command that the MON does not know is classified as unsupported.
-	if _, err := monitorHandle(t, ctx, cluster, monitors[0]).AdminSocket(ctx, "quorum_status"); err == nil || authQueryStatus(err) != authQueryUnsupported {
+	if _, err := harness.MonitorHandle(t, ctx, cluster, monitors[0]).AdminSocket(ctx, "quorum_status"); err == nil || authQueryStatus(err) != authQueryUnsupported {
 		t.Fatalf("an unknown admin socket command gave %v, status %s", err, authQueryStatus(err))
 	}
-	status, err := observeCluster(cluster).ManagerStatus(ctx)
+	status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil || !status.Available {
 		t.Fatalf("no active MGR: %+v, %v", status, err)
 	}
@@ -737,7 +738,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		Binding: authExcerptBinding{Daemon: "client.admin", Generation: "container " + client.GetContainerID() + " started " + clientState.StartedAt,
 			Capture: authRejectionOperation(rejection) + "/stderr/" + attempted.Format(time.RFC3339Nano)},
 		Start: attempted, End: ended, Stderr: tested.Stderr, StderrComplete: tested.Complete(),
-	}, newAuthExcerptRedactor(ctx, withSockets(t, cluster), authExcerptRedactionBudget), authFailureExcerptLimit)
+	}, newAuthExcerptRedactor(ctx, harness.WithSockets(t, cluster), authExcerptRedactionBudget), authFailureExcerptLimit)
 	excerpts := newAuthExcerptLedger()
 	if first, err := excerpts.record(firstExcerpt); err != nil || !first {
 		t.Fatalf("first excerpt not recorded: %v", err)
@@ -760,7 +761,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	collect := func(budget time.Duration, controlOutput int) authFirstFailureBundle {
-		collected := collectAuthFirstFailureBundle(ctx, withSockets(t, cluster), client, provenance, map[string]string{"control": image}, expected, rejection, nil, nil, budget, 15*time.Second, controlOutput)
+		collected := collectAuthFirstFailureBundle(ctx, harness.WithSockets(t, cluster), client, provenance, map[string]string{"control": image}, expected, rejection, nil, nil, budget, 15*time.Second, controlOutput)
 		attached := firstRecord
 		collected.FirstExcerpt = &attached
 		return collected
@@ -820,7 +821,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		}
 	}
 	// The controls ran under the supervisor; none may have left a marker.
-	if code, out, err := sessionExec(ctx, client, "sh", "-c", "ls -A /tmp/tc-supervised 2>/dev/null"); err != nil || strings.TrimSpace(out) != "" {
+	if code, out, err := harness.SessionExec(ctx, client, "sh", "-c", "ls -A /tmp/tc-supervised 2>/dev/null"); err != nil || strings.TrimSpace(out) != "" {
 		t.Fatalf("supervisor markers remain: %d %q %v", code, out, err)
 	}
 	t.Logf("AUTH_FIRST_FAILURE_BUNDLE wiped=%t verdict %+v\n%s", wiped, verdict, data)

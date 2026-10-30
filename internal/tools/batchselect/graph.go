@@ -13,7 +13,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -122,7 +124,7 @@ func realPath(path string) (string, error) {
 	return filepath.EvalSymlinks(abs)
 }
 
-// node is one top-level declaration of the analysed package.
+// node is one top-level declaration of an analysed package.
 type node struct {
 	*decl
 	file string
@@ -141,21 +143,41 @@ type graph struct {
 	imports map[string][]string
 }
 
-// load type-checks the test package of pattern under tags and builds its
-// declaration reference graph.
-func load(root, pattern, tags, goos, goarch string) (*graph, error) {
+// load type-checks the test package of pattern under tags, with the
+// non-test packages of the with directories from source, and builds the
+// declaration reference graph of all of them.
+func load(root, pattern string, with []string, tags, goos, goarch string) (*graph, error) {
 	env := goEnv(goos, goarch)
 	target, err := testPackage(root, env, pattern, tags)
 	if err != nil {
 		return nil, err
 	}
-	imports := []string{}
-	for _, path := range target.Imports {
-		if strings.Contains(path, " [") {
-			return nil, fmt.Errorf("the test package imports the test variant %s", path)
+	var companions []listedPackage
+	for _, dir := range with {
+		listed, err := goList(root, env, "-tags="+tags, "./"+dir)
+		if err != nil {
+			return nil, err
 		}
-		if path != "unsafe" && path != "C" {
-			imports = append(imports, path)
+		if len(listed) != 1 {
+			return nil, fmt.Errorf("go list found %d packages in %s", len(listed), dir)
+		}
+		if listed[0].Error != nil && strings.Contains(listed[0].Error.Err, "build constraints exclude all Go files") {
+			continue
+		}
+		if err := listError(listed[0]); err != nil {
+			return nil, err
+		}
+		companions = append(companions, listed[0])
+	}
+	imports := []string{}
+	for _, p := range append([]listedPackage{target}, companions...) {
+		for _, path := range p.Imports {
+			if strings.Contains(path, " [") {
+				return nil, fmt.Errorf("the test package imports the test variant %s", path)
+			}
+			if path != "unsafe" && path != "C" {
+				imports = append(imports, path)
+			}
 		}
 	}
 	exports := map[string]string{}
@@ -174,41 +196,47 @@ func load(root, pattern, tags, goos, goarch string) (*graph, error) {
 	fset := token.NewFileSet()
 	g := &graph{fset: fset, files: map[string]*outline{}, fileNodes: map[string][]int{}, keys: map[string][]int{},
 		imports: map[string][]string{}}
-	var files []*ast.File
 	absRoot, err := realPath(root)
 	if err != nil {
 		return nil, err
 	}
-	dir, err := realPath(target.Dir)
-	if err != nil {
-		return nil, err
-	}
-	for _, name := range target.GoFiles {
-		path := filepath.Join(dir, name)
-		src, err := os.ReadFile(path)
+	// parse adds the files of one package to the graph. A declaration key
+	// is qualified by its package, so names of different packages differ.
+	parse := func(p listedPackage) ([]*ast.File, error) {
+		dir, err := realPath(p.Dir)
 		if err != nil {
 			return nil, err
 		}
-		f, err := parser.ParseFile(fset, path, src, parser.ParseComments|parser.SkipObjectResolution)
-		if err != nil {
-			return nil, err
-		}
-		rel, err := filepath.Rel(absRoot, path)
-		if err != nil {
-			return nil, err
-		}
-		rel = filepath.ToSlash(rel)
-		o := newOutline(fset, f, src)
-		g.files[rel] = o
-		g.imports[rel] = o.imports
-		for _, d := range o.decls {
-			g.fileNodes[rel] = append(g.fileNodes[rel], len(g.nodes))
-			for _, key := range d.keys {
-				g.keys[key] = append(g.keys[key], len(g.nodes))
+		var files []*ast.File
+		for _, name := range p.GoFiles {
+			path := filepath.Join(dir, name)
+			src, err := os.ReadFile(path)
+			if err != nil {
+				return nil, err
 			}
-			g.nodes = append(g.nodes, node{decl: d, file: rel})
+			f, err := parser.ParseFile(fset, path, src, parser.ParseComments|parser.SkipObjectResolution)
+			if err != nil {
+				return nil, err
+			}
+			rel, err := filepath.Rel(absRoot, path)
+			if err != nil {
+				return nil, err
+			}
+			rel = filepath.ToSlash(rel)
+			o := newOutline(fset, f, src)
+			g.files[rel] = o
+			g.imports[rel] = o.imports
+			for _, d := range o.decls {
+				g.fileNodes[rel] = append(g.fileNodes[rel], len(g.nodes))
+				for _, key := range d.keys {
+					key = filepath.ToSlash(filepath.Dir(rel)) + ":" + key
+					g.keys[key] = append(g.keys[key], len(g.nodes))
+				}
+				g.nodes = append(g.nodes, node{decl: d, file: rel})
+			}
+			files = append(files, f)
 		}
-		files = append(files, f)
+		return files, nil
 	}
 	lookup := func(path string) (io.ReadCloser, error) {
 		if mapped, ok := target.ImportMap[path]; ok {
@@ -221,19 +249,40 @@ func load(root, pattern, tags, goos, goarch string) (*graph, error) {
 		return os.Open(export)
 	}
 	var typeErrors []error
-	config := types.Config{
-		Importer: importer.ForCompiler(fset, "gc", lookup),
-		Sizes:    types.SizesFor("gc", goarch),
-		Error:    func(err error) { typeErrors = append(typeErrors, err) },
-	}
 	info := &types.Info{Uses: map[*ast.Ident]types.Object{}}
-	pkg, _ := config.Check(target.ImportPath, fset, files, info)
-	if len(typeErrors) > 0 {
-		return nil, fmt.Errorf("type check: %v", typeErrors[0])
+	checked := map[string]*types.Package{}
+	exported := importer.ForCompiler(fset, "gc", lookup)
+	config := types.Config{
+		Importer: importerFunc(func(path string) (*types.Package, error) {
+			if p, ok := checked[path]; ok {
+				return p, nil
+			}
+			return exported.Import(path)
+		}),
+		Sizes: types.SizesFor("gc", goarch),
+		Error: func(err error) { typeErrors = append(typeErrors, err) },
 	}
-	g.link(pkg, info)
+	var pkgs []*types.Package
+	// Companions first: the test package imports them from source.
+	for _, p := range append(companions, target) {
+		files, err := parse(p)
+		if err != nil {
+			return nil, err
+		}
+		pkg, _ := config.Check(p.ImportPath, fset, files, info)
+		if len(typeErrors) > 0 {
+			return nil, fmt.Errorf("type check: %v", typeErrors[0])
+		}
+		checked[p.ImportPath] = pkg
+		pkgs = append(pkgs, pkg)
+	}
+	g.link(pkgs, info)
 	return g, nil
 }
+
+type importerFunc func(path string) (*types.Package, error)
+
+func (f importerFunc) Import(path string) (*types.Package, error) { return f(path) }
 
 // at finds the node whose declaration contains pos.
 func (g *graph) at(order []int, pos token.Pos) int {
@@ -254,7 +303,7 @@ func (g *graph) at(order []int, pos token.Pos) int {
 //
 // A method's receiver is not an edge to its type, or reaching one method
 // would reach all of them.
-func (g *graph) link(pkg *types.Package, info *types.Info) {
+func (g *graph) link(pkgs []*types.Package, info *types.Info) {
 	order := make([]int, len(g.nodes))
 	for i := range order {
 		order[i] = i
@@ -273,15 +322,17 @@ func (g *graph) link(pkg *types.Package, info *types.Info) {
 		if n.recv == "" {
 			continue
 		}
-		for _, t := range g.keys["type:"+n.recv] {
+		for _, t := range g.keys[path.Dir(n.file)+":type:"+n.recv] {
 			add(t, i)
 		}
 	}
 	var named []*types.Named
-	for _, name := range pkg.Scope().Names() {
-		if tn, ok := pkg.Scope().Lookup(name).(*types.TypeName); ok && !tn.IsAlias() {
-			if t, ok := tn.Type().(*types.Named); ok && !types.IsInterface(t) {
-				named = append(named, t)
+	for _, pkg := range pkgs {
+		for _, name := range pkg.Scope().Names() {
+			if tn, ok := pkg.Scope().Lookup(name).(*types.TypeName); ok && !tn.IsAlias() {
+				if t, ok := tn.Type().(*types.Named); ok && !types.IsInterface(t) {
+					named = append(named, t)
+				}
 			}
 		}
 	}
@@ -298,7 +349,7 @@ func (g *graph) link(pkg *types.Package, info *types.Info) {
 				continue
 			}
 			obj, _, _ := types.LookupFieldOrMethod(receiver, false, method.Pkg(), method.Name())
-			if fn, ok := obj.(*types.Func); ok && fn.Pkg() == pkg {
+			if fn, ok := obj.(*types.Func); ok && slices.Contains(pkgs, fn.Pkg()) {
 				targets = append(targets, g.at(order, fn.Pos()))
 			}
 		}
@@ -320,7 +371,7 @@ func (g *graph) link(pkg *types.Package, info *types.Info) {
 				}
 			}
 		}
-		if obj.Pkg() == pkg {
+		if slices.Contains(pkgs, obj.Pkg()) {
 			add(from, g.at(order, obj.Pos()))
 		}
 	}

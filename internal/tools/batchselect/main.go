@@ -1,5 +1,7 @@
 // Command batchselect reports which test batches of one package a change
-// can affect. It maps the diff since a base commit to the top-level
+// can affect. The declarations of the packages named by -with, non-test
+// packages that the test package imports (the integration harness), join the
+// same graph, so a change there selects only the batches that reach it. It maps the diff since a base commit to the top-level
 // declarations of the package's test build, and keeps a batch when one of
 // its roots (its tests, and every init function and package-level var
 // initializer) reaches a changed declaration in a reference graph that
@@ -59,6 +61,9 @@ type result struct {
 // options are what one selection reads besides the repository.
 type options struct {
 	root, base, pattern, unionTags, goos, goarch string
+	// with are the module-relative directories of the non-test packages
+	// whose declarations join the graph of the test package.
+	with []string
 	// repo is the git repository; head, when set, is the commit whose tree
 	// root holds, which then need not be a checkout.
 	repo, head string
@@ -80,15 +85,19 @@ func git(root string, args ...string) (string, error) {
 // under the package directory is classified before the documentation
 // exemption: a test can embed or read a Markdown file there, and go:embed
 // cannot reach outside the package directory.
-func classify(pkgDir string, file fileDiff) (ignored, analysed bool, reason string) {
+func classify(pkgDir string, with []string, file fileDiff) (ignored, analysed bool, reason string) {
 	p := file.path
+	dir := path.Dir(p)
 	switch {
-	case path.Dir(p) == pkgDir && strings.HasSuffix(p, ".go"):
+	case (dir == pkgDir || slices.Contains(with, dir)) && strings.HasSuffix(p, ".go"):
 		if file.status == 'D' {
 			return false, false, p + ": deleted file"
 		}
 		return false, true, ""
-	case strings.HasPrefix(p, pkgDir+"/"):
+	case strings.HasSuffix(p, "_test.go"):
+		// A test file of another package is never part of this build.
+		return true, false, ""
+	case strings.HasPrefix(p, pkgDir+"/") || slices.ContainsFunc(with, func(w string) bool { return strings.HasPrefix(p, w+"/") }):
 		return false, false, p + ": non-Go or nested file of the package, read at run time or embedded"
 	case strings.HasSuffix(p, ".md") || strings.HasPrefix(p, "docs/") || p == "LICENSE":
 		return true, false, ""
@@ -161,10 +170,11 @@ func (c *changes) kind(file string, l int, k lineKind) {
 	}
 }
 
-func (c *changes) markKey(keys []string) bool {
+// markKey marks the head declarations of keys in the package of file.
+func (c *changes) markKey(file string, keys []string) bool {
 	found := false
 	for _, key := range keys {
-		for _, n := range c.g.keys[key] {
+		for _, n := range c.g.keys[path.Dir(file)+":"+key] {
 			c.changed[n], found = true, true
 		}
 	}
@@ -283,14 +293,14 @@ func (c *changes) add(file fileDiff) {
 			for _, index := range base.lines[l-1] {
 				d := base.decls[index]
 				switch {
-				case c.markKey(d.keys):
+				case c.markKey(file.path, d.keys):
 				case d.isInit:
 					c.reasons = append(c.reasons, file.path+": an init function was removed")
 				case d.initializer:
 					c.reasons = append(c.reasons, file.path+": a package-level initializer was removed: "+d.display)
 				case d.recv != "":
 					// A removed method changes its type's method set.
-					c.markKey([]string{"type:" + d.recv})
+					c.markKey(file.path, []string{"type:" + d.recv})
 				}
 				// A removed function, type or const that nothing in
 				// the head names cannot change what the head runs.
@@ -356,7 +366,7 @@ func selectBatches(opts options) (result, error) {
 	}
 	var analysed []fileDiff
 	for _, file := range files {
-		ignored, ok, reason := classify(pkgDir, file)
+		ignored, ok, reason := classify(pkgDir, opts.with, file)
 		switch {
 		case ignored:
 			out.Ignored = append(out.Ignored, file.path)
@@ -391,22 +401,38 @@ func selectBatches(opts options) (result, error) {
 // graphSelection fills out.Batches from the reference graphs, or returns
 // the reasons to select every batch.
 func graphSelection(opts options, pkgDir, mergeBase string, analysed []fileDiff, out *result) []string {
-	dir := path.Join(opts.root, pkgDir)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return []string{err.Error()}
-	}
-	var names []string
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
-			names = append(names, entry.Name())
+	// The Go files of the analysed directories, as module-relative paths.
+	dirs := append([]string{pkgDir}, opts.with...)
+	names := map[string][]string{}
+	for _, d := range dirs {
+		entries, err := os.ReadDir(path.Join(opts.root, d))
+		if err != nil {
+			return []string{err.Error()}
 		}
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
+				names[d] = append(names[d], entry.Name())
+			}
+		}
+	}
+	match := func(tags string) (map[string]bool, error) {
+		set := map[string]bool{}
+		for _, d := range dirs {
+			files, err := matchFiles(path.Join(opts.root, d), names[d], tags, opts.goos, opts.goarch)
+			if err != nil {
+				return nil, err
+			}
+			for name := range files {
+				set[path.Join(d, name)] = true
+			}
+		}
+		return set, nil
 	}
 	base := func(file string) ([]byte, error) {
 		text, err := git(opts.repo, "show", mergeBase+":"+file)
 		return []byte(text), err
 	}
-	union, err := matchFiles(dir, names, opts.unionTags, opts.goos, opts.goarch)
+	union, err := match(opts.unionTags)
 	if err != nil {
 		return []string{err.Error()}
 	}
@@ -426,13 +452,13 @@ func graphSelection(opts options, pkgDir, mergeBase string, analysed []fileDiff,
 		if b, ok := graphs[key]; ok {
 			return b, nil
 		}
-		g, err := load(opts.root, opts.pattern, tags, opts.goos, opts.goarch)
+		g, err := load(opts.root, opts.pattern, opts.with, tags, opts.goos, opts.goarch)
 		if err != nil {
 			return nil, []string{"type-based analysis failed: " + err.Error()}
 		}
 		listed := map[string]bool{}
 		for file := range g.files {
-			listed[path.Base(file)] = true
+			listed[file] = true
 		}
 		if setKey(listed) != key {
 			return nil, []string{"go list and go/build disagree on the files of tags " + tags}
@@ -465,7 +491,7 @@ func graphSelection(opts options, pkgDir, mergeBase string, analysed []fileDiff,
 		return reasons
 	}
 	for _, spec := range opts.batches {
-		files, err := matchFiles(dir, names, spec.Tags, opts.goos, opts.goarch)
+		files, err := match(spec.Tags)
 		if err != nil {
 			return []string{err.Error()}
 		}
@@ -479,7 +505,10 @@ func graphSelection(opts options, pkgDir, mergeBase string, analysed []fileDiff,
 		res := batchResult{ID: spec.ID}
 		roots := 0
 		for n, item := range b.g.nodes {
-			if !files[path.Base(item.file)] || !(item.isEntry || item.isInit || item.initializer) {
+			// Tests are entries of the test package only; init functions and
+			// package-level initializers of every analysed package run.
+			entry := item.isEntry && path.Dir(item.file) == pkgDir
+			if !files[item.file] || !(entry || item.isInit || item.initializer) {
 				continue
 			}
 			roots++
@@ -507,11 +536,16 @@ func main() {
 	flag.StringVar(&opts.repo, "repo", "", "git repository top level (default: -root)")
 	flag.StringVar(&opts.head, "head", "", "head commit whose tree -root holds (default: the working tree of -root)")
 	flag.StringVar(&opts.pattern, "package", "./internal/integration", "the analysed test package")
+	var with string
+	flag.StringVar(&with, "with", "", "comma-separated module-relative directories of imported non-test packages to analyse with the test package")
 	flag.StringVar(&opts.unionTags, "union-tags", "all", "tags of the build that compiles every batch's files")
 	flag.StringVar(&opts.goos, "goos", "linux", "GOOS of the batch builds")
 	flag.StringVar(&opts.goarch, "goarch", "amd64", "GOARCH of the batch builds")
 	flag.StringVar(&batches, "batches", "", `JSON file of [{"id": ..., "tags": "a,b"}]`)
 	flag.Parse()
+	if with != "" {
+		opts.with = strings.Split(with, ",")
+	}
 	if opts.base == "" || batches == "" || flag.NArg() != 0 {
 		flag.Usage()
 		os.Exit(2)

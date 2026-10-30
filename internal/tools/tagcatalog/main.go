@@ -34,7 +34,7 @@ type file struct {
 	Tags       []string    `json:"tags"`
 	Tests      []string    `json:"tests"`
 	Metadata   []string    `json:"metadata"`
-	// Networks are the literal arguments of the file's networkModes calls,
+	// Networks are the literal arguments of the file's harness.NetworkModes calls,
 	// the Docker network modes its tests run in, default first; NetworkTests
 	// are the tests that call it.
 	Networks     []string `json:"networks"`
@@ -152,7 +152,7 @@ func inspect(root, path string) (file, error) {
 	return out, nil
 }
 
-// readNetworkModes reads the modes of every networkModes(t, "mode", ...) call
+// readNetworkModes reads the modes of every harness.NetworkModes(t, "mode", ...) call
 // in a file and the tests that make one. The planner builds the network axis
 // from them, so the modes are string literals, the same in every call of the
 // file, and each call is in a test function itself, which runs only the
@@ -169,7 +169,7 @@ func readNetworkModes(f *ast.File) ([]string, []string, error) {
 			if !ok || failure != nil {
 				return failure == nil
 			}
-			if name, ok := call.Fun.(*ast.Ident); !ok || name.Name != "networkModes" {
+			if !networkModesCall(call.Fun) {
 				return true
 			}
 			calls++
@@ -177,7 +177,7 @@ func readNetworkModes(f *ast.File) ([]string, []string, error) {
 			for _, arg := range call.Args[min(1, len(call.Args)):] {
 				literal, ok := arg.(*ast.BasicLit)
 				if !ok || literal.Kind != token.STRING {
-					failure = fmt.Errorf("networkModes takes string literal modes")
+					failure = fmt.Errorf("harness.NetworkModes takes string literal modes")
 					return false
 				}
 				value, err := strconv.Unquote(literal.Value)
@@ -188,9 +188,9 @@ func readNetworkModes(f *ast.File) ([]string, []string, error) {
 				args = append(args, value)
 			}
 			if len(args) == 0 {
-				failure = fmt.Errorf("networkModes needs at least one mode")
+				failure = fmt.Errorf("harness.NetworkModes needs at least one mode")
 			} else if seen && !slices.Equal(args, modes) {
-				failure = fmt.Errorf("networkModes calls of one file declare different modes")
+				failure = fmt.Errorf("harness.NetworkModes calls of one file declare different modes")
 			}
 			modes, seen = args, true
 			return true
@@ -202,12 +202,23 @@ func readNetworkModes(f *ast.File) ([]string, []string, error) {
 			continue
 		}
 		if !ok || fn.Recv != nil || !testName(fn.Name.Name) {
-			return nil, nil, fmt.Errorf("networkModes is called outside a test function")
+			return nil, nil, fmt.Errorf("harness.NetworkModes is called outside a test function")
 		}
 		tests = append(tests, fn.Name.Name)
 	}
 	sort.Strings(tests)
 	return modes, tests, nil
+}
+
+// networkModesCall reports a call of harness.NetworkModes, the helper of
+// internal/integration/harness that declares a test's network modes.
+func networkModesCall(fun ast.Expr) bool {
+	sel, ok := fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "NetworkModes" {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "harness"
 }
 
 func main() {

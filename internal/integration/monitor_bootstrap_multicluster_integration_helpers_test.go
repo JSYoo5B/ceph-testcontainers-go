@@ -14,11 +14,12 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 func monitorBootstrapRBDPeerConfig(t *testing.T, ctx context.Context, destination *ceph.Container, pool, peer string) (string, string) {
 	t.Helper()
-	policy, err := poolHandle(t, ctx, destination, pool).Status(ctx)
+	policy, err := harness.PoolHandle(t, ctx, destination, pool).Status(ctx)
 	if err != nil || policy.ID <= 0 {
 		t.Fatalf("read RBD receiving pool identity: error=%v", err)
 	}
@@ -72,8 +73,8 @@ func monitorBootstrapSetPeerConfig(t *testing.T, ctx context.Context, source *ce
 	if err := clusteraccess.ControlContainer(t, source).CopyToContainer(ctx, raw, path, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	topologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, source), "ceph", "config-key", "set", "cephfs/mirror/peer/"+filesystem+"/"+peer, "-i", path)
-	topologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, source), "rm", "-f", path)
+	harness.TopologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, source), "ceph", "config-key", "set", "cephfs/mirror/peer/"+filesystem+"/"+peer, "-i", path)
+	harness.TopologyExecOutput(t, ctx, clusteraccess.ControlContainer(t, source), "rm", "-f", path)
 }
 
 func monitorBootstrapAssertPeerConfig(t *testing.T, before, after map[string]json.RawMessage, addresses string) {

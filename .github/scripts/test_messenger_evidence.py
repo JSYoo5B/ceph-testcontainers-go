@@ -183,6 +183,14 @@ class MessengerEvidenceTests(unittest.TestCase):
     def test_changed_compiled_source(self):
         self.receipt["sources"]["internal/integration/*.go"] = "0" * 64; self.reject()
 
+    def test_changed_harness_source_makes_a_receipt_stale(self):
+        # The receipt was compiled from the current sources; a later change of
+        # shared harness code alone must invalidate it.
+        self.check()
+        harness = sorted((self.root / "internal/integration/harness").glob("*.go"))[0]
+        harness.write_text(harness.read_text() + "\n// changed after the receipt\n")
+        self.reject()
+
     def test_wrong_cohort(self):
         self.receipt["cohort"]["platform"] = "darwin/arm64"; self.reject()
 

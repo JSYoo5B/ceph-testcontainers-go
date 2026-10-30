@@ -19,6 +19,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -38,16 +39,16 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 	} else {
 		opts = append(opts, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()))
 	}
-	cluster, client := newServiceCluster(t, opts...)
+	cluster, client := harness.NewServiceCluster(t, opts...)
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
 	diagnosticsDataProbe(t, ctx, client, "seed")
 	owned := diagnosticsOwnedContainers(t, cluster)
-	if staticFacts(cluster).Images.Client != staticFacts(cluster).Images.Essential {
+	if harness.StaticFacts(cluster).Images.Client != harness.StaticFacts(cluster).Images.Essential {
 		// Initial CephFS setup owns a separate toolkit. Include that same
 		// container in the before/after inventory and diagnostic coverage proof.
-		owned = append(owned, toolkitContainer(t, cluster))
+		owned = append(owned, harness.ToolkitContainer(t, cluster))
 	}
 	observed := append(slices.Clone(owned), client)
 	config := ceph.DiagnosticsConfig{
@@ -104,8 +105,8 @@ func testClusterDiagnostics(t *testing.T, host bool) {
 	})
 
 	t.Run("partial-container-error", func(t *testing.T) {
-		image, _ := integrationImages(t)
-		removed, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(),
+		image, _ := harness.IntegrationImages(t)
+		removed, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), cluster.WithClient(),
 			ceph.WithIdleEntrypoint())
 		if removed != nil {
 			testcontainers.CleanupContainer(t, removed)
@@ -249,7 +250,7 @@ func diagnosticsCaptureState(t *testing.T, ctx context.Context, cluster *ceph.Co
 			}
 			state.Native[name] = string(canonical)
 		}
-		identities, err := observeCluster(cluster).OSDStates(ctx)
+		identities, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -295,7 +296,7 @@ func diagnosticsAssertUnchanged(t *testing.T, before, after diagnosticsStableSta
 
 func diagnosticsFSID(t *testing.T, ctx context.Context, cluster *ceph.Container) string {
 	t.Helper()
-	status, err := observeCluster(cluster).Status(ctx)
+	status, err := harness.ObserveCluster(cluster).Status(ctx)
 	if err != nil || status.FSID == "" {
 		t.Fatal("independent native FSID unavailable")
 	}
@@ -419,7 +420,7 @@ func diagnosticsJSONBool(data, key string) (bool, bool) {
 
 func diagnosticsDataProbe(t *testing.T, ctx context.Context, client testcontainers.Container, phase string) {
 	t.Helper()
-	execCommand(t, ctx, client, "python3", "-c", `import cephfs,rados,sys
+	harness.ExecCommand(t, ctx, client, "python3", "-c", `import cephfs,rados,sys
 payload=bytes(range(256))*128
 with rados.Rados(conffile="/etc/ceph/ceph.conf",conf={"rados_mon_op_timeout":"10","rados_osd_op_timeout":"10"}) as cluster:
     with cluster.open_ioctx("tc-diagnostics") as io:
@@ -469,7 +470,7 @@ func diagnosticsProcesses(t *testing.T, ctx context.Context, control testcontain
 func testCanceledDiagnostics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))
+	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))
 	pause, err := fault.Pause(ctx, cluster, clusteraccess.InitialManager(t, cluster))
 	if pause != nil {
 		defer func() { _ = pause.Resume(context.Background()) }()

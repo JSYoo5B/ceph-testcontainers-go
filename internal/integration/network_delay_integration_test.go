@@ -4,16 +4,20 @@
 
 package integration_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+)
 
 // It needs the netem helper (CEPH_TEST_NETEM_IMAGE, by default
 // fault.NetemHelperImage) and an engine that grants it NET_ADMIN; a missing
 // one fails the test.
 func TestNetworkDelay(t *testing.T) {
-	testNetworkDelay(t)
+	harness.RunNetworkDelay(t)
 }
 
 // The IPv6 filter of a peer delay, on an IPv6 cluster.
 func TestNetworkDelayPeerIPv6(t *testing.T) {
-	testNetworkDelayPeerIPv6(t)
+	harness.RunNetworkDelayPeerIPv6(t)
 }

@@ -17,6 +17,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -25,8 +26,8 @@ import (
 // registration with another owned ID. These exercise cleanup retry and UUID
 // rejection independently while preserving the same client data.
 func TestOSDRemovalLifecycle(t *testing.T) {
-	parallelWhenEnabled(t)
-	for _, mode := range networkModes(t, "host", "bridge") {
+	harness.ParallelWhenEnabled(t)
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
@@ -35,7 +36,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceCluster(t, opts...)
+			cluster, client := harness.NewServiceCluster(t, opts...)
 			const pool = "tc-osd-removal"
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", Replicas: 2, MinSize: 1, PGNum: 8}); err != nil {
 				t.Fatal(err)
@@ -48,12 +49,12 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 				if err := client.CopyToContainer(ctx, payload, "/tmp/osd-removal-payload", 0o600); err != nil {
 					t.Fatal(err)
 				}
-				execCommand(t, ctx, client, "rados", "-p", pool, "put", fmt.Sprintf("object-%d", i), "/tmp/osd-removal-payload")
+				harness.ExecCommand(t, ctx, client, "rados", "-p", pool, "put", fmt.Sprintf("object-%d", i), "/tmp/osd-removal-payload")
 			}
 			verify := func() {
 				t.Helper()
 				for i := range 8 {
-					execCommand(t, ctx, client, "rados", "-p", pool, "get", fmt.Sprintf("object-%d", i), "/tmp/osd-removal-result")
+					harness.ExecCommand(t, ctx, client, "rados", "-p", pool, "get", fmt.Sprintf("object-%d", i), "/tmp/osd-removal-result")
 					reader, err := client.CopyFileFromContainer(ctx, "/tmp/osd-removal-result")
 					if err != nil {
 						t.Fatal(err)
@@ -66,7 +67,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 				}
 			}
 			verify()
-			initial, err := observeCluster(cluster).OSDStates(ctx)
+			initial, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +111,7 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			states, err := observeCluster(cluster).OSDStates(ctx)
+			states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,8 +123,8 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			// This test actor explicitly removes a different OSD outside the API
 			// and creates an unowned, down registration with its old number.
 			foreignTarget := clusteraccess.OSDs(t, cluster)[1]
-			cephCommand(t, ctx, cluster, "osd", "crush", "reweight", fmt.Sprintf("osd.%d", foreignTarget.ID), "0")
-			cephCommand(t, ctx, cluster, "osd", "out", strconv.Itoa(foreignTarget.ID))
+			harness.CephCommand(t, ctx, cluster, "osd", "crush", "reweight", fmt.Sprintf("osd.%d", foreignTarget.ID), "0")
+			harness.CephCommand(t, ctx, cluster, "osd", "out", strconv.Itoa(foreignTarget.ID))
 			if err := cluster.WaitForPGClean(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -146,9 +147,9 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitOSDPolicyState(t, ctx, cluster, foreignTarget.ID, func(state ceph.OSDState) bool { return !state.Up })
-			cephCommand(t, ctx, cluster, "osd", "purge", strconv.Itoa(foreignTarget.ID), "--yes-i-really-mean-it")
+			harness.CephCommand(t, ctx, cluster, "osd", "purge", strconv.Itoa(foreignTarget.ID), "--yes-i-really-mean-it")
 			foreignUUID := uuid.NewString()
-			cephCommand(t, ctx, cluster, "osd", "create", foreignUUID, strconv.Itoa(foreignTarget.ID))
+			harness.CephCommand(t, ctx, cluster, "osd", "create", foreignUUID, strconv.Itoa(foreignTarget.ID))
 			before, err := cluster.Ceph(ctx, "osd", "dump", "--format", "json")
 			if err != nil || !bytes.Contains(before, []byte(foreignUUID)) {
 				t.Fatal("foreign OSD registration was not independently observed", err)

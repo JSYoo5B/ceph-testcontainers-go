@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 func TestS3FixtureSigningUsesUTCInstantAcrossTimeZones(t *testing.T) {
-	client := s3HTTPClient{accessKey: "fixture-access", secretKey: "fixture-secret", region: "us-east-1"}
+	client := harness.S3HTTPClient{AccessKey: "fixture-access", SecretKey: "fixture-secret", Region: "us-east-1"}
 	instant := time.Date(2026, 10, 3, 23, 30, 0, 0, time.UTC)
 	var authorization string
 	for _, offset := range []int{0, 9 * 60 * 60, -7 * 60 * 60} {
@@ -19,7 +21,7 @@ func TestS3FixtureSigningUsesUTCInstantAcrossTimeZones(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		client.sign(request, nil, instant.In(time.FixedZone("caller", offset)))
+		client.Sign(request, nil, instant.In(time.FixedZone("caller", offset)))
 		if request.Header.Get("X-Amz-Date") != "20261003T233000Z" {
 			t.Fatal("fixture signed a local wall clock as UTC")
 		}
@@ -43,7 +45,7 @@ func TestS3FixtureCanonicalURIFollowsAWS4(t *testing.T) {
 		{"s3 path is not normalized", "/bucket/a//b/./../c", "/bucket/a//b/./../c"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if actual := s3CanonicalURI(test.path); actual != test.want {
+			if actual := harness.S3CanonicalURI(test.path); actual != test.want {
 				t.Fatalf("AWS4 canonical URI=%q, want %q", actual, test.want)
 			}
 		})
@@ -51,7 +53,7 @@ func TestS3FixtureCanonicalURIFollowsAWS4(t *testing.T) {
 }
 
 func TestS3FixtureSigningCanonicalizesLiteralAndEncodedTenantSeparator(t *testing.T) {
-	client := s3HTTPClient{accessKey: "fixture-access", secretKey: "fixture-secret", region: "us-east-1"}
+	client := harness.S3HTTPClient{AccessKey: "fixture-access", SecretKey: "fixture-secret", Region: "us-east-1"}
 	instant := time.Date(2026, 10, 3, 23, 30, 0, 0, time.UTC)
 	const canonical = "/system_beta%3Atc-system-tenant-output/system/selected"
 	var authorization string
@@ -63,10 +65,10 @@ func TestS3FixtureSigningCanonicalizesLiteralAndEncodedTenantSeparator(t *testin
 		if request.URL.EscapedPath() != wirePath {
 			t.Fatal("regression did not preserve distinct literal and encoded wire paths")
 		}
-		if actual := s3CanonicalURI(request.URL.Path); actual != canonical {
+		if actual := harness.S3CanonicalURI(request.URL.Path); actual != canonical {
 			t.Fatalf("tenant canonical URI=%q, want %q; do not double-encode the separator", actual, canonical)
 		}
-		client.sign(request, nil, instant)
+		client.Sign(request, nil, instant)
 		if request.Header.Get("X-Amz-Date") != "20261003T233000Z" {
 			t.Fatal("tenant signature did not use the fixed UTC instant")
 		}

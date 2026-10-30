@@ -128,14 +128,21 @@ func readCoverageJSON(t *testing.T, path string, value any, strict bool) {
 	}
 }
 
-// scanCoverageSources parses every _test.go file of the package directory,
-// whatever its build tags, and analyses its test functions.
+// scanCoverageSources parses every Go file of the integration test packages
+// under dir, whatever its build tags: dir itself, the test packages beside
+// it and the harness they share. The manifest cites tests of any of them,
+// and their code reaches the harness.
 func scanCoverageSources(t *testing.T, dir string) coverageSources {
 	t.Helper()
-	paths, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil || len(paths) == 0 {
 		t.Fatalf("test sources in %s: %v %v", dir, paths, err)
 	}
+	nested, err := filepath.Glob(filepath.Join(dir, "*", "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths = append(paths, nested...)
 	files := map[string]string{}
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
@@ -164,7 +171,9 @@ func scanCoverageSources(t *testing.T, dir string) coverageSources {
 // A name is followed when it is a string literal, or a variable or field
 // whose values are string literals in the same file: a table in a composite
 // literal ranged over directly or through a variable, keyed fields of its
-// elements, and the arguments of the networkModes constructor. A Run whose
+// elements, and the arguments of the harness.NetworkModes constructor. The
+// packages are analysed as one: a harness.Name selector names the
+// package-level declaration Name. A Run whose
 // name is not followed adds no path, so a citation below it fails instead of
 // matching a literal that some other test uses.
 func parseCoverageSources(files map[string]string) (coverageSources, error) {
@@ -229,7 +238,20 @@ type coverageAnalyzer struct {
 // subtestNameConstructors are package helpers whose string arguments name
 // the values they return, so ranging over a call to one names the subtests
 // by its literal arguments.
-var subtestNameConstructors = map[string]bool{"networkModes": true}
+var subtestNameConstructors = map[string]bool{"NetworkModes": true}
+
+// harnessName returns Name for a harness.Name selector.
+func harnessName(expr ast.Expr) (string, bool) {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return "", false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	if !ok || pkg.Name != "harness" || pkg.Obj != nil {
+		return "", false
+	}
+	return sel.Sel.Name, true
+}
 
 // isImport reports whether ident is an unresolved name that no package-level
 // declaration owns, which in these sources is an imported package.
@@ -256,6 +278,9 @@ func (a *coverageAnalyzer) referenced(node ast.Node) ([]*ast.FuncDecl, []*ast.Va
 			}
 		}
 	case *ast.SelectorExpr:
+		if name, ok := harnessName(n); ok {
+			return a.funcs[name], a.globals[name]
+		}
 		if x, ok := n.X.(*ast.Ident); ok && a.isImport(x) {
 			return nil, nil
 		}
@@ -493,8 +518,8 @@ func (a *coverageAnalyzer) values(expr ast.Expr, depth int) ([]ast.Expr, bool) {
 // rangeValues returns the keys or the elements that ranging over x yields.
 func (a *coverageAnalyzer) rangeValues(x ast.Expr, keys bool, depth int) ([]ast.Expr, bool) {
 	if call, ok := x.(*ast.CallExpr); ok {
-		ident, ok := call.Fun.(*ast.Ident)
-		if !ok || keys || !subtestNameConstructors[ident.Name] {
+		name, ok := harnessName(call.Fun)
+		if !ok || keys || !subtestNameConstructors[name] {
 			return nil, false
 		}
 		var result []ast.Expr
@@ -875,7 +900,7 @@ import (
 )
 
 func TestWrites(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) { writeAndReport(t, host) })
 	}

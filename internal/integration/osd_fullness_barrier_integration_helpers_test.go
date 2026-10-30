@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
@@ -132,7 +133,7 @@ func fullnessEffective(t *testing.T, ctx context.Context, cluster *ceph.Containe
 func testOSDFullnessBarrier(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 22*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t)
+	cluster, client := harness.NewServiceCluster(t)
 	restore := func(name string, fn func(context.Context) error) {
 		t.Helper()
 		t.Cleanup(func() {

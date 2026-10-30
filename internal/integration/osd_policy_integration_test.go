@@ -12,13 +12,14 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
 
 func TestOSDPolicies(t *testing.T) {
-	parallelWhenEnabled(t)
-	for _, mode := range networkModes(t, "host", "bridge") {
+	harness.ParallelWhenEnabled(t)
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
@@ -27,7 +28,7 @@ func TestOSDPolicies(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceCluster(t, opts...)
+			cluster, client := harness.NewServiceCluster(t, opts...)
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-osd-policy", Application: "rados", Replicas: 2, MinSize: 1, PGNum: 16}); err != nil {
 				t.Fatal(err)
 			}
@@ -36,13 +37,13 @@ func TestOSDPolicies(t *testing.T) {
 			}
 			probe := func(phase string) {
 				t.Helper()
-				execCommand(t, ctx, client, "python3", "-c", `import subprocess,sys
+				harness.ExecCommand(t, ctx, client, "python3", "-c", `import subprocess,sys
 subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=True)`, osdPolicyProbe, phase)
 			}
 			probe("seed")
 			original := clusteraccess.OSDs(t, cluster)[0]
 			containerID := original.GetContainerID()
-			states, err := observeCluster(cluster).OSDStates(ctx)
+			states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 			if err != nil || len(states) != 4 {
 				t.Fatalf("initial native OSD states unavailable: %+v %v", states, err)
 			}
@@ -72,7 +73,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 				t.Fatalf("in changed identity or native map reweight: %+v", state)
 			}
 			probe("in")
-			initialFlags, err := observeCluster(cluster).OSDFlags(ctx)
+			initialFlags, err := harness.ObserveCluster(cluster).OSDFlags(ctx)
 			if err != nil || slices.Contains(initialFlags, "noout") {
 				t.Fatal("fresh noout=false state required for the auto-out positive control", err)
 			}
@@ -163,12 +164,12 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			}
 			probe("restarted")
 			// Preserve an original native flag, including the disable-and-restore path.
-			cephCommand(t, ctx, cluster, "osd", "set", "noout")
+			harness.CephCommand(t, ctx, cluster, "osd", "set", "noout")
 			disabled, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, false)
 			if err != nil {
 				t.Fatal(err)
 			}
-			flags, err := observeCluster(cluster).OSDFlags(ctx)
+			flags, err := harness.ObserveCluster(cluster).OSDFlags(ctx)
 			if err != nil || slices.Contains(flags, "noout") {
 				t.Fatal("temporary disable not native", err)
 			}
@@ -179,11 +180,11 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=30,check=Tr
 			if err := disabled.Restore(ctx); err != nil {
 				t.Fatal(err)
 			}
-			flags, err = observeCluster(cluster).OSDFlags(ctx)
+			flags, err = harness.ObserveCluster(cluster).OSDFlags(ctx)
 			if err != nil || !slices.Contains(flags, "noout") {
 				t.Fatal("original flag wasn't preserved", err)
 			}
-			cephCommand(t, ctx, cluster, "osd", "unset", "noout")
+			harness.CephCommand(t, ctx, cluster, "osd", "unset", "noout")
 			t.Log("native RADOS: owned OSD out→recovered PGs→in, noout=true retains a stopped OSD in, noout restore allows native auto-out of the same OSD, restart preserves UUID/container/payload; original global flag and map reweight restored")
 		})
 	}

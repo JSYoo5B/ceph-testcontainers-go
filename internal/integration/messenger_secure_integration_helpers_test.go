@@ -11,12 +11,13 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
 
 func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ceph.Container) {
 	t.Helper()
-	addresses, err := observeCluster(cluster).MonitorBootstrapAddresses(ctx)
+	addresses, err := harness.ObserveCluster(cluster).MonitorBootstrapAddresses(ctx)
 	if err != nil || !strings.Contains(addresses, "v2:") || strings.Contains(addresses, "v1:") {
 		t.Fatal("secure MON bootstrap is not v2-only", err)
 	}
@@ -50,7 +51,7 @@ func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ce
 			t.Fatalf("OSD %d does not advertise v2-only public/cluster addresses", osd.ID)
 		}
 	}
-	control := toolkitContainer(t, cluster)
+	control := harness.ToolkitContainer(t, cluster)
 	var daemons []string
 	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		daemons = append(daemons, "mon."+mon.DaemonName)
@@ -60,19 +61,19 @@ func checkSecureMessengerTopology(t *testing.T, ctx context.Context, cluster *ce
 	}
 	// tell forwards admin-socket commands; the OSD role needs no ceph CLI.
 	for _, daemon := range daemons {
-		data := topologyExecOutput(t, ctx, control, "python3", "-c", secureMessengerDaemonProbe, daemon, osdMap.FSID, "", messengerDumpArg(t, ctx, cluster))
+		data := harness.TopologyExecOutput(t, ctx, control, "python3", "-c", secureMessengerDaemonProbe, daemon, osdMap.FSID, "", harness.MessengerDumpArg(t, ctx, cluster))
 		t.Logf("MSGR2_NATIVE %s", data)
 	}
 	// Standby MGRs have an admin socket but do not serve forwarded tell commands.
 	for _, mgr := range clusteraccess.Managers(t, cluster) {
-		data := topologyExecOutput(t, ctx, mgr.Container, "python3", "-c", secureMessengerDaemonProbe, "mgr."+mgr.DaemonName, osdMap.FSID, "/var/run/ceph/ceph-mgr."+mgr.DaemonName+".asok", messengerDumpArg(t, ctx, cluster))
+		data := harness.TopologyExecOutput(t, ctx, mgr.Container, "python3", "-c", secureMessengerDaemonProbe, "mgr."+mgr.DaemonName, osdMap.FSID, "/var/run/ceph/ceph-mgr."+mgr.DaemonName+".asok", harness.MessengerDumpArg(t, ctx, cluster))
 		t.Logf("MSGR2_NATIVE %s", data)
 	}
 }
 
 func secureMessengerClient(t *testing.T, ctx context.Context, cluster *ceph.Container, client testcontainers.Container, phase string) {
 	t.Helper()
-	data := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerClientProbe, phase, messengerDumpArg(t, ctx, cluster))
+	data := harness.TopologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerClientProbe, phase, harness.MessengerDumpArg(t, ctx, cluster))
 	t.Logf("MSGR2_CLIENT %s", data)
 }
 

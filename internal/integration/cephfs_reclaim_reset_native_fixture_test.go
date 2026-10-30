@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // These controls run the native RESET recipe's embedded Python against a fake
@@ -119,62 +121,62 @@ const reclaimFakeImage = "sha256:6bb1c8a42fbc0bf87938946990b65174466997bc11c31eb
 
 func TestReclaimNativeABIProbeScript(t *testing.T) {
 	f := newReclaimFake(t)
-	probe := func(script string, env ...string) (resetABIProbe, error) {
+	probe := func(script string, env ...string) (harness.ResetABIProbe, error) {
 		out, code := f.run(script, env, reclaimFakeImage)
 		if code != 0 {
 			t.Fatalf("probe exited %d: %s", code, out)
 		}
-		doc, err := reclaimJSONLine(out)
+		doc, err := harness.ReclaimJSONLine(out)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return parseResetABIProbe(doc)
+		return harness.ParseResetABIProbe(doc)
 	}
-	p, err := probe(reclaimABIProbe)
+	p, err := probe(harness.ReclaimABIProbe)
 	if err != nil {
 		t.Fatalf("good probe unreadable: %v", err)
 	}
-	if err := checkResetABIProbe(p, 20, 2, 4); err != nil {
+	if err := harness.CheckResetABIProbe(p, 20, 2, 4); err != nil {
 		t.Fatalf("good probe rejected: %v", err)
 	}
-	if p.ImageConfigID != reclaimFakeImage || len(p.Calls) != len(resetABIContract) {
+	if p.ImageConfigID != reclaimFakeImage || len(p.Calls) != len(harness.ResetABIContract) {
 		t.Fatalf("probe: %+v", p)
 	}
-	if err := checkResetABIProbe(p, 19, 2, 5); err == nil {
+	if err := harness.CheckResetABIProbe(p, 19, 2, 5); err == nil {
 		t.Fatal("a probe of release 20.2.4 passed as 19.2.5")
 	}
 
 	t.Run("an unresolved symbol is a blocker", func(t *testing.T) {
-		if p, err := probe(reclaimABIProbe, "FAKE_MISSING=ceph_start_reclaim"); err == nil {
+		if p, err := probe(harness.ReclaimABIProbe, "FAKE_MISSING=ceph_start_reclaim"); err == nil {
 			t.Fatalf("accepted: %+v", p)
 		}
 	})
 	t.Run("an initialized probe handle is not eligible", func(t *testing.T) {
-		p, err := probe(reclaimABIProbe, "FAKE_INSTANCE=9")
-		if err != nil || checkResetABIProbe(p, 20, 2, 4) == nil {
+		p, err := probe(harness.ReclaimABIProbe, "FAKE_INSTANCE=9")
+		if err != nil || harness.CheckResetABIProbe(p, 20, 2, 4) == nil {
 			t.Fatalf("%+v %v", p, err)
 		}
 	})
 	t.Run("a failed create is not eligible", func(t *testing.T) {
-		p, err := probe(reclaimABIProbe, "FAKE_CREATE_RC=-12")
-		if err != nil || checkResetABIProbe(p, 20, 2, 4) == nil {
+		p, err := probe(harness.ReclaimABIProbe, "FAKE_CREATE_RC=-12")
+		if err != nil || harness.CheckResetABIProbe(p, 20, 2, 4) == nil {
 			t.Fatalf("%+v %v", p, err)
 		}
 	})
 	t.Run("a wrongly declared void function is caught", func(t *testing.T) {
-		broken := strings.Replace(reclaimABIProbe, `"ceph_finish_reclaim": ("None"`, `"ceph_finish_reclaim": ("c_int"`, 1)
-		if broken == reclaimABIProbe {
+		broken := strings.Replace(harness.ReclaimABIProbe, `"ceph_finish_reclaim": ("None"`, `"ceph_finish_reclaim": ("c_int"`, 1)
+		if broken == harness.ReclaimABIProbe {
 			t.Fatal("control did not change the script")
 		}
 		p, err := probe(broken)
-		if err != nil || checkResetABIProbe(p, 20, 2, 4) == nil {
+		if err != nil || harness.CheckResetABIProbe(p, 20, 2, 4) == nil {
 			t.Fatalf("declaring ceph_finish_reclaim as int passed: %+v %v", p, err)
 		}
 	})
 	t.Run("signed flags are caught", func(t *testing.T) {
-		broken := strings.Replace(reclaimABIProbe, `["c_void_p", "c_char_p", "c_uint"]`, `["c_void_p", "c_char_p", "c_int"]`, 1)
+		broken := strings.Replace(harness.ReclaimABIProbe, `["c_void_p", "c_char_p", "c_uint"]`, `["c_void_p", "c_char_p", "c_int"]`, 1)
 		p, err := probe(broken)
-		if broken == reclaimABIProbe || err != nil || checkResetABIProbe(p, 20, 2, 4) == nil {
+		if broken == harness.ReclaimABIProbe || err != nil || harness.CheckResetABIProbe(p, 20, 2, 4) == nil {
 			t.Fatalf("signed reclaim flags passed: %+v %v", p, err)
 		}
 	})
@@ -182,37 +184,37 @@ func TestReclaimNativeABIProbeScript(t *testing.T) {
 
 func TestReclaimNativeMissingScript(t *testing.T) {
 	f := newReclaimFake(t)
-	run := func(env ...string) reclaimMissingResult {
-		out, code := f.run(reclaimMissing, env, "fs0", "target-uuid", "own-uuid")
+	run := func(env ...string) harness.ReclaimMissingResult {
+		out, code := f.run(harness.ReclaimMissing, env, "fs0", "target-uuid", "own-uuid")
 		if code != 0 {
 			t.Fatalf("exit %d: %s", code, out)
 		}
-		r, err := parseReclaimMissing(out)
+		r, err := harness.ParseReclaimMissing(out)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return r
 	}
 	r := run()
-	if r.RC == nil || *r.RC != -2 || r.ReleaseRC == nil || *r.ReleaseRC != 0 || r.Flags != cephReclaimReset ||
+	if r.RC == nil || *r.RC != -2 || r.ReleaseRC == nil || *r.ReleaseRC != 0 || r.Flags != harness.CephReclaimReset ||
 		r.PriorReclaimCalls != 0 || !r.Initialized || r.Target != "target-uuid" || r.OwnUUID != "own-uuid" || !strings.Contains(r.Handle, ":") {
 		t.Fatalf("result: %+v", r)
 	}
 	if got := run("FAKE_RC=0"); got.RC == nil || *got.RC != 0 {
 		t.Fatalf("a return of 0 was not carried through: %+v", got)
 	}
-	if _, code := f.run(reclaimMissing, []string{"FAKE_MISSING=ceph_start_reclaim"}, "fs0", "target-uuid", "own-uuid"); code == 0 {
+	if _, code := f.run(harness.ReclaimMissing, []string{"FAKE_MISSING=ceph_start_reclaim"}, "fs0", "target-uuid", "own-uuid"); code == 0 {
 		t.Fatal("a missing symbol did not stop the attempt")
 	}
 }
 
 func TestReclaimNativeReaders(t *testing.T) {
 	t.Run("the JSON line survives noise and the last one wins", func(t *testing.T) {
-		doc, err := reclaimJSONLine("warning\nRECLAIM_JSON {\"a\":1}\nnoise\nRECLAIM_JSON {\"a\":2}\n")
+		doc, err := harness.ReclaimJSONLine("warning\nRECLAIM_JSON {\"a\":1}\nnoise\nRECLAIM_JSON {\"a\":2}\n")
 		if err != nil || string(doc) != `{"a":2}` {
 			t.Fatalf("%s %v", doc, err)
 		}
-		if _, err := reclaimJSONLine("no document\n"); err == nil {
+		if _, err := harness.ReclaimJSONLine("no document\n"); err == nil {
 			t.Fatal("accepted output without a document")
 		}
 	})
@@ -226,14 +228,14 @@ func TestReclaimNativeReaders(t *testing.T) {
 	}
 	for name, out := range missing {
 		t.Run("missing result rejects "+name, func(t *testing.T) {
-			if r, err := parseReclaimMissing(out); err == nil {
+			if r, err := harness.ParseReclaimMissing(out); err == nil {
 				t.Fatalf("accepted: %+v", r)
 			}
 		})
 	}
 	t.Run("a missing or null return value stays unrecorded", func(t *testing.T) {
 		for _, out := range []string{`RECLAIM_JSON {"handle":"1:2"}`, `RECLAIM_JSON {"handle":"1:2","rc":null}`} {
-			r, err := parseReclaimMissing(out)
+			r, err := harness.ParseReclaimMissing(out)
 			if err != nil || r.RC != nil {
 				t.Fatalf("%s: %+v %v", out, r, err)
 			}
@@ -241,25 +243,25 @@ func TestReclaimNativeReaders(t *testing.T) {
 	})
 	locks := []struct {
 		out  string
-		a, u resetLock
+		a, u harness.ResetLock
 		bad  bool
 	}{
-		{`RECLAIM_JSON {"client":1,"a_errno":11,"u_errno":11}`, resetLockHeld, resetLockHeld, false},
-		{`RECLAIM_JSON {"client":1,"a_errno":0,"u_errno":11}`, resetLockFree, resetLockHeld, false},
-		{`RECLAIM_JSON {"client":1,"a_errno":110,"u_errno":0}`, resetLockUnknown, resetLockFree, false},
-		{`RECLAIM_JSON {"client":1,"a_errno":-1,"u_errno":11}`, resetLockUnknown, resetLockHeld, false},
-		{`RECLAIM_JSON {"client":1,"u_errno":11}`, resetLockUnknown, resetLockHeld, false},
-		{`RECLAIM_JSON {"client":1,"a_errno":null,"u_errno":11}`, resetLockUnknown, resetLockHeld, false},
+		{`RECLAIM_JSON {"client":1,"a_errno":11,"u_errno":11}`, harness.ResetLockHeld, harness.ResetLockHeld, false},
+		{`RECLAIM_JSON {"client":1,"a_errno":0,"u_errno":11}`, harness.ResetLockFree, harness.ResetLockHeld, false},
+		{`RECLAIM_JSON {"client":1,"a_errno":110,"u_errno":0}`, harness.ResetLockUnknown, harness.ResetLockFree, false},
+		{`RECLAIM_JSON {"client":1,"a_errno":-1,"u_errno":11}`, harness.ResetLockUnknown, harness.ResetLockHeld, false},
+		{`RECLAIM_JSON {"client":1,"u_errno":11}`, harness.ResetLockUnknown, harness.ResetLockHeld, false},
+		{`RECLAIM_JSON {"client":1,"a_errno":null,"u_errno":11}`, harness.ResetLockUnknown, harness.ResetLockHeld, false},
 		{`RECLAIM_JSON {"client":1,"a_errno":"11","u_errno":11}`, 0, 0, true},
 		{`RECLAIM_JSON {"client":1,"a_errno":11,"u_errno":11,"x":1}`, 0, 0, true},
 	}
 	for _, c := range locks {
-		a, u, err := parseReclaimLock(c.out)
+		a, u, err := harness.ParseReclaimLock(c.out)
 		if c.bad != (err != nil) || (!c.bad && (a != c.a || u != c.u)) {
 			t.Fatalf("%s: %d %d %v", c.out, a, u, err)
 		}
 	}
-	// The caller path: startCephFSSingleMDS collapses the whitespace of the
+	// The caller path: StartCephFSSingleMDS collapses the whitespace of the
 	// daemon's answer before the recipe reads it.
 	normalize := func(answer string) string { return strings.Join(strings.Fields(answer), " ") }
 	daemon := `{"version":"20.2.4","release":"tentacle","release_type":"stable"}`
@@ -269,11 +271,11 @@ func TestReclaimNativeReaders(t *testing.T) {
 		"pretty printed":              "{\n    \"version\": \"20.2.4\",\n    \"release\": \"tentacle\",\n    \"release_type\": \"stable\"\n}\n",
 		"raw CLI text, still allowed": "ceph version 20.2.4 (7f793731f1b39eb4f465e960113d2363c311b964) tentacle (stable)",
 	} {
-		if maj, min, pat, err := reclaimExpectedRelease(normalize(answer)); err != nil || maj != 20 || min != 2 || pat != 4 {
+		if maj, min, pat, err := harness.ReclaimExpectedRelease(normalize(answer)); err != nil || maj != 20 || min != 2 || pat != 4 {
 			t.Fatalf("%s: %d.%d.%d %v", name, maj, min, pat, err)
 		}
 	}
-	if maj, min, pat, err := reclaimExpectedRelease(normalize(`{"version":"19.2.5","release":"squid","release_type":"stable"}` + "\n")); err != nil || maj != 19 || min != 2 || pat != 5 {
+	if maj, min, pat, err := harness.ReclaimExpectedRelease(normalize(`{"version":"19.2.5","release":"squid","release_type":"stable"}` + "\n")); err != nil || maj != 19 || min != 2 || pat != 5 {
 		t.Fatalf("squid: %d.%d.%d %v", maj, min, pat, err)
 	}
 	for name, answer := range map[string]string{
@@ -287,7 +289,7 @@ func TestReclaimNativeReaders(t *testing.T) {
 		"unrelated text":  `not a version`,
 		"array":           `["20.2.4"]`,
 	} {
-		if maj, min, pat, err := reclaimExpectedRelease(normalize(answer)); err == nil {
+		if maj, min, pat, err := harness.ReclaimExpectedRelease(normalize(answer)); err == nil {
 			t.Fatalf("%s accepted as %d.%d.%d", name, maj, min, pat)
 		}
 	}
@@ -295,24 +297,24 @@ func TestReclaimNativeReaders(t *testing.T) {
 
 func TestReclaimNativeLockProbeScript(t *testing.T) {
 	f := newReclaimFake(t)
-	run := func(a, u string) (resetLock, resetLock) {
-		out, code := f.run(reclaimLockProbe, []string{"FAKE_A_ERRNO=" + a, "FAKE_U_ERRNO=" + u}, "fs0", "/a", "/u")
+	run := func(a, u string) (harness.ResetLock, harness.ResetLock) {
+		out, code := f.run(harness.ReclaimLockProbe, []string{"FAKE_A_ERRNO=" + a, "FAKE_U_ERRNO=" + u}, "fs0", "/a", "/u")
 		if code != 0 {
 			t.Fatalf("exit %d: %s", code, out)
 		}
-		la, lu, err := parseReclaimLock(out)
+		la, lu, err := harness.ParseReclaimLock(out)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return la, lu
 	}
-	if a, u := run("11", "11"); a != resetLockHeld || u != resetLockHeld {
+	if a, u := run("11", "11"); a != harness.ResetLockHeld || u != harness.ResetLockHeld {
 		t.Fatalf("both held: %d %d", a, u)
 	}
-	if a, u := run("0", "11"); a != resetLockFree || u != resetLockHeld {
+	if a, u := run("0", "11"); a != harness.ResetLockFree || u != harness.ResetLockHeld {
 		t.Fatalf("A free: %d %d", a, u)
 	}
-	if a, u := run("5", "0"); a != resetLockUnknown || u != resetLockFree {
+	if a, u := run("5", "0"); a != harness.ResetLockUnknown || u != harness.ResetLockFree {
 		t.Fatalf("other errno: %d %d", a, u)
 	}
 }
@@ -327,17 +329,17 @@ func TestReclaimNativeReclaimerScript(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		out, code := f.run(string(reclaimReclaimer), []string{"FAKE_RC=" + rc, "FAKE_INSTANCE=7001"}, "fs0", work, "tok", "target-uuid", "own-uuid", "/a")
+		out, code := f.run(string(harness.ReclaimReclaimer), []string{"FAKE_RC=" + rc, "FAKE_INSTANCE=7001"}, "fs0", work, "tok", "target-uuid", "own-uuid", "/a")
 		return out, code
 	}
-	read := func(phase string) (reclaimReceipt, bool) {
+	read := func(phase string) (harness.ReclaimReceipt, bool) {
 		data, err := os.ReadFile(filepath.Join(work, "receipt-"+phase))
 		if err != nil {
-			return reclaimReceipt{}, false
+			return harness.ReclaimReceipt{}, false
 		}
 		decoder := json.NewDecoder(strings.NewReader(string(data)))
 		decoder.DisallowUnknownFields()
-		var r reclaimReceipt
+		var r harness.ReclaimReceipt
 		if err := decoder.Decode(&r); err != nil {
 			t.Fatalf("receipt %s: %v", phase, err)
 		}
@@ -349,7 +351,7 @@ func TestReclaimNativeReclaimerScript(t *testing.T) {
 	one, ok1 := read("1")
 	two, ok2 := read("2")
 	three, ok3 := read("3")
-	if !ok1 || !ok2 || !ok3 || one.RC == nil || *one.RC != 0 || one.Flags != cephReclaimReset || one.Target != "target-uuid" || one.OwnUUID != "own-uuid" ||
+	if !ok1 || !ok2 || !ok3 || one.RC == nil || *one.RC != 0 || one.Flags != harness.CephReclaimReset || one.Target != "target-uuid" || one.OwnUUID != "own-uuid" ||
 		one.PriorReclaimCalls != 0 || !one.Initialized || one.Handle == "" || two.Client != 7001 || two.Size != 27 || !two.NewFd || !three.Closed {
 		t.Fatalf("receipts: %+v %+v %+v", one, two, three)
 	}
@@ -371,8 +373,8 @@ func TestReclaimNativeReclaimerScript(t *testing.T) {
 
 func TestReclaimNativeActorSyntax(t *testing.T) {
 	for name, script := range map[string]string{
-		"seed": reclaimSeed, "holder": string(reclaimHolder), "reclaimer": string(reclaimReclaimer),
-		"missing": reclaimMissing, "lock probe": reclaimLockProbe, "probe": reclaimABIProbe,
+		"seed": harness.ReclaimSeed, "holder": string(harness.ReclaimHolder), "reclaimer": string(harness.ReclaimReclaimer),
+		"missing": harness.ReclaimMissing, "lock probe": harness.ReclaimLockProbe, "probe": harness.ReclaimABIProbe,
 	} {
 		cmd := exec.Command("python3", "-I", "-c", "import sys; compile(sys.argv[1], 'script', 'exec')", script)
 		if out, err := cmd.CombinedOutput(); err != nil {

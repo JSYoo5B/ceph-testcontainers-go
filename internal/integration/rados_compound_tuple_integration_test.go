@@ -13,6 +13,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // TestRADOSCompoundTupleNoFault is the no-fault native control of the compound
@@ -28,7 +29,7 @@ import (
 func TestRADOSCompoundTupleNoFault(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	if cluster != nil {
@@ -55,18 +56,18 @@ func TestRADOSCompoundTupleNoFault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	poolState, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
+	poolState, err := harness.PoolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil || poolState.ID <= 0 {
 		t.Fatalf("pool identity unavailable: %+v %v", poolState, err)
 	}
-	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	identity := tupleIdentity{Object: tupleObject, Pool: pool, PoolID: int64(poolState.ID), FSID: quorum.MonMap.FSID}
 	osds := osdMemoryIdentities(t, ctx, cluster)
 	platform := osdMemoryExec(t, ctx, client, "uname", "-sm")
-	t.Logf("RADOS_TUPLE_RUNTIME ceph=%s platform=%s fsid=%s pool=%s pool_id=%d osds=%v", staticFacts(cluster).CephVersion, platform, identity.FSID, pool, identity.PoolID, osds)
+	t.Logf("RADOS_TUPLE_RUNTIME ceph=%s platform=%s fsid=%s pool=%s pool_id=%d osds=%v", harness.StaticFacts(cluster).CephVersion, platform, identity.FSID, pool, identity.PoolID, osds)
 
 	// judge records the receipt before it asserts, so that a failed phase keeps
 	// its ledger and observation.

@@ -12,6 +12,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // mapPropagationReceipt is what TestMapPropagationReceipt logs.
@@ -41,7 +42,7 @@ func osdMapEpoch(t *testing.T, ctx context.Context, cluster *ceph.Container) uin
 
 func readMonmapView(t *testing.T, ctx context.Context, cluster *ceph.Container, name string) (monmapView, []byte) {
 	t.Helper()
-	out, err := monitorHandle(t, ctx, cluster, name).AdminSocket(ctx, "mon_status")
+	out, err := harness.MonitorHandle(t, ctx, cluster, name).AdminSocket(ctx, "mon_status")
 	if err != nil {
 		t.Fatalf("mon_status of mon.%s: %v", name, err)
 	}
@@ -102,7 +103,7 @@ func awaitMonmap(t *testing.T, ctx context.Context, cluster *ceph.Container, nam
 func testMapPropagationReceipt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3)))
+	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3)))
 	if err := cluster.WaitForQuorum(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +121,7 @@ func testMapPropagationReceipt(t *testing.T) {
 	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		deadline := time.Now().Add(time.Minute)
 		for {
-			out, err := osdHandle(t, ctx, cluster, osd.ID).AdminSocket(ctx, "status")
+			out, err := harness.OSDHandle(t, ctx, cluster, osd.ID).AdminSocket(ctx, "status")
 			if err != nil {
 				t.Fatalf("status of osd.%d: %v", osd.ID, err)
 			}
@@ -155,7 +156,7 @@ func testMapPropagationReceipt(t *testing.T) {
 	}
 	changed = time.Now()
 	receipt.MonmapAdded, receipt.AddArrivals = awaitMonmap(t, ctx, cluster, []string{"a", "b", "c", "d"}, receipt.MonmapBefore, []string{"a", "b", "c", "d"}, changed)
-	if err := monitorHandle(t, ctx, cluster, "d").Remove(ctx); err != nil {
+	if err := harness.MonitorHandle(t, ctx, cluster, "d").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	changed = time.Now()

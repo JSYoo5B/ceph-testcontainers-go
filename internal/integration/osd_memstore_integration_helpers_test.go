@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -60,7 +61,7 @@ func installCRUSHMap(t *testing.T, ctx context.Context, cluster *ceph.Container,
 	if err := control.CopyToContainer(ctx, []byte(text), "/tmp/tc-crush.txt", 0o644); err != nil {
 		t.Fatal(err)
 	}
-	execCommand(t, ctx, control, "crushtool", "-c", "/tmp/tc-crush.txt", "-o", "/tmp/tc-crush.bin")
+	harness.ExecCommand(t, ctx, control, "crushtool", "-c", "/tmp/tc-crush.txt", "-o", "/tmp/tc-crush.bin")
 	if _, err := cluster.Ceph(ctx, "osd", "setcrushmap", "-i", "/tmp/tc-crush.bin"); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +86,7 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 	defer cancel()
 	opts = append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
 		ceph.WithOSDStorage(ceph.OSDStorage{}.WithObjectStore(ceph.OSDMemStore).WithBlockSize(256 << 20)), legacyPoolFlags(t)}, opts...)
-	cluster, client := newServiceCluster(t, opts...)
+	cluster, client := harness.NewServiceCluster(t, opts...)
 
 	installCRUSHMap(t, ctx, cluster, legacyCRUSHMap)
 	assertLegacyCRUSHMap(t, ctx, cluster)
@@ -100,8 +101,8 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 	checkMemStoreLegacyPool(t, ctx, cluster, pool.Name)
 
 	// The client writes and reads through the single PG on osd.0.
-	execCommand(t, ctx, client, "sh", "-c", "head -c 5000 /dev/urandom > /tmp/object && rados -p tc-legacy put legacy /tmp/object && rados -p tc-legacy get legacy /tmp/read")
-	assertContainerFilesEqual(t, ctx, client, "/tmp/object", "/tmp/read")
+	harness.ExecCommand(t, ctx, client, "sh", "-c", "head -c 5000 /dev/urandom > /tmp/object && rados -p tc-legacy put legacy /tmp/object && rados -p tc-legacy get legacy /tmp/read")
+	harness.AssertContainerFilesEqual(t, ctx, client, "/tmp/object", "/tmp/read")
 	out, err := cluster.Ceph(ctx, "osd", "map", "tc-legacy", "legacy", "--format", "json")
 	var mapping struct {
 		PGID   string `json:"pgid"`
@@ -124,8 +125,8 @@ func testOSDMemStoreLegacyPlacement(t *testing.T, opts ...testcontainers.Contain
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	execCommand(t, ctx, client, "sh", "-c", "rados -p tc-legacy get legacy /tmp/after")
-	assertContainerFilesEqual(t, ctx, client, "/tmp/object", "/tmp/after")
+	harness.ExecCommand(t, ctx, client, "sh", "-c", "rados -p tc-legacy get legacy /tmp/after")
+	harness.AssertContainerFilesEqual(t, ctx, client, "/tmp/object", "/tmp/after")
 	assertLegacyCRUSHMap(t, ctx, cluster)
 	t.Logf("MemStore osd.0 with the legacy CRUSH map served pool %s (1 PG %s, size 1, no hashpspool) before and after a clean restart", pool.Name, mapping.PGID)
 }
@@ -144,7 +145,7 @@ func checkMemStoreLegacyPool(t *testing.T, ctx context.Context, cluster *ceph.Co
 	}
 	var pools []ceph.PoolState
 	for deadline := time.Now().Add(2 * time.Minute); ; {
-		pools, err = observedPoolStates(ctx, cluster)
+		pools, err = harness.ObservedPoolStates(ctx, cluster)
 		if err != nil {
 			t.Fatal(err)
 		}

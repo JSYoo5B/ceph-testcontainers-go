@@ -14,9 +14,11 @@
 //
 //   - every test-only package exists and no package imports it from a non-test
 //     file (go list's Imports leave out _test.go files);
-//   - no selected non-test file outside the test-only packages declares a
-//     function or method whose name starts with Test, or a type of the
-//     manifest's forbidden list (the moved test-config and test-state types);
+//   - no selected non-test file outside the test-only packages, and none of a
+//     harness package (integration test code that several test packages
+//     share), declares a function or method whose name starts with Test, or
+//     a type of the manifest's forbidden list (the moved test-config and
+//     test-state types);
 //   - the seam (hookreg.Test) is read only in the manifest's seam files. The
 //     import is resolved by path to its local binding, so a renamed import is
 //     caught, a local variable or a different package that happens to be
@@ -65,6 +67,11 @@ type Manifest struct {
 	// TestOnlyPackages are module-relative directories of helper packages that
 	// only _test.go files may import.
 	TestOnlyPackages []string `json:"test_only_packages"`
+	// HarnessPackages are the test-only packages that hold integration test
+	// code shared by several integration test packages. Go lets a test of
+	// another package see only non-test files, so this code is not in
+	// _test.go files; testdoublecheck reads it as test code.
+	HarnessPackages []string `json:"harness_packages"`
 	// SeamSelector is the registry member that links test code to production
 	// state, as <module-relative package directory>.<Name>, and SeamFiles the
 	// only non-test files that read it.
@@ -133,13 +140,29 @@ func Check(root, manifestPath string, tagSets []string) ([]string, error) {
 	if len(manifest.TestOnlyPackages) == 0 || !strings.Contains(manifest.SeamSelector, ".") {
 		return nil, errors.New("manifest: test_only_packages and a package.Name seam_selector are required")
 	}
+	for _, dir := range manifest.HarnessPackages {
+		if !slices.Contains(manifest.TestOnlyPackages, dir) {
+			return nil, fmt.Errorf("manifest: harness package %s is not in test_only_packages", dir)
+		}
+	}
 	var problems []string
+	seen := map[string]bool{}
 	for _, tags := range tagSets {
-		found, err := checkTagSet(root, manifest, tags)
+		found, selected, err := checkTagSet(root, manifest, tags)
 		if err != nil {
 			return nil, err
 		}
 		problems = append(problems, found...)
+		for dir, ok := range selected {
+			seen[dir] = seen[dir] || ok
+		}
+	}
+	// A package built only under some tags, like the integration harness,
+	// counts when one tag set selects a file of it.
+	for _, dir := range manifest.TestOnlyPackages {
+		if !seen[dir] {
+			problems = append(problems, fmt.Sprintf("test-only package %s has no selected file in any tag set: the rule would be vacuous", dir))
+		}
 	}
 	return problems, nil
 }
@@ -178,14 +201,14 @@ func relDir(root, dir string) string {
 	return filepath.ToSlash(rel)
 }
 
-func checkTagSet(root string, manifest Manifest, tags string) ([]string, error) {
+func checkTagSet(root string, manifest Manifest, tags string) ([]string, map[string]bool, error) {
 	label := "tags=" + tags
 	if tags == "" {
 		label = "no tags"
 	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
 		absRoot = resolved
@@ -196,7 +219,7 @@ func checkTagSet(root string, manifest Manifest, tags string) ([]string, error) 
 	}
 	packages, err := goList(absRoot, tags, patterns...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var problems []string
 	helperPaths := map[string]string{} // import path -> directory
@@ -212,21 +235,23 @@ func checkTagSet(root string, manifest Manifest, tags string) ([]string, error) 
 			helperPaths[pkg.ImportPath] = dir
 			seen[dir] = seen[dir] || len(pkg.selected()) > 0
 		}
-		if pkg.Error != nil {
+		// A test-only package that this tag set does not build, like the
+		// integration harness without integration tags, has no files here;
+		// Check requires it to be built by some tag set.
+		if pkg.Error != nil && !(helper && strings.Contains(pkg.Error.Err, "build constraints exclude all Go files")) {
 			problems = append(problems, fmt.Sprintf("[%s] %s: %s", label, pkg.ImportPath, pkg.Error.Err))
 		}
 		for _, e := range pkg.DepsErrors {
 			problems = append(problems, fmt.Sprintf("[%s] %s: dependency error: %s", label, pkg.ImportPath, e.Err))
 		}
+		// A harness package is test code in non-test files: it gets the
+		// declaration rules of ordinary code, since a Test function there
+		// would never run.
+		harness := slices.Contains(manifest.HarnessPackages, dir)
 		for _, file := range pkg.selected() {
 			if !strings.HasSuffix(file, "_test.go") {
-				scanned[path.Join(dir, file)] = !helper
+				scanned[path.Join(dir, file)] = !helper || harness
 			}
-		}
-	}
-	for _, dir := range manifest.TestOnlyPackages {
-		if !seen[dir] {
-			problems = append(problems, fmt.Sprintf("[%s] test-only package %s has no selected file: the rule would be vacuous", label, dir))
 		}
 	}
 	var importers []string
@@ -250,13 +275,13 @@ func checkTagSet(root string, manifest Manifest, tags string) ([]string, error) 
 	cut := strings.LastIndex(manifest.SeamSelector, ".")
 	module, err := modulePath(absRoot)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	seamImport, seamName := path.Join(module, manifest.SeamSelector[:cut]), manifest.SeamSelector[cut+1:]
 	for _, file := range files {
 		found, err := scan(filepath.Join(absRoot, filepath.FromSlash(file)), manifest.ForbiddenTypes, seamImport, seamName)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, f := range found {
 			switch {
@@ -269,7 +294,7 @@ func checkTagSet(root string, manifest Manifest, tags string) ([]string, error) 
 			}
 		}
 	}
-	return problems, nil
+	return problems, seen, nil
 }
 
 type finding struct {

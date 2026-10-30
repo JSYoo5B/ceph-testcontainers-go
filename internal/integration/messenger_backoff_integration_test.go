@@ -4,7 +4,11 @@
 
 package integration_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+)
 
 // A primary whose PG peered without going active, because a replica of a
 // min_size 3 pool stopped, holds a native client's read with a PG-wide
@@ -12,6 +16,6 @@ import "testing"
 // ACK_BLOCK and UNBLOCK, and the original read completes once the replica
 // returns.
 func TestOSDBackoffReceipt(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testOSDBackoffReceipt(t)
 }

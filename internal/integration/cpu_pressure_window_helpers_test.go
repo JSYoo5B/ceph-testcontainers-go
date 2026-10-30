@@ -134,7 +134,7 @@ type cpuPressureChecks struct {
 // classifyCPUPressure judges one window. Missing evidence is incomplete or
 // unsupported and never an empty value that counts as evidence.
 func classifyCPUPressure(r cpuPressureRecord, checks cpuPressureChecks) (cpuPressureVerdict, error) {
-	if !r.Generation.valid() {
+	if !r.Generation.Valid() {
 		return cpuPressureIncomplete, fmt.Errorf("%w: frozen generation is incomplete", errCPUPressure)
 	}
 	if r.Before == nil || r.After == nil {

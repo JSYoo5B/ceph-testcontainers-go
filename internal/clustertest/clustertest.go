@@ -23,6 +23,8 @@ import (
 
 // Quorum reports a supervised quorum read: a Python supervisor that runs
 // "ceph --connect-timeout 5 quorum_status --format json" with bounded output.
+//
+//testdouble:shared-double
 func Quorum(args []string) bool {
 	return len(args) == 12 && args[0] == "python3" && args[1] == "-c" &&
 		slices.Equal(args[6:], []string{"ceph", "--connect-timeout", "5", "quorum_status", "--format", "json"})
@@ -30,6 +32,8 @@ func Quorum(args []string) bool {
 
 // ModuleArgs strips the CLI prefix, "ceph --connect-timeout 5" or the quorum
 // supervisor, and returns the command's own words.
+//
+//testdouble:shared-double
 func ModuleArgs(args []string) []string {
 	if Quorum(args) {
 		return args[9:]
@@ -38,6 +42,8 @@ func ModuleArgs(args []string) []string {
 }
 
 // QuorumEnvelope encodes the supervisor's reply for a quorum read.
+//
+//testdouble:shared-double
 func QuorumEnvelope(stdout, stderr []byte, code int, timeout, clipped bool) []byte {
 	data, _ := json.Marshal(struct {
 		SchemaVersion   int    `json:"schema_version"`
@@ -53,6 +59,8 @@ func QuorumEnvelope(stdout, stderr []byte, code int, timeout, clipped bool) []by
 
 // Reply returns output as the Exec result of args: a supervisor envelope for
 // a quorum read, or a multiplexed stdout stream otherwise.
+//
+//testdouble:shared-double
 func Reply(args []string, code int, output []byte) (int, io.Reader, error) {
 	if Quorum(args) {
 		return 0, bytes.NewReader(QuorumEnvelope(output, nil, code, false, false)), nil
@@ -71,6 +79,8 @@ func Reply(args []string, code int, output []byte) (int, io.Reader, error) {
 // spaces. Commands with an ls word default to an empty JSON list. The
 // command equal to Fail exits FailCode, or 1, and writes FailReason, or a
 // generic message, to standard error. Calls records every command's words.
+//
+//testdouble:shared-double
 type CannedCommandContainer struct {
 	testcontainers.Container
 	Calls      [][]string
@@ -119,6 +129,8 @@ func (ctr *CannedCommandContainer) Exec(_ context.Context, args []string, _ ...t
 // profiles, FSMap and the mon_allow_pool_delete entry. Reads are rendered
 // from that state and mutations change it, refusing what Ceph refuses, so
 // tests assert the resulting state instead of the commands that produced it.
+//
+//testdouble:shared-double
 type StateFake struct {
 	*CannedCommandContainer
 	Pools       []FakePool
@@ -131,6 +143,8 @@ type StateFake struct {
 }
 
 // FakePool is a pool in the StateFake model.
+//
+//testdouble:shared-double
 type FakePool struct {
 	ID      int
 	Name    string
@@ -140,6 +154,8 @@ type FakePool struct {
 }
 
 // FakeFilesystem is a filesystem in the StateFake model.
+//
+//testdouble:shared-double
 type FakeFilesystem struct {
 	Name, Metadata string
 	Data           []string
@@ -147,6 +163,8 @@ type FakeFilesystem struct {
 
 // NewStateFake returns a model with only the .mgr pool and the default rule
 // and profile.
+//
+//testdouble:shared-double
 func NewStateFake() *StateFake {
 	return &StateFake{
 		CannedCommandContainer: &CannedCommandContainer{Output: map[string]string{}},

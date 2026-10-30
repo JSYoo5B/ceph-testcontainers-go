@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -167,7 +168,7 @@ func (op osdTrackedOp) event(name string) (time.Time, bool) {
 // PG and the flags, but not the object.
 func osdClientWrites(t *testing.T, ctx context.Context, cluster *ceph.Container, osd, command, pg string) []osdTrackedOp {
 	t.Helper()
-	out, err := adminSocket(t, ctx, cluster, osd, command)
+	out, err := harness.AdminSocket(t, ctx, cluster, osd, command)
 	if err != nil {
 		t.Fatalf("%s %s: %v", osd, command, err)
 	}

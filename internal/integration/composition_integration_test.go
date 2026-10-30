@@ -12,14 +12,15 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 )
 
 func TestInitialClusterComposition(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPools(ceph.PoolConfig{Name: "tc-initial", Application: "rados"})),
 		cephfs.WithFilesystems(cephfs.Config{Name: "small"}))
 	cluster, err := ceph.Run(ctx, image, opts...)
@@ -39,7 +40,7 @@ func TestInitialClusterComposition(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(),
+	client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), cluster.WithClient(),
 		ceph.WithIdleEntrypoint())
 	if client != nil {
 		testcontainers.CleanupContainer(t, client)
@@ -48,7 +49,7 @@ func TestInitialClusterComposition(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, phase := range []string{"seed", "verify"} {
-		execCommand(t, ctx, client, "python3", "-c", `import cephfs, rados, sys
+		harness.ExecCommand(t, ctx, client, "python3", "-c", `import cephfs, rados, sys
 payload = bytes(range(256)) * 128
 with rados.Rados(conffile="/etc/ceph/ceph.conf", conf={"rados_mon_op_timeout":"30", "rados_osd_op_timeout":"30"}) as cluster:
     with cluster.open_ioctx("tc-initial") as io:

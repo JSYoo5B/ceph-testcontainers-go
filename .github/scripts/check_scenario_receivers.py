@@ -11,7 +11,9 @@ PARENT = "TestMultiClusterRBDReceiverReadiness"
 NETWORKS = ("bridge", "host")
 SCOPES = ("scope-0", "scope-1", "scope-2", "scope-3", "scope-4")
 SELECTORS = {network: "^" + PARENT + "$/^" + network + "$" for network in NETWORKS}
-PACKAGE = "github.com/JSYoo5B/ceph-testcontainers-go/internal/integration"
+PACKAGE = "github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/rbd"
+# Logs produced while the scenario was in the single integration package.
+UNSPLIT_PACKAGE = "github.com/JSYoo5B/ceph-testcontainers-go/internal/integration"
 # Logs produced before the module path took the GitHub owner's casing.
 FORMER_PACKAGE = "github.com/jsyoo5b/ceph-testcontainers-go/internal/integration"
 
@@ -53,7 +55,7 @@ def validate(log, network, execution="go-test"):
             failures.append("package failure")
         if line == "PASS":
             package_passes.append(index)
-        if re.fullmatch(r"ok\s+(?:" + re.escape(PACKAGE) + "|" + re.escape(FORMER_PACKAGE) + r")\s+[0-9.]+s", line):
+        if re.fullmatch(r"ok\s+(?:" + "|".join(map(re.escape, (PACKAGE, UNSPLIT_PACKAGE, FORMER_PACKAGE))) + r")\s+[0-9.]+s", line):
             package_success.append(index)
         elif re.match(r"^ok(?:\s|$)", line):
             package_other.append(index)

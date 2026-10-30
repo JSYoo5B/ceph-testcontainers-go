@@ -18,6 +18,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -309,7 +310,7 @@ type dualStackTopology struct {
 func testDualStackReplacement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	const filesystem, pool = "tc-cephfs", "tc-dual-stack"
 	replacementMDS := filesystem + "-1"
 	ipv6First := map[string]bool{"osd.2": true, "mds." + replacementMDS: true, "mgr.b": true}
@@ -317,8 +318,8 @@ func testDualStackReplacement(t *testing.T) {
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack)),
 		ceph.WithConfigFile(dualStackOrderConfig(t, "osd.2", "mds."+replacementMDS, "mgr.b")),
 		cephfs.WithFilesystems(cephfs.Config{Name: filesystem, ActiveMDS: 1}))
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, opts...)
-	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, opts...)
+	quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +421,7 @@ func testDualStackReplacement(t *testing.T) {
 		return dualStackTopology{addresses: addresses, mds: *current, fsEpoch: fsMapEpoch(t, ctx, cluster)}
 	}
 
-	retainedCtr, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	retainedCtr, err := testcontainers.Run(ctx, harness.NativeClientImage(t, harness.StaticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, retainedCtr)
 	if err != nil {
 		t.Fatal(err)
@@ -510,7 +511,7 @@ func testDualStackReplacement(t *testing.T) {
 	if _, err := cluster.AddMonitor(ctx, "c"); err != nil {
 		t.Fatal(err)
 	}
-	if err := monitorHandle(t, ctx, cluster, "b").Remove(ctx); err != nil {
+	if err := harness.MonitorHandle(t, ctx, cluster, "b").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	addStale("mon.b", oldMon.Addrs)
@@ -525,7 +526,7 @@ func testDualStackReplacement(t *testing.T) {
 	if afterMon.addresses.MonMapEpoch <= initial.addresses.MonMapEpoch {
 		t.Fatalf("monmap epoch %d after the replacement, %d before", afterMon.addresses.MonMapEpoch, initial.addresses.MonMapEpoch)
 	}
-	bootstrap, err := observeCluster(cluster).MonitorBootstrapAddresses(ctx)
+	bootstrap, err := harness.ObserveCluster(cluster).MonitorBootstrapAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +587,7 @@ func testDualStackReplacement(t *testing.T) {
 	if added.ID != 2 {
 		t.Fatalf("the new OSD is osd.%d, want osd.2", added.ID)
 	}
-	if err := osdHandle(t, ctx, cluster, 0).Remove(ctx); err != nil {
+	if err := harness.OSDHandle(t, ctx, cluster, 0).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	addStale("osd.0", oldOSD.Public, oldOSD.Cluster, oldOSD.HeartbeatFront, oldOSD.HeartbeatBack)
@@ -661,14 +662,14 @@ func testDualStackReplacement(t *testing.T) {
 	// MGR: add mgr.b as a standby, then remove the active mgr.a. Its
 	// admission check reads every MON, MGR and OSD vector.
 	oldMgr := *afterMDS.addresses.ActiveManager
-	statusBefore, err := observeCluster(cluster).ManagerStatus(ctx)
+	statusBefore, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cluster.AddManager(ctx, "b"); err != nil {
 		t.Fatal(err)
 	}
-	if err := managerHandle(t, ctx, cluster, "a").Remove(ctx); err != nil {
+	if err := harness.ManagerHandle(t, ctx, cluster, "a").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	addStale("mgr.a", oldMgr.Addrs)
@@ -677,7 +678,7 @@ func testDualStackReplacement(t *testing.T) {
 		t.Fatalf("mds.%s changed from gid %d incarnation %d to gid %d incarnation %d during the MGR replacement",
 			replacementMDS, afterMDS.mds.GID, afterMDS.mds.Incarnation, afterMgr.mds.GID, afterMgr.mds.Incarnation)
 	}
-	statusAfter, err := observeCluster(cluster).ManagerStatus(ctx)
+	statusAfter, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -713,5 +714,5 @@ func testDualStackReplacement(t *testing.T) {
 		t.Fatalf("fresh readback: exit %d: %s", code, output)
 	}
 	t.Logf("DUAL_STACK_REPLACEMENT_RECEIPT image=%s ceph=%s fsid=%s steps=%q fresh_mon_c=%v retained=%q fresh_read=%q listening=%v reused_ip=%v",
-		staticFacts(cluster).Images.Essential, staticFacts(cluster).CephVersion, fsid, steps, freshMon, rounds, strings.TrimSpace(string(output)), listening, reused)
+		harness.StaticFacts(cluster).Images.Essential, harness.StaticFacts(cluster).CephVersion, fsid, steps, freshMon, rounds, strings.TrimSpace(string(output)), listening, reused)
 }

@@ -12,13 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 func TestObserveReturnsOnceTheConditionHolds(t *testing.T) {
 	probes := 0
-	seen, err := observe(t.Context(), time.Second, 100*time.Millisecond, time.Millisecond, func(context.Context) (int, bool, error) {
+	seen, err := harness.Observe(t.Context(), time.Second, 100*time.Millisecond, time.Millisecond, func(context.Context) (int, bool, error) {
 		probes++
 		return probes, probes == 3, nil
 	})
@@ -30,7 +31,7 @@ func TestObserveReturnsOnceTheConditionHolds(t *testing.T) {
 func TestObserveRejectsASampleThatReturnsAfterThePhase(t *testing.T) {
 	// The read finishes 75 ms into a 60 ms phase, as a slow exec whose
 	// output arrives late, and reports the condition reached.
-	seen, err := observe(t.Context(), 60*time.Millisecond, time.Second, time.Millisecond, func(context.Context) (string, bool, error) {
+	seen, err := harness.Observe(t.Context(), 60*time.Millisecond, time.Second, time.Millisecond, func(context.Context) (string, bool, error) {
 		time.Sleep(75 * time.Millisecond)
 		return "late", true, nil
 	})
@@ -41,7 +42,7 @@ func TestObserveRejectsASampleThatReturnsAfterThePhase(t *testing.T) {
 
 func TestObserveBoundsEachProbeWithinThePhase(t *testing.T) {
 	var deadlines []time.Duration
-	seen, err := observe(t.Context(), 200*time.Millisecond, 20*time.Millisecond, time.Millisecond, func(ctx context.Context) (int, bool, error) {
+	seen, err := harness.Observe(t.Context(), 200*time.Millisecond, 20*time.Millisecond, time.Millisecond, func(ctx context.Context) (int, bool, error) {
 		deadline, _ := ctx.Deadline()
 		deadlines = append(deadlines, time.Until(deadline))
 		<-ctx.Done()
@@ -58,7 +59,7 @@ func TestObserveBoundsEachProbeWithinThePhase(t *testing.T) {
 
 func TestObserveStopsAtATerminalError(t *testing.T) {
 	terminal := errors.New("the object was deleted")
-	seen, err := observe(t.Context(), time.Second, 100*time.Millisecond, time.Millisecond, func(context.Context) (int, bool, error) {
+	seen, err := harness.Observe(t.Context(), time.Second, 100*time.Millisecond, time.Millisecond, func(context.Context) (int, bool, error) {
 		return 7, false, terminal
 	})
 	if !errors.Is(err, terminal) || seen.Attempts != 1 || seen.Value != 7 {
@@ -69,7 +70,7 @@ func TestObserveStopsAtATerminalError(t *testing.T) {
 func TestObserveEndsWithItsCaller(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	probes := 0
-	_, err := observe(ctx, time.Minute, time.Second, 10*time.Millisecond, func(context.Context) (int, bool, error) {
+	_, err := harness.Observe(ctx, time.Minute, time.Second, 10*time.Millisecond, func(context.Context) (int, bool, error) {
 		probes++
 		if probes == 2 {
 			cancel()
@@ -100,18 +101,18 @@ func (ctr *eventLogContainer) Exec(_ context.Context, _ []string, _ ...tcexec.Pr
 func TestNotificationEventsAreReadWithinTheirPhase(t *testing.T) {
 	want := []string{"ObjectCreated:Put in/a"}
 	ready := &eventLogContainer{events: "ObjectCreated:Put in/a\nObjectRemoved:Delete in/a\n"}
-	seen, err := observeNotificationEvents(t.Context(), ready, want, time.Second)
+	seen, err := harness.ObserveNotificationEvents(t.Context(), ready, want, time.Second)
 	if err != nil || len(seen.Value) != 2 || ready.reads != 1 {
 		t.Fatalf("events present: %+v, %v", seen, err)
 	}
 	// A read that returns after the phase is not evidence, even when it
 	// holds the wanted event.
 	late := &eventLogContainer{delay: 80 * time.Millisecond, events: "ObjectCreated:Put in/a\n"}
-	seen, err = observeNotificationEvents(t.Context(), late, want, 50*time.Millisecond)
+	seen, err = harness.ObserveNotificationEvents(t.Context(), late, want, 50*time.Millisecond)
 	if !errors.Is(err, context.DeadlineExceeded) || seen.Value != nil {
 		t.Fatalf("a late read: %+v, %v", seen, err)
 	}
-	if missing := missingNotificationEvents(want, []string{"ObjectRemoved:Delete in/a"}); len(missing) != 1 {
+	if missing := harness.MissingNotificationEvents(want, []string{"ObjectRemoved:Delete in/a"}); len(missing) != 1 {
 		t.Fatalf("missing %v", missing)
 	}
 }

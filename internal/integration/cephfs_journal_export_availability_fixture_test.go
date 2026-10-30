@@ -10,11 +10,13 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Docker-free controls for the read-only journal export characterization.
 // The probe outputs below are synthetic text in the protocol of
-// jeProbeScript. No image was inspected, no journal tool ran and no export was
+// JeProbeScript. No image was inspected, no journal tool ran and no export was
 // taken here. The observation adapter feeds an export through the existing
 // jbAdmit rule of the persisted-end versus payload-end admission model
 // without changing it; the adapter's inputs are synthetic as well.
@@ -35,8 +37,8 @@ const (
 )
 
 func TestJournalExportAvailabilityAbsentNeedsCompleteProbe(t *testing.T) {
-	res := jeParseProbe(jeProbeOutput(jeVersionOK, jeToolsNone, jeFindClean), 0, false)
-	if res.Verdict != jeAbsent || res.CephVersion != "20.2.4" || res.CephCommit != jeCommit || res.CephRelease != "tentacle" {
+	res := harness.JeParseProbe(jeProbeOutput(jeVersionOK, jeToolsNone, jeFindClean), 0, false)
+	if res.Verdict != harness.JeAbsent || res.CephVersion != "20.2.4" || res.CephCommit != jeCommit || res.CephRelease != "tentacle" {
 		t.Fatalf("complete negative probe: %+v", res)
 	}
 	if res.Tools["cephfs-table-tool"] != "absent" {
@@ -45,18 +47,18 @@ func TestJournalExportAvailabilityAbsentNeedsCompleteProbe(t *testing.T) {
 }
 
 func TestJournalExportAvailabilityPresentByLookupOrByFilesystemHit(t *testing.T) {
-	byLookup := jeParseProbe(jeProbeOutput(jeVersionOK, jeToolsAll, jeFindClean+"hit /usr/bin/cephfs-data-scan\nhit /usr/bin/cephfs-journal-tool\nhit /usr/bin/cephfs-table-tool\n"), 0, false)
-	if byLookup.Verdict != jePresent || byLookup.Tools[jeJournalTool] != "present:/usr/bin/cephfs-journal-tool" || len(byLookup.Hits) != 3 {
+	byLookup := harness.JeParseProbe(jeProbeOutput(jeVersionOK, jeToolsAll, jeFindClean+"hit /usr/bin/cephfs-data-scan\nhit /usr/bin/cephfs-journal-tool\nhit /usr/bin/cephfs-table-tool\n"), 0, false)
+	if byLookup.Verdict != harness.JePresent || byLookup.Tools[harness.JeJournalTool] != "present:/usr/bin/cephfs-journal-tool" || len(byLookup.Hits) != 3 {
 		t.Fatalf("lookup: %+v", byLookup)
 	}
 	// Not on PATH, found only by the filesystem search.
-	byHit := jeParseProbe(jeProbeOutput(jeVersionOK, jeToolsNone, jeFindClean+"hit /opt/x/cephfs-journal-tool\n"), 0, false)
-	if byHit.Verdict != jePresent {
+	byHit := harness.JeParseProbe(jeProbeOutput(jeVersionOK, jeToolsNone, jeFindClean+"hit /opt/x/cephfs-journal-tool\n"), 0, false)
+	if byHit.Verdict != harness.JePresent {
 		t.Fatalf("hit: %+v", byHit)
 	}
 	// Another repair tool alone does not make the journal tool present.
-	other := jeParseProbe(jeProbeOutput(jeVersionOK, "tool cephfs-journal-tool absent\ntool cephfs-table-tool present /usr/bin/cephfs-table-tool\ntool cephfs-data-scan absent\n", jeFindClean+"hit /usr/bin/cephfs-table-tool\n"), 0, false)
-	if other.Verdict != jeAbsent {
+	other := harness.JeParseProbe(jeProbeOutput(jeVersionOK, "tool cephfs-journal-tool absent\ntool cephfs-table-tool present /usr/bin/cephfs-table-tool\ntool cephfs-data-scan absent\n", jeFindClean+"hit /usr/bin/cephfs-table-tool\n"), 0, false)
+	if other.Verdict != harness.JeAbsent {
 		t.Fatalf("other tool: %+v", other)
 	}
 }
@@ -91,42 +93,42 @@ func TestJournalExportAvailabilityBrokenProbesStayInconclusive(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			if res := jeParseProbe(c.out, c.exit, c.stopped); res.Verdict != jeInconclusive || res.Reason == "" {
+			if res := harness.JeParseProbe(c.out, c.exit, c.stopped); res.Verdict != harness.JeInconclusive || res.Reason == "" {
 				t.Fatalf("expected inconclusive with a reason, got %+v", res)
 			}
 		})
 	}
 	// A positive finding survives an incomplete search: a present journal
 	// tool is evidence even when find ended early.
-	if res := jeParseProbe(ok(jeVersionOK, jeToolsAll, "find rc=1\n"), 0, false); res.Verdict != jePresent {
+	if res := harness.JeParseProbe(ok(jeVersionOK, jeToolsAll, "find rc=1\n"), 0, false); res.Verdict != harness.JePresent {
 		t.Fatalf("present with early find end: %+v", res)
 	}
 }
 
 func TestJournalExportAvailabilityOverallNeverInventsAbsence(t *testing.T) {
-	absent := func(role string) jeRoleReceipt {
-		return jeRoleReceipt{Role: role, Configured: true, Verdict: jeAbsent}
+	absent := func(role string) harness.JeRoleReceipt {
+		return harness.JeRoleReceipt{Role: role, Configured: true, Verdict: harness.JeAbsent}
 	}
-	all := []jeRoleReceipt{absent("essential"), absent("client"), absent("cephfs"), absent("rbd-aux"), absent("rgw")}
-	if v, _ := jeOverall(all); v != jeAbsent {
+	all := []harness.JeRoleReceipt{absent("essential"), absent("client"), absent("cephfs"), absent("rbd-aux"), absent("rgw")}
+	if v, _ := harness.JeOverall(all); v != harness.JeAbsent {
 		t.Fatalf("all absent: %s", v)
 	}
-	unset := append([]jeRoleReceipt{}, all...)
-	unset[3] = jeRoleReceipt{Role: "rbd-aux", Verdict: jeAbsent}
-	if v, _ := jeOverall(unset); v != jeInconclusive {
+	unset := append([]harness.JeRoleReceipt{}, all...)
+	unset[3] = harness.JeRoleReceipt{Role: "rbd-aux", Verdict: harness.JeAbsent}
+	if v, _ := harness.JeOverall(unset); v != harness.JeInconclusive {
 		t.Fatalf("an unconfigured role must keep the answer inconclusive: %s", v)
 	}
-	broken := append([]jeRoleReceipt{}, all...)
-	broken[1] = jeRoleReceipt{Role: "client", Configured: true, Verdict: jeInconclusive, Reason: "probe"}
-	if v, _ := jeOverall(broken); v != jeInconclusive {
+	broken := append([]harness.JeRoleReceipt{}, all...)
+	broken[1] = harness.JeRoleReceipt{Role: "client", Configured: true, Verdict: harness.JeInconclusive, Reason: "probe"}
+	if v, _ := harness.JeOverall(broken); v != harness.JeInconclusive {
 		t.Fatalf("an inconclusive role: %s", v)
 	}
-	found := append([]jeRoleReceipt{}, broken...)
-	found[2] = jeRoleReceipt{Role: "cephfs", Configured: true, Verdict: jePresent}
-	if v, reason := jeOverall(found); v != jePresent || !strings.Contains(reason, "cephfs") {
+	found := append([]harness.JeRoleReceipt{}, broken...)
+	found[2] = harness.JeRoleReceipt{Role: "cephfs", Configured: true, Verdict: harness.JePresent}
+	if v, reason := harness.JeOverall(found); v != harness.JePresent || !strings.Contains(reason, "cephfs") {
 		t.Fatalf("presence is a positive finding even with an inconclusive role: %s %s", v, reason)
 	}
-	if v, _ := jeOverall(nil); v != jeInconclusive {
+	if v, _ := harness.JeOverall(nil); v != harness.JeInconclusive {
 		t.Fatalf("no roles: %s", v)
 	}
 }

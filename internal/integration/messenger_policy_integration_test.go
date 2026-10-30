@@ -4,14 +4,18 @@
 
 package integration_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+)
 
 func TestMessengerPolicy(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testMessengerPolicy(t)
 }
 
 func TestClientMessengerPolicyOverridesSecureOnly(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testClientPolicyOverridesSecureOnly(t)
 }

@@ -4,7 +4,11 @@
 
 package integration_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+)
 
 // TestDualStackReplacement replaces a MON, an OSD, the MDS and the MGR of an
 // AddressDualStack cluster with new containers, one at a time, while one
@@ -14,6 +18,6 @@ import "testing"
 // old daemon, and that the retained client completed its operations through
 // the new daemon over the family its vector lists first.
 func TestDualStackReplacement(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testDualStackReplacement(t)
 }

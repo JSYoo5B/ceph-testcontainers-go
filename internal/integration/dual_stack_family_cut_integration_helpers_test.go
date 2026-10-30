@@ -18,6 +18,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -174,7 +175,7 @@ type actorRequests map[string]map[string]any
 // operation it waits for, so a read that completes only after Restore must
 // still return the bytes of the object it started to read. For a done read,
 // check returns the SHA-256 it compared.
-func (started actorRequests) check(request map[string]any, result actorResult, done bool, want map[string]string) (string, error) {
+func (started actorRequests) Check(request map[string]any, result actorResult, done bool, want map[string]string) (string, error) {
 	id, _ := request["id"].(string)
 	origin := request
 	if request["op"] == "join" {
@@ -287,11 +288,11 @@ type familyCutState struct {
 
 func readFamilyCutState(t *testing.T, ctx context.Context, cluster *ceph.Container) familyCutState {
 	t.Helper()
-	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	addresses, err := observeCluster(cluster).DaemonAddresses(ctx)
+	addresses, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +302,7 @@ func readFamilyCutState(t *testing.T, ctx context.Context, cluster *ceph.Contain
 			up = append(up, osd.ID)
 		}
 	}
-	status, err := observeCluster(cluster).ManagerStatus(ctx)
+	status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,13 +355,13 @@ func v2Endpoint(vector []ceph.EntityAddress, v6 bool) netip.AddrPort {
 func testDualStackFamilyCut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	netem := netemImage(t)
-	image, roles := integrationImages(t)
+	netem := harness.NetemImage(t)
+	image, roles := harness.IntegrationImages(t)
 	const pool = "tc-family-cut"
 	opts := append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithPoolDefaults(1, 1)),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack)),
 		ceph.WithConfigFile(dualStackOrderConfig(t, "osd.1")))
-	cluster, client := newServiceClusterRun(t, ceph.Run, image, opts...)
+	cluster, client := harness.NewServiceClusterRun(t, ceph.Run, image, opts...)
 	addresses, _ := waitDualStackAddresses(t, ctx, cluster, 1, 2)
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados"}); err != nil {
 		t.Fatal(err)
@@ -400,7 +401,7 @@ func testDualStackFamilyCut(t *testing.T) {
 	expect := func(actor *familyActor, request map[string]any, done bool) actorResult {
 		t.Helper()
 		result := actor.call(t, ctx, request)
-		hash, err := actor.started.check(request, result, done, want)
+		hash, err := actor.started.Check(request, result, done, want)
 		if err != nil {
 			t.Fatalf("%s: %v", actor.tag, err)
 		}
@@ -461,7 +462,7 @@ func testDualStackFamilyCut(t *testing.T) {
 		if err := lease.Restore(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if root := rootQdisc(t, ctx, netem, client, lease.Interface); root != "noqueue 0:" {
+		if root := harness.RootQdisc(t, ctx, netem, client, lease.Interface); root != "noqueue 0:" {
 			t.Fatalf("root qdisc after Restore: %s", root)
 		}
 		filters, _ := json.Marshal(status.Filters)
@@ -563,7 +564,7 @@ func testDualStackFamilyCut(t *testing.T) {
 	var restarted ceph.OSDAddress
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
-		current, err := observeCluster(cluster).DaemonAddresses(ctx)
+		current, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 		if err == nil && len(current.OSDs) == 2 && current.OSDs[1].Up && current.OSDs[1].Public[0].Nonce != osd1.Public[0].Nonce {
 			restarted = current.OSDs[1]
 			break
@@ -592,7 +593,7 @@ func testDualStackFamilyCut(t *testing.T) {
 		t.Fatalf("cluster state %s after the cuts, %s before", after, state)
 	}
 	// A new session reads both objects.
-	code, reader, err = toolkitContainer(t, cluster).Exec(ctx, []string{"timeout", "120", "python3", "-c", dualStackOracle, pool, objects[0], objects[1]}, tcexec.Multiplexed())
+	code, reader, err = harness.ToolkitContainer(t, cluster).Exec(ctx, []string{"timeout", "120", "python3", "-c", dualStackOracle, pool, objects[0], objects[1]}, tcexec.Multiplexed())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,7 +603,7 @@ func testDualStackFamilyCut(t *testing.T) {
 		t.Fatalf("oracle read: exit %d: %s, want %v", code, output, want)
 	}
 	t.Logf("DUAL_STACK_FAMILY_CUT_RECEIPT image=%s ceph=%s netem=%s mon.a=%s osd.0=%s osd.1=%s baseline=%v cuts=%q instances=v6:%d,v4:%d state=%s oracle=%v",
-		staticFacts(cluster).Images.Essential, staticFacts(cluster).CephVersion, netem, vectorString(mon.Addrs), vectorString(osd0.Public), vectorString(osd1.Public),
+		harness.StaticFacts(cluster).Images.Essential, harness.StaticFacts(cluster).CephVersion, netem, vectorString(mon.Addrs), vectorString(osd0.Public), vectorString(osd1.Public),
 		baseline, receipts, instance6, instance4, state, oracle)
 }
 

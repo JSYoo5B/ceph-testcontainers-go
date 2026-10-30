@@ -106,7 +106,7 @@ func TestCPUBindingReadsThrottlingForTheFrozenGeneration(t *testing.T) {
 	if v, err := classifyCPUThrottle(before, after, false, cpuClassifyChecks{}); v != cpuVerdictThrottled || err != nil {
 		t.Fatalf("verdict %v %v", v, err)
 	}
-	if r := target.receipt(); strings.Contains(r, b.roots.Cgroup) || strings.Contains(r, "system.slice") || !strings.Contains(r, "process_start=777") {
+	if r := target.Receipt(); strings.Contains(r, b.roots.Cgroup) || strings.Contains(r, "system.slice") || !strings.Contains(r, "process_start=777") {
 		t.Fatalf("receipt leaks a path or lacks identity: %q", r)
 	}
 }

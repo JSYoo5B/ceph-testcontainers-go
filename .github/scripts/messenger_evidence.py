@@ -41,9 +41,10 @@ cleanup; any test or cleanup failure suppresses it. It records:
   - binding/case, unique run ID and cluster generation (FSID);
   - exact parent SHA-256;
   - source snapshot: SHA-256 of the embedded reference, coverage and binding
-    JSON, plus an aggregate over internal/integration/*.go computed as SHA-256
-    of sorted rows "path NUL file-sha256 newline" (inclusion does not mean all
-    build-tag alternatives ran);
+    JSON, plus one aggregate over internal/integration/*.go and one over
+    internal/integration/harness/*.go (the shared code the cases call), each
+    computed as SHA-256 of sorted rows "path NUL file-sha256 newline"
+    (inclusion does not mean all build-tag alternatives ran);
   - native Ceph version, Go build and the inspected immutable image IDs of
     every executor container (cluster/daemon, client toolkit, limited client;
     an aggregate image once). Inspection failure blocks the receipt; an unused
@@ -134,7 +135,10 @@ REFERENCE = "internal/integration/testdata/messenger_reference.json"
 COVERAGE = "internal/integration/testdata/messenger_coverage.json"
 BINDINGS = "internal/integration/testdata/messenger_evidence.json"
 EMITTER = "internal/integration/messenger_case_evidence_integration_helpers_test.go"
-SOURCES = (REFERENCE, COVERAGE, BINDINGS) + tuple(str(p.relative_to(BASE)) for p in sorted((BASE / "internal/integration").glob("*.go")))
+# The case package and the harness it calls; both are compiled into a receipt.
+SOURCE_DIRECTORIES = ("internal/integration", "internal/integration/harness")
+SOURCES = (REFERENCE, COVERAGE, BINDINGS) + tuple(str(p.relative_to(BASE)) for directory in SOURCE_DIRECTORIES
+                                                  for p in sorted((BASE / directory).glob("*.go")))
 PACKAGE = "github.com/JSYoo5B/ceph-testcontainers-go/internal/integration"
 
 
@@ -169,10 +173,11 @@ def digest(data):
 
 def source_digests(root):
     result = {p: digest((root / p).read_bytes()) for p in (REFERENCE, COVERAGE, BINDINGS)}
-    paths = sorted((root / "internal/integration").glob("*.go"))
-    need(paths, "missing integration source snapshot")
-    snapshot = "".join(str(p.relative_to(root)) + "\0" + digest(p.read_bytes()) + "\n" for p in paths)
-    result["internal/integration/*.go"] = digest(snapshot.encode())
+    for directory in SOURCE_DIRECTORIES:
+        paths = sorted((root / directory).glob("*.go"))
+        need(paths, "missing integration source snapshot of " + directory)
+        snapshot = "".join(str(p.relative_to(root)) + "\0" + digest(p.read_bytes()) + "\n" for p in paths)
+        result[directory + "/*.go"] = digest(snapshot.encode())
     return result
 
 

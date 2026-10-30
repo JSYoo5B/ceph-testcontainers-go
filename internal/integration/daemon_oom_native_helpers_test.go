@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -62,14 +63,14 @@ func testDaemonMemoryQualification(t *testing.T, pressure bool) {
 	if available < 4<<20 {
 		t.Skip("eligibility: less than 4 GiB available runner memory")
 	}
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithNoInitialManagers().WithNoInitialOSDs()),
 		testcontainers.WithHostConfigModifier(func(h *container.HostConfig) {
 			h.Memory = daemonMemoryBaseline
 			h.MemorySwap = daemonMemoryBaseline
 			h.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyDisabled}
 		}))
-	cluster, client := newServiceClusterWithOptions(t, image, opts...)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
 	id := cluster.GetContainerID()
 	target, err := daemonMemoryBind(ctx, docker.Client, id)
 	if err != nil {
@@ -80,7 +81,7 @@ func testDaemonMemoryQualification(t *testing.T, pressure bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("DAEMON_MEMORY_RUNTIME engine=%s arch=%s ceph=%s image=%s container=%s started=%s pid=%d process_start=%s", info.Info.ServerVersion, runtime.GOARCH, staticFacts(cluster).CephVersion, raw.Container.Image, id, target.Started, target.PID, target.ProcessStart)
+	t.Logf("DAEMON_MEMORY_RUNTIME engine=%s arch=%s ceph=%s image=%s container=%s started=%s pid=%d process_start=%s", info.Info.ServerVersion, runtime.GOARCH, harness.StaticFacts(cluster).CephVersion, raw.Container.Image, id, target.Started, target.PID, target.ProcessStart)
 	// Restoration has its own deadline even if the workload is canceled. Do not
 	// apply old settings to an unexpectedly restarted or replaced generation.
 	restored := false

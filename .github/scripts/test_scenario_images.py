@@ -15,8 +15,6 @@ import tempfile
 import unittest
 from unittest import mock
 
-import check_scenario_quiescence as quiescence_checker
-import check_scenario_recovery as recovery_checker
 import run_image_matrix as runner
 
 
@@ -27,27 +25,13 @@ CONSUMERS = ("CEPH_TEST_RBD_CLIENT_IMAGE", "CEPH_TEST_VAULT_IMAGE")
 IMAGES = {name: "sha256:" + digit * 64
           for name, digit in zip(ROLES, "12345")}
 IMAGES.update({name: "sha256:" + digit * 64 for name, digit in zip(ROLE_ENV, "56789")})
-# Historical manual targets, never the source of CI membership.
-MANUAL_SCENARIOS = (
-    "scenario-default", "scenario-topology", "scenario-multicluster-topology",
-    "scenario-cephfs-removal", "scenario-rbd-receivers",
-    "scenario-topology-extensions", "scenario-cluster-fixtures",
-    "scenario-cephfs-fixtures", "scenario-rados-fixtures",
-    "scenario-rbd-fixtures", "scenario-rgw-fixtures", "scenario-rgw-sync-fixtures",
-    "scenario-mirror-initial-daemons", "scenario-rbd-namespaces",
-    "scenario-empty-bootstrap", "scenario-rbd-namespace-observation",
-    "scenario-mds-replacements",
-)
-MANUAL_LIFECYCLE_TARGETS = (
-    "scenario-storage-bootstrap", "scenario-manager-bootstrap",
-    "scenario-mds-bootstrap", "scenario-mds-replacement",
-    "scenario-last-mds-replacement",
-    "scenario-osd-memory",
-    "scenario-small-osds",
-)
-FIXTURES = frozenset(name for name in MANUAL_SCENARIOS if name.endswith("-fixtures"))
-DRY_RUN_TARGETS = (*MANUAL_SCENARIOS, *MANUAL_LIFECYCLE_TARGETS,
-                   "scenario-rgw-sync-supported", "scenario-diagnostics")
+# The Make targets that run Docker tests. scenario takes its tests from the tag
+# runner, so the Makefile keeps no test list for it.
+DRY_RUN_TARGETS = ("scenario-default", "scenario")
+SCENARIO_SELECTION = ("SCENARIO_CATEGORY=recovery", "SCENARIO_BATCH=container_pause")
+# A -run selection in the Makefile is a name prefix or the empty match, never
+# a list of tests, except the representative image-compatibility set.
+SELECTION_RUN = re.compile(r"\^(?:\$\$|Test[A-Za-z]+)")
 PREP = "./.github/actions/scenario-images"
 CLEANUP = "./.github/actions/runtime-cleanup"
 
@@ -79,7 +63,7 @@ def check_dry_run_source(text):
         raise AssertionError("dry-run boundary refuses forced recipe execution")
     targets = blocks(text, r"^([\w.-]+):[ \t]*$")
     target_bodies = dict(targets)
-    for name in (*DRY_RUN_TARGETS, "rgw-sync-native-regressions"):
+    for name in DRY_RUN_TARGETS:
         if name not in target_bodies or re.search(
                 r"\$\(\s*MAKE\s*\)|\$\{\s*MAKE\s*\}", target_bodies[name]):
             raise AssertionError("scenario dry-run cannot execute recursive recipes")
@@ -150,7 +134,7 @@ class ScenarioImageTests(unittest.TestCase):
         return env
 
     def dry_run(self, target, env, extra=(), success=True):
-        result = subprocess.run(["make", "--no-print-directory", "-n", target, *extra],
+        result = subprocess.run(["make", "--no-print-directory", "-n", target, *SCENARIO_SELECTION, *extra],
                                 cwd=ROOT, env=env, capture_output=True, text=True,
                                 timeout=10)
         if success:
@@ -158,13 +142,13 @@ class ScenarioImageTests(unittest.TestCase):
         else:
             self.assertNotEqual(result.returncode, 0, result.stdout)
         commands = [shlex.split(line) for line in result.stdout.splitlines()
-                    if " go test " in line]
+                    if " go test " in line or "/tag_scenarios.py run " in line]
         return result, commands
 
     def prepared_environment(self, command, env):
         # Execute the generated env prefix against Python, never the Go recipe.
-        index = command.index("go")
-        self.assertEqual(command[index:index + 2], ["go", "test"])
+        index = next(i for i, token in enumerate(command) if token in ("go", "python3"))
+        self.assertIn(command[index:index + 2], (["go", "test"], ["python3", ".github/scripts/tag_scenarios.py"]))
         check_environment_prefix(command[:index])
         program = "import json,os; print(json.dumps(dict(os.environ)))"
         result = subprocess.run([*command[:index], sys.executable, "-c", program],
@@ -181,14 +165,13 @@ class ScenarioImageTests(unittest.TestCase):
             else:
                 self.assertNotIn(name, actual)
                 self.assertEqual(command[command.index(name) - 1], "-u")
+        # The tag runner itself drops the RBD client image and sets the Go
+        # flags, so the Make prefix passes the consumers through unchanged.
         for name in CONSUMERS:
-            if target in FIXTURES and name == "CEPH_TEST_RBD_CLIENT_IMAGE":
-                self.assertNotIn(name, actual)
-                self.assertEqual(command[command.index(name) - 1], "-u")
-            else:
-                self.assertEqual(actual.get(name), env[name])
+            self.assertEqual(actual.get(name), env[name])
         self.assertEqual(actual.get("CGO_ENABLED"), "0")
-        self.assertIn("-mod=readonly", command)
+        if "go" in command:
+            self.assertIn("-mod=readonly", command)
 
     def test_environment_prefix_rejects_executables_and_unapproved_options(self):
         for prefix in (["env", "sh", "-c", "docker info"],
@@ -216,8 +199,8 @@ class ScenarioImageTests(unittest.TestCase):
                     check_dry_run_source(self.makefile + "\nUNSAFE := " + function + "\n")
         for recursive in ("$(MAKE)", "${MAKE}"):
             with self.subTest(recursive=recursive):
-                source = self.makefile.replace("scenario-rgw-sync-fixtures:\n",
-                    "scenario-rgw-sync-fixtures:\nifeq (x,x)\n\t" + recursive + " other-goal\nendif\n", 1)
+                source = self.makefile.replace("scenario:\n",
+                    "scenario:\nifeq (x,x)\n\t" + recursive + " other-goal\nendif\n", 1)
                 with self.assertRaises(AssertionError):
                     check_dry_run_source(source)
 
@@ -253,7 +236,7 @@ class ScenarioImageTests(unittest.TestCase):
                 self.assertEqual(selected, commands)
 
     def test_each_missing_empty_or_whitespace_role_fails_before_go(self):
-        for target in ("scenario-default", "scenario-rgw-fixtures"):
+        for target in DRY_RUN_TARGETS:
             for name in ROLES:
                 for value in (None, "", " \t "):
                     with self.subTest(target=target, name=name, value=value):
@@ -265,7 +248,7 @@ class ScenarioImageTests(unittest.TestCase):
                         self.assertEqual(result.stdout, "")
 
     def test_unknown_or_empty_layout_fails_before_go(self):
-        for target in ("scenario-default", "scenario-rgw-fixtures"):
+        for target in DRY_RUN_TARGETS:
             for value in ("unknown", ""):
                 with self.subTest(target=target, value=value):
                     result, commands = self.dry_run(
@@ -275,54 +258,44 @@ class ScenarioImageTests(unittest.TestCase):
                     self.assertFalse(commands)
                     self.assertEqual(result.stdout, "")
 
-    def test_sync_shards_and_supported_aggregate_preserve_role_boundary(self):
-        env = self.environment({"SCENARIO_IMAGE_LAYOUT": "roles"})
-        _, supported = self.dry_run("scenario-rgw-sync-supported", env)
-        self.assertEqual(len(supported), 2)
-        for command in supported:
-            self.assert_image_environment("scenario-rgw-sync-supported", command, env, True)
-        for group in ("all", "policy", "policy-selective", "policy-owned-bridge",
-                      "policy-owned-host", "account", "translation"):
-            with self.subTest(group=group):
-                _, commands = self.dry_run("scenario-rgw-sync-fixtures", env,
-                                           ("SCENARIO_RGW_SYNC_GROUP=" + group,))
-                self.assertEqual(len(commands), 2 if group == "all" else 1)
-                for command in commands:
-                    self.assert_image_environment("scenario-rgw-sync-fixtures", command, env, True)
+    def test_scenario_requires_a_selection_and_delegates_to_the_tag_runner(self):
+        env = self.environment()
+        _, commands = self.dry_run("scenario", env)
+        self.assertEqual(len(commands), 1)
+        command = commands[0][commands[0].index("python3"):]
+        self.assertEqual(command, ["python3", ".github/scripts/tag_scenarios.py", "run",
+                                   "--category", "recovery", "--batch", "container_pause",
+                                   "--directory", "artifacts/scenario-recovery-container_pause"])
+        _, commands = self.dry_run("scenario", env, ("SCENARIO_PACKAGE=./internal/integration/rbd",))
+        command = commands[0]
+        self.assertEqual(command[command.index("--package") + 1], "./internal/integration/rbd")
+        self.assertEqual(command[command.index("--package") + 2], "--directory")
+        for missing in ("SCENARIO_CATEGORY", "SCENARIO_BATCH"):
+            with self.subTest(missing=missing):
+                result = subprocess.run(["make", "--no-print-directory", "scenario",
+                                         *SCENARIO_SELECTION, missing + "="],
+                                        cwd=ROOT, env=env, capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(missing + " is required", result.stderr)
 
-    def test_heavy_parent_cases_preserve_prepared_roles_and_consumer_boundary(self):
-        env = self.environment({"SCENARIO_IMAGE_LAYOUT": "roles"})
-        for target, prefix, option in (
-                ("scenario-multicluster-topology", "MULTICLUSTER_TOPOLOGY_TESTS", "SCENARIO_MULTICLUSTER_GROUP"),
-                ("scenario-rgw-sync-fixtures", "RGW_SYNC_FIXTURE_TESTS", "SCENARIO_RGW_SYNC_GROUP"),
-                ("scenario-cephfs-fixtures", "CEPHFS_FIXTURE_TESTS", "SCENARIO_CEPHFS_FIXTURE_CASE"),
-                ("scenario-topology-extensions", "TOPOLOGY_EXTENSION_TESTS", "SCENARIO_TOPOLOGY_EXTENSION_CASE"),
-                ("scenario-rbd-receivers", "RBD_RECEIVERS_TESTS", "SCENARIO_RBD_RECEIVERS_CASE"),
-                ("scenario-rbd-fixtures", "RBD_FIXTURE_TESTS", "SCENARIO_RBD_FIXTURE_CASE"),
-                ("scenario-cephfs-removal", "CEPHFS_REMOVAL_TESTS", "SCENARIO_CEPHFS_REMOVAL_CASE")):
-            # Diagnose manual Make targets without a maintained CI case list.
-            values = re.findall(r"^" + prefix + r"_([a-z][a-z-]*) =", self.makefile, re.M)
-            values = [value for value in values if value != "all"]
-            self.assertTrue(values)
-            self.assertEqual(len(values), len(set(values)))
-            for value in values:
-                with self.subTest(target=target, case=value):
-                    _, commands = self.dry_run(target, env, (option + "=" + value,))
-                    self.assertEqual(len(commands), 1)
-                    self.assert_image_environment(target, commands[0], env, True)
-                    expression = commands[0][commands[0].index("-run") + 1]
-                    if target == "scenario-rgw-sync-fixtures" and value == "translation":
-                        self.assertEqual(expression.split("/", 1)[1],
-                                         "(tag_owner_class|tenant_system_user_isolation)$")
-                    elif target == "scenario-cephfs-removal" and value in quiescence_checker.CASES:
-                        self.assertEqual(expression, quiescence_checker.SELECTORS[value])
-                    elif target == "scenario-cephfs-removal" and value in recovery_checker.CASES:
-                        self.assertEqual(expression, recovery_checker.SELECTORS[value])
-                    elif target == "scenario-rbd-receivers":
-                        self.assertEqual(expression,
-                                         "^TestMultiClusterRBDReceiverReadiness$/^" + value + "$")
-                    else:
-                        self.assertNotIn("/", expression)
+    def test_makefile_keeps_no_test_lists(self):
+        selections = re.findall(r"-run '([^']*)'", self.makefile)
+        self.assertTrue(selections)
+        for selection in selections:
+            with self.subTest(selection=selection):
+                if "|" in selection:
+                    names = re.fullmatch(r"\^Test\((.*)\)\$\$", selection)
+                    self.assertIsNotNone(names)
+                    expanded = set()
+                    for name in re.split(r"\|(?![^()]*\))", names[1]):
+                        group = re.fullmatch(r"(\w+)\((.*)\)", name)
+                        if group:
+                            expanded.update("Test" + group[1] + part for part in group[2].split("|"))
+                        else:
+                            expanded.add("Test" + name)
+                    self.assertEqual(expanded, set(runner.EXPECTED_TESTS))
+                else:
+                    self.assertRegex(selection, SELECTION_RUN)
 
     def test_runtime_prepares_roles_between_baseline_and_native_proof(self):
         job_steps = steps(self.jobs["runtime"])
@@ -414,28 +387,6 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(scalar(run, "CEPH_TEST_NETWORK"), "${{ matrix.network }}")
         self.assertNotIn("run:", self.optional_entry)
         self.assertNotIn("quay.io/", block)
-        for selected_rgw in ("", "registry.example/ceph-rgw@sha256:" + "a" * 64):
-            with self.subTest(rgw_input=selected_rgw):
-                # Model the step's sole expression after the existing composite
-                # has exported all four role IDs. Execute only make dry-run and
-                # its env prefix against Python; no Docker or Go runs here.
-                env = self.environment({"SCENARIO_IMAGE_LAYOUT": "roles"})
-                if selected_rgw:
-                    env["CEPH_TEST_RGW_IMAGE"] = selected_rgw
-                _, commands = self.dry_run("rgw-sync-native-regressions", env)
-                self.assertEqual(len(commands), 1)
-                command = ["env", *commands[0]]
-                actual = self.prepared_environment(command, env)
-                for name in ROLES:
-                    self.assertEqual(actual[name], selected_rgw if name == "CEPH_TEST_RGW_IMAGE"
-                                     and selected_rgw else IMAGES[name])
-                for name in CONSUMERS:
-                    self.assertEqual(actual[name], env[name])
-                self.assertEqual(actual["CGO_ENABLED"], "0")
-                self.assertIn("-mod=readonly", command)
-                self.assertIn("-tags=integration,features,multicluster,native_regression", command)
-                self.assertEqual(command[command.index("-run") + 1],
-                    "^Test(HostNetwork)?MultiClusterRGWSyncTranslationFiltering$/(priority_tags_owner_class|ordinary_user_denial_grant)$")
 
     def composite_script(self):
         self.assertEqual(scalar(self.action, "using"), "composite")

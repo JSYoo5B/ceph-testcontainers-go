@@ -15,6 +15,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -39,7 +40,7 @@ type policyClient struct {
 
 func startPolicyClient(t *testing.T, ctx context.Context, cluster *ceph.Container, name string, attach testcontainers.CustomizeRequestOption, args ...string) policyClient {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), attach, ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, harness.NativeClientImage(t, harness.StaticFacts(cluster).Images.Client), attach, ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
@@ -99,9 +100,9 @@ func policyOutcome(code int, output string) string {
 func testMessengerPolicy(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
+	cluster, _ := harness.NewServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeSecure, Managers: modeCRC, OSDs: modeSecure}))}, opts...)...)
-	if staticFacts(cluster).MessengerMode == ceph.MessengerV2Only {
+	if harness.StaticFacts(cluster).MessengerMode == ceph.MessengerV2Only {
 		checkMessengerV2Only(t, ctx, cluster)
 	}
 
@@ -200,7 +201,7 @@ func testMessengerPolicy(t *testing.T, opts ...testcontainers.ContainerCustomize
 func testClientPolicyOverridesSecureOnly(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
+	cluster, _ := harness.NewServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure))}, opts...)...)
 	crc := startPolicyClient(t, ctx, cluster, "crc", cluster.WithClient(
 		ceph.ClientContainerOptions{}.WithMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeCRC})))
@@ -219,7 +220,7 @@ func testClientPolicyOverridesSecureOnly(t *testing.T, opts ...testcontainers.Co
 // published ports and its listening sockets.
 func checkMessengerV2Only(t *testing.T, ctx context.Context, cluster *ceph.Container) {
 	t.Helper()
-	bootstrap, err := observeCluster(cluster).MonitorBootstrapAddresses(ctx)
+	bootstrap, err := harness.ObserveCluster(cluster).MonitorBootstrapAddresses(ctx)
 	if err != nil || !strings.Contains(bootstrap, "v2:") || strings.Contains(bootstrap, "v1:") {
 		t.Fatalf("MON bootstrap addresses are not v2-only: %q, %v", bootstrap, err)
 	}
@@ -228,7 +229,7 @@ func checkMessengerV2Only(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	if err != nil || strings.Contains(string(config), "v1:") {
 		t.Fatalf("the connection configuration names a v1 address: %v", err)
 	}
-	native, err := observeCluster(cluster).DaemonAddresses(ctx)
+	native, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 	if err != nil || native.ActiveManager == nil {
 		t.Fatalf("daemon addresses: %+v, %v", native, err)
 	}
@@ -263,20 +264,20 @@ func checkMessengerV2Only(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	}
 	for _, daemon := range daemons {
 		for option, want := range map[string]string{"ms_bind_msgr1": "false", "ms_bind_msgr2": "true"} {
-			out, err := adminSocket(t, ctx, cluster, daemon, "config", "get", option)
+			out, err := harness.AdminSocket(t, ctx, cluster, daemon, "config", "get", option)
 			var value map[string]string
 			if err != nil || json.Unmarshal(out, &value) != nil || value[option] != want {
 				t.Fatalf("%s %s = %s, want %s: %v", daemon, option, out, want, err)
 			}
 		}
 	}
-	if !staticFacts(cluster).UsesHostNetwork {
+	if !harness.StaticFacts(cluster).UsesHostNetwork {
 		if port, err := cluster.MappedPort(ctx, "6789/tcp"); err == nil {
 			t.Fatalf("the MON publishes the v1 port as %s", port)
 		}
 	}
 	for _, mon := range clusteraccess.Monitors(t, cluster) {
-		out := execOutput(t, ctx, mon.Container, "python3", "-c", `import json
+		out := harness.ExecOutput(t, ctx, mon.Container, "python3", "-c", `import json
 listening=set()
 for table in ('/proc/net/tcp','/proc/net/tcp6'):
     with open(table) as lines:
@@ -296,7 +297,7 @@ print(json.dumps(sorted(listening)))`)
 		}
 		// In host mode the MON shares the host's sockets, where 6789 can
 		// belong to anything else.
-		if !staticFacts(cluster).UsesHostNetwork && slices.Contains(ports, 6789) {
+		if !harness.StaticFacts(cluster).UsesHostNetwork && slices.Contains(ports, 6789) {
 			t.Fatalf("mon.%s listens on the v1 port: %v", mon.DaemonName, ports)
 		}
 	}
@@ -380,7 +381,7 @@ func waitEffectiveMode(t *testing.T, ctx context.Context, cluster *ceph.Containe
 	t.Helper()
 	for _, daemon := range daemons {
 		for deadline := time.Now().Add(time.Minute); ; {
-			out, err := adminSocket(t, ctx, cluster, daemon, "config", "get", option)
+			out, err := harness.AdminSocket(t, ctx, cluster, daemon, "config", "get", option)
 			var value map[string]string
 			if err == nil && json.Unmarshal(out, &value) == nil && value[option] == want {
 				break
@@ -400,15 +401,15 @@ func waitEffectiveMode(t *testing.T, ctx context.Context, cluster *ceph.Containe
 func testMessengerV2OnlyCRC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	keyType := ceph.CipherAES
 	if imageHasKeyTypes(t, ctx, image) {
 		keyType = ceph.CipherAES256K
 	}
-	cluster, _ := newServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only)), ceph.WithAuth(ceph.AuthConfig{KeyType: keyType}),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC})))...)
-	if staticFacts(cluster).MessengerMode != ceph.MessengerV2Only {
+	if harness.StaticFacts(cluster).MessengerMode != ceph.MessengerV2Only {
 		t.Fatal("the cluster reports another Messenger mode")
 	}
 	checkMessengerV2Only(t, ctx, cluster)
@@ -436,7 +437,7 @@ func testMessengerV2OnlyCRC(t *testing.T) {
 	secure.expect(t, ctx, "crc only", "rejected", "mon", "stat")
 	// The MON's client connections, the fixture CLI's among them, use CRC.
 	var modes []string
-	if err := json.Unmarshal([]byte(execOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", messengerClientModes, "mon.a")), &modes); err != nil {
+	if err := json.Unmarshal([]byte(harness.ExecOutput(t, ctx, harness.ToolkitContainer(t, cluster), "python3", "-c", messengerClientModes, "mon.a")), &modes); err != nil {
 		t.Fatal(err)
 	}
 	switch {
@@ -484,7 +485,7 @@ func testMessengerV2OnlyCRC(t *testing.T) {
 	crc.expect(t, ctx, "secure", "rejected", "mon", "stat")
 	secure.expect(t, ctx, "secure", "accepted", "mon", "stat")
 	secure.expect(t, ctx, "secure", "accepted", "crash", "ls")
-	execCommand(t, ctx, crc.ctr, "touch", "/tmp/established-proceed")
+	harness.ExecCommand(t, ctx, crc.ctr, "touch", "/tmp/established-proceed")
 	if err := <-started; err != nil || established.ExitCode != 0 || !strings.Contains(string(established.Stdout), `"after": 0`) {
 		t.Fatalf("the established CRC session after the change: %v, exit %d: %s %s", err, established.ExitCode, established.Stdout, established.Stderr)
 	}
@@ -541,7 +542,7 @@ func testMessengerV2OnlyCRC(t *testing.T) {
 	}
 	for deadline := time.Now().Add(2 * time.Minute); ; {
 		// The former active MGR respawns; wait until it is a standby again.
-		native, err := observeCluster(cluster).DaemonAddresses(ctx)
+		native, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 		if err == nil && native.ActiveManager != nil && native.ActiveManager.Name == "b" && native.ManagerAvailable && slices.Contains(native.StandbyManagers, "a") {
 			break
 		}

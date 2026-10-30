@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
@@ -21,18 +22,18 @@ import (
 // replica. An injected replica read error is invisible to clients until a deep
 // scrub reports it; repair rewrites the replica from the primary.
 func TestScrubInconsistency(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()
-			image, opts := integrationImages(t)
+			image, opts := harness.IntegrationImages(t)
 			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceClusterWithOptions(t, image, opts...)
-			fsid := strings.TrimSpace(string(mustCeph(t, ctx, cluster, "fsid")))
+			cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
+			fsid := strings.TrimSpace(string(harness.MustCeph(t, ctx, cluster, "fsid")))
 			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal(err)
 			}
@@ -50,7 +51,7 @@ func TestScrubInconsistency(t *testing.T) {
 			}
 			probe := func(t *testing.T, phase string) {
 				t.Helper()
-				t.Logf("SCRUB_CLIENT %s", execOutput(t, ctx, client, "python3", "-c", scrubRADOSProbe, poolName, phase))
+				t.Logf("SCRUB_CLIENT %s", harness.ExecOutput(t, ctx, client, "python3", "-c", scrubRADOSProbe, poolName, phase))
 			}
 			probe(t, "seed")
 			var mapping struct {
@@ -58,7 +59,7 @@ func TestScrubInconsistency(t *testing.T) {
 				Acting        []int     `json:"acting"`
 				ActingPrimary int       `json:"acting_primary"`
 			}
-			if err := json.Unmarshal(mustCeph(t, ctx, cluster, "osd", "map", poolName, "victim", "--format", "json"), &mapping); err != nil || len(mapping.Acting) != 2 {
+			if err := json.Unmarshal(harness.MustCeph(t, ctx, cluster, "osd", "map", poolName, "victim", "--format", "json"), &mapping); err != nil || len(mapping.Acting) != 2 {
 				t.Fatal("native object mapping unavailable", err)
 			}
 			replica := mapping.Acting[0]
@@ -67,14 +68,14 @@ func TestScrubInconsistency(t *testing.T) {
 			}
 			expectScrub := func(t *testing.T, phase string, inconsistent bool) {
 				t.Helper()
-				snapshot, err := poolHandle(t, ctx, cluster, poolName).PGs(ctx)
+				snapshot, err := harness.PoolHandle(t, ctx, cluster, poolName).PGs(ctx)
 				if err != nil || len(snapshot.PGs) != 1 || snapshot.PGs[0].PGID != mapping.PGID {
 					t.Fatalf("%s: native PG report unavailable: %v", phase, err)
 				}
 				if strings.Contains(snapshot.PGs[0].State, "inconsistent") != inconsistent {
 					t.Fatalf("%s: PG state %s, want inconsistent=%v", phase, snapshot.PGs[0].State, inconsistent)
 				}
-				objects, err := observeCluster(cluster).PGInconsistencies(ctx, mapping.PGID)
+				objects, err := harness.ObserveCluster(cluster).PGInconsistencies(ctx, mapping.PGID)
 				if err != nil {
 					t.Fatal("inconsistency check", err)
 				}
@@ -107,15 +108,15 @@ func TestScrubInconsistency(t *testing.T) {
 				t.Fatal("deep scrub", err)
 			}
 			expectScrub(t, "scrubbed", true)
-			waitHealthCode(t, ctx, cluster, fsid, "OSD_SCRUB_ERRORS", true)
-			waitHealthCode(t, ctx, cluster, fsid, "PG_DAMAGED", true)
+			harness.WaitHealthCode(t, ctx, cluster, fsid, "OSD_SCRUB_ERRORS", true)
+			harness.WaitHealthCode(t, ctx, cluster, fsid, "PG_DAMAGED", true)
 			probe(t, "damaged")
 
 			if err := cluster.RepairPG(ctx, mapping.PGID); err != nil {
 				t.Fatal("repair", err)
 			}
-			waitHealthCode(t, ctx, cluster, fsid, "PG_DAMAGED", false)
-			waitHealthCode(t, ctx, cluster, fsid, "OSD_SCRUB_ERRORS", false)
+			harness.WaitHealthCode(t, ctx, cluster, fsid, "PG_DAMAGED", false)
+			harness.WaitHealthCode(t, ctx, cluster, fsid, "OSD_SCRUB_ERRORS", false)
 			// Repair rewrote the replica, so the injected error is gone too.
 			if err := cluster.DeepScrubPG(ctx, mapping.PGID); err != nil {
 				t.Fatal("deep scrub after repair", err)

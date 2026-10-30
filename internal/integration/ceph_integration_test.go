@@ -14,16 +14,17 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 func TestClusterLifecycle(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
 	started := time.Now()
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	// One finalization archives a failure before the client and the
@@ -45,22 +46,22 @@ func TestClusterLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("image=%s version=%s", image, strings.TrimSpace(string(version)))
-	cephCommand(t, ctx, cluster, "osd", "pool", "create", "tc-poc", "8")
-	cephCommand(t, ctx, cluster, "osd", "pool", "set", "tc-poc", "pg_autoscale_mode", "off")
-	cephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", "tc-poc", "rados")
+	harness.CephCommand(t, ctx, cluster, "osd", "pool", "create", "tc-poc", "8")
+	harness.CephCommand(t, ctx, cluster, "osd", "pool", "set", "tc-poc", "pg_autoscale_mode", "off")
+	harness.CephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", "tc-poc", "rados")
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	logStatus(t, ctx, cluster, "initial")
-	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	harness.LogStatus(t, ctx, cluster, "initial")
+	quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil || quorum.MonMap.FSID == "" {
 		t.Fatal("original health oracle FSID unavailable", err)
 	}
-	integrationHealthDetails(t, ctx, cluster, quorum.MonMap.FSID, "initial-pool-clean")
+	harness.IntegrationHealthDetails(t, ctx, cluster, quorum.MonMap.FSID, "initial-pool-clean")
 	originalPGs := integrationPoolPGs(t, ctx, cluster, quorum.MonMap.FSID, "tc-poc", "initial-pool-clean")
 
 	// A separate container proves MON discovery and direct OSD connectivity.
-	client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(),
+	client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), cluster.WithClient(),
 		ceph.WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})),
 	)
@@ -75,9 +76,9 @@ func TestClusterLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 16 {
-		execCommand(t, ctx, client, "rados", "-p", "tc-poc", "put", fmt.Sprintf("object-%02d", i), "/tmp/payload")
+		harness.ExecCommand(t, ctx, client, "rados", "-p", "tc-poc", "put", fmt.Sprintf("object-%02d", i), "/tmp/payload")
 	}
-	verifyObjects(t, ctx, client, payload)
+	harness.VerifyObjects(t, ctx, client, payload)
 	t.Log("independent client: wrote and read 16 objects")
 
 	// Failure injection keeps OSD identity/data; graceful removal deletes it.
@@ -86,7 +87,7 @@ func TestClusterLifecycle(t *testing.T) {
 	if err := original.Stop(ctx, &stopTimeout); err != nil {
 		t.Fatal(err)
 	}
-	execCommand(t, ctx, client, "rados", "-p", "tc-poc", "get", "object-00", "/tmp/during-outage")
+	harness.ExecCommand(t, ctx, client, "rados", "-p", "tc-poc", "get", "object-00", "/tmp/during-outage")
 	if err := original.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func TestClusterLifecycle(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	logStatus(t, ctx, cluster, fmt.Sprintf("added osd.%d", added.ID))
+	harness.LogStatus(t, ctx, cluster, fmt.Sprintf("added osd.%d", added.ID))
 	addedPGs := integrationPoolPGs(t, ctx, cluster, quorum.MonMap.FSID, "tc-poc", "after-osd-add")
 	if addedPGs.PoolBefore.ID != originalPGs.PoolBefore.ID {
 		t.Fatal("OSD addition replaced original pool")
@@ -113,8 +114,8 @@ func TestClusterLifecycle(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	verifyObjects(t, ctx, client, payload)
-	logStatus(t, ctx, cluster, fmt.Sprintf("removed original osd.%d; all objects intact", original.ID))
+	harness.VerifyObjects(t, ctx, client, payload)
+	harness.LogStatus(t, ctx, cluster, fmt.Sprintf("removed original osd.%d; all objects intact", original.ID))
 	removedPGs := integrationPoolPGs(t, ctx, cluster, quorum.MonMap.FSID, "tc-poc", "after-original-osd-remove")
 	if removedPGs.PoolBefore.ID != originalPGs.PoolBefore.ID {
 		t.Fatal("OSD removal replaced original pool")
@@ -133,9 +134,9 @@ func TestClusterLifecycle(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	verifyObjects(t, ctx, client, payload)
+	harness.VerifyObjects(t, ctx, client, payload)
 	t.Logf("second add/remove cycle: osd.%d; total %s", readded.ID, time.Since(started).Round(time.Millisecond))
-	integrationHealthDetails(t, ctx, cluster, quorum.MonMap.FSID, "after-osd-lifecycle")
+	harness.IntegrationHealthDetails(t, ctx, cluster, quorum.MonMap.FSID, "after-osd-lifecycle")
 	finalPGs := integrationPoolPGs(t, ctx, cluster, quorum.MonMap.FSID, "tc-poc", "after-osd-lifecycle")
 	if finalPGs.PoolBefore.ID != originalPGs.PoolBefore.ID {
 		t.Fatal("OSD lifecycle replaced original pool")
@@ -143,7 +144,7 @@ func TestClusterLifecycle(t *testing.T) {
 }
 
 func TestBootstrapFailureCleanup(t *testing.T) {
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts,
 		ceph.WithStartupTimeout(15*time.Second),
 		testcontainers.WithEntrypoint("/bin/sh", "-c", "exit 23"),

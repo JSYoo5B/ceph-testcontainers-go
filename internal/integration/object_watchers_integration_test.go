@@ -13,6 +13,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // radosWatcher watches one object and answers every notify until stopped.
@@ -55,17 +56,17 @@ print(json.dumps({"errno": errno, "seconds": seconds}))
 // Until then every notify to the object waits for it and times out; once the
 // OSD drops the watch, notifies complete at once.
 func TestPausedObjectWatcher(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 			defer cancel()
-			image, opts := integrationImages(t)
+			image, opts := harness.IntegrationImages(t)
 			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceClusterWithOptions(t, image, opts...)
+			cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
 			const pool, object = "tc-watch", "watched"
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", Replicas: 2, MinSize: 1}); err != nil {
 				t.Fatal(err)
@@ -75,7 +76,7 @@ func TestPausedObjectWatcher(t *testing.T) {
 			}
 			watchers := func() []ceph.ObjectWatcher {
 				t.Helper()
-				list, err := observeCluster(cluster).ObjectWatchers(ctx, pool, "", object)
+				list, err := harness.ObserveCluster(cluster).ObjectWatchers(ctx, pool, "", object)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -83,20 +84,20 @@ func TestPausedObjectWatcher(t *testing.T) {
 			}
 			notify := func() (int, float64) {
 				t.Helper()
-				code, out, err := sessionExec(ctx, toolkitContainer(t, cluster), "python3", "-c", radosNotifier, pool, object)
+				code, out, err := harness.SessionExec(ctx, harness.ToolkitContainer(t, cluster), "python3", "-c", radosNotifier, pool, object)
 				var result struct {
 					Errno   int     `json:"errno"`
 					Seconds float64 `json:"seconds"`
 				}
-				if err != nil || code != 0 || json.Unmarshal([]byte(lastLine(out)), &result) != nil {
+				if err != nil || code != 0 || json.Unmarshal([]byte(harness.LastLine(out)), &result) != nil {
 					t.Fatalf("notify failed: %d %v %s", code, err, out)
 				}
 				return result.Errno, result.Seconds
 			}
 
-			execOutput(t, ctx, client, "sh", "-c", `mkdir -p "$4" && printf '%s' "$1" > "$4/watcher.py" && nohup python3 "$4/watcher.py" "$2" "$3" "$4" > "$4/log" 2>&1 &`,
+			harness.ExecOutput(t, ctx, client, "sh", "-c", `mkdir -p "$4" && printf '%s' "$1" > "$4/watcher.py" && nohup python3 "$4/watcher.py" "$2" "$3" "$4" > "$4/log" 2>&1 &`,
 				"sh", radosWatcher, pool, object, "/tmp/watcher")
-			id := waitClientFile(t, ctx, client, "/tmp/watcher/id", "/tmp/watcher/log")
+			id := harness.WaitClientFile(t, ctx, client, "/tmp/watcher/id", "/tmp/watcher/log")
 			list := watchers()
 			if len(list) != 1 || strconv.FormatUint(list[0].ClientID, 10) != id || list[0].Address == "" {
 				t.Fatalf("watchers = %+v, want client.%s", list, id)
@@ -124,9 +125,9 @@ func TestPausedObjectWatcher(t *testing.T) {
 				t.Fatalf("notify to a frozen watcher errno = %d after %.1fs, want 110 after its 5s timeout", errno, seconds)
 			}
 			// Each listing is bounded within the two minutes after the pause.
-			listed, err := observe(ctx, 2*time.Minute-time.Since(paused), 30*time.Second, 2*time.Second,
+			listed, err := harness.Observe(ctx, 2*time.Minute-time.Since(paused), 30*time.Second, 2*time.Second,
 				func(probeCtx context.Context) ([]ceph.ObjectWatcher, bool, error) {
-					list, err := observeCluster(cluster).ObjectWatchers(probeCtx, pool, "", object)
+					list, err := harness.ObserveCluster(cluster).ObjectWatchers(probeCtx, pool, "", object)
 					return list, err == nil && len(list) == 0, err
 				})
 			if err != nil {
@@ -140,7 +141,7 @@ func TestPausedObjectWatcher(t *testing.T) {
 			if errno, seconds := notify(); errno != 0 || seconds > 2 {
 				t.Fatalf("notify after the watch expired errno = %d after %.1fs", errno, seconds)
 			}
-			entries, err := observeCluster(cluster).BlocklistEntries(ctx)
+			entries, err := harness.ObserveCluster(cluster).BlocklistEntries(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}

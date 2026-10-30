@@ -4,7 +4,11 @@
 
 package integration_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+)
 
 // objecter_requests dumps saved from TestCephFSOSDInterruption on
 // quay.io/ceph/ceph:v20.2.4 while osd.0 was paused. Only the fields that the
@@ -19,22 +23,22 @@ const (
 )
 
 func TestParseObjecterOps(t *testing.T) {
-	client, err := parseObjecterOps([]byte(clientObjecterSample))
+	client, err := harness.ParseObjecterOps([]byte(clientObjecterSample))
 	if err != nil {
 		t.Fatal(err)
 	}
-	writes := objecterOpsOn(client, 3, "10000000000.00000000")
+	writes := harness.ObjecterOpsOn(client, 3, "10000000000.00000000")
 	if len(writes) != 1 || writes[0].TID != 4 || writes[0].OSD != 0 || writes[0].Age < 5 || writes[0].OSDOps[0] != "write 28~32 in=32b" {
 		t.Fatalf("client writes %+v", writes)
 	}
-	if other := objecterOpsOn(client, 2, ""); len(other) != 0 {
+	if other := harness.ObjecterOpsOn(client, 2, ""); len(other) != 0 {
 		t.Fatalf("client ops in pool 2: %+v", other)
 	}
-	mds, err := parseObjecterOps([]byte(mdsObjecterSample))
+	mds, err := harness.ParseObjecterOps([]byte(mdsObjecterSample))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if journal := objecterOpsOn(mds, 2, "200."); len(journal) != 1 || journal[0].Object != "200.00000001" {
+	if journal := harness.ObjecterOpsOn(mds, 2, "200."); len(journal) != 1 || journal[0].Object != "200.00000001" {
 		t.Fatalf("journal ops %+v", journal)
 	}
 	for _, locator := range []struct {
@@ -42,12 +46,12 @@ func TestParseObjecterOps(t *testing.T) {
 		pool    int64
 		ok      bool
 	}{{"@3", 3, true}, {"@12;ns", 12, true}, {"@4:key", 4, true}, {"3", 0, false}, {"@x", 0, false}} {
-		if pool, ok := (objecterOp{Locator: locator.locator}).pool(); pool != locator.pool || ok != locator.ok {
+		if pool, ok := (harness.ObjecterOp{Locator: locator.locator}).Pool(); pool != locator.pool || ok != locator.ok {
 			t.Errorf("pool of %q = %d, %t", locator.locator, pool, ok)
 		}
 	}
 	for _, bad := range []string{`{}`, `{"ops": null}`, `[]`} {
-		if _, err := parseObjecterOps([]byte(bad)); err == nil {
+		if _, err := harness.ParseObjecterOps([]byte(bad)); err == nil {
 			t.Errorf("parseObjecterOps(%s) accepted it", bad)
 		}
 	}

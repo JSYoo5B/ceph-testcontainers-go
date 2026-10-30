@@ -11,6 +11,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Self-managed snapshot write contexts are client state: the fixture supplies
@@ -18,10 +19,10 @@ import (
 // The snapshots and HEAD must read back the same bytes, sizes and versions
 // after a clean OSD restart.
 func TestRADOSSelfManagedSnapshots(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	const pool, namespace = "tc-selfsnap", "fixture"
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", PGNum: 1}); err != nil {
 		t.Fatal(err)
@@ -47,10 +48,10 @@ func TestRADOSSelfManagedSnapshots(t *testing.T) {
 
 	// Removing the pool removes the clones that no snapshot removal trims,
 	// such as the one of the unallocated id.
-	if err := poolHandle(t, ctx, cluster, pool).Remove(ctx); err != nil {
+	if err := harness.PoolHandle(t, ctx, cluster, pool).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	pools, err := observeCluster(cluster).Pools(ctx)
+	pools, err := harness.ObserveCluster(cluster).Pools(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

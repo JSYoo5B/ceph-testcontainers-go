@@ -12,6 +12,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -43,15 +44,15 @@ func monitorEndpoint(t *testing.T, ctx context.Context, ctr testcontainers.Conta
 func testMonitorAddressAcrossNetworkInterruption(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
-	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithNoInitialOSDs()),
+	image, roles := harness.IntegrationImages(t)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithNoInitialOSDs()),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv6)))...)
 	waitQuorumNames(t, ctx, cluster, "a", "b", "c")
 	monitors := map[string]*ceph.MonitorContainer{}
 	for _, mon := range clusteraccess.Monitors(t, cluster) {
 		monitors[mon.DaemonName] = mon
 	}
-	network := staticFacts(cluster).NetworkName
+	network := harness.StaticFacts(cluster).NetworkName
 	type restorer interface{ Restore(context.Context) error }
 	for _, form := range []struct {
 		name, mon string

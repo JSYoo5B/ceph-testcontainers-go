@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // contractObject is an object as the reading client saw it.
@@ -30,15 +31,15 @@ type contractObject struct {
 // keys where the image can make them, and a MemStore OSD with the legacy CRUSH
 // map and a pool without hashpspool. A second client reads every result back.
 func TestRADOSMutationContracts(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
 		ceph.WithOSDStorage(ceph.OSDStorage{}.WithObjectStore(ceph.OSDMemStore).WithBlockSize(256<<20)), legacyPoolFlags(t),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only).WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC})))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K})
-	cluster, client := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	installCRUSHMap(t, ctx, cluster, legacyCRUSHMap)
 	const pool, namespace = "tc-contracts", "suite"
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 1, Replicas: 1, MinSize: 1, NoHashPSPool: true, Application: "rados"}); err != nil {
@@ -156,7 +157,7 @@ func TestRADOSMutationContracts(t *testing.T) {
 	}
 	// The OSD's records show that it started and committed each operation
 	// after the client had given up on it.
-	poolState, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
+	poolState, err := harness.PoolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

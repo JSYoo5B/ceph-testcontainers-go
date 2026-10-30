@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -123,8 +124,8 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 22*time.Minute)
 	defer cancel()
 	const ledger, stopFile = "/tmp/tc-min-size.jsonl", "/tmp/tc-min-size.stop"
-	image, opts := integrationImages(t)
-	cluster, client := newServiceClusterWithOptions(t, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
+	image, opts := harness.IntegrationImages(t)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
 	restore := func(name string, fn func(context.Context) error) {
 		t.Helper()
 		t.Cleanup(func() {
@@ -449,7 +450,7 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	secondFaultReceipt(t, ctx, cluster, "restored", stopped)
 
 	// Close the writer and the data oracle.
-	execCommand(t, ctx, client, "touch", stopFile)
+	harness.ExecCommand(t, ctx, client, "touch", stopFile)
 	select {
 	case done := <-actor.done:
 		actorDone = true
@@ -473,7 +474,7 @@ func testOSDMinSizeBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	read, err := cluster.RunNativeCommand(ctx, toolkitContainer(t, cluster), secondFaultCommand("independent read", 3*time.Minute, "read", "tc-paths", string(encodedNames)))
+	read, err := cluster.RunNativeCommand(ctx, harness.ToolkitContainer(t, cluster), secondFaultCommand("independent read", 3*time.Minute, "read", "tc-paths", string(encodedNames)))
 	if err != nil || read.ExitCode != 0 || !read.Complete() {
 		t.Fatalf("independent read of the writer's objects: exit %d: %v: %.2048s", read.ExitCode, err, read.Stderr)
 	}

@@ -59,6 +59,8 @@ func get() unitHooks {
 }
 
 // TestConfig selects the settings of a unit-test cluster value.
+//
+//testdouble:unit-seam-client
 type TestConfig struct {
 	StartupTimeout time.Duration
 	Closed         bool
@@ -80,6 +82,8 @@ type TestConfig struct {
 // TestStateView points at a cluster's locks for unit tests. PortLeases is a
 // count taken when TestState is called. The closed flag, the control plane, the
 // options, the bootstrap record and the bridge-removal flag are written through the TestSet* functions.
+//
+//testdouble:unit-seam-client
 type TestStateView struct {
 	Mutex        *sync.Mutex
 	ControlMutex *sync.RWMutex
@@ -88,12 +92,16 @@ type TestStateView struct {
 }
 
 // TestCluster builds a cluster value for unit tests: control runs the CLI.
+//
+//testdouble:unit-seam-client
 func TestCluster(control testcontainers.Container, c TestConfig) *ceph.Container {
 	return get().UnitCluster(control, c.StartupTimeout, c.Closed, c.HostNetwork, c.PublicAddress, c.NetworkName,
 		c.OSDs, c.OSDPlacement, c.MemStore, c.MessengerMode, c.Images)
 }
 
 // TestState exposes a cluster's lock identities to unit tests.
+//
+//testdouble:unit-seam-client
 func TestState(c *ceph.Container) TestStateView {
 	mu, control, config, leases := get().UnitState(c)
 	return TestStateView{Mutex: mu, ControlMutex: control, ConfigMutex: config, PortLeases: leases}
@@ -102,87 +110,123 @@ func TestState(c *ceph.Container) TestStateView {
 // TestReplaceOSDs swaps the owned OSD descriptors of a cluster value for osds.
 // It takes no lock: use it on a cluster no other goroutine uses, or while
 // holding the mutex that TestState exposes.
+//
+//testdouble:unit-seam-client
 func TestReplaceOSDs(c *ceph.Container, osds map[int]*ceph.OSDContainer) {
 	get().UnitReplaceOSDs(c, osds)
 }
 
 // TestOSDCount is the number of OSD descriptors the cluster value owns, read
 // without a lock.
+//
+//testdouble:unit-seam-client
 func TestOSDCount(c *ceph.Container) int { return get().UnitOSDCount(c) }
 
 // TestSetClosed sets or clears a cluster's closed flag. It takes no lock: hold
 // the mutex that TestState exposes, or use a cluster no other goroutine uses.
+//
+//testdouble:unit-seam-client
 func TestSetClosed(c *ceph.Container, closed bool) { get().UnitSetClosed(c, closed) }
 
 // TestSetControlPlane replaces a cluster's control-plane container. It takes no
 // lock: hold ControlMutex, or use a cluster no other goroutine uses.
+//
+//testdouble:unit-seam-client
 func TestSetControlPlane(c *ceph.Container, control testcontainers.Container) {
 	get().UnitSetControlPlane(c, control)
 }
 
 // TestSetConfig replaces a cluster's recorded bootstrap configuration. It takes
 // no lock: hold ConfigMutex, or use a cluster no other goroutine uses.
+//
+//testdouble:unit-seam-client
 func TestSetConfig(c *ceph.Container, config []byte) { get().UnitSetConfig(c, config) }
 
 // TestSetKeyring replaces a cluster's recorded admin keyring. It takes no lock:
 // hold ConfigMutex, or use a cluster no other goroutine uses.
+//
+//testdouble:unit-seam-client
 func TestSetKeyring(c *ceph.Container, keyring []byte) { get().UnitSetKeyring(c, keyring) }
 
 // TestSetCephVersion replaces a cluster's recorded Ceph version. It takes no
 // lock: use a cluster no other goroutine uses, or hold the mutex that TestState
 // exposes.
+//
+//testdouble:unit-seam-client
 func TestSetCephVersion(c *ceph.Container, version string) { get().UnitSetCephVersion(c, version) }
 
 // TestSetNetworkRemoved marks a cluster's public bridge as removed or not. It
 // takes no lock: hold the mutex that TestState exposes, or use a cluster no
 // other goroutine uses.
+//
+//testdouble:unit-seam-client
 func TestSetNetworkRemoved(c *ceph.Container, removed bool) { get().UnitSetNetworkRemoved(c, removed) }
 
 // TestNetworkRemoved reports whether a cluster's public bridge is marked
 // removed, read without a lock.
+//
+//testdouble:unit-seam-client
 func TestNetworkRemoved(c *ceph.Container) bool { return get().UnitNetworkRemoved(c) }
 
 // TestSetInitialOSDs sets a cluster's initial OSD count. It takes no lock.
+//
+//testdouble:unit-seam-client
 func TestSetInitialOSDs(c *ceph.Container, osds int) { get().UnitSetInitialOSDs(c, osds) }
 
 // TestSetPoolDefaults sets the replica count and minimum size that pool
 // defaults resolve to. It takes no lock.
+//
+//testdouble:unit-seam-client
 func TestSetPoolDefaults(c *ceph.Container, replicas, minSize int) {
 	get().UnitSetPoolDefaults(c, replicas, minSize)
 }
 
 // TestSetStartupTimeout sets a cluster's startup timeout. It takes no lock.
+//
+//testdouble:unit-seam-client
 func TestSetStartupTimeout(c *ceph.Container, timeout time.Duration) {
 	get().UnitSetStartupTimeout(c, timeout)
 }
 
 // TestSetCephFSImage selects the image of the CephFS role. It takes no lock.
+//
+//testdouble:unit-seam-client
 func TestSetCephFSImage(c *ceph.Container, image string) { get().UnitSetCephFSImage(c, image) }
 
 // TestClientState returns a client identity's owner and lifecycle flags.
+//
+//testdouble:unit-seam-client
 func TestClientState(client *ceph.ClientConfig) (owner *ceph.Container, created, ready, revoked bool) {
 	return get().UnitClientState(client)
 }
 
 // TestApply applies options to empty settings and returns the service
 // bootstraps they record.
+//
+//testdouble:unit-seam-client
 func TestApply(opts ...ceph.Option) ([]servicehook.Bootstrap, error) { return get().UnitApply(opts...) }
 
 // TestPrepare validates an initial composition of osds OSDs and pools with
 // opts applied, as Run does, and returns the resulting initial pool list and
 // the prepared service bootstraps.
+//
+//testdouble:unit-seam-client
 func TestPrepare(osds int, noInitialOSDs bool, pools []ceph.PoolConfig, opts ...ceph.Option) ([]ceph.PoolConfig, []servicehook.Bootstrap, error) {
 	return get().UnitPrepare(osds, noInitialOSDs, pools, opts...)
 }
 
 // TestFaults snapshots the fault registry for unit tests. Call with the cluster
 // mutex held.
+//
+//testdouble:unit-seam-client
 func TestFaults(c *ceph.Container, kind faulthook.Kind) map[string]any {
 	return get().UnitFaults(c, string(kind))
 }
 
 // TestHeld snapshots the handles that one override kind holds, for unit tests.
 // Call with the cluster mutex held.
+//
+//testdouble:unit-seam-client
 func TestHeld(c *ceph.Container, kind overridehook.Kind) map[string]any {
 	return get().UnitHeld(c, string(kind))
 }

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // These controls drive the retained-client map wait with synthetic status
@@ -18,25 +20,25 @@ import (
 
 const retainedClientID = 4261
 
-func statusSequence(statuses ...cephFSClientStatus) func(context.Context) (cephFSClientStatus, error) {
+func statusSequence(statuses ...harness.CephFSClientStatus) func(context.Context) (harness.CephFSClientStatus, error) {
 	next := 0
-	return func(context.Context) (cephFSClientStatus, error) {
+	return func(context.Context) (harness.CephFSClientStatus, error) {
 		status := statuses[min(next, len(statuses)-1)]
 		next++
 		return status, nil
 	}
 }
 
-func clientAt(id uint64, epoch, barrier uint32, blocklisted bool) cephFSClientStatus {
-	return cephFSClientStatus{ID: id, OSDEpoch: epoch, Barrier: barrier, Blocklisted: blocklisted}
+func clientAt(id uint64, epoch, barrier uint32, blocklisted bool) harness.CephFSClientStatus {
+	return harness.CephFSClientStatus{ID: id, OSDEpoch: epoch, Barrier: barrier, Blocklisted: blocklisted}
 }
 
-func waitFor(r *retainedClientReceipt, target uint32, bound time.Duration, read func(context.Context) (cephFSClientStatus, error)) error {
-	return r.waitMap(context.Background(), "full map", target, true, bound, time.Second, time.Millisecond, read)
+func waitFor(r *harness.RetainedClientReceipt, target uint32, bound time.Duration, read func(context.Context) (harness.CephFSClientStatus, error)) error {
+	return r.WaitMap(context.Background(), "full map", target, true, bound, time.Second, time.Millisecond, read)
 }
 
 func TestRetainedMapWaitStaleEpochTimesOutWithTarget(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1099511627776, 3)
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1099511627776, 3)
 	err := waitFor(r, 26, 40*time.Millisecond, statusSequence(clientAt(retainedClientID, 24, 20, false), clientAt(retainedClientID, 25, 20, false)))
 	if err == nil {
 		t.Fatal("stale epoch accepted")
@@ -57,7 +59,7 @@ func TestRetainedMapWaitStaleEpochTimesOutWithTarget(t *testing.T) {
 }
 
 func TestRetainedMapWaitReachedWithOlderBarrier(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
 	if err := waitFor(r, 24, time.Second, statusSequence(clientAt(retainedClientID, 23, 20, false), clientAt(retainedClientID, 24, 20, false))); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +69,7 @@ func TestRetainedMapWaitReachedWithOlderBarrier(t *testing.T) {
 }
 
 func TestRetainedMapWaitAdvancedBarrierDoesNotSubstituteForMap(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
 	if err := waitFor(r, 24, 30*time.Millisecond, statusSequence(clientAt(retainedClientID, 23, 30, false))); err == nil {
 		t.Fatal("a barrier above the target made a stale map ready")
 	}
@@ -77,7 +79,7 @@ func TestRetainedMapWaitAdvancedBarrierDoesNotSubstituteForMap(t *testing.T) {
 }
 
 func TestRetainedMapWaitIdentityMismatchIsTerminal(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
 	err := waitFor(r, 24, time.Second, statusSequence(clientAt(4262, 24, 20, false), clientAt(retainedClientID, 24, 20, false)))
 	if err == nil || !strings.Contains(err.Error(), "client 4262") {
 		t.Fatalf("err = %v", err)
@@ -88,7 +90,7 @@ func TestRetainedMapWaitIdentityMismatchIsTerminal(t *testing.T) {
 }
 
 func TestRetainedMapWaitBlocklistingIsNotRevivedByClearance(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
 	err := waitFor(r, 24, time.Second, statusSequence(clientAt(retainedClientID, 24, 20, true), clientAt(retainedClientID, 24, 20, false)))
 	if err == nil || !strings.Contains(err.Error(), "blocklisted") {
 		t.Fatalf("err = %v", err)
@@ -99,8 +101,8 @@ func TestRetainedMapWaitBlocklistingIsNotRevivedByClearance(t *testing.T) {
 }
 
 func TestRetainedMapWaitLateResultIsNotEvidence(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
-	err := waitFor(r, 24, 20*time.Millisecond, func(ctx context.Context) (cephFSClientStatus, error) {
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
+	err := waitFor(r, 24, 20*time.Millisecond, func(ctx context.Context) (harness.CephFSClientStatus, error) {
 		<-ctx.Done()
 		time.Sleep(5 * time.Millisecond)
 		return clientAt(retainedClientID, 24, 20, false), nil
@@ -114,9 +116,9 @@ func TestRetainedMapWaitLateResultIsNotEvidence(t *testing.T) {
 }
 
 func TestRetainedMapWaitProbeErrorIsRecorded(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
-	err := waitFor(r, 24, time.Second, func(context.Context) (cephFSClientStatus, error) {
-		return cephFSClientStatus{}, errors.New("client status: exit=1")
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
+	err := waitFor(r, 24, time.Second, func(context.Context) (harness.CephFSClientStatus, error) {
+		return harness.CephFSClientStatus{}, errors.New("client status: exit=1")
 	})
 	if err == nil {
 		t.Fatal("probe error accepted")
@@ -127,10 +129,10 @@ func TestRetainedMapWaitProbeErrorIsRecorded(t *testing.T) {
 }
 
 func TestRetainedMapWaitPhaseExpiryDuringProbeIsATimeout(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
-	err := r.waitMap(context.Background(), "drained map", 31, true, 20*time.Millisecond, time.Second, time.Millisecond, func(ctx context.Context) (cephFSClientStatus, error) {
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
+	err := r.WaitMap(context.Background(), "drained map", 31, true, 20*time.Millisecond, time.Second, time.Millisecond, func(ctx context.Context) (harness.CephFSClientStatus, error) {
 		<-ctx.Done()
-		return cephFSClientStatus{}, ctx.Err()
+		return harness.CephFSClientStatus{}, ctx.Err()
 	})
 	if err == nil || !strings.Contains(err.Error(), "not observed within") {
 		t.Fatalf("err = %v, want the phase expiry", err)
@@ -141,10 +143,10 @@ func TestRetainedMapWaitPhaseExpiryDuringProbeIsATimeout(t *testing.T) {
 }
 
 func TestRetainedMapWaitShorterProbeBoundIsAProbeError(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
-	err := r.waitMap(context.Background(), "drained map", 31, true, time.Second, 20*time.Millisecond, time.Millisecond, func(ctx context.Context) (cephFSClientStatus, error) {
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
+	err := r.WaitMap(context.Background(), "drained map", 31, true, time.Second, 20*time.Millisecond, time.Millisecond, func(ctx context.Context) (harness.CephFSClientStatus, error) {
 		<-ctx.Done()
-		return cephFSClientStatus{}, ctx.Err()
+		return harness.CephFSClientStatus{}, ctx.Err()
 	})
 	if err == nil || strings.Contains(err.Error(), "not observed within") {
 		t.Fatalf("err = %v, want an independent probe failure", err)
@@ -155,24 +157,24 @@ func TestRetainedMapWaitShorterProbeBoundIsAProbeError(t *testing.T) {
 }
 
 func TestRetainedMapWaitSampleHistoryKeepsLastStatus(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
 	epoch := uint32(0)
-	_ = waitFor(r, 1000, 200*time.Millisecond, func(context.Context) (cephFSClientStatus, error) {
+	_ = waitFor(r, 1000, 200*time.Millisecond, func(context.Context) (harness.CephFSClientStatus, error) {
 		epoch++
 		return clientAt(retainedClientID, epoch, 20, false), nil
 	})
 	wait := r.Waits[0]
-	if len(wait.Samples) != retainedMapSampleLimit || wait.Dropped == 0 || wait.Samples[len(wait.Samples)-1].OSDEpoch != uint32(wait.Probes) {
+	if len(wait.Samples) != harness.RetainedMapSampleLimit || wait.Dropped == 0 || wait.Samples[len(wait.Samples)-1].OSDEpoch != uint32(wait.Probes) {
 		t.Fatalf("samples=%d dropped=%d probes=%d", len(wait.Samples), wait.Dropped, wait.Probes)
 	}
 }
 
 func TestRetainedClientReceiptKeepsUnreachedPhasesAbsent(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
 	notFull := uint32(23)
 	r.NotFullEpoch = &notFull
-	r.phase("pool-not-full")
-	line := r.line()
+	r.Phase("pool-not-full")
+	line := r.Line()
 	for _, absent := range []string{`"full_epoch"`, `"drained_epoch"`, `"waits"`, `"unprompted"`, `"restore_error"`, `"restore_started"`, "poke"} {
 		if strings.Contains(line, absent) {
 			t.Errorf("unreached %q appears: %s", absent, line)
@@ -184,7 +186,7 @@ func TestRetainedClientReceiptKeepsUnreachedPhasesAbsent(t *testing.T) {
 }
 
 func TestRetainedClientReceiptKeepsRestoreFailureBesideWaitFailure(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
 	full := uint32(26)
 	r.FullEpoch = &full
 	if err := waitFor(r, 26, 20*time.Millisecond, statusSequence(clientAt(retainedClientID, 25, 20, false))); err == nil {
@@ -192,7 +194,7 @@ func TestRetainedClientReceiptKeepsRestoreFailureBesideWaitFailure(t *testing.T)
 	}
 	r.RestoreStarted = true
 	r.RestoreError = "restore: mon unreachable"
-	line := r.line()
+	line := r.Line()
 	for _, want := range []string{" restore-started ", `"outcome":"timeout"`, `"target_epoch":26`, `"restore_error":"restore: mon unreachable"`} {
 		if !strings.Contains(line, want) {
 			t.Errorf("line lacks %q: %s", want, line)

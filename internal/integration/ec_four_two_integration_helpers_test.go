@@ -14,6 +14,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
@@ -97,7 +98,7 @@ func ecFourTwoWait(t *testing.T, parent context.Context, cluster *ceph.Container
 	defer cancel()
 	var last error
 	for {
-		s, err := poolHandle(t, ctx, cluster, pool).PGs(ctx)
+		s, err := harness.PoolHandle(t, ctx, cluster, pool).PGs(ctx)
 		if err == nil {
 			last = checkECFourTwoPlacement(p, baseline, s, lost, floor, primary)
 			if last == nil {
@@ -121,7 +122,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 	for i := range layout {
 		layout[i] = ceph.OSDConfig{Host: fmt.Sprintf("tc-ec-host-%d", i), Root: "tc-ec-four-two"}
 	}
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(layout...).WithDefaultCRUSHRoot("tc-ec-four-two")))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(layout...).WithDefaultCRUSHRoot("tc-ec-four-two")))
 	pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-four-two", Application: "rados", PGNum: 1, MinSize: minSize, FailureDomain: "host", CRUSHRoot: "tc-ec-four-two", ErasureCode: &ceph.ErasureCodeConfig{K: 4, M: 2, AllowOverwrites: true}})
 	if err != nil {
 		t.Fatalf("4+2 topology/pool admission failed: %v", err)
@@ -130,7 +131,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 		t.Fatal(err)
 	}
 	size := ecFourTwoFacts(t, ctx, cluster, pool)
-	initialStates, err := observeCluster(cluster).OSDStates(ctx)
+	initialStates, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +153,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 		cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer done()
 		if actor != nil {
-			if err := actor.finish(cleanup); err != nil {
+			if err := actor.Finish(cleanup); err != nil {
 				t.Errorf("actor shutdown unconfirmed; preserve the unknown outcome and leave store removal to Terminate: %v", err)
 				return
 			}
@@ -278,7 +279,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 	if err != nil || checkECFourTwoPlacement(p, baseline, secondAfter, lost, firstAfter.PGs[0].ReportedEpoch, firstAfter.PGs[0].ActingPrimary) != nil {
 		t.Fatalf("second I/O placement interval changed: %+v %v", secondAfter, err)
 	}
-	if err := actor.finish(ctx); err != nil {
+	if err := actor.Finish(ctx); err != nil {
 		t.Fatal("retained clients not confirmed shut down before store restoration:", err)
 	}
 	var shutdown ecFourTwoShutdown
@@ -312,7 +313,7 @@ func testECFourTwoAdmission(t *testing.T, minSize int) {
 			}
 		}
 	}
-	finalStates, err := observeCluster(cluster).OSDStates(ctx)
+	finalStates, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

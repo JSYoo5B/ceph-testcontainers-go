@@ -13,6 +13,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -59,10 +60,10 @@ func ecAdmissionClient(t *testing.T, ctx context.Context, cluster *ceph.Containe
 	t.Helper()
 	r, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"python3", "-c", ecAdmissionProbe, phase, pool}, Timeout: 45 * time.Second, MaxStdout: 1 << 16, MaxStderr: 1 << 16, Label: "EC admission " + phase})
 	var receipt map[string]any
-	if err != nil || !r.Complete() || r.ExitCode != 0 || json.Unmarshal([]byte(lastJSONLine(string(r.Stdout))), &receipt) != nil || receipt["phase"] != phase {
+	if err != nil || !r.Complete() || r.ExitCode != 0 || json.Unmarshal([]byte(harness.LastJSONLine(string(r.Stdout))), &receipt) != nil || receipt["phase"] != phase {
 		t.Fatalf("admission %s: %+v, %v", phase, r, err)
 	}
-	t.Logf("EC_ADMISSION_CLIENT %s", lastJSONLine(string(r.Stdout)))
+	t.Logf("EC_ADMISSION_CLIENT %s", harness.LastJSONLine(string(r.Stdout)))
 	return receipt
 }
 
@@ -119,7 +120,7 @@ func ecAdmissionInstanceOf(t *testing.T, ctx context.Context, osd *ceph.OSDConta
 func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	config := ceph.PoolConfig{Name: "tc-ec-admission", Application: "rados", PGNum: 1, MinSize: minSize, ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true}}
 	pool, err := cluster.CreatePool(ctx, config)
 	if err != nil {
@@ -221,7 +222,7 @@ func testECAdmission(t *testing.T, minSize int, primaryLost bool) {
 	if err := checkECAdmissionStopped(captured, faultInstance); err != nil {
 		t.Fatal(err)
 	}
-	states, err := observeCluster(cluster).OSDStates(ctx)
+	states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

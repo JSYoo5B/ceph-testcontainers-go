@@ -17,6 +17,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -41,7 +42,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = docker.Close() })
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithVolume()))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	terminated := false
@@ -73,7 +74,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "seed")
 	volume, _ := osdVolumeBacking(t, ctx, docker.Client, cluster)
-	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pausedRegistration := noInitialOSDNativeDump(t, ctx, cluster)
+	pausedRegistration := harness.NoInitialOSDNativeDump(t, ctx, cluster)
 	if refused, err := original.Detach(ctx); err == nil || refused != nil || !strings.Contains(err.Error(), "container pause") {
 		t.Fatal("DetachOSD of a paused OSD was not refused", err)
 	}
@@ -103,7 +104,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 	if owned := clusteraccess.OSDs(t, cluster); len(owned) != 1 || owned[0] != original || original.GetContainerID() != oldContainer {
 		t.Fatal("pause refusal changed the owned OSD handle")
 	}
-	if !slices.Equal(pausedRegistration, noInitialOSDNativeDump(t, ctx, cluster)) {
+	if !slices.Equal(pausedRegistration, harness.NoInitialOSDNativeDump(t, ctx, cluster)) {
 		t.Fatal("pause refusal changed the registration")
 	}
 	if err := pause.Resume(ctx); err != nil {
@@ -128,14 +129,14 @@ func TestOSDRetainedReopen(t *testing.T) {
 	if len(clusteraccess.OSDs(t, cluster)) != 0 {
 		t.Fatal("a detached OSD is still listed")
 	}
-	native := noInitialOSDNativeDump(t, ctx, cluster)
+	native := harness.NoInitialOSDNativeDump(t, ctx, cluster)
 	if len(native) != 1 || native[0].ID != original.ID || native[0].UUID != detached.UUID() || native[0].Up != 0 || native[0].In != 1 {
 		t.Fatalf("detached registration %+v", native)
 	}
 	if err := original.Remove(ctx); err == nil {
 		t.Fatal("RemoveOSD purged a detached OSD")
 	}
-	if !slices.Equal(native, noInitialOSDNativeDump(t, ctx, cluster)) {
+	if !slices.Equal(native, harness.NoInitialOSDNativeDump(t, ctx, cluster)) {
 		t.Fatal("RemoveOSD refusal changed the detached registration")
 	}
 
@@ -176,7 +177,7 @@ func TestOSDRetainedReopen(t *testing.T) {
 	if !slices.Equal(containers, retainedContainerIDs(t, ctx, docker.Client)) {
 		t.Fatal("the store refusal created or removed a container")
 	}
-	if !slices.Equal(native, noInitialOSDNativeDump(t, ctx, cluster)) {
+	if !slices.Equal(native, harness.NoInitialOSDNativeDump(t, ctx, cluster)) {
 		t.Fatal("the store refusal changed the detached registration")
 	}
 	if !maps.Equal(tampered, retainedStoreFingerprint(t, ctx, observer, store)) {

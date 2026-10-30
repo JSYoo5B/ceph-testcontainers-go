@@ -48,6 +48,7 @@ type osdFleetState struct {
 	osdHandles osdRegistry
 	// stores is the OSD memory and volume storage and its test seams; see
 	// osdStorageState.
+	//testdouble:nil-default-hook
 	stores osdStorageState
 	// deviceClaims is the cluster-wide claim table of the host block devices
 	// of OSDs; see osdDeviceClaims. Nothing publishes a claim yet.

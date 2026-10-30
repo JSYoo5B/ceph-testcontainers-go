@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // These controls feed synthetic probe documents, session listings and timed
@@ -31,7 +33,7 @@ const (
 
 func rstProbeJSON(mutate func(map[string]any)) []byte {
 	symbols := map[string]any{}
-	for name, c := range resetABIContract {
+	for name, c := range harness.ResetABIContract {
 		symbols[name] = map[string]any{"resolved": true, "restype": c.Restype, "argtypes": c.Argtypes}
 	}
 	doc := map[string]any{
@@ -60,15 +62,15 @@ func rstSub(doc map[string]any, keys ...string) map[string]any {
 }
 
 func TestResetABIProbeReader(t *testing.T) {
-	p, err := parseResetABIProbe(rstProbeJSON(nil))
+	p, err := harness.ParseResetABIProbe(rstProbeJSON(nil))
 	if err != nil || len(p.Calls) != 11 || p.Calls["ceph_start_reclaim"].Restype != "c_int" {
 		t.Fatalf("good probe: %+v %v", p, err)
 	}
-	if err := checkResetABIProbe(p, 20, 2, 4); err != nil {
+	if err := harness.CheckResetABIProbe(p, 20, 2, 4); err != nil {
 		t.Fatalf("good probe rejected: %v", err)
 	}
-	if len(resetABIContract) != 11 {
-		t.Fatalf("contract lists %d symbols, want 11", len(resetABIContract))
+	if len(harness.ResetABIContract) != 11 {
+		t.Fatalf("contract lists %d symbols, want 11", len(harness.ResetABIContract))
 	}
 
 	parseRejects := map[string]func(map[string]any){
@@ -102,15 +104,15 @@ func TestResetABIProbeReader(t *testing.T) {
 	}
 	for name, mutate := range parseRejects {
 		t.Run("parse rejects "+name, func(t *testing.T) {
-			if p, err := parseResetABIProbe(rstProbeJSON(mutate)); err == nil {
+			if p, err := harness.ParseResetABIProbe(rstProbeJSON(mutate)); err == nil {
 				t.Fatalf("accepted: %+v", p)
 			}
 		})
 	}
-	if _, err := parseResetABIProbe([]byte(`null`)); err == nil {
+	if _, err := harness.ParseResetABIProbe([]byte(`null`)); err == nil {
 		t.Fatal("accepted a null document")
 	}
-	if _, err := parseResetABIProbe([]byte(`[]`)); err == nil {
+	if _, err := harness.ParseResetABIProbe([]byte(`[]`)); err == nil {
 		t.Fatal("accepted an array document")
 	}
 
@@ -139,17 +141,17 @@ func TestResetABIProbeReader(t *testing.T) {
 	}
 	for name, mutate := range checkRejects {
 		t.Run("eligibility rejects "+name, func(t *testing.T) {
-			p, err := parseResetABIProbe(rstProbeJSON(mutate))
+			p, err := harness.ParseResetABIProbe(rstProbeJSON(mutate))
 			if err != nil {
 				t.Fatalf("fixture should parse: %v", err)
 			}
-			if err := checkResetABIProbe(p, 20, 2, 4); err == nil {
+			if err := harness.CheckResetABIProbe(p, 20, 2, 4); err == nil {
 				t.Fatal("eligibility passed")
 			}
 		})
 	}
 	// Squid is a separate pin; a Tentacle probe must not pass for it.
-	if err := checkResetABIProbe(p, 19, 2, 5); err == nil {
+	if err := harness.CheckResetABIProbe(p, 19, 2, 5); err == nil {
 		t.Fatal("a 20.2.4 probe passed the 19.2.5 gate")
 	}
 }
@@ -161,14 +163,14 @@ func rstSessionRow(id uint64, state string) string {
 }
 
 func TestResetSessionReader(t *testing.T) {
-	got, err := parseResetSessions(rstSessionJSON(rstSessionRow(rstA, "open"), rstSessionRow(rstU, "stale"), rstSessionRow(rstB, "closing")))
+	got, err := harness.ParseResetSessions(rstSessionJSON(rstSessionRow(rstA, "open"), rstSessionRow(rstU, "stale"), rstSessionRow(rstB, "closing")))
 	if err != nil || len(got) != 3 {
 		t.Fatalf("%v %v", got, err)
 	}
-	if got.status(rstA) != resetPresent || got.status(rstU) != resetPresent || got.status(rstB) != resetTransitional || got.status(9) != resetAbsent {
+	if got.Status(rstA) != harness.ResetPresent || got.Status(rstU) != harness.ResetPresent || got.Status(rstB) != harness.ResetTransitional || got.Status(9) != harness.ResetAbsent {
 		t.Fatalf("statuses wrong: %v", got)
 	}
-	if empty, err := parseResetSessions([]byte(`[]`)); err != nil || empty == nil || empty.status(rstA) != resetAbsent {
+	if empty, err := harness.ParseResetSessions([]byte(`[]`)); err != nil || empty == nil || empty.Status(rstA) != harness.ResetAbsent {
 		t.Fatalf("empty listing: %v %v", empty, err)
 	}
 	rejects := map[string][]byte{
@@ -188,7 +190,7 @@ func TestResetSessionReader(t *testing.T) {
 	}
 	for name, doc := range rejects {
 		t.Run("rejects "+name, func(t *testing.T) {
-			if got, err := parseResetSessions(doc); err == nil {
+			if got, err := harness.ParseResetSessions(doc); err == nil {
 				t.Fatalf("accepted: %v", got)
 			}
 		})
@@ -201,31 +203,33 @@ func rstAt(sec float64) time.Time { return rstT0.Add(time.Duration(sec * float64
 
 func rstInt(v int) *int { return &v }
 
-func rstObs(start, end float64, a, u string, aLock, uLock resetLock) resetObservation {
-	s := resetSessions{}
+func rstObs(start, end float64, a, u string, aLock, uLock harness.ResetLock) harness.ResetObservation {
+	s := harness.ResetSessions{}
 	if a != "" {
 		s[rstA] = a
 	}
 	if u != "" {
 		s[rstU] = u
 	}
-	return resetObservation{Start: rstAt(start), End: rstAt(end), Sessions: s, ALock: aLock, ULock: uLock}
+	return harness.ResetObservation{Start: rstAt(start), End: rstAt(end), Sessions: s, ALock: aLock, ULock: uLock}
 }
 
 // rstGood kills A at t=10, runs the missing-UUID attempt over [20,21], RESET
 // over [30,34] and mounts the replacement at t=50.
-func rstGood() resetSequence {
-	held := func(s, e float64) resetObservation { return rstObs(s, e, "open", "open", resetLockHeld, resetLockHeld) }
-	return resetSequence{
+func rstGood() harness.ResetSequence {
+	held := func(s, e float64) harness.ResetObservation {
+		return rstObs(s, e, "open", "open", harness.ResetLockHeld, harness.ResetLockHeld)
+	}
+	return harness.ResetSequence{
 		A: rstA, U: rstU, B: rstB, AUUID: "uuid-a", UUUID: "uuid-u",
 		AKilledAt: rstAt(10), AExitStatus: rstInt(-9),
-		AfterKill: []resetObservation{held(11, 12)},
-		Missing: resetAttempt{Handle: "h-missing", Initialized: true, Flags: cephReclaimReset,
+		AfterKill: []harness.ResetObservation{held(11, 12)},
+		Missing: harness.ResetAttempt{Handle: "h-missing", Initialized: true, Flags: harness.CephReclaimReset,
 			Target: "uuid-nobody", OwnUUID: "uuid-b1", RC: rstInt(-2), Start: rstAt(20), End: rstAt(21)},
-		AfterMissing: []resetObservation{held(22, 23)},
-		Reset: resetAttempt{Handle: "h-reset", Initialized: true, Flags: cephReclaimReset,
+		AfterMissing: []harness.ResetObservation{held(22, 23)},
+		Reset: harness.ResetAttempt{Handle: "h-reset", Initialized: true, Flags: harness.CephReclaimReset,
 			Target: "uuid-a", OwnUUID: "uuid-b2", RC: rstInt(0), Start: rstAt(30), End: rstAt(34)},
-		AfterReset:    []resetObservation{rstObs(35, 36, "", "open", resetLockFree, resetLockHeld)},
+		AfterReset:    []harness.ResetObservation{rstObs(35, 36, "", "open", harness.ResetLockFree, harness.ResetLockHeld)},
 		MountStart:    rstAt(50),
 		SeedSize:      27,
 		SeedSHA256:    rstSeedSHA,
@@ -236,100 +240,100 @@ func rstGood() resetSequence {
 }
 
 func TestResetSequenceJudge(t *testing.T) {
-	if got := judgeResetSequence(rstGood()); got.Verdict != resetEstablished {
+	if got := harness.JudgeResetSequence(rstGood()); got.Verdict != harness.ResetEstablished {
 		t.Fatalf("good sequence: %+v", got)
 	}
 	cases := []struct {
 		name   string
-		mutate func(*resetSequence)
-		want   resetVerdict
+		mutate func(*harness.ResetSequence)
+		want   harness.ResetVerdict
 		part   string
 	}{
 		// Source-grounded contradictions.
-		{"fresh handle returns 0 for a missing UUID", func(s *resetSequence) { s.Missing.RC = rstInt(0) }, resetContradicted, "returned 0 for a UUID"},
-		{"unrelated session lost after RESET", func(s *resetSequence) { s.AfterReset[0].Sessions = resetSessions{} }, resetContradicted, "lost its session"},
-		{"unrelated lock freed after RESET", func(s *resetSequence) { s.AfterReset[0].ULock = resetLockFree }, resetContradicted, "lock became free"},
-		{"unrelated lock freed after the missing attempt", func(s *resetSequence) { s.AfterMissing[0].ULock = resetLockFree }, resetContradicted, "lock became free"},
-		{"unrelated session lost after the missing attempt", func(s *resetSequence) { s.AfterMissing[0].Sessions = resetSessions{rstA: "open"} }, resetContradicted, "lost its session"},
+		{"fresh handle returns 0 for a missing UUID", func(s *harness.ResetSequence) { s.Missing.RC = rstInt(0) }, harness.ResetContradicted, "returned 0 for a UUID"},
+		{"unrelated session lost after RESET", func(s *harness.ResetSequence) { s.AfterReset[0].Sessions = harness.ResetSessions{} }, harness.ResetContradicted, "lost its session"},
+		{"unrelated lock freed after RESET", func(s *harness.ResetSequence) { s.AfterReset[0].ULock = harness.ResetLockFree }, harness.ResetContradicted, "lock became free"},
+		{"unrelated lock freed after the missing attempt", func(s *harness.ResetSequence) { s.AfterMissing[0].ULock = harness.ResetLockFree }, harness.ResetContradicted, "lock became free"},
+		{"unrelated session lost after the missing attempt", func(s *harness.ResetSequence) { s.AfterMissing[0].Sessions = harness.ResetSessions{rstA: "open"} }, harness.ResetContradicted, "lost its session"},
 
 		// Handle freshness: the stale reclaim_target_addrs hazard.
-		{"missing attempt on a handle that already reclaimed", func(s *resetSequence) { s.Missing.PriorReclaimCalls = 1 }, resetInconclusive, "reuses a handle"},
-		{"RESET on a reused handle", func(s *resetSequence) { s.Reset.PriorReclaimCalls = 1 }, resetInconclusive, "reuses a handle"},
-		{"one handle for both attempts", func(s *resetSequence) { s.Reset.Handle = s.Missing.Handle }, resetInconclusive, "share one native handle"},
-		{"uninitialized handle", func(s *resetSequence) { s.Missing.Initialized = false }, resetInconclusive, "no initialized"},
-		{"unnamed handle", func(s *resetSequence) { s.Reset.Handle = "" }, resetInconclusive, "no initialized"},
+		{"missing attempt on a handle that already reclaimed", func(s *harness.ResetSequence) { s.Missing.PriorReclaimCalls = 1 }, harness.ResetInconclusive, "reuses a handle"},
+		{"RESET on a reused handle", func(s *harness.ResetSequence) { s.Reset.PriorReclaimCalls = 1 }, harness.ResetInconclusive, "reuses a handle"},
+		{"one handle for both attempts", func(s *harness.ResetSequence) { s.Reset.Handle = s.Missing.Handle }, harness.ResetInconclusive, "share one native handle"},
+		{"uninitialized handle", func(s *harness.ResetSequence) { s.Missing.Initialized = false }, harness.ResetInconclusive, "no initialized"},
+		{"unnamed handle", func(s *harness.ResetSequence) { s.Reset.Handle = "" }, harness.ResetInconclusive, "no initialized"},
 
 		// Flags, targets, return values.
-		{"state-preserving flags 0 on RESET", func(s *resetSequence) { s.Reset.Flags = 0 }, resetInconclusive, "not CEPH_RECLAIM_RESET"},
-		{"flags 0 on the missing attempt", func(s *resetSequence) { s.Missing.Flags = 0 }, resetInconclusive, "not CEPH_RECLAIM_RESET"},
-		{"missing target is A", func(s *resetSequence) { s.Missing.Target = "uuid-a" }, resetInconclusive, "targets the UUID that RESET"},
-		{"missing target is U", func(s *resetSequence) { s.Missing.Target = "uuid-u" }, resetInconclusive, "names a live or own"},
-		{"missing target is the reclaimer's own", func(s *resetSequence) { s.Missing.Target = s.Reset.OwnUUID }, resetInconclusive, "names a live or own"},
-		{"target equals own UUID", func(s *resetSequence) { s.Reset.OwnUUID = s.Reset.Target }, resetInconclusive, "identical"},
-		{"RESET targets U", func(s *resetSequence) { s.Reset.Target = "uuid-u" }, resetInconclusive, "killed client's UUID"},
-		{"reclaimer reuses U's UUID", func(s *resetSequence) { s.Reset.OwnUUID = "uuid-u" }, resetInconclusive, "reuses a live"},
-		{"missing attempt other errno", func(s *resetSequence) { s.Missing.RC = rstInt(-22) }, resetInconclusive, "not -ENOENT"},
-		{"missing attempt return unrecorded", func(s *resetSequence) { s.Missing.RC = nil }, resetInconclusive, "not recorded"},
-		{"RESET returns ENOENT", func(s *resetSequence) { s.Reset.RC = rstInt(-2) }, resetInconclusive, "not 0"},
-		{"RESET return unrecorded", func(s *resetSequence) { s.Reset.RC = nil }, resetInconclusive, "not recorded"},
+		{"state-preserving flags 0 on RESET", func(s *harness.ResetSequence) { s.Reset.Flags = 0 }, harness.ResetInconclusive, "not CEPH_RECLAIM_RESET"},
+		{"flags 0 on the missing attempt", func(s *harness.ResetSequence) { s.Missing.Flags = 0 }, harness.ResetInconclusive, "not CEPH_RECLAIM_RESET"},
+		{"missing target is A", func(s *harness.ResetSequence) { s.Missing.Target = "uuid-a" }, harness.ResetInconclusive, "targets the UUID that RESET"},
+		{"missing target is U", func(s *harness.ResetSequence) { s.Missing.Target = "uuid-u" }, harness.ResetInconclusive, "names a live or own"},
+		{"missing target is the reclaimer's own", func(s *harness.ResetSequence) { s.Missing.Target = s.Reset.OwnUUID }, harness.ResetInconclusive, "names a live or own"},
+		{"target equals own UUID", func(s *harness.ResetSequence) { s.Reset.OwnUUID = s.Reset.Target }, harness.ResetInconclusive, "identical"},
+		{"RESET targets U", func(s *harness.ResetSequence) { s.Reset.Target = "uuid-u" }, harness.ResetInconclusive, "killed client's UUID"},
+		{"reclaimer reuses U's UUID", func(s *harness.ResetSequence) { s.Reset.OwnUUID = "uuid-u" }, harness.ResetInconclusive, "reuses a live"},
+		{"missing attempt other errno", func(s *harness.ResetSequence) { s.Missing.RC = rstInt(-22) }, harness.ResetInconclusive, "not -ENOENT"},
+		{"missing attempt return unrecorded", func(s *harness.ResetSequence) { s.Missing.RC = nil }, harness.ResetInconclusive, "not recorded"},
+		{"RESET returns ENOENT", func(s *harness.ResetSequence) { s.Reset.RC = rstInt(-2) }, harness.ResetInconclusive, "not 0"},
+		{"RESET return unrecorded", func(s *harness.ResetSequence) { s.Reset.RC = nil }, harness.ResetInconclusive, "not recorded"},
 
 		// Admission.
-		{"zero A", func(s *resetSequence) { s.A = 0 }, resetInconclusive, "distinct nonzero"},
-		{"B equals A", func(s *resetSequence) { s.B = s.A; s.ReadByClientID = s.A }, resetInconclusive, "distinct nonzero"},
-		{"A and U equal", func(s *resetSequence) { s.U = s.A }, resetInconclusive, "distinct nonzero"},
-		{"empty A uuid", func(s *resetSequence) { s.AUUID = "" }, resetInconclusive, "UUIDs"},
-		{"equal uuids", func(s *resetSequence) { s.UUUID = s.AUUID }, resetInconclusive, "UUIDs"},
-		{"kill status unrecorded", func(s *resetSequence) { s.AExitStatus = nil }, resetInconclusive, "SIGKILL"},
-		{"exit status not SIGKILL", func(s *resetSequence) { s.AExitStatus = rstInt(0) }, resetInconclusive, "SIGKILL"},
-		{"kill time unset", func(s *resetSequence) { s.AKilledAt = time.Time{} }, resetInconclusive, "time is missing"},
-		{"mount time unset", func(s *resetSequence) { s.MountStart = time.Time{} }, resetInconclusive, "time is missing"},
-		{"attempt ends before it starts", func(s *resetSequence) { s.Reset.End = rstAt(29) }, resetInconclusive, "times are missing"},
-		{"missing attempt after RESET start", func(s *resetSequence) { s.Missing.End = rstAt(31) }, resetInconclusive, "out of order"},
-		{"RESET ends after mount", func(s *resetSequence) { s.MountStart = rstAt(33) }, resetInconclusive, "out of order"},
-		{"kill after the first attempt", func(s *resetSequence) { s.AKilledAt = rstAt(25) }, resetInconclusive, "out of order"},
+		{"zero A", func(s *harness.ResetSequence) { s.A = 0 }, harness.ResetInconclusive, "distinct nonzero"},
+		{"B equals A", func(s *harness.ResetSequence) { s.B = s.A; s.ReadByClientID = s.A }, harness.ResetInconclusive, "distinct nonzero"},
+		{"A and U equal", func(s *harness.ResetSequence) { s.U = s.A }, harness.ResetInconclusive, "distinct nonzero"},
+		{"empty A uuid", func(s *harness.ResetSequence) { s.AUUID = "" }, harness.ResetInconclusive, "UUIDs"},
+		{"equal uuids", func(s *harness.ResetSequence) { s.UUUID = s.AUUID }, harness.ResetInconclusive, "UUIDs"},
+		{"kill status unrecorded", func(s *harness.ResetSequence) { s.AExitStatus = nil }, harness.ResetInconclusive, "SIGKILL"},
+		{"exit status not SIGKILL", func(s *harness.ResetSequence) { s.AExitStatus = rstInt(0) }, harness.ResetInconclusive, "SIGKILL"},
+		{"kill time unset", func(s *harness.ResetSequence) { s.AKilledAt = time.Time{} }, harness.ResetInconclusive, "time is missing"},
+		{"mount time unset", func(s *harness.ResetSequence) { s.MountStart = time.Time{} }, harness.ResetInconclusive, "time is missing"},
+		{"attempt ends before it starts", func(s *harness.ResetSequence) { s.Reset.End = rstAt(29) }, harness.ResetInconclusive, "times are missing"},
+		{"missing attempt after RESET start", func(s *harness.ResetSequence) { s.Missing.End = rstAt(31) }, harness.ResetInconclusive, "out of order"},
+		{"RESET ends after mount", func(s *harness.ResetSequence) { s.MountStart = rstAt(33) }, harness.ResetInconclusive, "out of order"},
+		{"kill after the first attempt", func(s *harness.ResetSequence) { s.AKilledAt = rstAt(25) }, harness.ResetInconclusive, "out of order"},
 
 		// Pre-state and phase evidence (daemon-sampled values need the interval).
-		{"no observation after the kill", func(s *resetSequence) { s.AfterKill = nil }, resetInconclusive, "no observation fits"},
-		{"observation straddles the first attempt", func(s *resetSequence) {
-			s.AfterKill = []resetObservation{rstObs(11, 20.5, "open", "open", resetLockHeld, resetLockHeld)}
-		}, resetInconclusive, "no observation fits"},
-		{"observation began before the kill", func(s *resetSequence) {
-			s.AfterKill = []resetObservation{rstObs(9, 12, "open", "open", resetLockHeld, resetLockHeld)}
-		}, resetInconclusive, "no observation fits"},
-		{"A already gone before the attempts", func(s *resetSequence) { s.AfterKill[0].Sessions = resetSessions{rstU: "open"} }, resetInconclusive, "not confirmed present"},
-		{"A lock unknown before the attempts", func(s *resetSequence) { s.AfterKill[0].ALock = resetLockUnknown }, resetInconclusive, "not confirmed present"},
-		{"A lock already free before the attempts", func(s *resetSequence) { s.AfterKill[0].ALock = resetLockFree }, resetInconclusive, "not confirmed present"},
-		{"A session closing before the attempts", func(s *resetSequence) { s.AfterKill[0].Sessions[rstA] = "closing" }, resetInconclusive, "not confirmed present"},
-		{"U lock unknown", func(s *resetSequence) { s.AfterKill[0].ULock = resetLockUnknown }, resetInconclusive, "lock state is unknown"},
-		{"U transitional", func(s *resetSequence) { s.AfterKill[0].Sessions[rstU] = "killing" }, resetInconclusive, "transitional"},
-		{"observation lacks a listing", func(s *resetSequence) { s.AfterKill[0].Sessions = nil }, resetInconclusive, "no session listing"},
-		{"no observation after the missing attempt", func(s *resetSequence) { s.AfterMissing = nil }, resetInconclusive, "no observation fits"},
-		{"A lost after the missing attempt", func(s *resetSequence) { s.AfterMissing[0].Sessions = resetSessions{rstU: "open"} }, resetInconclusive, "not confirmed present"},
-		{"no observation after RESET", func(s *resetSequence) { s.AfterReset = nil }, resetInconclusive, "no observation fits"},
-		{"after-RESET observation began before RESET returned", func(s *resetSequence) {
-			s.AfterReset = []resetObservation{rstObs(33, 36, "", "open", resetLockFree, resetLockHeld)}
-		}, resetInconclusive, "no observation fits"},
-		{"after-RESET observation ends after the mount", func(s *resetSequence) {
-			s.AfterReset = []resetObservation{rstObs(35, 51, "", "open", resetLockFree, resetLockHeld)}
-		}, resetInconclusive, "no observation fits"},
-		{"A still present after RESET", func(s *resetSequence) { s.AfterReset[0].Sessions[rstA] = "open" }, resetInconclusive, "not confirmed gone"},
-		{"A session killing after RESET", func(s *resetSequence) { s.AfterReset[0].Sessions[rstA] = "killing" }, resetInconclusive, "not confirmed gone"},
-		{"A lock still held after RESET", func(s *resetSequence) { s.AfterReset[0].ALock = resetLockHeld }, resetInconclusive, "not confirmed gone"},
-		{"A lock unknown after RESET", func(s *resetSequence) { s.AfterReset[0].ALock = resetLockUnknown }, resetInconclusive, "not confirmed gone"},
-		{"observations out of order", func(s *resetSequence) {
-			s.AfterReset = append(s.AfterReset, rstObs(34.5, 35.5, "", "open", resetLockFree, resetLockHeld))
-		}, resetInconclusive, "out-of-order"},
-		{"a later after-RESET observation resurrects A", func(s *resetSequence) {
-			s.AfterReset = append(s.AfterReset, rstObs(37, 38, "open", "open", resetLockHeld, resetLockHeld))
-		}, resetInconclusive, "not confirmed gone"},
+		{"no observation after the kill", func(s *harness.ResetSequence) { s.AfterKill = nil }, harness.ResetInconclusive, "no observation fits"},
+		{"observation straddles the first attempt", func(s *harness.ResetSequence) {
+			s.AfterKill = []harness.ResetObservation{rstObs(11, 20.5, "open", "open", harness.ResetLockHeld, harness.ResetLockHeld)}
+		}, harness.ResetInconclusive, "no observation fits"},
+		{"observation began before the kill", func(s *harness.ResetSequence) {
+			s.AfterKill = []harness.ResetObservation{rstObs(9, 12, "open", "open", harness.ResetLockHeld, harness.ResetLockHeld)}
+		}, harness.ResetInconclusive, "no observation fits"},
+		{"A already gone before the attempts", func(s *harness.ResetSequence) { s.AfterKill[0].Sessions = harness.ResetSessions{rstU: "open"} }, harness.ResetInconclusive, "not confirmed present"},
+		{"A lock unknown before the attempts", func(s *harness.ResetSequence) { s.AfterKill[0].ALock = harness.ResetLockUnknown }, harness.ResetInconclusive, "not confirmed present"},
+		{"A lock already free before the attempts", func(s *harness.ResetSequence) { s.AfterKill[0].ALock = harness.ResetLockFree }, harness.ResetInconclusive, "not confirmed present"},
+		{"A session closing before the attempts", func(s *harness.ResetSequence) { s.AfterKill[0].Sessions[rstA] = "closing" }, harness.ResetInconclusive, "not confirmed present"},
+		{"U lock unknown", func(s *harness.ResetSequence) { s.AfterKill[0].ULock = harness.ResetLockUnknown }, harness.ResetInconclusive, "lock state is unknown"},
+		{"U transitional", func(s *harness.ResetSequence) { s.AfterKill[0].Sessions[rstU] = "killing" }, harness.ResetInconclusive, "transitional"},
+		{"observation lacks a listing", func(s *harness.ResetSequence) { s.AfterKill[0].Sessions = nil }, harness.ResetInconclusive, "no session listing"},
+		{"no observation after the missing attempt", func(s *harness.ResetSequence) { s.AfterMissing = nil }, harness.ResetInconclusive, "no observation fits"},
+		{"A lost after the missing attempt", func(s *harness.ResetSequence) { s.AfterMissing[0].Sessions = harness.ResetSessions{rstU: "open"} }, harness.ResetInconclusive, "not confirmed present"},
+		{"no observation after RESET", func(s *harness.ResetSequence) { s.AfterReset = nil }, harness.ResetInconclusive, "no observation fits"},
+		{"after-RESET observation began before RESET returned", func(s *harness.ResetSequence) {
+			s.AfterReset = []harness.ResetObservation{rstObs(33, 36, "", "open", harness.ResetLockFree, harness.ResetLockHeld)}
+		}, harness.ResetInconclusive, "no observation fits"},
+		{"after-RESET observation ends after the mount", func(s *harness.ResetSequence) {
+			s.AfterReset = []harness.ResetObservation{rstObs(35, 51, "", "open", harness.ResetLockFree, harness.ResetLockHeld)}
+		}, harness.ResetInconclusive, "no observation fits"},
+		{"A still present after RESET", func(s *harness.ResetSequence) { s.AfterReset[0].Sessions[rstA] = "open" }, harness.ResetInconclusive, "not confirmed gone"},
+		{"A session killing after RESET", func(s *harness.ResetSequence) { s.AfterReset[0].Sessions[rstA] = "killing" }, harness.ResetInconclusive, "not confirmed gone"},
+		{"A lock still held after RESET", func(s *harness.ResetSequence) { s.AfterReset[0].ALock = harness.ResetLockHeld }, harness.ResetInconclusive, "not confirmed gone"},
+		{"A lock unknown after RESET", func(s *harness.ResetSequence) { s.AfterReset[0].ALock = harness.ResetLockUnknown }, harness.ResetInconclusive, "not confirmed gone"},
+		{"observations out of order", func(s *harness.ResetSequence) {
+			s.AfterReset = append(s.AfterReset, rstObs(34.5, 35.5, "", "open", harness.ResetLockFree, harness.ResetLockHeld))
+		}, harness.ResetInconclusive, "out-of-order"},
+		{"a later after-RESET observation resurrects A", func(s *harness.ResetSequence) {
+			s.AfterReset = append(s.AfterReset, rstObs(37, 38, "open", "open", harness.ResetLockHeld, harness.ResetLockHeld))
+		}, harness.ResetInconclusive, "not confirmed gone"},
 
 		// Replacement and data oracle.
-		{"size differs", func(s *resetSequence) { s.ReadSize = 26 }, resetInconclusive, "read size"},
-		{"empty seed", func(s *resetSequence) { s.SeedSize, s.ReadSize = 0, 0 }, resetInconclusive, "read size"},
-		{"digest differs", func(s *resetSequence) { s.ReadSHA256 = strings.Repeat("4", 64) }, resetInconclusive, "digest"},
-		{"seed digest malformed", func(s *resetSequence) { s.SeedSHA256, s.ReadSHA256 = "abc", "abc" }, resetInconclusive, "digest"},
-		{"read through an inherited descriptor", func(s *resetSequence) { s.ReadFromNewFd = false }, resetInconclusive, "new descriptor"},
-		{"read by someone else", func(s *resetSequence) { s.ReadByClientID = rstU }, resetInconclusive, "not the replacement"},
+		{"size differs", func(s *harness.ResetSequence) { s.ReadSize = 26 }, harness.ResetInconclusive, "read size"},
+		{"empty seed", func(s *harness.ResetSequence) { s.SeedSize, s.ReadSize = 0, 0 }, harness.ResetInconclusive, "read size"},
+		{"digest differs", func(s *harness.ResetSequence) { s.ReadSHA256 = strings.Repeat("4", 64) }, harness.ResetInconclusive, "digest"},
+		{"seed digest malformed", func(s *harness.ResetSequence) { s.SeedSHA256, s.ReadSHA256 = "abc", "abc" }, harness.ResetInconclusive, "digest"},
+		{"read through an inherited descriptor", func(s *harness.ResetSequence) { s.ReadFromNewFd = false }, harness.ResetInconclusive, "new descriptor"},
+		{"read by someone else", func(s *harness.ResetSequence) { s.ReadByClientID = rstU }, harness.ResetInconclusive, "not the replacement"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -339,7 +343,7 @@ func TestResetSequenceJudge(t *testing.T) {
 			s.AfterMissing = rstCloneObs(s.AfterMissing)
 			s.AfterReset = rstCloneObs(s.AfterReset)
 			c.mutate(&s)
-			got := judgeResetSequence(s)
+			got := harness.JudgeResetSequence(s)
 			if got.Verdict != c.want || !strings.Contains(got.Reason, c.part) {
 				t.Fatalf("verdict %d reason %q, want %d containing %q", got.Verdict, got.Reason, c.want, c.part)
 			}
@@ -347,7 +351,7 @@ func TestResetSequenceJudge(t *testing.T) {
 	}
 
 	// The default verdict must not be the passing one.
-	if (resetOutcome{}).Verdict != resetInconclusive {
+	if (harness.ResetOutcome{}).Verdict != harness.ResetInconclusive {
 		t.Fatal("zero outcome is not inconclusive")
 	}
 	names := make([]string, 0, len(cases))
@@ -362,11 +366,11 @@ func TestResetSequenceJudge(t *testing.T) {
 	}
 }
 
-func rstCloneObs(in []resetObservation) []resetObservation {
-	out := make([]resetObservation, len(in))
+func rstCloneObs(in []harness.ResetObservation) []harness.ResetObservation {
+	out := make([]harness.ResetObservation, len(in))
 	for i, o := range in {
 		out[i] = o
-		out[i].Sessions = resetSessions{}
+		out[i].Sessions = harness.ResetSessions{}
 		for k, v := range o.Sessions {
 			out[i].Sessions[k] = v
 		}

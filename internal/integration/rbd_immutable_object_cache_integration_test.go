@@ -15,6 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
 )
 
@@ -25,7 +26,7 @@ import (
 func TestImmutableObjectCache(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	const pool = "tc-ioc"
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 8, Replicas: 1, MinSize: 1}); err != nil {
 		t.Fatal(err)
@@ -38,7 +39,7 @@ func TestImmutableObjectCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, staticFacts(cluster).Images.RBDAux, identity.WithIdentity(), ceph.WithIdleEntrypoint())
+	client, err := testcontainers.Run(ctx, harness.StaticFacts(cluster).Images.RBDAux, identity.WithIdentity(), ceph.WithIdleEntrypoint())
 	if client != nil {
 		testcontainers.CleanupContainer(t, client)
 	}
@@ -46,7 +47,7 @@ func TestImmutableObjectCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	rbdCLI := func(args ...string) string {
-		return execOutput(t, ctx, client, append([]string{"rbd", "--id", id}, args...)...)
+		return harness.ExecOutput(t, ctx, client, append([]string{"rbd", "--id", id}, args...)...)
 	}
 	// 64 MiB in 4 MiB objects: 16 parent objects.
 	rbdCLI("create", "--size", "64", "--image-feature", "layering", pool+"/parent")
@@ -59,7 +60,7 @@ func TestImmutableObjectCache(t *testing.T) {
 		for name, value := range options {
 			args = append(args, "--"+name+"="+value)
 		}
-		return strings.Fields(execOutput(t, ctx, client, args...))[0]
+		return strings.Fields(harness.ExecOutput(t, ctx, client, args...))[0]
 	}
 	want := checksum("parent@base", nil)
 
@@ -83,7 +84,7 @@ func TestImmutableObjectCache(t *testing.T) {
 	// its cache directory after the client's read returned, so the last
 	// files can appear a moment later. More than 16 RADOS reads fails at
 	// once.
-	cached, err := observe(ctx, 30*time.Second, 10*time.Second, 200*time.Millisecond, func(probeCtx context.Context) (rbd.ImmutableObjectCacheStatus, bool, error) {
+	cached, err := harness.Observe(ctx, 30*time.Second, 10*time.Second, 200*time.Millisecond, func(probeCtx context.Context) (rbd.ImmutableObjectCacheStatus, bool, error) {
 		status, err := lease.Status(probeCtx)
 		switch {
 		case err != nil:
@@ -117,7 +118,7 @@ func TestImmutableObjectCache(t *testing.T) {
 	if err := lease.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	execCommand(t, ctx, client, "sh", "-c", `test ! -e "$0" && test ! -e "$1" && test -z "$(ls /var/run/ceph | grep immutable-object-cache)"`,
+	harness.ExecCommand(t, ctx, client, "sh", "-c", `test ! -e "$0" && test ! -e "$1" && test -z "$(ls /var/run/ceph | grep immutable-object-cache)"`,
 		lease.Config.Path, lease.Config.Socket)
 	t.Logf("pid %d cached %d objects (%d bytes) with %d RADOS reads, %d status reads after the first client read; a second read added none; after Stop the client read the same data from RADOS; Restore removed the socket and cache",
 		first.PID, first.CachedObjects, first.CachedBytes, first.RADOSReads, cached.Attempts)

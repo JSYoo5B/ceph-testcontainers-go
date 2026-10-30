@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -130,7 +131,7 @@ func waitDualStackAddresses(t *testing.T, ctx context.Context, cluster *ceph.Con
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		var err error
-		addresses, err = observeCluster(cluster).DaemonAddresses(ctx)
+		addresses, err = harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 		up := 0
 		for _, osd := range addresses.OSDs {
 			if osd.Up {
@@ -223,17 +224,17 @@ func runDualStackClient(t *testing.T, ctx context.Context, client testcontainers
 func testDualStackAddressFamily(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithMonitorCount(2).WithManagerCount(2)),
+	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithMonitorCount(2).WithManagerCount(2)),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack)))
-	if staticFacts(cluster).AddressFamily != ceph.AddressDualStack {
-		t.Fatalf("cluster reports %s", staticFacts(cluster).AddressFamily)
+	if harness.StaticFacts(cluster).AddressFamily != ceph.AddressDualStack {
+		t.Fatalf("cluster reports %s", harness.StaticFacts(cluster).AddressFamily)
 	}
 	addresses, endpoints := waitDualStackAddresses(t, ctx, cluster, 2, 2)
 
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-dual-stack", Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, harness.StaticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, client)
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +273,7 @@ func testDualStackAddressFamily(t *testing.T) {
 	// Fail the active MGR over. RemoveManager admits the replacement's
 	// advertised addresses before it returns.
 	first := addresses.ActiveManager.Name
-	if err := managerHandle(t, ctx, cluster, first).Remove(ctx); err != nil {
+	if err := harness.ManagerHandle(t, ctx, cluster, first).Remove(ctx); err != nil {
 		t.Fatalf("fail over from mgr.%s: %v", first, err)
 	}
 	addresses, endpoints = waitDualStackAddresses(t, ctx, cluster, 2, 2)
@@ -283,7 +284,7 @@ func testDualStackAddressFamily(t *testing.T) {
 
 	mgr := addresses.ActiveManager
 	t.Logf("DUAL_STACK_RECEIPT layout=single image=%s ceph=%s mons=%v first_mgr=%s active_mgr=%s:%v osds=%d ipv4_client=%s ipv6_client=%s after_failover=%s banners=%d/%d",
-		staticFacts(cluster).Images.Essential, staticFacts(cluster).CephVersion, addresses.Monitors, first, mgr.Name, mgr.Addrs, len(addresses.OSDs),
+		harness.StaticFacts(cluster).Images.Essential, harness.StaticFacts(cluster).CephVersion, addresses.Monitors, first, mgr.Name, mgr.Addrs, len(addresses.OSDs),
 		ipv4Paths, ipv6Paths, failoverPaths, len(answered), len(all))
 }
 
@@ -296,8 +297,8 @@ func testDualStackAddressFamily(t *testing.T) {
 func testDualStackSeparateClusterNetwork(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithPoolDefaults(2, 2)), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork().WithAddressFamily(ceph.AddressDualStack)))
-	if !staticFacts(cluster).HasSeparateClusterNetwork {
+	cluster, _ := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithPoolDefaults(2, 2)), ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork().WithAddressFamily(ceph.AddressDualStack)))
+	if !harness.StaticFacts(cluster).HasSeparateClusterNetwork {
 		t.Fatal("no replication bridge")
 	}
 	addresses, endpoints := waitDualStackAddresses(t, ctx, cluster, 1, 2)
@@ -307,7 +308,7 @@ func testDualStackSeparateClusterNetwork(t *testing.T) {
 	}
 	defer func() { _ = docker.Close() }()
 	subnets := map[string][]netip.Prefix{}
-	for plane, name := range map[string]string{"public": staticFacts(cluster).NetworkName, "cluster": staticFacts(cluster).ClusterNetworkName} {
+	for plane, name := range map[string]string{"public": harness.StaticFacts(cluster).NetworkName, "cluster": harness.StaticFacts(cluster).ClusterNetworkName} {
 		inspection, err := docker.NetworkInspect(ctx, name, mobycl.NetworkInspectOptions{})
 		if err != nil {
 			t.Fatal(err)
@@ -346,7 +347,7 @@ func testDualStackSeparateClusterNetwork(t *testing.T) {
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-dual-stack", Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, harness.StaticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, client)
 	if err != nil {
 		t.Fatal(err)
@@ -354,5 +355,5 @@ func testDualStackSeparateClusterNetwork(t *testing.T) {
 	mon := endpoints["mon."+addresses.Monitors[0].Name]
 	paths := runDualStackClient(t, ctx, client, "[v2:"+mon.v6+"]", "ipv6", "tc-dual-stack", endpoints)
 	t.Logf("DUAL_STACK_RECEIPT layout=separate image=%s ceph=%s public=%v cluster=%v osd.0=%v/%v ipv6_client=%s",
-		staticFacts(cluster).Images.Essential, staticFacts(cluster).CephVersion, subnets["public"], subnets["cluster"], addresses.OSDs[0].Public, addresses.OSDs[0].Cluster, paths)
+		harness.StaticFacts(cluster).Images.Essential, harness.StaticFacts(cluster).CephVersion, subnets["public"], subnets["cluster"], addresses.OSDs[0].Public, addresses.OSDs[0].Cluster, paths)
 }

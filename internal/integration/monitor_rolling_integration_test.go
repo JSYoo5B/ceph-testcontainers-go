@@ -17,6 +17,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -25,8 +26,8 @@ import (
 // Replace every original MON and cold-start original stopped services to prove
 // that their persistent bootstrap addresses also follow the live membership.
 func TestMonitorRollingReplacement(t *testing.T) {
-	parallelWhenEnabled(t)
-	for _, mode := range networkModes(t, "host", "bridge") {
+	harness.ParallelWhenEnabled(t)
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
@@ -39,7 +40,7 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, caller := newServiceCluster(t, opts...)
+			cluster, caller := harness.NewServiceCluster(t, opts...)
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -52,7 +53,7 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			}
 			mds := filesystem.MDSs()[0]
 			managerID, gatewayID, mdsID := manager.GetContainerID(), gateway.GetContainerID(), mds.GetContainerID()
-			initialManager, err := observeCluster(cluster).ManagerStatus(ctx)
+			initialManager, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 			if err != nil || !initialManager.Available || initialManager.ActiveName != manager.DaemonName || initialManager.ActiveGID == 0 {
 				t.Fatalf("initial native MGR identity is unavailable: %v", err)
 			}
@@ -87,18 +88,18 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			for i := range payload {
 				payload[i] = byte(i)
 			}
-			if err := toolkitContainer(t, cluster).CopyToContainer(ctx, payload, "/tmp/tc-mon-rolling-input", 0o600); err != nil {
+			if err := harness.ToolkitContainer(t, cluster).CopyToContainer(ctx, payload, "/tmp/tc-mon-rolling-input", 0o600); err != nil {
 				t.Fatal(err)
 			}
-			topologyExecOutput(t, ctx, toolkitContainer(t, cluster), "rados", "-p", "tc-mon-rolling", "put", "retained", "/tmp/tc-mon-rolling-input")
+			harness.TopologyExecOutput(t, ctx, harness.ToolkitContainer(t, cluster), "rados", "-p", "tc-mon-rolling", "put", "retained", "/tmp/tc-mon-rolling-input")
 			endpoint, err := gateway.S3Endpoint(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			s3 := s3HTTPClient{endpoint: endpoint, accessKey: gateway.AccessKey, secretKey: gateway.SecretKey, region: gateway.Region, http: &http.Client{Timeout: 20 * time.Second}}
+			s3 := harness.S3HTTPClient{Endpoint: endpoint, AccessKey: gateway.AccessKey, SecretKey: gateway.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 20 * time.Second}}
 			const bucket = "/tc-mon-rolling"
-			s3.request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
-			s3.request(t, ctx, http.MethodPut, bucket+"/retained", payload, http.StatusOK)
+			s3.Request(t, ctx, http.MethodPut, bucket, nil, http.StatusOK)
+			s3.Request(t, ctx, http.MethodPut, bucket+"/retained", payload, http.StatusOK)
 			stop := 3 * time.Second
 			for i, pair := range [][2]string{{"a", "d"}, {"b", "e"}, {"c", "f"}} {
 				if i == 2 {
@@ -116,17 +117,17 @@ func TestMonitorRollingReplacement(t *testing.T) {
 				}
 				monitorRollingQuorum(t, ctx, cluster, 4)
 				record("mon."+added.DaemonName, "/etc/ceph/mon.keyring", added)
-				if err := monitorHandle(t, ctx, cluster, pair[0]).Remove(ctx); err != nil {
+				if err := harness.MonitorHandle(t, ctx, cluster, pair[0]).Remove(ctx); err != nil {
 					t.Fatal(err)
 				}
 				delete(nodes, "mon."+pair[0])
 				monitorRollingQuorum(t, ctx, cluster, 3)
-				monitorRollingRADOS(t, ctx, toolkitContainer(t, cluster), payload)
+				monitorRollingRADOS(t, ctx, harness.ToolkitContainer(t, cluster), payload)
 				if i != 2 {
 					monitorRollingS3(t, ctx, s3, bucket+"/retained", payload)
 				}
 			}
-			quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+			quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -197,11 +198,11 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			if manager.GetContainerID() != managerID || gateway.GetContainerID() != gatewayID || mds.GetContainerID() != mdsID {
 				t.Fatal("cold restart replaced an original daemon container")
 			}
-			topologyWait(t, ctx, func() bool {
-				status, err := observeCluster(cluster).ManagerStatus(ctx)
+			harness.TopologyWait(t, ctx, func() bool {
+				status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 				return err == nil && status.Available && status.ActiveName == manager.DaemonName && status.ActiveGID != 0 && status.ActiveGID != initialManager.ActiveGID
 			})
-			topologyWait(t, ctx, func() bool {
+			harness.TopologyWait(t, ctx, func() bool {
 				status, err := filesystem.MDSStatus(ctx)
 				if err != nil || status.FilesystemID != initialMDS.FilesystemID || len(status.Active) != 1 {
 					return false
@@ -212,12 +213,12 @@ func TestMonitorRollingReplacement(t *testing.T) {
 			})
 			// Re-read the published endpoint: Docker can remap an ephemeral
 			// host port when the same stopped gateway is started again.
-			s3.endpoint, err = gateway.S3Endpoint(ctx)
+			s3.Endpoint, err = gateway.S3Endpoint(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
 			monitorRollingS3(t, ctx, s3, bucket+"/retained", payload)
-			monitorRollingRADOS(t, ctx, toolkitContainer(t, cluster), payload)
+			monitorRollingRADOS(t, ctx, harness.ToolkitContainer(t, cluster), payload)
 			t.Log("MON a,b,c -> d,e,f kept 4 -> 3 quorums; running/stopped owned configs and explicit refresh retained private settings and role keys; original MGR/MDS/RGW cold-started with retained RADOS/S3 bytes")
 		})
 	}

@@ -15,6 +15,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // The receipt of one MGR transition: a baseline with an active and a standby,
@@ -589,12 +590,12 @@ func awaitMgrPhase(ctx context.Context, cluster mgrSources, expect mgrExpectatio
 func testManagerTransitionReceipt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
-	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithNoInitialOSDs()))...)
+	image, roles := harness.IntegrationImages(t)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithNoInitialOSDs()))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	receipt := mgrTransitionReceipt{Schema: mgrReceiptSchema, Source: "ceph-testcontainers-go internal/integration", Run: t.Name(),
 		Images: map[string]string{"control": image}}
-	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -623,7 +624,7 @@ func testManagerTransitionReceipt(t *testing.T) {
 	phase := func(name string, deadline time.Duration) mgrPhaseSample {
 		t.Helper()
 		expect.Phase = name
-		record, sample := awaitMgrPhase(ctx, withSockets(t, cluster), expect, managers, deadline, bound, pause)
+		record, sample := awaitMgrPhase(ctx, harness.WithSockets(t, cluster), expect, managers, deadline, bound, pause)
 		receipt.Phases = append(receipt.Phases, record)
 		if !record.Accepted {
 			fail("phase %s ended %s: %s", name, sample.State, sample.Reason)

@@ -11,18 +11,19 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 func TestClientIdentities(t *testing.T) {
-	parallelWhenEnabled(t)
-	for _, mode := range networkModes(t, "host", "bridge") {
+	harness.ParallelWhenEnabled(t)
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
-			image, opts := integrationImages(t)
+			image, opts := harness.IntegrationImages(t)
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
@@ -34,20 +35,20 @@ func TestClientIdentities(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, pool := range []string{"tc-auth", "tc-auth-other"} {
-				cephCommand(t, ctx, cluster, "osd", "pool", "create", pool, "8")
-				cephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", pool, "rados")
+				harness.CephCommand(t, ctx, cluster, "osd", "pool", "create", pool, "8")
+				harness.CephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", pool, "rados")
 			}
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			admin, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(), ceph.WithIdleEntrypoint())
+			admin, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), cluster.WithClient(), ceph.WithIdleEntrypoint())
 			if admin != nil {
 				testcontainers.CleanupContainer(t, admin)
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			execCommand(t, ctx, admin, "python3", "-c", authNativeIsolationControl, "seed")
+			harness.ExecCommand(t, ctx, admin, "python3", "-c", authNativeIsolationControl, "seed")
 			writer, err := cluster.CreateClient(ctx, "writer", ceph.ClientCaps{Mon: "allow r", OSD: "allow rw pool=tc-auth namespace=blue", MGR: "allow r"})
 			if err != nil {
 				t.Fatal(err)
@@ -61,7 +62,7 @@ func TestClientIdentities(t *testing.T) {
 			}
 			newClient := func(identity *ceph.ClientConfig) testcontainers.Container {
 				t.Helper()
-				client, err := testcontainers.Run(ctx, nativeClientImage(t, image), identity.WithIdentity(),
+				client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), identity.WithIdentity(),
 					ceph.WithIdleEntrypoint(),
 					testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})))
 				if client != nil {
@@ -77,7 +78,7 @@ func TestClientIdentities(t *testing.T) {
 			// native call is blocked. Every probe creates a fresh authenticated session.
 			probe := func(client testcontainers.Container, identity *ceph.ClientConfig, phase, keyring string) {
 				t.Helper()
-				execCommand(t, ctx, client, "python3", "-c", `import subprocess, sys
+				harness.ExecCommand(t, ctx, client, "python3", "-c", `import subprocess, sys
 subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=35, check=True)`, authNativeProbe,
 					identity.Name(), phase, keyring)
 			}
@@ -126,7 +127,7 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=35, c
 			}
 			probe(writerClient, writer, "bad-auth", writer.KeyringPath())
 			probe(readerClient, reader, "readonly", reader.KeyringPath())
-			execCommand(t, ctx, admin, "python3", "-c", authNativeIsolationControl, "verify")
+			harness.ExecCommand(t, ctx, admin, "python3", "-c", authNativeIsolationControl, "verify")
 			t.Log("native librados: scoped read/write and cross-boundary denials; writer→reader→writer retained its key and dropped omitted mgr caps; wrong-key and revoked fresh connections failed")
 		})
 	}

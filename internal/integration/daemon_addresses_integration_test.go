@@ -8,14 +8,15 @@ import (
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 func TestDaemonAddresses(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testDaemonAddresses(t)
 }
 
 func TestHostNetworkDaemonAddresses(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testDaemonAddresses(t, ceph.WithHostNetwork())
 }

@@ -21,6 +21,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -358,7 +359,7 @@ func backoffMark(t *testing.T, ctx context.Context, ctr testcontainers.Container
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		if code, out, err := sessionExec(ctx, ctr, "cat", backoffWorkdir+"/"+name); err == nil && code == 0 {
+		if code, out, err := harness.SessionExec(ctx, ctr, "cat", backoffWorkdir+"/"+name); err == nil && code == 0 {
 			var mark map[string]any
 			if err := json.Unmarshal([]byte(out), &mark); err != nil {
 				t.Fatalf("reader mark %s: %v %q", name, err, out)
@@ -397,7 +398,7 @@ func (r *backoffRead) finished() bool {
 // backoffClientLog reads the reader's log file whole.
 func backoffClientLog(t *testing.T, ctx context.Context, ctr testcontainers.Container) []string {
 	t.Helper()
-	code, out, err := sessionExec(ctx, ctr, "cat", backoffWorkdir+"/client.log")
+	code, out, err := harness.SessionExec(ctx, ctr, "cat", backoffWorkdir+"/client.log")
 	if err != nil || code != 0 {
 		t.Fatalf("client log: exit %d: %v", code, err)
 	}
@@ -431,7 +432,7 @@ func waitBackoffPG(t *testing.T, parent context.Context, cluster *ceph.Container
 	defer cancel()
 	var last string
 	for {
-		snapshot, err := poolHandle(t, ctx, cluster, backoffPool).PGs(ctx)
+		snapshot, err := harness.PoolHandle(t, ctx, cluster, backoffPool).PGs(ctx)
 		if err == nil && len(snapshot.PGs) == 1 {
 			if ok(snapshot.PGs[0]) {
 				return snapshot.PGs[0], snapshot.OSDMapEpochAfter
@@ -478,17 +479,17 @@ type osdBackoffReceipt struct {
 		OSD    string `json:"osd"`
 		Client string `json:"client"`
 	} `json:"images"`
-	Target      backoffTarget    `json:"target"`
-	Replica     string           `json:"replica"`
-	Seeded      heldReadback     `json:"seeded"`
-	Clean       backoffPlacement `json:"clean"`
-	Held        backoffPlacement `json:"held"`
-	StillHeld   backoffPlacement `json:"still_held"`
-	After       backoffPlacement `json:"after"`
-	Chain       backoffChain     `json:"chain"`
-	ReadSeconds float64          `json:"read_seconds"`
-	Read        heldReadback     `json:"read"`
-	Cleanup     []string         `json:"cleanup"`
+	Target      backoffTarget        `json:"target"`
+	Replica     string               `json:"replica"`
+	Seeded      harness.HeldReadback `json:"seeded"`
+	Clean       backoffPlacement     `json:"clean"`
+	Held        backoffPlacement     `json:"held"`
+	StillHeld   backoffPlacement     `json:"still_held"`
+	After       backoffPlacement     `json:"after"`
+	Chain       backoffChain         `json:"chain"`
+	ReadSeconds float64              `json:"read_seconds"`
+	Read        harness.HeldReadback `json:"read"`
+	Cleanup     []string             `json:"cleanup"`
 }
 
 // testOSDBackoffReceipt makes the primary of a PG send a PG-wide backoff to
@@ -505,7 +506,7 @@ type osdBackoffReceipt struct {
 func testOSDBackoffReceipt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: backoffPool, PGNum: 1, Replicas: 3, MinSize: 3, Application: "rados"}); err != nil {
 		t.Fatal(err)
 	}
@@ -525,8 +526,8 @@ func testOSDBackoffReceipt(t *testing.T) {
 	}
 	payload := backoffPayload()
 	sum := sha256.Sum256(payload)
-	receipt.Seeded = heldReadback{Size: len(payload), SHA256: hex.EncodeToString(sum[:])}
-	if err := json.Unmarshal([]byte(lastJSONLine(string(seed.Stdout))), &receipt.Seeded); err != nil || receipt.Seeded.Version == 0 {
+	receipt.Seeded = harness.HeldReadback{Size: len(payload), SHA256: hex.EncodeToString(sum[:])}
+	if err := json.Unmarshal([]byte(harness.LastJSONLine(string(seed.Stdout))), &receipt.Seeded); err != nil || receipt.Seeded.Version == 0 {
 		t.Fatalf("seed output: %v: %.512s", err, seed.Stdout)
 	}
 	clean, epoch := waitBackoffPG(t, ctx, cluster, "clean on three OSDs", func(pg ceph.PGState) bool {
@@ -537,7 +538,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var mapping heldMapping
+	var mapping harness.HeldMapping
 	if err := json.Unmarshal(out, &mapping); err != nil || mapping.PGID != clean.PGID.String() || mapping.ActingPrimary != clean.ActingPrimary {
 		t.Fatalf("osd map of %s: %v: %.1024s, PG %s primary %d", backoffObject, err, out, clean.PGID, clean.ActingPrimary)
 	}
@@ -555,7 +556,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 	}
 	receipt.Target = backoffTarget{Primary: fmt.Sprintf("osd.%d", primary.ID), PGID: clean.PGID.String(), Object: backoffObject}
 	receipt.Replica = fmt.Sprintf("osd.%d", replica.ID)
-	receipt.Images.OSD, receipt.Images.Client = imageID(t, ctx, primary), imageID(t, ctx, client)
+	receipt.Images.OSD, receipt.Images.Client = harness.ImageID(t, ctx, primary), harness.ImageID(t, ctx, client)
 	version := targetedJSON[map[string]string](t, ctx, cluster, "tell", receipt.Target.Primary, "version")
 	receipt.Release = version["version"]
 
@@ -675,10 +676,10 @@ func testOSDBackoffReceipt(t *testing.T) {
 		SHA256  string  `json:"sha256"`
 		Seconds float64 `json:"seconds"`
 	}
-	if err := json.Unmarshal([]byte(lastJSONLine(string(reader.result.Stdout))), &read); err != nil {
+	if err := json.Unmarshal([]byte(harness.LastJSONLine(string(reader.result.Stdout))), &read); err != nil {
 		t.Fatalf("reader output: %v: %.512s", err, reader.result.Stdout)
 	}
-	receipt.Read = heldReadback{Client: receipt.Target.Client, Size: read.Size, SHA256: read.SHA256}
+	receipt.Read = harness.HeldReadback{Client: receipt.Target.Client, Size: read.Size, SHA256: read.SHA256}
 	receipt.ReadSeconds = read.Seconds
 	if read.RC != len(payload) || read.Size != len(payload) || read.SHA256 != receipt.Seeded.SHA256 {
 		t.Fatalf("held read returned %+v, want %d bytes with SHA-256 %s", read, len(payload), receipt.Seeded.SHA256)

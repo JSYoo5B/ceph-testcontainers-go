@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -82,7 +83,7 @@ type transportObserver struct {
 
 func (o transportObserver) snapshot(t *testing.T, ctx context.Context) transportSnapshot {
 	t.Helper()
-	out := delayExec(t, ctx, o.ctr, "python3", "-c", transportScript, o.iface)
+	out := harness.DelayExec(t, ctx, o.ctr, "python3", "-c", transportScript, o.iface)
 	var snapshot transportSnapshot
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &snapshot); err != nil || len(snapshot.Counters) == 0 {
 		t.Fatalf("parse %s's transport counters %q: %v", o.name, out, err)
@@ -175,7 +176,7 @@ const (
 // from the client and the control container, and observes the three
 // namespaces.
 type packetFaultFixture struct {
-	bandwidthFixture
+	harness.BandwidthFixture
 	name, sha256 string
 	peer         netip.Addr
 	observers    map[string]transportObserver
@@ -216,8 +217,8 @@ func (p packetFaultFixture) snapshots(t *testing.T, ctx context.Context, names .
 func (p packetFaultFixture) window(t *testing.T, ctx context.Context, profile packetFaultProfile) string {
 	t.Helper()
 	request := profile.fault
-	request.HelperImage, request.Plane, request.Peer = p.image, ceph.PublicNetworkPlane, p.peer
-	lease, err := fault.ApplyNetworkProfile(ctx, p.cluster, p.limited.Container, request)
+	request.HelperImage, request.Plane, request.Peer = p.Image, ceph.PublicNetworkPlane, p.peer
+	lease, err := fault.ApplyNetworkProfile(ctx, p.Cluster, p.Limited.Container, request)
 	if lease != nil {
 		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 	}
@@ -235,8 +236,8 @@ func (p packetFaultFixture) window(t *testing.T, ctx context.Context, profile pa
 	}
 	before := p.snapshots(t, ctx, "client", "control", "sender")
 	start := time.Now()
-	client := p.readObject(t, ctx, profile.name+": the client's read", p.client, profile.reads)
-	control := p.readObject(t, ctx, profile.name+": the control container's read", p.control, profile.reads)
+	client := p.readObject(t, ctx, profile.name+": the client's read", p.Client, profile.reads)
+	control := p.readObject(t, ctx, profile.name+": the control container's read", p.Control, profile.reads)
 	window := time.Since(start)
 	after := p.snapshots(t, ctx, "client", "control", "sender")
 	status, err := lease.Status(ctx)
@@ -246,10 +247,10 @@ func (p packetFaultFixture) window(t *testing.T, ctx context.Context, profile pa
 	if err := lease.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if root := rootQdisc(t, ctx, p.image, p.limited.Container, lease.Interface); root != "noqueue 0:" {
+	if root := harness.RootQdisc(t, ctx, p.Image, p.Limited.Container, lease.Interface); root != "noqueue 0:" {
 		t.Fatalf("root qdisc after Restore: %s", root)
 	}
-	if helpers := netemHelpers(t, ctx); helpers != 0 {
+	if helpers := harness.NetemHelpers(t, ctx); helpers != 0 {
 		t.Fatalf("%d netem helpers after Restore", helpers)
 	}
 	var effects []string
@@ -268,7 +269,7 @@ func (p packetFaultFixture) window(t *testing.T, ctx context.Context, profile pa
 	// quarter of the effects, or what a receiver counts without a fault.
 	recovering := p.snapshots(t, ctx, "client")
 	start = time.Now()
-	restored := p.readObject(t, ctx, profile.name+": the read after Restore", p.client, profile.reads)
+	restored := p.readObject(t, ctx, profile.name+": the read after Restore", p.Client, profile.reads)
 	if elapsed := time.Since(start); elapsed > time.Duration(profile.reads)*time.Second {
 		t.Errorf("%s: %d reads after Restore took %v", profile.name, profile.reads, elapsed)
 	}
@@ -294,33 +295,33 @@ func testNetworkPacketFaults(t *testing.T, ipv6 bool) {
 	if ipv6 {
 		customizers, family = append(customizers, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressIPv6))), "ipv6"
 	}
-	p := packetFaultFixture{bandwidthFixture: newBandwidthFixture(t, ctx, customizers...), observers: map[string]transportObserver{}}
-	p.name, p.sha256 = putBandwidthObject(t, ctx, p.cluster, p.client, p.limited.ID, "faults", packetFaultObject)
-	inspection, err := p.client.Inspect(ctx)
+	p := packetFaultFixture{BandwidthFixture: harness.NewBandwidthFixture(t, ctx, customizers...), observers: map[string]transportObserver{}}
+	p.name, p.sha256 = harness.PutBandwidthObject(t, ctx, p.Cluster, p.Client, p.Limited.ID, "faults", packetFaultObject)
+	inspection, err := p.Client.Inspect(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := inspection.NetworkSettings.Networks[staticFacts(p.cluster).NetworkName]
+	endpoint := inspection.NetworkSettings.Networks[harness.StaticFacts(p.Cluster).NetworkName]
 	if endpoint == nil || !endpoint.IPAddress.Is4() || ipv6 && !endpoint.GlobalIPv6Address.IsValid() {
-		t.Fatalf("no address of the family on %s", staticFacts(p.cluster).NetworkName)
+		t.Fatalf("no address of the family on %s", harness.StaticFacts(p.Cluster).NetworkName)
 	}
 	p.peer = endpoint.IPAddress
 	if ipv6 {
 		p.peer = endpoint.GlobalIPv6Address
 	}
-	for name, ctr := range map[string]testcontainers.Container{"client": p.client, "control": p.control, "sender": p.limited.Container} {
-		observer := startNetemObserver(t, ctx, p.image, ctr, false)
+	for name, ctr := range map[string]testcontainers.Container{"client": p.Client, "control": p.Control, "sender": p.Limited.Container} {
+		observer := harness.StartNetemObserver(t, ctx, p.Image, ctr, false)
 		defer func() { _ = observer.Terminate(context.WithoutCancel(ctx)) }()
 		p.observers[name] = transportObserver{name: name, iface: "eth0", ctr: observer}
 	}
-	t.Logf("NETWORK_PACKET_FAULT_CONTEXT family=%s: %s; helper %s; offload client %v, sender %v", family, engineContext(t, ctx), p.image,
+	t.Logf("NETWORK_PACKET_FAULT_CONTEXT family=%s: %s; helper %s; offload client %v, sender %v", family, engineContext(t, ctx), p.Image,
 		p.observers["client"].snapshot(t, ctx).Offload, p.observers["sender"].snapshot(t, ctx).Offload)
 
 	// Without a fault the same reads count few of the effects at either
 	// receiver; each window must count far more.
 	before := p.snapshots(t, ctx, "client", "control")
-	baseline := p.readObject(t, ctx, "the baseline read", p.client, 4)
-	control := p.readObject(t, ctx, "the control container's baseline read", p.control, 4)
+	baseline := p.readObject(t, ctx, "the baseline read", p.Client, 4)
+	control := p.readObject(t, ctx, "the control container's baseline read", p.Control, 4)
 	after := p.snapshots(t, ctx, "client", "control")
 	p.baseline = map[string]int64{}
 	for _, counters := range [][]string{reorderCounters, duplicateCounters, corruptCounters} {
@@ -337,6 +338,6 @@ func testNetworkPacketFaults(t *testing.T, ipv6 bool) {
 		profiles = append(profiles, composedProfile)
 	}
 	for _, profile := range profiles {
-		t.Logf("NETWORK_PACKET_FAULT_RECEIPT family=%s osd=%d object=%d peer=%s %s", family, p.limited.ID, packetFaultObject, p.peer, p.window(t, ctx, profile))
+		t.Logf("NETWORK_PACKET_FAULT_RECEIPT family=%s osd=%d object=%d peer=%s %s", family, p.Limited.ID, packetFaultObject, p.peer, p.window(t, ctx, profile))
 	}
 }

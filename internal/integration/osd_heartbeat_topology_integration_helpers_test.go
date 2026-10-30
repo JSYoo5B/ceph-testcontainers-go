@@ -14,6 +14,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 func readOSDMap(t *testing.T, ctx context.Context, cluster *ceph.Container) osdMap {
@@ -70,7 +71,7 @@ type osdHeartbeatReceipt struct {
 func testOSDHeartbeatFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	// Three replicas with min_size 2 keep the pool writable on the two OSDs
 	// that stay up.
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: "tc-topology", PGNum: 8, Replicas: 3, MinSize: 2, Application: "rados"}); err != nil {
@@ -79,7 +80,7 @@ func testOSDHeartbeatFailure(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	topologyRados(t, ctx, client, "seed")
+	harness.TopologyRados(t, ctx, client, "seed")
 	osds := clusteraccess.OSDs(t, cluster)
 	if len(osds) != 3 {
 		t.Fatalf("want three OSDs, have %d", len(osds))
@@ -136,7 +137,7 @@ func testOSDHeartbeatFailure(t *testing.T) {
 	if receipt.Down.UUID != receipt.Before.UUID || receipt.DownEpoch <= receipt.Before.UpFrom {
 		t.Fatalf("osd.%d down %+v, before %+v", target.ID, receipt.Down, receipt.Before)
 	}
-	topologyRados(t, ctx, client, "osd-marked-down")
+	harness.TopologyRados(t, ctx, client, "osd-marked-down")
 
 	// The marked OSD exits on its own; nothing in the test stops it.
 	deadline := time.Now().Add(2 * time.Minute)
@@ -214,7 +215,7 @@ func testOSDHeartbeatFailure(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	topologyRados(t, ctx, client, "osd-restarted")
+	harness.TopologyRados(t, ctx, client, "osd-restarted")
 	encoded, err := json.Marshal(receipt)
 	if err != nil {
 		t.Fatal(err)

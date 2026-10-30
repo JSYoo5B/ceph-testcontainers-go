@@ -4,9 +4,13 @@
 
 package integration_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+)
 
 func TestDaemonKeyRotation(t *testing.T) {
-	parallelWhenEnabled(t)
-	testDaemonKeyRotation(t)
+	harness.ParallelWhenEnabled(t)
+	harness.RunDaemonKeyRotation(t)
 }

@@ -19,6 +19,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -33,7 +34,7 @@ import (
 func TestPostTestVerification(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithPoolDefaults(1, 1)))...)
 	recorder := &finalizationRecorder{TB: t}
 	var finalization *ceph.Finalization

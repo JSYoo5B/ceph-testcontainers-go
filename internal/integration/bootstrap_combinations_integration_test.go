@@ -14,6 +14,7 @@ import (
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -28,7 +29,7 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name string
-		run  clusterRun
+		run  harness.ClusterRun
 		opts []testcontainers.ContainerCustomizer
 		pool string
 		// small follows the small OSD recipe: no initial OSDs, skip mClock
@@ -56,10 +57,10 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 			opts: []testcontainers.ContainerCustomizer{ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)), ceph.WithConfigFile(configFile)},
 			pool: "tc-combo",
 			check: func(t *testing.T, ctx context.Context, cluster *ceph.Container) {
-				if mode := staticFacts(cluster).MessengerMode; mode != ceph.MessengerV2Secure {
+				if mode := harness.StaticFacts(cluster).MessengerMode; mode != ceph.MessengerV2Secure {
 					t.Fatalf("messenger mode = %v", mode)
 				}
-				if value := strings.TrimSpace(string(mustCeph(t, ctx, cluster, "config", "show", "osd.0", "osd_max_pg_per_osd_hard_ratio"))); value != "7.000000" && value != "7" {
+				if value := strings.TrimSpace(string(harness.MustCeph(t, ctx, cluster, "config", "show", "osd.0", "osd_max_pg_per_osd_hard_ratio"))); value != "7.000000" && value != "7" {
 					t.Fatalf("config file value on osd.0 = %q", value)
 				}
 			},
@@ -67,7 +68,7 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 		{
 			// rbd.Run adds an RBD pool, which Run admits without a manager.
 			name: "rbd-without-managers",
-			run:  rbdRun,
+			run:  harness.RBDRun,
 			opts: []testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers())},
 			pool: "rbd",
 			check: func(t *testing.T, ctx context.Context, cluster *ceph.Container) {
@@ -80,12 +81,12 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
-			image, opts := integrationImages(t)
+			image, opts := harness.IntegrationImages(t)
 			if !test.small {
 				opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))
 			}
 			opts = append(opts, test.opts...)
-			cluster, client := newServiceClusterRun(t, test.run, image, opts...)
+			cluster, client := harness.NewServiceClusterRun(t, test.run, image, opts...)
 			if test.small {
 				if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 					t.Fatal(err)
@@ -111,11 +112,11 @@ func TestBootstrapOptionCombinations(t *testing.T) {
 			if test.check != nil {
 				test.check(t, ctx, cluster)
 			}
-			execOutput(t, ctx, client, "sh", "-c", `printf combination > /tmp/in && rados --pool "$1" put probe /tmp/in && rados --pool "$1" get probe /tmp/out`, "sh", test.pool)
-			assertContainerFilesEqual(t, ctx, client, "/tmp/in", "/tmp/out")
+			harness.ExecOutput(t, ctx, client, "sh", "-c", `printf combination > /tmp/in && rados --pool "$1" put probe /tmp/in && rados --pool "$1" get probe /tmp/out`, "sh", test.pool)
+			harness.AssertContainerFilesEqual(t, ctx, client, "/tmp/in", "/tmp/out")
 			if test.pool == "rbd" {
-				execOutput(t, ctx, client, "rbd", "create", "rbd/disk", "--size", "16M")
-				if info := execOutput(t, ctx, client, "rbd", "info", "rbd/disk"); !strings.Contains(info, "size 16 MiB") {
+				harness.ExecOutput(t, ctx, client, "rbd", "create", "rbd/disk", "--size", "16M")
+				if info := harness.ExecOutput(t, ctx, client, "rbd", "info", "rbd/disk"); !strings.Contains(info, "size 16 MiB") {
 					t.Fatalf("rbd info = %s", info)
 				}
 			}

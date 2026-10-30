@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
@@ -60,13 +61,13 @@ func TestCPUFiniteBaselineRoundTrip(t *testing.T) {
 	}
 	t.Logf("CPU_ROUNDTRIP_CONTROLLER euid=%d engine=%s arch=%s ncpu=%d", os.Geteuid(), info.Info.ServerVersion, runtime.GOARCH, info.Info.NCPU)
 
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers().WithNoInitialOSDs()),
 		testcontainers.WithHostConfigModifier(func(h *container.HostConfig) {
 			h.NanoCPUs = cpuRoundTripBaseline
 			h.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyDisabled}
 		}))
-	cluster, client := newServiceClusterWithOptions(t, image, opts...)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
 	id := cluster.GetContainerID()
 	inspect := func() (cpuEngineState, error) {
 		call, done := context.WithTimeout(ctx, 10*time.Second)
@@ -86,7 +87,7 @@ func TestCPUFiniteBaselineRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Skipf("eligibility incomplete before any update: %v", err)
 	}
-	t.Log(target.receipt())
+	t.Log(target.Receipt())
 
 	rawInspect := func(call context.Context) (container.InspectResponse, error) {
 		c, done := context.WithTimeout(call, 10*time.Second)

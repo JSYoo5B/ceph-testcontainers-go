@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 func TestIntegrationImage(t *testing.T) {
@@ -27,7 +28,7 @@ func TestIntegrationImage(t *testing.T) {
 		"undeclared role":   {map[string]string{"SCENARIO_IMAGE_LAYOUT": "roles", "CEPH_TEST_ESSENTIAL_IMAGE": essential}, "CEPH_TEST_RGW_IMAGE", "", "CEPH_TEST_RGW_IMAGE is required"},
 		"missing essential": {map[string]string{"SCENARIO_IMAGE_LAYOUT": "roles"}, "CEPH_TEST_ESSENTIAL_IMAGE", "", "CEPH_TEST_ESSENTIAL_IMAGE is required"},
 	} {
-		image, err := integrationImage(func(key string) string { return test.env[key] }, test.variable)
+		image, err := harness.IntegrationImage(func(key string) string { return test.env[key] }, test.variable)
 		if test.err != "" {
 			if err == nil || !strings.Contains(err.Error(), test.err) {
 				t.Errorf("%s: image %q, error %v, want %q", name, image, err, test.err)

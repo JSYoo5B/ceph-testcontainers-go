@@ -26,6 +26,8 @@ import (
 // containers are terminated, which are the volume users; retryStores runs once
 // more after the labeled containers are removed, because one of those can be a
 // user whose create reply was lost.
+//
+//testdouble:nil-default-hook
 type monStoreState struct {
 	// records is published before the volume is created, so a lost create reply
 	// stays owned for cleanup, and a record leaves it only when its release or
@@ -33,6 +35,7 @@ type monStoreState struct {
 	records map[string]*monStoreVolume
 
 	// monDocker replaces the Docker client of the store volumes in tests.
+	//testdouble:nil-default-hook
 	monDocker func(context.Context) (monStoreDocker, error)
 }
 

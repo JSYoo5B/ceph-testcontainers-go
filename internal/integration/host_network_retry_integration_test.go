@@ -16,6 +16,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -24,7 +25,7 @@ import (
 func TestHostNetworkMonitorPortConflictRetry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	const address = "127.0.0.1"
 	var blocker testcontainers.Container
 	var candidates []int
@@ -92,7 +93,7 @@ func TestHostNetworkMonitorPortConflictRetry(t *testing.T) {
 		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), ceph.WithStartupTimeout(3*time.Minute), customize)
 	cluster, err := ceph.Run(ctx, image, opts...)
 	if cluster != nil {
-		hostNetworkCleanupCluster(t, cluster)
+		harness.HostNetworkCleanupCluster(t, cluster)
 	}
 	if err != nil {
 		t.Fatalf("bootstrap after actual MON port conflict: %v; failed MON logs:\n%s", err, failedLogs)
@@ -111,7 +112,7 @@ func TestHostNetworkMonitorPortConflictRetry(t *testing.T) {
 	}
 	// Independently prove that the first candidate remains bound in the
 	// Docker host namespace, rather than relying only on diagnostic strings.
-	execCommand(t, ctx, blocker, "python3", "-c", `import errno, socket, sys
+	harness.ExecCommand(t, ctx, blocker, "python3", "-c", `import errno, socket, sys
 s = socket.socket()
 try:
     s.bind((sys.argv[1], int(sys.argv[2])))
@@ -165,7 +166,7 @@ finally:
 	if !foundV2 {
 		t.Fatalf("final monmap lacks a v2 endpoint: %s", data)
 	}
-	status, err := observeCluster(cluster).Status(ctx)
+	status, err := harness.ObserveCluster(cluster).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +181,7 @@ finally:
 	if err := blocker.CopyToContainer(ctx, keyring, "/tmp/retry-admin.keyring", 0o600); err != nil {
 		t.Fatal(err)
 	}
-	execCommand(t, ctx, blocker, "python3", "-c", `import json, rados, sys
+	harness.ExecCommand(t, ctx, blocker, "python3", "-c", `import json, rados, sys
 with rados.Rados(conffile="/tmp/retry-ceph.conf", conf={"keyring": "/tmp/retry-admin.keyring"}) as cluster:
     code, output, error = cluster.mon_command(json.dumps({"prefix": "status", "format": "json"}), b"")
     assert code == 0, (code, error)

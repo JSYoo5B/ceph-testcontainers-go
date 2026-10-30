@@ -14,6 +14,7 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // osdMapMessage is an OSD map message a client logged as received.
@@ -31,10 +32,10 @@ type osdMapMessage struct {
 // ceph CLI, the client's admin socket and messenger log and the MON's own
 // session dump read each result back.
 func TestNativeWatchNotifyAndSubscriptions(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	const pool = "tc-watch-subs"
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 1, Replicas: 1, MinSize: 1, Application: "rados"}); err != nil {
 		t.Fatal(err)

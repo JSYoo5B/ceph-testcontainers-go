@@ -11,21 +11,22 @@ import (
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 func TestOSDFullRatios(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
-			image, opts := integrationImages(t)
+			image, opts := harness.IntegrationImages(t)
 			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceClusterWithOptions(t, image, opts...)
+			cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
 			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal("prepare small OSDs without startup benchmark", err)
 			}
@@ -40,14 +41,14 @@ func TestOSDFullRatios(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			pool, err := poolHandle(t, ctx, cluster, "tc-full-ratios").Status(ctx)
+			pool, err := harness.PoolHandle(t, ctx, cluster, "tc-full-ratios").Status(ctx)
 			if err != nil || pool.ID <= 0 {
 				t.Fatal("positive native pool identity unavailable", err)
 			}
 			original := integrationFullRatios(t, ctx, cluster)
 			probe := func(t *testing.T, phase string) {
 				t.Helper()
-				execCommand(t, ctx, client, "python3", "-c", `import subprocess,sys
+				harness.ExecCommand(t, ctx, client, "python3", "-c", `import subprocess,sys
 subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=True)`, fullRatiosRADOSProbe, phase)
 			}
 			probe(t, "seed")
@@ -99,7 +100,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=Tr
 					}
 					waitFullRatioHealth(t, ctx, cluster, original.FSID, fault.code, false)
 					probe(t, "resumed-"+fault.name)
-					state, err := poolHandle(t, ctx, cluster, "tc-full-ratios").Status(ctx)
+					state, err := harness.PoolHandle(t, ctx, cluster, "tc-full-ratios").Status(ctx)
 					if err != nil || state.ID != pool.ID || state.Size != pool.Size || state.PGNum != pool.PGNum || state.Quota != pool.Quota {
 						t.Fatalf("ratio override changed pool identity/policy: %+v %v", state, err)
 					}
@@ -115,7 +116,7 @@ subprocess.run([sys.executable,"-c",sys.argv[1],sys.argv[2]],timeout=35,check=Tr
 // native epoch must include the checked map.
 func integrationFullRatios(t *testing.T, ctx context.Context, cluster *ceph.Container) ceph.FullRatioSnapshot {
 	t.Helper()
-	actual, err := observeCluster(cluster).FullRatios(ctx)
+	actual, err := harness.ObserveCluster(cluster).FullRatios(ctx)
 	if err != nil {
 		t.Fatal("full-ratio check", err)
 	}
@@ -145,7 +146,7 @@ func waitFullRatioHealth(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	phaseCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	for {
-		state := integrationHealthDetails(t, phaseCtx, cluster, fsid, code)
+		state := harness.IntegrationHealthDetails(t, phaseCtx, cluster, fsid, code)
 		_, found := state.Checks[code]
 		if found == present {
 			return

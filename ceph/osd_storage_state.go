@@ -26,6 +26,8 @@ import (
 // their pinned collaborators, that callers hold Container.mu, that a seam has
 // no production writer, that the release stages keep their order, and that the
 // split adds no mutex.
+//
+//testdouble:nil-default-hook
 type osdStorageState struct {
 	// memory and volume are published before allocation, so that a lost create
 	// reply stays owned for cleanup, and cleared only by a successful release.
@@ -33,9 +35,12 @@ type osdStorageState struct {
 	volume *osdVolumeStorage
 
 	// runner replaces runContainer for OSD containers in tests.
+	//testdouble:nil-default-hook
 	runner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 	// volumeDocker and volumeRunner replace owned-volume allocation in tests.
+	//testdouble:nil-default-hook
 	volumeDocker func(context.Context) (osdMemoryVolumeClient, error)
+	//testdouble:nil-default-hook
 	volumeRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 }
 

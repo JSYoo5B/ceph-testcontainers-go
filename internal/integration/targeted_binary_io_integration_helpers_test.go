@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -312,12 +313,12 @@ func targetedDebugMS(t *testing.T, ctx context.Context, cluster *ceph.Container,
 			t.Fatalf("%s reports no debug_ms", daemon)
 		}
 		before[daemon] = value
-		mustCeph(t, ctx, cluster, "tell", daemon, "config", "set", "debug_ms", "1")
+		harness.MustCeph(t, ctx, cluster, "tell", daemon, "config", "set", "debug_ms", "1")
 	}
 	return func() {
 		t.Helper()
 		for _, daemon := range daemons {
-			mustCeph(t, ctx, cluster, "tell", daemon, "config", "set", "debug_ms", before[daemon])
+			harness.MustCeph(t, ctx, cluster, "tell", daemon, "config", "set", "debug_ms", before[daemon])
 			if got := targetedJSON[map[string]string](t, ctx, cluster, "tell", daemon, "config", "get", "debug_ms")["debug_ms"]; got != before[daemon] {
 				t.Fatalf("%s debug_ms is %q after the restore, was %q", daemon, got, before[daemon])
 			}
@@ -606,14 +607,14 @@ func runBinaryProbe(ctx context.Context, ctr testcontainers.Container, args ...s
 // The caller raised debug_ms on osd.0 and every MON.
 func targetedBinaryIO(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid string, mons map[int]string, mgrGID uint64, mgrName string) map[string]any {
 	t.Helper()
-	control := toolkitContainer(t, cluster)
+	control := harness.ToolkitContainer(t, cluster)
 	const work = "/tmp/tc-binary-io"
-	execOutput(t, ctx, control, "sh", "-c", `rm -rf "$1" && mkdir -p "$1"`, "sh", work)
+	harness.ExecOutput(t, ctx, control, "sh", "-c", `rm -rf "$1" && mkdir -p "$1"`, "sh", work)
 	result, err := runBinaryProbe(ctx, control, targetedBinaryProbe, work, "0", mgrName, mons[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	execOutput(t, ctx, control, "rm", "-rf", work)
+	harness.ExecOutput(t, ctx, control, "rm", "-rf", work)
 	if err := bindWireReplies(result.Calls, parseCommandWireLines(result.Log)); err != nil {
 		t.Fatalf("client side: %v\n%s", err, strings.Join(result.Log, "\n"))
 	}
@@ -787,10 +788,10 @@ func targetedBinaryIO(t *testing.T, ctx context.Context, cluster *ceph.Container
 // dropped. The caller raised debug_ms on osd.1.
 func targetedCancellation(t *testing.T, ctx context.Context, cluster *ceph.Container) map[string]any {
 	t.Helper()
-	control := toolkitContainer(t, cluster)
+	control := harness.ToolkitContainer(t, cluster)
 	osd := clusteraccess.OSDs(t, cluster)[1]
 	const work = "/tmp/tc-binary-cancel"
-	execOutput(t, ctx, control, "sh", "-c", `rm -rf "$1" && mkdir -p "$1" && cd "$1" && mkfifo ready go cancelled resumed`, "sh", work)
+	harness.ExecOutput(t, ctx, control, "sh", "-c", `rm -rf "$1" && mkdir -p "$1" && cd "$1" && mkfifo ready go cancelled resumed`, "sh", work)
 	type outcome struct {
 		result binaryProbeResult
 		err    error
@@ -800,7 +801,7 @@ func targetedCancellation(t *testing.T, ctx context.Context, cluster *ceph.Conta
 		result, err := runBinaryProbe(ctx, control, targetedCancelProbe, work, "1", "5")
 		done <- outcome{result, err}
 	}()
-	turn := func(script string) { execOutput(t, ctx, control, "sh", "-c", script, "sh", work) }
+	turn := func(script string) { harness.ExecOutput(t, ctx, control, "sh", "-c", script, "sh", work) }
 	turn(`cat "$1/ready"`)
 	nodown, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoDown, true)
 	if err != nil {
@@ -827,7 +828,7 @@ func targetedCancellation(t *testing.T, ctx context.Context, cluster *ceph.Conta
 		t.Fatal(out.err)
 	}
 	result := out.result
-	execOutput(t, ctx, control, "rm", "-rf", work)
+	harness.ExecOutput(t, ctx, control, "rm", "-rf", work)
 	before, cancelled, after := result.call(t, "before"), result.call(t, "cancelled"), result.call(t, "after")
 	if before.Ret != 0 || cancelled.Ret != -110 || after.Ret != 0 {
 		t.Fatalf("calls %+v %+v %+v; want 0, -110, 0", before, cancelled, after)

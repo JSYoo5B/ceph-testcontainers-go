@@ -18,6 +18,8 @@ import (
 func ctx(tb testing.TB) context.Context { return context.WithoutCancel(tb.Context()) }
 
 // OSDs returns the owned OSDs of c sorted by ID.
+//
+//testdouble:shared-assertion
 func OSDs(tb testing.TB, c *ceph.Container) []*ceph.OSDContainer {
 	tb.Helper()
 	osds, err := c.OSDs(ctx(tb))
@@ -28,6 +30,8 @@ func OSDs(tb testing.TB, c *ceph.Container) []*ceph.OSDContainer {
 }
 
 // Monitors returns the owned MONs of c sorted by daemon name.
+//
+//testdouble:shared-assertion
 func Monitors(tb testing.TB, c *ceph.Container) []*ceph.MonitorContainer {
 	tb.Helper()
 	monitors, err := c.Monitors(ctx(tb))
@@ -38,6 +42,8 @@ func Monitors(tb testing.TB, c *ceph.Container) []*ceph.MonitorContainer {
 }
 
 // Managers returns the owned MGR candidates of c sorted by daemon name.
+//
+//testdouble:shared-assertion
 func Managers(tb testing.TB, c *ceph.Container) []*ceph.ManagerContainer {
 	tb.Helper()
 	managers, err := c.Managers(ctx(tb))
@@ -50,6 +56,8 @@ func Managers(tb testing.TB, c *ceph.Container) []*ceph.ManagerContainer {
 // InitialManager returns the container of MGR a, the manager Run starts, or
 // nil when no manager named a is a current candidate (it was removed, or the
 // cluster started without managers and a later one has another name).
+//
+//testdouble:shared-assertion
 func InitialManager(tb testing.TB, c *ceph.Container) testcontainers.Container {
 	tb.Helper()
 	for _, manager := range Managers(tb, c) {
@@ -61,6 +69,8 @@ func InitialManager(tb testing.TB, c *ceph.Container) testcontainers.Container {
 }
 
 // ControlContainer returns the stable CLI container of c.
+//
+//testdouble:shared-assertion
 func ControlContainer(tb testing.TB, c *ceph.Container) testcontainers.Container {
 	tb.Helper()
 	control, err := c.ControlContainer(ctx(tb))
@@ -71,6 +81,8 @@ func ControlContainer(tb testing.TB, c *ceph.Container) testcontainers.Container
 }
 
 // Gateways returns the RGW gateways of c sorted by name.
+//
+//testdouble:shared-assertion
 func Gateways(tb testing.TB, c *ceph.Container) []*rgw.Gateway {
 	tb.Helper()
 	gateways, err := rgw.Gateways(ctx(tb), c)
@@ -81,6 +93,8 @@ func Gateways(tb testing.TB, c *ceph.Container) []*rgw.Gateway {
 }
 
 // RGWGateways returns the RGW gateways of the cluster started by rgw.Run.
+//
+//testdouble:shared-assertion
 func RGWGateways(tb testing.TB, c *rgw.Container) []*rgw.Gateway {
 	tb.Helper()
 	gateways, err := rgw.Gateways(ctx(tb), c.Container)

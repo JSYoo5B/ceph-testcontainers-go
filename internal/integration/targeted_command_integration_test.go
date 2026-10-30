@@ -16,6 +16,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -59,9 +60,9 @@ func TestTargetedCommandRecipe(t *testing.T) {
 	recordEvidence := registerMessengerEvidence(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	const filesystem, pool, object = "tc-targets", "tc-targets", "targeted"
-	cluster, _ := newServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)),
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)),
 		cephfs.WithFilesystems(cephfs.Config{Name: filesystem}))...)
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 8, Replicas: 2, MinSize: 1}); err != nil {
 		t.Fatal(err)
@@ -88,7 +89,7 @@ func TestTargetedCommandRecipe(t *testing.T) {
 	receipt := map[string]any{"fsid": fsid, "osdmap_epoch": osdMap.Epoch, "pgid": mapping.PGID, "acting": mapping.Acting}
 
 	// Identity: each OSD, the PG, and refusals the client decides alone.
-	toolkit := toolkitContainer(t, cluster)
+	toolkit := harness.ToolkitContainer(t, cluster)
 	admin := runTargetedProbe(t, ctx, toolkit, "/etc/ceph/ceph.client.admin.keyring", "client.admin", 30,
 		"osd0=osd:0:status", "osd1=osd:1:status", "unknown=osd:0:tc-no-such-command", "missing=osd:99:status",
 		"pg=pg:"+mapping.PGID+":query", "missingpg=pg:99.0:query")
@@ -141,7 +142,7 @@ func TestTargetedCommandRecipe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, nativeClientImage(t, image), limited.WithIdentity(), ceph.WithIdleEntrypoint(),
+	client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), limited.WithIdentity(), ceph.WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})))
 	if client != nil {
 		testcontainers.CleanupContainer(t, client)
@@ -248,7 +249,7 @@ func TestTargetedCommandRecipe(t *testing.T) {
 func runTargetedProbe(t *testing.T, ctx context.Context, ctr testcontainers.Container, keyring, name string, timeout int, requests ...string) map[string]targetedReply {
 	t.Helper()
 	args := append([]string{"python3", "-c", targetedCommandProbe, keyring, name, fmt.Sprint(timeout)}, requests...)
-	out := execOutput(t, ctx, ctr, args...)
+	out := harness.ExecOutput(t, ctx, ctr, args...)
 	var replies map[string]targetedReply
 	if err := json.Unmarshal([]byte(out), &replies); err != nil {
 		t.Fatalf("targeted probe: %v: %s", err, out)
@@ -262,7 +263,7 @@ func runTargetedCLI(t *testing.T, ctx context.Context, ctr testcontainers.Contai
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := execOutput(t, ctx, ctr, "python3", "-c", targetedCLIProbe, string(data))
+	out := harness.ExecOutput(t, ctx, ctr, "python3", "-c", targetedCLIProbe, string(data))
 	var runs []targetedCLI
 	if err := json.Unmarshal([]byte(out), &runs); err != nil {
 		t.Fatalf("targeted CLI: %v: %s", err, out)
