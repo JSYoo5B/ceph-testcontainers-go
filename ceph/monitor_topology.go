@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -163,4 +164,67 @@ func (t monitorTopology) diagnosticServices(add func(role, name string, ctr test
 		}
 		add(role, name, ctr)
 	}
+}
+
+// terminateServices stops the service containers (gateways, metadata
+// servers) for Terminate, while their backing OSDs are still alive, and
+// drops each one that is gone. The caller holds Container.mu.
+func (t monitorTopology) terminateServices(ctx context.Context, opts []testcontainers.TerminateOption) []error {
+	var errs []error
+	for name, ctr := range t.roster.eachService() {
+		if err := ctr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+			errs = append(errs, fmt.Errorf("terminate service %s: %w", name, err))
+		} else {
+			t.roster.dropService(name)
+		}
+	}
+	return errs
+}
+
+// terminateMembers stops the MGRs (the first one, then the candidates) and
+// the MONs (the added ones, then the embedded first MON) for Terminate,
+// after the services and OSDs, and drops each one that is gone. The first
+// MGR's candidate entry "a" is dropped once the first MGR is gone. The
+// caller holds Container.mu.
+func (t monitorTopology) terminateMembers(ctx context.Context, opts []testcontainers.TerminateOption) []error {
+	var errs []error
+	if first := t.roster.initialManager(); first != nil {
+		if err := first.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+			errs = append(errs, err)
+		} else {
+			t.roster.clearInitialManager()
+		}
+	}
+	for name, mgr := range t.roster.eachManager() {
+		if name == "a" {
+			if t.roster.initialManager() == nil {
+				t.roster.dropManager(name)
+			}
+			continue
+		}
+		if mgr.Container != nil {
+			if err := mgr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		t.roster.dropManager(name)
+	}
+	for name, mon := range t.roster.eachMonitor() {
+		if mon.Container != nil {
+			if err := mon.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		t.roster.dropMonitor(name)
+	}
+	if t.first != nil && !t.firstMonitorTerminated() {
+		if err := t.first.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+			errs = append(errs, err)
+		} else {
+			t.markFirstMonitorTerminated()
+		}
+	}
+	return errs
 }

@@ -335,11 +335,13 @@ func osdDeviceClaimIgnoredCall(call string) bool {
 // their own callers are pinned by osdDeviceWiringCallers.
 var osdDeviceClaimCallers = map[string]map[string]bool{
 	"removeOSD": {"release": true},
-	"terminate": {"release": true, "settle": true},
+	"terminate": {"settle": true},
 }
 
 var osdDeviceClaimHolders = map[string]map[string]bool{
 	"registerBlockDeviceOSD": {"claim": true},
+	// terminateOSDs is called only by terminate (TestTerminateStepsAreCalledOnlyByTerminate).
+	"terminateOSDs": {"release": true},
 }
 
 func osdDeviceClaimUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "deviceClaims" }
@@ -577,7 +579,7 @@ func TestOSDDeviceClaimReleaseOrderAgainstContainerRemoval(t *testing.T) {
 	}
 	var problems []string
 	sawTerminate, sawRemove := false, false
-	for _, parsed := range parseProductionFiles(t) {
+	for _, parsed := range parseProductionFilesWithTerminateSteps(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {

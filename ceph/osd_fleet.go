@@ -73,3 +73,21 @@ func (f osdFleet) diagnosticOSDs(add func(role, name string, ctr testcontainers.
 		}
 	}
 }
+
+// terminateOSDs stops each OSD for Terminate, after the services, releases
+// its device claim and forgets it once its container is gone. A failed stop
+// keeps the OSD registered for a retry. The caller holds Container.mu.
+func (f osdFleet) terminateOSDs(ctx context.Context, opts []testcontainers.TerminateOption) []error {
+	var errs []error
+	for id, osd := range f.osdHandles.each() {
+		if osd.Container != nil {
+			if err := osd.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		f.deviceClaims.release(id, osd.Container != nil)
+		f.osdHandles.forget(id)
+	}
+	return errs
+}

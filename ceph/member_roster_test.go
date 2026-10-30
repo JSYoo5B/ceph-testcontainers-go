@@ -405,7 +405,8 @@ var memberRosterCallers = map[string]memberRosterCaller{
 	"retireMonitor":      {"holds", []string{"dropMonitor"}},
 	"retireManager":      {"holds", []string{"currentManager", "dropManager", "eachManager", "managerCount"}},
 	"startService":       {"takes", []string{"hasService", "setService"}},
-	"terminate":          {"takes", []string{"clearInitialManager", "dropManager", "dropMonitor", "dropService", "eachManager", "eachMonitor", "eachService", "initialManager"}},
+	"terminateServices":  {"holds", []string{"dropService", "eachService"}},
+	"terminateMembers":   {"holds", []string{"clearInitialManager", "dropManager", "dropMonitor", "eachManager", "eachMonitor", "initialManager"}},
 	"diagnosticDaemons":  {"holds", []string{"eachManager", "eachMonitor", "initialManager"}},
 	"diagnosticServices": {"holds", []string{"eachService"}},
 
@@ -572,7 +573,7 @@ func TestMemberRosterHasNoAddressTaken(t *testing.T) {
 // roster), the other MGRs and the added MONs, all after the storage release
 // stage and before the first MON.
 func TestTerminateStopsServicesBeforeOSDsAndMembersAfterThem(t *testing.T) {
-	for _, parsed := range parseProductionFiles(t) {
+	for _, parsed := range parseProductionFilesWithTerminateSteps(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil || !isContainerTerminate(fn) {

@@ -1011,63 +1011,11 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	_ = c.native.stopAll(ctx)
 	errs = append(errs, c.portLeases.release(ctx)...)
 	// Stop gateways and metadata servers while their backing OSDs are alive.
-	for name, ctr := range c.members.roster.eachService() {
-		if err := ctr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-			errs = append(errs, fmt.Errorf("terminate service %s: %w", name, err))
-		} else {
-			c.members.roster.dropService(name)
-		}
-	}
-	for id, osd := range c.fleet.osdHandles.each() {
-		if osd.Container != nil {
-			if err := osd.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-				errs = append(errs, err)
-				continue
-			}
-		}
-		c.fleet.deviceClaims.release(id, osd.Container != nil)
-		c.fleet.osdHandles.forget(id)
-	}
+	errs = append(errs, c.monitorTopology().terminateServices(ctx, opts)...)
+	errs = append(errs, c.osdFleet().terminateOSDs(ctx, opts)...)
 	memoryErr := c.fleet.stores.releaseMemory(ctx, c.fleet.osdHandles.count() == 0)
 	volumeErr := c.fleet.stores.releaseVolume(ctx, c.fleet.osdHandles.count() == 0)
-	if first := c.members.roster.initialManager(); first != nil {
-		if err := first.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-			errs = append(errs, err)
-		} else {
-			c.members.roster.clearInitialManager()
-		}
-	}
-	for name, mgr := range c.members.roster.eachManager() {
-		if name == "a" {
-			if c.members.roster.initialManager() == nil {
-				c.members.roster.dropManager(name)
-			}
-			continue
-		}
-		if mgr.Container != nil {
-			if err := mgr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-				errs = append(errs, err)
-				continue
-			}
-		}
-		c.members.roster.dropManager(name)
-	}
-	for name, mon := range c.members.roster.eachMonitor() {
-		if mon.Container != nil {
-			if err := mon.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-				errs = append(errs, err)
-				continue
-			}
-		}
-		c.members.roster.dropMonitor(name)
-	}
-	if topology := c.monitorTopology(); c.Container != nil && !topology.firstMonitorTerminated() {
-		if err := c.Container.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-			errs = append(errs, err)
-		} else {
-			topology.markFirstMonitorTerminated()
-		}
-	}
+	errs = append(errs, c.monitorTopology().terminateMembers(ctx, opts)...)
 	// The added and the primary MON containers are the users of the MON store
 	// volumes; release the stores whose attachment is gone.
 	monStoreErr := c.monStores.releaseStores(ctx)
