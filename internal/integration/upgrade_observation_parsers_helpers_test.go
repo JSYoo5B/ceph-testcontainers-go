@@ -7,12 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 )
 
 // The functions below turn the JSON that real Ceph commands print into the
@@ -59,57 +60,15 @@ var (
 	upgradeObsToken = map[string]bool{"active": true, "clean": true, "scrubbing": true, "deep": true}
 )
 
-// upgradeObsScan walks one JSON value and rejects duplicate object keys at any
-// depth. encoding/json keeps the last of two equal keys silently.
-func upgradeObsScan(dec *json.Decoder, path string) error {
-	tok, err := dec.Token()
-	if err != nil {
-		return err
-	}
-	delim, ok := tok.(json.Delim)
-	if !ok {
-		return nil
-	}
-	switch delim {
-	case '{':
-		seen := map[string]bool{}
-		for dec.More() {
-			keyTok, err := dec.Token()
-			if err != nil {
-				return err
-			}
-			key, _ := keyTok.(string)
-			if seen[key] {
-				return fmt.Errorf("duplicate key %q at %s", key, path)
-			}
-			seen[key] = true
-			if err := upgradeObsScan(dec, path+"."+key); err != nil {
-				return err
-			}
-		}
-	case '[':
-		for i := 0; dec.More(); i++ {
-			if err := upgradeObsScan(dec, fmt.Sprintf("%s[%d]", path, i)); err != nil {
-				return err
-			}
-		}
-	}
-	_, err = dec.Token() // the closing delimiter
-	return err
-}
-
 // upgradeObsCheck verifies that data is exactly one JSON value without
-// duplicate keys.
+// duplicate keys at any depth; encoding/json keeps the last of two equal keys
+// silently.
 func upgradeObsCheck(data []byte, what string) error {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return fmt.Errorf("%s: no output", what)
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	if err := upgradeObsScan(dec, "$"); err != nil {
+	if err := strictjson.Check(data, strictjson.Options{}); err != nil {
 		return fmt.Errorf("%s: %w", what, err)
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("%s: trailing data after the JSON value", what)
 	}
 	return nil
 }

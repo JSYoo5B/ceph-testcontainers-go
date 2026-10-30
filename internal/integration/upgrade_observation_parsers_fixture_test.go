@@ -6,10 +6,13 @@ package integration_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 )
 
 // These are Docker-free controls of the strict parsers that turn Ceph command
@@ -267,7 +270,7 @@ func TestUpgradeObservationVersionsControls(t *testing.T) {
 	if dup == obsGoldenVersions {
 		t.Fatal("duplicate control did not change the document")
 	}
-	if _, err := parseUpgradeVersionsStrict([]byte(dup)); err == nil || !strings.Contains(err.Error(), "duplicate key") {
+	if _, err := parseUpgradeVersionsStrict([]byte(dup)); !errors.Is(err, strictjson.ErrDuplicateKey) {
 		t.Fatalf("duplicate description: %v", err)
 	}
 	// The undecorated decoder, which cannot see duplicates, accepts it.
