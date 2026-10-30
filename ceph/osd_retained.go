@@ -149,9 +149,9 @@ func osdKeyringSecret(keyring string, id int) (string, error) {
 	return secret, nil
 }
 
-// clusterFSID reads the FSID that the MONs serve.
-func (c *Container) clusterFSID(ctx context.Context) (string, error) {
-	data, err := c.conn().ceph(ctx, "fsid")
+// fsid reads the FSID that the MONs serve.
+func (om osdMap) fsid(ctx context.Context) (string, error) {
+	data, err := om.conn.ceph(ctx, "fsid")
 	if err != nil {
 		return "", fmt.Errorf("read cluster FSID: %w", err)
 	}
@@ -209,7 +209,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	name := fmt.Sprintf("osd.%d", id)
-	fsid, err := c.clusterFSID(ctx)
+	fsid, err := osdMap{c.conn()}.fsid(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +308,7 @@ func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 	if err := c.startOSD(ctx, launch); err != nil {
 		return osd, err
 	}
-	if err := c.waitOSDsUp(ctx, []int{id}); err != nil {
+	if err := (osdMap{c.conn()}).waitUp(ctx, []int{id}); err != nil {
 		return osd, err
 	}
 	if _, err := c.removalOSDState(ctx, id); err != nil {
@@ -368,14 +368,14 @@ func (c *Container) reopenPreflight(ctx context.Context, detached *DetachedOSD) 
 	if store != detached.store {
 		return fmt.Errorf("retained osd.%d store changed since it was detached", id)
 	}
-	fsid, err := c.clusterFSID(ctx)
+	fsid, err := osdMap{c.conn()}.fsid(ctx)
 	if err != nil {
 		return err
 	}
 	if err := store.matches(id, detached.osdUUID, fsid); err != nil {
 		return err
 	}
-	dump, err := c.removalOSDDump(ctx)
+	dump, err := osdMap{c.conn()}.removalDump(ctx)
 	if err != nil {
 		return err
 	}

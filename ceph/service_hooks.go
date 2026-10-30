@@ -113,7 +113,7 @@ func (serviceHooks) Services(c *Container) map[string]testcontainers.Container {
 
 // PoolStates reads the native pool map. The caller holds the cluster mutex.
 func (serviceHooks) PoolStates(ctx context.Context, c *Container) ([]PoolState, error) {
-	return c.poolStates(ctx)
+	return poolCatalog{c.conn()}.states(ctx)
 }
 
 // StartService starts a service container on the cluster's networks and
@@ -224,7 +224,7 @@ func (serviceHooks) ClassifyExec(ctx context.Context, err error) error {
 // AuthCommand runs a Cephx command with the admin identity and reports a
 // failure by operation without the native output.
 func (serviceHooks) AuthCommand(ctx context.Context, c *Container, operation string, args ...string) ([]byte, error) {
-	return c.clientAuthCommand(ctx, operation, args...)
+	return authStore{c.conn()}.clientCommand(ctx, operation, args...)
 }
 
 // ClusterIdentity returns the FSID of the bootstrap configuration and whether

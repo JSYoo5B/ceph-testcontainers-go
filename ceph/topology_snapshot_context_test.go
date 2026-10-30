@@ -203,7 +203,7 @@ func TestCephStatusQueriesHonorBusyControlWhileOwnerIsHeld(t *testing.T) {
 				case "manager-status":
 					_, err = readManagerStatus(ctx, cluster.conn().ceph)
 				case "quorum":
-					_, err = cluster.quorumStatus(ctx)
+					_, err = daemonMaps{cluster.conn()}.quorum(ctx)
 				}
 				done <- err
 			}()

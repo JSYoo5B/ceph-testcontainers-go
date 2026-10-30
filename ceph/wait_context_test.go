@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -85,7 +86,6 @@ func newWaitContextFixture(t *testing.T, name string) waitContextFixture {
 func TestWaitContextPollRejectsCanceledObservation(t *testing.T) {
 	for _, phase := range []string{"before", "after-ready", "after-not-ready", "after-error"} {
 		t.Run(phase, func(t *testing.T) {
-			c := &Container{}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if phase == "before" {
@@ -93,7 +93,7 @@ func TestWaitContextPollRejectsCanceledObservation(t *testing.T) {
 			}
 			calls := 0
 			cause := errors.New("last native observation failed")
-			err := c.poll(ctx, func() (bool, error) {
+			err := clusterutil.Poll(ctx, func() (bool, error) {
 				calls++
 				cancel()
 				if phase == "after-error" {
@@ -124,7 +124,7 @@ func TestWaitContextPollRetainsLatestCauseAndTransientSuccess(t *testing.T) {
 		defer cancel()
 		first, latest := errors.New("first failure"), errors.New("latest failure")
 		calls := 0
-		err := (&Container{}).poll(ctx, func() (bool, error) {
+		err := clusterutil.Poll(ctx, func() (bool, error) {
 			calls++
 			if calls == 1 {
 				return false, first
@@ -143,7 +143,7 @@ func TestWaitContextPollRetainsLatestCauseAndTransientSuccess(t *testing.T) {
 		ctx := clustertest.NewSignalDeadline(t.Context())
 		cause := errors.New("native observation before timeout")
 		calls := 0
-		err := (&Container{}).poll(ctx, func() (bool, error) { calls++; ctx.Expire(); return false, cause })
+		err := clusterutil.Poll(ctx, func() (bool, error) { calls++; ctx.Expire(); return false, cause })
 		if err == nil || !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, cause) || calls != 1 {
 			t.Fatalf("deadline lost prior observation: %v calls=%d", err, calls)
 		}
@@ -152,7 +152,7 @@ func TestWaitContextPollRetainsLatestCauseAndTransientSuccess(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
 		calls := 0
-		err := (&Container{}).poll(ctx, func() (bool, error) {
+		err := clusterutil.Poll(ctx, func() (bool, error) {
 			calls++
 			if calls == 1 {
 				return false, errors.New("transient")

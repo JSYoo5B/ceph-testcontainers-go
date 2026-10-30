@@ -71,7 +71,7 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 	retainedCancelBytes(t, ctx, client, pool.Name, "seed")
 	// The cluster is new, so noout is unset; the flag is set and cleared
 	// directly because a test of package ceph cannot import package override.
-	if err := c.setOSDFlag(ctx, OSDFlagNoOut, true); err != nil {
+	if err := (osdMap{c.conn()}).setFlag(ctx, OSDFlagNoOut, true); err != nil {
 		t.Fatal(err)
 	}
 	detached, err := c.DetachOSD(ctx, original.ID)
@@ -123,7 +123,7 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 	// the stop signal for the 10 s grace period in the first native attempt and
 	// its down state was then never observed. Only a booted daemon is
 	// expected to leave the OSDMap as down at a graceful stop.
-	if err := c.waitOSDsUp(ctx, []int{original.ID}); err != nil {
+	if err := (osdMap{c.conn()}).waitUp(ctx, []int{original.ID}); err != nil {
 		t.Fatal("canceled candidate never reached up/in", err)
 	}
 	second, err := c.DetachOSD(ctx, original.ID)
@@ -142,14 +142,14 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 	if finalID == oldID || finalID == firstID {
 		t.Fatal("final instance reuses a removed container")
 	}
-	if err := c.waitOSDsUp(ctx, []int{original.ID}); err != nil {
+	if err := (osdMap{c.conn()}).waitUp(ctx, []int{original.ID}); err != nil {
 		t.Fatal(err)
 	}
 	state, err := c.removalOSDState(ctx, original.ID)
 	if err != nil || state.UUID != detached.UUID() || !state.Up || !state.In {
 		t.Fatal("native reopened registration differs", state, err)
 	}
-	fsid, err := c.clusterFSID(ctx)
+	fsid, err := osdMap{c.conn()}.fsid(ctx)
 	if err != nil || fsid != detached.ClusterFSID() || second.UUID() != detached.UUID() {
 		t.Fatal("native cluster identity changed", err)
 	}
@@ -157,7 +157,7 @@ func TestRetainedOSDReopenCanceledAfterCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	retainedCancelBytes(t, ctx, client, pool.Name, "readback")
-	if err := c.setOSDFlag(ctx, OSDFlagNoOut, false); err != nil {
+	if err := (osdMap{c.conn()}).setFlag(ctx, OSDFlagNoOut, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Terminate(ctx); err != nil {

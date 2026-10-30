@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+// osdMap is the cluster's native OSD map view: the OSD dump and flags, the
+// up/in wait, device classes and the cluster FSID the OSDs carry. It holds no
+// state and takes no lock; callers keep the topology lock and the OSD registry.
+type osdMap struct {
+	conn cephConn
+}
+
 // OSDState reports authoritative OSDMap state for an owned OSD. Weight is the
 // native map reweight in [0,1], not the CRUSH capacity weight. Out OSDs retain
 // their containers, identities and data; absence or a replaced UUID is an error.
@@ -70,12 +77,12 @@ func (c *Container) osdFlags(ctx context.Context) ([]OSDFlag, error) {
 	return readOSDFlags(ctx, c.conn().ceph)
 }
 
-func (c *Container) setOSDFlag(ctx context.Context, flag OSDFlag, enabled bool) error {
+func (om osdMap) setFlag(ctx context.Context, flag OSDFlag, enabled bool) error {
 	op := "unset"
 	if enabled {
 		op = "set"
 	}
-	_, err := c.conn().ceph(ctx, "osd", op, string(flag))
+	_, err := om.conn.ceph(ctx, "osd", op, string(flag))
 	return err
 }
 
@@ -84,8 +91,8 @@ type osdPolicySnapshot struct {
 	osds  map[int]OSDState
 }
 
-func (c *Container) osdPolicyDump(ctx context.Context) (osdPolicySnapshot, error) {
-	return readOSDPolicyDump(ctx, c.conn().ceph)
+func (om osdMap) policyDump(ctx context.Context) (osdPolicySnapshot, error) {
+	return readOSDPolicyDump(ctx, om.conn.ceph)
 }
 
 // decodeOSDPolicyDump decodes the flags and OSDs of the output of osd dump.

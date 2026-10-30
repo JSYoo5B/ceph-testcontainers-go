@@ -36,10 +36,10 @@ type clientTransition struct {
 	applied  func()
 }
 
-// readClientRecord reads the auth entry of entity, which must not change
+// readRecord reads the auth entry of entity, which must not change
 // meanwhile. The caller holds c.mu.
-func (c *Container) readClientRecord(ctx context.Context, entity string) (clientRecord, error) {
-	result, err := c.conn().rotationResult(ctx, 1<<20, 64<<10, "ceph", "--connect-timeout", "5", "auth", "get", entity, "--format", "json")
+func (as authStore) readRecord(ctx context.Context, entity string) (clientRecord, error) {
+	result, err := as.conn.rotationResult(ctx, 1<<20, 64<<10, "ceph", "--connect-timeout", "5", "auth", "get", entity, "--format", "json")
 	if err != nil {
 		return clientRecord{}, clientOperationError(ctx, "read the auth entry of "+entity, err)
 	}
@@ -54,7 +54,7 @@ func (c *Container) readClientRecord(ctx context.Context, entity string) (client
 	if result.ExitCode != 0 || json.Unmarshal(result.Stdout, &entries) != nil || len(entries) != 1 || entries[0].Entity != entity || entries[0].Key == "" {
 		return clientRecord{}, fmt.Errorf("read the auth entry of %s: unexpected result (exit %d)", entity, result.ExitCode)
 	}
-	keyring, err := c.conn().rotationCommand(ctx, "ceph", "--connect-timeout", "5", "auth", "get", entity)
+	keyring, err := as.conn.rotationCommand(ctx, "ceph", "--connect-timeout", "5", "auth", "get", entity)
 	if err != nil {
 		return clientRecord{}, clientOperationError(ctx, "read the keyring of "+entity, err)
 	}
@@ -124,7 +124,7 @@ func (c *Container) settleClient(ctx context.Context, entity string) error {
 		fence.clients = nil
 	}
 	if transition := fence.transition; transition != nil {
-		record, err := c.readClientRecord(ctx, entity)
+		record, err := authStore{c.conn()}.readRecord(ctx, entity)
 		if err != nil {
 			return err
 		}
@@ -161,7 +161,7 @@ func (c *Container) changeClient(ctx context.Context, entity string, command map
 	err := call.settle(settleCtx)
 	var record clientRecord
 	if err == nil {
-		record, err = c.readClientRecord(settleCtx, entity)
+		record, err = authStore{c.conn()}.readRecord(settleCtx, entity)
 	}
 	if err != nil {
 		c.authRecords.fenceFor(entity).transition = &clientTransition{from: from, to: to, applied: applied}
@@ -195,7 +195,7 @@ func (c *Container) ownedClientRecord(ctx context.Context, client *ClientConfig,
 	if err := c.checkCurrentClient(client); err != nil {
 		return clientRecord{}, err
 	}
-	current, err := c.readClientRecord(ctx, client.name)
+	current, err := authStore{c.conn()}.readRecord(ctx, client.name)
 	if err != nil {
 		return clientRecord{}, err
 	}

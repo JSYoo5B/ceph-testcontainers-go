@@ -19,17 +19,17 @@ var errPoolMissing = errors.New("pool does not exist")
 // removePool is called with c.mu held. With skipForeign, a pool that the
 // fixture did not create is left alone instead of being reported.
 func (c *Container) removePool(ctx context.Context, name string, skipForeign bool, handle *Pool) error {
-	rules, err := c.crushRuleNames(ctx)
+	rules, err := poolCatalog{c.conn()}.crushRuleNames(ctx)
 	if err != nil {
 		return err
 	}
-	pools, err := c.poolStates(ctx)
+	pools, err := poolCatalog{c.conn()}.states(ctx)
 	if err != nil {
 		return err
 	}
 	replicated, erasure := "tc-"+name+"-replicated", "tc-"+name+"-ec"
 	ruleNames := slices.Collect(maps.Values(rules))
-	profiles, err := c.erasureCodeProfiles(ctx)
+	profiles, err := poolCatalog{c.conn()}.erasureCodeProfiles(ctx)
 	if err != nil {
 		return err
 	}
@@ -49,7 +49,7 @@ func (c *Container) removePool(ctx context.Context, name string, skipForeign boo
 			}
 			return invalid(fmt.Errorf("pool %q was not created by CreatePool or WithPools (CRUSH rule %q); refusing removal", name, rule))
 		}
-		if err := c.refusePoolInUse(ctx, name); err != nil {
+		if err := (poolCatalog{c.conn()}).refuseInUse(ctx, name); err != nil {
 			return err
 		}
 		if err := c.deletePool(ctx, pool); err != nil {
@@ -89,21 +89,21 @@ func (c *Container) deletePool(ctx context.Context, pool PoolState) (err error) 
 	if c.allowPoolDeleteHeld() {
 		return errors.New("restore the override.SetConfig override of mon_allow_pool_delete before Pool.Remove")
 	}
-	entries, err := c.configuration(ctx)
+	entries, err := readConfiguration(ctx, c.conn().ceph)
 	if err != nil {
 		return err
 	}
 	previous := findConfigEntry(entries, allowPoolDeleteSetting)
 	if previous == nil || previous.Value != "true" {
-		_, setErr := c.configCommand(ctx, "set", configWho(allowPoolDeleteSetting), allowPoolDeleteSetting.Name, "true")
+		_, setErr := runConfigCommand(ctx, c.conn().ceph, "set", configWho(allowPoolDeleteSetting), allowPoolDeleteSetting.Name, "true")
 		defer func() {
 			restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
 			var restoreErr error
 			if previous == nil {
-				_, restoreErr = c.configCommand(restoreCtx, "rm", configWho(allowPoolDeleteSetting), allowPoolDeleteSetting.Name)
+				_, restoreErr = runConfigCommand(restoreCtx, c.conn().ceph, "rm", configWho(allowPoolDeleteSetting), allowPoolDeleteSetting.Name)
 			} else {
-				_, restoreErr = c.configCommand(restoreCtx, "set", configWho(allowPoolDeleteSetting), allowPoolDeleteSetting.Name, previous.Value)
+				_, restoreErr = runConfigCommand(restoreCtx, c.conn().ceph, "set", configWho(allowPoolDeleteSetting), allowPoolDeleteSetting.Name, previous.Value)
 			}
 			if restoreErr != nil {
 				err = errors.Join(err, fmt.Errorf("restore mon_allow_pool_delete: %w", restoreErr))
@@ -113,7 +113,7 @@ func (c *Container) deletePool(ctx context.Context, pool PoolState) (err error) 
 			return fmt.Errorf("allow pool deletion: %w", setErr)
 		}
 	}
-	if err := c.checkPoolID(ctx, pool); err != nil {
+	if err := (poolCatalog{c.conn()}).checkID(ctx, pool); err != nil {
 		return err
 	}
 	// Monitors apply a committed config change asynchronously; retry the
@@ -135,8 +135,8 @@ func (c *Container) deletePool(ctx context.Context, pool PoolState) (err error) 
 	return nil
 }
 
-func (c *Container) refusePoolInUse(ctx context.Context, name string) error {
-	data, err := c.conn().ceph(ctx, "fs", "ls", "--format", "json")
+func (pc poolCatalog) refuseInUse(ctx context.Context, name string) error {
+	data, err := pc.conn.ceph(ctx, "fs", "ls", "--format", "json")
 	if err != nil {
 		return err
 	}
@@ -156,8 +156,8 @@ func (c *Container) refusePoolInUse(ctx context.Context, name string) error {
 	return nil
 }
 
-func (c *Container) crushRuleNames(ctx context.Context) (map[int]string, error) {
-	data, err := c.conn().ceph(ctx, "osd", "crush", "rule", "dump", "--format", "json")
+func (pc poolCatalog) crushRuleNames(ctx context.Context) (map[int]string, error) {
+	data, err := pc.conn.ceph(ctx, "osd", "crush", "rule", "dump", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -175,8 +175,8 @@ func (c *Container) crushRuleNames(ctx context.Context) (map[int]string, error) 
 	return names, nil
 }
 
-func (c *Container) erasureCodeProfiles(ctx context.Context) ([]string, error) {
-	data, err := c.conn().ceph(ctx, "osd", "erasure-code-profile", "ls", "--format", "json")
+func (pc poolCatalog) erasureCodeProfiles(ctx context.Context) ([]string, error) {
+	data, err := pc.conn.ceph(ctx, "osd", "erasure-code-profile", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
 	}

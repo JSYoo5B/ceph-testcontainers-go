@@ -123,12 +123,12 @@ func (faultHooks) PoolPolicyReady(c *Container) error { return c.poolPolicyReady
 
 // PoolState reads one pool. The caller holds the mutex.
 func (faultHooks) PoolState(ctx context.Context, c *Container, name string) (PoolState, error) {
-	return c.poolState(ctx, name)
+	return poolCatalog{c.conn()}.state(ctx, name)
 }
 
 // CheckPoolID refuses a pool that was replaced since expected was read.
 func (faultHooks) CheckPoolID(ctx context.Context, c *Container, expected PoolState) error {
-	return c.checkPoolID(ctx, expected)
+	return poolCatalog{c.conn()}.checkID(ctx, expected)
 }
 
 // OwnedOSD reports an OSD that the cluster owns and has not purged. The

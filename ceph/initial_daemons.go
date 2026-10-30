@@ -56,11 +56,11 @@ func (c *Container) startInitialOSDs(ctx context.Context) error {
 	for i, launch := range launches {
 		ids[i] = launch.osd.ID
 	}
-	if err := c.waitOSDsUp(ctx, ids); err != nil {
+	if err := (osdMap{c.conn()}).waitUp(ctx, ids); err != nil {
 		return err
 	}
 	for _, launch := range launches {
-		if err := c.assignOSDDeviceClass(ctx, launch.osd); err != nil {
+		if err := (osdMap{c.conn()}).assignDeviceClass(ctx, launch.osd); err != nil {
 			return err
 		}
 	}
@@ -157,7 +157,7 @@ func (c *Container) finishInitialManagers(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	if err := c.waitManagerRegistered(ctx, daemonName(0)); err != nil {
+	if err := (daemonMaps{c.conn()}).waitManagerRegistered(ctx, daemonName(0)); err != nil {
 		return err
 	}
 	for i := 1; i < c.settings.managers; i++ {
@@ -165,7 +165,7 @@ func (c *Container) finishInitialManagers(ctx context.Context) error {
 		if _, err := c.startManager(ctx, name, c.settings.essentialImage); err != nil {
 			return err
 		}
-		if err := c.waitManagerRegistered(ctx, name); err != nil {
+		if err := (daemonMaps{c.conn()}).waitManagerRegistered(ctx, name); err != nil {
 			return err
 		}
 	}

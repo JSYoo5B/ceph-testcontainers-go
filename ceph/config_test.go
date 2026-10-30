@@ -16,7 +16,7 @@ import (
 func TestConfigurationRejectsMalformedDuplicateDump(t *testing.T) {
 	for _, raw := range []string{"null", `[{"section":"osd","name":"debug_osd","value":"2"},{"section":"osd","name":"debug_osd","value":"3"}]`, `[{"section":"osd","mask":{},"name":"debug_osd"}]`} {
 		c := &Container{Container: &configDumpFixture{raw: raw}, settings: options{startupTimeout: time.Second}}
-		if _, err := c.configuration(t.Context()); err == nil {
+		if _, err := readConfiguration(t.Context(), c.conn().ceph); err == nil {
 			t.Fatal("invalid configuration dump accepted")
 		}
 	}

@@ -86,7 +86,7 @@ func (c *Container) currentMonitorBootstrapAddresses(ctx context.Context) (strin
 	if err != nil || !confirmed {
 		return "", "", errors.New("ceph original bootstrap identity is unavailable")
 	}
-	status, err := c.quorumStatus(ctx)
+	status, err := daemonMaps{c.conn()}.quorum(ctx)
 	if err != nil {
 		return "", "", fmt.Errorf("read current monitor bootstrap: %w", err)
 	}

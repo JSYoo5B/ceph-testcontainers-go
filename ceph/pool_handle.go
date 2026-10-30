@@ -31,7 +31,7 @@ func (c *Container) Pool(ctx context.Context, name string) (*Pool, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	state, err := c.poolState(ctx, name)
+	state, err := poolCatalog{c.conn()}.state(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func (c *Container) pools(ctx context.Context) ([]*Pool, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	states, err := c.poolStates(ctx)
+	states, err := poolCatalog{c.conn()}.states(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -102,13 +102,13 @@ func (p *Pool) matchLocked(name string, id int64) error {
 	return nil
 }
 
-// handlePoolState reads the pool called name and requires it to be the pool
+// handleState reads the pool called name and requires it to be the pool
 // that handle identifies. The caller holds c.mu.
-func (c *Container) handlePoolState(ctx context.Context, name string, handle *Pool) (PoolState, error) {
+func (pc poolCatalog) handleState(ctx context.Context, name string, handle *Pool) (PoolState, error) {
 	if err := handle.matchLocked(name, -1); err != nil {
 		return PoolState{}, err
 	}
-	state, err := c.poolState(ctx, name)
+	state, err := pc.state(ctx, name)
 	if err != nil {
 		return PoolState{}, err
 	}
@@ -134,7 +134,7 @@ func (p *Pool) Status(ctx context.Context) (PoolState, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return PoolState{}, err
 	}
-	return c.handlePoolState(ctx, name, p)
+	return poolCatalog{c.conn()}.handleState(ctx, name, p)
 }
 
 // Usage reports the pool's stored bytes and objects with the original
@@ -196,7 +196,7 @@ func (p *Pool) SetPGCount(ctx context.Context, pgNum int) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	pool, err := c.handlePoolState(ctx, name, p)
+	pool, err := poolCatalog{c.conn()}.handleState(ctx, name, p)
 	if err != nil {
 		return err
 	}
@@ -205,7 +205,7 @@ func (p *Pool) SetPGCount(ctx context.Context, pgNum int) error {
 	}
 	// pg_num first: native pgp_num targets cannot exceed the pg_num target.
 	for _, setting := range []string{"pg_num", "pgp_num"} {
-		if err := c.checkPoolID(ctx, pool); err != nil {
+		if err := (poolCatalog{c.conn()}).checkID(ctx, pool); err != nil {
 			return err
 		}
 		if _, err := c.conn().ceph(ctx, "osd", "pool", "set", name, setting, strconv.Itoa(pgNum)); err != nil {
@@ -251,7 +251,7 @@ func (p *Pool) WaitForPGCount(ctx context.Context, pgNum int) error {
 			}
 			return err
 		}
-		pool, err := c.handlePoolState(ctx, name, p)
+		pool, err := poolCatalog{c.conn()}.handleState(ctx, name, p)
 		if p != nil && err != nil && errors.Is(err, errStalePool) {
 			c.mu.Unlock()
 			return err
@@ -259,7 +259,7 @@ func (p *Pool) WaitForPGCount(ctx context.Context, pgNum int) error {
 		replaced := err == nil && poolID >= 0 && pool.ID != poolID
 		reported := 0
 		if err == nil && !replaced && poolPGCountReached(pool, pgNum) {
-			reported, err = c.reportedPoolPGs(ctx, pool)
+			reported, err = poolCatalog{c.conn()}.reportedPGs(ctx, pool)
 		}
 		c.mu.Unlock()
 		if replaced {
@@ -327,14 +327,14 @@ func (p *Pool) SetPlacement(ctx context.Context, placement PoolPlacement) error 
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	pool, err := c.handlePoolState(ctx, name, p)
+	pool, err := poolCatalog{c.conn()}.handleState(ctx, name, p)
 	if err != nil {
 		return err
 	}
 	if pool.Type != "replicated" {
 		return errors.New("placement changes require a replicated pool")
 	}
-	if current, err := c.poolRulePlacement(ctx, pool.CRUSHRule); err == nil && samePoolPlacement(current, desired) {
+	if current, err := (poolCatalog{c.conn()}).rulePlacement(ctx, pool.CRUSHRule); err == nil && samePoolPlacement(current, desired) {
 		return nil
 	}
 	domains, err := c.nativePoolDomains(ctx, desired)
@@ -344,11 +344,11 @@ func (p *Pool) SetPlacement(ctx context.Context, placement PoolPlacement) error 
 	if domains < pool.Size {
 		return fmt.Errorf("pool %q needs %d owned %s domains; native CRUSH placement has %d eligible owned domains", name, pool.Size, desired.FailureDomain, domains)
 	}
-	rule, exists, err := c.poolPlacementRule(ctx, name, desired)
+	rule, exists, err := poolCatalog{c.conn()}.placementRule(ctx, name, desired)
 	if err != nil {
 		return err
 	}
-	if err := c.checkPoolID(ctx, pool); err != nil {
+	if err := (poolCatalog{c.conn()}).checkID(ctx, pool); err != nil {
 		return err
 	}
 	if !exists {
@@ -356,7 +356,7 @@ func (p *Pool) SetPlacement(ctx context.Context, placement PoolPlacement) error 
 			return fmt.Errorf("create placement rule for pool %q: %w", name, err)
 		}
 	}
-	if err := c.checkPoolID(ctx, pool); err != nil {
+	if err := (poolCatalog{c.conn()}).checkID(ctx, pool); err != nil {
 		return err
 	}
 	if _, err := c.conn().ceph(ctx, "osd", "pool", "set", name, "crush_rule", rule); err != nil {
@@ -385,7 +385,7 @@ func (p *Pool) SetQuota(ctx context.Context, quota PoolQuota) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	pool, err := c.handlePoolState(ctx, name, p)
+	pool, err := poolCatalog{c.conn()}.handleState(ctx, name, p)
 	if err != nil {
 		return err
 	}
@@ -399,7 +399,7 @@ func (p *Pool) SetQuota(ctx context.Context, quota PoolQuota) error {
 		if setting.current == setting.desired {
 			continue
 		}
-		if err := c.checkPoolID(ctx, pool); err != nil {
+		if err := (poolCatalog{c.conn()}).checkID(ctx, pool); err != nil {
 			return err
 		}
 		if _, err := c.conn().ceph(ctx, "osd", "pool", "set-quota", name, setting.name, strconv.FormatUint(setting.desired, 10)); err != nil {
@@ -434,14 +434,14 @@ func (p *Pool) SetReplication(ctx context.Context, replicas, minSize int) error 
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	pool, err := c.handlePoolState(ctx, name, p)
+	pool, err := poolCatalog{c.conn()}.handleState(ctx, name, p)
 	if err != nil {
 		return err
 	}
 	if pool.Type != "replicated" {
 		return errors.New("replication policy requires a replicated pool")
 	}
-	placement, err := c.poolRulePlacement(ctx, pool.CRUSHRule)
+	placement, err := poolCatalog{c.conn()}.rulePlacement(ctx, pool.CRUSHRule)
 	if err != nil {
 		return err
 	}
@@ -466,7 +466,7 @@ func (p *Pool) SetReplication(ctx context.Context, replicas, minSize int) error 
 		if setting.current == setting.desired {
 			continue
 		}
-		if err := c.checkPoolID(ctx, pool); err != nil {
+		if err := (poolCatalog{c.conn()}).checkID(ctx, pool); err != nil {
 			return err
 		}
 		args := []string{"osd", "pool", "set", name, setting.name, strconv.Itoa(setting.desired)}

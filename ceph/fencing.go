@@ -2,7 +2,6 @@ package ceph
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -21,10 +20,6 @@ type BlocklistEntry struct {
 	Address string
 	Range   bool
 	Until   time.Time
-}
-
-func (c *Container) blocklistEntries(ctx context.Context) ([]BlocklistEntry, error) {
-	return readBlocklistEntries(ctx, c.conn().ceph)
 }
 
 func decodeBlocklistEntries(data []byte) ([]BlocklistEntry, error) {

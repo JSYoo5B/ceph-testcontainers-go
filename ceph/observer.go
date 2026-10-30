@@ -110,7 +110,7 @@ func (o *Observer) Configuration(ctx context.Context) ([]ConfigEntry, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	return c.configuration(ctx)
+	return readConfiguration(ctx, c.conn().ceph)
 }
 
 // BlocklistEntries lists exact entries and CIDR ranges without mutating them.
@@ -124,7 +124,7 @@ func (o *Observer) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, erro
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	return c.blocklistEntries(ctx)
+	return readBlocklistEntries(ctx, c.conn().ceph)
 }
 
 // MGRModules lists configured and available modules, sorted by name. Enabled
@@ -140,7 +140,7 @@ func (o *Observer) MGRModules(ctx context.Context) ([]MGRModuleState, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	return c.mgrModules(ctx)
+	return readMGRModules(ctx, c.conn().ceph)
 }
 
 // OSDFlags lists exact global OSDMap flag tokens, including native compatibility
@@ -196,7 +196,7 @@ func (o *Observer) QuorumStatus(ctx context.Context) (QuorumStatus, error) {
 	if err != nil {
 		return QuorumStatus{}, err
 	}
-	return c.quorumStatus(ctx)
+	return daemonMaps{c.conn()}.quorum(ctx)
 }
 
 // MonitorBootstrapAddresses returns the current majority monmap's versioned

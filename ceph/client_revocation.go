@@ -68,7 +68,7 @@ func (r *ClientRevocationHandle) Restore(ctx context.Context) error {
 	if state.deleted {
 		return fmt.Errorf("cephx client %s was deleted for good", state.client.name)
 	}
-	current, err := c.readClientRecord(ctx, state.client.name)
+	current, err := authStore{c.conn()}.readRecord(ctx, state.client.name)
 	if err != nil {
 		return err
 	}

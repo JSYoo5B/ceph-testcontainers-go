@@ -16,11 +16,20 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+// daemonMaps is the cluster's native MON quorum and MGR map view: the quorum
+// status, the removal of one MON from the monmap and the wait for a manager to
+// register. It holds no state and takes no lock; the roster stays on Container
+// under Container.mu.
+type daemonMaps struct {
+	conn cephConn
+}
 
 // MonitorContainer is an owned quorum member. Stop/Start preserves its store;
 // MonitorContainer.Remove explicitly removes membership and deletes the container.
@@ -96,9 +105,9 @@ type QuorumStatus struct {
 	} `json:"monmap"`
 }
 
-// quorumStatus implements Observer.QuorumStatus.
-func (c *Container) quorumStatus(ctx context.Context) (QuorumStatus, error) {
-	control, err := c.conn().controlContainer(ctx)
+// quorum implements Observer.QuorumStatus.
+func (dm daemonMaps) quorum(ctx context.Context) (QuorumStatus, error) {
+	control, err := dm.conn.controlContainer(ctx)
 	if err != nil {
 		return QuorumStatus{}, fmt.Errorf("select monitor quorum control: %w", err)
 	}
@@ -110,8 +119,8 @@ func (c *Container) quorumStatus(ctx context.Context) (QuorumStatus, error) {
 func (c *Container) WaitForQuorum(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	return c.poll(ctx, func() (bool, error) {
-		status, err := c.quorumStatus(ctx)
+	return clusterutil.Poll(ctx, func() (bool, error) {
+		status, err := daemonMaps{c.conn()}.quorum(ctx)
 		return len(status.MonMap.Mons) > 0 && len(status.QuorumNames) > len(status.MonMap.Mons)/2, err
 	})
 }
@@ -144,7 +153,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	status, err := c.quorumStatus(ctx)
+	status, err := daemonMaps{c.conn()}.quorum(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("inspect monitor membership: %w", err)
 	}
@@ -229,8 +238,8 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 			return mon, err
 		}
 	}
-	if err := c.poll(ctx, func() (bool, error) {
-		status, err := c.quorumStatus(ctx)
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
+		status, err := daemonMaps{c.conn()}.quorum(ctx)
 		return slices.Contains(status.QuorumNames, name), err
 	}); err != nil {
 		return mon, fmt.Errorf("join monitor %s to quorum: %w", name, err)
@@ -256,8 +265,8 @@ func (c *Container) removeMonitor(ctx context.Context, handle *MonitorContainer)
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	var status QuorumStatus
-	if err := c.poll(ctx, func() (bool, error) {
-		current, err := c.quorumStatus(ctx)
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
+		current, err := daemonMaps{c.conn()}.quorum(ctx)
 		if err != nil {
 			return false, err
 		}
@@ -303,7 +312,7 @@ func (c *Container) removeMonitor(ctx context.Context, handle *MonitorContainer)
 		if err != nil {
 			return fmt.Errorf("select surviving monitors before removing %s: %w", name, err)
 		}
-		if err := c.removeMonitorMember(ctx, hosts, name); err != nil {
+		if err := (daemonMaps{c.conn()}).removeMonitorMember(ctx, hosts, name); err != nil {
 			return fmt.Errorf("remove monitor %s from native membership: %w", name, err)
 		}
 	}
@@ -373,11 +382,11 @@ func (c *Container) lockTopology(ctx context.Context) error {
 // config is read through Docker's archive API, which also works when stopped.
 func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, removedName string) error {
 	var status QuorumStatus
-	if err := c.poll(ctx, func() (bool, error) {
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		current, err := c.quorumStatus(ctx)
+		current, err := daemonMaps{c.conn()}.quorum(ctx)
 		if err != nil {
 			return false, err
 		}
@@ -706,7 +715,7 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 	if err != nil {
 		return mgr, err
 	}
-	if err := c.waitManagerRegistered(ctx, name); err != nil {
+	if err := (daemonMaps{c.conn()}).waitManagerRegistered(ctx, name); err != nil {
 		return mgr, err
 	}
 	if err := c.checkDualStackAddresses(ctx); err != nil {
@@ -722,7 +731,7 @@ func (c *Container) startManager(ctx context.Context, name, image string) (*Mana
 	if c.roster.manager(name) != nil {
 		return nil, fmt.Errorf("manager %s is already owned", name)
 	}
-	data, err := c.clientAuthCommand(ctx, "check manager identity", "auth", "ls", "--format", "json")
+	data, err := authStore{c.conn()}.clientCommand(ctx, "check manager identity", "auth", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -746,7 +755,7 @@ func (c *Container) startManager(ctx context.Context, name, image string) (*Mana
 	if _, registered := managerMapGID(status, name); registered {
 		return nil, fmt.Errorf("manager %s is already registered", name)
 	}
-	key, err := c.clientAuthCommand(ctx, "create manager identity", "auth", "get-or-create", "mgr."+name, "mon", "allow profile mgr", "osd", "allow *", "mds", "allow *")
+	key, err := authStore{c.conn()}.clientCommand(ctx, "create manager identity", "auth", "get-or-create", "mgr."+name, "mon", "allow profile mgr", "osd", "allow *", "mds", "allow *")
 	if err != nil {
 		return nil, err
 	}
@@ -769,9 +778,9 @@ func (c *Container) startManager(ctx context.Context, name, image string) (*Mana
 
 // waitManagerRegistered waits until the MGR is the available active MGR or a
 // standby.
-func (c *Container) waitManagerRegistered(ctx context.Context, name string) error {
-	if err := c.poll(ctx, func() (bool, error) {
-		status, err := readManagerStatus(ctx, c.conn().ceph)
+func (dm daemonMaps) waitManagerRegistered(ctx context.Context, name string) error {
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
+		status, err := readManagerStatus(ctx, dm.conn.ceph)
 		if status.ActiveName == name && status.Available {
 			return true, err
 		}
@@ -855,14 +864,14 @@ func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer)
 			return fmt.Errorf("remove manager %s from the manager map: %w", name, err)
 		}
 	}
-	if err := c.poll(ctx, func() (bool, error) {
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
 		status, err := readManagerStatus(ctx, c.conn().ceph)
 		_, present := managerMapGID(status, name)
 		return !present && status.Available && candidates[status.ActiveName], err
 	}); err != nil {
 		return fmt.Errorf("wait for manager replacement after removing %s: %w", name, err)
 	}
-	if _, err := c.clientAuthCommand(ctx, "delete manager identity", "auth", "del", "mgr."+name); err != nil {
+	if _, err := (authStore{c.conn()}).clientCommand(ctx, "delete manager identity", "auth", "del", "mgr."+name); err != nil {
 		return err
 	}
 	c.roster.dropManager(name)
@@ -902,12 +911,12 @@ const monitorRemovalObserveInterval = 500 * time.Millisecond
 // the reply forwarded to the CLI, which then waits for its deadline. While the
 // command runs, fresh membership reads that no longer list name count as the
 // commit and end the wait. The command is never resent.
-func (c *Container) removeMonitorMember(ctx context.Context, hosts, name string) error {
+func (dm daemonMaps) removeMonitorMember(ctx context.Context, hosts, name string) error {
 	command, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := c.conn().ceph(command, "-m", hosts, "mon", "remove", name)
+		_, err := dm.conn.ceph(command, "-m", hosts, "mon", "remove", name)
 		done <- err
 	}()
 	ticker := time.NewTicker(monitorRemovalObserveInterval)
@@ -917,7 +926,7 @@ func (c *Container) removeMonitorMember(ctx context.Context, hosts, name string)
 		case err := <-done:
 			return err
 		case <-ticker.C:
-			status, err := c.quorumStatus(command)
+			status, err := dm.quorum(command)
 			if err != nil || len(status.MonMap.Mons) == 0 {
 				continue
 			}

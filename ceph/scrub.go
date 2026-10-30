@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 )
 
 // InconsistentObject is one object reported by the last deep scrub of a PG.
@@ -103,7 +105,7 @@ func (c *Container) scrubPG(ctx context.Context, pgid PGID, operation string) (s
 		return "", err
 	}
 	var state string
-	err = c.poll(ctx, func() (bool, error) {
+	err = clusterutil.Poll(ctx, func() (bool, error) {
 		if err := c.lockTopology(ctx); err != nil {
 			return false, err
 		}
@@ -125,7 +127,7 @@ func (c *Container) pgScrubReport(ctx context.Context, pgid PGID) (time.Time, st
 		return time.Time{}, "", err
 	}
 	poolID, _, _ := strings.Cut(string(pgid), ".")
-	pools, err := c.poolStates(ctx)
+	pools, err := poolCatalog{c.conn()}.states(ctx)
 	if err != nil {
 		return time.Time{}, "", err
 	}

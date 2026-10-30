@@ -193,7 +193,7 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 	// A successful result always identifies its native pool. If the ID cannot
 	// be read, the pool exists but no handle may claim it by name later, so
 	// the result is an error that still carries the handle for cleanup.
-	state, err := c.poolState(ctx, pool.Name)
+	state, err := poolCatalog{c.conn()}.state(ctx, pool.Name)
 	if err != nil {
 		return pool, fmt.Errorf("pool %q was created but its native ID could not be read; the handle is not bound to the pool and binds to the pool of that name at its first successful operation: %w", pool.Name, err)
 	}

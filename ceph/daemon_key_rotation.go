@@ -123,7 +123,7 @@ func (call *authCall) send(ctx context.Context, command map[string]any, input []
 	out, err := call.c.conn().rotationCommand(ctx, argv...)
 	if err != nil {
 		if _, unconfirmed := supervised.Unconfirmed(err); unconfirmed {
-			call.c.fenceUnstopped(call.c.authRecords.fenceFor(call.entity), call.c.conn().cliContainer(), err)
+			call.c.authRecords.fenceFor(call.entity).recordUnstopped(call.c.conn().cliContainer(), err)
 			call.unstopped = true
 		}
 		return out, fmt.Errorf("%s %s: %w", prefix, call.entity, err)
@@ -241,7 +241,7 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 	}()
 	r := daemonRotation{c: c, call: call, daemon: daemon, ctr: ctr, keyrings: keyrings}
 
-	before, err := c.authKeys(ctx, "get", daemon)
+	before, err := authStore{c.conn()}.keys(ctx, "get", daemon)
 	if err != nil {
 		return err
 	}
@@ -323,7 +323,7 @@ func (r daemonRotation) pendingKey(ctx context.Context, before struct{ Key, Pend
 func (r daemonRotation) abandon(ctx context.Context, next string, cause error) error {
 	readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
 	defer readCancel()
-	if keys, err := r.c.authKeys(readCtx, "get", r.daemon); err == nil && keys.Key == next && keys.PendingKey == "" {
+	if keys, err := (authStore{r.c.conn()}).keys(readCtx, "get", r.daemon); err == nil && keys.Key == next && keys.PendingKey == "" {
 		if err := r.c.writeDaemonKeyrings(readCtx, r.ctr, r.daemon, next, r.keyrings); err != nil {
 			return errors.Join(cause, fmt.Errorf("%s restarted with the new key, which the MONs committed, but not all of its keyring files could get it: %w", r.daemon, err))
 		}
@@ -365,7 +365,7 @@ func (r daemonRotation) handOff(ctx context.Context, control testcontainers.Cont
 	// While the CLI may run, it may deliver the key to any later process
 	// too, so handedTo stays unknown until a later call stops it.
 	fence.handedKey, fence.handedTo, fence.handedDone = next, "", false
-	if !c.fenceUnstopped(fence, control, tellErr) {
+	if !fence.recordUnstopped(control, tellErr) {
 		// The handoff has ended, so it can reach only the process that
 		// runs now, or none.
 		if after, err := r.ctr.State(cleanupCtx); err == nil && after != nil {
@@ -392,7 +392,7 @@ func (r daemonRotation) commit(ctx context.Context, current, next string, remove
 			return errors.Join(fmt.Errorf("commit the new key of %s, which the daemon holds: %w; the commit may still apply, and the MONs accept the new key either way", daemon, commitErr), settleErr, removeErr)
 		}
 	}
-	after, readErr := r.c.authKeys(cleanupCtx, "get", daemon)
+	after, readErr := authStore{r.c.conn()}.keys(cleanupCtx, "get", daemon)
 	if readErr == nil && after.Key == next && after.PendingKey == "" {
 		if fence := r.c.authRecords.fence(daemon); fence != nil && fence.handedKey == next {
 			fence.handedDone = true
@@ -408,10 +408,10 @@ func (r daemonRotation) commit(ctx context.Context, current, next string, remove
 	return errors.Join(fmt.Errorf("commit the new key of %s: %w; the keys changed in an unexpected way, inspect ceph auth get %s", daemon, commitErr, daemon), readErr, removeErr)
 }
 
-// fenceUnstopped records the supervised invocation of err in fence when its
-// end is unconfirmed: its cancellation failed, or a signal killed its
+// recordUnstopped records the supervised invocation of err in the fence when
+// its end is unconfirmed: its cancellation failed, or a signal killed its
 // supervisor before its cleanup. It reports whether it did.
-func (c *Container) fenceUnstopped(fence *authFence, ctr testcontainers.Container, err error) bool {
+func (fence *authFence) recordUnstopped(ctr testcontainers.Container, err error) bool {
 	marker, unconfirmed := supervised.Unconfirmed(err)
 	if unconfirmed {
 		fence.running = append(fence.running, rotationRun{ctr: ctr, marker: marker})
@@ -491,10 +491,10 @@ func (c *Container) stopRotationRun(ctx context.Context, run rotationRun) error 
 	return err
 }
 
-// authKeys runs ceph auth <verb> daemon, which must not change anything, and
+// keys runs ceph auth <verb> daemon, which must not change anything, and
 // returns its key and pending key.
-func (c *Container) authKeys(ctx context.Context, verb, daemon string) (struct{ Key, PendingKey string }, error) {
-	out, err := c.conn().rotationCommand(ctx, "ceph", "--connect-timeout", "5", "auth", verb, daemon, "--format", "json")
+func (as authStore) keys(ctx context.Context, verb, daemon string) (struct{ Key, PendingKey string }, error) {
+	out, err := as.conn.rotationCommand(ctx, "ceph", "--connect-timeout", "5", "auth", verb, daemon, "--format", "json")
 	if err != nil {
 		return struct{ Key, PendingKey string }{}, fmt.Errorf("auth %s %s: %w", verb, daemon, err)
 	}

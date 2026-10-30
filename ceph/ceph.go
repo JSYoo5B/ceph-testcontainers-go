@@ -324,7 +324,7 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 		}
 		// MON OSDMap state is available before the first MGR. Its captured UUIDs
 		// and up/in flags do not rely on MGR-produced PG or health statistics.
-		if err := c.poll(ctx, func() (bool, error) {
+		if err := clusterutil.Poll(ctx, func() (bool, error) {
 			states, err := c.osdStates(ctx)
 			if err != nil {
 				return false, err
@@ -340,7 +340,7 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 		}
 		return ctx.Err()
 	}
-	if err := c.poll(ctx, func() (bool, error) {
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
 		s, err := readStatus(ctx, c.conn().ceph)
 		return s.MgrMap.Available, err
 	}); err != nil {
@@ -568,10 +568,10 @@ func (c *Container) AddOSD(ctx context.Context, configs ...OSDOptions) (*OSDCont
 	if err := c.startOSD(ctx, launch); err != nil {
 		return launch.osd, err
 	}
-	if err := c.waitOSDsUp(ctx, []int{launch.osd.ID}); err != nil {
+	if err := (osdMap{c.conn()}).waitUp(ctx, []int{launch.osd.ID}); err != nil {
 		return launch.osd, err
 	}
-	return launch.osd, c.assignOSDDeviceClass(ctx, launch.osd)
+	return launch.osd, osdMap{c.conn()}.assignDeviceClass(ctx, launch.osd)
 }
 
 // osdLaunch is a registered, owned OSD and its immutable creation recipe.
@@ -694,8 +694,8 @@ func (c *Container) startOSD(ctx context.Context, launch osdLaunch) error {
 	return nil
 }
 
-// assignOSDDeviceClass applies the configured class of an OSD that is up.
-func (c *Container) assignOSDDeviceClass(ctx context.Context, osd *OSDContainer) error {
+// assignDeviceClass applies the configured class of an OSD that is up.
+func (om osdMap) assignDeviceClass(ctx context.Context, osd *OSDContainer) error {
 	if osd.placement.DeviceClass == "" {
 		return nil
 	}
@@ -705,7 +705,7 @@ func (c *Container) assignOSDDeviceClass(ctx context.Context, osd *OSDContainer)
 		{"osd", "crush", "rm-device-class", fmt.Sprintf("osd.%d", osd.ID)},
 		{"osd", "crush", "set-device-class", osd.placement.DeviceClass, fmt.Sprintf("osd.%d", osd.ID)},
 	} {
-		if _, err := c.conn().ceph(ctx, args...); err != nil {
+		if _, err := om.conn.ceph(ctx, args...); err != nil {
 			return fmt.Errorf("assign osd.%d device class: %w", osd.ID, err)
 		}
 	}
@@ -785,7 +785,7 @@ func (c *Container) checkOSDRemovable(ctx context.Context, osd *OSDContainer) er
 	if err != nil || expected == uuid.Nil {
 		return fmt.Errorf("osd.%d registration UUID is unavailable", id)
 	}
-	dump, err := c.removalOSDDump(ctx)
+	dump, err := osdMap{c.conn()}.removalDump(ctx)
 	if err != nil {
 		return err
 	}
@@ -863,11 +863,11 @@ func (c *Container) drainAndPurgeOSD(ctx context.Context, osd *OSDContainer) err
 // Native reads and each mutation remain inside the serialized removal. A
 // malformed/missing/replaced identity stops the operation immediately rather
 // than being polled until timeout and then mistaken for successful draining.
-func (c *Container) removalOSDDump(ctx context.Context) (osdPolicySnapshot, error) {
+func (om osdMap) removalDump(ctx context.Context) (osdPolicySnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return osdPolicySnapshot{}, err
 	}
-	dump, err := c.osdPolicyDump(ctx)
+	dump, err := om.policyDump(ctx)
 	if err != nil {
 		return dump, err
 	}
@@ -877,7 +877,7 @@ func (c *Container) removalOSDDump(ctx context.Context) (osdPolicySnapshot, erro
 // removalOSDState reads the native state of one OSD of an ongoing removal.
 // The caller holds c.mu.
 func (c *Container) removalOSDState(ctx context.Context, id int) (OSDState, error) {
-	dump, err := c.removalOSDDump(ctx)
+	dump, err := osdMap{c.conn()}.removalDump(ctx)
 	if err != nil {
 		return OSDState{}, err
 	}
@@ -1097,12 +1097,12 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	return errors.Join(errs...)
 }
 
-// waitOSDsUp waits until every OSD of ids is up and in. Its error names the
+// waitUp waits until every OSD of ids is up and in. Its error names the
 // OSDs that were not.
-func (c *Container) waitOSDsUp(ctx context.Context, ids []int) error {
+func (om osdMap) waitUp(ctx context.Context, ids []int) error {
 	pending := slices.Clone(ids)
-	err := c.poll(ctx, func() (bool, error) {
-		flags, err := c.osdUpIn(ctx)
+	err := clusterutil.Poll(ctx, func() (bool, error) {
+		flags, err := om.upIn(ctx)
 		if err != nil {
 			return false, err
 		}
@@ -1126,9 +1126,9 @@ func (c *Container) waitOSDsUp(ctx context.Context, ids []int) error {
 
 type osdFlags struct{ up, in bool }
 
-// osdUpIn returns the up and in flags of every OSD in the OSDMap.
-func (c *Container) osdUpIn(ctx context.Context) (map[int]osdFlags, error) {
-	result, err := c.conn().ceph(ctx, "osd", "dump", "--format", "json")
+// upIn returns the up and in flags of every OSD in the OSDMap.
+func (om osdMap) upIn(ctx context.Context) (map[int]osdFlags, error) {
+	result, err := om.conn.ceph(ctx, "osd", "dump", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -1152,10 +1152,6 @@ func (c *Container) osdUpIn(ctx context.Context) (map[int]osdFlags, error) {
 // A gracefully stopping MDS otherwise waits about five seconds; data in a
 // terminated cluster is never read again.
 const terminationStopTimeout = 2 * time.Second
-
-func (c *Container) poll(ctx context.Context, check func() (bool, error)) error {
-	return clusterutil.Poll(ctx, check)
-}
 
 func scriptFile(name string) testcontainers.ContainerFile {
 	data, err := scripts.ReadFile("internal/scripts/" + name + ".sh")

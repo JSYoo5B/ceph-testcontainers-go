@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/hookreg"
 )
 
@@ -116,7 +117,7 @@ func (overrideHooks) NormalizeBlocklistSession(address string) (string, error) {
 
 // BlocklistEntries reads the native blocklist. The caller holds the mutex.
 func (overrideHooks) BlocklistEntries(ctx context.Context, c *Container) ([]BlocklistEntry, error) {
-	return c.blocklistEntries(ctx)
+	return readBlocklistEntries(ctx, c.conn().ceph)
 }
 
 // BlocklistAdd adds one exact session to the native blocklist for duration.
@@ -160,7 +161,7 @@ func (overrideHooks) CheckDebugGeneration(owned bool, identity string, running, 
 // OSDMapFlags reads the flag tokens of the native OSDMap, sorted, with the
 // decode checks of the OSD policy dump. The caller holds the mutex.
 func (overrideHooks) OSDMapFlags(ctx context.Context, c *Container) ([]string, error) {
-	dump, err := c.osdPolicyDump(ctx)
+	dump, err := osdMap{c.conn()}.policyDump(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +171,7 @@ func (overrideHooks) OSDMapFlags(ctx context.Context, c *Container) ([]string, e
 // SetOSDFlag sets or unsets one global OSDMap flag. The caller holds the
 // mutex.
 func (overrideHooks) SetOSDFlag(ctx context.Context, c *Container, flag OSDFlag, enabled bool) error {
-	return c.setOSDFlag(ctx, flag, enabled)
+	return osdMap{c.conn()}.setFlag(ctx, flag, enabled)
 }
 
 // ValidMGRModuleName reports whether name can be a Ceph manager module name.
@@ -185,11 +186,11 @@ func (overrideHooks) ValidMGRModuleName(name string) bool {
 // cancellation is not admitted.
 func (overrideHooks) MGRModulesSnapshot(ctx context.Context, c *Container) ([]MGRModuleState, error) {
 	var modules []MGRModuleState
-	err := c.poll(ctx, func() (bool, error) {
+	err := clusterutil.Poll(ctx, func() (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		current, err := c.mgrModules(ctx)
+		current, err := readMGRModules(ctx, c.conn().ceph)
 		if err != nil {
 			return false, err
 		}
@@ -208,8 +209,8 @@ func (overrideHooks) MGRModulesSnapshot(ctx context.Context, c *Container) ([]MG
 // transient unavailable or old map is not proof that the MON membership
 // mutation failed; only native reads are retried, never the mutation.
 func (overrideHooks) WaitMGRModuleMembership(ctx context.Context, c *Container, name string, enabled, alwaysOn bool) error {
-	return c.poll(ctx, func() (bool, error) {
-		modules, err := c.mgrModules(ctx)
+	return clusterutil.Poll(ctx, func() (bool, error) {
+		modules, err := readMGRModules(ctx, c.conn().ceph)
 		if err != nil {
 			return false, err
 		}
@@ -334,19 +335,19 @@ func (overrideHooks) ConfigWho(setting ConfigSetting) string { return configWho(
 // ConfigEntries reads the central configuration database. The caller holds
 // the mutex.
 func (overrideHooks) ConfigEntries(ctx context.Context, c *Container) ([]ConfigEntry, error) {
-	return c.configuration(ctx)
+	return readConfiguration(ctx, c.conn().ceph)
 }
 
 // ConfigSet stores value for a normalized setting. The caller holds the mutex.
 func (overrideHooks) ConfigSet(ctx context.Context, c *Container, setting ConfigSetting, value string) error {
-	_, err := c.configCommand(ctx, "set", configWho(setting), setting.Name, value)
+	_, err := runConfigCommand(ctx, c.conn().ceph, "set", configWho(setting), setting.Name, value)
 	return err
 }
 
 // ConfigRemove removes the entry of a normalized setting. The caller holds the
 // mutex.
 func (overrideHooks) ConfigRemove(ctx context.Context, c *Container, setting ConfigSetting) error {
-	_, err := c.configCommand(ctx, "rm", configWho(setting), setting.Name)
+	_, err := runConfigCommand(ctx, c.conn().ceph, "rm", configWho(setting), setting.Name)
 	return err
 }
 

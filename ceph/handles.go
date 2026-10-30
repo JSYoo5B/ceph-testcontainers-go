@@ -150,7 +150,7 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	dump, err := c.osdPolicyDump(ctx)
+	dump, err := osdMap{c.conn()}.policyDump(ctx)
 	if err != nil {
 		return err
 	}
@@ -168,7 +168,7 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if _, err := c.conn().ceph(ctx, "osd", op, strconv.Itoa(id)); err != nil {
 		return err
 	}
-	dump, err = c.osdPolicyDump(ctx)
+	dump, err = osdMap{c.conn()}.policyDump(ctx)
 	if err != nil {
 		return err
 	}

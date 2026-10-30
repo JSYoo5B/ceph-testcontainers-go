@@ -320,7 +320,7 @@ func (client *ClientConfig) Delete(ctx context.Context) error {
 			c.authRecords.dropRevocation(client.name)
 			c.authRecords.confirmKey(client.name, "")
 		}
-		current, err := c.readClientRecord(ctx, client.name)
+		current, err := authStore{c.conn()}.readRecord(ctx, client.name)
 		switch {
 		case err != nil:
 			return err
@@ -337,7 +337,7 @@ func (client *ClientConfig) Delete(ctx context.Context) error {
 	if err := c.checkCurrentClient(client); err != nil {
 		return err
 	}
-	current, err := c.readClientRecord(ctx, client.name)
+	current, err := authStore{c.conn()}.readRecord(ctx, client.name)
 	if err != nil {
 		return err
 	}

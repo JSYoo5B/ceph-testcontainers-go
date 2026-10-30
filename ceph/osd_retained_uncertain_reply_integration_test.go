@@ -71,7 +71,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 	retainedUncertainBytes(t, ctx, client, pool.Name, "seed")
 	// The cluster is new, so noout is unset; the flag is set and cleared
 	// directly because a test of package ceph cannot import package override.
-	if err := c.setOSDFlag(ctx, OSDFlagNoOut, true); err != nil {
+	if err := (osdMap{c.conn()}).setFlag(ctx, OSDFlagNoOut, true); err != nil {
 		t.Fatal(err)
 	}
 	detached, err := c.DetachOSD(ctx, original.ID)
@@ -135,14 +135,14 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 	// Observe native registration and data through healthy control/client paths.
 	// Never invoke a method on candidate's nil embedded Container or claim the
 	// unknown replacement CID is fenced against network-attached callers.
-	if err := c.waitOSDsUp(ctx, []int{original.ID}); err != nil {
+	if err := (osdMap{c.conn()}).waitUp(ctx, []int{original.ID}); err != nil {
 		t.Fatal(err)
 	}
 	state, err := c.removalOSDState(ctx, original.ID)
 	if err != nil || state.UUID != detached.UUID() || !state.Up || !state.In {
 		t.Fatal("native reopened registration differs", state, err)
 	}
-	fsid, err := c.clusterFSID(ctx)
+	fsid, err := osdMap{c.conn()}.fsid(ctx)
 	if err != nil || fsid != detached.ClusterFSID() {
 		t.Fatal("native cluster FSID changed", err)
 	}
@@ -150,7 +150,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	retainedUncertainBytes(t, ctx, client, pool.Name, "readback")
-	if err := c.setOSDFlag(ctx, OSDFlagNoOut, false); err != nil {
+	if err := (osdMap{c.conn()}).setFlag(ctx, OSDFlagNoOut, false); err != nil {
 		t.Fatal(err)
 	}
 	// The module knows no container handle for this candidate. Only its normal
