@@ -2,7 +2,6 @@ package multisite
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
@@ -242,23 +241,15 @@ func (f *Fixture) syncPolicyReadyBucket(ctx context.Context, zone *rgwZoneState,
 	if err != nil {
 		return false, false, err
 	}
-	if _, err := syncJSON(data); err != nil {
+	native, err := syncJSON(data)
+	if err != nil {
 		return false, true, err
 	}
-	var native struct {
-		ID        nativeString `json:"id"`
-		Bucket    nativeString `json:"bucket"`
-		Tenant    nativeString `json:"tenant"`
-		Zonegroup nativeString `json:"zonegroup"`
-	}
-	if err := json.Unmarshal(data, &native); err != nil {
-		return false, true, err
-	}
-	id := native.ID.value
+	id := nativeMember(native, "id").value
 	if id == "" {
 		return false, true, errors.New("RGW destination bucket statistics lack a native instance identity")
 	}
-	if !native.Bucket.is(bucket.Name) || !native.Tenant.is(bucket.Tenant) || !native.Zonegroup.is(g.groupID) {
+	if !nativeMember(native, "bucket").is(bucket.Name) || !nativeMember(native, "tenant").is(bucket.Tenant) || !nativeMember(native, "zonegroup").is(g.groupID) {
 		return false, true, errors.New("RGW destination bucket namespace or zonegroup identity differs")
 	}
 	if id != bucket.ID {

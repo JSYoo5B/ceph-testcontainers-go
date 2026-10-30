@@ -583,6 +583,14 @@ func TestRGWBucketInstanceMatchesOnlyItsExactNativeIdentity(t *testing.T) {
 		"bucket_info string": func(string) string { return `{"key":"bucket.instance:input:id-1","data":{"bucket_info":"input"}}` },
 		"no bucket_info":     func(string) string { return `{"key":"bucket.instance:input:id-1","data":{}}` },
 		"data not an object": func(string) string { return `{"key":"bucket.instance:input:id-1","data":[]}` },
+		// A later null for a repeated key wins, as in the native map; an
+		// earlier valid value must not survive it.
+		"repeated tenant then null": func(s string) string { return strings.Replace(s, `"tenant":""`, `"tenant":"","tenant":null`, 1) },
+		// Only the exact native key names the bucket; a case alias is ignored.
+		"case alias name": func(s string) string { return strings.Replace(s, `"name":"input"`, `"name":"other","NAME":"input"`, 1) },
+		"case alias key": func(s string) string {
+			return strings.Replace(s, `"key":"bucket.instance:input:id-1"`, `"key":"x","KEY":"bucket.instance:input:id-1"`, 1)
+		},
 	} {
 		if _, matched, err := decodeBucketInstance([]byte(edit(doc)), "input:id-1", g); matched || err != nil {
 			t.Errorf("%s: matched %v, err %v", name, matched, err)
@@ -593,6 +601,15 @@ func TestRGWBucketInstanceMatchesOnlyItsExactNativeIdentity(t *testing.T) {
 	odd, matched, err := decodeBucketInstance([]byte(strings.Replace(doc, `"owner":"alice"`, `"owner":{"id":"alice"}`, 1)), "input:id-1", g)
 	if err != nil || !matched || odd.Owner.set || odd.Owner.is("") {
 		t.Fatalf("object owner: %+v, %v, %v", odd, matched, err)
+	}
+	for name, edit := range map[string]string{
+		"repeated owner then null": `"owner":"alice","owner":null`,
+		"case alias owner":         `"owner":"mallory","OWNER":"alice"`,
+	} {
+		odd, matched, err := decodeBucketInstance([]byte(strings.Replace(doc, `"owner":"alice"`, edit, 1)), "input:id-1", g)
+		if err != nil || !matched || odd.Owner.is("alice") {
+			t.Errorf("%s: owner %+v, matched %v, err %v", name, odd.Owner, matched, err)
+		}
 	}
 	if _, _, err := decodeBucketInstance([]byte(strings.Replace(doc, `"groups":[`, `"groups":{"x":[`, 1)+"}"), "input:id-1", g); err == nil {
 		t.Fatal("a malformed instance document was accepted")

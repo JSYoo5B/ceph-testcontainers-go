@@ -714,53 +714,41 @@ func decodeBucketInstance(data []byte, key string, g *SyncGroup) (*rgwBucketInst
 	if err != nil {
 		return nil, false, err
 	}
-	var native struct {
-		Key  nativeString `json:"key"`
-		Data struct {
-			BucketInfo *struct {
-				Bucket struct {
-					Name     nativeString `json:"name"`
-					Tenant   nativeString `json:"tenant"`
-					BucketID nativeString `json:"bucket_id"`
-				} `json:"bucket"`
-				Zonegroup     nativeString `json:"zonegroup"`
-				Owner         nativeString `json:"owner"`
-				PlacementRule nativeString `json:"placement_rule"`
-			} `json:"bucket_info"`
-		} `json:"data"`
-	}
-	// A data or bucket_info member that is not an object fails here, which
-	// leaves the identity unmatched.
-	if json.Unmarshal(data, &native) != nil || native.Data.BucketInfo == nil {
+	// Identity members are read from the decoded document by their exact
+	// native key: a typed decode would match keys case-insensitively and keep
+	// an earlier value of a repeated key.
+	info := nativeObject(nativeObject(metadata, "data"), "bucket_info")
+	bucket := nativeObject(info, "bucket")
+	if info == nil || !nativeMember(metadata, "key").is("bucket.instance:"+key) || !nativeMember(bucket, "name").is(g.scope.Bucket) ||
+		!nativeMember(bucket, "tenant").is(g.scope.Tenant) || !nativeMember(bucket, "bucket_id").is(g.bucketID) || !nativeMember(info, "zonegroup").is(g.groupID) {
 		return nil, false, nil
 	}
-	info, bucket := native.Data.BucketInfo, native.Data.BucketInfo.Bucket
-	if !native.Key.is("bucket.instance:"+key) || !bucket.Name.is(g.scope.Bucket) || !bucket.Tenant.is(g.scope.Tenant) || !bucket.BucketID.is(g.bucketID) || !info.Zonegroup.is(g.groupID) {
-		return nil, false, nil
-	}
-	body, _ := metadata["data"].(map[string]any)
-	document, _ := body["bucket_info"].(map[string]any)
-	policy, err := syncPolicyFromDocument(document)
+	policy, err := syncPolicyFromDocument(info)
 	if err != nil {
 		return nil, true, err
 	}
-	return &rgwBucketInstance{Owner: info.Owner, PlacementRule: info.PlacementRule, policy: policy}, true, nil
+	return &rgwBucketInstance{Owner: nativeMember(info, "owner"), PlacementRule: nativeMember(info, "placement_rule"), policy: policy}, true, nil
 }
 
-// nativeString is a native JSON member that is meaningful only as a string.
-// Another value, null or a missing member leaves it unset instead of failing
-// the whole document, so a comparison with it fails.
+// nativeString is a native JSON member that is meaningful only as a string. A
+// member that is missing, null or of another type is unset, so a comparison
+// with it fails.
 type nativeString struct {
 	value string
 	set   bool
 }
 
-func (s *nativeString) UnmarshalJSON(data []byte) error {
-	var value string
-	if string(data) != "null" && json.Unmarshal(data, &value) == nil {
-		s.value, s.set = value, true
-	}
-	return nil
+// nativeMember reads the member of document named exactly key; encoding/json
+// has already kept the last of repeated keys, as the native comparison did.
+func nativeMember(document map[string]any, key string) nativeString {
+	value, ok := document[key].(string)
+	return nativeString{value: value, set: ok}
+}
+
+// nativeObject returns the object member named exactly key, or nil.
+func nativeObject(document map[string]any, key string) map[string]any {
+	value, _ := document[key].(map[string]any)
+	return value
 }
 
 // is reports whether the member is the string want.
