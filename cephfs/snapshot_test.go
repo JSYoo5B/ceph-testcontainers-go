@@ -133,7 +133,7 @@ func TestCephFSSnapshotPartialCreateAndCloneDuplicate(t *testing.T) {
 	if err := snapshot.Remove(t.Context()); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("partial snapshot granted removal")
 	}
-	fs, ctr, _, snapshot = snapshotFixture(t)
+	_, ctr, _, snapshot = snapshotFixture(t)
 	ctr.Output["fs subvolume ls fixture --group_name restores --format json"] = `[{"name":"copy"}]`
 	clone, err := snapshot.Clone(t.Context(), CloneConfig{Name: "copy", GroupName: "restores"})
 	if err == nil || clone != nil {

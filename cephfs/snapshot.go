@@ -116,9 +116,6 @@ func (subvolume *Subvolume) Snapshots(ctx context.Context) ([]string, error) {
 	if subvolume == nil {
 		return nil, errors.New("subvolume is unavailable")
 	}
-	if err := fs.validateVolumeHandle(subvolume.identity); err != nil {
-		return nil, err
-	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
 	if err != nil {
 		return nil, err
@@ -144,9 +141,6 @@ func (subvolume *Subvolume) CreateSnapshot(ctx context.Context, name string) (*S
 	}
 	if subvolume == nil {
 		return nil, errors.New("subvolume is unavailable")
-	}
-	if err := fs.validateVolumeHandle(subvolume.identity); err != nil {
-		return nil, err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
 	if err != nil {
@@ -249,13 +243,6 @@ func (fs *Filesystem) subvolumeSnapshotInfo(ctx context.Context, subvolumeName, 
 	return info, nil
 }
 
-func (fs *Filesystem) validateSnapshotHandle(snapshot *SubvolumeSnapshot) error {
-	if snapshot == nil || snapshot.identity == nil || !snapshot.identity.ready {
-		return servicehook.Invalid(errors.New("snapshot must be a confirmed resource created by this filesystem"))
-	}
-	return fs.validateVolumeHandle(snapshot.identity.subvolume)
-}
-
 func (fs *Filesystem) checkSnapshotIdentity(ctx context.Context, fsID int64, identity *cephFSSnapshotIdentity) (*SubvolumeSnapshotInfo, error) {
 	if identity.removed {
 		return nil, errors.New("subvolume snapshot has been removed")
@@ -280,9 +267,6 @@ func (fs *Filesystem) checkSnapshotIdentity(ctx context.Context, fsID int64, ide
 func (snapshot *SubvolumeSnapshot) Remove(ctx context.Context) error {
 	fs, err := snapshot.filesystem()
 	if err != nil {
-		return err
-	}
-	if err := fs.validateSnapshotHandle(snapshot); err != nil {
 		return err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
@@ -337,9 +321,6 @@ func (snapshot *SubvolumeSnapshot) Clone(ctx context.Context, config CloneConfig
 		return nil, err
 	}
 	if err := fs.validateSubvolumeConfig(config.Name, config.GroupName, config.DataPool, 0); err != nil {
-		return nil, err
-	}
-	if err := fs.validateSnapshotHandle(snapshot); err != nil {
 		return nil, err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)

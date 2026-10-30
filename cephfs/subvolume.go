@@ -519,9 +519,6 @@ func (group *SubvolumeGroup) Resize(ctx context.Context, sizeBytes int64) error 
 	if group == nil {
 		return errors.New("subvolume group is unavailable")
 	}
-	if err := fs.validateVolumeHandle(group.identity); err != nil {
-		return err
-	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
 	if err != nil {
 		return err
@@ -555,9 +552,6 @@ func (subvolume *Subvolume) Resize(ctx context.Context, sizeBytes int64) error {
 	if subvolume == nil {
 		return errors.New("subvolume is unavailable")
 	}
-	if err := fs.validateVolumeHandle(subvolume.identity); err != nil {
-		return err
-	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
 	if err != nil {
 		return err
@@ -588,9 +582,6 @@ func (group *SubvolumeGroup) Remove(ctx context.Context) error {
 	}
 	if group == nil {
 		return errors.New("subvolume group is unavailable")
-	}
-	if err := fs.validateVolumeHandle(group.identity); err != nil {
-		return err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
 	if err != nil {
@@ -640,9 +631,6 @@ func (subvolume *Subvolume) Remove(ctx context.Context) error {
 	}
 	if subvolume == nil {
 		return errors.New("subvolume is unavailable")
-	}
-	if err := fs.validateVolumeHandle(subvolume.identity); err != nil {
-		return err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
 	if err != nil {

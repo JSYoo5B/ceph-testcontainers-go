@@ -84,9 +84,6 @@ func (volume *Subvolume) Authorize(ctx context.Context, config SubvolumeAuthoriz
 	if volume == nil {
 		return nil, errors.New("subvolume is required")
 	}
-	if err := fs.validateVolumeHandle(volume.identity); err != nil {
-		return nil, err
-	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
 	if err != nil {
 		return nil, err
@@ -391,13 +388,6 @@ func (identity *cephFSAuthorizationIdentity) withoutOwnedClauses(caps map[string
 	return result, nil
 }
 
-func (fs *Filesystem) validateSubvolumeAuthorization(grant *SubvolumeAuthorization) error {
-	if fs == nil || fs.cluster == nil || grant == nil || grant.identity == nil || grant.identity.volume == nil || grant.identity.volume.filesystem != fs || !grant.identity.authorizeAttempted {
-		return servicehook.Invalid(errors.New("subvolume authorization must be an owned grant attempted by this filesystem"))
-	}
-	return nil
-}
-
 // Deauthorize removes only this native path/pool/namespace grant and
 // volumes metadata. It verifies the original volume, layout and principal key;
 // unrelated capabilities and the key are preserved unless native Ceph deletes
@@ -410,9 +400,6 @@ func (fs *Filesystem) validateSubvolumeAuthorization(grant *SubvolumeAuthorizati
 func (grant *SubvolumeAuthorization) Deauthorize(ctx context.Context) error {
 	fs, err := grant.filesystem()
 	if err != nil {
-		return err
-	}
-	if err := fs.validateSubvolumeAuthorization(grant); err != nil {
 		return err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
@@ -480,9 +467,6 @@ func (grant *SubvolumeAuthorization) Deauthorize(ctx context.Context) error {
 func (grant *SubvolumeAuthorization) EvictClients(ctx context.Context) error {
 	fs, err := grant.filesystem()
 	if err != nil {
-		return err
-	}
-	if err := fs.validateSubvolumeAuthorization(grant); err != nil {
 		return err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
