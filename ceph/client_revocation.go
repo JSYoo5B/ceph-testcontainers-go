@@ -41,32 +41,6 @@ func (r ClientRevocationHandle) String() string {
 // GoString excludes credentials from formatted Go representations as well.
 func (r ClientRevocationHandle) GoString() string { return r.String() }
 
-// revokeClient implements ClientConfig.Revoke, which documents the behavior.
-func (c *Container) revokeClient(ctx context.Context, client *ClientConfig) (*ClientRevocationHandle, error) {
-	if err := c.lockTopology(ctx); err != nil {
-		return nil, err
-	}
-	defer c.mu.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	current, err := c.ownedClientRecord(ctx, client, "revocation")
-	if err != nil {
-		return nil, err
-	}
-	state := &clientRevocationState{client: client, original: current}
-	revocation := &ClientRevocationHandle{owner: c, state: state}
-	c.authRecords.setRevocation(client.name, state)
-	_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, func() {})
-	switch {
-	case err == nil:
-		return revocation, nil
-	case c.authRecords.fence(client.name) != nil:
-		return revocation, err
-	}
-	c.authRecords.dropRevocation(client.name)
-	return nil, err
-}
-
 // Restore puts back the identity's original key and capabilities and makes
 // its descriptor usable again. It succeeds again once restored, as long as
 // the identity still holds them. It refuses an identity that was created

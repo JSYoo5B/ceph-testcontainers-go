@@ -139,7 +139,47 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if err != nil {
 		return err
 	}
-	return c.setOSDIn(ctx, o, in)
+	id := o.ID
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return err
+	}
+	if err := c.currentOSD(o); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	defer cancel()
+	dump, err := c.osdPolicyDump(ctx)
+	if err != nil {
+		return err
+	}
+	state, err := c.ownedOSDState(dump, id)
+	if err != nil {
+		return err
+	}
+	if state.In == in {
+		return nil
+	}
+	op := "out"
+	if in {
+		op = "in"
+	}
+	if _, err := c.cephCLI(ctx, "osd", op, strconv.Itoa(id)); err != nil {
+		return err
+	}
+	dump, err = c.osdPolicyDump(ctx)
+	if err != nil {
+		return err
+	}
+	state, err = c.ownedOSDState(dump, id)
+	if err != nil {
+		return err
+	}
+	if state.In != in {
+		return fmt.Errorf("osd.%d membership readback differs from requested in=%v", id, in)
+	}
+	return nil
 }
 
 // Detach stops and removes this owned OSD's container but keeps its store in

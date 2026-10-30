@@ -16,43 +16,6 @@ var allowPoolDeleteSetting = ConfigSetting{Section: "mon", Name: "mon_allow_pool
 // errPoolMissing marks a name with neither a pool nor fixture leftovers.
 var errPoolMissing = errors.New("pool does not exist")
 
-// removePoolByHandle implements Pool.Remove. It deletes a pool created by CreatePool or WithPools, together with
-// the CRUSH rule and erasure-code profile created for it, so a long-lived
-// cluster can give each test its own pool without reaching PG limits. Pools
-// that Ceph or a service created (.mgr, RGW zone pools, CephFS pools) and
-// pools still used by a CephFS filesystem are refused. Every object in the
-// pool is destroyed, including RBD images and namespaces; stop clients and
-// mirroring that use it first. mon_allow_pool_delete is enabled in the
-// central database only while the pool is removed and then restored; a local
-// config file that sets it to false blocks removal. Ownership is recognized by
-// the pool's tc-<name>-replicated or tc-<name>-ec CRUSH rule, so a pool that
-// Pool.SetPlacement moved to another rule is refused until it moves back;
-// placement rules are not removed. A retry after an error finishes removing
-// whichever owned resources remain. External edits to the pool must not race
-// this call.
-func (c *Container) removePoolByHandle(ctx context.Context, name string, handle *Pool) error {
-	if err := validateExistingPoolName(name); err != nil {
-		return err
-	}
-	if err := c.lockTopology(ctx); err != nil {
-		return err
-	}
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	if err := handle.matchLocked(name, -1); err != nil {
-		return err
-	}
-	if err := c.removePool(ctx, name, false, handle); err != nil {
-		return err
-	}
-	handle.ident.removed = true
-	return nil
-}
-
 // removePool is called with c.mu held. With skipForeign, a pool that the
 // fixture did not create is left alone instead of being reported.
 func (c *Container) removePool(ctx context.Context, name string, skipForeign bool, handle *Pool) error {

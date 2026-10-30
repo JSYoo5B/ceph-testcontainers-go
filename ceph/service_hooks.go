@@ -3,6 +3,7 @@ package ceph
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
@@ -51,10 +52,34 @@ func (serviceHooks) Command(ctx context.Context, ctr testcontainers.Container, a
 	return command(ctx, ctr, args...)
 }
 
-// RunOwnedShell runs argv in an admitted container of c under the shell
-// supervisor and tracks it until it is known to have ended.
+// RunOwnedShell runs argv in target, a container of c that the caller
+// admitted while it holds the cluster mutex, under the shell supervisor with
+// limit seconds (0 for none). The invocation is tracked like a
+// RunNativeCommand's: when ctx ends first, the command is stopped before
+// RunOwnedShell returns, and a stop that cannot be confirmed returns a
+// NativeCommandUnstoppedError, whose Stop and Terminate retry it. Terminate
+// cancels a running call. label names the command in errors.
 func (serviceHooks) RunOwnedShell(ctx context.Context, c *Container, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error) {
-	return c.runOwnedShell(ctx, target, label, limit, argv...)
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, stopCommand: supervised.CancelShell, done: make(chan struct{})}
+	// An owned shell has no target instance, which no fence can name, so the
+	// fence check of admit never refuses it.
+	if c.nativeCmds.admit(inv, nil) == nativeRefusedClosed {
+		return supervised.ShellReport{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
+	}
+	report, err := supervised.RunShell(runCtx, target, label, limit, argv...)
+	unstopped, _ := supervised.Unconfirmed(err)
+	c.nativeCmds.finish(inv, unstopped, unstopped != "")
+	close(inv.done)
+	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(runCtx), errNativeTerminated) {
+		err = fmt.Errorf("%s: %w: %w", label, errNativeTerminated, err)
+	}
+	err = safeNativeError(err)
+	if unstopped != "" {
+		return supervised.ShellReport{}, &NativeCommandUnstoppedError{invocation: inv, err: err}
+	}
+	return report, err
 }
 
 // ServiceBootstrap returns the Run option that records a service bootstrap.

@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
-	"time"
 )
 
 // PoolPlacement selects the CRUSH hierarchy of a replicated pool after creation.
@@ -18,122 +16,6 @@ type PoolPlacement struct {
 	FailureDomain string
 	CRUSHRoot     string
 	DeviceClass   string
-}
-
-// setPoolPGCount implements Pool.SetPGCount. It requests a new PG count for an existing pool with autoscaling
-// off or warn. It records both native pg_num and pgp_num targets; the active
-// manager then splits or merges PGs in steps, and merges wait for clean PGs.
-// Success means the targets were accepted, not that PGs have changed. Use
-// Pool.WaitForPGCount for the count and WaitForClean for the resulting movement.
-// Without an active manager the targets remain pending. The native pool ID is
-// checked before each mutation; on partial failure inspect Pool.Status. Native
-// per-OSD PG limits can still reject the request.
-func (c *Container) setPoolPGCount(ctx context.Context, name string, handle *Pool, pgNum int) error {
-	if err := validateExistingPoolName(name); err != nil {
-		return err
-	}
-	if err := validatePoolPGCount(pgNum); err != nil {
-		return err
-	}
-	if err := c.lockTopology(ctx); err != nil {
-		return err
-	}
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	pool, err := c.handlePoolState(ctx, name, handle)
-	if err != nil {
-		return err
-	}
-	if pool.AutoscaleMode == "on" {
-		return fmt.Errorf("pool %q has PG autoscaling on; it would replace the requested PG count", name)
-	}
-	// pg_num first: native pgp_num targets cannot exceed the pg_num target.
-	for _, setting := range []string{"pg_num", "pgp_num"} {
-		if err := c.checkPoolID(ctx, pool); err != nil {
-			return err
-		}
-		if _, err := c.cephCLI(ctx, "osd", "pool", "set", name, setting, strconv.Itoa(pgNum)); err != nil {
-			return fmt.Errorf("set pool %q %s target (earlier settings may have changed): %w", name, setting, err)
-		}
-	}
-	return nil
-}
-
-// waitForPoolPGCount implements Pool.WaitForPGCount. It waits until the native pool reports pgNum as its current,
-// pending and target PG and PGP counts and the manager reports exactly pgNum
-// PGs for it. Until then WaitForClean can pass on the previous PG set. It
-// identifies the pool by the native ID first observed and fails if the name is
-// later bound to another pool. The count does not imply clean PGs, completed
-// backfill or data visibility; call WaitForClean afterwards or use Pool.PGs.
-// Cluster startup timeout applies.
-func (c *Container) waitForPoolPGCount(ctx context.Context, name string, handle *Pool, pgNum int) error {
-	if err := validateExistingPoolName(name); err != nil {
-		return err
-	}
-	if err := validatePoolPGCount(pgNum); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	var last error
-	poolID := int64(-1)
-	for {
-		if err := c.lockTopology(ctx); err != nil {
-			return errors.Join(err, last)
-		}
-		if err := c.waitPolicyReady(ctx); err != nil {
-			c.mu.Unlock()
-			if ctx.Err() != nil {
-				return errors.Join(ctx.Err(), last, err)
-			}
-			return err
-		}
-		pool, err := c.handlePoolState(ctx, name, handle)
-		if handle != nil && err != nil && errors.Is(err, errStalePool) {
-			c.mu.Unlock()
-			return err
-		}
-		replaced := err == nil && poolID >= 0 && pool.ID != poolID
-		reported := 0
-		if err == nil && !replaced && poolPGCountReached(pool, pgNum) {
-			reported, err = c.reportedPoolPGs(ctx, pool)
-		}
-		c.mu.Unlock()
-		if replaced {
-			return fmt.Errorf("pool %q was replaced while waiting for its PG count", name)
-		}
-		if err == nil {
-			poolID = pool.ID
-			switch {
-			case pool.PGNumTarget == 0 || pool.PGPlacementNumTarget == 0 || pool.PGNumPending == 0:
-				err = fmt.Errorf("pool %q does not report native PG targets", name)
-			case !poolPGCountReached(pool, pgNum):
-				err = fmt.Errorf("pool %q PG count is %d/%d (pgp %d/%d, pending %d); waiting for %d",
-					name, pool.PGNum, pool.PGNumTarget, pool.PGPlacementNum, pool.PGPlacementNumTarget, pool.PGNumPending, pgNum)
-			case reported != pgNum:
-				err = fmt.Errorf("pool %q reports %d PGs; waiting for %d", name, reported, pgNum)
-			default:
-				return nil
-			}
-		}
-		// Keep the last observation made before the deadline; a canceled
-		// command error would hide why the count was not reached.
-		if err := ctx.Err(); err != nil {
-			return errors.Join(err, last)
-		}
-		last = err
-		select {
-		case <-ctx.Done():
-			return errors.Join(ctx.Err(), last)
-		case <-ticker.C:
-		}
-	}
 }
 
 // The OSDMap can reach a count before the manager reports the new PGs. Until
@@ -164,73 +46,6 @@ func poolPGCountReached(pool PoolState, pgNum int) bool {
 func validatePoolPGCount(pgNum int) error {
 	if pgNum < 1 || pgNum > 65536 {
 		return invalid(errors.New("pool PG count must be between 1 and 65536"))
-	}
-	return nil
-}
-
-// setPoolPlacement implements Pool.SetPlacement. It moves a replicated pool to a simple osd/host/rack CRUSH rule.
-// The size and min_size are unchanged and the new placement needs enough owned
-// eligible domains in the native CRUSH map. It reuses the pool's CreatePool rule
-// or an earlier rule from this method when its native steps match; otherwise it
-// creates tc-<pool>-placement-<hash>. Rules are not deleted, so a pool can move
-// back. Success means the pool references the rule; data moves asynchronously.
-// Until PG reports reflect the new map, WaitForClean can pass on the previous
-// placement, so poll Pool.PGs for the expected up/acting sets. Holding both
-// nobackfill and norecover with override.SetOSDFlag keeps the move incomplete;
-// nobackfill alone does not stop log-based recovery of small PGs. EC rules are
-// bound to their profile and are refused. External pool/CRUSH edits must not
-// race this call.
-func (c *Container) setPoolPlacement(ctx context.Context, name string, handle *Pool, placement PoolPlacement) error {
-	if err := validateExistingPoolName(name); err != nil {
-		return err
-	}
-	desired, err := normalizePoolPlacement(name, placement)
-	if err != nil {
-		return err
-	}
-	if err := c.lockTopology(ctx); err != nil {
-		return err
-	}
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	pool, err := c.handlePoolState(ctx, name, handle)
-	if err != nil {
-		return err
-	}
-	if pool.Type != "replicated" {
-		return errors.New("placement changes require a replicated pool")
-	}
-	if current, err := c.poolRulePlacement(ctx, pool.CRUSHRule); err == nil && samePoolPlacement(current, desired) {
-		return nil
-	}
-	domains, err := c.nativePoolDomains(ctx, desired)
-	if err != nil {
-		return err
-	}
-	if domains < pool.Size {
-		return fmt.Errorf("pool %q needs %d owned %s domains; native CRUSH placement has %d eligible owned domains", name, pool.Size, desired.FailureDomain, domains)
-	}
-	rule, exists, err := c.poolPlacementRule(ctx, name, desired)
-	if err != nil {
-		return err
-	}
-	if err := c.checkPoolID(ctx, pool); err != nil {
-		return err
-	}
-	if !exists {
-		if _, err := c.cephCLI(ctx, replicatedCRUSHRuleCommand(desired, rule)...); err != nil {
-			return fmt.Errorf("create placement rule for pool %q: %w", name, err)
-		}
-	}
-	if err := c.checkPoolID(ctx, pool); err != nil {
-		return err
-	}
-	if _, err := c.cephCLI(ctx, "osd", "pool", "set", name, "crush_rule", rule); err != nil {
-		return fmt.Errorf("set pool %q CRUSH rule %q: %w", name, rule, err)
 	}
 	return nil
 }
