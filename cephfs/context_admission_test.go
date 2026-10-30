@@ -158,7 +158,7 @@ func TestCephFSContextPinAdmissionDeadline(t *testing.T) {
 					},
 				}
 				key := change.state.path + "\x00" + string(change.setting.Type)
-				fs.pinOverrides = map[string]*PinOverrideHandle{key: change}
+				fs.pins = pinOverrides{byField: map[string]*PinOverrideHandle{key: change}}
 				control.policies[change.state.path].ExportRank = 1
 				assertCephFSContextAdmissionGate(t, fs.cluster, gate, func(ctx context.Context) error {
 					switch operation {
@@ -173,7 +173,7 @@ func TestCephFSContextPinAdmissionDeadline(t *testing.T) {
 					}
 				})
 				if len(control.calls) != 0 || len(control.native.Calls) != 0 || len(control.mutations) != 0 ||
-					change.state.restored || len(fs.pinOverrides) != 1 || fs.pinOverrides[key] != change ||
+					change.state.restored || len(fs.pins.byField) != 1 || fs.pins.byField[key] != change ||
 					control.policies[change.state.path].ExportRank != 1 ||
 					control.policies[change.state.path].Distributed {
 					t.Fatal("queued pin operation queried native state, changed policy or lost the recovery handle")

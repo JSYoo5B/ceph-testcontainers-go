@@ -498,10 +498,10 @@ func TestMDSRosterReadersHoldTheirLock(t *testing.T) {
 }
 
 // TestMDSRosterAddsNoMutex pins the number of mutexes of package cephfs. The
-// roster split moved fields, not locks: setupMu, snapshotScheduleMu and the
-// schedule lease mutex are the only three, and mdsRoster declares none.
+// roster split moved fields, not locks: setupMu, the schedule lease set mutex and
+// the schedule lease mutex are the only three, and mdsRoster declares none.
 func TestMDSRosterAddsNoMutex(t *testing.T) {
-	const want = 3 // filesystemRegistry.setupMu, Filesystem.snapshotScheduleMu, SnapshotScheduleLease.mu
+	const want = 3 // filesystemRegistry.setupMu, scheduleLeases.mu, SnapshotScheduleLease.mu
 	got, inRoster := 0, 0
 	for _, parsed := range parseCephFSProductionFiles(t) {
 		for _, decl := range parsed.Decls {

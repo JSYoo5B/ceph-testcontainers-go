@@ -153,16 +153,9 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 		filesystem: fs, rules: map[string]int{}, cleared: map[string]bool{}}
 	// Two leases of one directory would each take the other's schedule for
 	// their own.
-	fs.snapshotScheduleMu.Lock()
-	if fs.scheduledPaths[schedule.Path] != nil {
-		fs.snapshotScheduleMu.Unlock()
+	if !fs.schedules.reserve(lease) {
 		return nil, servicehook.Invalid(fmt.Errorf("directory %s already has a snapshot schedule lease", schedule.Path))
 	}
-	if fs.scheduledPaths == nil {
-		fs.scheduledPaths = map[string]*SnapshotScheduleLease{}
-	}
-	fs.scheduledPaths[schedule.Path] = lease
-	fs.snapshotScheduleMu.Unlock()
 	existing, err := fs.volumes().snapshotScheduleStatuses(ctx, schedule.Path)
 	if err == nil && len(existing) > 0 {
 		err = servicehook.Invalid(fmt.Errorf("directory %s already has %d snapshot schedules", schedule.Path, len(existing)))
@@ -215,11 +208,39 @@ func nonNil(m map[string]int) map[string]int {
 }
 
 // release lets another lease schedule the directory.
-func (l *SnapshotScheduleLease) release() {
-	l.filesystem.snapshotScheduleMu.Lock()
-	defer l.filesystem.snapshotScheduleMu.Unlock()
-	if l.filesystem.scheduledPaths[l.Path] == l {
-		delete(l.filesystem.scheduledPaths, l.Path)
+func (l *SnapshotScheduleLease) release() { l.filesystem.schedules.release(l) }
+
+// scheduleLeases is the set of directories of one filesystem that hold a
+// snapshot schedule lease not restored yet. Two leases of one directory would
+// each take the other's schedule for their own, so a directory holds at most
+// one. Its own mutex guards the set; it is a leaf lock, taken for the map
+// update alone and never while a native command runs.
+type scheduleLeases struct {
+	mu    sync.Mutex
+	paths map[string]*SnapshotScheduleLease
+}
+
+// reserve records lease for its directory and reports false when another
+// lease already holds it.
+func (s *scheduleLeases) reserve(lease *SnapshotScheduleLease) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.paths[lease.Path] != nil {
+		return false
+	}
+	if s.paths == nil {
+		s.paths = map[string]*SnapshotScheduleLease{}
+	}
+	s.paths[lease.Path] = lease
+	return true
+}
+
+// release frees the directory of lease, unless another lease holds it.
+func (s *scheduleLeases) release(lease *SnapshotScheduleLease) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.paths[lease.Path] == lease {
+		delete(s.paths, lease.Path)
 	}
 }
 

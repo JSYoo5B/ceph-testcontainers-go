@@ -165,7 +165,7 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 		return nil, err
 	}
 	key := base + "\x00" + string(setting.Type)
-	if fs.pinOverrides[key] != nil {
+	if fs.pins.tracked(key) != nil {
 		return nil, errors.New("restore the existing directory pin override for this field first")
 	}
 	prior, err := fs.volumes().readPinPolicy(ctx, base)
@@ -191,10 +191,7 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 	change := &PinOverrideHandle{filesystem: fs, target: target, setting: setting, state: &cephFSPinOverrideState{
 		path: base, inode: prior.Inode, previous: cephFSPinValue(prior, setting.Type), applied: canonicalCephFSPinValue(setting),
 	}}
-	if fs.pinOverrides == nil {
-		fs.pinOverrides = make(map[string]*PinOverrideHandle)
-	}
-	fs.pinOverrides[key] = change
+	fs.pins.track(key, change)
 	if change.state.previous == change.state.applied {
 		return change, nil
 	}
@@ -233,7 +230,7 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 		return nil
 	}
 	key := change.state.path + "\x00" + string(change.setting.Type)
-	if tracked := fs.pinOverrides[key]; tracked == nil || tracked.state != change.state {
+	if tracked := fs.pins.tracked(key); tracked == nil || tracked.state != change.state {
 		return errors.New("directory pin override is not tracked by this filesystem")
 	}
 	current, err := fs.readAndCheckPinTarget(ctx, fsID, change.target, change.state.path, change.state.inode)
@@ -243,7 +240,7 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 	value := cephFSPinValue(current, change.setting.Type)
 	if value == change.state.previous {
 		change.state.restored = true
-		delete(fs.pinOverrides, key)
+		fs.pins.forget(key)
 		return nil
 	}
 	if value != change.state.applied {
@@ -260,7 +257,7 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 		return errors.New("directory pin restoration readback differs from prior policy")
 	}
 	change.state.restored = true
-	delete(fs.pinOverrides, key)
+	fs.pins.forget(key)
 	return nil
 }
 
@@ -424,3 +421,26 @@ finally:
     fs.shutdown()
     deadline.cancel()
 `
+
+// pinOverrides is the set of directory pin overrides of one filesystem that
+// are not restored yet, keyed by directory and pin field: one override per
+// field, so an override never captures another's applied value as its
+// previous one. The setup gate taken by every subvolume operation serializes
+// its use, so it has no lock of its own.
+type pinOverrides struct {
+	byField map[string]*PinOverrideHandle
+}
+
+// tracked returns the override of key, or nil.
+func (p *pinOverrides) tracked(key string) *PinOverrideHandle { return p.byField[key] }
+
+// track records change as the override of key.
+func (p *pinOverrides) track(key string, change *PinOverrideHandle) {
+	if p.byField == nil {
+		p.byField = make(map[string]*PinOverrideHandle)
+	}
+	p.byField[key] = change
+}
+
+// forget drops the override of key once it is restored.
+func (p *pinOverrides) forget(key string) { delete(p.byField, key) }

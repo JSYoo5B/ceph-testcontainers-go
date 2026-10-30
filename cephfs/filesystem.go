@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -71,12 +70,11 @@ type Filesystem struct {
 	roster          mdsRoster
 	nativeIdentity  *cephFSNativeIdentity
 	coldMDS         *cephFSColdMDS
-	pinOverrides    map[string]*PinOverrideHandle
+	pins            pinOverrides
 	sessionTimeouts *cephFSSessionTimeoutsState
-	// scheduledPaths holds the directories with a snapshot schedule lease
-	// that is not restored yet.
-	snapshotScheduleMu sync.Mutex
-	scheduledPaths     map[string]*SnapshotScheduleLease
+	// schedules holds the directories with a snapshot schedule lease that is
+	// not restored yet.
+	schedules scheduleLeases
 }
 
 // MDSStatus records a metadata daemon's current native FSMap identity. GID
