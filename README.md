@@ -142,6 +142,8 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 
 Guides for tasks that span packages:
 
+- [API purpose and classification](docs/guides/api-purpose.md): what the API
+  is for, its categories, and where each package's API falls.
 - [Fault injection](docs/guides/fault-injection.md): stopping, pausing and
   disconnecting daemons and clients, delaying or dropping messages, fencing,
   full clusters and damaged replicas.
