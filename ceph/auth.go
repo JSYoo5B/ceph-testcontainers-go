@@ -160,7 +160,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	if err := c.settleClient(ctx, entity); err != nil {
+	if err := c.authLedger().settleClient(ctx, entity); err != nil {
 		return nil, err
 	}
 	if c.authRecords.revocation(entity) != nil {

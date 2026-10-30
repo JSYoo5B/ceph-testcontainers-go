@@ -262,13 +262,13 @@ func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) {
 // is only settled, for the service's own reconciliation. The caller holds the
 // cluster mutex.
 func (serviceHooks) SettleClient(ctx context.Context, c *Container, client *ClientConfig) error {
-	if err := c.settleClient(ctx, client.name); err != nil {
+	if err := c.authLedger().settleClient(ctx, client.name); err != nil {
 		return err
 	}
 	if client.revoked {
 		return nil
 	}
-	return c.checkCurrentClient(client)
+	return c.authLedger().checkCurrentClient(client)
 }
 
 // MonitorAddresses returns the bootstrap addresses of the monitors in quorum.

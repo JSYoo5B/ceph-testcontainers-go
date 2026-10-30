@@ -107,24 +107,24 @@ func keyCipher(key string) (CephxCipher, error) {
 // settleClient makes sure that nothing an earlier call left for the client
 // entity can still change its auth entry, and resolves what it changed. The
 // caller holds c.mu.
-func (c *Container) settleClient(ctx context.Context, entity string) error {
-	c.removeStrayAuthInputs(ctx)
-	fence := c.authRecords.fence(entity)
+func (l authLedger) settleClient(ctx context.Context, entity string) error {
+	l.removeStrayAuthInputs(ctx)
+	fence := l.authRecords.fence(entity)
 	if fence == nil {
 		return nil
 	}
-	if err := c.stopEarlierAuthCommands(ctx, entity); err != nil {
+	if err := l.stopEarlierAuthCommands(ctx, entity); err != nil {
 		return err
 	}
 	if len(fence.clients) > 0 {
-		if err := c.monitorSettling().settle(ctx, fence.clients); err != nil {
+		if err := l.monitorSettling().settle(ctx, fence.clients); err != nil {
 			return fmt.Errorf("an earlier call left a MON command for %s that may still apply, and the MONs cannot be settled yet: %w", entity, err)
 		}
-		_, _ = c.conn().rotationCommand(ctx, append([]string{"rm", "-f"}, fence.clients...)...)
+		_, _ = l.conn.rotationCommand(ctx, append([]string{"rm", "-f"}, fence.clients...)...)
 		fence.clients = nil
 	}
 	if transition := fence.transition; transition != nil {
-		record, err := authStore{c.conn()}.readRecord(ctx, entity)
+		record, err := authStore{l.conn}.readRecord(ctx, entity)
 		if err != nil {
 			return err
 		}
@@ -133,11 +133,11 @@ func (c *Container) settleClient(ctx context.Context, entity string) error {
 		case record.equal(transition.to):
 			transition.applied()
 		case !record.equal(transition.from):
-			c.authRecords.dropFence(entity)
+			l.authRecords.dropFence(entity)
 			return fmt.Errorf("the auth entry of %s changed outside this module while an earlier change was uncertain; inspect ceph auth get %s", entity, entity)
 		}
 	}
-	c.authRecords.dropFence(entity)
+	l.authRecords.dropFence(entity)
 	return nil
 }
 
@@ -146,10 +146,10 @@ func (c *Container) settleClient(ctx context.Context, entity string) error {
 // true once the MONs show to. An outcome that stays uncertain is recorded in
 // the entity's fence with applied, which runs once a later call finds to;
 // the error then says so. The caller holds c.mu.
-func (c *Container) changeClient(ctx context.Context, entity string, command map[string]any, input []byte, from, to clientRecord, applied func()) (bool, error) {
+func (l authLedger) changeClient(ctx context.Context, entity string, command map[string]any, input []byte, from, to clientRecord, applied func()) (bool, error) {
 	prefix, _ := command["prefix"].(string)
 	operation := prefix + " " + entity
-	call := &authCall{c: c, entity: entity}
+	call := &authCall{l: l, entity: entity}
 	_, sendErr := call.send(ctx, command, input)
 	cause := errors.New(operation + " answered")
 	if sendErr != nil {
@@ -161,10 +161,10 @@ func (c *Container) changeClient(ctx context.Context, entity string, command map
 	err := call.settle(settleCtx)
 	var record clientRecord
 	if err == nil {
-		record, err = authStore{c.conn()}.readRecord(settleCtx, entity)
+		record, err = authStore{l.conn}.readRecord(settleCtx, entity)
 	}
 	if err != nil {
-		c.authRecords.fenceFor(entity).transition = &clientTransition{from: from, to: to, applied: applied}
+		l.authRecords.fenceFor(entity).transition = &clientTransition{from: from, to: to, applied: applied}
 		return false, errors.Join(cause, fmt.Errorf("whether it applied is not known yet; the next operation on %s settles that first: %w", entity, err))
 	}
 	switch {
@@ -189,10 +189,10 @@ func (c *Container) ownedClientRecord(ctx context.Context, client *ClientConfig,
 	if client == nil || client.owner != c || !client.created || !client.ready || client.revoked {
 		return clientRecord{}, errors.New("cephx client must be an active identity created by this cluster")
 	}
-	if err := c.settleClient(ctx, client.name); err != nil {
+	if err := c.authLedger().settleClient(ctx, client.name); err != nil {
 		return clientRecord{}, err
 	}
-	if err := c.checkCurrentClient(client); err != nil {
+	if err := c.authLedger().checkCurrentClient(client); err != nil {
 		return clientRecord{}, err
 	}
 	current, err := authStore{c.conn()}.readRecord(ctx, client.name)
@@ -208,17 +208,17 @@ func (c *Container) ownedClientRecord(ctx context.Context, client *ClientConfig,
 // checkCurrentClient refuses an active descriptor whose key is no longer
 // the identity's, or whose identity has a change that is not resolved yet.
 // The caller holds c.mu and has settled the identity when it could.
-func (c *Container) checkCurrentClient(client *ClientConfig) error {
+func (l authLedger) checkCurrentClient(client *ClientConfig) error {
 	if client.replacedBy != nil {
 		return invalid(fmt.Errorf("cephx client %s has a new key; ClientConfig.ReplaceKey with this descriptor returns the current one", client.name))
 	}
-	if c.authRecords.fence(client.name) != nil {
+	if l.authRecords.fence(client.name) != nil {
 		return invalid(fmt.Errorf("an earlier change of cephx client %s is not resolved yet; a call that can run commands, such as ClientConfig.Capabilities, resolves it", client.name))
 	}
-	if c.authRecords.revocation(client.name) != nil {
+	if l.authRecords.revocation(client.name) != nil {
 		return invalid(fmt.Errorf("cephx client %s is revoked temporarily; Restore its revocation first", client.name))
 	}
-	if key, ok := c.authRecords.confirmedKey(client.name); !ok || key != clientKey(client.keyring, client.name) {
+	if key, ok := l.authRecords.confirmedKey(client.name); !ok || key != clientKey(client.keyring, client.name) {
 		return invalid(fmt.Errorf("cephx client %s is stale: the identity has another key or was deleted", client.name))
 	}
 	return nil

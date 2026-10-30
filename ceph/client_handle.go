@@ -38,7 +38,7 @@ func (client *ClientConfig) WithIdentity(opts ...ClientContainerOptions) testcon
 		if !client.ready || client.revoked || len(client.keyring) == 0 {
 			return errors.New("cephx client must be an active identity")
 		}
-		if err := c.checkCurrentClient(client); err != nil {
+		if err := c.authLedger().checkCurrentClient(client); err != nil {
 			return err
 		}
 		if c.settings.hostNetwork {
@@ -111,7 +111,7 @@ func (client *ClientConfig) UpdateCaps(ctx context.Context, caps ClientCaps) err
 	for i := 0; i < len(args); i += 2 {
 		target.caps[args[i]] = args[i+1]
 	}
-	_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth caps", "entity": client.name, "caps": args}, nil, current, target, func() {})
+	_, err = c.authLedger().changeClient(ctx, client.name, map[string]any{"prefix": "auth caps", "entity": client.name, "caps": args}, nil, current, target, func() {})
 	return err
 }
 
@@ -164,7 +164,7 @@ func (client *ClientConfig) ReplaceKey(ctx context.Context, opts ...ClientOption
 	if client == nil || client.owner != c || !client.created || !client.ready || client.revoked {
 		return nil, errors.New("cephx client must be an active identity created by this cluster")
 	}
-	if err := c.settleClient(ctx, client.name); err != nil {
+	if err := c.authLedger().settleClient(ctx, client.name); err != nil {
 		return nil, err
 	}
 	if next := client.replacedBy; next != nil {
@@ -205,7 +205,7 @@ func (client *ClientConfig) ReplaceKey(ctx context.Context, opts ...ClientOption
 	}
 	target := current
 	target.key, target.keyring = key, keyring
-	_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth import"}, keyring, current, target, func() {
+	_, err = c.authLedger().changeClient(ctx, client.name, map[string]any{"prefix": "auth import"}, keyring, current, target, func() {
 		// A descriptor is complete when it is returned, because its
 		// ConnectionConfig reads it without the cluster's lock.
 		client.replacedBy = &ClientConfig{owner: c, name: client.name, config: bytes.Clone(client.config),
@@ -265,7 +265,7 @@ func (client *ClientConfig) Revoke(ctx context.Context) (*ClientRevocationHandle
 	state := &clientRevocationState{client: client, original: current}
 	revocation := &ClientRevocationHandle{owner: c, state: state}
 	c.authRecords.setRevocation(client.name, state)
-	_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, func() {})
+	_, err = c.authLedger().changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, func() {})
 	switch {
 	case err == nil:
 		return revocation, nil
@@ -302,7 +302,7 @@ func (client *ClientConfig) Delete(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	if err := c.settleClient(ctx, client.name); err != nil {
+	if err := c.authLedger().settleClient(ctx, client.name); err != nil {
 		return err
 	}
 	if _, ok := c.authRecords.confirmedKey(client.name); client.revoked || !ok {
@@ -330,11 +330,11 @@ func (client *ClientConfig) Delete(ctx context.Context) error {
 		case !current.equal(revocation.original):
 			return invalid(fmt.Errorf("cephx identity %s was created again with another key or other capabilities; refusing revocation", client.name))
 		}
-		_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, deleted)
+		_, err = c.authLedger().changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, deleted)
 		return err
 	}
 	// A creation that failed after auth add applied can be revoked as well.
-	if err := c.checkCurrentClient(client); err != nil {
+	if err := c.authLedger().checkCurrentClient(client); err != nil {
 		return err
 	}
 	current, err := authStore{c.conn()}.readRecord(ctx, client.name)
@@ -344,7 +344,7 @@ func (client *ClientConfig) Delete(ctx context.Context) error {
 	if !current.exists || current.key != clientKey(client.keyring, client.name) {
 		return invalid(fmt.Errorf("cephx identity %s has a different key; refusing revocation", client.name))
 	}
-	_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, func() {
+	_, err = c.authLedger().changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, func() {
 		client.revoked = true
 		c.authRecords.confirmKey(client.name, "")
 	})

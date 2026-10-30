@@ -79,7 +79,7 @@ sys.exit(0 if ret==0 else 1)
 // entry of entity, such as one RotateKey or ClientConfig.ReplaceKey call, until
 // they are settled. The caller holds c.mu.
 type authCall struct {
-	c      *Container
+	l      authLedger
 	entity string
 	// clients holds the nonce files of the call's mutations.
 	clients []string
@@ -98,7 +98,7 @@ func (call *authCall) mutate(ctx context.Context, verb string) ([]byte, error) {
 // not nil, as the command's input, and returns its output. The input goes
 // to a file in the control container that send removes again.
 func (call *authCall) send(ctx context.Context, command map[string]any, input []byte) ([]byte, error) {
-	call.c.removeStrayAuthInputs(ctx)
+	call.l.removeStrayAuthInputs(ctx)
 	prefix, _ := command["prefix"].(string)
 	path := "/tmp/tc-auth-" + uuid.NewString()
 	encoded, err := json.Marshal(command)
@@ -107,10 +107,10 @@ func (call *authCall) send(ctx context.Context, command map[string]any, input []
 	}
 	argv := []string{"python3", "-c", monitorMutationScript, path + ".client", string(encoded)}
 	if input != nil {
-		if err := call.c.conn().cliContainer().CopyToContainer(ctx, input, path+".in", 0o600); err != nil {
+		if err := call.l.conn.cliContainer().CopyToContainer(ctx, input, path+".in", 0o600); err != nil {
 			// Docker may complete the copy after its request failed, also
 			// after the removal below, so later calls remove it again.
-			call.c.authRecords.addStray(path+".in", true)
+			call.l.authRecords.addStray(path+".in", true)
 			call.removeInput(ctx, path+".in")
 			return nil, fmt.Errorf("%s %s: copy the input: %w", prefix, call.entity, err)
 		}
@@ -120,10 +120,10 @@ func (call *authCall) send(ctx context.Context, command map[string]any, input []
 		defer call.removeInput(ctx, path+".in")
 	}
 	call.clients = append(call.clients, path+".client")
-	out, err := call.c.conn().rotationCommand(ctx, argv...)
+	out, err := call.l.conn.rotationCommand(ctx, argv...)
 	if err != nil {
 		if _, unconfirmed := supervised.Unconfirmed(err); unconfirmed {
-			call.c.authRecords.fenceFor(call.entity).recordUnstopped(call.c.conn().cliContainer(), err)
+			call.l.authRecords.fenceFor(call.entity).recordUnstopped(call.l.conn.cliContainer(), err)
 			call.unstopped = true
 		}
 		return out, fmt.Errorf("%s %s: %w", prefix, call.entity, err)
@@ -136,8 +136,8 @@ func (call *authCall) send(ctx context.Context, command map[string]any, input []
 func (call *authCall) removeInput(ctx context.Context, path string) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
 	defer cancel()
-	if _, err := call.c.conn().rotationCommand(cleanupCtx, "rm", "-f", path); err != nil {
-		call.c.authRecords.addStray(path, false)
+	if _, err := call.l.conn.rotationCommand(cleanupCtx, "rm", "-f", path); err != nil {
+		call.l.authRecords.addStray(path, false)
 	}
 }
 
@@ -145,15 +145,15 @@ func (call *authCall) removeInput(ctx context.Context, path string) {
 // not remove for sure. A file whose copy failed is removed again by every
 // later call, since nothing tells when Docker gave up on it. The caller holds
 // c.mu.
-func (c *Container) removeStrayAuthInputs(ctx context.Context) {
-	paths := c.authRecords.strayPaths()
+func (l authLedger) removeStrayAuthInputs(ctx context.Context) {
+	paths := l.authRecords.strayPaths()
 	if len(paths) == 0 {
 		return
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
 	defer cancel()
-	if _, err := c.conn().rotationCommand(cleanupCtx, append([]string{"rm", "-f"}, paths...)...); err == nil {
-		c.authRecords.forgetRemovedStrays()
+	if _, err := l.conn.rotationCommand(cleanupCtx, append([]string{"rm", "-f"}, paths...)...); err == nil {
+		l.authRecords.forgetRemovedStrays()
 	}
 }
 
@@ -177,13 +177,13 @@ func (call *authCall) settle(ctx context.Context) error {
 	var err error
 	if call.unstopped {
 		err = errors.New("a MON command of this call may still run; the next call stops it and settles the MONs first")
-	} else if err = call.c.monitorSettling().settle(ctx, clients); err == nil {
-		_, _ = call.c.conn().rotationCommand(ctx, append([]string{"rm", "-f"}, clients...)...)
+	} else if err = call.l.monitorSettling().settle(ctx, clients); err == nil {
+		_, _ = call.l.conn.rotationCommand(ctx, append([]string{"rm", "-f"}, clients...)...)
 		return nil
 	} else {
 		err = fmt.Errorf("a MON command of this call may still apply, so the next call settles the MONs first: %w", err)
 	}
-	fence := call.c.authRecords.fenceFor(call.entity)
+	fence := call.l.authRecords.fenceFor(call.entity)
 	fence.clients = append(fence.clients, clients...)
 	return err
 }
@@ -215,7 +215,7 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 		return invalid(fmt.Errorf("daemon %s is not owned by this cluster, or this handle is stale", daemon))
 	}
 	ctr, keyrings := c.daemonKeyrings(kind, id)
-	if err := c.stopEarlierAuthCommands(ctx, daemon); err != nil {
+	if err := c.authLedger().stopEarlierAuthCommands(ctx, daemon); err != nil {
 		return err
 	}
 	state, err := ctr.State(ctx)
@@ -225,11 +225,11 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 	if !state.Running || state.Paused {
 		return fmt.Errorf("daemon %s must be running to receive a new key", daemon)
 	}
-	if err := c.settleEarlierRotation(ctx, daemon, daemonIdentity(ctr, state)); err != nil {
+	if err := c.authLedger().settleEarlierRotation(ctx, daemon, daemonIdentity(ctr, state)); err != nil {
 		return err
 	}
 
-	call := &authCall{c: c, entity: daemon}
+	call := &authCall{l: c.authLedger(), entity: daemon}
 	defer func() {
 		// Whatever the outcome, no MON mutation of this call may apply later
 		// unless the daemon's fence records it.
@@ -239,7 +239,7 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 			err = errors.Join(err, settleErr)
 		}
 	}()
-	r := daemonRotation{c: c, call: call, daemon: daemon, ctr: ctr, keyrings: keyrings}
+	r := daemonRotation{l: c.authLedger(), call: call, daemon: daemon, ctr: ctr, keyrings: keyrings}
 
 	before, err := authStore{c.conn()}.keys(ctx, "get", daemon)
 	if err != nil {
@@ -252,7 +252,7 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 	if err != nil {
 		return err
 	}
-	if err := c.writeDaemonKeyrings(ctx, ctr, daemon, next, keyrings); err != nil {
+	if err := c.authLedger().writeDaemonKeyrings(ctx, ctr, daemon, next, keyrings); err != nil {
 		return r.abandon(ctx, next, err)
 	}
 	control, keyPath, err := r.stageKeyFile(ctx, next)
@@ -271,7 +271,7 @@ func (c *Container) rotateDaemonKey(ctx context.Context, handle daemonHandle) (e
 // the call's MON mutations. Its methods are the phases of rotateDaemonKey and
 // run inside its critical section. The caller holds c.mu.
 type daemonRotation struct {
-	c        *Container
+	l        authLedger
 	call     *authCall
 	daemon   string
 	ctr      testcontainers.Container
@@ -285,14 +285,14 @@ type daemonRotation struct {
 // daemon with another key. A pending key from an earlier call may already be
 // in the daemon or its keyring files, so a resumed rotation keeps it.
 func (r daemonRotation) finishEarlierHandoff(ctx context.Context, before struct{ Key, PendingKey string }) (done bool, err error) {
-	fence := r.c.authRecords.fence(r.daemon)
+	fence := r.l.authRecords.fence(r.daemon)
 	if fence == nil || fence.handedKey == "" || before.PendingKey == fence.handedKey {
 		return false, nil
 	}
 	if before.PendingKey == "" && before.Key == fence.handedKey && !fence.handedDone {
 		// The daemon authenticated with the handed key, and the MONs
 		// committed it: the rotation has finished with it.
-		if err := r.c.writeDaemonKeyrings(ctx, r.ctr, r.daemon, before.Key, r.keyrings); err != nil {
+		if err := r.l.writeDaemonKeyrings(ctx, r.ctr, r.daemon, before.Key, r.keyrings); err != nil {
 			return true, err
 		}
 		fence.handedDone = true
@@ -323,8 +323,8 @@ func (r daemonRotation) pendingKey(ctx context.Context, before struct{ Key, Pend
 func (r daemonRotation) abandon(ctx context.Context, next string, cause error) error {
 	readCtx, readCancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
 	defer readCancel()
-	if keys, err := (authStore{r.c.conn()}).keys(readCtx, "get", r.daemon); err == nil && keys.Key == next && keys.PendingKey == "" {
-		if err := r.c.writeDaemonKeyrings(readCtx, r.ctr, r.daemon, next, r.keyrings); err != nil {
+	if keys, err := (authStore{r.l.conn}).keys(readCtx, "get", r.daemon); err == nil && keys.Key == next && keys.PendingKey == "" {
+		if err := r.l.writeDaemonKeyrings(readCtx, r.ctr, r.daemon, next, r.keyrings); err != nil {
 			return errors.Join(cause, fmt.Errorf("%s restarted with the new key, which the MONs committed, but not all of its keyring files could get it: %w", r.daemon, err))
 		}
 		return nil
@@ -336,10 +336,10 @@ func (r daemonRotation) abandon(ctx context.Context, next string, cause error) e
 // which handOff gives it to the daemon. A copy that Docker completes after an
 // error only creates this file, which later calls remove.
 func (r daemonRotation) stageKeyFile(ctx context.Context, next string) (control testcontainers.Container, keyPath string, err error) {
-	control = r.c.conn().cliContainer()
+	control = r.l.conn.cliContainer()
 	keyPath = "/tmp/tc-rotate-" + uuid.NewString() + ".key"
 	if err := control.CopyToContainer(ctx, []byte(next), keyPath, 0o600); err != nil {
-		r.c.authRecords.addStray(keyPath, true)
+		r.l.authRecords.addStray(keyPath, true)
 		return nil, "", fmt.Errorf("copy the new key of %s: %w", r.daemon, err)
 	}
 	return control, keyPath, nil
@@ -350,18 +350,18 @@ func (r daemonRotation) stageKeyFile(ctx context.Context, next string) (control 
 // remove it, which later calls remove. A failed handoff records in the
 // daemon's fence that next may still reach the daemon.
 func (r daemonRotation) handOff(ctx context.Context, control testcontainers.Container, keyPath, next string) (removeErr, err error) {
-	c, daemon := r.c, r.daemon
-	_, tellErr := c.conn().rotationCommand(ctx, "ceph", "--connect-timeout", "5", "tell", daemon, "rotate-key", "-i", keyPath)
+	l, daemon := r.l, r.daemon
+	_, tellErr := l.conn.rotationCommand(ctx, "ceph", "--connect-timeout", "5", "tell", daemon, "rotate-key", "-i", keyPath)
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
 	defer cleanupCancel()
-	_, removeErr = c.conn().rotationCommand(cleanupCtx, "rm", "-f", keyPath)
+	_, removeErr = l.conn.rotationCommand(cleanupCtx, "rm", "-f", keyPath)
 	if removeErr != nil {
-		c.authRecords.addStray(keyPath, false)
+		l.authRecords.addStray(keyPath, false)
 	}
 	if tellErr == nil {
 		return removeErr, nil
 	}
-	fence := c.authRecords.fenceFor(daemon)
+	fence := l.authRecords.fenceFor(daemon)
 	// While the CLI may run, it may deliver the key to any later process
 	// too, so handedTo stays unknown until a later call stops it.
 	fence.handedKey, fence.handedTo, fence.handedDone = next, "", false
@@ -392,9 +392,9 @@ func (r daemonRotation) commit(ctx context.Context, current, next string, remove
 			return errors.Join(fmt.Errorf("commit the new key of %s, which the daemon holds: %w; the commit may still apply, and the MONs accept the new key either way", daemon, commitErr), settleErr, removeErr)
 		}
 	}
-	after, readErr := authStore{r.c.conn()}.keys(cleanupCtx, "get", daemon)
+	after, readErr := authStore{r.l.conn}.keys(cleanupCtx, "get", daemon)
 	if readErr == nil && after.Key == next && after.PendingKey == "" {
-		if fence := r.c.authRecords.fence(daemon); fence != nil && fence.handedKey == next {
+		if fence := r.l.authRecords.fence(daemon); fence != nil && fence.handedKey == next {
 			fence.handedDone = true
 		}
 		return removeErr
@@ -431,11 +431,11 @@ func daemonIdentity(ctr testcontainers.Container, state *container.State) string
 
 // stopEarlierAuthCommands makes sure that no command of an earlier call on
 // the auth entity still runs.
-func (c *Container) stopEarlierAuthCommands(ctx context.Context, daemon string) error {
-	fence := c.authRecords.fence(daemon)
+func (l authLedger) stopEarlierAuthCommands(ctx context.Context, daemon string) error {
+	fence := l.authRecords.fence(daemon)
 	for fence != nil && len(fence.running) > 0 {
 		run := fence.running[0]
-		if err := c.stopRotationRun(ctx, run); err != nil {
+		if err := l.stopRotationRun(ctx, run); err != nil {
 			return fmt.Errorf("a command of an earlier call on %s may still run and cannot be stopped yet: %w", daemon, err)
 		}
 		fence.running = fence.running[1:]
@@ -446,8 +446,8 @@ func (c *Container) stopEarlierAuthCommands(ctx context.Context, daemon string) 
 // settleEarlierRotation updates the handoff fence of daemon, whose process is
 // now identity, and settles the MONs when an earlier rotation left them
 // unsettled.
-func (c *Container) settleEarlierRotation(ctx context.Context, daemon, identity string) error {
-	fence := c.authRecords.fence(daemon)
+func (l authLedger) settleEarlierRotation(ctx context.Context, daemon, identity string) error {
+	fence := l.authRecords.fence(daemon)
 	if fence == nil {
 		return nil
 	}
@@ -461,22 +461,22 @@ func (c *Container) settleEarlierRotation(ctx context.Context, daemon, identity 
 		fence.handedKey, fence.handedTo, fence.handedDone = "", "", false
 	}
 	if len(fence.clients) > 0 {
-		if err := c.monitorSettling().settle(ctx, fence.clients); err != nil {
+		if err := l.monitorSettling().settle(ctx, fence.clients); err != nil {
 			return fmt.Errorf("an earlier rotation of %s left a MON command that may still apply, and the MONs cannot be settled yet: %w", daemon, err)
 		}
-		_, _ = c.conn().rotationCommand(ctx, append([]string{"rm", "-f"}, fence.clients...)...)
+		_, _ = l.conn.rotationCommand(ctx, append([]string{"rm", "-f"}, fence.clients...)...)
 		fence.clients = nil
 	}
 	if fence.handedKey == "" && len(fence.clients) == 0 && len(fence.running) == 0 {
-		c.authRecords.dropFence(daemon)
+		l.authRecords.dropFence(daemon)
 	}
 	return nil
 }
 
 // stopRotationRun returns once run can no longer run.
-func (c *Container) stopRotationRun(ctx context.Context, run rotationRun) error {
+func (l authLedger) stopRotationRun(ctx context.Context, run rotationRun) error {
 	if run.execID != "" {
-		return c.daemonExecs.finish(ctx, run.execID)
+		return l.daemonExecs.finish(ctx, run.execID)
 	}
 	// The canceler also confirms a command that ended with an earlier
 	// instance of a restarted container. A stopped container confirms
@@ -518,9 +518,9 @@ func daemonKeyring(daemon, key string) []byte {
 	return []byte("[" + daemon + "]\n\tkey = " + strings.TrimSpace(key) + "\n")
 }
 
-func (c *Container) writeDaemonKeyrings(ctx context.Context, ctr testcontainers.Container, daemon, key string, paths []string) error {
+func (l authLedger) writeDaemonKeyrings(ctx context.Context, ctr testcontainers.Container, daemon, key string, paths []string) error {
 	for _, path := range paths {
-		if err := c.placeDaemonKeyring(ctx, ctr, daemon, key, path); err != nil {
+		if err := l.placeDaemonKeyring(ctx, ctr, daemon, key, path); err != nil {
 			return err
 		}
 	}
@@ -532,12 +532,12 @@ func (c *Container) writeDaemonKeyrings(ctx context.Context, ctr testcontainers.
 // content goes to a new file first, which only a Docker exec of mv, whose end
 // RotateKey can confirm, renames into place. An exec that may still run
 // is recorded in the daemon's fence.
-func (c *Container) placeDaemonKeyring(ctx context.Context, ctr testcontainers.Container, daemon, key, path string) error {
+func (l authLedger) placeDaemonKeyring(ctx context.Context, ctr testcontainers.Container, daemon, key, path string) error {
 	staged := path + ".tc-" + uuid.NewString()
 	if err := ctr.CopyToContainer(ctx, daemonKeyring(daemon, key), staged, 0o600); err != nil {
 		return fmt.Errorf("write %s keyring %s: %w", daemon, path, err)
 	}
-	code, err := c.daemonExec(ctx, ctr, daemon, "mv", "-f", staged, path)
+	code, err := l.daemonExec(ctx, ctr, daemon, "mv", "-f", staged, path)
 	if err != nil {
 		return fmt.Errorf("write %s keyring %s: %w", daemon, path, err)
 	}
@@ -550,10 +550,10 @@ func (c *Container) placeDaemonKeyring(ctx context.Context, ctr testcontainers.C
 // daemonExec runs argv in ctr through Docker and returns its exit code once it
 // ended. When the end cannot be confirmed, the exec goes into the fence of
 // daemon and the error says so.
-func (c *Container) daemonExec(ctx context.Context, ctr testcontainers.Container, daemon string, argv ...string) (int, error) {
-	code, unended, err := c.daemonExecs.run(ctx, ctr, argv...)
+func (l authLedger) daemonExec(ctx context.Context, ctr testcontainers.Container, daemon string, argv ...string) (int, error) {
+	code, unended, err := l.daemonExecs.run(ctx, ctr, argv...)
 	if unended != "" {
-		fence := c.authRecords.fenceFor(daemon)
+		fence := l.authRecords.fenceFor(daemon)
 		fence.running = append(fence.running, rotationRun{ctr: ctr, execID: unended})
 	}
 	return code, err

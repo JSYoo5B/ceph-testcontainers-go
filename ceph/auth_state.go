@@ -134,3 +134,23 @@ func (a *authState) dropRevocationIf(entity string, state *clientRevocationState
 		delete(a.revocations, entity)
 	}
 }
+
+// authLedger runs the native auth changes whose outcome the records track:
+// client key, caps and removal changes, their settling, and the daemon key
+// rotation's handoff to keyring files. It binds the records to the command
+// transport and the daemon exec runner, and holds no state of its own.
+//
+// Every method needs Container.mu held, the lock that guards the records, for
+// the whole call; the guards in auth_state_test.go prove that for each
+// caller. A ledger is obtained only through Container.authLedger.
+type authLedger struct {
+	conn        cephConn
+	authRecords *authState
+	daemonExecs *daemonExecutor
+}
+
+// authLedger returns the ledger of the cluster's auth records. The caller
+// holds c.mu while it uses the ledger.
+func (c *Container) authLedger() authLedger {
+	return authLedger{conn: c.conn(), authRecords: &c.authRecords, daemonExecs: &c.daemonExecs}
+}
