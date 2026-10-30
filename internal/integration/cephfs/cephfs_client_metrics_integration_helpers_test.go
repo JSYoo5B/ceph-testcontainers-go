@@ -20,9 +20,12 @@ import (
 // the "act" gate, writes the payload at offset 0, fsyncs and publishes receipt
 // 2 with the acknowledged size; the idle actor never writes. Both close after
 // the "finish" gate and publish receipt 3. Arguments: filesystem, work
-// directory, token, path, mode ("writer" or "idle"), the payload's hex.
+// directory, token, path, mode ("writer" or "idle"), the payload size. The
+// payload is generated here as byte i%251 at offset i, because a 128 KiB
+// payload passed as hex would exceed Linux's per-argument limit.
 const cephFSMetricsActor harness.CephFSActorScript = harness.CephFSActorHelpers + `
-path, mode, payload = sys.argv[4].encode(), sys.argv[5], bytes.fromhex(sys.argv[6])
+path, mode = sys.argv[4].encode(), sys.argv[5]
+payload = bytes(i % 251 for i in range(int(sys.argv[6])))
 fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
 fs.conf_set("client_mount_timeout", "30")
 fs.conf_set("client_collect_and_send_global_metrics", "true")
@@ -118,8 +121,8 @@ func testCephFSClientMetrics(t *testing.T) {
 	if err := json.Unmarshal([]byte(harness.LastJSONLine(harness.ExecOutput(t, ctx, helper, "python3", "-c", cephFSMetricsSeed, m.FS.FilesystemName, path))), &seed); err != nil || seed.Client == 0 || seed.Size != 0 {
 		t.Fatalf("seed: %+v, %v", seed, err)
 	}
-	writer := harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, cephFSMetricsActor, m.FS.FilesystemName, "/tmp/client-metrics-writer", path, "writer", hex.EncodeToString(payload))
-	idle := harness.StartCephFSActor(t, ctx, m.Cluster, helper, cephFSMetricsActor, m.FS.FilesystemName, "/tmp/client-metrics-idle", path, "idle", "")
+	writer := harness.StartCephFSActor(t, ctx, m.Cluster, m.Client, cephFSMetricsActor, m.FS.FilesystemName, "/tmp/client-metrics-writer", path, "writer", strconv.Itoa(len(payload)))
+	idle := harness.StartCephFSActor(t, ctx, m.Cluster, helper, cephFSMetricsActor, m.FS.FilesystemName, "/tmp/client-metrics-idle", path, "idle", "0")
 	a, b := writer.Receipt(t, ctx, 1), idle.Receipt(t, ctx, 1)
 	if a.Client == 0 || b.Client == 0 || a.Client == b.Client || a.Client == seed.Client || b.Client == seed.Client {
 		t.Fatalf("client identities: seed %d, writer %+v, idle %+v", seed.Client, a, b)
