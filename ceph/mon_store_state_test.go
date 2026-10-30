@@ -212,13 +212,11 @@ var monStoreMethods = map[string][]string{
 // of its methods in production, and how it holds Container.mu. Only terminate
 // does, and only for the two release stages: no production code publishes a
 // record in this slice.
-var monStoreCallers = map[string]string{"terminate": "takes"}
-
-// monStoreProductionMethods are the methods production code outside the type
-// may call.
-var monStoreProductionMethods = []string{"releaseStores", "retryStores"}
+var monStoreCallers = map[string]stateCaller{"terminate": {"takes", []string{"releaseStores", "retryStores"}}}
 
 func monStoreUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "monStores" }
+
+func isMonStoreReceiver(fn *ast.FuncDecl) bool { return receiverTypeName(fn) == "monStoreState" }
 
 func monStoreIgnoredCall(call *ast.CallExpr) bool {
 	switch fun := call.Fun.(type) {
@@ -237,106 +235,19 @@ func monStoreIgnoredCall(call *ast.CallExpr) bool {
 // as the receiver of one of its methods, and the lock-free FactsOf source does
 // not mention it.
 func TestMonStoreStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) == "monStoreState" {
-				continue
-			}
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					if method, ok := call.Fun.(*ast.SelectorExpr); ok {
-						if _, known := monStoreMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok && monStoreUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
-				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && monStoreUse(sel) {
-					if allowed[sel] {
-						uses++
-					} else {
-						problems = append(problems, file+": "+fn.Name.Name+" uses Container.monStores outside a monStoreState method call")
-					}
-				}
-				return true
-			})
-			if file == "cluster_facts.go" && fn.Name != nil {
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					if sel, ok := n.(*ast.SelectorExpr); ok && monStoreUse(sel) {
-						problems = append(problems, "FactsOf source reads Container.monStores")
-					}
-					return true
-				})
-			}
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.monStores found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		t.Fatalf("MON store state escapes its methods: %v", problems)
-	}
+	fieldAudit{label: "Container.monStores", use: monStoreUse, own: isMonStoreReceiver, methods: monStoreMethods, wholeFactsFile: true}.check(t)
 }
 
 // TestMonStoreStateMethodsMakeOnlyTheirPinnedCalls pins the method set and the
 // calls of each method, and that only begin assigns the record map.
 func TestMonStoreStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) != "monStoreState" {
-				continue
+	methodAudit{label: "monStoreState", own: isMonStoreReceiver, methods: monStoreMethods, writers: map[string][]string{"records": {"begin"}},
+		render: func(call *ast.CallExpr) string {
+			if monStoreIgnoredCall(call) {
+				return ""
 			}
-			name := fn.Name.Name
-			want, known := monStoreMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update monStoreMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					if !monStoreIgnoredCall(x) {
-						got = append(got, types.ExprString(x))
-					}
-				case *ast.AssignStmt:
-					for _, lhs := range x.Lhs {
-						target := lhs
-						if index, ok := lhs.(*ast.IndexExpr); ok {
-							target = index.X
-						}
-						if sel, ok := target.(*ast.SelectorExpr); ok && sel.Sel.Name == "records" && name != "begin" {
-							problems = append(problems, name+" assigns records")
-						}
-					}
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-			}
-		}
-	}
-	for name := range monStoreMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
-	if len(problems) != 0 {
-		t.Fatalf("monStoreState breaks its lock contract: %v", problems)
-	}
+			return types.ExprString(call)
+		}}.check(t)
 }
 
 // TestMonStoreStateSeamHasNoProductionWriter guards that nothing outside tests
@@ -370,56 +281,7 @@ func TestMonStoreStateSeamHasNoProductionWriter(t *testing.T) {
 // they call only the release stages, and each calls lockTopology before its
 // first use. A later slice that adds a caller updates the table in its own diff.
 func TestMonStoreStateCallersHoldTheTopologyLock(t *testing.T) {
-	found := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) == "monStoreState" {
-				continue
-			}
-			var lockAt, firstUse token.Pos
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if isTopologyAcquire(call) && lockAt == token.NoPos {
-					lockAt = call.Pos()
-				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if recv, ok := sel.X.(*ast.SelectorExpr); ok && monStoreUse(recv) {
-						if firstUse == token.NoPos {
-							firstUse = call.Pos()
-						}
-						if !slices.Contains(monStoreProductionMethods, sel.Sel.Name) {
-							problems = append(problems, fn.Name.Name+" calls monStoreState."+sel.Sel.Name+", which has no production caller yet")
-						}
-					}
-				}
-				return true
-			})
-			if firstUse == token.NoPos {
-				continue
-			}
-			name := fn.Name.Name
-			found[name] = true
-			switch mode, known := monStoreCallers[name]; {
-			case !known:
-				problems = append(problems, name+" uses the MON store state but is not in monStoreCallers")
-			case mode == "takes" && (lockAt == token.NoPos || lockAt > firstUse):
-				problems = append(problems, name+" must take lockTopology before using the MON store state")
-			}
-		}
-	}
-	for name := range monStoreCallers {
-		if !found[name] {
-			problems = append(problems, name+" is listed but no longer uses the MON store state")
-		}
-	}
-	if len(problems) != 0 {
-		t.Fatalf("MON store callers break the lock contract: %v", problems)
-	}
+	callerAudit{label: "the MON store state", use: monStoreUse, own: isMonStoreReceiver, callers: monStoreCallers}.check(t)
 }
 
 // TestTerminateReleasesMonStoresInTheirTwoStagesInOrder guards the Terminate

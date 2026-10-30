@@ -175,47 +175,9 @@ var featureClientMethods = map[string]struct {
 // only as the receiver of one of its methods, so no code reads or writes a
 // field, or takes either lock, without the method that does.
 func TestFeatureClientStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) == "featureClientState" {
-				continue
-			}
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					if method, ok := call.Fun.(*ast.SelectorExpr); ok {
-						if _, known := featureClientMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok {
-								allowed[recv] = true
-							}
-						}
-					}
-				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "toolkit" {
-					// Container.featureClient binds the state once
-					// (TestFeatureClientBindsEachStateOnce).
-					if allowed[sel] || stateBinding(fn) {
-						uses++
-					} else {
-						problems = append(problems, file+": "+fn.Name.Name+" uses Container.toolkit outside a featureClientState method call")
-					}
-				}
-				return true
-			})
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.toolkit found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		t.Fatalf("feature client state escapes its methods: %v", problems)
-	}
+	// Container.featureClient binds the state once
+	// (TestFeatureClientBindsEachStateOnce).
+	fieldAudit{label: "Container.toolkit", use: toolkitUse, own: isFeatureClientStateReceiver, methods: featureClientCalls(), bound: stateBinding}.check(t)
 }
 
 // TestFeatureClientStateMethodsMakeOnlyTheirPinnedCalls guards the lock
@@ -223,41 +185,23 @@ func TestFeatureClientStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 // the calls listed, and none calls into Container, so publishMu stays a leaf
 // and mu is taken only by lock.
 func TestFeatureClientStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) != "featureClientState" {
-				continue
-			}
-			name := fn.Name.Name
-			want, known := featureClientMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update featureClientMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					got = append(got, types.ExprString(call))
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want.calls))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want.calls))
-			}
-		}
+	methodAudit{label: "featureClientState", own: isFeatureClientStateReceiver, methods: featureClientCalls(),
+		render: func(call *ast.CallExpr) string { return types.ExprString(call) }}.check(t)
+}
+
+// featureClientCalls is the call table of featureClientMethods.
+func featureClientCalls() map[string][]string {
+	calls := map[string][]string{}
+	for name, method := range featureClientMethods {
+		calls[name] = method.calls
 	}
-	for name := range featureClientMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
-	if len(problems) != 0 {
-		t.Fatalf("featureClientState breaks its lock contract: %v", problems)
-	}
+	return calls
+}
+
+func toolkitUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "toolkit" }
+
+func isFeatureClientStateReceiver(fn *ast.FuncDecl) bool {
+	return receiverTypeName(fn) == "featureClientState"
 }
 
 func join(items []string) string {

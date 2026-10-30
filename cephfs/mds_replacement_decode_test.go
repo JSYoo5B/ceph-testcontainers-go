@@ -31,7 +31,7 @@ func replacementDecode(t *testing.T, withWorker bool, edit replacementDecodeEdit
 	if withWorker {
 		rep.daemon = &MDS{}
 	}
-	return r.fs.readMDSReplacementScope(t.Context(), r.old.identity, rep)
+	return r.fs.fleet().readMDSReplacementScope(t.Context(), r.old.identity, rep)
 }
 
 func replacementDecodeSibling(info, up map[string]any) replacementDecodeEdit {
@@ -317,7 +317,7 @@ func TestMDSReplacementDecodeReturnsTheScopeWithAContextError(t *testing.T) {
 			}
 		}
 	}
-	scope, ready, err := r.fs.readMDSReplacementScope(ctx, r.old.identity, &cephFSMDSReplacement{name: "target-1"})
+	scope, ready, err := r.fs.fleet().readMDSReplacementScope(ctx, r.old.identity, &cephFSMDSReplacement{name: "target-1"})
 	if scope == nil || ready || err == nil || err.Error() != "context canceled" {
 		t.Fatalf("scope and context error changed: %+v ready=%v %v", scope, ready, err)
 	}
@@ -344,7 +344,7 @@ func TestMDSReplacementDecodeNativeReadFailuresKeepTheirContext(t *testing.T) {
 					}
 				}
 			}
-			scope, ready, err := r.fs.readMDSReplacementScope(t.Context(), r.old.identity, &cephFSMDSReplacement{name: "target-1"})
+			scope, ready, err := r.fs.fleet().readMDSReplacementScope(t.Context(), r.old.identity, &cephFSMDSReplacement{name: "target-1"})
 			if err == nil || err.Error() != tc.want || scope != nil || ready {
 				t.Fatalf("native read failure changed: want %q, got %+v %v %v", tc.want, scope, ready, err)
 			}
@@ -357,7 +357,7 @@ func TestMDSReplacementDecodeNativeReadFailuresKeepTheirContext(t *testing.T) {
 // identity is read from the same document: it calls the decoder directly.
 func TestMDSReplacementDecoderRefusesInvalidPoolIdentity(t *testing.T) {
 	r := newReplacementMDSFixture(t)
-	pools, err := r.fs.readNativePools(t.Context())
+	pools, err := r.fs.id.readNativePools(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

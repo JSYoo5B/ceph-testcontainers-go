@@ -157,14 +157,14 @@ func (f *Fixture) importSyncPeriod(ctx context.Context, master *rgwZoneState, st
 	return nil
 }
 
+// syncPeriodGroups returns the period's zonegroup documents. They are
+// returned as plain maps because callers compare them with reflect.DeepEqual
+// against documents read elsewhere, which a named map type would never equal.
 func syncPeriodGroups(period map[string]any) []map[string]any {
-	periodMap, _ := period["period_map"].(map[string]any)
-	groups, _ := periodMap["zonegroups"].([]any)
-	result := make([]map[string]any, 0, len(groups))
-	for _, value := range groups {
-		if group, ok := value.(map[string]any); ok {
-			result = append(result, group)
-		}
+	groups := nativeDoc(period).object("period_map").objects("zonegroups")
+	result := make([]map[string]any, len(groups))
+	for i, group := range groups {
+		result[i] = group
 	}
 	return result
 }

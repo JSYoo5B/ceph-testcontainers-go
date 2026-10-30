@@ -359,6 +359,7 @@ func (f osdFleet) clearStaleOSDSocket(ctx context.Context, detached *DetachedOSD
 }
 
 // reopenPreflight reads, without writing, everything that a reopen relies on.
+// The caller holds Container.mu.
 func (f osdFleet) reopenPreflight(ctx context.Context, detached *DetachedOSD) error {
 	id := detached.id
 	store, err := f.stores.retainedStore(ctx, id)

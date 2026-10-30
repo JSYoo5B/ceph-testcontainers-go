@@ -3,11 +3,9 @@ package ceph
 import (
 	"context"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"go/types"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -53,69 +51,26 @@ func faultCallName(call *ast.CallExpr) string {
 // as the receiver of one of its methods, and nothing reads the entries map,
 // takes the address of the registry or of the map, or ranges over it.
 func TestFaultRegistryFieldIsOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isFaultRegistryReceiver(fn) {
-				continue
-			}
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					if method, ok := call.Fun.(*ast.SelectorExpr); ok {
-						if _, known := faultRegistryMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok && faultsUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
+	fieldAudit{label: "Container.faults", use: faultsUse, own: isFaultRegistryReceiver, methods: faultRegistryMethods,
+		allow: func(file string, fn *ast.FuncDecl, n ast.Node, _ map[*ast.SelectorExpr]bool) []string {
+			var problems []string
+			switch x := n.(type) {
+			case *ast.SelectorExpr:
+				if inner, ok := x.X.(*ast.SelectorExpr); ok && x.Sel.Name == "entries" && faultsUse(inner) {
+					problems = append(problems, file+": "+fn.Name.Name+" reads the entries map")
 				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.SelectorExpr:
-					if faultsUse(x) {
-						if allowed[x] {
-							uses++
-						} else {
-							problems = append(problems, file+": "+fn.Name.Name+" uses Container.faults outside a faultRegistry method call")
+			case *ast.UnaryExpr:
+				if x.Op == token.AND {
+					ast.Inspect(x.X, func(m ast.Node) bool {
+						if sel, ok := m.(*ast.SelectorExpr); ok && (faultsUse(sel) || (sel.Sel.Name == "entries" && faultsUseOf(sel.X))) {
+							problems = append(problems, file+": takes the address of "+types.ExprString(x.X))
 						}
-					}
-					if inner, ok := x.X.(*ast.SelectorExpr); ok && x.Sel.Name == "entries" && faultsUse(inner) {
-						problems = append(problems, file+": "+fn.Name.Name+" reads the entries map")
-					}
-				case *ast.UnaryExpr:
-					if x.Op == token.AND {
-						ast.Inspect(x.X, func(m ast.Node) bool {
-							if sel, ok := m.(*ast.SelectorExpr); ok && (faultsUse(sel) || (sel.Sel.Name == "entries" && faultsUseOf(sel.X))) {
-								problems = append(problems, file+": takes the address of "+types.ExprString(x.X))
-							}
-							return true
-						})
-					}
+						return true
+					})
 				}
-				return true
-			})
-			if file == "cluster_facts.go" && strings.Contains(fn.Name.Name, "Facts") {
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					if sel, ok := n.(*ast.SelectorExpr); ok && faultsUse(sel) {
-						problems = append(problems, "FactsOf source reads Container.faults")
-					}
-					return true
-				})
 			}
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.faults found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("fault registry escapes its methods: %v", problems)
-	}
+			return problems
+		}}.check(t)
 }
 
 // TestFaultRegistryMethodsMakeOnlyTheirPinnedCalls guards the lock contract
@@ -123,76 +78,8 @@ func TestFaultRegistryFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 // listed, only undo operates on a lock and only through its sync.Locker
 // parameter, and no method names Container, its closed flag or its mutex.
 func TestFaultRegistryMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || !isFaultRegistryReceiver(fn) {
-				continue
-			}
-			name := fn.Name.Name
-			want, known := faultRegistryMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update faultRegistryMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					got = append(got, faultCallName(x))
-				case *ast.SelectorExpr:
-					switch x.Sel.Name {
-					case "closed", "mu", "controlMu", "configMu":
-						problems = append(problems, name+" reads "+types.ExprString(x))
-					}
-				case *ast.Ident:
-					if x.Name == "Container" {
-						problems = append(problems, name+" names Container")
-					}
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-			}
-		}
-	}
-	for name := range faultRegistryMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("faultRegistry breaks its lock contract: %v", problems)
-	}
-}
-
-// faultDocs maps "Receiver.Name" (or "Name" for a function) to the
-// lower-cased doc comment of each production function, so that the hook rows
-// of the same name on faultHooks and overrideHooks are told apart.
-func faultDocs(t *testing.T) map[string]string {
-	t.Helper()
-	docs := map[string]string{}
-	for file := range parseProductionFiles(t) {
-		parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.ParseComments)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, decl := range parsed.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Doc != nil {
-				key := fn.Name.Name
-				if recv := receiverTypeName(fn); recv != "" {
-					key = recv + "." + key
-				}
-				docs[key] = strings.ToLower(strings.Join(strings.Fields(fn.Doc.Text()), " "))
-			}
-		}
-	}
-	return docs
+	methodAudit{label: "faultRegistry", own: isFaultRegistryReceiver, methods: faultRegistryMethods, render: faultCallName,
+		forbidden: []string{"Container"}, forbiddenMembers: []string{"closed", "mu", "controlMu", "configMu"}}.check(t)
 }
 
 // faultRegistryCallers lists every function outside the component that calls
@@ -201,10 +88,7 @@ func faultDocs(t *testing.T) map[string]string {
 //	"takes"  acquires Container.mu before its first use
 //	"hook"   its doc comment says the caller holds the lock or the cluster is
 //	         not shared
-var faultRegistryCallers = map[string]struct {
-	mode    string
-	methods []string
-}{
+var faultRegistryCallers = map[string]stateCaller{
 	"Container.terminate":   {"takes", []string{"undo"}},
 	"Container.detachOSD":   {"takes", []string{"refuseInstanceFaults"}},
 	"Container.deletePool":  {"hook", []string{"poolDeleteOverrideHeld"}},
@@ -226,72 +110,7 @@ var faultRegistryCallers = map[string]struct {
 // documents the contract, and a stale row fails. Container.mu is the whole
 // lock domain of the type.
 func TestFaultRegistryCallersAreAudited(t *testing.T) {
-	docs := faultDocs(t)
-	found := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isFaultRegistryReceiver(fn) {
-				continue
-			}
-			methods := map[string]bool{}
-			first := token.NoPos
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if recv, ok := sel.X.(*ast.SelectorExpr); ok && faultsUse(recv) {
-						methods[sel.Sel.Name] = true
-						if first == token.NoPos || call.Pos() < first {
-							first = call.Pos()
-						}
-					}
-				}
-				return true
-			})
-			if len(methods) == 0 {
-				continue
-			}
-			key := fn.Name.Name
-			if recv := receiverTypeName(fn); recv != "" {
-				key = recv + "." + key
-			}
-			found[key] = true
-			row, known := faultRegistryCallers[key]
-			if !known {
-				problems = append(problems, key+" uses the fault registry but is not in faultRegistryCallers")
-				continue
-			}
-			if at := osdRegistryAcquirePos(fn); row.mode == "takes" && (at == token.NoPos || at > first) {
-				problems = append(problems, key+" must take Container.mu before using the fault registry")
-			}
-			if row.mode == "hook" && !strings.Contains(docs[key], "holds") {
-				problems = append(problems, key+" is a hook row but its doc comment does not name the lock contract")
-			}
-			got := slices.Sorted(func(yield func(string) bool) {
-				for m := range methods {
-					if !yield(m) {
-						return
-					}
-				}
-			})
-			if !slices.Equal(got, row.methods) {
-				problems = append(problems, key+" calls "+join(got)+", pinned "+join(row.methods))
-			}
-		}
-	}
-	for key := range faultRegistryCallers {
-		if !found[key] {
-			problems = append(problems, key+" is listed but no longer uses the fault registry")
-		}
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("fault registry callers break the lock contract: %v", problems)
-	}
+	callerAudit{label: "the fault registry", use: faultsUse, own: isFaultRegistryReceiver, callers: faultRegistryCallers, qualified: true}.check(t)
 }
 
 // TestTerminateUndoesFaultsFirstUnderTheClusterMutex guards the Terminate

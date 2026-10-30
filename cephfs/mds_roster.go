@@ -17,9 +17,9 @@ import (
 //     ceph.Container.mu) or, for the two cold-start reads that run between the
 //     two cluster-mutex sections of scaleColdMDS, the filesystem registry's
 //     setupMu. Both are enough because every writer holds both.
-//   - A writer holds setupMu and the cluster mutex. The writers are
-//     admitMDSStart (reserveIndex), publishStartedMDS (publish), retireMDS,
-//     removeFilesystem and removeStoppedMDS (remove). The constructor
+//   - A writer holds setupMu and the cluster mutex. The writers are the MDS
+//     fleet's admitMDSStart (reserveIndex), publishStartedMDS (publish),
+//     retireMDS, removeAll and removeStoppedMDS (remove). The constructor
 //     newMDSRoster runs before the Filesystem is published.
 //
 // setupMu is taken before the cluster mutex, as everywhere in this package, and
@@ -31,8 +31,9 @@ import (
 // call the mutating ones, that every caller holds the lock it needs, and that
 // the split adds no mutex.
 //
-// The embedded Filesystem.Container is not part of the roster: its four
-// re-seat sites stay where they are.
+// The roster lives in the filesystem's mdsState, which only the MDS fleet
+// reaches (mds_fleet_test.go). The embedded Filesystem.Container is not part of
+// the roster: the fleet re-seats it through its first-MDS slot.
 type mdsRoster struct {
 	// opts are the customizers for every daemon. Immutable after newMDSRoster.
 	opts []testcontainers.ContainerCustomizer

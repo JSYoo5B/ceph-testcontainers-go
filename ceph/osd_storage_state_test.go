@@ -6,7 +6,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"slices"
 	"strings"
 	"testing"
 
@@ -285,31 +284,25 @@ var osdStorageMethods = map[string][]string{
 	"retryVolume":   {"s.releaseVolume(ctx, osdsGone)"},
 }
 
-// osdStorageCallers lists every function outside the component that calls one
-// of its methods, and how it holds Container.mu: "takes" means it calls
-// lockTopology itself before its first use; "holds" means its doc comment
-// requires the caller to hold it (the callers of those take it, see
-// osdStorageHoldersTake).
-var osdStorageCallers = map[string]string{
-	"registerOSD":        "holds",
-	"ensureOSDMemory":    "holds",
-	"ensureOSDVolume":    "holds",
-	"newOSDLaunchRecipe": "holds",
-	"removeOSD":          "takes",
-	"detachOSD":          "takes",
-	"reopenOSD":          "takes",
-	"reopenPreflight":    "holds",
-	"terminate":          "takes",
-	"startOSD":           "seam",
+// osdStorageCallers pins every function outside the component that calls one
+// of its methods (see stateCaller). startOSD is the "seam" row: it reads the
+// never-reassigned runner without Container.mu, so that Run can start several
+// OSDs at once (TestOSDStorageStateSeamsHaveNoProductionWriter).
+var osdStorageCallers = map[string]stateCaller{
+	"registerOSD":            {"holds", []string{"requireFresh"}},
+	"registerBlockDeviceOSD": {"holds", nil},
+	"ensureOSDMemory":        {"holds", []string{"beginMemory", "memoryStorage"}},
+	"ensureOSDVolume":        {"holds", []string{"beginVolume", "runVolumeHelper", "volumeStorage"}},
+	"newOSDLaunchRecipe":     {"holds", []string{"launchVolumes"}},
+	"removeOSD":              {"takes", []string{"discard"}},
+	"detachOSD":              {"takes", []string{"hasVolume", "retainedStore"}},
+	"reopenOSD":              {"takes", []string{"hasVolume"}},
+	"reopenPreflight":        {"holds", []string{"retainedStore"}},
+	"terminate":              {"takes", []string{"releaseMemory", "releaseVolume", "retryMemory", "retryVolume"}},
+	"startOSD":               {"seam", []string{"runOSD"}},
 }
 
-// osdStorageHoldersTake names the functions that take Container.mu around the
-// "holds" callers above.
-var osdStorageHoldersTake = map[string][]string{
-	"registerOSD":        {"startInitialOSDs", "AddOSD"},
-	"reopenPreflight":    {"reopenOSD"},
-	"newOSDLaunchRecipe": {"registerOSD"},
-}
+func isOSDStorageReceiver(fn *ast.FuncDecl) bool { return receiverTypeName(fn) == "osdStorageState" }
 
 func osdStorageUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "stores" }
 
@@ -318,53 +311,7 @@ func osdStorageUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "stores"
 // as the receiver of one of its methods, no function outside the type assigns
 // one of its fields, and the lock-free FactsOf source does not mention it.
 func TestOSDStorageStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) == "osdStorageState" {
-				continue
-			}
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					if method, ok := call.Fun.(*ast.SelectorExpr); ok {
-						if _, known := osdStorageMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok && osdStorageUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
-				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && osdStorageUse(sel) {
-					if allowed[sel] || osdFleetBinding(fn) {
-						uses++
-					} else {
-						problems = append(problems, file+": "+fn.Name.Name+" uses Container.stores outside an osdStorageState method call")
-					}
-				}
-				return true
-			})
-			if file == "cluster_facts.go" && strings.Contains(fn.Name.Name, "Facts") {
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					if sel, ok := n.(*ast.SelectorExpr); ok && osdStorageUse(sel) {
-						problems = append(problems, "FactsOf source reads Container.stores")
-					}
-					return true
-				})
-			}
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.stores found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		t.Fatalf("OSD storage state escapes its methods: %v", problems)
-	}
+	fieldAudit{label: "Container.stores", use: osdStorageUse, own: isOSDStorageReceiver, methods: osdStorageMethods, bound: osdFleetBinding}.check(t)
 }
 
 // TestOSDStorageStateMethodsMakeOnlyTheirPinnedCalls guards the lock contract
@@ -372,49 +319,10 @@ func TestOSDStorageStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 // calls listed. None takes a lock or calls into Container, and the fields are
 // assigned only by the methods that publish or release a record.
 func TestOSDStorageStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	writers := map[string]bool{"beginMemory": true, "beginVolume": true, "releaseMemory": true, "releaseVolume": true}
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) != "osdStorageState" {
-				continue
-			}
-			name := fn.Name.Name
-			want, known := osdStorageMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update osdStorageMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					got = append(got, types.ExprString(x))
-				case *ast.AssignStmt:
-					for _, lhs := range x.Lhs {
-						if sel, ok := lhs.(*ast.SelectorExpr); ok && (sel.Sel.Name == "memory" || sel.Sel.Name == "volume") && !writers[name] {
-							problems = append(problems, name+" assigns "+sel.Sel.Name)
-						}
-					}
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-			}
-		}
-	}
-	for name := range osdStorageMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
-	if len(problems) != 0 {
-		t.Fatalf("osdStorageState breaks its lock contract: %v", problems)
-	}
+	writers := []string{"beginMemory", "beginVolume", "releaseMemory", "releaseVolume"}
+	methodAudit{label: "osdStorageState", own: isOSDStorageReceiver, methods: osdStorageMethods,
+		render:  func(call *ast.CallExpr) string { return types.ExprString(call) },
+		writers: map[string][]string{"memory": writers, "volume": writers}}.check(t)
 }
 
 // TestOSDStorageStateSeamsHaveNoProductionWriter guards the claim that startOSD
@@ -449,67 +357,7 @@ func TestOSDStorageStateSeamsHaveNoProductionWriter(t *testing.T) {
 // lockTopology before their first use, and the "holds" functions are reached
 // only from functions that take it.
 func TestOSDStorageStateCallersHoldTheTopologyLock(t *testing.T) {
-	found := map[string]bool{}
-	taking := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) == "osdStorageState" {
-				continue
-			}
-			var lockAt, firstUse token.Pos
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if isTopologyAcquire(call) && lockAt == token.NoPos {
-					lockAt = call.Pos()
-				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if recv, ok := sel.X.(*ast.SelectorExpr); ok && osdStorageUse(recv) {
-						if firstUse == token.NoPos {
-							firstUse = call.Pos()
-						}
-					}
-				}
-				return true
-			})
-			if lockAt != token.NoPos {
-				taking[fn.Name.Name] = true
-			}
-			if firstUse == token.NoPos {
-				continue
-			}
-			name := fn.Name.Name
-			found[name] = true
-			mode, known := osdStorageCallers[name]
-			switch {
-			case !known:
-				problems = append(problems, name+" uses the OSD storage state but is not in osdStorageCallers")
-			case mode == "takes" && (lockAt == token.NoPos || lockAt > firstUse):
-				problems = append(problems, name+" must take lockTopology before using the OSD storage state")
-			}
-		}
-	}
-	for name := range osdStorageCallers {
-		if !found[name] {
-			problems = append(problems, name+" is listed but no longer uses the OSD storage state")
-		}
-	}
-	for holder, takers := range osdStorageHoldersTake {
-		ok := false
-		for _, taker := range takers {
-			ok = ok || taking[taker] || osdStorageCallers[taker] == "holds"
-		}
-		if !ok {
-			problems = append(problems, holder+" is not reached from a function that takes lockTopology")
-		}
-	}
-	if len(problems) != 0 {
-		t.Fatalf("OSD storage callers break the lock contract: %v", problems)
-	}
+	callerAudit{label: "the OSD storage state", use: osdStorageUse, own: isOSDStorageReceiver, callers: osdStorageCallers, only: map[string][]string{"seam": {"startOSD"}}}.check(t)
 }
 
 // TestTerminateReleasesOSDStorageInItsTwoStagesInOrder guards the Terminate

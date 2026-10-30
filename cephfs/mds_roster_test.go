@@ -88,7 +88,7 @@ func TestMDSRosterReadersUnderTheClusterLockAreRaceFree(t *testing.T) {
 			defer wg.Done()
 			for range 200 {
 				_ = fs.MDSs()
-				if _, err := fs.mdsSnapshot(t.Context()); err != nil {
+				if _, err := fs.fleet().mdsSnapshot(t.Context()); err != nil {
 					t.Error(err)
 					return
 				}
@@ -100,13 +100,13 @@ func TestMDSRosterReadersUnderTheClusterLockAreRaceFree(t *testing.T) {
 		defer wg.Done()
 		for range 200 {
 			d := &MDS{ID: "x"}
-			servicehook.Lock(fs.cluster)
-			fs.roster.publish(d)
-			fs.roster.reserveIndex()
-			servicehook.Unlock(fs.cluster)
-			servicehook.Lock(fs.cluster)
-			fs.roster.remove(d)
-			servicehook.Unlock(fs.cluster)
+			servicehook.Lock(fs.id.cluster)
+			fs.mds.roster.publish(d)
+			fs.mds.roster.reserveIndex()
+			servicehook.Unlock(fs.id.cluster)
+			servicehook.Lock(fs.id.cluster)
+			fs.mds.roster.remove(d)
+			servicehook.Unlock(fs.id.cluster)
 		}
 	}()
 	wg.Wait()
@@ -131,11 +131,13 @@ var mdsRosterMethods = map[string]struct{ calls []string }{
 }
 
 // mdsRosterWriters maps each mutating method to the only functions that may
-// call it. All of them run with setupMu and the cluster mutex held.
+// call it. All of them run with setupMu and the cluster mutex held: they take
+// them, or (removeAll) are owner held and setup held, so every reference to them
+// follows both acquisitions (checked by the reader guard).
 var mdsRosterWriters = map[string][]string{
 	"reserveIndex": {"admitMDSStart"},
 	"publish":      {"publishStartedMDS"},
-	"remove":       {"retireMDS", "removeFilesystem", "removeStoppedMDS"},
+	"remove":       {"retireMDS", "removeAll", "removeStoppedMDS"},
 }
 
 // mdsRosterSetupHeld are the functions that run with setupMu held by their
@@ -144,11 +146,12 @@ var mdsRosterWriters = map[string][]string{
 var mdsRosterSetupHeld = map[string]bool{
 	"startMDS": true, "startMDSWithService": true, "startMDSWithAdmission": true, "admitMDSStart": true, "createMDSCredentials": true, "publishStartedMDS": true, "retireMDS": true,
 	"captureColdMDS": true, "scaleColdMDS": true, "verifyColdMDS": true, "checkColdMDSAuth": true,
-	"growMDSs": true, "retireSurplusMDSs": true,
+	"growMDSs": true, "retireSurplusMDSs": true, "removeAll": true,
 }
 
 // mdsRosterOwnerHeld are the functions documented "Owner held": they read the
-// roster and rely on the caller for the cluster mutex. ConfigTargets is called
+// roster and rely on the caller for the cluster mutex. ConfigTargets, which
+// calls the fleet's addConfigTargets, is called
 // by ceph.Container with its mutex held (the topology caller), through an
 // interface the AST guard cannot follow.
 var mdsRosterOwnerHeld = map[string]bool{
@@ -156,7 +159,7 @@ var mdsRosterOwnerHeld = map[string]bool{
 	"checkMDSReplacementPartial": true, "checkStoppedMDSOwner": true,
 	"decodeStoppedMDSScope": true, "verifyStoppedMDSSurvivors": true, "readStoppedMDSScope": true, "ConfigTargets": true,
 	"admitMDSReplacement": true, "admitStoppedMDSRemoval": true, "reattestStoppedMDS": true, "confirmStoppedMDSRemoved": true,
-	"checkScaleOwner": true,
+	"checkScaleOwner": true, "removeAll": true, "addConfigTargets": true,
 }
 
 // mdsRosterSetupOnlyReaders read the roster under setupMu alone, between the
@@ -414,8 +417,11 @@ func TestMDSRosterWritersAreTheFourPinnedFunctionsUnderBothLocks(t *testing.T) {
 					return true
 				}
 				found[method+"@"+fn.Name.Name] = true
-				if clusterAt == token.NoPos || clusterAt > call.Pos() {
+				if !mdsRosterOwnerHeld[fn.Name.Name] && (clusterAt == token.NoPos || clusterAt > call.Pos()) {
 					problems = append(problems, fn.Name.Name+" calls roster."+method+" before it holds the cluster mutex")
+				}
+				if mdsRosterOwnerHeld[fn.Name.Name] && !mdsRosterSetupHeld[fn.Name.Name] {
+					problems = append(problems, fn.Name.Name+" calls roster."+method+" owner held but is not pinned as setup held")
 				}
 				if !mdsRosterSetupHeld[fn.Name.Name] && (setupAt == token.NoPos || setupAt > clusterAt) {
 					problems = append(problems, fn.Name.Name+" calls roster."+method+" without taking setupMu before the cluster mutex")

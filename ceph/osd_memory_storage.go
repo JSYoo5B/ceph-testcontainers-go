@@ -94,6 +94,8 @@ func (s *osdMemoryStorage) mount(target string) testcontainers.CustomizeRequestO
 	})
 }
 
+// ensureOSDMemory publishes the cluster's OSD memory storage on first use.
+// The caller holds Container.mu.
 func (f osdFleet) ensureOSDMemory(ctx context.Context) error {
 	if f.settings.osdMemorySize == 0 {
 		return nil

@@ -153,90 +153,15 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	status, err := daemonMaps{c.conn()}.quorum(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("inspect monitor membership: %w", err)
-	}
-	for _, member := range status.MonMap.Mons {
-		if member.Name == name {
-			return nil, fmt.Errorf("monitor %s is already registered", name)
-		}
-	}
-	if err := c.ensureControlPlane(ctx); err != nil {
-		return nil, fmt.Errorf("start independent CLI control: %w", err)
-	}
-	key, err := c.conn().ceph(ctx, "auth", "get", "mon.")
-	if err != nil {
-		return nil, err
-	}
-	mapPath := "/tmp/tc-monmap-" + uuid.NewString()
-	if _, err := c.conn().ceph(ctx, "mon", "getmap", "-o", mapPath); err != nil {
-		return nil, err
-	}
-	monmap, err := readFile(ctx, c.conn().cliContainer(), mapPath)
+	key, monmap, err := c.monitorJoinMaterial(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	mon := &MonitorContainer{DaemonName: name, owner: c, image: c.settings.daemonImage(daemon)}
 	c.members.roster.addMonitor(name, mon)
-	attempts := 1
-	if c.settings.hostNetwork {
-		attempts = hostPortAttempts
-	}
-	for attempt := range attempts {
-		var lease *hostPortLease
-		if c.settings.hostNetwork {
-			lease, err = reserveHostPorts(ctx, c.settings.essentialImage, c.staticFacts().PublicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout, c.startup.ownedLabel())
-			// c.mu is already held, so register ownership without re-locking it.
-			c.portLeases.track(lease)
-			if err != nil {
-				return mon, err
-			}
-		}
-		config := []byte(strings.ReplaceAll(string(c.bootstrap.rawConfig()), "mon initial members = a\n", ""))
-		monEnv := c.settings.monitorJoinEnvironment(name)
-		opts := []testcontainers.ContainerCustomizer{c.adminClient(),
-			testcontainers.WithEntrypoint("/bin/sh", "/tc/mon-join.sh"), testcontainers.WithCmd(),
-			testcontainers.WithEnv(monEnv),
-			testcontainers.WithFiles(scriptFile("mon-join"), textFile("/etc/ceph/ceph.conf", config, 0o644),
-				textFile("/etc/ceph/mon.keyring", key, 0o600), textFile("/tc/monmap", monmap, 0o600)),
-			testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mon." + name + ".asok"}).WithStartupTimeout(c.settings.startupTimeout))}
-		if lease != nil {
-			portEnv := c.settings.monitorPortEnvironment(lease.Ports)
-			portEnv["CEPH_PUBLIC_ADDRESS"] = c.staticFacts().PublicAddress
-			opts = append(opts, testcontainers.WithNoStart(), testcontainers.WithEnv(portEnv))
-		} else {
-			opts = append(opts, keepMonitorAddress(c.staticFacts().NetworkName))
-		}
-		if err := c.clearAdminSocket(ctx, "mon."+name); err != nil {
-			return mon, err
-		}
-		opts = append(opts, c.runDir.mounts()...)
-		mon.Container, err = c.runDaemon(ctx, mon.image, append(opts, c.startup.ownedLabel())...)
-		if lease != nil {
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			releaseErr := lease.Release(cleanupCtx)
-			cancel()
-			if err != nil || releaseErr != nil {
-				return mon, errors.Join(err, releaseErr)
-			}
-			err = mon.Start(ctx)
-		}
-		if err == nil {
-			break
-		}
-		if lease == nil || attempt+1 == attempts || ctx.Err() != nil {
-			return mon, err
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		conflict := isPortConflict(cleanupCtx, mon.Container)
-		if conflict {
-			err = mon.Terminate(cleanupCtx)
-		}
-		cancel()
-		if !conflict || !onlyMissingHostResource(err) {
-			return mon, err
-		}
+	join := monitorJoin{name: name, config: []byte(strings.ReplaceAll(string(c.bootstrap.rawConfig()), "mon initial members = a\n", "")), key: key, monmap: monmap}
+	if err := c.startJoiningMonitor(ctx, mon, join); err != nil {
+		return mon, err
 	}
 	if err := clusterutil.Poll(ctx, func() (bool, error) {
 		status, err := daemonMaps{c.conn()}.quorum(ctx)
@@ -245,6 +170,117 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 		return mon, fmt.Errorf("join monitor %s to quorum: %w", name, err)
 	}
 	return mon, c.monitorTopology().refreshMonitorConfig(ctx)
+}
+
+// monitorJoin is what a joining MON starts from: the cluster configuration
+// without the initial-members line, the shared mon. key and the live monmap.
+type monitorJoin struct {
+	name                string
+	config, key, monmap []byte
+}
+
+// monitorJoinMaterial refuses a name the live monmap already has, starts the
+// independent CLI control and reads the shared mon. key and the live monmap.
+// The caller holds c.mu.
+func (c *Container) monitorJoinMaterial(ctx context.Context, name string) (key, monmap []byte, err error) {
+	status, err := daemonMaps{c.conn()}.quorum(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("inspect monitor membership: %w", err)
+	}
+	for _, member := range status.MonMap.Mons {
+		if member.Name == name {
+			return nil, nil, fmt.Errorf("monitor %s is already registered", name)
+		}
+	}
+	if err := c.ensureControlPlane(ctx); err != nil {
+		return nil, nil, fmt.Errorf("start independent CLI control: %w", err)
+	}
+	key, err = c.conn().ceph(ctx, "auth", "get", "mon.")
+	if err != nil {
+		return nil, nil, err
+	}
+	mapPath := "/tmp/tc-monmap-" + uuid.NewString()
+	if _, err := c.conn().ceph(ctx, "mon", "getmap", "-o", mapPath); err != nil {
+		return nil, nil, err
+	}
+	monmap, err = readFile(ctx, c.conn().cliContainer(), mapPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return key, monmap, nil
+}
+
+// startJoiningMonitor starts mon's container. On the host network it reserves
+// the MON ports first and retries a lost port race with a fresh reservation;
+// any other failure, or the last attempt's, returns with mon still owned. The
+// caller holds c.mu.
+func (c *Container) startJoiningMonitor(ctx context.Context, mon *MonitorContainer, join monitorJoin) error {
+	attempts := 1
+	if c.settings.hostNetwork {
+		attempts = hostPortAttempts
+	}
+	for attempt := range attempts {
+		var lease *hostPortLease
+		var err error
+		if c.settings.hostNetwork {
+			lease, err = reserveHostPorts(ctx, c.settings.essentialImage, c.staticFacts().PublicAddress, c.settings.monitorPortCount(), c.settings.startupTimeout, c.startup.ownedLabel())
+			// c.mu is already held, so register ownership without re-locking it.
+			c.portLeases.track(lease)
+			if err != nil {
+				return err
+			}
+		}
+		if err := c.clearAdminSocket(ctx, "mon."+join.name); err != nil {
+			return err
+		}
+		mon.Container, err = c.runDaemon(ctx, mon.image, c.monitorJoinOptions(join, lease)...)
+		if lease != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			releaseErr := lease.Release(cleanupCtx)
+			cancel()
+			if err != nil || releaseErr != nil {
+				return errors.Join(err, releaseErr)
+			}
+			err = mon.Start(ctx)
+		}
+		if err == nil {
+			return nil
+		}
+		if lease == nil || attempt+1 == attempts || ctx.Err() != nil {
+			return err
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		conflict := isPortConflict(cleanupCtx, mon.Container)
+		if conflict {
+			err = mon.Terminate(cleanupCtx)
+		}
+		cancel()
+		if !conflict || !onlyMissingHostResource(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// monitorJoinOptions is the container recipe of a joining MON: the join
+// script with the configuration, key and monmap, its socket wait, and either
+// the reserved host ports (created, not started) or the kept bridge address.
+func (c *Container) monitorJoinOptions(join monitorJoin, lease *hostPortLease) []testcontainers.ContainerCustomizer {
+	opts := []testcontainers.ContainerCustomizer{c.adminClient(),
+		testcontainers.WithEntrypoint("/bin/sh", "/tc/mon-join.sh"), testcontainers.WithCmd(),
+		testcontainers.WithEnv(c.settings.monitorJoinEnvironment(join.name)),
+		testcontainers.WithFiles(scriptFile("mon-join"), textFile("/etc/ceph/ceph.conf", join.config, 0o644),
+			textFile("/etc/ceph/mon.keyring", join.key, 0o600), textFile("/tc/monmap", join.monmap, 0o600)),
+		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mon." + join.name + ".asok"}).WithStartupTimeout(c.settings.startupTimeout))}
+	if lease != nil {
+		portEnv := c.settings.monitorPortEnvironment(lease.Ports)
+		portEnv["CEPH_PUBLIC_ADDRESS"] = c.staticFacts().PublicAddress
+		opts = append(opts, testcontainers.WithNoStart(), testcontainers.WithEnv(portEnv))
+	} else {
+		opts = append(opts, keepMonitorAddress(c.staticFacts().NetworkName))
+	}
+	opts = append(opts, c.runDir.mounts()...)
+	return append(opts, c.startup.ownedLabel())
 }
 
 // removeMonitor implements MonitorContainer.Remove, which documents the behavior. The caller
@@ -598,67 +634,106 @@ func replaceGlobalMonitorHost(config []byte, addresses string) ([]byte, error) {
 		return nil, errors.New("invalid or oversized monitor bootstrap configuration")
 	}
 	lines := strings.SplitAfter(string(config), "\n")
-	global, section, globals, hosts := false, false, 0, 0
+	var scan monitorConfigScan
 	for index, original := range lines {
-		line := strings.TrimSuffix(original, "\n")
-		line = strings.TrimSuffix(line, "\r")
-		ending := original[len(line):]
-		comment, err := monitorConfigComment(line)
+		line, err := splitMonitorConfigLine(original)
 		if err != nil {
 			return nil, err
 		}
-		content := line
-		if comment >= 0 {
-			content = line[:comment]
+		host, err := scan.next(line)
+		if err != nil {
+			return nil, err
 		}
-		trimmed := strings.TrimSpace(content)
-		if trimmed == "" {
-			continue
+		if host {
+			lines[index] = line.withValue(addresses)
 		}
-		if strings.HasPrefix(trimmed, "[") {
-			if !strings.HasSuffix(trimmed, "]") || strings.Count(trimmed, "[") != 1 || strings.Count(trimmed, "]") != 1 || strings.TrimSpace(trimmed[1:len(trimmed)-1]) == "" {
-				return nil, errors.New("ambiguous configuration section")
-			}
-			section = true
-			global = strings.TrimSpace(trimmed[1:len(trimmed)-1]) == "global"
-			if global {
-				globals++
-				if globals != 1 {
-					return nil, errors.New("duplicate global configuration section")
-				}
-			}
-			continue
-		}
-		key, _, hasValue := strings.Cut(content, "=")
-		if !section || !hasValue || strings.TrimSpace(key) == "" || strings.HasPrefix(trimmed, "!") || strings.HasSuffix(trimmed, "\\") {
-			return nil, errors.New("ambiguous configuration entry or include/continuation")
-		}
-		normalized := strings.Join(strings.Fields(strings.NewReplacer("_", " ", "-", " ").Replace(key)), "_")
-		if normalized == "include" || normalized == "includedir" {
-			return nil, errors.New("configuration include cannot be refreshed unambiguously")
-		}
-		if !global || normalized != "mon_host" {
-			continue
-		}
-		hosts++
-		if hosts != 1 {
-			return nil, errors.New("duplicate global mon_host configuration")
-		}
-		equals := strings.IndexByte(line, '=')
-		start := equals + 1
-		for start < len(line) && (line[start] == ' ' || line[start] == '\t') {
-			start++
-		}
-		end := len(content)
-		for end > start && (line[end-1] == ' ' || line[end-1] == '\t') {
-			end--
-		}
-		lines[index] = line[:start] + addresses + line[end:] + ending
 	}
-	if globals != 1 || hosts != 1 {
+	if scan.globals != 1 || scan.hosts != 1 {
 		return nil, errors.New("configuration needs exactly one explicit global mon_host entry")
 	}
 	return []byte(strings.Join(lines, "")), nil
+}
+
+// monitorConfigLine is one configuration line: its text without the line
+// ending, the part before any comment, that part trimmed, and the ending.
+type monitorConfigLine struct {
+	text, content, trimmed, ending string
+}
+
+func splitMonitorConfigLine(original string) (monitorConfigLine, error) {
+	text := strings.TrimSuffix(strings.TrimSuffix(original, "\n"), "\r")
+	comment, err := monitorConfigComment(text)
+	if err != nil {
+		return monitorConfigLine{}, err
+	}
+	content := text
+	if comment >= 0 {
+		content = text[:comment]
+	}
+	return monitorConfigLine{text: text, content: content, trimmed: strings.TrimSpace(content), ending: original[len(text):]}, nil
+}
+
+// withValue is the line with its value replaced by value, keeping the key,
+// the blanks around the value, any comment and the line ending.
+func (l monitorConfigLine) withValue(value string) string {
+	start := strings.IndexByte(l.text, '=') + 1
+	for start < len(l.text) && (l.text[start] == ' ' || l.text[start] == '\t') {
+		start++
+	}
+	end := len(l.content)
+	for end > start && (l.text[end-1] == ' ' || l.text[end-1] == '\t') {
+		end--
+	}
+	return l.text[:start] + value + l.text[end:] + l.ending
+}
+
+// monitorConfigScan follows the sections of a configuration and refuses any
+// line whose meaning would be ambiguous to Ceph's parser.
+type monitorConfigScan struct {
+	section, global bool
+	globals, hosts  int
+}
+
+// next reads one line and reports whether it is the global mon_host entry.
+func (s *monitorConfigScan) next(line monitorConfigLine) (bool, error) {
+	switch {
+	case line.trimmed == "":
+		return false, nil
+	case strings.HasPrefix(line.trimmed, "["):
+		return false, s.enter(line.trimmed)
+	}
+	key, _, hasValue := strings.Cut(line.content, "=")
+	if !s.section || !hasValue || strings.TrimSpace(key) == "" || strings.HasPrefix(line.trimmed, "!") || strings.HasSuffix(line.trimmed, "\\") {
+		return false, errors.New("ambiguous configuration entry or include/continuation")
+	}
+	normalized := strings.Join(strings.Fields(strings.NewReplacer("_", " ", "-", " ").Replace(key)), "_")
+	if normalized == "include" || normalized == "includedir" {
+		return false, errors.New("configuration include cannot be refreshed unambiguously")
+	}
+	if !s.global || normalized != "mon_host" {
+		return false, nil
+	}
+	s.hosts++
+	if s.hosts != 1 {
+		return false, errors.New("duplicate global mon_host configuration")
+	}
+	return true, nil
+}
+
+// enter starts the section of a header line.
+func (s *monitorConfigScan) enter(header string) error {
+	if !strings.HasSuffix(header, "]") || strings.Count(header, "[") != 1 || strings.Count(header, "]") != 1 || strings.TrimSpace(header[1:len(header)-1]) == "" {
+		return errors.New("ambiguous configuration section")
+	}
+	s.section = true
+	s.global = strings.TrimSpace(header[1:len(header)-1]) == "global"
+	if s.global {
+		s.globals++
+		if s.globals != 1 {
+			return errors.New("duplicate global configuration section")
+		}
+	}
+	return nil
 }
 
 func monitorConfigComment(line string) (int, error) {

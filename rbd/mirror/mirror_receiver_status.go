@@ -496,71 +496,100 @@ func legacyRBDNamespaceReplayers(images, names json.RawMessage) (json.RawMessage
 }
 
 func deriveRBDReceiverElection(result *ReceiverStatus, observations map[string]rbdReceiverNativeObservation) {
-	ids := make(map[string]bool)
-	ownedIDs := make(map[string]bool)
+	e := rbdReceiverElection{result: result, observations: observations, owned: make(map[string]bool), ready: make(map[string]bool)}
 	for _, name := range result.ExpectedDaemons {
 		if id := observations[name].report.InstanceID; rbdReceiverInstance(id) {
-			ownedIDs[id] = true
+			e.owned[id] = true
 		}
 	}
+	leader := e.findLeader()
+	if leader == "" {
+		e.reportNoOwnedLeader()
+		return
+	}
+	e.checkLeaderView(leader)
+}
+
+// rbdReceiverElection derives one receiver status from the expected daemons'
+// observations: owned holds every valid instance ID an expected daemon
+// reports, ready the IDs of the daemons whose receiving scope is ready.
+type rbdReceiverElection struct {
+	result       *ReceiverStatus
+	observations map[string]rbdReceiverNativeObservation
+	owned, ready map[string]bool
+}
+
+// findLeader marks every expected daemon whose receiving scope is not ready,
+// every repeated instance ID and every second claimed leader, and returns the
+// single ready daemon that reports itself as leader, or "".
+func (e rbdReceiverElection) findLeader() string {
 	var leader string
-	for _, name := range result.ExpectedDaemons {
-		o := observations[name]
+	for _, name := range e.result.ExpectedDaemons {
+		o := e.observations[name]
 		if !o.report.Running || o.report.PoolState != "running" || !o.report.NamespaceDiscovered || !rbdReceiverInstance(o.report.InstanceID) {
-			if result.DaemonProblems[name] == "" {
-				result.DaemonProblems[name] = "receiver-scope-not-ready"
+			if e.result.DaemonProblems[name] == "" {
+				e.result.DaemonProblems[name] = "receiver-scope-not-ready"
 			}
 			continue
 		}
-		if ids[o.report.InstanceID] {
-			result.DaemonProblems[name] = "receiver-instance-ambiguous"
+		if e.ready[o.report.InstanceID] {
+			e.result.DaemonProblems[name] = "receiver-instance-ambiguous"
 		}
-		ids[o.report.InstanceID] = true
+		e.ready[o.report.InstanceID] = true
 		if o.report.Leader {
 			if leader != "" {
-				result.DaemonProblems[name], result.DaemonProblems[leader] = "receiver-leader-ambiguous", "receiver-leader-ambiguous"
+				e.result.DaemonProblems[name], e.result.DaemonProblems[leader] = "receiver-leader-ambiguous", "receiver-leader-ambiguous"
 			} else {
 				leader = name
 			}
 		}
 	}
-	if leader == "" {
-		foreign := make(map[string]bool)
-		for _, observation := range observations {
-			id := observation.report.LeaderInstanceID
-			if rbdReceiverInstance(id) && !ownedIDs[id] {
-				foreign[id] = true
-			}
+	return leader
+}
+
+// reportNoOwnedLeader records the leaders that no owned daemon is, and marks
+// every daemon without another problem as not having seen an owned leader.
+func (e rbdReceiverElection) reportNoOwnedLeader() {
+	foreign := make(map[string]bool)
+	for _, observation := range e.observations {
+		id := observation.report.LeaderInstanceID
+		if rbdReceiverInstance(id) && !e.owned[id] {
+			foreign[id] = true
 		}
-		for id := range foreign {
-			result.ForeignInstances = append(result.ForeignInstances, id)
-		}
-		slices.Sort(result.ForeignInstances)
-		for _, name := range result.ExpectedDaemons {
-			if result.DaemonProblems[name] == "" {
-				result.DaemonProblems[name] = "owned-leader-unobserved"
-			}
-		}
-		return
 	}
-	l := observations[leader]
-	result.LeaderDaemonName, result.LeaderInstanceID, result.Instances = leader, l.report.InstanceID, slices.Clone(l.members)
+	for id := range foreign {
+		e.result.ForeignInstances = append(e.result.ForeignInstances, id)
+	}
+	slices.Sort(e.result.ForeignInstances)
+	for _, name := range e.result.ExpectedDaemons {
+		if e.result.DaemonProblems[name] == "" {
+			e.result.DaemonProblems[name] = "owned-leader-unobserved"
+		}
+	}
+}
+
+// checkLeaderView records the leader and its membership, the members that no
+// owned daemon is, and marks a leader whose membership is not exactly the
+// ready owned daemons, and every daemon that follows another leader.
+func (e rbdReceiverElection) checkLeaderView(leader string) {
+	l := e.observations[leader]
+	e.result.LeaderDaemonName, e.result.LeaderInstanceID, e.result.Instances = leader, l.report.InstanceID, slices.Clone(l.members)
 	var expected []string
-	for id := range ids {
+	for id := range e.ready {
 		expected = append(expected, id)
 	}
 	slices.Sort(expected)
 	for _, id := range l.members {
-		if !ownedIDs[id] {
-			result.ForeignInstances = append(result.ForeignInstances, id)
+		if !e.owned[id] {
+			e.result.ForeignInstances = append(e.result.ForeignInstances, id)
 		}
 	}
-	if l.report.LeaderInstanceID != l.report.InstanceID || !slices.Equal(expected, l.members) || len(ids) != len(result.ExpectedDaemons) {
-		result.DaemonProblems[leader] = "receiver-membership-converging"
+	if l.report.LeaderInstanceID != l.report.InstanceID || !slices.Equal(expected, l.members) || len(e.ready) != len(e.result.ExpectedDaemons) {
+		e.result.DaemonProblems[leader] = "receiver-membership-converging"
 	}
-	for _, name := range result.ExpectedDaemons {
-		if observations[name].report.LeaderInstanceID != l.report.InstanceID {
-			result.DaemonProblems[name] = "receiver-leader-converging"
+	for _, name := range e.result.ExpectedDaemons {
+		if e.observations[name].report.LeaderInstanceID != l.report.InstanceID {
+			e.result.DaemonProblems[name] = "receiver-leader-converging"
 		}
 	}
 }

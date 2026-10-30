@@ -1,7 +1,6 @@
 package ceph
 
 import (
-	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -162,65 +161,30 @@ var authStateMethods = map[string][]string{
 // does, and they are never replaced as a whole. Container.ledger itself is
 // addressed only by Container.authLedger's single binding.
 func TestAuthStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses, bindings := 0, 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) == "authState" {
-				continue
+	bindings := 0
+	fieldAudit{label: "Container.authRecords", use: authRecordsUse, own: isAuthStateReceiver, methods: authStateMethods,
+		allow: func(file string, fn *ast.FuncDecl, n ast.Node, allowed map[*ast.SelectorExpr]bool) []string {
+			kv, ok := n.(*ast.KeyValueExpr)
+			if !ok {
+				return nil
 			}
-			allowed := map[*ast.SelectorExpr]bool{}
+			key, ok := kv.Key.(*ast.Ident)
+			if !ok || (key.Name != "authRecords" && key.Name != "authLedgerState") {
+				return nil
+			}
 			// Container.authLedger binds the records to the ledger, the one
 			// place that hands out their address; the ledger's methods are
 			// held to this guard like any other function.
-			binding := funcKey(fn) == "Container.authLedger"
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					if method, ok := call.Fun.(*ast.SelectorExpr); ok {
-						if _, known := authStateMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok {
-								allowed[recv] = true
-							}
-						}
-					}
+			if address, ok := kv.Value.(*ast.UnaryExpr); funcKey(fn) == "Container.authLedger" && ok && address.Op == token.AND && key.Name == "authLedgerState" {
+				if sel, ok := address.X.(*ast.SelectorExpr); ok && sel.Sel.Name == "ledger" {
+					bindings++
+					return nil
 				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch n := n.(type) {
-				case *ast.SelectorExpr:
-					if n.Sel.Name == "authRecords" {
-						if allowed[n] {
-							uses++
-						} else {
-							problems = append(problems, file+": "+fn.Name.Name+" uses Container.authRecords outside an authState method call")
-						}
-					}
-				case *ast.KeyValueExpr:
-					if key, ok := n.Key.(*ast.Ident); ok && (key.Name == "authRecords" || key.Name == "authLedgerState") {
-						if address, ok := n.Value.(*ast.UnaryExpr); binding && ok && address.Op == token.AND && key.Name == "authLedgerState" {
-							if sel, ok := address.X.(*ast.SelectorExpr); ok && sel.Sel.Name == "ledger" {
-								bindings++
-								allowed[sel] = true
-								return true
-							}
-						}
-						problems = append(problems, file+": "+fn.Name.Name+" sets "+key.Name+" in a literal")
-					}
-				}
-				return true
-			})
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.authRecords found: the guard is vacuous")
-	}
+			}
+			return []string{file + ": " + fn.Name.Name + " sets " + key.Name + " in a literal"}
+		}}.check(t)
 	if bindings != 1 {
-		problems = append(problems, fmt.Sprintf("Container.authLedger binds the records %d times, want once", bindings))
-	}
-	if len(problems) != 0 {
-		t.Fatalf("auth state escapes its methods: %v", problems)
+		t.Fatalf("Container.authLedger binds the records %d times, want once", bindings)
 	}
 }
 
@@ -229,38 +193,8 @@ func TestAuthStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 // calls, so none takes a lock, none calls into Container and the records stay
 // guarded by the caller's Container.mu alone.
 func TestAuthStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) != "authState" {
-				continue
-			}
-			name := fn.Name.Name
-			want, known := authStateMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update authStateMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					got = append(got, types.ExprString(call))
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-			}
-		}
-	}
-	for name := range authStateMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
+	methodAudit{label: "authState", own: isAuthStateReceiver, methods: authStateMethods,
+		render: func(call *ast.CallExpr) string { return types.ExprString(call) }}.check(t)
 	// The state declares no lock and no field outside the five records.
 	for _, parsed := range parseProductionFiles(t) {
 		for _, decl := range parsed.Decls {
@@ -277,16 +211,17 @@ func TestAuthStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
 						}
 					}
 					if want := []string{"fences", "secrets", "keys", "strays", "revocations"}; !slices.Equal(fields, want) {
-						problems = append(problems, "authState fields are "+join(fields)+", pinned "+join(want))
+						t.Fatalf("authState fields are %s, pinned %s", join(fields), join(want))
 					}
 				}
 			}
 		}
 	}
-	if len(problems) != 0 {
-		t.Fatalf("authState breaks its lock contract: %v", problems)
-	}
 }
+
+func authRecordsUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "authRecords" }
+
+func isAuthStateReceiver(fn *ast.FuncDecl) bool { return receiverTypeName(fn) == "authState" }
 
 // authOwnerHeld lists the production functions that use Container.authRecords, or
 // call another function of this list, without taking Container.mu themselves.
