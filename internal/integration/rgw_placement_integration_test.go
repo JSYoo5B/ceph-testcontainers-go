@@ -193,7 +193,7 @@ func TestRGWPlacementRealmStorageClasses(t *testing.T) {
 	}
 	rgwPlacementPoolPayload(t, ctx, clusters[1], "tc-realm-ia", "replicated STANDARD_IA", payload)
 	for _, gateway := range []*rgw.Gateway{fixture.Source, fixture.Destination} {
-		state, err := gateway.PlacementStatus(ctx, map[*rgw.Gateway]*rgw.Placement{fixture.Source: sourcePlacement, fixture.Destination: destinationPlacement}[gateway])
+		state, err := (map[*rgw.Gateway]*rgw.Placement{fixture.Source: sourcePlacement, fixture.Destination: destinationPlacement}[gateway]).Status(ctx)
 		if err != nil || state.DefaultPlacement != "default-placement" {
 			t.Fatal("realm publication changed native default or lost zone-local mapping")
 		}

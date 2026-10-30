@@ -191,7 +191,7 @@ func testRGWS3ClientFeatures(t *testing.T, host bool) {
 	req(owner, http.MethodDelete, bucket, nil, nil, http.StatusNoContent)
 	rgwS3LifecycleAndObjectLock(t, ctx, gateway, owner, users[0])
 	for _, user := range users {
-		if err := gateway.RemoveUser(ctx, user); err != nil {
+		if err := user.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

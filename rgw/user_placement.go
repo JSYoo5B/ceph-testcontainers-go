@@ -54,7 +54,7 @@ func rgwPlacementNativeTags(value any) ([]string, error) {
 	return normalizeRGWPlacementTags(tags)
 }
 
-// SetUserPlacement sets an owned user's default placement/storage class and,
+// SetPlacement sets an owned user's default placement/storage class and,
 // optionally, replaces its placement tags. It uses the gateway's actual native
 // zone IDs, validates the confirmed placement and its unchanged pool IDs and
 // class mappings, and verifies that unrelated native user policy and keys did
@@ -65,8 +65,8 @@ func rgwPlacementNativeTags(value any) ([]string, error) {
 // ApplyPlacement/ReloadPlacement must activate the target before S3 uses it.
 // Native metadata caches may delay new S3 requests. External user/placement
 // edits must not race this operation. A failed readback may follow a persisted
-// change; UserInfo reads native state, and the same request can be retried.
-func (g *Gateway) SetUserPlacement(ctx context.Context, user *User, p *Placement, config UserPlacementConfig) error {
+// change; Info reads native state, and the same request can be retried.
+func (u *User) SetPlacement(ctx context.Context, p *Placement, config UserPlacementConfig) error {
 	if config.StorageClass == "" {
 		config.StorageClass = "STANDARD"
 	}
@@ -81,24 +81,28 @@ func (g *Gateway) SetUserPlacement(ctx context.Context, user *User, p *Placement
 	if err != nil {
 		return err
 	}
-	if g == nil || g.owner == nil {
-		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+	if u == nil || u.owner == nil {
+		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(g.owner)
-	defer servicehook.Unlock(g.owner)
+	servicehook.Lock(u.owner)
+	defer servicehook.Unlock(u.owner)
+	g, err := scopeGateway(u.owner, u.scope)
+	if err != nil {
+		return err
+	}
 	if err := g.validatePlacementHandle(p); err != nil {
 		return err
 	}
 	if !p.confirmed {
 		return errors.New("RGW placement creation has not been confirmed")
 	}
-	if user == nil || user.owner != g.owner || !sameRGWScope(user.scope, g.config) || user.state == nil || !user.state.created || user.state.removed || user.state.identity == nil || user.accessKey == "" || user.secretKey == "" {
-		return errors.New("RGW user must be an active identity created in this cluster and gateway scope")
+	if u.state == nil || !u.state.created || u.state.removed || u.state.identity == nil || u.accessKey == "" || u.secretKey == "" {
+		return errors.New("RGW user must be an active identity created in this cluster")
 	}
-	if user.state.nativeScope != nil && *user.state.nativeScope != p.scope {
+	if u.state.nativeScope != nil && *u.state.nativeScope != p.scope {
 		return errors.New("RGW user and placement have different native runtime scopes")
 	}
-	ctx, cancel := g.adminContext(ctx)
+	ctx, cancel := adminContext(ctx, g.owner)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return err
@@ -116,11 +120,11 @@ func (g *Gateway) SetUserPlacement(ctx context.Context, user *User, p *Placement
 	if !slices.ContainsFunc(p.config.StorageClasses, func(class StorageClassConfig) bool { return class.Name == config.StorageClass }) {
 		return errors.New("RGW user storage class is absent from the owned placement")
 	}
-	before, err := g.placementOwnedUser(ctx, user, p.scope)
+	before, err := g.placementOwnedUser(ctx, u, p.scope)
 	if err != nil {
 		return err
 	}
-	args := []string{"user", "modify", "--uid", user.id, "--placement-id", p.config.Name, "--storage-class", config.StorageClass}
+	args := []string{"user", "modify", "--uid", u.id, "--placement-id", p.config.Name, "--storage-class", config.StorageClass}
 	wantTags := before.info.PlacementTags
 	if config.Tags != nil {
 		wantTags = config.Tags
@@ -129,12 +133,12 @@ func (g *Gateway) SetUserPlacement(ctx context.Context, user *User, p *Placement
 	if _, err := g.placementCommand(ctx, p.scope, args...); err != nil {
 		return err
 	}
-	after, err := g.placementOwnedUser(ctx, user, p.scope)
+	after, err := g.placementOwnedUser(ctx, u, p.scope)
 	if err != nil {
 		return err
 	}
 	// rgw_placement_rule encodes STANDARD as the placement name alone.
-	// Its later decode clears storage_class, which user info dumps verbatim.
+	// Its later decode clears storage_class, which u info dumps verbatim.
 	// Compare the canonical class while retaining native UserInfo readback.
 	actualClass := after.info.DefaultStorageClass
 	if actualClass == "" {

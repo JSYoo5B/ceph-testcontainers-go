@@ -21,13 +21,13 @@ import (
 )
 
 // Explicit synchronization prepares deterministic native accounting for the
-// fixture assertion. UserUsage itself performs only read-only stats queries.
+// fixture assertion. User.Usage itself performs only read-only stats queries.
 func rgwFixtureUserUsage(t *testing.T, ctx context.Context, gateway *rgw.Gateway, user *rgw.User, stage string, objects, sizeBytes uint64) {
 	t.Helper()
 	if _, err := gateway.Admin(ctx, "user", "stats", "--uid", user.ID(), "--sync-stats"); err != nil {
 		t.Fatal(err)
 	}
-	usage, err := gateway.UserUsage(ctx, user)
+	usage, err := user.Usage(ctx)
 	if err != nil || usage.UserID != user.ID() || usage.Scope != "user" || usage.OwnerID != user.ID() || usage.NumObjects != objects || usage.SizeBytes != sizeBytes {
 		t.Fatalf("native user storage assertion %s: usage=%+v error=%v expected_objects=%d expected_bytes=%d", stage, usage, err, objects, sizeBytes)
 	}

@@ -68,7 +68,7 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 	if err := json.Unmarshal(observerS3.request(t, ctx, http.MethodGet, "/admin/user?uid="+alice.ID(), nil, http.StatusOK), &nativeAdminInfo); err != nil || nativeAdminInfo.ID != alice.ID() {
 		t.Fatal("explicit users=read capability did not expose the expected Admin Ops user info")
 	}
-	observerInfo, err := gateway.UserInfo(ctx, observer)
+	observerInfo, err := observer.Info(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,13 +81,13 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 
 	userQuota := rgw.Quota{Enabled: true, MaxSizeBytes: 1 << 20, MaxObjects: 8}
 	bucketQuota := rgw.Quota{Enabled: true, MaxSizeBytes: 1 << 19, MaxObjects: 4}
-	if err := gateway.SetUserQuota(ctx, alice, userQuota); err != nil {
+	if err := alice.SetQuota(ctx, userQuota); err != nil {
 		t.Fatal(err)
 	}
-	if err := gateway.SetBucketQuota(ctx, alice, bucketQuota); err != nil {
+	if err := alice.SetBucketQuota(ctx, bucketQuota); err != nil {
 		t.Fatal(err)
 	}
-	aliceInfo, err := gateway.UserInfo(ctx, alice)
+	aliceInfo, err := alice.Info(ctx)
 	if err != nil || aliceInfo.UserQuota != userQuota || aliceInfo.BucketQuota != bucketQuota || aliceInfo.Admin || aliceInfo.System {
 		t.Fatal("RGW native quota policy did not persist with the expected byte/object limits")
 	}
@@ -95,15 +95,15 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 	quotaUser, quotaS3 := create("tc-fixture-quota", "")
 	rgwFixtureUserAggregateQuota(t, ctx, gateway, quotaUser, quotaS3, bob, bobS3)
 
-	if err := gateway.SuspendUser(ctx, alice, true); err != nil {
+	if err := alice.Suspend(ctx, true); err != nil {
 		t.Fatal(err)
 	}
 	rgwFixtureWaitStatus(t, ctx, aliceS3, bucket+"/payload", http.StatusForbidden)
 	bobS3.request(t, ctx, http.MethodPut, bobBucket+"/while-alice-suspended", payload, http.StatusOK)
-	if info, err := gateway.UserInfo(ctx, alice); err != nil || !info.Suspended {
+	if info, err := alice.Info(ctx); err != nil || !info.Suspended {
 		t.Fatal("native suspension flag did not persist")
 	}
-	if err := gateway.SuspendUser(ctx, alice, false); err != nil {
+	if err := alice.Suspend(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	if actual := rgwFixtureWaitStatus(t, ctx, aliceS3, bucket+"/payload", http.StatusOK); !bytes.Equal(actual, payload) {
@@ -111,7 +111,7 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 	}
 	t.Log("suspension denied new signed HTTP requests; another identity stayed writable; resumption restored the original object")
 
-	if err := gateway.RemoveUser(ctx, alice); err == nil {
+	if err := alice.Remove(ctx); err == nil {
 		t.Fatal("user owning a populated bucket was removed without purge-data")
 	}
 	if actual := aliceS3.request(t, ctx, http.MethodGet, bucket+"/payload", nil, http.StatusOK); !bytes.Equal(actual, payload) {
@@ -119,14 +119,14 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 	}
 	aliceS3.request(t, ctx, http.MethodDelete, bucket+"/payload", nil, http.StatusNoContent)
 	aliceS3.request(t, ctx, http.MethodDelete, bucket, nil, http.StatusNoContent)
-	if err := gateway.RemoveUser(ctx, alice); err != nil {
+	if err := alice.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := gateway.RemoveUser(ctx, alice); err != nil {
+	if err := alice.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	rgwFixtureWaitStatus(t, ctx, aliceS3, "/", http.StatusForbidden)
-	if _, err := gateway.UserInfo(ctx, alice); err == nil {
+	if _, err := alice.Info(ctx); err == nil {
 		t.Fatal("removed owned handle still allowed native policy access")
 	}
 
@@ -135,7 +135,7 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 	}
 	bobS3.request(t, ctx, http.MethodDelete, bobBucket, nil, http.StatusNoContent)
 	for _, user := range []*rgw.User{bob, observer} {
-		if err := gateway.RemoveUser(ctx, user); err != nil {
+		if err := user.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -146,11 +146,11 @@ func testRGWUserAdministration(t *testing.T, customizers ...testcontainers.Conta
 // and an individual bucket quota are separate server admission conditions.
 func rgwFixtureUserAggregateQuota(t *testing.T, ctx context.Context, gateway *rgw.Gateway, user *rgw.User, client s3HTTPClient, neighbor *rgw.User, neighborS3 s3HTTPClient) {
 	t.Helper()
-	before, err := gateway.UserInfo(ctx, user)
+	before, err := user.Info(ctx)
 	if err != nil || before.ID != user.ID() || before.Type != "rgw" || before.AccountID != "" || before.Admin || before.System || before.Suspended || before.UserQuota.Enabled || before.BucketQuota.Enabled {
 		t.Fatal("user-quota fixture requires a fresh ordinary owned user with independent bucket quota disabled")
 	}
-	neighborBefore, err := gateway.UserInfo(ctx, neighbor)
+	neighborBefore, err := neighbor.Info(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,10 +174,10 @@ func rgwFixtureUserAggregateQuota(t *testing.T, ctx context.Context, gateway *rg
 	neighborS3.request(t, ctx, http.MethodPut, outside, nil, http.StatusOK)
 	bucketIDs[outside] = readBucketID(outside, neighbor)
 	limited := rgw.Quota{Enabled: true, MaxSizeBytes: -1, MaxObjects: 1}
-	if err := gateway.SetUserQuota(ctx, user, limited); err != nil {
+	if err := user.SetQuota(ctx, limited); err != nil {
 		t.Fatal(err)
 	}
-	current, err := gateway.UserInfo(ctx, user)
+	current, err := user.Info(ctx)
 	if err != nil || current.UserQuota != limited {
 		t.Fatal("ordinary aggregate user quota did not read back")
 	}
@@ -210,7 +210,7 @@ func rgwFixtureUserAggregateQuota(t *testing.T, ctx context.Context, gateway *rg
 			t.Fatal("user-quota restore refuses a replaced native bucket")
 		}
 	}
-	current, err = gateway.UserInfo(ctx, user)
+	current, err = user.Info(ctx)
 	if err != nil || current.UserQuota != limited {
 		t.Fatal("user-quota restore refuses an outside policy edit")
 	}
@@ -218,10 +218,10 @@ func rgwFixtureUserAggregateQuota(t *testing.T, ctx context.Context, gateway *rg
 	if !reflect.DeepEqual(current, before) {
 		t.Fatal("user-quota restore refuses changed native identity or unrelated policy")
 	}
-	if err := gateway.SetUserQuota(ctx, user, before.UserQuota); err != nil {
+	if err := user.SetQuota(ctx, before.UserQuota); err != nil {
 		t.Fatal(err)
 	}
-	if restored, err := gateway.UserInfo(ctx, user); err != nil || !reflect.DeepEqual(restored, before) {
+	if restored, err := user.Info(ctx); err != nil || !reflect.DeepEqual(restored, before) {
 		t.Fatal("user-quota restore did not preserve exact original native policy and owned key")
 	}
 	rgwFixtureUserQuotaWrite(t, ctx, client, second+"/rejected", payload, true)
@@ -236,15 +236,15 @@ func rgwFixtureUserAggregateQuota(t *testing.T, ctx context.Context, gateway *rg
 		client.request(t, ctx, http.MethodDelete, bucket+"/"+key, nil, http.StatusNoContent)
 		client.request(t, ctx, http.MethodDelete, bucket, nil, http.StatusNoContent)
 	}
-	if unchanged, err := gateway.UserInfo(ctx, neighbor); err != nil || !reflect.DeepEqual(unchanged, neighborBefore) {
+	if unchanged, err := neighbor.Info(ctx); err != nil || !reflect.DeepEqual(unchanged, neighborBefore) {
 		t.Fatal("ordinary user quota changed the sibling principal's native policy or owned key")
 	}
 	neighborS3.request(t, ctx, http.MethodDelete, outside+"/unaffected", nil, http.StatusNoContent)
 	neighborS3.request(t, ctx, http.MethodDelete, outside, nil, http.StatusNoContent)
-	if err := gateway.RemoveUser(ctx, user); err != nil {
+	if err := user.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := gateway.RemoveUser(ctx, user); err != nil {
+	if err := user.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("ordinary native user aggregate quota: second empty bucket denied with exact QuotaExceeded while per-bucket quota stayed disabled; sibling principal remained writable; original quota/key/bucket IDs and exact bytes recovered after restore; owned objects/buckets/user explicitly removed")

@@ -218,7 +218,7 @@ func testRGWPlacementStorageClasses(t *testing.T, options ...testcontainers.Cont
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := gateway.PlacementStatus(ctx, placement)
+	state, err := placement.Status(ctx)
 	if err != nil || state.DefaultPlacement != "default-placement" || placement.ZoneID == "" || placement.ZonegroupID == "" || state.LocationConstraint == "" {
 		t.Fatalf("native placement policy: %+v %v", state, err)
 	}

@@ -211,7 +211,7 @@ func runPair(ctx context.Context, image string, config Config, opts ...testconta
 		{"period", "update", "--commit"},
 	}
 	for _, cmd := range primaryCommands {
-		if _, err := f.SourceAdmin(ctx, cmd...); err != nil {
+		if _, err := f.admin(ctx, f.sourceClient, f.config.SourceZone, cmd...); err != nil {
 			return f, err
 		}
 	}
@@ -230,7 +230,7 @@ func runPair(ctx context.Context, image string, config Config, opts ...testconta
 			{"zonegroup", "modify", "--endpoints", sourceURL},
 			{"period", "update", "--commit"},
 		} {
-			if _, err := f.SourceAdmin(ctx, cmd...); err != nil {
+			if _, err := f.admin(ctx, f.sourceClient, f.config.SourceZone, cmd...); err != nil {
 				return f, err
 			}
 		}
@@ -248,7 +248,7 @@ func runPair(ctx context.Context, image string, config Config, opts ...testconta
 	}
 	secondaryCommands = append(secondaryCommands, rgwEndpointArgs(zoneCreate, destinationURL), []string{"period", "update", "--commit"})
 	for _, cmd := range secondaryCommands {
-		if _, err := f.DestinationAdmin(ctx, cmd...); err != nil {
+		if _, err := f.admin(ctx, f.destinationClient, f.config.DestinationZone, cmd...); err != nil {
 			return f, err
 		}
 	}
@@ -268,7 +268,7 @@ func runPair(ctx context.Context, image string, config Config, opts ...testconta
 		}
 		commands = append(commands, []string{"period", "update", "--commit"})
 		for _, cmd := range commands {
-			if _, err := f.DestinationAdmin(ctx, cmd...); err != nil {
+			if _, err := f.admin(ctx, f.destinationClient, f.config.DestinationZone, cmd...); err != nil {
 				return f, err
 			}
 		}
@@ -294,7 +294,7 @@ func runPair(ctx context.Context, image string, config Config, opts ...testconta
 		}
 		*item.target = identity.ID
 	}
-	data, err := f.DestinationAdmin(ctx, "realm", "get")
+	data, err := f.admin(ctx, f.destinationClient, f.config.DestinationZone, "realm", "get")
 	if err != nil {
 		return f, err
 	}
@@ -338,7 +338,7 @@ func runPair(ctx context.Context, image string, config Config, opts ...testconta
 			return f, err
 		}
 	}
-	user, err := f.SourceAdmin(ctx, "user", "create", "--uid", "tc-user-"+suffix, "--display-name", "Testcontainers multicluster S3 user")
+	user, err := f.admin(ctx, f.sourceClient, f.config.SourceZone, "user", "create", "--uid", "tc-user-"+suffix, "--display-name", "Testcontainers multicluster S3 user")
 	if err != nil {
 		return f, err
 	}
@@ -490,18 +490,6 @@ func ensureFreshRGWCluster(ctx context.Context, cluster *ceph.Container) error {
 	return nil
 }
 
-// SourceAdmin executes radosgw-admin in the source cluster's realm and zone.
-// The source starts as metadata master, but a caller can explicitly change it.
-func (f *Fixture) SourceAdmin(ctx context.Context, args ...string) ([]byte, error) {
-	return f.admin(ctx, f.sourceClient, f.config.SourceZone, args...)
-}
-
-// DestinationAdmin executes radosgw-admin in the destination cluster's realm
-// and zone, including after the destination has become metadata master.
-func (f *Fixture) DestinationAdmin(ctx context.Context, args ...string) ([]byte, error) {
-	return f.admin(ctx, f.destinationClient, f.config.DestinationZone, args...)
-}
-
 // PullSourcePeriod imports the destination's realm and current committed
 // period into the source cluster, using private system-user credentials.
 // Native realm pull updates the realm's current-period pointer and reflects
@@ -513,7 +501,7 @@ func (f *Fixture) PullSourcePeriod(ctx context.Context) error {
 	if f.systemAccess == "" || f.systemSecret == "" || f.destinationURL == "" {
 		return fmt.Errorf("RGW multisite system credentials are unavailable")
 	}
-	_, err := f.SourceAdmin(ctx, "realm", "pull", "--url", f.destinationURL, "--access-key", f.systemAccess, "--secret", f.systemSecret)
+	_, err := f.admin(ctx, f.sourceClient, f.config.SourceZone, "realm", "pull", "--url", f.destinationURL, "--access-key", f.systemAccess, "--secret", f.systemSecret)
 	return err
 }
 
@@ -525,7 +513,7 @@ func (f *Fixture) PullDestinationPeriod(ctx context.Context) error {
 	if f.systemAccess == "" || f.systemSecret == "" || f.sourceURL == "" {
 		return fmt.Errorf("RGW multisite system credentials are unavailable")
 	}
-	_, err := f.DestinationAdmin(ctx, "realm", "pull", "--url", f.sourceURL, "--access-key", f.systemAccess, "--secret", f.systemSecret)
+	_, err := f.admin(ctx, f.destinationClient, f.config.DestinationZone, "realm", "pull", "--url", f.sourceURL, "--access-key", f.systemAccess, "--secret", f.systemSecret)
 	return err
 }
 

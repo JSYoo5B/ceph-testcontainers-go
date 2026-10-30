@@ -24,15 +24,15 @@ func TestMultiClusterRGWSelectivePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncFlow(ctx, permission, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
+	if err := permission.CreateFlow(ctx, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, permission, multisite.SyncPipeConfig{ID: "bucket-allowance", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+	if err := permission.CreatePipe(ctx, multisite.SyncPipeConfig{ID: "bucket-allowance", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
 		t.Fatal(err)
 	}
 	// Publish only this owned policy and reload both gateways before writes,
 	// so the original all-bucket policy cannot race this scenario's data.
-	if err := link.ApplySyncGroup(ctx, permission); err != nil {
+	if err := permission.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	sourceS3.endpoint, err = link.Source.S3Endpoint(ctx)
@@ -52,10 +52,10 @@ func TestMultiClusterRGWSelectivePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, bucket, multisite.SyncPipeConfig{ID: "prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "published/"}); err != nil {
+	if err := bucket.CreatePipe(ctx, multisite.SyncPipeConfig{ID: "prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "published/"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.ApplySyncGroup(ctx, bucket); err != nil {
+	if err := bucket.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
@@ -81,7 +81,7 @@ func TestMultiClusterRGWSelectivePolicy(t *testing.T) {
 	// Bucket policy changes are dynamic and do not need a period commit.
 	// Verify new writes after the change, without asserting historical
 	// backfill or deletion of objects previously selected by the old prefix.
-	if err := link.SetSyncPipePrefix(ctx, bucket, "prefix", "reports/"); err != nil {
+	if err := bucket.SetPipePrefix(ctx, "prefix", "reports/"); err != nil {
 		t.Fatal(err)
 	}
 	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)

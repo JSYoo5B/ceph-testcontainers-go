@@ -28,10 +28,10 @@ func TestSerializedMultisiteMutationQueuedDeadline(t *testing.T) {
 			_, err := f.CreateSyncGroup(ctx, SyncPolicyScope{}, SyncGroupConfig{ID: "queued", Status: SyncAllowed})
 			return err
 		},
-		"RemoveSyncGroup":    func(ctx context.Context) error { return f.RemoveSyncGroup(ctx, group) },
-		"ApplySyncGroup":     func(ctx context.Context) error { return f.ApplySyncGroup(ctx, group) },
-		"SetSyncGroupStatus": func(ctx context.Context) error { return f.SetSyncGroupStatus(ctx, group, SyncEnabled) },
-		"InterruptZoneLink":  func(ctx context.Context) error { _, err := f.InterruptZoneLink(ctx, "queued"); return err },
+		"Remove":            func(ctx context.Context) error { return group.Remove(ctx) },
+		"Apply":             func(ctx context.Context) error { return group.Apply(ctx) },
+		"SetStatus":         func(ctx context.Context) error { return group.SetStatus(ctx, SyncEnabled) },
+		"InterruptZoneLink": func(ctx context.Context) error { _, err := f.InterruptZoneLink(ctx, "queued"); return err },
 		"ApplyZoneLinkProfile": func(ctx context.Context) error {
 			_, err := f.ApplyZoneLinkProfile(ctx, "queued", "peer", fault.NetworkProfile{HelperImage: "netem-helper:test", Loss: 100})
 			return err

@@ -29,21 +29,25 @@ type UserUsage struct {
 	LastStatsSync, LastStatsUpdate string
 }
 
-// UserUsage reads current storage counters for an owned user's effective native
+// Usage reads current storage counters for an owned user's effective native
 // owner. For an account root it returns the account aggregate with Scope account
 // and OwnerID equal to the originally owned account ID. It rechecks the user key,
 // type, account lifetime and scope before returning; no user, account, bucket or
 // statistics are created, changed, synchronized, reset or adopted.
-func (g *Gateway) UserUsage(ctx context.Context, user *User) (UserUsage, error) {
-	if g == nil || g.owner == nil {
-		return UserUsage{}, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+func (user *User) Usage(ctx context.Context) (UserUsage, error) {
+	if user == nil || user.owner == nil {
+		return UserUsage{}, servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
-	ctx, cancel := g.adminContext(ctx)
+	ctx, cancel := adminContext(ctx, user.owner)
 	defer cancel()
-	if err := servicehook.LockTopology(ctx, g.owner); err != nil {
+	if err := servicehook.LockTopology(ctx, user.owner); err != nil {
 		return UserUsage{}, err
 	}
-	defer servicehook.Unlock(g.owner)
+	defer servicehook.Unlock(user.owner)
+	g, err := scopeGateway(user.owner, user.scope)
+	if err != nil {
+		return UserUsage{}, err
+	}
 	if err := g.validateUsageGateway(); err != nil {
 		return UserUsage{}, err
 	}

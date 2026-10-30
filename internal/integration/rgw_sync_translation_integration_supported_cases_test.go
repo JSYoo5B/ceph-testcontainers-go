@@ -38,7 +38,7 @@ func (f *rgwSyncTranslationFixture) tag_owner_class(t *testing.T) {
 		}
 		cleanupRGWTranslationSyncGroup(t, link, selected, "tag-ia")
 		pipe := multisite.SyncPipeConfig{ID: "tag-ia", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "published/", Tags: []multisite.SyncObjectTag{{Key: "color", Value: "blue"}, {Key: "color", Value: "red"}}, DestinationOwner: ownerB, DestinationStorageClass: "STANDARD_IA", DestinationPlacements: map[string]*rgw.Placement{"destination": secondaryPlacement}}
-		if err := link.CreateSyncPipe(ctx, selected, pipe); err != nil {
+		if err := selected.CreatePipe(ctx, pipe); err != nil {
 			t.Fatal(err)
 		}
 		waitRGWTranslationPolicyReady(t, ctx, link, selected)
@@ -69,7 +69,7 @@ func (f *rgwSyncTranslationFixture) tag_owner_class(t *testing.T) {
 		putTagged(destB, output+"/published/reverse", "blue", payload)
 		requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{destB, output + "/published/green"}, rgwAbsentObject{destB, output + "/published/untagged"}, rgwAbsentObject{destB, output + "/private/blue"}, rgwAbsentObject{destB, output + "/published/from-other-bucket"}, rgwAbsentObject{b, output + "/published/reverse"})
 		waitOwnedBucketCheckpoint(t, ctx, link, selected, pipe.ID)
-		if err := link.RemoveSyncGroup(ctx, selected); err != nil {
+		if err := selected.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 		for _, key := range []string{"published/blue", "published/red"} {
@@ -99,7 +99,7 @@ func (f *rgwSyncTranslationFixture) tenant_system_user_isolation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			info, err := link.Source.UserInfo(ctx, tenantUsers[i])
+			info, err := (tenantUsers[i]).Info(ctx)
 			if err != nil || info.ID != tenant+"$tc-sync-tenant-user" || info.Tenant != tenant {
 				t.Fatal("tenant sync principal did not retain its exact canonical native UID")
 			}
@@ -114,17 +114,17 @@ func (f *rgwSyncTranslationFixture) tenant_system_user_isolation(t *testing.T) {
 		}
 		cleanupRGWTranslationSyncGroup(t, link, tenantGroup, "tenant-system", "tenant-user")
 		tenantPipe := multisite.SyncPipeConfig{ID: "tenant-system", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: "tc-sync-tenant-input", Tenant: "tenant_sync_alpha"}, DestinationBucket: &multisite.SyncBucketSelector{Name: "tc-sync-tenant-output", Tenant: "tenant_sync_alpha"}, Prefix: "system/", DestinationOwner: tenantUsers[0]}
-		if err := link.CreateSyncPipe(ctx, tenantGroup, tenantPipe); err != nil {
+		if err := tenantGroup.CreatePipe(ctx, tenantPipe); err != nil {
 			t.Fatal(err)
 		}
 		tenantUserPipe := tenantPipe
 		tenantUserPipe.ID, tenantUserPipe.Prefix, tenantUserPipe.User = "tenant-user", "user/", tenantUsers[0]
-		if err := link.CreateSyncPipe(ctx, tenantGroup, tenantUserPipe); err != nil {
+		if err := tenantGroup.CreatePipe(ctx, tenantUserPipe); err != nil {
 			t.Fatal(err)
 		}
 		crossTenant := tenantPipe
 		crossTenant.ID, crossTenant.DestinationOwner = "cross-tenant-unproven", tenantUsers[1]
-		if err := link.CreateSyncPipe(ctx, tenantGroup, crossTenant); err == nil {
+		if err := tenantGroup.CreatePipe(ctx, crossTenant); err == nil {
 			t.Fatal("unproven cross-tenant principal translation was accepted")
 		}
 		waitRGWTranslationPolicyReady(t, ctx, link, tenantGroup)
@@ -142,7 +142,7 @@ func (f *rgwSyncTranslationFixture) tenant_system_user_isolation(t *testing.T) {
 		denied := rgwTenantRequest(t, ctx, tenantSources[1], http.MethodGet, "/tenant_sync_alpha:tc-sync-tenant-input/system/selected", nil, http.StatusForbidden)
 		requireRGWUserPlacementDenied(t, denied)
 		requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{tenantDestinations[0], "/tc-sync-tenant-output/system/other-tenant"}, rgwAbsentObject{tenantDestinations[1], "/tc-sync-tenant-output/system/selected"}, rgwAbsentObject{tenantDestinations[1], "/tc-sync-tenant-output/system/other-tenant"})
-		if err := link.RemoveSyncGroup(ctx, tenantGroup); err != nil {
+		if err := tenantGroup.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if got := tenantDestinations[0].request(t, ctx, http.MethodGet, "/tc-sync-tenant-output/user/selected", nil, http.StatusOK); !bytes.Equal(got, tenantPayload) {

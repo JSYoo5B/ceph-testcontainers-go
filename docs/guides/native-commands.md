@@ -12,7 +12,7 @@ or uses cgo.
 | A command with bounded run time and output that must not outlive the call | `cluster.RunNativeCommand(ctx, target, command)` | The control container, a daemon container, or your attached container |
 | A workload, a restricted identity or your own client software | A container attached with `WithClient` or `WithClientIdentity` | Your container |
 | A native client in the test process | `cluster.ConnectionConfig(ctx)` with host networking | Your process |
-| `radosgw-admin` | `rgw.Gateway.Admin`, or `multisite.Fixture.SourceAdmin`, `DestinationAdmin`, `ZoneAdmin` | The gateway or the zone's setup client |
+| `radosgw-admin` | `rgw.Gateway.Admin`, or `multisite.Fixture.ZoneAdmin` | The gateway or the zone's setup client |
 | `rbd` on either side of a mirror link | `rbdmirror.Mirror.SourceRBD`, `DestinationRBD` | The link's setup clients |
 | A daemon's admin socket command | `AdminSocket`, `ceph tell`, or `ceph --admin-daemon` | Control container or daemon container |
 | A read-only snapshot for failure analysis | `cluster.CollectDiagnostics(ctx, config)` | Docker API and the control container |
@@ -569,11 +569,10 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
 - Do not modify users that the fixture created with `CreateUser` while it
   uses them.
 
-In multisite fixtures, `SourceAdmin` and `DestinationAdmin` address the two
-zones of a `multisite.WithConfig` fixture, and `ZoneAdmin(ctx, name, ...)` any
-owned zone, including those of a `multisite.WithTopology` fixture. They pass the zone's scope but do not add
-`--format json`. Do not edit periods or zones while `AddZone`,
-`AddZonegroup`, `RemoveZone`, `ApplySyncGroup` or a metadata master transition
+In multisite fixtures, `ZoneAdmin(ctx, name, ...)` addresses any owned zone by
+name, including those of a `multisite.WithTopology` fixture. It passes the
+zone's scope but does not add `--format json`. Do not edit periods or zones while `AddZone`,
+`AddZonegroup`, `RemoveZone`, `SyncGroup.Apply` or a metadata master transition
 runs.
 
 ## Diagnostics
@@ -614,8 +613,8 @@ compare-and-swap for most of these changes, some conflicts go undetected.
 | `fs set max_mds`, `fs fail`, `fs rm` | `ScaleMDS`, `WaitReady`, `cephfs.Remove` | `ScaleMDS`, `cephfs.Remove` |
 | `fs set session_timeout`/`session_autoclose` | `OverrideSessionTimeouts` | `OverrideSessionTimeouts` |
 | `fs subvolume`/`subvolumegroup` changes to owned subvolumes, snapshots or clones | Subvolume helpers, which check native identity | The typed subvolume helpers |
-| `radosgw-admin` changes to fixture-created users, accounts or placement | `UserInfo`, `RemoveUser`, `ApplyPlacement`, which verify keys and identity | The typed RGW helpers |
-| `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `ApplySyncGroup` | Typed topology calls, one at a time |
+| `radosgw-admin` changes to fixture-created users, accounts or placement | `User.Info`, `User.Remove`, `Gateway.ApplyPlacement`, which verify keys and identity | The typed RGW helpers |
+| `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `SyncGroup.Apply` | Typed topology calls, one at a time |
 | `rbd mirror pool enable`/`peer` changes on a mirrored pool | `rbdmirror.Mirror` operations, which compare captured policies | `rbdmirror.Mirror` methods, `Rebootstrap` |
 | Messenger mode and bind options with `MessengerV2Secure` | The fixed bootstrap policy; `override.SetConfig` refuses them | Choose `NetworkConfig.WithMessengerMode` at `Run` |
 | `docker stop`, `docker pause`, `docker network disconnect` on owned containers | Pause and interruption tracking, `Terminate` order | `Stop`/`Start`, `fault.Pause`, `InterruptNetwork` |

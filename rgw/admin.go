@@ -36,8 +36,9 @@ type UserConfig struct {
 // User is an identity created through a gateway. Credentials are returned
 // explicitly by Credentials; formatting this handle never includes secrets.
 // Users remain in Ceph when a gateway is removed, until explicitly removed or
-// the disposable cluster is terminated. Use another gateway in the same scope
-// for an owned user's operations if the original gateway has been removed.
+// the disposable cluster is terminated. Its operations run through the first
+// registered gateway, by name, in the scope of the gateway that created it, so
+// they keep working after that gateway is removed if another one serves it.
 type User struct {
 	owner     *ceph.Container
 	scope     Config
@@ -82,6 +83,13 @@ func (u *User) Credentials() (accessKey, secretKey string, err error) {
 		return "", "", errors.New("RGW S3 credentials are unavailable")
 	}
 	return u.accessKey, u.secretKey, nil
+}
+
+// ServedBy reports whether g belongs to the user's cluster and serves the
+// scope of the gateway that created the user, so that it can run the user's
+// operations.
+func (u *User) ServedBy(g *Gateway) bool {
+	return u != nil && g != nil && u.owner != nil && u.owner == g.owner && sameRGWScope(u.scope, g.config)
 }
 
 // String names the user without its keys.
@@ -138,16 +146,33 @@ func (g *Gateway) Admin(ctx context.Context, args ...string) ([]byte, error) {
 	if err := g.validateAdminGateway(); err != nil {
 		return nil, err
 	}
-	ctx, cancel := g.adminContext(ctx)
+	ctx, cancel := adminContext(ctx, g.owner)
 	defer cancel()
 	return g.adminCommand(ctx, args...)
 }
 
-func (g *Gateway) adminContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	if servicehook.StartupTimeout(g.owner) > 0 {
-		return context.WithTimeout(ctx, servicehook.StartupTimeout(g.owner))
+// adminContext bounds an admin operation by the cluster's startup timeout. A
+// handle calls it before it has resolved a gateway, so it takes the owner.
+func adminContext(ctx context.Context, owner *ceph.Container) (context.Context, context.CancelFunc) {
+	if servicehook.StartupTimeout(owner) > 0 {
+		return context.WithTimeout(ctx, servicehook.StartupTimeout(owner))
 	}
 	return ctx, func() {}
+}
+
+// scopeGateway returns the first registered gateway, in name order, that serves
+// scope and still admits admin commands. A handle runs its operations through
+// it. The caller holds the owning cluster's mutex.
+func scopeGateway(owner *ceph.Container, scope Config) (*Gateway, error) {
+	if servicehook.Closed(owner) {
+		return nil, servicehook.Invalid(errors.New("ceph cluster is terminated"))
+	}
+	for _, g := range gateways(owner).Sorted() {
+		if g != nil && sameRGWScope(g.config, scope) && g.validateAdminGateway() == nil {
+			return g, nil
+		}
+	}
+	return nil, servicehook.Invalid(errors.New("no registered RGW gateway serves this handle's scope"))
 }
 
 func (g *Gateway) validateAdminGateway() error {
@@ -155,7 +180,8 @@ func (g *Gateway) validateAdminGateway() error {
 		return servicehook.Invalid(errors.New("ceph cluster is terminated"))
 	}
 	service := servicehook.Service(g.owner, rgwServiceName(g.config))
-	if g.Container == nil || service == nil || service.GetContainerID() != g.GetContainerID() {
+	// DiagnosticHandle also refuses a typed nil, whose ID lookup would panic.
+	if servicehook.DiagnosticHandle(g.Container) == nil || servicehook.DiagnosticHandle(service) == nil || service.GetContainerID() != g.GetContainerID() {
 		return servicehook.Invalid(errors.New("RGW gateway is no longer owned by this cluster"))
 	}
 	return nil
@@ -291,7 +317,7 @@ func normalizeRGWUserConfig(config UserConfig) (UserConfig, error) {
 // capabilities. Existing IDs are rejected without changing their keys or
 // policy. A non-nil handle with an error records an attempted or partial
 // creation. If the generated credentials were confirmed, the handle supports
-// UserInfo and RemoveUser even after a later capability setup failure. If the
+// Info and Remove even after a later capability setup failure. If the
 // creation response is malformed, truncated or missing keys, credentials and
 // ownership cannot be confirmed: inspect through Admin or terminate the cluster
 // rather than adopting native keys or blindly retrying the same ID.
@@ -316,7 +342,7 @@ func (g *Gateway) createUser(ctx context.Context, config UserConfig, account *Ac
 	if err := g.validateAdminGateway(); err != nil {
 		return nil, err
 	}
-	ctx, cancel := g.adminContext(ctx)
+	ctx, cancel := adminContext(ctx, g.owner)
 	defer cancel()
 	var nativeScope *rgwPlacementScope
 	var creationAccount *Account
@@ -418,8 +444,8 @@ func (g *Gateway) userCommand(ctx context.Context, user *User, args ...string) (
 }
 
 func (g *Gateway) ownedUser(ctx context.Context, user *User) (*rgwNativeUser, error) {
-	if user == nil || user.owner != g.owner || !sameRGWScope(user.scope, g.config) || user.state == nil || !user.state.created || user.state.removed || user.state.identity == nil || user.accessKey == "" || user.secretKey == "" {
-		return nil, errors.New("RGW user must be an active identity created in this cluster and gateway scope")
+	if user.state == nil || !user.state.created || user.state.removed || user.state.identity == nil || user.accessKey == "" || user.secretKey == "" {
+		return nil, errors.New("RGW user must be an active identity created in this cluster")
 	}
 	data, err := g.userCommand(ctx, user, "user", "info", "--uid", user.id)
 	if err != nil {
@@ -441,7 +467,7 @@ func (g *Gateway) ownedUser(ctx context.Context, user *User) (*rgwNativeUser, er
 }
 
 // validateUserCreationIdentity is called with the owning cluster mutex held.
-// Use the private account lookup, since AccountInfo would acquire it again.
+// Use the private account lookup, since Account.Info would acquire it again.
 func (g *Gateway) validateUserCreationIdentity(ctx context.Context, user *User, native *rgwNativeUser) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -472,49 +498,53 @@ func (g *Gateway) validateUserCreationIdentity(ctx context.Context, user *User, 
 	return nil
 }
 
-func (g *Gateway) withOwnedUser(ctx context.Context, user *User, fn func(context.Context, *rgwNativeUser) error) error {
-	if g == nil || g.owner == nil {
-		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+// withGateway runs fn through the gateway that serves this user's scope,
+// holding the owning cluster's mutex, once the user is confirmed to be the
+// active identity it created.
+func (u *User) withGateway(ctx context.Context, fn func(context.Context, *Gateway, *rgwNativeUser) error) error {
+	if u == nil || u.owner == nil {
+		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(g.owner)
-	defer servicehook.Unlock(g.owner)
-	if err := g.validateAdminGateway(); err != nil {
-		return err
-	}
-	ctx, cancel := g.adminContext(ctx)
-	defer cancel()
-	native, err := g.ownedUser(ctx, user)
+	servicehook.Lock(u.owner)
+	defer servicehook.Unlock(u.owner)
+	g, err := scopeGateway(u.owner, u.scope)
 	if err != nil {
 		return err
 	}
-	return fn(ctx, native)
+	ctx, cancel := adminContext(ctx, u.owner)
+	defer cancel()
+	native, err := g.ownedUser(ctx, u)
+	if err != nil {
+		return err
+	}
+	return fn(ctx, g, native)
 }
 
-// UserInfo reads an owned user's quota, capabilities, suspension and placement
+// Info reads an owned user's quota, capabilities, suspension and placement
 // defaults/tags. Placement tags control new bucket placement, not object access.
 // It verifies the created key, original native user type and original account
 // association remain present before returning the policy. Account roots also
 // require the creation-owned account's native metadata lifetime to remain valid.
-func (g *Gateway) UserInfo(ctx context.Context, user *User) (UserInfo, error) {
+func (u *User) Info(ctx context.Context) (UserInfo, error) {
 	var info UserInfo
-	err := g.withOwnedUser(ctx, user, func(_ context.Context, native *rgwNativeUser) error {
+	err := u.withGateway(ctx, func(_ context.Context, _ *Gateway, native *rgwNativeUser) error {
 		info = native.info
 		return nil
 	})
 	return info, err
 }
 
-// SetUserQuota replaces both user limits and the enabled state. If a later
-// native command fails, a policy change may already have persisted; UserInfo
+// SetQuota replaces both user limits and the enabled state. If a later
+// native command fails, a policy change may already have persisted; Info
 // reads the authoritative state and the same request can safely be retried.
-func (g *Gateway) SetUserQuota(ctx context.Context, user *User, quota Quota) error {
-	return g.setUserQuota(ctx, user, "user", quota)
+func (u *User) SetQuota(ctx context.Context, quota Quota) error {
+	return u.setQuota(ctx, "user", quota)
 }
 
 // SetBucketQuota configures the per-bucket limits for all buckets owned by this
-// user. Use Admin for a policy on a single named bucket.
-func (g *Gateway) SetBucketQuota(ctx context.Context, user *User, quota Quota) error {
-	return g.setUserQuota(ctx, user, "bucket", quota)
+// user. Use Gateway.Admin for a policy on a single named bucket.
+func (u *User) SetBucketQuota(ctx context.Context, quota Quota) error {
+	return u.setQuota(ctx, "bucket", quota)
 }
 
 func rgwQuotaSizeArgument(bytes int64) string {
@@ -527,15 +557,15 @@ func rgwQuotaSizeArgument(bytes int64) string {
 	return strconv.FormatInt(bytes, 10) + "B"
 }
 
-func (g *Gateway) setUserQuota(ctx context.Context, user *User, scope string, quota Quota) error {
+func (u *User) setQuota(ctx context.Context, scope string, quota Quota) error {
 	if quota.MaxSizeBytes < -1 || quota.MaxObjects < -1 {
 		return errors.New("RGW quota limits must be -1, zero or positive")
 	}
-	return g.withOwnedUser(ctx, user, func(ctx context.Context, native *rgwNativeUser) error {
+	return u.withGateway(ctx, func(ctx context.Context, g *Gateway, native *rgwNativeUser) error {
 		if native.info.AccountID != "" {
-			return errors.New("account-owned storage requires SetAccountQuota or SetAccountBucketQuota")
+			return errors.New("account-owned storage requires Account.SetQuota or Account.SetBucketQuota")
 		}
-		if _, err := g.userCommand(ctx, user, "quota", "set", "--quota-scope", scope, "--uid", user.id,
+		if _, err := g.userCommand(ctx, u, "quota", "set", "--quota-scope", scope, "--uid", u.id,
 			"--max-size", rgwQuotaSizeArgument(quota.MaxSizeBytes), "--max-objects", strconv.FormatInt(quota.MaxObjects, 10)); err != nil {
 			return err
 		}
@@ -543,10 +573,10 @@ func (g *Gateway) setUserQuota(ctx context.Context, user *User, scope string, qu
 		if quota.Enabled {
 			action = "enable"
 		}
-		if _, err := g.userCommand(ctx, user, "quota", action, "--quota-scope", scope, "--uid", user.id); err != nil {
+		if _, err := g.userCommand(ctx, u, "quota", action, "--quota-scope", scope, "--uid", u.id); err != nil {
 			return err
 		}
-		native, err := g.ownedUser(ctx, user)
+		native, err := g.ownedUser(ctx, u)
 		if err != nil {
 			return err
 		}
@@ -561,19 +591,19 @@ func (g *Gateway) setUserQuota(ctx context.Context, user *User, scope string, qu
 	})
 }
 
-// SuspendUser disables or re-enables S3 access for an owned user and reads back
+// Suspend disables or re-enables S3 access for an owned user and reads back
 // native state. Gateway metadata caches may delay the observed HTTP response;
 // callers should poll new requests when testing suspension or re-enablement.
-func (g *Gateway) SuspendUser(ctx context.Context, user *User, suspended bool) error {
-	return g.withOwnedUser(ctx, user, func(ctx context.Context, _ *rgwNativeUser) error {
+func (u *User) Suspend(ctx context.Context, suspended bool) error {
+	return u.withGateway(ctx, func(ctx context.Context, g *Gateway, _ *rgwNativeUser) error {
 		action := "enable"
 		if suspended {
 			action = "suspend"
 		}
-		if _, err := g.userCommand(ctx, user, "user", action, "--uid", user.id); err != nil {
+		if _, err := g.userCommand(ctx, u, "user", action, "--uid", u.id); err != nil {
 			return err
 		}
-		native, err := g.ownedUser(ctx, user)
+		native, err := g.ownedUser(ctx, u)
 		if err != nil {
 			return err
 		}
@@ -584,52 +614,53 @@ func (g *Gateway) SuspendUser(ctx context.Context, user *User, suspended bool) e
 	})
 }
 
-// RemoveUser removes an owned identity without purging buckets or objects.
+// Remove removes an owned identity without purging buckets or objects.
 // The handle must contain its confirmed generated credentials; an incomplete
 // creation response never permits adopting keys from a later native query.
 // Ceph refuses ordinary users that still own buckets; remove those through the
 // S3 client first. Account buckets belong to the account and may outlive a root
-// user's removal; RemoveAccount independently refuses a nonempty account.
+// user's removal; Account.Remove independently refuses a nonempty account.
 // Success is idempotent across copies of a handle. After an uncertain
 // native failure, an absent user is accepted as completed removal; a user still
 // present remains tracked and its created key is verified before retrying.
-func (g *Gateway) RemoveUser(ctx context.Context, user *User) error {
-	if g == nil || g.owner == nil {
-		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+func (u *User) Remove(ctx context.Context) error {
+	if u == nil || u.owner == nil {
+		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(g.owner)
-	defer servicehook.Unlock(g.owner)
-	if user == nil || user.owner != g.owner || !sameRGWScope(user.scope, g.config) || user.state == nil || !user.state.created || user.state.identity == nil || user.accessKey == "" || user.secretKey == "" {
-		return errors.New("RGW user was not created in this cluster and gateway scope")
+	servicehook.Lock(u.owner)
+	defer servicehook.Unlock(u.owner)
+	if u.state == nil || !u.state.created || u.state.identity == nil || u.accessKey == "" || u.secretKey == "" {
+		return errors.New("RGW user was not created in this cluster")
 	}
-	if user.state.removed {
+	if u.state.removed {
 		return nil
 	}
-	if err := g.validateAdminGateway(); err != nil {
+	g, err := scopeGateway(u.owner, u.scope)
+	if err != nil {
 		return err
 	}
-	ctx, cancel := g.adminContext(ctx)
+	ctx, cancel := adminContext(ctx, u.owner)
 	defer cancel()
-	exists, err := g.userExistsForHandle(ctx, user)
+	exists, err := g.userExistsForHandle(ctx, u)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		user.state.removed = true
+		u.state.removed = true
 		return nil
 	}
-	if _, err := g.ownedUser(ctx, user); err != nil {
+	if _, err := g.ownedUser(ctx, u); err != nil {
 		return err
 	}
-	if _, err := g.userCommand(ctx, user, "user", "rm", "--uid", user.id); err != nil {
+	if _, err := g.userCommand(ctx, u, "user", "rm", "--uid", u.id); err != nil {
 		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		exists, checkErr := g.userExistsForHandle(checkCtx, user)
+		exists, checkErr := g.userExistsForHandle(checkCtx, u)
 		if checkErr != nil || exists {
 			return errors.Join(err, checkErr)
 		}
 	}
-	user.state.removed = true
+	u.state.removed = true
 	return nil
 }
 

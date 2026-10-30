@@ -23,7 +23,7 @@ func waitRGWScenarioBucketPolicyImport(t *testing.T, ctx context.Context, link *
 	// Import is a prerequisite for future writes. It does not prove effective
 	// discovery hints, data checkpoints, object bytes or permission effects.
 	started := time.Now()
-	status, err := link.WaitBucketSyncPolicyReady(ctx, group, "destination")
+	status, err := group.WaitBucketPolicyReady(ctx, "destination")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +72,11 @@ func newRGWScenario(t *testing.T, ctx context.Context, realm string) (*multisite
 	destinationS3 := sourceS3
 	destinationS3.endpoint = destinationEndpoint
 	return link, sourceS3, destinationS3
+}
+
+// rgwZoneAdmin binds Fixture.ZoneAdmin to one zone of link.
+func rgwZoneAdmin(link *multisite.Fixture, zone string) func(context.Context, ...string) ([]byte, error) {
+	return func(ctx context.Context, args ...string) ([]byte, error) { return link.ZoneAdmin(ctx, zone, args...) }
 }
 
 func rgwScenarioAdmin(t *testing.T, ctx context.Context, admin func(context.Context, ...string) ([]byte, error), args ...string) []byte {
