@@ -58,24 +58,23 @@ Two tagging notes:
   it also releases what the fixture owns. A `Remove` of a plain
   fixture-created resource (pool, subvolume, user, namespace) is **Lifetime**.
 
-## Boundary review
+## Judging borderline APIs
 
-The first review against the boundary removed `ceph.Container.ManagerContainer`
-(a nil-able compatibility accessor covered by `Managers` and
-`Observer.ManagerStatus`), the forwarding methods `cephfs.Container.Filesystems`,
-`rgw.Container.Gateways` and `rgw.Container.S3Endpoint` (the package functions
-and `Gateway.S3Endpoint` remain), and made the `User` and `Placement`
-ownership checks internal to `rgw` and `rgw/multisite`. These APIs were
-reviewed and kept:
+These rules decide the cases that the tag tests alone leave open. The reason a
+particular API is kept belongs in that API's own doc comment, not here.
 
-| API | Reason |
-| --- | --- |
-| `cephfs/mirror.Daemon.ProcessObserverBindingStatus` | Integration tests judge process quiescence by it; without it a test cannot tell an unbound observer from a quiet one. |
-| `ceph.WithIdleEntrypoint` | Client containers need a long-lived process to receive the handed-off configuration and run commands. |
-| `rbd.ExportBackup`, `ExportIncremental`, `RestoreBackup`, `RestoreIncremental` | They seed an image with known data and read back what the SUT wrote, with the stream and snapshot rules the fixture enforces. |
-| `cephfs.Filesystem.AddSnapshotSchedule`, `SnapshotScheduleLease` | A test needs scheduled snapshots as a precondition, and the lease restores the schedule. |
-| `rgw/multisite.Fixture.PullSourcePeriod`, `PullDestinationPeriod` | Failover and failback scenarios need the period import as a condition step. |
-| `ceph.Container.WaitForPGClean` beside `WaitForClean` | It deliberately accepts out or down OSDs, which a degraded-cluster test needs. |
+- A method that only forwards to another public API, or a shortcut that works
+  for one configuration only, is refused; keep the one general form.
+- A check that only another package of this module needs is internal (a hook
+  under `internal/`), not public API.
+- An observation of internal state is acceptable when a test needs it to tell
+  apart two outcomes it must judge.
+- An operation that looks operational (backup and restore, schedules, period
+  pulls) belongs when it seeds a precondition, performs a condition step, or
+  reads back what the SUT wrote, and only with the restrictions a fixture
+  needs.
+- Two near-identical waits or reads may both exist only when their acceptance
+  conditions differ, and each one's doc comment states the difference.
 
 ## Tagging an API
 
