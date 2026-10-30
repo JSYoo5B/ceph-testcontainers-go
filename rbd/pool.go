@@ -259,6 +259,10 @@ func nativeNamespaces(ctx context.Context, c *ceph.Container, poolName string) (
 // existing RBD initialization is safe to repeat. EC pools may supply image data
 // but cannot hold RBD metadata. Create the pool first, then wait for clean PGs
 // before client I/O. Partial initialization never deletes pool data.
+// Success is verified natively, by the pool's application tag and its
+// rbd_trash object, not only by the CLI exit code. Pool names may contain
+// letters, digits, _, . and -, must not start with . or -, and are at most
+// 128 characters.
 func InitPool(ctx context.Context, c *ceph.Container, pool string) error {
 	if c == nil {
 		return errNilCluster
@@ -271,6 +275,9 @@ func InitPool(ctx context.Context, c *ceph.Container, pool string) error {
 // A non-nil descriptor returned with an error identifies an attempted creation,
 // but cannot authorize removal unless creation was confirmed. Inspect native
 // state or dispose of the cluster after an uncertain creation failure.
+// Namespace names follow the rules of InitPool's pool names. Namespaces need
+// not be removed for cleanup: terminating the cluster disposes of them with
+// all their data.
 func CreateNamespace(ctx context.Context, c *ceph.Container, pool, name string) (*Namespace, error) {
 	if c == nil {
 		return nil, errNilCluster

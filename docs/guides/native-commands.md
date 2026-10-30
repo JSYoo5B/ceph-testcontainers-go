@@ -548,6 +548,37 @@ test's decisions. Changing the link's mode, scope, namespace mapping or peer
 through these clients makes later typed operations refuse to run, because
 they check the policies captured at setup.
 
+Commands that RBD and RBD mirroring tests commonly need:
+
+```sh
+# images, snapshots, locks and watchers (in a client container)
+rbd create --size 64M --image-feature layering,exclusive-lock volumes/disk
+rbd snap create volumes/disk@before
+rbd status volumes/disk --format json          # watchers
+rbd lock ls volumes/disk --format json
+rbd namespace list --pool volumes --format json
+rbd trash list --pool volumes --namespace tenant-a --format json
+
+# mirroring (through SourceRBD/DestinationRBD, without the leading "rbd")
+rbd mirror pool info volumes --format json
+rbd mirror pool status volumes --verbose --format json
+rbd mirror image status volumes/disk --format json
+rbd mirror image snapshot volumes/disk
+rbd mirror image demote volumes/disk
+rbd mirror image promote volumes/disk            # add --force only to simulate split-brain
+rbd mirror image resync volumes/disk
+rbd mirror pool peer remove volumes <peer-uuid>
+rbd mirror snapshot schedule add --pool volumes 1m
+
+# inside an rbdmirror.Daemon container
+ceph --admin-daemon /tmp/rbd-mirror.asok rbd mirror status
+```
+
+`rbd-mirror` reads its options from the destination cluster's central
+configuration (`client` section) when it starts; set them with
+`override.SetConfig` on the destination before `AddDaemon`. Its logs go to
+standard error (`daemon.Logs(ctx)`).
+
 ## RGW administration
 
 `rgw.Gateway.Admin` runs `radosgw-admin --format json` inside a running

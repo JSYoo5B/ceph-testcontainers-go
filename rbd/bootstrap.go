@@ -53,7 +53,12 @@ func (b *poolsBootstrap) Start(ctx context.Context, c *ceph.Container) error {
 // WithPools creates replicated pools for RBD images during Run and
 // initializes their RBD metadata. Application defaults to rbd and must not be
 // another application; erasure-coded data pools are created with WithPools and
-// referenced as an image's data pool. Repeated options replace the list.
+// referenced as an image's data pool. Repeated options replace the list, and
+// passing the option replaces the default rbd pool of Run. The other
+// ceph.PoolConfig fields keep their ceph meaning: a zero PGNum selects 8 PGs
+// with the autoscaler off, zero Replicas and MinSize select the cluster
+// defaults (2/1, or 1/1 with one OSD), and the placement fields are
+// validated against the OSDs like those of any other pool.
 func WithPools(configs ...ceph.PoolConfig) ceph.Option {
 	return servicehook.WithBootstrap(bootstrapKind, false, func() (servicehook.Bootstrap, error) { return newPoolsBootstrap(configs) })
 }
