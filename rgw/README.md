@@ -373,7 +373,7 @@ process, which uses `S3Endpoint`.
 On a `ceph.AddressDualStack` cluster it returns the gateway's IPv4 address.
 The gateway listens on `0.0.0.0:7480` and `[::]:7480`, so clients in the
 cluster's network reach it over its IPv6 address on port 7480 as well; see
-[Dual-stack clusters](../ceph/README.md#dual-stack-clusters).
+[Dual-stack clusters](../docs/guides/ceph-configuration.md#dual-stack-clusters).
 
 ### Container Methods: Native commands
 
@@ -1014,7 +1014,7 @@ confirmed creation can be activated.
 ### Independent test fixtures
 
 Start an independent fixture with `Run`, create service resources explicitly,
-and register owned cleanup. See [Independent test fixtures](../ceph/README.md#independent-test-fixtures).
+and register owned cleanup. See [Independent test fixtures](../docs/guides/ceph-configuration.md#independent-test-fixtures).
 
 ## Examples
 

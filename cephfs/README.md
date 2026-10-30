@@ -367,7 +367,7 @@ Deletes this owned filesystem. It gracefully stops its ranks and removes the fil
 terminates its MDS daemons, deletes their Cephx keys, and deletes the metadata,
 default data and `AdditionalDataPools` pools created from its `Config`, together
 with their CRUSH rules and erasure-code profiles. Pools attached later with
-`AddDataPool` are detached but kept; delete them with [Pool.Remove](../ceph/README.md#poolremove).
+`AddDataPool` are detached but kept; delete them with [Pool.Remove](../docs/guides/ceph-operations.md#poolremove).
 
 All file data in the deleted pools is destroyed. Stop clients, mirrors and
 subvolume operations on the filesystem first; their handles fail afterwards. A
@@ -413,7 +413,7 @@ On a `ceph.AddressDualStack` cluster every MDS advertises a concrete IPv4 and
 IPv6 address, IPv4 first. Clients reach an MDS through the first entry, so
 `ms_bind_prefer_ipv4 = false` in its `[mds.<ID>]` section of a
 `ceph.WithConfigFile` file makes them use IPv6; see
-[Dual-stack clusters](../ceph/README.md#dual-stack-clusters).
+[Dual-stack clusters](../docs/guides/ceph-configuration.md#dual-stack-clusters).
 
 ### Handles and ownership
 
@@ -1327,7 +1327,7 @@ Snapshot mirroring between two clusters is provided by the `cephfs/mirror` packa
 ### Independent test fixtures
 
 Start an independent fixture with `Run`, create service resources explicitly,
-and register owned cleanup. See [Independent test fixtures](../ceph/README.md#independent-test-fixtures).
+and register owned cleanup. See [Independent test fixtures](../docs/guides/ceph-configuration.md#independent-test-fixtures).
 
 ## Examples
 

@@ -90,7 +90,7 @@ in the object's current acting set, and the pool must be replicated (EC pools ar
 refused). The function enables `bluestore_debug_inject_read_err` on that daemon only,
 at runtime, until it restarts; the setting affects only objects with an injected
 error. The injection lives in OSD memory until the replica is rewritten (for
-example by [RepairPG](../ceph/README.md#repairpg)) or the OSD restarts. Object names that are
+example by [RepairPG](../docs/guides/ceph-operations.md#repairpg)) or the OSD restarts. Object names that are
 empty, contain NUL or start with `-` are refused.
 
 Observed behaviour on Ceph 20.2.4:
@@ -110,7 +110,7 @@ the whole word as the object. Topology operations are serialized with it.
 This is a one-shot injection. It returns no handle, the cluster does not
 register it, and `Terminate` does not undo it. A failure after the debug setting
 was enabled leaves it enabled; nothing disarms, repairs or retries. The
-recovery is [RepairPG](../ceph/README.md#repairpg), which rewrites the replica, or an OSD
+recovery is [RepairPG](../docs/guides/ceph-operations.md#repairpg), which rewrites the replica, or an OSD
 restart. Neither is a `Restore`.
 
 ## InterruptNetwork
@@ -129,7 +129,7 @@ host-network endpoint.
 The returned `*fault.NetworkInterruption` has `ContainerID`, `NetworkName` and
 `OriginalAddress`. `Restore` reconnects the endpoint with its original IP, also
 its original IPv6 address on the dual-stack bridge of
-[NetworkConfig.WithAddressFamily](../ceph/README.md#networkconfigwithaddressfamily)`(AddressIPv6)`, and its aliases, so the
+[NetworkConfig.WithAddressFamily](../docs/guides/ceph-configuration.md#networkconfigwithaddressfamily)`(AddressIPv6)`, and its aliases, so the
 address Ceph advertises stays valid and the daemon is not restarted. An
 endpoint that someone else reattached with a different or missing address is
 refused, and the handle can be restored again once the endpoint is back. It is a whole-endpoint interruption, not a packet filter between
@@ -188,7 +188,7 @@ The module starts the helper in `ctr`'s network namespace as root and grants
 | `Plane` | `ceph.PublicNetworkPlane` or `ceph.ClusterNetworkPlane`, as for [InterruptNetwork](#interruptnetwork). |
 | `Delay` | Added to every packet that leaves `ctr` through that endpoint, from 1 ms to `fault.MaxNetworkDelay` (10 s), in whole microseconds. With a `Loss` or a `Rate` it may be zero. |
 | `Jitter` | Varies each packet's delay uniformly within ±`Jitter`; at most `Delay`. |
-| `Peer` | Optional. Delays only the packets that `ctr` sends to this address; every other packet leaves without delay. An IPv4 address, or an IPv6 address when `ctr` has one on that bridge (the dual-stack bridge of `AddressIPv6` or `AddressDualStack`; see [Dual-stack clusters](../ceph/README.md#dual-stack-clusters) for cutting one family of a path). Mapped, zoned or unspecified addresses are refused. |
+| `Peer` | Optional. Delays only the packets that `ctr` sends to this address; every other packet leaves without delay. An IPv4 address, or an IPv6 address when `ctr` has one on that bridge (the dual-stack bridge of `AddressIPv6` or `AddressDualStack`; see [Dual-stack clusters](../docs/guides/ceph-configuration.md#dual-stack-clusters) for cutting one family of a path). Mapped, zoned or unspecified addresses are refused. |
 | `Loss` | Optional. Drops this percentage of the selected packets at random, from more than 0 to 100. With 100 and a `Peer`, the packets to that peer never arrive: a blackhole of one direction of one path. |
 | `PeerPort` | Optional, with `Peer`: only TCP packets to this destination port, such as one of the peer's Messenger ports. An IPv6 packet with extension headers before its TCP header is not selected. |
 | `Peers` | Optional, instead of `Peer` and `PeerPort`: several `fault.NetworkPeer` entries, each an `Addr` and an optional TCP `Port`, of either family, at most `fault.MaxNetworkPeers` (16) distinct ones. The packets to any of them get the same delay, loss and rate. Use it to cut a daemon's paths to several peers, since an endpoint holds one delay. |
@@ -293,7 +293,7 @@ if err != nil {
 
 To delay only one peer, set `Peer` to its address on the same plane, for
 example a client container's address or one from
-[DaemonAddresses](../ceph/README.md#daemonaddresses). The delay applies to packets that leave
+[DaemonAddresses](../docs/guides/ceph-operations.md#daemonaddresses). The delay applies to packets that leave
 `ctr` toward that peer; for the other direction, delay the peer's endpoint
 with `ctr`'s address.
 
@@ -317,7 +317,7 @@ delay, err := fault.ApplyNetworkProfile(ctx, cluster, osds[0], fault.NetworkProf
 ```
 
 To fault a container's paths to several peers, list them in `Peers`, for
-example every OSD's address from [DaemonAddresses](../ceph/README.md#daemonaddresses):
+example every OSD's address from [DaemonAddresses](../docs/guides/ceph-operations.md#daemonaddresses):
 
 ```golang
 observer, err := ceph.Observe(cluster)
