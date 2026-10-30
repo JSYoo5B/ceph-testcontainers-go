@@ -622,7 +622,7 @@ func TestRBDReceiverFinalNativeReadBlocksQueuedMutationOnlyUntilDeadline(t *test
 	t.Cleanup(func() {
 		ctx.Expire()
 		select {
-		case <-finished:
+		case _ = <-finished:
 		case <-time.After(time.Second):
 			t.Error("observer watchdog did not join")
 		}

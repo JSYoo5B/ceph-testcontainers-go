@@ -22,7 +22,7 @@ import (
 const (
 	schema = "ceph-lint-calibration/v1"
 	// ciPinnedVersion is the golangci-lint version of .github/workflows/code.yml.
-	ciPinnedVersion = "2.14.0"
+	ciPinnedVersion = "2.15.0"
 )
 
 //go:embed golangci.yml

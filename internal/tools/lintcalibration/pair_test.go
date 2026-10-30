@@ -61,7 +61,7 @@ func marshalReport(t *testing.T, rep *report) []byte {
 }
 
 func raw(t *testing.T, diags ...fd) []byte {
-	return rawFor(t, "2.14.0", []string{"./..."}, diags...)
+	return rawFor(t, "2.15.0", []string{"./..."}, diags...)
 }
 
 func snap(t *testing.T, files map[string]string) string { return writeModule(t, files) }
@@ -95,8 +95,8 @@ const hotSrc = "package m\n\nfunc Hot(x int) int { return x }\n"
 func TestPairRefusesMismatchedProvenance(t *testing.T) {
 	base := raw(t, fd{"gocognit", "a.go", 3, 1, cog("Hot", 40)})
 	cases := map[string]func(*report){
-		"golangci_lint_version": func(r *report) { r.Tool.Version = "2.15.0"; r.Tool.MatchesCIPin = false },
-		"ci_pinned_version":     func(r *report) { r.Tool.CIPinned = "2.15.0"; r.Tool.MatchesCIPin = r.Tool.Version == "2.15.0" },
+		"golangci_lint_version": func(r *report) { r.Tool.Version = "2.16.0"; r.Tool.MatchesCIPin = false },
+		"ci_pinned_version":     func(r *report) { r.Tool.CIPinned = "2.16.0"; r.Tool.MatchesCIPin = r.Tool.Version == "2.16.0" },
 		"config.sha256":         func(r *report) { r.Config.SHA256 = strings.Repeat("0", 64) },
 		"patterns":              func(r *report) { r.Patterns = []string{"./ceph/..."} },
 		"scope":                 func(r *report) { r.Scope = append(slices.Clone(r.Scope), "different scope line") },
@@ -476,10 +476,10 @@ func TestPairOutputIsDeterministicInBothInputOrders(t *testing.T) {
 // name neither a local path nor the snapshot directories.
 func TestPairOutputCarriesProvenanceAndEvidence(t *testing.T) {
 	base, head, bd, hd := scenario(t)
-	rb, rh := rawFor(t, "2.15.0", []string{"./a/...", "./b/..."}, base...), rawFor(t, "2.15.0", []string{"./a/...", "./b/..."}, head...)
+	rb, rh := rawFor(t, "2.16.0", []string{"./a/...", "./b/..."}, base...), rawFor(t, "2.16.0", []string{"./a/...", "./b/..."}, head...)
 	d := mustPair(t, rb, rh, bd, hd)
 	sum := sha256.Sum256(rb)
-	if d.Base.RawSHA256 != hex.EncodeToString(sum[:]) || d.Base.Ref != "base-id" || d.Head.Ref != "head-id" || !d.Base.SnapshotIndexed || d.Tool.Version != "2.15.0" || d.Tool.MatchesCIPin {
+	if d.Base.RawSHA256 != hex.EncodeToString(sum[:]) || d.Base.Ref != "base-id" || d.Head.Ref != "head-id" || !d.Base.SnapshotIndexed || d.Tool.Version != "2.16.0" || d.Tool.MatchesCIPin {
 		t.Errorf("%+v %+v", d.Base, d.Tool)
 	}
 	if d.Base.Diagnostics != len(base) || d.Head.Diagnostics != len(head) {
@@ -489,7 +489,7 @@ func TestPairOutputCarriesProvenanceAndEvidence(t *testing.T) {
 	for _, want := range []string{
 		"# schema: " + deltaSchema,
 		"# base.ref: base-id", "# head.ref: head-id", "# base.raw_sha256: " + d.Base.RawSHA256, "# head.raw_sha256: " + d.Head.RawSHA256,
-		"# golangci_lint_version: 2.15.0", "# ci_pinned_version: 2.14.0", "# matches_ci_pin: false", "# config_sha256: " + d.Config.SHA256,
+		"# golangci_lint_version: 2.16.0", "# ci_pinned_version: 2.15.0", "# matches_ci_pin: false", "# config_sha256: " + d.Config.SHA256,
 		"# patterns: ./a/...,./b/...", "# enabled_linters: cyclop,dupl,funlen,gocognit",
 		"# entries.reported_both: 2", "# entries.new_above_threshold: 1", "# entries.not_reported_above_threshold: 2", "# entries.moved_or_unmatched: 4",
 		"# scope: ", "# raw_scope: ", "state\treason\tlinter\t",
@@ -499,7 +499,7 @@ func TestPairOutputCarriesProvenanceAndEvidence(t *testing.T) {
 		}
 	}
 	js := render(t, d, "json")
-	for _, want := range []string{`"schema": "` + deltaSchema + `"`, `"raw_sha256": "` + d.Head.RawSHA256 + `"`, `"golangci_lint_version": "2.15.0"`, `"entries_per_state"`, `"raw_scope"`} {
+	for _, want := range []string{`"schema": "` + deltaSchema + `"`, `"raw_sha256": "` + d.Head.RawSHA256 + `"`, `"golangci_lint_version": "2.16.0"`, `"entries_per_state"`, `"raw_scope"`} {
 		if !strings.Contains(js, want) {
 			t.Errorf("JSON lacks %q", want)
 		}

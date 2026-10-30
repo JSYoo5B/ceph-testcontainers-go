@@ -303,7 +303,7 @@ var allMetrics = []string{"cyclop", "dupl", "funlen", "gocognit"}
 func TestReportGroupsAndOrdersEitherInputOrder(t *testing.T) {
 	for _, order := range [][]string{{"cyclop", "gocognit"}, {"gocognit", "cyclop"}} {
 		js := `{"Issues":[` + issue(order[0], "x.go", 3, 1) + `,` + issue(order[1], "x.go", 3, 6) + `,` + issue("funlen", "y.go", 9, 6) + `],` + linterList(allMetrics...) + `}`
-		rep, err := collect(t.TempDir(), fakeBinary(t, "2.14.0", js, 0), []string{"./..."})
+		rep, err := collect(t.TempDir(), fakeBinary(t, "2.15.0", js, 0), []string{"./..."})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -322,12 +322,12 @@ func TestReportGroupsAndOrdersEitherInputOrder(t *testing.T) {
 
 func TestReportRecordsVersionAgainstCIPin(t *testing.T) {
 	js := `{"Issues":null,` + linterList(allMetrics...) + `}`
-	for version, want := range map[string]bool{"2.14.0": true, "2.15.0": false} {
+	for version, want := range map[string]bool{"2.15.0": true, "2.16.0": false} {
 		rep, err := collect(t.TempDir(), fakeBinary(t, version, js, 0), []string{"./..."})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if rep.Tool.Version != version || rep.Tool.MatchesCIPin != want || rep.Tool.CIPinned != "2.14.0" {
+		if rep.Tool.Version != version || rep.Tool.MatchesCIPin != want || rep.Tool.CIPinned != "2.15.0" {
 			t.Errorf("version %s: %+v", version, rep.Tool)
 		}
 		if rep.Total != 0 || len(rep.Locations) != 0 {
@@ -354,7 +354,7 @@ func TestReportRejectsInconclusiveOutput(t *testing.T) {
 		"unexpected linter":       `{"Issues":[` + issue("govet", "x.go", 3, 1) + `],` + linterList(allMetrics...) + `}`,
 	}
 	for name, js := range cases {
-		if _, err := collect(t.TempDir(), fakeBinary(t, "2.14.0", js, 0), []string{"./..."}); err == nil {
+		if _, err := collect(t.TempDir(), fakeBinary(t, "2.15.0", js, 0), []string{"./..."}); err == nil {
 			t.Errorf("%s: want an error", name)
 		}
 	}
@@ -362,7 +362,7 @@ func TestReportRejectsInconclusiveOutput(t *testing.T) {
 
 func TestReportSurfacesToolFailure(t *testing.T) {
 	js := `{"Issues":[],` + linterList(allMetrics...) + `}`
-	if _, err := collect(t.TempDir(), fakeBinary(t, "2.14.0", js, 3), []string{"./..."}); err == nil {
+	if _, err := collect(t.TempDir(), fakeBinary(t, "2.15.0", js, 3), []string{"./..."}); err == nil {
 		t.Error("a non-zero exit must be an error")
 	}
 	if _, err := collect(t.TempDir(), filepath.Join(t.TempDir(), "absent"), nil); err == nil {
@@ -372,13 +372,13 @@ func TestReportSurfacesToolFailure(t *testing.T) {
 
 func TestTSVCarriesProvenanceAndOverlap(t *testing.T) {
 	js := `{"Issues":[` + issue("cyclop", "x.go", 3, 1) + `,` + issue("gocognit", "x.go", 3, 1) + `],` + linterList(allMetrics...) + `}`
-	bin := fakeBinary(t, "2.14.0", js, 0)
+	bin := fakeBinary(t, "2.15.0", js, 0)
 	var out bytes.Buffer
 	if err := run([]string{"report", "-dir", t.TempDir(), "-golangci-lint", bin, "-format", "tsv"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	text := out.String()
-	for _, want := range []string{"# schema: " + schema, "# golangci_lint_version: 2.14.0", "# matches_ci_pin: true", "# config_sha256: ", "# overlapping_locations: 1",
+	for _, want := range []string{"# schema: " + schema, "# golangci_lint_version: 2.15.0", "# matches_ci_pin: true", "# config_sha256: ", "# overlapping_locations: 1",
 		"x.go\t3\t1\tcyclop\ttrue\tfalse\tm", "x.go\t3\t1\tgocognit\ttrue\tfalse\tm"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("TSV lacks %q:\n%s", want, text)
@@ -409,7 +409,7 @@ func TestReportIssuesMemberPresence(t *testing.T) {
 		{"object", `{"Issues":{},` + report + `}`, true},
 	}
 	for _, c := range cases {
-		rep, err := collect(t.TempDir(), fakeBinary(t, "2.14.0", c.js, 0), []string{"./..."})
+		rep, err := collect(t.TempDir(), fakeBinary(t, "2.15.0", c.js, 0), []string{"./..."})
 		if c.wantErr {
 			if err == nil {
 				t.Errorf("%s: want an error, got total %d", c.name, rep.Total)
@@ -428,7 +428,7 @@ func TestReportOrdersByColumn(t *testing.T) {
 	var outs []string
 	for _, cols := range [][2]int{{1, 9}, {9, 1}} {
 		js := `{"Issues":[` + issue("cyclop", "x.go", 3, cols[0]) + `,` + issue("cyclop", "x.go", 3, cols[1]) + `],` + linterList(allMetrics...) + `}`
-		bin := fakeBinary(t, "2.14.0", js, 0)
+		bin := fakeBinary(t, "2.15.0", js, 0)
 		var out bytes.Buffer
 		if err := run([]string{"report", "-dir", t.TempDir(), "-golangci-lint", bin}, &out); err != nil {
 			t.Fatal(err)
@@ -440,5 +440,17 @@ func TestReportOrdersByColumn(t *testing.T) {
 	}
 	if !strings.Contains(outs[0], `"column": 1`) {
 		t.Error("missing column 1")
+	}
+}
+
+// The recorded pin is the version the Code checks workflow installs, so a
+// report never claims a match against a stale pin.
+func TestCIPinnedVersionMatchesTheWorkflow(t *testing.T) {
+	workflow, err := os.ReadFile("../../../.github/workflows/code.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(workflow), "version: v"+ciPinnedVersion+"\n") {
+		t.Fatalf("code.yml does not pin golangci-lint v%s", ciPinnedVersion)
 	}
 }

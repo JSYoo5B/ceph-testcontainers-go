@@ -191,7 +191,7 @@ func noInitialOSDQueuedCall(t *testing.T, gate *sync.Mutex, call func(context.Co
 		unlock()
 		if !joined {
 			select {
-			case <-result:
+			case _ = <-result:
 			case <-time.After(time.Second):
 				t.Error("queued first Add did not join after cleanup")
 			}

@@ -202,7 +202,7 @@ func TestCephFSDataPoolCanceledWhileWaitingForSetupNeverStartsOperation(t *testi
 		filesystems(fs.cluster).setupMu.Unlock()
 		locked = false
 		select {
-		case <-result:
+		case _ = <-result:
 		case <-time.After(time.Second):
 		}
 		t.Fatal("canceled waiter did not return while setup remained busy")

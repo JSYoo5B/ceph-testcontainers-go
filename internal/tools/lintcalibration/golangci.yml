@@ -4,7 +4,7 @@
 # this file.
 #
 # Its purpose is to keep every diagnostic of every metric linter. With the
-# defaults of golangci-lint v2.14.0 the uniq-by-line processor drops a later
+# defaults of golangci-lint v2 the uniq-by-line processor drops a later
 # issue at the same file and line even when it comes from another linter, and
 # the per-linter and same-text caps drop further issues. A comparison made
 # through those filters can hide a second metric at the same location.

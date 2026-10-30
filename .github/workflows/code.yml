@@ -125,7 +125,7 @@ jobs:
       - name: Lint Go packages with every build tag
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.14.0
+          version: v2.15.0
           args: --timeout=15m
       - name: Compile all and explicit optional tags without Docker
         run: make tag-compile

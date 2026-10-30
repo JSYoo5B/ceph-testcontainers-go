@@ -237,9 +237,10 @@ func RunInputWithExecCushion(ctx context.Context, ctr testcontainers.Container, 
 	close(stop)
 	_ = attachment.Input.Close()
 	if !outputEnded {
-		// The closed connection ends the reader; the supervisor may still
-		// run, so it is stopped inside the container.
-		<-read
+		// The closed connection ends the reader, so its error carries
+		// nothing; the supervisor may still run, so it is stopped inside the
+		// container.
+		_ = <-read
 		<-pumped
 		err := &BackendError{Op: "exec " + label + " supervisor", Err: attempt.Err()}
 		if cancelErr := Cancel(ctx, ctr, label, marker); cancelErr != nil {

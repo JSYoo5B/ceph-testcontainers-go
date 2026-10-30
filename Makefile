@@ -343,7 +343,7 @@ vulncheck:
 	python3 .github/scripts/check_vulns.py $(VULNCHECK_DIR)/goceph-probe-module.json || status=1; \
 	exit $$status
 
-# golangci-lint v2.14.0 with .golangci.yml, as in the Code checks workflow.
+# golangci-lint v2.15.0 with .golangci.yml, as in the Code checks workflow.
 lint:
 	golangci-lint run --timeout=15m ./...
 
