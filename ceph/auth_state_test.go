@@ -156,9 +156,11 @@ var authStateMethods = map[string][]string{
 }
 
 // TestAuthStateFieldsAreOnlyTouchedByItsMethods guards the ownership written
-// on authState: outside this type, Container.authRecords is used only as the receiver
-// of one of its methods, so no code reads or writes one of the five record
-// maps without the method that does, and it is never replaced as a whole.
+// on authState: outside this type, the records (in authLedgerState, the
+// Container field ledger) are used only as the receiver of one of its methods, so no
+// code reads or writes one of the five record maps without the method that
+// does, and they are never replaced as a whole. Container.ledger itself is
+// addressed only by Container.authLedger's single binding.
 func TestAuthStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 	var problems []string
 	uses, bindings := 0, 0
@@ -196,15 +198,15 @@ func TestAuthStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 						}
 					}
 				case *ast.KeyValueExpr:
-					if key, ok := n.Key.(*ast.Ident); ok && key.Name == "authRecords" {
-						if address, ok := n.Value.(*ast.UnaryExpr); binding && ok && address.Op == token.AND {
-							if sel, ok := address.X.(*ast.SelectorExpr); ok && sel.Sel.Name == "authRecords" {
+					if key, ok := n.Key.(*ast.Ident); ok && (key.Name == "authRecords" || key.Name == "authLedgerState") {
+						if address, ok := n.Value.(*ast.UnaryExpr); binding && ok && address.Op == token.AND && key.Name == "authLedgerState" {
+							if sel, ok := address.X.(*ast.SelectorExpr); ok && sel.Sel.Name == "ledger" {
 								bindings++
 								allowed[sel] = true
 								return true
 							}
 						}
-						problems = append(problems, file+": "+fn.Name.Name+" sets Container.authRecords in a literal")
+						problems = append(problems, file+": "+fn.Name.Name+" sets "+key.Name+" in a literal")
 					}
 				}
 				return true
@@ -435,7 +437,7 @@ func TestAuthRecordsAreOnlyUsedWithTheClusterMutexHeld(t *testing.T) {
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				switch n := n.(type) {
 				case *ast.SelectorExpr:
-					if n.Sel.Name == "authRecords" {
+					if n.Sel.Name == "authRecords" || n.Sel.Name == "ledger" && isContainerReceiver(n.X) {
 						uses = append(uses, n.Pos())
 					}
 				case *ast.CallExpr:

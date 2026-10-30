@@ -26,10 +26,12 @@ func inMonitorTopologyBinding(file *ast.File, pos token.Pos) bool {
 }
 
 // monitorTopologyBound is the state that Container.monitorTopology binds by
-// address. The roster and the bootstrap record keep their field guards, which
-// also hold for the topology's methods because they use the same field
-// names; monitorTerminated is audited by TestLifecycleFlagsHaveAuditedWritersAndReaders.
-var monitorTopologyBound = []string{"bootstrap", "monitorTerminated", "roster"}
+// address: the topology's own state (membershipState, which Container embeds:
+// the roster and the first-MON flag) and the bootstrap record. The roster and
+// the bootstrap record keep their field guards, which also hold for the
+// topology's methods because they use the same field names;
+// monitorTerminated is audited by TestLifecycleFlagsHaveAuditedWritersAndReaders.
+var monitorTopologyBound = []string{"bootstrap", "membershipState"}
 
 // TestMonitorTopologyBindsEachStateOnce guards the topology's construction
 // and back reference: Container.monitorTopology is a single return of one

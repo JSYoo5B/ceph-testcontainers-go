@@ -83,11 +83,11 @@ func TestOSDRemovalKeepsUnconfirmedCommandAndRetriesBeforePurge(t *testing.T) {
 	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); !errors.Is(err, blocked) {
 		t.Fatalf("unconfirmed stop: %v", err)
 	}
-	if len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 || c.osdHandles.get(3) == nil || registered(c) != 1 || !c.nativeCmds.fenced[daemon.GetContainerID()] || c.nativeCmds.closed {
+	if len(control.actions) != 0 || daemon.stops != 0 || daemon.terminations != 0 || c.fleet.osdHandles.get(3) == nil || registered(c) != 1 || !c.nativeCmds.fenced[daemon.GetContainerID()] || c.nativeCmds.closed {
 		t.Fatal("failed drain lost ownership, purged, or closed unrelated admission")
 	}
 	inv.stopCommand = func(context.Context, testcontainers.Container, string, string) error { return nil }
-	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); err != nil || c.osdHandles.get(3) != nil || registered(c) != 0 || control.purges != 1 {
+	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); err != nil || c.fleet.osdHandles.get(3) != nil || registered(c) != 0 || control.purges != 1 {
 		t.Fatalf("fresh retry did not finish removal: %v", err)
 	}
 }
@@ -114,7 +114,7 @@ func TestOSDRemovalRefusalDoesNotFenceAnInstance(t *testing.T) {
 		t.Fatalf("foreign identity changed admission: %v", err)
 	}
 	c, _, _ = newOSDLifecycleFixture()
-	c.osdHandles.forget(4)
+	c.fleet.osdHandles.forget(4)
 	if err := osdHandle(t, t.Context(), c, 3).Remove(t.Context()); err == nil || len(c.nativeCmds.fenced) != 0 {
 		t.Fatalf("last OSD refusal changed admission: %v", err)
 	}

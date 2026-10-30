@@ -149,14 +149,14 @@ func TestServiceHooksReachTheRoster(t *testing.T) {
 	hooks := serviceHooks{}
 	ctr := &fixtureService{}
 	hooks.SetService(c, "rgw", ctr)
-	if hooks.Service(c, "rgw") != ctr || c.roster.service("rgw") != ctr {
+	if hooks.Service(c, "rgw") != ctr || c.members.roster.service("rgw") != ctr {
 		t.Fatal("SetService did not reach the roster")
 	}
 	if got := hooks.Services(c); len(got) != 1 || got["rgw"] != ctr {
 		t.Fatalf("Services = %v", got)
 	}
 	hooks.DeleteService(c, "rgw")
-	if c.roster.hasService("rgw") {
+	if c.members.roster.hasService("rgw") {
 		t.Fatal("DeleteService did not reach the roster")
 	}
 }
@@ -190,13 +190,13 @@ func TestContainerDeclaresNoRosterFields(t *testing.T) {
 		return names
 	}
 	container := fields("Container")
-	for _, old := range []string{"manager", "monitors", "managers", "services"} {
+	for _, old := range []string{"manager", "monitors", "managers", "services", "roster"} {
 		if slices.Contains(container, old) {
-			t.Errorf("Container declares %s again; it belongs to memberRoster", old)
+			t.Errorf("Container declares %s again; it belongs to memberRoster in membershipState", old)
 		}
 	}
-	if !slices.Contains(container, "roster") {
-		t.Error("Container has no roster field")
+	if got := fields("membershipState"); !slices.Equal(got, []string{"monitorTerminated", "roster"}) {
+		t.Errorf("membershipState fields = %v, want the roster and the first-MON flag", got)
 	}
 	if got := fields("memberRoster"); !slices.Equal(got, []string{"firstMgr", "managers", "monitors", "services"}) {
 		t.Errorf("memberRoster fields = %v", got)
@@ -589,8 +589,8 @@ func TestTerminateStopsServicesBeforeOSDsAndMembersAfterThem(t *testing.T) {
 				return true
 			})
 			order := []string{
-				"range c.roster.eachService()", "range c.osdHandles.each()", "c.stores.releaseVolume(ctx, c.osdHandles.count() == 0)",
-				"c.roster.initialManager()", "range c.roster.eachManager()", "range c.roster.eachMonitor()", "c.Container.Terminate(ctx, opts...)",
+				"range c.members.roster.eachService()", "range c.fleet.osdHandles.each()", "c.fleet.stores.releaseVolume(ctx, c.fleet.osdHandles.count() == 0)",
+				"c.members.roster.initialManager()", "range c.members.roster.eachManager()", "range c.members.roster.eachMonitor()", "c.Container.Terminate(ctx, opts...)",
 			}
 			var problems []string
 			for _, key := range order {
@@ -605,7 +605,7 @@ func TestTerminateStopsServicesBeforeOSDsAndMembersAfterThem(t *testing.T) {
 					}
 				}
 			}
-			if got := len(at["c.roster.initialManager()"]); got != 2 {
+			if got := len(at["c.members.roster.initialManager()"]); got != 2 {
 				problems = append(problems, fmt.Sprintf("the first MGR must be read twice (to terminate it, then to decide whether entry a goes), got %d", got))
 			}
 			if len(problems) != 0 {

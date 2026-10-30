@@ -137,7 +137,7 @@ func TestNoInitialManagersReadinessUsesQuorumAndOwnedOSDMap(t *testing.T) {
 			cluster.settings.noInitialManagers = true
 			good := scenario == "zero" || scenario == "positive"
 			if scenario != "zero" {
-				cluster.osdHandles.register(0, &OSDContainer{ID: 0, nativeUUID: control.osdUUID})
+				cluster.fleet.osdHandles.register(0, &OSDContainer{ID: 0, nativeUUID: control.osdUUID})
 				control.osds = []map[string]any{{"osd": 0, "uuid": control.osdUUID, "up": 1, "in": 1, "weight": 1}}
 			}
 			switch scenario {
@@ -218,7 +218,7 @@ func TestNoInitialManagersPreservesOrdinaryAvailabilityAndCleanBarriers(t *testi
 	for _, wait := range []func(*Container, context.Context) error{(*Container).WaitForClean, (*Container).WaitForPGClean} {
 		cluster, control := noInitialManagerFixture()
 		cluster.settings.noInitialManagers = true
-		cluster.osdHandles.register(0, &OSDContainer{ID: 0, nativeUUID: control.osdUUID})
+		cluster.fleet.osdHandles.register(0, &OSDContainer{ID: 0, nativeUUID: control.osdUUID})
 		// The deadline passes when the fake answers a status query, after the
 		// wait observed the synthetic clean statistics, not at a point in time.
 		ctx := clustertest.NewSignalDeadline(t.Context())
@@ -240,7 +240,7 @@ func TestNoInitialManagersFirstAddAdmissionAndIdentityFailures(t *testing.T) {
 	noInitialOSDQueuedCall(t, &cluster.mu, func(ctx context.Context) error { _, err := cluster.AddManager(ctx, "a"); return err })
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if mgr, err := cluster.AddManager(ctx, "a"); mgr != nil || !errors.Is(err, context.Canceled) || len(control.calls) != 0 || cluster.roster.managerCount() != 0 || cluster.ManagerContainer() != nil {
+	if mgr, err := cluster.AddManager(ctx, "a"); mgr != nil || !errors.Is(err, context.Canceled) || len(control.calls) != 0 || cluster.members.roster.managerCount() != 0 || cluster.ManagerContainer() != nil {
 		t.Fatal("busy/canceled first manager changed native or owned state", err)
 	}
 	for _, scenario := range []string{"foreign auth", "foreign map", "auth list error", "auth malformed", "create response loss"} {
@@ -260,7 +260,7 @@ func TestNoInitialManagersFirstAddAdmissionAndIdentityFailures(t *testing.T) {
 				control.fail = "auth get-or-create mgr.a mon allow profile mgr osd allow * mds allow *"
 			}
 			mgr, err := cluster.AddManager(t.Context(), "a")
-			if mgr != nil || err == nil || strings.Contains(err.Error(), "PRIVATE-FIRST-MGR-KEY") || cluster.roster.managerCount() != 0 || cluster.ManagerContainer() != nil {
+			if mgr != nil || err == nil || strings.Contains(err.Error(), "PRIVATE-FIRST-MGR-KEY") || cluster.members.roster.managerCount() != 0 || cluster.ManagerContainer() != nil {
 				t.Fatalf("first Add identity rejection leaked/adopted state: mgr=%v err=%v", mgr, err)
 			}
 			for _, call := range control.calls {
@@ -288,15 +288,15 @@ func TestNoInitialManagersZeroAndPartialOwnershipCleanup(t *testing.T) {
 		if partial {
 			// Existing Add retains a descriptor after successful auth but a failed
 			// Docker launch. Whole-cluster cleanup disposes of this owned state.
-			cluster.roster.addManager("a", &ManagerContainer{DaemonName: "a", authOwned: true})
-			cluster.roster.addManager("b", &ManagerContainer{DaemonName: "b", authOwned: true})
+			cluster.members.roster.addManager("a", &ManagerContainer{DaemonName: "a", authOwned: true})
+			cluster.members.roster.addManager("b", &ManagerContainer{DaemonName: "b", authOwned: true})
 		}
 		osd := &hostNetworkFixtureContainer{failTerminationOnce: true}
-		cluster.osdHandles.register(0, &OSDContainer{ID: 0, Container: osd})
-		if err := cluster.Terminate(t.Context()); err == nil || !cluster.closed || cluster.roster.managerCount() != 0 || cluster.osdHandles.count() != 1 || control.terminations != 1 {
+		cluster.fleet.osdHandles.register(0, &OSDContainer{ID: 0, Container: osd})
+		if err := cluster.Terminate(t.Context()); err == nil || !cluster.closed || cluster.members.roster.managerCount() != 0 || cluster.fleet.osdHandles.count() != 1 || control.terminations != 1 {
 			t.Fatal("partial storage teardown lost ownership or skipped zero/partial managers", err)
 		}
-		if err := cluster.Terminate(t.Context()); err != nil || cluster.osdHandles.count() != 0 || osd.terminations != 2 || control.terminations != 1 {
+		if err := cluster.Terminate(t.Context()); err != nil || cluster.fleet.osdHandles.count() != 0 || osd.terminations != 2 || control.terminations != 1 {
 			t.Fatal("cleanup repeated completed MON phase or skipped retained OSD", err)
 		}
 		if mgr, err := cluster.AddManager(t.Context(), "a"); mgr != nil || err == nil || len(control.calls) != 0 || cluster.ManagerContainer() != nil {
@@ -311,7 +311,7 @@ func noInitialManagerFixture() (*Container, *noInitialManagerControl) {
 		quorum: `{"quorum_names":["a"],"monmap":{"mons":[{"name":"a"}]}}`,
 		auth:   `{"auth_dump":[]}`, mgr: `{"available":false,"active_name":"","active_gid":0,"standbys":[]}`,
 	}
-	cluster := &Container{Container: control, settings: options{startupTimeout: time.Second}, osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}}
+	cluster := &Container{Container: control, settings: options{startupTimeout: time.Second}, fleet: osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}}}
 	return cluster, control
 }
 

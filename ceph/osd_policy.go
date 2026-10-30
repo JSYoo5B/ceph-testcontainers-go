@@ -34,8 +34,8 @@ func (c *Container) osdStates(ctx context.Context) ([]OSDState, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	owned := make(map[int]*osdRegistration, c.osdHandles.count())
-	for id, osd := range c.osdHandles.each() {
+	owned := make(map[int]*osdRegistration, c.fleet.osdHandles.count())
+	for id, osd := range c.fleet.osdHandles.each() {
 		owned[id] = registrationOf(osd)
 	}
 	return readOwnedOSDStates(ctx, c.conn().ceph, owned)

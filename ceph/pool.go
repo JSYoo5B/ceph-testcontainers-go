@@ -107,7 +107,7 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 	if c.Container == nil {
 		return nil, errors.New("ceph control container is unavailable")
 	}
-	domains := c.osdHandles.placementDomains(config)
+	domains := c.fleet.osdHandles.placementDomains(config)
 	needed := config.Replicas
 	if config.ErasureCode != nil {
 		needed = config.ErasureCode.K + config.ErasureCode.M

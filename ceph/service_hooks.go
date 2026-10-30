@@ -93,22 +93,22 @@ func (serviceHooks) LockTopology(ctx context.Context, c *Container) error { retu
 // Service returns the named service container the cluster owns, or nil. The
 // caller holds the cluster mutex.
 func (serviceHooks) Service(c *Container, name string) testcontainers.Container {
-	return c.roster.service(name)
+	return c.members.roster.service(name)
 }
 
 // SetService records a service container the cluster owns and terminates.
 // The caller holds the cluster mutex.
 func (serviceHooks) SetService(c *Container, name string, ctr testcontainers.Container) {
-	c.roster.setService(name, ctr)
+	c.members.roster.setService(name, ctr)
 }
 
 // DeleteService forgets a service container. The caller holds the mutex.
-func (serviceHooks) DeleteService(c *Container, name string) { c.roster.dropService(name) }
+func (serviceHooks) DeleteService(c *Container, name string) { c.members.roster.dropService(name) }
 
 // Services returns a copy of the service containers. The caller holds the
 // cluster mutex.
 func (serviceHooks) Services(c *Container) map[string]testcontainers.Container {
-	return c.roster.serviceCopy()
+	return c.members.roster.serviceCopy()
 }
 
 // PoolStates reads the native pool map. The caller holds the cluster mutex.
@@ -191,7 +191,7 @@ func (serviceHooks) NormalizePool(config PoolConfig) (PoolConfig, error) {
 // PoolPlacementDomains counts the owned OSD placement domains that config
 // can use. The caller holds the cluster mutex.
 func (serviceHooks) PoolPlacementDomains(c *Container, config PoolConfig) int {
-	return c.osdHandles.placementDomains(config)
+	return c.fleet.osdHandles.placementDomains(config)
 }
 
 // PoolPolicyReady reports whether the cluster's pool policy accepts changes.
@@ -253,7 +253,7 @@ func (serviceHooks) ClientRevoked(client *ClientConfig) bool { return client.rev
 func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) {
 	client.revoked = revoked
 	if revoked {
-		client.owner.authRecords.confirmKey(client.name, "")
+		client.owner.ledger.authRecords.confirmKey(client.name, "")
 	}
 }
 

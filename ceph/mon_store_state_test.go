@@ -443,12 +443,12 @@ func TestTerminateReleasesMonStoresInTheirTwoStagesInOrder(t *testing.T) {
 			})
 			order := []string{
 				"c.lockTopology(ctx)",
-				"c.stores.releaseVolume(ctx, c.osdHandles.count() == 0)",
+				"c.fleet.stores.releaseVolume(ctx, c.fleet.osdHandles.count() == 0)",
 				"c.Container.Terminate(ctx, opts...)",
 				"c.monStores.releaseStores(ctx)",
 				"c.controlPlane.terminate(ctx, opts...)",
 				"c.startup.removeLabeledContainers(ctx)",
-				"c.stores.retryVolume(ctx, volumeErr, c.osdHandles.count() == 0)",
+				"c.fleet.stores.retryVolume(ctx, volumeErr, c.fleet.osdHandles.count() == 0)",
 				"c.monStores.retryStores(ctx, monStoreErr)",
 				"c.runDir.release(ctx)",
 			}

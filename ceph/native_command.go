@@ -564,25 +564,25 @@ func (c *Container) ownsNativeTarget(id string) bool {
 // c.mu.
 func (c *Container) ownsNativeTargetContext(ctx context.Context, id string) (bool, error) {
 	matches := func(ctr testcontainers.Container) bool { return ctr != nil && ctr.GetContainerID() == id }
-	if matches(c.Container) || matches(c.roster.initialManager()) {
+	if matches(c.Container) || matches(c.members.roster.initialManager()) {
 		return true, nil
 	}
-	for _, mon := range c.roster.eachMonitor() {
+	for _, mon := range c.members.roster.eachMonitor() {
 		if mon != nil && matches(mon.Container) {
 			return true, nil
 		}
 	}
-	for _, mgr := range c.roster.eachManager() {
+	for _, mgr := range c.members.roster.eachManager() {
 		if mgr != nil && matches(mgr.Container) {
 			return true, nil
 		}
 	}
-	for _, osd := range c.osdHandles.each() {
+	for _, osd := range c.fleet.osdHandles.each() {
 		if osd != nil && matches(osd.Container) {
 			return true, nil
 		}
 	}
-	for _, ctr := range c.roster.eachService() {
+	for _, ctr := range c.members.roster.eachService() {
 		if matches(ctr) {
 			return true, nil
 		}

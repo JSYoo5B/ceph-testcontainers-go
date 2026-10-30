@@ -61,7 +61,7 @@ func (o *OSDContainer) daemonRef() (string, string) { return "osd", strconv.Itoa
 
 // ownedBy reports, with c.mu held by the caller, whether c still owns o.
 func (o *OSDContainer) ownedBy(c *Container) bool {
-	return o != nil && c.osdHandles.get(o.ID) == o && o.Container != nil && !o.purged
+	return o != nil && c.fleet.osdHandles.get(o.ID) == o && o.Container != nil && !o.purged
 }
 
 func (m *MonitorContainer) daemonRef() (string, string) { return "mon", m.DaemonName }
@@ -77,7 +77,7 @@ func (m *MonitorContainer) ownedBy(c *Container) bool {
 func (m *ManagerContainer) daemonRef() (string, string) { return "mgr", m.DaemonName }
 
 func (m *ManagerContainer) ownedBy(c *Container) bool {
-	return m != nil && c.roster.manager(m.DaemonName) == m && m.Container != nil && !m.terminated
+	return m != nil && c.members.roster.manager(m.DaemonName) == m && m.Container != nil && !m.terminated
 }
 
 func (o *OSDContainer) cluster(op string) (*Container, error) {
@@ -145,7 +145,7 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if err := c.poolPolicyReady(); err != nil {
 		return err
 	}
-	if err := c.osdHandles.current(o); err != nil {
+	if err := c.fleet.osdHandles.current(o); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -154,7 +154,7 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if err != nil {
 		return err
 	}
-	state, err := c.osdHandles.ownedState(dump, id)
+	state, err := c.fleet.osdHandles.ownedState(dump, id)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if err != nil {
 		return err
 	}
-	state, err = c.osdHandles.ownedState(dump, id)
+	state, err = c.fleet.osdHandles.ownedState(dump, id)
 	if err != nil {
 		return err
 	}

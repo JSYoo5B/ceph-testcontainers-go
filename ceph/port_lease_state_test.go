@@ -302,7 +302,7 @@ func TestTerminateReleasesPortLeasesAfterNativeCommandsAndBeforeTheServices(t *t
 						}
 					}
 				case *ast.RangeStmt:
-					if types.ExprString(x.X) == "c.roster.eachService()" {
+					if types.ExprString(x.X) == "c.members.roster.eachService()" {
 						services = append(services, x.Pos())
 					}
 				}

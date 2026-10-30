@@ -226,25 +226,25 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	if c.Container != nil && (!c.monitorTopology().firstMonitorTerminated() || c.closed) {
 		add("mon", "a", c.Container)
 	}
-	for name, mon := range c.roster.eachMonitor() {
+	for name, mon := range c.members.roster.eachMonitor() {
 		if mon != nil {
 			add("mon", name, mon.Container)
 		}
 	}
-	for name, mgr := range c.roster.eachManager() {
+	for name, mgr := range c.members.roster.eachManager() {
 		if mgr != nil {
 			add("mgr", name, mgr.Container)
 		}
 	}
-	if first := c.roster.initialManager(); first != nil {
+	if first := c.members.roster.initialManager(); first != nil {
 		add("mgr", "a", first)
 	}
-	for id, osd := range c.osdHandles.each() {
+	for id, osd := range c.fleet.osdHandles.each() {
 		if osd != nil {
 			add("osd", strconv.Itoa(id), osd.Container)
 		}
 	}
-	for name, ctr := range c.roster.eachService() {
+	for name, ctr := range c.members.roster.eachService() {
 		role := "service"
 		if strings.HasPrefix(name, "mds.") {
 			role = "mds"
@@ -259,7 +259,7 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	}
 	// Every client key the module generated, including replaced, attempted
 	// and revoked ones.
-	snapshot.secrets = append(snapshot.secrets, c.authRecords.secretValues()...)
+	snapshot.secrets = append(snapshot.secrets, c.ledger.authRecords.secretValues()...)
 	for _, nw := range c.nets.bridges() {
 		snapshot.networks = append(snapshot.networks, diagnosticNetwork{id: nw.ID, name: nw.Name})
 	}

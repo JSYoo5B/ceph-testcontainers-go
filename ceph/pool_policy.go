@@ -239,7 +239,7 @@ func (c *Container) nativePoolDomains(ctx context.Context, placement PoolConfig)
 	var visit func(int, int, bool) error
 	visit = func(id, domain int, hasDomain bool) error {
 		if id >= 0 {
-			owned := c.osdHandles.get(id)
+			owned := c.fleet.osdHandles.get(id)
 			class, exists := classes[id]
 			if owned == nil || owned.purged || !exists || (placement.DeviceClass != "" && class != placement.DeviceClass) {
 				return nil

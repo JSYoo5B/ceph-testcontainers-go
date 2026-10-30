@@ -46,7 +46,7 @@ func (unitAccess) UnitCluster(control testcontainers.Container, startupTimeout t
 		c.nets.public = &testcontainers.DockerNetwork{Name: networkName}
 	}
 	for id := range osds {
-		c.osdHandles.register(id, &OSDContainer{ID: id, owner: c, Container: control, placement: placement})
+		c.fleet.osdHandles.register(id, &OSDContainer{ID: id, owner: c, Container: control, placement: placement})
 	}
 	return c
 }
@@ -118,13 +118,13 @@ func (unitAccess) UnitSetCephFSImage(c *Container, image string) { c.settings.ce
 // owns a cluster no other goroutine uses yet, or holds the mutex that
 // UnitState exposes.
 func (unitAccess) UnitReplaceOSDs(c *Container, osds map[int]*OSDContainer) {
-	c.osdHandles.replace(osds)
+	c.fleet.osdHandles.replace(osds)
 }
 
 // UnitOSDCount is the number of OSD descriptors a cluster value owns. The
 // caller holds the mutex that UnitState exposes, or owns a cluster no other
 // goroutine uses.
-func (unitAccess) UnitOSDCount(c *Container) int { return c.osdHandles.count() }
+func (unitAccess) UnitOSDCount(c *Container) int { return c.fleet.osdHandles.count() }
 
 // UnitClientState returns a client identity's owner and lifecycle flags.
 func (unitAccess) UnitClientState(client *ClientConfig) (owner *Container, created, ready, revoked bool) {

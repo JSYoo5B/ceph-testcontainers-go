@@ -26,10 +26,12 @@ func inOSDFleetBinding(file *ast.File, pos token.Pos) bool {
 	return false
 }
 
-// osdFleetBound is the state that Container.osdFleet binds by address. Each
-// of these keeps its own field guard, which now also holds for the fleet's
-// methods, because they reach the state under the same field name.
-var osdFleetBound = []string{"deviceClaims", "osdHandles", "runDir", "startup", "stores"}
+// osdFleetBound is the state that Container.osdFleet binds by address: the
+// fleet's own state (osdFleetState, which Container embeds) and the run
+// directory and startup identity it reads. The registry, storage and claims
+// inside osdFleetState keep their own field guards, which also hold for the
+// fleet's methods, because they reach the state under the same field names.
+var osdFleetBound = []string{"osdFleetState", "runDir", "startup"}
 
 // TestOSDFleetBindsEachStateOnce guards the fleet's construction and its
 // back reference. Container.osdFleet is a single return of one osdFleet
@@ -111,8 +113,12 @@ func checkStateBinding(fn *ast.FuncDecl, typeName string, bound []string) []stri
 		if ok && address.Op == token.AND {
 			sel, selOK = address.X.(*ast.SelectorExpr)
 		}
-		if !selOK || sel.Sel.Name != key || !isContainerReceiver(sel.X) {
-			problems = append(problems, typeName+" binds "+key+" to "+types.ExprString(kv.Value)+", want &c."+key)
+		field := key
+		if f, ok := ownerStateFields[key]; ok {
+			field = f
+		}
+		if !selOK || sel.Sel.Name != field || !isContainerReceiver(sel.X) {
+			problems = append(problems, typeName+" binds "+key+" to "+types.ExprString(kv.Value)+", want &c."+field)
 		}
 		seen[key]++
 	}
@@ -162,4 +168,88 @@ func checkOwnerUse(file string, fn *ast.FuncDecl, recv string, handles ...string
 		return true
 	})
 	return problems
+}
+
+// ownerStateFields are the Container fields that hold an owner's state, by
+// the state type: the owner view embeds the type, its constructor binds the
+// field.
+var ownerStateFields = map[string]string{
+	"osdFleetState":   "fleet",
+	"membershipState": "members",
+	"authLedgerState": "ledger",
+}
+
+// ownerStates are the owner state types and fields, each with the one
+// constructor that may name it.
+var ownerStates = map[string]string{
+	"osdFleetState": "Container.osdFleet", "fleet": "Container.osdFleet",
+	"membershipState": "Container.monitorTopology", "members": "Container.monitorTopology",
+	"authLedgerState": "Container.authLedger", "ledger": "Container.authLedger",
+}
+
+// TestOwnerStatesAreNamedOnlyByTheirConstructors guards that the owner states
+// stay owned: production code names Container.fleet, members or ledger, or
+// their types (as a selector, a literal key or a literal type), only in that
+// owner's constructor, so no other code takes the
+// whole state, copies it or replaces it. A use of a field inside a state
+// (c.fleet.osdHandles) is pinned by that field's own guard.
+func TestOwnerStatesAreNamedOnlyByTheirConstructors(t *testing.T) {
+	var problems []string
+	named := map[string]int{}
+	for file, parsed := range parseProductionFiles(t) {
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			// Reaching into a state (c.fleet.osdHandles) is the inner
+			// field's use, pinned by that field's guard; only the whole
+			// state is checked here.
+			inner := map[ast.Expr]bool{}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if sel, ok := n.(*ast.SelectorExpr); ok {
+					inner[sel.X] = true
+				}
+				return true
+			})
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				name := ""
+				switch n := n.(type) {
+				case *ast.SelectorExpr:
+					// A field is named on the cluster; the owner views reach
+					// their state through the embedded type, not by name.
+					if _, isType := ownerStateFields[n.Sel.Name]; isType || isContainerReceiver(n.X) && !inner[n] {
+						name = n.Sel.Name
+					}
+				case *ast.KeyValueExpr:
+					if key, ok := n.Key.(*ast.Ident); ok {
+						name = key.Name
+					}
+				case *ast.CompositeLit:
+					if id, ok := n.Type.(*ast.Ident); ok {
+						name = id.Name
+					}
+				}
+				owner, isState := ownerStates[name]
+				if !isState {
+					return true
+				}
+				if funcKey(fn) != owner {
+					problems = append(problems, file+": "+funcKey(fn)+" names "+name)
+				}
+				named[name]++
+				return true
+			})
+		}
+	}
+	for state, owner := range ownerStates {
+		// The binding names the type once (the literal key) and the field once (&c.<field>).
+		if named[state] != 1 {
+			problems = append(problems, fmt.Sprintf("%s is named %d times, want only its binding in %s", state, named[state], owner))
+		}
+	}
+	if len(problems) != 0 {
+		slices.Sort(problems)
+		t.Fatalf("an owner state escapes its owner: %v", problems)
+	}
 }

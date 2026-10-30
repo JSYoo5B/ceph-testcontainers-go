@@ -135,8 +135,8 @@ func TestAddOSDRefusesBeforeLockAndRegistration(t *testing.T) {
 			defer cancel()
 			started := time.Now()
 			osd, err := c.AddOSD(ctx, configs...)
-			if osd != nil || !errors.Is(err, ErrInvalidRequest) || ctx.Err() != nil || time.Since(started) > 2*time.Second || c.osdHandles.count() != 0 || c.closed {
-				t.Fatalf("osd=%v err=%v after %v owned=%d", osd, err, time.Since(started), c.osdHandles.count())
+			if osd != nil || !errors.Is(err, ErrInvalidRequest) || ctx.Err() != nil || time.Since(started) > 2*time.Second || c.fleet.osdHandles.count() != 0 || c.closed {
+				t.Fatalf("osd=%v err=%v after %v owned=%d", osd, err, time.Since(started), c.fleet.osdHandles.count())
 			}
 		})
 	}

@@ -43,8 +43,8 @@ func (c *Container) Managers(ctx context.Context) ([]*ManagerContainer, error) {
 		return nil, err
 	}
 	defer c.mu.Unlock()
-	result := make([]*ManagerContainer, 0, c.roster.managerCount())
-	for _, manager := range c.roster.eachManager() {
+	result := make([]*ManagerContainer, 0, c.members.roster.managerCount())
+	for _, manager := range c.members.roster.eachManager() {
 		result = append(result, manager)
 	}
 	slices.SortFunc(result, func(a, b *ManagerContainer) int { return strings.Compare(a.DaemonName, b.DaemonName) })
@@ -74,7 +74,7 @@ func (c *Container) OSDs(ctx context.Context) ([]*OSDContainer, error) {
 		return nil, err
 	}
 	defer c.mu.Unlock()
-	return c.osdHandles.sorted(), nil
+	return c.fleet.osdHandles.sorted(), nil
 }
 
 // ControlContainer returns the stable CLI handle while bounding a
