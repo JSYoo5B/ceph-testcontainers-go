@@ -133,16 +133,11 @@ func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Minute)
 	defer cancel()
-	removal := f.removedZones[name]
 	states := f.zoneStates()
 	if len(states) == 0 {
 		return errors.New("RGW multisite has no attached zones")
 	}
-	data, err := f.admin(ctx, states[0].client, states[0].Name, "period", "get", "--format", "json")
-	if err != nil {
-		return err
-	}
-	period, err := decodeRGWTopologyPeriod(data)
+	period, err := f.committedPeriod(ctx, states[0])
 	if err != nil {
 		return err
 	}
@@ -150,68 +145,12 @@ func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 	if master == nil {
 		return errors.New("current RGW metadata master is not an attached owned zone")
 	}
-	if removal == nil {
-		state, err := f.removableZone(period, master, states, name)
-		if err != nil {
-			return err
-		}
-		removal = &rgwZoneRemoval{state: state}
-		if f.removedZones == nil {
-			f.removedZones = make(map[string]*rgwZoneRemoval)
-		}
-		f.removedZones[name] = removal
-	}
-	state := removal.state
-	if state.ID == period.MasterZone {
-		return errors.New("cannot finish removal of the current RGW realm metadata master")
-	}
-	for _, group := range period.PeriodMap.Zonegroups {
-		if group.MasterZone == state.ID {
-			return errors.New("cannot finish removal of the current RGW zonegroup master")
-		}
-	}
-	if err := f.checkZonePeriod(period, master, states); err != nil {
-		// A commit can succeed while its response is lost. Accept only the
-		// exact graph with this target removed, never an unrelated mutation.
-		remaining := slices.DeleteFunc(slices.Clone(states), func(zone *rgwZoneState) bool { return zone.Name == name })
-		if removal.detached || f.checkZonePeriod(period, master, remaining) != nil {
-			return err
-		}
+	removal, err := f.zoneRemoval(period, master, states, name)
+	if err != nil {
+		return err
 	}
 	if !removal.detached {
-		// Fence the leaving gateway before removing it from the committed graph.
-		if state.Gateway == nil || state.client == nil {
-			return errors.New("cannot detach a partially initialized RGW zone")
-		}
-		status, err := state.Gateway.State(ctx)
-		if err != nil || status == nil {
-			return fmt.Errorf("inspect leaving RGW zone: %v", err)
-		}
-		if status.Running {
-			stop := 3 * time.Second
-			if err := state.Gateway.Stop(ctx, &stop); err != nil {
-				return err
-			}
-		}
-		// Read the master's local group configuration before mutating it. This
-		// handles a successful remove whose previous Exec response was lost.
-		groupData, err := f.adminInGroup(ctx, master.client, state.Zonegroup, state.Name, "zonegroup", "get")
-		if err != nil {
-			return err
-		}
-		var group struct {
-			Zones []struct{ ID, Name string } `json:"zones"`
-		}
-		if err := json.Unmarshal(groupData, &group); err != nil {
-			return err
-		}
-		present := slices.ContainsFunc(group.Zones, func(zone struct{ ID, Name string }) bool { return zone.ID == state.ID })
-		if present {
-			if _, err := f.adminInGroup(ctx, master.client, state.Zonegroup, state.Name, "zonegroup", "remove", "--zone-id", state.ID); err != nil {
-				return err
-			}
-		}
-		if _, err := f.admin(ctx, master.client, master.Name, "period", "update", "--commit"); err != nil {
+		if err := f.detachZone(ctx, master, removal.state); err != nil {
 			return err
 		}
 		removal.detached = true
@@ -226,6 +165,86 @@ func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 		}
 		removal.converged = true
 	}
+	return removal.removeResources(ctx)
+}
+
+// zoneRemoval returns the recorded removal of name, first recording a new one
+// for a zone the committed period allows to leave. It refuses to continue a
+// removal whose zone has since become a realm or zonegroup master, and accepts
+// a committed graph that differs from the owned zones only by the leaving zone
+// (a commit whose response was lost); any other difference is refused.
+func (f *Fixture) zoneRemoval(period *rgwTopologyPeriod, master *rgwZoneState, states []*rgwZoneState, name string) (*rgwZoneRemoval, error) {
+	removal := f.removedZones[name]
+	if removal == nil {
+		state, err := f.removableZone(period, master, states, name)
+		if err != nil {
+			return nil, err
+		}
+		removal = &rgwZoneRemoval{state: state}
+		if f.removedZones == nil {
+			f.removedZones = make(map[string]*rgwZoneRemoval)
+		}
+		f.removedZones[name] = removal
+	}
+	state := removal.state
+	if state.ID == period.MasterZone {
+		return nil, errors.New("cannot finish removal of the current RGW realm metadata master")
+	}
+	for _, group := range period.PeriodMap.Zonegroups {
+		if group.MasterZone == state.ID {
+			return nil, errors.New("cannot finish removal of the current RGW zonegroup master")
+		}
+	}
+	if err := f.checkZonePeriod(period, master, states); err != nil {
+		remaining := slices.DeleteFunc(slices.Clone(states), func(zone *rgwZoneState) bool { return zone.Name == name })
+		if removal.detached || f.checkZonePeriod(period, master, remaining) != nil {
+			return nil, err
+		}
+	}
+	return removal, nil
+}
+
+// detachZone fences the leaving zone's gateway, removes the zone from its
+// zonegroup on the master and commits the period. The master's group is read
+// first, so a removal whose earlier response was lost is not repeated.
+func (f *Fixture) detachZone(ctx context.Context, master, state *rgwZoneState) error {
+	if state.Gateway == nil || state.client == nil {
+		return errors.New("cannot detach a partially initialized RGW zone")
+	}
+	status, err := state.Gateway.State(ctx)
+	if err != nil || status == nil {
+		return fmt.Errorf("inspect leaving RGW zone: %v", err)
+	}
+	if status.Running {
+		stop := 3 * time.Second
+		if err := state.Gateway.Stop(ctx, &stop); err != nil {
+			return err
+		}
+	}
+	groupData, err := f.adminInGroup(ctx, master.client, state.Zonegroup, state.Name, "zonegroup", "get")
+	if err != nil {
+		return err
+	}
+	var group struct {
+		Zones []struct{ ID, Name string } `json:"zones"`
+	}
+	if err := json.Unmarshal(groupData, &group); err != nil {
+		return err
+	}
+	if slices.ContainsFunc(group.Zones, func(zone struct{ ID, Name string }) bool { return zone.ID == state.ID }) {
+		if _, err := f.adminInGroup(ctx, master.client, state.Zonegroup, state.Name, "zonegroup", "remove", "--zone-id", state.ID); err != nil {
+			return err
+		}
+	}
+	_, err = f.admin(ctx, master.client, master.Name, "period", "update", "--commit")
+	return err
+}
+
+// removeResources removes the detached zone's gateway and then its CLI
+// client, each once; a failed step is retried by the next RemoveZone. Realm,
+// zone configuration and data stay in the zone's storage cluster.
+func (removal *rgwZoneRemoval) removeResources(ctx context.Context) error {
+	state := removal.state
 	if !removal.gatewayRemoved {
 		if state.cluster != nil {
 			if err := state.Gateway.Remove(ctx); err != nil {

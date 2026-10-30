@@ -27,8 +27,53 @@ type SyncBucketSelector struct{ Name, Tenant string }
 // cannot represent comma-containing keys/values; '=' is only allowed in values.
 type SyncObjectTag struct{ Key, Value string }
 
+// syncPipeConfig builds the native pipe-create command and the pipe document
+// that its readback must equal. Every concrete bucket, principal and storage
+// class is confirmed against the native master before anything is returned.
 func (f *Fixture) syncPipeConfig(ctx context.Context, master *rgwZoneState, g *SyncGroup, config SyncPipeConfig, source, dest []string) ([]string, map[string]any, error) {
 	args := []string{"sync", "group", "pipe", "create", "--group-id", g.ID(), "--pipe-id", config.ID, "--source-zone-ids", strings.Join(source, ","), "--dest-zone-ids", strings.Join(dest, ",")}
+	filterArgs, filter, err := syncPipeFilter(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	args = append(args, filterArgs...)
+	src := map[string]any{"bucket": "*", "zones": syncStrings(source)}
+	dst := map[string]any{"bucket": "*", "zones": syncStrings(dest)}
+	bucketArgs, sourceInfo, destinationInfo, err := f.syncPipeBuckets(ctx, master, g, config, src, dst)
+	if err != nil {
+		return nil, nil, err
+	}
+	args = append(args, bucketArgs...)
+	destParams := map[string]any{}
+	params := map[string]any{"source": map[string]any{"filter": filter}, "dest": destParams, "priority": json.Number(strconv.FormatInt(int64(config.Priority), 10)), "mode": "system"}
+	// Ceph 19 stores system-mode pipes with an explicit empty user.
+	if master != nil && master.cluster != nil && multicluster.CephBefore(master.cluster, 20) {
+		params["user"] = ""
+	}
+	if config.Priority != 0 {
+		args = append(args, "--priority", strconv.FormatInt(int64(config.Priority), 10))
+	}
+	principalArgs, err := f.syncPipePrincipals(ctx, g, config, sourceInfo, destinationInfo, params, destParams)
+	if err != nil {
+		return nil, nil, err
+	}
+	args = append(args, principalArgs...)
+	if config.DestinationStorageClass != "" {
+		if err := f.syncDestinationClass(ctx, g, config, destinationInfo); err != nil {
+			return nil, nil, err
+		}
+		destParams["storage_class"] = config.DestinationStorageClass
+		args = append(args, "--storage-class", config.DestinationStorageClass)
+	} else if len(config.DestinationPlacements) > 0 {
+		return nil, nil, multisiteInvalid(errors.New("RGW destination placements require a requested storage class"))
+	}
+	return args, map[string]any{"id": config.ID, "source": src, "dest": dst, "params": params}, nil
+}
+
+// syncPipeFilter returns the prefix and tag arguments of a pipe and the
+// native source filter they produce.
+func syncPipeFilter(config SyncPipeConfig) ([]string, map[string]any, error) {
+	var args []string
 	filter := map[string]any{"tags": []any{}}
 	if config.Prefix != "" {
 		filter["prefix"] = config.Prefix
@@ -48,20 +93,28 @@ func (f *Fixture) syncPipeConfig(ctx context.Context, master *rgwZoneState, g *S
 		filter["tags"] = native
 		args = append(args, "--tags-add", strings.Join(encoded, ","))
 	}
-	src := map[string]any{"bucket": "*", "zones": syncStrings(source)}
-	dst := map[string]any{"bucket": "*", "zones": syncStrings(dest)}
+	return args, filter, nil
+}
+
+// syncPipeBuckets pins each selected bucket to its current native instance
+// in src and dst and returns the bucket arguments with the native info of
+// both sides. Without a destination selector, a bucket-scoped group's own
+// bucket is the destination.
+func (f *Fixture) syncPipeBuckets(ctx context.Context, master *rgwZoneState, g *SyncGroup, config SyncPipeConfig, src, dst map[string]any) ([]string, map[string]any, map[string]any, error) {
+	var args []string
 	var sourceInfo, destinationInfo map[string]any
 	for _, side := range []struct {
 		selector *SyncBucketSelector
 		native   map[string]any
 		flag     string
-	}{{config.SourceBucket, src, "--source"}, {config.DestinationBucket, dst, "--dest"}} {
+		info     *map[string]any
+	}{{config.SourceBucket, src, "--source", &sourceInfo}, {config.DestinationBucket, dst, "--dest", &destinationInfo}} {
 		if side.selector == nil {
 			continue
 		}
 		id, info, err := f.syncSelectedBucket(ctx, master, g, *side.selector)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		key := side.selector.Name + ":" + id
 		if side.selector.Tenant != "" {
@@ -72,74 +125,60 @@ func (f *Fixture) syncPipeConfig(ctx context.Context, master *rgwZoneState, g *S
 		if side.selector.Tenant != "" {
 			args = append(args, side.flag+"-tenant", side.selector.Tenant)
 		}
-		if side.flag == "--source" {
-			sourceInfo = info
-		} else {
-			destinationInfo = info
-		}
+		*side.info = info
 	}
 	if destinationInfo == nil && g.scope.Bucket != "" {
-		_, destinationInfo, err = f.syncSelectedBucket(ctx, master, g, SyncBucketSelector{Name: g.scope.Bucket, Tenant: g.scope.Tenant})
-		if err != nil {
-			return nil, nil, err
+		var err error
+		if _, destinationInfo, err = f.syncSelectedBucket(ctx, master, g, SyncBucketSelector{Name: g.scope.Bucket, Tenant: g.scope.Tenant}); err != nil {
+			return nil, nil, nil, err
 		}
 	}
-	destParams := map[string]any{}
-	params := map[string]any{"source": map[string]any{"filter": filter}, "dest": destParams, "priority": json.Number(strconv.FormatInt(int64(config.Priority), 10)), "mode": "system"}
-	// Ceph 19 stores system-mode pipes with an explicit empty user.
-	if master != nil && master.cluster != nil && multicluster.CephBefore(master.cluster, 20) {
-		params["user"] = ""
-	}
-	if config.Priority != 0 {
-		args = append(args, "--priority", strconv.FormatInt(int64(config.Priority), 10))
-	}
+	return args, sourceInfo, destinationInfo, nil
+}
+
+// syncPipePrincipals confirms the destination owner and the user-mode
+// principal of a pipe, records them in params and destParams and returns
+// their arguments.
+func (f *Fixture) syncPipePrincipals(ctx context.Context, g *SyncGroup, config SyncPipeConfig, sourceInfo, destinationInfo, params, destParams map[string]any) ([]string, error) {
+	var args []string
 	if config.DestinationOwner != nil {
 		info, err := f.syncOwnedPrincipal(ctx, g, config.DestinationOwner)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if info.AccountID != "" || (info.Type != "" && info.Type != "rgw") {
-			return nil, nil, multisiteInvalid(errors.New("RGW owner translation requires a confirmed ordinary user; account owner translation is unproven"))
+			return nil, multisiteInvalid(errors.New("RGW owner translation requires a confirmed ordinary user; account owner translation is unproven"))
 		}
 		if err := checkSyncPrincipalTenants(g.scope, config, info.Tenant); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if destinationInfo == nil {
-			return nil, nil, multisiteInvalid(errors.New("RGW owner translation requires a concrete destination bucket"))
+			return nil, multisiteInvalid(errors.New("RGW owner translation requires a concrete destination bucket"))
 		}
 		if config.User != nil && destinationInfo["owner"] != info.ID {
-			return nil, nil, multisiteInvalid(errors.New("RGW user-mode owner translation must select the destination bucket owner"))
+			return nil, multisiteInvalid(errors.New("RGW user-mode owner translation must select the destination bucket owner"))
 		}
 		destParams["acl_translation"] = map[string]any{"owner": info.ID}
 		args = append(args, "--dest-owner", info.ID)
 	}
-	if config.User != nil {
-		info, err := f.syncOwnedPrincipal(ctx, g, config.User)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := checkSyncUserModePrincipal(g.scope, config, info, sourceInfo, destinationInfo); err != nil {
-			return nil, nil, err
-		}
-		if zone := f.zoneBefore(20); info.AccountID != "" && zone != nil {
-			return nil, nil, accountPipeUnsupported(zone)
-		}
-		if destinationInfo == nil {
-			return nil, nil, multisiteInvalid(errors.New("RGW user mode requires a concrete destination bucket"))
-		}
-		params["mode"], params["user"] = "user", info.ID
-		args = append(args, "--mode", "user", "--uid", info.ID)
+	if config.User == nil {
+		return args, nil
 	}
-	if config.DestinationStorageClass != "" {
-		if err := f.syncDestinationClass(ctx, g, config, destinationInfo); err != nil {
-			return nil, nil, err
-		}
-		destParams["storage_class"] = config.DestinationStorageClass
-		args = append(args, "--storage-class", config.DestinationStorageClass)
-	} else if len(config.DestinationPlacements) > 0 {
-		return nil, nil, multisiteInvalid(errors.New("RGW destination placements require a requested storage class"))
+	info, err := f.syncOwnedPrincipal(ctx, g, config.User)
+	if err != nil {
+		return nil, err
 	}
-	return args, map[string]any{"id": config.ID, "source": src, "dest": dst, "params": params}, nil
+	if err := checkSyncUserModePrincipal(g.scope, config, info, sourceInfo, destinationInfo); err != nil {
+		return nil, err
+	}
+	if zone := f.zoneBefore(20); info.AccountID != "" && zone != nil {
+		return nil, accountPipeUnsupported(zone)
+	}
+	if destinationInfo == nil {
+		return nil, multisiteInvalid(errors.New("RGW user mode requires a concrete destination bucket"))
+	}
+	params["mode"], params["user"] = "user", info.ID
+	return append(args, "--mode", "user", "--uid", info.ID), nil
 }
 
 func checkSyncPrincipalTenants(scope SyncPolicyScope, config SyncPipeConfig, tenant string) error {

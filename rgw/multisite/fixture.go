@@ -110,34 +110,84 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 
 // runPair configures a two-zone realm; runTopology builds larger ones on it.
 func runPair(ctx context.Context, image string, config Config, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
-	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
+	setup, err := preparePair(ctx, image, config)
+	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Minute)
+	defer cancel()
+	f := newPairFixture(setup.config)
+	bridge, err := f.startPairClients(ctx, setup)
+	if err != nil {
+		return f, err
+	}
+	if err := f.bootstrapSourceZone(ctx, image, setup, bridge, opts...); err != nil {
+		return f, err
+	}
+	if err := f.joinDestinationZone(ctx, image, setup, bridge, opts...); err != nil {
+		return f, err
+	}
+	if err := f.recordPairIdentities(ctx); err != nil {
+		return f, err
+	}
+	// Both gateways started against an earlier bootstrap period before
+	// allocated endpoints were committed when the zones use host networking or
+	// separate zonegroups.
+	reload := setup.sourceHostNetwork || setup.config.destinationZonegroup != setup.config.Zonegroup
+	if err := f.finishPairBootstrap(ctx, reload); err != nil {
+		return f, err
+	}
+	return f, f.issueS3Credentials(ctx, setup.suffix)
+}
+
+// pairSetup is a validated two-zone request: the completed configuration, the
+// unique suffix of its generated names and what each cluster provides.
+type pairSetup struct {
+	config                                    Config
+	suffix                                    string
+	sourceHostNetwork, destinationHostNetwork bool
+	sourceClientImage, destinationClientImage string
+}
+
+// preparePair validates both clusters and the requested names before anything
+// is created.
+func preparePair(ctx context.Context, image string, config Config) (pairSetup, error) {
+	if err := multicluster.ValidatePair(ctx, image, config.Source, config.Destination); err != nil {
+		return pairSetup{}, err
+	}
 	if err := multicluster.RequireRoleImage(image, multicluster.RoleRGW, config.Source, config.Destination); err != nil {
-		return nil, fmt.Errorf("configure RGW multisite gateway image: %w", err)
+		return pairSetup{}, fmt.Errorf("configure RGW multisite gateway image: %w", err)
 	}
 	sourceFacts, err := ceph.FactsOf(config.Source)
 	if err != nil {
-		return nil, err
+		return pairSetup{}, err
 	}
 	destinationFacts, err := ceph.FactsOf(config.Destination)
 	if err != nil {
-		return nil, err
+		return pairSetup{}, err
 	}
-	sourceClientImage, err := rgwSetupImage(config.SetupImage, sourceFacts.Images.RGW)
-	if err != nil {
-		return nil, err
+	setup := pairSetup{sourceHostNetwork: sourceFacts.UsesHostNetwork, destinationHostNetwork: destinationFacts.UsesHostNetwork}
+	if setup.sourceClientImage, err = rgwSetupImage(config.SetupImage, sourceFacts.Images.RGW); err != nil {
+		return pairSetup{}, err
 	}
-	destinationClientImage, err := rgwSetupImage(config.SetupImage, destinationFacts.Images.RGW)
-	if err != nil {
-		return nil, err
+	if setup.destinationClientImage, err = rgwSetupImage(config.SetupImage, destinationFacts.Images.RGW); err != nil {
+		return pairSetup{}, err
 	}
 	for _, cluster := range []*ceph.Container{config.Source, config.Destination} {
 		if err := ensureFreshRGWCluster(ctx, cluster); err != nil {
-			return nil, err
+			return pairSetup{}, err
 		}
 	}
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	setup.suffix = strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	if setup.config, err = completePairConfig(config, setup.suffix); err != nil {
+		return pairSetup{}, err
+	}
+	return setup, nil
+}
+
+// completePairConfig fills the default realm, zonegroup and zone names from
+// suffix and refuses names radosgw-admin would misread.
+func completePairConfig(config Config, suffix string) (Config, error) {
 	if config.Realm == "" {
 		config.Realm = "tc-multicluster-" + suffix
 	}
@@ -152,26 +202,35 @@ func runPair(ctx context.Context, image string, config Config, opts ...testconta
 	}
 	for _, name := range []string{config.Realm, config.Zonegroup, config.SourceZone, config.DestinationZone} {
 		if strings.TrimSpace(name) != name || name == "" || strings.HasPrefix(name, "-") || strings.ContainsAny(name, "\x00\r\n") {
-			return nil, fmt.Errorf("invalid RGW realm/zone name")
+			return Config{}, fmt.Errorf("invalid RGW realm/zone name")
 		}
 	}
 	if config.SourceZone == config.DestinationZone {
-		return nil, fmt.Errorf("RGW zones must be distinct")
+		return Config{}, fmt.Errorf("RGW zones must be distinct")
 	}
 	if config.destinationZonegroup == "" {
 		config.destinationZonegroup = config.Zonegroup
 	}
-	ctx, cancel := context.WithTimeout(ctx, 6*time.Minute)
-	defer cancel()
+	return config, nil
+}
+
+func newPairFixture(config Config) *Fixture {
 	f := &Fixture{config: config, bootstrapStagingPending: true,
 		zoneGroups: map[string]string{config.SourceZone: config.Zonegroup, config.DestinationZone: config.destinationZonegroup},
 		groupIDs:   make(map[string]string), groupMasters: map[string]string{config.Zonegroup: config.SourceZone}}
 	if config.destinationZonegroup != config.Zonegroup {
 		f.groupMasters[config.destinationZonegroup] = config.DestinationZone
 	}
+	return f
+}
+
+// startPairClients creates the bridge network of a bridge-mode pair and both
+// CLI clients. Everything it creates is owned by f before an error returns.
+func (f *Fixture) startPairClients(ctx context.Context, setup pairSetup) (*testcontainers.DockerNetwork, error) {
 	var bridge *testcontainers.DockerNetwork
 	peerNetwork := ""
-	if !sourceFacts.UsesHostNetwork {
+	if !setup.sourceHostNetwork {
+		var err error
 		bridge, err = dockerbridge.New(ctx)
 		if bridge != nil {
 			f.httpNetwork = bridge
@@ -180,167 +239,155 @@ func runPair(ctx context.Context, image string, config Config, opts ...testconta
 			})
 		}
 		if err != nil {
-			return f, fmt.Errorf("create RGW HTTP bridge: %w", err)
+			return nil, fmt.Errorf("create RGW HTTP bridge: %w", err)
 		}
 		peerNetwork = bridge.Name
 	}
-	f.sourceClient, err = multicluster.RunClient(ctx, sourceClientImage, config.Source, peerNetwork, &f.owned)
-	if err != nil {
-		return f, err
+	var err error
+	if f.sourceClient, err = multicluster.RunClient(ctx, setup.sourceClientImage, setup.config.Source, peerNetwork, &f.owned); err != nil {
+		return nil, err
 	}
-	f.destinationClient, err = multicluster.RunClient(ctx, destinationClientImage, config.Destination, peerNetwork, &f.owned)
-	if err != nil {
-		return f, err
+	if f.destinationClient, err = multicluster.RunClient(ctx, setup.destinationClientImage, setup.config.Destination, peerNetwork, &f.owned); err != nil {
+		return nil, err
 	}
-	sourceAlias, destinationAlias := "rgw-primary-"+suffix, "rgw-secondary-"+suffix
-	sourceURL, destinationURL := "http://"+sourceAlias+":7480", "http://"+destinationAlias+":7480"
-	if sourceFacts.UsesHostNetwork {
+	return bridge, nil
+}
+
+func pairAliases(suffix string) (source, destination string) {
+	return "rgw-primary-" + suffix, "rgw-secondary-" + suffix
+}
+
+// bootstrapSourceZone creates the realm, the master zonegroup and zone and the
+// system user on the source, starts its gateway and, in host mode, commits the
+// gateway's actual listener as the master endpoint.
+func (f *Fixture) bootstrapSourceZone(ctx context.Context, image string, setup pairSetup, bridge *testcontainers.DockerNetwork, opts ...testcontainers.ContainerCustomizer) error {
+	sourceAlias, destinationAlias := pairAliases(setup.suffix)
+	f.sourceURL, f.destinationURL = "http://"+sourceAlias+":7480", "http://"+destinationAlias+":7480"
+	if setup.sourceHostNetwork {
 		// A named host gateway chooses its port at startup. Commit the fresh
 		// zone without endpoints first, then publish its actual owned listener.
-		sourceURL, destinationURL = "", ""
+		f.sourceURL, f.destinationURL = "", ""
 	}
-	systemAccess, systemSecret := strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()+uuid.NewString()
-	f.sourceURL, f.destinationURL = sourceURL, destinationURL
-	f.systemAccess, f.systemSecret = systemAccess, systemSecret
-	primaryCommands := [][]string{
+	f.systemAccess, f.systemSecret = strings.ReplaceAll(uuid.NewString(), "-", ""), uuid.NewString()+uuid.NewString()
+	if err := f.runZoneCommands(ctx, f.sourceClient, f.config.SourceZone, [][]string{
 		{"realm", "create", "--default"},
-		rgwEndpointArgs([]string{"zonegroup", "create", "--master", "--default"}, sourceURL),
-		rgwEndpointArgs([]string{"zone", "create", "--master", "--default"}, sourceURL),
-		{"user", "create", "--uid", "tc-sync-" + suffix, "--display-name", "Testcontainers multisite sync", "--system", "--access-key", systemAccess, "--secret-key", systemSecret},
-		{"zone", "modify", "--access-key", systemAccess, "--secret", systemSecret},
+		rgwEndpointArgs([]string{"zonegroup", "create", "--master", "--default"}, f.sourceURL),
+		rgwEndpointArgs([]string{"zone", "create", "--master", "--default"}, f.sourceURL),
+		{"user", "create", "--uid", "tc-sync-" + setup.suffix, "--display-name", "Testcontainers multisite sync", "--system", "--access-key", f.systemAccess, "--secret-key", f.systemSecret},
+		{"zone", "modify", "--access-key", f.systemAccess, "--secret", f.systemSecret},
 		{"period", "update", "--commit"},
+	}); err != nil {
+		return err
 	}
-	for _, cmd := range primaryCommands {
-		if _, err := f.admin(ctx, f.sourceClient, f.config.SourceZone, cmd...); err != nil {
-			return f, err
-		}
+	var err error
+	if f.Source, err = f.runGateway(ctx, image, setup.config.Source, bridge, sourceAlias, f.config.SourceZone, opts...); err != nil {
+		return err
 	}
-	f.Source, err = f.runGateway(ctx, image, config.Source, bridge, sourceAlias, config.SourceZone, opts...)
-	if err != nil {
-		return f, err
+	if !setup.sourceHostNetwork {
+		return nil
 	}
-	if sourceFacts.UsesHostNetwork {
-		sourceURL, err = f.Source.DaemonEndpoint(ctx)
-		if err != nil {
-			return f, err
-		}
-		f.sourceURL = sourceURL
-		for _, cmd := range [][]string{
-			{"zone", "modify", "--endpoints", sourceURL},
-			{"zonegroup", "modify", "--endpoints", sourceURL},
-			{"period", "update", "--commit"},
-		} {
-			if _, err := f.admin(ctx, f.sourceClient, f.config.SourceZone, cmd...); err != nil {
-				return f, err
-			}
-		}
+	if f.sourceURL, err = f.Source.DaemonEndpoint(ctx); err != nil {
+		return err
 	}
-	secondaryCommands := [][]string{
-		{"realm", "pull", "--url", sourceURL, "--access-key", systemAccess, "--secret", systemSecret},
-		{"realm", "default"},
+	return f.publishZoneEndpoint(ctx, f.sourceClient, f.config.SourceZone, f.sourceURL, true)
+}
+
+// joinDestinationZone joins the destination to the realm through the source,
+// starts its gateway and, in host mode, commits its actual listener.
+func (f *Fixture) joinDestinationZone(ctx context.Context, image string, setup pairSetup, bridge *testcontainers.DockerNetwork, opts ...testcontainers.ContainerCustomizer) error {
+	newGroup := ""
+	if f.config.destinationZonegroup != f.config.Zonegroup {
+		newGroup = f.config.destinationZonegroup
 	}
-	if config.destinationZonegroup != config.Zonegroup {
-		secondaryCommands = append(secondaryCommands, rgwEndpointArgs([]string{"zonegroup", "create", "--api-name", config.destinationZonegroup}, destinationURL))
+	if err := f.joinZone(ctx, zoneJoin{client: f.destinationClient, zone: f.config.DestinationZone, masterURL: f.sourceURL, endpoint: f.destinationURL, newGroup: newGroup}); err != nil {
+		return err
 	}
-	zoneCreate := []string{"zone", "create", "--access-key", systemAccess, "--secret", systemSecret}
-	if config.destinationZonegroup != config.Zonegroup {
-		zoneCreate = append(zoneCreate, "--master")
+	_, destinationAlias := pairAliases(setup.suffix)
+	var err error
+	if f.Destination, err = f.runGateway(ctx, image, setup.config.Destination, bridge, destinationAlias, f.config.DestinationZone, opts...); err != nil {
+		return err
 	}
-	secondaryCommands = append(secondaryCommands, rgwEndpointArgs(zoneCreate, destinationURL), []string{"period", "update", "--commit"})
-	for _, cmd := range secondaryCommands {
-		if _, err := f.admin(ctx, f.destinationClient, f.config.DestinationZone, cmd...); err != nil {
-			return f, err
-		}
+	if !setup.destinationHostNetwork {
+		return nil
 	}
-	f.Destination, err = f.runGateway(ctx, image, config.Destination, bridge, destinationAlias, config.DestinationZone, opts...)
-	if err != nil {
-		return f, err
+	if f.destinationURL, err = f.Destination.DaemonEndpoint(ctx); err != nil {
+		return err
 	}
-	if destinationFacts.UsesHostNetwork {
-		destinationURL, err = f.Destination.DaemonEndpoint(ctx)
-		if err != nil {
-			return f, err
-		}
-		f.destinationURL = destinationURL
-		commands := [][]string{{"zone", "modify", "--endpoints", destinationURL}}
-		if config.destinationZonegroup != config.Zonegroup {
-			commands = append(commands, []string{"zonegroup", "modify", "--endpoints", destinationURL})
-		}
-		commands = append(commands, []string{"period", "update", "--commit"})
-		for _, cmd := range commands {
-			if _, err := f.admin(ctx, f.destinationClient, f.config.DestinationZone, cmd...); err != nil {
-				return f, err
-			}
-		}
-	}
+	return f.publishZoneEndpoint(ctx, f.destinationClient, f.config.DestinationZone, f.destinationURL, newGroup != "")
+}
+
+// recordPairIdentities reads the native realm, zone and zonegroup IDs and
+// requires the destination to have joined the source's realm as a distinct
+// zone.
+func (f *Fixture) recordPairIdentities(ctx context.Context) error {
 	for _, item := range []struct {
 		client       testcontainers.Container
 		zone, entity string
 		target       *string
 	}{
-		{f.sourceClient, config.SourceZone, "realm", &f.RealmID},
-		{f.sourceClient, config.SourceZone, "zone", &f.SourceZoneID},
-		{f.destinationClient, config.DestinationZone, "zone", &f.DestinationZoneID},
+		{f.sourceClient, f.config.SourceZone, "realm", &f.RealmID},
+		{f.sourceClient, f.config.SourceZone, "zone", &f.SourceZoneID},
+		{f.destinationClient, f.config.DestinationZone, "zone", &f.DestinationZoneID},
 	} {
-		data, err := f.admin(ctx, item.client, item.zone, item.entity, "get")
+		id, err := f.nativeID(ctx, item.client, item.zone, item.entity)
 		if err != nil {
-			return f, err
+			return err
 		}
-		var identity struct {
-			ID string `json:"id"`
+		if id == "" {
+			return fmt.Errorf("invalid RGW %s identity", item.entity)
 		}
-		if err := json.Unmarshal(data, &identity); err != nil || identity.ID == "" {
-			return f, fmt.Errorf("invalid RGW %s identity", item.entity)
-		}
-		*item.target = identity.ID
+		*item.target = id
 	}
-	data, err := f.admin(ctx, f.destinationClient, f.config.DestinationZone, "realm", "get")
+	destinationRealm, err := f.nativeID(ctx, f.destinationClient, f.config.DestinationZone, "realm")
 	if err != nil {
-		return f, err
+		return err
 	}
-	var destinationRealm struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(data, &destinationRealm); err != nil || destinationRealm.ID != f.RealmID || f.SourceZoneID == f.DestinationZoneID {
-		return f, fmt.Errorf("RGW multisite realm/zone identities do not match the requested topology")
+	if destinationRealm != f.RealmID || f.SourceZoneID == f.DestinationZoneID {
+		return fmt.Errorf("RGW multisite realm/zone identities do not match the requested topology")
 	}
 	for _, zone := range f.zoneStates() {
-		data, err := f.admin(ctx, zone.client, zone.Name, "zonegroup", "get")
+		id, err := f.nativeID(ctx, zone.client, zone.Name, "zonegroup")
 		if err != nil {
-			return f, err
+			return err
 		}
-		var group struct {
-			ID string `json:"id"`
+		if id == "" {
+			return fmt.Errorf("invalid RGW zonegroup identity")
 		}
-		if err := json.Unmarshal(data, &group); err != nil || group.ID == "" {
-			return f, fmt.Errorf("invalid RGW zonegroup identity")
-		}
-		f.groupIDs[zone.Zonegroup] = group.ID
+		f.groupIDs[zone.Zonegroup] = id
 	}
+	return nil
+}
+
+// finishPairBootstrap waits until both zones commit the same period and
+// leaves a canonical staging snapshot. With reload, it loads the verified
+// final period into both gateways before S3 operations are admitted instead
+// of racing asynchronous reload.
+func (f *Fixture) finishPairBootstrap(ctx context.Context, reload bool) error {
 	if err := f.waitZonePeriods(ctx, f.zoneStates()[0], f.zoneStates()); err != nil {
-		return f, err
+		return err
 	}
 	// A secondary commits its own staging object remotely. The master can
 	// retain its earlier source-only staging object after the final current
 	// period includes both zones. Finish the fresh bootstrap with a canonical
 	// unpublished staging snapshot so later guarded policy updates can proceed.
 	if err := f.canonicalizeBootstrapStaging(ctx); err != nil {
-		return f, err
+		return err
 	}
-	if sourceFacts.UsesHostNetwork || config.destinationZonegroup != config.Zonegroup {
-		// Both gateways started against an earlier bootstrap period before
-		// allocated endpoints were committed. Load the verified final period
-		// before admitting S3 operations instead of racing asynchronous reload.
-		if err := f.waitZoneMetadataBootstrap(ctx, f.zoneStates()[0], f.zoneStates()); err != nil {
-			return f, err
-		}
-		if err := f.reloadZoneGateways(ctx, f.zoneStates(), nil); err != nil {
-			return f, err
-		}
+	if !reload {
+		return nil
 	}
+	if err := f.waitZoneMetadataBootstrap(ctx, f.zoneStates()[0], f.zoneStates()); err != nil {
+		return err
+	}
+	return f.reloadZoneGateways(ctx, f.zoneStates(), nil)
+}
+
+// issueS3Credentials creates the ordinary S3 test user on the master and
+// gives its single key to both gateways.
+func (f *Fixture) issueS3Credentials(ctx context.Context, suffix string) error {
 	user, err := f.admin(ctx, f.sourceClient, f.config.SourceZone, "user", "create", "--uid", "tc-user-"+suffix, "--display-name", "Testcontainers multicluster S3 user")
 	if err != nil {
-		return f, err
+		return err
 	}
 	var credentials struct {
 		Keys []struct {
@@ -349,13 +396,72 @@ func runPair(ctx context.Context, image string, config Config, opts ...testconta
 		} `json:"keys"`
 	}
 	if err := json.Unmarshal(user, &credentials); err != nil || len(credentials.Keys) != 1 || credentials.Keys[0].AccessKey == "" || credentials.Keys[0].SecretKey == "" {
-		return f, fmt.Errorf("invalid RGW S3 test credentials")
+		return fmt.Errorf("invalid RGW S3 test credentials")
 	}
 	for _, gateway := range []*rgw.Gateway{f.Source, f.Destination} {
 		gateway.AccessKey = credentials.Keys[0].AccessKey
 		gateway.SecretKey = credentials.Keys[0].SecretKey
 	}
-	return f, nil
+	return nil
+}
+
+// zoneJoin is a fresh zone joining the realm through its CLI client: it pulls
+// the realm from the metadata master, creates the zone (with newGroup, first
+// that zonegroup, with the zone as its master) and commits the period.
+// endpoint is the committed peer endpoint; it is empty in host mode until the
+// zone's gateway listens.
+type zoneJoin struct {
+	client                              testcontainers.Container
+	zone, masterURL, endpoint, newGroup string
+}
+
+func (f *Fixture) joinZone(ctx context.Context, join zoneJoin) error {
+	commands := [][]string{
+		{"realm", "pull", "--url", join.masterURL, "--access-key", f.systemAccess, "--secret", f.systemSecret},
+		{"realm", "default"},
+	}
+	create := []string{"zone", "create", "--access-key", f.systemAccess, "--secret", f.systemSecret}
+	if join.newGroup != "" {
+		commands = append(commands, rgwEndpointArgs([]string{"zonegroup", "create", "--api-name", join.newGroup}, join.endpoint))
+		create = append(create, "--master")
+	}
+	commands = append(commands, rgwEndpointArgs(create, join.endpoint), []string{"period", "update", "--commit"})
+	return f.runZoneCommands(ctx, join.client, join.zone, commands)
+}
+
+// publishZoneEndpoint commits a host-mode gateway's actual listener as the
+// zone's endpoint and, for a zonegroup master, as the group's endpoint.
+func (f *Fixture) publishZoneEndpoint(ctx context.Context, client testcontainers.Container, zone, endpoint string, groupMaster bool) error {
+	commands := [][]string{{"zone", "modify", "--endpoints", endpoint}}
+	if groupMaster {
+		commands = append(commands, []string{"zonegroup", "modify", "--endpoints", endpoint})
+	}
+	return f.runZoneCommands(ctx, client, zone, append(commands, []string{"period", "update", "--commit"}))
+}
+
+func (f *Fixture) runZoneCommands(ctx context.Context, client testcontainers.Container, zone string, commands [][]string) error {
+	for _, command := range commands {
+		if _, err := f.admin(ctx, client, zone, command...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// nativeID reads the id of the zone's native realm, zonegroup or zone
+// document. A document without a readable id returns an empty ID and no error.
+func (f *Fixture) nativeID(ctx context.Context, client testcontainers.Container, zone, entity string) (string, error) {
+	data, err := f.admin(ctx, client, zone, entity, "get")
+	if err != nil {
+		return "", err
+	}
+	var native struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(data, &native); err != nil {
+		return "", nil
+	}
+	return native.ID, nil
 }
 
 // An empty override lets each zone select its cluster's RGW administration
