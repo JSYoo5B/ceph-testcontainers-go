@@ -57,6 +57,8 @@ func Pause(ctx context.Context, c *ceph.Container, ctr testcontainers.Container)
 
 // Only the Docker connection is replaceable in unit tests; admission, locks,
 // registry ownership and Terminate use the cluster's actual implementation.
+//
+//testdouble:dependency-port
 func pauseContainerInCluster(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, connect func(context.Context) (containerPauseClient, error)) (pause *PauseLease, err error) {
 	err = faulthook.WithTopology(ctx, c, func() error {
 		if faulthook.Closed(c) || ctr == nil || ctr.GetContainerID() == "" {

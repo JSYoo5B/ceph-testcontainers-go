@@ -27,8 +27,8 @@ TABLE = [
     ("docs/contributing/api-naming.md", False),
     # Read by the messenger coverage fixture test.
     ("docs/guides/messenger-client-fixtures.md", False),
-    # Read by internal/tools/testdoublecheck (the test-double inventory).
-    ("docs/contributing/test-double-inventory.md", False),
+    # No check reads the test-double inventory: the classes are source directives.
+    ("docs/contributing/test-double-inventory.md", True),
     ("docs/contributing/configuration-composition.md", False),
     # Read by tag_scenarios (registry) and its tests (catalogue).
     ("docs/guides/bug-compatibility-tags.json", False), ("docs/guides/bug-compatibility.md", False),

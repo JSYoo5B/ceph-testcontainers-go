@@ -19,6 +19,7 @@ import (
 // caller's: run returns its ID.
 type daemonExecutor struct {
 	// docker replaces the Docker client in tests; nil uses the engine.
+	//testdouble:nil-default-hook
 	docker func(context.Context) (keyRotationExecClient, error)
 }
 

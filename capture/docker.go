@@ -40,6 +40,8 @@ type helperState struct {
 }
 
 // backend runs the Docker operations of a capture; tests replace it.
+//
+//testdouble:dependency-port
 type backend interface {
 	// target inspects id and its endpoint on network. A removed container
 	// returns an error for which errdefs.IsNotFound is true.
@@ -67,6 +69,8 @@ type dockerBackend struct{}
 
 // newDockerClient opens the Docker client of every backend operation; tests
 // replace it with a client of a fake Engine API.
+//
+//testdouble:wired-operation
 var newDockerClient = func(ctx context.Context) (*testcontainers.DockerClient, error) {
 	return testcontainers.NewDockerClientWithOpts(ctx)
 }

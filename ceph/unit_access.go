@@ -20,6 +20,8 @@ import (
 //
 // Every method takes no lock. The caller holds the mutex that UnitState
 // returns, or owns a cluster value that no other goroutine uses yet.
+//
+//testdouble:unit-seam
 type unitAccess struct{}
 
 func init() {
@@ -27,6 +29,8 @@ func init() {
 }
 
 // UnitCluster builds a cluster value for the service packages' unit tests.
+//
+//testdouble:unit-seam
 func (unitAccess) UnitCluster(control testcontainers.Container, startupTimeout time.Duration, closed, hostNetwork bool,
 	publicAddress, networkName string, osds int, placement OSDConfig, memStore bool,
 	mode MessengerMode, images *ImageSet) *Container {
@@ -53,6 +57,8 @@ func (unitAccess) UnitCluster(control testcontainers.Container, startupTimeout t
 
 // UnitState exposes a cluster's internals to unit tests. It takes no lock: the
 // caller holds Mutex or the cluster value is not shared yet.
+//
+//testdouble:unit-seam
 func (unitAccess) UnitState(c *Container) (mu *sync.Mutex, control, config *sync.RWMutex, portLeases int) {
 	return &c.mu, c.controlPlane.mutex(), c.bootstrap.mutex(), c.portLeases.count()
 }
@@ -84,6 +90,8 @@ func (unitAccess) UnitSetCephVersion(c *Container, version string) {
 // UnitSetNetworkRemoved marks the public bridge as removed or not, so a unit
 // test with a synthetic bridge skips the Docker removal. The caller holds Mutex
 // or the cluster value is not shared.
+//
+//testdouble:unit-seam
 func (unitAccess) UnitSetNetworkRemoved(c *Container, removed bool) {
 	c.nets.publicRemoved = removed
 }
@@ -117,6 +125,8 @@ func (unitAccess) UnitSetCephFSImage(c *Container, image string) { c.settings.ce
 // osds, for the service packages' unit tests. It takes no lock: the caller
 // owns a cluster no other goroutine uses yet, or holds the mutex that
 // UnitState exposes.
+//
+//testdouble:unit-seam
 func (unitAccess) UnitReplaceOSDs(c *Container, osds map[int]*OSDContainer) {
 	c.fleet.osdHandles.replace(osds)
 }
@@ -133,6 +143,8 @@ func (unitAccess) UnitClientState(client *ClientConfig) (owner *Container, creat
 
 // UnitApply applies options to empty settings and returns the service
 // bootstraps they record, for the service packages' unit tests.
+//
+//testdouble:unit-seam
 func (unitAccess) UnitApply(opts ...Option) ([]serviceBootstrap, error) {
 	var settings options
 	for _, opt := range opts {
@@ -161,6 +173,8 @@ func (unitAccess) UnitPrepare(osds int, noInitialOSDs bool, pools []PoolConfig, 
 
 // UnitFaults snapshots one family for cross-package contract tests. The
 // caller holds the mutex, or the cluster is not shared.
+//
+//testdouble:unit-seam
 func (unitAccess) UnitFaults(c *Container, kind string) map[string]any {
 	k, ok := faultKindNames[kind]
 	if !ok {
@@ -171,6 +185,8 @@ func (unitAccess) UnitFaults(c *Container, kind string) map[string]any {
 
 // UnitHeld snapshots the handles that one kind holds, for unit tests. The
 // caller holds the mutex, or the cluster is not shared.
+//
+//testdouble:unit-seam
 func (unitAccess) UnitHeld(c *Container, kind string) map[string]any {
 	k, ok := overrideKindNames[kind]
 	if !ok {

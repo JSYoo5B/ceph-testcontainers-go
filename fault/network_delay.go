@@ -388,6 +388,8 @@ type netemTarget struct {
 
 // netemBackend runs the Docker and helper operations of a delay; tests
 // replace it with a model of namespaces and qdiscs.
+//
+//testdouble:dependency-port
 type netemBackend interface {
 	// target inspects id and its endpoint on network. A removed container
 	// returns an error for which errdefs.IsNotFound is true.

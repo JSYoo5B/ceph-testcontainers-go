@@ -38,6 +38,7 @@ type startupIdentity struct {
 	firstMonitorImageID string
 	// ownedContainerDocker replaces the Docker client of Terminate's removal
 	// of labeled containers in tests.
+	//testdouble:nil-default-hook
 	ownedContainerDocker func(context.Context) (ownedContainerClient, error)
 }
 

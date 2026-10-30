@@ -23,15 +23,20 @@ func init() {
 	clusterutil.Quiet = quiet
 }
 
-// Lock and Unlock hold the cluster mutex that serializes fixture mutations.
-func (serviceHooks) Lock(c *Container)   { c.mu.Lock() }
-func (serviceHooks) Unlock(c *Container) { c.mu.Unlock() }
+// AuthCommand runs a Cephx command with the admin identity and reports a
+// failure by operation without the native output.
+func (serviceHooks) AuthCommand(ctx context.Context, c *Container, operation string, args ...string) ([]byte, error) {
+	return authStore{c.conn()}.clientCommand(ctx, operation, args...)
+}
+func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.conn().cliContainer() }
 
-// TryLock holds the cluster mutex if it is free.
-func (serviceHooks) TryLock(c *Container) bool { return c.mu.TryLock() }
+// CephBefore reports whether the recorded Ceph release is older than major.
+func (serviceHooks) CephBefore(c *Container, major int) bool { return c.cephBefore(major) }
 
-// StartupTimeout bounds one fixture operation.
-func (serviceHooks) StartupTimeout(c *Container) time.Duration { return c.settings.startupTimeout }
+// ClassifyExec classifies a failed Docker exec of a native command.
+func (serviceHooks) ClassifyExec(ctx context.Context, err error) error {
+	return classifyDispatched(ctx, err)
+}
 
 // CLI returns the container that runs Ceph CLI commands, or nil.
 func (serviceHooks) ClientCommand(ctx context.Context, c *Container, args ...string) ([]byte, error) {
@@ -42,14 +47,125 @@ func (serviceHooks) ClientCommand(ctx context.Context, c *Container, args ...str
 	return command(ctx, target, args...)
 }
 
-func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.conn().cliContainer() }
+// ClientConfirmed reports a client identity that c created and confirmed.
+func (serviceHooks) ClientConfirmed(client *ClientConfig, c *Container) bool {
+	return client.owner == c && client.created && client.ready
+}
+
+// ClientKeyring returns the keyring retrieved when the client was created.
+func (serviceHooks) ClientKeyring(client *ClientConfig) []byte { return client.keyring }
+
+// ClientRevoked reports a client identity known to be deleted.
+func (serviceHooks) ClientRevoked(client *ClientConfig) bool { return client.revoked }
 
 // Closed reports a terminated cluster.
 func (serviceHooks) Closed(c *Container) bool { return c.closed }
 
+// ClusterIdentity returns the FSID of the bootstrap configuration and whether
+// the configuration and admin keyring were confirmed. The error is only ctx's.
+func (serviceHooks) ClusterIdentity(ctx context.Context, c *Container) (string, bool, error) {
+	identity, err := c.bootstrap.identity(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	return identity.fsid, identity.err == nil && identity.confirmed, nil
+}
+
 // Command runs a CLI command in ctr and returns its standard output.
 func (serviceHooks) Command(ctx context.Context, ctr testcontainers.Container, args ...string) ([]byte, error) {
 	return command(ctx, ctr, args...)
+}
+
+// DeleteService forgets a service container. The caller holds the mutex.
+func (serviceHooks) DeleteService(c *Container, name string) { c.members.roster.dropService(name) }
+
+// DiagnosticHandle returns ctr, or nil when it is a typed nil.
+func (serviceHooks) DiagnosticHandle(ctr testcontainers.Container) testcontainers.Container {
+	return diagnosticContainerHandle(ctr)
+}
+
+// Extension returns the per-cluster state a service package keeps under
+// kind, storing the result of create on first use. It takes its own lock, so
+// callers may or may not hold the cluster mutex.
+func (serviceHooks) Extension(c *Container, kind string, create func() any) any {
+	return c.extensions.getOrCreate(kind, create)
+}
+
+// HostPortAttempts bounds retries after a host port conflict.
+func (serviceHooks) HostPortAttempts() int { return hostPortAttempts }
+
+// Invalid classifies a refused request from a service package.
+func (serviceHooks) Invalid(err error) error { return newInvalid(err) }
+
+// IsPortConflict reports a container that failed because its port was taken.
+func (serviceHooks) IsPortConflict(ctx context.Context, ctr testcontainers.Container) bool {
+	return isPortConflict(ctx, ctr)
+}
+
+// Lock and Unlock hold the cluster mutex that serializes fixture mutations.
+func (serviceHooks) Lock(c *Container) { c.mu.Lock() }
+
+// LockTopology holds the cluster mutex unless ctx ends first.
+func (serviceHooks) LockTopology(ctx context.Context, c *Container) error { return c.lockTopology(ctx) }
+
+// MonitorAddresses returns the bootstrap addresses of the monitors in quorum.
+func (serviceHooks) MonitorAddresses(status QuorumStatus) (string, error) {
+	return monitorBootstrapAddresses(status)
+}
+
+// NativeFailure describes a command that exited nonzero.
+func (serviceHooks) NativeFailure(program string, code int, stdout, stderr []byte) error {
+	return nativeFailure(program, code, stdout, stderr)
+}
+
+// NormalizePool validates a pool configuration and fills its defaults.
+func (serviceHooks) NormalizePool(config PoolConfig) (PoolConfig, error) {
+	return normalizePoolConfig(config)
+}
+
+// OnlyMissingHostResource reports an error that only says a container or
+// network is already gone.
+func (serviceHooks) OnlyMissingHostResource(err error) bool { return onlyMissingHostResource(err) }
+
+// PoolMissing reports a RemovePool error for a name with nothing to remove.
+func (serviceHooks) PoolMissing(err error) bool { return errors.Is(err, errPoolMissing) }
+
+// PoolPlacementDomains counts the owned OSD placement domains that config
+// can use. The caller holds the cluster mutex.
+func (serviceHooks) PoolPlacementDomains(c *Container, config PoolConfig) int {
+	return c.fleet.osdHandles.placementDomains(config)
+}
+
+// PoolPolicyReady reports whether the cluster's pool policy accepts changes.
+// The caller holds the cluster mutex.
+func (serviceHooks) PoolPolicyReady(c *Container) error { return c.poolPolicyReady() }
+
+// PoolStates reads the native pool map. The caller holds the cluster mutex.
+func (serviceHooks) PoolStates(ctx context.Context, c *Container) ([]PoolState, error) {
+	return poolCatalog{c.conn()}.states(ctx)
+}
+
+// RemovePool removes a fixture-created pool and its rule and profile. With
+// skipForeign, a pool the fixture did not create is left alone. The caller
+// holds the cluster mutex.
+func (serviceHooks) RemovePool(ctx context.Context, c *Container, name string, skipForeign bool) error {
+	return c.removePool(ctx, name, skipForeign, nil)
+}
+
+// ReserveHostPorts reserves count host ports that the cluster tracks until
+// release is called or the cluster terminates.
+func (serviceHooks) ReserveHostPorts(ctx context.Context, c *Container, count int) ([]int, func(context.Context) error, error) {
+	lease, err := c.reserveTrackedHostPorts(ctx, count)
+	if err != nil {
+		return nil, nil, err
+	}
+	return lease.Ports, lease.Release, nil
+}
+
+// ResolvePool applies the cluster's pool defaults: CRUSH root, replicas and
+// minimum size.
+func (serviceHooks) ResolvePool(c *Container, config PoolConfig) PoolConfig {
+	return resolvePoolDefaults(c.settings, config)
 }
 
 // RunOwnedShell runs argv in target, a container of c that the caller
@@ -82,13 +198,8 @@ func (serviceHooks) RunOwnedShell(ctx context.Context, c *Container, target test
 	return report, err
 }
 
-// ServiceBootstrap returns the Run option that records a service bootstrap.
-func (serviceHooks) ServiceBootstrap(kind string, fallback bool, build func() (serviceBootstrap, error)) Option {
-	return withServiceBootstrap(kind, fallback, build)
-}
-
-// LockTopology holds the cluster mutex unless ctx ends first.
-func (serviceHooks) LockTopology(ctx context.Context, c *Container) error { return c.lockTopology(ctx) }
+// ScriptFile returns an embedded bootstrap script as a container file.
+func (serviceHooks) ScriptFile(name string) testcontainers.ContainerFile { return scriptFile(name) }
 
 // Service returns the named service container the cluster owns, or nil. The
 // caller holds the cluster mutex.
@@ -96,61 +207,10 @@ func (serviceHooks) Service(c *Container, name string) testcontainers.Container 
 	return c.members.roster.service(name)
 }
 
-// SetService records a service container the cluster owns and terminates.
-// The caller holds the cluster mutex.
-func (serviceHooks) SetService(c *Container, name string, ctr testcontainers.Container) {
-	c.members.roster.setService(name, ctr)
+// ServiceBootstrap returns the Run option that records a service bootstrap.
+func (serviceHooks) ServiceBootstrap(kind string, fallback bool, build func() (serviceBootstrap, error)) Option {
+	return withServiceBootstrap(kind, fallback, build)
 }
-
-// DeleteService forgets a service container. The caller holds the mutex.
-func (serviceHooks) DeleteService(c *Container, name string) { c.members.roster.dropService(name) }
-
-// Services returns a copy of the service containers. The caller holds the
-// cluster mutex.
-func (serviceHooks) Services(c *Container) map[string]testcontainers.Container {
-	return c.members.roster.serviceCopy()
-}
-
-// PoolStates reads the native pool map. The caller holds the cluster mutex.
-func (serviceHooks) PoolStates(ctx context.Context, c *Container) ([]PoolState, error) {
-	return poolCatalog{c.conn()}.states(ctx)
-}
-
-// StartService starts a service container on the cluster's networks and
-// records it for termination. It takes the cluster mutex itself.
-func (serviceHooks) StartService(ctx context.Context, c *Container, name, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
-	return c.startService(ctx, name, image, opts...)
-}
-
-// ReserveHostPorts reserves count host ports that the cluster tracks until
-// release is called or the cluster terminates.
-func (serviceHooks) ReserveHostPorts(ctx context.Context, c *Container, count int) ([]int, func(context.Context) error, error) {
-	lease, err := c.reserveTrackedHostPorts(ctx, count)
-	if err != nil {
-		return nil, nil, err
-	}
-	return lease.Ports, lease.Release, nil
-}
-
-// HostPortAttempts bounds retries after a host port conflict.
-func (serviceHooks) HostPortAttempts() int { return hostPortAttempts }
-
-// IsPortConflict reports a container that failed because its port was taken.
-func (serviceHooks) IsPortConflict(ctx context.Context, ctr testcontainers.Container) bool {
-	return isPortConflict(ctx, ctr)
-}
-
-// OnlyMissingHostResource reports an error that only says a container or
-// network is already gone.
-func (serviceHooks) OnlyMissingHostResource(err error) bool { return onlyMissingHostResource(err) }
-
-// DiagnosticHandle returns ctr, or nil when it is a typed nil.
-func (serviceHooks) DiagnosticHandle(ctr testcontainers.Container) testcontainers.Container {
-	return diagnosticContainerHandle(ctr)
-}
-
-// ScriptFile returns an embedded bootstrap script as a container file.
-func (serviceHooks) ScriptFile(name string) testcontainers.ContainerFile { return scriptFile(name) }
 
 // ServiceImage returns the image selected for an image role: client, rbd-aux,
 // essential, rgw or cephfs.
@@ -170,83 +230,11 @@ func (serviceHooks) ServiceImage(c *Container, role string) string {
 	return ""
 }
 
-// Extension returns the per-cluster state a service package keeps under
-// kind, storing the result of create on first use. It takes its own lock, so
-// callers may or may not hold the cluster mutex.
-func (serviceHooks) Extension(c *Container, kind string, create func() any) any {
-	return c.extensions.getOrCreate(kind, create)
+// Services returns a copy of the service containers. The caller holds the
+// cluster mutex.
+func (serviceHooks) Services(c *Container) map[string]testcontainers.Container {
+	return c.members.roster.serviceCopy()
 }
-
-// ResolvePool applies the cluster's pool defaults: CRUSH root, replicas and
-// minimum size.
-func (serviceHooks) ResolvePool(c *Container, config PoolConfig) PoolConfig {
-	return resolvePoolDefaults(c.settings, config)
-}
-
-// NormalizePool validates a pool configuration and fills its defaults.
-func (serviceHooks) NormalizePool(config PoolConfig) (PoolConfig, error) {
-	return normalizePoolConfig(config)
-}
-
-// PoolPlacementDomains counts the owned OSD placement domains that config
-// can use. The caller holds the cluster mutex.
-func (serviceHooks) PoolPlacementDomains(c *Container, config PoolConfig) int {
-	return c.fleet.osdHandles.placementDomains(config)
-}
-
-// PoolPolicyReady reports whether the cluster's pool policy accepts changes.
-// The caller holds the cluster mutex.
-func (serviceHooks) PoolPolicyReady(c *Container) error { return c.poolPolicyReady() }
-
-// RemovePool removes a fixture-created pool and its rule and profile. With
-// skipForeign, a pool the fixture did not create is left alone. The caller
-// holds the cluster mutex.
-func (serviceHooks) RemovePool(ctx context.Context, c *Container, name string, skipForeign bool) error {
-	return c.removePool(ctx, name, skipForeign, nil)
-}
-
-// PoolMissing reports a RemovePool error for a name with nothing to remove.
-func (serviceHooks) PoolMissing(err error) bool { return errors.Is(err, errPoolMissing) }
-
-// CephBefore reports whether the recorded Ceph release is older than major.
-func (serviceHooks) CephBefore(c *Container, major int) bool { return c.cephBefore(major) }
-
-// NativeFailure describes a command that exited nonzero.
-func (serviceHooks) NativeFailure(program string, code int, stdout, stderr []byte) error {
-	return nativeFailure(program, code, stdout, stderr)
-}
-
-// ClassifyExec classifies a failed Docker exec of a native command.
-func (serviceHooks) ClassifyExec(ctx context.Context, err error) error {
-	return classifyDispatched(ctx, err)
-}
-
-// AuthCommand runs a Cephx command with the admin identity and reports a
-// failure by operation without the native output.
-func (serviceHooks) AuthCommand(ctx context.Context, c *Container, operation string, args ...string) ([]byte, error) {
-	return authStore{c.conn()}.clientCommand(ctx, operation, args...)
-}
-
-// ClusterIdentity returns the FSID of the bootstrap configuration and whether
-// the configuration and admin keyring were confirmed. The error is only ctx's.
-func (serviceHooks) ClusterIdentity(ctx context.Context, c *Container) (string, bool, error) {
-	identity, err := c.bootstrap.identity(ctx)
-	if err != nil {
-		return "", false, err
-	}
-	return identity.fsid, identity.err == nil && identity.confirmed, nil
-}
-
-// ClientConfirmed reports a client identity that c created and confirmed.
-func (serviceHooks) ClientConfirmed(client *ClientConfig, c *Container) bool {
-	return client.owner == c && client.created && client.ready
-}
-
-// ClientKeyring returns the keyring retrieved when the client was created.
-func (serviceHooks) ClientKeyring(client *ClientConfig) []byte { return client.keyring }
-
-// ClientRevoked reports a client identity known to be deleted.
-func (serviceHooks) ClientRevoked(client *ClientConfig) bool { return client.revoked }
 
 // SetClientRevoked records whether a service deleted the client identity.
 // The caller holds the cluster mutex.
@@ -255,6 +243,12 @@ func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) {
 	if revoked {
 		client.owner.ledger.authRecords.confirmKey(client.name, "")
 	}
+}
+
+// SetService records a service container the cluster owns and terminates.
+// The caller holds the cluster mutex.
+func (serviceHooks) SetService(c *Container, name string, ctr testcontainers.Container) {
+	c.members.roster.setService(name, ctr)
 }
 
 // SettleClient settles the client's identity and refuses a descriptor that is
@@ -271,10 +265,16 @@ func (serviceHooks) SettleClient(ctx context.Context, c *Container, client *Clie
 	return c.authLedger().checkCurrentClient(client)
 }
 
-// MonitorAddresses returns the bootstrap addresses of the monitors in quorum.
-func (serviceHooks) MonitorAddresses(status QuorumStatus) (string, error) {
-	return monitorBootstrapAddresses(status)
+// StartService starts a service container on the cluster's networks and
+// records it for termination. It takes the cluster mutex itself.
+func (serviceHooks) StartService(ctx context.Context, c *Container, name, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	return c.startService(ctx, name, image, opts...)
 }
 
-// Invalid classifies a refused request from a service package.
-func (serviceHooks) Invalid(err error) error { return newInvalid(err) }
+// StartupTimeout bounds one fixture operation.
+func (serviceHooks) StartupTimeout(c *Container) time.Duration { return c.settings.startupTimeout }
+
+// TryLock holds the cluster mutex if it is free.
+func (serviceHooks) TryLock(c *Container) bool { return c.mu.TryLock() }
+
+func (serviceHooks) Unlock(c *Container) { c.mu.Unlock() }

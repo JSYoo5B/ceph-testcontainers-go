@@ -337,9 +337,12 @@ type Verification struct {
 	images  ImageSet
 
 	// The cluster's operations, replaced in tests.
+	//testdouble:wired-operation
 	snapshot func(context.Context) (diagnosticsSnapshot, error)
-	docker   func(context.Context) (verificationDocker, func(), error)
-	now      func() time.Time
+	//testdouble:wired-operation
+	docker func(context.Context) (verificationDocker, func(), error)
+	//testdouble:wired-operation
+	now func() time.Time
 
 	mu       sync.Mutex
 	baseline *verificationBaseline

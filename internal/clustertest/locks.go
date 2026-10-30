@@ -14,6 +14,8 @@ import (
 )
 
 // NativeCallCounter counts native calls a queued operation must not make.
+//
+//testdouble:shared-double
 type NativeCallCounter struct {
 	testcontainers.Container
 	Execs, Stops, Terminations atomic.Int32
@@ -41,6 +43,8 @@ func (runtime *NativeCallCounter) Terminate(ctx context.Context, _ ...testcontai
 
 // AssertContextLockQueued holds mutex and checks that operation returns its
 // own short deadline without taking or releasing the busy gate.
+//
+//testdouble:shared-assertion
 func AssertContextLockQueued(t testing.TB, mutex *sync.Mutex, operation func(context.Context) error) {
 	t.Helper()
 	mutex.Lock()
@@ -79,6 +83,8 @@ func AssertContextLockQueued(t testing.TB, mutex *sync.Mutex, operation func(con
 }
 
 // ControlQueryCounter counts control queries that admission must not reach.
+//
+//testdouble:shared-double
 type ControlQueryCounter struct {
 	testcontainers.Container
 	Calls *atomic.Int32
@@ -90,6 +96,8 @@ func (c *ControlQueryCounter) GetContainerID() string {
 }
 
 // TerminateRecorder records Terminate calls and returns Err.
+//
+//testdouble:shared-double
 type TerminateRecorder struct {
 	testcontainers.Container
 	Calls int

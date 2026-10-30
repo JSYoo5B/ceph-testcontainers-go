@@ -120,8 +120,9 @@ build tag. It stays ordinary untagged source that `go build ./...` compiles.
 `go run ./internal/tools/testsupportcheck`, driven by
 `internal/tools/testsupportcheck/manifest.json`. Add a new shared test helper
 package to that manifest in the same change. The next step,
-`go run ./internal/tools/testdoublecheck`, requires the package's exported
-declarations to be listed in the [test-double inventory](test-double-inventory.md).
+`go run ./internal/tools/testdoublecheck`, requires each exported declaration
+of the package to carry a `//testdouble:<class>` directive (see the
+[test-double inventory](test-double-inventory.md)).
 
 The check reads source and `go list` metadata only. It limits who imports the
 helpers and who reads the seam; it makes no claim about which symbols a linked
@@ -220,7 +221,7 @@ gateway rejects the secondary zone's `radosgw-admin realm pull` with HTTP 403,
 so RGW multisite scenarios cannot start. See
 [Releases and images](../guides/releases-and-images.md).
 
-The `scenario-*` targets default to `SCENARIO_IMAGE_LAYOUT=all`, which unsets
+`scenario-default` and `scenario` default to `SCENARIO_IMAGE_LAYOUT=all`, which unsets
 the role variables and runs `ceph.DefaultImage` even if `CEPH_TEST_IMAGE` is
 exported. To use your own images, set all five role variables and
 `SCENARIO_IMAGE_LAYOUT=roles`; a missing variable stops Make.
@@ -239,7 +240,7 @@ Use `--release 19.2.5` for Squid, and `--roles essential` (or another list) to
 resolve only some roles. The script pulls only missing images, never builds,
 and refuses an existing `--output-dir`. `summary.json` lists the `CEPH_TEST_*`
 values under `prepared_environment`; export them for a test, the tag runner or
-a `scenario-*` target with `SCENARIO_IMAGE_LAYOUT=roles`.
+`make scenario` with `SCENARIO_IMAGE_LAYOUT=roles`.
 
 ### Image compatibility checks
 
@@ -278,26 +279,32 @@ control container runs the `ceph` CLI from the essential image; `rados` and
 ## Make targets
 
 Every Docker target takes a timeout override, for example
-`TOPOLOGY_TIMEOUT=90m make topology`.
+`MULTICLUSTER_TIMEOUT=90m make multicluster`.
 
 | Target | What it runs | Timeout variable (default) |
 | --- | --- | --- |
 | `test-all` | `-tags=all ./...` | `ALL_TEST_TIMEOUT` (180m) |
-| `integration` | `-tags=integration` | `INTEGRATION_TIMEOUT` (20m) |
-| `topology`, `topology-extensions` | Topology selections | `TOPOLOGY_TIMEOUT` (40m), `TOPOLOGY_EXTENSIONS_TIMEOUT` (90m) |
+| `integration`, `scenario-default` | `-tags=integration` | `INTEGRATION_TIMEOUT` (20m) |
+| `scenario` | One CI batch through the tag runner | the batch's own budget |
 | `multicluster` | `^TestMultiCluster` | `MULTICLUSTER_TIMEOUT` (60m) |
-| `hostnetwork`, `hostnetwork-multicluster` | `^TestHostNetwork` | `HOSTNETWORK_TIMEOUT` (40m) |
-| `cluster-features`, `cluster-feature-extensions` | Server fixtures | `CLUSTER_FEATURES_TIMEOUT`, `CLUSTER_FEATURE_EXTENSIONS_TIMEOUT` (40m) |
-| `client-fixtures`, `rgw-*-fixtures` | Client recipes; `client-fixtures` and `rgw-sync-fixtures` include known upstream limitations | `CLIENT_FIXTURES_TIMEOUT` (120m), `RGW_CLIENT_FIXTURES_TIMEOUT` (40m) |
-| `rgw-sync-native-regressions` | Strict RGW sync regressions | `MULTICLUSTER_TIMEOUT` |
+| `hostnetwork` | `^TestHostNetwork` | `HOSTNETWORK_TIMEOUT` (40m) |
 | `image-compatibility`, `image-matrix` | Representative tests with chosen images | `IMAGE_COMPATIBILITY_TIMEOUT` (40m) |
 | `goceph-linux` | go-ceph consumer check | set by the harness |
-| `scenario-*` | Fixed `-run` selections for manual diagnosis; CI does not use them | one per target |
 
-Several `scenario-*` targets take a case or group variable, for example
-`make scenario-rbd-fixtures SCENARIO_RBD_FIXTURE_CASE=failback`. The accepted
-values are the `*_TESTS_<value>` variables in the Makefile; an unknown value
-stops Make.
+`make scenario` runs one batch with the tags, budget and pass rules that CI
+uses. The tag runner takes the batch's tests from the build tags and metadata
+of the test sources, so the Makefile keeps no list of test names and a new
+test joins its batch without a Makefile change:
+
+```sh
+python3 .github/scripts/tag_scenarios.py plan --output artifacts/plan.json
+make scenario SCENARIO_CATEGORY=recovery SCENARIO_BATCH=container_pause
+```
+
+`plan.json` lists every category and batch. The run's logs and report go to
+`SCENARIO_DIRECTORY` (default `artifacts/scenario-<category>-<batch>`), which
+must not exist yet. To run one test, use `go test -tags=all -run` (see
+[One test](#one-test)).
 
 `make goceph-linux` needs two images prepared on the local engine: a client
 with `/usr/local/bin/go-ceph-probe` and the native libraries, and a runner
@@ -537,7 +544,7 @@ concurrent caller.
 
 ## Test doubles
 
-The [test-double inventory](test-double-inventory.md) lists what exists; the
+The [test-double inventory](test-double-inventory.md) defines the classes; the
 boundary rules are in [Test-only code](#test-only-code). Write tests so that
 the reader sees what is substituted and what is proved.
 

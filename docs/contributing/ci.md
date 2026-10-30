@@ -106,9 +106,8 @@ allowlist:
   `docs/contributing/api-naming.md` and
   `docs/contributing/configuration-composition.md` (the review notes that the
   API catalogue receipts name),
-  `docs/guides/messenger-client-fixtures.md`,
-  `docs/guides/bug-compatibility.md` and
-  `docs/contributing/test-double-inventory.md`.
+  `docs/guides/messenger-client-fixtures.md` and
+  `docs/guides/bug-compatibility.md`.
 
 Every other path runs the full Code checks, including a package's
 `README.md` (Go tests read it), any non-Markdown or nested file

@@ -87,16 +87,20 @@ type Finalization struct {
 	debugWindows []DebugLevelReceipter
 
 	// The cluster's operations, replaced in tests.
-	cluster            string
-	images             ImageSet
+	//testdouble:wired-operation
+	cluster string
+	images  ImageSet
+	//testdouble:wired-operation
 	collectDiagnostics func(context.Context, DiagnosticsConfig) (*DiagnosticsReport, error)
-	collectCrash       func(context.Context, CrashMetadataConfig) (*CrashMetadataReport, error)
-	terminate          func(context.Context) error
-	activate           func(context.Context, VerificationConfig) (*Verification, error)
-	writeFile          func(string, []byte) error
-	artifactDir        func() (string, bool)
-	now                func() time.Time
-	newID              func() string
+	//testdouble:wired-operation
+	collectCrash func(context.Context, CrashMetadataConfig) (*CrashMetadataReport, error)
+	//testdouble:wired-operation
+	terminate   func(context.Context) error
+	activate    func(context.Context, VerificationConfig) (*Verification, error)
+	writeFile   func(string, []byte) error
+	artifactDir func() (string, bool)
+	now         func() time.Time
+	newID       func() string
 }
 
 type finalizationStep struct {

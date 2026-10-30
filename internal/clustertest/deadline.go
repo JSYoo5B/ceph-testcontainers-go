@@ -13,6 +13,8 @@ import (
 // how much work a slow (race-instrumented, loaded) run finishes before a
 // wall-clock deadline. It reports no Deadline, so code that sizes its own
 // timeouts from the caller's deadline treats it as unbounded until it expires.
+//
+//testdouble:shared-double
 type SignalDeadline struct {
 	context.Context
 	done chan struct{}
@@ -21,6 +23,8 @@ type SignalDeadline struct {
 
 // NewSignalDeadline derives a SignalDeadline from parent. Cancelling parent
 // does not expire it; Expire does.
+//
+//testdouble:shared-double
 func NewSignalDeadline(parent context.Context) *SignalDeadline {
 	return &SignalDeadline{Context: parent, done: make(chan struct{})}
 }

@@ -53,6 +53,7 @@ type Container struct {
 	// image ID, and the test seam of the labeled-container removal; see
 	// startupIdentity. It has no lock: it is written before the cluster is
 	// shared.
+	//testdouble:nil-default-hook
 	startup  startupIdentity
 	settings options
 	// ledger is the auth records and the daemon exec seam, owned by
@@ -72,6 +73,7 @@ type Container struct {
 	// monStores is the owned MON store volumes, by MON name; see
 	// monStoreState. It has no lock of its own: mu guards it. Nothing publishes
 	// a record yet.
+	//testdouble:nil-default-hook
 	monStores monStoreState
 	// runDir is the shared admin-socket run directory; see runDirState for
 	// what guards each part.
@@ -94,6 +96,7 @@ type Container struct {
 	// overrideHooks.DebugWindows. Terminate does not touch it.
 	debugLevels debugLevelRegistry
 	// daemonRunner replaces runContainer for AddMonitor and AddManager containers in tests.
+	//testdouble:nil-default-hook
 	daemonRunner func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)
 }
 

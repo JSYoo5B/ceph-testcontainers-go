@@ -149,8 +149,9 @@ review than a real implementation or a small fake. Prefer small, explicit
 substitutes; do not grow a second implementation of external-system semantics
 or hide long expectation scripts behind helpers. Mock/fake success is not
 native compatibility evidence. Follow the test-double guidance in
-[Testing](docs/contributing/testing.md#test-doubles); existing doubles are in
-the [inventory](docs/contributing/test-double-inventory.md).
+[Testing](docs/contributing/testing.md#test-doubles). A shared double or a
+runtime test seam declares its class with a `//testdouble:<class>` directive;
+the classes are in the [inventory](docs/contributing/test-double-inventory.md).
 
 ## Validation
 
