@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 328,
+  "count": 327,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -472,14 +472,6 @@
       "signature": "func(ctx context.Context, pgid PGID) error",
       "receiver": "*Container",
       "proposed": "ceph.Container.DeepScrubPG",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.ManagerContainer",
-      "kind": "method",
-      "signature": "func() testcontainers.Container",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.ManagerContainer",
       "decision": "baseline"
     },
     {
