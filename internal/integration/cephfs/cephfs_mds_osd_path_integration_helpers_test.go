@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"net/netip"
 	"slices"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // cephFSMDSOSDPathWriter keeps one mount with an admin socket and one O_RDWR

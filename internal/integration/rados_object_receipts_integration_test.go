@@ -6,13 +6,13 @@ package integration_test
 
 import (
 	"context"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"strconv"
 	"testing"
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // The RADOS object operations that python-rados and the rados CLI of the

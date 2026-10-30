@@ -6,7 +6,6 @@ package integration_test
 
 import (
 	"context"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"testing"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // TestMonMajorityLossLocalOracle loses and regains the majority of a five-MON

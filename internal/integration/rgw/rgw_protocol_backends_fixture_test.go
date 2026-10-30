@@ -8,11 +8,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 func TestRGWBackendSTSFormContentTypeIsSigned(t *testing.T) {

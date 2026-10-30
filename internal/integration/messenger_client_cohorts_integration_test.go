@@ -5,11 +5,11 @@
 package integration_test
 
 import (
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // The CRC profile with a MemStore OSD, on a bridge network with AES keys and

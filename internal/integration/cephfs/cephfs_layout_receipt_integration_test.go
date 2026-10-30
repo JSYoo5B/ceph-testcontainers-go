@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"maps"
 	"slices"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // cephFSLayoutReceipt is what TestCephFSLayoutReceipt logs.

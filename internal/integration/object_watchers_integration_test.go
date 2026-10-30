@@ -7,13 +7,13 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"strconv"
 	"testing"
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // radosWatcher watches one object and answers every notify until stopped.

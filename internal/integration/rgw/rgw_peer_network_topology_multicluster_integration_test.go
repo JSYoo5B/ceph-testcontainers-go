@@ -7,7 +7,6 @@ package rgw_test
 import (
 	"bytes"
 	"context"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"net/http"
 	"slices"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 )

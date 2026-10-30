@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"net/http"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 )

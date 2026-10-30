@@ -7,10 +7,11 @@ package integration_test
 import (
 	"context"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // These controls drive the retained-client map wait with synthetic status

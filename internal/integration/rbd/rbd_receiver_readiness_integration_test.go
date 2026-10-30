@@ -3,8 +3,9 @@
 package rbd_test
 
 import (
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // TestMultiClusterRBDReceiverReadiness verifies image-free scope discovery,

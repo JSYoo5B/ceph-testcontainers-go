@@ -5,7 +5,6 @@ package integration_test
 import (
 	"context"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"testing"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"

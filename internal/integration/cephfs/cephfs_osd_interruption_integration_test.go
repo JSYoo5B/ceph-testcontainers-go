@@ -5,8 +5,9 @@
 package cephfs_test
 
 import (
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // The OSD that holds a live client's file freezes while the client fsyncs a

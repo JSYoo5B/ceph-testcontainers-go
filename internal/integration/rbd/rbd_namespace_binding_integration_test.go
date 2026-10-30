@@ -5,8 +5,9 @@
 package rbd_test
 
 import (
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // One owner and one receiving pool share their actual cohort across two named

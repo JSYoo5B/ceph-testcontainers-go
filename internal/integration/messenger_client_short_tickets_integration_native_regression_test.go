@@ -5,9 +5,10 @@
 package integration_test
 
 import (
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // MON tickets of 1.5 seconds and service tickets of 12 seconds, with a

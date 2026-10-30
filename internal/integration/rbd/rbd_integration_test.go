@@ -5,8 +5,9 @@
 package rbd_test
 
 import (
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // TestRBDLifecycle verifies userspace RBD I/O via the image's CLI. It does not

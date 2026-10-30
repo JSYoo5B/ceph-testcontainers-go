@@ -5,8 +5,9 @@
 package integration_test
 
 import (
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // A K=2, M=1 pool with an explicit min_size of 2 acknowledges an overwrite

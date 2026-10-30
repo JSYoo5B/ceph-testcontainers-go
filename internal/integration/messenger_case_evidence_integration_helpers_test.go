@@ -9,7 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"path"
 	"regexp"
 	"runtime"
 	"slices"
@@ -18,6 +18,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -35,6 +36,11 @@ var evidenceBindings []byte
 
 //go:embed *.go
 var evidenceCaseSources embed.FS
+
+// The harness code that the cases call is part of what a receipt proves.
+//
+//go:embed harness/*.go
+var evidenceHarnessSources embed.FS
 
 func evidenceDigest(data []byte) string {
 	sum := sha256.Sum256(data)
@@ -87,19 +93,25 @@ func targetedMessengerEvidence(t *testing.T, ctx context.Context, cluster *ceph.
 	} {
 		sources[name] = evidenceDigest(data)
 	}
-	entries, err := evidenceCaseSources.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var snapshot strings.Builder
-	for _, entry := range entries {
-		data, err := evidenceCaseSources.ReadFile(entry.Name())
+	for _, set := range []struct {
+		fs  embed.FS
+		dir string
+	}{{evidenceCaseSources, "."}, {evidenceHarnessSources, "harness"}} {
+		entries, err := set.fs.ReadDir(set.dir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		fmt.Fprintf(&snapshot, "internal/integration/%s\x00%s\n", entry.Name(), evidenceDigest(data))
+		prefix := path.Join("internal/integration", set.dir)
+		var snapshot strings.Builder
+		for _, entry := range entries {
+			data, err := set.fs.ReadFile(path.Join(set.dir, entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fmt.Fprintf(&snapshot, "%s/%s\x00%s\n", prefix, entry.Name(), evidenceDigest(data))
+		}
+		sources[prefix+"/*.go"] = evidenceDigest([]byte(snapshot.String()))
 	}
-	sources["internal/integration/*.go"] = evidenceDigest([]byte(snapshot.String()))
 	return map[string]any{"schema": "ceph-messenger-case/v1", "binding": "targeted-command/native-identities", "case": t.Name(), "run_id": uuid.NewString(), "generation": fsid, "parent_sha256": evidenceDigest(parent), "sources": sources,
 		"cohort": map[string]any{"release": match[1], "ceph_version": version, "platform": fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH), "go_version": runtime.Version(), "images": ids}}
 }

@@ -6,8 +6,9 @@ package integration_test
 
 import (
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Small logical devices use an explicit preparation profile that skips mClock's

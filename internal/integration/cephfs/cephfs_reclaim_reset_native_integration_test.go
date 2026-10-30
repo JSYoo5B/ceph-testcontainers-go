@@ -5,8 +5,9 @@
 package cephfs_test
 
 import (
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // A killed client's session and lock still stand; a fresh handle's RESET of a

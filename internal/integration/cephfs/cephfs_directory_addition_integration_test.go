@@ -5,8 +5,9 @@
 package cephfs_test
 
 import (
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Two independent pairs cover explicit zero-daemon policy construction, actual

@@ -6,9 +6,10 @@ package integration_test
 
 import (
 	"bytes"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 func TestStripedLayoutApply(t *testing.T) {

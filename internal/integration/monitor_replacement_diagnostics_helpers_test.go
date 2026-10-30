@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"regexp"
 	"slices"
 	"strconv"
@@ -20,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/supervised"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
