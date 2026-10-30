@@ -119,6 +119,10 @@ func (m *ManagerContainer) cluster(op string) (*Container, error) {
 // Remove acts on this handle's own instance. A handle of a removed or detached
 // OSD, or one that Reopen replaced, returns an error and never acts on the
 // container that owns the ID now. Remove refuses a detaching or detached OSD.
+//
+// If the remaining OSDs cannot hold the data (replica count or free space),
+// the drain does not finish and the call fails at the timeout; the OSD is left
+// out and reweighted and is not marked in again automatically.
 func (o *OSDContainer) Remove(ctx context.Context) error {
 	c, err := o.cluster("OSDContainer.Remove")
 	if err != nil {
@@ -195,6 +199,11 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 // instance. On error the OSD stays owned with its fence: retry Detach with
 // a fresh context or terminate the cluster. Remove refuses a detaching or
 // detached OSD.
+//
+// Detach only an OSD that is up: a daemon that is still booting can be killed
+// at the end of the stop grace before it marks itself down, and in a one-OSD
+// cluster no peer reports it, so Detach waits until its context ends. A
+// detached OSD leaves Container.OSDs.
 func (o *OSDContainer) Detach(ctx context.Context) (*DetachedOSD, error) {
 	c, err := o.cluster("OSDContainer.Detach")
 	if err != nil {
@@ -322,6 +331,16 @@ func (m *ManagerContainer) RotateKey(ctx context.Context) error {
 // Remove deletes this owned monitor. It preserves a working quorum: add a
 // replacement first when a stop would leave fewer than a majority of the
 // current map running. A handle of a removed monitor returns an error.
+//
+// It refuses a removal that would leave fewer than a majority of the current
+// map running; add a replacement first. MON a can be removed too; the embedded
+// container of Container is then gone and fixture commands use the control
+// container. If the mon remove reply is lost, the call returns an error
+// without resending; calling Remove again with a fresh context reads the
+// current membership, skips the completed native step and finishes the
+// container and configuration cleanup. MON a is described by a fresh
+// descriptor on every listing, so a handle is matched by name and container,
+// not by pointer identity.
 func (m *MonitorContainer) Remove(ctx context.Context) error {
 	c, err := m.cluster("MonitorContainer.Remove")
 	if err != nil {

@@ -46,6 +46,13 @@ var errNilClusterFacts = invalid(errors.New("cannot capture static facts of a ni
 // with an error, stays empty and is not replaced by a default.
 // TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup guards that no
 // later code path writes these sources.
+//
+// The facts are written by Run before it returns and are never cleared by
+// Terminate, so FactsOf works on a terminated cluster or while Terminate runs,
+// without a lock, command or Docker call. A fact that was never recorded stays
+// empty (for example the CephVersion of a cluster that Run returned with an
+// error); an empty value does not distinguish not recorded from recorded as
+// empty, and no value reports whether the resources still exist.
 func FactsOf(c *Container) (ClusterFacts, error) {
 	if c == nil {
 		return ClusterFacts{}, errNilClusterFacts

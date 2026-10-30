@@ -177,6 +177,12 @@ func configureImages(o *options) error {
 
 // ClientContainer returns the owned userspace toolkit executor. It starts
 // lazily for a separate client image; aggregate images reuse the control-plane executor.
+//
+// Run rados, rbd and the Python client bindings there. The first attachment is
+// serialized with MON topology changes and honours cancellation, and the
+// cluster owns the container's partial or successful teardown. RBD and CephFS
+// operations, ObjectWatchers and PGInconsistencies use it, while daemon-local
+// sockets and process observations stay on their daemon.
 func (c *Container) ClientContainer(ctx context.Context) (testcontainers.Container, error) {
 	if c == nil {
 		return nil, fmt.Errorf("ceph cluster is unavailable")

@@ -29,6 +29,12 @@ import (
 // are caller-owned clients or mirror daemons; collection never adopts them.
 // RedactValues removes additional opaque application secrets. Redaction is best
 // effort: arbitrary log contents still require review before sharing a report.
+//
+// The limits are 5 minutes total, 1 minute per operation, 1 MiB per artifact,
+// 10000 log lines, 8 workers, 128 containers, 64 additional containers and 128
+// redaction values of up to 4096 bytes; invalid limits are refused before
+// collection, without a report. Artifact kinds are inventory, container-
+// inspect, container-logs, network-inspect and ceph.
 type DiagnosticsConfig struct {
 	Timeout              time.Duration
 	OperationTimeout     time.Duration
@@ -81,6 +87,20 @@ type DiagnosticsReport struct {
 // does not return an error. A canceled caller needs a fresh context to collect.
 // No daemon is started, stopped or reconfigured, and no file, environment,
 // keyring, auth database, mount source or arbitrary command is collected.
+//
+// It collects the state and selected metadata of every tracked MON, MGR, OSD,
+// MDS, RGW and control container, network metadata, log tails and fixed Ceph
+// queries (version, status, health, pgs, quorum, monmap, mgrmap, osdmap,
+// fsmap); it never collects files, environment variables, keyrings, the auth
+// database, mount sources or arbitrary commands. TerminateOnCleanup with
+// Archive calls it on failure; otherwise call it before cleanup with its own
+// short context. When some queries fail, the report and an aggregate error are
+// both returned, so save the report first; truncation alone is not an error. A
+// ceph artifact holds the query's stdout followed by its stderr. When ctx
+// ends, every running query is stopped in the control container before the
+// call returns. Known admin and RGW secrets and every client key the cluster
+// generated (also replaced or attempted ones) are masked with RedactValues and
+// named secret patterns.
 func (c *Container) CollectDiagnostics(ctx context.Context, config DiagnosticsConfig) (*DiagnosticsReport, error) {
 	config, err := normalizeDiagnosticsConfig(config)
 	if err != nil {

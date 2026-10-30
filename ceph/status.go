@@ -36,6 +36,12 @@ type Status struct {
 // PG states with extra flags, such as active+clean+scrubbing, do not count. It
 // never succeeds while an owned OSD is intentionally stopped or out; use
 // WaitForPGClean then. The cluster's startup timeout also bounds the wait.
+//
+// Call it after creating pools and after topology changes, before client I/O.
+// OSDs registered outside the fixture make the count differ, a pool whose
+// replica count exceeds the OSD count never becomes clean, and after
+// Pool.SetPGCount or Pool.SetPlacement it can pass before the new PG set is
+// reported (see Pool.WaitForPGCount and Pool.PGs).
 func (c *Container) WaitForClean(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()

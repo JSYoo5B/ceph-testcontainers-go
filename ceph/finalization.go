@@ -37,7 +37,12 @@ type FinalizationConfig struct {
 	// with its -artifacts flag; otherwise it is removed after the test.
 	ArchiveDirectory string
 	// Scenario labels the manifest, for example with a batch or profile name.
-	Scenario       string
+	Scenario string
+	// CheckTimeout bounds all checks together (default 2 minutes),
+	// ArchiveTimeout the whole archive with both collectors and every write
+	// (default 3 minutes), and CleanupTimeout the cleanups together and
+	// Terminate separately (default 3 minutes). Each is at most 10 minutes;
+	// invalid fields are refused before anything is registered.
 	CheckTimeout   time.Duration
 	ArchiveTimeout time.Duration
 	CleanupTimeout time.Duration
@@ -52,6 +57,15 @@ type FinalizationConfig struct {
 // archive, the cleanups in reverse registration order, then Terminate, so
 // that a check registered after the test body still decides whether to
 // archive and that a client removed by a cleanup is still there to inspect.
+// Captures registered with Capture are settled after the checks and before the
+// archive. The archive is written when the test has failed by then, so a
+// failure reported by a check or a capture settlement triggers it too, and a
+// cleanup that fails when nothing had failed before triggers an archive of
+// what still runs, labelled after-cleanup. Test cleanups registered after
+// TerminateOnCleanup run before all of this, as Go runs cleanups last-in
+// first-out, so route the removal of clients the archive should see through
+// Cleanup. A check fails the test by returning an error, by panicking or
+// through t. Adding a step after the finalization has started fails the test.
 type Finalization struct {
 	t      testing.TB
 	config FinalizationConfig

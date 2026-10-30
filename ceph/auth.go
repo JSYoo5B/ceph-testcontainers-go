@@ -123,6 +123,12 @@ func clientCapArgs(caps ClientCaps) ([]string, error) {
 // broader caps. ClientConfig.Delete can revoke a confirmed successful creation.
 // The key has the cluster's AuthConfig.KeyType, the release default without
 // one, or the type that ClientOptions.WithKeyType selects.
+//
+// name is an ID or client.ID of letters, digits, dots, underscores or hyphens.
+// The identity is created whether or not the MONs allow its key type; whether
+// it can authenticate depends on the MonMap's auth_allowed_ciphers.
+// CipherAES256K needs an essential image whose ceph-authtool has --key-type;
+// without it the call fails before any change.
 func (c *Container) CreateClient(ctx context.Context, name string, caps ClientCaps, opts ...ClientOptions) (*ClientConfig, error) {
 	return c.createClient(ctx, name, caps, opts...)
 }

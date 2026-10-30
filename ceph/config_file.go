@@ -59,6 +59,29 @@ type userConfigSection struct {
 // they are escaped as \# and \;. Ceph silently ignores some values (for
 // example an osd_memory_target below 896 MiB); check the effective value with
 // ceph config show.
+//
+// The rejected keys and their replacements: fsid, mon_host,
+// mon_initial_members and mon_addr (generated;
+// ClusterConfig.WithMonitorCount); public_network, cluster_network,
+// public_addr, cluster_addr and *_bind_addr (WithHostNetwork,
+// NetworkConfig.WithSeparateClusterNetwork, NetworkConfig.WithHostAddress);
+// auth_*, keyring, key and keyfile (WithAuth); ms_*_mode, ms_mon_*_mode and
+// ms_bind_* except ms_bind_prefer_ipv4 (NetworkConfig.WithMessengerMode,
+// NetworkConfig.WithMessengerPolicy,
+// ClientContainerOptions.WithMessengerPolicy, NetworkConfig.WithAddressFamily,
+// WithHostNetwork); osd_pool_default_size and osd_pool_default_min_size
+// (ClusterConfig.WithPoolDefaults); osd_pool_default_crush_rule
+// (ClusterConfig.WithDefaultCRUSHRoot); bluestore_block_size
+// (OSDStorage.WithBlockSize); osd_objectstore, bluestore_block_path and
+// bluestore_block_create (fixed storage layout); log_file, log_to_file,
+// log_to_stderr, err_to_stderr and mon_cluster_log_to_* (logs always go to
+// container output); admin_socket, run_dir, mon_data, osd_data, mgr_data and
+// mds_data (fixed paths); crash_dir (fixed at CrashDir); mds_join_fs and
+// mds_cache_memory_limit (MDS command line); rgw_frontends,
+// rgw_thread_pool_size, rgw_exit_timeout_secs, rgw_realm, rgw_zonegroup,
+// rgw_zone, rgw_sync_obj_etag_verify and rgw_sync_lease_period (RGW command
+// line). ms_bind_prefer_ipv4 with any family but AddressDualStack is refused
+// with ErrInvalidRequest.
 func WithConfigFile(path string) Option {
 	return func(o *options) error {
 		file, err := os.Open(path)

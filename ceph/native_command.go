@@ -384,6 +384,18 @@ func validateNativeCommand(command NativeCommand) (string, error) {
 // cancellation stop the command as without Input, and a write in progress
 // then fails. A malformed limit or an Input that served another command fails
 // before anything runs or any input is taken.
+//
+// Failures before the command runs are classified: a malformed command, or a
+// target that the cluster neither owns nor has attached, or that is stopped or
+// paused, is ErrInvalidRequest; a target without python3, or a program that
+// does not exist or is not executable, is ErrImageCapability; a program that
+// could not start for want of a process or memory, or that a security policy
+// refused, and other Docker failures are ErrEnvironmentUnavailable. A container
+// that disappears or stops after the command was sent matches no category,
+// since the command may have run, and neither do context errors,
+// ErrNativeCommandIncomplete, ErrNativeInputClosed or
+// *NativeCommandUnstoppedError. The essential and client roles and the RGW
+// setup runtime provide python3; the cephfs role does not promise it.
 func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error) {
 	label, err := validateNativeCommand(command)
 	if err != nil {

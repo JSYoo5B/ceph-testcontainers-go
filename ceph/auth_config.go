@@ -15,7 +15,8 @@ import (
 )
 
 // CephxCipher names a Cephx key type, which is also the cipher of the
-// tickets made with such keys.
+// tickets made with such keys. A decoded key records its type in its first two
+// bytes, little-endian: 1 for aes and 2 for aes256k.
 type CephxCipher string
 
 const (
@@ -69,7 +70,14 @@ type AuthConfig struct {
 // every daemon's and WithClient container's ceph.conf, so override.SetConfig
 // cannot change them later. An image without key type support, such as Squid
 // or Tentacle before 20.2.4, accepts a configuration in which every cipher is
-// CipherAES, and Run fails before any daemon starts when one is not.
+// CipherAES, and Run fails before any daemon starts when one is not; Run checks
+// the ceph-authtool --key-type and monmaptool cipher options themselves, not
+// the release number. On Tentacle 20.2.4 and later every default key and cipher
+// is aes256k. A PreferredCipher of aes also sets mon_auth_allow_insecure_key in
+// [mon], which Tentacle requires before its MONs generate AES keys. WithConfigFile
+// rejects auth_* keys, so set the lifetimes here. The MonMap ciphers can change
+// on a running Tentacle cluster with ceph mon set (for example
+// auth_allowed_ciphers), and ceph mon dump reports them.
 func WithAuth(config AuthConfig) Option {
 	return func(o *options) error {
 		normalized, err := normalizeAuthConfig(config)

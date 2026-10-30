@@ -45,6 +45,12 @@ func messengerModeList(field string, modes []MessengerConnectionMode) (string, e
 // the daemon accepts. A nil field keeps Ceph's default, which accepts both
 // modes. Connections between daemons keep their defaults, so every policy
 // leaves the cluster itself working.
+//
+// A client that offers no accepted mode fails at once against a MON (EACCES;
+// the ceph CLI prints RADOS permission denied and exits with 13), but gets no
+// error from a MGR or an OSD and keeps retrying until its own timeout, so bound
+// such calls. The MON client's handle_auth_bad_method log line is not reliable
+// in the ceph CLI's output, which exits without shutting librados down.
 type MessengerPolicy struct {
 	// Monitors sets ms_mon_service_mode for the MONs.
 	Monitors []MessengerConnectionMode

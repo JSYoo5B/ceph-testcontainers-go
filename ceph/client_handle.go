@@ -24,6 +24,13 @@ func (client *ClientConfig) cluster(op string) (*Container, error) {
 // rejects a descriptor whose creation is incomplete, that is revoked or that
 // ReplaceKey made stale. Caller owns the attached container and must terminate
 // it before the cluster. The options customize the container's ceph.conf.
+//
+// The container gets /etc/ceph/ceph.conf, with the current MON addresses and a
+// [client.<id>] section that points to the keyring, and the keyring at
+// KeyringPath. The client must select its identity, for example rados --id
+// reader, CEPH_ARGS="--id reader", librados rados_create(&cluster, "reader")
+// or go-ceph rados.NewConnWithUser("reader"). It also refuses an identity that
+// Revoke removed until its Restore, or that has an unresolved change.
 func (client *ClientConfig) WithIdentity(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
 		c, err := client.cluster("ClientConfig.WithIdentity")

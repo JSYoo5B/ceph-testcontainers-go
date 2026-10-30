@@ -518,6 +518,10 @@ func (c *Container) trackHostPortLease(lease *hostPortLease) {
 // It may be nil after a is removed while another MGR remains active. Use
 // Managers and ManagerStatus for the current candidates and active identity.
 // The cluster owns its cleanup.
+//
+// It is nil when a has been removed or was never created, for example when the
+// first manager added after ClusterConfig.WithNoInitialManagers has another
+// name; use Managers and Observer.ManagerStatus for the current candidates.
 func (c *Container) ManagerContainer() testcontainers.Container {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -528,6 +532,17 @@ func (c *Container) ManagerContainer() testcontainers.Container {
 // These privileged, ephemeral credentials are for trusted test containers only.
 // Caller owns and terminates that container before terminating the cluster.
 // The options customize the container's ceph.conf.
+//
+// It copies the bootstrap /etc/ceph/ceph.conf and
+// /etc/ceph/ceph.client.admin.keyring into the container and joins it to the
+// cluster's public network (the host network in host mode). The container must
+// already contain the Ceph clients it uses; WithClient installs nothing, and
+// ceph.DefaultImage or ClusterFacts.Images.Client work for CLI and Python
+// clients. Combine it with WithIdleEntrypoint for a container driven with
+// Exec. Ceph clients connect directly to the OSD addresses the MONs advertise,
+// which in bridge mode are container addresses, so a process on the Docker
+// host cannot reach RADOS, RBD or CephFS through the MON's mapped port alone;
+// use a WithClient container or WithHostNetwork on Linux.
 func (c *Container) WithClient(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
 	return c.adminClient(opts...)
 }
@@ -556,8 +571,16 @@ func (c *Container) adminClient(opts ...ClientContainerOptions) testcontainers.C
 	}
 }
 
-// Ceph runs the Ceph CLI in the control container. Arguments are passed directly,
-// without shell interpolation. Use --format json for machine-readable responses.
+// Ceph runs the Ceph CLI in the control container with --connect-timeout 5 and
+// returns its standard output. Arguments are passed directly, without shell
+// interpolation. Use --format json for machine-readable responses. A non-zero
+// exit returns the standard output with a *NativeFailure (exit code, the errno
+// Ceph reported and its reason without log lines, keys redacted);
+// errors.Is(err, fs.ErrNotExist) holds for ENOENT. When no MON answers within
+// 5 seconds the CLI exits before it sends the command, and Ceph connects again
+// until a MON answers, ctx ends or a minute has passed, so a stalled or
+// electing MON delays the command instead of failing it, and the command runs
+// once.
 func (c *Container) Ceph(ctx context.Context, args ...string) ([]byte, error) {
 	return c.conn().ceph(ctx, args...)
 }
@@ -1014,6 +1037,19 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 // passed by the caller still takes precedence. From its start, also when it
 // then fails, Terminate refuses new native commands and cancels the running
 // ones, including the command of an rgw.Gateway.Admin call.
+//
+// It first restores network interruptions and resumes paused containers, then
+// releases host port reservations, stops services (RGW, MDS) before OSDs,
+// removes every owned daemon and helper container, the OSD storage volumes and
+// the shared admin-socket run volume, and finally the owned networks. Every
+// container the cluster creates carries the org.testcontainers.ceph.cluster
+// label with the cluster's ID, and Terminate also removes a labelled container
+// it has no handle for, as Docker can create one when the reply to a create
+// request was lost. A failed cleanup can be retried; an endpoint that cannot be
+// restored keeps its network for the retry. Containers the caller attached with
+// WithClient or ClientConfig.WithIdentity are the caller's: terminate them
+// first, because Docker cannot remove a network that still has attached
+// containers (with testcontainers.CleanupContainer, register the cluster first).
 func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	return c.terminate(ctx, opts...)
 }

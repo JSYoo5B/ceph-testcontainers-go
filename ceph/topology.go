@@ -130,6 +130,14 @@ func (c *Container) WaitForQuorum(ctx context.Context) error {
 // DaemonOptions.WithImage starts this one MON from another image; the default is the
 // essential image. Options are validated before the topology lock is taken or
 // anything is created.
+//
+// Names already in the monmap are refused, and a can never be reused. The
+// first call also starts the independent control container. After joining, it
+// copies the new quorum's addresses into the mon_host of every owned daemon's
+// ceph.conf, including stopped daemons; if only that copy failed, retry
+// RefreshMonitorConfig. Caller-owned client containers are not updated (see
+// RefreshClientMonitorConfig). A partially started member stays owned on
+// error.
 func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonOptions) (*MonitorContainer, error) {
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid monitor name")
@@ -776,6 +784,11 @@ func monitorConfigComment(line string) (int, error) {
 // DaemonOptions.WithImage starts this one MGR from another image; the default is the
 // essential image. Options are validated before the topology lock is taken or
 // any identity is created.
+//
+// It never forces the active role away from a running manager, and success
+// does not mean every MGR module is ready; use WaitMGRModuleReady or
+// WaitForClean. On an AddressDualStack cluster it then checks the active MGR's
+// advertised addresses.
 func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonOptions) (*ManagerContainer, error) {
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid manager name")

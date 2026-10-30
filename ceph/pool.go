@@ -98,6 +98,15 @@ type poolIdentity struct {
 // It never deletes data after a partial command failure. Use WaitForClean before
 // application I/O. For RBD, create images in a replicated metadata pool and pass
 // the EC pool as data_pool in the native client (or --data-pool to the RBD CLI).
+//
+// The pool uses a dedicated CRUSH rule tc-<name>-replicated (or tc-<name>-ec
+// with an EC profile of the same name) and is created with the autoscaler off.
+// The returned Pool embeds the resolved PoolConfig and adds CRUSHRule and
+// ErasureCodeProfile; it describes the requested settings at creation, while
+// Pool.Status reports the current state. The handle identifies its native pool
+// by name and native ID, and copies share that identity: after Pool.Remove, or
+// when the name belongs to another pool, every method returns an error instead
+// of acting on the pool that now has the name.
 func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, error) {
 	config = resolvePoolDefaults(c.settings, config)
 	config, err := normalizePoolConfig(config)

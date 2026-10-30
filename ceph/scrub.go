@@ -70,6 +70,10 @@ func (p PGID) String() string { return string(p) }
 // reports a deep-scrub stamp newer than before the request. Inconsistencies
 // are reported, not repaired. The noscrub and nodeep-scrub flags or an
 // unavailable primary can keep the wait from finishing before its deadline.
+//
+// fault.InjectObjectDataError creates a damaged replica to observe with
+// DeepScrubPG, Observer.PGInconsistencies and RepairPG; ceph osd map <pool>
+// <object> --format json reports an object's PG and acting set.
 func (c *Container) DeepScrubPG(ctx context.Context, pgid PGID) error {
 	_, err := c.scrubPG(ctx, pgid, "deep-scrub")
 	return err

@@ -128,11 +128,12 @@ give `go test` a generous `-timeout` when several clusters run in one package.
 - API: `go doc github.com/JSYoo5B/ceph-testcontainers-go/ceph` (add `-all` for
   every symbol), or
   [pkg.go.dev](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph).
-- [Cluster configuration](../docs/guides/ceph-configuration.md): how `Run`
-  builds a cluster and every option, in depth, with limitations and release
-  differences.
-- [Cluster operations](../docs/guides/ceph-operations.md): the methods of a
-  running cluster by task, with shared types and error categories.
+- [Cluster configuration](../docs/guides/ceph-configuration.md): the
+  composition model, service packages, dual-stack address families, and
+  limitations and release differences.
+- [Cluster operations](../docs/guides/ceph-operations.md): removing, detaching
+  and reopening OSDs, the Cephx key change model, the failure archive and
+  post-test verification.
 - [Recipes](../docs/guides/ceph-recipes.md): worked examples.
 - Guides: [contexts and cleanup](../docs/guides/contexts-and-cleanup.md),
   [errors](../docs/guides/errors.md),

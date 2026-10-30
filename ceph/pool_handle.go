@@ -147,6 +147,9 @@ func (p *Pool) Status(ctx context.Context) (PoolState, error) {
 // This method makes no writes, retries or background workers. External pool or
 // control configuration writers must not race it; the native reads are not an
 // atomic transaction. Poll with a caller deadline for eventual assertions.
+//
+// A pool without a statistics row is an error, not an empty result, and
+// AllocatedBytes need not equal StoredBytes times the replica count.
 func (p *Pool) Usage(ctx context.Context) (PoolUsageSnapshot, error) {
 	c, err := p.cluster("Pool.Usage")
 	if err != nil {
@@ -262,6 +265,8 @@ func (p *Pool) Usage(ctx context.Context) (PoolUsageSnapshot, error) {
 // must not race these separate reads. Compare original fixture identities
 // and data when asserting movement; these reported PGs are not current
 // mappings or read-after-write evidence.
+//
+// It works before any OSD exists.
 func (p *Pool) PGs(ctx context.Context) (PoolPGSnapshot, error) {
 	c, err := p.cluster("Pool.PGs")
 	if err != nil {
@@ -584,6 +589,10 @@ func (p *Pool) SetPlacement(ctx context.Context, placement PoolPlacement) error 
 // Commands are sequential and may partially succeed; inspect Status after an
 // error. Existing data is never removed. External pool edits must not race
 // this operation; native pool IDs are checked before each mutation.
+//
+// Quotas are enforced from asynchronously reported PG statistics, so writes
+// can overshoot briefly; when a quota is reached Ceph marks the pool full and
+// clients see writes blocked or EDQUOT, depending on the client.
 func (p *Pool) SetQuota(ctx context.Context, quota PoolQuota) error {
 	c, err := p.cluster("Pool.SetQuota")
 	if err != nil {

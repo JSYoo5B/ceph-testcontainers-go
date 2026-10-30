@@ -66,6 +66,14 @@ func (Option) Customize(*testcontainers.GenericContainerRequest) error { return 
 // The default advertised address is 127.0.0.1 for clients on that same host.
 // Run fails with ErrHostNetworkUnavailable unless the engine runs Linux
 // containers and the test process reaches the first MON's advertised endpoint.
+// MON port reservation is retried up to five times when another process takes
+// a port, and the reachability probe is retried for up to 5 seconds; later
+// MON, MGR, OSD, MDS and RGW endpoints are not probed. MGR, OSD and MDS use
+// Ceph's dynamic ports. Docker Desktop needs host networking enabled (4.34 or
+// later), and a test process that itself runs in a bridge-network container
+// cannot use host mode. It cannot be combined with
+// NetworkConfig.WithSeparateClusterNetwork, and fault.InterruptNetwork and
+// fault.ApplyNetworkProfile are unavailable in host mode.
 func WithHostNetwork() Option {
 	return func(o *options) error {
 		o.hostNetwork = true
@@ -90,6 +98,11 @@ const (
 // WithStartupTimeout bounds bootstrap, readiness and topology operations.
 // Run's whole bootstrap, from validation to the initial services, shares it.
 // Each operation is also bounded by the caller's context. Default: 3 minutes.
+//
+// It bounds Run as a whole and each later topology, readiness and wait
+// operation, such as AddOSD, WaitForClean, Pool.WaitForPGCount and
+// DeepScrubPG, so a wait never outlives the shorter of the two limits.
+// Increase it for slow engines, large pools or long recovery waits.
 func WithStartupTimeout(timeout time.Duration) Option {
 	return func(o *options) error {
 		if timeout <= 0 {
