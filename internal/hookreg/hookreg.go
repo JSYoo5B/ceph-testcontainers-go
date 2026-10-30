@@ -1,6 +1,6 @@
 // Package hookreg holds the hooks that package ceph registers for the rbd,
 // cephfs and rgw packages, for the fault operations, for the override
-// operations. It imports nothing, so ceph can register its hooks without
+// operations, and the hooks that package rgw registers for rgw/multisite. It imports nothing, so ceph can register its hooks without
 // importing internal/servicehook, internal/faulthook or
 // internal/overridehook, which import ceph and give the hooks their typed
 // form.
@@ -21,3 +21,7 @@ var Override any
 // unit-test access seam that internal/testhelper types. It is the only link
 // between test helper code and the unexported state of a cluster.
 var Test any
+
+// RGW is set once, during the initialization of package rgw, to the handle
+// ownership checks that internal/rgwhook types for rgw/multisite.
+var RGW any

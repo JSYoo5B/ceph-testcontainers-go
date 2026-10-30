@@ -13,6 +13,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/rgwhook"
 )
 
 // SyncBucketSelector identifies a preexisting bucket. Its current native
@@ -245,7 +246,7 @@ func (g *SyncGroup) ownedPrincipal(ctx context.Context, user *rgw.User) (rgw.Use
 	// remote UID.
 	unconfirmed := multisiteInvalid(errors.New("RGW sync principal was not confirmed as created through an attached owned gateway"))
 	if !slices.ContainsFunc(f.zoneStates(), func(zone *rgwZoneState) bool {
-		return zone.Zonegroup == g.scope.Zonegroup && zone.Gateway != nil && user.ServedBy(zone.Gateway)
+		return zone.Zonegroup == g.scope.Zonegroup && zone.Gateway != nil && rgwhook.UserServedBy(user, zone.Gateway)
 	}) {
 		return rgw.UserInfo{}, unconfirmed
 	}
@@ -300,7 +301,7 @@ func (g *SyncGroup) destinationClass(ctx context.Context, config SyncPipeConfig,
 			return multisiteInvalid(errors.New("RGW destination placement zone is not attached and owned"))
 		}
 		placement := config.DestinationPlacements[name]
-		if !placement.ServedBy(zone.Gateway) {
+		if !rgwhook.PlacementServedBy(placement, zone.Gateway) {
 			return multisiteInvalid(errors.New("RGW destination placement is not owned by the destination zone's cluster"))
 		}
 		state, err := placement.Status(ctx)

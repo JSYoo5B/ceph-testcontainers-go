@@ -89,10 +89,10 @@ func (u *User) Credentials() (accessKey, secretKey string, err error) {
 	return u.accessKey, u.secretKey, nil
 }
 
-// ServedBy reports whether g belongs to the user's cluster and serves the
+// servedBy reports whether g belongs to the user's cluster and serves the
 // scope of the gateway that created the user, so that it can run the user's
 // operations.
-func (u *User) ServedBy(g *Gateway) bool {
+func (u *User) servedBy(g *Gateway) bool {
 	return u != nil && g != nil && u.owner != nil && u.owner == g.owner && sameRGWScope(u.scope, g.config)
 }
 

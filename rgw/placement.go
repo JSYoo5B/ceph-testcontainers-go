@@ -65,11 +65,11 @@ type Placement struct {
 	confirmed                                              bool
 }
 
-// ServedBy reports whether g belongs to the cluster that owns the placement,
+// servedBy reports whether g belongs to the cluster that owns the placement,
 // that is, whether the placement's pools and resources live where g runs. The
 // native realm, zonegroup and zone IDs alone do not show this: a period can be
 // imported into another storage cluster.
-func (p *Placement) ServedBy(g *Gateway) bool {
+func (p *Placement) servedBy(g *Gateway) bool {
 	return p != nil && g != nil && p.owner != nil && p.owner == g.owner
 }
 

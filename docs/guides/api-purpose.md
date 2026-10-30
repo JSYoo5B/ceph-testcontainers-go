@@ -251,6 +251,25 @@ whose `Restore` returns it; each `Restore` is Cond, Life.
 | `Session.Stop`, `Settle` | Evid, Life | Ends the capture; settles it into the failure archive. |
 | `Session.CaptureFile`, `SettlementAllowance` | Evid | The capture output and its settle bound. |
 
+## Boundary review
+
+The first review against the boundary removed `ceph.Container.ManagerContainer`
+(a nil-able compatibility accessor covered by `Managers` and
+`Observer.ManagerStatus`), the forwarding methods `cephfs.Container.Filesystems`,
+`rgw.Container.Gateways` and `rgw.Container.S3Endpoint` (the package functions
+and `Gateway.S3Endpoint` remain), and made the `User` and `Placement`
+ownership checks internal to `rgw` and `rgw/multisite`. These APIs were
+reviewed and kept:
+
+| API | Reason |
+| --- | --- |
+| `cephfs/mirror.Daemon.ProcessObserverBindingStatus` | Integration tests judge process quiescence by it; without it a test cannot tell an unbound observer from a quiet one. |
+| `ceph.WithIdleEntrypoint` | Client containers need a long-lived process to receive the handed-off configuration and run commands. |
+| `rbd.ExportBackup`, `ExportIncremental`, `RestoreBackup`, `RestoreIncremental` | They seed an image with known data and read back what the SUT wrote, with the stream and snapshot rules the fixture enforces. |
+| `cephfs.Filesystem.AddSnapshotSchedule`, `SnapshotScheduleLease` | A test needs scheduled snapshots as a precondition, and the lease restores the schedule. |
+| `rgw/multisite.Fixture.PullSourcePeriod`, `PullDestinationPeriod` | Failover and failback scenarios need the period import as a condition step. |
+| `ceph.Container.WaitForPGClean` beside `WaitForClean` | It deliberately accepts out or down OSDs, which a degraded-cluster test needs. |
+
 ## Adding or changing an API
 
 A new or changed public function or method names its purpose tags in the pull
