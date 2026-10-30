@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw",
-  "count": 61,
+  "count": 62,
   "entries": [
     {
       "current": "rgw.Account",
@@ -241,6 +241,14 @@
       "signature": "func() string",
       "receiver": "Placement",
       "proposed": "rgw.Placement.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Placement.ServedBy",
+      "kind": "method",
+      "signature": "func(g *Gateway) bool",
+      "receiver": "*Placement",
+      "proposed": "rgw.Placement.ServedBy",
       "decision": "baseline"
     },
     {
