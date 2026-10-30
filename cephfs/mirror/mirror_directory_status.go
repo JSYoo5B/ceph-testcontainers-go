@@ -87,21 +87,60 @@ func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (Di
 		}
 		return result, ctx.Err()
 	}
+	watchers, err := mirror.readFilesystemWatchers(ctx)
+	if err != nil {
+		return result, err
+	}
+	selected, observationErrors, err := mirror.selectDirectoryDaemon(ctx, mapping.InstanceID, watchers, &result)
+	if err != nil {
+		return result, err
+	}
+	if selected == nil {
+		if len(observationErrors) != 0 {
+			return result, &cephFSObservationPartialError{problems: observationErrors}
+		}
+		return result, cephFSObserveQuery("CephFS directory has no current owned filesystem session", nil)
+	}
+	result.DaemonName = selected.DaemonName
+	if err := mirror.readDirectoryReplay(ctx, selected, directory, &result); err != nil {
+		return result, err
+	}
+	if err := mirror.confirmDirectoryUnchanged(ctx, directory, mapping); err != nil {
+		result.Ready = false
+		return result, err
+	}
+	if len(observationErrors) != 0 {
+		return result, &cephFSObservationPartialError{problems: observationErrors}
+	}
+	return result, nil
+}
+
+// readFilesystemWatchers reads the watchers of the source filesystem's
+// cephfs_mirror object, by watcher address.
+func (mirror *Mirror) readFilesystemWatchers(ctx context.Context) (map[string]string, error) {
 	control, err := mirror.source.ClientContainer(ctx)
 	if err != nil {
-		return result, cephFSObserveQuery("read CephFS filesystem watchers", err)
+		return nil, cephFSObserveQuery("read CephFS filesystem watchers", err)
 	}
 	if control == nil {
-		return result, cephFSObserveQuery("CephFS source control container is unavailable", nil)
+		return nil, cephFSObserveQuery("CephFS source control container is unavailable", nil)
 	}
 	data, err := multicluster.Exec(ctx, control, "rados", "--pool", mirror.metadataPool, "listwatchers", "cephfs_mirror")
 	if err != nil {
-		return result, cephFSObserveQuery("read CephFS filesystem watchers", err)
+		return nil, cephFSObserveQuery("read CephFS filesystem watchers", err)
 	}
 	watchers, err := parseCephFSMirrorWatchers(data)
 	if err != nil {
-		return result, cephFSObserveGuard("decode CephFS filesystem watchers")
+		return nil, cephFSObserveGuard("decode CephFS filesystem watchers")
 	}
+	return watchers, nil
+}
+
+// selectDirectoryDaemon finds the one owned daemon whose filesystem session
+// watches the mapped instance and checks its peer. A daemon that cannot be
+// observed is recorded in result.DaemonProblems and returned among the
+// observation errors; a contradiction is returned as err. Mirror.mu is held.
+func (mirror *Mirror) selectDirectoryDaemon(ctx context.Context, instanceID string, watchers map[string]string, result *DirectoryStatus) (*Daemon, []error, error) {
 	var selected *Daemon
 	var observationErrors []error
 	problem := func(name string, err error) {
@@ -116,57 +155,67 @@ func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (Di
 			problem("<nil>", cephFSObserveQuery("owned CephFS mirror process is unavailable", nil))
 			continue
 		}
-		if daemon.Container == nil {
-			problem(daemon.DaemonName, cephFSObserveQuery("owned CephFS mirror process is unavailable", nil))
-			continue
-		}
-		state, err := daemon.State(ctx)
+		address, peer, unavailable, err := mirror.observeDaemonSession(ctx, daemon)
 		if err != nil {
-			problem(daemon.DaemonName, cephFSObserveQuery("inspect CephFS mirror process", err))
+			return nil, nil, err
+		}
+		if unavailable != nil {
+			problem(daemon.DaemonName, unavailable)
 			continue
 		}
-		if state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
-			problem(daemon.DaemonName, cephFSObserveQuery("owned CephFS mirror process is not running normally", nil))
-			continue
-		}
-		data, err := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.filesystemID))
-		if err != nil {
-			problem(daemon.DaemonName, cephFSObserveQuery("read CephFS mirror filesystem session", err))
-			continue
-		}
-		address, peer, failed, err := decodeCephFSObservedSession(data, mirror.peerID)
-		if err != nil {
-			return result, err
-		}
-		if failed {
-			problem(daemon.DaemonName, cephFSObserveQuery("owned CephFS filesystem session or peer is unavailable", nil))
-			continue
-		}
-		if watchers[address] != mapping.InstanceID {
+		if watchers[address] != instanceID {
 			continue
 		}
 		if peer != (cephFSPeerIdentity{ClientName: mirror.DestinationClientEntity, SiteName: mirror.destinationSite, FilesystemName: mirror.DestinationFilesystem}) {
-			return result, cephFSObserveGuard("CephFS selected daemon peer destination differs")
+			return nil, nil, cephFSObserveGuard("CephFS selected daemon peer destination differs")
 		}
 		if selected != nil {
-			return result, cephFSObserveGuard("CephFS directory maps to more than one owned filesystem session")
+			return nil, nil, cephFSObserveGuard("CephFS directory maps to more than one owned filesystem session")
 		}
 		selected = daemon
 	}
-	if selected == nil {
-		if len(observationErrors) != 0 {
-			return result, &cephFSObservationPartialError{problems: observationErrors}
-		}
-		return result, cephFSObserveQuery("CephFS directory has no current owned filesystem session", nil)
+	return selected, observationErrors, nil
+}
+
+// observeDaemonSession reads one owned daemon's filesystem session: its
+// watcher address and peer. A daemon that is missing, not running normally or
+// whose session cannot be read or is failed is reported as unavailable, the
+// problem recorded for it; a malformed session is returned as err.
+func (mirror *Mirror) observeDaemonSession(ctx context.Context, daemon *Daemon) (address string, peer cephFSPeerIdentity, unavailable, err error) {
+	if daemon.Container == nil {
+		return "", cephFSPeerIdentity{}, cephFSObserveQuery("owned CephFS mirror process is unavailable", nil), nil
 	}
-	result.DaemonName = selected.DaemonName
-	data, err = multicluster.Exec(ctx, selected, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.filesystemID), mirror.peerID)
+	state, stateErr := daemon.State(ctx)
+	if stateErr != nil {
+		return "", cephFSPeerIdentity{}, cephFSObserveQuery("inspect CephFS mirror process", stateErr), nil
+	}
+	if state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
+		return "", cephFSPeerIdentity{}, cephFSObserveQuery("owned CephFS mirror process is not running normally", nil), nil
+	}
+	data, execErr := multicluster.Exec(ctx, daemon, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.filesystemID))
+	if execErr != nil {
+		return "", cephFSPeerIdentity{}, cephFSObserveQuery("read CephFS mirror filesystem session", execErr), nil
+	}
+	address, peer, failed, err := decodeCephFSObservedSession(data, mirror.peerID)
 	if err != nil {
-		return result, cephFSObserveQuery("read CephFS mirror directory replay", err)
+		return "", cephFSPeerIdentity{}, nil, err
+	}
+	if failed {
+		return "", cephFSPeerIdentity{}, cephFSObserveQuery("owned CephFS filesystem session or peer is unavailable", nil), nil
+	}
+	return address, peer, nil, nil
+}
+
+// readDirectoryReplay reads the selected daemon's replay state of directory
+// into result.
+func (mirror *Mirror) readDirectoryReplay(ctx context.Context, selected *Daemon, directory string, result *DirectoryStatus) error {
+	data, err := multicluster.Exec(ctx, selected, "ceph", "--admin-daemon", "/var/run/ceph/cephfs-mirror.asok", "fs", "mirror", "peer", "status", fmt.Sprintf("%s@%d", mirror.SourceFilesystem, mirror.filesystemID), mirror.peerID)
+	if err != nil {
+		return cephFSObserveQuery("read CephFS mirror directory replay", err)
 	}
 	replay, present, err := decodeCephFSObservedReplay(data, directory)
 	if err != nil {
-		return result, err
+		return err
 	}
 	if present {
 		result.State, result.FailureReason = replay.State, replay.FailureReason
@@ -174,27 +223,24 @@ func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (Di
 		result.SnapshotsSynced, result.SnapshotsDeleted, result.SnapsRenamed = replay.Synced, replay.Deleted, replay.Renamed
 		result.Ready = replay.State == "idle" || replay.State == "syncing"
 	}
+	return nil
+}
+
+// confirmDirectoryUnchanged rereads the directory mapping and the filesystem
+// and peer identities after the observation, so that a status assembled
+// across a reassignment or replacement is never reported.
+func (mirror *Mirror) confirmDirectoryUnchanged(ctx context.Context, directory string, mapping cephFSObservedMapping) error {
 	after, err := mirror.readCephFSObservedMapping(ctx, directory)
 	if err != nil {
-		result.Ready = false
-		return result, err
+		return err
 	}
 	if after != mapping {
-		result.Ready = false
-		return result, cephFSObserveQuery("CephFS directory assignment changed during observation", nil)
+		return cephFSObserveQuery("CephFS directory assignment changed during observation", nil)
 	}
 	if err := mirror.checkCephFSObservedIdentities(ctx); err != nil {
-		result.Ready = false
-		return result, err
+		return err
 	}
-	if err := ctx.Err(); err != nil {
-		result.Ready = false
-		return result, err
-	}
-	if len(observationErrors) != 0 {
-		return result, &cephFSObservationPartialError{problems: observationErrors}
-	}
-	return result, nil
+	return ctx.Err()
 }
 
 // WaitDirectoryReady waits for a current owned directory to be assigned to a
