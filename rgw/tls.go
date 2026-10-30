@@ -79,61 +79,89 @@ func (g *Gateway) S3SecureEndpoint(ctx context.Context) (string, error) {
 func tlsReadiness(c *ceph.Container, facts ceph.ClusterFacts, port int, config *TLSConfig) *wait.NopStrategy {
 	pair, _ := tls.X509KeyPair(config.CertificatePEM, config.PrivateKeyPEM)
 	digest := sha256.Sum256(pair.Certificate[0])
-	fingerprint := hex.EncodeToString(digest[:])
+	probe := rgwTLSProbe{cluster: c, facts: facts, port: strconv.Itoa(port), fingerprint: hex.EncodeToString(digest[:])}
 	return wait.ForNop(func(ctx context.Context, target wait.StrategyTarget) error {
 		ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 		defer cancel()
 		ticker := time.NewTicker(150 * time.Millisecond)
 		defer ticker.Stop()
-		address := facts.PublicAddress
-		if !facts.UsesHostNetwork {
-			info, err := target.Inspect(ctx)
-			if err != nil {
-				return err
-			}
-			if info == nil || info.NetworkSettings == nil {
-				return errors.New("RGW TLS network is absent")
-			}
-			endpoint := info.NetworkSettings.Networks[facts.NetworkName]
-			if endpoint == nil || !endpoint.IPAddress.IsValid() {
-				return errors.New("RGW TLS public network address is absent")
-			}
-			address = endpoint.IPAddress.String()
+		address, err := probe.address(ctx, target)
+		if err != nil {
+			return err
 		}
-		var lastErr error
 		for {
-			state, err := target.State(ctx)
+			retry, err := probe.attempt(ctx, target, address)
 			if err != nil {
 				return err
 			}
-			if state == nil || !state.Running {
-				return errors.New("RGW stopped before owning its TLS listener")
-			}
-			code, reader, err := target.Exec(ctx, []string{"sh", "-c", rgwOwnsListener, "rgw-tls-listener", strconv.Itoa(port)})
-			if err != nil {
-				return err
-			}
-			if reader != nil {
-				if _, err := io.Copy(io.Discard, reader); err != nil {
-					return err
-				}
-			}
-			if code == 0 {
-				if _, err := servicehook.Command(ctx, servicehook.CLI(c), "python3", "-c", rgwTLSReady, address, strconv.Itoa(port), fingerprint); err == nil {
-					return nil
-				} else {
-					lastErr = err
-				}
-			} else {
-				lastErr = errors.New("RGW does not yet own its TLS listener")
+			if retry == nil {
+				return nil
 			}
 			select {
 			case <-ctx.Done():
-				return errors.Join(ctx.Err(), lastErr)
+				return errors.Join(ctx.Err(), retry)
 			case <-ticker.C:
 			}
 		}
 	}).WithStartupTimeout(servicehook.StartupTimeout(c))
+}
+
+// rgwTLSProbe is one gateway's TLS readiness check: the listener port and the
+// SHA-256 fingerprint of the configured leaf certificate.
+type rgwTLSProbe struct {
+	cluster           *ceph.Container
+	facts             ceph.ClusterFacts
+	port, fingerprint string
+}
+
+// address is where the cluster's CLI container reaches the listener: the
+// public address on the host network, otherwise the gateway's address on the
+// cluster network.
+func (p rgwTLSProbe) address(ctx context.Context, target wait.StrategyTarget) (string, error) {
+	if p.facts.UsesHostNetwork {
+		return p.facts.PublicAddress, nil
+	}
+	info, err := target.Inspect(ctx)
+	if err != nil {
+		return "", err
+	}
+	if info == nil || info.NetworkSettings == nil {
+		return "", errors.New("RGW TLS network is absent")
+	}
+	endpoint := info.NetworkSettings.Networks[p.facts.NetworkName]
+	if endpoint == nil || !endpoint.IPAddress.IsValid() {
+		return "", errors.New("RGW TLS public network address is absent")
+	}
+	return endpoint.IPAddress.String(), nil
+}
+
+// attempt runs one probe. A stopped gateway or a failed inspection is fatal
+// (err); a listener not yet owned by RGW or not yet serving the pinned
+// certificate is worth retrying (retry). Both nil means ready.
+func (p rgwTLSProbe) attempt(ctx context.Context, target wait.StrategyTarget, address string) (retry, err error) {
+	state, err := target.State(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if state == nil || !state.Running {
+		return nil, errors.New("RGW stopped before owning its TLS listener")
+	}
+	code, reader, err := target.Exec(ctx, []string{"sh", "-c", rgwOwnsListener, "rgw-tls-listener", p.port})
+	if err != nil {
+		return nil, err
+	}
+	if reader != nil {
+		if _, err := io.Copy(io.Discard, reader); err != nil {
+			return nil, err
+		}
+	}
+	if code != 0 {
+		return errors.New("RGW does not yet own its TLS listener"), nil
+	}
+	if _, err := servicehook.Command(ctx, servicehook.CLI(p.cluster), "python3", "-c", rgwTLSReady, address, p.port, p.fingerprint); err != nil {
+		return err, nil
+	}
+	return nil, nil
 }
 
 const rgwTLSReady = `import hashlib, socket, ssl, sys
