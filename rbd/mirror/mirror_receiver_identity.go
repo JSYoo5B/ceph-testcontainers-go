@@ -5,14 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
-	"io"
 	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -53,60 +53,16 @@ func rbdReceiverQuery(ctx context.Context, operation string, native error) error
 }
 
 func rbdReceiverJSON(data []byte) error {
-	if len(data) == 0 || len(data) > 4<<20 {
-		return rbdReceiverGuard("RBD receiver native JSON size is invalid")
-	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.UseNumber()
-	var walk func(int) error
-	walk = func(depth int) error {
-		if depth > 64 {
-			return errors.New("depth")
-		}
-		token, err := d.Token()
-		if err != nil {
-			return err
-		}
-		delim, composite := token.(json.Delim)
-		if !composite {
-			return nil
-		}
-		switch delim {
-		case '{':
-			seen := make(map[string]bool)
-			for d.More() {
-				token, err := d.Token()
-				key, ok := token.(string)
-				if err != nil || !ok || seen[key] {
-					return errors.New("key")
-				}
-				seen[key] = true
-				if err := walk(depth + 1); err != nil {
-					return err
-				}
-			}
-		case '[':
-			for d.More() {
-				if err := walk(depth + 1); err != nil {
-					return err
-				}
-			}
-		default:
-			return errors.New("delimiter")
-		}
-		end, err := d.Token()
-		if err != nil || (delim == '{' && end != json.Delim('}')) || (delim == '[' && end != json.Delim(']')) {
-			return errors.New("end")
-		}
+	switch err := strictjson.Check(data, strictjson.Options{MaxBytes: 4 << 20}); {
+	case err == nil:
 		return nil
-	}
-	if walk(0) != nil {
+	case errors.Is(err, strictjson.ErrSize):
+		return rbdReceiverGuard("RBD receiver native JSON size is invalid")
+	case errors.Is(err, strictjson.ErrTrailing):
+		return rbdReceiverGuard("decode RBD receiver native JSON: trailing data")
+	default:
 		return rbdReceiverGuard("decode RBD receiver native JSON: malformed or duplicate fields")
 	}
-	if _, err := d.Token(); err != io.EOF {
-		return rbdReceiverGuard("decode RBD receiver native JSON: trailing data")
-	}
-	return nil
 }
 
 func rbdReceiverExec(ctx context.Context, client testcontainers.Container, operation string, args ...string) ([]byte, error) {

@@ -1,17 +1,16 @@
 package rgw
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 )
 
 // UserUsage is a native storage-accounting snapshot, not dated request or
@@ -131,17 +130,10 @@ func (g *Gateway) validateUsageGateway() error {
 
 func decodeRGWUserUsage(data []byte) (UserUsage, error) {
 	bad := errors.New("decode RGW user storage usage")
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	value, err := rgwUsageJSONValue(decoder)
-	if err != nil {
-		return UserUsage{}, bad
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return UserUsage{}, bad
-	}
-	root, ok := value.(map[string]any)
-	if !ok {
+	// Duplicate members are refused in every object, including unknown future
+	// fields. Native data and decoder errors are never copied into the error.
+	var root map[string]any
+	if strictjson.Decode(data, &root, strictjson.Options{UseNumber: true}) != nil || root == nil {
 		return UserUsage{}, bad
 	}
 	stats, ok := root["stats"].(map[string]any)
@@ -154,10 +146,11 @@ func decodeRGWUserUsage(data []byte) (UserUsage, error) {
 		if !ok {
 			return UserUsage{}, bad
 		}
-		*dest, err = strconv.ParseUint(string(number), 10, 64)
+		value, err := strconv.ParseUint(string(number), 10, 64)
 		if err != nil {
 			return UserUsage{}, bad
 		}
+		*dest = value
 	}
 	for name, dest := range map[string]*string{"last_stats_sync": &usage.LastStatsSync, "last_stats_update": &usage.LastStatsUpdate} {
 		text, ok := root[name].(string)
@@ -186,58 +179,4 @@ func rgwUsageNativeTime(text string) bool {
 	const layout = "2006-01-02T15:04:05.000000Z"
 	value, err := time.Parse(layout, text)
 	return err == nil && value.Format(layout) == text && value.Unix() >= absoluteFrom && value.Unix() <= 1<<32-1
-}
-
-// Detect duplicate members in every object, including unknown future fields.
-// Native data and decoder errors are never copied into a returned error.
-func rgwUsageJSONValue(decoder *json.Decoder) (any, error) {
-	token, err := decoder.Token()
-	if err != nil {
-		return nil, err
-	}
-	delim, ok := token.(json.Delim)
-	if !ok {
-		return token, nil
-	}
-	switch delim {
-	case '{':
-		object := make(map[string]any)
-		for decoder.More() {
-			name, err := decoder.Token()
-			if err != nil {
-				return nil, err
-			}
-			key, ok := name.(string)
-			if !ok {
-				return nil, errors.New("invalid JSON object key")
-			}
-			if _, duplicate := object[key]; duplicate {
-				return nil, errors.New("duplicate JSON object key")
-			}
-			value, err := rgwUsageJSONValue(decoder)
-			if err != nil {
-				return nil, err
-			}
-			object[key] = value
-		}
-		if end, err := decoder.Token(); err != nil || end != json.Delim('}') {
-			return nil, errors.New("invalid JSON object ending")
-		}
-		return object, nil
-	case '[':
-		array := make([]any, 0)
-		for decoder.More() {
-			value, err := rgwUsageJSONValue(decoder)
-			if err != nil {
-				return nil, err
-			}
-			array = append(array, value)
-		}
-		if end, err := decoder.Token(); err != nil || end != json.Delim(']') {
-			return nil, errors.New("invalid JSON array ending")
-		}
-		return array, nil
-	default:
-		return nil, errors.New("invalid JSON delimiter")
-	}
 }

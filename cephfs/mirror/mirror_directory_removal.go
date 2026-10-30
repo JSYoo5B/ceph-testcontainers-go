@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 )
 
 // DirectoryRemoval retains an explicit path removal and its original
@@ -567,11 +568,19 @@ func (r *DirectoryRemoval) observeDaemon(ctx context.Context, w cephFSPeerRemova
 	return "released", nil
 }
 
-// Native peer_status is a flat object. Stream keys to reject duplicate canonical
-// paths before map decoding can overwrite them, and validate every entry with
-// the existing production replay decoder before treating selected path absence
-// as cycle-unregister evidence. Empty {} requires separate normal peer guards.
+// Native peer_status is a flat object. Refuse a duplicate key at any depth
+// before map decoding can overwrite one, stream the paths to require each to be
+// canonical, and validate every entry with the existing production replay
+// decoder before treating selected path absence as cycle-unregister evidence.
+// Empty {} requires separate normal peer guards.
 func decodeCephFSDirectoryRemovalStats(data []byte, selected string) (bool, error) {
+	if err := strictjson.Check(data, strictjson.Options{}); errors.Is(err, strictjson.ErrDuplicateKey) {
+		return false, cephFSObserveGuard("CephFS directory release peer stats path identity is ambiguous")
+	} else if errors.Is(err, strictjson.ErrTrailing) {
+		return false, cephFSObserveGuard("decode CephFS directory release peer stats trailing data")
+	} else if err != nil {
+		return false, cephFSObserveGuard("decode CephFS directory release peer stats object")
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	token, err := decoder.Token()
 	if err != nil || token != json.Delim('{') {

@@ -196,9 +196,9 @@ native run exists.
   `entity_addrvec_t::dump`. The recorded 20.2.4 `mon dump` fixture of the
   daemon-address tests is the real input of the decoder tests; no recorded
   `quorum_status` exists, so that document is synthetic.
-- Strictness. Exactly one JSON value, no duplicate key at any depth, no
-  trailing data. A required field that is missing, null or of the wrong type is
-  an error: epoch (at least 1), canonical lowercase FSID, a non-empty `mons`
+- Strictness. Exactly one JSON value, no duplicate key at any depth, nesting
+  within the shared limit of `internal/strictjson`, no trailing data. A
+  required field that is missing, null or of the wrong type is an error: epoch (at least 1), canonical lowercase FSID, a non-empty `mons`
   array in rank order with unique non-empty names, a non-empty address vector per
   member whose entries have type `v1` or `v2`, an IP and a port in 1..65535 that
   is not the unspecified address, and a 32-bit nonce, no repeated address. An
