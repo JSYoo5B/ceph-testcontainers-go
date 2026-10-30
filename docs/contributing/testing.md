@@ -575,8 +575,11 @@ provisioning) through `internal/servicehook` and keep per-cluster state in an
 extension registry on the cluster. Shared helpers live in
 `internal/clusterutil`, shared CLI fakes and lock assertions in
 `internal/clustertest`, and cross-cluster resource tracking in
-`internal/multicluster`. Production code imports no client SDK (go-ceph, AWS
-SDK) and no cgo; SDKs belong to tests, examples and separate consumer modules.
+`internal/multicluster`. No Go file of the module, test files included,
+imports a client library (go-ceph, an S3 or Swift SDK) or cgo. A client
+belongs to a separate Go module, such as `internal/integration/goceph/probe`,
+or to a consumer repository; see
+[Client dependencies](../guides/api-purpose.md#client-dependencies).
 
 `internal/apiinventory` checks that every exported function, type, method,
 constant and variable of a public package has a godoc comment, and that each
