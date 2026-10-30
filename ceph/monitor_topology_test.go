@@ -3,7 +3,6 @@ package ceph
 import (
 	"go/ast"
 	"go/token"
-	"slices"
 	"testing"
 )
 
@@ -39,38 +38,6 @@ var monitorTopologyBound = []string{"bootstrap", "membershipState"}
 // as &c.<same field>; no other function builds a monitorTopology; and its
 // methods use owner only as the owner of a MON or MGR handle they create.
 func TestMonitorTopologyBindsEachStateOnce(t *testing.T) {
-	var problems []string
-	constructors := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if lit, ok := n.(*ast.CompositeLit); ok {
-					if id, ok := lit.Type.(*ast.Ident); ok && id.Name == "monitorTopology" {
-						constructors++
-						if !monitorTopologyBinding(fn) {
-							problems = append(problems, file+": "+funcKey(fn)+" builds a monitorTopology")
-						}
-					}
-				}
-				return true
-			})
-			if monitorTopologyBinding(fn) {
-				problems = append(problems, checkStateBinding(fn, "monitorTopology", monitorTopologyBound)...)
-			}
-			if receiverTypeName(fn) == "monitorTopology" {
-				problems = append(problems, checkOwnerUse(file, fn, "t", "MonitorContainer", "ManagerContainer")...)
-			}
-		}
-	}
-	if constructors != 1 {
-		problems = append(problems, "want exactly one monitorTopology literal")
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("the monitor topology binding is not pinned: %v", problems)
-	}
+	bindingAudit{typeName: "monitorTopology", constructor: monitorTopologyBinding, bound: monitorTopologyBound, singleReturn: true,
+		recv: "t", handles: []string{"MonitorContainer", "ManagerContainer"}}.check(t)
 }

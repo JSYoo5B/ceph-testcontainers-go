@@ -6,8 +6,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"slices"
-	"strings"
 	"testing"
 
 	"github.com/moby/moby/api/types/volume"
@@ -77,24 +75,24 @@ var runDirMethods = map[string][]string{
 //	"free"     reads only the never-reassigned pointer or the immutable name
 //	"takes"    calls lockTopology before its first mu-guarded use
 //	"holds"    its doc comment requires the caller to hold Container.mu
-var runDirCallers = map[string]map[string]string{
-	"newCluster":          {"create": "init"},
-	"runMonitor":          {"mounts": "free"},
-	"startedContainer":    {"mounts": "free"},
-	"ensureControlPlane":  {"mounts": "free"},
-	"AddMonitor":          {"mounts": "free"},
-	"startManager":        {"mounts": "free"},
-	"clearAdminSocket":    {"published": "free"},
-	"clearStaleOSDSocket": {"published": "free"},
-	"newOSDLaunchRecipe":  {"volumeName": "free"},
-	"adminSocket":         {"shared": "takes"},
-	"set":                 {"shared": "takes"},
-	"terminate":           {"release": "takes"},
+var runDirCallers = map[string]stateCaller{
+	"newCluster":          {"init", []string{"create"}},
+	"runMonitor":          {"free", []string{"mounts"}},
+	"startedContainer":    {"free", []string{"mounts"}},
+	"ensureControlPlane":  {"free", []string{"mounts"}},
+	"AddMonitor":          {"free", []string{"mounts"}},
+	"startManager":        {"free", []string{"mounts"}},
+	"clearAdminSocket":    {"free", []string{"published"}},
+	"clearStaleOSDSocket": {"free", []string{"published"}},
+	"newOSDLaunchRecipe":  {"free", []string{"volumeName"}},
+	"adminSocket":         {"takes", []string{"shared"}},
+	"set":                 {"takes", []string{"shared"}},
+	"terminate":           {"takes", []string{"release"}},
 }
 
 // runDirMuGuarded names the methods that read or write the removed mark and
 // so need Container.mu: their callers must be "takes" rows.
-var runDirMuGuarded = map[string]bool{"shared": true, "release": true}
+var runDirMuGuarded = []string{"shared", "release"}
 
 func runDirUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "runDir" }
 
@@ -105,53 +103,7 @@ func isRunDirReceiver(fn *ast.FuncDecl) bool { return receiverTypeName(fn) == "r
 // receiver of one of its methods, and the lock-free FactsOf source never
 // mentions it.
 func TestRunDirStateFieldIsOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isRunDirReceiver(fn) {
-				continue
-			}
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					if method, ok := call.Fun.(*ast.SelectorExpr); ok {
-						if _, known := runDirMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok && runDirUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
-				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && runDirUse(sel) {
-					if allowed[sel] || stateBinding(fn) {
-						uses++
-					} else {
-						problems = append(problems, file+": "+fn.Name.Name+" uses Container.runDir outside a runDirState method call")
-					}
-				}
-				return true
-			})
-			if file == "cluster_facts.go" && strings.Contains(fn.Name.Name, "Facts") {
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					if sel, ok := n.(*ast.SelectorExpr); ok && runDirUse(sel) {
-						problems = append(problems, "FactsOf source reads Container.runDir")
-					}
-					return true
-				})
-			}
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.runDir found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		t.Fatalf("run directory state escapes its methods: %v", problems)
-	}
+	fieldAudit{label: "Container.runDir", use: runDirUse, own: isRunDirReceiver, methods: runDirMethods, bound: stateBinding}.check(t)
 }
 
 // TestRunDirStateMethodsMakeOnlyTheirPinnedCalls guards the lock contract of
@@ -159,48 +111,9 @@ func TestRunDirStateFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 // listed (none locks or calls into Container), and the volume field is
 // assigned only by create, which is what makes the lock-free readers safe.
 func TestRunDirStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || !isRunDirReceiver(fn) {
-				continue
-			}
-			name := fn.Name.Name
-			want, known := runDirMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update runDirMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					got = append(got, types.ExprString(x))
-				case *ast.AssignStmt:
-					for _, lhs := range x.Lhs {
-						if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "volume" && name != "create" {
-							problems = append(problems, name+" assigns volume")
-						}
-					}
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-			}
-		}
-	}
-	for name := range runDirMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
-	if len(problems) != 0 {
-		t.Fatalf("runDirState breaks its lock contract: %v", problems)
-	}
+	methodAudit{label: "runDirState", own: isRunDirReceiver, methods: runDirMethods,
+		render:  func(call *ast.CallExpr) string { return types.ExprString(call) },
+		writers: map[string][]string{"volume": {"create"}}}.check(t)
 }
 
 // TestRunDirStateCreatePublishesBeforeTheDockerCreate guards the order that
@@ -242,70 +155,8 @@ func TestRunDirStateCreatePublishesBeforeTheDockerCreate(t *testing.T) {
 // single caller Run, and a mu-guarded method has no caller that is not in
 // the table.
 func TestRunDirStateCallersAreAudited(t *testing.T) {
-	found := map[string]map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isRunDirReceiver(fn) {
-				continue
-			}
-			var lockAt token.Pos
-			uses := map[string]token.Pos{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if isTopologyAcquire(call) && lockAt == token.NoPos {
-					lockAt = call.Pos()
-				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if recv, ok := sel.X.(*ast.SelectorExpr); ok && runDirUse(recv) {
-						if _, seen := uses[sel.Sel.Name]; !seen {
-							uses[sel.Sel.Name] = call.Pos()
-						}
-					}
-				}
-				return true
-			})
-			name := fn.Name.Name
-			for method, at := range uses {
-				if found[name] == nil {
-					found[name] = map[string]bool{}
-				}
-				found[name][method] = true
-				mode, known := runDirCallers[name][method]
-				switch {
-				case !known:
-					problems = append(problems, name+" calls runDir."+method+" but is not in runDirCallers")
-				case mode == "takes" && (lockAt == token.NoPos || lockAt > at):
-					problems = append(problems, name+" must take lockTopology before runDir."+method)
-				case runDirMuGuarded[method] && mode != "takes":
-					problems = append(problems, name+" calls the mu-guarded runDir."+method+" without taking the topology lock")
-				}
-			}
-		}
-	}
-	for name, methods := range runDirCallers {
-		for method := range methods {
-			if !found[name][method] {
-				problems = append(problems, name+" is listed for runDir."+method+" but no longer calls it")
-			}
-		}
-	}
-	creators := 0
-	for _, methods := range found {
-		if methods["create"] {
-			creators++
-		}
-	}
-	if creators != 1 || !found["newCluster"]["create"] {
-		problems = append(problems, "runDir.create must have the single caller newCluster")
-	}
-	if len(problems) != 0 {
-		t.Fatalf("run directory callers break the lock contract: %v", problems)
-	}
+	callerAudit{label: "the run directory", use: runDirUse, own: isRunDirReceiver, callers: runDirCallers,
+		only: map[string][]string{"init": {"newCluster"}}, guarded: runDirMuGuarded}.check(t)
 }
 
 // TestTerminateReleasesTheRunDirectoryAfterTheStorageRetryAndBeforeTheBridges

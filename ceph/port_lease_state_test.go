@@ -5,8 +5,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"slices"
-	"strings"
 	"testing"
 )
 
@@ -71,64 +69,22 @@ func isPortLeaseReceiver(fn *ast.FuncDecl) bool { return receiverTypeName(fn) ==
 // only as the receiver of one of its methods, so no code reads the slice or
 // takes its address, and the lock-free FactsOf source never mentions it.
 func TestPortLeaseStateFieldIsOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isPortLeaseReceiver(fn) {
-				continue
-			}
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					if method, ok := call.Fun.(*ast.SelectorExpr); ok {
-						if _, known := portLeaseMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok && portLeaseUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
-				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && portLeaseUse(sel) {
-					if allowed[sel] {
-						uses++
-					} else {
-						problems = append(problems, file+": "+fn.Name.Name+" uses Container.portLeases outside a portLeaseState method call")
-					}
-				}
-				if un, ok := n.(*ast.UnaryExpr); ok && un.Op == token.AND {
-					ast.Inspect(un.X, func(m ast.Node) bool {
-						if sel, ok := m.(*ast.SelectorExpr); ok && (portLeaseUse(sel) || sel.Sel.Name == "leases") {
-							problems = append(problems, file+": takes the address of "+types.ExprString(un.X))
-						}
-						return true
-					})
-				}
-				if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "leases" {
-					problems = append(problems, file+": "+fn.Name.Name+" reads the lease slice")
-				}
-				return true
-			})
-			if file == "cluster_facts.go" && strings.Contains(fn.Name.Name, "Facts") {
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					if sel, ok := n.(*ast.SelectorExpr); ok && portLeaseUse(sel) {
-						problems = append(problems, "FactsOf source reads Container.portLeases")
+	fieldAudit{label: "Container.portLeases", use: portLeaseUse, own: isPortLeaseReceiver, methods: portLeaseMethods,
+		allow: func(file string, fn *ast.FuncDecl, n ast.Node, _ map[*ast.SelectorExpr]bool) []string {
+			var problems []string
+			if un, ok := n.(*ast.UnaryExpr); ok && un.Op == token.AND {
+				ast.Inspect(un.X, func(m ast.Node) bool {
+					if sel, ok := m.(*ast.SelectorExpr); ok && (portLeaseUse(sel) || sel.Sel.Name == "leases") {
+						problems = append(problems, file+": takes the address of "+types.ExprString(un.X))
 					}
 					return true
 				})
 			}
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.portLeases found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		t.Fatalf("port lease state escapes its methods: %v", problems)
-	}
+			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "leases" {
+				problems = append(problems, file+": "+fn.Name.Name+" reads the lease slice")
+			}
+			return problems
+		}}.check(t)
 }
 
 // TestPortLeaseStateMethodsMakeOnlyTheirPinnedCalls guards the lock contract
@@ -136,51 +92,13 @@ func TestPortLeaseStateFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 // listed (none locks or calls into Container), and the slice is assigned only
 // by track.
 func TestPortLeaseStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || !isPortLeaseReceiver(fn) {
-				continue
+	methodAudit{label: "portLeaseState", own: isPortLeaseReceiver, methods: portLeaseMethods, writers: map[string][]string{"leases": {"track"}},
+		render: func(call *ast.CallExpr) string {
+			if name := types.ExprString(call.Fun); name != "lease.Release" {
+				return name
 			}
-			name := fn.Name.Name
-			want, known := portLeaseMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update portLeaseMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					got = append(got, types.ExprString(x.Fun))
-					if types.ExprString(x.Fun) == "lease.Release" {
-						got[len(got)-1] = "lease.Release(ctx)"
-					}
-				case *ast.AssignStmt:
-					for _, lhs := range x.Lhs {
-						if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "leases" && name != "track" {
-							problems = append(problems, name+" assigns leases")
-						}
-					}
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-			}
-		}
-	}
-	for name := range portLeaseMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
-	if len(problems) != 0 {
-		t.Fatalf("portLeaseState breaks its lock contract: %v", problems)
-	}
+			return "lease.Release(ctx)"
+		}}.check(t)
 }
 
 // portLeaseCallers lists every function outside the component that calls one
@@ -189,10 +107,7 @@ func TestPortLeaseStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
 //	"takes"  acquires Container.mu before its first use
 //	"hook"   its doc comment says the caller holds the lock or the cluster is
 //	         not shared (the exported test state view)
-var portLeaseCallers = map[string]struct {
-	mode    string
-	methods []string
-}{
+var portLeaseCallers = map[string]stateCaller{
 	"reserveTrackedHostPortsWith": {"takes", []string{"track"}},
 	"trackHostPortLease":          {"takes", []string{"track"}},
 	"AddMonitor":                  {"takes", []string{"track"}},
@@ -206,69 +121,7 @@ var portLeaseCallers = map[string]struct {
 // function documents the contract, and a stale row fails. Container.mu is the
 // whole lock domain: the type has no lock of its own.
 func TestPortLeaseStateCallersAreAudited(t *testing.T) {
-	docs := osdRegistryDocs(t)
-	found := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isPortLeaseReceiver(fn) {
-				continue
-			}
-			methods := map[string]bool{}
-			first := token.NoPos
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if recv, ok := sel.X.(*ast.SelectorExpr); ok && portLeaseUse(recv) {
-						methods[sel.Sel.Name] = true
-						if first == token.NoPos || call.Pos() < first {
-							first = call.Pos()
-						}
-					}
-				}
-				return true
-			})
-			if len(methods) == 0 {
-				continue
-			}
-			name := fn.Name.Name
-			found[name] = true
-			row, known := portLeaseCallers[name]
-			if !known {
-				problems = append(problems, name+" uses the port lease state but is not in portLeaseCallers")
-				continue
-			}
-			if at := osdRegistryAcquirePos(fn); row.mode == "takes" && (at == token.NoPos || at > first) {
-				problems = append(problems, name+" must take Container.mu before using the port lease state")
-			}
-			if row.mode == "hook" && !strings.Contains(docs[name], "holds") {
-				problems = append(problems, name+" is a hook row but its doc comment does not name the lock contract")
-			}
-			got := slices.Sorted(func(yield func(string) bool) {
-				for m := range methods {
-					if !yield(m) {
-						return
-					}
-				}
-			})
-			if !slices.Equal(got, row.methods) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(row.methods))
-			}
-		}
-	}
-	for name := range portLeaseCallers {
-		if !found[name] {
-			problems = append(problems, name+" is listed but no longer uses the port lease state")
-		}
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("port lease callers break the lock contract: %v", problems)
-	}
+	callerAudit{label: "the port lease state", use: portLeaseUse, own: isPortLeaseReceiver, callers: portLeaseCallers}.check(t)
 }
 
 // TestTerminateReleasesPortLeasesAfterNativeCommandsAndBeforeTheServices

@@ -81,6 +81,8 @@ func (s *osdVolumeStorage) inspect(ctx context.Context) (err error) {
 	return s.validate(result.Volume)
 }
 
+// ensureOSDVolume publishes the cluster's OSD volume storage on first use.
+// The caller holds Container.mu.
 func (f osdFleet) ensureOSDVolume(ctx context.Context) error {
 	if !f.settings.osdVolumeStorage {
 		return nil

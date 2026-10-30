@@ -105,27 +105,27 @@ var startupIdentityWriters = map[string]string{
 }
 
 // startupIdentityCallers lists every function outside the component that uses
-// it, with the methods it calls. The type has no lock, so there is no lock
-// column: every fact is written before the cluster is shared (Run) and read
-// only afterwards. A new row needs a new review of that claim.
-var startupIdentityCallers = map[string][]string{
-	"bootstrapFirstMonitor":   {"recordFirstMonitorImage", "recordKeyTypeOption"},
-	"AddMonitor":              {"ownedLabel"},
-	"OwnedLabel":              {"ownedLabel"},
-	"TerminateOnCleanup":      {"ownerID"},
-	"checkDualStackAddresses": {"firstMonitorImage"},
-	"startedContainer":        {"ownedLabel"},
-	"ensureControlPlane":      {"ownedLabel"},
-	"ensureOSDMemory":         {"ownedLabel"},
-	"ensureOSDVolume":         {"ownedLabel"},
-	"generateKeyArgs":         {"firstMonitorImage", "supportsKeyType"},
-	"newOSDLaunchRecipe":      {"ownerID"},
-	"reserveTrackedHostPorts": {"ownedLabel"},
-	"runMonitor":              {"ownedLabel"},
-	"startManager":            {"ownedLabel"},
-	"startService":            {"ownedLabel"},
-	"startVerification":       {"ownerID"},
-	"terminate":               {"ownerID", "removeLabeledContainers"},
+// it, with the methods it calls. The type has no lock: every fact is written
+// before the cluster is shared, by Run's "record" row, and only read
+// afterwards, by the "fact" rows. A new row needs a new review of that claim.
+var startupIdentityCallers = map[string]stateCaller{
+	"bootstrapFirstMonitor":   {"record", []string{"recordFirstMonitorImage", "recordKeyTypeOption"}},
+	"AddMonitor":              {"fact", []string{"ownedLabel"}},
+	"OwnedLabel":              {"fact", []string{"ownedLabel"}},
+	"TerminateOnCleanup":      {"fact", []string{"ownerID"}},
+	"checkDualStackAddresses": {"fact", []string{"firstMonitorImage"}},
+	"startedContainer":        {"fact", []string{"ownedLabel"}},
+	"ensureControlPlane":      {"fact", []string{"ownedLabel"}},
+	"ensureOSDMemory":         {"fact", []string{"ownedLabel"}},
+	"ensureOSDVolume":         {"fact", []string{"ownedLabel"}},
+	"generateKeyArgs":         {"fact", []string{"firstMonitorImage", "supportsKeyType"}},
+	"newOSDLaunchRecipe":      {"fact", []string{"ownerID"}},
+	"reserveTrackedHostPorts": {"fact", []string{"ownedLabel"}},
+	"runMonitor":              {"fact", []string{"ownedLabel"}},
+	"startManager":            {"fact", []string{"ownedLabel"}},
+	"startService":            {"fact", []string{"ownedLabel"}},
+	"startVerification":       {"fact", []string{"ownerID"}},
+	"terminate":               {"fact", []string{"ownerID", "removeLabeledContainers"}},
 }
 
 var startupIdentityFields = map[string]bool{"owner": true, "keyTypeOption": true, "firstMonitorImageID": true, "ownedContainerDocker": true}
@@ -164,71 +164,48 @@ func TestContainerDeclaresNoStartupIdentityFields(t *testing.T) {
 // the address of the component; the only production Container literal that sets
 // it is Run's.
 func TestStartupIdentityFieldIsOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
 	literals := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isStartupReceiver(fn) {
-				continue
+	fieldAudit{label: "Container.startup", use: startupUse, own: isStartupReceiver, methods: startupIdentityMethods, bound: stateBinding,
+		counted: func(fn *ast.FuncDecl, sel *ast.SelectorExpr) bool {
+			return isContainerReceiver(sel.X) || receiverTypeName(fn) == "osdFleet" || receiverTypeName(fn) == "featureClient"
+		},
+		allow: func(file string, fn *ast.FuncDecl, n ast.Node, _ map[*ast.SelectorExpr]bool) []string {
+			var problems []string
+			switch x := n.(type) {
+			case *ast.CompositeLit:
+				if id, ok := x.Type.(*ast.Ident); !ok || id.Name != "Container" {
+					return nil
+				}
+				for _, elt := range x.Elts {
+					kv, ok := elt.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					key, ok := kv.Key.(*ast.Ident)
+					if !ok {
+						continue
+					}
+					switch key.Name {
+					case "startup":
+						literals++
+						if fn.Name.Name != "newCluster" || file != "ceph.go" {
+							problems = append(problems, file+": "+fn.Name.Name+" sets startup in a Container literal")
+						}
+					case "owner", "keyTypeOption", "firstMonitorImageID", "ownedContainerDocker":
+						problems = append(problems, file+": "+fn.Name.Name+" sets the removed field "+key.Name)
+					}
+				}
+			case *ast.UnaryExpr:
+				if x.Op == token.AND {
+					if sel, ok := x.X.(*ast.SelectorExpr); ok && (startupUse(sel) || startupUse2(sel)) && !stateBinding(fn) {
+						problems = append(problems, file+": takes the address of "+types.ExprString(x.X))
+					}
+				}
 			}
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					if method, ok := x.Fun.(*ast.SelectorExpr); ok {
-						if _, known := startupIdentityMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok && startupUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
-				case *ast.CompositeLit:
-					if id, ok := x.Type.(*ast.Ident); ok && id.Name == "Container" {
-						for _, elt := range x.Elts {
-							if kv, ok := elt.(*ast.KeyValueExpr); ok {
-								if key, ok := kv.Key.(*ast.Ident); ok {
-									switch key.Name {
-									case "startup":
-										literals++
-										if fn.Name.Name != "newCluster" || file != "ceph.go" {
-											problems = append(problems, file+": "+fn.Name.Name+" sets startup in a Container literal")
-										}
-									case "owner", "keyTypeOption", "firstMonitorImageID", "ownedContainerDocker":
-										problems = append(problems, file+": "+fn.Name.Name+" sets the removed field "+key.Name)
-									}
-								}
-							}
-						}
-					}
-				case *ast.UnaryExpr:
-					if x.Op == token.AND {
-						if sel, ok := x.X.(*ast.SelectorExpr); ok && (startupUse(sel) || startupUse2(sel)) && !stateBinding(fn) {
-							problems = append(problems, file+": takes the address of "+types.ExprString(x.X))
-						}
-					}
-				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && startupUse(sel) && (isContainerReceiver(sel.X) || receiverTypeName(fn) == "osdFleet" || receiverTypeName(fn) == "featureClient") {
-					if allowed[sel] || stateBinding(fn) {
-						uses++
-					} else {
-						problems = append(problems, file+": "+fn.Name.Name+" uses Container.startup outside a startupIdentity method call")
-					}
-				}
-				return true
-			})
-		}
-	}
-	if uses == 0 || literals != 1 {
-		problems = append(problems, "the guard is vacuous or Run's literal is missing: uses and literals found "+join([]string{itoa(uses), itoa(literals)}))
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("startup identity escapes its methods: %v", problems)
+			return problems
+		}}.check(t)
+	if literals != 1 {
+		t.Fatalf("Run's Container literal sets the startup identity %d times, want once", literals)
 	}
 }
 
@@ -237,69 +214,24 @@ func TestStartupIdentityFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 // listed, none names Container or a mutex, and a field is assigned only by its
 // recorder.
 func TestStartupIdentityMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || !isStartupReceiver(fn) {
-				continue
-			}
-			name := fn.Name.Name
-			want, known := startupIdentityMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update startupIdentityMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					got = append(got, types.ExprString(x.Fun))
-					if types.ExprString(x.Fun) == "newClient" {
-						got[len(got)-1] = "newClient(ctx)"
-					}
-				case *ast.Ident:
-					switch x.Name {
-					case "Container", "closed", "controlPlane", "settings", "bootstrap":
-						problems = append(problems, name+" names "+x.Name)
-					}
-				case *ast.SelectorExpr:
-					switch x.Sel.Name {
-					case "mu", "Lock", "Unlock", "TryLock", "lockTopology":
-						problems = append(problems, name+" touches "+types.ExprString(x))
-					}
-				case *ast.AssignStmt:
-					for _, lhs := range x.Lhs {
-						if sel, ok := lhs.(*ast.SelectorExpr); ok {
-							if startupIdentityFields[sel.Sel.Name] && startupIdentityWriters[name] != sel.Sel.Name {
-								problems = append(problems, name+" assigns "+sel.Sel.Name)
-							}
-						}
-					}
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-			}
+	writers := map[string][]string{}
+	for field := range startupIdentityFields {
+		writers[field] = nil
+	}
+	for method, field := range startupIdentityWriters {
+		if _, ok := startupIdentityMethods[method]; !ok {
+			t.Fatalf("%s is a writer row without a pinned method", method)
 		}
+		writers[field] = append(writers[field], method)
 	}
-	for name := range startupIdentityMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
-	for name := range startupIdentityWriters {
-		if _, ok := startupIdentityMethods[name]; !ok {
-			problems = append(problems, name+" is a writer row without a pinned method")
-		}
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("startupIdentity breaks its lock contract: %v", problems)
-	}
+	methodAudit{label: "startupIdentity", own: isStartupReceiver, methods: startupIdentityMethods, writers: writers,
+		render: func(call *ast.CallExpr) string {
+			if name := types.ExprString(call.Fun); name != "newClient" {
+				return name
+			}
+			return "newClient(ctx)"
+		},
+		forbidden: []string{"Container", "closed", "controlPlane", "settings", "bootstrap"}, forbiddenMembers: []string{"mu", "Lock", "Unlock", "TryLock", "lockTopology"}}.check(t)
 }
 
 // TestStartupIdentityCallersAreAudited is the caller-table guard: the functions
@@ -307,73 +239,26 @@ func TestStartupIdentityMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
 // recorders are called by Run only and exactly once each, and a stale row
 // fails.
 func TestStartupIdentityCallersAreAudited(t *testing.T) {
-	found := map[string]map[string]bool{}
+	callerAudit{label: "the startup identity", use: startupUse, own: isStartupReceiver, callers: startupIdentityCallers,
+		only: map[string][]string{"record": {"bootstrapFirstMonitor"}}}.check(t)
+	// Each recorder is called exactly once, by Run's startup phase.
 	recorded := map[string]int{}
-	var problems []string
 	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isStartupReceiver(fn) {
-				continue
-			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				recv, ok := sel.X.(*ast.SelectorExpr)
-				if !ok || !startupUse(recv) {
-					return true
-				}
-				name := fn.Name.Name
-				if found[name] == nil {
-					found[name] = map[string]bool{}
-				}
-				found[name][sel.Sel.Name] = true
-				if _, writer := startupIdentityWriters[sel.Sel.Name]; writer {
-					recorded[sel.Sel.Name]++
-					if name != "bootstrapFirstMonitor" {
-						problems = append(problems, name+" calls the recorder "+sel.Sel.Name+"; only bootstrapFirstMonitor may")
+		ast.Inspect(parsed, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+					if recv, ok := sel.X.(*ast.SelectorExpr); ok && startupUse(recv) {
+						recorded[sel.Sel.Name]++
 					}
 				}
-				return true
-			})
-		}
-	}
-	for name, methods := range found {
-		want, known := startupIdentityCallers[name]
-		if !known {
-			problems = append(problems, name+" uses the startup identity but is not in startupIdentityCallers")
-			continue
-		}
-		got := slices.Sorted(func(yield func(string) bool) {
-			for m := range methods {
-				if !yield(m) {
-					return
-				}
 			}
+			return true
 		})
-		if !slices.Equal(got, want) {
-			problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-		}
-	}
-	for name := range startupIdentityCallers {
-		if found[name] == nil {
-			problems = append(problems, name+" is listed but no longer uses the startup identity")
-		}
 	}
 	for recorder := range startupIdentityWriters {
 		if recorded[recorder] != 1 {
-			problems = append(problems, recorder+" must be called exactly once, by Run")
+			t.Errorf("%s must be called exactly once, by Run", recorder)
 		}
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("startup identity callers changed: %v", problems)
 	}
 }
 

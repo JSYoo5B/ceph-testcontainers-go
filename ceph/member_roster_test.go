@@ -6,7 +6,6 @@ import (
 	"go/token"
 	"go/types"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -250,66 +249,7 @@ var memberRosterFieldWriters = map[string][]string{
 // an address), no production Container literal sets it, and the lock-free
 // FactsOf source never mentions it.
 func TestMemberRosterFieldIsOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		ast.Inspect(parsed, func(n ast.Node) bool {
-			lit, ok := n.(*ast.CompositeLit)
-			if !ok || types.ExprString(lit.Type) != "Container" {
-				return true
-			}
-			for _, elt := range lit.Elts {
-				if kv, ok := elt.(*ast.KeyValueExpr); ok && types.ExprString(kv.Key) == "roster" {
-					problems = append(problems, file+": a Container literal sets roster")
-				}
-			}
-			return true
-		})
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isMemberRosterReceiver(fn) {
-				continue
-			}
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					if method, ok := call.Fun.(*ast.SelectorExpr); ok {
-						if _, known := memberRosterMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok && memberRosterUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
-				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && memberRosterUse(sel) {
-					if allowed[sel] || monitorTopologyBinding(fn) {
-						uses++
-					} else {
-						problems = append(problems, file+": "+fn.Name.Name+" uses Container.roster outside a memberRoster method call")
-					}
-				}
-				return true
-			})
-			if file == "cluster_facts.go" && strings.Contains(fn.Name.Name, "Facts") {
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					if sel, ok := n.(*ast.SelectorExpr); ok && memberRosterUse(sel) {
-						problems = append(problems, "FactsOf source reads Container.roster")
-					}
-					return true
-				})
-			}
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.roster found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("the roster escapes its methods: %v", problems)
-	}
+	fieldAudit{label: "Container.roster", use: memberRosterUse, own: isMemberRosterReceiver, methods: memberRosterMethods, bound: monitorTopologyBinding, literalField: "roster"}.check(t)
 }
 
 // TestMemberRosterMethodsMakeOnlyTheirPinnedCalls guards the lock contract of
@@ -317,82 +257,12 @@ func TestMemberRosterFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 // listed (none locks or calls into Container), and each field is assigned only
 // by the methods that own the transition.
 func TestMemberRosterMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || !isMemberRosterReceiver(fn) {
-				continue
-			}
-			name := fn.Name.Name
-			want, known := memberRosterMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update memberRosterMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					got = append(got, types.ExprString(x.Fun))
-				case *ast.AssignStmt:
-					for _, lhs := range x.Lhs {
-						if index, ok := lhs.(*ast.IndexExpr); ok {
-							lhs = index.X
-						}
-						sel, ok := lhs.(*ast.SelectorExpr)
-						if !ok {
-							continue
-						}
-						if writers, field := memberRosterFieldWriters[sel.Sel.Name]; field && !slices.Contains(writers, name) {
-							problems = append(problems, name+" assigns "+sel.Sel.Name)
-						}
-					}
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-			}
-		}
-	}
-	for name := range memberRosterMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
-	// Every pinned writer really writes its field.
-	for field, writers := range memberRosterFieldWriters {
-		for _, writer := range writers {
-			if _, ok := memberRosterMethods[writer]; !ok {
-				problems = append(problems, field+" writer "+writer+" is not a pinned method")
-			}
-		}
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("memberRoster breaks its lock contract: %v", problems)
-	}
+	methodAudit{label: "memberRoster", own: isMemberRosterReceiver, methods: memberRosterMethods, writers: memberRosterFieldWriters}.check(t)
 }
 
-// memberRosterCaller pins one function that uses the roster or sits between
-// such a function and its lock.
-//
-//	mode "takes"  acquires Container.mu itself before its first roster use
-//	mode "holds"  its doc comment requires the caller to hold Container.mu; every caller is itself an acquiring, "holds", "hook" or "init" function
-//	mode "hook"   a hook for another package whose doc comment requires the caller to hold the mutex
-//	mode "init"   runs before the cluster is shared
-//
-// methods is the roster methods the function calls directly, empty for an
-// intermediate function that only calls a "holds" function.
-type memberRosterCaller struct {
-	mode    string
-	methods []string
-}
-
-var memberRosterCallers = map[string]memberRosterCaller{
+// memberRosterCallers pins every function that uses the roster or sits
+// between such a function and its lock (see stateCaller).
+var memberRosterCallers = map[string]stateCaller{
 	"Service":       {"hook", []string{"service"}},
 	"SetService":    {"hook", []string{"setService"}},
 	"DeleteService": {"hook", []string{"dropService"}},
@@ -432,114 +302,7 @@ var memberRosterCallers = map[string]memberRosterCaller{
 // "hook" or "init" row of the table. This is the lock domain written on the
 // type: Container.mu, with no lock of the roster's own.
 func TestMemberRosterCallersAreAudited(t *testing.T) {
-	type fnInfo struct {
-		decl    *ast.FuncDecl
-		methods map[string]bool
-		acquire token.Pos
-		calls   map[string][]token.Pos
-	}
-	// Functions are judged one declaration at a time: two declarations with
-	// the same name (methods of different types) are never merged.
-	infos := map[string][]*fnInfo{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			info := &fnInfo{decl: fn, methods: map[string]bool{}, acquire: osdRegistryAcquirePos(fn), calls: map[string][]token.Pos{}}
-			firstUse := token.NoPos
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if name := calleeName(call); name != "" {
-					info.calls[name] = append(info.calls[name], call.Pos())
-				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if recv, ok := sel.X.(*ast.SelectorExpr); ok && memberRosterUse(recv) && !isMemberRosterReceiver(fn) {
-						info.methods[sel.Sel.Name] = true
-						if firstUse == token.NoPos || call.Pos() < firstUse {
-							firstUse = call.Pos()
-						}
-					}
-				}
-				return true
-			})
-			name := fn.Name.Name
-			infos[name] = append(infos[name], info)
-			if len(info.methods) == 0 {
-				continue
-			}
-			row, known := memberRosterCallers[name]
-			switch {
-			case !known:
-				problems = append(problems, name+" uses the roster but is not in memberRosterCallers")
-				continue
-			case row.mode == "takes" && (info.acquire == token.NoPos || info.acquire > firstUse):
-				problems = append(problems, name+" must take Container.mu before using the roster")
-			}
-			got := slices.Sorted(func(yield func(string) bool) {
-				for m := range info.methods {
-					if !yield(m) {
-						return
-					}
-				}
-			})
-			if !slices.Equal(got, slices.Sorted(slices.Values(row.methods))) {
-				problems = append(problems, name+" calls roster methods "+join(got)+", pinned "+join(row.methods))
-			}
-		}
-	}
-	docs := osdRegistryDocs(t)
-	for name, row := range memberRosterCallers {
-		decls := infos[name]
-		if len(decls) == 0 {
-			problems = append(problems, name+" is listed but does not exist")
-			continue
-		}
-		using := 0
-		for _, info := range decls {
-			if len(info.methods) != 0 {
-				using++
-			}
-		}
-		if len(row.methods) != 0 && using == 0 {
-			problems = append(problems, name+" is listed but no longer uses the roster")
-		}
-		if row.mode == "holds" || row.mode == "hook" {
-			if doc := docs[name]; !strings.Contains(doc, "hold") && !strings.Contains(doc, " held") {
-				problems = append(problems, name+" is a "+row.mode+" row but its doc comment does not say that the caller holds the lock")
-			}
-		}
-	}
-	// Every call to a "holds" function comes from a function that is guarded.
-	for held, row := range memberRosterCallers {
-		if row.mode != "holds" {
-			continue
-		}
-		for caller, decls := range infos {
-			for _, info := range decls {
-				if caller == held && info.decl.Recv == nil {
-					continue
-				}
-				for _, at := range info.calls[held] {
-					callerRow, listed := memberRosterCallers[caller]
-					acquired := info.acquire != token.NoPos && info.acquire < at
-					ok := acquired || (listed && (callerRow.mode == "holds" || callerRow.mode == "hook" || callerRow.mode == "init"))
-					if !ok {
-						problems = append(problems, caller+" calls "+held+" without taking Container.mu and is not a pinned holds, hook or init function")
-					}
-				}
-			}
-		}
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("roster callers break the lock contract: %v", problems)
-	}
+	callerAudit{label: "the roster", use: memberRosterUse, own: isMemberRosterReceiver, callers: memberRosterCallers}.check(t)
 }
 
 // TestMemberRosterHasNoAddressTaken guards that nothing takes the address of

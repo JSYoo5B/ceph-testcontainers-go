@@ -142,10 +142,11 @@ var extensionStoreMethods = map[string][]string{
 
 // extensionStoreCallers lists every function outside the component that calls
 // one of its methods. Both methods take the leaf lock themselves, so a caller
-// may or may not hold Container.mu (the order is mu, then the store lock).
-var extensionStoreCallers = map[string]map[string]bool{
-	"Extension":      {"getOrCreate": true},
-	"extensionsWith": {"inKindOrder": true},
+// may or may not hold Container.mu (the order is mu, then the store lock): the
+// rows are "free".
+var extensionStoreCallers = map[string]stateCaller{
+	"Extension":      {"free", []string{"getOrCreate"}},
+	"extensionsWith": {"free", []string{"inKindOrder"}},
 }
 
 func isExtensionStoreReceiver(fn *ast.FuncDecl) bool {
@@ -175,112 +176,17 @@ func TestContainerDeclaresNoExtensionsMapOrLock(t *testing.T) {
 // receiver of one of its methods, its map is never reached directly, and no
 // production composite literal of Container sets it.
 func TestExtensionStoreFieldIsOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isExtensionStoreReceiver(fn) {
-				continue
-			}
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					if method, ok := x.Fun.(*ast.SelectorExpr); ok {
-						if _, known := extensionStoreMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok && extensionsUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
-				case *ast.CompositeLit:
-					if id, ok := x.Type.(*ast.Ident); ok && id.Name == "Container" {
-						for _, elt := range x.Elts {
-							if kv, ok := elt.(*ast.KeyValueExpr); ok {
-								if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "extensions" {
-									problems = append(problems, file+": "+fn.Name.Name+" sets extensions in a Container literal")
-								}
-							}
-						}
-					}
-				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && extensionsUse(sel) && isContainerReceiver(sel.X) {
-					if allowed[sel] {
-						uses++
-					} else {
-						problems = append(problems, file+": "+fn.Name.Name+" uses Container.extensions outside an extensionStore method call")
-					}
-				}
-				return true
-			})
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.extensions found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("extension store escapes its methods: %v", problems)
-	}
+	fieldAudit{label: "Container.extensions", use: extensionsUse, own: isExtensionStoreReceiver, methods: extensionStoreMethods, literalField: "extensions",
+		counted: func(_ *ast.FuncDecl, sel *ast.SelectorExpr) bool { return isContainerReceiver(sel.X) }}.check(t)
 }
 
 // TestExtensionStoreMethodsMakeOnlyTheirPinnedCalls guards the lock contract of
 // the type: the method set is pinned, each method makes exactly the calls
 // listed, and no method names Container, closed or another mutex.
 func TestExtensionStoreMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || !isExtensionStoreReceiver(fn) {
-				continue
-			}
-			name := fn.Name.Name
-			want, known := extensionStoreMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update extensionStoreMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					got = append(got, types.ExprString(x))
-				case *ast.Ident:
-					switch x.Name {
-					case "Container", "closed", "controlPlane", "settings", "bootstrap":
-						problems = append(problems, name+" names "+x.Name)
-					}
-				case *ast.SelectorExpr:
-					switch x.Sel.Name {
-					case "mu", "controlMu", "configMu", "extensionsMu":
-						if id, ok := x.X.(*ast.Ident); !ok || id.Name != "s" {
-							problems = append(problems, name+" reads "+types.ExprString(x))
-						}
-					}
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-			}
-		}
-	}
-	for name := range extensionStoreMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("extensionStore breaks its lock contract: %v", problems)
-	}
+	methodAudit{label: "extensionStore", own: isExtensionStoreReceiver, methods: extensionStoreMethods,
+		render:    func(call *ast.CallExpr) string { return types.ExprString(call) },
+		forbidden: []string{"Container", "closed", "controlPlane", "settings", "bootstrap"}, forbiddenMembers: []string{"mu", "controlMu", "configMu", "extensionsMu"}, self: "s"}.check(t)
 }
 
 // TestExtensionStoreMapWritersAreAudited pins every production function that
@@ -338,50 +244,7 @@ func TestExtensionStoreMapWritersAreAudited(t *testing.T) {
 // publishes the lock identity (the store has no mutex accessor and TestState
 // does not mention it), and a stale row fails.
 func TestExtensionStoreCallersAreAudited(t *testing.T) {
-	found := map[string]map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isExtensionStoreReceiver(fn) {
-				continue
-			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				recv, ok := sel.X.(*ast.SelectorExpr)
-				if !ok || !extensionsUse(recv) {
-					return true
-				}
-				name := fn.Name.Name
-				if found[name] == nil {
-					found[name] = map[string]bool{}
-				}
-				found[name][sel.Sel.Name] = true
-				if !extensionStoreCallers[name][sel.Sel.Name] {
-					problems = append(problems, name+" calls extensions."+sel.Sel.Name+" but is not in extensionStoreCallers")
-				}
-				return true
-			})
-		}
-	}
-	for name, methods := range extensionStoreCallers {
-		for method := range methods {
-			if !found[name][method] {
-				problems = append(problems, name+" is listed for extensions."+method+" but no longer calls it")
-			}
-		}
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("extension store callers changed: %v", problems)
-	}
+	callerAudit{label: "the extension store", use: extensionsUse, own: isExtensionStoreReceiver, callers: extensionStoreCallers}.check(t)
 }
 
 // TestExtensionStoreSourceIsInTheRightFile pins the file of the component so a
