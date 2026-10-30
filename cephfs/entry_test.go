@@ -123,7 +123,7 @@ func TestEntryPointsRejectMissingCluster(t *testing.T) {
 	if _, err := Start(ctx, nil, Config{}); err == nil {
 		t.Fatal("nil cluster started a filesystem")
 	}
-	if err := (&Filesystem{FilesystemName: "a", name: "a"}).Remove(ctx); err == nil || !strings.Contains(err.Error(), "unavailable") {
+	if err := (&Filesystem{FilesystemName: "a", id: filesystemIdentity{name: "a"}}).Remove(ctx); err == nil || !strings.Contains(err.Error(), "unavailable") {
 		t.Fatalf("nil cluster removed a filesystem: %v", err)
 	}
 	if Filesystems(nil) != nil {
@@ -138,7 +138,7 @@ func TestFilesystemRegistryReportsOwnedState(t *testing.T) {
 		t.Fatal("an empty registry reported owned filesystems")
 	}
 	mds := &MDS{Container: &poolFixtureContainer{}, ID: "alpha-0"}
-	registry.byName["alpha"] = &Filesystem{FilesystemName: "alpha", name: "alpha", roster: mdsRoster{daemons: []*MDS{mds, nil, {ID: "uncreated"}}}}
+	registry.byName["alpha"] = &Filesystem{FilesystemName: "alpha", id: filesystemIdentity{name: "alpha"}, mds: mdsState{roster: mdsRoster{daemons: []*MDS{mds, nil, {ID: "uncreated"}}}}}
 	if !registry.RequiresMGRModule("volumes") || registry.RequiresMGRModule("mirroring") {
 		t.Fatal("owned filesystems did not protect exactly the volumes module")
 	}
@@ -156,7 +156,7 @@ func TestContainerFilesystemsUsesTheEmbeddedCluster(t *testing.T) {
 		t.Fatal("nil container reported filesystems")
 	}
 	cluster := &Container{Container: testhelper.TestCluster(nil, testhelper.TestConfig{})}
-	beta, alpha := &Filesystem{FilesystemName: "beta", name: "beta"}, &Filesystem{FilesystemName: "alpha", name: "alpha"}
+	beta, alpha := &Filesystem{FilesystemName: "beta", id: filesystemIdentity{name: "beta"}}, &Filesystem{FilesystemName: "alpha", id: filesystemIdentity{name: "alpha"}}
 	filesystems(cluster.Container).byName["beta"], filesystems(cluster.Container).byName["alpha"] = beta, alpha
 	if got := cluster.Filesystems(); len(got) != 2 || got[0] != alpha || got[1] != beta {
 		t.Fatalf("Filesystems = %v", got)

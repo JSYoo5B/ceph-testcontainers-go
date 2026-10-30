@@ -18,7 +18,7 @@ import (
 // AddDataPool are detached by the native removal but kept. A retry after an
 // error continues with whatever remains.
 func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem) error {
-	name := handle.name
+	name := handle.id.name
 	release, err := lockSetupThenTopology(ctx, c)
 	if err != nil {
 		return err
@@ -48,7 +48,7 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 			return fmt.Errorf("remove cephfs %q: %w", name, err)
 		}
 	}
-	for _, daemon := range fs.roster.snapshot() {
+	for _, daemon := range fs.mds.roster.snapshot() {
 		if daemon.Container != nil {
 			if err := daemon.Terminate(ctx); err != nil && !servicehook.OnlyMissingHostResource(err) {
 				return fmt.Errorf("terminate mds.%s of removed cephfs %q: %w", daemon.ID, name, err)
@@ -61,10 +61,10 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 		if _, err := c.Ceph(ctx, "auth", "del", "mds."+daemon.ID); err != nil && !errors.Is(err, iofs.ErrNotExist) && !strings.Contains(err.Error(), "does not exist") {
 			return fmt.Errorf("remove key of mds.%s: %w", daemon.ID, err)
 		}
-		fs.roster.remove(daemon)
+		fs.mds.roster.remove(daemon)
 	}
 	fs.Container = nil
-	for _, pool := range cephFSConfiguredPools(fs.config) {
+	for _, pool := range cephFSConfiguredPools(fs.id.config) {
 		if err := servicehook.RemovePool(ctx, c, pool.Name, true); err != nil && !servicehook.PoolMissing(err) {
 			return fmt.Errorf("remove pool %q of removed cephfs %q: %w", pool.Name, name, err)
 		}

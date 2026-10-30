@@ -100,13 +100,13 @@ func TestMDSRosterReadersUnderTheClusterLockAreRaceFree(t *testing.T) {
 		defer wg.Done()
 		for range 200 {
 			d := &MDS{ID: "x"}
-			servicehook.Lock(fs.cluster)
-			fs.roster.publish(d)
-			fs.roster.reserveIndex()
-			servicehook.Unlock(fs.cluster)
-			servicehook.Lock(fs.cluster)
-			fs.roster.remove(d)
-			servicehook.Unlock(fs.cluster)
+			servicehook.Lock(fs.id.cluster)
+			fs.mds.roster.publish(d)
+			fs.mds.roster.reserveIndex()
+			servicehook.Unlock(fs.id.cluster)
+			servicehook.Lock(fs.id.cluster)
+			fs.mds.roster.remove(d)
+			servicehook.Unlock(fs.id.cluster)
 		}
 	}()
 	wg.Wait()

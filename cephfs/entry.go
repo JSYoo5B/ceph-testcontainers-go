@@ -61,10 +61,10 @@ func Filesystems(c *ceph.Container) []*Filesystem {
 // Remove acts on this descriptor. One that Remove already removed, or that is
 // not the one the cluster owns for its name, returns an error.
 func (fs *Filesystem) Remove(ctx context.Context) error {
-	if fs == nil || fs.cluster == nil {
+	if fs == nil || fs.id.cluster == nil {
 		return errNilCluster
 	}
-	return removeFilesystem(ctx, fs.cluster, fs)
+	return removeFilesystem(ctx, fs.id.cluster, fs)
 }
 
 // WithFilesystems creates named filesystems and their MDS topologies during
@@ -104,7 +104,7 @@ func filesystems(c *ceph.Container) *filesystemRegistry {
 
 func (r *filesystemRegistry) sorted() []*Filesystem {
 	result := slices.Collect(maps.Values(r.byName))
-	slices.SortFunc(result, func(a, b *Filesystem) int { return strings.Compare(a.name, b.name) })
+	slices.SortFunc(result, func(a, b *Filesystem) int { return strings.Compare(a.id.name, b.id.name) })
 	return result
 }
 
@@ -115,7 +115,7 @@ func (r *filesystemRegistry) ConfigTargets() map[string]testcontainers.Container
 		if fs == nil {
 			continue
 		}
-		for _, mds := range fs.roster.members() {
+		for _, mds := range fs.mds.roster.members() {
 			if mds != nil && mds.Container != nil {
 				targets["mds."+mds.ID] = mds.Container
 			}

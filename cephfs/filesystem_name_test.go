@@ -51,7 +51,7 @@ func TestScaleMDSOwnershipUsesCreationIdentityNotEditedDescriptor(t *testing.T) 
 	if err := fs.ScaleMDS(t.Context(), 1, 0); err != nil && err.Error() == ownership {
 		t.Fatalf("ScaleMDS ownership followed the edited FilesystemName: %v", err)
 	}
-	assertCephFSContextAdmissionReleased(t, fs.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
 }
 
 // F5: ScaleMDS replaces the whole config struct under the cluster mutex while
@@ -65,11 +65,11 @@ func TestScheduleNameReadDoesNotRaceWithConfigReplacement(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := range 200 {
-			servicehook.Lock(fs.cluster)
-			desired := fs.config
+			servicehook.Lock(fs.id.cluster)
+			desired := fs.id.config
 			desired.ActiveMDS = i%2 + 1
-			fs.config = desired
-			servicehook.Unlock(fs.cluster)
+			fs.id.config = desired
+			servicehook.Unlock(fs.id.cluster)
 		}
 	}()
 	go func() {

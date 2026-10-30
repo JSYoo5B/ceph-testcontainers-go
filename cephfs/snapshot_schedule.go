@@ -123,7 +123,7 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 	if err := validateSnapshotSchedule(schedule); err != nil {
 		return nil, err
 	}
-	observer, err := ceph.Observe(fs.cluster)
+	observer, err := ceph.Observe(fs.id.cluster)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 		return nil, servicehook.Invalid(errors.New("the MGR snap_schedule module is not enabled: enable it with override.SetMGRModule"))
 	}
 	if strings.HasSuffix(schedule.Repeat, "m") {
-		data, err := fs.cluster.Ceph(ctx, "config", "get", "mgr", "mgr/snap_schedule/allow_m_granularity")
+		data, err := fs.id.cluster.Ceph(ctx, "config", "get", "mgr", "mgr/snap_schedule/allow_m_granularity")
 		if err != nil {
 			return nil, fmt.Errorf("read mgr/snap_schedule/allow_m_granularity: %w", err)
 		}
@@ -168,7 +168,7 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 	if !schedule.Start.IsZero() {
 		args = append(args, lease.Start.Format(snapshotScheduleTime))
 	}
-	if _, err := fs.cluster.Ceph(ctx, append(args, "--fs", fs.name)...); err != nil {
+	if _, err := fs.id.cluster.Ceph(ctx, append(args, "--fs", fs.id.name)...); err != nil {
 		// A lost reply may have added it; Restore reads the directory back.
 		return lease, fmt.Errorf("add the snapshot schedule of %s: %w", schedule.Path, err)
 	}
@@ -185,8 +185,8 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 	}
 	for _, period := range slices.Sorted(maps.Keys(schedule.Retention)) {
 		lease.rules[period] = schedule.Retention[period]
-		if _, err := fs.cluster.Ceph(ctx, "fs", "snap-schedule", "retention", "add", schedule.Path, period,
-			strconv.Itoa(schedule.Retention[period]), "--fs", fs.name); err != nil {
+		if _, err := fs.id.cluster.Ceph(ctx, "fs", "snap-schedule", "retention", "add", schedule.Path, period,
+			strconv.Itoa(schedule.Retention[period]), "--fs", fs.id.name); err != nil {
 			return lease, fmt.Errorf("add the snapshot retention %s of %s: %w", period, schedule.Path, err)
 		}
 	}
@@ -360,11 +360,11 @@ func (l *SnapshotScheduleLease) Status(ctx context.Context) (SnapshotScheduleSta
 // took, named "scheduled-…", oldest first, through libcephfs in the control
 // container.
 func (l *SnapshotScheduleLease) Snapshots(ctx context.Context) ([]string, error) {
-	control, err := l.filesystem.cluster.ClientContainer(ctx)
+	control, err := l.filesystem.id.cluster.ClientContainer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select the CephFS CLI container: %w", err)
 	}
-	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSSnapshotListScript, l.filesystem.name, l.Path)
+	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSSnapshotListScript, l.filesystem.id.name, l.Path)
 	if err != nil {
 		return nil, fmt.Errorf("list the snapshots of %s: %w", l.Path, err)
 	}
@@ -442,8 +442,8 @@ func (l *SnapshotScheduleLease) Restore(ctx context.Context) error {
 	}
 	if owned != nil {
 		// The start selects this schedule among those with its repeat.
-		if _, err := l.filesystem.cluster.Ceph(ctx, "fs", "snap-schedule", "remove", l.Path, l.Repeat, owned.start,
-			"--fs", l.filesystem.name); err != nil {
+		if _, err := l.filesystem.id.cluster.Ceph(ctx, "fs", "snap-schedule", "remove", l.Path, l.Repeat, owned.start,
+			"--fs", l.filesystem.id.name); err != nil {
 			return fmt.Errorf("remove the snapshot schedule of %s: %w", l.Path, err)
 		}
 		// Bind an unconfirmed add, so the read back looks for this schedule.
@@ -494,8 +494,8 @@ func (l *SnapshotScheduleLease) removeRules(ctx context.Context, statuses []Snap
 		pending = remaining
 	}
 	for _, period := range pending {
-		_, err := l.filesystem.cluster.Ceph(ctx, "fs", "snap-schedule", "retention", "remove", l.Path, period,
-			strconv.Itoa(l.rules[period]), "--fs", l.filesystem.name)
+		_, err := l.filesystem.id.cluster.Ceph(ctx, "fs", "snap-schedule", "retention", "remove", l.Path, period,
+			strconv.Itoa(l.rules[period]), "--fs", l.filesystem.id.name)
 		if err != nil && (len(statuses) > 0 || !snapshotRetentionAbsent(err)) {
 			return fmt.Errorf("remove the snapshot retention %s of %s: %w", period, l.Path, err)
 		}

@@ -209,15 +209,15 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 // to its previous canonical native value. It is idempotent across handle copies;
 // after an uncertain reply, retry with a fresh context to reconcile readback.
 func (change *PinOverrideHandle) Restore(ctx context.Context) error {
-	if change == nil || change.filesystem == nil || change.filesystem.cluster == nil || change.state == nil {
+	if change == nil || change.filesystem == nil || change.filesystem.id.cluster == nil || change.state == nil {
 		return errors.New("CephFS pin override is unavailable")
 	}
 	fs := change.filesystem
-	if err := clusterutil.LockMutex(ctx, &filesystems(fs.cluster).setupMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &filesystems(fs.id.cluster).setupMu); err != nil {
 		return err
 	}
 	restored := change.state.restored
-	filesystems(fs.cluster).setupMu.Unlock()
+	filesystems(fs.id.cluster).setupMu.Unlock()
 	if restored {
 		return nil
 	}
@@ -308,11 +308,11 @@ func cephFSPinValue(policy *PinPolicy, kind PinType) float64 {
 }
 
 func (fs *Filesystem) checkPinTarget(ctx context.Context, fsID int64, target cephFSPinTarget) (string, error) {
-	if err := servicehook.LockTopology(ctx, fs.cluster); err != nil {
+	if err := servicehook.LockTopology(ctx, fs.id.cluster); err != nil {
 		return "", err
 	}
-	closed := servicehook.Closed(fs.cluster)
-	servicehook.Unlock(fs.cluster)
+	closed := servicehook.Closed(fs.id.cluster)
+	servicehook.Unlock(fs.id.cluster)
 	if closed {
 		return "", servicehook.Invalid(errors.New("CephFS cluster is terminated"))
 	}

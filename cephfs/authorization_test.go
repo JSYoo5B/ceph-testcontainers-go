@@ -146,8 +146,8 @@ func cephFSAuthorizationFixture(t *testing.T) (*Filesystem, *cephFSAuthFixtureCo
 		t.Fatal(err)
 	}
 	ctr := &cephFSAuthFixtureContainer{poolFixtureContainer: pool, auth: make(map[string]*cephFSAuthFixtureEntry), grants: make(map[string]string)}
-	fs.cluster.Container = ctr
-	testhelper.TestSetConfig(fs.cluster, []byte("[global]\nmon_host = fixture\n"))
+	fs.id.cluster.Container = ctr
+	testhelper.TestSetConfig(fs.id.cluster, []byte("[global]\nmon_host = fixture\n"))
 	ctr.Calls = nil
 	return fs, ctr, volume
 }
@@ -277,7 +277,7 @@ func TestCephFSSubvolumeAuthorizationOutsideIdentityEditsRefuseMutation(t *testi
 		{"caps", func(_ *Filesystem, c *cephFSAuthFixtureContainer) {
 			c.auth["client.writer"].Caps["osd"] = "allow *"
 		}},
-		{"closed", func(fs *Filesystem, _ *cephFSAuthFixtureContainer) { testhelper.TestSetClosed(fs.cluster, true) }},
+		{"closed", func(fs *Filesystem, _ *cephFSAuthFixtureContainer) { testhelper.TestSetClosed(fs.id.cluster, true) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fs, c, volume := cephFSAuthorizationFixture(t)

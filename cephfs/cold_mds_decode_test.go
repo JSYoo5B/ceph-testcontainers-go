@@ -17,7 +17,7 @@ func coldMDSDecode(t *testing.T, edit func(native map[string]any, m map[string]a
 	if edit != nil {
 		edit(native, native["filesystems"].([]any)[0].(map[string]any)["mdsmap"].(map[string]any))
 	}
-	return decodeColdMDSMap([]byte(coldMDSTestJSON(native)), coldMDSMapExpectation{filesystem: fs.config.Name, reservedName: "cold-target-0", native: fs.coldMDS.identity, dataPools: fs.coldMDS.dataPools})
+	return decodeColdMDSMap([]byte(coldMDSTestJSON(native)), coldMDSMapExpectation{filesystem: fs.id.config.Name, reservedName: "cold-target-0", native: fs.mds.coldMDS.identity, dataPools: fs.mds.coldMDS.dataPools})
 }
 
 func TestColdMDSDecodeAcceptsTheSettledBaseline(t *testing.T) {

@@ -72,10 +72,10 @@ func (fs *Filesystem) removeStoppedMDS(parent context.Context, daemon *MDS) erro
 	if err := parent.Err(); err != nil {
 		return err
 	}
-	if fs == nil || fs.cluster == nil || daemon == nil || daemon.identity == nil {
+	if fs == nil || fs.id.cluster == nil || daemon == nil || daemon.identity == nil {
 		return errors.New("original owned MDS creation identity is unavailable")
 	}
-	c := fs.cluster
+	c := fs.id.cluster
 	ctx, cancel := context.WithTimeout(parent, servicehook.StartupTimeout(c))
 	defer cancel()
 	release, err := lockSetupThenTopology(ctx, c)
@@ -106,9 +106,9 @@ func (fs *Filesystem) removeStoppedMDS(parent context.Context, daemon *MDS) erro
 		return nil
 	}
 	servicehook.DeleteService(c, "mds."+i.name)
-	fs.roster.remove(i.descriptor)
+	fs.mds.roster.remove(i.descriptor)
 	if fs.Container == i.container {
-		fs.Container = fs.roster.at(0).identity.container
+		fs.Container = fs.mds.roster.at(0).identity.container
 	}
 	i.removed = true
 	return nil
@@ -128,7 +128,7 @@ func (fs *Filesystem) admitStoppedMDSRemoval(ctx context.Context, daemon *MDS) (
 		return nil, err
 	}
 	// Admission to control/config precedes any Docker or native reads.
-	control, err := fs.cluster.ControlContainer(ctx)
+	control, err := fs.id.cluster.ControlContainer(ctx)
 	if err != nil || control == nil {
 		return nil, clusterutil.OperationError(ctx, "select stopped MDS control", err)
 	}
@@ -195,15 +195,15 @@ func (fs *Filesystem) confirmStoppedMDSRemoved(ctx context.Context, daemon *MDS,
 
 // Owner held; exported fields cannot redirect either target or survivor reads.
 func (fs *Filesystem) checkStoppedMDSOwner(handle *MDS, i *cephFSMDSIdentity) error {
-	c := fs.cluster
-	if !fs.registered() || fs.FilesystemName != fs.name || fs.MetadataPool != fs.config.MetadataPool.Name || fs.DataPool != fs.config.DataPool.Name || i.filesystem != fs || !i.confirmed || i.native == nil || i.native != fs.nativeIdentity || i.container == nil || i.container.GetContainerID() != i.cid || i.descriptor == nil || i.descriptor.identity != i || handle.ID != i.name || handle.FilesystemName != fs.name || handle.Container != i.container {
+	c := fs.id.cluster
+	if !fs.registered() || fs.FilesystemName != fs.id.name || fs.MetadataPool != fs.id.config.MetadataPool.Name || fs.DataPool != fs.id.config.DataPool.Name || i.filesystem != fs || !i.confirmed || i.native == nil || i.native != fs.id.native || i.container == nil || i.container.GetContainerID() != i.cid || i.descriptor == nil || i.descriptor.identity != i || handle.ID != i.name || handle.FilesystemName != fs.id.name || handle.Container != i.container {
 		return errors.New("original stopped MDS ownership changed or startup is unconfirmed")
 	}
-	if i.descriptor.ID != i.name || i.descriptor.FilesystemName != fs.name || i.descriptor.Container != i.container {
+	if i.descriptor.ID != i.name || i.descriptor.FilesystemName != fs.id.name || i.descriptor.Container != i.container {
 		return servicehook.Invalid(errors.New("original stopped MDS descriptor was edited"))
 	}
 	count, embedded := 0, false
-	for _, owned := range fs.roster.members() {
+	for _, owned := range fs.mds.roster.members() {
 		if owned == i.descriptor {
 			count++
 		}
@@ -273,7 +273,7 @@ func (fs *Filesystem) readStoppedMDSScope(ctx context.Context, target *cephFSMDS
 	if err != nil {
 		return nil, clusterutil.OperationError(ctx, "read original stopped MDS filesystem pools", err)
 	}
-	data, err := fs.cluster.Ceph(ctx, "fs", "dump", "--format", "json")
+	data, err := fs.id.cluster.Ceph(ctx, "fs", "dump", "--format", "json")
 	if err != nil {
 		return nil, clusterutil.OperationError(ctx, "read stopped MDS global map", err)
 	}
@@ -283,12 +283,12 @@ func (fs *Filesystem) readStoppedMDSScope(ctx context.Context, target *cephFSMDS
 func (fs *Filesystem) decodeStoppedMDSScope(ctx context.Context, target *cephFSMDSIdentity, pools *cephFSNativePools, data []byte) (*cephFSMDSRemovalScope, error) {
 	state, err := decodeStoppedMDSMap(data, stoppedMDSMapExpectation{
 		targetName:    target.name,
-		filesystem:    fs.name,
+		filesystem:    fs.id.name,
 		native:        target.native,
 		pools:         pools,
-		activeMDS:     fs.config.ActiveMDS,
-		standbyMDS:    fs.config.StandbyMDS,
-		standbyReplay: fs.config.StandbyReplay,
+		activeMDS:     fs.id.config.ActiveMDS,
+		standbyMDS:    fs.id.config.StandbyMDS,
+		standbyReplay: fs.id.config.StandbyReplay,
 	})
 	if err != nil {
 		return nil, err
@@ -304,7 +304,7 @@ func (fs *Filesystem) verifyStoppedMDSSurvivors(ctx context.Context, target *cep
 	scope, registered := state.scope, state.registered
 	remaining := 0
 	seenNames, seenCIDs := map[string]bool{}, map[string]bool{}
-	for _, daemon := range fs.roster.members() {
+	for _, daemon := range fs.mds.roster.members() {
 		if daemon == target.descriptor {
 			continue
 		}

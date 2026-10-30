@@ -19,7 +19,7 @@ import (
 func TestCephFSDirectControlSnapshotsHonorBusyPublication(t *testing.T) {
 	t.Run("pin", func(t *testing.T) {
 		fs, control, _, _ := cephFSPinFixture()
-		assertSnapshotReadLockQueued(t, testhelper.TestState(fs.cluster).ControlMutex, func(ctx context.Context) error {
+		assertSnapshotReadLockQueued(t, testhelper.TestState(fs.id.cluster).ControlMutex, func(ctx context.Context) error {
 			policy, err := fs.volumes().readPinPolicy(ctx, "/volumes/group/volume")
 			if policy != nil {
 				t.Error("busy control returned a pin policy")
@@ -37,7 +37,7 @@ func TestCephFSDirectControlSnapshotsHonorBusyPublication(t *testing.T) {
 	t.Run("clone", func(t *testing.T) {
 		fs, control, clone := cloneLifecycleFixture(t)
 		before := *clone.identity.incarnation
-		assertSnapshotReadLockQueued(t, testhelper.TestState(fs.cluster).ControlMutex, func(ctx context.Context) error {
+		assertSnapshotReadLockQueued(t, testhelper.TestState(fs.id.cluster).ControlMutex, func(ctx context.Context) error {
 			incarnation, err := fs.volumes().readCloneIncarnation(ctx, clone.identity)
 			if incarnation != nil {
 				t.Error("busy control returned clone incarnation")
@@ -67,12 +67,12 @@ func TestCephFSDataPoolFinalRADOSReadHonorsBusyControl(t *testing.T) {
 			if disabled {
 				return
 			}
-			testhelper.TestState(fs.cluster).ControlMutex.Lock()
+			testhelper.TestState(fs.id.cluster).ControlMutex.Lock()
 			held = true
 			close(entered)
 		}
 	}
-	fs.cluster.Container = hooked
+	fs.id.cluster.Container = hooked
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	result, exited := make(chan error, 1), make(chan struct{})
@@ -85,7 +85,7 @@ func TestCephFSDataPoolFinalRADOSReadHonorsBusyControl(t *testing.T) {
 		publicationMu.Lock()
 		disabled = true
 		if held {
-			testhelper.TestState(fs.cluster).ControlMutex.Unlock()
+			testhelper.TestState(fs.id.cluster).ControlMutex.Unlock()
 			held = false
 		}
 		publicationMu.Unlock()
@@ -114,13 +114,13 @@ func TestCephFSDataPoolFinalRADOSReadHonorsBusyControl(t *testing.T) {
 	if slices.Contains(native.calls, "rados -p extra --all ls") {
 		t.Fatal("busy final control sent RADOS command")
 	}
-	if testhelper.TestState(fs.cluster).ControlMutex.TryLock() {
-		testhelper.TestState(fs.cluster).ControlMutex.Unlock()
+	if testhelper.TestState(fs.id.cluster).ControlMutex.TryLock() {
+		testhelper.TestState(fs.id.cluster).ControlMutex.Unlock()
 		t.Fatal("operation stole or unlocked held control gate")
 	}
 	publicationMu.Lock()
 	disabled = true
-	testhelper.TestState(fs.cluster).ControlMutex.Unlock()
+	testhelper.TestState(fs.id.cluster).ControlMutex.Unlock()
 	held = false
 	publicationMu.Unlock()
 	if err := fs.checkUnusedDataPool(t.Context(), "extra"); err != nil || !slices.Contains(native.calls, "rados -p extra --all ls") {
@@ -149,7 +149,7 @@ func TestCephFSInheritedCreatePoolAdmissionHonorsBusyOwner(t *testing.T) {
 
 func TestCephFSCanceledNativeIdentityReadbackStillPublishesOwnership(t *testing.T) {
 	fs, native := subvolumeFixture()
-	fs.nativeIdentity = nil
+	fs.id.native = nil
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	hooked := &cephFSDependencyControl{Container: native}
@@ -158,16 +158,16 @@ func TestCephFSCanceledNativeIdentityReadbackStillPublishesOwnership(t *testing.
 			cancel()
 		}
 	}
-	fs.cluster.Container = hooked
+	fs.id.cluster.Container = hooked
 	if err := fs.captureNativePoolIdentity(ctx); err != nil {
 		t.Fatalf("successful native identity readback was discarded after cancellation: %v", err)
 	}
-	if !errors.Is(ctx.Err(), context.Canceled) || fs.nativeIdentity == nil || fs.nativeIdentity.id != 41 || fs.nativeIdentity.metadataPool != 1 || fs.nativeIdentity.defaultPool != 2 || fs.nativeIdentity.attachments == nil {
+	if !errors.Is(ctx.Err(), context.Canceled) || fs.id.native == nil || fs.id.native.id != 41 || fs.id.native.metadataPool != 1 || fs.id.native.defaultPool != 2 || fs.id.native.attachments == nil {
 		t.Fatal("cancellation lost original filesystem/pool ownership")
 	}
-	original := fs.nativeIdentity
+	original := fs.id.native
 	hooked.afterRead = nil
-	if _, err := fs.readNativePools(t.Context()); err != nil || fs.nativeIdentity != original {
+	if _, err := fs.readNativePools(t.Context()); err != nil || fs.id.native != original {
 		t.Fatalf("fresh native read could not use exact published identity: %v", err)
 	}
 }

@@ -132,12 +132,12 @@ func (change *SessionTimeoutsOverrideHandle) Restore(ctx context.Context) error 
 	fs := change.filesystem
 	state := change.state
 	// A confirmed restore stays complete after the filesystem or cluster is gone.
-	if fs.cluster != nil {
-		if err := clusterutil.LockMutex(ctx, &filesystems(fs.cluster).setupMu); err != nil {
+	if fs.id.cluster != nil {
+		if err := clusterutil.LockMutex(ctx, &filesystems(fs.id.cluster).setupMu); err != nil {
 			return err
 		}
 		restored := state.restored
-		filesystems(fs.cluster).setupMu.Unlock()
+		filesystems(fs.id.cluster).setupMu.Unlock()
 		if restored {
 			return nil
 		}
@@ -192,9 +192,9 @@ func (fs *Filesystem) Sessions(ctx context.Context) ([]Session, error) {
 	}
 	var sessions []Session
 	for _, mds := range status.Active {
-		data, err := fs.cluster.Ceph(ctx, "tell", "mds."+fs.name+":"+strconv.Itoa(mds.Rank), "session", "ls", "--format", "json")
+		data, err := fs.id.cluster.Ceph(ctx, "tell", "mds."+fs.id.name+":"+strconv.Itoa(mds.Rank), "session", "ls", "--format", "json")
 		if err != nil {
-			return nil, fmt.Errorf("list sessions of CephFS %q rank %d: %w", fs.name, mds.Rank, err)
+			return nil, fmt.Errorf("list sessions of CephFS %q rank %d: %w", fs.id.name, mds.Rank, err)
 		}
 		ranked, err := parseCephFSSessions(data, mds.Rank)
 		if err != nil {
@@ -247,10 +247,10 @@ func (fs *Filesystem) beginSessionOperation(ctx context.Context) (context.Contex
 	ctx, done, err := fs.admitOperation(ctx, admissionSpec{
 		refusal: "CephFS filesystem must be an active filesystem created by this cluster",
 		check: func(context.Context) (bool, error) {
-			if !fs.registered() || fs.FilesystemName != fs.name || fs.nativeIdentity == nil {
+			if !fs.registered() || fs.FilesystemName != fs.id.name || fs.id.native == nil {
 				return false, nil
 			}
-			fsID = fs.nativeIdentity.id
+			fsID = fs.id.native.id
 			return true, nil
 		},
 	})

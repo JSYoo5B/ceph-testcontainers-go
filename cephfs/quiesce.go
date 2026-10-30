@@ -106,11 +106,11 @@ func (fs *Filesystem) QuiesceSubvolumes(ctx context.Context, volumes []*Subvolum
 	q := &Quiesce{filesystem: fs, state: &cephFSQuiesceIdentity{
 		id: "tc-" + uuid.NewString(), filesystemID: fsID, members: members, await: config.Timeout,
 	}}
-	args := []string{"fs", "quiesce", fs.name, "--set-id", q.state.id, "--if-version", "0",
+	args := []string{"fs", "quiesce", fs.id.name, "--set-id", q.state.id, "--if-version", "0",
 		"--timeout", quiesceSeconds(config.Timeout), "--expiration", quiesceSeconds(config.Expiration),
 		"--await-for", quiesceSeconds(config.Timeout)}
 	args = append(args, names...)
-	_, setErr := fs.cluster.Ceph(ctx, args...)
+	_, setErr := fs.id.cluster.Ceph(ctx, args...)
 	readCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer stop()
 	state, readErr := q.read(readCtx)
@@ -189,7 +189,7 @@ func (q *Quiesce) Release(ctx context.Context) error {
 		return servicehook.Invalid(fmt.Errorf("quiesce state/version changed (%s/%d); checkpoint release refused", current.State, current.Version))
 	}
 	q.state.releaseAttempted = true
-	_, setErr := fs.cluster.Ceph(ctx, "fs", "quiesce", fs.name, "--set-id", q.state.id,
+	_, setErr := fs.id.cluster.Ceph(ctx, "fs", "quiesce", fs.id.name, "--set-id", q.state.id,
 		"--release", "--if-version", strconv.FormatUint(q.state.version, 10), "--await-for", quiesceSeconds(q.state.await))
 	readCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer stop()
@@ -205,7 +205,7 @@ func (q *Quiesce) Release(ctx context.Context) error {
 }
 
 func (q *Quiesce) read(ctx context.Context) (*QuiesceState, error) {
-	data, err := q.filesystem.cluster.Ceph(ctx, "fs", "quiesce", q.filesystem.name, "--set-id", q.state.id, "--query", "--format", "json")
+	data, err := q.filesystem.id.cluster.Ceph(ctx, "fs", "quiesce", q.filesystem.id.name, "--set-id", q.state.id, "--query", "--format", "json")
 	if err != nil {
 		return nil, err
 	}

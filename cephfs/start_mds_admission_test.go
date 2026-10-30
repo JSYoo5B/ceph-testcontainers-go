@@ -30,10 +30,10 @@ func startMDSTopologyFree(t *testing.T, fs *Filesystem) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if err := servicehook.LockTopology(ctx, fs.cluster); err != nil {
+	if err := servicehook.LockTopology(ctx, fs.id.cluster); err != nil {
 		t.Fatal("the topology mutex is retained after startMDSWithAdmission returned")
 	}
-	servicehook.Unlock(fs.cluster)
+	servicehook.Unlock(fs.id.cluster)
 }
 
 // TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership characterizes the
@@ -46,20 +46,20 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 	const owner = "cephfs cluster is terminated or filesystem ownership changed"
 	t.Run("ownership/unregistered-filesystem", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
-		delete(filesystems(fs.cluster).byName, fs.FilesystemName)
+		delete(filesystems(fs.id.cluster).byName, fs.FilesystemName)
 		before := n.mutationCount()
 		d, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
-		if err == nil || err.Error() != owner || d != nil || fs.coldMDS.attempted || fs.roster.nextIndex != 0 || n.mutationCount() != before {
+		if err == nil || err.Error() != owner || d != nil || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 || n.mutationCount() != before {
 			t.Fatalf("ownership refusal changed: %v %v", d, err)
 		}
 		startMDSTopologyFree(t, fs)
 	})
 	t.Run("cold/identity-drift", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
-		fs.nativeIdentity = &cephFSNativeIdentity{}
+		fs.id.native = &cephFSNativeIdentity{}
 		before := len(n.calls)
 		_, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
-		if err == nil || err.Error() != "original cold MDS ownership changed before startup" || fs.coldMDS.attempted || fs.roster.nextIndex != 0 || len(n.calls) != before {
+		if err == nil || err.Error() != "original cold MDS ownership changed before startup" || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 || len(n.calls) != before {
 			t.Fatalf("cold ownership refusal changed: %v", err)
 		}
 		startMDSTopologyFree(t, fs)
@@ -69,7 +69,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		fs.Container = &mdsScaleFixtureContainer{id: "foreign"}
 		before := len(n.calls)
 		_, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
-		if err == nil || err.Error() != "original cold MDS ownership changed before startup" || fs.coldMDS.attempted || len(n.calls) != before {
+		if err == nil || err.Error() != "original cold MDS ownership changed before startup" || fs.mds.coldMDS.attempted || len(n.calls) != before {
 			t.Fatalf("cold ownership refusal changed: %v", err)
 		}
 		startMDSTopologyFree(t, fs)
@@ -79,7 +79,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		n.fsid = "b011602b-37aa-496b-a8b5-b3e7a5d13ff3"
 		before := n.mutationCount()
 		_, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
-		if err == nil || err.Error() != "original cold cluster identity is invalid or changed" || fs.coldMDS.attempted || fs.roster.nextIndex != 0 || n.mutationCount() != before {
+		if err == nil || err.Error() != "original cold cluster identity is invalid or changed" || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 || n.mutationCount() != before {
 			t.Fatalf("selected control refusal changed: %v", err)
 		}
 		startMDSTopologyFree(t, fs)
@@ -88,7 +88,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		n.fail = "fsid"
 		_, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
-		if err == nil || !strings.HasPrefix(err.Error(), "read selected initial MDS control identity") || fs.coldMDS.attempted || fs.roster.nextIndex != 0 {
+		if err == nil || !strings.HasPrefix(err.Error(), "read selected initial MDS control identity") || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 {
 			t.Fatalf("control read failure changed: %v", err)
 		}
 		startMDSTopologyFree(t, fs)
@@ -104,7 +104,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		}
 		before := n.mutationCount()
 		_, err := fs.startMDSWithAdmission(ctx, startMDSNever(t), nil, nil)
-		if !errors.Is(err, context.Canceled) || fs.coldMDS.attempted || fs.roster.nextIndex != 0 || n.mutationCount() != before {
+		if !errors.Is(err, context.Canceled) || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 || n.mutationCount() != before {
 			t.Fatalf("cancellation before permission consumption changed: %v", err)
 		}
 		startMDSTopologyFree(t, fs)
@@ -113,23 +113,23 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		n.fail = "auth get-or-create mds.cold-target-0" + startMDSCaps
 		_, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
-		if err == nil || !strings.HasPrefix(err.Error(), "create initial MDS credentials") || strings.Contains(err.Error(), "never-log") || !fs.coldMDS.attempted || fs.roster.nextIndex != 1 {
+		if err == nil || !strings.HasPrefix(err.Error(), "create initial MDS credentials") || strings.Contains(err.Error(), "never-log") || !fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 1 {
 			t.Fatalf("cold credentials failure changed: %v", err)
 		}
 		n.fail = ""
 		_, err = fs.startMDSWithAdmission(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 			return nil, errors.New("stop here")
 		}, nil, nil)
-		if err == nil || err.Error() != "stop here" || fs.roster.nextIndex != 2 {
+		if err == nil || err.Error() != "stop here" || fs.mds.roster.nextIndex != 2 {
 			t.Fatalf("the consumed cold permission was used again or the second start took the cold path: %v", err)
 		}
 	})
 	t.Run("ordinary/credentials-failure", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
-		fs.coldMDS = nil
+		fs.mds.coldMDS = nil
 		n.fail = "auth get-or-create mds.cold-target-0" + startMDSCaps
 		_, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
-		if err == nil || !strings.HasPrefix(err.Error(), "create mds.cold-target-0 credentials: ") || fs.roster.nextIndex != 1 {
+		if err == nil || !strings.HasPrefix(err.Error(), "create mds.cold-target-0 credentials: ") || fs.mds.roster.nextIndex != 1 {
 			t.Fatalf("ordinary credentials failure changed: %v", err)
 		}
 		startMDSTopologyFree(t, fs)
@@ -144,7 +144,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 			return nil, cause
 		}
 		d, err := r.fs.startMDSWithAdmission(t.Context(), startMDSNever(t), admit, nil)
-		if err == nil || err.Error() != "admit replacement MDS startup" || d != nil || sawID != "target-1" || r.fs.roster.nextIndex != 1 || r.n.mutations != 0 {
+		if err == nil || err.Error() != "admit replacement MDS startup" || d != nil || sawID != "target-1" || r.fs.mds.roster.nextIndex != 1 || r.n.mutations != 0 {
 			t.Fatalf("replacement admission failure changed: %v (id %q)", err, sawID)
 		}
 		startMDSTopologyFree(t, r.fs)
@@ -153,7 +153,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		r := newReplacementMDSFixture(t)
 		admit := func(context.Context, string) (testcontainers.Container, error) { return nil, nil }
 		_, err := r.fs.startMDSWithAdmission(t.Context(), startMDSNever(t), admit, nil)
-		if err == nil || !strings.HasPrefix(err.Error(), "admit replacement MDS startup") || r.fs.roster.nextIndex != 1 || r.n.mutations != 0 {
+		if err == nil || !strings.HasPrefix(err.Error(), "admit replacement MDS startup") || r.fs.mds.roster.nextIndex != 1 || r.n.mutations != 0 {
 			t.Fatalf("replacement nil-control refusal changed: %v", err)
 		}
 		startMDSTopologyFree(t, r.fs)
@@ -163,7 +163,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		r.n.fail = "auth get-or-create mds.target-1" + startMDSCaps
 		admit := func(context.Context, string) (testcontainers.Container, error) { return r.n, nil }
 		d, err := r.fs.startMDSWithAdmission(t.Context(), startMDSNever(t), admit, nil)
-		if err == nil || !strings.HasPrefix(err.Error(), "create replacement MDS credentials") || d != nil || r.fs.roster.nextIndex != 2 {
+		if err == nil || !strings.HasPrefix(err.Error(), "create replacement MDS credentials") || d != nil || r.fs.mds.roster.nextIndex != 2 {
 			t.Fatalf("replacement credentials failure changed: %v", err)
 		}
 		startMDSTopologyFree(t, r.fs)
@@ -178,7 +178,7 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 	cause := errors.New("native service cause")
 	t.Run("ordinary/partial-handle-with-error", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
-		fs.coldMDS = nil
+		fs.mds.coldMDS = nil
 		worker := &mdsScaleFixtureContainer{id: "partial"}
 		start := coldMDSTestService(t, fs, n, worker, cause, false)
 		var hooked []*MDS
@@ -190,12 +190,12 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 	})
 	t.Run("ordinary/typed-nil-handle-is-not-published", func(t *testing.T) {
 		fs, _ := coldMDSTestConstruct(t, false)
-		fs.coldMDS = nil
+		fs.mds.coldMDS = nil
 		var typedNil *mdsScaleFixtureContainer
 		d, err := fs.startMDSWithAdmission(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 			return typedNil, cause
 		}, nil, func(*MDS) { t.Error("published hook ran for a typed-nil handle") })
-		if err != cause || d != nil || fs.Container != nil || len(fs.MDSs()) != 0 || fs.roster.nextIndex != 1 {
+		if err != cause || d != nil || fs.Container != nil || len(fs.MDSs()) != 0 || fs.mds.roster.nextIndex != 1 {
 			t.Fatalf("typed-nil handle was published or the error changed: %v %v", d, err)
 		}
 	})
@@ -213,7 +213,7 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 		d, err := fs.startMDSWithAdmission(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 			return nil, cause
 		}, nil, nil)
-		if d != nil || err == nil || err.Error() != "start initial MDS service" || !fs.coldMDS.attempted {
+		if d != nil || err == nil || err.Error() != "start initial MDS service" || !fs.mds.coldMDS.attempted {
 			t.Fatalf("cold start failure changed: %v %v", d, err)
 		}
 	})

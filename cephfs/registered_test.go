@@ -63,13 +63,13 @@ func TestRegisteredRefusesClosedAndReplacedFilesystems(t *testing.T) {
 	if !fs.registered() {
 		t.Fatal("a live filesystem is not registered")
 	}
-	replacement := &Filesystem{cluster: fs.cluster, name: fs.name}
-	filesystems(fs.cluster).byName[fs.name] = replacement
+	replacement := &Filesystem{id: filesystemIdentity{cluster: fs.id.cluster, name: fs.id.name}}
+	filesystems(fs.id.cluster).byName[fs.id.name] = replacement
 	if fs.registered() || !replacement.registered() {
 		t.Fatal("a replaced registry entry still admits the original handle")
 	}
-	filesystems(fs.cluster).byName[fs.name] = fs
-	testhelper.TestSetClosed(fs.cluster, true)
+	filesystems(fs.id.cluster).byName[fs.id.name] = fs
+	testhelper.TestSetClosed(fs.id.cluster, true)
 	if fs.registered() {
 		t.Fatal("a closed cluster still admits its filesystem")
 	}

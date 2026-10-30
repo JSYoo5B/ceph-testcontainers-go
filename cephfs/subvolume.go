@@ -122,7 +122,7 @@ func (fs *Filesystem) validateSubvolumeConfig(name, group, dataPool string, size
 	if size < 0 {
 		return servicehook.Invalid(errors.New("subvolume quota must not be negative; zero means unlimited"))
 	}
-	if fs == nil || fs.cluster == nil {
+	if fs == nil || fs.id.cluster == nil {
 		return servicehook.Invalid(errors.New("CephFS filesystem is unavailable"))
 	}
 	if dataPool == "" {
@@ -145,8 +145,8 @@ func (fs *Filesystem) beginSubvolumeOperation(ctx context.Context) (context.Cont
 		recheckCanceled: true,
 		refusal:         "CephFS filesystem must be an active filesystem created by this cluster",
 		check: func(ctx context.Context) (bool, error) {
-			c := fs.cluster
-			if !fs.registered() || fs.FilesystemName != fs.name || fs.nativeIdentity == nil {
+			c := fs.id.cluster
+			if !fs.registered() || fs.FilesystemName != fs.id.name || fs.id.native == nil {
 				return false, nil
 			}
 			control, err := c.ControlContainer(ctx)
@@ -283,10 +283,10 @@ func (fs *Filesystem) CreateSubvolumeGroup(ctx context.Context, config Subvolume
 	if slices.Contains(names, config.Name) {
 		return nil, servicehook.Invalid(fmt.Errorf("subvolume group %q already exists", config.Name))
 	}
-	group := &SubvolumeGroup{Name: config.Name, FilesystemName: fs.name,
+	group := &SubvolumeGroup{Name: config.Name, FilesystemName: fs.id.name,
 		identity: &cephFSVolumeIdentity{filesystem: fs, filesystemID: fsID, name: config.Name}}
-	args := appendSubvolumeLayout([]string{"fs", "subvolumegroup", "create", fs.name, config.Name}, config.SizeBytes, config.DataPool)
-	if _, err := fs.cluster.Ceph(ctx, args...); err != nil {
+	args := appendSubvolumeLayout([]string{"fs", "subvolumegroup", "create", fs.id.name, config.Name}, config.SizeBytes, config.DataPool)
+	if _, err := fs.id.cluster.Ceph(ctx, args...); err != nil {
 		return group, fmt.Errorf("create subvolume group %q: %w", config.Name, err)
 	}
 	info, err := fs.volumes().subvolumeGroupInfo(ctx, config.Name)
@@ -324,14 +324,14 @@ func (fs *Filesystem) CreateSubvolume(ctx context.Context, config SubvolumeConfi
 	if slices.Contains(names, config.Name) {
 		return nil, servicehook.Invalid(fmt.Errorf("subvolume %q in group %q already exists", config.Name, config.GroupName))
 	}
-	subvolume := &Subvolume{Name: config.Name, GroupName: config.GroupName, FilesystemName: fs.name,
+	subvolume := &Subvolume{Name: config.Name, GroupName: config.GroupName, FilesystemName: fs.id.name,
 		identity: &cephFSVolumeIdentity{filesystem: fs, filesystemID: fsID, name: config.Name, group: config.GroupName}}
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "create", fs.name, config.Name}, config.GroupName)
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "create", fs.id.name, config.Name}, config.GroupName)
 	args = appendSubvolumeLayout(args, config.SizeBytes, config.DataPool)
 	if config.NamespaceIsolated {
 		args = append(args, "--namespace-isolated")
 	}
-	if _, err := fs.cluster.Ceph(ctx, args...); err != nil {
+	if _, err := fs.id.cluster.Ceph(ctx, args...); err != nil {
 		return subvolume, fmt.Errorf("create subvolume %q: %w", config.Name, err)
 	}
 	info, err := fs.volumes().subvolumeInfo(ctx, config.Name, config.GroupName)
@@ -534,7 +534,7 @@ func (group *SubvolumeGroup) Resize(ctx context.Context, sizeBytes int64) error 
 	if err := fs.checkVolumeIdentity(fsID, group.identity, info.Path, info.CreatedAt); err != nil {
 		return err
 	}
-	_, err = fs.cluster.Ceph(ctx, "fs", "subvolumegroup", "resize", fs.name, group.identity.name, quota, "--no_shrink")
+	_, err = fs.id.cluster.Ceph(ctx, "fs", "subvolumegroup", "resize", fs.id.name, group.identity.name, quota, "--no_shrink")
 	return err
 }
 
@@ -567,8 +567,8 @@ func (subvolume *Subvolume) Resize(ctx context.Context, sizeBytes int64) error {
 	if err := fs.checkVolumeIdentity(fsID, subvolume.identity, info.Path, info.CreatedAt); err != nil {
 		return err
 	}
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "resize", fs.name, subvolume.identity.name, quota}, subvolume.identity.group)
-	_, err = fs.cluster.Ceph(ctx, append(args, "--no_shrink")...)
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "resize", fs.id.name, subvolume.identity.name, quota}, subvolume.identity.group)
+	_, err = fs.id.cluster.Ceph(ctx, append(args, "--no_shrink")...)
 	return err
 }
 
@@ -612,7 +612,7 @@ func (group *SubvolumeGroup) Remove(ctx context.Context) error {
 		return err
 	}
 	group.identity.removalAttempted = true
-	if _, err := fs.cluster.Ceph(ctx, "fs", "subvolumegroup", "rm", fs.name, group.identity.name); err != nil {
+	if _, err := fs.id.cluster.Ceph(ctx, "fs", "subvolumegroup", "rm", fs.id.name, group.identity.name); err != nil {
 		return err
 	}
 	group.identity.removed = true
@@ -665,9 +665,9 @@ func (subvolume *Subvolume) Remove(ctx context.Context) error {
 	if err := fs.checkVolumeIdentity(fsID, subvolume.identity, info.Path, info.CreatedAt); err != nil {
 		return err
 	}
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "rm", fs.name, subvolume.identity.name}, subvolume.identity.group)
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "rm", fs.id.name, subvolume.identity.name}, subvolume.identity.group)
 	subvolume.identity.removalAttempted = true
-	if _, err := fs.cluster.Ceph(ctx, args...); err != nil {
+	if _, err := fs.id.cluster.Ceph(ctx, args...); err != nil {
 		return err
 	}
 	subvolume.identity.removed = true
