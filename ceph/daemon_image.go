@@ -35,8 +35,18 @@ type DaemonOptions struct {
 // client or helper container still uses the cluster's images.
 //
 // The image reference must be non-empty and free of whitespace and control
-// characters. A refusal happens before any daemon identity, key or container
-// is created.
+// characters. A refusal matches ErrInvalidRequest and happens before the
+// topology lock and before any daemon identity, key or container is created;
+// nothing checks that the image exists. MON and MGR containers are never
+// recreated, so their image does not change for their lifetime.
+// ClusterFacts.Images and ClusterFacts.CephVersion, and the images recorded in
+// a finalization manifest or verification report, keep describing the cluster
+// and its first MON; the diagnostics archive records each container's image
+// from Docker. A client container is still refused when its release differs
+// from ClusterFacts.CephVersion. This is a building block: no mixed-version or
+// upgrade combination is claimed to work.
+//
+//purpose:construction
 func (o DaemonOptions) WithImage(image string) DaemonOptions {
 	o.image, o.imageSet = image, true
 	return o
@@ -80,6 +90,8 @@ func (c *Container) runDaemon(ctx context.Context, image string, opts ...testcon
 
 // Image returns the image this MON container was started from: the
 // DaemonOptions.WithImage override, or the cluster's essential image.
+//
+//purpose:observation
 func (m *MonitorContainer) Image() string {
 	if m == nil {
 		return ""
@@ -89,6 +101,8 @@ func (m *MonitorContainer) Image() string {
 
 // Image returns the image this MGR container was started from: the
 // DaemonOptions.WithImage override, or the cluster's essential image.
+//
+//purpose:observation
 func (m *ManagerContainer) Image() string {
 	if m == nil {
 		return ""
@@ -99,6 +113,8 @@ func (m *ManagerContainer) Image() string {
 // Image returns the image this OSD container was started from: the
 // OSDOptions.WithImage override, or the cluster's essential image. DetachedOSD.Reopen
 // starts the OSD from the same image again.
+//
+//purpose:observation
 func (o *OSDContainer) Image() string {
 	if o == nil {
 		return ""
@@ -108,6 +124,8 @@ func (o *OSDContainer) Image() string {
 
 // Image returns the image the detached OSD ran from, which DetachedOSD.Reopen
 // uses again.
+//
+//purpose:observation
 func (d *DetachedOSD) Image() string {
 	if d == nil {
 		return ""

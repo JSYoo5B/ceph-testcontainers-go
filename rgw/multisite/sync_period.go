@@ -18,6 +18,8 @@ import (
 // Unrelated current, locally pending or staging-period edits are refused before
 // period update can overwrite them. Partial publication/reload is not rolled
 // back; retry the same handle after resolving an external failure.
+//
+//purpose:construction,condition
 func (g *SyncGroup) Apply(ctx context.Context) error {
 	f, err := g.fixture()
 	if err != nil {

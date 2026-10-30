@@ -36,6 +36,11 @@ type BucketSyncPolicyStatus struct {
 // checkpoints, payloads or permissions, or replay objects written before the
 // policy was imported. It does not pull periods, restart gateways or mutate
 // replication state. Use it after creating pipes and before selected writes.
+//
+// Zonegroup groups, removed handles, pending mutations and zones outside the
+// pipes' destinations are refused.
+//
+//purpose:observation
 func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone string) (BucketSyncPolicyStatus, error) {
 	f, err := g.fixture()
 	if err != nil {

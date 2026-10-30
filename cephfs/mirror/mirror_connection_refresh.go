@@ -22,6 +22,8 @@ import (
 // bootstrap metadata or change directory assignments. Successful copies remain
 // on partial failure; retry with a fresh context. External file writers must
 // not race this operation.
+//
+//purpose:condition
 func (mirror *Mirror) RefreshMonitorConfig(ctx context.Context) error {
 	return mirror.refreshMonitorConfig(ctx, func(ctx context.Context, client testcontainers.Container) error {
 		return mirror.source.RefreshClientMonitorConfig(ctx, client)
@@ -85,6 +87,8 @@ func (mirror *Mirror) refreshMonitorConfig(ctx context.Context, refresh func(con
 // A failed write can have applied: successful changes remain and retries skip
 // a config-key already holding the current addresses. External config-key writers
 // must not race this operation; Ceph provides no value compare-and-swap here.
+//
+//purpose:condition
 func (mirror *Mirror) RefreshPeerMonitorConfig(ctx context.Context) error {
 	return mirror.refreshPeerMonitorConfig(ctx, func(ctx context.Context) (string, error) {
 		observer, err := ceph.Observe(mirror.destination)

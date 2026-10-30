@@ -16,6 +16,12 @@ import (
 // a replicated pool, with the cluster's replica/min-size defaults when omitted
 // (normally 2/1, or 1/1 for one initial OSD). Application
 // can be rados, rbd, cephfs, rgw or a custom name; empty leaves it unassigned.
+// Name uses letters, digits, '_', '.' and '-' and must not start with '.' or
+// '-'. Replicas is 1 to 10 and must be zero for an erasure-coded pool. MinSize
+// is 1 to Replicas for a replicated pool and K to K+M for an erasure-coded one.
+// FailureDomain puts each replica or shard in a distinct osd, host or rack
+// bucket. For RBD pools that need rbd pool init, use rbd.WithPools or
+// rbd.InitPool.
 type PoolConfig struct {
 	Name        string
 	PGNum       int
@@ -45,6 +51,7 @@ type PoolConfig struct {
 // MinSize of K permits I/O without any spare shard during a failure.
 // AllowOverwrites enables partial object writes and is required for RBD and
 // CephFS data pools. Their metadata must remain in a replicated pool.
+// K is at least 2, M at least 1 and K+M at most 128.
 type ErasureCodeConfig struct {
 	K               int
 	M               int
@@ -91,6 +98,17 @@ type poolIdentity struct {
 // It never deletes data after a partial command failure. Use WaitForClean before
 // application I/O. For RBD, create images in a replicated metadata pool and pass
 // the EC pool as data_pool in the native client (or --data-pool to the RBD CLI).
+//
+// The pool uses a dedicated CRUSH rule tc-<name>-replicated (or tc-<name>-ec
+// with an EC profile of the same name) and is created with the autoscaler off.
+// The returned Pool embeds the resolved PoolConfig and adds CRUSHRule and
+// ErasureCodeProfile; it describes the requested settings at creation, while
+// Pool.Status reports the current state. The handle identifies its native pool
+// by name and native ID, and copies share that identity: after Pool.Remove, or
+// when the name belongs to another pool, every method returns an error instead
+// of acting on the pool that now has the name.
+//
+//purpose:construction
 func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, error) {
 	config = resolvePoolDefaults(c.settings, config)
 	config, err := normalizePoolConfig(config)

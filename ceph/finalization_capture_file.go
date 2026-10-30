@@ -42,6 +42,8 @@ const (
 // and must keep it and its directory available until finalization returns. If
 // cleanup produces the first failure, copying runs after cleanup and reports
 // an unavailable source rather than recovering bytes that were removed.
+//
+//purpose:evidence
 func (f *Finalization) CaptureWithFile(name string, session CaptureFileSource, maxBytes int64) {
 	if f == nil {
 		return

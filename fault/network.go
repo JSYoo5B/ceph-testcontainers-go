@@ -40,9 +40,24 @@ type NetworkInterruption struct {
 // InterruptNetwork disconnects a container from one of this cluster's bridges.
 // The container may be an owned daemon or a caller-owned WithClient container.
 // With a single bridge, both planes select that same endpoint. Host mode is
-// rejected because Docker cannot disconnect a host-network endpoint.
+// rejected because Docker cannot disconnect a host-network endpoint. It cuts
+// the whole endpoint, not the traffic to selected peers; use
+// ApplyNetworkProfile with a Loss of 100 and Peers for that.
 // The fixture retains the handle and attempts restoration during Terminate.
 // Restore explicitly before destroying caller-owned containers or the cluster.
+//
+// An interrupted MON stays detached when it is stopped and started: its
+// Start refuses with ceph.ErrInvalidRequest until Restore has reattached the
+// endpoint, because the MON can bind only its monmap address. A cut cluster
+// endpoint can end an OSD process: with three or more OSDs on separate CRUSH
+// hosts its peers report the failed heartbeats, the MON marks it down after
+// osd_heartbeat_grace (20 s), and the OSD exits when it cannot rebind its
+// cluster messenger ("rebind cluster_messenger failed"). Restore does not
+// restart it; call Start on its handle afterwards. With two OSDs one
+// reporter is not enough (mon_osd_min_down_reporters is 2) and the OSD stays
+// up.
+//
+//purpose:condition
 func InterruptNetwork(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, plane ceph.NetworkPlane) (link *NetworkInterruption, err error) {
 	err = faulthook.WithTopology(ctx, c, func() error {
 		facts, factsErr := ceph.FactsOf(c)
@@ -86,6 +101,8 @@ func InterruptNetwork(ctx context.Context, c *ceph.Container, ctr testcontainers
 // stop a daemon, change Ceph policies or remove the network. Fixture-specific
 // helpers also register restoration with their cleanup. Host networking cannot
 // be interrupted through Docker endpoint operations.
+//
+//purpose:condition
 func InterruptLink(ctx context.Context, ctr testcontainers.Container, name string) (*NetworkInterruption, error) {
 	if ctr == nil || ctr.GetContainerID() == "" || name == "" || name == "host" || name == "none" || name == "bridge" {
 		return nil, errors.New("network interruption requires a container and a named bridge")
@@ -128,6 +145,8 @@ func (link *NetworkInterruption) isComplete(ctx context.Context) (bool, error) {
 // need no restoration. An externally reattached endpoint with a different
 // address is refused rather than overwritten, and the handle stays
 // retryable.
+//
+//purpose:condition,lifetime
 func (link *NetworkInterruption) Restore(ctx context.Context) error {
 	if err := lockMutex(ctx, &link.mu); err != nil {
 		return err

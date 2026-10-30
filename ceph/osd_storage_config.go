@@ -43,6 +43,8 @@ type OSDStorage struct {
 // startup capacity benchmark before AddOSD; the benchmark can exhaust a small
 // file even without client data. A size below the minimum, including zero, is an
 // explicit invalid setting, not an unspecified one.
+//
+//purpose:construction
 func (o OSDStorage) WithBlockSize(size int64) OSDStorage {
 	o.set |= osdStorageBlockSize
 	o.blockSize = size
@@ -53,7 +55,14 @@ func (o OSDStorage) WithBlockSize(size int64) OSDStorage {
 // including OSDs added later. WithBlockSize sets the capacity of a MemStore OSD.
 // MemStore cannot be combined with WithInMemory or WithVolume, which place
 // BlueStore files in shared volumes. fault.InjectObjectDataError needs
-// BlueStore. An unknown store, including the empty one, is refused.
+// BlueStore. An unknown store, including the empty one, is refused. MemStore
+// keeps data in the OSD process's memory and saves it to the data directory
+// when the store is unmounted, so the fixture disables Ceph's fast OSD shutdown
+// for MemStore OSDs: a stopped OSD keeps its data across Stop and Start, while
+// a killed OSD or a removed container loses it. ceph osd metadata reports
+// osd_objectstore as memstore.
+//
+//purpose:construction
 func (o OSDStorage) WithObjectStore(store OSDObjectStore) OSDStorage {
 	o.set |= osdStorageObjectStore
 	o.store = store
@@ -70,7 +79,16 @@ func (o OSDStorage) WithObjectStore(store OSDObjectStore) OSDStorage {
 // compatible Docker Desktop engines. No host mount, privileged container or
 // additional image is required. The default remains container-local sparse
 // files. ClusterConfig.WithNoInitialOSDs defers allocation until AddOSD. A non-positive
-// maxBytes is refused.
+// maxBytes is refused. The volume shares the Docker daemon's memory (the Linux
+// VM's on Docker Desktop, the remote host's on a remote engine) with every
+// daemon; size the cap for replicas, metadata, recovery and mClock's startup
+// benchmark, and note that deleting Ceph objects does not necessarily release
+// tmpfs pages. The helper is an idle container without network, created before
+// the first OSD; the cluster refuses to continue with a restarted helper.
+// OSDContainer.Remove discards the purged OSD's directory. Rootless or managed
+// engines may refuse tmpfs volumes.
+//
+//purpose:construction
 func (o OSDStorage) WithInMemory(maxBytes int64) OSDStorage {
 	o.set |= osdStorageInMemory
 	o.memoryMax = maxBytes
@@ -81,11 +99,23 @@ func (o OSDStorage) WithInMemory(maxBytes int64) OSDStorage {
 // Docker-managed local named volume owned by the cluster. Allocation is lazy
 // until the first OSD registration. Unlike tmpfs it needs no live keeper to
 // preserve bytes; an isolated essential-image helper manages fresh/purged paths.
-// Terminate removes the volume after its users; a busy/failed removal is
-// retryable. It cannot be combined with MemStore or WithInMemory. No
-// caller-owned volumes, host mounts or devices are adopted. This does not
-// provide retained detach/reopen, host-reboot durability or a public
-// replacement-container API.
+// Each OSD still gets its own sparse file with WithBlockSize as its logical
+// capacity. The helper has no network and no cluster credentials; a stopped or
+// restarted helper refuses further storage operations before a new OSD is
+// registered and is not replaced automatically, while existing OSDs can still
+// stop and start with their containers. OSDContainer.Remove drains and purges
+// the native registration, removes the container and discards only its
+// directory. Terminate removes every owned OSD and the helper, then deletes the
+// volume without force; a busy or failed deletion keeps ownership for another
+// Terminate. Changed volume metadata is refused before directory operations or
+// deletion, so never modify or attach the volume externally. It cannot be
+// combined with MemStore or WithInMemory. No caller-owned volumes, host mounts
+// or devices are adopted. This is the only backend on which
+// OSDContainer.Detach retains a store and DetachedOSD.Reopen restarts it in a
+// new container; it gives no host-reboot durability, and Terminate also
+// discards detached stores.
+//
+//purpose:construction
 func (o OSDStorage) WithVolume() OSDStorage {
 	o.set |= osdStorageVolume
 	o.volumeKept = true
@@ -95,6 +125,8 @@ func (o OSDStorage) WithVolume() OSDStorage {
 // WithOSDStorage is the grouped option function that carries an OSDStorage to
 // Run. Like every Option it changes the cluster settings only and never reaches
 // a container request.
+//
+//purpose:construction
 func WithOSDStorage(storage OSDStorage) Option {
 	return func(o *options) error { return storage.apply(o) }
 }

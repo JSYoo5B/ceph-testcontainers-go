@@ -16,7 +16,10 @@ import (
 type NetworkPlane string
 
 const (
-	PublicNetworkPlane  NetworkPlane = "public"
+	// PublicNetworkPlane is the client/public bridge.
+	PublicNetworkPlane NetworkPlane = "public"
+	// ClusterNetworkPlane is the OSD replication and heartbeat bridge; with
+	// a single bridge it selects the same endpoint as PublicNetworkPlane.
 	ClusterNetworkPlane NetworkPlane = "cluster"
 )
 

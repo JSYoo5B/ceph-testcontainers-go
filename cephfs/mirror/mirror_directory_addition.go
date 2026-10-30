@@ -41,6 +41,16 @@ type DirectoryAdditionStatus struct {
 // AddDirectory keep their existing contracts. A new completed-other-path intent
 // supersedes the previous addition receipt. Add/reconcile is bounded to two
 // minutes, or the caller's earlier deadline.
+//
+// Only one addition can be pending; while it is, AddDaemon, AddDirectory,
+// RebalanceDirectories, directory and peer removal and RebootstrapPeer are
+// refused. DirectoryAddition.Status reports PolicyPresent (the path is in
+// Ceph's policy) and Registered (the fixture also owns it); after a lost reply
+// the policy can be present while Registered stays false, and only a repeated
+// BeginDirectoryAddition confirms ownership. Neither flag says that a daemon
+// picked up the path.
+//
+//purpose:construction,condition
 func (mirror *Mirror) BeginDirectoryAddition(ctx context.Context, directory string) (*DirectoryAddition, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory addition fixture is unavailable")
@@ -283,6 +293,8 @@ func (r *DirectoryAddition) attempt(ctx context.Context) error {
 // Status is read-only. A visible policy after a lost reply can be reported while
 // Registered remains false until an explicit fresh Begin reconciles the intent.
 // Each observation is bounded to 30 seconds, or the caller's earlier deadline.
+//
+//purpose:observation
 func (r *DirectoryAddition) Status(ctx context.Context) (DirectoryAdditionStatus, error) {
 	result := DirectoryAdditionStatus{}
 	if r == nil || r.original == nil || r.original.mirror == nil {

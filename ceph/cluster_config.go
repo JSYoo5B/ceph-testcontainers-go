@@ -55,6 +55,8 @@ type ClusterConfig struct {
 // WithMonitorCount selects the initial monitor count (default: 1). Three enables
 // quorum failover tests; even counts are allowed for deliberate quorum-loss
 // scenarios. A count below one is refused.
+//
+//purpose:construction
 func (c ClusterConfig) WithMonitorCount(count int) ClusterConfig {
 	c.set |= clusterMonitors
 	c.monitors = count
@@ -64,6 +66,8 @@ func (c ClusterConfig) WithMonitorCount(count int) ClusterConfig {
 // WithManagerCount starts one active manager and the remaining standbys
 // (default: one manager). A count below one is refused; WithNoInitialManagers
 // defers the first manager instead.
+//
+//purpose:construction
 func (c ClusterConfig) WithManagerCount(count int) ClusterConfig {
 	c.set |= clusterManagers
 	c.managers, c.noManagers = count, false
@@ -74,7 +78,13 @@ func (c ClusterConfig) WithManagerCount(count int) ClusterConfig {
 // Run waits for MON quorum and requested OSDs up/in, without implying PG clean
 // or MGR module readiness. Initial CephFS/RGW services are refused before
 // allocation; positive-OSD initial pools are allowed. The essential image must
-// still contain the MGR and its required dependencies.
+// still contain the MGR and its required dependencies. WaitForClean and
+// WaitForPGClean need an available manager, so they cannot succeed before one
+// is added, and Ceph may report MGR_DOWN (after mon_mgr_mkfs_grace) or
+// HEALTH_ERR while client data I/O still works. To simulate a manager outage in
+// a configured cluster, stop the existing manager container instead.
+//
+//purpose:construction
 func (c ClusterConfig) WithNoInitialManagers() ClusterConfig {
 	c.set |= clusterManagers
 	c.managers, c.noManagers = 0, true
@@ -83,6 +93,11 @@ func (c ClusterConfig) WithNoInitialManagers() ClusterConfig {
 
 // WithOSDCount sets the initial number of OSD containers at default locations
 // (default: 2). A count below one is refused; WithNoInitialOSDs starts none.
+// Each OSD gets a logical host osd-ID under the default root. Without
+// WithPoolDefaults the cluster's default pool size is min(2, count) with
+// min_size 1, so a one-OSD cluster gets replica-1 pools that can become clean.
+//
+//purpose:construction
 func (c ClusterConfig) WithOSDCount(count int) ClusterConfig {
 	c.set |= clusterOSDs
 	c.osds, c.initialOSDs, c.noOSDs = count, nil, false
@@ -90,8 +105,20 @@ func (c ClusterConfig) WithOSDCount(count int) ClusterConfig {
 }
 
 // WithInitialOSDs selects the count and logical CRUSH locations of the initial
-// OSDs, one OSDConfig per OSD. An empty layout is refused. The value keeps its
-// own copy of configs.
+// OSDs, one OSDConfig per OSD. An empty layout is refused, and so is a host
+// that appears under different racks or roots. The value keeps its own copy of
+// configs. Pools that need N distinct failure domains are validated against
+// the layout before anything is created.
+//
+// Run registers the initial OSDs one after another in layout order, so IDs,
+// keys and CRUSH host buckets are allocated in that order on every run, and
+// every host bucket exists before any OSD boots. It then starts up to four OSD
+// containers at a time and waits until all are up and in. If an OSD fails to
+// start, no further OSD is started and the error names it; every registered
+// OSD and created container stays owned by the returned cluster. AddOSD adds
+// one OSD at a time.
+//
+//purpose:construction
 func (c ClusterConfig) WithInitialOSDs(configs ...OSDConfig) ClusterConfig {
 	c.set |= clusterOSDs
 	c.osds, c.initialOSDs, c.noOSDs = len(configs), slices.Clone(configs), false
@@ -107,6 +134,8 @@ func (c ClusterConfig) WithInitialOSDs(configs ...OSDConfig) ClusterConfig {
 // calls; WithPoolDefaults may override them. Initial pools and CephFS/RGW
 // services are refused before allocation. No storage readiness is implied:
 // native internal pools may have pending PGs.
+//
+//purpose:construction
 func (c ClusterConfig) WithNoInitialOSDs() ClusterConfig {
 	c.set |= clusterOSDs
 	c.osds, c.initialOSDs, c.noOSDs = 0, nil, true
@@ -117,6 +146,8 @@ func (c ClusterConfig) WithNoInitialOSDs() ClusterConfig {
 // including .mgr, and for omitted PoolConfig.CRUSHRoot/OSDConfig.Root fields.
 // The initial layout must contain enough OSDs in this root for the default
 // replica count. Without this setting the root is default.
+//
+//purpose:construction
 func (c ClusterConfig) WithDefaultCRUSHRoot(root string) ClusterConfig {
 	c.set |= clusterDefaultRoot
 	c.crushRoot = root
@@ -124,8 +155,13 @@ func (c ClusterConfig) WithDefaultCRUSHRoot(root string) ClusterConfig {
 }
 
 // WithPoolDefaults selects size/min_size for pools created by Ceph or callers.
-// Without this setting the fast fixture uses size=min(2, OSD count), min_size=1.
-// CreatePool can override these defaults for each explicitly configured pool.
+// Without this setting the fast fixture uses size=min(2, OSD count), min_size=1
+// (2/1 with WithNoInitialOSDs). It requires 1 <= minSize <= replicas <= 10 and
+// sets osd_pool_default_size and osd_pool_default_min_size, which
+// WithConfigFile therefore rejects. CreatePool can override these defaults for
+// each explicitly configured pool.
+//
+//purpose:construction
 func (c ClusterConfig) WithPoolDefaults(replicas, minSize int) ClusterConfig {
 	c.set |= clusterPoolDefaults
 	c.replicas, c.minSize = replicas, minSize
@@ -135,6 +171,8 @@ func (c ClusterConfig) WithPoolDefaults(replicas, minSize int) ClusterConfig {
 // WithPools creates the selected pools after initial OSD startup. Configs and
 // nested EC settings are copied; cluster defaults are resolved after all Run
 // options have been applied.
+//
+//purpose:construction
 func (c ClusterConfig) WithPools(configs ...PoolConfig) ClusterConfig {
 	c.set |= clusterPools
 	c.pools = clonePoolConfigs(configs)
@@ -148,6 +186,8 @@ func (c ClusterConfig) WithPools(configs ...PoolConfig) ClusterConfig {
 // WithClusterConfig is the grouped option function that carries a ClusterConfig
 // to Run. Like every Option it changes the cluster settings only and never
 // reaches a container request.
+//
+//purpose:construction
 func WithClusterConfig(cluster ClusterConfig) Option {
 	return func(o *options) error { return cluster.apply(o) }
 }

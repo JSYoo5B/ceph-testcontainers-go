@@ -86,6 +86,8 @@ type cephFSNativeSession struct {
 }
 
 // SessionTimeouts reads both limits from the filesystem's current MDSMap.
+//
+//purpose:observation
 func (fs *Filesystem) SessionTimeouts(ctx context.Context) (SessionTimeouts, error) {
 	ctx, fsID, done, err := fs.beginSessionOperation(ctx)
 	if err != nil {
@@ -100,6 +102,8 @@ func (fs *Filesystem) SessionTimeouts(ctx context.Context) (SessionTimeouts, err
 // Each value must be a whole number of seconds and at least 30 seconds, the
 // native minimum. Only one handle per filesystem may be active. The native CLI
 // changes one value per command, so apply and restore are not atomic.
+//
+//purpose:condition
 func (fs *Filesystem) OverrideSessionTimeouts(ctx context.Context, requested SessionTimeouts) (*SessionTimeoutsOverrideHandle, error) {
 	if err := validateCephFSSessionTimeouts(requested); err != nil {
 		return nil, err
@@ -125,6 +129,8 @@ func (fs *Filesystem) OverrideSessionTimeouts(ctx context.Context, requested Ses
 // Restore returns both limits to the values captured before the change. It is
 // idempotent across handle copies. A value that is neither the applied nor the
 // captured one is an outside edit and is refused rather than overwritten.
+//
+//purpose:condition,lifetime
 func (change *SessionTimeoutsOverrideHandle) Restore(ctx context.Context) error {
 	if change == nil || change.filesystem == nil || change.state == nil {
 		return errors.New("CephFS session timeouts override is unavailable")
@@ -180,6 +186,8 @@ func ownedSessionValue(value, previous, applied time.Duration) bool {
 // Sessions lists client sessions from every active rank of the filesystem,
 // including the fixture's own short-lived libcephfs probes. Filter by Hostname
 // or EntityID to find a particular client. It reads native state only.
+//
+//purpose:observation
 func (fs *Filesystem) Sessions(ctx context.Context) ([]Session, error) {
 	ctx, _, done, err := fs.beginSessionOperation(ctx)
 	if err != nil {

@@ -119,6 +119,12 @@ func (m *ManagerContainer) cluster(op string) (*Container, error) {
 // Remove acts on this handle's own instance. A handle of a removed or detached
 // OSD, or one that Reopen replaced, returns an error and never acts on the
 // container that owns the ID now. Remove refuses a detaching or detached OSD.
+//
+// If the remaining OSDs cannot hold the data (replica count or free space),
+// the drain does not finish and the call fails at the timeout; the OSD is left
+// out and reweighted and is not marked in again automatically.
+//
+//purpose:condition,lifetime
 func (o *OSDContainer) Remove(ctx context.Context) error {
 	c, err := o.cluster("OSDContainer.Remove")
 	if err != nil {
@@ -134,6 +140,8 @@ func (o *OSDContainer) Remove(ctx context.Context) error {
 // a nonzero map reweight across out/in. External replacement must not race
 // this method; Ceph has no compare-and-swap operation for OSD membership.
 // A handle of a removed or detached OSD returns an error.
+//
+//purpose:condition
 func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	c, err := o.cluster("OSDContainer.SetIn")
 	if err != nil {
@@ -195,6 +203,13 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 // instance. On error the OSD stays owned with its fence: retry Detach with
 // a fresh context or terminate the cluster. Remove refuses a detaching or
 // detached OSD.
+//
+// Detach only an OSD that is up: a daemon that is still booting can be killed
+// at the end of the stop grace before it marks itself down, and in a one-OSD
+// cluster no peer reports it, so Detach waits until its context ends. A
+// detached OSD leaves Container.OSDs.
+//
+//purpose:condition
 func (o *OSDContainer) Detach(ctx context.Context) (*DetachedOSD, error) {
 	c, err := o.cluster("OSDContainer.Detach")
 	if err != nil {
@@ -219,6 +234,8 @@ func (o *OSDContainer) Detach(ctx context.Context) (*DetachedOSD, error) {
 // also bounds every call. When the call ends early, AdminSocket stops its CLI
 // in the control container before it returns, including one that Docker has
 // not started yet. A nonzero exit returns the output with an error.
+//
+//purpose:native
 func (o *OSDContainer) AdminSocket(ctx context.Context, args ...string) ([]byte, error) {
 	c, err := o.cluster("OSDContainer.AdminSocket")
 	if err != nil {
@@ -243,6 +260,8 @@ func (o *OSDContainer) AdminSocket(ctx context.Context, args ...string) ([]byte,
 // also bounds every call. When the call ends early, AdminSocket stops its CLI
 // in the control container before it returns, including one that Docker has
 // not started yet. A nonzero exit returns the output with an error.
+//
+//purpose:native
 func (m *MonitorContainer) AdminSocket(ctx context.Context, args ...string) ([]byte, error) {
 	c, err := m.cluster("MonitorContainer.AdminSocket")
 	if err != nil {
@@ -267,6 +286,8 @@ func (m *MonitorContainer) AdminSocket(ctx context.Context, args ...string) ([]b
 // also bounds every call. When the call ends early, AdminSocket stops its CLI
 // in the control container before it returns, including one that Docker has
 // not started yet. A nonzero exit returns the output with an error.
+//
+//purpose:native
 func (m *ManagerContainer) AdminSocket(ctx context.Context, args ...string) ([]byte, error) {
 	c, err := m.cluster("ManagerContainer.AdminSocket")
 	if err != nil {
@@ -279,6 +300,8 @@ func (m *ManagerContainer) AdminSocket(ctx context.Context, args ...string) ([]b
 // as cephadm's daemon key rotation does. The rotation is described at
 // ManagerContainer.RotateKey; the same steps and failure semantics apply.
 // A handle of a removed or detached OSD returns an error.
+//
+//purpose:condition
 func (o *OSDContainer) RotateKey(ctx context.Context) error {
 	c, err := o.cluster("OSDContainer.RotateKey")
 	if err != nil {
@@ -311,6 +334,8 @@ func (o *OSDContainer) RotateKey(ctx context.Context) error {
 // the daemon, a later call finishes the rotation with the same key and
 // generates another key only once the daemon's container has restarted.
 // A handle of a removed MGR returns an error.
+//
+//purpose:condition
 func (m *ManagerContainer) RotateKey(ctx context.Context) error {
 	c, err := m.cluster("ManagerContainer.RotateKey")
 	if err != nil {
@@ -322,6 +347,18 @@ func (m *ManagerContainer) RotateKey(ctx context.Context) error {
 // Remove deletes this owned monitor. It preserves a working quorum: add a
 // replacement first when a stop would leave fewer than a majority of the
 // current map running. A handle of a removed monitor returns an error.
+//
+// It refuses a removal that would leave fewer than a majority of the current
+// map running; add a replacement first. MON a can be removed too; the embedded
+// container of Container is then gone and fixture commands use the control
+// container. If the mon remove reply is lost, the call returns an error
+// without resending; calling Remove again with a fresh context reads the
+// current membership, skips the completed native step and finishes the
+// container and configuration cleanup. MON a is described by a fresh
+// descriptor on every listing, so a handle is matched by name and container,
+// not by pointer identity.
+//
+//purpose:condition,lifetime
 func (m *MonitorContainer) Remove(ctx context.Context) error {
 	c, err := m.cluster("MonitorContainer.Remove")
 	if err != nil {
@@ -335,6 +372,8 @@ func (m *MonitorContainer) Remove(ctx context.Context) error {
 // candidate. On failure the handle remains owned for retry or cluster cleanup.
 // Do not edit these manager identities externally while a topology operation
 // is in progress. A handle of a removed manager returns an error.
+//
+//purpose:condition,lifetime
 func (m *ManagerContainer) Remove(ctx context.Context) error {
 	c, err := m.cluster("ManagerContainer.Remove")
 	if err != nil {
@@ -368,6 +407,8 @@ func (m *ManagerContainer) Remove(ctx context.Context) error {
 // that such a lost reply may have created. The store is started through the
 // ordinary bootstrap, which validates the stored identity again and never
 // formats a store that has its ready marker.
+//
+//purpose:condition,lifetime
 func (d *DetachedOSD) Reopen(ctx context.Context) (*OSDContainer, error) {
 	if d == nil || d.cluster == nil {
 		return nil, invalidRequest("DetachedOSD.Reopen: the detached OSD does not belong to a cluster")

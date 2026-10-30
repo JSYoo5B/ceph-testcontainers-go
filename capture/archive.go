@@ -18,6 +18,15 @@ var _ ceph.CaptureFileSource = (*Session)(nil)
 //
 // Finalization.CaptureWithFile is the explicit consent to archive these raw,
 // unsanitized packets; ordinary Finalization.Capture never opens this source.
+// The archive copies only for a failure: it verifies EOF, the exact size and
+// the full SHA256 before it publishes the copy as
+// capture-<registration>-<name>.pcap, refuses a symlink or other non-regular
+// source, and fails verification when the file changed after retrieval.
+// Keep the file and its directory until the finalization returns: a
+// t.TempDir registered after TerminateOnCleanup is removed first, so create
+// it before registering the finalization or use t.ArtifactDir.
+//
+//purpose:evidence
 func (s *Session) CaptureFile(ctx context.Context) (io.ReadCloser, int64, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, 0, "", err

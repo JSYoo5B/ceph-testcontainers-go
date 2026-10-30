@@ -47,6 +47,8 @@ type DirectoryStatus struct {
 // a partial error and DaemonProblems even if this directory's owner is ready.
 // This method accepts only currently owned directory policies; removal-drain and
 // peer-removal observation require a separate retained policy handle.
+//
+//purpose:observation
 func (mirror *Mirror) DirectoryStatus(ctx context.Context, directory string) (DirectoryStatus, error) {
 	var result DirectoryStatus
 	directory, err := normalizeMirrorDirectory(directory)
@@ -247,6 +249,13 @@ func (mirror *Mirror) confirmDirectoryUnchanged(ctx context.Context, directory s
 // live owned process with the captured destination peer. Unrelated stopped
 // members remain in DaemonProblems but do not prevent this directory's readiness.
 // Snapshot completion and payload equivalence are separate conditions.
+//
+// It polls for at most four minutes or the caller's deadline and returns the
+// last status with the last query error on timeout (errors.Is(err,
+// context.DeadlineExceeded) holds). A changed filesystem or peer identity fails
+// at once; after recreating the peer, start a new wait.
+//
+//purpose:observation
 func (mirror *Mirror) WaitDirectoryReady(ctx context.Context, directory string) (DirectoryStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
@@ -262,6 +271,13 @@ func (mirror *Mirror) WaitDirectoryReady(ctx context.Context, directory string) 
 // or byte equality. If another newer snapshot becomes last before observation,
 // this conservative exact-checkpoint wait can time out. Quiesce checkpoint
 // creation and verify the intended destination snapshot bytes separately.
+//
+// Read the source ID with libcephfs, such as
+// snap_info('/data/.snap/<name>')['id']; the destination's own snapshot ID is a
+// different number, and taking the expected value from LastSyncedSnapshot tests
+// nothing. It waits at most four minutes.
+//
+//purpose:observation
 func (mirror *Mirror) WaitSnapshotSynced(ctx context.Context, directory string, checkpoint Snapshot) (DirectoryStatus, error) {
 	if checkpoint.ID == 0 || checkpoint.ID > cephFSObservationMaxSnapshotID || checkpoint.Name == "" || checkpoint.Name == "." || checkpoint.Name == ".." || strings.ContainsAny(checkpoint.Name, "/\x00\r\n") {
 		return DirectoryStatus{}, cephFSObserveGuard("CephFS mirror checkpoint requires a source snapshot ID and valid name")

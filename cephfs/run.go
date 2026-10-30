@@ -14,6 +14,8 @@ import (
 // Bootstrap options that leave the cluster without OSDs or managers for the filesystem, such as
 // ceph.ClusterConfig.WithNoInitialOSDs, are rejected; use ceph.Run for those stages.
 // A non-nil Container returned with an error must still be terminated.
+//
+//purpose:construction
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	c, err := ceph.Run(ctx, img, append(slices.Clone(opts), defaultFilesystem())...)
 	if c == nil {
@@ -28,13 +30,4 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 // packages.
 type Container struct {
 	*ceph.Container
-}
-
-// Filesystems returns the cluster's filesystems sorted by name: the package
-// function Filesystems applied to the embedded cluster.
-func (c *Container) Filesystems() []*Filesystem {
-	if c == nil {
-		return nil
-	}
-	return Filesystems(c.Container)
 }

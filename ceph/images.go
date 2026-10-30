@@ -62,6 +62,8 @@ type ImageOptions struct {
 // WithImageOptions is the grouped option function that carries an ImageOptions
 // to Run. Like every Option it changes the cluster settings only and never
 // reaches a container request.
+//
+//purpose:construction
 func WithImageOptions(config ImageOptions) Option {
 	return func(o *options) error { return config.apply(o) }
 }
@@ -73,6 +75,8 @@ func WithImageOptions(config ImageOptions) Option {
 // and the set leaves empty is refused; there is no fallback to Essential. An
 // explicit empty set is refused, not read as unspecified. WithCephFSImage and
 // WithRGWImage replace the matching role of the set. The ImageSet is copied.
+//
+//purpose:construction
 func (o ImageOptions) WithImageSet(images ImageSet) ImageOptions {
 	o.images, o.imagesSet = images, true
 	return o
@@ -83,6 +87,8 @@ func (o ImageOptions) WithImageSet(images ImageSet) ImageOptions {
 // those started later. Without it MDS daemons use the Run image. Images().CephFS
 // reports it, the usual image argument of cephfs/mirror.Run. With WithImageSet it replaces the set's CephFS role. Use matching
 // Ceph versions. A blank image is refused.
+//
+//purpose:construction
 func (o ImageOptions) WithCephFSImage(image string) ImageOptions {
 	o.cephfs, o.cephfsSet = image, true
 	return o
@@ -95,6 +101,8 @@ func (o ImageOptions) WithCephFSImage(image string) ImageOptions {
 // image as an argument of multisite.Run instead. With
 // WithImageSet it replaces the set's RGW role. Use matching Ceph versions. A
 // blank image is refused.
+//
+//purpose:construction
 func (o ImageOptions) WithRGWImage(image string) ImageOptions {
 	o.rgw, o.rgwSet = image, true
 	return o
@@ -177,6 +185,14 @@ func configureImages(o *options) error {
 
 // ClientContainer returns the owned userspace toolkit executor. It starts
 // lazily for a separate client image; aggregate images reuse the control-plane executor.
+//
+// Run rados, rbd and the Python client bindings there. The first attachment is
+// serialized with MON topology changes and honours cancellation, and the
+// cluster owns the container's partial or successful teardown. RBD and CephFS
+// operations, ObjectWatchers and PGInconsistencies use it, while daemon-local
+// sockets and process observations stay on their daemon.
+//
+//purpose:handoff,native
 func (c *Container) ClientContainer(ctx context.Context) (testcontainers.Container, error) {
 	if c == nil {
 		return nil, fmt.Errorf("ceph cluster is unavailable")

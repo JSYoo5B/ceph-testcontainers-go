@@ -16,6 +16,8 @@ import (
 // the whole cohort's election readiness or proving write/checkpoint delivery.
 // It creates no resources or checkpoints. Admission and native/process reads
 // take at most 30 seconds, bounded by ctx; a partial report can accompany an error.
+//
+//purpose:observation
 func (v *Namespace) ImageStatus(ctx context.Context, imageName string) (ImageStatus, error) {
 	status, _, err := v.imageStatus(ctx, imageName, nil)
 	return status, err
@@ -28,6 +30,8 @@ func (v *Namespace) ImageStatus(ctx context.Context, imageName string) (ImageSta
 // same-container restart may change its native instance. Polls release the owner
 // and member gates. It does not wait for bytes or snapshot completion, rebind a
 // stale bootstrap generation, or expose native private data through error causes.
+//
+//purpose:observation
 func (v *Namespace) WaitReplayReady(ctx context.Context, imageName string) (ImageStatus, error) {
 	if err := validateRBDMirrorObservedImage(imageName); err != nil {
 		return ImageStatus{}, scopedRBDImageError(ctx, err)

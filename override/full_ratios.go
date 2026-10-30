@@ -61,6 +61,33 @@ func notAppliedFullRatios(cause error) (*FullRatiosHandle, error) {
 // refused with ceph.ErrInvalidRequest and Op "override.SetFullRatios". A call that
 // fails after the override was tracked, from the first native step on, returns
 // the real handle with the error.
+//
+// Low ratios reproduce full conditions with a small amount of existing data;
+// the package never fills real devices. Wait for OSD_NEARFULL,
+// OSD_BACKFILLFULL or OSD_FULL with ceph.Observer.HealthDetails before relying
+// on the condition. Terminate does not reset individual thresholds.
+//
+// Outcomes, as the handle it returns and the error:
+//   - All three thresholds applied and read back: real handle; nil.
+//   - Nil cluster: not applied handle; ceph.ErrInvalidRequest, Op
+//     override.SetFullRatios.
+//   - Context already ended, or ended while waiting for the topology lock: not
+//     applied handle; the context error.
+//   - Invalid, unordered or float32-collapsed ratios: not applied handle;
+//     ceph.ErrInvalidRequest.
+//   - This cluster already holds a full ratios override: not applied handle;
+//     plain error.
+//   - Terminated cluster, no control container or unconfirmed bootstrap
+//     identity: not applied handle (reservation released); the cluster's own
+//     error.
+//   - The native map cannot be read, or the original is not ordered: not
+//     applied handle (reservation released); the native error or a plain
+//     error.
+//   - Any failure from the first native step on (command, readback, canceled
+//     context): real handle (uncertain, tracked before the first step); the
+//     error.
+//
+//purpose:condition
 func SetFullRatios(ctx context.Context, c *ceph.Container, requested ceph.FullRatios) (*FullRatiosHandle, error) {
 	const op = "override.SetFullRatios"
 	if c == nil {
@@ -126,6 +153,8 @@ func setFullRatiosLocked(ctx context.Context, c *ceph.Container, requested ceph.
 // pool policies and central configuration are not changed. A handle of a call
 // that was not applied returns nil without taking a lock. A cluster that has
 // been terminated refuses the restore, and the override stays registered.
+//
+//purpose:condition,lifetime
 func (change *FullRatiosHandle) Restore(ctx context.Context) error {
 	if change == nil {
 		return errors.New("full ratios override is unavailable")

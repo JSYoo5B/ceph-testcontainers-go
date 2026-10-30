@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "cephfs",
-  "count": 94,
+  "count": 93,
   "entries": [
     {
       "current": "cephfs.CloneConfig",
@@ -20,14 +20,6 @@
       "current": "cephfs.Container",
       "kind": "type",
       "proposed": "cephfs.Container",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs.Container.Filesystems",
-      "kind": "method",
-      "signature": "func() []*Filesystem",
-      "receiver": "*Container",
-      "proposed": "cephfs.Container.Filesystems",
       "decision": "baseline"
     },
     {

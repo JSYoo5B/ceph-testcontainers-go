@@ -38,6 +38,14 @@ type DirectoryRemovalStatus struct {
 	Daemons                                     map[string]DirectoryRemovalDaemonStatus
 }
 
+// DirectoryRemovalDaemonStatus is one original daemon's view of a directory
+// removal. State is unobserved (not observed yet in this call), tracked (the
+// daemon still has a sync cycle registered for the path), released (no sync
+// cycle for the path in its original session), stopped or unavailable (not
+// running or not queryable; retryable), retired (removed from the fixture) or
+// session-changed (the process, filesystem session or peer command is not
+// the original one; a guard error). Problem explains a state other than
+// released.
 type DirectoryRemovalDaemonStatus struct {
 	ContainerID, InstanceID string
 	State, Problem          string
@@ -50,6 +58,19 @@ type DirectoryRemovalDaemonStatus struct {
 // This first version requires the same process/session throughout observation;
 // stopping, restarting or removing the cohort can prevent a release proof.
 // External policy, filesystem and direct container writers must not race it.
+//
+// On a retry after an uncertain reply a policy that is already gone is not
+// removed again; a policy still present is resent only after the original
+// assigned daemon and cohort are checked again, waiting while the assignment
+// moves and refusing if another daemon took over. While the removal is not
+// Released, AddDirectory, AddDaemon, RebalanceDirectories, peer removal,
+// RebootstrapPeer and removal of other paths are refused. Released means the
+// policy is gone and every original daemon reports released in its original
+// process and session; it does not prove that worker threads exited, the remote
+// lock was released, a checkpoint completed or destination metadata is
+// unchanged. See the package documentation for an interrupted removal.
+//
+//purpose:condition,lifetime
 func (mirror *Mirror) BeginDirectoryRemoval(ctx context.Context, directory string) (*DirectoryRemoval, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory removal fixture is unavailable")
@@ -387,6 +408,8 @@ func (r *DirectoryRemoval) initialStatus() DirectoryRemovalStatus {
 // whole-map path stats observations. Schema/identity changes permanently guard;
 // native query failures remain retryable. Common attestation conservatively
 // guards non-context failures while retaining the intent for fresh-context retry.
+//
+//purpose:observation
 func (r *DirectoryRemoval) Status(ctx context.Context) (DirectoryRemovalStatus, error) {
 	return r.statusWithAdmission(ctx, nil)
 }
@@ -505,6 +528,8 @@ func (r *DirectoryRemoval) observeCohort(ctx context.Context, watchers map[strin
 // WaitReleased drops fixture/member locks after each bounded observation and
 // between polls. Deadline/cancel returns the last partial report, Released=false,
 // preserving both the caller cause and last native observation error.
+//
+//purpose:observation
 func (r *DirectoryRemoval) WaitReleased(ctx context.Context) (DirectoryRemovalStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()

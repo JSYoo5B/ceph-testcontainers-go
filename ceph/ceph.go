@@ -180,7 +180,40 @@ func resolveOptions(img string, opts []testcontainers.ContainerCustomizer) (opti
 // request, so a setting passed as one is never lost and never reaches a
 // container.
 // Images contain runtime tools; this module supplies cluster setup.
-// A non-nil Container returned with an error must still be terminated.
+//
+// Run builds the whole cluster before it returns, bounded by ctx and by
+// WithStartupTimeout: it validates every option together, creates the owned
+// bridge network (two with NetworkConfig.WithSeparateClusterNetwork) or checks
+// the engine in host mode, starts MON a and records its configuration, admin
+// keyring and Ceph version, adds the remaining MONs (and, with more than one,
+// the separate CLI control container), starts the MGRs (the first stays
+// active), registers and starts the OSDs and waits until they are up and in,
+// waits for an available active MGR (or, with
+// ClusterConfig.WithNoInitialManagers, for quorum and the OSDs), and finally
+// creates the ClusterConfig.WithPools pools and the resources of the service
+// options. Run does not wait for clean placement groups; call WaitForClean
+// before client I/O.
+//
+// Contradictory options fail before any Docker resource exists, regardless of
+// their order: a host address without WithHostNetwork; host networking with a
+// separate cluster network or with an address family other than AddressIPv4;
+// a Messenger policy with MessengerV2Secure; AddressIPv4MappedIPv6 with a
+// separate cluster network; one field set by two carriers of the same group;
+// no initial OSDs with initial pools or services; no initial managers with
+// initial filesystems or gateways; a default CRUSH root or an initial pool
+// that the initial layout cannot satisfy; and duplicate pool, filesystem or
+// gateway names, including the pools a filesystem creates. In host mode Run
+// fails with ErrHostNetworkUnavailable when the engine does not run Linux
+// containers, the selected address is not assigned on the Docker host, or the
+// test process cannot reach the first MON.
+//
+// The returned Container embeds the first MON's testcontainers.Container, so
+// generic methods such as Exec, Logs, Host and MappedPort address MON a;
+// Terminate is overridden and removes the whole cluster. A non-nil Container
+// returned with an error owns every resource created so far and must still be
+// terminated; register testcontainers.CleanupContainer before checking err.
+//
+//purpose:construction
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	settings, err := resolveOptions(img, opts)
 	if err != nil {
@@ -483,20 +516,23 @@ func (c *Container) trackHostPortLease(lease *hostPortLease) {
 	c.portLeases.track(lease)
 }
 
-// ManagerContainer returns the initial MGR a for compatibility and inspection.
-// It may be nil after a is removed while another MGR remains active. Use
-// Managers and ManagerStatus for the current candidates and active identity.
-// The cluster owns its cleanup.
-func (c *Container) ManagerContainer() testcontainers.Container {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.members.roster.initialManager()
-}
-
 // WithClient connects another container to Ceph and copies its admin credentials.
 // These privileged, ephemeral credentials are for trusted test containers only.
 // Caller owns and terminates that container before terminating the cluster.
 // The options customize the container's ceph.conf.
+//
+// It copies the bootstrap /etc/ceph/ceph.conf and
+// /etc/ceph/ceph.client.admin.keyring into the container and joins it to the
+// cluster's public network (the host network in host mode). The container must
+// already contain the Ceph clients it uses; WithClient installs nothing, and
+// ceph.DefaultImage or ClusterFacts.Images.Client work for CLI and Python
+// clients. Combine it with WithIdleEntrypoint for a container driven with
+// Exec. Ceph clients connect directly to the OSD addresses the MONs advertise,
+// which in bridge mode are container addresses, so a process on the Docker
+// host cannot reach RADOS, RBD or CephFS through the MON's mapped port alone;
+// use a WithClient container or WithHostNetwork on Linux.
+//
+//purpose:handoff
 func (c *Container) WithClient(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
 	return c.adminClient(opts...)
 }
@@ -525,8 +561,18 @@ func (c *Container) adminClient(opts ...ClientContainerOptions) testcontainers.C
 	}
 }
 
-// Ceph runs the Ceph CLI in the control container. Arguments are passed directly,
-// without shell interpolation. Use --format json for machine-readable responses.
+// Ceph runs the Ceph CLI in the control container with --connect-timeout 5 and
+// returns its standard output. Arguments are passed directly, without shell
+// interpolation. Use --format json for machine-readable responses. A non-zero
+// exit returns the standard output with a *NativeFailure (exit code, the errno
+// Ceph reported and its reason without log lines, keys redacted);
+// errors.Is(err, fs.ErrNotExist) holds for ENOENT. When no MON answers within
+// 5 seconds the CLI exits before it sends the command, and Ceph connects again
+// until a MON answers, ctx ends or a minute has passed, so a stalled or
+// electing MON delays the command instead of failing it, and the command runs
+// once.
+//
+//purpose:native
 func (c *Container) Ceph(ctx context.Context, args ...string) ([]byte, error) {
 	return c.conn().ceph(ctx, args...)
 }
@@ -545,6 +591,8 @@ func (c *Container) Ceph(ctx context.Context, args ...string) ([]byte, error) {
 // serialized. An OSD returned with an error is tracked for cleanup and may be
 // inspected; no data is silently purged on failure. The image override is kept
 // in the OSD's recipe for DetachedOSD.Reopen.
+//
+//purpose:construction,condition
 func (c *Container) AddOSD(ctx context.Context, configs ...OSDOptions) (*OSDContainer, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -937,6 +985,8 @@ func (f osdFleet) waitOSDRemoval(ctx context.Context, id int, drain bool) error 
 
 // ServiceContainers returns owned optional services (such as RGW or MDS),
 // sorted by service name. The cluster owns their cleanup.
+//
+//purpose:observation
 func (c *Container) ServiceContainers() []testcontainers.Container {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -983,6 +1033,21 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 // passed by the caller still takes precedence. From its start, also when it
 // then fails, Terminate refuses new native commands and cancels the running
 // ones, including the command of an rgw.Gateway.Admin call.
+//
+// It first restores network interruptions and resumes paused containers, then
+// releases host port reservations, stops services (RGW, MDS) before OSDs,
+// removes every owned daemon and helper container, the OSD storage volumes and
+// the shared admin-socket run volume, and finally the owned networks. Every
+// container the cluster creates carries the org.testcontainers.ceph.cluster
+// label with the cluster's ID, and Terminate also removes a labelled container
+// it has no handle for, as Docker can create one when the reply to a create
+// request was lost. A failed cleanup can be retried; an endpoint that cannot be
+// restored keeps its network for the retry. Containers the caller attached with
+// WithClient or ClientConfig.WithIdentity are the caller's: terminate them
+// first, because Docker cannot remove a network that still has attached
+// containers (with testcontainers.CleanupContainer, register the cluster first).
+//
+//purpose:lifetime
 func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	return c.terminate(ctx, opts...)
 }

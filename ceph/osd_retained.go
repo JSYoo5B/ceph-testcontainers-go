@@ -35,15 +35,23 @@ type DetachedOSD struct {
 }
 
 // ID returns the retained numeric OSD ID.
+//
+//purpose:observation
 func (d *DetachedOSD) ID() int { return d.id }
 
 // UUID returns the retained OSD UUID that the store and its MON registration hold.
+//
+//purpose:observation
 func (d *DetachedOSD) UUID() string { return d.osdUUID }
 
 // ClusterFSID returns the cluster FSID that the retained store holds.
+//
+//purpose:observation
 func (d *DetachedOSD) ClusterFSID() string { return d.fsid }
 
 // Placement returns the CRUSH location that DetachedOSD.Reopen starts the OSD in.
+//
+//purpose:observation
 func (d *DetachedOSD) Placement() OSDConfig { return d.placement }
 
 // osdStoreIdentity is what a detached store holds: its identity files and the

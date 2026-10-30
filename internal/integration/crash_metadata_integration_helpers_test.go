@@ -119,7 +119,7 @@ os.makedirs(p)
 
 	execCommand(t, ctx, helper, "mkdir", "/var/lib/ceph/crash")
 
-	crashDaemon(t, ctx, cluster.ManagerContainer())
+	crashDaemon(t, ctx, clusteraccess.InitialManager(t, cluster))
 	crashDaemon(t, ctx, osds[0].Container)
 	stop := 10 * time.Second
 	if err := osds[1].Stop(ctx, &stop); err != nil {
@@ -133,7 +133,7 @@ os.makedirs(p)
 	for _, result := range report.Containers {
 		results[result.Role+"."+result.Name] = result
 	}
-	for name, ctr := range map[string]testcontainers.Container{"mgr.a": cluster.ManagerContainer(), "osd.0": osds[0].Container} {
+	for name, ctr := range map[string]testcontainers.Container{"mgr.a": clusteraccess.InitialManager(t, cluster), "osd.0": osds[0].Container} {
 		result := results[name]
 		if result.Outcome != ceph.CrashRecordsFound || len(result.Records) != 1 || result.State != "exited" {
 			t.Fatalf("%s after its crash: %+v", name, result)

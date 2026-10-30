@@ -22,8 +22,12 @@ import (
 type Scope string
 
 const (
+	// ScopeImage enables images one by one, with Mirror.EnableImage or rbd
+	// mirror image enable.
 	ScopeImage Scope = "image"
-	ScopePool  Scope = "pool"
+	// ScopePool enrolls every image with the journaling feature
+	// automatically; it implies ModeJournal.
+	ScopePool Scope = "pool"
 )
 
 // NamespaceState reports native policy for a selected pool/namespace.
@@ -44,6 +48,8 @@ type Policies struct {
 // PolicyStatus reads this link's selected namespace policies after checking the
 // original native pool IDs. External policy changes are reported as native
 // state; callers compare Scope and RemoteNamespace with their desired fixture.
+//
+//purpose:observation
 func (m *Mirror) PolicyStatus(ctx context.Context) (Policies, error) {
 	var status Policies
 	if m == nil {

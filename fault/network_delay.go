@@ -89,6 +89,8 @@ type NetworkPacketFault struct {
 }
 
 // IsZero reports whether the fault is off.
+//
+//purpose:observation
 func (f NetworkPacketFault) IsZero() bool {
 	return f == NetworkPacketFault{}
 }
@@ -192,9 +194,15 @@ type NetworkProfile struct {
 	// offload packet counts with all of its segments. The packets waiting
 	// for the rate, and for the Delay, share one queue of QueueLimit
 	// packets; one that arrives at a full queue is dropped and counted in
-	// NetworkProfileStatus.Drops. Zero sets no limit. It shapes only what the
-	// target sends: what an application achieves through it is less, and is
-	// for the caller to measure.
+	// NetworkProfileStatus.Drops. Zero sets no limit. With a Loss, netem
+	// drops first, then delays, then paces what is left. It shapes only what
+	// the target sends: to limit what the target receives from a peer, limit
+	// the peer's endpoint with the target's address. What an application
+	// achieves through it is less, and is for the caller to measure; the
+	// status's Rate and counters are configuration and counts, not a
+	// throughput. The preflight adds and removes a netem qdisc with a rate on
+	// its loopback and checks what the kernel reports, so a tc or kernel
+	// without netem's rate is refused before the target changes.
 	Rate NetworkRate
 	// QueueLimit, with a Rate, is the netem queue in packets, from 1 to
 	// MaxNetworkQueueLimit; zero means DefaultNetworkQueueLimit.
@@ -207,7 +215,11 @@ type NetworkProfile struct {
 	// may be reordered.
 	Reorder NetworkPacketFault
 	// Duplicate, when set, sends a second copy of this percentage of the
-	// selected packets.
+	// selected packets. iproute2 6.1, the tc of NetemHelperImage, sends a
+	// duplicate's correlation only together with a delay's correlation, so
+	// with a Duplicate.Correlation the lease passes the delay with a zero
+	// correlation (delay 0us 0us 0% without a Delay), the kernel's state
+	// without one.
 	Duplicate NetworkPacketFault
 	// Corrupt, when set, flips one random bit in this percentage of the
 	// selected packets, within the part of the packet that the kernel holds
@@ -911,6 +923,24 @@ func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, re
 // The delay lasts until Restore, or until the target stops or leaves the
 // bridge, which removes its interface. Terminate restores delays that are
 // still held; restore a caller-owned target's delay before removing it.
+//
+// With a Peer or Peers the lease owns a prio root qdisc whose third band
+// leads to the netem child, and one u32 filter per peer that sends its
+// packets there; every priority maps to the first band, so nothing else is
+// delayed. IPv4 peers' filters are in preference 10 and u32 table 800:, with
+// handles 800::1, 800::2 and so on in the given order; IPv6 peers' are in
+// the next preference and table (11 and 801: after IPv4 peers, otherwise 10
+// and 800:). They are added root first and filters last, so no packet is
+// delayed before the hierarchy is complete.
+//
+// TCP absorbs packet faults before Ceph sees them: the receiver reorders
+// segments back, discards duplicates (answering with a D-SACK) and drops a
+// segment whose checksum fails, which the sender retransmits. A Ceph
+// operation that returns the right bytes therefore does not show that a
+// packet was altered; read the receiver's kernel counters for the transport
+// effect.
+//
+//purpose:condition
 func ApplyNetworkProfile(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkProfile) (*NetworkProfileLease, error) {
 	return temporaryNetworkDelay(ctx, c, target, delay, nil)
 }
@@ -948,6 +978,8 @@ func temporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testco
 // Terminate knows it. delay.Plane stays empty; every other field, check and
 // error is that of ApplyNetworkProfile, and a network that is not a bridge
 // is refused.
+//
+//purpose:condition
 func ApplyLinkProfile(ctx context.Context, ctr testcontainers.Container, network string, delay NetworkProfile) (*NetworkProfileLease, error) {
 	return temporaryLinkDelay(ctx, dockerNetemBackend{}, ctr, network, delay)
 }
@@ -1565,6 +1597,13 @@ func removeNetemHelper(ctx context.Context, backend netemBackend, helper testcon
 
 // Status reads the delayed interface's qdiscs through the helper. After the
 // target restarted, stopped, was removed or left the bridge, it reports Gone.
+// With peers it reports Applied only when the root, the netem child and
+// exactly the lease's filters, with the requested address and port keys,
+// are present and nothing else is under the root; Filters holds tc's filter
+// dump with each u32 filter's keys under matches. The counters are the
+// child's, so they count only selected packets.
+//
+//purpose:observation
 func (l *NetworkProfileLease) Status(ctx context.Context) (NetworkProfileStatus, error) {
 	if err := lockMutex(ctx, &l.mu); err != nil {
 		return NetworkProfileStatus{}, err
@@ -1742,6 +1781,8 @@ func (l *NetworkProfileLease) ownedPrefix(status NetworkProfileStatus) error {
 // interface is gone needs no removal. A root qdisc that someone replaced, or
 // a filter or qdisc that someone added under the lease's root, is refused,
 // not removed, and the lease stays retryable.
+//
+//purpose:condition,lifetime
 func (l *NetworkProfileLease) Restore(ctx context.Context) error {
 	if l == nil {
 		return nil

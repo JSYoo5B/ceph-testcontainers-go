@@ -50,8 +50,8 @@ go run ./internal/tools/apinaming approve rgw/multisite
 
 It refuses a stale catalogue, a pending `proposal` row, and a missing review
 note or reference page. The receipt names the review note
-(this page by default, `-review` selects another) and the API
-reference page of the package (`docs/<package>.md`, with `/` written as `-`).
+(this page by default, `-review` selects another) and the usage page of the
+package (`<package>/README.md`).
 The other commands are `check` (what the tests verify) and `aggregate` (the
 per-package counts and totals, computed on demand and never committed).
 
@@ -66,6 +66,15 @@ The public package list is discovered: every directory outside `internal`,
 `testdata`, `vendor` and hidden directories with a non-test Go source is a
 public package and needs a catalogue directory with all three files. A catalogue
 directory without a package fails as well.
+
+## Purpose before naming
+
+Naming applies to an API that belongs in the library at all. First give it its
+purpose tags from [API purpose and purpose tags](../guides/api-purpose.md),
+write them in its `//purpose:` directive, and check that it passes the
+"belongs" test of at least one of them; an API that passes none, such as a
+service-operation or convenience-only API, is refused before its name is
+discussed.
 
 ## Naming convention
 

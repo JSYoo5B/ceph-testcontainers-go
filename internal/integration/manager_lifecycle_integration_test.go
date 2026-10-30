@@ -51,7 +51,7 @@ func TestManagerLifecycle(t *testing.T) {
 	}
 	checkMap("a")
 	managerLifecycleRBDReady(t, ctx, cluster)
-	primary := cluster.ManagerContainer()
+	primary := clusteraccess.InitialManager(t, cluster)
 	b, err := cluster.AddManager(ctx, "b")
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +64,7 @@ func TestManagerLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkMap("b")
-	if cluster.ManagerContainer() != nil || clusteraccess.Managers(t, cluster)[0] != b {
+	if clusteraccess.InitialManager(t, cluster) != nil || clusteraccess.Managers(t, cluster)[0] != b {
 		t.Fatal("removing primary a retained its legacy pointer or replaced b's container")
 	}
 	managerLifecycleRBDReady(t, ctx, cluster)

@@ -535,6 +535,8 @@ func verificationName(name string) bool {
 // The check fails the test both for an unexpected and for an incomplete
 // verification. It never changes the cluster: it restarts, archives and
 // removes nothing, and a failure never skips the cleanups or Terminate.
+//
+//purpose:observation
 func (f *Finalization) Verify(ctx context.Context, config VerificationConfig) (*Verification, error) {
 	if f == nil || f.activate == nil {
 		return nil, invalid(errors.New("Verify needs a Finalization from TerminateOnCleanup"))
@@ -641,6 +643,8 @@ func (v *Verification) activate(ctx context.Context) error {
 // from the activation's baseline. Gaps make a report incomplete instead of
 // returning an error: Evaluate returns an error only when it cannot evaluate
 // at all.
+//
+//purpose:observation
 func (v *Verification) Evaluate(ctx context.Context) (*VerificationReport, error) {
 	if v == nil {
 		return nil, invalid(errors.New("verification is nil"))

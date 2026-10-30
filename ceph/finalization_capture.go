@@ -53,8 +53,20 @@ type finalizationCaptureReport struct {
 // return instead of abandoning it, because the capture's target must not be
 // removed underneath a running settlement. An explicit Stop that already ran
 // is not repeated; its report is the one kept. Settlement errors fail the
-// test, and the report is kept for the archive even then. Nil sessions and
-// registration after finalization started fail the test instead.
+// test, and the report is kept for the archive even then. Nil sessions
+// (including a typed nil pointer) and registration after finalization started
+// fail the test instead.
+//
+// With FinalizationConfig.Archive the archive keeps each settled report as
+// capture-<n>-<name>.json, n being the registration order, and the manifest
+// lists each settlement under captures with its error, failed_test, allowance
+// and reported fields; a settlement failure marks the trigger capture_failed.
+// The archived report names its output file by base name only, and its strings
+// are masked like the manifest's errors (the configured RedactValues and the
+// recognized secret patterns). Only metadata is archived: this never copies or
+// retains the pcap file itself, which CaptureWithFile does on explicit consent.
+//
+//purpose:evidence
 func (f *Finalization) Capture(name string, session CaptureSettler) {
 	if f == nil {
 		return

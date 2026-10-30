@@ -28,6 +28,8 @@ type clientRevocationState struct {
 }
 
 // Name returns the revoked entity, for example client.reader.
+//
+//purpose:observation
 func (r *ClientRevocationHandle) Name() string { return r.state.client.name }
 
 // String deliberately excludes credentials.
@@ -47,6 +49,8 @@ func (r ClientRevocationHandle) GoString() string { return r.String() }
 // again with another key or other capabilities, and one that ClientConfig.Delete
 // removed for good. The restoration is fenced like the removal: when its
 // outcome stays uncertain, the next Restore settles first.
+//
+//purpose:condition,lifetime
 func (r *ClientRevocationHandle) Restore(ctx context.Context) error {
 	if r == nil || r.owner == nil || r.state == nil {
 		return errors.New("client revocation is unavailable")

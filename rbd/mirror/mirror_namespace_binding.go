@@ -59,6 +59,15 @@ func (scope *rbdReceiverScope) guard(m *Mirror) error {
 // The original successful owner setup and captured base policies remain required.
 // Binding takes at most 30 seconds, bounded by ctx, including owner admission.
 // Repeated calls produce separate immutable views, not resource owners or retries.
+//
+// Binding the default namespace requires an active reciprocal default policy; a
+// default namespace in init-only mode cannot be bound. Configure an extra
+// namespace pair with SourceRBD and DestinationRBD instead of a second Run,
+// then bind it here. A Rebootstrap that reaches the native bootstrap step
+// invalidates every earlier view permanently, even when it fails, and Terminate
+// invalidates them too; bind again after a successful Rebootstrap.
+//
+//purpose:construction
 func (m *Mirror) BindNamespace(ctx context.Context, sourceNamespace, destinationNamespace string) (*Namespace, error) {
 	if m == nil {
 		return nil, rbdReceiverGuard("RBD namespace binding owner is unavailable")
@@ -98,6 +107,8 @@ func (m *Mirror) BindNamespace(ctx context.Context, sourceNamespace, destination
 // ReceiverStatus observes this bound namespace pair using the original owner's
 // exact current owned cohort. Zero owned daemons is non-ready. It shares the
 // owner's 30-second admission/process deadline and never creates a receiver.
+//
+//purpose:observation
 func (v *Namespace) ReceiverStatus(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
 	if v == nil || v.owner == nil || v.scope.binding == nil {
 		return ReceiverStatus{}, rbdReceiverGuard("RBD namespace binding is unavailable")
@@ -111,6 +122,8 @@ func (v *Namespace) ReceiverStatus(ctx context.Context, expectedDaemons ...strin
 // admitted cohort; replacement handles and new peer generations are not adopted.
 // Same-container restart may change its native instance. Polls release the owner
 // gate. Ready does not prove replay or delivery of any image/write/checkpoint.
+//
+//purpose:observation
 func (v *Namespace) WaitReceiverReady(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
 	if v == nil || v.owner == nil || v.scope.binding == nil {
 		return ReceiverStatus{}, rbdReceiverGuard("RBD namespace binding is unavailable")

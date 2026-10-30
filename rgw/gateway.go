@@ -24,11 +24,22 @@ import (
 
 // Gateway is an optional S3 gateway owned by its Ceph cluster. AccessKey
 // and SecretKey belong to a generated ordinary S3 user for trusted tests.
+//
+// Gateway embeds testcontainers.Container, so Stop, Start, Logs, Exec and
+// Inspect act on the gateway container. Formatting a Gateway, User, Account,
+// Placement or TLSConfig with any fmt verb, including %+v and %#v, prints only
+// an identifying label such as "RGW gateway s3"; credentials and TLS keys are
+// read explicitly from the fields or User.Credentials. A gateway runs with 4
+// worker threads: enough for functional tests, not for load tests. Rate limits
+// are enforced by each gateway separately.
 type Gateway struct {
 	testcontainers.Container
-	GatewayName   string
-	AccessKey     string
-	SecretKey     string
+	GatewayName string
+	AccessKey   string
+	SecretKey   string
+	// Region is the SigV4 signing region: Config.Region, which defaults to
+	// us-east-1, or for a multisite gateway its zonegroup name. RGW itself
+	// is not configured with it.
 	Region        string
 	port          int
 	tlsPort       int
@@ -364,6 +375,12 @@ func discardNamedAttempt(ctx context.Context, c *ceph.Container, serviceName str
 // network or daemon-host namespace. Host mode returns the advertised address;
 // bridge mode returns the gateway's IP in its Ceph cluster network. The caller
 // must share or reach that network. Use S3Endpoint for host application clients.
+//
+// On a ceph.AddressDualStack cluster it returns the gateway's IPv4 address; the
+// gateway listens on 0.0.0.0:7480 and [::]:7480, so clients in the cluster
+// network reach it over its IPv6 address on port 7480 too.
+//
+//purpose:handoff
 func (c *Gateway) DaemonEndpoint(ctx context.Context) (string, error) {
 	port := c.port
 	if port == 0 {
@@ -400,6 +417,13 @@ func (c *Gateway) DaemonEndpoint(ctx context.Context) (string, error) {
 // 127.0.0.1 address uses the Docker provider host, while a custom host address
 // is returned directly, matching the gateway's bind address.
 // Configure clients to use path-style addressing and the test credentials.
+//
+// Sign with Gateway.Region. In bridge mode the mapped port can change whenever
+// the gateway container restarts (ApplyPlacement, ReloadPlacement, multisite
+// sync group and zone changes, or the caller's own Stop and Start): call
+// S3Endpoint again afterwards.
+//
+//purpose:handoff
 func (c *Gateway) S3Endpoint(ctx context.Context) (string, error) {
 	port := c.port
 	if port == 0 {

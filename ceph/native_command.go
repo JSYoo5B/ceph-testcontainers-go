@@ -93,6 +93,8 @@ type NativeInput struct {
 }
 
 // NewNativeInput returns an open input for one NativeCommand.
+//
+//purpose:native
 func NewNativeInput() *NativeInput {
 	return &NativeInput{writes: make(chan supervised.InputWrite), closed: make(chan struct{}), finished: make(chan struct{})}
 }
@@ -109,6 +111,8 @@ func NewNativeInput() *NativeInput {
 // input is closed, or the command ended or its input stream failed, Write
 // returns an error that matches ErrNativeInputClosed. An empty write sends
 // nothing.
+//
+//purpose:native
 func (in *NativeInput) Write(ctx context.Context, data []byte) error {
 	select {
 	case <-in.closed:
@@ -147,6 +151,8 @@ func (in *NativeInput) Write(ctx context.Context, data []byte) error {
 // Close ends the input: the command gets the end of input after every byte
 // written before. Close is idempotent and never fails; a command that ended
 // before is not affected.
+//
+//purpose:native
 func (in *NativeInput) Close() error {
 	in.close.Do(func() { close(in.closed) })
 	return nil
@@ -176,6 +182,8 @@ type NativeCommandResult struct {
 
 // Complete reports whether the command finished within its time and output
 // limits, so that its output is complete.
+//
+//purpose:native
 func (r NativeCommandResult) Complete() bool {
 	return !r.TimedOut && !r.StdoutTruncated && !r.StderrTruncated
 }
@@ -204,6 +212,8 @@ func (e *NativeCommandUnstoppedError) Unwrap() error { return e.err }
 // confirm anything until then. Each attempt has its own
 // NativeCommandStopTimeout, and waits for a concurrent attempt within ctx.
 // Stop is idempotent and can be retried, also after Terminate.
+//
+//purpose:native,lifetime
 func (e *NativeCommandUnstoppedError) Stop(ctx context.Context) error {
 	inv := e.invocation
 	if inv == nil {
@@ -384,6 +394,20 @@ func validateNativeCommand(command NativeCommand) (string, error) {
 // cancellation stop the command as without Input, and a write in progress
 // then fails. A malformed limit or an Input that served another command fails
 // before anything runs or any input is taken.
+//
+// Failures before the command runs are classified: a malformed command, or a
+// target that the cluster neither owns nor has attached, or that is stopped or
+// paused, is ErrInvalidRequest; a target without python3, or a program that
+// does not exist or is not executable, is ErrImageCapability; a program that
+// could not start for want of a process or memory, or that a security policy
+// refused, and other Docker failures are ErrEnvironmentUnavailable. A container
+// that disappears or stops after the command was sent matches no category,
+// since the command may have run, and neither do context errors,
+// ErrNativeCommandIncomplete, ErrNativeInputClosed or
+// *NativeCommandUnstoppedError. The essential and client roles and the RGW
+// setup runtime provide python3; the cephfs role does not promise it.
+//
+//purpose:native
 func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error) {
 	label, err := validateNativeCommand(command)
 	if err != nil {
@@ -558,6 +582,8 @@ func classifyNativeBackend(err error, dispatched bool) error {
 // keyring keys, service credentials, and the private keys, secret assignments
 // and bearer tokens that it recognizes. It is meant for output that a test
 // logs or reports; an oracle compares the raw bytes. Redaction is best effort.
+//
+//purpose:evidence
 func (c *Container) RedactSecrets(ctx context.Context, data []byte, values ...string) ([]byte, error) {
 	snapshot, err := c.diagnosticsSnapshot(ctx, DiagnosticsConfig{RedactValues: values})
 	if err != nil {

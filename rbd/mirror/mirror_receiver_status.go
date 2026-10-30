@@ -19,6 +19,12 @@ import (
 // proves neither image replay nor delivery of a particular write/checkpoint.
 // ForeignInstances makes the exact-cohort predicate false; it does not mean
 // that another fixture sharing the receiving pool is unhealthy.
+//
+// Daemons holds per-daemon detail keyed by daemon name. LeaderDaemonName and
+// LeaderInstanceID name the owned leader when one was agreed. Instances are the
+// native members and ForeignInstances those this fixture does not own.
+// DaemonProblems holds short reason codes per daemon, such as
+// receiver-scope-not-ready or receiver-leader-converging.
 type ReceiverStatus struct {
 	Pool, SourceNamespace, DestinationNamespace string
 	SourceFSID, DestinationFSID                 string
@@ -64,6 +70,17 @@ type rbdReceiverWitness struct {
 // owned daemon is stopped. It never adopts a process, bootstraps a peer or
 // creates an image. The observation takes at most 30 seconds, bounded by ctx,
 // including owner/member admission. A partial report may accompany an error.
+//
+// Ready requires that every expected daemon runs, has discovered the pool, peer
+// and exact namespace mapping and reports a unique instance; that exactly one
+// owned daemon is leader with a member set equal to the expected set; and that
+// every member reports the same leader. Instances the fixture does not own
+// (ForeignInstances, such as another fixture's daemon for the same pool) make
+// Ready false. A fixture with no daemons is a successful, non-ready
+// observation. Ready can be true while the destination has not yet learned the
+// remote mirror UUID: it is a discovery and election check only.
+//
+//purpose:observation
 func (m *Mirror) ReceiverStatus(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
 	status, _, err := m.receiverStatus(ctx, expectedDaemons, nil)
 	return status, err
@@ -76,6 +93,10 @@ func (m *Mirror) ReceiverStatus(ctx context.Context, expectedDaemons ...string) 
 // Same-container Stop/Start may produce a new native instance. Polls release
 // the fixture lock. Cancellation returns the last useful report, with Ready
 // cleared, and only canonical context causes in the secret-safe error chain.
+//
+// With zero daemons it waits until ctx ends.
+//
+//purpose:observation
 func (m *Mirror) WaitReceiverReady(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
 	if m == nil {
 		return ReceiverStatus{}, rbdReceiverGuard("RBD receiver fixture is unavailable")

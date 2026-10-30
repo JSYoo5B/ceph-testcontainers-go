@@ -144,7 +144,7 @@ func hostNetworkCleanupCluster(t *testing.T, cluster *ceph.Container) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		if t.Failed() {
-			ctrs := append([]testcontainers.Container{cluster.Container, cluster.ManagerContainer()}, cluster.ServiceContainers()...)
+			ctrs := append([]testcontainers.Container{cluster.Container, clusteraccess.InitialManager(t, cluster)}, cluster.ServiceContainers()...)
 			ctrs = append(ctrs, osdContainers(t, cluster)...)
 			for _, ctr := range ctrs {
 				if ctr == nil {

@@ -146,7 +146,7 @@ These affect commands or client libraries you run yourself, not the typed API:
   [Daemon controls](messenger-client-fixtures.md#daemon-controls).
 - **Both releases, CephFS directory rebalancing.** External directory changes or
   mirror daemons joining or leaving can still trigger the upstream MGR hang; see
-  [CephFS limitations](../../cephfs/README.md#limitations-and-release-differences).
+  [CephFS limitations](../../cephfs/README.md#concepts-and-limits).
 
 ## Role images
 
@@ -255,7 +255,7 @@ provided.
 `DaemonOptions.WithImage` starts one new MON or MGR, and `OSDOptions.WithImage` one new
 OSD, from an image other than the cluster's essential image. They are options of
 `AddMonitor`, `AddManager` and `AddOSD`; see
-[Per-daemon images](../../ceph/README.md#per-daemon-images) for the full contract.
+[Per-daemon images](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#DaemonOptions.WithImage) for the full contract.
 
 ```golang
 osd, err := cluster.AddOSD(ctx, ceph.OSDOptions{}.WithImage("registry.example/ceph:other"))

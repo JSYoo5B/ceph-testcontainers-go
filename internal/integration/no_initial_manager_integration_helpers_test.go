@@ -61,7 +61,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 	}
 	fsid := q.MonMap.FSID
 	originalMONCID := cluster.GetContainerID()
-	if len(clusteraccess.Managers(t, cluster)) != 0 || cluster.ManagerContainer() != nil || customizers.Load() != 1 {
+	if len(clusteraccess.Managers(t, cluster)) != 0 || clusteraccess.InitialManager(t, cluster) != nil || customizers.Load() != 1 {
 		t.Fatal("cold construction launched a manager or changed MON customizer scope")
 	}
 	noInitialManagerMap(t, ctx, cluster, false)
@@ -138,7 +138,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		noInitialManagerAuth(t, ctx, cluster, nil)
 	}
 	manager, err := cluster.AddManager(ctx, "a")
-	if err != nil || manager == nil || manager.Container == nil || manager.DaemonName != "a" || cluster.ManagerContainer() != manager.Container {
+	if err != nil || manager == nil || manager.Container == nil || manager.DaemonName != "a" || clusteraccess.InitialManager(t, cluster) != manager.Container {
 		t.Fatal("first explicit manager lost initial-a ownership", err)
 	}
 	oracle.owned = append(oracle.owned, manager.GetContainerID())
@@ -206,7 +206,7 @@ func testNoInitialManager(t *testing.T, host, noStorage bool) {
 		t.Fatal("manager/storage addition replaced original pool", err)
 	}
 	q, err = observeCluster(cluster).QuorumStatus(ctx)
-	if err != nil || q.MonMap.FSID != fsid || cluster.GetContainerID() != originalMONCID || manager.GetContainerID() != originalMGRCID || cluster.ManagerContainer() != manager.Container || noInitialManagerMap(t, ctx, cluster, true) != gid || customizers.Load() != 1 {
+	if err != nil || q.MonMap.FSID != fsid || cluster.GetContainerID() != originalMONCID || manager.GetContainerID() != originalMGRCID || clusteraccess.InitialManager(t, cluster) != manager.Container || noInitialManagerMap(t, ctx, cluster, true) != gid || customizers.Load() != 1 {
 		t.Fatal("provisioning replaced original MON/MGR identity", err)
 	}
 	finalOSDCIDs := make([]string, 0, 2)

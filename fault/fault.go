@@ -1,6 +1,20 @@
 // Package fault injects dedicated faults into an existing Ceph fixture.
 // Cluster-bound operations use ceph.Run's lifetime and are restored by its
-// Terminate. Standalone link operations are restored by their caller.
+// Terminate, in this order: network shaping first, endpoint restoration
+// second, then paused containers are resumed. Standalone link operations
+// (InterruptLink, ApplyLinkProfile) are restored by their caller before it
+// removes their container or bridge. Keep a non-nil handle returned with an
+// error: its restore stays retryable after an uncertain result.
+//
+// The error categories are those of package ceph; the sentinels of this
+// package match them with errors.Is.
+//
+// Policy and admission controls that only change how Ceph admits work, such
+// as full ratios, OSD flags and the session blocklist, live in package
+// override even when a test uses them to provoke failures. Object read-error
+// injection is here because it is a purpose-built synthetic fault, although
+// Ceph implements it as a daemon debug switch; scrub, repair and inspection
+// of the damaged PG stay in package ceph.
 package fault
 
 import (

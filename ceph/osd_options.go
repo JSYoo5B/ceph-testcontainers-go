@@ -26,6 +26,8 @@ type OSDOptions struct {
 // together: an empty field is an explicit request for its default, and
 // WithPlacement(OSDConfig{}) is an explicit default placement. A later call on
 // the same value replaces the earlier placement entirely.
+//
+//purpose:construction
 func (o OSDOptions) WithPlacement(config OSDConfig) OSDOptions {
 	o.placement, o.placementSet = config, true
 	return o
@@ -40,6 +42,8 @@ func (o OSDOptions) WithPlacement(config OSDConfig) OSDOptions {
 // of whitespace and control characters; an empty image is an explicit invalid
 // selection, not an unspecified one. A later call on the same value replaces the
 // earlier image.
+//
+//purpose:construction
 func (o OSDOptions) WithImage(image string) OSDOptions {
 	o.image, o.imageSet = image, true
 	return o

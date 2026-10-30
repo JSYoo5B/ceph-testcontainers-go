@@ -27,6 +27,8 @@ var errNilCluster = errors.New("ceph cluster is unavailable")
 // Customizers apply to each MDS and must preserve its identity, config, keyring,
 // entrypoint and networking. A non-nil result with an error identifies attempted
 // resources; the cluster owns cleanup, including partial daemon startup.
+//
+//purpose:construction
 func Start(ctx context.Context, c *ceph.Container, config Config, opts ...testcontainers.ContainerCustomizer) (*Filesystem, error) {
 	if c == nil {
 		return nil, errNilCluster
@@ -37,6 +39,8 @@ func Start(ctx context.Context, c *ceph.Container, config Config, opts ...testco
 // Filesystems returns the cluster's owned filesystem descriptors sorted by
 // filesystem name, including a descriptor whose setup partially failed. The
 // cluster owns their MDS containers.
+//
+//purpose:observation
 func Filesystems(c *ceph.Container) []*Filesystem {
 	if c == nil {
 		return nil
@@ -60,6 +64,13 @@ func Filesystems(c *ceph.Container) []*Filesystem {
 //
 // Remove acts on this descriptor. One that Remove already removed, or that is
 // not the one the cluster owns for its name, returns an error.
+//
+// It requests fs set <name> down true and requires the filesystem's native up
+// map to be empty before fs rm, so a rank that is still stopping or
+// reconnecting blocks removal, and health warnings never authorize a forced fs
+// fail.
+//
+//purpose:lifetime
 func (fs *Filesystem) Remove(ctx context.Context) error {
 	if fs == nil || fs.id.cluster == nil {
 		return errNilCluster
@@ -70,6 +81,8 @@ func (fs *Filesystem) Remove(ctx context.Context) error {
 // WithFilesystems creates named filesystems and their MDS topologies during
 // Run. No arguments selects the default filesystem. Repeated options replace
 // the list; Start can add further filesystems after Run returns.
+//
+//purpose:construction
 func WithFilesystems(configs ...Config) ceph.Option {
 	if len(configs) == 0 {
 		configs = []Config{{}}

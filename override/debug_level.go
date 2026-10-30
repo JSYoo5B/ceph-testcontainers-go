@@ -42,6 +42,8 @@ func (h DebugLevelHandle) GoString() string { return h.String() }
 // Receipt returns a copy of the window's record. It reads only local state and
 // never queries the daemon. A handle that has no window (a nil handle or the
 // zero value) returns a receipt without a state.
+//
+//purpose:observation
 func (h *DebugLevelHandle) Receipt() ceph.DebugLevelReceipt {
 	if h == nil || h.state == nil {
 		return ceph.DebugLevelReceipt{Transitions: []ceph.DebugLevelTransition{}}
@@ -95,6 +97,38 @@ func (h *DebugLevelHandle) Receipt() ceph.DebugLevelReceipt {
 // outside write of the window's own value cannot be told apart from it. A
 // restart of the daemon's container from outside the cluster after the last
 // check is not held off either.
+//
+// There is no generic logging default: no level or duration is a universal
+// diagnostic setting, and 0/0 is a control rather than a silence guarantee.
+// Pick the daemon and option relevant to one concrete operation, open the
+// window right before it and restore right after it returns. Verbose logging
+// can change the CPU use and timing of the operation it observes.
+//
+// Outcomes, as the handle it returns and the error:
+//   - Window applied and read back: real handle (applied-verified); nil.
+//   - Nil cluster: not applied handle; ceph.ErrInvalidRequest, Op
+//     override.SetDebugLevel.
+//   - Context already ended: not applied handle; the context error.
+//   - Option or level not supported: not applied handle;
+//     ceph.ErrInvalidRequest.
+//   - Daemon is not an OSD such as osd.0: not applied handle;
+//     ceph.ErrInvalidRequest.
+//   - OSD unknown, purged, being purged or detaching: not applied handle;
+//     ceph.ErrInvalidRequest.
+//   - Terminated cluster: not applied handle; the error of an operation on a
+//     terminated cluster.
+//   - A window for this daemon and option is open: not applied handle;
+//     ceph.ErrInvalidRequest.
+//   - The daemon is not an owned running one, or the prior level cannot be
+//     read: not applied handle; the native or inspection error.
+//   - The generation changed before the set was issued: not applied handle;
+//     the refusal.
+//   - The set, its settling or its readback fails or differs: real handle
+//     (apply-uncertain); the joined errors.
+//   - The generation changed during the set: real handle (target-changed); the
+//     joined errors.
+//
+//purpose:condition,evidence
 func SetDebugLevel(ctx context.Context, c *ceph.Container, setting ceph.DebugLevelSetting) (*DebugLevelHandle, error) {
 	const op = "override.SetDebugLevel"
 	if c == nil {
@@ -368,6 +402,8 @@ func openDebugLevel(ctx context.Context, registry overridehook.DebugWindows, tar
 // and the settling of a set use fresh contexts bounded by the cluster's
 // startup timeout. A handle of a call that was not applied returns nil without
 // taking a lock.
+//
+//purpose:condition,lifetime
 func (h *DebugLevelHandle) Restore(ctx context.Context) error {
 	if h == nil || h.state == nil {
 		return errors.New("debug level override is unavailable")

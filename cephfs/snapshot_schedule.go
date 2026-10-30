@@ -119,6 +119,12 @@ const snapshotScheduleTime = "2006-01-02T15:04:05"
 // directory keeps retention rules after its last schedule is removed: rules
 // that the new schedule inherits are refused with ceph.ErrInvalidRequest
 // after the schedule was added, with a lease that removes it.
+//
+// A non-nil lease returned with an error must be restored: after an add whose
+// reply was lost, Restore takes the only schedule with the requested repeat and
+// start as the lease's.
+//
+//purpose:construction
 func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule SnapshotSchedule) (*SnapshotScheduleLease, error) {
 	if err := validateSnapshotSchedule(schedule); err != nil {
 		return nil, err
@@ -345,6 +351,8 @@ func (l *SnapshotScheduleLease) match(statuses []SnapshotScheduleStatus) (*Snaps
 }
 
 // Status reads the schedule's state from the snap_schedule module.
+//
+//purpose:observation
 func (l *SnapshotScheduleLease) Status(ctx context.Context) (SnapshotScheduleStatus, error) {
 	status, err := l.find(ctx)
 	if err != nil {
@@ -359,6 +367,8 @@ func (l *SnapshotScheduleLease) Status(ctx context.Context) (SnapshotScheduleSta
 // Snapshots lists the snapshots in the directory's .snap that the module
 // took, named "scheduled-…", oldest first, through libcephfs in the control
 // container.
+//
+//purpose:observation
 func (l *SnapshotScheduleLease) Snapshots(ctx context.Context) ([]string, error) {
 	control, err := l.filesystem.id.cluster.ClientContainer(ctx)
 	if err != nil {
@@ -420,6 +430,8 @@ finally:
 //     a change, and so it does for a rule whose count changed or a schedule
 //     with the lease's repeat that is not the lease's. The lease stays
 //     retryable, for example after the other schedule's owner removed it.
+//
+//purpose:construction,lifetime
 func (l *SnapshotScheduleLease) Restore(ctx context.Context) error {
 	if l == nil {
 		return nil

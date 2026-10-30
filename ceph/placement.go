@@ -21,6 +21,8 @@ type OSDConfig struct {
 }
 
 // Placement returns a copy of this OSD's resolved logical CRUSH location.
+//
+//purpose:observation
 func (o *OSDContainer) Placement() OSDConfig { return o.placement }
 
 var crushLocationName = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)

@@ -25,6 +25,8 @@ var errStalePool = errors.New("pool handle is stale")
 // The returned Pool describes what the cluster reports: Name, PGNum,
 // Replicas (of a replicated pool), MinSize and ErasureCodeProfile. The other
 // fields, CRUSHRule included, are zero; PoolState has the full native state.
+//
+//purpose:observation
 func (c *Container) Pool(ctx context.Context, name string) (*Pool, error) {
 	if err := validateExistingPoolName(name); err != nil {
 		return nil, err
@@ -123,6 +125,8 @@ func (pc poolCatalog) handleState(ctx context.Context, name string, handle *Pool
 
 // Status returns the native state of this pool. It fails when the pool does
 // not exist or the name belongs to another pool now.
+//
+//purpose:observation
 func (p *Pool) Status(ctx context.Context) (PoolState, error) {
 	c, err := p.cluster("Pool.Status")
 	if err != nil {
@@ -147,6 +151,11 @@ func (p *Pool) Status(ctx context.Context) (PoolState, error) {
 // This method makes no writes, retries or background workers. External pool or
 // control configuration writers must not race it; the native reads are not an
 // atomic transaction. Poll with a caller deadline for eventual assertions.
+//
+// A pool without a statistics row is an error, not an empty result, and
+// AllocatedBytes need not equal StoredBytes times the replica count.
+//
+//purpose:observation
 func (p *Pool) Usage(ctx context.Context) (PoolUsageSnapshot, error) {
 	c, err := p.cluster("Pool.Usage")
 	if err != nil {
@@ -262,6 +271,10 @@ func (p *Pool) Usage(ctx context.Context) (PoolUsageSnapshot, error) {
 // must not race these separate reads. Compare original fixture identities
 // and data when asserting movement; these reported PGs are not current
 // mappings or read-after-write evidence.
+//
+// It works before any OSD exists.
+//
+//purpose:observation
 func (p *Pool) PGs(ctx context.Context) (PoolPGSnapshot, error) {
 	c, err := p.cluster("Pool.PGs")
 	if err != nil {
@@ -390,6 +403,8 @@ func (p *Pool) PGs(ctx context.Context) (PoolPGSnapshot, error) {
 // movement. Without an active manager the targets remain pending. The native
 // pool ID is checked before each mutation; on partial failure inspect Status.
 // Native per-OSD PG limits can still reject the request.
+//
+//purpose:construction,condition
 func (p *Pool) SetPGCount(ctx context.Context, pgNum int) error {
 	c, err := p.cluster("Pool.SetPGCount")
 	if err != nil {
@@ -437,6 +452,8 @@ func (p *Pool) SetPGCount(ctx context.Context, pgNum int) error {
 // identifies. The count does not imply clean PGs, completed backfill or data
 // visibility; call WaitForClean afterwards or use PGs. Cluster startup
 // timeout applies.
+//
+//purpose:observation
 func (p *Pool) WaitForPGCount(ctx context.Context, pgNum int) error {
 	c, err := p.cluster("Pool.WaitForPGCount")
 	if err != nil {
@@ -520,6 +537,8 @@ func (p *Pool) WaitForPGCount(ctx context.Context, pgNum int) error {
 // move incomplete; nobackfill alone does not stop log-based recovery of small
 // PGs. EC rules are bound to their profile and are refused. External
 // pool/CRUSH edits must not race this call.
+//
+//purpose:construction,condition
 func (p *Pool) SetPlacement(ctx context.Context, placement PoolPlacement) error {
 	c, err := p.cluster("Pool.SetPlacement")
 	if err != nil {
@@ -584,6 +603,12 @@ func (p *Pool) SetPlacement(ctx context.Context, placement PoolPlacement) error 
 // Commands are sequential and may partially succeed; inspect Status after an
 // error. Existing data is never removed. External pool edits must not race
 // this operation; native pool IDs are checked before each mutation.
+//
+// Quotas are enforced from asynchronously reported PG statistics, so writes
+// can overshoot briefly; when a quota is reached Ceph marks the pool full and
+// clients see writes blocked or EDQUOT, depending on the client.
+//
+//purpose:construction,condition
 func (p *Pool) SetQuota(ctx context.Context, quota PoolQuota) error {
 	c, err := p.cluster("Pool.SetQuota")
 	if err != nil {
@@ -630,6 +655,8 @@ func (p *Pool) SetQuota(ctx context.Context, quota PoolQuota) error {
 // WaitForClean waits for resulting recovery. On partial failure, inspect
 // Status; no rollback or data deletion is attempted. External pool/CRUSH
 // edits must not race this call.
+//
+//purpose:construction,condition
 func (p *Pool) SetReplication(ctx context.Context, replicas, minSize int) error {
 	c, err := p.cluster("Pool.SetReplication")
 	if err != nil {
@@ -712,6 +739,8 @@ func (p *Pool) SetReplication(ctx context.Context, replicas, minSize int) error 
 //
 // After a complete removal the handle is stale and every operation through
 // it returns an error, so a later pool that reuses the name is not affected.
+//
+//purpose:lifetime
 func (p *Pool) Remove(ctx context.Context) error {
 	c, err := p.cluster("Pool.Remove")
 	if err != nil {

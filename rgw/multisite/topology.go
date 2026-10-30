@@ -271,6 +271,8 @@ func validRGWZoneName(name string) bool {
 
 // Zones returns owned zone descriptors sorted by name, including partial zones
 // returned by a failed AddZone. It does not expose private system credentials.
+//
+//purpose:observation
 func (f *Fixture) Zones() []Zone {
 	f.topologyMu.Lock()
 	defer f.topologyMu.Unlock()
@@ -301,6 +303,8 @@ func (f *Fixture) zoneStates() []*rgwZoneState {
 // ZoneAdmin runs native radosgw-admin in any owned zone, including a partial
 // zone whose CLI client started successfully. Do not edit period/zone state
 // concurrently with AddZone or external metadata master transitions.
+//
+//purpose:native
 func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([]byte, error) {
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return nil, err
@@ -334,6 +338,8 @@ func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([
 // initialization fails rather than adopting an external zone.
 // image selects the new gateway. Its setup client uses the new cluster's rgw
 // image unless the fixture was configured with SetupImage.
+//
+//purpose:construction,condition
 func (f *Fixture) AddZone(ctx context.Context, image string, config ZoneConfig, opts ...testcontainers.ContainerCustomizer) (*Zone, error) {
 	if f == nil || !validRGWZoneName(config.Name) {
 		return nil, errors.New("invalid RGW fixture or zone name")

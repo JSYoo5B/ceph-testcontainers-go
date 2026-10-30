@@ -28,6 +28,13 @@ const CrashDir = "/var/lib/ceph/crash"
 // container. AdditionalContainers are caller-owned containers, such as
 // mirror daemons, whose CrashDir is read too; collection never adopts them.
 // RedactValues removes additional opaque secrets from the collected fields.
+//
+// The limits are 5 minutes total, 1 minute per container, 256 MiB of archive,
+// 65536 entries, 1 MiB per metadata file, 1024 records per container (later
+// ones are listed in Omitted), 64 additional containers and 128 redaction
+// values of up to 4096 bytes. An additional container is read whatever its
+// Role and Name; the control container, which runs no daemon, is read only
+// when listed here.
 type CrashMetadataConfig struct {
 	Timeout              time.Duration
 	OperationTimeout     time.Duration
@@ -199,6 +206,21 @@ func normalizeCrashMetadataConfig(config CrashMetadataConfig) (CrashMetadataConf
 // container's outcome, rejected files and errors stay in the report, which is
 // returned also with an error for failed or incomplete reads. Crash metadata
 // can still hold host names and paths; review a report before sharing it.
+//
+// Ceph writes a report directory (a meta JSON file, a log file and a done
+// marker) into CrashDir when a daemon dies on a fatal signal or a failed
+// assertion; only meta files, also in posted/, are read, other entries are
+// counted in IgnoredEntries, and rejected files are listed in Omitted with
+// their reason. A record keeps the known crash fields (crash_id, timestamp,
+// process_name, entity_name, ceph_version, utsname_*, os_*, backtrace,
+// assert_*, io_error*, archived, stack_sig) and names other fields in
+// OmittedFields without values. A failed or incomplete container makes the
+// call return an error with the report and the other containers' records. A
+// container's exit code alone does not tell a crash: a daemon that is PID 1,
+// as here, exits 1 after writing its report. It is not called automatically
+// outside TerminateOnCleanup's archive.
+//
+//purpose:evidence
 func (c *Container) CollectCrashMetadata(ctx context.Context, config CrashMetadataConfig) (*CrashMetadataReport, error) {
 	config, err := normalizeCrashMetadataConfig(config)
 	if err != nil {

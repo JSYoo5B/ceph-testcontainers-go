@@ -45,7 +45,7 @@ func TestRGWMinimalS3Recipe(t *testing.T) {
 	}
 	gateway := gateways[0]
 	containers := map[string]bool{}
-	for _, ctr := range []testcontainers.Container{cluster.Container.Container, cluster.ManagerContainer(), clusteraccess.OSDs(t, cluster.Container)[0], gateway} {
+	for _, ctr := range []testcontainers.Container{cluster.Container.Container, clusteraccess.InitialManager(t, cluster.Container), clusteraccess.OSDs(t, cluster.Container)[0], gateway} {
 		containers[ctr.GetContainerID()] = true
 	}
 	if control, err := cluster.ControlContainer(ctx); err != nil || control.GetContainerID() != cluster.Container.Container.GetContainerID() {

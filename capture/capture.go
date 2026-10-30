@@ -84,11 +84,11 @@ type Request struct {
 	// extension.
 	HelperImage string
 	// Network is the user-defined bridge network through which the target's
-	// endpoint is selected.
+	// endpoint is selected; bridge, host and none are refused.
 	Network string
 	// Interface is the target's interface on Network, inside the target's
 	// network namespace, such as "eth0". Start checks that its MAC address
-	// is that of the endpoint.
+	// is that of the endpoint; any and lo are refused.
 	Interface string
 	// Filter is a pcap-filter expression that selects the traffic. It is
 	// compiled before the capture starts.
@@ -100,7 +100,8 @@ type Request struct {
 	// MaxFileBytes.
 	MaxPackets int
 	// Output is the path of the file that Stop writes the capture to. It must
-	// not exist; Start creates it, and its directory must exist.
+	// not exist; Start creates it, and its directory must exist, so parallel
+	// or repeated tests need distinct paths.
 	Output string
 	// ReadyTimeout bounds the wait for readiness; zero is
 	// DefaultReadyTimeout.
@@ -225,6 +226,12 @@ type Statistics struct {
 
 // FileReport is the structural check of the retrieved file. Counts cover
 // the records read completely before the verdict.
+//
+// The check reads with two bounds, the file size and one record's captured
+// length. A record's declared length is compared with them before anything
+// is read, and record data streams through the digest without being held,
+// so a hostile length can neither allocate nor read its declared size. Read
+// errors are returned as errors, never as a verdict.
 type FileReport struct {
 	Status FileStatus `json:"status"`
 	// Reason explains any status other than FileValid.
@@ -253,6 +260,11 @@ type FileReport struct {
 // the target did, and what was delivered. Process, target, retrieval and
 // file outcomes are separate: a valid file can come from a capture that
 // ended early or lost its target.
+//
+// The report carries JSON field tags for delivery. The pcap itself holds
+// payloads, addresses and identifiers that text and JSON redaction do not
+// sanitize; keep capture files only where the caller deliberately selects
+// them.
 type Report struct {
 	// ContainerID, Network, Interface and MACAddress identify the captured
 	// endpoint; SandboxID, TargetStartedAt and Namespace the network
@@ -348,19 +360,29 @@ var pollInterval = 100 * time.Millisecond
 // Host-network, stopped or paused targets and targets that share another
 // container's namespace are refused.
 //
-// Before the capture starts, a probe in the same namespace checks the image
-// against the contract, compiles the filter and checks that the interface
-// has the endpoint's MAC address. A missing HelperImage is
+// Before the capture starts, a short-lived probe from the same image in the
+// same namespace checks the contract's executables (sh, sleep, tcpdump,
+// python3) and non-root user, runs tcpdump --version, compiles the filter
+// with tcpdump -y EN10MB -d and reads the interface's MAC address. The
+// capture then runs the image ID that the probe ran, not the tag, as
+//
+//	tcpdump -p -i <Interface> -s <SnapLen> -c <MaxPackets> --immediate-mode -U -w <file> -- <Filter>
+//
+// A missing HelperImage is
 // ceph.ErrImageCapability; a bad request, filter or interface is
 // ceph.ErrInvalidRequest; and the errors ErrImageUnsupported,
 // ErrPermissionDenied and ErrFailed tell an unsuitable image, a denied
 // capability and a capture that did not become ready apart.
 //
-// Readiness is tcpdump's "listening on" line together with its file; a
-// running helper alone is not. The session is bound to the target's
+// Readiness is tcpdump's "listening on <Interface>, link-type EN10MB" line
+// together with its output file; a running helper or an existing file alone
+// is not. Start the workload of interest only after Start returns. The session is bound to the target's
 // container instance and sandbox at that point and never follows a restart.
-// Start returns a non-nil session with an error only when it could not
-// remove a probe or a helper that failed; Stop it to retry the removal.
+// After a failure Start removes the helper and the output file it created.
+// It returns a non-nil session with an error only when it could not remove
+// a probe or a helper that failed; Stop it to retry the removal.
+//
+//purpose:evidence
 func Start(ctx context.Context, target testcontainers.Container, req Request) (*Session, error) {
 	return start(ctx, dockerBackend{}, target, req)
 }
@@ -589,6 +611,8 @@ func (s *Session) removeHelper(ctx context.Context) error {
 // or delivered a file that is not valid classic pcap, and a removal error. A
 // capture that ended at MaxPackets is not an error; its End says so. After a removal error
 // Stop can be called again; it returns the same report.
+//
+//purpose:evidence,lifetime
 func (s *Session) Stop(ctx context.Context) (Report, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -858,8 +882,12 @@ func classifyStartError(ctx context.Context, label string, err error) error {
 var _ ceph.CaptureSettler = (*Session)(nil)
 
 // SettlementAllowance is the longest Settle runs: the stop grace plus the
-// package's own Docker allowance, whatever context Settle is given. It is
-// what ceph.Finalization.Capture admits for this session.
+// package's own two-minute Docker allowance (130 seconds with the default
+// stop grace), whatever context Settle is given. It is what
+// ceph.Finalization.Capture admits for this session. Callers that do not use
+// a finalization call Stop instead of Settle.
+//
+//purpose:evidence
 func (s *Session) SettlementAllowance() time.Duration {
 	return s.stopGrace() + finishTimeout
 }
@@ -870,6 +898,8 @@ func (s *Session) SettlementAllowance() time.Duration {
 // It shares Stop's behavior: the context's cancellation does not shorten it,
 // it waits for a Stop that is already running, and a Stop that already
 // finished is not repeated.
+//
+//purpose:evidence,lifetime
 func (s *Session) Settle(ctx context.Context) (any, error) {
 	report, err := s.Stop(ctx)
 	if report.Output != "" {

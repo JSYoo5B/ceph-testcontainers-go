@@ -70,6 +70,9 @@ type rgwAccountState struct {
 	versionTag         string
 }
 
+// ID returns the native account ID, or "" for a nil handle.
+//
+//purpose:observation
 func (a *Account) ID() string {
 	if a == nil {
 		return ""
@@ -136,6 +139,8 @@ func normalizeRGWAccountConfig(config AccountConfig) (AccountConfig, error) {
 // creation response and native metadata version tag. Inspect uncertain results
 // through Admin or terminate the disposable cluster; do not migrate users into
 // them or blindly delete an identity whose creation was not confirmed.
+//
+//purpose:construction,handoff
 func (g *Gateway) CreateAccount(ctx context.Context, config AccountConfig) (*Account, error) {
 	config, err := normalizeRGWAccountConfig(config)
 	if err != nil {
@@ -301,6 +306,8 @@ func (g *Gateway) ownedAccount(ctx context.Context, a *Account) (*rgwNativeAccou
 }
 
 // Info reads the owned account's authoritative native policy.
+//
+//purpose:observation
 func (a *Account) Info(ctx context.Context) (AccountInfo, error) {
 	if a == nil || a.owner == nil {
 		return AccountInfo{}, servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))
@@ -327,6 +334,8 @@ func (a *Account) Info(ctx context.Context) (AccountInfo, error) {
 // Empty Tenant inherits the account tenant; a different tenant is rejected.
 // Account root grants permissions within the account; global admin and multisite
 // system flags remain false. IAM operations remain on the consuming client.
+//
+//purpose:construction,handoff
 func (a *Account) CreateRootUser(ctx context.Context, config UserConfig) (*User, error) {
 	if a == nil || a.owner == nil {
 		return nil, errors.New("owned RGW account is required")
@@ -343,12 +352,16 @@ func (a *Account) CreateRootUser(ctx context.Context, config UserConfig) (*User,
 // SetQuota replaces aggregate account limits and their enabled state.
 // Native account quota size is rounded to KiB, so byte limits must be -1, zero
 // or a positive multiple of 1024. Readback does not promise cache enforcement.
+//
+//purpose:construction,condition
 func (a *Account) SetQuota(ctx context.Context, quota Quota) error {
 	return a.setQuota(ctx, "account", quota)
 }
 
 // SetBucketQuota applies individual bucket limits to every bucket owned
 // by this account, independent of which account identity created the bucket.
+//
+//purpose:construction,condition
 func (a *Account) SetBucketQuota(ctx context.Context, quota Quota) error {
 	return a.setQuota(ctx, "bucket", quota)
 }
@@ -409,6 +422,8 @@ func (a *Account) setQuota(ctx context.Context, scope string, quota Quota) error
 // Ceph refuses remaining users, buckets, roles, groups, OIDC providers or topics.
 // Remove these through their ordinary clients first. Success is idempotent across
 // copies. Native external account edits must not race these fixture helpers.
+//
+//purpose:lifetime
 func (a *Account) Remove(ctx context.Context) error {
 	if a == nil || a.owner == nil {
 		return servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))

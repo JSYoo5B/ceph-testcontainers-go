@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw",
-  "count": 62,
+  "count": 58,
   "entries": [
     {
       "current": "rgw.Account",
@@ -102,22 +102,6 @@
       "current": "rgw.Container",
       "kind": "type",
       "proposed": "rgw.Container",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Container.Gateways",
-      "kind": "method",
-      "signature": "func(ctx context.Context) ([]*Gateway, error)",
-      "receiver": "*Container",
-      "proposed": "rgw.Container.Gateways",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Container.S3Endpoint",
-      "kind": "method",
-      "signature": "func(ctx context.Context) (string, error)",
-      "receiver": "*Container",
-      "proposed": "rgw.Container.S3Endpoint",
       "decision": "baseline"
     },
     {
@@ -244,14 +228,6 @@
       "decision": "baseline"
     },
     {
-      "current": "rgw.Placement.ServedBy",
-      "kind": "method",
-      "signature": "func(g *Gateway) bool",
-      "receiver": "*Placement",
-      "proposed": "rgw.Placement.ServedBy",
-      "decision": "baseline"
-    },
-    {
       "current": "rgw.Placement.Status",
       "kind": "method",
       "signature": "func(ctx context.Context) (PlacementState, error)",
@@ -371,14 +347,6 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*User",
       "proposed": "rgw.User.Remove",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.User.ServedBy",
-      "kind": "method",
-      "signature": "func(g *Gateway) bool",
-      "receiver": "*User",
-      "proposed": "rgw.User.ServedBy",
       "decision": "baseline"
     },
     {

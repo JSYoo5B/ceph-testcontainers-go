@@ -264,6 +264,8 @@ func appendSubvolumeLayout(args []string, size int64, pool string) []string {
 // operations. A non-nil handle on error records an attempted creation, but only a
 // fully confirmed identity can be mutated. Cluster termination cleans up the
 // entire disposable filesystem even after partial creation.
+//
+//purpose:construction
 func (fs *Filesystem) CreateSubvolumeGroup(ctx context.Context, config SubvolumeGroupConfig) (*SubvolumeGroup, error) {
 	if err := fs.validateSubvolumeConfig(config.Name, "", config.DataPool, config.SizeBytes); err != nil {
 		return nil, err
@@ -305,6 +307,8 @@ func (fs *Filesystem) CreateSubvolumeGroup(ctx context.Context, config Subvolume
 // group. It rejects duplicates and unknown filesystem data pools before create.
 // A non-nil result on failure identifies an attempted resource; it never removes
 // partial data. Only successfully confirmed handles support Resize/Remove.
+//
+//purpose:construction
 func (fs *Filesystem) CreateSubvolume(ctx context.Context, config SubvolumeConfig) (*Subvolume, error) {
 	if err := fs.validateSubvolumeConfig(config.Name, config.GroupName, config.DataPool, config.SizeBytes); err != nil {
 		return nil, err
@@ -349,6 +353,8 @@ func (fs *Filesystem) CreateSubvolume(ctx context.Context, config SubvolumeConfi
 
 // SubvolumeGroups lists native named groups, sorted by name. It omits Ceph's
 // internal default group and includes groups created outside these helpers.
+//
+//purpose:observation
 func (fs *Filesystem) SubvolumeGroups(ctx context.Context) ([]string, error) {
 	ctx, _, done, err := fs.beginSubvolumeOperation(ctx)
 	if err != nil {
@@ -360,6 +366,8 @@ func (fs *Filesystem) SubvolumeGroups(ctx context.Context) ([]string, error) {
 
 // Subvolumes lists native names in groupName, sorted by name. Empty selects the
 // default group. Native snapshot-retained entries can appear in this listing.
+//
+//purpose:observation
 func (fs *Filesystem) Subvolumes(ctx context.Context, groupName string) ([]string, error) {
 	if err := validateCephFSVolumeName(groupName, true); err != nil {
 		return nil, err
@@ -373,6 +381,8 @@ func (fs *Filesystem) Subvolumes(ctx context.Context, groupName string) ([]strin
 }
 
 // SubvolumeGroupInfo queries the current native group quota/layout and path.
+//
+//purpose:observation
 func (fs *Filesystem) SubvolumeGroupInfo(ctx context.Context, name string) (*SubvolumeGroupInfo, error) {
 	if err := validateCephFSVolumeName(name, false); err != nil {
 		return nil, err
@@ -388,6 +398,8 @@ func (fs *Filesystem) SubvolumeGroupInfo(ctx context.Context, name string) (*Sub
 // SubvolumeInfo queries current metadata. name identifies the subvolume and an
 // empty groupName selects the default group. A snapshot-retained entry lacks a
 // usable Path and is never accepted as an active owned resource.
+//
+//purpose:observation
 func (fs *Filesystem) SubvolumeInfo(ctx context.Context, name, groupName string) (*SubvolumeInfo, error) {
 	if err := validateCephFSVolumeName(name, false); err != nil {
 		return nil, err
@@ -507,6 +519,8 @@ func cephFSResizeQuota(size int64) (string, error) {
 // limit. --no_shrink refuses a positive limit below native current usage; it
 // never truncates files. Directory accounting and quota enforcement are native
 // CephFS behavior and can lag concurrent writes.
+//
+//purpose:construction,condition
 func (group *SubvolumeGroup) Resize(ctx context.Context, sizeBytes int64) error {
 	fs, err := group.filesystem()
 	if err != nil {
@@ -540,6 +554,8 @@ func (group *SubvolumeGroup) Resize(ctx context.Context, sizeBytes int64) error 
 
 // Resize changes only an owned subvolume's quota, with the same zero
 // and --no_shrink behavior as SubvolumeGroup.Resize.
+//
+//purpose:construction,condition
 func (subvolume *Subvolume) Resize(ctx context.Context, sizeBytes int64) error {
 	fs, err := subvolume.filesystem()
 	if err != nil {
@@ -575,6 +591,8 @@ func (subvolume *Subvolume) Resize(ctx context.Context, sizeBytes int64) error {
 // Remove removes an owned empty group without --force. A native
 // refusal (for example a nonempty group) preserves its handle for retry. A repeat
 // call after confirmed success is a no-op. External edits must not race removal.
+//
+//purpose:lifetime
 func (group *SubvolumeGroup) Remove(ctx context.Context) error {
 	fs, err := group.filesystem()
 	if err != nil {
@@ -624,6 +642,8 @@ func (group *SubvolumeGroup) Remove(ctx context.Context) error {
 // use the snapshot helpers to remove owned snapshots first. Trash purging is async.
 // Repeat removal after confirmed success is a no-op; external edits must not
 // race this operation. Its filesystem, groups and pools remain available.
+//
+//purpose:lifetime
 func (subvolume *Subvolume) Remove(ctx context.Context) error {
 	fs, err := subvolume.filesystem()
 	if err != nil {

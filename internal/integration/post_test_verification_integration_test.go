@@ -89,7 +89,7 @@ func TestPostTestVerification(t *testing.T) {
 		t.Fatalf("an absent required crash passed: %+v", report.Crashes)
 	}
 
-	crashDaemon(t, ctx, cluster.ManagerContainer())
+	crashDaemon(t, ctx, clusteraccess.InitialManager(t, cluster))
 	crashDaemon(t, ctx, clusteraccess.OSDs(t, cluster)[0].Container)
 
 	report, err = policy.Evaluate(ctx)

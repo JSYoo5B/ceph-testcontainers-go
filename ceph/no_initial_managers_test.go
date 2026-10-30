@@ -240,7 +240,7 @@ func TestNoInitialManagersFirstAddAdmissionAndIdentityFailures(t *testing.T) {
 	noInitialOSDQueuedCall(t, &cluster.mu, func(ctx context.Context) error { _, err := cluster.AddManager(ctx, "a"); return err })
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if mgr, err := cluster.AddManager(ctx, "a"); mgr != nil || !errors.Is(err, context.Canceled) || len(control.calls) != 0 || cluster.members.roster.managerCount() != 0 || cluster.ManagerContainer() != nil {
+	if mgr, err := cluster.AddManager(ctx, "a"); mgr != nil || !errors.Is(err, context.Canceled) || len(control.calls) != 0 || cluster.members.roster.managerCount() != 0 || cluster.members.roster.initialManager() != nil {
 		t.Fatal("busy/canceled first manager changed native or owned state", err)
 	}
 	for _, scenario := range []string{"foreign auth", "foreign map", "auth list error", "auth malformed", "create response loss"} {
@@ -260,7 +260,7 @@ func TestNoInitialManagersFirstAddAdmissionAndIdentityFailures(t *testing.T) {
 				control.fail = "auth get-or-create mgr.a mon allow profile mgr osd allow * mds allow *"
 			}
 			mgr, err := cluster.AddManager(t.Context(), "a")
-			if mgr != nil || err == nil || strings.Contains(err.Error(), "PRIVATE-FIRST-MGR-KEY") || cluster.members.roster.managerCount() != 0 || cluster.ManagerContainer() != nil {
+			if mgr != nil || err == nil || strings.Contains(err.Error(), "PRIVATE-FIRST-MGR-KEY") || cluster.members.roster.managerCount() != 0 || cluster.members.roster.initialManager() != nil {
 				t.Fatalf("first Add identity rejection leaked/adopted state: mgr=%v err=%v", mgr, err)
 			}
 			for _, call := range control.calls {
@@ -299,7 +299,7 @@ func TestNoInitialManagersZeroAndPartialOwnershipCleanup(t *testing.T) {
 		if err := cluster.Terminate(t.Context()); err != nil || cluster.fleet.osdHandles.count() != 0 || osd.terminations != 2 || control.terminations != 1 {
 			t.Fatal("cleanup repeated completed MON phase or skipped retained OSD", err)
 		}
-		if mgr, err := cluster.AddManager(t.Context(), "a"); mgr != nil || err == nil || len(control.calls) != 0 || cluster.ManagerContainer() != nil {
+		if mgr, err := cluster.AddManager(t.Context(), "a"); mgr != nil || err == nil || len(control.calls) != 0 || cluster.members.roster.initialManager() != nil {
 			t.Fatal("terminated cold constructor admitted first manager", err)
 		}
 	}

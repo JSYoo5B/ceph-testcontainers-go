@@ -25,6 +25,8 @@ import (
 // Complete cluster topology changes before refreshing; topology mutations and
 // external policy/config writers must not race the batch. The operation takes
 // at most two minutes, bounded by the caller context, including lock waits.
+//
+//purpose:condition
 func (m *Mirror) RefreshMonitorConfig(ctx context.Context) error {
 	return m.refreshRBDMirrorMonitorConfig(ctx, func(ctx context.Context, cluster *ceph.Container, client testcontainers.Container) error {
 		return cluster.RefreshClientMonitorConfig(ctx, client)

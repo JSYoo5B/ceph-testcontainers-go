@@ -45,9 +45,45 @@ type userConfigSection struct {
 // those. The exception is ms_bind_prefer_ipv4, which Run accepts with
 // AddressDualStack only: false in a daemon's section, such as [osd.1] or
 // [mgr.b], makes that daemon advertise its IPv6 address first, and native
-// clients then connect to it over IPv6. RGW runs as client.admin, so RGW settings belong in [client] or
-// [client.admin]. Includes, continuations and keys outside a section are
-// rejected.
+// clients then connect to it over IPv6. RGW runs as client.admin, so RGW
+// settings belong in [client] or [client.admin]. The merged file becomes
+// /etc/ceph/ceph.conf before the first MON creates its store, so
+// bootstrap-only settings work; it does not change a running cluster.
+// Spaces, '-' and '_' in key names are equivalent, as in Ceph.
+//
+// The file is validated before any container is created. Includes, lines
+// continued with a trailing backslash, keys outside a section, duplicate keys
+// within one section of one file, NUL bytes, invalid UTF-8 and files or merged
+// results larger than 64 KiB are rejected. Ceph treats '#' and ';' as comment
+// starts even inside quotes, so a value containing them is rejected unless
+// they are escaped as \# and \;. Ceph silently ignores some values (for
+// example an osd_memory_target below 896 MiB); check the effective value with
+// ceph config show.
+//
+// The rejected keys and their replacements: fsid, mon_host,
+// mon_initial_members and mon_addr (generated;
+// ClusterConfig.WithMonitorCount); public_network, cluster_network,
+// public_addr, cluster_addr and *_bind_addr (WithHostNetwork,
+// NetworkConfig.WithSeparateClusterNetwork, NetworkConfig.WithHostAddress);
+// auth_*, keyring, key and keyfile (WithAuth); ms_*_mode, ms_mon_*_mode and
+// ms_bind_* except ms_bind_prefer_ipv4 (NetworkConfig.WithMessengerMode,
+// NetworkConfig.WithMessengerPolicy,
+// ClientContainerOptions.WithMessengerPolicy, NetworkConfig.WithAddressFamily,
+// WithHostNetwork); osd_pool_default_size and osd_pool_default_min_size
+// (ClusterConfig.WithPoolDefaults); osd_pool_default_crush_rule
+// (ClusterConfig.WithDefaultCRUSHRoot); bluestore_block_size
+// (OSDStorage.WithBlockSize); osd_objectstore, bluestore_block_path and
+// bluestore_block_create (fixed storage layout); log_file, log_to_file,
+// log_to_stderr, err_to_stderr and mon_cluster_log_to_* (logs always go to
+// container output); admin_socket, run_dir, mon_data, osd_data, mgr_data and
+// mds_data (fixed paths); crash_dir (fixed at CrashDir); mds_join_fs and
+// mds_cache_memory_limit (MDS command line); rgw_frontends,
+// rgw_thread_pool_size, rgw_exit_timeout_secs, rgw_realm, rgw_zonegroup,
+// rgw_zone, rgw_sync_obj_etag_verify and rgw_sync_lease_period (RGW command
+// line). ms_bind_prefer_ipv4 with any family but AddressDualStack is refused
+// with ErrInvalidRequest.
+//
+//purpose:construction
 func WithConfigFile(path string) Option {
 	return func(o *options) error {
 		file, err := os.Open(path)

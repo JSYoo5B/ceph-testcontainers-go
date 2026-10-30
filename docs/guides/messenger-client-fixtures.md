@@ -25,7 +25,7 @@ readiness, not a client's protocol implementation.
 | | none at bootstrap, two started later | `ClusterConfig.WithNoInitialManagers`, then `AddManager("a")` and `AddManager("b")` | `TestMessengerClientProfileDelayedManagers` |
 | OSD | none | `ClusterConfig.WithNoInitialOSDs` | `TestMessengerClientProfileSecure` |
 | | one MemStore OSD | `ClusterConfig.WithOSDCount(1).WithPoolDefaults(1, 1)`, `OSDStorage.WithObjectStore(OSDMemStore)` | `TestMessengerClientProfileCRC` |
-| CRUSH and pool | legacy tunables, a straw root, a rule that chooses OSDs; a pool with one PG and size 1; no pool with `hashpspool`, `.mgr` included | compile the map with `crushtool` and install it with `osd setcrushmap` (see [Reproduce a minimal legacy placement setup](../../ceph/README.md#reproduce-a-minimal-legacy-placement-setup)); `osd_pool_default_flag_hashpspool = false` in a `WithConfigFile` `[global]` section; `CreatePool(ceph.PoolConfig{PGNum: 1, Replicas: 1, MinSize: 1, NoHashPSPool: true})` | `TestMessengerClientProfileCRC`, `TestOSDMemStoreLegacyPlacement`, `TestRADOSMutationContracts` |
+| CRUSH and pool | legacy tunables, a straw root, a rule that chooses OSDs; a pool with one PG and size 1; no pool with `hashpspool`, `.mgr` included | compile the map with `crushtool` and install it with `osd setcrushmap`; `osd_pool_default_flag_hashpspool = false` in a `WithConfigFile` `[global]` section; `CreatePool(ceph.PoolConfig{PGNum: 1, Replicas: 1, MinSize: 1, NoHashPSPool: true})` | `TestMessengerClientProfileCRC`, `TestOSDMemStoreLegacyPlacement`, `TestRADOSMutationContracts` |
 | Key type / service cipher | `aes256k`/`aes256k` | `WithAuth(ceph.AuthConfig{KeyType: ceph.CipherAES256K})` | `TestMessengerClientProfileSecure` |
 | | `aes`/`aes` | `AuthConfig{KeyType: ceph.CipherAES}` | `TestMessengerClientProfileModeRejection/managers` |
 | | `aes`/`aes256k` | `AuthConfig{KeyType: ceph.CipherAES, ServiceCipher: ceph.CipherAES256K}` | `TestMessengerClientProfileCRC/bridge` |
@@ -42,7 +42,7 @@ readiness, not a client's protocol implementation.
 | Address family | IPv4 | the default | every other profile |
 | | IPv6 | `NetworkConfig.WithAddressFamily(ceph.AddressIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv6` |
 | | IPv4-mapped IPv6 | `NetworkConfig.WithAddressFamily(ceph.AddressIPv4MappedIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv4-mapped` |
-| | IPv4 and IPv6 on every daemon | `NetworkConfig.WithAddressFamily(ceph.AddressDualStack)`; MON vectors list IPv6 first, the others IPv4 first (see [Dual-stack clusters](../../ceph/README.md#dual-stack-clusters)) | `TestDualStackAddressFamily`, `TestDualStackSeparateClusterNetwork` |
+| | IPv4 and IPv6 on every daemon | `NetworkConfig.WithAddressFamily(ceph.AddressDualStack)`; MON vectors list IPv6 first, the others IPv4 first (see [Dual-stack clusters](ceph-configuration.md#dual-stack-clusters)) | `TestDualStackAddressFamily`, `TestDualStackSeparateClusterNetwork` |
 | Where the tests run | a container on the cluster network | `WithClient` or `ClientConfig.WithIdentity` | every profile |
 | | a host process | `WithHostNetwork` (see [Host network](host-network.md)); every advertised MON, MGR and OSD address is reachable from the host | `TestMessengerClientProfileCRC/host` |
 | Client identities | full access, read-only, revocable, and one limited to the `fsid` command | `CreateClient` with `ceph.ClientCaps`, for example `{Mon: "allow command \"fsid\"", MGR: "allow r"}`; keys get the cluster's `KeyType` | `TestMessengerClientProfileSecure` |
@@ -648,7 +648,7 @@ declarations to validated receipts, is documented in
   them.
 - **Short MON tickets.** Under ten seconds, a MON client that renews late is
   refused with `EACCES` and does not authenticate again (see
-  [WithAuth](../../ceph/README.md#withauth)); this is Ceph's MON client
+  [WithAuth](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#WithAuth)); this is Ceph's MON client
   behaviour. A MGR busy loading modules can lose its session this way and
   abort, which is why the 1.5 s profile is optional. With 1.5 s MON tickets on
   Tentacle with AES256K keys, native librados sessions and MGR commands stop

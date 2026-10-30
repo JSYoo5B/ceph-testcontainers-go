@@ -62,6 +62,8 @@ func (c *Container) daemonVersion(ctx context.Context, handle daemonHandle) (str
 // daemon that DaemonOptions.WithImage started from another image. It works under the
 // same conditions as AdminSocket, and a stopped daemon, a stale handle or an
 // unrecognized reply returns an error.
+//
+//purpose:observation
 func (o *OSDContainer) Version(ctx context.Context) (string, error) {
 	c, err := o.cluster("OSDContainer.Version")
 	if err != nil {
@@ -72,6 +74,8 @@ func (o *OSDContainer) Version(ctx context.Context) (string, error) {
 
 // Version returns the release that this running MON reports itself, such as
 // "20.2.4". See OSDContainer.Version.
+//
+//purpose:observation
 func (m *MonitorContainer) Version(ctx context.Context) (string, error) {
 	c, err := m.cluster("MonitorContainer.Version")
 	if err != nil {
@@ -82,6 +86,8 @@ func (m *MonitorContainer) Version(ctx context.Context) (string, error) {
 
 // Version returns the release that this running MGR reports itself, such as
 // "20.2.4". See OSDContainer.Version.
+//
+//purpose:observation
 func (m *ManagerContainer) Version(ctx context.Context) (string, error) {
 	c, err := m.cluster("ManagerContainer.Version")
 	if err != nil {

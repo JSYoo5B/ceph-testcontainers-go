@@ -116,6 +116,8 @@ func (dm daemonMaps) quorum(ctx context.Context) (QuorumStatus, error) {
 
 // WaitForQuorum waits for a majority of the current monmap, including fixtures
 // with a stopped monitor. It does not require HEALTH_OK or every MON to run.
+//
+//purpose:observation
 func (c *Container) WaitForQuorum(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
@@ -130,6 +132,16 @@ func (c *Container) WaitForQuorum(ctx context.Context) error {
 // DaemonOptions.WithImage starts this one MON from another image; the default is the
 // essential image. Options are validated before the topology lock is taken or
 // anything is created.
+//
+// Names already in the monmap are refused, and a can never be reused. The
+// first call also starts the independent control container. After joining, it
+// copies the new quorum's addresses into the mon_host of every owned daemon's
+// ceph.conf, including stopped daemons; if only that copy failed, retry
+// RefreshMonitorConfig. Caller-owned client containers are not updated (see
+// RefreshClientMonitorConfig). A partially started member stays owned on
+// error.
+//
+//purpose:construction,condition
 func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonOptions) (*MonitorContainer, error) {
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid monitor name")
@@ -399,6 +411,8 @@ func (t monitorTopology) refreshMonitorConfig(ctx context.Context) error {
 // and the future-client template are retained on partial failure. Repeating a
 // refresh reads each current file and skips copies that are already up to date.
 // External config writers must not race this operation: Docker has no file CAS.
+//
+//purpose:condition,handoff
 func (c *Container) RefreshMonitorConfig(ctx context.Context) error {
 	if c == nil {
 		return errors.New("ceph cluster is unavailable")
@@ -776,6 +790,13 @@ func monitorConfigComment(line string) (int, error) {
 // DaemonOptions.WithImage starts this one MGR from another image; the default is the
 // essential image. Options are validated before the topology lock is taken or
 // any identity is created.
+//
+// It never forces the active role away from a running manager, and success
+// does not mean every MGR module is ready; use WaitMGRModuleReady or
+// WaitForClean. On an AddressDualStack cluster it then checks the active MGR's
+// advertised addresses.
+//
+//purpose:construction,condition
 func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonOptions) (*ManagerContainer, error) {
 	if !daemonNamePattern.MatchString(name) {
 		return nil, errors.New("invalid manager name")

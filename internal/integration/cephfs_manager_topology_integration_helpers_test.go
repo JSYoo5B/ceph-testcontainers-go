@@ -50,7 +50,7 @@ func testCephFSManagerTopology(t *testing.T, host bool) {
 	if err := managerHandle(t, ctx, source, "a").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if source.ManagerContainer() != nil {
+	if clusteraccess.InitialManager(t, source) != nil {
 		t.Fatal("initial manager a retained its legacy container handle after removal")
 	}
 	if _, err := source.AddManager(ctx, "c"); err != nil {

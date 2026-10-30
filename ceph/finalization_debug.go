@@ -44,6 +44,8 @@ type DebugLevelReceipter interface {
 // later record. Taking a copy reads only the handle's local state; it never
 // applies or restores a level and never queries the daemon. Passing runs
 // archive nothing. Registering after finalization started fails the test.
+//
+//purpose:evidence
 func (f *Finalization) TrackDebugLevel(handle DebugLevelReceipter) {
 	if f == nil {
 		return

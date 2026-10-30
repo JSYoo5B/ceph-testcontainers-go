@@ -15,6 +15,14 @@ import (
 // cluster's public bridge, retaining its destination/pool-election endpoint.
 // The daemon stays running; peer and image policies remain unchanged. Restore
 // the returned handle to resume reception. Host mode has no bridge endpoint.
+//
+// It disconnects a whole endpoint, not a per-peer packet filter; see package
+// fault for delays and drops. The returned handle's Restore reconnects the
+// original IP address and aliases, is retryable, and does not overwrite an
+// endpoint that someone reconnected differently. The fixture also restores
+// outstanding interruptions during cleanup.
+//
+//purpose:condition
 func (d *Daemon) InterruptPeerLink(ctx context.Context) (*fault.NetworkInterruption, error) {
 	if d == nil || d.owner == nil {
 		return nil, servicehook.Invalid(errors.New("RBD mirror daemon is not owned by a fixture"))

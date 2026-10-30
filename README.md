@@ -120,12 +120,12 @@ files, err := cephfs.Run(ctx, ceph.DefaultImage)
 
 // One S3 gateway with a generated test user.
 objects, err := rgw.Run(ctx, ceph.DefaultImage)
-endpoint, err := objects.S3Endpoint(ctx)
-gateways, err := objects.Gateways(ctx)
+gateways, err := rgw.Gateways(ctx, objects.Container)
 if err != nil {
 	t.Fatal(err)
 }
 gateway := gateways[0] // AccessKey, SecretKey and Region
+endpoint, err := gateway.S3Endpoint(ctx)
 ```
 
 To serve several services from one cluster, pass their options to `ceph.Run`:
@@ -142,6 +142,11 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 
 Guides for tasks that span packages:
 
+- [API purpose and purpose tags](docs/guides/api-purpose.md): what the API is
+  for, what each purpose tag means, and how an API declares its tags.
+- [Ceph cluster configuration](docs/guides/ceph-configuration.md) and
+  [Ceph cluster operations](docs/guides/ceph-operations.md): the `ceph`
+  concepts that span several APIs; each API is documented in its godoc.
 - [Fault injection](docs/guides/fault-injection.md): stopping, pausing and
   disconnecting daemons and clients, delaying or dropping messages, fencing,
   full clusters and damaged replicas.

@@ -42,6 +42,11 @@ type ProcessBindingStatus struct {
 
 // ProcessObserverBindingStatus reports local optional binding availability.
 // It does not query Docker or establish task cessation.
+//
+// State is disabled, bound, partial-startup, context-unavailable,
+// factory-error, empty-client, positive-binding-failed or closed.
+//
+//purpose:observation
 func (d *Daemon) ProcessObserverBindingStatus() ProcessBindingStatus {
 	if d == nil {
 		return ProcessBindingStatus{State: "unavailable"}
@@ -258,6 +263,8 @@ type OriginalProcessStatus struct {
 }
 
 // ProcessQuiescence does not mutate completed or relax existing overlap gates.
+//
+//purpose:observation
 func (r *PeerRemoval) ProcessQuiescence(ctx context.Context) (ProcessQuiescenceStatus, error) {
 	if r == nil {
 		return ProcessQuiescenceStatus{}, cephFSObserveGuard("original peer process receipt is unavailable")
@@ -270,6 +277,8 @@ func (r *PeerRemoval) ProcessQuiescence(ctx context.Context) (ProcessQuiescenceS
 
 // ProcessQuiescence retains the peer tuple and original path generation.
 // Path policy absence is the existing exact native mirror ls observation.
+//
+//purpose:observation
 func (r *DirectoryRemoval) ProcessQuiescence(ctx context.Context) (ProcessQuiescenceStatus, error) {
 	if r == nil || r.original == nil {
 		return ProcessQuiescenceStatus{}, cephFSObserveGuard("original directory process receipt is unavailable")

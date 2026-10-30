@@ -695,7 +695,7 @@ func testDualStackReplacement(t *testing.T) {
 
 	// The sockets each replacement listens on. They are not checked: the
 	// MGR binds its IPv6 listener to [::] although it advertises a concrete
-	// IPv6 address (see the dual-stack section of ceph/README.md).
+	// IPv6 address (see the dual-stack section of docs/guides/ceph-configuration.md).
 	listening := map[string][]string{
 		"mon.c":                 listeningSockets(t, ctx, monitorContainer(t, cluster, "c")),
 		"osd.2":                 listeningSockets(t, ctx, osdContainer(t, cluster, 2)),

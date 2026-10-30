@@ -66,6 +66,24 @@ type NetworkConfig struct {
 // Run, AddManager and ManagerContainer.Remove check that the MONs, the active MGR and
 // the up OSDs advertise a concrete address of each family, and fail with
 // ErrUnsupported otherwise. An unknown family is refused.
+//
+// ClusterFacts.AddressFamily reports the selection. With AddressIPv6 and
+// AddressIPv4MappedIPv6 the generated ceph.conf sets ms_bind_ipv4 = false and
+// ms_bind_ipv6 = true, so MGRs, OSDs and MDSs bind [::] and advertise the
+// address from which the MONs see them; no daemon has an IPv4 Messenger
+// socket, and with AddressIPv4MappedIPv6 the IPv6 sockets accept the IPv4
+// connections the mapped addresses stand for. With AddressIPv6, Docker
+// forwards an IPv4 connection to a published MON port to the container's IPv4
+// address, where no MON listens, so run clients in WithClient containers. Ceph
+// prints an IPv4-mapped address in dotted form but parses only hexadecimal
+// groups (::ffff:ac13:2); the fixture writes mon_host in the parseable form,
+// so convert an address the same way before passing it to a Ceph tool. HTTP
+// endpoints such as RGW's keep their addresses. Docker reuses the address of a
+// removed or stopped container, so identify a daemon by its entry's nonce or
+// its GID, not by address alone. See docs/guides/ceph-configuration.md for
+// dual-stack address order and for cutting one family of a path.
+//
+//purpose:construction
 func (n NetworkConfig) WithAddressFamily(family AddressFamily) NetworkConfig {
 	n.set |= networkAddressFamily
 	n.addressFamily = family
@@ -76,7 +94,12 @@ func (n NetworkConfig) WithAddressFamily(family AddressFamily) NetworkConfig {
 // recovery and heartbeat traffic. MON/MGR/MDS/RGW and WithClient use only the
 // public bridge. Docker selects both subnets; with WithAddressFamily(AddressIPv6)
 // both bridges are dual-stack and Ceph uses their IPv6 subnets. This setting
-// requires bridge mode.
+// requires bridge mode. Only OSDs join both bridges. ClusterFacts.NetworkName
+// and ClusterFacts.ClusterNetworkName name them, and fault.InterruptNetwork with
+// ClusterNetworkPlane disconnects one OSD's whole cluster endpoint (both
+// families) and keeps its public one.
+//
+//purpose:construction
 func (n NetworkConfig) WithSeparateClusterNetwork() NetworkConfig {
 	n.set |= networkSeparateCluster
 	return n
@@ -87,6 +110,8 @@ func (n NetworkConfig) WithSeparateClusterNetwork() NetworkConfig {
 // must be assigned on the Docker daemon host and reachable from the test
 // process; Run verifies both. Requires WithHostNetwork. An empty, unspecified,
 // multicast, broadcast or non-IPv4 address is refused.
+//
+//purpose:construction
 func (n NetworkConfig) WithHostAddress(address string) NetworkConfig {
 	n.set |= networkHostAddress
 	n.hostAddress = address
@@ -99,7 +124,25 @@ func (n NetworkConfig) WithHostAddress(address string) NetworkConfig {
 // daemons and WithClient containers. MessengerV2Only removes the v1 listeners
 // and addresses in the same way but leaves the connection modes to Ceph's
 // defaults and the Messenger policy. This setting does not enable RGW HTTP TLS.
-// An unknown mode is refused.
+// An unknown mode is refused. Both settings are fixed for the cluster's
+// lifetime.
+//
+// In both v2 modes the monmap and mon_host contain only v2 addresses and no
+// daemon listens on a v1 port: in bridge mode the MON publishes only 3300/tcp,
+// so MappedPort(ctx, "6789/tcp") fails, and in host mode one MON port is
+// reserved. Later daemons, WithClient and ClientConfig.WithIdentity containers
+// and ConnectionConfig inherit the mode, and override.SetConfig refuses
+// ms_bind_msgr1 and ms_bind_msgr2 (and, with MessengerV2Secure, the six
+// ms_*_mode options) because the local file would override them.
+// MessengerV2Only sets only ms_bind_msgr1 = false and ms_bind_msgr2 = true;
+// MessengerV2Secure also sets ms_cluster_mode, ms_service_mode, ms_client_mode
+// and their ms_mon_ forms to secure, so a CRC-only client is rejected with
+// AUTH_BAD_METHOD rather than timing out. Cephx stays required in every mode.
+// ClusterFacts.MessengerMode reports the selected mode, not live connections;
+// on Tentacle a daemon's messenger dump admin command reports the mode of each
+// connection.
+//
+//purpose:construction
 func (n NetworkConfig) WithMessengerMode(mode MessengerMode) NetworkConfig {
 	n.set |= networkMessengerMode
 	n.messengerMode = mode
@@ -114,6 +157,8 @@ func (n NetworkConfig) WithMessengerMode(mode MessengerMode) NetworkConfig {
 // fixes every mode. The value keeps its own copy of the lists, so changing the
 // policy's slices afterwards does not change it; a nil list keeps Ceph's
 // default and a non-nil empty list is refused.
+//
+//purpose:construction
 func (n NetworkConfig) WithMessengerPolicy(policy MessengerPolicy) NetworkConfig {
 	n.set |= networkMessengerPolicy
 	n.messengerPolicy = MessengerPolicy{Monitors: slices.Clone(policy.Monitors), Managers: slices.Clone(policy.Managers), OSDs: slices.Clone(policy.OSDs)}
@@ -123,6 +168,8 @@ func (n NetworkConfig) WithMessengerPolicy(policy MessengerPolicy) NetworkConfig
 // WithNetworkConfig is the grouped option function that carries a NetworkConfig
 // to Run. Like every Option it changes the cluster settings only and never
 // reaches a container request.
+//
+//purpose:construction
 func WithNetworkConfig(network NetworkConfig) Option {
 	return func(o *options) error { return network.apply(o) }
 }

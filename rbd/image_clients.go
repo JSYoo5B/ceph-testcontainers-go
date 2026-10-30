@@ -26,9 +26,14 @@ type ImageWatcher struct {
 // takes for the exclusive-lock feature; its ID carries the owner's watch
 // cookie. Other locks are advisory locks added through rbd lock add.
 type ImageLock struct {
-	ID      string
-	Locker  string
+	// ID is the lock ID; for a managed lock it is "auto <watch cookie>".
+	ID string
+	// Locker is the owner's entity name, such as client.4235.
+	Locker string
+	// Address is the owner's IP:port/nonce, the form that
+	// override.AddBlocklist takes.
 	Address string
+	// Managed marks the lock that librbd takes for exclusive-lock.
 	Managed bool
 }
 
@@ -42,6 +47,8 @@ type ImageClientStatus struct {
 
 // ExclusiveOwner returns the managed exclusive lock, or nil if no client
 // holds it.
+//
+//purpose:observation
 func (status *ImageClientStatus) ExclusiveOwner() *ImageLock {
 	if status == nil {
 		return nil
@@ -57,6 +64,8 @@ func (status *ImageClientStatus) ExclusiveOwner() *ImageLock {
 // ImageClients reads which clients watch an image and which hold its
 // locks, including clients outside this fixture. Namespace is empty for the
 // default namespace. It reads native state only and grants no ownership.
+//
+//purpose:observation
 func ImageClients(ctx context.Context, c *ceph.Container, pool, namespace, image string) (*ImageClientStatus, error) {
 	if c == nil {
 		return nil, errNilCluster
