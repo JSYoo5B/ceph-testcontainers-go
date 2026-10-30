@@ -117,7 +117,7 @@ func (c *Container) settleClient(ctx context.Context, entity string) error {
 		return err
 	}
 	if len(fence.clients) > 0 {
-		if err := c.settleMonitors(ctx, fence.clients); err != nil {
+		if err := c.monitorSettling().settle(ctx, fence.clients); err != nil {
 			return fmt.Errorf("an earlier call left a MON command for %s that may still apply, and the MONs cannot be settled yet: %w", entity, err)
 		}
 		_, _ = c.rotationCommand(ctx, append([]string{"rm", "-f"}, fence.clients...)...)
