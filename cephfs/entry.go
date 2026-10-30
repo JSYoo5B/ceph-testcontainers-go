@@ -115,11 +115,7 @@ func (r *filesystemRegistry) ConfigTargets() map[string]testcontainers.Container
 		if fs == nil {
 			continue
 		}
-		for _, mds := range fs.mds.roster.members() {
-			if mds != nil && mds.Container != nil {
-				targets["mds."+mds.ID] = mds.Container
-			}
-		}
+		fs.fleet().addConfigTargets(targets)
 	}
 	return targets
 }

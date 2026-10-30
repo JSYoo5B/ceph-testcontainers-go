@@ -75,7 +75,7 @@ func TestScheduleNameReadDoesNotRaceWithConfigReplacement(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range 200 {
-			if _, err := fs.volumes().snapshotScheduleStatuses(t.Context(), "/"); err != nil {
+			if _, err := fs.id.volumes().snapshotScheduleStatuses(t.Context(), "/"); err != nil {
 				t.Errorf("status read failed: %v", err)
 				return
 			}
@@ -84,10 +84,12 @@ func TestScheduleNameReadDoesNotRaceWithConfigReplacement(t *testing.T) {
 	wg.Wait()
 }
 
-// The identity is read from fs.name everywhere. The only reads of the exported
-// copy through a Filesystem receiver are the descriptor-integrity refusals
-// listed here, and no code reads the name through config (an unlocked read of
-// config is the F5 question). The list is exact so a new reader is reviewed.
+// The identity is read from the identity's name everywhere. The only reads of
+// the exported copy are the descriptor-integrity refusals listed here, through
+// a Filesystem receiver or through the MDS fleet's descriptor, which
+// Filesystem.fleet binds to the exported field exactly once; no code reads the
+// name through config (an unlocked read of config is the F5 question). The list
+// is exact so a new reader is reviewed.
 func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
 	allowedExported := []string{"beginSubvolumeOperation", "beginSessionOperation", "checkStoppedMDSOwner", "scaleColdMDS"}
 	fset := token.NewFileSet()
@@ -95,7 +97,7 @@ func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var exportedReads []string
+	var exportedReads, bindings []string
 	for _, name := range files {
 		if strings.HasSuffix(name, "_test.go") {
 			continue
@@ -109,6 +111,16 @@ func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
 			if !ok || fn.Body == nil {
 				continue
 			}
+			bound := map[*ast.SelectorExpr]bool{}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if unary, ok := n.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+					if sel, ok := unary.X.(*ast.SelectorExpr); ok && sel.Sel.Name == "FilesystemName" {
+						bound[sel] = true
+						bindings = append(bindings, fn.Name.Name)
+					}
+				}
+				return true
+			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				sel, ok := n.(*ast.SelectorExpr)
 				if !ok {
@@ -117,7 +129,10 @@ func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
 				if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "config" && sel.Sel.Name == "Name" {
 					t.Errorf("%s: %s reads the name through config", fset.Position(sel.Pos()), fn.Name.Name)
 				}
-				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "fs" && sel.Sel.Name == "FilesystemName" {
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "fs" && sel.Sel.Name == "FilesystemName" && !bound[sel] {
+					exportedReads = append(exportedReads, fn.Name.Name)
+				}
+				if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "descriptor" && sel.Sel.Name == "name" {
 					exportedReads = append(exportedReads, fn.Name.Name)
 				}
 				return true
@@ -133,5 +148,8 @@ func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
 		if !slices.Contains(exportedReads, name) {
 			t.Errorf("%s no longer reads the exported copy; shrink the allow-list", name)
 		}
+	}
+	if !slices.Equal(bindings, []string{"fleet"}) {
+		t.Errorf("the exported FilesystemName is bound by address in %v, want only Filesystem.fleet", bindings)
 	}
 }

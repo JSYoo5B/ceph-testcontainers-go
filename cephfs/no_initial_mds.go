@@ -25,75 +25,75 @@ type cephFSColdMDS struct {
 	attempted bool
 }
 
-func (fs *Filesystem) captureColdMDS(ctx context.Context, originalFSID string) error {
-	fsid, err := fs.volumes().readColdFSID(ctx, &cephFSColdMDS{fsid: originalFSID})
+func (f mdsFleet) captureColdMDS(ctx context.Context, originalFSID string) error {
+	fsid, err := f.id.volumes().readColdFSID(ctx, &cephFSColdMDS{fsid: originalFSID})
 	if err != nil {
 		return err
 	}
-	state, err := fs.readNativePools(ctx)
+	state, err := f.id.readNativePools(ctx)
 	if err != nil {
 		return clusterutil.OperationError(ctx, "read cold filesystem pools", err)
 	}
-	cap := &cephFSColdMDS{fsid: fsid, identity: fs.id.native, pools: make(map[string]int64), dataPools: slices.Clone(state.dataPools)}
-	if cap.identity == nil || len(state.dataPools) != 1+len(fs.id.config.AdditionalDataPools) {
+	cap := &cephFSColdMDS{fsid: fsid, identity: f.id.native, pools: make(map[string]int64), dataPools: slices.Clone(state.dataPools)}
+	if cap.identity == nil || len(state.dataPools) != 1+len(f.id.config.AdditionalDataPools) {
 		return errors.New("cold filesystem setup is incomplete")
 	}
-	for _, config := range cephFSConfiguredPools(fs.id.config) {
+	for _, config := range cephFSConfiguredPools(f.id.config) {
 		pool, err := state.poolByName(config.Name)
 		if err != nil || pool.ID < 0 {
 			return errors.New("cold filesystem pool identity is unavailable")
 		}
 		cap.pools[pool.Name] = pool.ID
 	}
-	if err := fs.verifyColdMDS(ctx, cap); err != nil {
+	if err := f.verifyColdMDS(ctx, cap); err != nil {
 		return err
 	}
-	if err := fs.checkColdMDSAuth(ctx); err != nil {
+	if err := f.checkColdMDSAuth(ctx); err != nil {
 		return err
 	}
-	if err := fs.verifyColdMDS(ctx, cap); err != nil {
+	if err := f.verifyColdMDS(ctx, cap); err != nil {
 		return err
 	}
-	if err := servicehook.LockTopology(ctx, fs.id.cluster); err != nil {
+	if err := servicehook.LockTopology(ctx, f.id.cluster); err != nil {
 		return err
 	}
-	defer servicehook.Unlock(fs.id.cluster)
+	defer servicehook.Unlock(f.id.cluster)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !fs.registered() || fs.id.native != cap.identity || fs.Container != nil || fs.mds.roster.count() != 0 {
+	if !f.id.registered() || f.id.native != cap.identity || *f.first != nil || f.mds.roster.count() != 0 {
 		return errors.New("cold filesystem ownership changed before confirmation")
 	}
-	fs.mds.coldMDS = cap
+	f.mds.coldMDS = cap
 	return nil
 }
 
 // Called with the original setup gate held. Only this additive branch accepts
 // nil embedded Container; successful first startup then uses ordinary scaling.
-func (fs *Filesystem) scaleColdMDS(parent context.Context, active, standby int, start func(context.Context) error) error {
+func (f mdsFleet) scaleColdMDS(parent context.Context, active, standby int, start func(context.Context) error) error {
 	if active != 1 || standby != 0 {
 		return errors.New("first cold MDS scale requires one active and zero standby")
 	}
-	c := fs.id.cluster
+	c := f.id.cluster
 	ctx, cancel := context.WithTimeout(parent, servicehook.StartupTimeout(c))
 	defer cancel()
 	if err := servicehook.LockTopology(ctx, c); err != nil {
 		return err
 	}
-	cap := fs.mds.coldMDS
-	valid := fs.registered() && fs.FilesystemName == fs.id.name && fs.Container == nil && fs.mds.roster.count() == 0 && cap != nil && !cap.attempted && cap.identity == fs.id.native
+	cap := f.mds.coldMDS
+	valid := f.id.registered() && *f.descriptor.name == f.id.name && *f.first == nil && f.mds.roster.count() == 0 && cap != nil && !cap.attempted && cap.identity == f.id.native
 	servicehook.Unlock(c)
 	if !valid {
 		return servicehook.Invalid(errors.New("cold filesystem is unavailable, incomplete or already attempted"))
 	}
-	if err := fs.verifyColdMDS(ctx, cap); err != nil {
+	if err := f.verifyColdMDS(ctx, cap); err != nil {
 		return err
 	}
-	if err := fs.checkColdMDSAuth(ctx); err != nil {
+	if err := f.checkColdMDSAuth(ctx); err != nil {
 		return err
 	}
 	// Reattest policy after auth admission before the starter consumes permission.
-	if err := fs.verifyColdMDS(ctx, cap); err != nil {
+	if err := f.verifyColdMDS(ctx, cap); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -102,14 +102,14 @@ func (fs *Filesystem) scaleColdMDS(parent context.Context, active, standby int, 
 	if err := start(ctx); err != nil {
 		return err
 	}
-	if err := fs.WaitReady(ctx); err != nil {
+	if err := f.waitReady(ctx); err != nil {
 		return err
 	}
 	// Final readiness cannot authorize replacement of an original additional pool.
-	if _, err := fs.volumes().readColdFSID(ctx, cap); err != nil {
+	if _, err := f.id.volumes().readColdFSID(ctx, cap); err != nil {
 		return err
 	}
-	state, err := fs.readNativePools(ctx)
+	state, err := f.id.readNativePools(ctx)
 	if err != nil {
 		return clusterutil.OperationError(ctx, "read initialized cold filesystem", err)
 	}
@@ -122,20 +122,20 @@ func (fs *Filesystem) scaleColdMDS(parent context.Context, active, standby int, 
 			return errors.New("original cold filesystem pool was replaced")
 		}
 	}
-	if _, err := fs.volumes().readColdFSID(ctx, cap); err != nil {
+	if _, err := f.id.volumes().readColdFSID(ctx, cap); err != nil {
 		return err
 	}
 	return ctx.Err()
 }
 
-func (fs *Filesystem) verifyColdMDS(ctx context.Context, cap *cephFSColdMDS) error {
-	if cap == nil || cap.identity == nil || cap.identity != fs.id.native {
+func (f mdsFleet) verifyColdMDS(ctx context.Context, cap *cephFSColdMDS) error {
+	if cap == nil || cap.identity == nil || cap.identity != f.id.native {
 		return errors.New("cold filesystem identity is unavailable")
 	}
-	if _, err := fs.volumes().readColdFSID(ctx, cap); err != nil {
+	if _, err := f.id.volumes().readColdFSID(ctx, cap); err != nil {
 		return err
 	}
-	state, err := fs.readNativePools(ctx)
+	state, err := f.id.readNativePools(ctx)
 	if err != nil {
 		return clusterutil.OperationError(ctx, "read original cold filesystem", err)
 	}
@@ -155,24 +155,24 @@ func (fs *Filesystem) verifyColdMDS(ctx context.Context, cap *cephFSColdMDS) err
 			return errors.New("original cold filesystem pool was replaced")
 		}
 	}
-	for index, config := range append([]ceph.PoolConfig{fs.id.config.DataPool}, fs.id.config.AdditionalDataPools...) {
+	for index, config := range append([]ceph.PoolConfig{f.id.config.DataPool}, f.id.config.AdditionalDataPools...) {
 		if index >= len(cap.dataPools) || cap.pools[config.Name] != cap.dataPools[index] {
 			return errors.New("cold filesystem data pool mapping differs from configuration")
 		}
 	}
-	data, err := servicehook.AuthCommand(ctx, fs.id.cluster, "read cold native MDS map", "fs", "dump", "--format", "json")
+	data, err := servicehook.AuthCommand(ctx, f.id.cluster, "read cold native MDS map", "fs", "dump", "--format", "json")
 	if err != nil {
 		return err
 	}
-	if err := decodeColdMDSMap(data, coldMDSMapExpectation{filesystem: fs.id.name, reservedName: fs.mds.roster.nextID(fs.id.name), native: cap.identity, dataPools: cap.dataPools}); err != nil {
+	if err := decodeColdMDSMap(data, coldMDSMapExpectation{filesystem: f.id.name, reservedName: f.mds.roster.nextID(f.id.name), native: cap.identity, dataPools: cap.dataPools}); err != nil {
 		return err
 	}
-	_, err = fs.volumes().readColdFSID(ctx, cap)
+	_, err = f.id.volumes().readColdFSID(ctx, cap)
 	return err
 }
 
-func (fs *Filesystem) checkColdMDSAuth(ctx context.Context) error {
-	data, err := servicehook.AuthCommand(ctx, fs.id.cluster, "check initial MDS identity", "auth", "ls", "--format", "json")
+func (f mdsFleet) checkColdMDSAuth(ctx context.Context) error {
+	data, err := servicehook.AuthCommand(ctx, f.id.cluster, "check initial MDS identity", "auth", "ls", "--format", "json")
 	if err != nil {
 		return err
 	}
@@ -185,7 +185,7 @@ func (fs *Filesystem) checkColdMDSAuth(ctx context.Context) error {
 		return errors.New("decode initial MDS identity names")
 	}
 	seen := map[string]bool{}
-	reserved := "mds." + fs.mds.roster.nextID(fs.id.name)
+	reserved := "mds." + f.mds.roster.nextID(f.id.name)
 	for _, entry := range *auth.Entities {
 		if entry.Entity == nil || *entry.Entity == "" || strings.TrimSpace(*entry.Entity) != *entry.Entity || seen[*entry.Entity] {
 			return errors.New("initial MDS identity names are incomplete or duplicated")
@@ -236,11 +236,11 @@ func coldMDSFSID(ctx context.Context, data []byte, cap *cephFSColdMDS) (string, 
 	}
 	return value, nil
 }
-func (fs *Filesystem) checkColdSelectedControl(ctx context.Context, control testcontainers.Container) error {
+func (f mdsFleet) checkColdSelectedControl(ctx context.Context, control testcontainers.Container) error {
 	data, err := servicehook.Command(ctx, control, "ceph", "--connect-timeout", "5", "fsid")
 	if err != nil {
 		return clusterutil.OperationError(ctx, "read selected initial MDS control identity", err)
 	}
-	_, err = coldMDSFSID(ctx, data, fs.mds.coldMDS)
+	_, err = coldMDSFSID(ctx, data, f.mds.coldMDS)
 	return err
 }

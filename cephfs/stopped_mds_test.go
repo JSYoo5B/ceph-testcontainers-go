@@ -200,7 +200,7 @@ func TestFailedMDSCreationReturnsTheStarterErrorWithoutPublishing(t *testing.T) 
 	var panicValue any
 	func() {
 		defer func() { panicValue = recover() }()
-		returned = fs.startMDSWithService(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+		returned = fs.fleet().startMDSWithService(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 			var missing *testcontainers.DockerContainer
 			return missing, cause
 		})
@@ -228,7 +228,7 @@ func TestFailedMDSCreationReturnsTheStarterErrorWithoutPublishing(t *testing.T) 
 
 func stoppedMDSPublish(t *testing.T, fs *Filesystem, daemon *stoppedMDSDaemon, startErr error) {
 	t.Helper()
-	err := fs.startMDSWithService(t.Context(), func(ctx context.Context, name, _ string, _ ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	err := fs.fleet().startMDSWithService(t.Context(), func(ctx context.Context, name, _ string, _ ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		if daemon != nil {
 			if err := servicehook.LockTopology(ctx, fs.id.cluster); err != nil {
 				return nil, err
@@ -262,7 +262,7 @@ func TestStoppedMDSPublicationRetainsOriginalAndPartialIdentity(t *testing.T) {
 			stoppedMDSPublish(t, fs, d, cause)
 			owned := fs.mds.roster.daemons[2]
 			i := owned.identity
-			if i == nil || i.descriptor != owned || i.container != d || i.cid != cid || i.name != "target-2" || i.native != fs.id.native || i.filesystem != fs || i.confirmed != (kind == "success") || servicehook.Service(fs.id.cluster, "mds.target-2") != d || fs.mds.roster.nextIndex != 3 {
+			if i == nil || i.descriptor != owned || i.container != d || i.cid != cid || i.name != "target-2" || i.native != fs.id.native || i.fleet.id != &fs.id || i.confirmed != (kind == "success") || servicehook.Service(fs.id.cluster, "mds.target-2") != d || fs.mds.roster.nextIndex != 3 {
 				t.Fatal("actual publication lost original or partial ownership")
 			}
 		})
@@ -276,7 +276,7 @@ func TestStoppedMDSNilAndCanceledPublicationPreservesOldReceipt(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			daemon := &stoppedMDSDaemon{cid: strings.Repeat("c", 64)}
-			err := fs.startMDSWithService(ctx, func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+			err := fs.fleet().startMDSWithService(ctx, func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 				if !canceled {
 					return nil, nil
 				}

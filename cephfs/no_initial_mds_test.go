@@ -345,7 +345,7 @@ func TestNoInitialMDSColdScopeGuardsAndForeignStandby(t *testing.T) {
 	other["info"] = map[string]any{"gid_40": coldMDSTestRow("_other-0", "up:active", 40, 0, 9)}
 	n.native["filesystems"] = append(n.native["filesystems"].([]any), map[string]any{"id": 9, "mdsmap": other})
 	n.native["standbys"] = []any{coldMDSTestRow("_other-1", "up:standby", 41, -1, 9)}
-	if err := fs.verifyColdMDS(t.Context(), fs.mds.coldMDS); err != nil {
+	if err := fs.fleet().verifyColdMDS(t.Context(), fs.mds.coldMDS); err != nil {
 		t.Fatalf("protected independent sibling rejected: %v", err)
 	}
 }
@@ -451,7 +451,7 @@ func TestNoInitialMDSRealAdmissionGatesAndCancellation(t *testing.T) {
 					case "scale":
 						return fs.ScaleMDS(ctx, 1, 0)
 					default:
-						return fs.startMDSWithService(ctx, func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+						return fs.fleet().startMDSWithService(ctx, func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 							t.Error("blocked starter reached service launch")
 							return nil, nil
 						})
@@ -498,7 +498,7 @@ func coldMDSTestScaleWithService(ctx context.Context, fs *Filesystem, start func
 		return err
 	}
 	defer filesystems(fs.id.cluster).setupMu.Unlock()
-	return fs.scaleColdMDS(ctx, 1, 0, func(ctx context.Context) error { return fs.startMDSWithService(ctx, start) })
+	return fs.fleet().scaleColdMDS(ctx, 1, 0, func(ctx context.Context) error { return fs.fleet().startMDSWithService(ctx, start) })
 }
 func coldMDSTestService(t *testing.T, fs *Filesystem, n *coldMDSFixture, worker testcontainers.Container, serviceErr error, active bool) func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 	t.Helper()
@@ -613,7 +613,7 @@ func TestNoInitialMDSSelectedControlAndLateAdmissionPreserveAuthority(t *testing
 		fs, n := coldMDSTestConstruct(t, false)
 		other := &coldMDSFixture{pools: n.pools, native: n.native, auth: n.auth, fsid: n.fsid}
 		testhelper.TestSetControlPlane(fs.id.cluster, other)
-		if err := fs.verifyColdMDS(t.Context(), fs.mds.coldMDS); err != nil || len(other.calls) == 0 {
+		if err := fs.fleet().verifyColdMDS(t.Context(), fs.mds.coldMDS); err != nil || len(other.calls) == 0 {
 			t.Fatalf("stable cluster behind changed CLI was rejected: %v", err)
 		}
 	})
@@ -629,7 +629,7 @@ func TestNoInitialMDSSelectedControlAndLateAdmissionPreserveAuthority(t *testing
 		fs, n := coldMDSTestConstruct(t, false)
 		n.fsid = "b011602b-37aa-496b-a8b5-b3e7a5d13ff3"
 		before := n.mutationCount()
-		err := fs.startMDSWithService(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+		err := fs.fleet().startMDSWithService(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 			t.Error("foreign selected control started daemon")
 			return nil, nil
 		})
@@ -708,7 +708,7 @@ func TestNoInitialMDSOrdinaryStarterKeepsLegacyPartialError(t *testing.T) {
 	fs.mds.coldMDS = nil
 	worker := &mdsScaleFixtureContainer{id: "legacy-partial"}
 	cause := errors.New("ordinary native service cause")
-	err := fs.startMDSWithService(t.Context(), coldMDSTestService(t, fs, n, worker, cause, false))
+	err := fs.fleet().startMDSWithService(t.Context(), coldMDSTestService(t, fs, n, worker, cause, false))
 	if !errors.Is(err, cause) || fs.mds.roster.nextIndex != 1 || fs.Container != worker || len(fs.MDSs()) != 1 || servicehook.Service(fs.id.cluster, "mds.cold-target-0") != worker {
 		t.Fatalf("ordinary start contract changed under private service seam: %v", err)
 	}

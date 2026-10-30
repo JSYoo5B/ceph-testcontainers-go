@@ -146,7 +146,7 @@ func (fs *Filesystem) beginSubvolumeOperation(ctx context.Context) (context.Cont
 		refusal:         "CephFS filesystem must be an active filesystem created by this cluster",
 		check: func(ctx context.Context) (bool, error) {
 			c := fs.id.cluster
-			if !fs.registered() || fs.FilesystemName != fs.id.name || fs.id.native == nil {
+			if !fs.id.registered() || fs.FilesystemName != fs.id.name || fs.id.native == nil {
 				return false, nil
 			}
 			control, err := c.ControlContainer(ctx)
@@ -159,12 +159,12 @@ func (fs *Filesystem) beginSubvolumeOperation(ctx context.Context) (context.Cont
 	if err != nil {
 		return ctx, 0, func() {}, err
 	}
-	state, err := fs.readNativePools(ctx)
+	state, err := fs.id.readNativePools(ctx)
 	if err != nil {
 		done()
 		return ctx, 0, func() {}, err
 	}
-	if err := fs.volumes().ensureVolumesModule(ctx); err != nil {
+	if err := fs.id.volumes().ensureVolumesModule(ctx); err != nil {
 		done()
 		return ctx, 0, func() {}, err
 	}
@@ -276,7 +276,7 @@ func (fs *Filesystem) CreateSubvolumeGroup(ctx context.Context, config Subvolume
 	if err := fs.checkSubvolumeDataPool(ctx, config.DataPool); err != nil {
 		return nil, err
 	}
-	names, err := fs.volumes().subvolumeGroupNames(ctx)
+	names, err := fs.id.volumes().subvolumeGroupNames(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +289,7 @@ func (fs *Filesystem) CreateSubvolumeGroup(ctx context.Context, config Subvolume
 	if _, err := fs.id.cluster.Ceph(ctx, args...); err != nil {
 		return group, fmt.Errorf("create subvolume group %q: %w", config.Name, err)
 	}
-	info, err := fs.volumes().subvolumeGroupInfo(ctx, config.Name)
+	info, err := fs.id.volumes().subvolumeGroupInfo(ctx, config.Name)
 	if err != nil {
 		return group, err
 	}
@@ -317,7 +317,7 @@ func (fs *Filesystem) CreateSubvolume(ctx context.Context, config SubvolumeConfi
 	if err := fs.checkSubvolumeCreationPool(ctx, config.DataPool, config.GroupName); err != nil {
 		return nil, err
 	}
-	names, err := fs.volumes().subvolumeNames(ctx, config.GroupName)
+	names, err := fs.id.volumes().subvolumeNames(ctx, config.GroupName)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +334,7 @@ func (fs *Filesystem) CreateSubvolume(ctx context.Context, config SubvolumeConfi
 	if _, err := fs.id.cluster.Ceph(ctx, args...); err != nil {
 		return subvolume, fmt.Errorf("create subvolume %q: %w", config.Name, err)
 	}
-	info, err := fs.volumes().subvolumeInfo(ctx, config.Name, config.GroupName)
+	info, err := fs.id.volumes().subvolumeInfo(ctx, config.Name, config.GroupName)
 	if err != nil {
 		return subvolume, err
 	}
@@ -355,7 +355,7 @@ func (fs *Filesystem) SubvolumeGroups(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	defer done()
-	return fs.volumes().subvolumeGroupNames(ctx)
+	return fs.id.volumes().subvolumeGroupNames(ctx)
 }
 
 // Subvolumes lists native names in groupName, sorted by name. Empty selects the
@@ -369,7 +369,7 @@ func (fs *Filesystem) Subvolumes(ctx context.Context, groupName string) ([]strin
 		return nil, err
 	}
 	defer done()
-	return fs.volumes().subvolumeNames(ctx, groupName)
+	return fs.id.volumes().subvolumeNames(ctx, groupName)
 }
 
 // SubvolumeGroupInfo queries the current native group quota/layout and path.
@@ -382,7 +382,7 @@ func (fs *Filesystem) SubvolumeGroupInfo(ctx context.Context, name string) (*Sub
 		return nil, err
 	}
 	defer done()
-	return fs.volumes().subvolumeGroupInfo(ctx, name)
+	return fs.id.volumes().subvolumeGroupInfo(ctx, name)
 }
 
 // SubvolumeInfo queries current metadata. name identifies the subvolume and an
@@ -400,7 +400,7 @@ func (fs *Filesystem) SubvolumeInfo(ctx context.Context, name, groupName string)
 		return nil, err
 	}
 	defer done()
-	return fs.volumes().subvolumeInfo(ctx, name, groupName)
+	return fs.id.volumes().subvolumeInfo(ctx, name, groupName)
 }
 
 type cephFSVolumeRawInfo struct {
@@ -527,7 +527,7 @@ func (group *SubvolumeGroup) Resize(ctx context.Context, sizeBytes int64) error 
 	if group.identity.removed {
 		return errors.New("subvolume group has been removed")
 	}
-	info, err := fs.volumes().subvolumeGroupInfo(ctx, group.identity.name)
+	info, err := fs.id.volumes().subvolumeGroupInfo(ctx, group.identity.name)
 	if err != nil {
 		return err
 	}
@@ -560,7 +560,7 @@ func (subvolume *Subvolume) Resize(ctx context.Context, sizeBytes int64) error {
 	if subvolume.identity.removed {
 		return errors.New("subvolume has been removed")
 	}
-	info, err := fs.volumes().subvolumeInfo(ctx, subvolume.identity.name, subvolume.identity.group)
+	info, err := fs.id.volumes().subvolumeInfo(ctx, subvolume.identity.name, subvolume.identity.group)
 	if err != nil {
 		return err
 	}
@@ -595,7 +595,7 @@ func (group *SubvolumeGroup) Remove(ctx context.Context) error {
 		return servicehook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
 	}
 	if group.identity.removalAttempted {
-		names, err := fs.volumes().subvolumeGroupNames(ctx)
+		names, err := fs.id.volumes().subvolumeGroupNames(ctx)
 		if err != nil {
 			return err
 		}
@@ -604,7 +604,7 @@ func (group *SubvolumeGroup) Remove(ctx context.Context) error {
 			return nil
 		}
 	}
-	info, err := fs.volumes().subvolumeGroupInfo(ctx, group.identity.name)
+	info, err := fs.id.volumes().subvolumeGroupInfo(ctx, group.identity.name)
 	if err != nil {
 		return err
 	}
@@ -649,7 +649,7 @@ func (subvolume *Subvolume) Remove(ctx context.Context) error {
 		return servicehook.Invalid(errors.New("CephFS filesystem was replaced outside this fixture; refusing removal"))
 	}
 	if subvolume.identity.removalAttempted {
-		names, err := fs.volumes().subvolumeNames(ctx, subvolume.identity.group)
+		names, err := fs.id.volumes().subvolumeNames(ctx, subvolume.identity.group)
 		if err != nil {
 			return err
 		}
@@ -658,7 +658,7 @@ func (subvolume *Subvolume) Remove(ctx context.Context) error {
 			return nil
 		}
 	}
-	info, err := fs.volumes().subvolumeInfo(ctx, subvolume.identity.name, subvolume.identity.group)
+	info, err := fs.id.volumes().subvolumeInfo(ctx, subvolume.identity.name, subvolume.identity.group)
 	if err != nil {
 		return err
 	}

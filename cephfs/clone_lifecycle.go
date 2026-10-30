@@ -77,7 +77,7 @@ func (fs *Filesystem) checkCloneIncarnation(ctx context.Context, identity *cephF
 	if identity.incarnation == nil {
 		return errors.New("clone has no submission-confirmed native incarnation; inspect it through Ceph")
 	}
-	current, err := fs.volumes().readCloneIncarnation(ctx, identity)
+	current, err := fs.id.volumes().readCloneIncarnation(ctx, identity)
 	if err != nil {
 		return err
 	}
@@ -211,7 +211,7 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 	if identity.removed {
 		return nil
 	}
-	names, err := fs.volumes().subvolumeNames(ctx, identity.group)
+	names, err := fs.id.volumes().subvolumeNames(ctx, identity.group)
 	if err != nil {
 		return err
 	}
@@ -244,7 +244,7 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 	if _, err := fs.id.cluster.Ceph(ctx, append(args, "--force")...); err != nil {
 		return err
 	}
-	names, err = fs.volumes().subvolumeNames(ctx, identity.group)
+	names, err = fs.id.volumes().subvolumeNames(ctx, identity.group)
 	if err != nil {
 		return err
 	}

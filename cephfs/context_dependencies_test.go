@@ -20,7 +20,7 @@ func TestCephFSDirectControlSnapshotsHonorBusyPublication(t *testing.T) {
 	t.Run("pin", func(t *testing.T) {
 		fs, control, _, _ := cephFSPinFixture()
 		assertSnapshotReadLockQueued(t, testhelper.TestState(fs.id.cluster).ControlMutex, func(ctx context.Context) error {
-			policy, err := fs.volumes().readPinPolicy(ctx, "/volumes/group/volume")
+			policy, err := fs.id.volumes().readPinPolicy(ctx, "/volumes/group/volume")
 			if policy != nil {
 				t.Error("busy control returned a pin policy")
 			}
@@ -29,7 +29,7 @@ func TestCephFSDirectControlSnapshotsHonorBusyPublication(t *testing.T) {
 		if len(control.calls) != 0 || len(control.mutations) != 0 {
 			t.Fatal("busy control queried or mutated pin policy")
 		}
-		policy, err := fs.volumes().readPinPolicy(t.Context(), "/volumes/group/volume")
+		policy, err := fs.id.volumes().readPinPolicy(t.Context(), "/volumes/group/volume")
 		if err != nil || policy == nil || policy.Inode != 103 || len(control.mutations) != 0 {
 			t.Fatalf("fresh context could not read original pin identity: policy=%v err=%v", policy, err)
 		}
@@ -38,7 +38,7 @@ func TestCephFSDirectControlSnapshotsHonorBusyPublication(t *testing.T) {
 		fs, control, clone := cloneLifecycleFixture(t)
 		before := *clone.identity.incarnation
 		assertSnapshotReadLockQueued(t, testhelper.TestState(fs.id.cluster).ControlMutex, func(ctx context.Context) error {
-			incarnation, err := fs.volumes().readCloneIncarnation(ctx, clone.identity)
+			incarnation, err := fs.id.volumes().readCloneIncarnation(ctx, clone.identity)
 			if incarnation != nil {
 				t.Error("busy control returned clone incarnation")
 			}
@@ -47,7 +47,7 @@ func TestCephFSDirectControlSnapshotsHonorBusyPublication(t *testing.T) {
 		if len(control.Calls) != 0 || *clone.identity.incarnation != before {
 			t.Fatal("busy control queried or changed captured clone identity")
 		}
-		incarnation, err := fs.volumes().readCloneIncarnation(t.Context(), clone.identity)
+		incarnation, err := fs.id.volumes().readCloneIncarnation(t.Context(), clone.identity)
 		if err != nil || incarnation == nil || *incarnation != before {
 			t.Fatalf("fresh context could not inspect original clone incarnation: %v", err)
 		}
@@ -167,7 +167,7 @@ func TestCephFSCanceledNativeIdentityReadbackStillPublishesOwnership(t *testing.
 	}
 	original := fs.id.native
 	hooked.afterRead = nil
-	if _, err := fs.readNativePools(t.Context()); err != nil || fs.id.native != original {
+	if _, err := fs.id.readNativePools(t.Context()); err != nil || fs.id.native != original {
 		t.Fatalf("fresh native read could not use exact published identity: %v", err)
 	}
 }

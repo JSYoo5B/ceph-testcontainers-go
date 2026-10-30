@@ -140,7 +140,7 @@ func (r *replacementMDSFixture) start(ctx context.Context, name, image string, o
 }
 
 func (r *replacementMDSFixture) add(ctx context.Context) (*MDS, error) {
-	return r.fs.addMDSReplacement(ctx, r.old, r.start)
+	return r.fs.fleet().addMDSReplacement(ctx, r.old, r.start)
 }
 func (r *replacementMDSFixture) assertNoAttempt(t *testing.T) {
 	t.Helper()
@@ -160,14 +160,14 @@ func TestMDSReplacementActualPublicationAndCompletedCopyRetry(t *testing.T) {
 		t.Fatal("replacement lost canonical publication, old embed, monotonic name or desired policy")
 	}
 	copy := *r.old
-	again, err := r.fs.addMDSReplacement(t.Context(), &copy, r.start)
+	again, err := r.fs.fleet().addMDSReplacement(t.Context(), &copy, r.start)
 	if err != nil || again != newDaemon || r.starts != 1 || r.n.mutations != 1 {
 		t.Fatal("completed copied-handle retry launched or adopted a new daemon", err)
 	}
 	if err := (&copy).RemoveStopped(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	again, err = r.fs.addMDSReplacement(t.Context(), &copy, r.start)
+	again, err = r.fs.fleet().addMDSReplacement(t.Context(), &copy, r.start)
 	if err != nil || again != newDaemon || r.fs.Container != r.newCID || len(r.fs.mds.roster.daemons) != 1 || r.oldCID.removes != 1 || r.starts != 1 || r.n.mutations != 1 {
 		t.Fatal("completed own Q removal/404 lost exact replacement or created another", err)
 	}
@@ -223,7 +223,7 @@ func TestMDSReplacementOwnerAndPublicAdmissionRejectsWithoutMutation(t *testing.
 				cancel()
 				ctx = c
 			}
-			if _, err := r.fs.addMDSReplacement(ctx, target, r.start); err == nil {
+			if _, err := r.fs.fleet().addMDSReplacement(ctx, target, r.start); err == nil {
 				t.Fatal("invalid owner admitted")
 			}
 			if r.starts != 0 || r.n.mutations != 0 || r.old.identity.replacement != nil || r.fs.mds.roster.nextIndex != 1 || len(r.n.calls) != 0 {
@@ -479,7 +479,7 @@ func TestMDSReplacementActualPartialStartupRetainedOnRetryAndCleanup(t *testing.
 				t.Fatal("nil service acquired a descriptor")
 			}
 			copy := *r.old
-			again, retryErr := r.fs.addMDSReplacement(t.Context(), &copy, r.start)
+			again, retryErr := r.fs.fleet().addMDSReplacement(t.Context(), &copy, r.start)
 			if again != got || retryErr == nil || retryErr.Error() != "attempted MDS replacement is cleanup-only" || r.starts != 1 || r.n.mutations != 1 {
 				t.Fatal("failed receipt retry lost useful partial or resent native start", retryErr)
 			}
@@ -695,7 +695,7 @@ func TestMDSReplacementLateOriginalOwnerDriftStaysCleanupOnly(t *testing.T) {
 	}
 	copy := *r.old
 	copy.Container = r.newCID
-	again, err := r.fs.addMDSReplacement(t.Context(), &copy, r.start)
+	again, err := r.fs.fleet().addMDSReplacement(t.Context(), &copy, r.start)
 	if again != got || err == nil || r.starts != 1 || r.n.mutations != 1 {
 		t.Fatal("partial receipt owner rejection lost useful cleanup result or launched again", err)
 	}
@@ -802,7 +802,7 @@ func TestMDSReplacementLegacyStarterReceiptUnchanged(t *testing.T) {
 				cause = fmt.Errorf("legacy starter error")
 				ctr = r.newCID
 			}
-			err := r.fs.startMDSWithService(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+			err := r.fs.fleet().startMDSWithService(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 				if ctr != nil {
 					servicehook.SetService(r.fs.id.cluster, "mds.target-1", ctr)
 				}

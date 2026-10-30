@@ -19,7 +19,7 @@ func stoppedMDSDecode(t *testing.T, edit stoppedMDSEdit) (*cephFSMDSRemovalScope
 	fs, native, target, _, survivor := stoppedMDSFixture(t)
 	// The pool identity comes from the same dump, so it is read from the
 	// settled map and only the decoded bytes carry the edit.
-	pools, err := fs.readNativePools(t.Context())
+	pools, err := fs.id.readNativePools(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func stoppedMDSDecode(t *testing.T, edit stoppedMDSEdit) (*cephFSMDSRemovalScope
 	if native.raw != "" {
 		data = []byte(native.raw)
 	}
-	return fs.decodeStoppedMDSScope(t.Context(), target.identity, pools, data)
+	return fs.fleet().decodeStoppedMDSScope(t.Context(), target.identity, pools, data)
 }
 
 func stoppedMDSInfoRow(m map[string]any, key string) map[string]any {

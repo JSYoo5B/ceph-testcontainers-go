@@ -131,7 +131,7 @@ func TestCephFSContextCanceledFreeAdmissionHasNoEffects(t *testing.T) {
 			case "data-pools":
 				_, err = fs.DataPools(ctx)
 			case "snapshot":
-				_, err = fs.mdsSnapshot(ctx)
+				_, err = fs.fleet().mdsSnapshot(ctx)
 			}
 			if !errors.Is(err, context.Canceled) || len(control.Calls) != 0 || daemon.states != 0 ||
 				len(filesystems(fs.id.cluster).byName) != 1 || fs.id.config.ActiveMDS != 1 || fs.id.config.StandbyMDS != 0 {
@@ -193,7 +193,7 @@ func TestCephFSContextMDSSnapshotPreservesOwnedDescriptors(t *testing.T) {
 	second := &MDS{ID: "a", FilesystemName: "fixture"}
 	fs.mds.roster.daemons = []*MDS{first, second}
 	assertContextLockQueued(t, testhelper.TestState(fs.id.cluster).Mutex, func(ctx context.Context) error {
-		_, err := fs.mdsSnapshot(ctx)
+		_, err := fs.fleet().mdsSnapshot(ctx)
 		return err
 	})
 	if len(control.Calls) != 0 || fs.mds.roster.daemons[0] != first || fs.mds.roster.daemons[1] != second {
@@ -201,7 +201,7 @@ func TestCephFSContextMDSSnapshotPreservesOwnedDescriptors(t *testing.T) {
 	}
 	for _, closed := range []bool{false, true} {
 		testhelper.TestSetClosed(fs.id.cluster, closed)
-		snapshot, err := fs.mdsSnapshot(t.Context())
+		snapshot, err := fs.fleet().mdsSnapshot(t.Context())
 		if err != nil || len(snapshot) != 2 || snapshot[0] != first || snapshot[1] != second {
 			t.Fatalf("snapshot lost pointers, creation order or terminated-fixture inspection: %+v %v", snapshot, err)
 		}

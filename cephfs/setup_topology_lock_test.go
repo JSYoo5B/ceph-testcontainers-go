@@ -23,9 +23,9 @@ func setupTopologyOps(r *replacementMDSFixture) map[string]func(context.Context)
 	return map[string]func(context.Context) error{
 		"remove-filesystem": func(ctx context.Context) error { return removeFilesystem(ctx, r.fs.id.cluster, r.fs) },
 		"scale-mds":         func(ctx context.Context) error { return r.fs.ScaleMDS(ctx, 1, 0) },
-		"remove-stopped":    func(ctx context.Context) error { return r.fs.removeStoppedMDS(ctx, r.old) },
+		"remove-stopped":    func(ctx context.Context) error { return r.fs.fleet().removeStoppedMDS(ctx, r.old) },
 		"replace-mds": func(ctx context.Context) error {
-			_, err := r.fs.addMDSReplacement(ctx, r.old, func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+			_, err := r.fs.fleet().addMDSReplacement(ctx, r.old, func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 				return nil, errors.New("must not start")
 			})
 			return err
@@ -138,7 +138,7 @@ func TestSetupThenTopologyAcquisitionKeepsItsOrderAndRelease(t *testing.T) {
 // ownership state and imports no sync, and the only functions that take both
 // locks themselves are the helper and admitOperation.
 func TestSetupThenTopologyPrefixHasOneOwnerAndKeepsPredicatesLocal(t *testing.T) {
-	pinned := []string{"ScaleMDS", "addMDSReplacement", "removeFilesystem", "removeStoppedMDS"}
+	pinned := []string{"addMDSReplacement", "removeFilesystem", "removeStoppedMDS", "scale"}
 	var callers []string
 	both := map[string][]string{}
 	var helper *ast.FuncDecl

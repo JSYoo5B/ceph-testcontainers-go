@@ -140,7 +140,7 @@ func (fs *Filesystem) readOwnedPinPolicy(ctx context.Context, target cephFSPinTa
 	if err != nil {
 		return nil, err
 	}
-	policy, err := fs.volumes().readPinPolicy(ctx, base)
+	policy, err := fs.id.volumes().readPinPolicy(ctx, base)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +168,7 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 	if fs.pins.tracked(key) != nil {
 		return nil, errors.New("restore the existing directory pin override for this field first")
 	}
-	prior, err := fs.volumes().readPinPolicy(ctx, base)
+	prior, err := fs.id.volumes().readPinPolicy(ctx, base)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 	if change.state.previous == change.state.applied {
 		return change, nil
 	}
-	_, setErr := fs.volumes().pinCommand(ctx, target, setting.Type, setting.Value)
+	_, setErr := fs.id.volumes().pinCommand(ctx, target, setting.Type, setting.Value)
 	readCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer stop()
 	current, readErr := fs.readAndCheckPinTarget(readCtx, fsID, target, base, prior.Inode)
@@ -246,7 +246,7 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 	if value != change.state.applied {
 		return servicehook.Invalid(errors.New("directory pin policy changed outside this override; refusing restoration"))
 	}
-	if _, err := fs.volumes().pinCommand(ctx, change.target, change.setting.Type, change.state.previous); err != nil {
+	if _, err := fs.id.volumes().pinCommand(ctx, change.target, change.setting.Type, change.state.previous); err != nil {
 		return err
 	}
 	current, err = fs.readAndCheckPinTarget(ctx, fsID, change.target, change.state.path, change.state.inode)
@@ -319,19 +319,19 @@ func (fs *Filesystem) checkPinTarget(ctx context.Context, fsID int64, target cep
 	if err := fs.validateVolumeHandle(target.identity); err != nil || target.identity.removed {
 		return "", errors.New("directory pin target must remain a confirmed owned resource")
 	}
-	state, err := fs.readNativePools(ctx)
+	state, err := fs.id.readNativePools(ctx)
 	if err != nil || state.id != fsID {
 		return "", errors.Join(err, errors.New("filesystem identity changed during directory pin operation"))
 	}
 	identity := target.identity
 	if target.group {
-		info, err := fs.volumes().subvolumeGroupInfo(ctx, identity.name)
+		info, err := fs.id.volumes().subvolumeGroupInfo(ctx, identity.name)
 		if err != nil {
 			return "", err
 		}
 		return identity.path, fs.checkVolumeIdentity(fsID, identity, info.Path, info.CreatedAt)
 	}
-	info, err := fs.volumes().subvolumeInfo(ctx, identity.name, identity.group)
+	info, err := fs.id.volumes().subvolumeInfo(ctx, identity.name, identity.group)
 	if err != nil {
 		return "", err
 	}
@@ -364,7 +364,7 @@ func (fs *Filesystem) readAndCheckPinTarget(ctx context.Context, fsID int64, tar
 	if currentBase != base {
 		return nil, errors.New("directory pin base path changed")
 	}
-	policy, err := fs.volumes().readPinPolicy(ctx, base)
+	policy, err := fs.id.volumes().readPinPolicy(ctx, base)
 	if err != nil {
 		return nil, err
 	}

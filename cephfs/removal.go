@@ -3,11 +3,8 @@ package cephfs
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	iofs "io/fs"
 	"slices"
-	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -48,22 +45,9 @@ func removeFilesystem(ctx context.Context, c *ceph.Container, handle *Filesystem
 			return fmt.Errorf("remove cephfs %q: %w", name, err)
 		}
 	}
-	for _, daemon := range fs.mds.roster.snapshot() {
-		if daemon.Container != nil {
-			if err := daemon.Terminate(ctx); err != nil && !servicehook.OnlyMissingHostResource(err) {
-				return fmt.Errorf("terminate mds.%s of removed cephfs %q: %w", daemon.ID, name, err)
-			}
-			service := "mds." + daemon.ID
-			if owned := servicehook.Service(c, service); owned != nil && owned.GetContainerID() == daemon.GetContainerID() {
-				servicehook.DeleteService(c, service)
-			}
-		}
-		if _, err := c.Ceph(ctx, "auth", "del", "mds."+daemon.ID); err != nil && !errors.Is(err, iofs.ErrNotExist) && !strings.Contains(err.Error(), "does not exist") {
-			return fmt.Errorf("remove key of mds.%s: %w", daemon.ID, err)
-		}
-		fs.mds.roster.remove(daemon)
+	if err := fs.fleet().removeAll(ctx); err != nil {
+		return err
 	}
-	fs.Container = nil
 	for _, pool := range cephFSConfiguredPools(fs.id.config) {
 		if err := servicehook.RemovePool(ctx, c, pool.Name, true); err != nil && !servicehook.PoolMissing(err) {
 			return fmt.Errorf("remove pool %q of removed cephfs %q: %w", pool.Name, name, err)

@@ -60,17 +60,17 @@ func TestRegistryOwnershipIsReadOnlyThroughRegistered(t *testing.T) {
 
 func TestRegisteredRefusesClosedAndReplacedFilesystems(t *testing.T) {
 	fs, _ := subvolumeFixture()
-	if !fs.registered() {
+	if !fs.id.registered() {
 		t.Fatal("a live filesystem is not registered")
 	}
 	replacement := &Filesystem{id: filesystemIdentity{cluster: fs.id.cluster, name: fs.id.name}}
 	filesystems(fs.id.cluster).byName[fs.id.name] = replacement
-	if fs.registered() || !replacement.registered() {
+	if fs.id.registered() || !replacement.id.registered() {
 		t.Fatal("a replaced registry entry still admits the original handle")
 	}
 	filesystems(fs.id.cluster).byName[fs.id.name] = fs
 	testhelper.TestSetClosed(fs.id.cluster, true)
-	if fs.registered() {
+	if fs.id.registered() {
 		t.Fatal("a closed cluster still admits its filesystem")
 	}
 }

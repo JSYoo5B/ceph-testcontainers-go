@@ -89,7 +89,7 @@ func (fs *Filesystem) checkSnapshotSubvolume(ctx context.Context, fsID int64, id
 	if identity.removed {
 		return errors.New("snapshot source subvolume has been removed")
 	}
-	info, err := fs.volumes().subvolumeInfo(ctx, identity.name, identity.group)
+	info, err := fs.id.volumes().subvolumeInfo(ctx, identity.name, identity.group)
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func (subvolume *Subvolume) Snapshots(ctx context.Context) ([]string, error) {
 	if err := fs.checkSnapshotSubvolume(ctx, fsID, subvolume.identity); err != nil {
 		return nil, err
 	}
-	return fs.volumes().snapshotNames(ctx, subvolume.identity)
+	return fs.id.volumes().snapshotNames(ctx, subvolume.identity)
 }
 
 // CreateSnapshot creates a fresh snapshot without modifying an existing
@@ -150,7 +150,7 @@ func (subvolume *Subvolume) CreateSnapshot(ctx context.Context, name string) (*S
 	if err := fs.checkSnapshotSubvolume(ctx, fsID, subvolume.identity); err != nil {
 		return nil, err
 	}
-	names, err := fs.volumes().snapshotNames(ctx, subvolume.identity)
+	names, err := fs.id.volumes().snapshotNames(ctx, subvolume.identity)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ func (subvolume *Subvolume) CreateSnapshot(ctx context.Context, name string) (*S
 	if _, err := fs.id.cluster.Ceph(ctx, args...); err != nil {
 		return snapshot, err
 	}
-	info, err := fs.volumes().subvolumeSnapshotInfo(ctx, identity.subvolume.name, identity.subvolume.group, identity.name)
+	info, err := fs.id.volumes().subvolumeSnapshotInfo(ctx, identity.subvolume.name, identity.subvolume.group, identity.name)
 	if err != nil {
 		return snapshot, err
 	}
@@ -189,7 +189,7 @@ func (fs *Filesystem) SubvolumeSnapshotInfo(ctx context.Context, subvolumeName, 
 		return nil, err
 	}
 	defer done()
-	return fs.volumes().subvolumeSnapshotInfo(ctx, subvolumeName, groupName, snapshotName)
+	return fs.id.volumes().subvolumeSnapshotInfo(ctx, subvolumeName, groupName, snapshotName)
 }
 
 func decodeCephFSSnapshotInfo(data []byte) (*SubvolumeSnapshotInfo, error) {
@@ -250,7 +250,7 @@ func (fs *Filesystem) checkSnapshotIdentity(ctx context.Context, fsID int64, ide
 	if err := fs.checkSnapshotSubvolume(ctx, fsID, identity.subvolume); err != nil {
 		return nil, err
 	}
-	info, err := fs.volumes().subvolumeSnapshotInfo(ctx, identity.subvolume.name, identity.subvolume.group, identity.name)
+	info, err := fs.id.volumes().subvolumeSnapshotInfo(ctx, identity.subvolume.name, identity.subvolume.group, identity.name)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +282,7 @@ func (snapshot *SubvolumeSnapshot) Remove(ctx context.Context) error {
 		return err
 	}
 	if identity.removalAttempted {
-		names, err := fs.volumes().snapshotNames(ctx, identity.subvolume)
+		names, err := fs.id.volumes().snapshotNames(ctx, identity.subvolume)
 		if err != nil {
 			return err
 		}
@@ -338,7 +338,7 @@ func (snapshot *SubvolumeSnapshot) Clone(ctx context.Context, config CloneConfig
 	if _, err := fs.checkSnapshotIdentity(ctx, fsID, snapshot.identity); err != nil {
 		return nil, err
 	}
-	names, err := fs.volumes().subvolumeNames(ctx, config.GroupName)
+	names, err := fs.id.volumes().subvolumeNames(ctx, config.GroupName)
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +359,7 @@ func (snapshot *SubvolumeSnapshot) Clone(ctx context.Context, config CloneConfig
 		return clone, err
 	}
 	identity.submitted = true
-	identity.incarnation, err = fs.volumes().readCloneIncarnation(ctx, identity)
+	identity.incarnation, err = fs.id.volumes().readCloneIncarnation(ctx, identity)
 	if err != nil {
 		return clone, err
 	}
@@ -444,7 +444,7 @@ func (fs *Filesystem) subvolumeCloneStatus(ctx context.Context, fsID int64, iden
 		if identity.subvolume.identity.removed {
 			return nil, errors.New("completed clone subvolume has been removed")
 		}
-		info, err := fs.volumes().subvolumeInfo(ctx, identity.name, identity.group)
+		info, err := fs.id.volumes().subvolumeInfo(ctx, identity.name, identity.group)
 		if err != nil {
 			return nil, err
 		}
@@ -548,7 +548,7 @@ func (clone *SubvolumeClone) waitStep(ctx context.Context, fs *Filesystem) (*Sub
 // type, state, pool and path match the submission.
 func (clone *SubvolumeClone) adoptCompleted(ctx context.Context, fs *Filesystem, fsID int64) error {
 	identity := clone.identity
-	info, err := fs.volumes().subvolumeInfo(ctx, identity.name, identity.group)
+	info, err := fs.id.volumes().subvolumeInfo(ctx, identity.name, identity.group)
 	if err != nil {
 		return err
 	}

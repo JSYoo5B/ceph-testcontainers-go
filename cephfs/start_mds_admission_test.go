@@ -48,7 +48,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		delete(filesystems(fs.id.cluster).byName, fs.FilesystemName)
 		before := n.mutationCount()
-		d, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
+		d, err := fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
 		if err == nil || err.Error() != owner || d != nil || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 || n.mutationCount() != before {
 			t.Fatalf("ownership refusal changed: %v %v", d, err)
 		}
@@ -58,7 +58,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		fs.id.native = &cephFSNativeIdentity{}
 		before := len(n.calls)
-		_, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
+		_, err := fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
 		if err == nil || err.Error() != "original cold MDS ownership changed before startup" || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 || len(n.calls) != before {
 			t.Fatalf("cold ownership refusal changed: %v", err)
 		}
@@ -68,7 +68,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		fs.Container = &mdsScaleFixtureContainer{id: "foreign"}
 		before := len(n.calls)
-		_, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
+		_, err := fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
 		if err == nil || err.Error() != "original cold MDS ownership changed before startup" || fs.mds.coldMDS.attempted || len(n.calls) != before {
 			t.Fatalf("cold ownership refusal changed: %v", err)
 		}
@@ -78,7 +78,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		n.fsid = "b011602b-37aa-496b-a8b5-b3e7a5d13ff3"
 		before := n.mutationCount()
-		_, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
+		_, err := fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
 		if err == nil || err.Error() != "original cold cluster identity is invalid or changed" || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 || n.mutationCount() != before {
 			t.Fatalf("selected control refusal changed: %v", err)
 		}
@@ -87,7 +87,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 	t.Run("cold/control-read-failure", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		n.fail = "fsid"
-		_, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
+		_, err := fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
 		if err == nil || !strings.HasPrefix(err.Error(), "read selected initial MDS control identity") || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 {
 			t.Fatalf("control read failure changed: %v", err)
 		}
@@ -103,7 +103,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 			}
 		}
 		before := n.mutationCount()
-		_, err := fs.startMDSWithAdmission(ctx, startMDSNever(t), nil, nil)
+		_, err := fs.fleet().startMDSWithAdmission(ctx, startMDSNever(t), nil, nil)
 		if !errors.Is(err, context.Canceled) || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 || n.mutationCount() != before {
 			t.Fatalf("cancellation before permission consumption changed: %v", err)
 		}
@@ -112,12 +112,12 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 	t.Run("cold/permission-consumed-once", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		n.fail = "auth get-or-create mds.cold-target-0" + startMDSCaps
-		_, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
+		_, err := fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
 		if err == nil || !strings.HasPrefix(err.Error(), "create initial MDS credentials") || strings.Contains(err.Error(), "never-log") || !fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 1 {
 			t.Fatalf("cold credentials failure changed: %v", err)
 		}
 		n.fail = ""
-		_, err = fs.startMDSWithAdmission(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+		_, err = fs.fleet().startMDSWithAdmission(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 			return nil, errors.New("stop here")
 		}, nil, nil)
 		if err == nil || err.Error() != "stop here" || fs.mds.roster.nextIndex != 2 {
@@ -128,7 +128,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		fs.mds.coldMDS = nil
 		n.fail = "auth get-or-create mds.cold-target-0" + startMDSCaps
-		_, err := fs.startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
+		_, err := fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
 		if err == nil || !strings.HasPrefix(err.Error(), "create mds.cold-target-0 credentials: ") || fs.mds.roster.nextIndex != 1 {
 			t.Fatalf("ordinary credentials failure changed: %v", err)
 		}
@@ -143,7 +143,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 			sawID = id
 			return nil, cause
 		}
-		d, err := r.fs.startMDSWithAdmission(t.Context(), startMDSNever(t), admit, nil)
+		d, err := r.fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), admit, nil)
 		if err == nil || err.Error() != "admit replacement MDS startup" || d != nil || sawID != "target-1" || r.fs.mds.roster.nextIndex != 1 || r.n.mutations != 0 {
 			t.Fatalf("replacement admission failure changed: %v (id %q)", err, sawID)
 		}
@@ -152,7 +152,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 	t.Run("replacement/admit-nil-control", func(t *testing.T) {
 		r := newReplacementMDSFixture(t)
 		admit := func(context.Context, string) (testcontainers.Container, error) { return nil, nil }
-		_, err := r.fs.startMDSWithAdmission(t.Context(), startMDSNever(t), admit, nil)
+		_, err := r.fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), admit, nil)
 		if err == nil || !strings.HasPrefix(err.Error(), "admit replacement MDS startup") || r.fs.mds.roster.nextIndex != 1 || r.n.mutations != 0 {
 			t.Fatalf("replacement nil-control refusal changed: %v", err)
 		}
@@ -162,7 +162,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 		r := newReplacementMDSFixture(t)
 		r.n.fail = "auth get-or-create mds.target-1" + startMDSCaps
 		admit := func(context.Context, string) (testcontainers.Container, error) { return r.n, nil }
-		d, err := r.fs.startMDSWithAdmission(t.Context(), startMDSNever(t), admit, nil)
+		d, err := r.fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), admit, nil)
 		if err == nil || !strings.HasPrefix(err.Error(), "create replacement MDS credentials") || d != nil || r.fs.mds.roster.nextIndex != 2 {
 			t.Fatalf("replacement credentials failure changed: %v", err)
 		}
@@ -182,7 +182,7 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 		worker := &mdsScaleFixtureContainer{id: "partial"}
 		start := coldMDSTestService(t, fs, n, worker, cause, false)
 		var hooked []*MDS
-		d, err := fs.startMDSWithAdmission(t.Context(), start, nil, func(m *MDS) { hooked = append(hooked, m) })
+		d, err := fs.fleet().startMDSWithAdmission(t.Context(), start, nil, func(m *MDS) { hooked = append(hooked, m) })
 		if err != cause || d == nil || d.Container != worker || d.ID != "cold-target-0" || len(hooked) != 1 || hooked[0] != d || fs.Container != worker || len(fs.MDSs()) != 1 {
 			t.Fatalf("ordinary partial result changed: %v %v", d, err)
 		}
@@ -192,7 +192,7 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 		fs, _ := coldMDSTestConstruct(t, false)
 		fs.mds.coldMDS = nil
 		var typedNil *mdsScaleFixtureContainer
-		d, err := fs.startMDSWithAdmission(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+		d, err := fs.fleet().startMDSWithAdmission(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 			return typedNil, cause
 		}, nil, func(*MDS) { t.Error("published hook ran for a typed-nil handle") })
 		if err != cause || d != nil || fs.Container != nil || len(fs.MDSs()) != 0 || fs.mds.roster.nextIndex != 1 {
@@ -203,14 +203,14 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 		r := newReplacementMDSFixture(t)
 		first := &mdsScaleFixtureContainer{id: "first"}
 		r.fs.Container = first
-		d, err := r.fs.startMDSWithAdmission(t.Context(), r.start, nil, nil)
+		d, err := r.fs.fleet().startMDSWithAdmission(t.Context(), r.start, nil, nil)
 		if err != nil || d == nil || r.fs.Container != first || len(r.fs.MDSs()) != 2 {
 			t.Fatalf("the embedded Container was replaced or the start failed: %v %v", d, err)
 		}
 	})
 	t.Run("cold/no-handle", func(t *testing.T) {
 		fs, _ := coldMDSTestConstruct(t, false)
-		d, err := fs.startMDSWithAdmission(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+		d, err := fs.fleet().startMDSWithAdmission(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 			return nil, cause
 		}, nil, nil)
 		if d != nil || err == nil || err.Error() != "start initial MDS service" || !fs.mds.coldMDS.attempted {
@@ -220,7 +220,7 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 	t.Run("cold/partial-handle-is-not-returned", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		worker := &mdsScaleFixtureContainer{id: "partial-cold"}
-		d, err := fs.startMDSWithAdmission(t.Context(), coldMDSTestService(t, fs, n, worker, cause, false), nil, nil)
+		d, err := fs.fleet().startMDSWithAdmission(t.Context(), coldMDSTestService(t, fs, n, worker, cause, false), nil, nil)
 		if d != nil || err == nil || err.Error() != "start initial MDS service" || fs.Container != worker || len(fs.MDSs()) != 1 {
 			t.Fatalf("cold partial result changed: %v %v", d, err)
 		}
@@ -230,7 +230,7 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 	}
 	t.Run("replacement/no-handle", func(t *testing.T) {
 		r := newReplacementMDSFixture(t)
-		d, err := r.fs.startMDSWithAdmission(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+		d, err := r.fs.fleet().startMDSWithAdmission(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 			return nil, cause
 		}, admit(r), nil)
 		if d != nil || err == nil || err.Error() != "start replacement MDS service" {
@@ -241,7 +241,7 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 		r := newReplacementMDSFixture(t)
 		r.startErr = cause
 		var hooked *MDS
-		d, err := r.fs.startMDSWithAdmission(t.Context(), r.start, admit(r), func(m *MDS) { hooked = m })
+		d, err := r.fs.fleet().startMDSWithAdmission(t.Context(), r.start, admit(r), func(m *MDS) { hooked = m })
 		if d == nil || hooked != d || err == nil || err.Error() != "start replacement MDS service" {
 			t.Fatalf("replacement partial result changed: %v %v", d, err)
 		}
@@ -251,14 +251,14 @@ func TestStartMDSPublicationAndResultClassificationPerMode(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		r.afterStart = func(context.Context) { cancel() }
-		d, err := r.fs.startMDSWithAdmission(ctx, r.start, admit(r), nil)
+		d, err := r.fs.fleet().startMDSWithAdmission(ctx, r.start, admit(r), nil)
 		if d == nil || !errors.Is(err, context.Canceled) || !strings.HasPrefix(err.Error(), "start replacement MDS service") {
 			t.Fatalf("replacement late cancellation changed: %v %v", d, err)
 		}
 	})
 	t.Run("replacement/success", func(t *testing.T) {
 		r := newReplacementMDSFixture(t)
-		d, err := r.fs.startMDSWithAdmission(t.Context(), r.start, admit(r), nil)
+		d, err := r.fs.fleet().startMDSWithAdmission(t.Context(), r.start, admit(r), nil)
 		if err != nil || d == nil || d.ID != "target-1" || len(r.fs.MDSs()) != 2 {
 			t.Fatalf("replacement success changed: %v %v", d, err)
 		}
