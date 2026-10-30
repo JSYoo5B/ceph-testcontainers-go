@@ -379,10 +379,26 @@ func (p *rbdMirrorPair) provisionPolicies(ctx context.Context) error {
 			return err
 		}
 	}
+	steps, configuredSites, err := p.planPolicies(ctx)
+	if err != nil {
+		return err
+	}
+	for _, step := range steps {
+		if err := p.applyPolicyStep(ctx, step, configuredSites); err != nil {
+			return err
+		}
+	}
+	return p.capturePolicyIdentities(ctx)
+}
+
+// planPolicies reads both endpoints' site names and namespace policies and
+// plans the steps that bring them to the configured scope. Both endpoints are
+// checked before the first mutation, so an incompatible destination cannot
+// broaden the source's existing scope. configuredSites maps each site to the
+// cluster-wide site name it had.
+func (p *rbdMirrorPair) planPolicies(ctx context.Context) ([]rbdMirrorPolicyStep, map[string]string, error) {
 	var steps []rbdMirrorPolicyStep
 	configuredSites := make(map[string]string)
-	// Check both endpoints before the first mutation, so an incompatible
-	// destination cannot broaden the source's existing scope.
 	for _, site := range []struct {
 		client                  testcontainers.Container
 		cluster                 *ceph.Container
@@ -393,69 +409,81 @@ func (p *rbdMirrorPair) provisionPolicies(ctx context.Context) error {
 	} {
 		legacy := p.legacyClient(site.client)
 		if legacy && site.namespace != site.remote {
-			return p.namespaceMappingUnsupported(ctx, site.client, site.cluster, site.name, site.namespace, site.remote)
+			return nil, nil, p.namespaceMappingUnsupported(ctx, site.client, site.cluster, site.name, site.namespace, site.remote)
 		}
 		configuredSite, err := readConfiguredRBDMirrorSite(ctx, site.client)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		if configuredSite != "" && configuredSite != site.name {
-			return servicehook.Invalid(errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly"))
+			return nil, nil, servicehook.Invalid(errors.New("existing cluster-wide RBD mirror site name differs; reconfigure explicitly"))
 		}
 		configuredSites[site.name] = configuredSite
 		base, err := readRBDMirrorNamespacePolicy(ctx, site.client, p.config.Pool, "", legacy)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		selected := base
 		if site.namespace != "" {
 			selected, err = readRBDMirrorNamespacePolicy(ctx, site.client, p.config.Pool, site.namespace, legacy)
 			if err != nil {
-				return err
+				return nil, nil, err
 			}
 		}
 		planned, err := planRBDMirrorSite(site.client, site.namespace, site.remote, site.name, p.config.Scope, base, selected, legacy)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		steps = append(steps, planned...)
 	}
-	for _, step := range steps {
-		if err := p.checkPools(ctx); err != nil {
-			return err
-		}
-		configuredSite, err := readConfiguredRBDMirrorSite(ctx, step.client)
-		if err != nil {
-			return err
-		}
-		if configuredSite != configuredSites[step.site] {
-			return errors.New("cluster-wide RBD mirror site name changed during setup; refusing mutation")
-		}
-		current, err := readRBDMirrorNamespacePolicy(ctx, step.client, p.config.Pool, step.namespace, step.legacy)
-		if err != nil {
-			return err
-		}
-		if !sameRBDMirrorPolicy(current, step.previous) {
-			return errors.New("RBD mirror namespace policy changed during setup; refusing mutation")
-		}
-		args := []string{"rbd", "mirror", "pool", "enable", "--site-name", step.site, rbdMirrorNamespaceSpec(p.config.Pool, step.namespace), step.mode}
-		if step.mode != "init-only" && !step.legacy {
-			// Even an empty value is intentional: omission would default to the
-			// local namespace and break named -> default mappings.
-			args = append(args, "--remote-namespace", step.remote)
-		}
-		if _, err := multicluster.Exec(ctx, step.client, args...); err != nil {
-			return fmt.Errorf("enable RBD mirror %s policy (earlier steps may have persisted): %w", step.mode, err)
-		}
-		current, err = readRBDMirrorNamespacePolicy(ctx, step.client, p.config.Pool, step.namespace, step.legacy)
-		if err != nil {
-			return err
-		}
-		if current.Mode != step.mode || (step.mode != "init-only" && (current.RemoteNamespace == nil || *current.RemoteNamespace != step.remote)) {
-			return errors.New("RBD mirror namespace policy readback differs from requested configuration")
-		}
-		configuredSites[step.site] = step.site
+	return steps, configuredSites, nil
+}
+
+// applyPolicyStep enables one planned policy after checking that the pools,
+// the site name and the namespace policy are still what was planned, then
+// reads the policy back. A failure may leave earlier steps persisted.
+func (p *rbdMirrorPair) applyPolicyStep(ctx context.Context, step rbdMirrorPolicyStep, configuredSites map[string]string) error {
+	if err := p.checkPools(ctx); err != nil {
+		return err
 	}
+	configuredSite, err := readConfiguredRBDMirrorSite(ctx, step.client)
+	if err != nil {
+		return err
+	}
+	if configuredSite != configuredSites[step.site] {
+		return errors.New("cluster-wide RBD mirror site name changed during setup; refusing mutation")
+	}
+	current, err := readRBDMirrorNamespacePolicy(ctx, step.client, p.config.Pool, step.namespace, step.legacy)
+	if err != nil {
+		return err
+	}
+	if !sameRBDMirrorPolicy(current, step.previous) {
+		return errors.New("RBD mirror namespace policy changed during setup; refusing mutation")
+	}
+	args := []string{"rbd", "mirror", "pool", "enable", "--site-name", step.site, rbdMirrorNamespaceSpec(p.config.Pool, step.namespace), step.mode}
+	if step.mode != "init-only" && !step.legacy {
+		// Even an empty value is intentional: omission would default to the
+		// local namespace and break named -> default mappings.
+		args = append(args, "--remote-namespace", step.remote)
+	}
+	if _, err := multicluster.Exec(ctx, step.client, args...); err != nil {
+		return fmt.Errorf("enable RBD mirror %s policy (earlier steps may have persisted): %w", step.mode, err)
+	}
+	current, err = readRBDMirrorNamespacePolicy(ctx, step.client, p.config.Pool, step.namespace, step.legacy)
+	if err != nil {
+		return err
+	}
+	if current.Mode != step.mode || (step.mode != "init-only" && (current.RemoteNamespace == nil || *current.RemoteNamespace != step.remote)) {
+		return errors.New("RBD mirror namespace policy readback differs from requested configuration")
+	}
+	configuredSites[step.site] = step.site
+	return nil
+}
+
+// capturePolicyIdentities reads the provisioned policies, requires them to be
+// the configured scope, mapping and site names, and records them on first
+// setup.
+func (p *rbdMirrorPair) capturePolicyIdentities(ctx context.Context) error {
 	identities, err := p.readPolicyIdentities(ctx)
 	if err != nil {
 		return err

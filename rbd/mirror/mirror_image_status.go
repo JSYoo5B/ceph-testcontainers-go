@@ -65,164 +65,226 @@ func (m *Mirror) ImageStatus(ctx context.Context, imageName string) (ImageStatus
 // The original owner's gate is held throughout this bounded read. A non-nil
 // scope belongs to a retained view; it never replaces the owner's config.
 func (m *Mirror) observeRBDMirrorImageLocked(ctx context.Context, imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness) (ImageStatus, error) {
-	var result ImageStatus
-	pool, sourceNS, destinationNS := m.pair.config.Pool, m.pair.config.SourceNamespace, m.pair.config.DestinationNamespace
-	mode := m.pair.config.Mode
-	checkIdentities := m.pair.checkObservedIdentities
+	o := m.imageObservation(imageName, scope, witness)
+	source, destination, settled, err := o.readSites(ctx)
+	if err != nil || settled {
+		return o.result, err
+	}
+	if err := o.readReplay(ctx, source, destination); err != nil {
+		return o.result, err
+	}
+	if err := o.confirm(ctx, source, destination); err != nil {
+		o.result.ReplayReady = false
+		return o.result, err
+	}
+	return o.result, nil
+}
+
+// rbdImageObservation is one image status read: the pool and namespaces it
+// reads, the mode it expects, the identity check that brackets it and the
+// status it builds. A scoped observation reads a bound namespace's view with
+// its receiver witness; an unscoped one reads the fixture's original pair.
+type rbdImageObservation struct {
+	m                      *Mirror
+	name                   string
+	pool, sourceNS, destNS string
+	mode                   Mode
+	scope                  *rbdReceiverScope
+	witness                *rbdReceiverWitness
+	checkIdentities        func(context.Context) error
+	result                 ImageStatus
+}
+
+func (m *Mirror) imageObservation(imageName string, scope *rbdReceiverScope, witness *rbdReceiverWitness) *rbdImageObservation {
+	o := &rbdImageObservation{m: m, name: imageName, scope: scope, witness: witness,
+		pool: m.pair.config.Pool, sourceNS: m.pair.config.SourceNamespace, destNS: m.pair.config.DestinationNamespace,
+		mode: m.pair.config.Mode, checkIdentities: m.pair.checkObservedIdentities}
 	if scope != nil {
-		pool, sourceNS, destinationNS = scope.selection[0], scope.selection[1], scope.selection[2]
-		mode = "" // The source image, not the owner's original mode, is authoritative.
-		checkIdentities = func(ctx context.Context) error { return m.checkRBDReceiverScopeIdentities(ctx, scope) }
+		o.pool, o.sourceNS, o.destNS = scope.selection[0], scope.selection[1], scope.selection[2]
+		o.mode = "" // The source image, not the owner's original mode, is authoritative.
+		o.checkIdentities = func(ctx context.Context) error { return m.checkRBDReceiverScopeIdentities(ctx, scope) }
 	}
-	result.Pool, result.Name = pool, imageName
-	result.SourceNamespace, result.DestinationNamespace = sourceNS, destinationNS
-	if err := checkIdentities(ctx); err != nil {
-		return result, err
+	o.result.Pool, o.result.Name = o.pool, imageName
+	o.result.SourceNamespace, o.result.DestinationNamespace = o.sourceNS, o.destNS
+	return o
+}
+
+func (o *rbdImageObservation) sourceSpec() string {
+	return rbdMirrorImageSpec(o.pool, o.sourceNS, o.name)
+}
+
+func (o *rbdImageObservation) destinationSpec() string {
+	return rbdMirrorImageSpec(o.pool, o.destNS, o.name)
+}
+
+func (o *rbdImageObservation) readInfo(ctx context.Context, client testcontainers.Container, spec string) (rbdObservedInfo, error) {
+	return readRBDMirrorImageInfoForScope(ctx, client, spec, o.name, o.mode, o.scope != nil)
+}
+
+// readSites reads both images' mirroring info after the identity check.
+// settled reports a final result without a replay status: an unscoped image
+// whose mirroring is still being enabled or disabled is valid but never
+// replay-ready, and its identities are kept so a wait can pin them.
+func (o *rbdImageObservation) readSites(ctx context.Context) (source, destination rbdObservedInfo, settled bool, err error) {
+	if err := o.checkIdentities(ctx); err != nil {
+		return source, destination, false, err
 	}
-	if scope == nil {
-		var err error
-		mode, err = normalizeRBDMirrorMode(mode)
+	if o.scope == nil {
+		mode, err := normalizeRBDMirrorMode(o.mode)
 		if err != nil {
-			return result, rbdImageGuardError("RBD mirror image mode is invalid")
+			return source, destination, false, rbdImageGuardError("RBD mirror image mode is invalid")
 		}
-		result.Mode = mode
+		o.mode, o.result.Mode = mode, mode
 	}
-	source, err := readRBDMirrorImageInfoForScope(ctx, m.pair.sourceClient, rbdMirrorImageSpec(pool, sourceNS, imageName), imageName, mode, scope != nil)
+	source, err = o.readInfo(ctx, o.m.pair.sourceClient, o.sourceSpec())
 	if err != nil {
-		return result, err
+		return source, destination, false, err
 	}
-	result.GlobalID, result.SourceImageID, result.SourcePrimary = source.GlobalID, source.ID, source.Primary
-	result.SourceMirrorState = source.State
-	if scope != nil {
-		mode, result.Mode = source.Mode, source.Mode
-		if scope.policies.source.selected.Mode == "pool" && mode != ModeJournal {
-			return result, rbdImageGuardError("RBD pool-scoped image must use journal mirroring")
+	o.result.GlobalID, o.result.SourceImageID, o.result.SourcePrimary = source.GlobalID, source.ID, source.Primary
+	o.result.SourceMirrorState = source.State
+	if o.scope != nil {
+		o.mode, o.result.Mode = source.Mode, source.Mode
+		if o.scope.policies.source.selected.Mode == "pool" && o.mode != ModeJournal {
+			return source, destination, false, rbdImageGuardError("RBD pool-scoped image must use journal mirroring")
 		}
 	}
-	destination, err := readRBDMirrorImageInfoForScope(ctx, m.pair.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), imageName, mode, scope != nil)
+	destination, err = o.readInfo(ctx, o.m.pair.destinationClient, o.destinationSpec())
 	if errors.Is(err, errRBDImageMirroringDisabled) {
 		// rbd-mirror creates the destination image first and enables mirroring
 		// on it right after. Its identity is kept, so that a wait pins it.
-		result.DestinationImageID, result.DestinationMirrorState = destination.ID, destination.State
-		return result, rbdImagePendingError("RBD destination image is not enrolled for mirroring yet")
+		o.result.DestinationImageID, o.result.DestinationMirrorState = destination.ID, destination.State
+		return source, destination, false, rbdImagePendingError("RBD destination image is not enrolled for mirroring yet")
 	}
 	if err != nil {
-		return result, err
+		return source, destination, false, err
 	}
-	result.DestinationImageID, result.DestinationPrimary = destination.ID, destination.Primary
-	result.DestinationMirrorState = destination.State
+	o.result.DestinationImageID, o.result.DestinationPrimary = destination.ID, destination.Primary
+	o.result.DestinationMirrorState = destination.State
 	if source.GlobalID != destination.GlobalID {
-		return result, rbdImageGuardError("RBD source and destination image global IDs differ")
+		return source, destination, false, rbdImageGuardError("RBD source and destination image global IDs differ")
 	}
 	// Creating/disabling are valid transitions, never replay-ready. Native status
 	// refuses these states. Preserve identities and let Wait retry.
-	if scope == nil && (source.State != "enabled" || destination.State != "enabled") {
-		if err := checkIdentities(ctx); err != nil {
-			return result, err
+	if o.scope == nil && (source.State != "enabled" || destination.State != "enabled") {
+		if err := o.checkIdentities(ctx); err != nil {
+			return source, destination, false, err
 		}
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-		return result, nil
+		return source, destination, true, ctx.Err()
 	}
+	return source, destination, false, nil
+}
+
+// readReplay reads the destination's replay status and, for an up/replaying
+// report, attributes it to a running owned process. A native "up" entry may
+// outlive the process, so the report alone never makes the image ready.
+func (o *rbdImageObservation) readReplay(ctx context.Context, source, destination rbdObservedInfo) error {
 	var status rbdObservedStatus
 	if source.State == "enabled" && destination.State == "enabled" {
 		var err error
-		status, err = readRBDMirrorImageStatusForScope(ctx, m.pair.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), imageName, source.GlobalID, scope != nil)
+		status, err = readRBDMirrorImageStatusForScope(ctx, o.m.pair.destinationClient, o.destinationSpec(), o.name, source.GlobalID, o.scope != nil)
 		if err != nil {
-			return result, err
+			return err
 		}
 	}
-	result.State, result.Description, result.LastUpdate = status.State, status.Description, status.LastUpdate
-	// A native "up" entry may outlive the process. Attribute an up/replaying
-	// report to a currently running owned process and its actual pool instance.
-	if source.Primary && !destination.Primary && status.State == "up+replaying" && status.Service != nil {
-		if scope != nil {
-			for _, name := range witness.names {
-				member := witness.members[name]
-				nativeID, ownedClient := strings.CutPrefix(member.client, "client.rbd-mirror.")
-				if !ownedClient || nativeID == "" || nativeID != status.Service.DaemonID {
-					continue
-				}
-				result.DaemonName, result.InstanceID = name, status.Service.InstanceID
-				observed, err := m.readRBDReceiver(ctx, scope, member)
-				if err != nil {
-					return result, err
-				}
-				result.ReplayReady = observed.problem == "" && observed.report.Running && observed.report.NamespaceDiscovered && observed.report.PoolState == "running" && observed.report.InstanceID == status.Service.InstanceID
-				break
-			}
-		} else {
-			for _, daemon := range m.roster.daemons {
-				if daemon == nil || daemon.Container == nil {
-					continue
-				}
-				// AddDaemon creates client.rbd-mirror.<id>. Ceph registers its
-				// service as <id>, stripping both the client entity type and the
-				// rbd-mirror daemon prefix. Match this exact owned identity.
-				nativeDaemonID, ownedClient := strings.CutPrefix(daemon.ClientName, "client.rbd-mirror.")
-				if !ownedClient || nativeDaemonID == "" || nativeDaemonID != status.Service.DaemonID {
-					continue
-				}
-				result.DaemonName, result.InstanceID = daemon.DaemonName, status.Service.InstanceID
-				state, err := daemon.State(ctx)
-				if err != nil {
-					return result, rbdImageQueryError("inspect RBD receiving process", err)
-				}
-				if state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
-					break
-				}
-				native, err := readRBDMirrorObservedDaemon(ctx, daemon.Container)
-				if err != nil {
-					return result, err
-				}
-				result.ReplayReady = slices.ContainsFunc(native.PoolReplayers, func(pool PoolReplayerStatus) bool {
-					return pool.Pool == m.pair.config.Pool && pool.State == "running" && pool.InstanceID == status.Service.InstanceID
-				})
-				break
-			}
-		}
+	o.result.State, o.result.Description, o.result.LastUpdate = status.State, status.Description, status.LastUpdate
+	if !source.Primary || destination.Primary || status.State != "up+replaying" || status.Service == nil {
+		return nil
 	}
-	// Detect replacement between info and status instead of blessing a new image
-	// with the same name. Also reject source replacement while the receiver read
-	// was in progress. This does not impose atomicity on external native edits.
+	if o.scope != nil {
+		return o.attributeScoped(ctx, status.Service)
+	}
+	return o.attributeOwned(ctx, status.Service)
+}
+
+// attributeScoped matches the reporting service to a witnessed receiver
+// member and requires that member's own report to show the same instance.
+func (o *rbdImageObservation) attributeScoped(ctx context.Context, service *rbdObservedService) error {
+	for _, name := range o.witness.names {
+		member := o.witness.members[name]
+		nativeID, ownedClient := strings.CutPrefix(member.client, "client.rbd-mirror.")
+		if !ownedClient || nativeID == "" || nativeID != service.DaemonID {
+			continue
+		}
+		o.result.DaemonName, o.result.InstanceID = name, service.InstanceID
+		observed, err := o.m.readRBDReceiver(ctx, o.scope, member)
+		if err != nil {
+			return err
+		}
+		o.result.ReplayReady = observed.problem == "" && observed.report.Running && observed.report.NamespaceDiscovered && observed.report.PoolState == "running" && observed.report.InstanceID == service.InstanceID
+		return nil
+	}
+	return nil
+}
+
+// attributeOwned matches the reporting service to a fixture daemon and
+// requires that running process to replay the pool with the same instance.
+func (o *rbdImageObservation) attributeOwned(ctx context.Context, service *rbdObservedService) error {
+	for _, daemon := range o.m.roster.daemons {
+		if daemon == nil || daemon.Container == nil {
+			continue
+		}
+		// AddDaemon creates client.rbd-mirror.<id>. Ceph registers its
+		// service as <id>, stripping both the client entity type and the
+		// rbd-mirror daemon prefix. Match this exact owned identity.
+		nativeDaemonID, ownedClient := strings.CutPrefix(daemon.ClientName, "client.rbd-mirror.")
+		if !ownedClient || nativeDaemonID == "" || nativeDaemonID != service.DaemonID {
+			continue
+		}
+		o.result.DaemonName, o.result.InstanceID = daemon.DaemonName, service.InstanceID
+		state, err := daemon.State(ctx)
+		if err != nil {
+			return rbdImageQueryError("inspect RBD receiving process", err)
+		}
+		if state == nil || !state.Running || state.Paused || state.Restarting || state.Dead {
+			return nil
+		}
+		native, err := readRBDMirrorObservedDaemon(ctx, daemon.Container)
+		if err != nil {
+			return err
+		}
+		o.result.ReplayReady = slices.ContainsFunc(native.PoolReplayers, func(pool PoolReplayerStatus) bool {
+			return pool.Pool == o.m.pair.config.Pool && pool.State == "running" && pool.InstanceID == service.InstanceID
+		})
+		return nil
+	}
+	return nil
+}
+
+// confirm rereads both images and the identities after the status read. It
+// detects a replacement between info and status instead of blessing a new
+// image with the same name, and a source replacement while the receiver read
+// was in progress. This does not impose atomicity on external native edits.
+func (o *rbdImageObservation) confirm(ctx context.Context, source, destination rbdObservedInfo) error {
 	for _, site := range []struct {
 		client testcontainers.Container
 		spec   string
 		before rbdObservedInfo
 	}{
-		{m.pair.sourceClient, rbdMirrorImageSpec(pool, sourceNS, imageName), source},
-		{m.pair.destinationClient, rbdMirrorImageSpec(pool, destinationNS, imageName), destination},
+		{o.m.pair.sourceClient, o.sourceSpec(), source},
+		{o.m.pair.destinationClient, o.destinationSpec(), destination},
 	} {
-		after, err := readRBDMirrorImageInfoForScope(ctx, site.client, site.spec, imageName, mode, scope != nil)
+		after, err := o.readInfo(ctx, site.client, site.spec)
 		if err != nil {
-			result.ReplayReady = false
-			return result, err
+			return err
 		}
 		if after != site.before {
-			result.ReplayReady = false
-			if scope == nil || after.ID != site.before.ID || after.GlobalID != site.before.GlobalID || after.Mode != site.before.Mode || after.Primary != site.before.Primary {
-				return result, rbdImageGuardError("RBD image identity or primary ownership changed during observation")
+			o.result.ReplayReady = false
+			if o.scope == nil || after.ID != site.before.ID || after.GlobalID != site.before.GlobalID || after.Mode != site.before.Mode || after.Primary != site.before.Primary {
+				return rbdImageGuardError("RBD image identity or primary ownership changed during observation")
 			}
 			// A recognized state transition with stable scoped identity is non-ready.
 			// Retain all final authority checks and let a later poll observe progress.
 		}
 	}
-	if err := checkIdentities(ctx); err != nil {
-		result.ReplayReady = false
-		return result, err
+	if err := o.checkIdentities(ctx); err != nil {
+		return err
 	}
-	if scope != nil {
-		if _, err := m.receiverWitness(scope, nil, witness); err != nil {
-			result.ReplayReady = false
-			return result, err
+	if o.scope != nil {
+		if _, err := o.m.receiverWitness(o.scope, nil, o.witness); err != nil {
+			return err
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		result.ReplayReady = false
-		return result, err
-	}
-	return result, nil
+	return ctx.Err()
 }
 
 // WaitReplayReady waits for up to four minutes, bounded by the caller context,

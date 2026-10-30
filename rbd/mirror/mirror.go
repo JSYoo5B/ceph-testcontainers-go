@@ -472,7 +472,6 @@ func (m *Mirror) Rebootstrap(ctx context.Context) (returnErr error) {
 	if m.closed || m.pair.sourceClient == nil || m.pair.destinationClient == nil {
 		return errors.New("RBD mirror setup clients are unavailable")
 	}
-	config := m.pair.config
 	if err := m.pair.checkPolicyIdentities(ctx); err != nil {
 		return err
 	}
@@ -501,16 +500,9 @@ func (m *Mirror) Rebootstrap(ctx context.Context) (returnErr error) {
 			}
 		}()
 	}
-	token, err := m.SourceRBD(ctx, "mirror", "pool", "peer", "bootstrap", "create", "--site-name", config.SourceSite, config.Pool)
+	token, bootstrap, err := m.pair.createBootstrapToken(ctx)
 	if err != nil {
-		return fmt.Errorf("create RBD mirror peer token: %w", err)
-	}
-	if len(bytes.TrimSpace(token)) == 0 {
-		return errors.New("source returned an empty RBD mirror peer token")
-	}
-	bootstrap, err := decodeRBDBootstrapIdentity(token)
-	if err != nil {
-		return fmt.Errorf("read source RBD mirror bootstrap identity: %w", err)
+		return err
 	}
 	tokenPath := "/tmp/rbd-mirror-peer-token-" + uuid.NewString()
 	defer func() {
@@ -520,68 +512,14 @@ func (m *Mirror) Rebootstrap(ctx context.Context) (returnErr error) {
 			returnErr = errors.Join(returnErr, fmt.Errorf("remove RBD mirror peer token file: %w", err))
 		}
 	}()
-	if err := m.pair.destinationClient.CopyToContainer(ctx, token, tokenPath, 0o600); err != nil {
-		return fmt.Errorf("copy RBD mirror peer token: %w", err)
-	}
-	if err := m.pair.checkPolicyIdentities(ctx); err != nil {
+	if err := m.pair.importBootstrapToken(ctx, token, tokenPath); err != nil {
 		return err
 	}
-	if _, err := m.DestinationRBD(ctx, "mirror", "pool", "peer", "bootstrap", "import",
-		"--site-name", config.DestinationSite, "--direction", "rx-only", config.Pool, tokenPath); err != nil {
-		return fmt.Errorf("import rx-only RBD mirror peer: %w", err)
-	}
-	// Bootstrap import reuses an existing peer without updating its client or
-	// direction. It does refresh the monitor/key attributes from the token.
-	// The remote daemon can already have registered this site as tx-only. Use
-	// both its site identity and mirror UUID so only this link is updated.
-	fsid, err := multicluster.Exec(ctx, m.pair.sourceClient, "ceph", "fsid")
+	fsid, sourceMirrorUUID, err := m.pair.sourceIdentity(ctx, bootstrap)
 	if err != nil {
-		return fmt.Errorf("read source cluster identity: %w", err)
+		return err
 	}
-	if bootstrap.FSID != strings.TrimSpace(string(fsid)) {
-		return errors.New("source RBD bootstrap token has a conflicting cluster identity")
-	}
-	sourceInfo, err := m.SourceRBD(ctx, "mirror", "pool", "info", config.Pool, "--format", "json")
-	if err != nil {
-		return fmt.Errorf("read source RBD mirror identity: %w", err)
-	}
-	var sourcePool struct {
-		MirrorUUID string `json:"mirror_uuid"`
-	}
-	err = json.Unmarshal(sourceInfo, &sourcePool)
-	// An rbd without remote namespaces, as in Ceph 19, does not print the
-	// UUID, whatever release the cluster runs.
-	if err == nil && sourcePool.MirrorUUID == "" && m.pair.legacyClient(m.pair.sourceClient) {
-		sourcePool.MirrorUUID, err = readLegacyRBDMirrorUUID(ctx, m.pair.sourceClient, config.Pool, "")
-	}
-	if err != nil || sourcePool.MirrorUUID == "" {
-		return fmt.Errorf("read source RBD mirror identity: invalid pool info (decode error: %v)", err)
-	}
-	destinationInfo, err := m.DestinationRBD(ctx, "mirror", "pool", "info", config.Pool, "--format", "json")
-	if err != nil {
-		return fmt.Errorf("read destination RBD mirror peer: %w", err)
-	}
-	peer, err := matchingRBDMirrorPeer(destinationInfo, config.SourceSite, strings.TrimSpace(string(fsid)), sourcePool.MirrorUUID)
-	if err != nil {
-		return fmt.Errorf("identify imported RBD mirror peer: %w", err)
-	}
-	if peer.ClientName != bootstrap.ClientName {
-		if err := m.pair.checkPolicyIdentities(ctx); err != nil {
-			return err
-		}
-		if _, err := m.DestinationRBD(ctx, "mirror", "pool", "peer", "set", config.Pool, peer.UUID, "client", bootstrap.ClientName); err != nil {
-			return fmt.Errorf("configure imported RBD mirror peer client: %w", err)
-		}
-	}
-	if peer.Direction == "tx-only" {
-		if err := m.pair.checkPolicyIdentities(ctx); err != nil {
-			return err
-		}
-		if _, err := m.DestinationRBD(ctx, "mirror", "pool", "peer", "set", config.Pool, peer.UUID, "direction", "rx-tx"); err != nil {
-			return fmt.Errorf("enable receiving on imported RBD mirror peer: %w", err)
-		}
-	}
-	if err := m.pair.checkPolicyIdentities(ctx); err != nil {
+	if err := m.pair.reconcileImportedPeer(ctx, bootstrap, fsid, sourceMirrorUUID); err != nil {
 		return err
 	}
 	if m.receiver.clusters != nil {
@@ -665,19 +603,129 @@ func matchingRBDMirrorPeer(info []byte, site, fsid, mirrorUUID string) (rbdMirro
 // SourceRBD executes the RBD CLI in this link's source setup client. Arguments
 // are passed without shell interpolation; use --format json for state queries.
 func (m *Mirror) SourceRBD(ctx context.Context, args ...string) ([]byte, error) {
-	if m == nil || m.pair.sourceClient == nil {
+	if m == nil {
 		return nil, errors.New("RBD mirror source setup client is unavailable")
 	}
-	return multicluster.Exec(ctx, m.pair.sourceClient, append([]string{"rbd"}, args...)...)
+	return m.pair.sourceRBD(ctx, args...)
 }
 
 // DestinationRBD executes the RBD CLI in the destination setup client. It can
 // promote/demote images, request resync, and inspect or remove explicit peers.
 func (m *Mirror) DestinationRBD(ctx context.Context, args ...string) ([]byte, error) {
-	if m == nil || m.pair.destinationClient == nil {
+	if m == nil {
 		return nil, errors.New("RBD mirror destination setup client is unavailable")
 	}
-	return multicluster.Exec(ctx, m.pair.destinationClient, append([]string{"rbd"}, args...)...)
+	return m.pair.destinationRBD(ctx, args...)
+}
+
+func (p *rbdMirrorPair) sourceRBD(ctx context.Context, args ...string) ([]byte, error) {
+	if p.sourceClient == nil {
+		return nil, errors.New("RBD mirror source setup client is unavailable")
+	}
+	return multicluster.Exec(ctx, p.sourceClient, append([]string{"rbd"}, args...)...)
+}
+
+func (p *rbdMirrorPair) destinationRBD(ctx context.Context, args ...string) ([]byte, error) {
+	if p.destinationClient == nil {
+		return nil, errors.New("RBD mirror destination setup client is unavailable")
+	}
+	return multicluster.Exec(ctx, p.destinationClient, append([]string{"rbd"}, args...)...)
+}
+
+// createBootstrapToken creates a source peer bootstrap token and reads the
+// identity it carries.
+func (p *rbdMirrorPair) createBootstrapToken(ctx context.Context) ([]byte, rbdBootstrapIdentity, error) {
+	token, err := p.sourceRBD(ctx, "mirror", "pool", "peer", "bootstrap", "create", "--site-name", p.config.SourceSite, p.config.Pool)
+	if err != nil {
+		return nil, rbdBootstrapIdentity{}, fmt.Errorf("create RBD mirror peer token: %w", err)
+	}
+	if len(bytes.TrimSpace(token)) == 0 {
+		return nil, rbdBootstrapIdentity{}, errors.New("source returned an empty RBD mirror peer token")
+	}
+	bootstrap, err := decodeRBDBootstrapIdentity(token)
+	if err != nil {
+		return nil, rbdBootstrapIdentity{}, fmt.Errorf("read source RBD mirror bootstrap identity: %w", err)
+	}
+	return token, bootstrap, nil
+}
+
+// importBootstrapToken copies the token to tokenPath on the destination and
+// imports it as an rx-only peer. The caller removes the file.
+func (p *rbdMirrorPair) importBootstrapToken(ctx context.Context, token []byte, tokenPath string) error {
+	if err := p.destinationClient.CopyToContainer(ctx, token, tokenPath, 0o600); err != nil {
+		return fmt.Errorf("copy RBD mirror peer token: %w", err)
+	}
+	if err := p.checkPolicyIdentities(ctx); err != nil {
+		return err
+	}
+	if _, err := p.destinationRBD(ctx, "mirror", "pool", "peer", "bootstrap", "import",
+		"--site-name", p.config.DestinationSite, "--direction", "rx-only", p.config.Pool, tokenPath); err != nil {
+		return fmt.Errorf("import rx-only RBD mirror peer: %w", err)
+	}
+	return nil
+}
+
+// sourceIdentity reads the source cluster FSID, which must be the token's, and
+// the source pool's mirror UUID.
+func (p *rbdMirrorPair) sourceIdentity(ctx context.Context, bootstrap rbdBootstrapIdentity) (fsid, mirrorUUID string, err error) {
+	raw, err := multicluster.Exec(ctx, p.sourceClient, "ceph", "fsid")
+	if err != nil {
+		return "", "", fmt.Errorf("read source cluster identity: %w", err)
+	}
+	fsid = strings.TrimSpace(string(raw))
+	if bootstrap.FSID != fsid {
+		return "", "", errors.New("source RBD bootstrap token has a conflicting cluster identity")
+	}
+	sourceInfo, err := p.sourceRBD(ctx, "mirror", "pool", "info", p.config.Pool, "--format", "json")
+	if err != nil {
+		return "", "", fmt.Errorf("read source RBD mirror identity: %w", err)
+	}
+	var sourcePool struct {
+		MirrorUUID string `json:"mirror_uuid"`
+	}
+	err = json.Unmarshal(sourceInfo, &sourcePool)
+	// An rbd without remote namespaces, as in Ceph 19, does not print the
+	// UUID, whatever release the cluster runs.
+	if err == nil && sourcePool.MirrorUUID == "" && p.legacyClient(p.sourceClient) {
+		sourcePool.MirrorUUID, err = readLegacyRBDMirrorUUID(ctx, p.sourceClient, p.config.Pool, "")
+	}
+	if err != nil || sourcePool.MirrorUUID == "" {
+		return "", "", fmt.Errorf("read source RBD mirror identity: invalid pool info (decode error: %v)", err)
+	}
+	return fsid, sourcePool.MirrorUUID, nil
+}
+
+// reconcileImportedPeer completes the imported peer. Bootstrap import reuses
+// an existing peer without updating its client or direction; it does refresh
+// the monitor/key attributes from the token. The remote daemon can already
+// have registered this site as tx-only, so the peer is matched by both its
+// site identity and the source mirror UUID and only this link is updated.
+func (p *rbdMirrorPair) reconcileImportedPeer(ctx context.Context, bootstrap rbdBootstrapIdentity, fsid, sourceMirrorUUID string) error {
+	destinationInfo, err := p.destinationRBD(ctx, "mirror", "pool", "info", p.config.Pool, "--format", "json")
+	if err != nil {
+		return fmt.Errorf("read destination RBD mirror peer: %w", err)
+	}
+	peer, err := matchingRBDMirrorPeer(destinationInfo, p.config.SourceSite, fsid, sourceMirrorUUID)
+	if err != nil {
+		return fmt.Errorf("identify imported RBD mirror peer: %w", err)
+	}
+	if peer.ClientName != bootstrap.ClientName {
+		if err := p.checkPolicyIdentities(ctx); err != nil {
+			return err
+		}
+		if _, err := p.destinationRBD(ctx, "mirror", "pool", "peer", "set", p.config.Pool, peer.UUID, "client", bootstrap.ClientName); err != nil {
+			return fmt.Errorf("configure imported RBD mirror peer client: %w", err)
+		}
+	}
+	if peer.Direction == "tx-only" {
+		if err := p.checkPolicyIdentities(ctx); err != nil {
+			return err
+		}
+		if _, err := p.destinationRBD(ctx, "mirror", "pool", "peer", "set", p.config.Pool, peer.UUID, "direction", "rx-tx"); err != nil {
+			return fmt.Errorf("enable receiving on imported RBD mirror peer: %w", err)
+		}
+	}
+	return p.checkPolicyIdentities(ctx)
 }
 
 // EnableImage enables the configured snapshot or journal mode on an existing

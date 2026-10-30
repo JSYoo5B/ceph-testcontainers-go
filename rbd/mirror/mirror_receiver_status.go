@@ -339,82 +339,18 @@ func decodeRBDReceiverDiscovery(data []byte, pool string, peer *rbdReceiverPeerI
 	if json.Unmarshal(data, &native) != nil {
 		return selected, false, rbdReceiverGuard("decode RBD receiver pool discovery")
 	}
-	var rows []struct {
-		Pool           *string         `json:"pool"`
-		Peer           *string         `json:"peer"`
-		State          *string         `json:"state"`
-		Instance       *string         `json:"instance_id"`
-		LeaderInstance *string         `json:"leader_instance_id"`
-		Leader         *bool           `json:"leader"`
-		Instances      json.RawMessage `json:"instances"`
-		Namespaces     json.RawMessage `json:"namespace_replayers"`
-		LegacyImages   json.RawMessage `json:"image_replayers"`
-		LegacyNames    json.RawMessage `json:"namespaces"`
-	}
+	var rows []rbdReceiverPoolRow
 	if len(native.Pools) == 0 || json.Unmarshal(native.Pools, &rows) != nil || rows == nil {
 		return selected, false, rbdReceiverGuard("decode RBD receiver pool discovery array")
 	}
 	expectedPeer := "uuid: " + peer.uuid + " cluster: " + peer.site + " client: " + peer.client
 	found := false
+	// Every row is validated, not only the selected one, so a malformed
+	// sibling refuses the whole report.
 	for _, row := range rows {
-		if row.Peer == nil || *row.Peer == "" || row.State == nil || !slices.Contains([]string{"running", "error", "stopped", "stopped (manual)"}, *row.State) {
-			return selected, false, rbdReceiverGuard("decode RBD receiver discovery identity/state")
-		}
-		if legacy {
-			converted, err := legacyRBDNamespaceReplayers(row.LegacyImages, row.LegacyNames)
-			if err != nil {
-				return selected, false, err
-			}
-			row.Namespaces = converted
-		}
-		var namespaces []struct {
-			Local  *string         `json:"local_namespace"`
-			Remote *string         `json:"remote_namespace"`
-			Images json.RawMessage `json:"image_replayers"`
-		}
-		if len(row.Namespaces) == 0 || json.Unmarshal(row.Namespaces, &namespaces) != nil || namespaces == nil {
-			return selected, false, rbdReceiverGuard("decode RBD receiver namespace discovery array")
-		}
-		entry := rbdReceiverDiscovery{state: *row.State}
-		seenNamespaces := make(map[string]bool)
-		for _, namespace := range namespaces {
-			var images []json.RawMessage
-			if namespace.Local == nil || namespace.Remote == nil || seenNamespaces[*namespace.Local] || len(namespace.Images) == 0 || json.Unmarshal(namespace.Images, &images) != nil || images == nil {
-				return selected, false, rbdReceiverGuard("decode RBD receiver namespace discovery identity")
-			}
-			seenNamespaces[*namespace.Local] = true
-			entry.namespaces = append(entry.namespaces, rbdReceiverNamespace{*namespace.Local, *namespace.Remote})
-		}
-		if row.Instance != nil {
-			if !rbdReceiverInstance(*row.Instance) {
-				return selected, false, rbdReceiverGuard("decode RBD receiver native instance")
-			}
-			entry.instance = *row.Instance
-		}
-		if row.LeaderInstance != nil {
-			if *row.LeaderInstance != "" && !rbdReceiverInstance(*row.LeaderInstance) {
-				return selected, false, rbdReceiverGuard("decode RBD receiver native leader instance")
-			}
-			entry.leaderInstance = *row.LeaderInstance
-		}
-		if row.Leader != nil {
-			entry.leader = *row.Leader
-		}
-		if len(row.Instances) != 0 {
-			if json.Unmarshal(row.Instances, &entry.members) != nil || entry.members == nil {
-				return selected, false, rbdReceiverGuard("decode RBD receiver native membership")
-			}
-			seen := make(map[string]bool)
-			for _, id := range entry.members {
-				if !rbdReceiverInstance(id) || seen[id] {
-					return selected, false, rbdReceiverGuard("decode RBD receiver duplicate or invalid membership")
-				}
-				seen[id] = true
-			}
-			slices.Sort(entry.members)
-		}
-		if *row.State == "running" && (row.Pool == nil || *row.Pool == "" || row.Instance == nil || row.LeaderInstance == nil || row.Leader == nil || entry.leader && len(row.Instances) == 0) {
-			return selected, false, rbdReceiverGuard("decode RBD running receiver election fields")
+		entry, err := row.decode(legacy)
+		if err != nil {
+			return selected, false, err
 		}
 		if row.Pool == nil || *row.Pool != pool || *row.Peer != expectedPeer {
 			continue
@@ -425,6 +361,107 @@ func decodeRBDReceiverDiscovery(data []byte, pool string, peer *rbdReceiverPeerI
 		selected, found = entry, true
 	}
 	return selected, found, nil
+}
+
+// rbdReceiverPoolRow is one pool_replayers row of the rbd-mirror status.
+type rbdReceiverPoolRow struct {
+	Pool           *string         `json:"pool"`
+	Peer           *string         `json:"peer"`
+	State          *string         `json:"state"`
+	Instance       *string         `json:"instance_id"`
+	LeaderInstance *string         `json:"leader_instance_id"`
+	Leader         *bool           `json:"leader"`
+	Instances      json.RawMessage `json:"instances"`
+	Namespaces     json.RawMessage `json:"namespace_replayers"`
+	LegacyImages   json.RawMessage `json:"image_replayers"`
+	LegacyNames    json.RawMessage `json:"namespaces"`
+}
+
+// decode validates the row's identity, state, namespaces and election fields;
+// a running row must report its pool, instance, leader and, as leader, its
+// membership.
+func (row rbdReceiverPoolRow) decode(legacy bool) (rbdReceiverDiscovery, error) {
+	if row.Peer == nil || *row.Peer == "" || row.State == nil || !slices.Contains([]string{"running", "error", "stopped", "stopped (manual)"}, *row.State) {
+		return rbdReceiverDiscovery{}, rbdReceiverGuard("decode RBD receiver discovery identity/state")
+	}
+	if legacy {
+		converted, err := legacyRBDNamespaceReplayers(row.LegacyImages, row.LegacyNames)
+		if err != nil {
+			return rbdReceiverDiscovery{}, err
+		}
+		row.Namespaces = converted
+	}
+	entry := rbdReceiverDiscovery{state: *row.State}
+	var err error
+	if entry.namespaces, err = decodeRBDReceiverNamespaces(row.Namespaces); err != nil {
+		return rbdReceiverDiscovery{}, err
+	}
+	if row.Instance != nil {
+		if !rbdReceiverInstance(*row.Instance) {
+			return rbdReceiverDiscovery{}, rbdReceiverGuard("decode RBD receiver native instance")
+		}
+		entry.instance = *row.Instance
+	}
+	if row.LeaderInstance != nil {
+		if *row.LeaderInstance != "" && !rbdReceiverInstance(*row.LeaderInstance) {
+			return rbdReceiverDiscovery{}, rbdReceiverGuard("decode RBD receiver native leader instance")
+		}
+		entry.leaderInstance = *row.LeaderInstance
+	}
+	if row.Leader != nil {
+		entry.leader = *row.Leader
+	}
+	if len(row.Instances) != 0 {
+		if entry.members, err = decodeRBDReceiverMembers(row.Instances); err != nil {
+			return rbdReceiverDiscovery{}, err
+		}
+	}
+	if *row.State == "running" && (row.Pool == nil || *row.Pool == "" || row.Instance == nil || row.LeaderInstance == nil || row.Leader == nil || entry.leader && len(row.Instances) == 0) {
+		return rbdReceiverDiscovery{}, rbdReceiverGuard("decode RBD running receiver election fields")
+	}
+	return entry, nil
+}
+
+// decodeRBDReceiverNamespaces reads namespace_replayers: each namespace once,
+// with both names and an image_replayers array.
+func decodeRBDReceiverNamespaces(raw json.RawMessage) ([]rbdReceiverNamespace, error) {
+	var namespaces []struct {
+		Local  *string         `json:"local_namespace"`
+		Remote *string         `json:"remote_namespace"`
+		Images json.RawMessage `json:"image_replayers"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &namespaces) != nil || namespaces == nil {
+		return nil, rbdReceiverGuard("decode RBD receiver namespace discovery array")
+	}
+	var result []rbdReceiverNamespace
+	seen := make(map[string]bool)
+	for _, namespace := range namespaces {
+		var images []json.RawMessage
+		if namespace.Local == nil || namespace.Remote == nil || seen[*namespace.Local] || len(namespace.Images) == 0 || json.Unmarshal(namespace.Images, &images) != nil || images == nil {
+			return nil, rbdReceiverGuard("decode RBD receiver namespace discovery identity")
+		}
+		seen[*namespace.Local] = true
+		result = append(result, rbdReceiverNamespace{*namespace.Local, *namespace.Remote})
+	}
+	return result, nil
+}
+
+// decodeRBDReceiverMembers reads the instances array: distinct valid native
+// instance IDs, returned sorted.
+func decodeRBDReceiverMembers(raw json.RawMessage) ([]string, error) {
+	var members []string
+	if json.Unmarshal(raw, &members) != nil || members == nil {
+		return nil, rbdReceiverGuard("decode RBD receiver native membership")
+	}
+	seen := make(map[string]bool)
+	for _, id := range members {
+		if !rbdReceiverInstance(id) || seen[id] {
+			return nil, rbdReceiverGuard("decode RBD receiver duplicate or invalid membership")
+		}
+		seen[id] = true
+	}
+	slices.Sort(members)
+	return members, nil
 }
 
 // legacyRBDNamespaceReplayers rebuilds the namespace_replayers array of later
