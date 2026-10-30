@@ -115,21 +115,31 @@ type Mirror struct {
 	metadataPoolID, destinationMetadataPoolID int64
 	destinationFilesystemID                   int
 	pendingPeerImport                         *cephFSPeerIdentity
-	peerRemoval                               *PeerRemoval
-	directoryRemoval                          *DirectoryRemoval
-	directoryAddition                         *DirectoryAddition
-	directoryGenerations                      map[string]uint64
-	peerGeneration                            uint64
-	managerNetworking                         *cephFSManagerNetworking
-	closed                                    bool
-	daemons                                   []*Daemon
-	daemonImage, sourceID                     string
-	daemonKeyring                             []byte
-	daemonOptions                             []testcontainers.ContainerCustomizer
-	initialDaemonAssigned                     bool
-	originalProcessClientFactory              func(context.Context) (*mobycl.Client, error)
-	ownedDirectories                          map[string]bool
-	pendingDirectoryRelease                   map[string]bool
+	// ops is the explicit peer and directory operations in flight.
+	ops                          mirrorOperations
+	managerNetworking            *cephFSManagerNetworking
+	closed                       bool
+	daemons                      []*Daemon
+	daemonImage, sourceID        string
+	daemonKeyring                []byte
+	daemonOptions                []testcontainers.ContainerCustomizer
+	initialDaemonAssigned        bool
+	originalProcessClientFactory func(context.Context) (*mobycl.Client, error)
+	ownedDirectories             map[string]bool
+	pendingDirectoryRelease      map[string]bool
+}
+
+// mirrorOperations is the ledger of a mirror's explicit operations in flight:
+// the peer drain, the directory release and the directory addition, with the
+// directory and peer generations that let a completed addition be superseded.
+// Its overlap guards keep two of these operations from running against the
+// same native state. Every method requires the caller to hold Mirror.mu.
+type mirrorOperations struct {
+	peerRemoval          *PeerRemoval
+	directoryRemoval     *DirectoryRemoval
+	directoryAddition    *DirectoryAddition
+	directoryGenerations map[string]uint64
+	peerGeneration       uint64
 }
 
 // peer_list in Tentacle's mgr mirroring/fs/snapshot_mirror.py reports
@@ -238,7 +248,7 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 			return mirror, fmt.Errorf("configure CephFS mirror directory %q: %w", directory, err)
 		}
 		mirror.ownedDirectories[directory] = true
-		mirror.advanceDirectoryGeneration(directory)
+		mirror.ops.advanceDirectoryGeneration(directory)
 	}
 	if err := ctx.Err(); err != nil {
 		return mirror, fmt.Errorf("confirm CephFS mirror construction: %w", err)
@@ -527,7 +537,7 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return nil, err
 	}
 	if mirror.closed {
@@ -901,7 +911,7 @@ func (mirror *Mirror) AddDirectory(ctx context.Context, directory string) error 
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return err
 	}
 	if mirror.source == nil {
@@ -909,10 +919,10 @@ func (mirror *Mirror) AddDirectory(ctx context.Context, directory string) error 
 	}
 	// Even an uncertain native re-add invalidates the old cycle receipt; it
 	// does not establish new ownership or advance the registration generation.
-	if r := mirror.directoryRemoval; r != nil && r.terminal() && r.directory == directory {
+	if r := mirror.ops.directoryRemoval; r != nil && r.terminal() && r.directory == directory {
 		r.superseded = true
 	}
-	mirror.supersedeDirectoryAddition(directory)
+	mirror.ops.supersedeDirectoryAddition(directory)
 	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "add", mirror.SourceFilesystem, directory); err != nil {
 		return fmt.Errorf("add CephFS mirror directory %q: %w", directory, err)
 	}
@@ -921,7 +931,7 @@ func (mirror *Mirror) AddDirectory(ctx context.Context, directory string) error 
 		mirror.ownedDirectories = make(map[string]bool)
 	}
 	mirror.ownedDirectories[directory] = true
-	mirror.advanceDirectoryGeneration(directory)
+	mirror.ops.advanceDirectoryGeneration(directory)
 	return nil
 }
 
@@ -937,12 +947,12 @@ func (mirror *Mirror) RemoveDirectory(ctx context.Context, directory string) err
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.guardDirectoryAdditionOverlap(); err != nil {
+	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
 		return err
 	}
-	if r := mirror.directoryRemoval; r != nil && r.directory == directory && !r.completed {
+	if r := mirror.ops.directoryRemoval; r != nil && r.directory == directory && !r.completed {
 		if r.processQuiescenceAcknowledged {
-			if !r.superseded && r.generation == mirror.directoryGenerations[directory] {
+			if !r.superseded && r.generation == mirror.ops.directoryGenerations[directory] {
 				return r.confirmAcknowledgedProcessPolicy(ctx)
 			}
 		} else {
@@ -952,13 +962,13 @@ func (mirror *Mirror) RemoveDirectory(ctx context.Context, directory string) err
 			return r.resume(ctx)
 		}
 	}
-	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return err
 	}
 	if mirror.source == nil {
 		return errors.New("CephFS mirror is not initialized")
 	}
-	mirror.supersedeDirectoryAddition(directory)
+	mirror.ops.supersedeDirectoryAddition(directory)
 	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "remove", mirror.SourceFilesystem, directory); err != nil {
 		return fmt.Errorf("remove CephFS mirror directory %q: %w", directory, err)
 	}
@@ -986,7 +996,7 @@ func (mirror *Mirror) RebalanceDirectories(ctx context.Context) error {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return err
 	}
 	if mirror.closed {
@@ -1048,10 +1058,10 @@ func (mirror *Mirror) RebalanceDirectories(ctx context.Context) error {
 	}
 	return rebalanceCephFSMirrorDirectories(ctx, directories, list, state,
 		func(commandCtx context.Context, operation, directory string) error {
-			mirror.supersedeDirectoryAddition(directory)
+			mirror.ops.supersedeDirectoryAddition(directory)
 			_, err := mirror.source.Ceph(commandCtx, "fs", "snapshot", "mirror", operation, mirror.SourceFilesystem, directory)
 			if err == nil && operation == "add" {
-				mirror.advanceDirectoryGeneration(directory)
+				mirror.ops.advanceDirectoryGeneration(directory)
 			}
 			return err
 		}, mirror.pendingDirectoryRelease, 500*time.Millisecond)
@@ -1215,25 +1225,25 @@ func (mirror *Mirror) RemovePeer(ctx context.Context, id string) error {
 		return err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.guardDirectoryAdditionOverlap(); err != nil {
+	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
 		return err
 	}
-	if mirror.peerRemoval != nil && mirror.peerRemoval.peerID == id && !mirror.peerRemoval.completed {
-		if mirror.peerRemoval.processQuiescenceAcknowledged {
-			return mirror.peerRemoval.confirmAcknowledgedProcessPolicy(ctx)
+	if mirror.ops.peerRemoval != nil && mirror.ops.peerRemoval.peerID == id && !mirror.ops.peerRemoval.completed {
+		if mirror.ops.peerRemoval.processQuiescenceAcknowledged {
+			return mirror.ops.peerRemoval.confirmAcknowledgedProcessPolicy(ctx)
 		}
-		if err := mirror.peerRemoval.checkHandle(); err != nil {
+		if err := mirror.ops.peerRemoval.checkHandle(); err != nil {
 			return err
 		}
-		return mirror.peerRemoval.resume(ctx)
+		return mirror.ops.peerRemoval.resume(ctx)
 	}
-	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return err
 	}
 	if id == "" || id != mirror.peerID {
 		return errors.New("CephFS mirror does not own this peer")
 	}
-	mirror.supersedePeerDirectoryAddition(id)
+	mirror.ops.supersedePeerDirectoryAddition(id)
 	if _, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "peer_remove", mirror.SourceFilesystem, id); err != nil {
 		return fmt.Errorf("remove CephFS mirror peer: %w", err)
 	}
@@ -1262,7 +1272,7 @@ func (mirror *Mirror) RebootstrapPeer(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return "", err
 	}
 	if err := mirror.confirmCephFSRefreshHandle(false); err != nil {
@@ -1353,7 +1363,7 @@ func (mirror *Mirror) reconcilePendingPeer(peers map[string]json.RawMessage) (st
 		return "", err
 	}
 	if mirror.peerID != id {
-		mirror.peerGeneration++
+		mirror.ops.peerGeneration++
 	}
 	mirror.peerID = id
 	mirror.pendingPeerImport = nil

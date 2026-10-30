@@ -62,23 +62,23 @@ func (mirror *Mirror) beginDirectoryAddition(ctx context.Context, directory stri
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.guardCephFSRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardCephFSRemovalOverlap(); err != nil {
 		return nil, err
 	}
-	if r := mirror.directoryAddition; r != nil && r.directory == directory && !r.superseded {
+	if r := mirror.ops.directoryAddition; r != nil && r.directory == directory && !r.superseded {
 		return r, r.resume(ctx)
 	}
-	if err := mirror.guardDirectoryAdditionOverlap(); err != nil {
+	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
 		return nil, err
 	}
 	if err := mirror.confirmCephFSRefreshHandle(true); err != nil {
 		return nil, err
 	}
 	parsed, err := uuid.Parse(mirror.peerID)
-	if err != nil || parsed.String() != mirror.peerID || parsed == uuid.Nil || mirror.peerGeneration == 0 || mirror.metadataPoolID <= 0 || mirror.destinationMetadataPoolID <= 0 || mirror.metadataPool == "" || mirror.SourceClientEntity == "" || readClusters == nil {
+	if err != nil || parsed.String() != mirror.peerID || parsed == uuid.Nil || mirror.ops.peerGeneration == 0 || mirror.metadataPoolID <= 0 || mirror.destinationMetadataPoolID <= 0 || mirror.metadataPool == "" || mirror.SourceClientEntity == "" || readClusters == nil {
 		return nil, cephFSObserveGuard("CephFS directory addition original identity is unavailable")
 	}
-	if mirror.ownedDirectories[directory] || mirror.pendingDirectoryRelease[directory] || mirror.directoryGenerations[directory] == ^uint64(0) {
+	if mirror.ownedDirectories[directory] || mirror.pendingDirectoryRelease[directory] || mirror.ops.directoryGenerations[directory] == ^uint64(0) {
 		return nil, cephFSObserveGuard("CephFS directory addition path already has owned intent")
 	}
 	clusters, err := readClusters(ctx)
@@ -91,8 +91,8 @@ func (mirror *Mirror) beginDirectoryAddition(ctx context.Context, directory stri
 	original := &PeerRemoval{mirror: mirror, source: mirror.source, destination: mirror.destination,
 		sourceFilesystem: mirror.SourceFilesystem, destinationFilesystem: mirror.DestinationFilesystem, sourceClient: mirror.SourceClientEntity, metadataPool: mirror.metadataPool,
 		sourceID: mirror.filesystemID, destinationID: mirror.destinationFilesystemID, sourceMetadata: mirror.metadataPoolID, destinationMetadata: mirror.destinationMetadataPoolID,
-		peerID: mirror.peerID, peer: cephFSPeerIdentity{mirror.DestinationClientEntity, mirror.destinationSite, mirror.DestinationFilesystem}, generation: mirror.peerGeneration, clusters: clusters, readClusters: readClusters}
-	r := &DirectoryAddition{original: original, directory: directory, baseGeneration: mirror.directoryGenerations[directory]}
+		peerID: mirror.peerID, peer: cephFSPeerIdentity{mirror.DestinationClientEntity, mirror.destinationSite, mirror.DestinationFilesystem}, generation: mirror.ops.peerGeneration, clusters: clusters, readClusters: readClusters}
+	r := &DirectoryAddition{original: original, directory: directory, baseGeneration: mirror.ops.directoryGenerations[directory]}
 	present, err := r.observe(ctx, false)
 	if err != nil {
 		return nil, err
@@ -100,32 +100,32 @@ func (mirror *Mirror) beginDirectoryAddition(ctx context.Context, directory stri
 	if present {
 		return nil, cephFSObserveGuard("CephFS directory addition path existed before this intent")
 	}
-	if previous := mirror.directoryAddition; previous != nil {
+	if previous := mirror.ops.directoryAddition; previous != nil {
 		previous.superseded = true
 	}
 	// Register BEFORE mutation; an uncertain native response cannot erase intent.
-	mirror.directoryAddition = r
+	mirror.ops.directoryAddition = r
 	return r, r.attempt(ctx)
 }
 
-func (mirror *Mirror) guardDirectoryAdditionOverlap() error {
-	if r := mirror.directoryAddition; r != nil && !r.registered {
+func (ops *mirrorOperations) guardDirectoryAdditionOverlap() error {
+	if r := ops.directoryAddition; r != nil && !r.registered {
 		return cephFSObserveGuard("explicit CephFS directory addition is incomplete")
 	}
 	return nil
 }
 
 // Called before a selected-path mutation, including an uncertain native attempt.
-func (mirror *Mirror) supersedeDirectoryAddition(directory string) {
-	if r := mirror.directoryAddition; r != nil && r.registered && r.directory == directory {
+func (ops *mirrorOperations) supersedeDirectoryAddition(directory string) {
+	if r := ops.directoryAddition; r != nil && r.registered && r.directory == directory {
 		r.superseded = true
 	}
 }
 
 // Peer removal invalidates only a completed addition from that exact owned peer
 // generation. Read-only/stale receipt retries do not retire a newer addition.
-func (mirror *Mirror) supersedePeerDirectoryAddition(id string) {
-	if r := mirror.directoryAddition; r != nil && r.registered && r.original != nil && r.original.peerID == id && r.original.generation == mirror.peerGeneration {
+func (ops *mirrorOperations) supersedePeerDirectoryAddition(id string) {
+	if r := ops.directoryAddition; r != nil && r.registered && r.original != nil && r.original.peerID == id && r.original.generation == ops.peerGeneration {
 		r.superseded = true
 	}
 }
@@ -135,7 +135,7 @@ func (r *DirectoryAddition) checkHandle(retained bool) error {
 		return cephFSObserveGuard("CephFS directory addition original identity is unavailable")
 	}
 	o, m := r.original, r.original.mirror
-	if m.closed || r.superseded || (retained && m.directoryAddition != r) || m.peerGeneration != o.generation {
+	if m.closed || r.superseded || (retained && m.ops.directoryAddition != r) || m.ops.peerGeneration != o.generation {
 		return cephFSObserveGuard("CephFS directory addition owner is closed or superseded")
 	}
 	if m.source != o.source || m.destination != o.destination || m.SourceFilesystem != o.sourceFilesystem || m.DestinationFilesystem != o.destinationFilesystem || m.SourceClientEntity != o.sourceClient || m.filesystemID != o.sourceID || m.destinationFilesystemID != o.destinationID || m.metadataPoolID != o.sourceMetadata || m.destinationMetadataPoolID != o.destinationMetadata || m.metadataPool != o.metadataPool || m.DestinationClientEntity != o.peer.ClientName || m.destinationSite != o.peer.SiteName || m.peerID != o.peerID || m.pendingPeerImport != nil {
@@ -145,7 +145,7 @@ func (r *DirectoryAddition) checkHandle(retained bool) error {
 	if r.registered {
 		want = r.generation
 	}
-	if m.directoryGenerations[r.directory] != want || m.ownedDirectories[r.directory] != r.registered || m.pendingDirectoryRelease[r.directory] {
+	if m.ops.directoryGenerations[r.directory] != want || m.ownedDirectories[r.directory] != r.registered || m.pendingDirectoryRelease[r.directory] {
 		return cephFSObserveGuard("CephFS directory addition original path generation changed")
 	}
 	return nil
@@ -246,12 +246,12 @@ func (r *DirectoryAddition) resume(ctx context.Context) error {
 		if m.ownedDirectories == nil {
 			m.ownedDirectories = make(map[string]bool)
 		}
-		if m.directoryGenerations == nil {
-			m.directoryGenerations = make(map[string]uint64)
+		if m.ops.directoryGenerations == nil {
+			m.ops.directoryGenerations = make(map[string]uint64)
 		}
 		m.ownedDirectories[r.directory] = true
-		m.directoryGenerations[r.directory] = r.baseGeneration + 1
-		r.generation = m.directoryGenerations[r.directory]
+		m.ops.directoryGenerations[r.directory] = r.baseGeneration + 1
+		r.generation = m.ops.directoryGenerations[r.directory]
 		r.registered = true
 		return nil
 	}
@@ -269,7 +269,7 @@ func (r *DirectoryAddition) attempt(ctx context.Context) error {
 		return err
 	}
 	m := r.original.mirror
-	if old := m.directoryRemoval; old != nil && old.terminal() && old.directory == r.directory {
+	if old := m.ops.directoryRemoval; old != nil && old.terminal() && old.directory == r.directory {
 		old.superseded = true
 	}
 	r.requestAttempted = true
