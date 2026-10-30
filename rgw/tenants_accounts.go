@@ -70,6 +70,7 @@ type rgwAccountState struct {
 	versionTag         string
 }
 
+// ID returns the native account ID, or "" for a nil handle.
 func (a *Account) ID() string {
 	if a == nil {
 		return ""

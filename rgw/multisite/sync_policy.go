@@ -34,11 +34,18 @@ type SyncPolicyScope struct{ Zonegroup, Bucket, Tenant string }
 type SyncGroupStatus string
 
 const (
-	SyncAllowed   SyncGroupStatus = "allowed"
-	SyncEnabled   SyncGroupStatus = "enabled"
+	// SyncAllowed permits replication without activating it; a bucket group
+	// may enable a subset.
+	SyncAllowed SyncGroupStatus = "allowed"
+	// SyncEnabled activates the group's pipes.
+	SyncEnabled SyncGroupStatus = "enabled"
+	// SyncForbidden blocks replication and takes precedence over other
+	// matching enabled groups.
 	SyncForbidden SyncGroupStatus = "forbidden"
 )
 
+// SyncGroupConfig selects a new sync group. ID has no spaces or ,/:$ and at
+// most 128 characters; empty generates one. Status is required.
 type SyncGroupConfig struct {
 	ID     string
 	Status SyncGroupStatus
@@ -63,6 +70,25 @@ type SyncFlowConfig struct {
 // Principal and selected bucket tenants must match. IAM nonroot, cross-account
 // and cross-tenant principal translation remain unproven and are refused.
 // This helper never creates S3 buckets or grants access.
+//
+// ID is unique in the group and required. In system mode (no User) concrete
+// source and destination buckets may belong to different tenants when no owner
+// or user translation is requested. RGW preserves source object ACLs, so the
+// destination bucket owner may not be the principal that can read the
+// replicated objects.
+//
+// On the default image (Ceph 20.2.4) two stored parameters have no reliable
+// effect, so a stored policy and a caught-up checkpoint are no evidence that
+// they work: Priority does not choose between overlapping pipes with the same
+// prefix (the native rebuild order decides which pipe's parameters, such as the
+// destination storage class, apply), and user mode with an ordinary user does
+// not test source-side denial (RGW authorises the replication GET on the system
+// path, so objects replicate even when the principal is denied s3:GetObject).
+// User mode with an account root user honours a destination bucket policy that
+// denies s3:ReplicateObject. On Ceph 19 a user-mode pipe with an account root
+// user replicates nothing, so CreatePipe refuses it with ceph.ErrUnsupported
+// when any zone runs Ceph 19; the *ceph.OperationError names the zone and its
+// version.
 type SyncPipeConfig struct {
 	ID                              string
 	SourceZones, DestinationZones   []string
@@ -81,6 +107,12 @@ type SyncPipeConfig struct {
 // SyncGroup is a fresh group created by this fixture. Copies share native
 // readback and lifecycle state. IDs on unrelated existing groups are never
 // adopted. Native edits must not race these methods.
+//
+// A group is stored on the zonegroup or on one existing bucket. Every mutation
+// compares the native policy before and after the change and refuses unrelated
+// or external changes; if the reply of a confirmed mutation is lost, the next
+// call on the same handle reconciles the pending change first. Group mutations
+// are bounded by two minutes.
 type SyncGroup struct {
 	owner                      *Fixture
 	scope                      SyncPolicyScope
@@ -102,6 +134,7 @@ type rgwSyncPending struct {
 	check                     func(map[string]any) error
 }
 
+// ID returns the native sync group ID, or "" for a nil handle.
 func (g *SyncGroup) ID() string {
 	if g == nil || g.state == nil {
 		return ""
@@ -347,6 +380,9 @@ func (g *SyncGroup) RemovePipe(ctx context.Context, id string) error {
 }
 
 // SetStatus changes an owned group's allowed/enabled/forbidden state.
+//
+// After forbidden to enabled, earlier log entries may stay unprocessed until an
+// explicit bucket sync run through ZoneAdmin.
 func (g *SyncGroup) SetStatus(ctx context.Context, status SyncGroupStatus) error {
 	_, err := g.fixture()
 	if err != nil {

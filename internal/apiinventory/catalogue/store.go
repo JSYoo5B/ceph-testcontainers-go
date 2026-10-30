@@ -23,8 +23,8 @@ func PackageDir(root, pkg string) string {
 	return filepath.Join(root, filepath.FromSlash(Dir), filepath.FromSlash(pkg))
 }
 
-// DefaultPage is the API reference page of a package: the README.md in the
-// package directory.
+// DefaultPage is the usage page of a package: the README.md in the package
+// directory.
 func DefaultPage(pkg string) string {
 	return pkg + "/README.md"
 }

@@ -60,6 +60,11 @@ func Filesystems(c *ceph.Container) []*Filesystem {
 //
 // Remove acts on this descriptor. One that Remove already removed, or that is
 // not the one the cluster owns for its name, returns an error.
+//
+// It requests fs set <name> down true and requires the filesystem's native up
+// map to be empty before fs rm, so a rank that is still stopping or
+// reconnecting blocks removal, and health warnings never authorize a forced fs
+// fail.
 func (fs *Filesystem) Remove(ctx context.Context) error {
 	if fs == nil || fs.id.cluster == nil {
 		return errNilCluster

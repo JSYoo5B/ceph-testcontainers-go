@@ -23,6 +23,13 @@ import (
 // a PEM certificate chain and matching unencrypted private key. No proxy is
 // involved. Clients must explicitly trust its CA and use a matching hostname.
 // Files live only in the owned RGW container; descriptors never log key bytes.
+//
+// The bytes are copied; the certificate and key are written to /tc/rgw-tls.pem
+// with mode 0600 inside the gateway container only. In bridge mode container
+// ports 7480 (HTTP) and 7481 (HTTPS) are mapped to random host ports; in host
+// mode two free host ports are reserved. Startup verifies that the gateway
+// process owns the HTTPS socket and that the listener presents the configured
+// certificate. ceph.NetworkConfig.WithMessengerMode does not enable HTTPS.
 type TLSConfig struct {
 	CertificatePEM, PrivateKeyPEM []byte
 }

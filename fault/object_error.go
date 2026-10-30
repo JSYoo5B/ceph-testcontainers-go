@@ -70,6 +70,12 @@ func validateInjectObjectName(name string) error {
 // after the debug setting was enabled leaves it enabled and is not retried or
 // disarmed.
 //
+// Inject into a non-primary replica to leave scrub evidence: client reads
+// served by the primary are unaffected, a deep scrub reports read_error on
+// that shard, the PG becomes active+clean+inconsistent and health reports
+// OSD_SCRUB_ERRORS and PG_DAMAGED. An error on the primary does not make
+// client reads fail either, and a later deep scrub reports no inconsistency.
+//
 // The object is addressed in the default namespace. A name containing a slash
 // is refused before any native command, because the native command would
 // reinterpret the part before the first slash as a namespace.

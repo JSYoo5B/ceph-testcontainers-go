@@ -25,6 +25,21 @@ import (
 // with AllowOverwrites. Each pool defaults to application=cephfs. Directory
 // layouts select additional pools after filesystem creation. StandbyReplay
 // assigns up to one journal follower per active rank; extra standbys stay idle.
+//
+// Name is letters, digits, _, . or -, starting with a letter, digit or _.
+// ActiveMDS (max_mds) is 1 to 256, and StandbyReplay needs StandbyMDS of at
+// least one. Every pool gets application=cephfs and another application is
+// refused; pools and OSD placements are validated before anything is created.
+// The default data pool also stores inode backtraces and cannot be detached;
+// additional pools are selected through subvolume, group or clone DataPool
+// fields or directory layouts.
+//
+// While a NoInitialMDS filesystem is cold its descriptor has a nil embedded
+// container and an empty MDSs; do not call promoted container methods on it.
+// WaitReady waits until its deadline, a fresh libcephfs mount fails after
+// client_mount_timeout with errno 110 (ETIMEDOUT) and Ceph reports
+// MDS_ALL_DOWN. ScaleMDS(ctx, 1, 0) starts the first MDS; after that the
+// filesystem behaves like any other.
 type Config struct {
 	Name                string
 	MetadataPool        ceph.PoolConfig
@@ -42,6 +57,10 @@ type Config struct {
 // MDS is an owned metadata daemon. ID is its static Ceph daemon name;
 // MDSStatus reports its current rank and GID. Stop/Start can inject failures.
 // Cluster termination removes stopped and partially initialized daemons too.
+//
+// On a ceph.AddressDualStack cluster every MDS advertises a concrete IPv4 and
+// IPv6 address, IPv4 first; ms_bind_prefer_ipv4 = false in its [mds.<ID>]
+// section of a ceph.WithConfigFile file makes clients use IPv6.
 type MDS struct {
 	testcontainers.Container
 	ID             string
@@ -53,6 +72,18 @@ type MDS struct {
 // for compatibility with Start. MDSs exposes every owned metadata daemon.
 // The cluster owns their lifetime. Clients use libcephfs through WithClient
 // without a kernel or FUSE mount on the host.
+//
+// FilesystemName is what clients pass as libcephfs filesystem_name. The
+// embedded container is nil while a NoInitialMDS filesystem is cold and moves
+// to a surviving daemon when the original is retired; use MDSs for the
+// topology.
+//
+// Operations on the filesystem and its handles wait for each other within the
+// caller's context; a call canceled while waiting returns without changing Ceph
+// and can be retried. The Ceph CLI has no compare-and-swap for these resources,
+// so external ceph fs edits must not run on the same resources while a fixture
+// operation is in progress. Termination removes the owned resources; explicit
+// cleanup is for tests that assert removal or inspect intermediate state.
 type Filesystem struct {
 	testcontainers.Container
 	FilesystemName      string

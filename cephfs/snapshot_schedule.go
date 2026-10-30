@@ -119,6 +119,10 @@ const snapshotScheduleTime = "2006-01-02T15:04:05"
 // directory keeps retention rules after its last schedule is removed: rules
 // that the new schedule inherits are refused with ceph.ErrInvalidRequest
 // after the schedule was added, with a lease that removes it.
+//
+// A non-nil lease returned with an error must be restored: after an add whose
+// reply was lost, Restore takes the only schedule with the requested repeat and
+// start as the lease's.
 func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule SnapshotSchedule) (*SnapshotScheduleLease, error) {
 	if err := validateSnapshotSchedule(schedule); err != nil {
 		return nil, err

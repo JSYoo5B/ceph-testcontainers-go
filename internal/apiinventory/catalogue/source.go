@@ -116,7 +116,7 @@ func receiverName(expr ast.Expr) string {
 }
 
 // ExportedNames returns the names a package exports, with methods as
-// Type.Method. The API reference page check uses it.
+// Type.Method.
 func ExportedNames(root, pkg string) ([]string, error) {
 	local := map[string][]string{}
 	err := parseDir(root, pkg, func(file *ast.File) error {

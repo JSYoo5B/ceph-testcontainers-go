@@ -56,6 +56,28 @@ func mgrModuleNotApplied(name string, cause error) (*MGRModuleHandle, error) {
 // ceph.ErrInvalidRequest and Op "override.SetMGRModule". A module that is
 // already in the requested state returns a real handle and no error: it holds a
 // lease with no write.
+//
+// The name must be a Ceph module name: lower-case letters, digits and
+// underscores, starting with a letter.
+//
+// Outcomes, as the handle it returns and the error:
+//   - Module changed and read back: real handle; nil.
+//   - Module already in the requested state: real (a lease with no write)
+//     handle; nil.
+//   - Nil cluster: not applied handle; ceph.ErrInvalidRequest, Op
+//     override.SetMGRModule.
+//   - Invalid module name: not applied handle; plain error invalid Ceph
+//     manager module name.
+//   - Terminated cluster or no control container: not applied handle; the
+//     cluster's own error.
+//   - This module is already held by another handle: not applied handle; plain
+//     error.
+//   - The module snapshot cannot be read: not applied handle (reservation
+//     released); the native error or the context error.
+//   - Module missing, cannot run, always-on rule or protection refuses: not
+//     applied handle (reservation released); plain error.
+//   - The change or the readback after it fails: real handle (uncertain); the
+//     joined errors.
 func SetMGRModule(ctx context.Context, c *ceph.Container, name string, enabled bool) (*MGRModuleHandle, error) {
 	const op = "override.SetMGRModule"
 	if c == nil {

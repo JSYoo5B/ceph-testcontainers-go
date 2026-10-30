@@ -44,6 +44,10 @@ type rgwSyncBucketCheckpoint struct {
 // require a bucket-scoped group. Concrete bucket instance IDs remain fixed.
 // A caught-up checkpoint does not prove filter semantics or copied payloads;
 // applications should quiesce writes and verify their S3 bytes separately.
+//
+// On Ceph 19 radosgw-admin ignores --format json for bucket sync status and
+// prints text; this method parses it into the same structure and reports
+// unknown lines as errors.
 func (g *SyncGroup) BucketSyncStatus(ctx context.Context, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
 	f, err := g.fixture()
 	if err != nil {

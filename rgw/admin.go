@@ -26,6 +26,10 @@ import (
 // nil preserves Ceph's default; zero allows unlimited buckets and -1 forbids
 // creating buckets. Tenant selects a native namespace; empty preserves the
 // legacy namespace. ID is the local user ID, without a tenant prefix.
+//
+// Tenant is letters, digits and underscores and must not look like an account
+// ID; a tenant user's canonical ID is tenant$id, and buckets with the same name
+// can exist in different tenants.
 type UserConfig struct {
 	ID, DisplayName, Email string
 	Tenant                 string
@@ -108,6 +112,9 @@ type Quota struct {
 	MaxObjects   int64
 }
 
+// AdminCapability is one admin capability of a user. Type is the
+// capability type, such as users, usage, ratelimit or buckets; Permission is
+// read, write, or * when both were granted (* does not mean global admin).
 type AdminCapability struct {
 	Type       string `json:"type"`
 	Permission string `json:"perm"`
@@ -117,6 +124,10 @@ type AdminCapability struct {
 // BucketQuota applies individually to every bucket owned by this user.
 // DefaultStorageClass preserves native representation: STANDARD on a named
 // default placement is persisted and later read back as an empty string.
+//
+// Type is rgw (or empty) for ordinary users and root for account root users.
+// The fixture never sets Admin or System. PlacementTags allow the user to
+// create buckets in tagged placement targets and grant no object access.
 type UserInfo struct {
 	ID, DisplayName, Email                      string
 	Tenant, LocalID, Namespace, Type, AccountID string
@@ -134,6 +145,31 @@ type UserInfo struct {
 // Success output may contain credentials; failed command output is redacted.
 // This is an explicit escape hatch for native operations beyond typed helpers;
 // do not race raw user edits with owned-user creation or mutation.
+//
+// --format json is always added. Arguments must not contain control characters,
+// so pass JSON documents (policies, trust documents) as single-line strings.
+// Arguments that would change the scope or connection are refused with
+// ceph.ErrInvalidRequest: --rgw-realm, --rgw-zonegroup, --rgw-zone and their ID
+// and name variants, --conf/-c, --keyring/-k, --name/-n, --id, --mon-host/-m,
+// --cluster and similar flags.
+//
+// The call is bounded by ctx and by the cluster's startup timeout, and no
+// radosgw-admin outlives it: a small sh supervisor in the gateway container
+// stops the command with SIGTERM, then SIGKILL after 2 s, 15 s before the bound
+// (at half the bound for a short one; ceph.ErrNativeFailure, "radosgw-admin
+// still ran after Ns and was stopped"), when ctx ends first (Admin then stops
+// it under its own budget of about 10 s and returns ctx's error only after the
+// command is gone; a call that ends before Docker started the command makes
+// sure it never starts), or when the cluster's Terminate starts. When Admin
+// cannot confirm the stop, for example because the gateway is paused or the
+// engine is unreachable, it returns a *ceph.NativeCommandUnstoppedError whose
+// Stop retries; Terminate retries too. Stopping radosgw-admin does not undo a
+// request it already sent: the outcome of a stopped mutation is unknown and
+// Admin never repeats it.
+//
+// A failure keeps a *ceph.NativeFailure with the exit code and errno but no
+// reason, so errors.Is(err, fs.ErrNotExist) works; run the same command with
+// Exec to see the native text.
 func (g *Gateway) Admin(ctx context.Context, args ...string) ([]byte, error) {
 	if err := validateRGWAdminArgs(args); err != nil {
 		return nil, err
@@ -568,6 +604,11 @@ func (u *User) SetQuota(ctx context.Context, quota Quota) error {
 
 // SetBucketQuota configures the per-bucket limits for all buckets owned by this
 // user. Use Gateway.Admin for a policy on a single named bucket.
+//
+// The limits apply to each bucket the user owns, individually. Quota
+// enforcement depends on native statistics and caches, so a write right after a
+// quota change, or right after the quota is reached, may still be accepted:
+// poll with new writes when testing rejection.
 func (u *User) SetBucketQuota(ctx context.Context, quota Quota) error {
 	return u.setQuota(ctx, "bucket", quota)
 }

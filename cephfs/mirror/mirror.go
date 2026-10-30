@@ -40,6 +40,13 @@ func WithConfig(config Config) Option {
 
 // Config connects existing CephFS filesystems. The caller creates
 // both clusters and their MDS/filesystems before starting snapshot mirroring.
+//
+// DestinationSite is the site name recorded in the peer: default destination,
+// without @, / or whitespace. A negative DaemonCount is refused. With
+// NoInitialDaemons no mirror container is created, the embedded container is
+// nil and Daemons is empty; directory policies can still be registered, but
+// readiness and snapshot waits stay unready until a daemon is added, and the
+// first daemon added becomes the embedded container.
 type Config struct {
 	Source, Destination                     *ceph.Container
 	SourceFilesystem, DestinationFilesystem string
@@ -167,6 +174,14 @@ type cephFSPeerIdentity struct {
 // Both clusters must use the same network mode. Host mode requires no extra
 // daemon or manager attachment; bridge mode joins the peer cluster network.
 // Initial daemon names are a through z, then node-27 and onward.
+//
+// Run enables the MGR mirroring module on both clusters, in bridge mode
+// connects every source MGR candidate to the destination network (the source
+// MGR checks the destination filesystem when the peer is imported), creates
+// the source principal client.tc-cephfs-mirror-<suffix> and
+// authorizes client.tc-cephfs-peer-<suffix> with rwps on / of the destination
+// filesystem. Pass the embedded *ceph.Container of a *cephfs.Container, such as
+// cluster.Container.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("configure CephFS mirror: %w", err)
@@ -949,6 +964,12 @@ func (mirror *Mirror) AddDirectory(ctx context.Context, directory string) error 
 // RemoveDirectory stops tracking a path, preserving its source and destination
 // data and snapshots. Daemon updates are asynchronous; inspect mirror daemon
 // status before assuming in-flight synchronization has stopped.
+//
+// Success means Ceph accepted the policy change; a sync in progress can still
+// finish. Use BeginDirectoryRemoval to prove that the daemons released the
+// directory. A pending tracked removal of the same path is retried instead. It
+// does not wait for an idle policy: wait until the other directories report
+// mapped first (see RebalanceDirectories).
 func (mirror *Mirror) RemoveDirectory(ctx context.Context, directory string) error {
 	directory, err := normalizeMirrorDirectory(directory)
 	if err != nil {
@@ -1002,6 +1023,17 @@ func (mirror *Mirror) RemoveDirectory(ctx context.Context, directory string) err
 // Every current member must be running; remove stopped members first. Intended
 // membership is retained on partial CLI failure so a fresh-context retry can
 // recover. Caller-added policies and other filesystems are not modified.
+//
+// The deadlock: the MGR's mirroring module holds its policy lock while a
+// removal waits for a RADOS write, and the acknowledgement of an earlier
+// release, which needs that lock, runs on the same librados callback strand, so
+// with Ceph 20.2.4 and 19.2.5 fs snapshot mirror remove, ls, dirmap and show
+// distribution stop answering for the filesystem until the active MGR restarts
+// (ceph mgr fail). The fixture removes a path only while every tracked
+// directory is mapped (or stalled with no daemon running); it cannot fence a
+// daemon that joins, restarts or times out, or another client that changes
+// directories meanwhile. Failover from a dead daemon to a survivor works
+// without it.
 func (mirror *Mirror) RebalanceDirectories(ctx context.Context) error {
 	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
 		return err

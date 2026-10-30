@@ -384,7 +384,7 @@ with `override.SetOSDFlag` meanwhile. `TestRADOSErasureCodedOutcomes` in
 | Need | Use |
 | --- | --- |
 | Inspect stored central configuration | `Observer.Configuration(ctx)` |
-| Change any option for a test and restore it | [override.SetConfig](../../override/README.md#setconfig) |
+| Change any option for a test and restore it | [override.SetConfig](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/override#SetConfig) |
 | Options that must exist at bootstrap | [WithConfigFile](../../ceph/README.md#withconfigfile) |
 | A daemon's effective value | `cluster.Ceph(ctx, "config", "show", "osd.0", name)` |
 
@@ -548,6 +548,70 @@ test's decisions. Changing the link's mode, scope, namespace mapping or peer
 through these clients makes later typed operations refuse to run, because
 they check the policies captured at setup.
 
+Commands that RBD and RBD mirroring tests commonly need:
+
+```sh
+# images, snapshots, locks and watchers (in a client container)
+rbd create --size 64M --image-feature layering,exclusive-lock volumes/disk
+rbd snap create volumes/disk@before
+rbd status volumes/disk --format json          # watchers
+rbd lock ls volumes/disk --format json
+rbd namespace list --pool volumes --format json
+rbd trash list --pool volumes --namespace tenant-a --format json
+
+# mirroring (through SourceRBD/DestinationRBD, without the leading "rbd")
+rbd mirror pool info volumes --format json
+rbd mirror pool status volumes --verbose --format json
+rbd mirror image status volumes/disk --format json
+rbd mirror image snapshot volumes/disk
+rbd mirror image demote volumes/disk
+rbd mirror image promote volumes/disk            # add --force only to simulate split-brain
+rbd mirror image resync volumes/disk
+rbd mirror pool peer remove volumes <peer-uuid>
+rbd mirror snapshot schedule add --pool volumes 1m
+
+# inside an rbdmirror.Daemon container
+ceph --admin-daemon /tmp/rbd-mirror.asok rbd mirror status
+```
+
+`rbd-mirror` reads its options from the destination cluster's central
+configuration (`client` section) when it starts; set them with
+`override.SetConfig` on the destination before `AddDaemon`. Its logs go to
+standard error (`daemon.Logs(ctx)`).
+
+## CephFS state and settings
+
+Anything without a typed CephFS API is a `cluster.Ceph` call (no shell; add
+`--format json` for machine-readable output):
+
+```golang
+out, err := cluster.Ceph(ctx, "fs", "status", fs.FilesystemName, "--format", "json")
+out, err = cluster.Ceph(ctx, "fs", "dump", "--format", "json")
+_, err = cluster.Ceph(ctx, "fs", "set", fs.FilesystemName, "max_file_size", "1073741824")
+out, err = cluster.Ceph(ctx, "fs", "subvolume", "ls", fs.FilesystemName, "--group_name", "tenants")
+out, err = cluster.Ceph(ctx, "tell", "mds."+fs.FilesystemName+":0", "session", "ls", "--format", "json")
+out, err = cluster.Ceph(ctx, "tell", "mds."+fs.FilesystemName+":0", "dump_ops_in_flight")
+_, err = cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(gid, 10)) // GID from MDSStatus
+```
+
+- Each MDS has its admin socket at `/var/run/ceph/ceph-mds.<ID>.asok`. It runs
+  with `--mds-cache-memory-limit 134217728` (128 MiB) on its command line, so
+  central configuration cannot change that option.
+- CephFS mirror policy and assignment are `fs snapshot mirror ls`, `dirmap`,
+  `peer_list`, `daemon status` and `show distribution` on the source; each
+  mirror daemon's admin socket (`/var/run/ceph/cephfs-mirror.asok`) takes
+  `fs mirror status <fs>@<fscid>` and `fs mirror peer status <fs>@<fscid> <peer>`.
+- Retained snapshots (`fs subvolume rm --retain-snapshots`) and custom metadata
+  have no typed API. On Ceph 20.2.4 a `snapshot-retained` subvolume has no live
+  path and refuses custom metadata calls; snapshots and clones do not copy a
+  subvolume's custom metadata, and Ceph lower-cases metadata keys. Recreating a
+  retained name makes a new subvolume with a new UUID (`EAGAIN` while Ceph still
+  purges is safe to retry); typed handles do not adopt either state.
+
+Raw commands on resources that typed handles own are outside the handles'
+contract: fence other writers and do not run fixture operations on the same
+resources at the same time.
+
 ## RGW administration
 
 `rgw.Gateway.Admin` runs `radosgw-admin --format json` inside a running
@@ -568,6 +632,34 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
   from the error, which carries a `*ceph.NativeFailure` without a reason.
 - Do not modify users that the fixture created with `CreateUser` while it
   uses them.
+
+Commands that RGW tests commonly need:
+
+```golang
+stats, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", "reports")
+_, err = gateway.Admin(ctx, "lc", "process", "--bucket", "logs")
+_, err = gateway.Admin(ctx, "reshard", "add", "--bucket", "big", "--num-shards", "17")
+_, err = gateway.Admin(ctx, "quota", "set", "--quota-scope", "bucket", "--bucket", "big", "--max-objects", "100")
+_, err = gateway.Admin(ctx, "caps", "add", "--uid", user.ID(), "--caps", "usage=write")
+_, err = gateway.Admin(ctx, "role", "create", "--role-name", "reader", "--assume-role-policy-doc", trust)
+```
+
+- To see a failure's native text, run the same `radosgw-admin` command with
+  `gateway.Exec`; the container has the cluster configuration and admin keyring
+  at the default paths. The control container also has `radosgw-admin`, which
+  works for the default zone of a standalone cluster without a running gateway.
+- Admin Ops REST requests are SigV4-signed HTTP requests to the gateway
+  endpoint, signed with a dedicated user created with `UserConfig.AdminCaps`
+  (such as `"users=read;usage=read;buckets=read"`). The fixture never grants the
+  global `admin` flag.
+- Server-side RGW options go to `override.SetConfig` with section
+  `client.admin` before `rgw.Start`, or to `[client]`/`[client.admin]` of a
+  `ceph.WithConfigFile` file; many take effect only when the gateway starts, so
+  restart it and resolve `S3Endpoint` again. The Beast frontend, a thread pool of
+  4, a 1-second exit timeout and, for multisite gateways, a 30-second sync lease
+  are on the daemon command line and cannot be changed through configuration.
+- On Ceph 19 (Squid), `role get` for a missing role exits with status 2 like on
+  Tentacle but also prints one ENOENT log line.
 
 In multisite fixtures, `ZoneAdmin(ctx, name, ...)` addresses any owned zone by
 name, including those of a `multisite.WithTopology` fixture. It passes the

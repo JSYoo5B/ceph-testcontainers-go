@@ -26,9 +26,14 @@ type ImageWatcher struct {
 // takes for the exclusive-lock feature; its ID carries the owner's watch
 // cookie. Other locks are advisory locks added through rbd lock add.
 type ImageLock struct {
-	ID      string
-	Locker  string
+	// ID is the lock ID; for a managed lock it is "auto <watch cookie>".
+	ID string
+	// Locker is the owner's entity name, such as client.4235.
+	Locker string
+	// Address is the owner's IP:port/nonce, the form that
+	// override.AddBlocklist takes.
 	Address string
+	// Managed marks the lock that librbd takes for exclusive-lock.
 	Managed bool
 }
 

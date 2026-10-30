@@ -59,6 +59,13 @@ func (scope *rbdReceiverScope) guard(m *Mirror) error {
 // The original successful owner setup and captured base policies remain required.
 // Binding takes at most 30 seconds, bounded by ctx, including owner admission.
 // Repeated calls produce separate immutable views, not resource owners or retries.
+//
+// Binding the default namespace requires an active reciprocal default policy; a
+// default namespace in init-only mode cannot be bound. Configure an extra
+// namespace pair with SourceRBD and DestinationRBD instead of a second Run,
+// then bind it here. A Rebootstrap that reaches the native bootstrap step
+// invalidates every earlier view permanently, even when it fails, and Terminate
+// invalidates them too; bind again after a successful Rebootstrap.
 func (m *Mirror) BindNamespace(ctx context.Context, sourceNamespace, destinationNamespace string) (*Namespace, error) {
 	if m == nil {
 		return nil, rbdReceiverGuard("RBD namespace binding owner is unavailable")
