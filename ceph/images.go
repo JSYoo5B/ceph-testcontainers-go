@@ -201,7 +201,7 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 	}
 	images := c.staticFacts().Images
 	if images.Client == images.Essential {
-		return c.controlContainerContext(ctx)
+		return c.conn().controlContainer(ctx)
 	}
 	if images.Client == "" {
 		return nil, invalidRequest("client image is required for this operation")

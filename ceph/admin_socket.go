@@ -140,7 +140,7 @@ func (c *Container) adminSocket(ctx context.Context, handle daemonHandle, args .
 	case !shared:
 		return nil, errors.New("this cluster has no shared run directory for admin sockets")
 	}
-	control, err := c.controlContainerContext(ctx)
+	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select admin socket control: %w", err)
 	}
@@ -210,7 +210,7 @@ func (c *Container) clearAdminSocket(ctx context.Context, daemon string) error {
 	if !c.runDir.published() {
 		return nil
 	}
-	control := c.cliContainer()
+	control := c.conn().cliContainer()
 	if control == nil {
 		return errors.New("ceph control container is unavailable")
 	}

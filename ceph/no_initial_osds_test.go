@@ -123,7 +123,7 @@ func TestNoInitialOSDsDoesNotImplyPGCleanOrPoolProvisioning(t *testing.T) {
 		if pool, err := cluster.CreatePool(t.Context(), PoolConfig{Name: "before-storage"}); pool != nil || err == nil || len(control.actions) != 0 {
 			t.Fatal("empty storage bypassed existing CreatePool domain preflight")
 		}
-		if status, err := readStatus(t.Context(), cluster.cephCLI); err != nil || !status.MgrMap.Available || status.OSDMap.NumOSDs != 0 || status.PGMap.NumPGs != pgs {
+		if status, err := readStatus(t.Context(), cluster.conn().ceph); err != nil || !status.MgrMap.Available || status.OSDMap.NumOSDs != 0 || status.PGMap.NumPGs != pgs {
 			t.Fatalf("zero-storage native status fixture invalid: %v", err)
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)

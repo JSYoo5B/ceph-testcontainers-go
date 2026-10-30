@@ -96,7 +96,7 @@ func (c *Container) scrubPG(ctx context.Context, pgid PGID, operation string) (s
 	}
 	before, _, err := c.pgScrubReport(ctx, pgid)
 	if err == nil {
-		_, err = c.cephCLI(ctx, "pg", operation, string(pgid))
+		_, err = c.conn().ceph(ctx, "pg", operation, string(pgid))
 	}
 	c.mu.Unlock()
 	if err != nil {
@@ -138,7 +138,7 @@ func (c *Container) pgScrubReport(ctx context.Context, pgid PGID) (time.Time, st
 	if name == "" {
 		return time.Time{}, "", fmt.Errorf("pool of PG %s does not exist", pgid)
 	}
-	data, err := c.cephCLI(ctx, "pg", "ls-by-pool", name, "--format", "json")
+	data, err := c.conn().ceph(ctx, "pg", "ls-by-pool", name, "--format", "json")
 	if err != nil {
 		return time.Time{}, "", err
 	}

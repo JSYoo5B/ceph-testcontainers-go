@@ -50,13 +50,6 @@ func daemonName(index int) string {
 	return fmt.Sprintf("node-%d", index)
 }
 
-func (c *Container) cliContainer() testcontainers.Container {
-	if control := c.controlPlane.current(); control != nil {
-		return control
-	}
-	return c.Container
-}
-
 // ensureControlPlane is called while topology holds c.mu. Separating CLI from
 // MON a keeps topology operations available when that quorum member is stopped.
 func (c *Container) ensureControlPlane(ctx context.Context) error {
@@ -105,7 +98,7 @@ type QuorumStatus struct {
 
 // quorumStatus implements Observer.QuorumStatus.
 func (c *Container) quorumStatus(ctx context.Context) (QuorumStatus, error) {
-	control, err := c.controlContainerContext(ctx)
+	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
 		return QuorumStatus{}, fmt.Errorf("select monitor quorum control: %w", err)
 	}
@@ -163,15 +156,15 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	if err := c.ensureControlPlane(ctx); err != nil {
 		return nil, fmt.Errorf("start independent CLI control: %w", err)
 	}
-	key, err := c.cephCLI(ctx, "auth", "get", "mon.")
+	key, err := c.conn().ceph(ctx, "auth", "get", "mon.")
 	if err != nil {
 		return nil, err
 	}
 	mapPath := "/tmp/tc-monmap-" + uuid.NewString()
-	if _, err := c.cephCLI(ctx, "mon", "getmap", "-o", mapPath); err != nil {
+	if _, err := c.conn().ceph(ctx, "mon", "getmap", "-o", mapPath); err != nil {
 		return nil, err
 	}
-	monmap, err := readFile(ctx, c.cliContainer(), mapPath)
+	monmap, err := readFile(ctx, c.conn().cliContainer(), mapPath)
 	if err != nil {
 		return nil, err
 	}
@@ -418,7 +411,7 @@ func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, remove
 	if err != nil {
 		return fmt.Errorf("refresh future client configuration: %w", err)
 	}
-	control := c.cliContainer()
+	control := c.conn().cliContainer()
 	if control == nil {
 		return errors.New("ceph control container is unavailable")
 	}
@@ -746,7 +739,7 @@ func (c *Container) startManager(ctx context.Context, name, image string) (*Mana
 			return nil, invalid(fmt.Errorf("manager identity mgr.%s already exists", name))
 		}
 	}
-	status, err := readManagerStatus(ctx, c.cephCLI)
+	status, err := readManagerStatus(ctx, c.conn().ceph)
 	if err != nil {
 		return nil, err
 	}
@@ -778,7 +771,7 @@ func (c *Container) startManager(ctx context.Context, name, image string) (*Mana
 // standby.
 func (c *Container) waitManagerRegistered(ctx context.Context, name string) error {
 	if err := c.poll(ctx, func() (bool, error) {
-		status, err := readManagerStatus(ctx, c.cephCLI)
+		status, err := readManagerStatus(ctx, c.conn().ceph)
 		if status.ActiveName == name && status.Available {
 			return true, err
 		}
@@ -820,7 +813,7 @@ func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer)
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	status, err := readManagerStatus(ctx, c.cephCLI)
+	status, err := readManagerStatus(ctx, c.conn().ceph)
 	if err != nil {
 		return err
 	}
@@ -858,12 +851,12 @@ func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer)
 	if registered {
 		// Ceph interprets a numeric argument as a daemon GID, even when a
 		// daemon's name consists entirely of digits. Use the observed GID.
-		if _, err := c.cephCLI(ctx, "mgr", "fail", strconv.FormatUint(gid, 10)); err != nil {
+		if _, err := c.conn().ceph(ctx, "mgr", "fail", strconv.FormatUint(gid, 10)); err != nil {
 			return fmt.Errorf("remove manager %s from the manager map: %w", name, err)
 		}
 	}
 	if err := c.poll(ctx, func() (bool, error) {
-		status, err := readManagerStatus(ctx, c.cephCLI)
+		status, err := readManagerStatus(ctx, c.conn().ceph)
 		_, present := managerMapGID(status, name)
 		return !present && status.Available && candidates[status.ActiveName], err
 	}); err != nil {
@@ -914,7 +907,7 @@ func (c *Container) removeMonitorMember(ctx context.Context, hosts, name string)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := c.cephCLI(command, "-m", hosts, "mon", "remove", name)
+		_, err := c.conn().ceph(command, "-m", hosts, "mon", "remove", name)
 		done <- err
 	}()
 	ticker := time.NewTicker(monitorRemovalObserveInterval)

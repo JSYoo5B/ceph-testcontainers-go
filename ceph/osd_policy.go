@@ -31,7 +31,7 @@ func (c *Container) osdStates(ctx context.Context) ([]OSDState, error) {
 	for id, osd := range c.osdHandles.each() {
 		owned[id] = registrationOf(osd)
 	}
-	return readOwnedOSDStates(ctx, c.cephCLI, owned)
+	return readOwnedOSDStates(ctx, c.conn().ceph, owned)
 }
 
 // OSDFlag is a global OSDMap flag token such as "noout". The constants name
@@ -67,7 +67,7 @@ func (c *Container) osdFlags(ctx context.Context) ([]OSDFlag, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	return readOSDFlags(ctx, c.cephCLI)
+	return readOSDFlags(ctx, c.conn().ceph)
 }
 
 func (c *Container) setOSDFlag(ctx context.Context, flag OSDFlag, enabled bool) error {
@@ -75,7 +75,7 @@ func (c *Container) setOSDFlag(ctx context.Context, flag OSDFlag, enabled bool) 
 	if enabled {
 		op = "set"
 	}
-	_, err := c.cephCLI(ctx, "osd", op, string(flag))
+	_, err := c.conn().ceph(ctx, "osd", op, string(flag))
 	return err
 }
 
@@ -85,7 +85,7 @@ type osdPolicySnapshot struct {
 }
 
 func (c *Container) osdPolicyDump(ctx context.Context) (osdPolicySnapshot, error) {
-	return readOSDPolicyDump(ctx, c.cephCLI)
+	return readOSDPolicyDump(ctx, c.conn().ceph)
 }
 
 // decodeOSDPolicyDump decodes the flags and OSDs of the output of osd dump.
@@ -160,7 +160,7 @@ func (c *Container) WaitForPGClean(ctx context.Context) error {
 			c.mu.Unlock()
 			return errors.Join(err, last)
 		}
-		s, err := readStatus(ctx, c.cephCLI)
+		s, err := readStatus(ctx, c.conn().ceph)
 		c.mu.Unlock()
 		if err != nil {
 			last = err

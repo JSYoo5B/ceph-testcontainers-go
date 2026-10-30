@@ -122,14 +122,14 @@ func (overrideHooks) BlocklistEntries(ctx context.Context, c *Container) ([]Bloc
 // BlocklistAdd adds one exact session to the native blocklist for duration.
 // The caller holds the mutex.
 func (overrideHooks) BlocklistAdd(ctx context.Context, c *Container, address string, duration time.Duration) error {
-	_, err := c.cephCLI(ctx, "osd", "blocklist", "add", address, strconv.FormatFloat(duration.Seconds(), 'f', 6, 64))
+	_, err := c.conn().ceph(ctx, "osd", "blocklist", "add", address, strconv.FormatFloat(duration.Seconds(), 'f', 6, 64))
 	return err
 }
 
 // BlocklistRemove removes one exact session from the native blocklist. The
 // caller holds the mutex.
 func (overrideHooks) BlocklistRemove(ctx context.Context, c *Container, address string) error {
-	_, err := c.cephCLI(ctx, "osd", "blocklist", "rm", address)
+	_, err := c.conn().ceph(ctx, "osd", "blocklist", "rm", address)
 	return err
 }
 
@@ -228,7 +228,7 @@ func (overrideHooks) SetMGRModule(ctx context.Context, c *Container, name string
 	if enabled {
 		op = "enable"
 	}
-	_, err := c.cephCLI(ctx, "mgr", "module", op, name)
+	_, err := c.conn().ceph(ctx, "mgr", "module", op, name)
 	return err
 }
 
@@ -243,7 +243,7 @@ func (overrideHooks) ProtectMGRModule(ctx context.Context, c *Container, name st
 	if name == "volumes" && (c.settings.requiresMGRModule("volumes") || ownedNeed) {
 		return errors.New("MGR volumes module is required by configured or owned CephFS filesystems")
 	}
-	data, err := c.cephCLI(ctx, "fs", "dump", "--format", "json")
+	data, err := c.conn().ceph(ctx, "fs", "dump", "--format", "json")
 	if err != nil {
 		return err
 	}

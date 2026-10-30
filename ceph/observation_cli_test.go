@@ -150,13 +150,13 @@ func TestCLIObservationsPassTheCallerContext(t *testing.T) {
 // a cluster without one refuses before any command runs.
 func TestCLIObservationsRefuseWithoutControlContainer(t *testing.T) {
 	c := &Container{}
-	if _, err := readStatus(context.Background(), c.cephCLI); err == nil || !strings.Contains(err.Error(), "ceph control container is unavailable") {
+	if _, err := readStatus(context.Background(), c.conn().ceph); err == nil || !strings.Contains(err.Error(), "ceph control container is unavailable") {
 		t.Fatalf("Status err = %v", err)
 	}
-	if _, err := readManagerStatus(context.Background(), c.cephCLI); err == nil || !strings.Contains(err.Error(), "ceph control container is unavailable") {
+	if _, err := readManagerStatus(context.Background(), c.conn().ceph); err == nil || !strings.Contains(err.Error(), "ceph control container is unavailable") {
 		t.Fatalf("ManagerStatus err = %v", err)
 	}
-	if _, err := readDaemonAddresses(context.Background(), c.cephCLI); err == nil || !strings.Contains(err.Error(), "read monmap: ") {
+	if _, err := readDaemonAddresses(context.Background(), c.conn().ceph); err == nil || !strings.Contains(err.Error(), "read monmap: ") {
 		t.Fatalf("DaemonAddresses err = %v", err)
 	}
 }

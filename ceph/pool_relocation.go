@@ -21,7 +21,7 @@ type PoolPlacement struct {
 // The OSDMap can reach a count before the manager reports the new PGs. Until
 // the reported set matches too, WaitForClean could still pass on the old set.
 func (c *Container) reportedPoolPGs(ctx context.Context, pool PoolState) (int, error) {
-	data, err := c.cephCLI(ctx, "pg", "ls-by-pool", pool.Name, "--format", "json")
+	data, err := c.conn().ceph(ctx, "pg", "ls-by-pool", pool.Name, "--format", "json")
 	if err != nil {
 		return 0, err
 	}
@@ -74,7 +74,7 @@ func poolPlacementRuleName(pool string, placement PoolConfig) string {
 }
 
 func (c *Container) poolPlacementRule(ctx context.Context, pool string, desired PoolConfig) (string, bool, error) {
-	data, err := c.cephCLI(ctx, "osd", "crush", "rule", "dump", "--format", "json")
+	data, err := c.conn().ceph(ctx, "osd", "crush", "rule", "dump", "--format", "json")
 	if err != nil {
 		return "", false, err
 	}

@@ -56,7 +56,7 @@ func (c *Container) fullRatiosSession(ctx context.Context) (fullRatiosCLISession
 	if c.closed {
 		return fullRatiosCLISession{}, clientOperationError(ctx, "ceph cluster is terminated", nil)
 	}
-	control, err := c.controlContainerContext(ctx)
+	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
 		return fullRatiosCLISession{}, err
 	}

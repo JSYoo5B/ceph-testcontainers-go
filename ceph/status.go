@@ -41,7 +41,7 @@ func (c *Container) WaitForClean(ctx context.Context) error {
 	expected := c.osdHandles.count()
 	c.mu.Unlock()
 	return c.poll(ctx, func() (bool, error) {
-		s, err := readStatus(ctx, c.cephCLI)
+		s, err := readStatus(ctx, c.conn().ceph)
 		if err != nil {
 			return false, err
 		}

@@ -58,7 +58,7 @@ func (c *Container) poolUsage(ctx context.Context, name string, handle *Pool) (P
 	if err := handle.matchLocked(name, -1); err != nil {
 		return PoolUsageSnapshot{}, err
 	}
-	control, err := c.controlContainerContext(ctx)
+	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
 		return PoolUsageSnapshot{}, err
 	}

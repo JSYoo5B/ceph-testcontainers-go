@@ -81,19 +81,5 @@ func (c *Container) OSDs(ctx context.Context) ([]*OSDContainer, error) {
 // concurrent control-plane creation or termination publication wait by ctx.
 // The cluster owns the handle; this snapshot does not promise it remains live.
 func (c *Container) ControlContainer(ctx context.Context) (testcontainers.Container, error) {
-	return c.controlContainerContext(ctx)
-}
-
-func (c *Container) controlContainerContext(ctx context.Context) (testcontainers.Container, error) {
-	if c == nil {
-		return nil, errors.New("ceph cluster is unavailable")
-	}
-	control, err := c.controlPlane.currentContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if control != nil {
-		return control, nil
-	}
-	return c.Container, nil
+	return c.conn().controlContainer(ctx)
 }

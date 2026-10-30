@@ -208,7 +208,7 @@ func (p *Pool) SetPGCount(ctx context.Context, pgNum int) error {
 		if err := c.checkPoolID(ctx, pool); err != nil {
 			return err
 		}
-		if _, err := c.cephCLI(ctx, "osd", "pool", "set", name, setting, strconv.Itoa(pgNum)); err != nil {
+		if _, err := c.conn().ceph(ctx, "osd", "pool", "set", name, setting, strconv.Itoa(pgNum)); err != nil {
 			return fmt.Errorf("set pool %q %s target (earlier settings may have changed): %w", name, setting, err)
 		}
 	}
@@ -352,14 +352,14 @@ func (p *Pool) SetPlacement(ctx context.Context, placement PoolPlacement) error 
 		return err
 	}
 	if !exists {
-		if _, err := c.cephCLI(ctx, replicatedCRUSHRuleCommand(desired, rule)...); err != nil {
+		if _, err := c.conn().ceph(ctx, replicatedCRUSHRuleCommand(desired, rule)...); err != nil {
 			return fmt.Errorf("create placement rule for pool %q: %w", name, err)
 		}
 	}
 	if err := c.checkPoolID(ctx, pool); err != nil {
 		return err
 	}
-	if _, err := c.cephCLI(ctx, "osd", "pool", "set", name, "crush_rule", rule); err != nil {
+	if _, err := c.conn().ceph(ctx, "osd", "pool", "set", name, "crush_rule", rule); err != nil {
 		return fmt.Errorf("set pool %q CRUSH rule %q: %w", name, rule, err)
 	}
 	return nil
@@ -402,7 +402,7 @@ func (p *Pool) SetQuota(ctx context.Context, quota PoolQuota) error {
 		if err := c.checkPoolID(ctx, pool); err != nil {
 			return err
 		}
-		if _, err := c.cephCLI(ctx, "osd", "pool", "set-quota", name, setting.name, strconv.FormatUint(setting.desired, 10)); err != nil {
+		if _, err := c.conn().ceph(ctx, "osd", "pool", "set-quota", name, setting.name, strconv.FormatUint(setting.desired, 10)); err != nil {
 			return fmt.Errorf("set pool %q %s quota (earlier settings may have changed): %w", name, setting.name, err)
 		}
 	}
@@ -473,7 +473,7 @@ func (p *Pool) SetReplication(ctx context.Context, replicas, minSize int) error 
 		if setting.name == "size" && setting.desired == 1 {
 			args = append(args, "--yes-i-really-mean-it")
 		}
-		if _, err := c.cephCLI(ctx, args...); err != nil {
+		if _, err := c.conn().ceph(ctx, args...); err != nil {
 			return fmt.Errorf("set pool %q %s (earlier settings may have changed): %w", name, setting.name, err)
 		}
 	}

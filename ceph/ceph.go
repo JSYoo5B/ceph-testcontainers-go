@@ -341,7 +341,7 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 		return ctx.Err()
 	}
 	if err := c.poll(ctx, func() (bool, error) {
-		s, err := readStatus(ctx, c.cephCLI)
+		s, err := readStatus(ctx, c.conn().ceph)
 		return s.MgrMap.Available, err
 	}); err != nil {
 		return fmt.Errorf("wait for ceph manager: %w", err)
@@ -516,16 +516,7 @@ func (c *Container) adminClient(opts ...ClientContainerOptions) testcontainers.C
 // Ceph runs the Ceph CLI in the control container. Arguments are passed directly,
 // without shell interpolation. Use --format json for machine-readable responses.
 func (c *Container) Ceph(ctx context.Context, args ...string) ([]byte, error) {
-	return c.cephCLI(ctx, args...)
-}
-
-// cephCLI runs the Ceph CLI for the module's own operations.
-func (c *Container) cephCLI(ctx context.Context, args ...string) ([]byte, error) {
-	control, err := c.controlContainerContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("select Ceph CLI container: %w", err)
-	}
-	return command(ctx, control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
+	return c.conn().ceph(ctx, args...)
 }
 
 // AddOSD registers, formats and starts a new OSD, then waits for it to be up/in.
@@ -621,7 +612,7 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, image str
 		return osdLaunch{}, err
 	}
 	osdUUID := uuid.NewString()
-	control := c.cliContainer()
+	control := c.conn().cliContainer()
 	secret, err := command(ctx, control, generate...)
 	if err != nil {
 		return osdLaunch{}, err
@@ -634,7 +625,7 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, image str
 	if err := control.CopyToContainer(ctx, keys, keyPath, 0o600); err != nil {
 		return osdLaunch{}, fmt.Errorf("copy osd registration key: %w", err)
 	}
-	result, err := c.cephCLI(ctx, "osd", "new", osdUUID, "-i", keyPath)
+	result, err := c.conn().ceph(ctx, "osd", "new", osdUUID, "-i", keyPath)
 	if err != nil {
 		return osdLaunch{}, err
 	}
@@ -660,7 +651,7 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, image str
 		if config.Rack != "" {
 			args = append(args, "rack="+config.Rack)
 		}
-		if _, err := c.cephCLI(ctx, args...); err != nil {
+		if _, err := c.conn().ceph(ctx, args...); err != nil {
 			return launch, fmt.Errorf("create CRUSH host %s of osd.%d: %w", config.Host, id, err)
 		}
 		buckets[config.Host] = true
@@ -714,7 +705,7 @@ func (c *Container) assignOSDDeviceClass(ctx context.Context, osd *OSDContainer)
 		{"osd", "crush", "rm-device-class", fmt.Sprintf("osd.%d", osd.ID)},
 		{"osd", "crush", "set-device-class", osd.placement.DeviceClass, fmt.Sprintf("osd.%d", osd.ID)},
 	} {
-		if _, err := c.cephCLI(ctx, args...); err != nil {
+		if _, err := c.conn().ceph(ctx, args...); err != nil {
 			return fmt.Errorf("assign osd.%d device class: %w", osd.ID, err)
 		}
 	}
@@ -862,7 +853,7 @@ func (c *Container) drainAndPurgeOSD(ctx context.Context, osd *OSDContainer) err
 	// Mark before the request because cancellation/transport failure does
 	// not establish whether the MON committed the purge.
 	osd.purgeIssued = true
-	if _, err := c.cephCLI(ctx, "osd", "purge", strconv.Itoa(id), "--yes-i-really-mean-it"); err != nil {
+	if _, err := c.conn().ceph(ctx, "osd", "purge", strconv.Itoa(id), "--yes-i-really-mean-it"); err != nil {
 		return err
 	}
 	osd.purged = true
@@ -899,7 +890,7 @@ func (c *Container) removalOSDMutation(ctx context.Context, id int, args ...stri
 	if _, err := c.removalOSDState(ctx, id); err != nil {
 		return err
 	}
-	_, err := c.cephCLI(ctx, args...)
+	_, err := c.conn().ceph(ctx, args...)
 	return err
 }
 
@@ -918,7 +909,7 @@ func (c *Container) waitOSDRemoval(ctx context.Context, id int, drain bool) erro
 			return nil
 		}
 		if drain {
-			if _, err := c.cephCLI(ctx, "osd", "safe-to-destroy", strconv.Itoa(id)); err == nil {
+			if _, err := c.conn().ceph(ctx, "osd", "safe-to-destroy", strconv.Itoa(id)); err == nil {
 				return nil
 			} else {
 				last = err
@@ -1137,7 +1128,7 @@ type osdFlags struct{ up, in bool }
 
 // osdUpIn returns the up and in flags of every OSD in the OSDMap.
 func (c *Container) osdUpIn(ctx context.Context) (map[int]osdFlags, error) {
-	result, err := c.cephCLI(ctx, "osd", "dump", "--format", "json")
+	result, err := c.conn().ceph(ctx, "osd", "dump", "--format", "json")
 	if err != nil {
 		return nil, err
 	}

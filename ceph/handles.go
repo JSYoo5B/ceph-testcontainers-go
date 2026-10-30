@@ -165,7 +165,7 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if in {
 		op = "in"
 	}
-	if _, err := c.cephCLI(ctx, "osd", op, strconv.Itoa(id)); err != nil {
+	if _, err := c.conn().ceph(ctx, "osd", op, strconv.Itoa(id)); err != nil {
 		return err
 	}
 	dump, err = c.osdPolicyDump(ctx)

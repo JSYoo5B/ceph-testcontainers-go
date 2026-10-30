@@ -151,7 +151,7 @@ func osdKeyringSecret(keyring string, id int) (string, error) {
 
 // clusterFSID reads the FSID that the MONs serve.
 func (c *Container) clusterFSID(ctx context.Context) (string, error) {
-	data, err := c.cephCLI(ctx, "fsid")
+	data, err := c.conn().ceph(ctx, "fsid")
 	if err != nil {
 		return "", fmt.Errorf("read cluster FSID: %w", err)
 	}
@@ -340,7 +340,7 @@ func (c *Container) clearStaleOSDSocket(ctx context.Context, detached *DetachedO
 		}
 		detached.staleCleanups = detached.staleCleanups[1:]
 	}
-	control := c.cliContainer()
+	control := c.conn().cliContainer()
 	if control == nil {
 		return errors.New("ceph control container is unavailable")
 	}
@@ -389,7 +389,7 @@ func (c *Container) reopenPreflight(ctx context.Context, detached *DetachedOSD) 
 	if state.Up {
 		return fmt.Errorf("retained osd.%d is up; another instance uses its registration", id)
 	}
-	key, err := c.cephCLI(ctx, "auth", "get-key", fmt.Sprintf("osd.%d", id))
+	key, err := c.conn().ceph(ctx, "auth", "get-key", fmt.Sprintf("osd.%d", id))
 	if err != nil {
 		return fmt.Errorf("read the MON key of osd.%d: %w", id, err)
 	}

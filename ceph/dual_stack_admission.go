@@ -22,7 +22,7 @@ func (c *Container) checkDualStackAddresses(ctx context.Context) error {
 	}
 	var addresses DaemonAddresses
 	if err := c.poll(ctx, func() (bool, error) {
-		current, err := readDaemonAddresses(ctx, c.cephCLI)
+		current, err := readDaemonAddresses(ctx, c.conn().ceph)
 		if err != nil {
 			return false, err
 		}

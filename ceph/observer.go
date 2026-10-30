@@ -26,7 +26,7 @@ func (o *Observer) query() (cliQuery, error) {
 	if err != nil {
 		return nil, err
 	}
-	return c.cephCLI, nil
+	return c.conn().ceph, nil
 }
 
 // resolve validates the observer's construction for one query.
@@ -283,5 +283,5 @@ func (o *Observer) ManagerMetrics(ctx context.Context) (ManagerMetrics, error) {
 	if err != nil {
 		return ManagerMetrics{}, err
 	}
-	return readManagerMetrics(ctx, c.managerServices, c.controlSupervisedLookup())
+	return readManagerMetrics(ctx, c.managerServices, c.conn().supervisedLookup())
 }

@@ -161,7 +161,7 @@ func TestTestStatePublishesTheControlPlaneLockIdentity(t *testing.T) {
 	}
 	fake := &controlStateFake{id: "hook"}
 	unitAccess{}.UnitSetControlPlane(c, fake)
-	if c.cliContainer() != fake {
+	if c.conn().cliContainer() != fake {
 		t.Fatal("UnitSetControlPlane did not reach the control selection")
 	}
 }
@@ -189,13 +189,13 @@ var controlPlaneMethods = map[string][]string{
 //	"takes"    calls lockTopology before its first use
 //	"identity" returns the lock identity for the test state view
 var controlPlaneCallers = map[string]map[string]string{
-	"terminate":               {"terminate": "takes"},
-	"ensureControlPlane":      {"current": "holds", "publish": "holds"},
-	"cliContainer":            {"current": "free"},
-	"controlContainerContext": {"currentContext": "free"},
-	"admitNativeTarget":       {"owns": "free"},
-	"diagnosticsSnapshot":     {"diagnosticHandle": "free"},
-	"UnitState":               {"mutex": "identity"},
+	"terminate":           {"terminate": "takes"},
+	"ensureControlPlane":  {"current": "holds", "publish": "holds"},
+	"cliContainer":        {"current": "free"},
+	"controlContainer":    {"currentContext": "free"},
+	"admitNativeTarget":   {"owns": "free"},
+	"diagnosticsSnapshot": {"diagnosticHandle": "free"},
+	"UnitState":           {"mutex": "identity"},
 }
 
 // isControlPlaneHandleOwner reports whether e is the component itself: the
@@ -210,7 +210,16 @@ func isControlPlaneHandleOwner(e ast.Expr) bool {
 	return false
 }
 
-func controlPlaneUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "controlPlane" }
+// controlPlaneUse reports whether sel names the component: Container's
+// controlPlane field, or the control pointer of a cephConn method receiver n,
+// which Container.conn sets to &c.controlPlane.
+func controlPlaneUse(sel *ast.SelectorExpr) bool {
+	if sel.Sel.Name == "controlPlane" {
+		return true
+	}
+	id, ok := sel.X.(*ast.Ident)
+	return ok && id.Name == "n" && sel.Sel.Name == "control"
+}
 
 func isControlPlaneReceiver(fn *ast.FuncDecl) bool {
 	return receiverTypeName(fn) == "controlPlaneState"
@@ -249,6 +258,31 @@ func TestControlPlaneStateFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 						}
 					}
 				case *ast.CompositeLit:
+					// cephConn{control: &c.controlPlane}, in Container.conn only:
+					// the transport reaches the component through its pinned
+					// readers (TestCephConnReachesTheControlPlaneOnlyThroughItsReaders).
+					if id, ok := x.Type.(*ast.Ident); ok && id.Name == "cephConn" {
+						for _, elt := range x.Elts {
+							kv, ok := elt.(*ast.KeyValueExpr)
+							if !ok {
+								continue
+							}
+							if key, ok := kv.Key.(*ast.Ident); !ok || key.Name != "control" {
+								continue
+							}
+							u, ok := kv.Value.(*ast.UnaryExpr)
+							recv, isSel := ast.Expr(nil), false
+							if ok && u.Op == token.AND {
+								recv = u.X
+								_, isSel = recv.(*ast.SelectorExpr)
+							}
+							if isSel && fn.Name.Name == "conn" && receiverTypeName(fn) == "Container" && controlPlaneUse(recv.(*ast.SelectorExpr)) {
+								allowed[recv.(*ast.SelectorExpr)] = true
+							} else {
+								problems = append(problems, file+": "+fn.Name.Name+" builds a cephConn control other than &c.controlPlane in Container.conn")
+							}
+						}
+					}
 					if id, ok := x.Type.(*ast.Ident); ok && id.Name == "Container" {
 						for _, elt := range x.Elts {
 							if kv, ok := elt.(*ast.KeyValueExpr); ok {

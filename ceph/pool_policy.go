@@ -52,14 +52,14 @@ func (c *Container) poolPolicyReady() error {
 	if c.closed {
 		return errClusterTerminated
 	}
-	if c.cliContainer() == nil {
+	if c.conn().cliContainer() == nil {
 		return errors.New("ceph control container is unavailable")
 	}
 	return nil
 }
 
 func (c *Container) poolStates(ctx context.Context) ([]PoolState, error) {
-	data, err := c.cephCLI(ctx, "osd", "pool", "ls", "detail", "--format", "json")
+	data, err := c.conn().ceph(ctx, "osd", "pool", "ls", "detail", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ func (c *Container) checkPoolID(ctx context.Context, expected PoolState) error {
 }
 
 func (c *Container) poolRulePlacement(ctx context.Context, id int) (PoolConfig, error) {
-	data, err := c.cephCLI(ctx, "osd", "crush", "rule", "dump", "--format", "json")
+	data, err := c.conn().ceph(ctx, "osd", "crush", "rule", "dump", "--format", "json")
 	if err != nil {
 		return PoolConfig{}, err
 	}
@@ -184,7 +184,7 @@ func (c *Container) poolRulePlacement(ctx context.Context, id int) (PoolConfig, 
 // completed external move, class or weight edit is reflected in this snapshot.
 // The caller holds c.mu, which guards the OSD registry it reads.
 func (c *Container) nativePoolDomains(ctx context.Context, placement PoolConfig) (int, error) {
-	data, err := c.cephCLI(ctx, "osd", "crush", "dump", "--format", "json")
+	data, err := c.conn().ceph(ctx, "osd", "crush", "dump", "--format", "json")
 	if err != nil {
 		return 0, err
 	}

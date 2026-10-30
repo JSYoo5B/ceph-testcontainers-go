@@ -11,7 +11,7 @@ import (
 // narrow cliQuery contract. They take no topology lock and no admission check,
 // exactly like the exported methods that delegate to them, and every query goes
 // through whatever the caller passes in, so the control container is still
-// selected on each call by Container.cephCLI. The contract is deliberately not
+// selected on each call by cephConn.ceph. The contract is deliberately not
 // given to observations that need the topology lock, a captured control handle
 // with the bootstrap identity, a client container or supervised execution.
 

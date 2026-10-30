@@ -244,7 +244,7 @@ func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) 
 	if !c.runDir.shared() {
 		return nil, &debugLevelRefusal{err: errors.New("this cluster has no shared run directory for admin sockets")}
 	}
-	control, err := c.controlContainerContext(ctx)
+	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
 		return nil, &debugLevelRefusal{err: fmt.Errorf("select admin socket control: %w", err)}
 	}

@@ -94,7 +94,7 @@ func findConfigEntry(entries []ConfigEntry, setting ConfigSetting) *ConfigEntry 
 }
 
 func (c *Container) configuration(ctx context.Context) ([]ConfigEntry, error) {
-	return readConfiguration(ctx, c.cephCLI)
+	return readConfiguration(ctx, c.conn().ceph)
 }
 
 // decodeConfiguration decodes the output of config dump.
@@ -121,5 +121,5 @@ func decodeConfiguration(data []byte) ([]ConfigEntry, error) {
 }
 
 func (c *Container) configCommand(ctx context.Context, args ...string) ([]byte, error) {
-	return runConfigCommand(ctx, c.cephCLI, args...)
+	return runConfigCommand(ctx, c.conn().ceph, args...)
 }

@@ -103,12 +103,12 @@ func (faultHooks) OwnedLabel(c *Container) testcontainers.CustomizeRequestOption
 
 // Control returns the container that runs the control CLI.
 func (faultHooks) Control(ctx context.Context, c *Container) (testcontainers.Container, error) {
-	return c.controlContainerContext(ctx)
+	return c.conn().controlContainer(ctx)
 }
 
 // CLI runs a Ceph CLI command with the admin identity.
 func (faultHooks) CLI(ctx context.Context, c *Container, args ...string) ([]byte, error) {
-	return c.cephCLI(ctx, args...)
+	return c.conn().ceph(ctx, args...)
 }
 
 // ClusterIdentity returns the bootstrap FSID and whether the configuration

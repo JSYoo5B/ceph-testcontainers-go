@@ -24,7 +24,7 @@ type BlocklistEntry struct {
 }
 
 func (c *Container) blocklistEntries(ctx context.Context) ([]BlocklistEntry, error) {
-	return readBlocklistEntries(ctx, c.cephCLI)
+	return readBlocklistEntries(ctx, c.conn().ceph)
 }
 
 func decodeBlocklistEntries(data []byte) ([]BlocklistEntry, error) {

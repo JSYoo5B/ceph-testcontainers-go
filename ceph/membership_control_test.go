@@ -131,6 +131,12 @@ func TestMembershipControlStateIsNeverAddressed(t *testing.T) {
 				if !ok || u.Op != token.AND {
 					return true
 				}
+				// Container.conn hands &c.controlPlane to the transport, whose
+				// use of it is pinned by
+				// TestCephConnReachesTheControlPlaneOnlyThroughItsReaders.
+				if sel, ok := u.X.(*ast.SelectorExpr); ok && sel.Sel.Name == "controlPlane" && fn.Name.Name == "conn" && receiverTypeName(fn) == "Container" {
+					return true
+				}
 				if name := membershipFieldUnder(u.X); name != "" {
 					problems = append(problems, file+": "+fn.Name.Name+" takes the address of "+name)
 				}

@@ -80,7 +80,7 @@ func (c *Container) poolPGs(ctx context.Context, name string, handle *Pool) (Poo
 	if err := handle.matchLocked(name, -1); err != nil {
 		return PoolPGSnapshot{}, err
 	}
-	control, err := c.controlContainerContext(ctx)
+	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
 		return PoolPGSnapshot{}, err
 	}

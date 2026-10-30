@@ -136,7 +136,7 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 		}{pool.ErasureCodeProfile, []string{"osd", "erasure-code-profile", "ls", "--format", "json"}})
 	}
 	for _, check := range checks {
-		data, err := c.cephCLI(ctx, check.args...)
+		data, err := c.conn().ceph(ctx, check.args...)
 		if err != nil {
 			return nil, fmt.Errorf("check existing pool resources: %w", err)
 		}
@@ -186,7 +186,7 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 		commands = append(commands, []string{"osd", "pool", "application", "enable", pool.Name, config.Application})
 	}
 	for _, args := range commands {
-		if _, err := c.cephCLI(ctx, args...); err != nil {
+		if _, err := c.conn().ceph(ctx, args...); err != nil {
 			return pool, fmt.Errorf("create pool %q: %w", pool.Name, err)
 		}
 	}

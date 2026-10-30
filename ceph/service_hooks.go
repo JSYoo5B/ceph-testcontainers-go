@@ -42,7 +42,7 @@ func (serviceHooks) ClientCommand(ctx context.Context, c *Container, args ...str
 	return command(ctx, target, args...)
 }
 
-func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.cliContainer() }
+func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.conn().cliContainer() }
 
 // Closed reports a terminated cluster.
 func (serviceHooks) Closed(c *Container) bool { return c.closed }

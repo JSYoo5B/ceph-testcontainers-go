@@ -56,7 +56,7 @@ func (c *Container) healthDetails(ctx context.Context) (HealthSnapshot, error) {
 	if c.closed {
 		return HealthSnapshot{}, errClusterTerminated
 	}
-	control, err := c.controlContainerContext(ctx)
+	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
 		return HealthSnapshot{}, err
 	}

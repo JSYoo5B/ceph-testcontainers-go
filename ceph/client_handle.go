@@ -192,7 +192,7 @@ func (client *ClientConfig) ReplaceKey(ctx context.Context, opts ...ClientOption
 	if err != nil {
 		return nil, err
 	}
-	secret, err := c.rotationCommand(ctx, generate...)
+	secret, err := c.conn().rotationCommand(ctx, generate...)
 	key := strings.TrimSpace(string(secret))
 	if err != nil || key == "" {
 		return nil, clientOperationError(ctx, "generate fresh Cephx key: command failed", err)

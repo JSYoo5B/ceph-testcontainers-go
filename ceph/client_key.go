@@ -39,7 +39,7 @@ type clientTransition struct {
 // readClientRecord reads the auth entry of entity, which must not change
 // meanwhile. The caller holds c.mu.
 func (c *Container) readClientRecord(ctx context.Context, entity string) (clientRecord, error) {
-	result, err := c.rotationCommandResult(ctx, 1<<20, 64<<10, "ceph", "--connect-timeout", "5", "auth", "get", entity, "--format", "json")
+	result, err := c.conn().rotationResult(ctx, 1<<20, 64<<10, "ceph", "--connect-timeout", "5", "auth", "get", entity, "--format", "json")
 	if err != nil {
 		return clientRecord{}, clientOperationError(ctx, "read the auth entry of "+entity, err)
 	}
@@ -54,7 +54,7 @@ func (c *Container) readClientRecord(ctx context.Context, entity string) (client
 	if result.ExitCode != 0 || json.Unmarshal(result.Stdout, &entries) != nil || len(entries) != 1 || entries[0].Entity != entity || entries[0].Key == "" {
 		return clientRecord{}, fmt.Errorf("read the auth entry of %s: unexpected result (exit %d)", entity, result.ExitCode)
 	}
-	keyring, err := c.rotationCommand(ctx, "ceph", "--connect-timeout", "5", "auth", "get", entity)
+	keyring, err := c.conn().rotationCommand(ctx, "ceph", "--connect-timeout", "5", "auth", "get", entity)
 	if err != nil {
 		return clientRecord{}, clientOperationError(ctx, "read the keyring of "+entity, err)
 	}
@@ -120,7 +120,7 @@ func (c *Container) settleClient(ctx context.Context, entity string) error {
 		if err := c.monitorSettling().settle(ctx, fence.clients); err != nil {
 			return fmt.Errorf("an earlier call left a MON command for %s that may still apply, and the MONs cannot be settled yet: %w", entity, err)
 		}
-		_, _ = c.rotationCommand(ctx, append([]string{"rm", "-f"}, fence.clients...)...)
+		_, _ = c.conn().rotationCommand(ctx, append([]string{"rm", "-f"}, fence.clients...)...)
 		fence.clients = nil
 	}
 	if transition := fence.transition; transition != nil {

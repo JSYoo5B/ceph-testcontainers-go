@@ -143,7 +143,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	if c.closed {
 		return nil, errClusterTerminated
 	}
-	control, err := c.controlContainerContext(ctx)
+	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +177,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	}
 	client := &ClientConfig{owner: c, name: entity}
 	client.config = clientConfigBytes(c.bootstrap.rawConfig(), client)
-	control, err = c.controlContainerContext(ctx)
+	control, err = c.conn().controlContainer(ctx)
 	if err != nil {
 		return client, err
 	}
@@ -225,7 +225,7 @@ func clientConfigBytes(base []byte, client *ClientConfig) []byte {
 // Auth command output can contain keys, including on failure. Never include it
 // in an error returned to test logs; preserve cancellation without secret output.
 func (c *Container) clientAuthCommand(ctx context.Context, operation string, args ...string) ([]byte, error) {
-	data, err := c.cephCLI(ctx, args...)
+	data, err := c.conn().ceph(ctx, args...)
 	if err != nil {
 		return nil, clientOperationError(ctx, operation+": Ceph command failed", err)
 	}

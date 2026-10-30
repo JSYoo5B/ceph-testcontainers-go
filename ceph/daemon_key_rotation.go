@@ -107,7 +107,7 @@ func (call *authCall) send(ctx context.Context, command map[string]any, input []
 	}
 	argv := []string{"python3", "-c", monitorMutationScript, path + ".client", string(encoded)}
 	if input != nil {
-		if err := call.c.cliContainer().CopyToContainer(ctx, input, path+".in", 0o600); err != nil {
+		if err := call.c.conn().cliContainer().CopyToContainer(ctx, input, path+".in", 0o600); err != nil {
 			// Docker may complete the copy after its request failed, also
 			// after the removal below, so later calls remove it again.
 			call.c.authRecords.addStray(path+".in", true)
@@ -120,10 +120,10 @@ func (call *authCall) send(ctx context.Context, command map[string]any, input []
 		defer call.removeInput(ctx, path+".in")
 	}
 	call.clients = append(call.clients, path+".client")
-	out, err := call.c.rotationCommand(ctx, argv...)
+	out, err := call.c.conn().rotationCommand(ctx, argv...)
 	if err != nil {
 		if _, unconfirmed := supervised.Unconfirmed(err); unconfirmed {
-			call.c.fenceUnstopped(call.c.authRecords.fenceFor(call.entity), call.c.cliContainer(), err)
+			call.c.fenceUnstopped(call.c.authRecords.fenceFor(call.entity), call.c.conn().cliContainer(), err)
 			call.unstopped = true
 		}
 		return out, fmt.Errorf("%s %s: %w", prefix, call.entity, err)
@@ -136,7 +136,7 @@ func (call *authCall) send(ctx context.Context, command map[string]any, input []
 func (call *authCall) removeInput(ctx context.Context, path string) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
 	defer cancel()
-	if _, err := call.c.rotationCommand(cleanupCtx, "rm", "-f", path); err != nil {
+	if _, err := call.c.conn().rotationCommand(cleanupCtx, "rm", "-f", path); err != nil {
 		call.c.authRecords.addStray(path, false)
 	}
 }
@@ -152,7 +152,7 @@ func (c *Container) removeStrayAuthInputs(ctx context.Context) {
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
 	defer cancel()
-	if _, err := c.rotationCommand(cleanupCtx, append([]string{"rm", "-f"}, paths...)...); err == nil {
+	if _, err := c.conn().rotationCommand(cleanupCtx, append([]string{"rm", "-f"}, paths...)...); err == nil {
 		c.authRecords.forgetRemovedStrays()
 	}
 }
@@ -178,7 +178,7 @@ func (call *authCall) settle(ctx context.Context) error {
 	if call.unstopped {
 		err = errors.New("a MON command of this call may still run; the next call stops it and settles the MONs first")
 	} else if err = call.c.monitorSettling().settle(ctx, clients); err == nil {
-		_, _ = call.c.rotationCommand(ctx, append([]string{"rm", "-f"}, clients...)...)
+		_, _ = call.c.conn().rotationCommand(ctx, append([]string{"rm", "-f"}, clients...)...)
 		return nil
 	} else {
 		err = fmt.Errorf("a MON command of this call may still apply, so the next call settles the MONs first: %w", err)
@@ -336,7 +336,7 @@ func (r daemonRotation) abandon(ctx context.Context, next string, cause error) e
 // which handOff gives it to the daemon. A copy that Docker completes after an
 // error only creates this file, which later calls remove.
 func (r daemonRotation) stageKeyFile(ctx context.Context, next string) (control testcontainers.Container, keyPath string, err error) {
-	control = r.c.cliContainer()
+	control = r.c.conn().cliContainer()
 	keyPath = "/tmp/tc-rotate-" + uuid.NewString() + ".key"
 	if err := control.CopyToContainer(ctx, []byte(next), keyPath, 0o600); err != nil {
 		r.c.authRecords.addStray(keyPath, true)
@@ -351,10 +351,10 @@ func (r daemonRotation) stageKeyFile(ctx context.Context, next string) (control 
 // daemon's fence that next may still reach the daemon.
 func (r daemonRotation) handOff(ctx context.Context, control testcontainers.Container, keyPath, next string) (removeErr, err error) {
 	c, daemon := r.c, r.daemon
-	_, tellErr := c.rotationCommand(ctx, "ceph", "--connect-timeout", "5", "tell", daemon, "rotate-key", "-i", keyPath)
+	_, tellErr := c.conn().rotationCommand(ctx, "ceph", "--connect-timeout", "5", "tell", daemon, "rotate-key", "-i", keyPath)
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), keyRotationCleanupTimeout)
 	defer cleanupCancel()
-	_, removeErr = c.rotationCommand(cleanupCtx, "rm", "-f", keyPath)
+	_, removeErr = c.conn().rotationCommand(cleanupCtx, "rm", "-f", keyPath)
 	if removeErr != nil {
 		c.authRecords.addStray(keyPath, false)
 	}
@@ -464,7 +464,7 @@ func (c *Container) settleEarlierRotation(ctx context.Context, daemon, identity 
 		if err := c.monitorSettling().settle(ctx, fence.clients); err != nil {
 			return fmt.Errorf("an earlier rotation of %s left a MON command that may still apply, and the MONs cannot be settled yet: %w", daemon, err)
 		}
-		_, _ = c.rotationCommand(ctx, append([]string{"rm", "-f"}, fence.clients...)...)
+		_, _ = c.conn().rotationCommand(ctx, append([]string{"rm", "-f"}, fence.clients...)...)
 		fence.clients = nil
 	}
 	if fence.handedKey == "" && len(fence.clients) == 0 && len(fence.running) == 0 {
@@ -491,37 +491,10 @@ func (c *Container) stopRotationRun(ctx context.Context, run rotationRun) error 
 	return err
 }
 
-// rotationCommand runs one native command of a rotation in the control
-// container under the supervisor, which stops it inside the container before
-// returning when ctx ends first, or reports a supervised.NotStoppedError. A
-// nonzero exit is a *NativeFailure, which reads only standard error: the
-// standard output of a rotation can hold keys. A ceph CLI that no MON
-// answered connects again, as in command.
-func (c *Container) rotationCommand(ctx context.Context, argv ...string) ([]byte, error) {
-	return reconnectCeph(ctx, argv, func() ([]byte, error) {
-		result, err := c.rotationCommandResult(ctx, 1<<20, 64<<10, argv...)
-		if err != nil {
-			return nil, err
-		}
-		if result.ExitCode != 0 {
-			return result.Stdout, nativeFailure(argv[0], result.ExitCode, nil, result.Stderr)
-		}
-		return result.Stdout, nil
-	})
-}
-
-func (c *Container) rotationCommandResult(ctx context.Context, stdoutLimit, stderrLimit int, argv ...string) (supervised.Result, error) {
-	control, err := c.controlContainerContext(ctx)
-	if err != nil {
-		return supervised.Result{}, fmt.Errorf("select Ceph CLI container: %w", err)
-	}
-	return supervised.Command(ctx, control, "key rotation", keyRotationCommandTimeout, stdoutLimit, stderrLimit, argv...)
-}
-
 // authKeys runs ceph auth <verb> daemon, which must not change anything, and
 // returns its key and pending key.
 func (c *Container) authKeys(ctx context.Context, verb, daemon string) (struct{ Key, PendingKey string }, error) {
-	out, err := c.rotationCommand(ctx, "ceph", "--connect-timeout", "5", "auth", verb, daemon, "--format", "json")
+	out, err := c.conn().rotationCommand(ctx, "ceph", "--connect-timeout", "5", "auth", verb, daemon, "--format", "json")
 	if err != nil {
 		return struct{ Key, PendingKey string }{}, fmt.Errorf("auth %s %s: %w", verb, daemon, err)
 	}
