@@ -155,7 +155,8 @@ var mdsRosterOwnerHeld = map[string]bool{
 	"completedMDSReplacementCohort": true, "checkMDSReplacementOwner": true,
 	"checkMDSReplacementPartial": true, "checkStoppedMDSOwner": true,
 	"decodeStoppedMDSScope": true, "verifyStoppedMDSSurvivors": true, "readStoppedMDSScope": true, "ConfigTargets": true,
-	"admitMDSReplacement": true,
+	"admitMDSReplacement": true, "admitStoppedMDSRemoval": true, "reattestStoppedMDS": true, "confirmStoppedMDSRemoved": true,
+	"checkScaleOwner": true,
 }
 
 // mdsRosterSetupOnlyReaders read the roster under setupMu alone, between the

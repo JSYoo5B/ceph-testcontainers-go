@@ -85,46 +85,12 @@ func (fs *Filesystem) removeStoppedMDS(parent context.Context, daemon *MDS) erro
 	defer release()
 	defer servicehook.Unlock(c)
 	i := daemon.identity
-	if err := fs.checkStoppedMDSOwner(daemon, i); err != nil {
-		return err
-	}
-	if err := completedMDSReplacementAuthority(i); err != nil {
-		return err
-	}
-	// Admission to control/config precedes any Docker or native reads.
-	control, err := c.ControlContainer(ctx)
-	if err != nil || control == nil {
-		return clusterutil.OperationError(ctx, "select stopped MDS control", err)
-	}
-	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
-		return err
-	}
-	if _, err := inspectStoppedMDS(ctx, i, false); err != nil {
-		return err
-	}
-	scope, err := fs.readStoppedMDSScope(ctx, i)
+	scope, err := fs.admitStoppedMDSRemoval(ctx, daemon)
 	if err != nil {
 		return err
 	}
-	if i.removalAttempted && !i.removed && !reflect.DeepEqual(i.scope, scope) {
-		return errors.New("admitted stopped MDS policy or attachments changed")
-	}
-	// Reattest original native/owner/state immediately before a Docker attempt.
-	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
-		return err
-	}
-	after, err := fs.readStoppedMDSScope(ctx, i)
-	if err != nil || !reflect.DeepEqual(scope, after) {
-		return clusterutil.OperationError(ctx, "stopped MDS scope changed before removal", err)
-	}
-	if err := fs.checkStoppedMDSOwner(daemon, i); err != nil {
-		return err
-	}
-	missing, err := inspectStoppedMDS(ctx, i, false)
+	missing, err := fs.reattestStoppedMDS(ctx, daemon, scope)
 	if err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if !i.removed && !missing {
@@ -133,23 +99,7 @@ func (fs *Filesystem) removeStoppedMDS(parent context.Context, daemon *MDS) erro
 			return clusterutil.OperationError(ctx, "terminate original stopped MDS", err)
 		}
 	}
-	// A success reply is followed by exact full-CID absence, then fresh native
-	// authority. Context/error loss leaves the retained pending owner for retry.
-	missing, err = inspectStoppedMDS(ctx, i, true)
-	if err != nil || !missing {
-		return clusterutil.OperationError(ctx, "confirm original stopped MDS removal", err)
-	}
-	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
-		return err
-	}
-	after, err = fs.readStoppedMDSScope(ctx, i)
-	if err != nil || !reflect.DeepEqual(scope, after) {
-		return clusterutil.OperationError(ctx, "stopped MDS scope changed after removal", err)
-	}
-	if err := fs.checkStoppedMDSOwner(daemon, i); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
+	if err := fs.confirmStoppedMDSRemoved(ctx, daemon, scope); err != nil {
 		return err
 	}
 	if i.removed {
@@ -162,6 +112,85 @@ func (fs *Filesystem) removeStoppedMDS(parent context.Context, daemon *MDS) erro
 	}
 	i.removed = true
 	return nil
+}
+
+// admitStoppedMDSRemoval is the admission of removeStoppedMDS. Owner held:
+// the caller holds setupMu and the cluster mutex. It checks the owner and the
+// completed-replacement authority before any Docker or native read, then the
+// control, the native cluster, the container and the scope, which must equal
+// the scope admitted by an earlier attempt.
+func (fs *Filesystem) admitStoppedMDSRemoval(ctx context.Context, daemon *MDS) (*cephFSMDSRemovalScope, error) {
+	i := daemon.identity
+	if err := fs.checkStoppedMDSOwner(daemon, i); err != nil {
+		return nil, err
+	}
+	if err := completedMDSReplacementAuthority(i); err != nil {
+		return nil, err
+	}
+	// Admission to control/config precedes any Docker or native reads.
+	control, err := fs.cluster.ControlContainer(ctx)
+	if err != nil || control == nil {
+		return nil, clusterutil.OperationError(ctx, "select stopped MDS control", err)
+	}
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
+		return nil, err
+	}
+	if _, err := inspectStoppedMDS(ctx, i, false); err != nil {
+		return nil, err
+	}
+	scope, err := fs.readStoppedMDSScope(ctx, i)
+	if err != nil {
+		return nil, err
+	}
+	if i.removalAttempted && !i.removed && !reflect.DeepEqual(i.scope, scope) {
+		return nil, errors.New("admitted stopped MDS policy or attachments changed")
+	}
+	return scope, nil
+}
+
+// reattestStoppedMDS reattests the original native cluster, scope, owner and
+// container state immediately before a Docker attempt, and reports whether
+// the container is already missing. Owner held.
+func (fs *Filesystem) reattestStoppedMDS(ctx context.Context, daemon *MDS, scope *cephFSMDSRemovalScope) (bool, error) {
+	i := daemon.identity
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
+		return false, err
+	}
+	after, err := fs.readStoppedMDSScope(ctx, i)
+	if err != nil || !reflect.DeepEqual(scope, after) {
+		return false, clusterutil.OperationError(ctx, "stopped MDS scope changed before removal", err)
+	}
+	if err := fs.checkStoppedMDSOwner(daemon, i); err != nil {
+		return false, err
+	}
+	missing, err := inspectStoppedMDS(ctx, i, false)
+	if err != nil {
+		return false, err
+	}
+	return missing, ctx.Err()
+}
+
+// confirmStoppedMDSRemoved follows a removal with exact full-CID absence, then
+// fresh native authority: the native cluster, an unchanged scope and the
+// owner. Context or error loss leaves the retained pending owner for retry.
+// Owner held.
+func (fs *Filesystem) confirmStoppedMDSRemoved(ctx context.Context, daemon *MDS, scope *cephFSMDSRemovalScope) error {
+	i := daemon.identity
+	missing, err := inspectStoppedMDS(ctx, i, true)
+	if err != nil || !missing {
+		return clusterutil.OperationError(ctx, "confirm original stopped MDS removal", err)
+	}
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
+		return err
+	}
+	after, err := fs.readStoppedMDSScope(ctx, i)
+	if err != nil || !reflect.DeepEqual(scope, after) {
+		return clusterutil.OperationError(ctx, "stopped MDS scope changed after removal", err)
+	}
+	if err := fs.checkStoppedMDSOwner(daemon, i); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 // Owner held; exported fields cannot redirect either target or survivor reads.

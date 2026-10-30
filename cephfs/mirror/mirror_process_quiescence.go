@@ -342,40 +342,12 @@ func observeCephFSReceiptProcessQuiescenceLocked(ctx context.Context, o *PeerRem
 	if err := validateQuiescenceWatchers(before); err != nil {
 		return result, err
 	}
-	first := make(map[string]cephFSOriginalProcessProbe)
-	for _, w := range o.cohort {
-		i, err := w.originalProcess.inspect(ctx)
-		if err != nil {
-			return result, annotateProcessProblem(&result, w.name, err)
-		}
-		kind, ended, err := classifyCephFSOriginalTask(w.startedAt, i)
-		if err != nil {
-			return result, annotateProcessProblem(&result, w.name, err)
-		}
-		first[w.name] = i
-		entry := result.Daemons[w.name]
-		entry.Evidence, entry.OriginalTaskEnded = kind, ended
-		entry.OriginalWatcherRetired = originalNumericWatcherRetired(w.instanceID, before)
-		result.Daemons[w.name] = entry
-	}
-	after, err := o.watchers(ctx)
+	first, err := probeCephFSOriginalProcesses(ctx, o, before, &result)
 	if err != nil {
 		return result, err
 	}
-	if err := validateQuiescenceWatchers(after); err != nil {
+	if err := confirmCephFSOriginalProcessesUnchanged(ctx, o, before, first, &result); err != nil {
 		return result, err
-	}
-	if !equalCephFSRemovalWatchers(before, after) {
-		return result, cephFSObserveQuery("original process watcher set changed during observation", nil)
-	}
-	for _, w := range o.cohort {
-		i, err := w.originalProcess.inspect(ctx)
-		if err != nil {
-			return result, annotateProcessProblem(&result, w.name, err)
-		}
-		if !sameOriginalProcessProbe(first[w.name], i) {
-			return result, cephFSObserveQuery("original process state changed during observation", nil)
-		}
 	}
 	// Policy/owner/context rechecks precede every published per-member success.
 	absent, err = authority(ctx)
@@ -400,6 +372,54 @@ func observeCephFSReceiptProcessQuiescenceLocked(ctx context.Context, o *PeerRem
 	}
 	result.OriginalQuiescent = all
 	return result, nil
+}
+
+// probeCephFSOriginalProcesses inspects every original process once, records
+// its task evidence and whether its watcher has retired from before, and
+// returns the probes for the closing comparison.
+func probeCephFSOriginalProcesses(ctx context.Context, o *PeerRemoval, before map[string]string, result *ProcessQuiescenceStatus) (map[string]cephFSOriginalProcessProbe, error) {
+	first := make(map[string]cephFSOriginalProcessProbe)
+	for _, w := range o.cohort {
+		i, err := w.originalProcess.inspect(ctx)
+		if err != nil {
+			return nil, annotateProcessProblem(result, w.name, err)
+		}
+		kind, ended, err := classifyCephFSOriginalTask(w.startedAt, i)
+		if err != nil {
+			return nil, annotateProcessProblem(result, w.name, err)
+		}
+		first[w.name] = i
+		entry := result.Daemons[w.name]
+		entry.Evidence, entry.OriginalTaskEnded = kind, ended
+		entry.OriginalWatcherRetired = originalNumericWatcherRetired(w.instanceID, before)
+		result.Daemons[w.name] = entry
+	}
+	return first, nil
+}
+
+// confirmCephFSOriginalProcessesUnchanged rereads the watchers and every
+// original process, so that a status assembled across a change is refused.
+func confirmCephFSOriginalProcessesUnchanged(ctx context.Context, o *PeerRemoval, before map[string]string, first map[string]cephFSOriginalProcessProbe, result *ProcessQuiescenceStatus) error {
+	after, err := o.watchers(ctx)
+	if err != nil {
+		return err
+	}
+	if err := validateQuiescenceWatchers(after); err != nil {
+		return err
+	}
+	if !equalCephFSRemovalWatchers(before, after) {
+		return cephFSObserveQuery("original process watcher set changed during observation", nil)
+	}
+	for _, w := range o.cohort {
+		i, err := w.originalProcess.inspect(ctx)
+		if err != nil {
+			return annotateProcessProblem(result, w.name, err)
+		}
+		if !sameOriginalProcessProbe(first[w.name], i) {
+			return cephFSObserveQuery("original process state changed during observation", nil)
+		}
+	}
+	return nil
 }
 
 func annotateProcessProblem(result *ProcessQuiescenceStatus, name string, err error) error {
