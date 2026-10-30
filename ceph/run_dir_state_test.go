@@ -128,7 +128,7 @@ func TestRunDirStateFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if sel, ok := n.(*ast.SelectorExpr); ok && runDirUse(sel) {
-					if allowed[sel] {
+					if allowed[sel] || osdFleetBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.runDir outside a runDirState method call")

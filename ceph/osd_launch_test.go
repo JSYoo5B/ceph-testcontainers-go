@@ -112,7 +112,7 @@ func preparedOSDLaunch(t *testing.T) (*Container, osdLaunch) {
 	t.Helper()
 	c, _, _ := newInitialOSDCluster(options{essentialImage: "synthetic-osd-image"})
 	c.bootstrap.config, c.bootstrap.keyring = []byte("[global]\nfsid = synthetic-cluster\n"), []byte("synthetic-admin-keyring")
-	launch, err := c.registerOSD(t.Context(), OSDConfig{Root: "default", Host: "synthetic-host"}, c.settings.essentialImage, nil)
+	launch, err := c.osdFleet().registerOSD(t.Context(), OSDConfig{Root: "default", Host: "synthetic-host"}, c.settings.essentialImage, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,12 +148,12 @@ func TestOSDLaunchNeverReplaysCreationOrLosesPartialHandle(t *testing.T) {
 				}
 				return created, nil
 			}
-			err := c.startOSD(t.Context(), launch)
+			err := c.osdFleet().startOSD(t.Context(), launch)
 			if (err == nil) != (outcome == "success") || (err != nil && !errors.Is(err, creationErr)) {
 				t.Fatalf("creation outcome: %v", err)
 			}
 			copyOfLaunch := launch
-			if err := c.startOSD(t.Context(), copyOfLaunch); err == nil || !strings.Contains(err.Error(), "already attempted") || calls != 1 {
+			if err := c.osdFleet().startOSD(t.Context(), copyOfLaunch); err == nil || !strings.Contains(err.Error(), "already attempted") || calls != 1 {
 				t.Fatal("a copied launch replayed container creation")
 			}
 			if c.osdHandles.get(saved.ID) != saved || (saved.Container == created) != (outcome != "no-handle-error") {
@@ -183,7 +183,10 @@ func TestOSDLaunchConcurrentCopiesCreateOnlyOneContainer(t *testing.T) {
 	errs := make(chan error, 8)
 	for range 8 {
 		wg.Add(1)
-		go func(copyOfLaunch osdLaunch) { defer wg.Done(); errs <- c.startOSD(t.Context(), copyOfLaunch) }(launch)
+		go func(copyOfLaunch osdLaunch) {
+			defer wg.Done()
+			errs <- c.osdFleet().startOSD(t.Context(), copyOfLaunch)
+		}(launch)
 	}
 	<-entered
 	close(release)
@@ -208,11 +211,11 @@ func TestOSDLaunchRefusesRebindingAndIncompletePreparation(t *testing.T) {
 		t.Fatal("refused launch reached container creation")
 		return nil, nil
 	}
-	if err := c.startOSD(t.Context(), launch); err == nil || launch.osd.Container != previous {
+	if err := c.osdFleet().startOSD(t.Context(), launch); err == nil || launch.osd.Container != previous {
 		t.Fatal("existing container was rebound")
 	}
 	for _, incomplete := range []osdLaunch{{}, {osd: &OSDContainer{ID: 7}}} {
-		if err := c.startOSD(t.Context(), incomplete); err == nil {
+		if err := c.osdFleet().startOSD(t.Context(), incomplete); err == nil {
 			t.Fatal("incomplete registration reached container creation")
 		}
 	}
@@ -258,7 +261,7 @@ func TestOSDLaunchCancelledBeforeCreationDoesNotConsumeAttempt(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := c.startOSD(ctx, launch); !errors.Is(err, context.Canceled) || launch.recipe.started.Load() || launch.osd.Container != nil {
+	if err := c.osdFleet().startOSD(ctx, launch); !errors.Is(err, context.Canceled) || launch.recipe.started.Load() || launch.osd.Container != nil {
 		t.Fatalf("cancelled preflight changed creation state: %v", err)
 	}
 }

@@ -43,13 +43,13 @@ func (c *Container) startInitialOSDs(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		launch, err := c.registerOSD(ctx, config, c.settings.essentialImage, buckets)
+		launch, err := c.osdFleet().registerOSD(ctx, config, c.settings.essentialImage, buckets)
 		if err != nil {
 			return err
 		}
 		launches = append(launches, launch)
 	}
-	if err := c.startOSDs(ctx, launches); err != nil {
+	if err := c.osdFleet().startOSDs(ctx, launches); err != nil {
 		return err
 	}
 	ids := make([]int, len(launches))
@@ -71,7 +71,7 @@ func (c *Container) startInitialOSDs(ctx context.Context) error {
 // once and in their order. After the first failure, or once ctx ends, it
 // starts no further OSD but waits for those already starting. The error of
 // the first failure comes first, joined with those of the others.
-func (c *Container) startOSDs(ctx context.Context, launches []osdLaunch) error {
+func (f osdFleet) startOSDs(ctx context.Context, launches []osdLaunch) error {
 	var (
 		wg   sync.WaitGroup
 		mu   sync.Mutex
@@ -105,7 +105,7 @@ func (c *Container) startOSDs(ctx context.Context, launches []osdLaunch) error {
 		go func() {
 			defer wg.Done()
 			defer func() { <-slots }()
-			if err := c.startOSD(ctx, launch); err != nil {
+			if err := f.startOSD(ctx, launch); err != nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()

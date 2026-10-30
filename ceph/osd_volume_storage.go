@@ -81,22 +81,22 @@ func (s *osdVolumeStorage) inspect(ctx context.Context) (err error) {
 	return s.validate(result.Volume)
 }
 
-func (c *Container) ensureOSDVolume(ctx context.Context) error {
-	if !c.settings.osdVolumeStorage {
+func (f osdFleet) ensureOSDVolume(ctx context.Context) error {
+	if !f.settings.osdVolumeStorage {
 		return nil
 	}
-	if s := c.stores.volumeStorage(); s != nil {
+	if s := f.stores.volumeStorage(); s != nil {
 		return s.check(ctx)
 	}
 	// Publish before creation, including a lost create response. Neither a
 	// later Add nor cleanup may allocate a replacement to resolve uncertainty.
-	s := c.stores.beginVolume()
+	s := f.stores.beginVolume()
 	if err := s.create(ctx); err != nil {
 		return err
 	}
-	helper, err := c.stores.runVolumeHelper(ctx, c.settings.essentialImage, WithIdleEntrypoint(),
+	helper, err := f.stores.runVolumeHelper(ctx, f.settings.essentialImage, WithIdleEntrypoint(),
 		testcontainers.WithHostConfigModifier(func(h *container.HostConfig) { h.NetworkMode = "none" }),
-		testcontainers.WithLabels(map[string]string{osdVolumeOwnerLabel: s.owner}), c.startup.ownedLabel(),
+		testcontainers.WithLabels(map[string]string{osdVolumeOwnerLabel: s.owner}), f.startup.ownedLabel(),
 		osdLaunchVolume(s.name, osdVolumeHelperPath, true))
 	if helper != nil {
 		s.helper = helper

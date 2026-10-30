@@ -138,7 +138,7 @@ func TestRetainedOSDUncertainReopenReply(t *testing.T) {
 	if err := (osdMap{c.conn()}).waitUp(ctx, []int{original.ID}); err != nil {
 		t.Fatal(err)
 	}
-	state, err := c.removalOSDState(ctx, original.ID)
+	state, err := c.osdFleet().removalOSDState(ctx, original.ID)
 	if err != nil || state.UUID != detached.UUID() || !state.Up || !state.In {
 		t.Fatal("native reopened registration differs", state, err)
 	}

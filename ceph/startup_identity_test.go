@@ -204,7 +204,7 @@ func TestStartupIdentityFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 					}
 				case *ast.UnaryExpr:
 					if x.Op == token.AND {
-						if sel, ok := x.X.(*ast.SelectorExpr); ok && (startupUse(sel) || startupUse2(sel)) {
+						if sel, ok := x.X.(*ast.SelectorExpr); ok && (startupUse(sel) || startupUse2(sel)) && !osdFleetBinding(fn) {
 							problems = append(problems, file+": takes the address of "+types.ExprString(x.X))
 						}
 					}
@@ -212,8 +212,8 @@ func TestStartupIdentityFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 				return true
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && startupUse(sel) && isContainerReceiver(sel.X) {
-					if allowed[sel] {
+				if sel, ok := n.(*ast.SelectorExpr); ok && startupUse(sel) && (isContainerReceiver(sel.X) || receiverTypeName(fn) == "osdFleet") {
+					if allowed[sel] || osdFleetBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.startup outside a startupIdentity method call")

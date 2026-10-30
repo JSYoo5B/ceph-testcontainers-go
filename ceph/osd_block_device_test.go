@@ -194,7 +194,7 @@ func TestOSDLaunchStartsOneContainerWithTheMappedBlockDevice(t *testing.T) {
 		req.HostConfigModifier(&host)
 		return created, nil
 	}
-	if err := c.startOSD(t.Context(), launch); err != nil || calls != 1 {
+	if err := c.osdFleet().startOSD(t.Context(), launch); err != nil || calls != 1 {
 		t.Fatalf("start: %v after %d creations", err, calls)
 	}
 	if len(host.Devices) != 1 || host.Devices[0].PathOnHost != "/dev/mapper/tc-scratch-0" {

@@ -52,7 +52,7 @@ func (w *wiringCluster) wire(t *testing.T, device osdBlockDevice, lease string) 
 		t.Fatal(err)
 	}
 	defer w.mu.Unlock()
-	return w.registerBlockDeviceOSD(t.Context(), OSDConfig{Root: "default", Host: "synthetic-host"}, w.settings.essentialImage, device, lease)
+	return w.osdFleet().registerBlockDeviceOSD(t.Context(), OSDConfig{Root: "default", Host: "synthetic-host"}, w.settings.essentialImage, device, lease)
 }
 
 func nopOutcome(int) (testcontainers.Container, error) { return &osdMemoryContainerFake{}, nil }
@@ -70,7 +70,7 @@ func TestRegisterBlockDeviceOSDHandsBackAMappedUnstartedLaunchWithItsClaim(t *te
 	if launch.recipe.started.Load() || len(w.creations) != 0 || w.osdHandles.get(launch.osd.ID) != launch.osd {
 		t.Fatal("the wiring step started or lost the launch")
 	}
-	if err := w.startOSD(t.Context(), launch); err != nil {
+	if err := w.osdFleet().startOSD(t.Context(), launch); err != nil {
 		t.Fatal(err)
 	}
 	req := w.creations[0]
@@ -115,7 +115,7 @@ func TestRegisterBlockDeviceOSDRefusesBadInputsBeforeRegistering(t *testing.T) {
 		w := newWiringCluster(t, options{}, nopOutcome)
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		_, err := w.registerBlockDeviceOSD(ctx, OSDConfig{Root: "default"}, "img", claimDevice("a", 1), "lease-a")
+		_, err := w.osdFleet().registerBlockDeviceOSD(ctx, OSDConfig{Root: "default"}, "img", claimDevice("a", 1), "lease-a")
 		if !errors.Is(err, context.Canceled) || w.osdHandles.count() != 0 || w.deviceClaims.count() != 0 {
 			t.Fatalf("err %v, handles %d, claims %d", err, w.osdHandles.count(), w.deviceClaims.count())
 		}
@@ -130,7 +130,7 @@ func requireSealed(t *testing.T, w *wiringCluster, launch osdLaunch) {
 		t.Fatalf("launch %+v is not a registered, sealed launch", launch)
 	}
 	before := len(w.creations)
-	err := w.startOSD(t.Context(), launch)
+	err := w.osdFleet().startOSD(t.Context(), launch)
 	if err == nil || !strings.Contains(err.Error(), "do not replay") || len(w.creations) != before || launch.osd.Container != nil {
 		t.Fatalf("sealed launch started: %v, creations %d", err, len(w.creations)-before)
 	}
@@ -180,7 +180,7 @@ func TestRegisterBlockDeviceOSDRefusedClaimChangesNothingAndSealsTheRecipe(t *te
 				t.Fatal("a refused claim was published")
 			}
 			// The first launch is unaffected.
-			if err := w.startOSD(t.Context(), first); err != nil {
+			if err := w.osdFleet().startOSD(t.Context(), first); err != nil {
 				t.Fatalf("first launch: %v", err)
 			}
 		})
@@ -214,7 +214,7 @@ func TestRegisterBlockDeviceOSDClaimFollowsTheTablesRulesThroughUncertainStartup
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := w.startOSD(t.Context(), launch); err == nil {
+			if err := w.osdFleet().startOSD(t.Context(), launch); err == nil {
 				t.Fatal("start failure hidden")
 			}
 			// The caller's lease token is still on the claim, and neither a
@@ -230,7 +230,7 @@ func TestRegisterBlockDeviceOSDClaimFollowsTheTablesRulesThroughUncertainStartup
 				t.Fatalf("claim %+v", info)
 			}
 			// The same launch can never be replayed to retry the device.
-			if err := w.startOSD(t.Context(), launch); err == nil || !strings.Contains(err.Error(), "do not replay") || len(w.creations) != 1 {
+			if err := w.osdFleet().startOSD(t.Context(), launch); err == nil || !strings.Contains(err.Error(), "do not replay") || len(w.creations) != 1 {
 				t.Fatalf("replay: %v, creations %d", err, len(w.creations))
 			}
 			// Only the table's confirmation drops it.
@@ -270,10 +270,10 @@ var osdDeviceWiringCallers = map[string]bool{}
 var osdDeviceWiringSequence = []string{
 	"device.validate",
 	"osdDeviceLease.MatchString",
-	"c.registerOSD",
+	"f.registerOSD",
 	"launch.recipe.attachBlockDevice",
 	"launch.recipe.seal",
-	"c.deviceClaims.claim",
+	"f.deviceClaims.claim",
 	"launch.recipe.seal",
 }
 
@@ -332,8 +332,8 @@ func osdDeviceWiringProblems(files map[string]*ast.File) []string {
 
 func osdDeviceWiringStepProblems(fn *ast.FuncDecl) []string {
 	var problems []string
-	if fn.Recv == nil || receiverTypeName(fn) != "Container" || fn.Name.IsExported() {
-		problems = append(problems, "registerBlockDeviceOSD must be an unexported Container method")
+	if fn.Recv == nil || receiverTypeName(fn) != "osdFleet" || fn.Name.IsExported() {
+		problems = append(problems, "registerBlockDeviceOSD must be an unexported osdFleet method")
 	}
 	var got []string
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -362,7 +362,7 @@ func osdDeviceWiringStepProblems(fn *ast.FuncDecl) []string {
 				if len(x.Args) != 1 || types.ExprString(x.Args[0]) != "lease" {
 					problems = append(problems, "the lease token must be checked as given")
 				}
-			case "c.deviceClaims.claim":
+			case "f.deviceClaims.claim":
 				want := []string{"launch.osd.ID", "lease", "device", "&launch.recipe.started"}
 				var args []string
 				for _, a := range x.Args {
@@ -430,13 +430,13 @@ func TestOSDDeviceWiringGuardRejectsBrokenVariants(t *testing.T) {
 		"claim failure does not seal":   {"&launch.recipe.started); err != nil {\n\t\tlaunch.recipe.seal()\n", "&launch.recipe.started); err != nil {\n"},
 		"lease token is trimmed":        {"launch.osd.ID, lease, device", "launch.osd.ID, strings.TrimSpace(lease), device"},
 		"claim uses a private one-shot": {"&launch.recipe.started); err", "new(atomic.Bool)); err"},
-		"claim before attach":           {"if err := launch.recipe.attachBlockDevice(device); err != nil {\n\t\tlaunch.recipe.seal()\n\t\treturn launch, err\n\t}\n\tif err := c.deviceClaims.claim(launch.osd.ID, lease, device, &launch.recipe.started); err != nil {\n\t\tlaunch.recipe.seal()\n\t\treturn launch, err\n\t}\n", "if err := c.deviceClaims.claim(launch.osd.ID, lease, device, &launch.recipe.started); err != nil {\n\t\tlaunch.recipe.seal()\n\t\treturn launch, err\n\t}\n\tif err := launch.recipe.attachBlockDevice(device); err != nil {\n\t\tlaunch.recipe.seal()\n\t\treturn launch, err\n\t}\n"},
-		"claim before registration":     {"launch, err := c.registerOSD(ctx, config, image, nil)", "_ = c.deviceClaims.claim(0, lease, device, nil)\n\tlaunch, err := c.registerOSD(ctx, config, image, nil)"},
+		"claim before attach":           {"if err := launch.recipe.attachBlockDevice(device); err != nil {\n\t\tlaunch.recipe.seal()\n\t\treturn launch, err\n\t}\n\tif err := f.deviceClaims.claim(launch.osd.ID, lease, device, &launch.recipe.started); err != nil {\n\t\tlaunch.recipe.seal()\n\t\treturn launch, err\n\t}\n", "if err := f.deviceClaims.claim(launch.osd.ID, lease, device, &launch.recipe.started); err != nil {\n\t\tlaunch.recipe.seal()\n\t\treturn launch, err\n\t}\n\tif err := launch.recipe.attachBlockDevice(device); err != nil {\n\t\tlaunch.recipe.seal()\n\t\treturn launch, err\n\t}\n"},
+		"claim before registration":     {"launch, err := f.registerOSD(ctx, config, image, nil)", "_ = f.deviceClaims.claim(0, lease, device, nil)\n\tlaunch, err := f.registerOSD(ctx, config, image, nil)"},
 		"token check dropped":           {"if !osdDeviceLease.MatchString(lease) {", "if false {"},
-		"takes the topology lock":       {"launch, err := c.registerOSD(", "_ = c.lockTopology(ctx)\n\tlaunch, err := c.registerOSD("},
-		"takes the mutex":               {"launch, err := c.registerOSD(", "c.mu.Lock()\n\tlaunch, err := c.registerOSD("},
-		"starts a goroutine":            {"launch, err := c.registerOSD(", "go func() {}()\n\tlaunch, err := c.registerOSD("},
-		"starts the launch itself":      {"\treturn launch, nil\n}", "\treturn launch, c.startOSD(ctx, launch)\n}"},
+		"takes the topology lock":       {"launch, err := f.registerOSD(", "_ = f.owner.lockTopology(ctx)\n\tlaunch, err := f.registerOSD("},
+		"takes the mutex":               {"launch, err := f.registerOSD(", "f.owner.mu.Lock()\n\tlaunch, err := f.registerOSD("},
+		"starts a goroutine":            {"launch, err := f.registerOSD(", "go func() {}()\n\tlaunch, err := f.registerOSD("},
+		"starts the launch itself":      {"\treturn launch, nil\n}", "\treturn launch, f.startOSD(ctx, launch)\n}"},
 		"imports a device package":      {"import (\n\t\"context\"", "import (\n\t\"os/exec\"\n\t\"context\""},
 	}
 	if problems := osdDeviceWiringProblems(map[string]*ast.File{"osd_device_wiring.go": parseSourceString(t, original)}); len(problems) != 0 {
@@ -458,7 +458,7 @@ func TestOSDDeviceWiringGuardRejectsBrokenVariants(t *testing.T) {
 		})
 	}
 	t.Run("production caller", func(t *testing.T) {
-		caller := parseSourceString(t, "package ceph\nfunc (c *Container) launchDeviceOSD() { c.registerBlockDeviceOSD(nil, OSDConfig{}, \"\", osdBlockDevice{}, \"x\") }\n")
+		caller := parseSourceString(t, "package ceph\nfunc (c *Container) launchDeviceOSD() { c.osdFleet().registerBlockDeviceOSD(nil, OSDConfig{}, \"\", osdBlockDevice{}, \"x\") }\n")
 		if problems := osdDeviceWiringProblems(map[string]*ast.File{"x.go": caller}); len(problems) == 0 {
 			t.Fatal("a production caller was accepted")
 		}

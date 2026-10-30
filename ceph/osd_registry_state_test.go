@@ -176,7 +176,7 @@ func TestOSDRegistryFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if sel, ok := n.(*ast.SelectorExpr); ok && osdRegistryUse(sel) {
-					if allowed[sel] {
+					if allowed[sel] || osdFleetBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.osdHandles outside an osdRegistry method call")
@@ -509,7 +509,7 @@ func TestOSDRegistryHasNoAddressTakenAndTestHooksExposeNoMap(t *testing.T) {
 				return true
 			}
 			ast.Inspect(un.X, func(m ast.Node) bool {
-				if sel, ok := m.(*ast.SelectorExpr); ok && (osdRegistryUse(sel) || sel.Sel.Name == "owned" || sel.Sel.Name == "detached") {
+				if sel, ok := m.(*ast.SelectorExpr); ok && (osdRegistryUse(sel) || sel.Sel.Name == "owned" || sel.Sel.Name == "detached") && !inOSDFleetBinding(parsed, un.Pos()) {
 					problems = append(problems, file+": takes the address of "+types.ExprString(un.X))
 				}
 				return true

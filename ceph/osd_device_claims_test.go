@@ -173,7 +173,7 @@ func TestOSDDeviceClaimReleaseSealsTheRecipeAgainstALateStart(t *testing.T) {
 		creates++
 		return &osdMemoryContainerFake{}, nil
 	}
-	err := cluster.startOSD(t.Context(), osdLaunch{osd: &OSDContainer{ID: 3}, recipe: recipe})
+	err := cluster.osdFleet().startOSD(t.Context(), osdLaunch{osd: &OSDContainer{ID: 3}, recipe: recipe})
 	if err == nil || !strings.Contains(err.Error(), "do not replay") || creates != 0 {
 		t.Fatalf("startOSD after release = %v, creations %d", err, creates)
 	}
@@ -183,7 +183,7 @@ func TestOSDDeviceClaimReleaseSealsTheRecipeAgainstALateStart(t *testing.T) {
 	if err := s.claim(4, "lease-b", claimDevice("b", 2), &recipe.started); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.startOSD(t.Context(), osdLaunch{osd: &OSDContainer{ID: 4}, recipe: recipe}); err != nil || creates != 1 {
+	if err := cluster.osdFleet().startOSD(t.Context(), osdLaunch{osd: &OSDContainer{ID: 4}, recipe: recipe}); err != nil || creates != 1 {
 		t.Fatalf("control start = %v, creations %d", err, creates)
 	}
 	if s.release(4, false) {
@@ -368,7 +368,7 @@ func TestOSDDeviceClaimsFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if sel, ok := n.(*ast.SelectorExpr); ok && osdDeviceClaimUse(sel) {
-					if allowed[sel] {
+					if allowed[sel] || osdFleetBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.deviceClaims outside an osdDeviceClaims method call")

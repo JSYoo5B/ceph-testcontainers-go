@@ -77,13 +77,13 @@ func validateCRUSHHierarchy(defaultRoot string, locations []OSDConfig) error {
 }
 
 // Caller holds c.mu while checking the candidate against immutable owned OSDs.
-func (c *Container) validateOSDPlacement(candidate OSDConfig) error {
-	locations := make([]OSDConfig, 0, c.osdHandles.count()+1)
-	for _, osd := range c.osdHandles.each() {
+func (f osdFleet) validateOSDPlacement(candidate OSDConfig) error {
+	locations := make([]OSDConfig, 0, f.osdHandles.count()+1)
+	for _, osd := range f.osdHandles.each() {
 		locations = append(locations, osd.Placement())
 	}
 	locations = append(locations, candidate)
-	return validateCRUSHHierarchy(clusterCRUSHRoot(c.settings), locations)
+	return validateCRUSHHierarchy(clusterCRUSHRoot(f.settings), locations)
 }
 
 func clusterCRUSHRoot(settings options) string {

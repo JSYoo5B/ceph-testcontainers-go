@@ -379,11 +379,11 @@ func reopenOrderOK(src string) bool {
 	if end := strings.Index(body, "\n}\n"); end >= 0 {
 		body = body[:end]
 	}
-	clean := strings.Index(body, "c.clearStaleOSDSocket(")
+	clean := strings.Index(body, "c.osdFleet().clearStaleOSDSocket(")
 	recheck := strings.Index(body[max(clean, 0):], "ctx.Err()")
 	consume := strings.Index(body, "detached.reopened = true")
 	return clean >= 0 && consume >= 0 && recheck >= 0 && clean+recheck < consume &&
-		strings.Count(body, "c.clearStaleOSDSocket(") == 1 && !strings.Contains(body, "c.clearAdminSocket(")
+		strings.Count(body, "c.osdFleet().clearStaleOSDSocket(") == 1 && !strings.Contains(body, "c.clearAdminSocket(")
 }
 
 // The exact production source keeps the order; the control sources do not.
@@ -401,7 +401,7 @@ func TestReopenSourceCleansBeforeConsuming(t *testing.T) {
 	}
 	detached.reopened = true
 	c.osdHandles.register(id, osd)
-	if err := c.clearStaleOSDSocket(ctx, detached); err != nil {
+	if err := c.osdFleet().clearStaleOSDSocket(ctx, detached); err != nil {
 		return
 	}
 }

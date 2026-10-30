@@ -359,7 +359,7 @@ func waitOSDLauncherJoins(t *testing.T) {
 	for time.Now().Before(deadline) {
 		n := runtime.Stack(buf, true)
 		for _, g := range strings.Split(string(buf[:n]), "\n\n") {
-			if strings.Contains(g, ".(*Container).startOSDs(") && strings.Contains(g, "sync.(*WaitGroup).Wait(") {
+			if strings.Contains(g, ".osdFleet.startOSDs(") && strings.Contains(g, "sync.(*WaitGroup).Wait(") {
 				return
 			}
 		}

@@ -226,7 +226,7 @@ func TestOSDMemoryReuseRequiresTheOriginalLiveKeeper(t *testing.T) {
 			case "released":
 				s.volumeRemoved = true
 			}
-			err := cluster.ensureOSDMemory(t.Context())
+			err := cluster.osdFleet().ensureOSDMemory(t.Context())
 			if (err == nil) != (condition == "live") || cluster.stores.memory != s || s.keeper != keeper || docker.creates != 0 || docker.removals != 0 {
 				t.Fatalf("keeper failure reallocated/released storage: condition=%s storage=%+v err=%v", condition, s, err)
 			}

@@ -74,11 +74,11 @@ func TestOSDVolumeLazyAllocationAndUncertainCreateOwnership(t *testing.T) {
 	if err := c.startInitialOSDs(t.Context()); err != nil || c.stores.volume != nil || d.creates != 0 {
 		t.Fatal("zero-OSD bootstrap allocated storage")
 	}
-	if err := c.ensureOSDVolume(t.Context()); !errors.Is(err, lost) || c.stores.volume == nil || d.creates != 1 {
+	if err := c.osdFleet().ensureOSDVolume(t.Context()); !errors.Is(err, lost) || c.stores.volume == nil || d.creates != 1 {
 		t.Fatal("uncertain create lost ownership")
 	}
 	s := c.stores.volume
-	if err := c.ensureOSDVolume(t.Context()); err == nil || c.stores.volume != s || d.creates != 1 {
+	if err := c.osdFleet().ensureOSDVolume(t.Context()); err == nil || c.stores.volume != s || d.creates != 1 {
 		t.Fatal("uncertain create was replayed")
 	}
 	if d.createOptions.Driver != "local" || len(d.createOptions.DriverOpts) != 0 || d.createOptions.Labels[osdVolumeOwnerLabel] != s.owner {
@@ -177,7 +177,7 @@ func TestOSDVolumeHelperFailureDoesNotClaimDataLossOrRepair(t *testing.T) {
 				s.removed = true
 			}
 			c := &Container{settings: options{osdVolumeStorage: true}, stores: osdStorageState{volume: s}}
-			if err := c.ensureOSDVolume(t.Context()); err == nil || c.stores.volume != s || d.creates != 0 || d.removals != 0 {
+			if err := c.osdFleet().ensureOSDVolume(t.Context()); err == nil || c.stores.volume != s || d.creates != 0 || d.removals != 0 {
 				t.Fatal("unavailable storage was recreated or admitted")
 			}
 		})
@@ -235,10 +235,10 @@ func TestOSDVolumePartialHelperRemainsOwnedUntilCleanup(t *testing.T) {
 		}
 		return h, failed
 	}
-	if err := c.ensureOSDVolume(t.Context()); !errors.Is(err, failed) || c.stores.volume == nil || c.stores.volume.helper != h || c.stores.volume.ready {
+	if err := c.osdFleet().ensureOSDVolume(t.Context()); !errors.Is(err, failed) || c.stores.volume == nil || c.stores.volume.helper != h || c.stores.volume.ready {
 		t.Fatal("partial helper lost ownership", err)
 	}
-	if err := c.ensureOSDVolume(t.Context()); err == nil || calls != 1 || d.creates != 1 {
+	if err := c.osdFleet().ensureOSDVolume(t.Context()); err == nil || calls != 1 || d.creates != 1 {
 		t.Fatal("partial helper setup was replayed")
 	}
 	h.terminateErr = failed
