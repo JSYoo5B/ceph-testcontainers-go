@@ -721,42 +721,18 @@ func decodeBucketInstance(data []byte, key string, g *SyncGroup) (*rgwBucketInst
 	// Identity members are read from the decoded document by their exact
 	// native key: a typed decode would match keys case-insensitively and keep
 	// an earlier value of a repeated key.
-	info := nativeObject(nativeObject(metadata, "data"), "bucket_info")
-	bucket := nativeObject(info, "bucket")
-	if info == nil || !nativeMember(metadata, "key").is("bucket.instance:"+key) || !nativeMember(bucket, "name").is(g.scope.Bucket) ||
-		!nativeMember(bucket, "tenant").is(g.scope.Tenant) || !nativeMember(bucket, "bucket_id").is(g.bucketID) || !nativeMember(info, "zonegroup").is(g.groupID) {
+	info := nativeDoc(metadata).object("data").object("bucket_info")
+	bucket := info.object("bucket")
+	if info == nil || !nativeDoc(metadata).member("key").is("bucket.instance:"+key) || !bucket.member("name").is(g.scope.Bucket) ||
+		!bucket.member("tenant").is(g.scope.Tenant) || !bucket.member("bucket_id").is(g.bucketID) || !info.member("zonegroup").is(g.groupID) {
 		return nil, false, nil
 	}
 	policy, err := syncPolicyFromDocument(info)
 	if err != nil {
 		return nil, true, err
 	}
-	return &rgwBucketInstance{Owner: nativeMember(info, "owner"), PlacementRule: nativeMember(info, "placement_rule"), policy: policy}, true, nil
+	return &rgwBucketInstance{Owner: info.member("owner"), PlacementRule: info.member("placement_rule"), policy: policy}, true, nil
 }
-
-// nativeString is a native JSON member that is meaningful only as a string. A
-// member that is missing, null or of another type is unset, so a comparison
-// with it fails.
-type nativeString struct {
-	value string
-	set   bool
-}
-
-// nativeMember reads the member of document named exactly key; encoding/json
-// has already kept the last of repeated keys, as the native comparison did.
-func nativeMember(document map[string]any, key string) nativeString {
-	value, ok := document[key].(string)
-	return nativeString{value: value, set: ok}
-}
-
-// nativeObject returns the object member named exactly key, or nil.
-func nativeObject(document map[string]any, key string) map[string]any {
-	value, _ := document[key].(map[string]any)
-	return value
-}
-
-// is reports whether the member is the string want.
-func (s nativeString) is(want string) bool { return s.set && s.value == want }
 
 func (g *SyncGroup) zoneIDs(names []string, wildcard bool) ([]string, error) {
 	f := g.owner
@@ -861,14 +837,7 @@ func syncPolicyFromDocument(doc map[string]any) (map[string]any, error) {
 	return policy, nil
 }
 func syncNativeGroup(policy map[string]any, id string) map[string]any {
-	groups, _ := policy["groups"].([]any)
-	for _, v := range groups {
-		g, _ := v.(map[string]any)
-		if g["id"] == id {
-			return g
-		}
-	}
-	return nil
+	return nativeDoc(policy).identified("groups", id)
 }
 func syncPolicyReplace(policy map[string]any, id string, group map[string]any) map[string]any {
 	copy := syncJSONClone(policy)
@@ -891,14 +860,7 @@ func syncGroupEmpty(g map[string]any) bool {
 	return flows != nil && len(flows) == 0 && pipes != nil && len(pipes) == 0
 }
 func syncNativePipe(g map[string]any, id string) map[string]any {
-	pipes, _ := g["pipes"].([]any)
-	for _, v := range pipes {
-		p, _ := v.(map[string]any)
-		if p["id"] == id {
-			return p
-		}
-	}
-	return nil
+	return nativeDoc(g).identified("pipes", id)
 }
 func syncGroupWithoutPipe(g map[string]any, id string) map[string]any {
 	copy := syncJSONClone(g)

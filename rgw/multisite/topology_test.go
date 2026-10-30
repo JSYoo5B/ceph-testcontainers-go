@@ -74,10 +74,43 @@ func TestRGWTopologyRequiresEveryZoneIdentityAndEndpoint(t *testing.T) {
 		strings.Replace(committed, `"name":"b"`, `"name":"foreign"`, 1),
 		strings.Replace(committed, `http://b:7480`, `http://b:wrong-port`, 1),
 		strings.Replace(committed, `"master_zone":"id-c"`, `"master_zone":"id-a"`, 1),
+		// Members are read by exact name: a case alias does not stand in for
+		// the native member, and the last of repeated keys wins.
+		strings.Replace(committed, `"id":"id-b","name":"b"`, `"ID":"id-b","name":"b"`, 1),
+		strings.Replace(committed, `"realm_id":"realm"`, `"realm_id":"foreign","REALM_ID":"realm"`, 1),
+		strings.Replace(committed, `"id":"id-b"`, `"id":"id-b","id":"id-a"`, 1),
 	} {
 		period, err := decodeRGWTopologyPeriod([]byte(invalid))
 		if err == nil && fixture.checkZonePeriod(period, states[2], states) == nil {
 			t.Fatal("stale or incomplete three-zone native graph was accepted")
+		}
+	}
+}
+
+// A committed period whose members have the wrong shape is invalid before any
+// topology comparison; missing optional members read as empty.
+func TestRGWTopologyPeriodRefusesMalformedMembers(t *testing.T) {
+	const base = `{"realm_id":"realm","master_zone":"id-a","period_map":{"zonegroups":[{"id":"g","name":"group","master_zone":"id-a","endpoints":["http://a:7480"],"zones":[{"id":"id-a","name":"a","endpoints":["http://a:7480"]}]}]}}`
+	period, err := decodeRGWTopologyPeriod([]byte(base))
+	if err != nil || len(period.PeriodMap.Zonegroups) != 1 || period.PeriodMap.Zonegroups[0].Zones[0].ID != "id-a" || period.MasterZonegroup != "" {
+		t.Fatalf("well-formed period: %+v, %v", period, err)
+	}
+	if period, err := decodeRGWTopologyPeriod([]byte(strings.Replace(base, `,"zones":[{"id":"id-a","name":"a","endpoints":["http://a:7480"]}]`, `,"zones":null`, 1))); err != nil || len(period.PeriodMap.Zonegroups[0].Zones) != 0 {
+		t.Fatalf("null zones: %+v, %v", period, err)
+	}
+	for name, malformed := range map[string]string{
+		"no realm":             strings.Replace(base, `"realm_id":"realm",`, ``, 1),
+		"numeric master":       strings.Replace(base, `"master_zone":"id-a","period_map"`, `"master_zone":7,"period_map"`, 1),
+		"no zonegroup list":    `{"realm_id":"realm","master_zone":"id-a","period_map":{}}`,
+		"zonegroup not object": `{"realm_id":"realm","master_zone":"id-a","period_map":{"zonegroups":["g"]}}`,
+		"endpoint not string":  strings.Replace(base, `"endpoints":["http://a:7480"],"zones"`, `"endpoints":[7],"zones"`, 1),
+		"zones not list":       strings.Replace(base, `"zones":[{"id":"id-a","name":"a","endpoints":["http://a:7480"]}]`, `"zones":{}`, 1),
+		"zone not object":      strings.Replace(base, `"zones":[{"id":"id-a","name":"a","endpoints":["http://a:7480"]}]`, `"zones":["a"]`, 1),
+		"zone id not string":   strings.Replace(base, `{"id":"id-a","name":"a"`, `{"id":1,"name":"a"`, 1),
+		"trailing output":      base + "{}",
+	} {
+		if _, err := decodeRGWTopologyPeriod([]byte(malformed)); err == nil {
+			t.Errorf("%s: malformed period was decoded", name)
 		}
 	}
 }

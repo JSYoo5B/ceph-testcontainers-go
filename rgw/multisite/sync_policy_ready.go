@@ -248,11 +248,11 @@ func (g *SyncGroup) policyReadyBucket(ctx context.Context, zone *rgwZoneState, b
 	if err != nil {
 		return false, true, err
 	}
-	id := nativeMember(native, "id").value
+	id := nativeDoc(native).member("id").value
 	if id == "" {
 		return false, true, errors.New("RGW destination bucket statistics lack a native instance identity")
 	}
-	if !nativeMember(native, "bucket").is(bucket.Name) || !nativeMember(native, "tenant").is(bucket.Tenant) || !nativeMember(native, "zonegroup").is(g.groupID) {
+	if stats := nativeDoc(native); !stats.member("bucket").is(bucket.Name) || !stats.member("tenant").is(bucket.Tenant) || !stats.member("zonegroup").is(g.groupID) {
 		return false, true, errors.New("RGW destination bucket namespace or zonegroup identity differs")
 	}
 	if id != bucket.ID {

@@ -584,44 +584,98 @@ func (t *rgwZoneTopology) reloadZoneGateways(ctx context.Context, states []*rgwZ
 	return nil
 }
 
+// rgwTopologyPeriod is the part of a committed period that the topology
+// checks read: realm, master zone and zonegroup, and each zonegroup's zones
+// and endpoints.
 type rgwTopologyPeriod struct {
-	RealmID         string `json:"realm_id"`
-	MasterZone      string `json:"master_zone"`
-	MasterZonegroup string `json:"master_zonegroup"`
-	PeriodMap       struct {
-		Zonegroups []struct {
-			ID         string   `json:"id"`
-			Name       string   `json:"name"`
-			MasterZone string   `json:"master_zone"`
-			Endpoints  []string `json:"endpoints"`
-			Zones      []struct {
-				ID, Name  string
-				Endpoints []string `json:"endpoints"`
-			} `json:"zones"`
-		} `json:"zonegroups"`
-	} `json:"period_map"`
+	RealmID, MasterZone, MasterZonegroup string
+	PeriodMap                            struct{ Zonegroups []rgwTopologyZonegroup }
 }
 
+type rgwTopologyZonegroup struct {
+	ID, Name, MasterZone string
+	Endpoints            []string
+	Zones                []rgwTopologyZone
+}
+
+type rgwTopologyZone struct {
+	ID, Name  string
+	Endpoints []string
+}
+
+var errInvalidTopologyPeriod = errors.New("invalid committed RGW topology period")
+
+// decodeRGWTopologyPeriod reads a committed period by exact member name. A
+// member of the wrong type, a zonegroup or zone that is not an object, or a
+// period without realm, master zone or zonegroup list is invalid.
 func decodeRGWTopologyPeriod(data []byte) (*rgwTopologyPeriod, error) {
+	document, err := syncJSON(data)
+	if err != nil {
+		return nil, errInvalidTopologyPeriod
+	}
+	doc := nativeDoc(document)
 	var period rgwTopologyPeriod
-	if err := json.Unmarshal(data, &period); err != nil || period.RealmID == "" || period.MasterZone == "" || period.PeriodMap.Zonegroups == nil {
-		return nil, errors.New("invalid committed RGW topology period")
+	var ok [3]bool
+	period.RealmID, ok[0] = doc.text("realm_id")
+	period.MasterZone, ok[1] = doc.text("master_zone")
+	period.MasterZonegroup, ok[2] = doc.text("master_zonegroup")
+	groups, isList := doc.object("period_map")["zonegroups"].([]any)
+	if ok != [3]bool{true, true, true} || !isList || period.RealmID == "" || period.MasterZone == "" {
+		return nil, errInvalidTopologyPeriod
+	}
+	period.PeriodMap.Zonegroups = make([]rgwTopologyZonegroup, 0, len(groups))
+	for _, value := range groups {
+		object, isObject := value.(map[string]any)
+		if !isObject {
+			return nil, errInvalidTopologyPeriod
+		}
+		group, err := decodeRGWTopologyZonegroup(object)
+		if err != nil {
+			return nil, err
+		}
+		period.PeriodMap.Zonegroups = append(period.PeriodMap.Zonegroups, group)
 	}
 	return &period, nil
 }
 
+func decodeRGWTopologyZonegroup(doc nativeDoc) (rgwTopologyZonegroup, error) {
+	var group rgwTopologyZonegroup
+	var ok [4]bool
+	group.ID, ok[0] = doc.text("id")
+	group.Name, ok[1] = doc.text("name")
+	group.MasterZone, ok[2] = doc.text("master_zone")
+	group.Endpoints, ok[3] = doc.texts("endpoints")
+	zones, isList := doc["zones"].([]any)
+	if ok != [4]bool{true, true, true, true} || !isList && doc["zones"] != nil {
+		return rgwTopologyZonegroup{}, errInvalidTopologyPeriod
+	}
+	for _, value := range zones {
+		object, isObject := value.(map[string]any)
+		if !isObject {
+			return rgwTopologyZonegroup{}, errInvalidTopologyPeriod
+		}
+		zone := nativeDoc(object)
+		var entry rgwTopologyZone
+		var zoneOK [3]bool
+		entry.ID, zoneOK[0] = zone.text("id")
+		entry.Name, zoneOK[1] = zone.text("name")
+		entry.Endpoints, zoneOK[2] = zone.texts("endpoints")
+		if zoneOK != [3]bool{true, true, true} {
+			return rgwTopologyZonegroup{}, errInvalidTopologyPeriod
+		}
+		group.Zones = append(group.Zones, entry)
+	}
+	return group, nil
+}
+
+// checkZonePeriod requires a committed period to describe exactly the owned
+// topology: this realm and master, one zonegroup per owned group, and every
+// owned zone with its identity and peer endpoint.
 func (f *Fixture) checkZonePeriod(period *rgwTopologyPeriod, master *rgwZoneState, states []*rgwZoneState) error {
 	if period.RealmID != f.RealmID || period.MasterZone != master.ID {
 		return errors.New("committed RGW topology realm/master identity mismatch")
 	}
-	groups := make(map[string][]*rgwZoneState)
-	for _, state := range states {
-		name := state.Zonegroup
-		if name == "" {
-			name = f.realm.config.Zonegroup
-		}
-		groups[name] = append(groups[name], state)
-	}
+	groups := f.zoneStatesByGroup(states)
 	if len(period.PeriodMap.Zonegroups) != len(groups) {
 		return errors.New("committed RGW topology contains unexpected zonegroups")
 	}
@@ -632,34 +686,67 @@ func (f *Fixture) checkZonePeriod(period *rgwTopologyPeriod, master *rgwZoneStat
 			return errors.New("committed RGW zonegroup contains unexpected zones or duplicate groups")
 		}
 		seen[group.Name] = true
-		if id := f.topology.groupIDs[group.Name]; id != "" && id != group.ID {
-			return errors.New("committed RGW zonegroup identity mismatch")
+		if err := f.checkPeriodZonegroup(period, group, expected, master); err != nil {
+			return err
 		}
-		var groupMaster *rgwZoneState
-		for _, zone := range expected {
-			if zone.ID == group.MasterZone {
-				groupMaster = zone
-			}
+		if err := checkPeriodZones(group, expected); err != nil {
+			return err
 		}
-		if groupMaster == nil || !slices.Equal(group.Endpoints, []string{groupMaster.PeerEndpoint}) {
-			return errors.New("committed RGW topology zonegroup master/endpoint mismatch")
+	}
+	return nil
+}
+
+// zoneStatesByGroup groups the owned zones by zonegroup name; a zone without
+// one belongs to the fixture's configured zonegroup.
+func (f *Fixture) zoneStatesByGroup(states []*rgwZoneState) map[string][]*rgwZoneState {
+	groups := make(map[string][]*rgwZoneState)
+	for _, state := range states {
+		name := state.Zonegroup
+		if name == "" {
+			name = f.realm.config.Zonegroup
 		}
-		if groupMaster.ID == master.ID && (period.MasterZonegroup != "" || f.topology.groupIDs[group.Name] != "") && group.ID != period.MasterZonegroup {
-			return errors.New("committed RGW realm master zonegroup mismatch")
+		groups[name] = append(groups[name], state)
+	}
+	return groups
+}
+
+// checkPeriodZonegroup checks one committed zonegroup's identity, its master
+// zone and endpoint, and, for the realm master's group, the realm's master
+// zonegroup.
+func (f *Fixture) checkPeriodZonegroup(period *rgwTopologyPeriod, group rgwTopologyZonegroup, expected []*rgwZoneState, master *rgwZoneState) error {
+	if id := f.topology.groupIDs[group.Name]; id != "" && id != group.ID {
+		return errors.New("committed RGW zonegroup identity mismatch")
+	}
+	var groupMaster *rgwZoneState
+	for _, zone := range expected {
+		if zone.ID == group.MasterZone {
+			groupMaster = zone
 		}
-		for _, state := range expected {
-			found := false
-			for _, zone := range group.Zones {
-				if zone.Name == state.Name {
-					if zone.ID != state.ID || state.ID == "" || state.PeerEndpoint == "" || !slices.Equal(zone.Endpoints, []string{state.PeerEndpoint}) {
-						return fmt.Errorf("committed RGW zone %s identity/endpoint mismatch", state.Name)
-					}
-					found = true
+	}
+	if groupMaster == nil || !slices.Equal(group.Endpoints, []string{groupMaster.PeerEndpoint}) {
+		return errors.New("committed RGW topology zonegroup master/endpoint mismatch")
+	}
+	if groupMaster.ID == master.ID && (period.MasterZonegroup != "" || f.topology.groupIDs[group.Name] != "") && group.ID != period.MasterZonegroup {
+		return errors.New("committed RGW realm master zonegroup mismatch")
+	}
+	return nil
+}
+
+// checkPeriodZones requires every owned zone of a zonegroup to be committed
+// with its own ID and exactly its peer endpoint.
+func checkPeriodZones(group rgwTopologyZonegroup, expected []*rgwZoneState) error {
+	for _, state := range expected {
+		found := false
+		for _, zone := range group.Zones {
+			if zone.Name == state.Name {
+				if zone.ID != state.ID || state.ID == "" || state.PeerEndpoint == "" || !slices.Equal(zone.Endpoints, []string{state.PeerEndpoint}) {
+					return fmt.Errorf("committed RGW zone %s identity/endpoint mismatch", state.Name)
 				}
+				found = true
 			}
-			if !found {
-				return fmt.Errorf("committed RGW topology omits zone %s", state.Name)
-			}
+		}
+		if !found {
+			return fmt.Errorf("committed RGW topology omits zone %s", state.Name)
 		}
 	}
 	return nil
