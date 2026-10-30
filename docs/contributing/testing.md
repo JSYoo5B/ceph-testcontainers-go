@@ -578,10 +578,13 @@ extension registry on the cluster. Shared helpers live in
 `internal/multicluster`. Production code imports no client SDK (go-ceph, AWS
 SDK) and no cgo; SDKs belong to tests, examples and separate consumer modules.
 
-`internal/apiinventory` checks that each package's API page, `<pkg>/README.md`
-(for example [ceph/README.md](../../ceph/README.md)), names every exported
-identifier and method of the package. Mention a new export there, usually under
-its own heading, in the same change.
+`internal/apiinventory` checks that every exported function, type, method,
+constant and variable of a public package has a godoc comment, and that each
+package keeps its usage page, `<pkg>/README.md` (for example
+[ceph/README.md](../../ceph/README.md)). The README describes what the package
+is for, the usual order of use and its concepts and limits; the API itself is
+documented in godoc, which `go doc` and pkg.go.dev show. Document a new export
+in its doc comment in the same change.
 
 The same tests check the per-package catalogues in
 `internal/apiinventory/catalogues/<package>/` (`declarations.json`, `members.json`,

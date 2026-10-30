@@ -49,6 +49,9 @@ type PeerRemovalStatus struct {
 	Daemons                                     map[string]PeerRemovalDaemonStatus
 }
 
+// PeerRemovalDaemonStatus is one owned mirror daemon's part of a peer
+// removal: its container and native instance, and its state or problem in the
+// removal cohort.
 type PeerRemovalDaemonStatus struct {
 	ContainerID, InstanceID string
 	State, Problem          string

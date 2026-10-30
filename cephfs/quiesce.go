@@ -50,6 +50,7 @@ type cephFSQuiesceIdentity struct {
 	await                                 time.Duration
 }
 
+// ID returns the native quiesce set ID, or "" for a nil handle.
 func (q *Quiesce) ID() string {
 	if q == nil || q.state == nil {
 		return ""

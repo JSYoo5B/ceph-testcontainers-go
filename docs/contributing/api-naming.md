@@ -50,8 +50,8 @@ go run ./internal/tools/apinaming approve rgw/multisite
 
 It refuses a stale catalogue, a pending `proposal` row, and a missing review
 note or reference page. The receipt names the review note
-(this page by default, `-review` selects another) and the API
-reference page of the package (`docs/<package>.md`, with `/` written as `-`).
+(this page by default, `-review` selects another) and the usage page of the
+package (`<package>/README.md`).
 The other commands are `check` (what the tests verify) and `aggregate` (the
 per-package counts and totals, computed on demand and never committed).
 

@@ -108,6 +108,8 @@ type Quota struct {
 	MaxObjects   int64
 }
 
+// AdminCapability is one native admin capability of a user, such as
+// users=read: its type and its permission.
 type AdminCapability struct {
 	Type       string `json:"type"`
 	Permission string `json:"perm"`
