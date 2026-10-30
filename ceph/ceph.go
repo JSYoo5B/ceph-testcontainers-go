@@ -53,8 +53,8 @@ type Container struct {
 	// authState for what guards them.
 	authRecords authState
 	// daemonExecs runs RotateKey's commands in daemon containers through the
-	// Docker exec API; see daemonExecutor. It has no lock: its test seam is
-	// set before the cluster is shared.
+	// Docker exec API; see daemonExecutor. It has no lock: it is set before
+	// the cluster is shared and never changes.
 	daemonExecs daemonExecutor
 	// startup is the owner label ID, the first MON's key-type support and
 	// image ID, and the test seam of the labeled-container removal; see

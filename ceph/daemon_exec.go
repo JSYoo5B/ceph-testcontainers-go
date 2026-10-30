@@ -13,11 +13,12 @@ import (
 
 // daemonExecutor runs a command in a daemon container through the Docker exec
 // API, whose end, unlike a testcontainers exec, can be confirmed: RotateKey
-// places keyring files with it. docker replaces the Docker client in tests;
-// it is set before the cluster is shared and never changes, so the executor
-// has no lock and adds nothing to its callers' lock contract. Recording an
-// exec that may still run is the caller's: run returns its ID.
+// places keyring files with it. Its only field is set before the cluster is
+// shared and never changes, so the executor has no lock and adds nothing to
+// its callers' lock contract. Recording an exec that may still run is the
+// caller's: run returns its ID.
 type daemonExecutor struct {
+	// docker replaces the Docker client in tests; nil uses the engine.
 	docker func(context.Context) (keyRotationExecClient, error)
 }
 
