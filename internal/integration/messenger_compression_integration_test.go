@@ -34,6 +34,9 @@ type compressionPhaseReceipt struct {
 	// negotiated features.
 	Client   string            `json:"client"`
 	Features map[string]string `json:"features"`
+	// Revision1 is the number of READY lines of the phase, all msgr2.1,
+	// where the release has no messenger dump.
+	Revision1 int `json:"rev1_ready_lines,omitempty"`
 }
 
 // TestMessengerCompressionReceipt records which Messenger v2 sessions
@@ -222,12 +225,12 @@ func observeCompressionPhase(t *testing.T, ctx context.Context, cluster *ceph.Co
 			for daemon, messengers := range probe.Dumps {
 				osdSessions := 0
 				for name, raw := range messengers {
-					connections, err := parseMessengerConnections(raw)
+					connections, err := harness.ParseMessengerConnections(raw)
 					if err != nil {
 						t.Fatalf("%s %s: %v", daemon, name, err)
 					}
 					for _, c := range connections {
-						if !c.ready() {
+						if !c.Ready() {
 							continue
 						}
 						problems = append(problems, checkDumpedSession(daemon, c, phase)...)
@@ -254,13 +257,29 @@ func observeCompressionPhase(t *testing.T, ctx context.Context, cluster *ceph.Co
 		} else {
 			receipt.Evidence = "debug_ms READY lines"
 			receipt.PeerOSD, receipt.PeerOther, receipt.Client = 0, 0, ""
+			receipt.Revision1 = 0
 			for i, osd := range osds {
 				lines := harness.ContainerLogLines(t, ctx, osd)
+				total := len(lines)
 				if offsets[i] < len(lines) {
 					lines = lines[offsets[i]:]
 				}
+				// Every READY line of the phase, bound to the OSD process
+				// that printed it, must report msgr2.1.
+				daemon := fmt.Sprintf("osd.%d", osd.ID)
+				inspect, err := osd.Inspect(ctx)
+				if err != nil || inspect.State == nil {
+					t.Fatalf("inspect %s: %v", daemon, err)
+				}
+				binding := harness.ReadyRevisionBinding{Daemon: daemon, Generation: osd.GetContainerID() + "@" + inspect.State.StartedAt,
+					Capture: fmt.Sprintf("container log lines %d-%d", offsets[i], total)}
+				revisions := harness.ParseReadyRevisionLines(binding, lines)
+				for _, problem := range harness.ReadyRevision1Problems(revisions) {
+					problems = append(problems, daemon+": "+problem)
+				}
+				receipt.Revision1 += len(revisions)
 				osdSessions := 0
-				for _, c := range parseReadyLogLines(lines) {
+				for _, c := range harness.ParseReadyLogLines(lines) {
 					problems = append(problems, checkLoggedSession(fmt.Sprintf("osd.%d", osd.ID), c, phase)...)
 					switch {
 					case c.PeerType == "osd":

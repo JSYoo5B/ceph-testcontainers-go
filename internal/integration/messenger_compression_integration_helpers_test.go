@@ -5,158 +5,13 @@ package integration_test
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
-
-// messengerConnection is one connection in a daemon's "messenger dump": its
-// messenger, peer, protocol state, connection mode and the crypto and
-// compression handlers of the session.
-type messengerConnection struct {
-	Messenger     string `json:"messenger"`
-	PeerType      string `json:"peer_type"`
-	PeerID        int64  `json:"peer_id"`
-	GlobalID      uint64 `json:"global_id"`
-	State         string `json:"state"`
-	Connected     bool   `json:"connected"`
-	Mode          string `json:"mode"`
-	Revision1     bool   `json:"rev1"`
-	CryptoRx      string `json:"crypto_rx"`
-	CryptoTx      string `json:"crypto_tx"`
-	CompressionRx string `json:"compression_rx"`
-	CompressionTx string `json:"compression_tx"`
-}
-
-// ready reports whether the connection is an established msgr2 session.
-func (c messengerConnection) ready() bool { return c.Connected && c.State == "READY" }
-
-// parseMessengerCatalog returns the messenger names of "messenger dump"
-// without an argument. Ceph wraps the result in "status".
-func parseMessengerCatalog(data []byte) ([]string, error) {
-	var dump struct {
-		Status *struct {
-			Messengers []string `json:"messengers"`
-		} `json:"status"`
-		Messengers []string `json:"messengers"`
-	}
-	if err := json.Unmarshal(data, &dump); err != nil {
-		return nil, err
-	}
-	names := dump.Messengers
-	if dump.Status != nil {
-		names = dump.Status.Messengers
-	}
-	if len(names) == 0 {
-		return nil, fmt.Errorf("messenger dump lists no messengers: %.300s", data)
-	}
-	return names, nil
-}
-
-// parseMessengerConnections reads "messenger dump <name>": the connections
-// and anonymous connections of one messenger.
-func parseMessengerConnections(data []byte) ([]messengerConnection, error) {
-	type asyncConnection struct {
-		State  string `json:"state"`
-		Status struct {
-			Connected bool `json:"connected"`
-		} `json:"status"`
-		Peer struct {
-			Type     string `json:"type"`
-			ID       int64  `json:"id"`
-			GlobalID uint64 `json:"global_id"`
-		} `json:"peer"`
-		Protocol struct {
-			V2 *struct {
-				State   string `json:"state"`
-				ConMode string `json:"con_mode"`
-				Rev1    bool   `json:"rev1"`
-				Crypto  struct {
-					Rx string `json:"rx"`
-					Tx string `json:"tx"`
-				} `json:"crypto"`
-				Compression struct {
-					Rx string `json:"rx"`
-					Tx string `json:"tx"`
-				} `json:"compression"`
-			} `json:"v2"`
-		} `json:"protocol"`
-	}
-	type messenger struct {
-		Connections []struct {
-			Async asyncConnection `json:"async_connection"`
-		} `json:"connections"`
-		AnonConns []asyncConnection `json:"anon_conns"`
-	}
-	var dump struct {
-		Status *struct {
-			Name      string     `json:"name"`
-			Messenger *messenger `json:"messenger"`
-		} `json:"status"`
-		Name      string     `json:"name"`
-		Messenger *messenger `json:"messenger"`
-	}
-	if err := json.Unmarshal(data, &dump); err != nil {
-		return nil, err
-	}
-	name, body := dump.Name, dump.Messenger
-	if dump.Status != nil {
-		name, body = dump.Status.Name, dump.Status.Messenger
-	}
-	if body == nil {
-		return nil, fmt.Errorf("messenger dump has no messenger: %.300s", data)
-	}
-	all := make([]asyncConnection, 0, len(body.Connections)+len(body.AnonConns))
-	for _, c := range body.Connections {
-		all = append(all, c.Async)
-	}
-	all = append(all, body.AnonConns...)
-	var result []messengerConnection
-	for _, c := range all {
-		connection := messengerConnection{Messenger: name, PeerType: c.Peer.Type, PeerID: c.Peer.ID, GlobalID: c.Peer.GlobalID,
-			State: c.State, Connected: c.Status.Connected}
-		if v2 := c.Protocol.V2; v2 != nil {
-			connection.State, connection.Mode, connection.Revision1 = v2.State, v2.ConMode, v2.Rev1
-			connection.CryptoRx, connection.CryptoTx = v2.Crypto.Rx, v2.Crypto.Tx
-			connection.CompressionRx, connection.CompressionTx = v2.Compression.Rx, v2.Compression.Tx
-		}
-		result = append(result, connection)
-	}
-	return result, nil
-}
-
-// readyLogConnection is one msgr2 session that a daemon logged as READY at
-// debug_ms 1. A release without messenger dump prints the session's crypto
-// and compression handlers there only as pointers, so the log tells whether
-// a handler exists, not which algorithm it runs.
-type readyLogConnection struct {
-	Mode        string `json:"mode"`
-	Crypto      bool   `json:"crypto"`
-	Compression bool   `json:"compression"`
-	PeerType    string `json:"peer_type"`
-	PeerID      string `json:"peer_id"`
-}
-
-var readyLogPattern = regexp.MustCompile(`conn\(\S+ \S+ (\w+) :\S+ s=READY .*? crypto rx=(\S+) tx=(\S+) comp rx=(\S+) tx=(\S+)\)\.ready entity=(\w+)\.(\S+)`)
-
-// parseReadyLogLines returns the READY sessions in daemon log lines.
-func parseReadyLogLines(lines []string) []readyLogConnection {
-	null := func(pointer string) bool { return pointer == "0" || pointer == "0x0" || pointer == "(nil)" }
-	var result []readyLogConnection
-	for _, line := range lines {
-		match := readyLogPattern.FindStringSubmatch(line)
-		if match == nil {
-			continue
-		}
-		mode, cryptoRx, cryptoTx, compRx, compTx, peerType, peerID := match[1], match[2], match[3], match[4], match[5], match[6], match[7]
-		result = append(result, readyLogConnection{Mode: mode, Crypto: !null(cryptoRx) && !null(cryptoTx),
-			Compression: !null(compRx) && !null(compTx), PeerType: peerType, PeerID: peerID})
-	}
-	return result
-}
 
 // featureSession is one MON session with the features its connection negotiated.
 type featureSession struct {
@@ -277,7 +132,7 @@ type compressionPhase struct {
 // checkDumpedSession compares one READY session from messenger dump with
 // the phase. Reused sessions may report con_mode "unknown"; their cipher
 // still tells secure from CRC.
-func checkDumpedSession(daemon string, c messengerConnection, phase compressionPhase) []string {
+func checkDumpedSession(daemon string, c harness.MessengerConnection, phase compressionPhase) []string {
 	where := fmt.Sprintf("%s %s session with %s.%d", daemon, c.Messenger, c.PeerType, c.PeerID)
 	var problems []string
 	if !c.Revision1 {
@@ -304,7 +159,7 @@ func checkDumpedSession(daemon string, c messengerConnection, phase compressionP
 }
 
 // checkLoggedSession compares one READY log line with the phase.
-func checkLoggedSession(daemon string, c readyLogConnection, phase compressionPhase) []string {
+func checkLoggedSession(daemon string, c harness.ReadyLogConnection, phase compressionPhase) []string {
 	where := fmt.Sprintf("%s session with %s.%s", daemon, c.PeerType, c.PeerID)
 	if c.PeerType != "osd" {
 		if c.Compression {

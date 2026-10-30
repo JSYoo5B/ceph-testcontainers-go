@@ -12,7 +12,7 @@
       "symbols": [
         "CEPH_MSGR2_FEATURE_REVISION_1"
       ],
-      "status": "partial",
+      "status": "covered",
       "evidence": "native-state",
       "cases": [
         {
@@ -25,11 +25,19 @@
         },
         {
           "test": "TestMessengerCompressionReceipt",
-          "asserts": "every READY session of both OSDs, with MONs, MGRs, OSDs and clients, reports rev1 (msgr2.1) in messenger dump"
+          "asserts": "every READY session of both OSDs, with MONs, MGRs, OSDs and clients, reports rev1 (msgr2.1) in messenger dump, or READY log lines without it"
+        },
+        {
+          "test": "TestCephFSMessengerV2Sessions",
+          "receipt": "MESSENGER_V2_SESSIONS_RECEIPT",
+          "asserts": "on a v2-only CephFS cluster the MDS advertises only v2 addresses in fs dump and runs with ms_bind_msgr1 false and ms_bind_msgr2 true; every READY session that each MON, MGR, OSD and the MDS logged at debug_ms 1, bound to the daemon's container generation, has rev1=1, the MDS's with a MON, a MGR, an OSD and a mounted libcephfs client among them; where the release has messenger dump every READY connection of every messenger of those daemons is rev1 and every messenger that listens advertises v2 only"
+        },
+        {
+          "test": "TestRGWMessengerV2Sessions",
+          "receipt": "MESSENGER_V2_RGW_RECEIPT",
+          "asserts": "on a v2-only RGW cluster the gateway's container listens on TCP 7480 (beast) only, apart from Docker's resolver, so radosgw binds no messenger; radosgw's messengers are the ones whose nonces the MONs hold client sessions with from the gateway's container after rgw.Run returned, and every READY session that a MON, MGR or OSD logged at debug_ms 1 with one of those messengers has rev1=1 and, when authenticated, that session's client global ID, with at least one on a MON and one on an OSD; READY sessions of radosgw-admin, which runs in the same container as client.admin, are counted apart and support nothing; where the release has messenger dump radosgw's own messengers have exactly those nonces, listen on no socket, advertise no v1 address, and their READY connections reach a MON and an OSD with rev1"
         }
-      ],
-      "gap": "msgr2.1 is asserted only from messenger dump (Ceph 20) and only for sessions of OSDs; MDS and RGW binds are not checked.",
-      "owner": "#5"
+      ]
     },
     {
       "id": "messenger/secure-mode",
@@ -274,10 +282,16 @@
         "CEPH_FEATURE_MSGR_KEEPALIVE2",
         "CEPH_FEATURE_RECONNECT_SEQ"
       ],
-      "status": "uncovered",
-      "evidence": "none",
-      "cases": [],
-      "gap": "No recipe records a native connection's keepalive, ACK sequence or reset; MDS session reconnect is covered under client-mds.",
+      "status": "partial",
+      "evidence": "native-state",
+      "cases": [
+        {
+          "test": "TestCephFSMessengerReconnect",
+          "receipt": "MESSENGER_RECONNECT_RECEIPT",
+          "asserts": "a libcephfs client runs with ms_inject_socket_failures 40 for 2 s while it writes, fsyncs and stats 4 KiB records, and its messenger logs injected failures on lossless and lossy connections; the MDS's READY lines of that client after the baseline are reconnects of the one lossless session, with the same connection object and client and server cookies, a larger connect_seq and peer global sequence each time, and in_seq and out_seq that never go back and are not 0, and where the release has messenger dump the MDS's connection is the same conn_id and peer nonce with the last logged connect_seq and peer_global_seq; the OSDs' READY lines of that client are new lossy sessions, each with connect_seq 0, no server cookie, a client cookie no earlier session had and in_seq and out_seq 0, and with messenger dump an OSD has a new READY connection object of that client; the MDS session stays open under one MDS GID and an independent client reads every acknowledged record byte for byte"
+        }
+      ],
+      "gap": "KEEPALIVE2 and KEEPALIVE2_ACK frames and individual ACK frames are not observed: neither debug_ms 1 nor messenger dump reports them, so acknowledgement is evidenced only by the in_seq and out_seq that a reconnected lossless session carries. Faults are injected by the client's own messenger on its MDS and OSD connections only; daemon-to-daemon sessions, server-side session resets, network-level faults and keepalive timeouts are not recorded.",
       "owner": "#5"
     },
     {
