@@ -19,7 +19,7 @@ func TestRGWSyncPipeCapturesDistinctBucketInstancesAndTagPriority(t *testing.T) 
 		t.Fatal(err)
 	}
 	config := SyncPipeConfig{ID: "filtered", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &SyncBucketSelector{Name: "input"}, DestinationBucket: &SyncBucketSelector{Name: "output"}, Tags: []SyncObjectTag{{Key: "color", Value: "red"}, {Key: "color", Value: "blue"}}, Prefix: "published/", Priority: 7}
-	if err := f.CreateSyncPipe(t.Context(), g, config); err != nil {
+	if err := g.CreatePipe(t.Context(), config); err != nil {
 		t.Fatal(err)
 	}
 	pipe := syncNativePipe(g.state.group, "filtered")
@@ -31,10 +31,10 @@ func TestRGWSyncPipeCapturesDistinctBucketInstancesAndTagPriority(t *testing.T) 
 		t.Fatal("same-key OR tags were lost or reordered incorrectly")
 	}
 	config.Tags[0].Value = "mutated"
-	if err := f.SetSyncPipePrefix(t.Context(), g, "filtered", "reports/"); err != nil {
+	if err := g.SetPipePrefix(t.Context(), "filtered", "reports/"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.RemoveSyncPipe(t.Context(), g, "filtered"); err != nil {
+	if err := g.RemovePipe(t.Context(), "filtered"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -59,17 +59,17 @@ func TestRGWSyncTenantBucketScopeUsesCanonicalNativeKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := SyncPipeConfig{ID: "tenant-pipe", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &SyncBucketSelector{Name: "bucket", Tenant: "tenant-a"}, DestinationBucket: &SyncBucketSelector{Name: "output", Tenant: "tenant-b"}}
-	if err := f.CreateSyncPipe(t.Context(), g, config); err != nil {
+	if err := g.CreatePipe(t.Context(), config); err != nil {
 		t.Fatal(err)
 	}
 	pipe := syncNativePipe(g.state.group, config.ID)
 	if pipe["source"].(map[string]any)["bucket"] != "tenant-a/bucket:bucket-original" || pipe["dest"].(map[string]any)["bucket"] != "tenant-b/output:output-instance" {
 		t.Fatal("tenant bucket selector lost its exact native namespace/instance")
 	}
-	if err := f.RemoveSyncPipe(t.Context(), g, config.ID); err != nil {
+	if err := g.RemovePipe(t.Context(), config.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.RemoveSyncGroup(t.Context(), g); err != nil {
+	if err := g.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range cli.calls {
@@ -95,7 +95,7 @@ func TestRGWSyncPipeRefusesUnconfirmedPrincipalsAndClassMappings(t *testing.T) {
 		config.ID = "unsafe"
 		config.SourceZones = []string{"source"}
 		config.DestinationZones = []string{"destination"}
-		if err := f.CreateSyncPipe(t.Context(), g, config); !errors.Is(err, ceph.ErrInvalidRequest) {
+		if err := g.CreatePipe(t.Context(), config); !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Fatalf("unconfirmed identity or destination mapping %+v returned %v", config, err)
 		}
 		for _, args := range cli.calls {

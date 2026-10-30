@@ -120,18 +120,18 @@ func requirePolicyImportReadOnly(t *testing.T, calls [][]string) {
 }
 
 func TestRGWBucketSyncPolicyReadyRequiresIndependentLocalSnapshot(t *testing.T) {
-	f, cli, g := newRGWPolicyImportFixture(t)
+	_, cli, g := newRGWPolicyImportFixture(t)
 	cli.policyLagReads = 1
 	before := len(cli.calls)
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	state, err := f.WaitBucketSyncPolicyReady(ctx, g, "destination")
+	state, err := g.WaitBucketPolicyReady(ctx, "destination")
 	if err != nil || !state.Imported || !state.PeriodImported || !state.PolicyImported || !state.BucketsImported || cli.localReads < 2 || state.PeriodID != "period-original" || state.GroupID != g.ID() || state.ZoneID != "dest-id" || state.Bucket.ID != "bucket-original" || len(state.Buckets) != 1 {
 		t.Fatalf("local metadata was not independently observed: %+v %v", state, err)
 	}
 	requirePolicyImportReadOnly(t, cli.calls[before:])
 	state.Buckets[0].ID = "caller-mutated"
-	state, err = f.WaitBucketSyncPolicyReady(t.Context(), g, "destination")
+	state, err = g.WaitBucketPolicyReady(t.Context(), "destination")
 	if err != nil || !state.Imported || state.Buckets[0].ID != "bucket-original" || g.bucketID != "bucket-original" {
 		t.Fatal("returned identity slice could redirect the owned policy observer")
 	}
@@ -145,13 +145,13 @@ func TestRGWBucketSyncPolicyReadyKeepsTenantAndRequiredSideInstances(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.CreateSyncPipe(t.Context(), g, SyncPipeConfig{ID: "translated", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &SyncBucketSelector{Name: "bucket", Tenant: "tenant-a"}, DestinationBucket: &SyncBucketSelector{Name: "output", Tenant: "tenant-b"}}); err != nil {
+	if err := g.CreatePipe(t.Context(), SyncPipeConfig{ID: "translated", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &SyncBucketSelector{Name: "bucket", Tenant: "tenant-a"}, DestinationBucket: &SyncBucketSelector{Name: "output", Tenant: "tenant-b"}}); err != nil {
 		t.Fatal(err)
 	}
 	cli := &rgwPolicyImportCLI{rgwSyncCLI: native, localPolicy: syncJSONClone(native.bucketPolicy)}
 	f.sourceClient, f.destinationClient = cli, cli
 	before := len(cli.calls)
-	status, err := f.WaitBucketSyncPolicyReady(t.Context(), g, "destination")
+	status, err := g.WaitBucketPolicyReady(t.Context(), "destination")
 	want := []SyncBucketIdentity{{Name: "bucket", Tenant: "tenant-a", ID: "bucket-original"}, {Name: "output", Tenant: "tenant-b", ID: "output-original"}}
 	if err != nil || !status.Imported || !slices.Equal(status.Buckets, want) || status.Bucket != want[0] {
 		t.Fatalf("tenant-qualified source/destination imports lost their captured identities: %+v %v", status, err)
@@ -165,7 +165,7 @@ func TestRGWBucketSyncPolicyReadyKeepsTenantAndRequiredSideInstances(t *testing.
 	cli.localBuckets = map[string]string{"tenant-b/output": "replacement"}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	status, err = f.WaitBucketSyncPolicyReady(ctx, g, "destination")
+	status, err = g.WaitBucketPolicyReady(ctx, "destination")
 	if err == nil || errors.Is(err, context.DeadlineExceeded) || status.Imported || status.BucketsImported {
 		t.Fatalf("recreated required destination instance was adopted or treated as ordinary import lag: %+v %v", status, err)
 	}
@@ -174,9 +174,9 @@ func TestRGWBucketSyncPolicyReadyKeepsTenantAndRequiredSideInstances(t *testing.
 func TestRGWBucketSyncPolicyReadyWaitsForPolicyPeriodAndReferencedBucketImports(t *testing.T) {
 	for _, scenario := range []string{"policy", "period", "destination-bucket"} {
 		t.Run(scenario, func(t *testing.T) {
-			f, cli, g := newRGWPolicyImportFixture(t)
+			_, cli, g := newRGWPolicyImportFixture(t)
 			cli.additionalBuckets = map[string]string{"output": "output-original"}
-			if err := f.CreateSyncPipe(t.Context(), g, SyncPipeConfig{ID: "translated", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &SyncBucketSelector{Name: "bucket"}, DestinationBucket: &SyncBucketSelector{Name: "output"}}); err != nil {
+			if err := g.CreatePipe(t.Context(), SyncPipeConfig{ID: "translated", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &SyncBucketSelector{Name: "bucket"}, DestinationBucket: &SyncBucketSelector{Name: "output"}}); err != nil {
 				t.Fatal(err)
 			}
 			cli.localPolicy = syncJSONClone(cli.bucketPolicy)
@@ -195,7 +195,7 @@ func TestRGWBucketSyncPolicyReadyWaitsForPolicyPeriodAndReferencedBucketImports(
 			// that a slow (race-instrumented) run can end mid-observation.
 			ctx := clustertest.NewSignalDeadline(t.Context())
 			cli.onExec = expireAfterDestinationObservation(ctx)
-			state, err := f.WaitBucketSyncPolicyReady(ctx, g, "destination")
+			state, err := g.WaitBucketPolicyReady(ctx, "destination")
 			if !errors.Is(err, context.DeadlineExceeded) || state.Imported || len(state.Buckets) != 2 || strings.Contains(err.Error(), "secret-marker") {
 				t.Fatalf("partial local imports became ready or leaked native text: %+v %v", state, err)
 			}
@@ -210,7 +210,7 @@ func TestRGWBucketSyncPolicyReadyWaitsForPolicyPeriodAndReferencedBucketImports(
 func TestRGWBucketSyncPolicyReadyRefusesRecreatedForeignAndMalformedMetadata(t *testing.T) {
 	for _, scenario := range []string{"recreated-bucket", "missing-id", "foreign-group", "foreign-period", "staging-period", "metadata-id", "malformed-stats"} {
 		t.Run(scenario, func(t *testing.T) {
-			f, cli, g := newRGWPolicyImportFixture(t)
+			_, cli, g := newRGWPolicyImportFixture(t)
 			switch scenario {
 			case "recreated-bucket":
 				cli.localBuckets = map[string]string{"bucket": "replacement"}
@@ -233,7 +233,7 @@ func TestRGWBucketSyncPolicyReadyRefusesRecreatedForeignAndMalformedMetadata(t *
 			before := len(cli.calls)
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			state, err := f.WaitBucketSyncPolicyReady(ctx, g, "destination")
+			state, err := g.WaitBucketPolicyReady(ctx, "destination")
 			if err == nil || errors.Is(err, context.DeadlineExceeded) || state.Imported || strings.Contains(err.Error(), "secret-marker") {
 				t.Fatalf("invalid metadata was adopted or treated as ordinary lag: %+v %v", state, err)
 			}
@@ -268,7 +268,7 @@ func TestRGWBucketSyncPolicyReadyRejectsInvalidAdmissionBeforeCommands(t *testin
 				cancel()
 			}
 			before := len(cli.calls)
-			if _, err := f.WaitBucketSyncPolicyReady(ctx, g, zone); err == nil || len(cli.calls) != before {
+			if _, err := g.WaitBucketPolicyReady(ctx, zone); err == nil || len(cli.calls) != before {
 				t.Fatal("invalid observer admission invoked native commands")
 			}
 		})
@@ -281,7 +281,7 @@ func TestRGWBucketSyncPolicyReadyBoundsMutexQueueAndCancellationAfterRead(t *tes
 	before := len(cli.calls)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	started := time.Now()
-	_, err := f.WaitBucketSyncPolicyReady(ctx, g, "destination")
+	_, err := g.WaitBucketPolicyReady(ctx, "destination")
 	cancel()
 	f.topologyMu.Unlock()
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > time.Second || len(cli.calls) != before {
@@ -290,7 +290,7 @@ func TestRGWBucketSyncPolicyReadyBoundsMutexQueueAndCancellationAfterRead(t *tes
 	ctx, cancel = context.WithCancel(t.Context())
 	defer cancel()
 	cli.onLocalPolicyRead = cancel
-	state, err := f.WaitBucketSyncPolicyReady(ctx, g, "destination")
+	state, err := g.WaitBucketPolicyReady(ctx, "destination")
 	if !errors.Is(err, context.Canceled) || state.Imported {
 		t.Fatal("ready local metadata completed after caller cancellation")
 	}
@@ -299,7 +299,7 @@ func TestRGWBucketSyncPolicyReadyBoundsMutexQueueAndCancellationAfterRead(t *tes
 func TestRGWBucketSyncPolicyReadyRevalidatesMasterWhileLocalPolicyLags(t *testing.T) {
 	for _, change := range []string{"policy", "period", "instance"} {
 		t.Run(change, func(t *testing.T) {
-			f, cli, g := newRGWPolicyImportFixture(t)
+			_, cli, g := newRGWPolicyImportFixture(t)
 			cli.policyLagReads = 1
 			cli.onLocalPolicyRead = func() {
 				cli.onLocalPolicyRead = nil
@@ -314,7 +314,7 @@ func TestRGWBucketSyncPolicyReadyRevalidatesMasterWhileLocalPolicyLags(t *testin
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
-			state, err := f.WaitBucketSyncPolicyReady(ctx, g, "destination")
+			state, err := g.WaitBucketPolicyReady(ctx, "destination")
 			if err == nil || errors.Is(err, context.DeadlineExceeded) || state.Imported {
 				t.Fatalf("changed master state became a new import target: %+v %v", state, err)
 			}

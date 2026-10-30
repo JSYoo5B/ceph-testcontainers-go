@@ -19,12 +19,13 @@ func TestMultiClusterRGWMetadataMasterFailover(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
 	link, sourceS3, destinationS3 := newRGWScenario(t, ctx, "tc-metadata-failover")
+	sourceAdmin, destinationAdmin := rgwZoneAdmin(link, "source"), rgwZoneAdmin(link, "destination")
 	const originalBucket = "/tc-before-master-change"
 	payload := bytes.Repeat([]byte("RGW planned metadata master transition\n"), 512)
 	sourceS3.request(t, ctx, http.MethodPut, originalBucket, nil, http.StatusOK)
 	sourceS3.request(t, ctx, http.MethodPut, originalBucket+"/object", payload, http.StatusOK)
 	waitMultisiteObject(t, ctx, destinationS3, originalBucket+"/object", http.StatusOK, payload)
-	waitRGWMetadataCaughtUp(t, ctx, link.DestinationAdmin)
+	waitRGWMetadataCaughtUp(t, ctx, destinationAdmin)
 	fenceRGWScenarioGateway(t, ctx, link.Source)
 
 	for _, command := range [][]string{
@@ -37,11 +38,11 @@ func TestMultiClusterRGWMetadataMasterFailover(t *testing.T) {
 		{"period", "update"},
 		{"period", "commit"},
 	} {
-		rgwScenarioAdmin(t, ctx, link.DestinationAdmin, command...)
+		rgwScenarioAdmin(t, ctx, destinationAdmin, command...)
 	}
 	restartRGWScenarioGateway(t, ctx, link.Destination, &destinationS3)
-	assertRGWMetadataMaster(t, ctx, link.DestinationAdmin, link.DestinationZoneID)
-	promotedUser := rgwScenarioUser(t, ctx, link.DestinationAdmin, "tc-promoted-user", destinationS3)
+	assertRGWMetadataMaster(t, ctx, destinationAdmin, link.DestinationZoneID)
+	promotedUser := rgwScenarioUser(t, ctx, destinationAdmin, "tc-promoted-user", destinationS3)
 	const promotedBucket = "/tc-created-after-promotion"
 	promotedUser.request(t, ctx, http.MethodPut, promotedBucket, nil, http.StatusOK)
 	promotedUser.request(t, ctx, http.MethodPut, promotedBucket+"/object", payload, http.StatusOK)
@@ -54,11 +55,11 @@ func TestMultiClusterRGWMetadataMasterFailover(t *testing.T) {
 		t.Fatal(err)
 	}
 	restartRGWScenarioGateway(t, ctx, link.Source, &sourceS3)
-	assertRGWMetadataMaster(t, ctx, link.SourceAdmin, link.DestinationZoneID)
+	assertRGWMetadataMaster(t, ctx, sourceAdmin, link.DestinationZoneID)
 	recoveredSourceUser := promotedUser
 	recoveredSourceUser.endpoint = sourceS3.endpoint
 	waitMultisiteObject(t, ctx, recoveredSourceUser, promotedBucket+"/object", http.StatusOK, payload)
-	waitRGWMetadataCaughtUp(t, ctx, link.SourceAdmin)
+	waitRGWMetadataCaughtUp(t, ctx, sourceAdmin)
 	if got := sourceS3.request(t, ctx, http.MethodGet, originalBucket+"/object", nil, http.StatusOK); !bytes.Equal(got, payload) {
 		t.Fatal("recovering the former master changed its pre-transition data")
 	}
@@ -70,11 +71,11 @@ func TestMultiClusterRGWMetadataMasterFailover(t *testing.T) {
 		{"period", "update"},
 		{"period", "commit"},
 	} {
-		rgwScenarioAdmin(t, ctx, link.SourceAdmin, command...)
+		rgwScenarioAdmin(t, ctx, sourceAdmin, command...)
 	}
 	restartRGWScenarioGateway(t, ctx, link.Source, &sourceS3)
-	assertRGWMetadataMaster(t, ctx, link.SourceAdmin, link.SourceZoneID)
-	failedBackUser := rgwScenarioUser(t, ctx, link.SourceAdmin, "tc-failed-back-user", sourceS3)
+	assertRGWMetadataMaster(t, ctx, sourceAdmin, link.SourceZoneID)
+	failedBackUser := rgwScenarioUser(t, ctx, sourceAdmin, "tc-failed-back-user", sourceS3)
 	const failedBackBucket = "/tc-created-after-failback"
 	failedBackUser.request(t, ctx, http.MethodPut, failedBackBucket, nil, http.StatusOK)
 	failedBackUser.request(t, ctx, http.MethodPut, failedBackBucket+"/object", payload, http.StatusOK)
@@ -82,7 +83,7 @@ func TestMultiClusterRGWMetadataMasterFailover(t *testing.T) {
 		t.Fatal(err)
 	}
 	restartRGWScenarioGateway(t, ctx, link.Destination, &destinationS3)
-	assertRGWMetadataMaster(t, ctx, link.DestinationAdmin, link.SourceZoneID)
+	assertRGWMetadataMaster(t, ctx, destinationAdmin, link.SourceZoneID)
 	recoveredDestinationUser := failedBackUser
 	recoveredDestinationUser.endpoint = destinationS3.endpoint
 	waitMultisiteObject(t, ctx, recoveredDestinationUser, failedBackBucket+"/object", http.StatusOK, payload)

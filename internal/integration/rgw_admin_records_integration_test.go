@@ -164,7 +164,7 @@ func TestRGWAdminRecordsAndRateLimit(t *testing.T) {
 				clients[i].request(t, ctx, http.MethodDelete, "/"+bucket, nil, http.StatusNoContent)
 			}
 			for _, user := range users {
-				if err := gateway.RemoveUser(ctx, user); err != nil {
+				if err := user.Remove(ctx); err != nil {
 					t.Fatal(err)
 				}
 			}

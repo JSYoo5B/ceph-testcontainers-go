@@ -108,7 +108,7 @@ func rgwProtocolBackends(t *testing.T, host bool) {
 	t.Run("swift", func(t *testing.T) { rgwBackendSwift(t, ctx, gateways[0], endpoints, users[0], clients[0]) })
 	t.Run("sse-kms", func(t *testing.T) { rgwBackendKMS(t, ctx, gateways, endpoints, clients[0], vault) })
 	for _, user := range users {
-		if err := gateways[0].RemoveUser(ctx, user); err != nil {
+		if err := user.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -166,7 +166,7 @@ func rgwBackendSTS(t *testing.T, ctx context.Context, cluster *ceph.Container, g
 		if bucketRemoved || bucketID == "" {
 			return
 		}
-		if _, err := gateways[0].UserInfo(cleanup, users[0]); err != nil {
+		if _, err := (users[0]).Info(cleanup); err != nil {
 			t.Error("STS cleanup owned bucket user identity changed (output redacted)")
 			return
 		}

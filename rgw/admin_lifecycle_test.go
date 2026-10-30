@@ -73,7 +73,7 @@ func newHostGateway(t *testing.T) (*Gateway, *hostGateway) {
 	})
 	config := Config{Name: "default"}
 	owner := testCluster(nil, testhelper.TestConfig{}, map[string]testcontainers.Container{rgwServiceName(config): ctr})
-	return &Gateway{Container: ctr, owner: owner, config: config, GatewayName: config.Name}, ctr
+	return registerTestGateway(&Gateway{Container: ctr, owner: owner, config: config, GatewayName: config.Name}), ctr
 }
 
 func (ctr *hostGateway) GetContainerID() string { return "gateway" }

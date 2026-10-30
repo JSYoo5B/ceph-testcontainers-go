@@ -246,24 +246,6 @@ terminated.
 
 ### Fixture Methods: Periods, failover and native commands
 
-#### SourceAdmin
-
-```golang
-func (m *Fixture) SourceAdmin(ctx context.Context, args ...string) ([]byte, error)
-```
-
-Runs `radosgw-admin` in the source cluster's setup client, scoped to the realm,
-the source zonegroup and the source zone. It keeps working after the
-destination has become metadata master.
-
-#### DestinationAdmin
-
-```golang
-func (m *Fixture) DestinationAdmin(ctx context.Context, args ...string) ([]byte, error)
-```
-
-Same as `SourceAdmin` for the destination zone.
-
 #### ZoneAdmin
 
 ```golang
@@ -271,7 +253,8 @@ func (m *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([
 ```
 
 Runs `radosgw-admin` in any owned zone by name, including a partial zone whose
-setup client started. Do not edit period or zone state with it while `AddZone`
+setup client started, scoped to the realm and the zone's zonegroup and zone.
+It keeps working after another zone has become metadata master. Do not edit period or zone state with it while `AddZone`
 or a raw master change is in progress.
 
 ```golang
@@ -444,25 +427,25 @@ A bucket-scoped group records the bucket's native instance ID, so a bucket that
 is deleted and recreated with the same name is refused later. The bucket must
 already exist; create it with the S3 client first.
 
-Zonegroup groups take effect after `ApplySyncGroup`. Bucket groups are dynamic
+Zonegroup groups take effect after `SyncGroup.Apply`. Bucket groups are dynamic
 metadata and need no period commit. If creation fails ambiguously, the returned
 handle is unconfirmed and cannot remove the uncertain configuration: inspect it
-with `SourceAdmin` (`sync group get`) or discard the clusters.
+with `ZoneAdmin` (`sync group get`) or discard the clusters.
 
-#### CreateSyncFlow
+#### SyncGroup.CreateFlow
 
 ```golang
-func (m *Fixture) CreateSyncFlow(ctx context.Context, group *SyncGroup, config SyncFlowConfig) error
+func (g *SyncGroup) CreateFlow(ctx context.Context, config SyncFlowConfig) error
 ```
 
 Adds a flow to an owned group (see [`SyncFlowConfig`](#syncflowconfig)). A
 directional flow is identified natively by its source/destination pair, not by
 an ID. Bucket groups may only narrow the flows allowed by their zonegroup.
 
-#### CreateSyncPipe
+#### SyncGroup.CreatePipe
 
 ```golang
-func (m *Fixture) CreateSyncPipe(ctx context.Context, group *SyncGroup, config SyncPipeConfig) error
+func (g *SyncGroup) CreatePipe(ctx context.Context, config SyncPipeConfig) error
 ```
 
 Adds a pipe to an owned group after validating every zone, bucket and principal
@@ -471,33 +454,33 @@ group. A stored pipe does not prove effective replication; verify positive and
 negative writes with the S3 client. This helper never creates buckets or
 grants S3 permissions.
 
-#### SetSyncGroupStatus
+#### SyncGroup.SetStatus
 
 ```golang
-func (m *Fixture) SetSyncGroupStatus(ctx context.Context, group *SyncGroup, status SyncGroupStatus) error
+func (g *SyncGroup) SetStatus(ctx context.Context, status SyncGroupStatus) error
 ```
 
 Changes a group between `SyncAllowed`, `SyncEnabled` and `SyncForbidden`. A
-zonegroup group needs `ApplySyncGroup` afterwards; for a bucket group, wait with
-`WaitBucketSyncPolicyReady` before writing objects that depend on the change.
+zonegroup group needs `Apply` afterwards; for a bucket group, wait with
+`WaitBucketPolicyReady` before writing objects that depend on the change.
 
-#### SetSyncPipePrefix
+#### SyncGroup.SetPipePrefix
 
 ```golang
-func (m *Fixture) SetSyncPipePrefix(ctx context.Context, group *SyncGroup, id, prefix string) error
+func (g *SyncGroup) SetPipePrefix(ctx context.Context, id, prefix string) error
 ```
 
 Changes the source prefix of one pipe; an empty prefix removes the filter. It
 affects future replication only: objects written earlier are not backfilled,
 and objects already copied are not deleted. The method confirms the master's
 stored policy, not its import into other zones. For a bucket group, call
-`WaitBucketSyncPolicyReady` for the destination before writing objects that
+`WaitBucketPolicyReady` for the destination before writing objects that
 depend on the new prefix.
 
-#### ApplySyncGroup
+#### SyncGroup.Apply
 
 ```golang
-func (m *Fixture) ApplySyncGroup(ctx context.Context, group *SyncGroup) error
+func (g *SyncGroup) Apply(ctx context.Context) error
 ```
 
 For a zonegroup group: publishes this group's change in a new period, pulls the
@@ -507,46 +490,46 @@ contains unrelated edits, so that `period update` cannot overwrite them. Call
 `S3Endpoint` again afterwards, and use `WaitSyncReady` before relying on
 replication. A partial publication or reload is not rolled back; retry with the
 same handle after fixing the cause. Also call it after removing a zonegroup
-group with `RemoveSyncGroup`. Bounded by four minutes.
+group with `Remove`. Bounded by four minutes.
 
 For a bucket group it only verifies that the stored policy still matches the
 handle, because bucket policy is dynamic.
 
-#### RemoveSyncPipe
+#### SyncGroup.RemovePipe
 
 ```golang
-func (m *Fixture) RemoveSyncPipe(ctx context.Context, group *SyncGroup, id string) error
+func (g *SyncGroup) RemovePipe(ctx context.Context, id string) error
 ```
 
 Removes one pipe from an owned group. The pipe must exist in the group's native
 policy, and the removal must leave the rest of the group unchanged. Already
 replicated objects stay.
 
-#### RemoveSyncFlow
+#### SyncGroup.RemoveFlow
 
 ```golang
-func (m *Fixture) RemoveSyncFlow(ctx context.Context, group *SyncGroup, config SyncFlowConfig) error
+func (g *SyncGroup) RemoveFlow(ctx context.Context, config SyncFlowConfig) error
 ```
 
 Removes a flow present in the group. A symmetrical flow is removed as a whole
 named set; a directional flow is selected by its zone pair. Other groups are
 never changed.
 
-#### RemoveSyncGroup
+#### SyncGroup.Remove
 
 ```golang
-func (m *Fixture) RemoveSyncGroup(ctx context.Context, group *SyncGroup) error
+func (g *SyncGroup) Remove(ctx context.Context) error
 ```
 
 Removes a confirmed group if its native policy is unchanged; an externally
 modified group is refused. Bucket and object data remain. Removal is
 idempotent across copies of the handle. A zonegroup group needs
-`ApplySyncGroup` afterwards to publish the removal.
+`Apply` afterwards to publish the removal.
 
-#### WaitBucketSyncPolicyReady
+#### SyncGroup.WaitBucketPolicyReady
 
 ```golang
-func (m *Fixture) WaitBucketSyncPolicyReady(ctx context.Context, group *SyncGroup, destinationZone string) (BucketSyncPolicyStatus, error)
+func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone string) (BucketSyncPolicyStatus, error)
 ```
 
 Waits until a bucket group's policy has been imported into the metadata of a
@@ -569,10 +552,10 @@ Zonegroup groups, removed handles, pending mutations and zones outside the
 pipes' destinations are rejected. Groups with status `allowed` or `forbidden`
 can also be observed as imported.
 
-#### BucketSyncStatus
+#### SyncGroup.BucketSyncStatus
 
 ```golang
-func (m *Fixture) BucketSyncStatus(ctx context.Context, group *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error)
+func (g *SyncGroup) BucketSyncStatus(ctx context.Context, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error)
 ```
 
 Reads the per-bucket replication checkpoint for the source and destination
@@ -580,10 +563,10 @@ buckets captured by an owned, unchanged group and pipe, between two explicit
 owned zones (see [`BucketSyncStatus`](#bucketsyncstatus-type)). A pipe with a
 wildcard bucket selector requires a bucket group. Bounded by 30 seconds.
 
-#### WaitBucketSyncReady
+#### SyncGroup.WaitBucketSyncReady
 
 ```golang
-func (m *Fixture) WaitBucketSyncReady(ctx context.Context, group *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error)
+func (g *SyncGroup) WaitBucketSyncReady(ctx context.Context, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error)
 ```
 
 Waits up to four minutes (or until `ctx` ends) until the bucket checkpoint is
@@ -795,7 +778,7 @@ eventually(t, 4*time.Minute, func() bool {
 Both zones accept writes, and deletes replicate too, so a replica is not a
 backup. Users and buckets are realm metadata owned by the metadata master
 (`east` here). Create users through the master (`ms.Source.CreateUser` or
-`ms.SourceAdmin`); a bucket created through another zone's gateway is forwarded
+`ms.ZoneAdmin(ctx, "east", ...)`); a bucket created through another zone's gateway is forwarded
 to the master, so the master must be reachable. Replication is asynchronous:
 allow minutes rather than seconds, especially after a gateway restart.
 
@@ -838,7 +821,7 @@ for _, args := range [][]string{
 	{"period", "update"},
 	{"period", "commit"},
 } {
-	if _, err := ms.DestinationAdmin(ctx, args...); err != nil {
+	if _, err := ms.ZoneAdmin(ctx, "west", args...); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -854,7 +837,7 @@ if err := ms.Source.Start(ctx); err != nil {
 }
 
 // Failback is the same sequence in the other direction: wait for metadata in
-// east, fence west, promote with SourceAdmin, restart east,
+// east, fence west, promote with ZoneAdmin(ctx, "east", ...), restart east,
 // PullDestinationPeriod, start west.
 ```
 
@@ -944,17 +927,17 @@ permit, err := ms.CreateSyncGroup(ctx, multisite.SyncPolicyScope{},
 if err != nil {
 	t.Fatal(err)
 }
-if err := ms.CreateSyncFlow(ctx, permit, multisite.SyncFlowConfig{
+if err := permit.CreateFlow(ctx, multisite.SyncFlowConfig{
 	ID: "pair", Zones: []string{"east", "west"},
 }); err != nil {
 	t.Fatal(err)
 }
-if err := ms.CreateSyncPipe(ctx, permit, multisite.SyncPipeConfig{
+if err := permit.CreatePipe(ctx, multisite.SyncPipeConfig{
 	ID: "east-to-west", SourceZones: []string{"east"}, DestinationZones: []string{"west"},
 }); err != nil {
 	t.Fatal(err)
 }
-if err := ms.ApplySyncGroup(ctx, permit); err != nil { // reloads the gateways
+if err := permit.Apply(ctx); err != nil { // reloads the gateways
 	t.Fatal(err)
 }
 if _, err := ms.WaitSyncReady(ctx, "west", "east"); err != nil {
@@ -968,7 +951,7 @@ selected, err := ms.CreateSyncGroup(ctx, multisite.SyncPolicyScope{Bucket: "app-
 if err != nil {
 	t.Fatal(err)
 }
-if err := ms.CreateSyncPipe(ctx, selected, multisite.SyncPipeConfig{
+if err := selected.CreatePipe(ctx, multisite.SyncPipeConfig{
 	ID: "published", SourceZones: []string{"east"}, DestinationZones: []string{"west"},
 	Prefix: "published/",
 }); err != nil {
@@ -976,7 +959,7 @@ if err := ms.CreateSyncPipe(ctx, selected, multisite.SyncPipeConfig{
 }
 
 // 3. Wait until west has imported the bucket policy, then write.
-if _, err := ms.WaitBucketSyncPolicyReady(ctx, selected, "west"); err != nil {
+if _, err := selected.WaitBucketPolicyReady(ctx, "west"); err != nil {
 	t.Fatal(err)
 }
 // Write app-data/published/report and app-data/private/notes through east.
@@ -988,7 +971,7 @@ eventually(t, 4*time.Minute, func() bool {
 	})
 	return err == nil
 })
-status, err := ms.WaitBucketSyncReady(ctx, selected, "published", "east", "west")
+status, err := selected.WaitBucketSyncReady(ctx, "published", "east", "west")
 if err != nil {
 	t.Fatal(err)
 }
@@ -1019,10 +1002,10 @@ Variations:
   With an account root user, a destination bucket policy that denies
   `s3:ReplicateObject` blocks replication while ordinary S3 requests keep
   working.
-- Changing the prefix: `SetSyncPipePrefix(ctx, selected, "published", "reports/")`,
-  then `WaitBucketSyncPolicyReady` before writing.
-- Removing: `RemoveSyncGroup` for the bucket group (already copied objects
-  stay); `RemoveSyncGroup` plus `ApplySyncGroup` for the zonegroup group.
+- Changing the prefix: `selected.SetPipePrefix(ctx, "published", "reports/")`,
+  then `WaitBucketPolicyReady` before writing.
+- Removing: `Remove` for the bucket group (already copied objects
+  stay); `Remove` plus `Apply` for the zonegroup group.
 
 ### Pause and resume a bucket policy
 
@@ -1032,24 +1015,24 @@ recorded while the policy was forbidden may remain unprocessed. Replay them
 explicitly on a quiet fixture:
 
 ```golang
-if err := ms.SetSyncGroupStatus(ctx, selected, multisite.SyncForbidden); err != nil {
+if err := selected.SetStatus(ctx, multisite.SyncForbidden); err != nil {
 	t.Fatal(err)
 }
-if _, err := ms.WaitBucketSyncPolicyReady(ctx, selected, "west"); err != nil {
+if _, err := selected.WaitBucketPolicyReady(ctx, "west"); err != nil {
 	t.Fatal(err)
 }
 // BucketSyncStatus now reports State "stopped" or "disabled_or_no_sources".
 // Writes to published/ are not replicated.
 
-if err := ms.SetSyncGroupStatus(ctx, selected, multisite.SyncEnabled); err != nil {
+if err := selected.SetStatus(ctx, multisite.SyncEnabled); err != nil {
 	t.Fatal(err)
 }
-if _, err := ms.WaitBucketSyncPolicyReady(ctx, selected, "west"); err != nil {
+if _, err := selected.WaitBucketPolicyReady(ctx, "west"); err != nil {
 	t.Fatal(err)
 }
 
 // Replay the existing bucket logs with the current policy.
-before, err := ms.BucketSyncStatus(ctx, selected, "published", "east", "west")
+before, err := selected.BucketSyncStatus(ctx, "published", "east", "west")
 if err != nil || before.State != "incremental" {
 	t.Fatalf("state %q: %v", before.State, err)
 }
@@ -1061,7 +1044,7 @@ args := []string{"bucket", "sync", "run",
 if _, err := ms.ZoneAdmin(ctx, before.Zone, args...); err != nil {
 	t.Fatal(err)
 }
-if _, err := ms.WaitBucketSyncReady(ctx, selected, "published", "east", "west"); err != nil {
+if _, err := selected.WaitBucketSyncReady(ctx, "published", "east", "west"); err != nil {
 	t.Fatal(err)
 }
 ```
@@ -1084,15 +1067,15 @@ if _, err := ms.WaitBucketSyncReady(ctx, selected, "published", "east", "west");
 ### radosgw-admin in multisite zones
 
 ```golang
-period, err := ms.SourceAdmin(ctx, "period", "get")
-status, err := ms.DestinationAdmin(ctx, "sync", "status")
+period, err := ms.ZoneAdmin(ctx, "east", "period", "get")
+status, err := ms.ZoneAdmin(ctx, "west", "sync", "status")
 policy, err := ms.ZoneAdmin(ctx, "c", "sync", "group", "get", "--group-id", group.ID())
 ```
 
 These run in the fixture's setup client of each zone (rgw image unless `SetupImage` is set), scoped
 to the realm, zonegroup and zone. Use them for promotion, period inspection and
 explicit `bucket sync run`. Do not edit periods or zones while `AddZone`,
-`AddZonegroup`, `RemoveZone` or `ApplySyncGroup` runs.
+`AddZonegroup`, `RemoveZone` or `SyncGroup.Apply` runs.
 
 ## Limitations
 

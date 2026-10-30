@@ -82,8 +82,8 @@ func assertRGWUsageReadOnlyCalls(t *testing.T, calls [][]string, id string) {
 func TestRGWUserUsageReportsNativeStorageAndTenantOwner(t *testing.T) {
 	for _, id := range []string{"test-user", "team_a$test-user"} {
 		t.Run(id, func(t *testing.T) {
-			g, f, user := newRGWUsageFixture(id, rgwUsageFixture)
-			usage, err := g.UserUsage(t.Context(), user)
+			_, f, user := newRGWUsageFixture(id, rgwUsageFixture)
+			usage, err := user.Usage(t.Context())
 			if err != nil || usage.UserID != id || usage.OwnerID != id || usage.Scope != "user" || usage.SizeBytes != 8193 || usage.SizeActualBytes != 12288 || usage.NumObjects != 3 || usage.LastStatsSync != "0.000000" {
 				t.Fatalf("storage counters or aggregation identity changed: %#v %v", usage, err)
 			}
@@ -125,7 +125,7 @@ func newRGWUsageAccountFixture(t *testing.T) (*Gateway, *rgwUsageAccountContaine
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := g.CreateAccountRootUser(t.Context(), account, UserConfig{ID: "root"})
+	user, err := account.CreateRootUser(t.Context(), UserConfig{ID: "root"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,8 +137,8 @@ func newRGWUsageAccountFixture(t *testing.T) (*Gateway, *rgwUsageAccountContaine
 }
 
 func TestRGWUserUsageAccountRootReportsAccountAggregate(t *testing.T) {
-	g, f, account, user := newRGWUsageAccountFixture(t)
-	usage, err := g.UserUsage(t.Context(), user)
+	_, f, account, user := newRGWUsageAccountFixture(t)
+	usage, err := user.Usage(t.Context())
 	if err != nil || usage.Scope != "account" || usage.OwnerID != account.ID() || usage.UserID != "team_a$root" || usage.OwnerID == usage.UserID || usage.Tenant != "team_a" || usage.SizeBytes != 8193 || usage.NumObjects != 3 {
 		t.Fatalf("account aggregate mislabeled as per-user storage: %#v %v", usage, err)
 	}
@@ -148,13 +148,13 @@ func TestRGWUserUsageAccountRootReportsAccountAggregate(t *testing.T) {
 func TestRGWUserUsageRejectsChangedAccountLifetime(t *testing.T) {
 	for _, phase := range []string{"before", "after stats"} {
 		t.Run(phase, func(t *testing.T) {
-			g, f, _, user := newRGWUsageAccountFixture(t)
+			_, f, _, user := newRGWUsageAccountFixture(t)
 			if phase == "before" {
 				f.versionTag = "recreated-account"
 			} else {
 				f.onStats = func() { f.versionTag = "recreated-account" }
 			}
-			usage, err := g.UserUsage(t.Context(), user)
+			usage, err := user.Usage(t.Context())
 			if err == nil || usage != (UserUsage{}) || strings.Contains(err.Error(), "PRIVATE") {
 				t.Fatalf("account lifetime change published usage: %#v %v", usage, err)
 			}
@@ -236,7 +236,7 @@ func TestRGWUserUsageRefusesUnownedOrReplacedGatewayBeforeNative(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			g, f, user := newRGWUsageFixture("test-user", rgwUsageFixture)
 			edit(g, user)
-			usage, err := g.UserUsage(t.Context(), user)
+			usage, err := user.Usage(t.Context())
 			if err == nil || usage != (UserUsage{}) || len(f.calls) != 0 {
 				t.Fatalf("invalid fixture authority reached native: %#v %v calls%d", usage, err, len(f.calls))
 			}
@@ -252,9 +252,9 @@ func TestRGWUserUsageFinalIdentityGuardDiscardsCounters(t *testing.T) {
 		{"native type", strings.Replace(rgwUsageUserFixture("test-user"), `"type":"rgw"`, `"type":"root"`, 1)},
 	} {
 		t.Run(edit.name, func(t *testing.T) {
-			g, f, user := newRGWUsageFixture("test-user", rgwUsageFixture)
+			_, f, user := newRGWUsageFixture("test-user", rgwUsageFixture)
 			f.responses[2].data = edit.raw
-			usage, err := g.UserUsage(t.Context(), user)
+			usage, err := user.Usage(t.Context())
 			if err == nil || usage != (UserUsage{}) || len(f.calls) != 3 || strings.Contains(err.Error(), "PRIVATE") || strings.Contains(err.Error(), "foreign-secret") {
 				t.Fatalf("newer identity published prior counters: %#v %v", usage, err)
 			}
@@ -265,7 +265,7 @@ func TestRGWUserUsageFinalIdentityGuardDiscardsCounters(t *testing.T) {
 func TestRGWUserUsageCancellationBeforeNativeAndAfterValidReply(t *testing.T) {
 	for _, phase := range []string{"before", "after stats", "after final user"} {
 		t.Run(phase, func(t *testing.T) {
-			g, f, user := newRGWUsageFixture("test-user", rgwUsageFixture)
+			_, f, user := newRGWUsageFixture("test-user", rgwUsageFixture)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if phase == "before" {
@@ -281,7 +281,7 @@ func TestRGWUserUsageCancellationBeforeNativeAndAfterValidReply(t *testing.T) {
 					}
 				}
 			}
-			usage, err := g.UserUsage(ctx, user)
+			usage, err := user.Usage(ctx)
 			if !errors.Is(err, context.Canceled) || usage != (UserUsage{}) {
 				t.Fatalf("late success or context lost: %#v %v", usage, err)
 			}
@@ -320,7 +320,7 @@ func TestRGWUserUsageHeldOwnerDeadlineJoinsWithoutNative(t *testing.T) {
 		}
 	})
 	started = true
-	go func() { _, err := g.UserUsage(ctx, user); result <- err }()
+	go func() { _, err := user.Usage(ctx); result <- err }()
 	select {
 	case err := <-result:
 		joined = true
@@ -340,7 +340,7 @@ func TestRGWUserUsageHeldOwnerDeadlineJoinsWithoutNative(t *testing.T) {
 func TestRGWUserUsageRedactsNativeErrorsAndPreservesContextCause(t *testing.T) {
 	for _, phase := range []string{"native", "transport", "deadline"} {
 		t.Run(phase, func(t *testing.T) {
-			g, f, user := newRGWUsageFixture("test-user", rgwUsageFixture)
+			_, f, user := newRGWUsageFixture("test-user", rgwUsageFixture)
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 			defer cancel()
 			if phase == "native" {
@@ -357,7 +357,7 @@ func TestRGWUserUsageRedactsNativeErrorsAndPreservesContextCause(t *testing.T) {
 				}
 				f.responses[1] = rgwAdminResponse{err: errors.New("PRIVATE-SECRET timeout transport")}
 			}
-			usage, err := g.UserUsage(ctx, user)
+			usage, err := user.Usage(ctx)
 			if err == nil || usage != (UserUsage{}) || strings.Contains(err.Error(), "PRIVATE") {
 				t.Fatalf("native error published or exposed: %#v %v", usage, err)
 			}
@@ -375,7 +375,7 @@ func TestRGWUserUsageGatewayFinalGuardDiscardsCounters(t *testing.T) {
 			servicehook.SetService(g.owner, rgwServiceName(g.config), &rgwAdminTestContainer{id: "gateway"})
 		}
 	}
-	usage, err := g.UserUsage(t.Context(), user)
+	usage, err := user.Usage(t.Context())
 	if err == nil || usage != (UserUsage{}) || len(f.calls) != 3 {
 		t.Fatalf("gateway replacement published storage: %#v %v", usage, err)
 	}
@@ -396,7 +396,7 @@ func TestRGWUserUsageRejectsChangedNativeScopeAndRedactsControlFailure(t *testin
 			case "control secret":
 				g.owner.Container = &rgwAdminTestContainer{id: "control", responses: []rgwAdminResponse{{code: 13, data: "PRIVATE-SECRET native service dump failure"}}}
 			}
-			usage, err := g.UserUsage(t.Context(), user)
+			usage, err := user.Usage(t.Context())
 			if err == nil || usage != (UserUsage{}) || strings.Contains(err.Error(), "PRIVATE") {
 				t.Fatalf("invalid native scope or secret escaped: %#v %v", usage, err)
 			}
@@ -410,7 +410,7 @@ func TestRGWUserUsageRejectsChangedNativeScopeAndRedactsControlFailure(t *testin
 func TestRGWUserUsageHeldControlDeadlineReleasesOwnerAndDoesNotReadStats(t *testing.T) {
 	g, f, _, user := newRGWUsageAccountFixture(t)
 	assertSnapshotReadLockQueued(t, testhelper.TestState(g.owner).ControlMutex, func(ctx context.Context) error {
-		usage, err := g.UserUsage(ctx, user)
+		usage, err := user.Usage(ctx)
 		if usage != (UserUsage{}) {
 			t.Error("queued native scope published usage")
 		}
@@ -423,7 +423,7 @@ func TestRGWUserUsageHeldControlDeadlineReleasesOwnerAndDoesNotReadStats(t *test
 		t.Fatal("queued native scope retained owner gate")
 	}
 	servicehook.Unlock(g.owner)
-	if _, err := g.UserUsage(t.Context(), user); err != nil {
+	if _, err := user.Usage(t.Context()); err != nil {
 		t.Fatalf("fresh context could not reuse retained fixture: %v", err)
 	}
 }

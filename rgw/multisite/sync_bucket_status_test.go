@@ -18,7 +18,7 @@ func newRGWSyncBucketStatusFixture(t *testing.T) (*Fixture, *rgwSyncCLI, *SyncGr
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.CreateSyncPipe(t.Context(), g, SyncPipeConfig{ID: "selected", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "selected/"}); err != nil {
+	if err := g.CreatePipe(t.Context(), SyncPipeConfig{ID: "selected", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "selected/"}); err != nil {
 		t.Fatal(err)
 	}
 	cli.bucketStatusOutput = rgwReadyBucketStatus
@@ -26,8 +26,8 @@ func newRGWSyncBucketStatusFixture(t *testing.T) (*Fixture, *rgwSyncCLI, *SyncGr
 }
 
 func TestRGWBucketSyncStatusUsesOwnedPipeInstancesAndRemoteCheckpoint(t *testing.T) {
-	f, cli, g := newRGWSyncBucketStatusFixture(t)
-	status, err := f.WaitBucketSyncReady(t.Context(), g, "selected", "source", "destination")
+	_, cli, g := newRGWSyncBucketStatusFixture(t)
+	status, err := g.WaitBucketSyncReady(t.Context(), "selected", "source", "destination")
 	if err != nil || !status.CaughtUp || status.State != "incremental" || status.Shards != 1 || status.PeriodID != "period-original" || status.SourceBucket.ID != "bucket-original" || status.DestinationBucket.ID != "bucket-original" {
 		t.Fatalf("exact bucket checkpoint rejected: %+v %v", status, err)
 	}
@@ -41,7 +41,7 @@ func TestRGWBucketSyncStatusUsesOwnedPipeInstancesAndRemoteCheckpoint(t *testing
 		t.Fatal("checkpoint used a guessed bucket or native zone")
 	}
 	cli.bucketStatusOutput = strings.Replace(rgwReadyBucketStatus, `"behind_shards":[]`, `"behind_shards":[{"shard_id":0,"shard_marker":"secret-marker"}]`, 1)
-	status, err = f.BucketSyncStatus(t.Context(), g, "selected", "source", "destination")
+	status, err = g.BucketSyncStatus(t.Context(), "selected", "source", "destination")
 	if err != nil || status.CaughtUp || status.BehindShards != 1 || strings.Contains(status.State, "secret-marker") {
 		t.Fatalf("native bucket lag was ignored or exposed: %+v %v", status, err)
 	}
@@ -56,7 +56,7 @@ func TestRGWBucketSyncStatusUsesOwnedPipeInstancesAndRemoteCheckpoint(t *testing
 			cancel()
 		}
 	}
-	status, err = f.WaitBucketSyncReady(ctx, g, "selected", "source", "destination")
+	status, err = g.WaitBucketSyncReady(ctx, "selected", "source", "destination")
 	if !errors.Is(err, context.Canceled) || status.CaughtUp || status.BehindShards != 1 || strings.Contains(err.Error(), "secret-marker") {
 		t.Fatalf("bounded waiter accepted lag or exposed markers: %+v %v", status, err)
 	}
@@ -91,7 +91,7 @@ func TestRGWBucketSyncDecoderRefusesDisabledFullAndExitZeroErrors(t *testing.T) 
 }
 
 func TestRGWBucketCheckpointRejectsStaleUnownedAndUnpublishedInputs(t *testing.T) {
-	f, cli, g := newRGWSyncBucketStatusFixture(t)
+	_, cli, g := newRGWSyncBucketStatusFixture(t)
 	for _, request := range []struct {
 		group              *SyncGroup
 		pipe, source, dest string
@@ -101,13 +101,13 @@ func TestRGWBucketCheckpointRejectsStaleUnownedAndUnpublishedInputs(t *testing.T
 		{g, "selected", "destination", "source"},
 		{g, "selected", "source", "source"},
 	} {
-		if _, err := f.BucketSyncStatus(t.Context(), request.group, request.pipe, request.source, request.dest); err == nil {
+		if _, err := request.group.BucketSyncStatus(t.Context(), request.pipe, request.source, request.dest); err == nil {
 			t.Fatal("unowned or wrong-direction checkpoint accepted")
 		}
 	}
 	cli.bucketID = "recreated"
 	before := len(cli.calls)
-	if _, err := f.BucketSyncStatus(t.Context(), g, "selected", "source", "destination"); err == nil {
+	if _, err := g.BucketSyncStatus(t.Context(), "selected", "source", "destination"); err == nil {
 		t.Fatal("recreated bucket name substituted into captured checkpoint")
 	}
 	for _, args := range cli.calls[before:] {
@@ -115,29 +115,29 @@ func TestRGWBucketCheckpointRejectsStaleUnownedAndUnpublishedInputs(t *testing.T
 			t.Fatal("stale checkpoint reached native comparison")
 		}
 	}
-	f, cli, _, _ = newRGWSyncTestFixture()
+	f, cli, _, _ := newRGWSyncTestFixture()
 	g, err := f.CreateSyncGroup(t.Context(), SyncPolicyScope{}, SyncGroupConfig{ID: "unpublished", Status: SyncEnabled})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.CreateSyncPipe(t.Context(), g, SyncPipeConfig{ID: "selected", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+	if err := g.CreatePipe(t.Context(), SyncPipeConfig{ID: "selected", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.BucketSyncStatus(t.Context(), g, "selected", "source", "destination"); err == nil {
+	if _, err := g.BucketSyncStatus(t.Context(), "selected", "source", "destination"); err == nil {
 		t.Fatal("unpublished global policy accepted")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	before = len(cli.calls)
-	if _, err := f.WaitBucketSyncReady(ctx, g, "selected", "source", "destination"); !errors.Is(err, context.Canceled) || len(cli.calls) != before {
+	if _, err := g.WaitBucketSyncReady(ctx, "selected", "source", "destination"); !errors.Is(err, context.Canceled) || len(cli.calls) != before {
 		t.Fatal("cancelled checkpoint invoked native commands")
 	}
 }
 
 func TestRGWBucketCheckpointRejectsRemoteFailureStderr(t *testing.T) {
-	f, cli, g := newRGWSyncBucketStatusFixture(t)
+	_, cli, g := newRGWSyncBucketStatusFixture(t)
 	cli.stderrOutput = "ERROR: remote comparison failed secret-marker"
-	status, err := f.BucketSyncStatus(t.Context(), g, "selected", "source", "destination")
+	status, err := g.BucketSyncStatus(t.Context(), "selected", "source", "destination")
 	if err == nil || status.CaughtUp || strings.Contains(err.Error(), "secret-marker") {
 		t.Fatal("ready JSON hid stderr remote error or exposed native marker")
 	}
@@ -151,15 +151,15 @@ func TestRGWBucketCheckpointRetainsTranslatedTenantInstanceSelectors(t *testing.
 		t.Fatal(err)
 	}
 	source, destination := &SyncBucketSelector{Name: "input", Tenant: "tenant-a"}, &SyncBucketSelector{Name: "output", Tenant: "tenant-a"}
-	if err := f.CreateSyncPipe(t.Context(), g, SyncPipeConfig{ID: "selected", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: source, DestinationBucket: destination}); err != nil {
+	if err := g.CreatePipe(t.Context(), SyncPipeConfig{ID: "selected", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: source, DestinationBucket: destination}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.ApplySyncGroup(t.Context(), g); err != nil {
+	if err := g.Apply(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	source.Name, destination.Tenant = "mutated", "different-tenant"
 	cli.bucketStatusOutput = `{"realm":"realm","zonegroup":"group-id","zone":"dest-id","bucket":"output","bucket_instance_id":"destination-instance","sources":[{"source_zone":"source-id","source_name":"source","source_bucket":"input","source_bucket_id":"source-instance","total_shards":2,"behind_shards":[]}]}`
-	status, err := f.BucketSyncStatus(t.Context(), g, "selected", "source", "destination")
+	status, err := g.BucketSyncStatus(t.Context(), "selected", "source", "destination")
 	if err != nil || !status.CaughtUp || status.SourceBucket != (SyncBucketIdentity{Name: "input", Tenant: "tenant-a", ID: "source-instance"}) || status.DestinationBucket != (SyncBucketIdentity{Name: "output", Tenant: "tenant-a", ID: "destination-instance"}) {
 		t.Fatalf("private translated checkpoint changed: %+v %v", status, err)
 	}
@@ -174,7 +174,7 @@ func TestRGWBucketCheckpointRetainsTranslatedTenantInstanceSelectors(t *testing.
 	}
 	cli.additionalBuckets["tenant-a/input"] = "replacement-source"
 	before := len(cli.calls)
-	if _, err := f.BucketSyncStatus(t.Context(), g, "selected", "source", "destination"); err == nil {
+	if _, err := g.BucketSyncStatus(t.Context(), "selected", "source", "destination"); err == nil {
 		t.Fatal("translated source recreation accepted")
 	}
 	for _, args := range cli.calls[before:] {
@@ -219,15 +219,15 @@ func TestRGWBucketCheckpointRequiresEveryMatchingPipeComparison(t *testing.T) {
 }
 
 func TestRGWBucketCheckpointRefusesOldNonMasterSourcePeriod(t *testing.T) {
-	f, cli, g := newRGWSyncBucketStatusFixture(t)
-	if err := f.CreateSyncPipe(t.Context(), g, SyncPipeConfig{ID: "reverse", SourceZones: []string{"destination"}, DestinationZones: []string{"source"}}); err != nil {
+	_, cli, g := newRGWSyncBucketStatusFixture(t)
+	if err := g.CreatePipe(t.Context(), SyncPipeConfig{ID: "reverse", SourceZones: []string{"destination"}, DestinationZones: []string{"source"}}); err != nil {
 		t.Fatal(err)
 	}
 	stale := syncJSONClone(cli.current)
 	stale["id"] = "old-source-period"
 	cli.periodByZone = map[string]map[string]any{"dest-id": stale}
 	before := len(cli.calls)
-	status, err := f.BucketSyncStatus(t.Context(), g, "reverse", "destination", "source")
+	status, err := g.BucketSyncStatus(t.Context(), "reverse", "destination", "source")
 	if err == nil || status.CaughtUp {
 		t.Fatal("old source period accepted under current destination policy")
 	}
@@ -239,11 +239,11 @@ func TestRGWBucketCheckpointRefusesOldNonMasterSourcePeriod(t *testing.T) {
 }
 
 func TestRGWBucketCheckpointCancellationDuringReadyNativeRead(t *testing.T) {
-	f, cli, g := newRGWSyncBucketStatusFixture(t)
+	_, cli, g := newRGWSyncBucketStatusFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	cli.cancelOnBucketStatus = cancel
-	status, err := f.WaitBucketSyncReady(ctx, g, "selected", "source", "destination")
+	status, err := g.WaitBucketSyncReady(ctx, "selected", "source", "destination")
 	if !errors.Is(err, context.Canceled) || status.CaughtUp {
 		t.Fatal("ready native response completed after cancellation")
 	}
@@ -258,11 +258,11 @@ func TestRGWSyncObserversBoundMutexQueueTime(t *testing.T) {
 		func(ctx context.Context) error { _, err := f.SyncStatus(ctx, "destination"); return err },
 		func(ctx context.Context) error { _, err := f.WaitSyncReady(ctx, "destination", "source"); return err },
 		func(ctx context.Context) error {
-			_, err := f.BucketSyncStatus(ctx, g, "selected", "source", "destination")
+			_, err := g.BucketSyncStatus(ctx, "selected", "source", "destination")
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := f.WaitBucketSyncReady(ctx, g, "selected", "source", "destination")
+			_, err := g.WaitBucketSyncReady(ctx, "selected", "source", "destination")
 			return err
 		},
 	} {
@@ -283,10 +283,10 @@ func TestRGWBucketCheckpointRechecksCommittedPolicyOnEveryPoll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.CreateSyncPipe(t.Context(), g, SyncPipeConfig{ID: "selected", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &SyncBucketSelector{Name: "input"}, DestinationBucket: &SyncBucketSelector{Name: "output"}}); err != nil {
+	if err := g.CreatePipe(t.Context(), SyncPipeConfig{ID: "selected", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &SyncBucketSelector{Name: "input"}, DestinationBucket: &SyncBucketSelector{Name: "output"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.ApplySyncGroup(t.Context(), g); err != nil {
+	if err := g.Apply(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	checkpoint, err := f.syncBucketCheckpoint(t.Context(), g, "selected", "source", "destination")
@@ -313,10 +313,10 @@ func TestRGWBucketCheckpointRequiresCommittedPeriodIdentity(t *testing.T) {
 		func(period map[string]any) { period["id"] = "realm:staging" },
 		func(period map[string]any) { period["realm_epoch"] = json.Number("0") },
 	} {
-		f, cli, g := newRGWSyncBucketStatusFixture(t)
+		_, cli, g := newRGWSyncBucketStatusFixture(t)
 		change(cli.current)
 		before := len(cli.calls)
-		status, err := f.BucketSyncStatus(t.Context(), g, "selected", "source", "destination")
+		status, err := g.BucketSyncStatus(t.Context(), "selected", "source", "destination")
 		if err == nil || status.CaughtUp {
 			t.Fatal("malformed or staging period accepted as a committed bucket checkpoint")
 		}

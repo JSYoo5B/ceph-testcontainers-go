@@ -18,7 +18,7 @@ import (
 
 func waitRGWTranslationPolicyReady(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup) {
 	t.Helper()
-	status, err := link.WaitBucketSyncPolicyReady(ctx, group, "destination")
+	status, err := group.WaitBucketPolicyReady(ctx, "destination")
 	if err != nil || !status.Imported || !status.PeriodImported || !status.PolicyImported || !status.BucketsImported || status.Bucket.ID == "" || len(status.Buckets) == 0 {
 		t.Fatalf("wait owned bucket policy import: group=%s period=%s zone=%s/%s bucket=%s/%s:%s period_imported=%t policy_imported=%t buckets_imported=%t error=%s", group.ID(), status.PeriodID, status.Zone, status.ZoneID, status.Bucket.Tenant, status.Bucket.Name, status.Bucket.ID, status.PeriodImported, status.PolicyImported, status.BucketsImported, rgwSyncDiagnosticError(err))
 	}
@@ -36,7 +36,7 @@ func cleanupRGWTranslationSyncGroup(t *testing.T, link *multisite.Fixture, group
 			inspect, stop := context.WithTimeout(context.Background(), time.Minute)
 			for _, pipeID := range pipeIDs {
 				attempt, cancel := context.WithTimeout(inspect, 20*time.Second)
-				state, err := link.BucketSyncStatus(attempt, group, pipeID, "source", "destination")
+				state, err := group.BucketSyncStatus(attempt, pipeID, "source", "destination")
 				cancel()
 				t.Logf("translation bucket diagnostic group=%s pipe=%s realm=%s period=%s zonegroup=%s realm_epoch=%d source_zone=%s/%s source_bucket=%s/%s:%s destination_zone=%s/%s destination_bucket=%s/%s:%s state=%s shards=%d behind_shards=%d caught_up=%t status_error=%s", group.ID(), pipeID, state.RealmID, state.PeriodID, state.ZonegroupID, state.RealmEpoch, state.SourceZone, state.SourceZoneID, state.SourceBucket.Tenant, state.SourceBucket.Name, state.SourceBucket.ID, state.Zone, state.ZoneID, state.DestinationBucket.Tenant, state.DestinationBucket.Name, state.DestinationBucket.ID, state.State, state.Shards, state.BehindShards, state.CaughtUp, rgwSyncDiagnosticError(err))
 			}
@@ -44,7 +44,7 @@ func cleanupRGWTranslationSyncGroup(t *testing.T, link *multisite.Fixture, group
 		}
 		cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer stop()
-		if err := link.RemoveSyncGroup(cleanup, group); err != nil {
+		if err := group.Remove(cleanup); err != nil {
 			t.Errorf("cleanup isolated translation sync group %s: %v", group.ID(), err)
 			return
 		}
@@ -147,13 +147,13 @@ func newRGWSyncTranslationFixture(t *testing.T, ctx context.Context, opts ...tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncFlow(ctx, global, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
+	if err := global.CreateFlow(ctx, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, global, multisite.SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+	if err := global.CreatePipe(ctx, multisite.SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.ApplySyncGroup(ctx, global); err != nil {
+	if err := global.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := link.WaitSyncReady(ctx, "destination", "source"); err != nil {

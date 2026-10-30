@@ -223,43 +223,43 @@ func TestRGWTenantUsersPreserveCanonicalIDForEveryOperation(t *testing.T) {
 	f.calls = nil
 	for i, user := range users {
 		quota := Quota{Enabled: true, MaxSizeBytes: 1024, MaxObjects: int64(i + 1)}
-		if err := g.SetUserQuota(t.Context(), user, quota); err != nil {
+		if err := user.SetQuota(t.Context(), quota); err != nil {
 			t.Fatal(err)
 		}
-		if err := g.SetBucketQuota(t.Context(), user, quota); err != nil {
+		if err := user.SetBucketQuota(t.Context(), quota); err != nil {
 			t.Fatal(err)
 		}
 		unlimited := Quota{MaxSizeBytes: -1, MaxObjects: -1}
-		if err := g.SetUserQuota(t.Context(), user, unlimited); err != nil {
+		if err := user.SetQuota(t.Context(), unlimited); err != nil {
 			t.Fatal(err)
 		}
-		if err := g.SetBucketQuota(t.Context(), user, unlimited); err != nil {
+		if err := user.SetBucketQuota(t.Context(), unlimited); err != nil {
 			t.Fatal(err)
 		}
-		info, err := g.UserInfo(t.Context(), user)
+		info, err := user.Info(t.Context())
 		if err != nil || info.UserQuota != unlimited || info.BucketQuota != unlimited {
 			t.Fatal("ordinary or tenant negative user/bucket limits changed to zero")
 		}
-		if err := g.SetUserQuota(t.Context(), user, quota); err != nil {
+		if err := user.SetQuota(t.Context(), quota); err != nil {
 			t.Fatal(err)
 		}
-		if err := g.SetBucketQuota(t.Context(), user, quota); err != nil {
+		if err := user.SetBucketQuota(t.Context(), quota); err != nil {
 			t.Fatal(err)
 		}
-		if err := g.SuspendUser(t.Context(), user, true); err != nil {
+		if err := user.Suspend(t.Context(), true); err != nil {
 			t.Fatal(err)
 		}
-		info, err = g.UserInfo(t.Context(), user)
+		info, err = user.Info(t.Context())
 		if err != nil || info.ID != user.ID() || info.LocalID != "same" || info.UserQuota != quota || !info.Suspended {
 			t.Fatal("tenant user native policy wrong")
 		}
-		if err := g.SuspendUser(t.Context(), user, false); err != nil {
+		if err := user.Suspend(t.Context(), false); err != nil {
 			t.Fatal(err)
 		}
-		if err := g.RemoveUser(t.Context(), user); err != nil {
+		if err := user.Remove(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if err := g.RemoveUser(t.Context(), user); err != nil {
+		if err := user.Remove(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -331,30 +331,30 @@ func TestRGWAccountFreshRootQuotaAndNonpurgeLifecycle(t *testing.T) {
 	if _, err := g.CreateAccount(t.Context(), AccountConfig{ID: a.ID()}); err == nil {
 		t.Fatal("existing account adopted")
 	}
-	root, err := g.CreateAccountRootUser(t.Context(), a, UserConfig{ID: "fixture-root", DisplayName: "FixtureRoot"})
+	root, err := a.CreateRootUser(t.Context(), UserConfig{ID: "fixture-root", DisplayName: "FixtureRoot"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := g.UserInfo(t.Context(), root)
+	info, err := root.Info(t.Context())
 	if err != nil || info.AccountID != a.ID() || info.Type != "root" || info.Tenant != "account_team" || info.Admin || info.System {
 		t.Fatal("root account identity wrong")
 	}
 	q := Quota{Enabled: true, MaxSizeBytes: 2048, MaxObjects: 3}
-	if err := g.SetAccountQuota(t.Context(), a, q); err != nil {
+	if err := a.SetQuota(t.Context(), q); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.SetAccountBucketQuota(t.Context(), a, q); err != nil {
+	if err := a.SetBucketQuota(t.Context(), q); err != nil {
 		t.Fatal(err)
 	}
-	account, err := g.AccountInfo(t.Context(), a)
+	account, err := a.Info(t.Context())
 	if err != nil || account.AccountQuota != q || account.BucketQuota != q {
 		t.Fatal("account quota not read back")
 	}
 	q = Quota{Enabled: true, MaxSizeBytes: -1, MaxObjects: 1}
-	if err := g.SetAccountQuota(t.Context(), a, q); err != nil {
+	if err := a.SetQuota(t.Context(), q); err != nil {
 		t.Fatal(err)
 	}
-	account, err = g.AccountInfo(t.Context(), a)
+	account, err = a.Info(t.Context())
 	if err != nil || account.AccountQuota != q {
 		t.Fatal("disabled account size was rounded to zero")
 	}
@@ -367,25 +367,25 @@ func TestRGWAccountFreshRootQuotaAndNonpurgeLifecycle(t *testing.T) {
 	if !disabledSizeArgument {
 		t.Fatal("disabled account size did not use native negative KiB")
 	}
-	if err := g.SetUserQuota(t.Context(), root, q); err == nil {
+	if err := root.SetQuota(t.Context(), q); err == nil {
 		t.Fatal("ineffective per-user account quota accepted")
 	}
 	f.failRemove = true
-	if err := g.RemoveAccount(t.Context(), a); err == nil || strings.Contains(err.Error(), "PRIVATE") {
+	if err := a.Remove(t.Context()); err == nil || strings.Contains(err.Error(), "PRIVATE") {
 		t.Fatal("nonempty account removal hidden or secret leaked")
 	}
-	if _, err := g.UserInfo(t.Context(), root); err != nil {
+	if _, err := root.Info(t.Context()); err != nil {
 		t.Fatal("failed account removal changed root")
 	}
-	if err := g.RemoveUser(t.Context(), root); err != nil {
+	if err := root.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	f.failRemove = false
 	copyHandle := *a
-	if err := g.RemoveAccount(t.Context(), a); err != nil {
+	if err := a.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.RemoveAccount(t.Context(), &copyHandle); err != nil {
+	if err := (&copyHandle).Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range f.calls {
@@ -411,7 +411,7 @@ func TestRGWAccountRejectsUnconfirmedForeignAndReplacedLifetimes(t *testing.T) {
 		}
 		edit(a, f)
 		f.calls = nil
-		if err := g.SetAccountQuota(t.Context(), a, Quota{MaxSizeBytes: -1, MaxObjects: 1}); err == nil {
+		if err := a.SetQuota(t.Context(), Quota{MaxSizeBytes: -1, MaxObjects: 1}); err == nil {
 			t.Fatal("foreign/replaced account mutated")
 		}
 		for _, args := range f.calls {
@@ -426,7 +426,7 @@ func TestRGWAccountRejectsUnconfirmedForeignAndReplacedLifetimes(t *testing.T) {
 	if err == nil || a == nil || a.state.confirmed {
 		t.Fatal("missing metadata lifetime adopted")
 	}
-	if err := g.RemoveAccount(t.Context(), a); err == nil {
+	if err := a.Remove(t.Context()); err == nil {
 		t.Fatal("unconfirmed account deleted")
 	}
 }
@@ -476,12 +476,12 @@ func TestRGWAccountRootRejectsChangedAssociationAndAccountLifetime(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			user, err := g.CreateAccountRootUser(t.Context(), a, UserConfig{ID: "original-root"})
+			user, err := a.CreateRootUser(t.Context(), UserConfig{ID: "original-root"})
 			if err != nil {
 				t.Fatal(err)
 			}
 			copy := *user
-			if _, err := g.UserInfo(t.Context(), &copy); err != nil {
+			if _, err := (&copy).Info(t.Context()); err != nil {
 				t.Fatalf("original account association was not usable: %v", err)
 			}
 			test.edit(a, user, f)
@@ -494,13 +494,13 @@ func assertRGWUserAssociationRefusesOperations(t *testing.T, g *Gateway, f *rgwA
 	t.Helper()
 	before := mustRGWUserPlacementJSON(t, f.users[user.ID()])
 	f.calls = nil
-	if _, err := g.UserInfo(t.Context(), user); err == nil || strings.Contains(err.Error(), "SECRET") {
+	if _, err := user.Info(t.Context()); err == nil || strings.Contains(err.Error(), "SECRET") {
 		t.Fatalf("changed user/account identity accepted or secret leaked: %v", err)
 	}
-	if err := g.SuspendUser(t.Context(), user, true); err == nil {
+	if err := user.Suspend(t.Context(), true); err == nil {
 		t.Fatal("changed user/account identity reached suspension")
 	}
-	if err := g.RemoveUser(t.Context(), user); err == nil || user.state.removed {
+	if err := user.Remove(t.Context()); err == nil || user.state.removed {
 		t.Fatal("changed user/account identity reached deletion or lost its handle")
 	}
 	for _, args := range f.calls {
@@ -519,19 +519,19 @@ func TestRGWAccountRootCapturesImmutableDescriptorAndSharedLifecycle(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := g.CreateAccountRootUser(t.Context(), a, UserConfig{ID: "root"})
+	user, err := a.CreateRootUser(t.Context(), UserConfig{ID: "root"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Package-private descriptor mutation stands in for future public view
 	// fields: it must not redirect a user to a different account identity.
 	a.id, a.config.Tenant, a.scope.zoneID = "RGW76543210987654321", "foreign", "foreign"
-	if info, err := g.UserInfo(t.Context(), user); err != nil || info.AccountID != "RGW12345678901234567" || info.Tenant != "team" {
+	if info, err := user.Info(t.Context()); err != nil || info.AccountID != "RGW12345678901234567" || info.Tenant != "team" {
 		t.Fatalf("mutable account descriptor redirected the confirmed root: %v", err)
 	}
 	f.calls = nil
 	a.state.removed = true
-	if _, err := g.UserInfo(t.Context(), user); err == nil {
+	if _, err := user.Info(t.Context()); err == nil {
 		t.Fatal("copied account descriptor did not share removal state")
 	}
 }
@@ -554,7 +554,7 @@ func TestRGWAccountRootUnconfirmedCreationCannotAdoptLaterKeys(t *testing.T) {
 				t.Fatal(err)
 			}
 			test.edit(f)
-			user, err := g.CreateAccountRootUser(t.Context(), a, UserConfig{ID: "root"})
+			user, err := a.CreateRootUser(t.Context(), UserConfig{ID: "root"})
 			if err == nil || user == nil || user.state.identity != nil {
 				t.Fatal("unconfirmed root creation adopted a native identity")
 			}
@@ -564,10 +564,10 @@ func TestRGWAccountRootUnconfirmedCreationCannotAdoptLaterKeys(t *testing.T) {
 			// A later coherent reply cannot retroactively establish ownership.
 			f.users[user.ID()]["type"], f.users[user.ID()]["account_id"] = "root", a.ID()
 			f.calls = nil
-			if _, err := g.UserInfo(t.Context(), user); err == nil || len(f.calls) != 0 {
+			if _, err := user.Info(t.Context()); err == nil || len(f.calls) != 0 {
 				t.Fatal("unconfirmed creation adopted later native root credentials")
 			}
-			if err := g.RemoveUser(t.Context(), user); err == nil || len(f.calls) != 0 {
+			if err := user.Remove(t.Context()); err == nil || len(f.calls) != 0 {
 				t.Fatal("unconfirmed creation attempted native root removal")
 			}
 		})
@@ -586,15 +586,15 @@ func TestRGWAccountValidationAndQuotaPreservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.CreateAccountRootUser(t.Context(), a, UserConfig{ID: "root", Tenant: "other"}); err == nil {
+	if _, err := a.CreateRootUser(t.Context(), UserConfig{ID: "root", Tenant: "other"}); err == nil {
 		t.Fatal("cross-tenant account membership accepted")
 	}
 	f.calls = nil
-	if err := g.SetAccountQuota(t.Context(), a, Quota{MaxSizeBytes: 1, MaxObjects: 1}); err == nil || len(f.calls) != 0 {
+	if err := a.SetQuota(t.Context(), Quota{MaxSizeBytes: 1, MaxObjects: 1}); err == nil || len(f.calls) != 0 {
 		t.Fatal("native KiB rounding silently changed caller byte limit")
 	}
 	f.unrelatedQuota = true
-	if err := g.SetAccountQuota(t.Context(), a, Quota{Enabled: true, MaxSizeBytes: 1024, MaxObjects: 1}); err == nil {
+	if err := a.SetQuota(t.Context(), Quota{Enabled: true, MaxSizeBytes: 1024, MaxObjects: 1}); err == nil {
 		t.Fatal("unrelated account policy drift hidden")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -603,16 +603,16 @@ func TestRGWAccountValidationAndQuotaPreservation(t *testing.T) {
 	if _, err := g.CreateAccount(ctx, AccountConfig{Name: "cancelled"}); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
 		t.Fatal("canceled account creation lost context")
 	}
-	if _, err := g.AccountInfo(ctx, a); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
+	if _, err := a.Info(ctx); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
 		t.Fatal("canceled account info reached native command")
 	}
-	if err := g.SetAccountQuota(ctx, a, Quota{MaxSizeBytes: -1, MaxObjects: -1}); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
+	if err := a.SetQuota(ctx, Quota{MaxSizeBytes: -1, MaxObjects: -1}); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
 		t.Fatal("canceled account quota reached native command")
 	}
-	if _, err := g.CreateAccountRootUser(ctx, a, UserConfig{ID: "cancelled"}); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
+	if _, err := a.CreateRootUser(ctx, UserConfig{ID: "cancelled"}); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
 		t.Fatal("canceled account root creation reached native command")
 	}
-	if err := g.RemoveAccount(ctx, a); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
+	if err := a.Remove(ctx); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
 		t.Fatal("canceled account removal reached native command")
 	}
 }

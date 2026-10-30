@@ -54,12 +54,15 @@ type AccountConfig struct {
 // Account is a fresh account owned by this fixture. Its native metadata
 // version tag distinguishes its lifetime from a deleted/recreated account.
 // Copies share lifecycle state. Removing a gateway does not remove the account.
+// Its operations run through the first registered gateway, by name, in the
+// scope of the gateway that created it.
 type Account struct {
-	owner  *ceph.Container
-	scope  rgwPlacementScope
-	config AccountConfig
-	id     string
-	state  *rgwAccountState
+	owner        *ceph.Container
+	gatewayScope Config
+	scope        rgwPlacementScope
+	config       AccountConfig
+	id           string
+	state        *rgwAccountState
 }
 
 type rgwAccountState struct {
@@ -146,7 +149,7 @@ func (g *Gateway) CreateAccount(ctx context.Context, config AccountConfig) (*Acc
 	if err := g.validateAdminGateway(); err != nil {
 		return nil, err
 	}
-	ctx, cancel := g.adminContext(ctx)
+	ctx, cancel := adminContext(ctx, g.owner)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -155,7 +158,7 @@ func (g *Gateway) CreateAccount(ctx context.Context, config AccountConfig) (*Acc
 	if err != nil {
 		return nil, err
 	}
-	a := &Account{owner: g.owner, scope: scope, config: config, id: config.ID, state: &rgwAccountState{}}
+	a := &Account{owner: g.owner, gatewayScope: g.config, scope: scope, config: config, id: config.ID, state: &rgwAccountState{}}
 	exists, err := g.accountExists(ctx, a)
 	if err != nil {
 		return nil, err
@@ -277,7 +280,7 @@ func (g *Gateway) ownedAccount(ctx context.Context, a *Account) (*rgwNativeAccou
 	if err := g.validateAdminGateway(); err != nil {
 		return nil, err
 	}
-	if a == nil || a.owner != g.owner || a.state == nil || !a.state.confirmed || a.state.removed {
+	if a == nil || a.state == nil || !a.state.confirmed || a.state.removed {
 		return nil, errors.New("RGW account must be active and created by this cluster")
 	}
 	scope, err := g.placementRuntimeScope(ctx)
@@ -297,15 +300,22 @@ func (g *Gateway) ownedAccount(ctx context.Context, a *Account) (*rgwNativeAccou
 	return native, nil
 }
 
-// AccountInfo reads the owned account's authoritative native policy.
-func (g *Gateway) AccountInfo(ctx context.Context, a *Account) (AccountInfo, error) {
-	if g == nil || g.owner == nil {
-		return AccountInfo{}, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+// Info reads the owned account's authoritative native policy.
+func (a *Account) Info(ctx context.Context) (AccountInfo, error) {
+	if a == nil || a.owner == nil {
+		return AccountInfo{}, servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(g.owner)
-	defer servicehook.Unlock(g.owner)
-	ctx, cancel := g.adminContext(ctx)
+	servicehook.Lock(a.owner)
+	defer servicehook.Unlock(a.owner)
+	ctx, cancel := adminContext(ctx, a.owner)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return AccountInfo{}, err
+	}
+	g, err := scopeGateway(a.owner, a.gatewayScope)
+	if err != nil {
+		return AccountInfo{}, err
+	}
 	native, err := g.ownedAccount(ctx, a)
 	if err != nil {
 		return AccountInfo{}, err
@@ -313,41 +323,54 @@ func (g *Gateway) AccountInfo(ctx context.Context, a *Account) (AccountInfo, err
 	return native.info, nil
 }
 
-// CreateAccountRootUser creates a fresh root identity inside an owned account.
+// CreateRootUser creates a fresh root identity inside an owned account.
 // Empty Tenant inherits the account tenant; a different tenant is rejected.
 // Account root grants permissions within the account; global admin and multisite
 // system flags remain false. IAM operations remain on the consuming client.
-func (g *Gateway) CreateAccountRootUser(ctx context.Context, a *Account, config UserConfig) (*User, error) {
-	if a == nil {
+func (a *Account) CreateRootUser(ctx context.Context, config UserConfig) (*User, error) {
+	if a == nil || a.owner == nil {
 		return nil, errors.New("owned RGW account is required")
+	}
+	servicehook.Lock(a.owner)
+	g, err := scopeGateway(a.owner, a.gatewayScope)
+	servicehook.Unlock(a.owner)
+	if err != nil {
+		return nil, err
 	}
 	return g.createUser(ctx, config, a)
 }
 
-// SetAccountQuota replaces aggregate account limits and their enabled state.
+// SetQuota replaces aggregate account limits and their enabled state.
 // Native account quota size is rounded to KiB, so byte limits must be -1, zero
 // or a positive multiple of 1024. Readback does not promise cache enforcement.
-func (g *Gateway) SetAccountQuota(ctx context.Context, a *Account, quota Quota) error {
-	return g.setAccountQuota(ctx, a, "account", quota)
+func (a *Account) SetQuota(ctx context.Context, quota Quota) error {
+	return a.setQuota(ctx, "account", quota)
 }
 
-// SetAccountBucketQuota applies individual bucket limits to every bucket owned
+// SetBucketQuota applies individual bucket limits to every bucket owned
 // by this account, independent of which account identity created the bucket.
-func (g *Gateway) SetAccountBucketQuota(ctx context.Context, a *Account, quota Quota) error {
-	return g.setAccountQuota(ctx, a, "bucket", quota)
+func (a *Account) SetBucketQuota(ctx context.Context, quota Quota) error {
+	return a.setQuota(ctx, "bucket", quota)
 }
 
-func (g *Gateway) setAccountQuota(ctx context.Context, a *Account, scope string, quota Quota) error {
+func (a *Account) setQuota(ctx context.Context, scope string, quota Quota) error {
 	if quota.MaxObjects < -1 || quota.MaxSizeBytes < -1 || (quota.MaxSizeBytes > 0 && quota.MaxSizeBytes%1024 != 0) {
 		return errors.New("RGW account quota limits must be -1, zero or positive; byte limits must be multiples of 1024")
 	}
-	if g == nil || g.owner == nil {
-		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+	if a == nil || a.owner == nil {
+		return servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(g.owner)
-	defer servicehook.Unlock(g.owner)
-	ctx, cancel := g.adminContext(ctx)
+	servicehook.Lock(a.owner)
+	defer servicehook.Unlock(a.owner)
+	ctx, cancel := adminContext(ctx, a.owner)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	g, err := scopeGateway(a.owner, a.gatewayScope)
+	if err != nil {
+		return err
+	}
 	before, err := g.ownedAccount(ctx, a)
 	if err != nil {
 		return err
@@ -382,28 +405,29 @@ func (g *Gateway) setAccountQuota(ctx context.Context, a *Account, scope string,
 	return nil
 }
 
-// RemoveAccount removes only an owned, empty account, without purge-data. Native
+// Remove removes only an owned, empty account, without purge-data. Native
 // Ceph refuses remaining users, buckets, roles, groups, OIDC providers or topics.
 // Remove these through their ordinary clients first. Success is idempotent across
 // copies. Native external account edits must not race these fixture helpers.
-func (g *Gateway) RemoveAccount(ctx context.Context, a *Account) error {
-	if g == nil || g.owner == nil {
-		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+func (a *Account) Remove(ctx context.Context) error {
+	if a == nil || a.owner == nil {
+		return servicehook.Invalid(errors.New("RGW account is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(g.owner)
-	defer servicehook.Unlock(g.owner)
-	if a == nil || a.owner != g.owner || a.state == nil || !a.state.confirmed {
+	servicehook.Lock(a.owner)
+	defer servicehook.Unlock(a.owner)
+	if a.state == nil || !a.state.confirmed {
 		return servicehook.Invalid(errors.New("RGW account was not confirmed as created by this cluster"))
 	}
 	if a.state.removed {
 		return nil
 	}
-	ctx, cancel := g.adminContext(ctx)
+	ctx, cancel := adminContext(ctx, a.owner)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := g.validateAdminGateway(); err != nil {
+	g, err := scopeGateway(a.owner, a.gatewayScope)
+	if err != nil {
 		return err
 	}
 	current, err := g.placementRuntimeScope(ctx)

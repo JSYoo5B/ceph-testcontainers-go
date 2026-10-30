@@ -182,7 +182,7 @@ func TestRGWBucketMaintenance(t *testing.T) {
 				}
 				client.request(t, ctx, http.MethodDelete, "/"+site.bucket, nil, http.StatusNoContent)
 			}
-			if err := gateway.RemoveUser(ctx, user); err != nil {
+			if err := user.Remove(ctx); err != nil {
 				t.Fatal(err)
 			}
 			t.Logf("native individual quota denied excess object and preserved sibling bucket; disable restored writes; queued reshard %d→%d completed with all shard statuses idle, four payloads/listings/policies preserved, owned S3 cleanup", prior.Shards, shards)

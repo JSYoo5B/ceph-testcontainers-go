@@ -289,39 +289,39 @@ func TestRGWOwnedSyncPolicyLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}
-	if err := f.CreateSyncFlow(t.Context(), g, dir); err != nil {
+	if err := g.CreateFlow(t.Context(), dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.CreateSyncFlow(t.Context(), g, dir); err == nil {
+	if err := g.CreateFlow(t.Context(), dir); err == nil {
 		t.Fatal("adopted duplicate directional native pair")
 	}
-	if err := f.CreateSyncPipe(t.Context(), g, SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+	if err := g.CreatePipe(t.Context(), SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.ApplySyncGroup(t.Context(), g); err != nil {
+	if err := g.Apply(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if a.starts != 1 || b.starts != 1 || cli.current["id"] != "period-committed" {
 		t.Fatal("publication did not reload owned running gateways")
 	}
-	if err := f.RemoveSyncPipe(t.Context(), g, "permit"); err != nil {
+	if err := g.RemovePipe(t.Context(), "permit"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.RemoveSyncFlow(t.Context(), g, dir); err != nil {
+	if err := g.RemoveFlow(t.Context(), dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.SetSyncGroupStatus(t.Context(), g, SyncForbidden); err != nil {
+	if err := g.SetStatus(t.Context(), SyncForbidden); err != nil {
 		t.Fatal(err)
 	}
 	copy := *g
-	if err := f.RemoveSyncGroup(t.Context(), g); err != nil {
+	if err := g.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	before := len(cli.calls)
-	if err := f.RemoveSyncGroup(t.Context(), &copy); err != nil || len(cli.calls) != before {
+	if err := (&copy).Remove(t.Context()); err != nil || len(cli.calls) != before {
 		t.Fatal("removal across handle copies was not idempotent")
 	}
-	if err := f.ApplySyncGroup(t.Context(), &copy); err != nil {
+	if err := (&copy).Apply(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if syncNativeGroup(syncPeriodGroups(cli.current)[0]["sync_policy"].(map[string]any), g.ID()) != nil {
@@ -335,20 +335,20 @@ func TestRGWBucketSyncPolicyUsesInstanceAndDynamicUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.CreateSyncPipe(t.Context(), g, SyncPipeConfig{ID: "prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "published/"}); err != nil {
+	if err := g.CreatePipe(t.Context(), SyncPipeConfig{ID: "prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "published/"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, prefix := range []string{"reports/", ""} {
-		if err := f.SetSyncPipePrefix(t.Context(), g, "prefix", prefix); err != nil {
+		if err := g.SetPipePrefix(t.Context(), "prefix", prefix); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := f.ApplySyncGroup(t.Context(), g); err != nil || a.starts != 0 || b.starts != 0 {
+	if err := g.Apply(t.Context()); err != nil || a.starts != 0 || b.starts != 0 {
 		t.Fatal("bucket activation committed or restarted gateways")
 	}
 	cli.bucketID = "bucket-recreated"
 	before := syncJSONClone(cli.bucketPolicy)
-	if err := f.RemoveSyncGroup(t.Context(), g); err == nil || !reflect.DeepEqual(cli.bucketPolicy, before) {
+	if err := g.Remove(t.Context()); err == nil || !reflect.DeepEqual(cli.bucketPolicy, before) {
 		t.Fatal("recreated bucket name was changed")
 	}
 }
@@ -376,7 +376,7 @@ func TestRGWSyncPolicyRefusesForeignPendingStagingAndGroupChanges(t *testing.T) 
 				g.owner = &Fixture{}
 			}
 			beforeStage, beforeGroup := syncJSONClone(cli.staging), syncJSONClone(cli.group)
-			if err := f.ApplySyncGroup(t.Context(), g); err == nil {
+			if err := g.Apply(t.Context()); err == nil {
 				t.Fatal("foreign policy publication accepted")
 			}
 			if !reflect.DeepEqual(beforeStage, cli.staging) || !reflect.DeepEqual(beforeGroup, cli.group) || a.stops != 0 || b.stops != 0 {
@@ -398,7 +398,7 @@ func TestRGWSymmetricalReadbackMustMatchExactNativeZones(t *testing.T) {
 		t.Fatal(err)
 	}
 	cli.badSymmetry = true
-	if err := f.CreateSyncFlow(t.Context(), g, SyncFlowConfig{ID: "pair", Zones: []string{"source", "destination"}}); err == nil {
+	if err := g.CreateFlow(t.Context(), SyncFlowConfig{ID: "pair", Zones: []string{"source", "destination"}}); err == nil {
 		t.Fatal("named flow with incorrect zones was confirmed")
 	}
 }
@@ -410,7 +410,7 @@ func TestRGWSyncPolicyCancelledAndUnownedHandlesDoNotMutate(t *testing.T) {
 	if _, err := f.CreateSyncGroup(ctx, SyncPolicyScope{}, SyncGroupConfig{ID: "owned", Status: SyncAllowed}); !errors.Is(err, context.Canceled) || len(cli.calls) != 0 {
 		t.Fatal("cancelled create used native CLI")
 	}
-	if err := f.RemoveSyncGroup(t.Context(), &SyncGroup{}); err == nil || len(cli.calls) != 0 {
+	if err := (&SyncGroup{}).Remove(t.Context()); err == nil || len(cli.calls) != 0 {
 		t.Fatal("foreign group used native CLI")
 	}
 	for _, args := range []SyncGroupConfig{{ID: "--option", Status: SyncAllowed}, {ID: "valid", Status: "unknown"}} {
@@ -427,10 +427,10 @@ func TestRGWSyncMutationLostReplyConfirmsExactNativeIntent(t *testing.T) {
 		t.Fatal(err)
 	}
 	cli.lostReply = true
-	if err := f.SetSyncGroupStatus(t.Context(), g, SyncEnabled); err != nil || g.state.pending != nil || g.state.group["status"] != "enabled" {
+	if err := g.SetStatus(t.Context(), SyncEnabled); err != nil || g.state.pending != nil || g.state.group["status"] != "enabled" {
 		t.Fatalf("lost reply applied mutation was not reconciled: %v", err)
 	}
-	if err := f.RemoveSyncGroup(t.Context(), g); err != nil {
+	if err := g.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -442,7 +442,7 @@ func TestRGWSyncStatusAndPrefixAssignmentsAreIdempotentNoOps(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := len(cli.calls)
-	if err := f.SetSyncGroupStatus(t.Context(), g, SyncAllowed); err != nil || g.state.pending != nil {
+	if err := g.SetStatus(t.Context(), SyncAllowed); err != nil || g.state.pending != nil {
 		t.Fatal("unchanged group status left unresolved intent")
 	}
 	for _, args := range cli.calls[before:] {
@@ -450,22 +450,22 @@ func TestRGWSyncStatusAndPrefixAssignmentsAreIdempotentNoOps(t *testing.T) {
 			t.Fatal("no-op status issued native mutation")
 		}
 	}
-	if err := f.CreateSyncPipe(t.Context(), g, SyncPipeConfig{ID: "same-prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "selected/"}); err != nil {
+	if err := g.CreatePipe(t.Context(), SyncPipeConfig{ID: "same-prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "selected/"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.SetSyncPipePrefix(t.Context(), g, "same-prefix", "selected/"); err != nil || g.state.pending != nil {
+	if err := g.SetPipePrefix(t.Context(), "same-prefix", "selected/"); err != nil || g.state.pending != nil {
 		t.Fatal("unchanged prefix left unresolved intent")
 	}
-	if err := f.SetSyncPipePrefix(t.Context(), g, "same-prefix", ""); err != nil {
+	if err := g.SetPipePrefix(t.Context(), "same-prefix", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.SetSyncPipePrefix(t.Context(), g, "same-prefix", ""); err != nil || g.state.pending != nil {
+	if err := g.SetPipePrefix(t.Context(), "same-prefix", ""); err != nil || g.state.pending != nil {
 		t.Fatal("empty-on-empty prefix left unresolved intent")
 	}
-	if err := f.ApplySyncGroup(t.Context(), g); err != nil {
+	if err := g.Apply(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.RemoveSyncGroup(t.Context(), g); err != nil {
+	if err := g.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -478,11 +478,11 @@ func TestRGWSyncMutationRetainsPendingIntentAcrossReadbackOutage(t *testing.T) {
 	}
 	cli.lostReply, cli.readFailuresAfterMutation = true, 1
 	config := SyncPipeConfig{ID: "pending", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "selected/"}
-	if err := f.CreateSyncPipe(t.Context(), g, config); err == nil || g.state.pending == nil {
+	if err := g.CreatePipe(t.Context(), config); err == nil || g.state.pending == nil {
 		t.Fatal("ambiguous mutation lost its pending intent")
 	}
 	before := len(cli.calls)
-	if err := f.CreateSyncPipe(t.Context(), g, config); err != nil || g.state.pending != nil || syncNativePipe(g.state.group, "pending") == nil {
+	if err := g.CreatePipe(t.Context(), config); err != nil || g.state.pending != nil || syncNativePipe(g.state.group, "pending") == nil {
 		t.Fatalf("same request did not recover applied intent: %v", err)
 	}
 	for _, args := range cli.calls[before:] {
@@ -490,7 +490,7 @@ func TestRGWSyncMutationRetainsPendingIntentAcrossReadbackOutage(t *testing.T) {
 			t.Fatal("reconciled retry issued a duplicate native mutation")
 		}
 	}
-	if err := f.RemoveSyncPipe(t.Context(), g, "pending"); err != nil {
+	if err := g.RemovePipe(t.Context(), "pending"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -502,10 +502,10 @@ func TestRGWSyncMutationReadbackOutageCanBeReconciledByRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	cli.readFailuresAfterMutation = 2
-	if err := f.SetSyncGroupStatus(t.Context(), g, SyncEnabled); err == nil || g.state.pending == nil {
+	if err := g.SetStatus(t.Context(), SyncEnabled); err == nil || g.state.pending == nil {
 		t.Fatal("readback outage did not retain applied intent")
 	}
-	if err := f.RemoveSyncGroup(t.Context(), g); err != nil || g.state.pending != nil || !g.state.removed {
+	if err := g.Remove(t.Context()); err != nil || g.state.pending != nil || !g.state.removed {
 		t.Fatalf("removal could not reconcile exact applied intent first: %v", err)
 	}
 }
@@ -523,26 +523,26 @@ func TestRGWSyncPendingMutationRefusesForeignDeltasAndBeforeStatePublication(t *
 			} else {
 				cli.failBeforeMutation = true
 			}
-			if err := f.SetSyncGroupStatus(t.Context(), g, SyncEnabled); err == nil || g.state.pending == nil {
+			if err := g.SetStatus(t.Context(), SyncEnabled); err == nil || g.state.pending == nil {
 				t.Fatal("failure did not retain pending intent")
 			}
 			if foreign {
 				syncNativeGroup(cli.group["sync_policy"].(map[string]any), g.ID())["foreign"] = "edited"
 			}
 			before := syncJSONClone(cli.group)
-			if err := f.ApplySyncGroup(t.Context(), g); err == nil || a.stops != 0 || b.stops != 0 {
+			if err := g.Apply(t.Context()); err == nil || a.stops != 0 || b.stops != 0 {
 				t.Fatal("unresolved/foreign pending mutation was published")
 			}
-			if err := f.RemoveSyncGroup(t.Context(), g); err == nil || !reflect.DeepEqual(before, cli.group) {
+			if err := g.Remove(t.Context()); err == nil || !reflect.DeepEqual(before, cli.group) {
 				t.Fatal("unresolved/foreign pending mutation was removed")
 			}
 			if foreign {
-				if err := f.SetSyncGroupStatus(t.Context(), g, SyncEnabled); err == nil {
+				if err := g.SetStatus(t.Context(), SyncEnabled); err == nil {
 					t.Fatal("foreign delta adopted by retry")
 				}
 			} else {
 				cli.failBeforeMutation = false
-				if err := f.SetSyncGroupStatus(t.Context(), g, SyncEnabled); err != nil || g.state.pending != nil {
+				if err := g.SetStatus(t.Context(), SyncEnabled); err != nil || g.state.pending != nil {
 					t.Fatal("unchanged before-state did not permit same request retry")
 				}
 			}

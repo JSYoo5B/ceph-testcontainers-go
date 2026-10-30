@@ -43,7 +43,7 @@ shorten:
 | Operation | Bound |
 | --- | --- |
 | `rbdmirror.Mirror.WaitReplayReady`, `WaitReceiverReady` | 4 minutes |
-| `multisite.Fixture.WaitSyncReady`, `WaitBucketSyncReady`, `WaitBucketSyncPolicyReady` | 4 minutes |
+| `multisite.Fixture.WaitSyncReady`, `SyncGroup.WaitBucketSyncReady`, `SyncGroup.WaitBucketPolicyReady` | 4 minutes |
 | `cephfsmirror.Mirror.WaitDirectoryReady`, `WaitSnapshotSynced` | 4 minutes |
 | `cephfsmirror.DirectoryRemoval.WaitReleased`, `cephfsmirror.PeerRemoval.WaitDrained` | 2 minutes |
 | `rbdmirror.Mirror.ReceiverStatus`, `BindNamespace` | 30 seconds |

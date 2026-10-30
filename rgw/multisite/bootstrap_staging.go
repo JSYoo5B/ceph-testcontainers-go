@@ -11,7 +11,7 @@ import (
 // This mutation is only admitted inside fresh Run initialization,
 // after both clusters passed ensureFreshRGWCluster and before exposing the
 // fixture. It must never turn a later foreign staging period into permission
-// to overwrite pending configuration in ApplySyncGroup.
+// to overwrite pending configuration in SyncGroup.Apply.
 func (f *Fixture) canonicalizeBootstrapStaging(ctx context.Context) error {
 	if f == nil || f.closed || !f.bootstrapStagingPending {
 		return errors.New("RGW staging canonicalization is restricted to fresh owned bootstrap")
