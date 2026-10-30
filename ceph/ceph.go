@@ -191,6 +191,31 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	}
 	ctx, cancel := context.WithTimeout(ctx, settings.startupTimeout)
 	defer cancel()
+	c, err := newCluster(ctx, settings)
+	if err != nil {
+		return c, err
+	}
+	if err := c.bootstrapFirstMonitor(ctx, opts); err != nil {
+		return c, err
+	}
+	if err := c.configureDefaultCRUSHRoot(ctx); err != nil {
+		return c, fmt.Errorf("configure default CRUSH placement: %w", err)
+	}
+	if err := c.applyMessengerPolicy(ctx); err != nil {
+		return c, fmt.Errorf("apply messenger policy: %w", err)
+	}
+	if err := c.startInitialTopology(ctx); err != nil {
+		return c, err
+	}
+	return c, nil
+}
+
+// newCluster builds the cluster value of Run: its bridges (unless it uses the
+// host network), its startup identity and its shared run directory. A
+// returned cluster owns whatever was created, also with an error, so that
+// Terminate removes it. Run is its only caller.
+func newCluster(ctx context.Context, settings options) (*Container, error) {
+	var err error
 	var nw *testcontainers.DockerNetwork
 	if settings.hostNetwork {
 		if err := checkHostNetworkEngine(ctx); err != nil {
@@ -225,42 +250,42 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err := c.runDir.create(ctx); err != nil {
 		return c, err
 	}
-	mon, err := c.runMonitor(ctx, settings.essentialImage, uuid.NewString(), opts...)
+	return c, nil
+}
+
+// bootstrapFirstMonitor starts the first MON as the cluster's embedded
+// container and records what it bootstraps: the configuration, the Ceph
+// version, the key-type option, the image and the admin keyring. Each
+// record is written even with an error, so that a partial cluster reports
+// what it got. Run is its only caller, before the cluster is returned.
+func (c *Container) bootstrapFirstMonitor(ctx context.Context, opts []testcontainers.ContainerCustomizer) error {
+	mon, err := c.runMonitor(ctx, c.settings.essentialImage, uuid.NewString(), opts...)
 	if mon != nil {
 		c.Container = mon
 	}
 	if err != nil {
-		return c, fmt.Errorf("run ceph monitor: %w", err)
+		return fmt.Errorf("run ceph monitor: %w", err)
 	}
 	config, err := readFile(ctx, mon, "/etc/ceph/ceph.conf")
 	c.bootstrap.recordConfig(config)
 	if err != nil {
-		return c, err
+		return err
 	}
 	if err := c.recordCephVersion(ctx); err != nil {
-		return c, err
+		return err
 	}
 	keyTypeOption, err := detectKeyTypeOption(ctx, mon)
 	c.startup.recordKeyTypeOption(keyTypeOption)
 	if err != nil {
-		return c, err
+		return err
 	}
 	c.startup.recordFirstMonitorImage(containerImageID(ctx, mon))
 	keyring, err := readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring")
 	c.bootstrap.recordKeyring(keyring)
 	if err != nil {
-		return c, err
+		return err
 	}
-	if err := c.configureDefaultCRUSHRoot(ctx); err != nil {
-		return c, fmt.Errorf("configure default CRUSH placement: %w", err)
-	}
-	if err := c.applyMessengerPolicy(ctx); err != nil {
-		return c, fmt.Errorf("apply messenger policy: %w", err)
-	}
-	if err := c.startInitialTopology(ctx); err != nil {
-		return c, err
-	}
-	return c, nil
+	return nil
 }
 
 // startInitialTopology brings a cluster whose first MON is configured to the

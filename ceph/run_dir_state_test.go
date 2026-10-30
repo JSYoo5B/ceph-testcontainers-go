@@ -78,7 +78,7 @@ var runDirMethods = map[string][]string{
 //	"takes"    calls lockTopology before its first mu-guarded use
 //	"holds"    its doc comment requires the caller to hold Container.mu
 var runDirCallers = map[string]map[string]string{
-	"Run":                    {"create": "init"},
+	"newCluster":             {"create": "init"},
 	"runMonitor":             {"mounts": "free"},
 	"clientContainerContext": {"mounts": "free"},
 	"ensureControlPlane":     {"mounts": "free"},
@@ -300,8 +300,8 @@ func TestRunDirStateCallersAreAudited(t *testing.T) {
 			creators++
 		}
 	}
-	if creators != 1 || !found["Run"]["create"] {
-		problems = append(problems, "runDir.create must have the single caller Run")
+	if creators != 1 || !found["newCluster"]["create"] {
+		problems = append(problems, "runDir.create must have the single caller newCluster")
 	}
 	if len(problems) != 0 {
 		t.Fatalf("run directory callers break the lock contract: %v", problems)

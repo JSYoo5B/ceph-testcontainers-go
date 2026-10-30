@@ -250,7 +250,7 @@ var bootstrapRecordCallers = map[string]map[string]string{
 	"WithIdentity":                     {"rawConfig": "takes"},
 	"startService":                     {"isComplete": "takes"},
 	"AddMonitor":                       {"rawConfig": "takes"},
-	"Run":                              {"recordConfig": "startup", "recordKeyring": "startup"},
+	"bootstrapFirstMonitor":            {"recordConfig": "startup", "recordKeyring": "startup"},
 	"recordCephVersion":                {"recordVersion": "startup"},
 	"staticFacts":                      {"rawVersion": "lockfree"},
 	"adminClient":                      {"clones": "free"},
@@ -525,7 +525,7 @@ func TestBootstrapRecordCallersAreAudited(t *testing.T) {
 					problems = append(problems, name+" calls bootstrap."+method+" but is not in bootstrapRecordCallers")
 				case mode == "takes" && (lockAt == token.NoPos || lockAt > at):
 					problems = append(problems, name+" must take the topology lock before bootstrap."+method)
-				case mode == "startup" && name != "Run" && name != "recordCephVersion":
+				case mode == "startup" && name != "bootstrapFirstMonitor" && name != "recordCephVersion":
 					problems = append(problems, name+" writes the bootstrap record outside startup")
 				case mode == "lockfree" && name != "staticFacts":
 					problems = append(problems, name+" reads the bootstrap record without a lock")
