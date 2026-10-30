@@ -91,25 +91,25 @@ func (c *Container) CollectDiagnostics(ctx context.Context, config DiagnosticsCo
 	report := &DiagnosticsReport{SchemaVersion: 1, StartedAt: time.Now().UTC(), Artifacts: []DiagnosticArtifact{}}
 	snapshot, err := c.diagnosticsSnapshot(ctx, config)
 	report.HostNetwork, report.Closed = snapshot.hostNetwork, snapshot.closed
-	if err != nil {
+	inventoryFailure := func(name string, err error) string {
 		message, clipped := diagnosticErrorText(err, diagnosticsRedactor(snapshot.secrets), config.MaxOutputBytes)
-		report.Artifacts = append(report.Artifacts, DiagnosticArtifact{Kind: "inventory", Name: "cluster", Error: message, Truncated: clipped})
+		report.Artifacts = append(report.Artifacts, DiagnosticArtifact{Kind: "inventory", Name: name, Error: message, Truncated: clipped})
+		return message
+	}
+	if err != nil {
+		message := inventoryFailure("cluster", err)
 		report.FinishedAt = time.Now().UTC()
 		return report, errors.Join(errors.New(message), ctx.Err())
 	}
 	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
 	if err != nil {
-		redact := diagnosticsRedactor(snapshot.secrets)
-		message, clipped := diagnosticErrorText(err, redact, config.MaxOutputBytes)
-		report.Artifacts = append(report.Artifacts, DiagnosticArtifact{Kind: "inventory", Name: "docker", Error: message, Truncated: clipped})
+		message := inventoryFailure("docker", err)
 		report.FinishedAt = time.Now().UTC()
 		return report, errors.Join(fmt.Errorf("diagnostics Docker client: %s", message), ctx.Err())
 	}
 	report, err = collectDiagnostics(ctx, config, snapshot, docker, report)
 	if closeErr := docker.Close(); closeErr != nil {
-		redact := diagnosticsRedactor(snapshot.secrets)
-		message, clipped := diagnosticErrorText(closeErr, redact, config.MaxOutputBytes)
-		report.Artifacts = append(report.Artifacts, DiagnosticArtifact{Kind: "inventory", Name: "docker-close", Error: message, Truncated: clipped})
+		message := inventoryFailure("docker-close", closeErr)
 		report.Complete = false
 		err = errors.Join(err, fmt.Errorf("close diagnostics Docker client: %s", message))
 	}
@@ -304,11 +304,45 @@ type diagnosticTask struct {
 	collect  func(context.Context) (string, bool, error)
 }
 
+// diagnosticCollection is one collection run over a snapshot: it plans one
+// task per observation, runs the tasks on the configured workers and finishes
+// the report. It owns no cluster state; the snapshot was taken under the
+// cluster's lock and is only read here.
+type diagnosticCollection struct {
+	config   DiagnosticsConfig
+	snapshot diagnosticsSnapshot
+	docker   diagnosticsDocker
+	redact   func(string) string
+}
+
 func collectDiagnostics(ctx context.Context, config DiagnosticsConfig, snapshot diagnosticsSnapshot, docker diagnosticsDocker, report *DiagnosticsReport) (*DiagnosticsReport, error) {
-	redact := diagnosticsRedactor(snapshot.secrets)
+	run := diagnosticCollection{config: config, snapshot: snapshot, docker: docker, redact: diagnosticsRedactor(snapshot.secrets)}
+	tasks := run.plan()
+	report.Artifacts = make([]DiagnosticArtifact, len(tasks))
+	for i, task := range tasks {
+		report.Artifacts[i] = task.artifact
+	}
+	run.execute(ctx, tasks, report.Artifacts)
+	if snapshot.omitted > 0 {
+		report.Artifacts = append(report.Artifacts, DiagnosticArtifact{Kind: "inventory", Name: "container-limit", Error: fmt.Sprintf("%d containers omitted by MaxContainers", snapshot.omitted)})
+	}
+	return run.finish(ctx, report)
+}
+
+// plan lists the tasks in report order: each container's inspection and logs,
+// then the networks, then the fixed Ceph queries.
+func (run diagnosticCollection) plan() []diagnosticTask {
+	tasks, ids := run.containerTasks()
+	tasks = append(tasks, run.networkTasks(ids)...)
+	return append(tasks, run.cephTasks()...)
+}
+
+// containerTasks inspects each container and reads its logs. ids records the
+// created containers, which the network inspection lists as members.
+func (run diagnosticCollection) containerTasks() ([]diagnosticTask, map[string]bool) {
 	tasks := []diagnosticTask{}
 	ids := make(map[string]bool)
-	for _, target := range snapshot.containers {
+	for _, target := range run.snapshot.containers {
 		id := ""
 		if target.Container != nil {
 			id = target.Container.GetContainerID()
@@ -321,79 +355,74 @@ func collectDiagnostics(ctx context.Context, config DiagnosticsConfig, snapshot 
 					return "", false, errors.New("container was not created")
 				}
 				if kind == "container-inspect" {
-					response, err := docker.ContainerInspect(probe, id, dockerclient.ContainerInspectOptions{})
+					response, err := run.docker.ContainerInspect(probe, id, dockerclient.ContainerInspectOptions{})
 					if err != nil {
 						return "", false, err
 					}
 					data, err := json.Marshal(diagnosticContainerInspection(response.Container))
 					return string(data), false, err
 				}
-				return diagnosticLogs(probe, docker, id, config)
+				return diagnosticLogs(probe, run.docker, id, run.config)
 			}})
 		}
 	}
-	if snapshot.hostNetwork {
-		tasks = append(tasks, diagnosticTask{artifact: DiagnosticArtifact{Kind: "network-inspect", Name: "host"}, collect: func(context.Context) (string, bool, error) {
-			data, err := json.Marshal(map[string]any{"name": "host", "driver": "host", "shared": true, "public_address": snapshot.publicAddress})
+	return tasks, ids
+}
+
+// networkTasks describes the host namespace, or inspects each distinct bridge
+// once.
+func (run diagnosticCollection) networkTasks(ids map[string]bool) []diagnosticTask {
+	if run.snapshot.hostNetwork {
+		return []diagnosticTask{{artifact: DiagnosticArtifact{Kind: "network-inspect", Name: "host"}, collect: func(context.Context) (string, bool, error) {
+			data, err := json.Marshal(map[string]any{"name": "host", "driver": "host", "shared": true, "public_address": run.snapshot.publicAddress})
+			return string(data), false, err
+		}}}
+	}
+	var tasks []diagnosticTask
+	seen := make(map[string]bool)
+	for _, nw := range run.snapshot.networks {
+		if seen[nw.id+nw.name] {
+			continue
+		}
+		seen[nw.id+nw.name] = true
+		tasks = append(tasks, diagnosticTask{artifact: DiagnosticArtifact{Kind: "network-inspect", Name: nw.name}, collect: func(probe context.Context) (string, bool, error) {
+			if nw.id == "" {
+				return "", false, errors.New("network was not created")
+			}
+			response, err := run.docker.NetworkInspect(probe, nw.id, dockerclient.NetworkInspectOptions{})
+			if err != nil {
+				return "", false, err
+			}
+			data, err := json.Marshal(diagnosticNetworkInspection(response.Network, ids))
 			return string(data), false, err
 		}})
-	} else {
-		seen := make(map[string]bool)
-		for _, nw := range snapshot.networks {
-			if seen[nw.id+nw.name] {
-				continue
-			}
-			seen[nw.id+nw.name] = true
-			tasks = append(tasks, diagnosticTask{artifact: DiagnosticArtifact{Kind: "network-inspect", Name: nw.name}, collect: func(probe context.Context) (string, bool, error) {
-				if nw.id == "" {
-					return "", false, errors.New("network was not created")
-				}
-				response, err := docker.NetworkInspect(probe, nw.id, dockerclient.NetworkInspectOptions{})
-				if err != nil {
-					return "", false, err
-				}
-				data, err := json.Marshal(diagnosticNetworkInspection(response.Network, ids))
-				return string(data), false, err
-			}})
-		}
 	}
+	return tasks
+}
+
+// cephTasks runs the fixed read-only Ceph queries through the control
+// container.
+func (run diagnosticCollection) cephTasks() []diagnosticTask {
+	var tasks []diagnosticTask
 	for _, query := range diagnosticCephQueries {
 		tasks = append(tasks, diagnosticTask{artifact: DiagnosticArtifact{Kind: "ceph", Name: query.name}, collect: func(probe context.Context) (string, bool, error) {
-			return diagnosticCephCommand(probe, snapshot.control, query.args, config.MaxOutputBytes)
+			return diagnosticCephCommand(probe, run.snapshot.control, query.args, run.config.MaxOutputBytes)
 		}})
 	}
-	report.Artifacts = make([]DiagnosticArtifact, len(tasks))
-	for i, task := range tasks {
-		report.Artifacts[i] = task.artifact
-	}
+	return tasks
+}
+
+// execute runs the tasks on config.Concurrency workers, each writing only its
+// own artifact.
+func (run diagnosticCollection) execute(ctx context.Context, tasks []diagnosticTask, artifacts []DiagnosticArtifact) {
 	jobs := make(chan int)
 	var workers sync.WaitGroup
-	for range config.Concurrency {
+	for range run.config.Concurrency {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
 			for i := range jobs {
-				artifact := &report.Artifacts[i]
-				if err := ctx.Err(); err != nil {
-					artifact.Error = err.Error()
-					continue
-				}
-				probe, cancel := context.WithTimeout(ctx, config.OperationTimeout)
-				data, clipped, err := tasks[i].collect(probe)
-				if err == nil {
-					err = probe.Err()
-				}
-				cancel()
-				data, outputClipped := diagnosticBoundText(redact(data), config.MaxOutputBytes)
-				artifact.Data, artifact.Truncated = data, clipped || outputClipped
-				if err != nil {
-					message, errorClipped := diagnosticBoundText(redact(err.Error()), config.MaxOutputBytes)
-					if message == "" {
-						message = "?"
-					}
-					artifact.Error = message
-					artifact.Truncated = artifact.Truncated || errorClipped
-				}
+				run.collectOne(ctx, tasks[i], &artifacts[i])
 			}
 		}()
 	}
@@ -402,16 +431,43 @@ func collectDiagnostics(ctx context.Context, config DiagnosticsConfig, snapshot 
 	}
 	close(jobs)
 	workers.Wait()
-	if snapshot.omitted > 0 {
-		report.Artifacts = append(report.Artifacts, DiagnosticArtifact{Kind: "inventory", Name: "container-limit", Error: fmt.Sprintf("%d containers omitted by MaxContainers", snapshot.omitted)})
+}
+
+// collectOne runs one task under the operation timeout and records its
+// redacted, bounded output or error.
+func (run diagnosticCollection) collectOne(ctx context.Context, task diagnosticTask, artifact *DiagnosticArtifact) {
+	if err := ctx.Err(); err != nil {
+		artifact.Error = err.Error()
+		return
 	}
+	probe, cancel := context.WithTimeout(ctx, run.config.OperationTimeout)
+	data, clipped, err := task.collect(probe)
+	if err == nil {
+		err = probe.Err()
+	}
+	cancel()
+	data, outputClipped := diagnosticBoundText(run.redact(data), run.config.MaxOutputBytes)
+	artifact.Data, artifact.Truncated = data, clipped || outputClipped
+	if err != nil {
+		message, errorClipped := diagnosticBoundText(run.redact(err.Error()), run.config.MaxOutputBytes)
+		if message == "" {
+			message = "?"
+		}
+		artifact.Error = message
+		artifact.Truncated = artifact.Truncated || errorClipped
+	}
+}
+
+// finish redacts every artifact's identity, decides completeness and joins the
+// artifact errors with the run's own.
+func (run diagnosticCollection) finish(ctx context.Context, report *DiagnosticsReport) (*DiagnosticsReport, error) {
 	report.Complete = true
 	var errs []error
 	for i := range report.Artifacts {
 		artifact := &report.Artifacts[i]
-		artifact.Name, artifact.Role, artifact.ContainerID = redact(artifact.Name), redact(artifact.Role), redact(artifact.ContainerID)
+		artifact.Name, artifact.Role, artifact.ContainerID = run.redact(artifact.Name), run.redact(artifact.Role), run.redact(artifact.ContainerID)
 		if artifact.Error != "" {
-			message, clipped := diagnosticErrorText(errors.New(artifact.Error), redact, config.MaxOutputBytes)
+			message, clipped := diagnosticErrorText(errors.New(artifact.Error), run.redact, run.config.MaxOutputBytes)
 			artifact.Error, artifact.Truncated = message, artifact.Truncated || clipped
 			errs = append(errs, fmt.Errorf("%s/%s: %s", artifact.Kind, artifact.Name, artifact.Error))
 		}

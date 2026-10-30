@@ -366,6 +366,35 @@ type verificationRule struct {
 }
 
 func normalizeVerificationConfig(config VerificationConfig) (VerificationConfig, []*verificationRule, []*verificationRule, error) {
+	config = verificationDefaults(config)
+	fail := func(err error) (VerificationConfig, []*verificationRule, []*verificationRule, error) {
+		return config, nil, nil, invalid(fmt.Errorf("verification: %v", err))
+	}
+	if err := checkVerificationBounds(config); err != nil {
+		return fail(err)
+	}
+	rules := verificationRuleSet{names: map[string]bool{}}
+	var logs, crashes []*verificationRule
+	for _, expectation := range config.Logs {
+		r, err := rules.log(expectation)
+		if err != nil {
+			return fail(err)
+		}
+		logs = append(logs, r)
+	}
+	for _, expectation := range config.Crashes {
+		r, err := rules.crash(expectation)
+		if err != nil {
+			return fail(err)
+		}
+		crashes = append(crashes, r)
+	}
+	config.Logs, config.Crashes = slices.Clone(config.Logs), slices.Clone(config.Crashes)
+	return config, logs, crashes, nil
+}
+
+// verificationDefaults fills the zero fields of config.
+func verificationDefaults(config VerificationConfig) VerificationConfig {
 	if config.Name == "" {
 		config.Name = defaultVerificationName
 	}
@@ -381,98 +410,112 @@ func normalizeVerificationConfig(config VerificationConfig) (VerificationConfig,
 	if config.MaxFindings == 0 {
 		config.MaxFindings = 256
 	}
-	fail := func(format string, args ...any) (VerificationConfig, []*verificationRule, []*verificationRule, error) {
-		return config, nil, nil, invalid(fmt.Errorf("verification: "+format, args...))
-	}
+	return config
+}
+
+// checkVerificationBounds refuses a name, timeout, limit, container
+// description or redaction value outside its range.
+func checkVerificationBounds(config VerificationConfig) error {
 	switch {
 	case !verificationName(config.Name):
-		return fail("name must be one line of at most 128 bytes")
+		return errors.New("name must be one line of at most 128 bytes")
 	case config.Timeout < 0 || config.Timeout > 5*time.Minute || config.OperationTimeout < 0 || config.OperationTimeout > time.Minute:
-		return fail("timeouts out of range")
+		return errors.New("timeouts out of range")
 	case config.MaxLogBytes < 1 || config.MaxLogBytes > 256<<20 || config.MaxFindings < 1 || config.MaxFindings > 4096:
-		return fail("limits out of range")
+		return errors.New("limits out of range")
 	case len(config.Logs) > maxVerificationRules || len(config.Crashes) > maxVerificationRules:
-		return fail("more than %d expectations of one kind", maxVerificationRules)
+		return fmt.Errorf("more than %d expectations of one kind", maxVerificationRules)
 	case len(config.AdditionalContainers) > 64 || len(config.RedactValues) > 128:
-		return fail("too many additional containers or redaction values")
+		return errors.New("too many additional containers or redaction values")
 	}
 	for _, target := range config.AdditionalContainers {
 		if len(target.Role) > 64 || len(target.Name) > 128 || strings.ContainsAny(target.Role+target.Name, "\x00\r\n") {
-			return fail("invalid container description")
+			return errors.New("invalid container description")
 		}
 	}
 	for _, value := range config.RedactValues {
 		if len(value) > 4096 {
-			return fail("redaction value exceeds 4096 bytes")
+			return errors.New("redaction value exceeds 4096 bytes")
 		}
 	}
-	names := map[string]bool{}
-	rule := func(kind, name string, required bool, minCount, maxCount int, daemon, pattern string) (*verificationRule, error) {
-		switch {
-		case !verificationName(name) || name == "":
-			return nil, fmt.Errorf("%s expectation name must be one non-empty line of at most 128 bytes", kind)
-		case names[name]:
-			return nil, fmt.Errorf("expectation name %q is used twice", name)
-		case minCount < 0 || maxCount < 0:
-			return nil, fmt.Errorf("expectation %q has a negative count", name)
-		case !required && minCount != 0:
-			return nil, fmt.Errorf("expectation %q sets MinCount without Required", name)
-		case !verificationName(daemon) || len(pattern) > 1024:
-			return nil, fmt.Errorf("expectation %q has an invalid criterion", name)
-		}
-		names[name] = true
-		if required && minCount == 0 {
-			minCount = 1
-		}
-		if maxCount != 0 && minCount > maxCount {
-			return nil, fmt.Errorf("expectation %q requires more events than it permits", name)
-		}
-		r := &verificationRule{name: name, required: required, minCount: minCount, max: maxCount, daemon: daemon}
-		if pattern != "" {
-			compiled, err := regexp.Compile(pattern)
-			if err != nil {
-				return nil, fmt.Errorf("expectation %q: %w", name, err)
-			}
-			r.pattern = compiled
-		}
-		return r, nil
+	return nil
+}
+
+// verificationRuleSet compiles the expectations of one configuration; names
+// holds the expectation names already used, across both kinds.
+type verificationRuleSet struct {
+	names map[string]bool
+}
+
+// log compiles a log expectation, which needs a pattern and a known event.
+func (set verificationRuleSet) log(expectation LogExpectation) (*verificationRule, error) {
+	r, err := set.rule("log", expectation.Name, expectation.Required, expectation.MinCount, expectation.MaxCount, expectation.Daemon, expectation.Pattern)
+	if err != nil {
+		return nil, err
 	}
-	var logs, crashes []*verificationRule
-	for _, expectation := range config.Logs {
-		r, err := rule("log", expectation.Name, expectation.Required, expectation.MinCount, expectation.MaxCount, expectation.Daemon, expectation.Pattern)
+	if expectation.Pattern == "" {
+		return nil, fmt.Errorf("log expectation %q has no pattern", expectation.Name)
+	}
+	if expectation.Event != "" && !slices.ContainsFunc(verificationLogEvents, func(known struct {
+		event   LogEvent
+		pattern *regexp.Regexp
+	}) bool {
+		return known.event == expectation.Event
+	}) {
+		return nil, fmt.Errorf("log expectation %q has unknown event %q", expectation.Name, expectation.Event)
+	}
+	r.event = expectation.Event
+	return r, nil
+}
+
+// crash compiles a crash expectation, which needs a daemon, a process or a
+// signature.
+func (set verificationRuleSet) crash(expectation CrashExpectation) (*verificationRule, error) {
+	r, err := set.rule("crash", expectation.Name, expectation.Required, expectation.MinCount, expectation.MaxCount, expectation.Daemon, expectation.Signature)
+	if err != nil {
+		return nil, err
+	}
+	if !verificationName(expectation.Process) {
+		return nil, fmt.Errorf("crash expectation %q has an invalid process", expectation.Name)
+	}
+	if expectation.Daemon == "" && expectation.Process == "" && expectation.Signature == "" {
+		return nil, fmt.Errorf("crash expectation %q needs a daemon, a process or a signature", expectation.Name)
+	}
+	r.process = expectation.Process
+	return r, nil
+}
+
+// rule checks and compiles the criteria common to both kinds and claims the
+// name.
+func (set verificationRuleSet) rule(kind, name string, required bool, minCount, maxCount int, daemon, pattern string) (*verificationRule, error) {
+	switch {
+	case !verificationName(name) || name == "":
+		return nil, fmt.Errorf("%s expectation name must be one non-empty line of at most 128 bytes", kind)
+	case set.names[name]:
+		return nil, fmt.Errorf("expectation name %q is used twice", name)
+	case minCount < 0 || maxCount < 0:
+		return nil, fmt.Errorf("expectation %q has a negative count", name)
+	case !required && minCount != 0:
+		return nil, fmt.Errorf("expectation %q sets MinCount without Required", name)
+	case !verificationName(daemon) || len(pattern) > 1024:
+		return nil, fmt.Errorf("expectation %q has an invalid criterion", name)
+	}
+	set.names[name] = true
+	if required && minCount == 0 {
+		minCount = 1
+	}
+	if maxCount != 0 && minCount > maxCount {
+		return nil, fmt.Errorf("expectation %q requires more events than it permits", name)
+	}
+	r := &verificationRule{name: name, required: required, minCount: minCount, max: maxCount, daemon: daemon}
+	if pattern != "" {
+		compiled, err := regexp.Compile(pattern)
 		if err != nil {
-			return fail("%v", err)
+			return nil, fmt.Errorf("expectation %q: %w", name, err)
 		}
-		if expectation.Pattern == "" {
-			return fail("log expectation %q has no pattern", expectation.Name)
-		}
-		if expectation.Event != "" && !slices.ContainsFunc(verificationLogEvents, func(known struct {
-			event   LogEvent
-			pattern *regexp.Regexp
-		}) bool {
-			return known.event == expectation.Event
-		}) {
-			return fail("log expectation %q has unknown event %q", expectation.Name, expectation.Event)
-		}
-		r.event = expectation.Event
-		logs = append(logs, r)
+		r.pattern = compiled
 	}
-	for _, expectation := range config.Crashes {
-		r, err := rule("crash", expectation.Name, expectation.Required, expectation.MinCount, expectation.MaxCount, expectation.Daemon, expectation.Signature)
-		if err != nil {
-			return fail("%v", err)
-		}
-		if !verificationName(expectation.Process) {
-			return fail("crash expectation %q has an invalid process", expectation.Name)
-		}
-		if expectation.Daemon == "" && expectation.Process == "" && expectation.Signature == "" {
-			return fail("crash expectation %q needs a daemon, a process or a signature", expectation.Name)
-		}
-		r.process = expectation.Process
-		crashes = append(crashes, r)
-	}
-	config.Logs, config.Crashes = slices.Clone(config.Logs), slices.Clone(config.Crashes)
-	return config, logs, crashes, nil
+	return r, nil
 }
 
 func verificationName(name string) bool {
