@@ -648,7 +648,7 @@ declarations to validated receipts, is documented in
   them.
 - **Short MON tickets.** Under ten seconds, a MON client that renews late is
   refused with `EACCES` and does not authenticate again (see
-  [WithAuth](ceph-configuration.md#withauth)); this is Ceph's MON client
+  [WithAuth](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#WithAuth)); this is Ceph's MON client
   behaviour. A MGR busy loading modules can lose its session this way and
   abort, which is why the 1.5 s profile is optional. With 1.5 s MON tickets on
   Tentacle with AES256K keys, native librados sessions and MGR commands stop

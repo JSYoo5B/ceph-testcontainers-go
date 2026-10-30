@@ -5,7 +5,7 @@ Worked examples for the `ceph` package. They are collected here until the usage 
 
 The fragments below run inside a test with `ctx := t.Context()` and a `cluster`
 started as in the [usage example](../../ceph/README.md#usual-order-of-use), unless they show their own
-`Run`. They use `waitForHealthCheck` from [HealthDetails](ceph-operations.md#healthdetails).
+`Run`. They use `waitForHealthCheck` from [HealthDetails](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#HealthDetails).
 
 ## Attach a client with a restricted identity
 
@@ -675,14 +675,14 @@ container, or use host mode.
 
 ## Save diagnostics when a test fails
 
-Use [TerminateOnCleanup](ceph-operations.md#terminateoncleanup) with `Archive: true`: it
+Use [TerminateOnCleanup](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#TerminateOnCleanup) with `Archive: true`: it
 writes the diagnostics, the crash metadata and a manifest into the test's
 artifact directory before the cluster is terminated. Run `go test -artifacts`
 to keep them. Add caller-owned clients and mirror daemons with
 `Diagnostics.AdditionalContainers`, remove them through
 `Finalization.Cleanup`, and mask application secrets with `RedactValues`. To
-collect by hand, see [CollectDiagnostics](ceph-operations.md#collectdiagnostics) and
-[CollectCrashMetadata](ceph-operations.md#collectcrashmetadata).
+collect by hand, see [CollectDiagnostics](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#CollectDiagnostics) and
+[CollectCrashMetadata](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#CollectCrashMetadata).
 
 To also fail a test whose client operations succeeded although a daemon
 crashed or logged an unexpected warning, activate a post-test

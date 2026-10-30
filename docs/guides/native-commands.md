@@ -18,9 +18,9 @@ or uses cgo.
 | A read-only snapshot for failure analysis | `cluster.CollectDiagnostics(ctx, config)` | Docker API and the control container |
 
 The API contracts are in [`ceph`](../../ceph/README.md),
-[RunNativeCommand](ceph-operations.md#runnativecommand),
-[ControlContainer](ceph-operations.md#controlcontainer) and
-[ClientContainer](ceph-operations.md#clientcontainer). This guide adds the
+[RunNativeCommand](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#RunNativeCommand),
+[ControlContainer](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ControlContainer) and
+[ClientContainer](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientContainer). This guide adds the
 details and traps that matter when you use them.
 
 ## The ceph CLI
@@ -120,7 +120,7 @@ These commands do not give usable JSON:
 its own native queries. Use it for oracle and probe commands whose run time
 and output must be bounded and whose process must not outlive a canceled
 call. The fields and error categories are listed in
-[RunNativeCommand](ceph-operations.md#runnativecommand).
+[RunNativeCommand](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#RunNativeCommand).
 
 ```golang
 result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
@@ -385,7 +385,7 @@ with `override.SetOSDFlag` meanwhile. `TestRADOSErasureCodedOutcomes` in
 | --- | --- |
 | Inspect stored central configuration | `Observer.Configuration(ctx)` |
 | Change any option for a test and restore it | [override.SetConfig](../../override/README.md#setconfig) |
-| Options that must exist at bootstrap | [WithConfigFile](ceph-configuration.md#withconfigfile) |
+| Options that must exist at bootstrap | [WithConfigFile](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#WithConfigFile) |
 | A daemon's effective value | `cluster.Ceph(ctx, "config", "show", "osd.0", name)` |
 
 - `override.SetConfig` accepts any option, with a `Section` and optional
@@ -404,9 +404,9 @@ with `override.SetOSDFlag` meanwhile. `TestRADOSErasureCodedOutcomes` in
 `WithClient` attaches your container to the cluster network with `ceph.conf`
 and the admin keyring. `ClientConfig.WithIdentity` copies only a restricted
 identity's keyring, at `client.KeyringPath()`. See
-[WithClient](ceph-operations.md#withclient),
-[ClientConfig.WithIdentity](ceph-operations.md#clientconfigwithidentity) and
-[CreateClient](ceph-operations.md#createclient).
+[WithClient](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#WithClient),
+[ClientConfig.WithIdentity](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ClientConfig.WithIdentity) and
+[CreateClient](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#CreateClient).
 
 ```golang
 reader, err := cluster.CreateClient(ctx, "reader", ceph.ClientCaps{
@@ -451,7 +451,7 @@ process, which normally requires `ceph.WithHostNetwork()`; see
 
 For MON, MGR and OSD daemons, use the `AdminSocket` method of
 `MonitorContainer`, `ManagerContainer` and `OSDContainer` (see
-[AdminSocket](ceph-operations.md#adminsocket)). It reaches the socket of any
+[AdminSocket](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDContainer.AdminSocket)). It reaches the socket of any
 owned daemon whatever its image, without the Messenger or Cephx:
 
 ```golang
@@ -577,10 +577,10 @@ runs.
 
 ## Diagnostics
 
-[CollectDiagnostics](ceph-operations.md#collectdiagnostics) gathers a
+[CollectDiagnostics](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#CollectDiagnostics) gathers a
 bounded, read-only, JSON-serializable snapshot with a fixed set of Ceph
 queries, also from partially bootstrapped or terminated clusters, and
-[CollectCrashMetadata](ceph-operations.md#collectcrashmetadata) adds the
+[CollectCrashMetadata](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#CollectCrashMetadata) adds the
 daemons' crash reports.
 
 - Call it with a fresh context; a canceled test context cannot collect.

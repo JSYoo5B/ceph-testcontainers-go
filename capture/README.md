@@ -98,7 +98,7 @@ func (s *Session) Settle(ctx context.Context) (any, error)
 ```
 
 These implement `ceph.CaptureSettler` for
-[`Finalization.Capture`](../docs/guides/ceph-operations.md#settling-a-capture). `Settle` is `Stop` with
+[`Finalization.Capture`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Finalization.Capture). `Settle` is `Stop` with
 the report returned as an `any` holding a `capture.Report` whose `Output` is
 reduced to its base name, so that an archived report names no host path. It
 inherits `Stop`'s behavior: the context's cancellation does not shorten it, a

@@ -232,7 +232,7 @@ cut, err := fault.ApplyNetworkProfile(ctx, cluster, mds, fault.NetworkProfile{
 Requests to the target still arrive, so a write may have run although its reply
 was lost: read the outcome back with another client before treating the
 operation as failed. Get peer addresses from a client's `ContainerIP` or from
-[`DaemonAddresses`](ceph-operations.md#daemonaddresses). For an MDS path cut,
+[`DaemonAddresses`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#DaemonAddresses). For an MDS path cut,
 see [MDS sessions](messenger-client-fixtures.md#mds-sessions).
 
 ### Bandwidth limits
@@ -587,12 +587,12 @@ Traps:
 
 ## Removing an OSD or marking it out
 
-[`OSDContainer.Remove`](ceph-operations.md#osdcontainerremove) drains, stops,
+[`OSDContainer.Remove`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDContainer.Remove) drains, stops,
 purges and removes an OSD. It refuses the last owned OSD, and when the remaining
 OSDs cannot hold the data it times out and leaves the OSD out and reweighted.
 `AddOSD` is refused until a removal has finished.
 
-[`OSDContainer.SetIn`](ceph-operations.md#osdcontainersetin)`(ctx, false)`
+[`OSDContainer.SetIn`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDContainer.SetIn)`(ctx, false)`
 marks an OSD out while it keeps running. During that time wait with
 `WaitForPGClean`; `WaitForClean` also requires every owned OSD up and in. For
 an abrupt loss, `Stop` the OSD instead.

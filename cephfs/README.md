@@ -367,7 +367,7 @@ Deletes this owned filesystem. It gracefully stops its ranks and removes the fil
 terminates its MDS daemons, deletes their Cephx keys, and deletes the metadata,
 default data and `AdditionalDataPools` pools created from its `Config`, together
 with their CRUSH rules and erasure-code profiles. Pools attached later with
-`AddDataPool` are detached but kept; delete them with [Pool.Remove](../docs/guides/ceph-operations.md#poolremove).
+`AddDataPool` are detached but kept; delete them with [Pool.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Pool.Remove).
 
 All file data in the deleted pools is destroyed. Stop clients, mirrors and
 subvolume operations on the filesystem first; their handles fail afterwards. A
@@ -1327,7 +1327,7 @@ Snapshot mirroring between two clusters is provided by the `cephfs/mirror` packa
 ### Independent test fixtures
 
 Start an independent fixture with `Run`, create service resources explicitly,
-and register owned cleanup. See [Independent test fixtures](../docs/guides/ceph-configuration.md#independent-test-fixtures).
+and register owned cleanup. See [Independent test fixtures](../ceph/README.md#concepts-and-limits).
 
 ## Examples
 

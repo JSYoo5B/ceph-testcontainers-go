@@ -90,7 +90,7 @@ in the object's current acting set, and the pool must be replicated (EC pools ar
 refused). The function enables `bluestore_debug_inject_read_err` on that daemon only,
 at runtime, until it restarts; the setting affects only objects with an injected
 error. The injection lives in OSD memory until the replica is rewritten (for
-example by [RepairPG](../docs/guides/ceph-operations.md#repairpg)) or the OSD restarts. Object names that are
+example by [RepairPG](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#RepairPG)) or the OSD restarts. Object names that are
 empty, contain NUL or start with `-` are refused.
 
 Observed behaviour on Ceph 20.2.4:
@@ -110,7 +110,7 @@ the whole word as the object. Topology operations are serialized with it.
 This is a one-shot injection. It returns no handle, the cluster does not
 register it, and `Terminate` does not undo it. A failure after the debug setting
 was enabled leaves it enabled; nothing disarms, repairs or retries. The
-recovery is [RepairPG](../docs/guides/ceph-operations.md#repairpg), which rewrites the replica, or an OSD
+recovery is [RepairPG](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#RepairPG), which rewrites the replica, or an OSD
 restart. Neither is a `Restore`.
 
 ## InterruptNetwork
@@ -129,7 +129,7 @@ host-network endpoint.
 The returned `*fault.NetworkInterruption` has `ContainerID`, `NetworkName` and
 `OriginalAddress`. `Restore` reconnects the endpoint with its original IP, also
 its original IPv6 address on the dual-stack bridge of
-[NetworkConfig.WithAddressFamily](../docs/guides/ceph-configuration.md#networkconfigwithaddressfamily)`(AddressIPv6)`, and its aliases, so the
+[NetworkConfig.WithAddressFamily](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#NetworkConfig.WithAddressFamily)`(AddressIPv6)`, and its aliases, so the
 address Ceph advertises stays valid and the daemon is not restarted. An
 endpoint that someone else reattached with a different or missing address is
 refused, and the handle can be restored again once the endpoint is back. It is a whole-endpoint interruption, not a packet filter between
@@ -293,7 +293,7 @@ if err != nil {
 
 To delay only one peer, set `Peer` to its address on the same plane, for
 example a client container's address or one from
-[DaemonAddresses](../docs/guides/ceph-operations.md#daemonaddresses). The delay applies to packets that leave
+[DaemonAddresses](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#DaemonAddresses). The delay applies to packets that leave
 `ctr` toward that peer; for the other direction, delay the peer's endpoint
 with `ctr`'s address.
 
@@ -317,7 +317,7 @@ delay, err := fault.ApplyNetworkProfile(ctx, cluster, osds[0], fault.NetworkProf
 ```
 
 To fault a container's paths to several peers, list them in `Peers`, for
-example every OSD's address from [DaemonAddresses](../docs/guides/ceph-operations.md#daemonaddresses):
+example every OSD's address from [DaemonAddresses](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#DaemonAddresses):
 
 ```golang
 observer, err := ceph.Observe(cluster)
