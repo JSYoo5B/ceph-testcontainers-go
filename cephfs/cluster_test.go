@@ -58,7 +58,7 @@ func assertSnapshotReadLockQueued(t *testing.T, mutex *sync.RWMutex, operation f
 		mutex.Unlock()
 		locked = false
 		select {
-		case <-done:
+		case _ = <-done:
 		case <-time.After(time.Second):
 		}
 		t.Fatal("snapshot remained queued after caller deadline")

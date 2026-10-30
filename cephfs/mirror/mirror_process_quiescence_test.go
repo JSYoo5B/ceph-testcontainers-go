@@ -735,7 +735,7 @@ func TestCephFSOriginalProcessBindingBusyLockHonorsContext(t *testing.T) {
 		}
 		if !joined {
 			select {
-			case <-done:
+			case _ = <-done:
 				joined = true
 			case <-time.After(500 * time.Millisecond):
 				t.Error("observer did not join after cleanup unlock")
@@ -782,7 +782,7 @@ func TestCephFSOriginalProcessBusyFixtureAndMemberLocksHaveWatchdog(t *testing.T
 				}
 				if !joined {
 					select {
-					case <-done:
+					case _ = <-done:
 						joined = true
 					case <-time.After(500 * time.Millisecond):
 						t.Error("quiescence worker did not join after cleanup unlock")

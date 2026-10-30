@@ -202,7 +202,7 @@ func TestCephFSDataPoolCanceledWhileWaitingForSetupNeverStartsOperation(t *testi
 		filesystems(fs.cluster).setupMu.Unlock()
 		locked = false
 		select {
-		case <-result:
+		case _ = <-result:
 		case <-time.After(time.Second):
 		}
 		t.Fatal("canceled waiter did not return while setup remained busy")
@@ -311,14 +311,14 @@ func TestCephFSUnusedDataPoolRemovalPreservesDataAndSharedState(t *testing.T) {
 	copy := *attachment
 	copy.Name, copy.ID, copy.FilesystemName = "metadata", 1, "other"
 	c.failRemove = true
-	if err := fs.RemoveUnusedDataPool(t.Context(), &copy); err == nil || c.attached {
+	if err := (&copy).RemoveUnused(t.Context()); err == nil || c.attached {
 		t.Fatal("lost removal reply was not retained")
 	}
 	c.failRemove = false
-	if err := fs.RemoveUnusedDataPool(t.Context(), attachment); err != nil {
+	if err := attachment.RemoveUnused(t.Context()); err != nil {
 		t.Fatal("unknown successful detach retry", err)
 	}
-	if err := fs.RemoveUnusedDataPool(t.Context(), &copy); err != nil {
+	if err := (&copy).RemoveUnused(t.Context()); err != nil {
 		t.Fatal("copied removal state not shared", err)
 	}
 	if c.apps["cephfs"]["data"] != "fixture" {
@@ -374,7 +374,7 @@ func TestCephFSUnusedDataPoolRemovalRefusesReferencesAndExternalEdits(t *testing
 			}
 			test.edit(fs, c, p)
 			before := len(c.calls)
-			if err := fs.RemoveUnusedDataPool(t.Context(), p); err == nil {
+			if err := p.RemoveUnused(t.Context()); err == nil {
 				t.Fatal("unsafe detach accepted")
 			}
 			for _, call := range c.calls[before:] {
@@ -384,8 +384,8 @@ func TestCephFSUnusedDataPoolRemovalRefusesReferencesAndExternalEdits(t *testing
 			}
 		})
 	}
-	fs, _ := dataPoolsFixture(t)
-	if err := fs.RemoveUnusedDataPool(t.Context(), &DataPool{Name: "data", ID: 2}); err == nil {
+	dataPoolsFixture(t)
+	if err := (&DataPool{Name: "data", ID: 2}).RemoveUnused(t.Context()); err == nil {
 		t.Fatal("unowned default pool accepted")
 	}
 }
@@ -406,7 +406,7 @@ func TestCephFSDataPoolInheritedGroupSelectionIsStickyBeforeCreate(t *testing.T)
 	}
 	// External removal of the group and eventual object purge cannot turn a
 	// previously selected pool into a fresh, never-used attachment.
-	if err := fs.RemoveUnusedDataPool(t.Context(), attachment); err == nil {
+	if err := attachment.RemoveUnused(t.Context()); err == nil {
 		t.Fatal("implicit use was forgotten")
 	}
 }

@@ -48,7 +48,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	cephFSSnapshotIO(t, ctx, client, filesystem, source.Path, "", "seed", sourceInfo.DataPool, sourceInfo.PoolNamespace, 8<<20)
-	snapshot, err := fs.CreateSubvolumeSnapshot(ctx, source, "checkpoint")
+	snapshot, err := source.CreateSnapshot(ctx, "checkpoint")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,13 +75,13 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	noWait := temporaryConfig("mgr/volumes/snapshot_clone_no_wait", "false")
 	delay := temporaryConfig("mgr/volumes/snapshot_clone_delay", "30")
 	span := timeline.Begin(partialID, cloneTimelineSubmit, "snapshot_clone_delay=30 snapshot_clone_no_wait=false")
-	clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: "partial", GroupName: group.Name})
+	clone, err := snapshot.Clone(ctx, cephfs.CloneConfig{Name: "partial", GroupName: group.Name})
 	if err != nil {
 		t.Fatal(err)
 	}
 	span.Ok()
 	span = timeline.Begin(partialID, cloneTimelinePending, "")
-	status, err := fs.SubvolumeCloneStatus(ctx, clone)
+	status, err := clone.Status(ctx)
 	if err != nil || status.State != "pending" {
 		t.Fatalf("clone did not remain pending during native delay: %+v error=%v", status, err)
 	}
@@ -89,32 +89,32 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	if err != nil || !snapshotInfo.HasPendingClones || !slices.Contains(snapshotInfo.PendingClones, cephfs.SnapshotPendingClone{Name: clone.Name, GroupName: clone.GroupName}) {
 		t.Fatalf("source snapshot did not protect pending target: %+v error=%v", snapshotInfo, err)
 	}
-	if err := fs.RemovePartialSubvolumeClone(ctx, clone); err == nil {
+	if err := clone.RemovePartial(ctx); err == nil {
 		t.Fatal("fixture removed an active clone")
 	}
 	if _, err := cluster.Ceph(ctx, "fs", "subvolume", "rm", filesystem, clone.Name, "--group_name", clone.GroupName, "--force"); err == nil {
 		t.Fatal("native force removal accepted pending clone")
 	}
-	if err := fs.RemoveSubvolumeSnapshot(ctx, snapshot); err == nil {
+	if err := snapshot.Remove(ctx); err == nil {
 		t.Fatal("source snapshot removed while pending clone protected it")
 	}
 	span.Ok()
 	span = timeline.Begin(partialID, cloneTimelineCancelSetup, "cancel through a copied descriptor with foreign names")
 	copy := *clone
 	copy.Name, copy.GroupName, copy.FilesystemName = "foreign", "foreign", "foreign"
-	if err := fs.CancelSubvolumeClone(ctx, &copy); err != nil {
+	if err := (&copy).Cancel(ctx); err != nil {
 		t.Fatal(err)
 	}
 	span.Ok()
 	span = timeline.Begin(partialID, cloneTimelineTerminal, "")
-	status, err = fs.SubvolumeCloneStatus(ctx, clone)
+	status, err = clone.Status(ctx)
 	if err != nil || status.State != "canceled" {
 		t.Fatalf("native cancellation did not retain canceled target: %+v error=%v", status, err)
 	}
-	if target, err := fs.WaitForSubvolumeClone(ctx, clone); err == nil || target != nil {
+	if target, err := clone.Wait(ctx); err == nil || target != nil {
 		t.Fatal("canceled clone was adopted as a completed subvolume")
 	}
-	if err := fs.CancelSubvolumeClone(ctx, clone); err != nil {
+	if err := clone.Cancel(ctx); err != nil {
 		t.Fatal("retry did not reconcile canceled target", err)
 	}
 	span.Ok()
@@ -128,7 +128,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	cephFSSnapshotIO(t, ctx, client, filesystem, snapshot.Path, source.Path, "verify-clone", sourceInfo.DataPool, sourceInfo.PoolNamespace, 8<<20)
 	span.Ok()
 	span = timeline.Begin(partialID, cloneTimelineCleanup, "")
-	if err := fs.RemovePartialSubvolumeClone(ctx, &copy); err != nil {
+	if err := (&copy).RemovePartial(ctx); err != nil {
 		t.Fatal(err)
 	}
 	names, err := fs.Subvolumes(ctx, group.Name)
@@ -148,16 +148,16 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	// Reuse the public name after successful cleanup. A copied old descriptor
 	// shares its removed state and must never force-remove the new incarnation.
 	span = timeline.Begin(replacementID, cloneTimelineSubmit, "settings restored")
-	replacement, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: clone.Name, GroupName: clone.GroupName})
+	replacement, err := snapshot.Clone(ctx, cephfs.CloneConfig{Name: clone.Name, GroupName: clone.GroupName})
 	if err != nil {
 		t.Fatal(err)
 	}
 	span.Ok()
 	span = timeline.Begin(replacementID, cloneTimelineTerminal, "includes repeated owned cleanup with the old descriptor")
-	if err := fs.RemovePartialSubvolumeClone(ctx, clone); err != nil {
+	if err := clone.RemovePartial(ctx); err != nil {
 		t.Fatal("repeated owned cleanup did not converge", err)
 	}
-	restored, err := fs.WaitForSubvolumeClone(ctx, replacement)
+	restored, err := replacement.Wait(ctx)
 	if err != nil {
 		t.Fatal("old descriptor damaged replacement clone", err)
 	}
@@ -170,7 +170,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	cephFSSnapshotIO(t, ctx, client, filesystem, restored.Path, source.Path, "verify-clone", restoredInfo.DataPool, restoredInfo.PoolNamespace, 8<<20)
 	cephFSSnapshotIO(t, ctx, client, filesystem, restored.Path, source.Path, "update-clone", restoredInfo.DataPool, restoredInfo.PoolNamespace, 8<<20)
 	cephFSSnapshotIO(t, ctx, client, filesystem, source.Path, restored.Path, "verify-source", sourceInfo.DataPool, sourceInfo.PoolNamespace, 8<<20)
-	if err := fs.RemovePartialSubvolumeClone(ctx, replacement); err == nil {
+	if err := replacement.RemovePartial(ctx); err == nil {
 		t.Fatal("explicit partial cleanup accepted a completed clone")
 	}
 	span.Ok()
@@ -181,7 +181,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	failureNoWait := temporaryConfig("mgr/volumes/snapshot_clone_no_wait", "false")
 	failureDelay := temporaryConfig("mgr/volumes/snapshot_clone_delay", "60")
 	span = timeline.Begin(faultedID, cloneTimelineSubmit, "snapshot_clone_delay=60 snapshot_clone_no_wait=false")
-	failed, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: "faulted", GroupName: group.Name})
+	failed, err := snapshot.Clone(ctx, cephfs.CloneConfig{Name: "faulted", GroupName: group.Name})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,14 +201,14 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	}
 	span.Ok()
 	span = timeline.Begin(faultedID, cloneTimelineTerminal, "")
-	if target, err := fs.WaitForSubvolumeClone(ctx, failed); err == nil || target != nil {
+	if target, err := failed.Wait(ctx); err == nil || target != nil {
 		t.Fatal("faulted native clone was adopted as complete")
 	}
-	status, err = fs.SubvolumeCloneStatus(ctx, failed)
+	status, err = failed.Status(ctx)
 	if err != nil || status.State != "failed" || status.FailureErrno != 21 {
 		t.Fatalf("target collision did not produce native EISDIR failure: %+v error=%v", status, err)
 	}
-	if err := fs.CancelSubvolumeClone(ctx, failed); err == nil {
+	if err := failed.Cancel(ctx); err == nil {
 		t.Fatal("failed clone was treated as canceled")
 	}
 	span.Ok()
@@ -232,7 +232,7 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	cephFSSnapshotIO(t, ctx, client, filesystem, snapshot.Path, source.Path, "verify-clone", sourceInfo.DataPool, sourceInfo.PoolNamespace, 8<<20)
 	span.Ok()
 	span = timeline.Begin(faultedID, cloneTimelineCleanup, "")
-	if err := fs.RemovePartialSubvolumeClone(ctx, failed); err != nil {
+	if err := failed.RemovePartial(ctx); err != nil {
 		t.Fatal("owned failed target could not be explicitly removed", err)
 	}
 	names, err = fs.Subvolumes(ctx, failed.GroupName)
@@ -244,15 +244,15 @@ func testCephFSCloneCancellationAndPartialCleanup(t *testing.T, host bool) {
 	cephFSSnapshotIO(t, ctx, client, filesystem, source.Path, restored.Path, "verify-source", sourceInfo.DataPool, sourceInfo.PoolNamespace, 8<<20)
 	span.Ok()
 	span = timeline.Begin(replacementID, cloneTimelineCleanup, "")
-	if err := fs.RemoveSubvolumeSnapshot(ctx, snapshot); err != nil {
+	if err := snapshot.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for _, volume := range []*cephfs.Subvolume{restored, source} {
-		if err := fs.RemoveSubvolume(ctx, volume); err != nil {
+		if err := volume.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := fs.RemoveSubvolumeGroup(ctx, group); err != nil {
+	if err := group.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	span.Ok()

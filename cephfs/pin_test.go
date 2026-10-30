@@ -21,22 +21,22 @@ import (
 
 func TestCephFSPinValidationAndOwnershipBeforeCommands(t *testing.T) {
 	for _, setting := range []PinSetting{{}, {Type: "other"}, {Type: PinExport, Value: -2}, {Type: PinExport, Value: 0.5}, {Type: PinExport, Value: math.Inf(1)}, {Type: PinDistributed, Value: 2}, {Type: PinRandom, Value: -0.01}, {Type: PinRandom, Value: 1.01}, {Type: PinRandom, Value: math.NaN()}} {
-		fs, control, volume, _ := cephFSPinFixture()
-		if change, err := fs.OverrideSubvolumePin(t.Context(), volume, setting); change != nil || err == nil || len(control.calls) != 0 {
+		_, control, volume, _ := cephFSPinFixture()
+		if change, err := volume.OverridePin(t.Context(), setting); change != nil || err == nil || len(control.calls) != 0 {
 			t.Fatalf("invalid pin setting executed commands: %+v handle=%v error=%v", setting, change, err)
 		}
 	}
 	fs, control, volume, _ := cephFSPinFixture()
 	foreign := *volume
 	foreign.identity = &cephFSVolumeIdentity{filesystem: &Filesystem{}, ready: true}
-	if change, err := fs.OverrideSubvolumePin(t.Context(), &foreign, PinSetting{Type: PinExport, Value: 1}); change != nil || err == nil || len(control.calls) != 0 {
+	if change, err := (&foreign).OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1}); change != nil || err == nil || len(control.calls) != 0 {
 		t.Fatal("foreign resource was adopted")
 	}
-	if _, err := fs.SubvolumePinPolicy(t.Context(), &foreign); err == nil || len(control.calls) != 0 {
+	if _, err := (&foreign).PinPolicy(t.Context()); err == nil || len(control.calls) != 0 {
 		t.Fatal("foreign resource policy was queried")
 	}
 	testhelper.TestSetClosed(fs.cluster, true)
-	if change, err := fs.OverrideSubvolumePin(t.Context(), volume, PinSetting{Type: PinExport, Value: 1}); change != nil || err == nil || len(control.calls) != 0 {
+	if change, err := volume.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1}); change != nil || err == nil || len(control.calls) != 0 {
 		t.Fatal("closed cluster queried or changed directory pins")
 	}
 }
@@ -44,18 +44,18 @@ func TestCephFSPinValidationAndOwnershipBeforeCommands(t *testing.T) {
 func TestCephFSPinNativeBasePrivateNamesAndSharedRestore(t *testing.T) {
 	fs, control, volume, group := cephFSPinFixture()
 	volume.Name, volume.GroupName, volume.Path, volume.FilesystemName = "foreign", "other", "/foreign", "other-fs"
-	policy, err := fs.SubvolumePinPolicy(t.Context(), volume)
+	policy, err := volume.PinPolicy(t.Context())
 	if err != nil || policy.Path != "/volumes/group/volume" || policy.Inode != 103 || policy.ExportRank != 0 {
 		t.Fatalf("subvolume read used data/public path instead of captured native base: %+v error=%v", policy, err)
 	}
-	change, err := fs.OverrideSubvolumePin(t.Context(), volume, PinSetting{Type: PinExport, Value: 1})
+	change, err := volume.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(control.mutations[0], []string{"fs", "subvolume", "pin", "fixture", "volume", "export", "1", "--group_name", "group"}) {
 		t.Fatalf("public handle edits redirected mutation: %v", control.mutations)
 	}
-	if _, err := fs.OverrideSubvolumePin(t.Context(), volume, PinSetting{Type: PinExport, Value: -1}); err == nil || len(control.mutations) != 1 {
+	if _, err := volume.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: -1}); err == nil || len(control.mutations) != 1 {
 		t.Fatal("overlapping same-field override accepted")
 	}
 	copy := *change
@@ -68,7 +68,7 @@ func TestCephFSPinNativeBasePrivateNamesAndSharedRestore(t *testing.T) {
 	}
 	testhelper.TestSetClosed(fs.cluster, false)
 	group.Name, group.Path = "foreign", "/foreign"
-	groupChange, err := fs.OverrideSubvolumeGroupPin(t.Context(), group, PinSetting{Type: PinExport, Value: 1})
+	groupChange, err := group.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1})
 	if err != nil || !slices.Equal(control.mutations[2], []string{"fs", "subvolumegroup", "pin", "fixture", "group", "export", "1"}) {
 		t.Fatalf("group mutation changed target or used a subvolume command: %v error=%v", control.mutations, err)
 	}
@@ -78,15 +78,15 @@ func TestCephFSPinNativeBasePrivateNamesAndSharedRestore(t *testing.T) {
 }
 
 func TestCephFSPinIndependentFieldsPreserveOutsidePolicies(t *testing.T) {
-	fs, control, _, group := cephFSPinFixture()
+	_, control, _, group := cephFSPinFixture()
 	groupPath := group.identity.path
 	control.policies[groupPath].Distributed = true
 	control.policies[groupPath].RandomProbability = 0.01
-	export, err := fs.OverrideSubvolumeGroupPin(t.Context(), group, PinSetting{Type: PinExport, Value: 1})
+	export, err := group.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	distributed, err := fs.OverrideSubvolumeGroupPin(t.Context(), group, PinSetting{Type: PinDistributed, Value: 0})
+	distributed, err := group.OverridePin(t.Context(), PinSetting{Type: PinDistributed, Value: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestCephFSPinRestoreRejectsOutsideFieldOrResourceChanges(t *testing.T) {
 	for _, scenario := range []string{"field", "inode", "subvolume path", "birth time", "filesystem", "pool", "removed"} {
 		t.Run(scenario, func(t *testing.T) {
 			fs, control, volume, _ := cephFSPinFixture()
-			change, err := fs.OverrideSubvolumePin(t.Context(), volume, PinSetting{Type: PinExport, Value: 1})
+			change, err := volume.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -143,7 +143,7 @@ func TestCephFSPinRankFeasibilityRequiresOwnedActiveNativeRank(t *testing.T) {
 		case "recovering daemon":
 			control.native.Output["fs dump --format json"] = strings.Replace(control.native.Output["fs dump --format json"], `"name":"b","rank":1,"gid":102,"state":"up:active"`, `"name":"b","rank":1,"gid":102,"state":"up:replay"`, 1)
 		}
-		if change, err := fs.OverrideSubvolumePin(t.Context(), volume, PinSetting{Type: PinExport, Value: rank}); change != nil || err == nil || len(control.mutations) != 0 {
+		if change, err := volume.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: rank}); change != nil || err == nil || len(control.mutations) != 0 {
 			t.Fatalf("infeasible %s rank accepted: handle=%v error=%v", scenario, change, err)
 		}
 	}
@@ -156,7 +156,7 @@ func TestCephFSPinUncertainApplyAndRestoreRemainReconciliable(t *testing.T) {
 			control.lostReply = scenario == "apply lost reply"
 			control.falseSuccess = scenario == "apply false success"
 			control.failReadAfterMutation = scenario == "apply readback failure"
-			change, err := fs.OverrideSubvolumePin(t.Context(), volume, PinSetting{Type: PinExport, Value: 1})
+			change, err := volume.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1})
 			if change == nil || (strings.HasPrefix(scenario, "apply") && err == nil) || (!strings.HasPrefix(scenario, "apply") && err != nil) {
 				t.Fatalf("uncertain apply lost its handle/error: handle=%v error=%v", change, err)
 			}
@@ -180,14 +180,14 @@ func TestCephFSPinUncertainApplyAndRestoreRemainReconciliable(t *testing.T) {
 }
 
 func TestCephFSPinVirtualDefaultsAndNativeProbabilityPrecision(t *testing.T) {
-	fs, control, volume, _ := cephFSPinFixture()
+	_, control, volume, _ := cephFSPinFixture()
 	base := "/volumes/group/volume"
 	control.policies[base].ExportRank = -1
-	policy, err := fs.SubvolumePinPolicy(t.Context(), volume)
+	policy, err := volume.PinPolicy(t.Context())
 	if err != nil || policy.ExportRank != -1 || policy.Distributed || policy.RandomProbability != 0 {
 		t.Fatalf("virtual defaults treated as missing xattrs: %+v %v", policy, err)
 	}
-	change, err := fs.OverrideSubvolumePin(t.Context(), volume, PinSetting{Type: PinRandom, Value: 0.123456789})
+	change, err := volume.OverridePin(t.Context(), PinSetting{Type: PinRandom, Value: 0.123456789})
 	if err != nil || change.state.applied != 0.123457 {
 		t.Fatalf("native probability canonicalization rejected successful value: %+v %v", change, err)
 	}
@@ -196,7 +196,7 @@ func TestCephFSPinVirtualDefaultsAndNativeProbabilityPrecision(t *testing.T) {
 	}
 	for _, malformed := range []string{`{`, `{}`, `{"path":"/volumes/group/volume","inode":1,"export":"-1","distributed":"2","random":"0"}`, `{"path":"/volumes/group/volume","inode":1,"export":"-1","distributed":"0","random":"NaN"}`} {
 		control.override = malformed
-		if _, err := fs.SubvolumePinPolicy(t.Context(), volume); err == nil {
+		if _, err := volume.PinPolicy(t.Context()); err == nil {
 			t.Errorf("malformed virtual policy accepted: %s", malformed)
 		}
 	}

@@ -27,7 +27,7 @@ import (
 //
 // Counts cover the retained standalone service callers.
 var invalidCallSites = map[string]int{
-	"rbd": 28, "cephfs": 60, "rgw": 58,
+	"rbd": 28, "cephfs": 65, "rgw": 58,
 	"rbd/mirror": 26, "cephfs/mirror": 13,
 }
 

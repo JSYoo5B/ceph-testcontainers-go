@@ -419,8 +419,8 @@ IPv6 address, IPv4 first. Clients reach an MDS through the first entry, so
 
 The filesystem methods below share these rules:
 
-- Handles returned by `Create*`, `AddDataPool`, `AuthorizeSubvolume`,
-  `CloneSubvolumeSnapshot`, `QuiesceSubvolumes` and `Temporary*` are owned by
+- Handles returned by `Create*`, `AddDataPool`, `Subvolume.Authorize`,
+  `SubvolumeSnapshot.Clone`, `QuiesceSubvolumes` and `Temporary*` are owned by
   the fixture. Their exported fields describe the resource at creation.
   Changing a field does not redirect later operations, which use the identity
   captured at creation (filesystem ID, pool IDs, subvolume UUID path, inode and
@@ -641,10 +641,10 @@ has `Name`, `ID` (distinguishes a pool recreated under the same name) and
 `Default` (the first data pool, which cannot be detached). Unlike the
 `AdditionalDataPools` field, it reflects later attachments and removals.
 
-#### RemoveUnusedDataPool
+#### DataPool.RemoveUnused
 
 ```golang
-func (fs *Filesystem) RemoveUnusedDataPool(ctx context.Context, attachment *DataPool) error
+func (attachment *DataPool) RemoveUnused(ctx context.Context) error
 ```
 
 Detaches a pool attached by `AddDataPool` that was never used. It is refused if
@@ -696,7 +696,7 @@ Creates a new subvolume. `SubvolumeConfig` fields:
 | `GroupName` | Existing group. Empty selects Ceph's default group. |
 | `SizeBytes` | Quota (`ceph.quota.max_bytes`). Zero means unlimited. |
 | `DataPool` | One of the filesystem's current data pools. Empty inherits the group layout. Unknown pools are rejected before creation. |
-| `NamespaceIsolated` | Stores file data in a separate RADOS namespace. Required for `AuthorizeSubvolume`. It does not grant or restrict access by itself. |
+| `NamespaceIsolated` | Stores file data in a separate RADOS namespace. Required for `Subvolume.Authorize`. It does not grant or restrict access by itself. |
 
 The returned `Subvolume` has `Name`, `GroupName`, `FilesystemName` and `Path`,
 the real directory a client mounts (`/volumes/<group>/<name>/<uuid>`). A
@@ -719,10 +719,10 @@ if err != nil {
 // volume.Path is the mount root for the client under test.
 ```
 
-#### ResizeSubvolumeGroup
+#### SubvolumeGroup.Resize
 
 ```golang
-func (fs *Filesystem) ResizeSubvolumeGroup(ctx context.Context, group *SubvolumeGroup, sizeBytes int64) error
+func (group *SubvolumeGroup) Resize(ctx context.Context, sizeBytes int64) error
 ```
 
 Changes an owned group's quota. Zero removes the limit. A positive limit below
@@ -730,14 +730,14 @@ the current usage is refused (`--no_shrink`); files are never truncated. Usage
 accounting and quota enforcement are native CephFS behaviour and can lag
 behind concurrent writes.
 
-#### ResizeSubvolume
+#### Subvolume.Resize
 
 ```golang
-func (fs *Filesystem) ResizeSubvolume(ctx context.Context, subvolume *Subvolume, sizeBytes int64) error
+func (subvolume *Subvolume) Resize(ctx context.Context, sizeBytes int64) error
 ```
 
 Changes an owned subvolume's quota with the same rules as
-`ResizeSubvolumeGroup`. A clone returned by `WaitForSubvolumeClone` can be
+`SubvolumeGroup.Resize`. A clone returned by `SubvolumeClone.Wait` can be
 resized too.
 
 #### SubvolumeGroupInfo
@@ -780,23 +780,23 @@ func (fs *Filesystem) Subvolumes(ctx context.Context, groupName string) ([]strin
 Lists subvolume names in a group, sorted by name; empty selects the default
 group. Subvolumes that only retain snapshots can appear in the list.
 
-#### RemoveSubvolume
+#### Subvolume.Remove
 
 ```golang
-func (fs *Filesystem) RemoveSubvolume(ctx context.Context, subvolume *Subvolume) error
+func (subvolume *Subvolume) Remove(ctx context.Context) error
 ```
 
 Deletes an owned subvolume and its contents. It uses neither `--force` nor
 `--retain-snapshots`, so Ceph refuses a subvolume that still has snapshots:
-remove owned snapshots first with `RemoveSubvolumeSnapshot`. It is also refused
-while a grant from `AuthorizeSubvolume` is active or uncertain. Ceph purges the
+remove owned snapshots first with `SubvolumeSnapshot.Remove`. It is also refused
+while a grant from `Subvolume.Authorize` is active or uncertain. Ceph purges the
 deleted tree asynchronously from its trash. The filesystem, group and pools
 remain. A repeated call after success does nothing.
 
-#### RemoveSubvolumeGroup
+#### SubvolumeGroup.Remove
 
 ```golang
-func (fs *Filesystem) RemoveSubvolumeGroup(ctx context.Context, group *SubvolumeGroup) error
+func (group *SubvolumeGroup) Remove(ctx context.Context) error
 ```
 
 Deletes an owned, empty group without `--force`. If Ceph refuses (for example
@@ -805,10 +805,10 @@ call after success does nothing.
 
 ### Filesystem Methods: snapshots and clones
 
-#### CreateSubvolumeSnapshot
+#### Subvolume.CreateSnapshot
 
 ```golang
-func (fs *Filesystem) CreateSubvolumeSnapshot(ctx context.Context, subvolume *Subvolume, name string) (*SubvolumeSnapshot, error)
+func (subvolume *Subvolume) CreateSnapshot(ctx context.Context, name string) (*SubvolumeSnapshot, error)
 ```
 
 Creates a new snapshot of an owned subvolume. An existing snapshot with the same
@@ -819,14 +819,14 @@ A snapshot does not pause application writers. For a consistent checkpoint,
 synchronise the writers yourself or pause I/O with `QuiesceSubvolumes` first
 (see [Take a consistent snapshot of several subvolumes](#take-a-consistent-snapshot-of-several-subvolumes)).
 
-#### SubvolumeSnapshots
+#### Subvolume.Snapshots
 
 ```golang
-func (fs *Filesystem) SubvolumeSnapshots(ctx context.Context, subvolume *Subvolume) ([]string, error)
+func (subvolume *Subvolume) Snapshots(ctx context.Context) ([]string, error)
 ```
 
 Lists the snapshots of an owned subvolume, including snapshots made by a client
-(`mkdir .snap/<name>`). Only snapshots returned by `CreateSubvolumeSnapshot` can
+(`mkdir .snap/<name>`). Only snapshots returned by `Subvolume.CreateSnapshot` can
 be cloned or removed through the fixture.
 
 #### SubvolumeSnapshotInfo
@@ -841,10 +841,10 @@ Reads snapshot metadata for any existing snapshot: `Name`, `SubvolumeName`,
 clone's `Name` and `GroupName`, empty for the default group) and
 `OrphanClonesCount`.
 
-#### CloneSubvolumeSnapshot
+#### SubvolumeSnapshot.Clone
 
 ```golang
-func (fs *Filesystem) CloneSubvolumeSnapshot(ctx context.Context, snapshot *SubvolumeSnapshot, config CloneConfig) (*SubvolumeClone, error)
+func (snapshot *SubvolumeSnapshot) Clone(ctx context.Context, config CloneConfig) (*SubvolumeClone, error)
 ```
 
 Starts an asynchronous copy of an owned snapshot into a new subvolume.
@@ -864,38 +864,38 @@ target name with the CLI while the clone is pending. If submission or that
 identity read fails, the returned descriptor can be inspected but not waited on
 or canceled.
 
-#### WaitForSubvolumeClone
+#### SubvolumeClone.Wait
 
 ```golang
-func (fs *Filesystem) WaitForSubvolumeClone(ctx context.Context, clone *SubvolumeClone) (*Subvolume, error)
+func (clone *SubvolumeClone) Wait(ctx context.Context) (*Subvolume, error)
 ```
 
 Waits until the clone completes and returns it as an owned `Subvolume` that
-supports `ResizeSubvolume` and `RemoveSubvolume`. The wait is bounded by the
+supports `Subvolume.Resize` and `Subvolume.Remove`. The wait is bounded by the
 cluster startup timeout or the caller's earlier deadline. A timeout does not
 cancel the copy, so the wait can be repeated. `failed` and `canceled` clones
 return an error at once and keep their partial data.
 
 ```golang
-snapshot, err := fs.CreateSubvolumeSnapshot(ctx, volume, "checkpoint")
+snapshot, err := volume.CreateSnapshot(ctx, "checkpoint")
 if err != nil {
 	t.Fatal(err)
 }
-clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: "restored"})
+clone, err := snapshot.Clone(ctx, cephfs.CloneConfig{Name: "restored"})
 if err != nil {
 	t.Fatal(err)
 }
-restored, err := fs.WaitForSubvolumeClone(ctx, clone)
+restored, err := clone.Wait(ctx)
 if err != nil {
 	t.Fatal(err)
 }
 // Mount restored.Path in the client under test.
 ```
 
-#### SubvolumeCloneStatus
+#### SubvolumeClone.Status
 
 ```golang
-func (fs *Filesystem) SubvolumeCloneStatus(ctx context.Context, clone *SubvolumeClone) (*SubvolumeCloneStatus, error)
+func (clone *SubvolumeClone) Status(ctx context.Context) (*SubvolumeCloneStatus, error)
 ```
 
 Reads the clone state without changing it: `State` (`pending`, `in-progress`,
@@ -904,10 +904,10 @@ Reads the clone state without changing it: `State` (`pending`, `in-progress`,
 completion), `FailureErrno` and `FailureMessage` (zero and empty unless Ceph
 recorded a failure) and Ceph's `Progress` map.
 
-#### CancelSubvolumeClone
+#### SubvolumeClone.Cancel
 
 ```golang
-func (fs *Filesystem) CancelSubvolumeClone(ctx context.Context, clone *SubvolumeClone) error
+func (clone *SubvolumeClone) Cancel(ctx context.Context) error
 ```
 
 Cancels a `pending` or `in-progress` clone and waits until it is `canceled` and
@@ -916,10 +916,10 @@ clone that already completed or failed is reported as an error, not as a
 successful cancellation. The source snapshot must still exist. A retry after a
 lost reply first checks whether the clone is already canceled.
 
-#### RemovePartialSubvolumeClone
+#### SubvolumeClone.RemovePartial
 
 ```golang
-func (fs *Filesystem) RemovePartialSubvolumeClone(ctx context.Context, clone *SubvolumeClone) error
+func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error
 ```
 
 Deletes the target of an owned `failed` or `canceled` clone with `--force`. It
@@ -929,10 +929,10 @@ must still exist and is never touched. Success means the target name is gone;
 Ceph purges its data asynchronously. A retry after a lost reply does not delete
 a target recreated under the same name.
 
-#### RemoveSubvolumeSnapshot
+#### SubvolumeSnapshot.Remove
 
 ```golang
-func (fs *Filesystem) RemoveSubvolumeSnapshot(ctx context.Context, snapshot *SubvolumeSnapshot) error
+func (snapshot *SubvolumeSnapshot) Remove(ctx context.Context) error
 ```
 
 Deletes an owned snapshot without `--force`. Snapshots with pending clones are
@@ -1026,10 +1026,10 @@ removes a rule that outlived its schedule.
 These methods create Cephx principals that can reach exactly one subvolume,
 through Ceph's `fs subvolume authorize`.
 
-#### AuthorizeSubvolume
+#### Subvolume.Authorize
 
 ```golang
-func (fs *Filesystem) AuthorizeSubvolume(ctx context.Context, volume *Subvolume, config SubvolumeAuthorizationConfig) (*SubvolumeAuthorization, error)
+func (volume *Subvolume) Authorize(ctx context.Context, config SubvolumeAuthorizationConfig) (*SubvolumeAuthorization, error)
 ```
 
 Creates a new principal `client.<ClientID>` with a fresh key and grants it
@@ -1055,8 +1055,8 @@ The returned `SubvolumeAuthorization` has `Client` (a `*ceph.ClientConfig` for
 `Client.KeyringPath()` the keyring path in the attached container), `AuthID`,
 `Access`, `FilesystemName`, `SubvolumeName`, `GroupName`, `Path`, `DataPool` and
 `PoolNamespace`. A non-nil result with an error can describe a partially created
-principal. Do not call `AuthorizeSubvolume` again with the same ID: inspect the
-principal through `cluster.Ceph`, call `DeauthorizeSubvolume` if `Client` was
+principal. Do not call `Subvolume.Authorize` again with the same ID: inspect the
+principal through `cluster.Ceph`, call `SubvolumeAuthorization.Deauthorize` if `Client` was
 created, or terminate the cluster.
 
 #### SubvolumeAuthorizedClients
@@ -1069,10 +1069,10 @@ Reads Ceph's `authorized_list` for a subvolume: each entry has `AuthID` and
 `Access`. It includes principals authorized with the raw CLI. It is the volumes
 module's metadata, not an audit of every Cephx cap.
 
-#### DeauthorizeSubvolume
+#### SubvolumeAuthorization.Deauthorize
 
 ```golang
-func (fs *Filesystem) DeauthorizeSubvolume(ctx context.Context, grant *SubvolumeAuthorization) error
+func (grant *SubvolumeAuthorization) Deauthorize(ctx context.Context) error
 ```
 
 Removes exactly this grant's MDS path and OSD pool/namespace caps and the
@@ -1082,18 +1082,18 @@ a principal left with no caps at all). Overlapping caps added separately are not
 revoked, files are not removed and established sessions are not closed.
 
 Revocation applies to new connections. Test it with a fresh client, then call
-`EvictSubvolumeClients` to close existing sessions. A lost reply is reconciled
+`SubvolumeAuthorization.EvictClients` to close existing sessions. A lost reply is reconciled
 on retry; edits made outside the fixture in the meantime are reported, not
 overwritten.
 
-#### EvictSubvolumeClients
+#### SubvolumeAuthorization.EvictClients
 
 ```golang
-func (fs *Filesystem) EvictSubvolumeClients(ctx context.Context, grant *SubvolumeAuthorization) error
+func (grant *SubvolumeAuthorization) EvictClients(ctx context.Context) error
 ```
 
 Evicts sessions of this principal whose mount root is exactly the subvolume's
-original path. It requires a completed `DeauthorizeSubvolume`. Sessions mounted
+original path. It requires a completed `SubvolumeAuthorization.Deauthorize`. Sessions mounted
 at other roots and future connections allowed by other caps are out of scope.
 Eviction can blocklist the client's address. An error can mean partial eviction
 across several MDS ranks; a retry repeats the same scope.
@@ -1111,10 +1111,10 @@ selected with `PinType`: `cephfs.PinExport` (pin to one rank),
 Policies can coexist; ancestry and Ceph's precedence rules decide the actual
 placement.
 
-#### SubvolumePinPolicy
+#### Subvolume.PinPolicy
 
 ```golang
-func (fs *Filesystem) SubvolumePinPolicy(ctx context.Context, volume *Subvolume) (*PinPolicy, error)
+func (volume *Subvolume) PinPolicy(ctx context.Context) (*PinPolicy, error)
 ```
 
 Reads the local pin attributes on an owned subvolume's base directory through
@@ -1124,18 +1124,18 @@ base directory one level above the UUID data directory), `Inode`, `ExportRank`
 precision of Ceph's text value). These are local values: they do not show
 inherited policy or the rank that actually serves the subtree.
 
-#### SubvolumeGroupPinPolicy
+#### SubvolumeGroup.PinPolicy
 
 ```golang
-func (fs *Filesystem) SubvolumeGroupPinPolicy(ctx context.Context, group *SubvolumeGroup) (*PinPolicy, error)
+func (group *SubvolumeGroup) PinPolicy(ctx context.Context) (*PinPolicy, error)
 ```
 
-Same as `SubvolumePinPolicy` for an owned group directory.
+Same as `Subvolume.PinPolicy` for an owned group directory.
 
-#### OverrideSubvolumePin
+#### Subvolume.OverridePin
 
 ```golang
-func (fs *Filesystem) OverrideSubvolumePin(ctx context.Context, volume *Subvolume, setting PinSetting) (*PinOverrideHandle, error)
+func (volume *Subvolume) OverridePin(ctx context.Context, setting PinSetting) (*PinOverrideHandle, error)
 ```
 
 Sets one pin field of an owned subvolume with `ceph fs subvolume pin` and
@@ -1156,7 +1156,7 @@ returned, because a canceled call or lost reply can leave the field changed.
 
 ```golang
 // Needs two active ranks, for example Config{ActiveMDS: 2}.
-pin, err := fs.OverrideSubvolumePin(ctx, volume, cephfs.PinSetting{Type: cephfs.PinExport, Value: 1})
+pin, err := volume.OverridePin(ctx, cephfs.PinSetting{Type: cephfs.PinExport, Value: 1})
 if pin != nil {
 	t.Cleanup(func() { _ = pin.Restore(context.Background()) })
 }
@@ -1165,13 +1165,13 @@ if err != nil {
 }
 ```
 
-#### OverrideSubvolumeGroupPin
+#### SubvolumeGroup.OverridePin
 
 ```golang
-func (fs *Filesystem) OverrideSubvolumeGroupPin(ctx context.Context, group *SubvolumeGroup, setting PinSetting) (*PinOverrideHandle, error)
+func (group *SubvolumeGroup) OverridePin(ctx context.Context, setting PinSetting) (*PinOverrideHandle, error)
 ```
 
-Same as `OverrideSubvolumePin` for an owned group.
+Same as `Subvolume.OverridePin` for an owned group.
 
 #### PinOverrideHandle.Restore
 
@@ -1452,7 +1452,7 @@ file := volume.Path + "/big"
 if out := mustExec(t, client, "python3", "-c", quotaProbe, fs.FilesystemName, file, "2097152"); out != "EDQUOT" {
 	t.Fatalf("2 MiB write into a 1 MiB quota: %s", out)
 }
-if err := fs.ResizeSubvolume(ctx, volume, 8<<20); err != nil {
+if err := volume.Resize(ctx, 8<<20); err != nil {
 	t.Fatal(err)
 }
 if out := mustExec(t, client, "python3", "-c", quotaProbe, fs.FilesystemName, file, "2097152"); out != "written" {
@@ -1514,7 +1514,7 @@ for _, name := range []string{"tenant-a", "tenant-b"} {
 		t.Fatal(err)
 	}
 }
-grant, err := fs.AuthorizeSubvolume(ctx, volumes["tenant-a"],
+grant, err := volumes["tenant-a"].Authorize(ctx,
 	cephfs.SubvolumeAuthorizationConfig{ClientID: "tenant-a", Access: "rw"})
 if err != nil {
 	t.Fatal(err) // a non-nil grant may be partial; do not authorize the same ID again
@@ -1532,10 +1532,10 @@ if out != "denied" {
 }
 
 // Revoke: new connections are refused, then established sessions are evicted.
-if err := fs.DeauthorizeSubvolume(ctx, grant); err != nil {
+if err := grant.Deauthorize(ctx); err != nil {
 	t.Fatal(err)
 }
-if err := fs.EvictSubvolumeClients(ctx, grant); err != nil {
+if err := grant.EvictClients(ctx); err != nil {
 	t.Fatal(err)
 }
 if err := grant.Client.Delete(ctx); err != nil { // optional
@@ -1571,7 +1571,7 @@ if err != nil {
 	t.Fatal(err)
 }
 for _, volume := range []*cephfs.Subvolume{orders, payments} {
-	if _, err := fs.CreateSubvolumeSnapshot(ctx, volume, "checkpoint-1"); err != nil {
+	if _, err := volume.CreateSnapshot(ctx, "checkpoint-1"); err != nil {
 		t.Fatal(err) // Expiration resumes I/O even if the test stops here.
 	}
 }
@@ -2065,7 +2065,7 @@ if strings.HasPrefix(facts.CephVersion, "19.") {
 | `session_timeout`, `session_autoclose` | 60 s, 300 s | Time until an unresponsive client is evicted; shorten with `OverrideSessionTimeouts` (minimum 30 s). |
 | Blocklist entry of an evicted client | 1 h | The address stays blocklisted until `BlocklistEntry.Until`; new mounts use a new nonce and are not affected. |
 | `client_mount_timeout` | 300 s | A mount against an unavailable or silent MDS fails with errno 110 after this time. Set it low in probes. |
-| Cluster startup timeout | 3 min | Bounds `Start`, `WaitReady` and `WaitForSubvolumeClone`; change with `ceph.WithStartupTimeout`. |
+| Cluster startup timeout | 3 min | Bounds `Start`, `WaitReady` and `SubvolumeClone.Wait`; change with `ceph.WithStartupTimeout`. |
 
 Context handling, cleanup ordering and partial results are covered in
 [Contexts and cleanup](../docs/guides/contexts-and-cleanup.md).

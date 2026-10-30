@@ -70,7 +70,7 @@ func newWaitFixture(t *testing.T, name string) waitFixture {
 		f.cluster = f.fs.cluster
 		f.control = &waitControl{Container: base}
 		f.cluster.Container = f.control
-		f.wait = func(ctx context.Context) error { _, err := f.fs.WaitForSubvolumeClone(ctx, f.clone); return err }
+		f.wait = func(ctx context.Context) error { _, err := f.clone.Wait(ctx); return err }
 		f.finalQuery = "fs subvolume info fixture copy --group_name restores --format json"
 	default:
 		t.Fatalf("unknown wait fixture %q", name)
@@ -217,14 +217,14 @@ func TestWaitCloneLateCancellationPreservesSharedHandle(t *testing.T) {
 			cancel()
 		}
 	}
-	result, err := f.fs.WaitForSubvolumeClone(ctx, f.clone)
+	result, err := f.clone.Wait(ctx)
 	if result != nil || err == nil || !errors.Is(err, context.Canceled) || f.clone.identity.subvolume == nil {
 		t.Fatalf("late cancel result=%v err=%v capture=%v", result, err, f.clone.identity.subvolume)
 	}
 	retained := f.clone.identity.subvolume
 	copy := *f.clone
 	f.control.after = nil
-	recovered, err := f.fs.WaitForSubvolumeClone(t.Context(), &copy)
+	recovered, err := (&copy).Wait(t.Context())
 	if err != nil || recovered == nil || recovered.identity != retained.identity || recovered == retained {
 		t.Fatalf("fresh copied request lost retained private identity: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestWaitClonePendingObservationReleasesSetupGateBeforeDelay(t *testing.T) {
 
 func TestWaitCompletedCloneReentryRetainsCaptureOnCancel(t *testing.T) {
 	f := newWaitFixture(t, "Clone")
-	first, err := f.fs.WaitForSubvolumeClone(t.Context(), f.clone)
+	first, err := f.clone.Wait(t.Context())
 	if err != nil || first == nil {
 		t.Fatalf("initial complete clone: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestWaitCompletedCloneReentryRetainsCaptureOnCancel(t *testing.T) {
 			cancel()
 		}
 	}
-	result, err := f.fs.WaitForSubvolumeClone(ctx, f.clone)
+	result, err := f.clone.Wait(ctx)
 	if result != nil || err == nil || !errors.Is(err, context.Canceled) || f.clone.identity.subvolume != retained || retained.identity != first.identity {
 		t.Fatalf("reentry canceled result=%v err=%v", result, err)
 	}

@@ -63,7 +63,7 @@ func (fs *Filesystem) captureColdMDS(ctx context.Context, originalFSID string) e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if servicehook.Closed(fs.cluster) || filesystems(fs.cluster).byName[fs.name] != fs || fs.nativeIdentity != cap.identity || fs.Container != nil || fs.roster.count() != 0 {
+	if !fs.registered() || fs.nativeIdentity != cap.identity || fs.Container != nil || fs.roster.count() != 0 {
 		return errors.New("cold filesystem ownership changed before confirmation")
 	}
 	fs.coldMDS = cap
@@ -83,7 +83,7 @@ func (fs *Filesystem) scaleColdMDS(parent context.Context, active, standby int, 
 		return err
 	}
 	cap := fs.coldMDS
-	valid := !servicehook.Closed(c) && filesystems(c).byName[fs.name] == fs && fs.FilesystemName == fs.name && fs.Container == nil && fs.roster.count() == 0 && cap != nil && !cap.attempted && cap.identity == fs.nativeIdentity
+	valid := fs.registered() && fs.FilesystemName == fs.name && fs.Container == nil && fs.roster.count() == 0 && cap != nil && !cap.attempted && cap.identity == fs.nativeIdentity
 	servicehook.Unlock(c)
 	if !valid {
 		return servicehook.Invalid(errors.New("cold filesystem is unavailable, incomplete or already attempted"))

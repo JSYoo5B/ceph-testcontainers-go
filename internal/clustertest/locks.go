@@ -62,8 +62,10 @@ func AssertContextLockQueued(t testing.TB, mutex *sync.Mutex, operation func(con
 	case <-time.After(500 * time.Millisecond):
 		mutex.Unlock()
 		locked = false
+		// Join the released operation before failing; its result is not
+		// the subject of this failure.
 		select {
-		case <-result:
+		case _ = <-result:
 		case <-time.After(time.Second):
 		}
 		t.Fatal("queued operation ignored its short caller deadline")

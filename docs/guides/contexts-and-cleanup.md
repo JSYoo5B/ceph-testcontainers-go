@@ -34,7 +34,7 @@ cluster's startup timeout, 3 minutes by default. Change it with
 context deadline applies to each operation. This covers, for example,
 bootstrap, `AddOSD`, `OSDContainer.Remove`, `WaitForClean`, `WaitForPGClean`,
 `WaitForQuorum`, `Pool.WaitForPGCount`, `DeepScrubPG`, `RepairPG`,
-`cephfs.Filesystem.WaitReady`, `WaitForSubvolumeClone` and
+`cephfs.Filesystem.WaitReady`, `SubvolumeClone.Wait` and
 `rgw.Gateway.Admin`.
 
 Some operations have their own fixed upper bound, which your context can only
@@ -341,7 +341,7 @@ result:
 | `CreatePool` | Pool whose creation was attempted | Inspect it or discard the cluster; data is never deleted automatically |
 | `CreateClient` | Attempted identity | Inspect auth state or discard the cluster; do not retry with broader caps |
 | `ClientConfig.ReplaceKey` | Descriptor for the attempted key, possibly still unusable | Preserve it and the original descriptor; settle the identity before use/retry (see [ClientConfig.ReplaceKey](../../ceph/README.md#clientconfigreplacekey)) |
-| `override.SetConfig`, `override.SetMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `cephfs` `OverrideSessionTimeouts`, `OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | Override handle | `Restore`, or discard the cluster |
+| `override.SetConfig`, `override.SetMessengerPolicy`, `ClientConfig.Revoke`, `override.SetOSDFlag`, `override.SetMGRModule`, `override.SetFullRatios`, `override.AddBlocklist`, `cephfs` `OverrideSessionTimeouts`, `Subvolume.OverridePin`, `SubvolumeGroup.OverridePin` | Override handle | `Restore`, or discard the cluster |
 | `fault.Pause` | Pause handle | `Resume` |
 | `RunNativeCommand` | `*ceph.NativeCommandUnstoppedError` (found with `errors.As`) | `Stop`, after resuming a paused container |
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
@@ -365,7 +365,7 @@ back. Some wrap several native settings:
 | `override.SetFullRatios` | The nearfull, backfillfull and full ratios; a refused call still returns a handle whose `Restore` does nothing |
 | `override.AddBlocklist` | Adds one exact client-session blocklist entry; a refused call still returns a handle whose `Restore` does nothing |
 | `cephfs.Filesystem.OverrideSessionTimeouts` | A filesystem's `session_timeout` and `session_autoclose` |
-| `cephfs.Filesystem.OverrideSubvolumePin`, `OverrideSubvolumeGroupPin` | One pin policy field of a subvolume or group |
+| `cephfs.Subvolume.OverridePin`, `SubvolumeGroup.OverridePin` | One pin policy field of a subvolume or group |
 
 They share these rules:
 

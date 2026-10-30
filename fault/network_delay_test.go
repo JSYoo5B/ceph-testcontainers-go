@@ -1171,7 +1171,7 @@ func TestNetworkDelayReserveDuringRestore(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		close(proceed)
 		select {
-		case <-restored:
+		case _ = <-restored:
 		case <-time.After(2 * time.Second):
 			t.Fatal("ApplyNetworkProfile and Restore deadlocked")
 		}

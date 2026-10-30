@@ -106,7 +106,7 @@ func (fs *Filesystem) cloneSourceDetached(ctx context.Context, fsID int64, ident
 	return true, nil
 }
 
-// CancelSubvolumeClone requests native cancellation of an owned pending or
+// Cancel requests native cancellation of an owned pending or
 // in-progress clone, then waits for canceled state and release of this clone's
 // source snapshot protection. Its partial target is retained. A completed or
 // failed clone is never treated as successfully canceled. Copied handles share
@@ -114,7 +114,11 @@ func (fs *Filesystem) cloneSourceDetached(ctx context.Context, fsID int64, ident
 // The original source snapshot must still exist. Native external clone/source
 // edits must not race this operation; pending UUIDs are read from version-checked
 // native volumes metadata captured immediately after submission.
-func (fs *Filesystem) CancelSubvolumeClone(ctx context.Context, clone *SubvolumeClone) error {
+func (clone *SubvolumeClone) Cancel(ctx context.Context) error {
+	fs, err := clone.filesystem()
+	if err != nil {
+		return err
+	}
 	if err := fs.validateCloneHandle(clone); err != nil {
 		return err
 	}
@@ -177,7 +181,7 @@ func (fs *Filesystem) cancelSubvolumeCloneStep(ctx context.Context, identity *ce
 	return false, nil
 }
 
-// RemovePartialSubvolumeClone explicitly removes an owned failed or canceled
+// RemovePartial explicitly removes an owned failed or canceled
 // target with native --force. It refuses pending/in-progress/completed clones,
 // replaced target incarnations and unresolved source protection. The original
 // snapshot must remain present and unchanged. No source data or snapshots are
@@ -185,7 +189,11 @@ func (fs *Filesystem) cancelSubvolumeCloneStep(ctx context.Context, identity *ce
 // confirms logical absence, not physical purge completion. A failed command
 // retains shared retry state so an unknown successful removal can be reconciled
 // without deleting a subsequently recreated same-named target.
-func (fs *Filesystem) RemovePartialSubvolumeClone(ctx context.Context, clone *SubvolumeClone) error {
+func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
+	fs, err := clone.filesystem()
+	if err != nil {
+		return err
+	}
 	if clone == nil || clone.identity == nil || clone.identity.filesystem != fs || !clone.identity.submitted {
 		return errors.New("partial clone must have been submitted by this filesystem")
 	}

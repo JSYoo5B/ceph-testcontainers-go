@@ -105,3 +105,10 @@ directory without a package fails as well.
 9. Domain data-restore verbs such as `rbd.RestoreBackup` and
    `rbd.RestoreIncremental` consume input; they are not cleanup handles and must
    not be converted into a generic cleanup contract.
+10. An operation that acts on one resource handle is a method of that handle,
+    named without the resource word: `volume.Resize(ctx, n)`,
+    `snapshot.Clone(ctx, cfg)`, `grant.Deauthorize(ctx)`, not
+    `fs.ResizeSubvolume(ctx, volume, n)`. The handle carries the identity its
+    parent recorded, so a handle cannot be passed to a foreign parent. Creation,
+    listing and name-based queries stay on the parent (`fs.CreateSubvolume`,
+    `fs.SubvolumeInfo`).

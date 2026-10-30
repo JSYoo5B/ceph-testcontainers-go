@@ -521,7 +521,7 @@ func TestCephFSDirectoryAdditionFinalProofRetainsFixtureGate(t *testing.T) {
 		}
 		if !joined {
 			select {
-			case <-done:
+			case _ = <-done:
 				joined = true
 			case <-time.After(500 * time.Millisecond):
 				t.Error("final proof failed to join")
@@ -529,7 +529,7 @@ func TestCephFSDirectoryAdditionFinalProofRetainsFixtureGate(t *testing.T) {
 		}
 		if busyDone != nil && !busyJoined {
 			select {
-			case <-busyDone:
+			case _ = <-busyDone:
 				busyJoined = true
 			case <-time.After(500 * time.Millisecond):
 				t.Error("overlap admission failed to join after unlock")
@@ -701,7 +701,7 @@ func TestCephFSDirectoryAdditionBusyFixtureGateHasWatchdog(t *testing.T) {
 		}
 		if !joined {
 			select {
-			case <-done:
+			case _ = <-done:
 				joined = true
 			case <-time.After(500 * time.Millisecond):
 				t.Error("addition failed to join after unlock")

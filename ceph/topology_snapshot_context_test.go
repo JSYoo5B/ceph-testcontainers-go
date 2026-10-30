@@ -69,7 +69,7 @@ func assertSnapshotReadLockQueued(t *testing.T, mutex *sync.RWMutex, operation f
 		mutex.Unlock()
 		locked = false
 		select {
-		case <-done:
+		case _ = <-done:
 		case <-time.After(time.Second):
 		}
 		t.Fatal("snapshot remained queued after caller deadline")
@@ -216,7 +216,7 @@ func TestCephStatusQueriesHonorBusyControlWhileOwnerIsHeld(t *testing.T) {
 				cluster.controlPlane.mu.Unlock()
 				locked = false
 				select {
-				case <-done:
+				case _ = <-done:
 				case <-time.After(time.Second):
 				}
 				t.Fatal("native wrapper remained in plain control read wait")
@@ -262,7 +262,7 @@ func TestCephControlSnapshotDoesNotReenterTopologyOwner(t *testing.T) {
 		cluster.mu.Unlock()
 		locked = false
 		select {
-		case <-done:
+		case _ = <-done:
 		case <-time.After(time.Second):
 		}
 		t.Fatal("Ceph tried to reacquire the topology owner")

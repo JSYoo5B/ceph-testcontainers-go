@@ -75,36 +75,52 @@ type cephFSPinOverrideState struct {
 	restored          bool
 }
 
-// SubvolumePinPolicy reads all three local fields on an owned subvolume's base
+// PinPolicy reads all three local fields on an owned subvolume's base
 // directory through libcephfs inside the control container. No host mount or
 // Go native dependency is required; the image must supply Python libcephfs.
-func (fs *Filesystem) SubvolumePinPolicy(ctx context.Context, volume *Subvolume) (*PinPolicy, error) {
+func (volume *Subvolume) PinPolicy(ctx context.Context) (*PinPolicy, error) {
+	fs, err := volume.filesystem()
+	if err != nil {
+		return nil, err
+	}
 	if volume == nil {
 		return nil, errors.New("subvolume is unavailable")
 	}
 	return fs.readOwnedPinPolicy(ctx, cephFSPinTarget{identity: volume.identity})
 }
 
-// SubvolumeGroupPinPolicy reads an owned group's local directory policies.
-func (fs *Filesystem) SubvolumeGroupPinPolicy(ctx context.Context, group *SubvolumeGroup) (*PinPolicy, error) {
+// PinPolicy reads an owned group's local directory policies.
+func (group *SubvolumeGroup) PinPolicy(ctx context.Context) (*PinPolicy, error) {
+	fs, err := group.filesystem()
+	if err != nil {
+		return nil, err
+	}
 	if group == nil {
 		return nil, errors.New("subvolume group is unavailable")
 	}
 	return fs.readOwnedPinPolicy(ctx, cephFSPinTarget{identity: group.identity, group: true})
 }
 
-// OverrideSubvolumePin changes one local field using Ceph's volumes command.
+// OverridePin changes one local field using Ceph's volumes command.
 // The native subvolume data path is left intact. Overlapping handles for the
 // same target/field are rejected; independent fields may be changed separately.
-func (fs *Filesystem) OverrideSubvolumePin(ctx context.Context, volume *Subvolume, setting PinSetting) (*PinOverrideHandle, error) {
+func (volume *Subvolume) OverridePin(ctx context.Context, setting PinSetting) (*PinOverrideHandle, error) {
+	fs, err := volume.filesystem()
+	if err != nil {
+		return nil, err
+	}
 	if volume == nil {
 		return nil, errors.New("subvolume is unavailable")
 	}
 	return fs.temporaryPin(ctx, cephFSPinTarget{identity: volume.identity}, setting)
 }
 
-// OverrideSubvolumeGroupPin changes one owned group's local policy field.
-func (fs *Filesystem) OverrideSubvolumeGroupPin(ctx context.Context, group *SubvolumeGroup, setting PinSetting) (*PinOverrideHandle, error) {
+// OverridePin changes one owned group's local policy field.
+func (group *SubvolumeGroup) OverridePin(ctx context.Context, setting PinSetting) (*PinOverrideHandle, error) {
+	fs, err := group.filesystem()
+	if err != nil {
+		return nil, err
+	}
 	if group == nil {
 		return nil, errors.New("subvolume group is unavailable")
 	}

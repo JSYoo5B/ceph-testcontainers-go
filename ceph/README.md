@@ -3106,8 +3106,8 @@ one that may still apply. The CephFS subvolume grants of the
 client. Their own commands go through the MGR, though, which this settling
 cannot fence, and the module cannot tell when a failed one has ended: the
 volumes module may still create or change the identity later. Do not replace
-or revoke a client after a failed `AuthorizeSubvolume` or
-`DeauthorizeSubvolume` for it. A `SubvolumeAuthorizedClients` listing shows
+or revoke a client after a failed `Subvolume.Authorize` or
+`SubvolumeAuthorization.Deauthorize` for it. A `SubvolumeAuthorizedClients` listing shows
 only the state at that moment.
 
 #### ClientConfig.Revoke

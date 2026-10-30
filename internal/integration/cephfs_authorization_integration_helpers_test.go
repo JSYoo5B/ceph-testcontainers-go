@@ -61,15 +61,15 @@ finally:
 	if sourceInfo.PoolNamespace == "" || sourceInfo.PoolNamespace == neighborInfo.PoolNamespace {
 		t.Fatal("test did not create independent native namespaces")
 	}
-	writer, err := fs.AuthorizeSubvolume(ctx, source, cephfs.SubvolumeAuthorizationConfig{ClientID: "subvolume-writer", Access: "rw"})
+	writer, err := source.Authorize(ctx, cephfs.SubvolumeAuthorizationConfig{ClientID: "subvolume-writer", Access: "rw"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader, err := fs.AuthorizeSubvolume(ctx, source, cephfs.SubvolumeAuthorizationConfig{ClientID: "subvolume-reader", Access: "r"})
+	reader, err := source.Authorize(ctx, cephfs.SubvolumeAuthorizationConfig{ClientID: "subvolume-reader", Access: "r"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if duplicate, err := fs.AuthorizeSubvolume(ctx, source, cephfs.SubvolumeAuthorizationConfig{ClientID: writer.AuthID, Access: "r"}); err == nil || duplicate != nil {
+	if duplicate, err := source.Authorize(ctx, cephfs.SubvolumeAuthorizationConfig{ClientID: writer.AuthID, Access: "r"}); err == nil || duplicate != nil {
 		t.Fatal("existing principal was adopted or modified")
 	}
 	listing, err := fs.SubvolumeAuthorizedClients(ctx, source.Name, source.GroupName)
@@ -78,7 +78,7 @@ finally:
 	}) {
 		t.Fatalf("native authorization list=%+v error=%v", listing, err)
 	}
-	if err := fs.RemoveSubvolume(ctx, source); err == nil {
+	if err := source.Remove(ctx); err == nil {
 		t.Fatal("authorized subvolume was removed before revocation")
 	}
 	newClient := func(identity *ceph.ClientConfig) testcontainers.Container {
@@ -147,7 +147,7 @@ finally:
 	// Keep crashed-mount cleanup as an ordinary owned grant operation. The
 	// client dies while mounted, then its exact grant is revoked and its
 	// sessions are evicted before logical subvolume removal below.
-	crashed, err := fs.AuthorizeSubvolume(ctx, source, cephfs.SubvolumeAuthorizationConfig{ClientID: "subvolume-crashed", Access: "rw"})
+	crashed, err := source.Authorize(ctx, cephfs.SubvolumeAuthorizationConfig{ClientID: "subvolume-crashed", Access: "rw"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,10 +170,10 @@ finally:
 	if err := holder.Terminate(ctx, testcontainers.StopTimeout(0)); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.DeauthorizeSubvolume(ctx, crashed); err != nil {
+	if err := crashed.Deauthorize(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.EvictSubvolumeClients(ctx, crashed); err != nil {
+	if err := crashed.EvictClients(ctx); err != nil {
 		t.Fatal(err)
 	}
 	sessions, err = fs.Sessions(ctx)
@@ -241,13 +241,13 @@ finally:
 	}
 	copy := *writer
 	copy.AuthID, copy.SubvolumeName, copy.GroupName, copy.Path, copy.Client = "foreign", "foreign", "foreign", "/foreign", nil
-	if err := fs.DeauthorizeSubvolume(ctx, &copy); err != nil {
+	if err := (&copy).Deauthorize(ctx); err != nil {
 		t.Fatal(err)
 	}
 	assertPreserved(writer)
 	probe(writerClient, writer.Client, source, neighbor, sourceInfo, neighborInfo, "revoked")
 	probe(writerClient, writer.Client, neighbor, source, neighborInfo, sourceInfo, "r")
-	if err := fs.EvictSubvolumeClients(ctx, writer); err != nil {
+	if err := writer.EvictClients(ctx); err != nil {
 		t.Fatal(err)
 	}
 	cephFSSubvolumeExec(t, ctx, writerClient, "python3", "-c", "open('"+trigger+"', 'w').close()")
@@ -259,10 +259,10 @@ finally:
 	case <-ctx.Done():
 		t.Fatal("evicted native session did not finish", ctx.Err())
 	}
-	if err := fs.DeauthorizeSubvolume(ctx, writer); err != nil {
+	if err := writer.Deauthorize(ctx); err != nil {
 		t.Fatal("copied deauthorization state was not shared", err)
 	}
-	if err := fs.DeauthorizeSubvolume(ctx, reader); err != nil {
+	if err := reader.Deauthorize(ctx); err != nil {
 		t.Fatal(err)
 	}
 	assertPreserved(reader)
@@ -278,11 +278,11 @@ finally:
 		}
 	}
 	for _, volume := range volumes {
-		if err := fs.RemoveSubvolume(ctx, volume); err != nil {
+		if err := volume.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := fs.RemoveSubvolumeGroup(ctx, group); err != nil {
+	if err := group.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("native subvolume RO/RW path and RADOS namespace constraints, list, fresh revocation, preserved unrelated rights/key and scoped established-session eviction passed")

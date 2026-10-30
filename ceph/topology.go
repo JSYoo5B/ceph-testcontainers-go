@@ -934,7 +934,9 @@ func (c *Container) removeMonitorMember(ctx context.Context, hosts, name string)
 			}
 			if !member {
 				cancel()
-				<-done
+				// The membership read observed the commit; the canceled
+				// command's own result, normally the lost reply, does not change it.
+				_ = <-done
 				return nil
 			}
 		}

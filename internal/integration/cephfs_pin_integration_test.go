@@ -60,11 +60,11 @@ func TestCephFSPins(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			groupPrior, err := fs.SubvolumeGroupPinPolicy(ctx, group)
+			groupPrior, err := group.PinPolicy(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			volumePrior, err := fs.SubvolumePinPolicy(ctx, volume)
+			volumePrior, err := volume.PinPolicy(ctx)
 			if err != nil || volumePrior.Path != path.Dir(volume.Path) || volumePrior.Path == volume.Path {
 				t.Fatalf("pin query did not address native base directory: %+v error=%v", volumePrior, err)
 			}
@@ -88,11 +88,11 @@ func TestCephFSPins(t *testing.T) {
 			if err := groupExport.Restore(ctx); err != nil {
 				t.Fatal(err)
 			}
-			groupAfter, err := fs.SubvolumeGroupPinPolicy(ctx, group)
+			groupAfter, err := group.PinPolicy(ctx)
 			if err != nil || groupAfter.Inode != groupPrior.Inode || groupAfter.ExportRank != groupPrior.ExportRank {
 				t.Fatalf("group original export policy/inode not restored: %+v error=%v", groupAfter, err)
 			}
-			volumeAfter, err := fs.SubvolumePinPolicy(ctx, volume)
+			volumeAfter, err := volume.PinPolicy(ctx)
 			if err != nil || volumeAfter.Inode != volumePrior.Inode || volumeAfter.ExportRank != volumePrior.ExportRank {
 				t.Fatalf("subvolume original export policy/inode not restored: %+v error=%v", volumeAfter, err)
 			}
@@ -104,7 +104,7 @@ func TestCephFSPins(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					prior, err := fs.SubvolumeGroupPinPolicy(ctx, group)
+					prior, err := group.PinPolicy(ctx)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -137,7 +137,7 @@ func TestCephFSPins(t *testing.T) {
 					if err := change.Restore(ctx); err != nil {
 						t.Fatal(err)
 					}
-					after, err := fs.SubvolumeGroupPinPolicy(ctx, group)
+					after, err := group.PinPolicy(ctx)
 					if err != nil || after.Inode != prior.Inode || (kind == cephfs.PinDistributed && after.Distributed != prior.Distributed) || (kind == cephfs.PinRandom && after.RandomProbability != prior.RandomProbability) {
 						t.Fatalf("ephemeral policy restoration changed original field/identity: %+v error=%v", after, err)
 					}

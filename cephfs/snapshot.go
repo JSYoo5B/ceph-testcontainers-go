@@ -46,7 +46,7 @@ type CloneConfig struct {
 	Name, GroupName, DataPool string
 }
 
-// SubvolumeClone is an asynchronous, owned clone request. WaitForSubvolumeClone
+// SubvolumeClone is an asynchronous, owned clone request. SubvolumeClone.Wait
 // returns a usable subvolume only after native cloning completes. A non-nil
 // descriptor on error records the attempted request but cannot be adopted or
 // canceled automatically. Cluster cleanup removes incomplete data too.
@@ -105,15 +105,16 @@ func (fs *Filesystem) snapshotNames(ctx context.Context, identity *cephFSVolumeI
 	return decodeCephFSVolumeNames(data)
 }
 
-// SubvolumeSnapshots lists native snapshots of an owned subvolume, including
+// Snapshots lists native snapshots of an owned subvolume, including
 // snapshots made by an external client. Only snapshots returned by this fixture's
-// CreateSubvolumeSnapshot can be removed or cloned through an owned descriptor.
-func (fs *Filesystem) SubvolumeSnapshots(ctx context.Context, subvolume *Subvolume) ([]string, error) {
+// Subvolume.CreateSnapshot can be removed or cloned through an owned descriptor.
+func (subvolume *Subvolume) Snapshots(ctx context.Context) ([]string, error) {
+	fs, err := subvolume.filesystem()
+	if err != nil {
+		return nil, err
+	}
 	if subvolume == nil {
 		return nil, errors.New("subvolume is unavailable")
-	}
-	if err := fs.validateVolumeHandle(subvolume.identity); err != nil {
-		return nil, err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
 	if err != nil {
@@ -126,19 +127,20 @@ func (fs *Filesystem) SubvolumeSnapshots(ctx context.Context, subvolume *Subvolu
 	return fs.snapshotNames(ctx, subvolume.identity)
 }
 
-// CreateSubvolumeSnapshot creates a fresh snapshot without modifying an existing
+// CreateSnapshot creates a fresh snapshot without modifying an existing
 // same-named snapshot. Application writers must be synchronized by the caller
 // before taking a consistency-sensitive checkpoint. External CLI mutations must
 // not race the native preflight and creation.
-func (fs *Filesystem) CreateSubvolumeSnapshot(ctx context.Context, subvolume *Subvolume, name string) (*SubvolumeSnapshot, error) {
+func (subvolume *Subvolume) CreateSnapshot(ctx context.Context, name string) (*SubvolumeSnapshot, error) {
+	fs, err := subvolume.filesystem()
+	if err != nil {
+		return nil, err
+	}
 	if err := validateCephFSVolumeName(name, false); err != nil {
 		return nil, err
 	}
 	if subvolume == nil {
 		return nil, errors.New("subvolume is unavailable")
-	}
-	if err := fs.validateVolumeHandle(subvolume.identity); err != nil {
-		return nil, err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
 	if err != nil {
@@ -241,13 +243,6 @@ func (fs *Filesystem) subvolumeSnapshotInfo(ctx context.Context, subvolumeName, 
 	return info, nil
 }
 
-func (fs *Filesystem) validateSnapshotHandle(snapshot *SubvolumeSnapshot) error {
-	if snapshot == nil || snapshot.identity == nil || !snapshot.identity.ready {
-		return servicehook.Invalid(errors.New("snapshot must be a confirmed resource created by this filesystem"))
-	}
-	return fs.validateVolumeHandle(snapshot.identity.subvolume)
-}
-
 func (fs *Filesystem) checkSnapshotIdentity(ctx context.Context, fsID int64, identity *cephFSSnapshotIdentity) (*SubvolumeSnapshotInfo, error) {
 	if identity.removed {
 		return nil, errors.New("subvolume snapshot has been removed")
@@ -265,12 +260,13 @@ func (fs *Filesystem) checkSnapshotIdentity(ctx context.Context, fsID int64, ide
 	return info, nil
 }
 
-// RemoveSubvolumeSnapshot removes only this owned snapshot without --force.
+// Remove removes only this owned snapshot without --force.
 // Pending clones protect their source snapshot both in this preflight and in
 // native Ceph. Copies share removal state, and retry reconciles an uncertain
 // successful deletion. Source data and completed clones are preserved.
-func (fs *Filesystem) RemoveSubvolumeSnapshot(ctx context.Context, snapshot *SubvolumeSnapshot) error {
-	if err := fs.validateSnapshotHandle(snapshot); err != nil {
+func (snapshot *SubvolumeSnapshot) Remove(ctx context.Context) error {
+	fs, err := snapshot.filesystem()
+	if err != nil {
 		return err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
@@ -311,19 +307,20 @@ func (fs *Filesystem) RemoveSubvolumeSnapshot(ctx context.Context, snapshot *Sub
 	return nil
 }
 
-// CloneSubvolumeSnapshot submits an asynchronous copy to a fresh subvolume.
+// Clone submits an asynchronous copy to a fresh subvolume.
 // Duplicate targets are rejected; the source snapshot is retained. Immediately
 // after submission it captures the target UUID, inode and birth time from
 // version-checked native volumes metadata inside the control container. External
 // edits must not race submission. A failed command or identity read returns a
 // non-nil descriptor for inspection, but cannot be adopted or mutated through
 // this API. Failed/canceled targets are retained until explicit
-// RemovePartialSubvolumeClone or raw Ceph cleanup.
-func (fs *Filesystem) CloneSubvolumeSnapshot(ctx context.Context, snapshot *SubvolumeSnapshot, config CloneConfig) (*SubvolumeClone, error) {
-	if err := fs.validateSubvolumeConfig(config.Name, config.GroupName, config.DataPool, 0); err != nil {
+// SubvolumeClone.RemovePartial or raw Ceph cleanup.
+func (snapshot *SubvolumeSnapshot) Clone(ctx context.Context, config CloneConfig) (*SubvolumeClone, error) {
+	fs, err := snapshot.filesystem()
+	if err != nil {
 		return nil, err
 	}
-	if err := fs.validateSnapshotHandle(snapshot); err != nil {
+	if err := fs.validateSubvolumeConfig(config.Name, config.GroupName, config.DataPool, 0); err != nil {
 		return nil, err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
@@ -458,10 +455,14 @@ func (fs *Filesystem) subvolumeCloneStatus(ctx context.Context, fsID int64, iden
 	return status, nil
 }
 
-// SubvolumeCloneStatus inspects this owned request. Native status is read-only;
+// Status inspects this owned request. Native status is read-only;
 // failed and canceled targets are preserved. Every query verifies the captured
 // native UUID, inode and birth time too.
-func (fs *Filesystem) SubvolumeCloneStatus(ctx context.Context, clone *SubvolumeClone) (*SubvolumeCloneStatus, error) {
+func (clone *SubvolumeClone) Status(ctx context.Context) (*SubvolumeCloneStatus, error) {
+	fs, err := clone.filesystem()
+	if err != nil {
+		return nil, err
+	}
 	if err := fs.validateCloneHandle(clone); err != nil {
 		return nil, err
 	}
@@ -476,11 +477,15 @@ func (fs *Filesystem) SubvolumeCloneStatus(ctx context.Context, clone *Subvolume
 	return fs.subvolumeCloneStatus(ctx, fsID, clone.identity)
 }
 
-// WaitForSubvolumeClone waits within the cluster startup timeout or the caller's
+// Wait waits within the cluster startup timeout or the caller's
 // earlier deadline. A timeout leaves cloning running and can be retried. Native
 // failed/canceled states return promptly without removing partial data. A
-// successful result supports existing ResizeSubvolume/RemoveSubvolume methods.
-func (fs *Filesystem) WaitForSubvolumeClone(ctx context.Context, clone *SubvolumeClone) (*Subvolume, error) {
+// successful result supports existing Subvolume.Resize/Subvolume.Remove methods.
+func (clone *SubvolumeClone) Wait(ctx context.Context) (*Subvolume, error) {
+	fs, err := clone.filesystem()
+	if err != nil {
+		return nil, err
+	}
 	if err := fs.validateCloneHandle(clone); err != nil {
 		return nil, err
 	}

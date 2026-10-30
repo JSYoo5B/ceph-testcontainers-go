@@ -58,7 +58,7 @@ type cephFSAuthorizationIdentity struct {
 	remainingCaps                                   map[string]string
 }
 
-// AuthorizeSubvolume creates a fresh identity with an explicit fresh key, then
+// Authorize creates a fresh identity with an explicit fresh key, then
 // asks MGR volumes to grant its exact native UUID path and pool/namespace. It
 // refuses existing principals and non-isolated layouts. Native --allow_existing_id
 // is used only for this immediately created, key-verified identity, never to
@@ -67,9 +67,13 @@ type cephFSAuthorizationIdentity struct {
 //
 // A non-nil result with an error may contain an owned partial creation. It is
 // never silently adopted by a second Authorize call; inspect through Ceph or
-// explicitly DeauthorizeSubvolume when its Client creation was confirmed.
+// explicitly SubvolumeAuthorization.Deauthorize when its Client creation was confirmed.
 // External auth/layout edits must not race these operations.
-func (fs *Filesystem) AuthorizeSubvolume(ctx context.Context, volume *Subvolume, config SubvolumeAuthorizationConfig) (*SubvolumeAuthorization, error) {
+func (volume *Subvolume) Authorize(ctx context.Context, config SubvolumeAuthorizationConfig) (*SubvolumeAuthorization, error) {
+	fs, err := volume.filesystem()
+	if err != nil {
+		return nil, err
+	}
 	entity, err := clientEntity(config.ClientID)
 	if err != nil {
 		return nil, err
@@ -79,9 +83,6 @@ func (fs *Filesystem) AuthorizeSubvolume(ctx context.Context, volume *Subvolume,
 	}
 	if volume == nil {
 		return nil, errors.New("subvolume is required")
-	}
-	if err := fs.validateVolumeHandle(volume.identity); err != nil {
-		return nil, err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
 	if err != nil {
@@ -387,24 +388,18 @@ func (identity *cephFSAuthorizationIdentity) withoutOwnedClauses(caps map[string
 	return result, nil
 }
 
-func (fs *Filesystem) validateSubvolumeAuthorization(grant *SubvolumeAuthorization) error {
-	if fs == nil || fs.cluster == nil || grant == nil || grant.identity == nil || grant.identity.volume == nil || grant.identity.volume.filesystem != fs || !grant.identity.authorizeAttempted {
-		return servicehook.Invalid(errors.New("subvolume authorization must be an owned grant attempted by this filesystem"))
-	}
-	return nil
-}
-
-// DeauthorizeSubvolume removes only this native path/pool/namespace grant and
+// Deauthorize removes only this native path/pool/namespace grant and
 // volumes metadata. It verifies the original volume, layout and principal key;
 // unrelated capabilities and the key are preserved unless native Ceph deletes
 // an identity with no remaining rights. It does not revoke overlapping grants
 // added separately, remove files or evict established sessions. Use a fresh
-// client to observe changed permissions, then EvictSubvolumeClients when needed.
+// client to observe changed permissions, then SubvolumeAuthorization.EvictClients when needed.
 // A lost reply keeps retry state; native metadata/caps are reconciled before
 // repeating the command. Outside edits after an uncertain result are surfaced
 // without restoring or overwriting them.
-func (fs *Filesystem) DeauthorizeSubvolume(ctx context.Context, grant *SubvolumeAuthorization) error {
-	if err := fs.validateSubvolumeAuthorization(grant); err != nil {
+func (grant *SubvolumeAuthorization) Deauthorize(ctx context.Context) error {
+	fs, err := grant.filesystem()
+	if err != nil {
 		return err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
@@ -463,14 +458,15 @@ func (fs *Filesystem) DeauthorizeSubvolume(ctx context.Context, grant *Subvolume
 	return nil
 }
 
-// EvictSubvolumeClients evicts existing sessions with this principal and the
+// EvictClients evicts existing sessions with this principal and the
 // exact original subvolume mount root. Deauthorization must have completed
 // first; independently mounted roots and future connections permitted by other
 // grants are outside this native operation's scope. Eviction may blocklist the
 // client's connection address. A native error may represent partial eviction
 // across MDS ranks; a retry repeats the same owned scope.
-func (fs *Filesystem) EvictSubvolumeClients(ctx context.Context, grant *SubvolumeAuthorization) error {
-	if err := fs.validateSubvolumeAuthorization(grant); err != nil {
+func (grant *SubvolumeAuthorization) EvictClients(ctx context.Context) error {
+	fs, err := grant.filesystem()
+	if err != nil {
 		return err
 	}
 	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)

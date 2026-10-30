@@ -313,7 +313,7 @@ func TestRGWUserUsageHeldOwnerDeadlineJoinsWithoutNative(t *testing.T) {
 		unlock.Do(func() { servicehook.Unlock(g.owner) })
 		if started && !joined {
 			select {
-			case <-result:
+			case _ = <-result:
 			case <-time.After(2 * time.Second):
 				t.Error("usage worker did not join")
 			}

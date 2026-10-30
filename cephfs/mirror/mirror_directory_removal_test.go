@@ -751,18 +751,18 @@ func TestCephFSDirectoryRemovalProductionBusyLocksAndPollRelease(t *testing.T) {
 	case stats := <-first:
 		if stats != directoryRemovalTracked {
 			cancel()
-			<-done
+			_ = <-done
 			t.Fatal("first Wait observation did not positively witness pending path")
 		}
 	case <-time.After(500 * time.Millisecond):
 		cancel()
-		<-done
+		_ = <-done
 		t.Fatal("Wait never observed the original tracked path")
 	}
 	err := multicluster.LockObservation(gateCtx, &m.mu)
 	if err != nil {
 		cancel()
-		<-done
+		_ = <-done
 		t.Fatalf("Wait held fixture gate between polls: %v", err)
 	}
 	a.stats, b.stats = `{}`, `{}`
