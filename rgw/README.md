@@ -468,9 +468,12 @@ Contract:
   confirmed. Inspect the user with `Admin` or discard the cluster; do not retry
   the same ID blindly.
 - Users remain in Ceph when the gateway that created them is removed. A handle
-  runs its operations through the first registered gateway, by name, in the
-  scope of the gateway that created it, so another gateway in the same zone
-  keeps serving it.
+  runs its operations through the first running registered gateway, by name,
+  in the scope of the gateway that created it, so another gateway in the same
+  zone keeps serving it. A stopped gateway, or one whose startup failed, is
+  skipped; the choice is made before any command, so a mutation is never
+  replayed on another gateway. With no running gateway in the scope the call
+  fails before reaching Ceph.
 
 #### User.Info
 
@@ -720,6 +723,17 @@ Reads the exact native policy of a created or partial target (see
 error; use `Admin` (`zonegroup get`, `zone get`) for detailed inspection. It
 does not claim that a running gateway has loaded the configuration.
 
+#### Placement.ServedBy
+
+```golang
+func (p *Placement) ServedBy(g *Gateway) bool
+```
+
+Reports whether `g` belongs to the cluster that owns the placement, that is,
+whether the placement's pools live where `g` runs. Matching `RealmID`,
+`ZonegroupID` and `ZoneID` do not prove this, because a period can be imported
+into another storage cluster.
+
 #### ReloadPlacement
 
 ```golang
@@ -928,8 +942,8 @@ A handle to an account created by `CreateAccount`. `ID()` returns the account
 ID. The handle records the account's native metadata version, so a deleted and
 recreated account with the same ID is not mistaken for the original. Copies
 share lifecycle state. Removing a gateway does not remove the account: its
-operations run through the first registered gateway, by name, in the scope of
-the gateway that created it.
+operations run through the first running registered gateway, by name, in the
+scope of the gateway that created it.
 
 #### AccountInfo type
 

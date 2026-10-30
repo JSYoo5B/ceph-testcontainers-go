@@ -86,7 +86,7 @@ func (u *User) SetPlacement(ctx context.Context, p *Placement, config UserPlacem
 	}
 	servicehook.Lock(u.owner)
 	defer servicehook.Unlock(u.owner)
-	g, err := scopeGateway(u.owner, u.scope)
+	g, err := scopeGateway(ctx, u.owner, u.scope)
 	if err != nil {
 		return err
 	}

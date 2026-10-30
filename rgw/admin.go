@@ -161,16 +161,39 @@ func adminContext(ctx context.Context, owner *ceph.Container) (context.Context, 
 }
 
 // scopeGateway returns the first registered gateway, in name order, that serves
-// scope and still admits admin commands. A handle runs its operations through
-// it. The caller holds the owning cluster's mutex.
-func scopeGateway(owner *ceph.Container, scope Config) (*Gateway, error) {
+// scope, still admits admin commands and whose container is running. A handle
+// runs its operations through it. A stopped gateway, or one whose startup
+// failed after its container was published, stays registered, so it is skipped
+// here instead of being chosen and failing the operation; the selection runs
+// before any command, so no mutation is replayed on another gateway. The
+// caller holds the owning cluster's mutex.
+func scopeGateway(ctx context.Context, owner *ceph.Container, scope Config) (*Gateway, error) {
 	if servicehook.Closed(owner) {
 		return nil, servicehook.Invalid(errors.New("ceph cluster is terminated"))
 	}
+	ctx, cancel := adminContext(ctx, owner)
+	defer cancel()
+	var stopped []string
+	var inspectErr error
 	for _, g := range gateways(owner).Sorted() {
-		if g != nil && sameRGWScope(g.config, scope) && g.validateAdminGateway() == nil {
+		if g == nil || !sameRGWScope(g.config, scope) || g.validateAdminGateway() != nil {
+			continue
+		}
+		state, err := g.State(ctx)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			inspectErr = errors.Join(inspectErr, fmt.Errorf("inspect RGW gateway %s: %w", g.config.Name, err))
+			continue
+		}
+		if state != nil && state.Running {
 			return g, nil
 		}
+		stopped = append(stopped, g.config.Name)
+	}
+	if len(stopped) > 0 || inspectErr != nil {
+		return nil, errors.Join(fmt.Errorf("no running RGW gateway serves this handle's scope (stopped: %s)", strings.Join(stopped, ", ")), inspectErr)
 	}
 	return nil, servicehook.Invalid(errors.New("no registered RGW gateway serves this handle's scope"))
 }
@@ -507,7 +530,7 @@ func (u *User) withGateway(ctx context.Context, fn func(context.Context, *Gatewa
 	}
 	servicehook.Lock(u.owner)
 	defer servicehook.Unlock(u.owner)
-	g, err := scopeGateway(u.owner, u.scope)
+	g, err := scopeGateway(ctx, u.owner, u.scope)
 	if err != nil {
 		return err
 	}
@@ -635,7 +658,7 @@ func (u *User) Remove(ctx context.Context) error {
 	if u.state.removed {
 		return nil
 	}
-	g, err := scopeGateway(u.owner, u.scope)
+	g, err := scopeGateway(ctx, u.owner, u.scope)
 	if err != nil {
 		return err
 	}

@@ -44,7 +44,7 @@ func (user *User) Usage(ctx context.Context) (UserUsage, error) {
 		return UserUsage{}, err
 	}
 	defer servicehook.Unlock(user.owner)
-	g, err := scopeGateway(user.owner, user.scope)
+	g, err := scopeGateway(ctx, user.owner, user.scope)
 	if err != nil {
 		return UserUsage{}, err
 	}

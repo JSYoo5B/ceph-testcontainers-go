@@ -255,7 +255,11 @@ func (f *Fixture) syncDestinationClass(ctx context.Context, g *SyncGroup, config
 		if zone == nil || zone.Gateway == nil {
 			return multisiteInvalid(errors.New("RGW destination placement zone is not attached and owned"))
 		}
-		state, err := (config.DestinationPlacements[name]).Status(ctx)
+		placement := config.DestinationPlacements[name]
+		if !placement.ServedBy(zone.Gateway) {
+			return multisiteInvalid(errors.New("RGW destination placement is not owned by the destination zone's cluster"))
+		}
+		state, err := placement.Status(ctx)
 		if err != nil {
 			return err
 		}

@@ -63,6 +63,14 @@ type Placement struct {
 	confirmed                                              bool
 }
 
+// ServedBy reports whether g belongs to the cluster that owns the placement,
+// that is, whether the placement's pools and resources live where g runs. The
+// native realm, zonegroup and zone IDs alone do not show this: a period can be
+// imported into another storage cluster.
+func (p *Placement) ServedBy(g *Gateway) bool {
+	return p != nil && g != nil && p.owner != nil && p.owner == g.owner
+}
+
 // String names the placement target.
 func (p Placement) String() string { return "RGW placement " + p.Name }
 
@@ -253,7 +261,7 @@ func (g *Gateway) CreatePlacement(ctx context.Context, config PlacementConfig) (
 }
 
 // Status reads the exact native scope of a created or partial policy, through
-// the first registered gateway, by name, in the scope of the gateway that
+// the first running registered gateway, by name, in the scope of the gateway that
 // created it. Incomplete or changed mappings return an error; use Gateway.Admin
 // for detailed partial inspection. It does not claim a running gateway reloaded
 // this configuration.
@@ -263,7 +271,7 @@ func (p *Placement) Status(ctx context.Context) (PlacementState, error) {
 	}
 	servicehook.Lock(p.owner)
 	defer servicehook.Unlock(p.owner)
-	g, err := scopeGateway(p.owner, p.gatewayScope)
+	g, err := scopeGateway(ctx, p.owner, p.gatewayScope)
 	if err != nil {
 		return PlacementState{}, err
 	}

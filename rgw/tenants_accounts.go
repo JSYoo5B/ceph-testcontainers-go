@@ -54,7 +54,7 @@ type AccountConfig struct {
 // Account is a fresh account owned by this fixture. Its native metadata
 // version tag distinguishes its lifetime from a deleted/recreated account.
 // Copies share lifecycle state. Removing a gateway does not remove the account.
-// Its operations run through the first registered gateway, by name, in the
+// Its operations run through the first running registered gateway, by name, in the
 // scope of the gateway that created it.
 type Account struct {
 	owner        *ceph.Container
@@ -312,7 +312,7 @@ func (a *Account) Info(ctx context.Context) (AccountInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return AccountInfo{}, err
 	}
-	g, err := scopeGateway(a.owner, a.gatewayScope)
+	g, err := scopeGateway(ctx, a.owner, a.gatewayScope)
 	if err != nil {
 		return AccountInfo{}, err
 	}
@@ -332,7 +332,7 @@ func (a *Account) CreateRootUser(ctx context.Context, config UserConfig) (*User,
 		return nil, errors.New("owned RGW account is required")
 	}
 	servicehook.Lock(a.owner)
-	g, err := scopeGateway(a.owner, a.gatewayScope)
+	g, err := scopeGateway(ctx, a.owner, a.gatewayScope)
 	servicehook.Unlock(a.owner)
 	if err != nil {
 		return nil, err
@@ -367,7 +367,7 @@ func (a *Account) setQuota(ctx context.Context, scope string, quota Quota) error
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	g, err := scopeGateway(a.owner, a.gatewayScope)
+	g, err := scopeGateway(ctx, a.owner, a.gatewayScope)
 	if err != nil {
 		return err
 	}
@@ -426,7 +426,7 @@ func (a *Account) Remove(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	g, err := scopeGateway(a.owner, a.gatewayScope)
+	g, err := scopeGateway(ctx, a.owner, a.gatewayScope)
 	if err != nil {
 		return err
 	}

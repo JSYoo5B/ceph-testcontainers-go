@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"reflect"
 	"slices"
@@ -15,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -32,6 +33,11 @@ type rgwPlacementTestContainer struct {
 	foreignDefault        bool
 	pendingRegistrations  int
 	stopCount, startCount int
+}
+
+// State reports a running gateway, so the placement handle selects it.
+func (ctr *rgwPlacementTestContainer) State(context.Context) (*container.State, error) {
+	return &container.State{Running: true}, nil
 }
 
 func (f *rgwPlacementTestContainer) GetContainerID() string { return "gateway" }
