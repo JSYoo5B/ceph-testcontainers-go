@@ -69,10 +69,11 @@ directory without a package fails as well.
 
 ## Purpose before naming
 
-Naming applies to an API that belongs in the library at all. First place it in
-a category of [API purpose and classification](../guides/api-purpose.md) and
-check that it passes the category's "belongs" test; a service-operation or
-convenience-only API is refused before its name is discussed.
+Naming applies to an API that belongs in the library at all. First give it its
+purpose tags from [API purpose and classification](../guides/api-purpose.md)
+and check that it passes the "belongs" test of at least one of them; an API
+that passes none, such as a service-operation or convenience-only API, is
+refused before its name is discussed.
 
 ## Naming convention
 
