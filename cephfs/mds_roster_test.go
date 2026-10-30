@@ -144,6 +144,7 @@ var mdsRosterWriters = map[string][]string{
 var mdsRosterSetupHeld = map[string]bool{
 	"startMDS": true, "startMDSWithService": true, "startMDSWithAdmission": true, "admitMDSStart": true, "createMDSCredentials": true, "publishStartedMDS": true, "retireMDS": true,
 	"captureColdMDS": true, "scaleColdMDS": true, "verifyColdMDS": true, "checkColdMDSAuth": true,
+	"growMDSs": true, "retireSurplusMDSs": true,
 }
 
 // mdsRosterOwnerHeld are the functions documented "Owner held": they read the
@@ -154,6 +155,7 @@ var mdsRosterOwnerHeld = map[string]bool{
 	"completedMDSReplacementCohort": true, "checkMDSReplacementOwner": true,
 	"checkMDSReplacementPartial": true, "checkStoppedMDSOwner": true,
 	"decodeStoppedMDSScope": true, "verifyStoppedMDSSurvivors": true, "readStoppedMDSScope": true, "ConfigTargets": true,
+	"admitMDSReplacement": true,
 }
 
 // mdsRosterSetupOnlyReaders read the roster under setupMu alone, between the

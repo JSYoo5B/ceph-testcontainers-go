@@ -100,7 +100,7 @@ func TestColdAndReplacementReadsHaveOneDecode(t *testing.T) {
 	want := map[string][]string{
 		"decodeColdMDSMap":        {"verifyColdMDS"},
 		"decodeMDSReplacementMap": {"readMDSReplacementScope"},
-		"readMDSReplacementScope": {"addMDSReplacement", "addMDSReplacement", "observeMDSReplacement"},
+		"readMDSReplacementScope": {"addMDSReplacement", "admitMDSReplacement", "observeMDSReplacement"},
 	}
 	if !reflect.DeepEqual(callers, want) {
 		t.Errorf("caller table changed: %v, pinned %v", callers, want)

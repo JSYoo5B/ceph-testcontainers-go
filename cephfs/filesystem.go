@@ -293,28 +293,9 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 	servicehook.Unlock(c)
 	ctx, cancel := context.WithTimeout(ctx, servicehook.StartupTimeout(c))
 	defer cancel()
-	if _, err := fs.readNativePools(ctx); err != nil {
-		return err
-	}
-	status, err := fs.MDSStatus(ctx)
+	status, err := fs.checkScalable(ctx)
 	if err != nil {
 		return err
-	}
-	daemons, err := fs.mdsSnapshot(ctx)
-	if err != nil {
-		return err
-	}
-	if !cephFSMDSSettled(status, status.MaxMDS, len(daemons)) {
-		return errors.New("cephfs owned MDSs must be active or registered standbys before scaling")
-	}
-	for _, daemon := range daemons {
-		state, err := daemon.State(ctx)
-		if err != nil {
-			return fmt.Errorf("inspect mds.%s before scaling: %w", daemon.ID, err)
-		}
-		if state == nil || !state.Running {
-			return fmt.Errorf("mds.%s is not running; restore it before scaling", daemon.ID)
-		}
 	}
 	if err := servicehook.LockTopology(ctx, c); err != nil {
 		return err
@@ -347,43 +328,110 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 				}
 			}
 		}()
-		if err := clusterutil.Poll(ctx, func() (bool, error) {
-			current, err := fs.MDSStatus(ctx)
-			if err != nil {
-				return false, err
-			}
-			daemons, err := fs.mdsSnapshot(ctx)
-			if err != nil {
-				return false, err
-			}
-			return len(current.StandbyReplay) == 0 && cephFSMDSSettled(current, status.MaxMDS, len(daemons)), nil
-		}); err != nil {
-			return fmt.Errorf("wait for replay followers to become standbys: %w", err)
+		if err := fs.waitReplayFollowersStandby(ctx, status.MaxMDS); err != nil {
+			return err
 		}
 	}
+	if err := fs.growMDSs(ctx, active+standby); err != nil {
+		return err
+	}
+	if err := fs.setMDSCounts(ctx, status.MaxMDS, active, standby); err != nil {
+		return err
+	}
+	if err := fs.retireSurplusMDSs(ctx, active, standby); err != nil {
+		return err
+	}
+	if replayPaused {
+		if _, err := c.Ceph(ctx, "fs", "set", fs.name, "allow_standby_replay", "true"); err != nil {
+			return fmt.Errorf("restore cephfs standby replay: %w", err)
+		}
+		replayPaused = false
+	}
+	return fs.WaitReady(ctx)
+}
+
+// checkScalable is the preflight of ScaleMDS, run without the topology lock:
+// the native pools still match, every owned MDS is active or a registered
+// standby and every owned container is running. It returns the status the
+// scale starts from.
+func (fs *Filesystem) checkScalable(ctx context.Context) (*FilesystemStatus, error) {
+	if _, err := fs.readNativePools(ctx); err != nil {
+		return nil, err
+	}
+	status, err := fs.MDSStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	daemons, err := fs.mdsSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !cephFSMDSSettled(status, status.MaxMDS, len(daemons)) {
+		return nil, errors.New("cephfs owned MDSs must be active or registered standbys before scaling")
+	}
+	for _, daemon := range daemons {
+		state, err := daemon.State(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("inspect mds.%s before scaling: %w", daemon.ID, err)
+		}
+		if state == nil || !state.Running {
+			return nil, fmt.Errorf("mds.%s is not running; restore it before scaling", daemon.ID)
+		}
+	}
+	return status, nil
+}
+
+// waitReplayFollowersStandby waits, after standby replay was turned off,
+// until every replay follower has become an ordinary standby, so that growing
+// ranks can use them. ScaleMDS restores the preference.
+func (fs *Filesystem) waitReplayFollowersStandby(ctx context.Context, maxMDS int) error {
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
+		current, err := fs.MDSStatus(ctx)
+		if err != nil {
+			return false, err
+		}
+		daemons, err := fs.mdsSnapshot(ctx)
+		if err != nil {
+			return false, err
+		}
+		return len(current.StandbyReplay) == 0 && cephFSMDSSettled(current, maxMDS, len(daemons)), nil
+	}); err != nil {
+		return fmt.Errorf("wait for replay followers to become standbys: %w", err)
+	}
+	return nil
+}
+
+// growMDSs starts owned MDSs until the filesystem owns want of them. Setup
+// held: the caller holds setupMu, which startMDS requires.
+func (fs *Filesystem) growMDSs(ctx context.Context, want int) error {
 	for {
 		daemons, err := fs.mdsSnapshot(ctx)
 		if err != nil {
 			return err
 		}
-		if len(daemons) >= active+standby {
-			break
+		if len(daemons) >= want {
+			return nil
 		}
 		if err := fs.startMDS(ctx); err != nil {
 			return fmt.Errorf("add cephfs MDS while scaling: %w", err)
 		}
 	}
-	if status.MaxMDS != active {
-		if _, err := c.Ceph(ctx, "fs", "set", fs.name, "max_mds", strconv.Itoa(active), "--yes-i-really-mean-it"); err != nil {
+}
+
+// setMDSCounts sets max_mds (when it changes) and standby_count_wanted, then
+// waits for the rank handoff. A retiring rank passes through up:stopping
+// before it respawns as standby. Active count alone would miss that
+// transition; every owned daemon is accounted for before any surplus
+// candidate is selected for retirement.
+func (fs *Filesystem) setMDSCounts(ctx context.Context, maxMDS, active, standby int) error {
+	if maxMDS != active {
+		if _, err := fs.cluster.Ceph(ctx, "fs", "set", fs.name, "max_mds", strconv.Itoa(active), "--yes-i-really-mean-it"); err != nil {
 			return fmt.Errorf("scale cephfs active ranks: %w", err)
 		}
 	}
-	if _, err := c.Ceph(ctx, "fs", "set", fs.name, "standby_count_wanted", strconv.Itoa(standby)); err != nil {
+	if _, err := fs.cluster.Ceph(ctx, "fs", "set", fs.name, "standby_count_wanted", strconv.Itoa(standby)); err != nil {
 		return fmt.Errorf("scale cephfs standby count: %w", err)
 	}
-	// A retiring rank passes through up:stopping before it respawns as standby.
-	// Active count alone would miss that transition; account for every owned
-	// daemon before selecting any surplus candidate for retirement.
 	if err := clusterutil.Poll(ctx, func() (bool, error) {
 		status, err := fs.MDSStatus(ctx)
 		if err != nil {
@@ -397,13 +445,20 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 	}); err != nil {
 		return fmt.Errorf("wait for cephfs rank handoff: %w", err)
 	}
+	return nil
+}
+
+// retireSurplusMDSs retires safely registered owned standbys until the
+// filesystem owns active+standby MDSs. Setup held: the caller holds setupMu,
+// which retireMDS requires.
+func (fs *Filesystem) retireSurplusMDSs(ctx context.Context, active, standby int) error {
 	for {
 		daemons, err := fs.mdsSnapshot(ctx)
 		if err != nil {
 			return err
 		}
 		if len(daemons) <= active+standby {
-			break
+			return nil
 		}
 		status, err := fs.MDSStatus(ctx)
 		if err != nil {
@@ -417,13 +472,6 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 			return err
 		}
 	}
-	if replayPaused {
-		if _, err := c.Ceph(ctx, "fs", "set", fs.name, "allow_standby_replay", "true"); err != nil {
-			return fmt.Errorf("restore cephfs standby replay: %w", err)
-		}
-		replayPaused = false
-	}
-	return fs.WaitReady(ctx)
 }
 
 func (fs *Filesystem) startMDS(ctx context.Context) error {
