@@ -492,7 +492,7 @@ func TestOSDChainGateGuardRejectsBrokenVariants(t *testing.T) {
 	for name, src := range map[string]string{
 		"production caller of the judge":     "package ceph\nfunc (c *Container) wrapUp() { _ = judgeChainRelease(osdClusterExclusion{}, osdChainEvidence{}, nil, \"x\", osdBlockDevice{}) }\n",
 		"production caller of the collector": "package ceph\nfunc (c *Container) wrapUp() { _, _ = collectChainEvidence(nil, nil, \"x\") }\n",
-		"production caller of the receipt":   "package ceph\nfunc (c *Container) wrapUp() { _ = c.deviceClaims.exclusionOf(\"x\", osdBlockDevice{}) }\n",
+		"production caller of the receipt":   "package ceph\nfunc (c *Container) wrapUp() { _ = c.fleet.deviceClaims.exclusionOf(\"x\", osdBlockDevice{}) }\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if problems := osdChainGateProblems(map[string]*ast.File{"x.go": parseSourceString(t, src)}); len(problems) == 0 {

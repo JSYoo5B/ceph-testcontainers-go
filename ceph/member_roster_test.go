@@ -149,14 +149,14 @@ func TestServiceHooksReachTheRoster(t *testing.T) {
 	hooks := serviceHooks{}
 	ctr := &fixtureService{}
 	hooks.SetService(c, "rgw", ctr)
-	if hooks.Service(c, "rgw") != ctr || c.roster.service("rgw") != ctr {
+	if hooks.Service(c, "rgw") != ctr || c.members.roster.service("rgw") != ctr {
 		t.Fatal("SetService did not reach the roster")
 	}
 	if got := hooks.Services(c); len(got) != 1 || got["rgw"] != ctr {
 		t.Fatalf("Services = %v", got)
 	}
 	hooks.DeleteService(c, "rgw")
-	if c.roster.hasService("rgw") {
+	if c.members.roster.hasService("rgw") {
 		t.Fatal("DeleteService did not reach the roster")
 	}
 }
@@ -190,13 +190,13 @@ func TestContainerDeclaresNoRosterFields(t *testing.T) {
 		return names
 	}
 	container := fields("Container")
-	for _, old := range []string{"manager", "monitors", "managers", "services"} {
+	for _, old := range []string{"manager", "monitors", "managers", "services", "roster"} {
 		if slices.Contains(container, old) {
-			t.Errorf("Container declares %s again; it belongs to memberRoster", old)
+			t.Errorf("Container declares %s again; it belongs to memberRoster in membershipState", old)
 		}
 	}
-	if !slices.Contains(container, "roster") {
-		t.Error("Container has no roster field")
+	if got := fields("membershipState"); !slices.Equal(got, []string{"monitorTerminated", "roster"}) {
+		t.Errorf("membershipState fields = %v, want the roster and the first-MON flag", got)
 	}
 	if got := fields("memberRoster"); !slices.Equal(got, []string{"firstMgr", "managers", "monitors", "services"}) {
 		t.Errorf("memberRoster fields = %v", got)
@@ -231,6 +231,8 @@ var memberRosterMethods = map[string][]string{
 	"serviceCopy":          {"maps.Clone"},
 	"setService":           {"make"},
 	"dropService":          {"delete"},
+	// currentManager needs only the roster; the caller holds Container.mu.
+	"currentManager": {"r.manager", "invalid", "fmt.Errorf"},
 }
 
 // memberRosterFieldWriters pins which methods assign each field, directly or
@@ -283,7 +285,7 @@ func TestMemberRosterFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if sel, ok := n.(*ast.SelectorExpr); ok && memberRosterUse(sel) {
-					if allowed[sel] {
+					if allowed[sel] || monitorTopologyBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.roster outside a memberRoster method call")
@@ -396,18 +398,19 @@ var memberRosterCallers = map[string]memberRosterCaller{
 	"DeleteService": {"hook", []string{"dropService"}},
 	"Services":      {"hook", []string{"serviceCopy"}},
 
-	"ManagerContainer":    {"takes", []string{"initialManager"}},
-	"ServiceContainers":   {"takes", []string{"sortedServices"}},
-	"Managers":            {"takes", []string{"eachManager", "managerCount"}},
-	"AddMonitor":          {"takes", []string{"addMonitor", "monitor"}},
-	"removeMonitor":       {"takes", []string{"dropMonitor"}},
-	"removeManager":       {"takes", []string{"dropManager", "eachManager", "managerCount"}},
-	"startService":        {"takes", []string{"hasService", "setService"}},
-	"terminate":           {"takes", []string{"clearInitialManager", "dropManager", "dropMonitor", "dropService", "eachManager", "eachMonitor", "eachService", "initialManager"}},
-	"diagnosticsSnapshot": {"takes", []string{"eachManager", "eachMonitor", "eachService", "initialManager"}},
+	"ManagerContainer":   {"takes", []string{"initialManager"}},
+	"ServiceContainers":  {"takes", []string{"sortedServices"}},
+	"Managers":           {"takes", []string{"eachManager", "managerCount"}},
+	"AddMonitor":         {"takes", []string{"addMonitor", "monitor"}},
+	"retireMonitor":      {"holds", []string{"dropMonitor"}},
+	"retireManager":      {"holds", []string{"currentManager", "dropManager", "eachManager", "managerCount"}},
+	"startService":       {"takes", []string{"hasService", "setService"}},
+	"terminateServices":  {"holds", []string{"dropService", "eachService"}},
+	"terminateMembers":   {"holds", []string{"clearInitialManager", "dropManager", "dropMonitor", "eachManager", "eachMonitor", "initialManager"}},
+	"diagnosticDaemons":  {"holds", []string{"eachManager", "eachMonitor", "initialManager"}},
+	"diagnosticServices": {"holds", []string{"eachService"}},
 
 	"startManager":                     {"holds", []string{"addManager", "manager", "recordInitialManager"}},
-	"currentManager":                   {"holds", []string{"manager"}},
 	"currentMonitor":                   {"holds", []string{"monitor"}},
 	"ownedBy":                          {"holds", []string{"manager"}},
 	"ownsDaemon":                       {"holds", []string{"manager", "monitor"}},
@@ -416,9 +419,8 @@ var memberRosterCallers = map[string]memberRosterCaller{
 	"monitorConfigTargets":             {"holds", []string{"eachManager", "eachMonitor", "eachService", "initialManager", "manager"}},
 	"Owns":                             {"hook", nil},
 	"refreshMonitorConfig":             {"holds", nil},
-	"ownsNativeTarget":                 {"holds", nil},
 	"refreshMonitorConfigAfterRemoval": {"holds", nil},
-	"ownsNativeTargetContext":          {"holds", []string{"eachManager", "eachMonitor", "eachService", "initialManager"}},
+	"ownsNativeTarget":                 {"holds", []string{"eachManager", "eachMonitor", "eachService", "initialManager"}},
 }
 
 // TestMemberRosterCallersAreAudited guards the callers. The set of functions
@@ -552,7 +554,7 @@ func TestMemberRosterHasNoAddressTaken(t *testing.T) {
 				return true
 			}
 			ast.Inspect(un.X, func(m ast.Node) bool {
-				if sel, ok := m.(*ast.SelectorExpr); ok && (memberRosterUse(sel) || sel.Sel.Name == "firstMgr") {
+				if sel, ok := m.(*ast.SelectorExpr); ok && (memberRosterUse(sel) || sel.Sel.Name == "firstMgr") && !inMonitorTopologyBinding(parsed, un.Pos()) {
 					problems = append(problems, file+": takes the address of "+types.ExprString(un.X))
 				}
 				return true
@@ -571,7 +573,7 @@ func TestMemberRosterHasNoAddressTaken(t *testing.T) {
 // roster), the other MGRs and the added MONs, all after the storage release
 // stage and before the first MON.
 func TestTerminateStopsServicesBeforeOSDsAndMembersAfterThem(t *testing.T) {
-	for _, parsed := range parseProductionFiles(t) {
+	for _, parsed := range parseProductionFilesWithTerminateSteps(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil || !isContainerTerminate(fn) {
@@ -588,8 +590,8 @@ func TestTerminateStopsServicesBeforeOSDsAndMembersAfterThem(t *testing.T) {
 				return true
 			})
 			order := []string{
-				"range c.roster.eachService()", "range c.osdHandles.each()", "c.stores.releaseVolume(ctx, c.osdHandles.count() == 0)",
-				"c.roster.initialManager()", "range c.roster.eachManager()", "range c.roster.eachMonitor()", "c.Container.Terminate(ctx, opts...)",
+				"range c.members.roster.eachService()", "range c.fleet.osdHandles.each()", "c.fleet.stores.releaseVolume(ctx, c.fleet.osdHandles.count() == 0)",
+				"c.members.roster.initialManager()", "range c.members.roster.eachManager()", "range c.members.roster.eachMonitor()", "c.Container.Terminate(ctx, opts...)",
 			}
 			var problems []string
 			for _, key := range order {
@@ -604,7 +606,7 @@ func TestTerminateStopsServicesBeforeOSDsAndMembersAfterThem(t *testing.T) {
 					}
 				}
 			}
-			if got := len(at["c.roster.initialManager()"]); got != 2 {
+			if got := len(at["c.members.roster.initialManager()"]); got != 2 {
 				problems = append(problems, fmt.Sprintf("the first MGR must be read twice (to terminate it, then to decide whether entry a goes), got %d", got))
 			}
 			if len(problems) != 0 {

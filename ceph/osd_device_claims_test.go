@@ -169,11 +169,11 @@ func TestOSDDeviceClaimReleaseSealsTheRecipeAgainstALateStart(t *testing.T) {
 	}
 	creates := 0
 	cluster := &Container{}
-	cluster.stores.runner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+	cluster.fleet.stores.runner = func(context.Context, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 		creates++
 		return &osdMemoryContainerFake{}, nil
 	}
-	err := cluster.startOSD(t.Context(), osdLaunch{osd: &OSDContainer{ID: 3}, recipe: recipe})
+	err := cluster.osdFleet().startOSD(t.Context(), osdLaunch{osd: &OSDContainer{ID: 3}, recipe: recipe})
 	if err == nil || !strings.Contains(err.Error(), "do not replay") || creates != 0 {
 		t.Fatalf("startOSD after release = %v, creations %d", err, creates)
 	}
@@ -183,7 +183,7 @@ func TestOSDDeviceClaimReleaseSealsTheRecipeAgainstALateStart(t *testing.T) {
 	if err := s.claim(4, "lease-b", claimDevice("b", 2), &recipe.started); err != nil {
 		t.Fatal(err)
 	}
-	if err := cluster.startOSD(t.Context(), osdLaunch{osd: &OSDContainer{ID: 4}, recipe: recipe}); err != nil || creates != 1 {
+	if err := cluster.osdFleet().startOSD(t.Context(), osdLaunch{osd: &OSDContainer{ID: 4}, recipe: recipe}); err != nil || creates != 1 {
 		t.Fatalf("control start = %v, creations %d", err, creates)
 	}
 	if s.release(4, false) {
@@ -231,8 +231,8 @@ func publishAttempted(t *testing.T, c *Container, id int, ctr testcontainers.Con
 	if ctr != nil {
 		osd.Container = ctr
 	}
-	c.osdHandles.register(id, osd)
-	mustClaim(t, &c.deviceClaims, id, lease, device).Store(true)
+	c.fleet.osdHandles.register(id, osd)
+	mustClaim(t, &c.fleet.deviceClaims, id, lease, device).Store(true)
 }
 
 func TestTerminateReleasesDeviceClaimsByContainerEvidence(t *testing.T) {
@@ -246,8 +246,8 @@ func TestTerminateReleasesDeviceClaimsByContainerEvidence(t *testing.T) {
 		if err := c.Terminate(t.Context()); err == nil || strings.Contains(err.Error(), "claims retained") {
 			t.Fatalf("Terminate = %v", err)
 		}
-		if c.deviceClaims.count() != 0 || ctr.terminations != 1 {
-			t.Fatalf("claims %d, terminations %d", c.deviceClaims.count(), ctr.terminations)
+		if c.fleet.deviceClaims.count() != 0 || ctr.terminations != 1 {
+			t.Fatalf("claims %d, terminations %d", c.fleet.deviceClaims.count(), ctr.terminations)
 		}
 	})
 	t.Run("failed termination keeps the claim until the scan removes it", func(t *testing.T) {
@@ -257,16 +257,16 @@ func TestTerminateReleasesDeviceClaimsByContainerEvidence(t *testing.T) {
 		if err := c.Terminate(t.Context()); err == nil || strings.Contains(err.Error(), "claims retained") {
 			t.Fatalf("Terminate = %v", err)
 		}
-		if c.deviceClaims.count() != 0 || len(docker.removed) != 1 {
-			t.Fatalf("claims %d, removed %v", c.deviceClaims.count(), docker.removed)
+		if c.fleet.deviceClaims.count() != 0 || len(docker.removed) != 1 {
+			t.Fatalf("claims %d, removed %v", c.fleet.deviceClaims.count(), docker.removed)
 		}
 	})
 	t.Run("lost create reply is released only by the scan", func(t *testing.T) {
 		docker := &fakeOwnedDocker{containers: map[string]map[string]string{"lost-osd": {clusterOwnerLabel: "c"}}}
 		c := ownedCluster("c", docker)
 		publishAttempted(t, c, 0, nil, "lease-a", claimDevice("a", 1))
-		if err := c.Terminate(t.Context()); err != nil || c.deviceClaims.count() != 0 || len(docker.removed) != 1 {
-			t.Fatalf("Terminate = %v, claims %d, removed %v", err, c.deviceClaims.count(), docker.removed)
+		if err := c.Terminate(t.Context()); err != nil || c.fleet.deviceClaims.count() != 0 || len(docker.removed) != 1 {
+			t.Fatalf("Terminate = %v, claims %d, removed %v", err, c.fleet.deviceClaims.count(), docker.removed)
 		}
 	})
 	t.Run("lost create reply with a failed scan stays claimed and is reported", func(t *testing.T) {
@@ -275,24 +275,24 @@ func TestTerminateReleasesDeviceClaimsByContainerEvidence(t *testing.T) {
 		c := ownedCluster("c", docker)
 		publishAttempted(t, c, 0, nil, "lease-a", claimDevice("a", 1))
 		err := c.Terminate(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "osd.0 lease lease-a") || c.deviceClaims.count() != 1 {
-			t.Fatalf("Terminate = %v, claims %d", err, c.deviceClaims.count())
+		if err == nil || !strings.Contains(err.Error(), "osd.0 lease lease-a") || c.fleet.deviceClaims.count() != 1 {
+			t.Fatalf("Terminate = %v, claims %d", err, c.fleet.deviceClaims.count())
 		}
 	})
 	t.Run("lost create reply of an unowned cluster is never released by a scan that did nothing", func(t *testing.T) {
 		c := ownedCluster("", &fakeOwnedDocker{})
 		publishAttempted(t, c, 0, nil, "lease-a", claimDevice("a", 1))
 		err := c.Terminate(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "claims retained") || c.deviceClaims.count() != 1 {
-			t.Fatalf("Terminate = %v, claims %d", err, c.deviceClaims.count())
+		if err == nil || !strings.Contains(err.Error(), "claims retained") || c.fleet.deviceClaims.count() != 1 {
+			t.Fatalf("Terminate = %v, claims %d", err, c.fleet.deviceClaims.count())
 		}
 	})
 	t.Run("a launch that never created a container keeps no claim", func(t *testing.T) {
 		c := ownedCluster("", &fakeOwnedDocker{})
-		c.osdHandles.register(0, &OSDContainer{ID: 0})
-		creation := mustClaim(t, &c.deviceClaims, 0, "lease-a", claimDevice("a", 1))
-		if err := c.Terminate(t.Context()); err != nil || c.deviceClaims.count() != 0 || !creation.Load() {
-			t.Fatalf("Terminate = %v, claims %d", err, c.deviceClaims.count())
+		c.fleet.osdHandles.register(0, &OSDContainer{ID: 0})
+		creation := mustClaim(t, &c.fleet.deviceClaims, 0, "lease-a", claimDevice("a", 1))
+		if err := c.Terminate(t.Context()); err != nil || c.fleet.deviceClaims.count() != 0 || !creation.Load() {
+			t.Fatalf("Terminate = %v, claims %d", err, c.fleet.deviceClaims.count())
 		}
 	})
 	t.Run("an empty table changes nothing", func(t *testing.T) {
@@ -335,11 +335,13 @@ func osdDeviceClaimIgnoredCall(call string) bool {
 // their own callers are pinned by osdDeviceWiringCallers.
 var osdDeviceClaimCallers = map[string]map[string]bool{
 	"removeOSD": {"release": true},
-	"terminate": {"release": true, "settle": true},
+	"terminate": {"settle": true},
 }
 
 var osdDeviceClaimHolders = map[string]map[string]bool{
 	"registerBlockDeviceOSD": {"claim": true},
+	// terminateOSDs is called only by terminate (TestTerminateStepsAreCalledOnlyByTerminate).
+	"terminateOSDs": {"release": true},
 }
 
 func osdDeviceClaimUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "deviceClaims" }
@@ -368,7 +370,7 @@ func TestOSDDeviceClaimsFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if sel, ok := n.(*ast.SelectorExpr); ok && osdDeviceClaimUse(sel) {
-					if allowed[sel] {
+					if allowed[sel] || osdFleetBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.deviceClaims outside an osdDeviceClaims method call")
@@ -577,7 +579,7 @@ func TestOSDDeviceClaimReleaseOrderAgainstContainerRemoval(t *testing.T) {
 	}
 	var problems []string
 	sawTerminate, sawRemove := false, false
-	for _, parsed := range parseProductionFiles(t) {
+	for _, parsed := range parseProductionFilesWithTerminateSteps(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
@@ -590,10 +592,10 @@ func TestOSDDeviceClaimReleaseOrderAgainstContainerRemoval(t *testing.T) {
 				problems = append(problems, check("terminate", at, []string{
 					"c.lockTopology(ctx)",
 					"osd.Terminate(ctx, opts...)",
-					"c.deviceClaims.release(id, osd.Container != nil)",
-					"c.osdHandles.forget(id)",
+					"c.fleet.deviceClaims.release(id, osd.Container != nil)",
+					"c.fleet.osdHandles.forget(id)",
 					"c.startup.removeLabeledContainers(ctx)",
-					"c.deviceClaims.settle(scanErr == nil && c.startup.ownerID() != \"\")",
+					"c.fleet.deviceClaims.settle(scanErr == nil && c.startup.ownerID() != \"\")",
 					"c.runDir.release(ctx)",
 				})...)
 			case fn.Name.Name == "removeOSD" && receiverTypeName(fn) == "Container":
@@ -602,9 +604,9 @@ func TestOSDDeviceClaimReleaseOrderAgainstContainerRemoval(t *testing.T) {
 				problems = append(problems, check("removeOSD", at, []string{
 					"c.lockTopology(ctx)",
 					"osd.Terminate(ctx)",
-					"c.stores.discard(ctx, id)",
-					"c.deviceClaims.release(id, osd.Container != nil)",
-					"c.osdHandles.forget(id)",
+					"c.fleet.stores.discard(ctx, id)",
+					"c.fleet.deviceClaims.release(id, osd.Container != nil)",
+					"c.fleet.osdHandles.forget(id)",
 				})...)
 			}
 		}

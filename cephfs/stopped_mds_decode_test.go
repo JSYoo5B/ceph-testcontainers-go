@@ -199,8 +199,8 @@ func calleeName(call *ast.CallExpr) string {
 }
 
 // TestStoppedMDSDecoderIsAPureFunctionOfItsArguments guards the contract of
-// stopped_mds_decode.go: the file declares only the decoder and its two value
-// types, imports no package that can reach a lock, a command or Docker, and
+// stopped_mds_decode.go: the file declares only the decoder, its phase
+// functions and their value types, imports no package that can reach a lock, a command or Docker, and
 // names none of the owner state. So the decoder cannot start reading the
 // roster, the cluster or a container without this test failing.
 func TestStoppedMDSDecoderIsAPureFunctionOfItsArguments(t *testing.T) {
@@ -229,7 +229,9 @@ func TestStoppedMDSDecoderIsAPureFunctionOfItsArguments(t *testing.T) {
 	}
 	slices.Sort(types)
 	slices.Sort(imports)
-	if !slices.Equal(funcs, []string{"decodeStoppedMDSMap"}) || !slices.Equal(types, []string{"stoppedMDSMapExpectation", "stoppedMDSMapState"}) {
+	wantFuncs := []string{"decodeStoppedMDSMap", "admitStoppedMDSRow", "checkStoppedMDSMembership", "stoppedMDSScope", "collectStoppedMDSSurvivors", "collectStoppedMDSStandbys"}
+	wantTypes := []string{"stoppedMDSFields", "stoppedMDSFilesystem", "stoppedMDSMap", "stoppedMDSMapExpectation", "stoppedMDSMapState", "stoppedMDSSeen"}
+	if !slices.Equal(funcs, wantFuncs) || !slices.Equal(types, wantTypes) {
 		t.Errorf("decoder file declarations changed: funcs %v types %v", funcs, types)
 	}
 	wantImports := []string{"errors", "github.com/JSYoo5B/ceph-testcontainers-go/internal/naming", "slices", "strconv", "strings"}
@@ -342,9 +344,9 @@ func TestMDSRowStateListHasOneCopy(t *testing.T) {
 		}
 	}
 	want := map[string][]string{
-		"decodeColdMDSMap":        {"cold_mds_decode.go"},
-		"decodeStoppedMDSMap":     {"stopped_mds_decode.go"},
-		"decodeMDSReplacementMap": {"mds_replacement_decode.go"},
+		"decodeColdMDSMap":       {"cold_mds_decode.go"},
+		"admitStoppedMDSRow":     {"stopped_mds_decode.go"},
+		"admitReplacementMDSRow": {"mds_replacement_decode.go"},
 	}
 	if !reflect.DeepEqual(callers, want) {
 		t.Errorf("state-list callers changed: %v, pinned %v", callers, want)

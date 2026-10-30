@@ -109,12 +109,12 @@ var startupIdentityWriters = map[string]string{
 // column: every fact is written before the cluster is shared (Run) and read
 // only afterwards. A new row needs a new review of that claim.
 var startupIdentityCallers = map[string][]string{
-	"Run":                     {"recordFirstMonitorImage", "recordKeyTypeOption"},
+	"bootstrapFirstMonitor":   {"recordFirstMonitorImage", "recordKeyTypeOption"},
 	"AddMonitor":              {"ownedLabel"},
 	"OwnedLabel":              {"ownedLabel"},
 	"TerminateOnCleanup":      {"ownerID"},
 	"checkDualStackAddresses": {"firstMonitorImage"},
-	"clientContainerContext":  {"ownedLabel"},
+	"startedContainer":        {"ownedLabel"},
 	"ensureControlPlane":      {"ownedLabel"},
 	"ensureOSDMemory":         {"ownedLabel"},
 	"ensureOSDVolume":         {"ownedLabel"},
@@ -192,7 +192,7 @@ func TestStartupIdentityFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 									switch key.Name {
 									case "startup":
 										literals++
-										if fn.Name.Name != "Run" || file != "ceph.go" {
+										if fn.Name.Name != "newCluster" || file != "ceph.go" {
 											problems = append(problems, file+": "+fn.Name.Name+" sets startup in a Container literal")
 										}
 									case "owner", "keyTypeOption", "firstMonitorImageID", "ownedContainerDocker":
@@ -204,7 +204,7 @@ func TestStartupIdentityFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 					}
 				case *ast.UnaryExpr:
 					if x.Op == token.AND {
-						if sel, ok := x.X.(*ast.SelectorExpr); ok && (startupUse(sel) || startupUse2(sel)) {
+						if sel, ok := x.X.(*ast.SelectorExpr); ok && (startupUse(sel) || startupUse2(sel)) && !stateBinding(fn) {
 							problems = append(problems, file+": takes the address of "+types.ExprString(x.X))
 						}
 					}
@@ -212,8 +212,8 @@ func TestStartupIdentityFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 				return true
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && startupUse(sel) && isContainerReceiver(sel.X) {
-					if allowed[sel] {
+				if sel, ok := n.(*ast.SelectorExpr); ok && startupUse(sel) && (isContainerReceiver(sel.X) || receiverTypeName(fn) == "osdFleet" || receiverTypeName(fn) == "featureClient") {
+					if allowed[sel] || stateBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.startup outside a startupIdentity method call")
@@ -336,8 +336,8 @@ func TestStartupIdentityCallersAreAudited(t *testing.T) {
 				found[name][sel.Sel.Name] = true
 				if _, writer := startupIdentityWriters[sel.Sel.Name]; writer {
 					recorded[sel.Sel.Name]++
-					if name != "Run" {
-						problems = append(problems, name+" calls the recorder "+sel.Sel.Name+"; only Run may")
+					if name != "bootstrapFirstMonitor" {
+						problems = append(problems, name+" calls the recorder "+sel.Sel.Name+"; only bootstrapFirstMonitor may")
 					}
 				}
 				return true
@@ -389,6 +389,52 @@ func TestStartupIdentitySourceIsInTheRightFile(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// startupPhaseCallers are the Run phases that write what a cluster records
+// once at startup, each with its one caller. The recorder guards pin those
+// writes to the phases; this keeps the phases themselves inside Run, before
+// the cluster is returned.
+var startupPhaseCallers = map[string]string{
+	"newCluster":            "Run",
+	"bootstrapFirstMonitor": "Run",
+	"recordCephVersion":     "Container.bootstrapFirstMonitor",
+}
+
+// TestStartupPhasesHaveTheirSingleCaller guards that each startup phase is
+// called exactly once, from its listed caller.
+func TestStartupPhasesHaveTheirSingleCaller(t *testing.T) {
+	calls := map[string][]string{}
+	for _, parsed := range parseProductionFiles(t) {
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				name := ""
+				switch f := call.Fun.(type) {
+				case *ast.Ident:
+					name = f.Name
+				case *ast.SelectorExpr:
+					name = f.Sel.Name
+				}
+				if _, phase := startupPhaseCallers[name]; phase {
+					calls[name] = append(calls[name], funcKey(fn))
+				}
+				return true
+			})
+		}
+	}
+	for phase, caller := range startupPhaseCallers {
+		if got := calls[phase]; len(got) != 1 || got[0] != caller {
+			t.Errorf("%s is called from %v, want once from %s", phase, got, caller)
 		}
 	}
 }

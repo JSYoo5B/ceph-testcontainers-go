@@ -63,11 +63,11 @@ func resolveDaemonOptions(configs []DaemonOptions) (DaemonOptions, error) {
 
 // daemonImage returns the image the new daemon starts from: its override, or
 // the cluster's essential image.
-func (c *Container) daemonImage(o DaemonOptions) string {
-	if o.imageSet {
-		return o.image
+func (o options) daemonImage(daemon DaemonOptions) string {
+	if daemon.imageSet {
+		return daemon.image
 	}
-	return c.settings.essentialImage
+	return o.essentialImage
 }
 
 // runDaemon starts the container of a new MON or MGR from image.

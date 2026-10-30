@@ -10,6 +10,14 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 )
 
+// poolCatalog is the cluster's native pool, CRUSH rule and erasure-code
+// profile view: it runs the pool queries and the checks built on them through
+// the transport. It holds no state and takes no lock; the mutations that use it
+// run under the caller's topology lock as before.
+type poolCatalog struct {
+	conn cephConn
+}
+
 // PoolQuota limits logical bytes and object count. Zero removes that limit.
 // Enforcement depends on asynchronously reported PG statistics, so the quota
 // is not a strict per-write accounting boundary.
@@ -52,14 +60,14 @@ func (c *Container) poolPolicyReady() error {
 	if c.closed {
 		return errClusterTerminated
 	}
-	if c.cliContainer() == nil {
+	if c.conn().cliContainer() == nil {
 		return errors.New("ceph control container is unavailable")
 	}
 	return nil
 }
 
-func (c *Container) poolStates(ctx context.Context) ([]PoolState, error) {
-	data, err := c.cephCLI(ctx, "osd", "pool", "ls", "detail", "--format", "json")
+func (pc poolCatalog) states(ctx context.Context) ([]PoolState, error) {
+	data, err := pc.conn.ceph(ctx, "osd", "pool", "ls", "detail", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -108,8 +116,8 @@ func decodePoolStates(data []byte) ([]PoolState, error) {
 	return states, nil
 }
 
-func (c *Container) poolState(ctx context.Context, name string) (PoolState, error) {
-	states, err := c.poolStates(ctx)
+func (pc poolCatalog) state(ctx context.Context, name string) (PoolState, error) {
+	states, err := pc.states(ctx)
 	if err != nil {
 		return PoolState{}, err
 	}
@@ -121,8 +129,8 @@ func (c *Container) poolState(ctx context.Context, name string) (PoolState, erro
 	return PoolState{}, fmt.Errorf("pool %q does not exist", name)
 }
 
-func (c *Container) checkPoolID(ctx context.Context, expected PoolState) error {
-	pool, err := c.poolState(ctx, expected.Name)
+func (pc poolCatalog) checkID(ctx context.Context, expected PoolState) error {
+	pool, err := pc.state(ctx, expected.Name)
 	if err != nil {
 		return err
 	}
@@ -132,8 +140,8 @@ func (c *Container) checkPoolID(ctx context.Context, expected PoolState) error {
 	return nil
 }
 
-func (c *Container) poolRulePlacement(ctx context.Context, id int) (PoolConfig, error) {
-	data, err := c.cephCLI(ctx, "osd", "crush", "rule", "dump", "--format", "json")
+func (pc poolCatalog) rulePlacement(ctx context.Context, id int) (PoolConfig, error) {
+	data, err := pc.conn.ceph(ctx, "osd", "crush", "rule", "dump", "--format", "json")
 	if err != nil {
 		return PoolConfig{}, err
 	}
@@ -184,7 +192,7 @@ func (c *Container) poolRulePlacement(ctx context.Context, id int) (PoolConfig, 
 // completed external move, class or weight edit is reflected in this snapshot.
 // The caller holds c.mu, which guards the OSD registry it reads.
 func (c *Container) nativePoolDomains(ctx context.Context, placement PoolConfig) (int, error) {
-	data, err := c.cephCLI(ctx, "osd", "crush", "dump", "--format", "json")
+	data, err := c.conn().ceph(ctx, "osd", "crush", "dump", "--format", "json")
 	if err != nil {
 		return 0, err
 	}
@@ -231,7 +239,7 @@ func (c *Container) nativePoolDomains(ctx context.Context, placement PoolConfig)
 	var visit func(int, int, bool) error
 	visit = func(id, domain int, hasDomain bool) error {
 		if id >= 0 {
-			owned := c.osdHandles.get(id)
+			owned := c.fleet.osdHandles.get(id)
 			class, exists := classes[id]
 			if owned == nil || owned.purged || !exists || (placement.DeviceClass != "" && class != placement.DeviceClass) {
 				return nil

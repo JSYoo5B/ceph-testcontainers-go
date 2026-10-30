@@ -1,7 +1,6 @@
 package ceph
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -93,10 +92,6 @@ func findConfigEntry(entries []ConfigEntry, setting ConfigSetting) *ConfigEntry 
 	return nil
 }
 
-func (c *Container) configuration(ctx context.Context) ([]ConfigEntry, error) {
-	return readConfiguration(ctx, c.cephCLI)
-}
-
 // decodeConfiguration decodes the output of config dump.
 func decodeConfiguration(data []byte) ([]ConfigEntry, error) {
 	var entries []ConfigEntry
@@ -118,8 +113,4 @@ func decodeConfiguration(data []byte) ([]ConfigEntry, error) {
 		seen[key] = true
 	}
 	return entries, nil
-}
-
-func (c *Container) configCommand(ctx context.Context, args ...string) ([]byte, error) {
-	return runConfigCommand(ctx, c.cephCLI, args...)
 }

@@ -86,7 +86,7 @@ func TestObserverClusterFormReadsActualStateOnEveryQuery(t *testing.T) {
 		t.Fatalf("commands = %q, want %q", ctr.commands(), want)
 	}
 	// The Container method of the same name is unchanged and returns the same.
-	direct, err := readStatus(t.Context(), cluster.cephCLI)
+	direct, err := readStatus(t.Context(), cluster.conn().ceph)
 	if err != nil || direct.FSID != second.FSID {
 		t.Fatalf("direct status = %+v, %v", direct, err)
 	}
@@ -97,7 +97,7 @@ func TestObserverDaemonAddressesUsesTheDaemonMapCommands(t *testing.T) {
 	observer, _ := Observe(cluster)
 	// Empty maps are not evidence: the observation fails like the method does.
 	_, observerErr := observer.DaemonAddresses(t.Context())
-	_, directErr := readDaemonAddresses(t.Context(), cluster.cephCLI)
+	_, directErr := readDaemonAddresses(t.Context(), cluster.conn().ceph)
 	if observerErr == nil || directErr == nil || observerErr.Error() != directErr.Error() {
 		t.Fatalf("observer error %v differs from method error %v", observerErr, directErr)
 	}

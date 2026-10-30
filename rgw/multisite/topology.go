@@ -98,11 +98,11 @@ func runTopology(ctx context.Context, image string, config TopologyConfig, opts 
 		// The outer constructor still owns fresh initialization and has not
 		// exposed f. Additional remote commits need a final master-local
 		// staging snapshot of the complete graph before returning it.
-		f.bootstrapStagingPending = true
+		f.topology.bootstrapStagingPending = true
 	}
 	for _, zone := range zones[2:] {
 		f.topologyMu.Lock()
-		_, exists := f.groupIDs[zone.Zonegroup]
+		_, exists := f.topology.groupIDs[zone.Zonegroup]
 		_, err := f.addZone(ctx, image, zone, !exists, opts...)
 		f.topologyMu.Unlock()
 		if err != nil {
@@ -286,14 +286,14 @@ func (f *Fixture) Zones() []Zone {
 // zoneStates is called while topologyMu is held.
 func (f *Fixture) zoneStates() []*rgwZoneState {
 	states := []*rgwZoneState{
-		{Zone: Zone{Name: f.config.SourceZone, ID: f.SourceZoneID, Zonegroup: f.zoneGroupName(f.config.SourceZone), PeerEndpoint: f.sourceURL, Gateway: f.Source}, cluster: f.config.Source, client: f.sourceClient},
-		{Zone: Zone{Name: f.config.DestinationZone, ID: f.DestinationZoneID, Zonegroup: f.zoneGroupName(f.config.DestinationZone), PeerEndpoint: f.destinationURL, Gateway: f.Destination}, cluster: f.config.Destination, client: f.destinationClient},
+		{Zone: Zone{Name: f.realm.config.SourceZone, ID: f.SourceZoneID, Zonegroup: f.realm.zoneGroupName(f.realm.config.SourceZone), PeerEndpoint: f.realm.sourceURL, Gateway: f.Source}, cluster: f.realm.config.Source, client: f.realm.sourceClient},
+		{Zone: Zone{Name: f.realm.config.DestinationZone, ID: f.DestinationZoneID, Zonegroup: f.realm.zoneGroupName(f.realm.config.DestinationZone), PeerEndpoint: f.realm.destinationURL, Gateway: f.Destination}, cluster: f.realm.config.Destination, client: f.realm.destinationClient},
 	}
-	for _, zone := range f.additionalZones {
+	for _, zone := range f.topology.additional {
 		states = append(states, zone)
 	}
 	return slices.DeleteFunc(states, func(state *rgwZoneState) bool {
-		removal := f.removedZones[state.Name]
+		removal := f.topology.removed[state.Name]
 		return removal != nil && removal.detached
 	})
 }
@@ -318,7 +318,7 @@ func (f *Fixture) ZoneAdmin(ctx context.Context, name string, args ...string) ([
 	if client == nil {
 		return nil, fmt.Errorf("RGW zone %s has no running owned CLI client", name)
 	}
-	return f.admin(ctx, client, name, args...)
+	return f.realm.admin(ctx, client, name, args...)
 }
 
 // AddZone joins another fresh storage cluster to the existing realm/zonegroup.
@@ -374,7 +374,7 @@ func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, 
 	if createGroup {
 		newGroup = config.Zonegroup
 	}
-	if err := f.joinZone(ctx, zoneJoin{client: state.client, zone: config.Name, masterURL: master.PeerEndpoint, endpoint: state.PeerEndpoint, newGroup: newGroup}); err != nil {
+	if err := f.realm.joinZone(ctx, zoneJoin{client: state.client, zone: config.Name, masterURL: master.PeerEndpoint, endpoint: state.PeerEndpoint, newGroup: newGroup}); err != nil {
 		return &state.Zone, fmt.Errorf("join RGW zone %s: %w", config.Name, err)
 	}
 	state.Gateway, err = f.runGateway(ctx, image, config.Cluster, f.httpNetwork, alias, config.Name, opts...)
@@ -385,7 +385,7 @@ func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, 
 		if state.PeerEndpoint, err = state.Gateway.DaemonEndpoint(ctx); err != nil {
 			return &state.Zone, err
 		}
-		if err := f.publishZoneEndpoint(ctx, state.client, config.Name, state.PeerEndpoint, createGroup); err != nil {
+		if err := f.realm.publishZoneEndpoint(ctx, state.client, config.Name, state.PeerEndpoint, createGroup); err != nil {
 			return &state.Zone, err
 		}
 	}
@@ -396,10 +396,10 @@ func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, 
 	if err := f.waitZonePeriods(ctx, master, states); err != nil {
 		return &state.Zone, err
 	}
-	if err := f.waitZoneMetadataBootstrap(ctx, master, states); err != nil {
+	if err := f.realm.waitZoneMetadataBootstrap(ctx, master, states); err != nil {
 		return &state.Zone, err
 	}
-	if err := f.reloadZoneGateways(ctx, states, func(zone *rgwZoneState) bool { return zone == state && !addition.hostNetwork }); err != nil {
+	if err := f.topology.reloadZoneGateways(ctx, states, func(zone *rgwZoneState) bool { return zone == state && !addition.hostNetwork }); err != nil {
 		return &state.Zone, err
 	}
 	state.Gateway.AccessKey, state.Gateway.SecretKey = f.Source.AccessKey, f.Source.SecretKey
@@ -420,15 +420,15 @@ type zoneAddition struct {
 // zone and a cluster that is not fresh. The caller holds topologyMu.
 func (f *Fixture) admitZoneAddition(ctx context.Context, image string, config ZoneConfig, createGroup bool) (zoneAddition, error) {
 	if config.Zonegroup == "" {
-		config.Zonegroup = f.config.Zonegroup
+		config.Zonegroup = f.realm.config.Zonegroup
 	}
 	if !validRGWZoneName(config.Name) || !validRGWZoneName(config.Zonegroup) {
 		return zoneAddition{}, errors.New("invalid RGW zone or zonegroup name")
 	}
-	if removal := f.removedZones[config.Name]; removal != nil {
+	if removal := f.topology.removed[config.Name]; removal != nil {
 		return zoneAddition{}, errors.New("detached RGW zones retain configuration and cannot be adopted as fresh zones")
 	}
-	for _, removal := range f.removedZones {
+	for _, removal := range f.topology.removed {
 		if !removal.converged || !removal.gatewayRemoved || !removal.clientRemoved {
 			return zoneAddition{}, errors.New("finish the pending RGW zone removal before adding zones")
 		}
@@ -436,10 +436,10 @@ func (f *Fixture) admitZoneAddition(ctx context.Context, image string, config Zo
 			return zoneAddition{}, errors.New("detached RGW storage clusters retain configuration and cannot be adopted as fresh zones")
 		}
 	}
-	if _, knownGroup := f.groupIDs[config.Zonegroup]; knownGroup == createGroup {
+	if _, knownGroup := f.topology.groupIDs[config.Zonegroup]; knownGroup == createGroup {
 		return zoneAddition{}, errors.New("AddZone requires an owned zonegroup; AddZonegroup requires a fresh group name")
 	}
-	if f.closed || f.Source == nil || f.Destination == nil || f.RealmID == "" || f.systemAccess == "" || f.systemSecret == "" {
+	if f.closed || f.Source == nil || f.Destination == nil || f.RealmID == "" || f.realm.systemAccess == "" || f.realm.systemSecret == "" {
 		return zoneAddition{}, errors.New("RGW multisite must be initialized and running")
 	}
 	for _, zone := range f.zoneStates() {
@@ -457,7 +457,7 @@ func (f *Fixture) admitZoneAddition(ctx context.Context, image string, config Zo
 	if err != nil {
 		return zoneAddition{}, err
 	}
-	clientImage, err := rgwSetupImage(f.config.SetupImage, facts.Images.RGW)
+	clientImage, err := rgwSetupImage(f.realm.config.SetupImage, facts.Images.RGW)
 	if err != nil {
 		return zoneAddition{}, err
 	}
@@ -472,7 +472,7 @@ func (f *Fixture) admitZoneAddition(ctx context.Context, image string, config Zo
 // period already contains.
 func (f *Fixture) additionMaster(ctx context.Context, name string) (*rgwZoneState, error) {
 	states := f.zoneStates()
-	period, err := f.committedPeriod(ctx, states[0])
+	period, err := f.realm.committedPeriod(ctx, states[0])
 	if err != nil {
 		return nil, err
 	}
@@ -497,23 +497,28 @@ func (f *Fixture) additionMaster(ctx context.Context, name string) (*rgwZoneStat
 // so a partial addition stays owned and visible through Zones.
 func (f *Fixture) registerAddedZone(config ZoneConfig) *rgwZoneState {
 	state := &rgwZoneState{Zone: Zone{Name: config.Name, Zonegroup: config.Zonegroup}, cluster: config.Cluster}
-	if f.additionalZones == nil {
-		f.additionalZones = make(map[string]*rgwZoneState)
+	if f.topology.additional == nil {
+		f.topology.additional = make(map[string]*rgwZoneState)
 	}
-	f.additionalZones[config.Name] = state
-	f.scopeMu.Lock()
-	if f.zoneGroups == nil {
-		f.zoneGroups = make(map[string]string)
-	}
-	f.zoneGroups[config.Name] = config.Zonegroup
-	f.scopeMu.Unlock()
+	f.topology.additional[config.Name] = state
+	f.realm.recordZoneGroup(config.Name, config.Zonegroup)
 	return state
+}
+
+// recordZoneGroup records the zonegroup that commands for zone run in.
+func (r *rgwRealmAccess) recordZoneGroup(zone, group string) {
+	r.scopeMu.Lock()
+	defer r.scopeMu.Unlock()
+	if r.zoneGroups == nil {
+		r.zoneGroups = make(map[string]string)
+	}
+	r.zoneGroups[zone] = group
 }
 
 // recordAddedZoneIdentity reads the added zone's native ID and, for a new
 // zonegroup, the group's ID with the zone as its master.
 func (f *Fixture) recordAddedZoneIdentity(ctx context.Context, state *rgwZoneState, createGroup bool) error {
-	id, err := f.nativeID(ctx, state.client, state.Name, "zone")
+	id, err := f.realm.nativeID(ctx, state.client, state.Name, "zone")
 	if err != nil {
 		return err
 	}
@@ -524,28 +529,28 @@ func (f *Fixture) recordAddedZoneIdentity(ctx context.Context, state *rgwZoneSta
 	if !createGroup {
 		return nil
 	}
-	groupID, err := f.nativeID(ctx, state.client, state.Name, "zonegroup")
+	groupID, err := f.realm.nativeID(ctx, state.client, state.Name, "zonegroup")
 	if err != nil {
 		return err
 	}
 	if groupID == "" {
 		return errors.New("invalid added RGW zonegroup identity")
 	}
-	f.groupIDs[state.Zonegroup] = groupID
-	f.groupMasters[state.Zonegroup] = state.Name
+	f.topology.groupIDs[state.Zonegroup] = groupID
+	f.topology.groupMasters[state.Zonegroup] = state.Name
 	return nil
 }
 
 // committedPeriod reads and decodes the committed period as zone sees it.
-func (f *Fixture) committedPeriod(ctx context.Context, zone *rgwZoneState) (*rgwTopologyPeriod, error) {
-	data, err := f.admin(ctx, zone.client, zone.Name, "period", "get", "--format", "json")
+func (r *rgwRealmAccess) committedPeriod(ctx context.Context, zone *rgwZoneState) (*rgwTopologyPeriod, error) {
+	data, err := r.admin(ctx, zone.client, zone.Name, "period", "get", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
 	return decodeRGWTopologyPeriod(data)
 }
 
-func (f *Fixture) reloadZoneGateways(ctx context.Context, states []*rgwZoneState, skip func(*rgwZoneState) bool) error {
+func (t *rgwZoneTopology) reloadZoneGateways(ctx context.Context, states []*rgwZoneState, skip func(*rgwZoneState) bool) error {
 	for _, zone := range states {
 		// A bridge gateway starts after its endpoint was committed, so the
 		// new zone already loaded the final period. Avoid interrupting its
@@ -558,14 +563,14 @@ func (f *Fixture) reloadZoneGateways(ctx context.Context, states []*rgwZoneState
 			return fmt.Errorf("inspect zone %s before period reload: %v", zone.Name, err)
 		}
 		if !status.Running {
-			if !f.reloadNeeded[zone.Name] {
+			if !t.reloadNeeded[zone.Name] {
 				continue
 			}
 		} else {
-			if f.reloadNeeded == nil {
-				f.reloadNeeded = make(map[string]bool)
+			if t.reloadNeeded == nil {
+				t.reloadNeeded = make(map[string]bool)
 			}
-			f.reloadNeeded[zone.Name] = true
+			t.reloadNeeded[zone.Name] = true
 			stop := 3 * time.Second
 			if err := zone.Gateway.Stop(ctx, &stop); err != nil {
 				return fmt.Errorf("stop zone %s before period reload: %w", zone.Name, err)
@@ -574,7 +579,7 @@ func (f *Fixture) reloadZoneGateways(ctx context.Context, states []*rgwZoneState
 		if err := zone.Gateway.Start(ctx); err != nil {
 			return fmt.Errorf("restart zone %s after period reload: %w", zone.Name, err)
 		}
-		delete(f.reloadNeeded, zone.Name)
+		delete(t.reloadNeeded, zone.Name)
 	}
 	return nil
 }
@@ -613,7 +618,7 @@ func (f *Fixture) checkZonePeriod(period *rgwTopologyPeriod, master *rgwZoneStat
 	for _, state := range states {
 		name := state.Zonegroup
 		if name == "" {
-			name = f.config.Zonegroup
+			name = f.realm.config.Zonegroup
 		}
 		groups[name] = append(groups[name], state)
 	}
@@ -627,7 +632,7 @@ func (f *Fixture) checkZonePeriod(period *rgwTopologyPeriod, master *rgwZoneStat
 			return errors.New("committed RGW zonegroup contains unexpected zones or duplicate groups")
 		}
 		seen[group.Name] = true
-		if id := f.groupIDs[group.Name]; id != "" && id != group.ID {
+		if id := f.topology.groupIDs[group.Name]; id != "" && id != group.ID {
 			return errors.New("committed RGW zonegroup identity mismatch")
 		}
 		var groupMaster *rgwZoneState
@@ -639,7 +644,7 @@ func (f *Fixture) checkZonePeriod(period *rgwTopologyPeriod, master *rgwZoneStat
 		if groupMaster == nil || !slices.Equal(group.Endpoints, []string{groupMaster.PeerEndpoint}) {
 			return errors.New("committed RGW topology zonegroup master/endpoint mismatch")
 		}
-		if groupMaster.ID == master.ID && (period.MasterZonegroup != "" || f.groupIDs[group.Name] != "") && group.ID != period.MasterZonegroup {
+		if groupMaster.ID == master.ID && (period.MasterZonegroup != "" || f.topology.groupIDs[group.Name] != "") && group.ID != period.MasterZonegroup {
 			return errors.New("committed RGW realm master zonegroup mismatch")
 		}
 		for _, state := range expected {
@@ -663,54 +668,10 @@ func (f *Fixture) checkZonePeriod(period *rgwTopologyPeriod, master *rgwZoneStat
 func (f *Fixture) waitZonePeriods(ctx context.Context, master *rgwZoneState, states []*rgwZoneState) error {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	var last error
 	for {
-		last = nil
-		for _, state := range states {
-			// A newly started secondary may not yet have received the system
-			// user's metadata, so automatic signed period notifications can be
-			// rejected. Pull using the master's known bootstrap credentials;
-			// realm pull advances the active pointer and reflects zonegroups.
-			if state.ID != master.ID {
-				if _, err := f.admin(ctx, state.client, state.Name, "realm", "pull", "--url", master.PeerEndpoint,
-					"--access-key", f.systemAccess, "--secret", f.systemSecret); err != nil {
-					last = fmt.Errorf("pull active RGW topology into %s: %w", state.Name, err)
-					break
-				}
-			}
-			data, err := f.admin(ctx, state.client, state.Name, "period", "get", "--format", "json")
-			if err == nil {
-				var period *rgwTopologyPeriod
-				period, err = decodeRGWTopologyPeriod(data)
-				if err == nil {
-					err = f.checkZonePeriod(period, master, states)
-				}
-			}
-			if err != nil {
-				last = fmt.Errorf("RGW topology period in %s: %w", state.Name, err)
-				break
-			}
-		}
+		last := f.zonePeriodsLag(ctx, master, states)
 		if last == nil {
-			data, err := f.admin(ctx, master.client, master.Name, "period", "get", "--format", "json")
-			if err != nil {
-				return err
-			}
-			period, err := decodeRGWTopologyPeriod(data)
-			if err != nil {
-				return err
-			}
-			if f.groupMasters == nil {
-				f.groupMasters = make(map[string]string)
-			}
-			for _, group := range period.PeriodMap.Zonegroups {
-				for _, state := range states {
-					if state.ID == group.MasterZone {
-						f.groupMasters[group.Name] = state.Name
-					}
-				}
-			}
-			return nil
+			return f.recordGroupMasters(ctx, master, states)
 		}
 		select {
 		case <-ctx.Done():
@@ -720,10 +681,63 @@ func (f *Fixture) waitZonePeriods(ctx context.Context, master *rgwZoneState, sta
 	}
 }
 
+// zonePeriodsLag pulls the active topology into every secondary and checks
+// each zone's period, returning the first zone that does not have it yet.
+func (f *Fixture) zonePeriodsLag(ctx context.Context, master *rgwZoneState, states []*rgwZoneState) error {
+	for _, state := range states {
+		// A newly started secondary may not yet have received the system
+		// user's metadata, so automatic signed period notifications can be
+		// rejected. Pull using the master's known bootstrap credentials;
+		// realm pull advances the active pointer and reflects zonegroups.
+		if state.ID != master.ID {
+			if _, err := f.realm.admin(ctx, state.client, state.Name, "realm", "pull", "--url", master.PeerEndpoint,
+				"--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret); err != nil {
+				return fmt.Errorf("pull active RGW topology into %s: %w", state.Name, err)
+			}
+		}
+		data, err := f.realm.admin(ctx, state.client, state.Name, "period", "get", "--format", "json")
+		if err == nil {
+			var period *rgwTopologyPeriod
+			period, err = decodeRGWTopologyPeriod(data)
+			if err == nil {
+				err = f.checkZonePeriod(period, master, states)
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("RGW topology period in %s: %w", state.Name, err)
+		}
+	}
+	return nil
+}
+
+// recordGroupMasters records each zonegroup's master zone from the master's
+// committed period.
+func (f *Fixture) recordGroupMasters(ctx context.Context, master *rgwZoneState, states []*rgwZoneState) error {
+	data, err := f.realm.admin(ctx, master.client, master.Name, "period", "get", "--format", "json")
+	if err != nil {
+		return err
+	}
+	period, err := decodeRGWTopologyPeriod(data)
+	if err != nil {
+		return err
+	}
+	if f.topology.groupMasters == nil {
+		f.topology.groupMasters = make(map[string]string)
+	}
+	for _, group := range period.PeriodMap.Zonegroups {
+		for _, state := range states {
+			if state.ID == group.MasterZone {
+				f.topology.groupMasters[group.Name] = state.Name
+			}
+		}
+	}
+	return nil
+}
+
 // HTTP readiness does not imply that a secondary finished creating its local
 // metadata full-sync maps. Wait for every native shard to enter incremental
 // sync before restarting gateways to apply the new topology.
-func (f *Fixture) waitZoneMetadataBootstrap(ctx context.Context, master *rgwZoneState, states []*rgwZoneState) error {
+func (r *rgwRealmAccess) waitZoneMetadataBootstrap(ctx context.Context, master *rgwZoneState, states []*rgwZoneState) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	for _, zone := range states {
@@ -739,7 +753,7 @@ func (f *Fixture) waitZoneMetadataBootstrap(ctx context.Context, master *rgwZone
 		}
 		var last error
 		for {
-			data, err := f.admin(ctx, zone.client, zone.Name, "metadata", "sync", "status", "--format", "json")
+			data, err := r.admin(ctx, zone.client, zone.Name, "metadata", "sync", "status", "--format", "json")
 			if err == nil {
 				err = rgwMetadataBootstrapped(data)
 			}

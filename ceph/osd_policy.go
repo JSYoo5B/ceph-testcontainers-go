@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+// osdMap is the cluster's native OSD map view: the OSD dump and flags, the
+// up/in wait, device classes and the cluster FSID the OSDs carry. It holds no
+// state and takes no lock; callers keep the topology lock and the OSD registry.
+type osdMap struct {
+	conn cephConn
+}
+
 // OSDState reports authoritative OSDMap state for an owned OSD. Weight is the
 // native map reweight in [0,1], not the CRUSH capacity weight. Out OSDs retain
 // their containers, identities and data; absence or a replaced UUID is an error.
@@ -27,11 +34,11 @@ func (c *Container) osdStates(ctx context.Context) ([]OSDState, error) {
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	owned := make(map[int]*osdRegistration, c.osdHandles.count())
-	for id, osd := range c.osdHandles.each() {
+	owned := make(map[int]*osdRegistration, c.fleet.osdHandles.count())
+	for id, osd := range c.fleet.osdHandles.each() {
 		owned[id] = registrationOf(osd)
 	}
-	return readOwnedOSDStates(ctx, c.cephCLI, owned)
+	return readOwnedOSDStates(ctx, c.conn().ceph, owned)
 }
 
 // OSDFlag is a global OSDMap flag token such as "noout". The constants name
@@ -60,22 +67,12 @@ const (
 // String returns the native flag token.
 func (f OSDFlag) String() string { return string(f) }
 
-// osdFlags implements Observer.OSDFlags.
-func (c *Container) osdFlags(ctx context.Context) ([]OSDFlag, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return nil, err
-	}
-	return readOSDFlags(ctx, c.cephCLI)
-}
-
-func (c *Container) setOSDFlag(ctx context.Context, flag OSDFlag, enabled bool) error {
+func (om osdMap) setFlag(ctx context.Context, flag OSDFlag, enabled bool) error {
 	op := "unset"
 	if enabled {
 		op = "set"
 	}
-	_, err := c.cephCLI(ctx, "osd", op, string(flag))
+	_, err := om.conn.ceph(ctx, "osd", op, string(flag))
 	return err
 }
 
@@ -84,8 +81,8 @@ type osdPolicySnapshot struct {
 	osds  map[int]OSDState
 }
 
-func (c *Container) osdPolicyDump(ctx context.Context) (osdPolicySnapshot, error) {
-	return readOSDPolicyDump(ctx, c.cephCLI)
+func (om osdMap) policyDump(ctx context.Context) (osdPolicySnapshot, error) {
+	return readOSDPolicyDump(ctx, om.conn.ceph)
 }
 
 // decodeOSDPolicyDump decodes the flags and OSDs of the output of osd dump.
@@ -127,10 +124,10 @@ func decodeOSDPolicyDump(data []byte) (osdPolicySnapshot, error) {
 	return result, nil
 }
 
-// ownedOSDState resolves id against a native snapshot and the OSD registry.
-// The caller holds c.mu.
-func (c *Container) ownedOSDState(dump osdPolicySnapshot, id int) (OSDState, error) {
-	return resolveOwnedOSDState(dump, id, registrationOf(c.osdHandles.get(id)))
+// ownedState resolves id against a native snapshot and the registry.
+// The caller holds Container.mu.
+func (r *osdRegistry) ownedState(dump osdPolicySnapshot, id int) (OSDState, error) {
+	return resolveOwnedOSDState(dump, id, registrationOf(r.get(id)))
 }
 
 // WaitForPGClean waits for every existing PG to be exactly active+clean. Unlike
@@ -160,7 +157,7 @@ func (c *Container) WaitForPGClean(ctx context.Context) error {
 			c.mu.Unlock()
 			return errors.Join(err, last)
 		}
-		s, err := readStatus(ctx, c.cephCLI)
+		s, err := readStatus(ctx, c.conn().ceph)
 		c.mu.Unlock()
 		if err != nil {
 			last = err

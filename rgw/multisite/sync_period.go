@@ -36,10 +36,10 @@ func (g *SyncGroup) Apply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := f.finishPendingSyncGroup(ctx, master, g); err != nil {
+	if err := g.finishPending(ctx, master); err != nil {
 		return err
 	}
-	policy, _, err := f.syncPolicyDocument(ctx, master, g)
+	policy, _, err := g.policyDocument(ctx, master)
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func (g *SyncGroup) Apply(ctx context.Context) error {
 	if err := f.importSyncPeriod(ctx, master, states, current); err != nil {
 		return err
 	}
-	return f.reloadZoneGateways(ctx, states, nil)
+	return f.topology.reloadZoneGateways(ctx, states, nil)
 }
 
 // checkStoredZonegroups requires every zonegroup of want to be stored exactly
@@ -138,7 +138,7 @@ func (f *Fixture) importSyncPeriod(ctx context.Context, master *rgwZoneState, st
 	for _, zone := range states {
 		if zone.ID != master.ID {
 			if _, err := f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "realm", "pull", "--url", master.PeerEndpoint,
-				"--access-key", f.systemAccess, "--secret", f.systemSecret); err != nil {
+				"--access-key", f.realm.systemAccess, "--secret", f.realm.systemSecret); err != nil {
 				return err
 			}
 		}
@@ -214,7 +214,7 @@ func (f *Fixture) syncStagingPeriod(ctx context.Context, master *rgwZoneState) (
 	}
 	id := f.RealmID + ":staging"
 	argv := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring",
-		"--realm-id", f.RealmID, "--zonegroup-id", f.groupIDs[master.Zonegroup], "--zone-id", master.ID,
+		"--realm-id", f.RealmID, "--zonegroup-id", f.topology.groupIDs[master.Zonegroup], "--zone-id", master.ID,
 		"--format", "json", "period", "get", "--period", id, "--epoch", "1"}
 	code, reader, err := master.client.Exec(ctx, argv)
 	if err != nil {

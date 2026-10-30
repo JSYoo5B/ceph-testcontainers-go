@@ -20,8 +20,8 @@ type PoolPlacement struct {
 
 // The OSDMap can reach a count before the manager reports the new PGs. Until
 // the reported set matches too, WaitForClean could still pass on the old set.
-func (c *Container) reportedPoolPGs(ctx context.Context, pool PoolState) (int, error) {
-	data, err := c.cephCLI(ctx, "pg", "ls-by-pool", pool.Name, "--format", "json")
+func (pc poolCatalog) reportedPGs(ctx context.Context, pool PoolState) (int, error) {
+	data, err := pc.conn.ceph(ctx, "pg", "ls-by-pool", pool.Name, "--format", "json")
 	if err != nil {
 		return 0, err
 	}
@@ -73,8 +73,8 @@ func poolPlacementRuleName(pool string, placement PoolConfig) string {
 	return "tc-" + pool + "-placement-" + hex.EncodeToString(sum[:4])
 }
 
-func (c *Container) poolPlacementRule(ctx context.Context, pool string, desired PoolConfig) (string, bool, error) {
-	data, err := c.cephCLI(ctx, "osd", "crush", "rule", "dump", "--format", "json")
+func (pc poolCatalog) placementRule(ctx context.Context, pool string, desired PoolConfig) (string, bool, error) {
+	data, err := pc.conn.ceph(ctx, "osd", "crush", "rule", "dump", "--format", "json")
 	if err != nil {
 		return "", false, err
 	}
@@ -98,7 +98,7 @@ func (c *Container) poolPlacementRule(ctx context.Context, pool string, desired 
 		if !exists {
 			continue
 		}
-		current, err := c.poolRulePlacement(ctx, id)
+		current, err := pc.rulePlacement(ctx, id)
 		if err == nil && samePoolPlacement(current, desired) {
 			return name, true, nil
 		}

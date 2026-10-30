@@ -11,7 +11,7 @@ func (c *Container) waitPolicyReady(ctx context.Context) error {
 	if c.closed {
 		return errClusterTerminated
 	}
-	control, err := c.controlContainerContext(ctx)
+	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
 		return err
 	}

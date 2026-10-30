@@ -276,7 +276,7 @@ func TestPortLeaseStateCallersAreAudited(t *testing.T) {
 // and the native commands are stopped, and before the services, the OSDs and
 // the monitors are terminated, exactly once.
 func TestTerminateReleasesPortLeasesAfterNativeCommandsAndBeforeTheServices(t *testing.T) {
-	for _, parsed := range parseProductionFiles(t) {
+	for _, parsed := range parseProductionFilesWithTerminateSteps(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil || !isContainerTerminate(fn) {
@@ -293,8 +293,10 @@ func TestTerminateReleasesPortLeasesAfterNativeCommandsAndBeforeTheServices(t *t
 							if recv, ok := sel.X.(*ast.SelectorExpr); ok && faultsUse(recv) {
 								undo = append(undo, x.Pos())
 							}
-						case "stopNativeInvocations":
-							stop = append(stop, x.Pos())
+						case "stopAll":
+							if types.ExprString(sel.X) == "c.native" {
+								stop = append(stop, x.Pos())
+							}
 						case "release":
 							if recv, ok := sel.X.(*ast.SelectorExpr); ok && portLeaseUse(recv) {
 								release = append(release, x.Pos())
@@ -302,14 +304,14 @@ func TestTerminateReleasesPortLeasesAfterNativeCommandsAndBeforeTheServices(t *t
 						}
 					}
 				case *ast.RangeStmt:
-					if types.ExprString(x.X) == "c.roster.eachService()" {
+					if types.ExprString(x.X) == "c.members.roster.eachService()" {
 						services = append(services, x.Pos())
 					}
 				}
 				return true
 			})
 			if len(undo) != 1 || len(stop) == 0 || len(release) != 1 || len(services) != 1 {
-				t.Fatalf("terminate must call faults.undo and portLeases.release once, stopNativeInvocations at least once and range over services once: %d %d %d %d", len(undo), len(stop), len(release), len(services))
+				t.Fatalf("terminate must call faults.undo and portLeases.release once, c.native.stopAll at least once and range over services once: %d %d %d %d", len(undo), len(stop), len(release), len(services))
 			}
 			if !(undo[0] < release[0] && stop[0] < release[0] && release[0] < services[0]) {
 				t.Fatal("terminate must release the port leases after the faults and native commands and before the services")

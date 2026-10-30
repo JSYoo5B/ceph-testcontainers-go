@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -155,12 +156,14 @@ var authStateMethods = map[string][]string{
 }
 
 // TestAuthStateFieldsAreOnlyTouchedByItsMethods guards the ownership written
-// on authState: outside this type, Container.authRecords is used only as the receiver
-// of one of its methods, so no code reads or writes one of the five record
-// maps without the method that does, and it is never replaced as a whole.
+// on authState: outside this type, the records (in authLedgerState, the
+// Container field ledger) are used only as the receiver of one of its methods, so no
+// code reads or writes one of the five record maps without the method that
+// does, and they are never replaced as a whole. Container.ledger itself is
+// addressed only by Container.authLedger's single binding.
 func TestAuthStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 	var problems []string
-	uses := 0
+	uses, bindings := 0, 0
 	for file, parsed := range parseProductionFiles(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -168,6 +171,10 @@ func TestAuthStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 				continue
 			}
 			allowed := map[*ast.SelectorExpr]bool{}
+			// Container.authLedger binds the records to the ledger, the one
+			// place that hands out their address; the ledger's methods are
+			// held to this guard like any other function.
+			binding := funcKey(fn) == "Container.authLedger"
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if call, ok := n.(*ast.CallExpr); ok {
 					if method, ok := call.Fun.(*ast.SelectorExpr); ok {
@@ -191,8 +198,15 @@ func TestAuthStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 						}
 					}
 				case *ast.KeyValueExpr:
-					if key, ok := n.Key.(*ast.Ident); ok && key.Name == "authRecords" {
-						problems = append(problems, file+": "+fn.Name.Name+" sets Container.authRecords in a literal")
+					if key, ok := n.Key.(*ast.Ident); ok && (key.Name == "authRecords" || key.Name == "authLedgerState") {
+						if address, ok := n.Value.(*ast.UnaryExpr); binding && ok && address.Op == token.AND && key.Name == "authLedgerState" {
+							if sel, ok := address.X.(*ast.SelectorExpr); ok && sel.Sel.Name == "ledger" {
+								bindings++
+								allowed[sel] = true
+								return true
+							}
+						}
+						problems = append(problems, file+": "+fn.Name.Name+" sets "+key.Name+" in a literal")
 					}
 				}
 				return true
@@ -201,6 +215,9 @@ func TestAuthStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 	}
 	if uses == 0 {
 		problems = append(problems, "no use of Container.authRecords found: the guard is vacuous")
+	}
+	if bindings != 1 {
+		problems = append(problems, fmt.Sprintf("Container.authLedger binds the records %d times, want once", bindings))
 	}
 	if len(problems) != 0 {
 		t.Fatalf("auth state escapes its methods: %v", problems)
@@ -278,16 +295,17 @@ func TestAuthStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
 // are in this list too. A function is named "Receiver.name", or "name" for a
 // function without receiver. The value is where the contract is written.
 var authOwnerHeld = map[string]string{
-	"Container.settleClient":              "client_key.go: settleClient",
-	"Container.changeClient":              "client_key.go: changeClient",
+	"Container.authLedger":                "auth_state.go: authLedger, whose ledger the caller uses while it holds c.mu",
+	"authLedger.settleClient":             "client_key.go: settleClient",
+	"authLedger.changeClient":             "client_key.go: changeClient",
 	"Container.ownedClientRecord":         "client_key.go: ownedClientRecord",
-	"Container.checkCurrentClient":        "client_key.go: checkCurrentClient",
-	"Container.removeStrayAuthInputs":     "daemon_key_rotation.go: removeStrayAuthInputs",
-	"Container.stopEarlierAuthCommands":   "daemon_key_rotation.go: stopEarlierAuthCommands",
-	"Container.settleEarlierRotation":     "daemon_key_rotation.go: settleEarlierRotation",
-	"Container.daemonExec":                "daemon_key_rotation.go: daemonExec, reached from rotateDaemonKey",
-	"Container.placeDaemonKeyring":        "daemon_key_rotation.go: placeDaemonKeyring, reached from rotateDaemonKey through writeDaemonKeyrings",
-	"Container.writeDaemonKeyrings":       "daemon_key_rotation.go: reached from rotateDaemonKey",
+	"authLedger.checkCurrentClient":       "client_key.go: checkCurrentClient",
+	"authLedger.removeStrayAuthInputs":    "daemon_key_rotation.go: removeStrayAuthInputs",
+	"authLedger.stopEarlierAuthCommands":  "daemon_key_rotation.go: stopEarlierAuthCommands",
+	"authLedger.settleEarlierRotation":    "daemon_key_rotation.go: settleEarlierRotation",
+	"authLedger.daemonExec":               "daemon_key_rotation.go: daemonExec, reached from rotateDaemonKey",
+	"authLedger.placeDaemonKeyring":       "daemon_key_rotation.go: placeDaemonKeyring, reached from rotateDaemonKey through writeDaemonKeyrings",
+	"authLedger.writeDaemonKeyrings":      "daemon_key_rotation.go: reached from rotateDaemonKey",
 	"daemonRotation.finishEarlierHandoff": "daemon_key_rotation.go: daemonRotation, whose phases run in rotateDaemonKey's critical section",
 	"daemonRotation.abandon":              "daemon_key_rotation.go: daemonRotation",
 	"daemonRotation.stageKeyFile":         "daemon_key_rotation.go: daemonRotation",
@@ -419,7 +437,7 @@ func TestAuthRecordsAreOnlyUsedWithTheClusterMutexHeld(t *testing.T) {
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				switch n := n.(type) {
 				case *ast.SelectorExpr:
-					if n.Sel.Name == "authRecords" {
+					if n.Sel.Name == "authRecords" || n.Sel.Name == "ledger" && isContainerReceiver(n.X) {
 						uses = append(uses, n.Pos())
 					}
 				case *ast.CallExpr:

@@ -16,7 +16,7 @@ func (c *Container) managerServices(ctx context.Context) (map[string]string, err
 	if err := c.poolPolicyReady(); err != nil {
 		return nil, err
 	}
-	return readManagerServices(ctx, c.cephCLI)
+	return readManagerServices(ctx, c.conn().ceph)
 }
 
 func decodeManagerServices(data []byte) (map[string]string, error) {

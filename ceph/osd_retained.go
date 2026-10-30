@@ -149,9 +149,9 @@ func osdKeyringSecret(keyring string, id int) (string, error) {
 	return secret, nil
 }
 
-// clusterFSID reads the FSID that the MONs serve.
-func (c *Container) clusterFSID(ctx context.Context) (string, error) {
-	data, err := c.cephCLI(ctx, "fsid")
+// fsid reads the FSID that the MONs serve.
+func (om osdMap) fsid(ctx context.Context) (string, error) {
+	data, err := om.conn.ceph(ctx, "fsid")
 	if err != nil {
 		return "", fmt.Errorf("read cluster FSID: %w", err)
 	}
@@ -171,8 +171,8 @@ var instanceFaultNames = map[faultKind]string{
 // refuseInstanceFaults refuses an OSD container that a held network or
 // pause fault still targets: its undo needs the container OSDContainer.Detach removes.
 // The caller holds c.mu.
-func (c *Container) refuseInstanceFaults(ctx context.Context, id int, containerID string) error {
-	name, found, err := c.faults.openInstanceFault(ctx, containerID)
+func (r *faultRegistry) refuseInstanceFaults(ctx context.Context, id int, containerID string) error {
+	name, found, err := r.openInstanceFault(ctx, containerID)
 	if err != nil {
 		return err
 	}
@@ -196,10 +196,10 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 	if c.closed {
 		return nil, errClusterTerminated
 	}
-	if !c.settings.osdVolumeStorage || !c.stores.hasVolume() {
+	if !c.settings.osdVolumeStorage || !c.fleet.stores.hasVolume() {
 		return nil, invalidRequest("OSDContainer.Detach retains stores only with OSDStorage.WithVolume")
 	}
-	if err := c.currentOSD(handle); err != nil {
+	if err := c.fleet.osdHandles.current(handle); err != nil {
 		return nil, err
 	}
 	osd := handle
@@ -209,30 +209,30 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
 	name := fmt.Sprintf("osd.%d", id)
-	fsid, err := c.clusterFSID(ctx)
+	fsid, err := osdMap{c.conn()}.fsid(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if !osd.detachRemoved {
-		if _, err := c.removalOSDState(ctx, id); err != nil {
+		if _, err := c.osdFleet().removalOSDState(ctx, id); err != nil {
 			return nil, err
 		}
 		if osd.Container == nil {
 			return nil, fmt.Errorf("%s has no container to detach", name)
 		}
 		containerID := osd.GetContainerID()
-		if err := c.refuseInstanceFaults(ctx, id, containerID); err != nil {
+		if err := c.faults.refuseInstanceFaults(ctx, id, containerID); err != nil {
 			return nil, err
 		}
 		osd.detaching = true
-		if err := c.fenceNativeTarget(ctx, containerID); err != nil {
+		if err := c.native.fence(ctx, containerID); err != nil {
 			return nil, fmt.Errorf("stop native commands for %s: %w", name, err)
 		}
 		stopTimeout := 10 * time.Second
 		if err := osd.Stop(ctx, &stopTimeout); !onlyMissingHostResource(err) {
 			return nil, fmt.Errorf("stop %s: %w", name, err)
 		}
-		if err := c.waitOSDRemoval(ctx, id, false); err != nil {
+		if err := c.osdFleet().waitOSDRemoval(ctx, id, false); err != nil {
 			return nil, fmt.Errorf("wait for %s down: %w", name, err)
 		}
 		if err := ctx.Err(); err != nil {
@@ -245,10 +245,10 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 		}
 		osd.detachRemoved = true
 	}
-	if _, err := c.removalOSDState(ctx, id); err != nil {
+	if _, err := c.osdFleet().removalOSDState(ctx, id); err != nil {
 		return nil, err
 	}
-	store, err := c.stores.retainedStore(ctx, id)
+	store, err := c.fleet.stores.retainedStore(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +256,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 		return nil, err
 	}
 	detached := &DetachedOSD{cluster: c, id: id, osdUUID: osd.nativeUUID, fsid: fsid, placement: osd.placement, image: osd.image, store: store}
-	c.osdHandles.park(id, detached)
+	c.fleet.osdHandles.park(id, detached)
 	return detached, nil
 }
 
@@ -277,24 +277,24 @@ func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 		return nil, invalidRequest("the detached OSD belongs to another cluster")
 	}
 	id := detached.id
-	if detached.reopened || c.osdHandles.detachedOf(id) != detached {
+	if detached.reopened || c.fleet.osdHandles.detachedOf(id) != detached {
 		return nil, invalid(fmt.Errorf("osd.%d was already reopened", id))
 	}
-	if c.osdHandles.get(id) != nil {
+	if c.fleet.osdHandles.get(id) != nil {
 		return nil, fmt.Errorf("osd.%d is owned by another handle", id)
 	}
-	if !c.stores.hasVolume() {
+	if !c.fleet.stores.hasVolume() {
 		return nil, errors.New("OSD volume storage is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	if err := c.reopenPreflight(ctx, detached); err != nil {
+	if err := c.osdFleet().reopenPreflight(ctx, detached); err != nil {
 		return nil, err
 	}
 	// The stale socket cleanup is idempotent and runs before the handle is
 	// consumed, so that its failure is a known zero-dispatch refusal that
 	// leaves the detached OSD reusable. The topology lock is held throughout.
-	if err := c.clearStaleOSDSocket(ctx, detached); err != nil {
+	if err := c.osdFleet().clearStaleOSDSocket(ctx, detached); err != nil {
 		return nil, err
 	}
 	// Last check before the irreversible transition.
@@ -303,15 +303,15 @@ func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 	}
 	detached.reopened = true
 	osd := &OSDContainer{ID: id, owner: c, nativeUUID: detached.osdUUID, placement: detached.placement, image: detached.image}
-	c.osdHandles.unpark(id, osd)
+	c.fleet.osdHandles.unpark(id, osd)
 	launch := osdLaunch{osd: osd, recipe: c.newOSDLaunchRecipe(osd, []byte(detached.store.keyring))}
-	if err := c.startOSD(ctx, launch); err != nil {
+	if err := c.osdFleet().startOSD(ctx, launch); err != nil {
 		return osd, err
 	}
-	if err := c.waitOSDsUp(ctx, []int{id}); err != nil {
+	if err := (osdMap{c.conn()}).waitUp(ctx, []int{id}); err != nil {
 		return osd, err
 	}
-	if _, err := c.removalOSDState(ctx, id); err != nil {
+	if _, err := c.osdFleet().removalOSDState(ctx, id); err != nil {
 		return osd, err
 	}
 	return osd, nil
@@ -325,8 +325,8 @@ func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 // same way and returned as an error. Only an error without such a record
 // proves that no cleanup command can still run, and only then may the caller
 // retry. The caller holds c.mu.
-func (c *Container) clearStaleOSDSocket(ctx context.Context, detached *DetachedOSD) error {
-	if !c.runDir.published() {
+func (f osdFleet) clearStaleOSDSocket(ctx context.Context, detached *DetachedOSD) error {
+	if !f.runDir.published() {
 		return nil
 	}
 	daemon := fmt.Sprintf("osd.%d", detached.id)
@@ -340,11 +340,11 @@ func (c *Container) clearStaleOSDSocket(ctx context.Context, detached *DetachedO
 		}
 		detached.staleCleanups = detached.staleCleanups[1:]
 	}
-	control := c.cliContainer()
+	control := f.conn.cliContainer()
 	if control == nil {
 		return errors.New("ceph control container is unavailable")
 	}
-	result, err := supervised.Command(ctx, control, "stale admin socket cleanup", c.settings.startupTimeout, adminSocketStdoutLimit, adminSocketStderrLimit,
+	result, err := supervised.Command(ctx, control, "stale admin socket cleanup", f.settings.startupTimeout, adminSocketStdoutLimit, adminSocketStderrLimit,
 		"rm", "-f", adminSocketDir+"/ceph-"+daemon+".asok")
 	if err != nil {
 		if marker, unconfirmed := supervised.Unconfirmed(err); unconfirmed {
@@ -359,23 +359,23 @@ func (c *Container) clearStaleOSDSocket(ctx context.Context, detached *DetachedO
 }
 
 // reopenPreflight reads, without writing, everything that a reopen relies on.
-func (c *Container) reopenPreflight(ctx context.Context, detached *DetachedOSD) error {
+func (f osdFleet) reopenPreflight(ctx context.Context, detached *DetachedOSD) error {
 	id := detached.id
-	store, err := c.stores.retainedStore(ctx, id)
+	store, err := f.stores.retainedStore(ctx, id)
 	if err != nil {
 		return err
 	}
 	if store != detached.store {
 		return fmt.Errorf("retained osd.%d store changed since it was detached", id)
 	}
-	fsid, err := c.clusterFSID(ctx)
+	fsid, err := osdMap{f.conn}.fsid(ctx)
 	if err != nil {
 		return err
 	}
 	if err := store.matches(id, detached.osdUUID, fsid); err != nil {
 		return err
 	}
-	dump, err := c.removalOSDDump(ctx)
+	dump, err := osdMap{f.conn}.removalDump(ctx)
 	if err != nil {
 		return err
 	}
@@ -389,7 +389,7 @@ func (c *Container) reopenPreflight(ctx context.Context, detached *DetachedOSD) 
 	if state.Up {
 		return fmt.Errorf("retained osd.%d is up; another instance uses its registration", id)
 	}
-	key, err := c.cephCLI(ctx, "auth", "get-key", fmt.Sprintf("osd.%d", id))
+	key, err := f.conn.ceph(ctx, "auth", "get-key", fmt.Sprintf("osd.%d", id))
 	if err != nil {
 		return fmt.Errorf("read the MON key of osd.%d: %w", id, err)
 	}

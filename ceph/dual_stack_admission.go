@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 )
 
 // checkDualStackAddresses admits an AddressDualStack cluster only when the
@@ -21,8 +23,8 @@ func (c *Container) checkDualStackAddresses(ctx context.Context) error {
 		return nil
 	}
 	var addresses DaemonAddresses
-	if err := c.poll(ctx, func() (bool, error) {
-		current, err := readDaemonAddresses(ctx, c.cephCLI)
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
+		current, err := readDaemonAddresses(ctx, c.conn().ceph)
 		if err != nil {
 			return false, err
 		}

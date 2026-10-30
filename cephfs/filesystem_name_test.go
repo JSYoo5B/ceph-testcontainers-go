@@ -75,7 +75,7 @@ func TestScheduleNameReadDoesNotRaceWithConfigReplacement(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for range 200 {
-			if _, err := fs.snapshotScheduleStatuses(t.Context(), "/"); err != nil {
+			if _, err := fs.volumes().snapshotScheduleStatuses(t.Context(), "/"); err != nil {
 				t.Errorf("status read failed: %v", err)
 				return
 			}

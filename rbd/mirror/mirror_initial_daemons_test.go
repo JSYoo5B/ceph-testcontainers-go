@@ -115,12 +115,12 @@ func TestMirrorInitialDaemonCanceledAdmissionHasNoRuntimeEffects(t *testing.T) {
 
 func TestMirrorInitialZeroRBDObserverDoesNotLaunchDaemons(t *testing.T) {
 	h := newReceiverHarness(t, "", "", 0)
-	config := h.m.config
+	config := h.m.pair.config
 	config.NoInitialDaemons = true
 	var err error
-	h.m.config, err = normalizeRBDMirrorConfig(config)
-	if err != nil || h.m.config.DaemonCount != 0 {
-		t.Fatalf("explicit zero fixture normalization: %+v %v", h.m.config, err)
+	h.m.pair.config, err = normalizeRBDMirrorConfig(config)
+	if err != nil || h.m.pair.config.DaemonCount != 0 {
+		t.Fatalf("explicit zero fixture normalization: %+v %v", h.m.pair.config, err)
 	}
 	status, err := h.m.ReceiverStatus(t.Context())
 	if err != nil || status.Ready || status.PeerID != receiverPeerUUID || len(status.Daemons) != 0 || h.m.Container != nil {

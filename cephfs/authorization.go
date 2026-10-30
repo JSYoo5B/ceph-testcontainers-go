@@ -89,26 +89,9 @@ func (volume *Subvolume) Authorize(ctx context.Context, config SubvolumeAuthoriz
 		return nil, err
 	}
 	defer done()
-	info, err := fs.subvolumeInfo(ctx, volume.identity.name, volume.identity.group)
+	info, pool, err := fs.authorizationTarget(ctx, fsID, volume)
 	if err != nil {
 		return nil, err
-	}
-	if volume.identity.removed || info.State != "complete" {
-		return nil, errors.New("subvolume must be active and complete")
-	}
-	if err := fs.checkVolumeIdentity(fsID, volume.identity, info.Path, info.CreatedAt); err != nil {
-		return nil, err
-	}
-	if info.PoolNamespace == "" {
-		return nil, errors.New("subvolume authorization requires a native isolated pool namespace")
-	}
-	state, err := fs.readNativePools(ctx)
-	if err != nil {
-		return nil, err
-	}
-	pool, err := state.poolByName(info.DataPool)
-	if err != nil || !slices.Contains(state.dataPools, pool.ID) {
-		return nil, errors.New("subvolume layout pool is not registered with this filesystem")
 	}
 	// Fresh-key auth add prevents native get-or-create from silently reusing a
 	// concurrently created external principal. Initial caps contain no file-data
@@ -125,41 +108,78 @@ func (volume *Subvolume) Authorize(ctx context.Context, config SubvolumeAuthoriz
 	if err != nil {
 		return grant, err
 	}
+	return grant, fs.grantAuthorization(ctx, volume, identity)
+}
+
+// authorizationTarget reads the native subvolume an authorization targets:
+// it must be active, complete, the same incarnation and in an isolated pool
+// namespace of a pool registered with this filesystem. The subvolume
+// operation gate is held.
+func (fs *Filesystem) authorizationTarget(ctx context.Context, fsID int64, volume *Subvolume) (*SubvolumeInfo, ceph.PoolState, error) {
+	info, err := fs.volumes().subvolumeInfo(ctx, volume.identity.name, volume.identity.group)
+	if err != nil {
+		return nil, ceph.PoolState{}, err
+	}
+	if volume.identity.removed || info.State != "complete" {
+		return nil, ceph.PoolState{}, errors.New("subvolume must be active and complete")
+	}
+	if err := fs.checkVolumeIdentity(fsID, volume.identity, info.Path, info.CreatedAt); err != nil {
+		return nil, ceph.PoolState{}, err
+	}
+	if info.PoolNamespace == "" {
+		return nil, ceph.PoolState{}, errors.New("subvolume authorization requires a native isolated pool namespace")
+	}
+	state, err := fs.readNativePools(ctx)
+	if err != nil {
+		return nil, ceph.PoolState{}, err
+	}
+	pool, err := state.poolByName(info.DataPool)
+	if err != nil || !slices.Contains(state.dataPools, pool.ID) {
+		return nil, ceph.PoolState{}, errors.New("subvolume layout pool is not registered with this filesystem")
+	}
+	return info, pool, nil
+}
+
+// grantAuthorization records the attempt and applies the native subvolume
+// authorization to the fresh principal under the topology lock: the principal
+// must have no file-data capabilities before, and exactly the expected MDS
+// and OSD clauses with its key preserved after.
+func (fs *Filesystem) grantAuthorization(ctx context.Context, volume *Subvolume, identity *cephFSAuthorizationIdentity) error {
 	if err := servicehook.LockTopology(ctx, fs.cluster); err != nil {
-		return grant, err
+		return err
 	}
 	defer servicehook.Unlock(fs.cluster)
-	before, err := fs.authorizationClientCaps(ctx, identity)
+	before, err := fs.volumes().authorizationClientCaps(ctx, identity)
 	if err != nil {
-		return grant, err
+		return err
 	}
 	if before["mds"] != "" || before["osd"] != "" {
-		return grant, errors.New("fresh principal acquired file-data capabilities outside this request")
+		return errors.New("fresh principal acquired file-data capabilities outside this request")
 	}
 	if volume.identity.authorizations == nil {
 		volume.identity.authorizations = make(map[*cephFSAuthorizationIdentity]struct{})
 	}
 	volume.identity.authorizations[identity] = struct{}{}
 	identity.authorizeAttempted = true
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "authorize", fs.name, volume.identity.name, client.User()}, volume.identity.group)
-	args = append(args, "--access_level", config.Access, "--allow_existing_id")
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "authorize", fs.name, volume.identity.name, identity.client.User()}, volume.identity.group)
+	args = append(args, "--access_level", identity.access, "--allow_existing_id")
 	if _, err := servicehook.AuthCommand(ctx, fs.cluster, "authorize owned subvolume client", args...); err != nil {
-		return grant, err
+		return err
 	}
-	current, err := fs.authorizationClientCaps(ctx, identity)
+	current, err := fs.volumes().authorizationClientCaps(ctx, identity)
 	if err != nil {
-		return grant, err
+		return err
 	}
 	expected := maps.Clone(before)
 	expected["mds"], expected["osd"] = identity.nativeClauses()
 	if !equalAuthorizationCaps(current, expected) {
-		return grant, errors.New("native subvolume authorization did not preserve the key and expected capability clauses")
+		return errors.New("native subvolume authorization did not preserve the key and expected capability clauses")
 	}
 	if err := fs.checkNativeAuthorization(ctx, identity, true); err != nil {
-		return grant, err
+		return err
 	}
 	identity.authorized = true
-	return grant, nil
+	return nil
 }
 
 func decodeSubvolumeAuthorizedClients(data []byte) ([]SubvolumeAuthorizedClient, error) {
@@ -188,9 +208,9 @@ func decodeSubvolumeAuthorizedClients(data []byte) ([]SubvolumeAuthorizedClient,
 	return result, nil
 }
 
-func (fs *Filesystem) nativeAuthorizedClients(ctx context.Context, name, group string) ([]SubvolumeAuthorizedClient, error) {
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "authorized_list", fs.name, name}, group)
-	data, err := fs.cluster.Ceph(ctx, args...)
+func (v volumeCommands) nativeAuthorizedClients(ctx context.Context, name, group string) ([]SubvolumeAuthorizedClient, error) {
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "authorized_list", v.name, name}, group)
+	data, err := v.cluster.Ceph(ctx, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +231,7 @@ func (fs *Filesystem) SubvolumeAuthorizedClients(ctx context.Context, name, grou
 		return nil, err
 	}
 	defer done()
-	return fs.nativeAuthorizedClients(ctx, name, group)
+	return fs.volumes().nativeAuthorizedClients(ctx, name, group)
 }
 
 func (identity *cephFSAuthorizationIdentity) nativeClauses() (string, string) {
@@ -221,8 +241,8 @@ func (identity *cephFSAuthorizationIdentity) nativeClauses() (string, string) {
 
 // authorizationClientCaps must be called with cluster.mu held. It also supports
 // a confirmed own deletion when reconciling a lost native deauthorize reply.
-func (fs *Filesystem) authorizationClientCaps(ctx context.Context, identity *cephFSAuthorizationIdentity) (map[string]string, error) {
-	c, client := fs.cluster, identity.client
+func (v volumeCommands) authorizationClientCaps(ctx context.Context, identity *cephFSAuthorizationIdentity) (map[string]string, error) {
+	c, client := v.cluster, identity.client
 	if servicehook.Closed(c) || client == nil || !servicehook.ClientConfirmed(client, c) {
 		return nil, errors.New("subvolume principal must be a confirmed identity created by this cluster")
 	}
@@ -268,7 +288,7 @@ func (fs *Filesystem) checkAuthorizationVolume(ctx context.Context, fsID int64, 
 	if identity.volume.removed {
 		return errors.New("authorized subvolume was removed")
 	}
-	info, err := fs.subvolumeInfo(ctx, identity.volume.name, identity.volume.group)
+	info, err := fs.volumes().subvolumeInfo(ctx, identity.volume.name, identity.volume.group)
 	if err != nil {
 		return err
 	}
@@ -301,7 +321,7 @@ func (fs *Filesystem) checkNativeAuthorization(ctx context.Context, identity *ce
 }
 
 func (fs *Filesystem) nativeAuthorizationPresent(ctx context.Context, identity *cephFSAuthorizationIdentity) (bool, error) {
-	listing, err := fs.nativeAuthorizedClients(ctx, identity.volume.name, identity.volume.group)
+	listing, err := fs.volumes().nativeAuthorizedClients(ctx, identity.volume.name, identity.volume.group)
 	if err != nil {
 		return false, err
 	}
@@ -418,7 +438,7 @@ func (grant *SubvolumeAuthorization) Deauthorize(ctx context.Context) error {
 		return err
 	}
 	defer servicehook.Unlock(fs.cluster)
-	current, err := fs.authorizationClientCaps(ctx, identity)
+	current, err := fs.volumes().authorizationClientCaps(ctx, identity)
 	if err != nil {
 		return err
 	}
@@ -443,7 +463,7 @@ func (grant *SubvolumeAuthorization) Deauthorize(ctx context.Context) error {
 	if _, err := servicehook.AuthCommand(ctx, fs.cluster, "deauthorize owned subvolume client", args...); err != nil {
 		return err
 	}
-	current, err = fs.authorizationClientCaps(ctx, identity)
+	current, err = fs.volumes().authorizationClientCaps(ctx, identity)
 	if err != nil {
 		return err
 	}
@@ -485,7 +505,7 @@ func (grant *SubvolumeAuthorization) EvictClients(ctx context.Context) error {
 		return err
 	}
 	defer servicehook.Unlock(fs.cluster)
-	if _, err := fs.authorizationClientCaps(ctx, identity); err != nil {
+	if _, err := fs.volumes().authorizationClientCaps(ctx, identity); err != nil {
 		return err
 	}
 	if err := fs.checkNativeAuthorization(ctx, identity, false); err != nil {

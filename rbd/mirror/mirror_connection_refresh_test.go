@@ -73,8 +73,8 @@ func newRBDConnectionRefreshFixture(t *testing.T, sourceNamespace, destinationNa
 		name      string
 		identity  rbdMirrorSitePolicyIdentity
 	}{
-		{source, sourceNamespace, "source", link.policyIdentities.source},
-		{destination, destinationNamespace, "destination", link.policyIdentities.destination},
+		{source, sourceNamespace, "source", link.pair.policyIdentities.source},
+		{destination, destinationNamespace, "destination", link.pair.policyIdentities.destination},
 	} {
 		site.client.site = site.name
 		site.client.policies["images"] = site.identity.base
@@ -84,15 +84,15 @@ func newRBDConnectionRefreshFixture(t *testing.T, sourceNamespace, destinationNa
 	}
 	fixture := &rbdConnectionRefreshFixture{link: link, source: source, destination: destination,
 		sourceCluster: &ceph.Container{Container: source}, targetCluster: &ceph.Container{Container: destination}}
-	link.config.Source, link.config.Destination = fixture.sourceCluster, fixture.targetCluster
+	link.pair.config.Source, link.pair.config.Destination = fixture.sourceCluster, fixture.targetCluster
 	for _, name := range []string{"source-cli", "destination-cli", "daemon-a", "daemon-b"} {
 		fixture.clients = append(fixture.clients, &rbdConnectionRefreshArchive{
 			name: name, config: "# " + name + " private marker\n[global]\nmon host = old\nfsid = retained\n[client]\nclient mount timeout = 37\n",
 			keyring: name + " private key", running: name != "daemon-b",
 		})
 	}
-	link.sourceClient, link.destinationClient = fixture.clients[0], fixture.clients[1]
-	link.daemons = []*Daemon{
+	link.pair.sourceClient, link.pair.destinationClient = fixture.clients[0], fixture.clients[1]
+	link.roster.daemons = []*Daemon{
 		{Container: fixture.clients[2], DaemonName: "a", ClientName: "client.rbd-mirror.tc-a"},
 		{Container: fixture.clients[3], DaemonName: "b", ClientName: "client.rbd-mirror.tc-b"},
 	}
@@ -136,7 +136,7 @@ func TestRBDMirrorMonitorRefreshUsesCurrentControlsAndOwnedLocalTargets(t *testi
 		t.Run(mapping.source+"-"+mapping.destination, func(t *testing.T) {
 			fixture := newRBDConnectionRefreshFixture(t, mapping.source, mapping.destination)
 			link := fixture.link
-			policies := link.policyIdentities
+			policies := link.pair.policyIdentities
 			initialContainer := link.Container
 			var order []string
 			beforeConfig, beforeKeyring, beforeState := make([]string, len(fixture.clients)), make([]string, len(fixture.clients)), make([]bool, len(fixture.clients))
@@ -161,7 +161,7 @@ func TestRBDMirrorMonitorRefreshUsesCurrentControlsAndOwnedLocalTargets(t *testi
 					t.Fatalf("refresh changed private data/process or used stale CLI %s: %+v", client.name, client)
 				}
 			}
-			if link.Container != initialContainer || link.policyIdentities != policies || link.daemons[0].ClientName != "client.rbd-mirror.tc-a" || link.daemons[1].ClientName != "client.rbd-mirror.tc-b" || len(fixture.source.mutations)+len(fixture.destination.mutations) != 0 {
+			if link.Container != initialContainer || link.pair.policyIdentities != policies || link.roster.daemons[0].ClientName != "client.rbd-mirror.tc-a" || link.roster.daemons[1].ClientName != "client.rbd-mirror.tc-b" || len(fixture.source.mutations)+len(fixture.destination.mutations) != 0 {
 				t.Fatal("monitor refresh changed daemon/auth/policy identity or ran native mutation")
 			}
 		})
@@ -200,14 +200,14 @@ func TestRBDMirrorMonitorRefreshPreservesPoolScopeAndNamespacePolicies(t *testin
 		t.Run(mapping.source+"-"+mapping.destination, func(t *testing.T) {
 			fixture := newRBDConnectionRefreshFixture(t, mapping.source, mapping.destination)
 			link := fixture.link
-			link.config.Scope, link.config.Mode = ScopePool, ModeJournal
+			link.pair.config.Scope, link.pair.config.Mode = ScopePool, ModeJournal
 			for _, site := range []struct {
 				control   *rbdNamespacePolicyFixture
 				namespace string
 				identity  *rbdMirrorSitePolicyIdentity
 			}{
-				{fixture.source, mapping.source, &link.policyIdentities.source},
-				{fixture.destination, mapping.destination, &link.policyIdentities.destination},
+				{fixture.source, mapping.source, &link.pair.policyIdentities.source},
+				{fixture.destination, mapping.destination, &link.pair.policyIdentities.destination},
 			} {
 				if site.identity.base.Mode == "image" {
 					site.identity.base.Mode = "pool"
@@ -218,13 +218,13 @@ func TestRBDMirrorMonitorRefreshPreservesPoolScopeAndNamespacePolicies(t *testin
 					site.control.policies["images/"+site.namespace] = site.identity.selected
 				}
 			}
-			beforeSource, beforeDestination := link.policyIdentities.source, link.policyIdentities.destination
+			beforeSource, beforeDestination := link.pair.policyIdentities.source, link.pair.policyIdentities.destination
 			if err := link.refreshRBDMirrorMonitorConfig(t.Context(), fixture.refresh); err != nil {
 				t.Fatal(err)
 			}
-			if link.config.Scope != ScopePool || link.config.Mode != ModeJournal ||
-				!sameRBDMirrorPolicy(link.policyIdentities.source.base, beforeSource.base) || !sameRBDMirrorPolicy(link.policyIdentities.source.selected, beforeSource.selected) ||
-				!sameRBDMirrorPolicy(link.policyIdentities.destination.base, beforeDestination.base) || !sameRBDMirrorPolicy(link.policyIdentities.destination.selected, beforeDestination.selected) || len(fixture.source.mutations)+len(fixture.destination.mutations) != 0 {
+			if link.pair.config.Scope != ScopePool || link.pair.config.Mode != ModeJournal ||
+				!sameRBDMirrorPolicy(link.pair.policyIdentities.source.base, beforeSource.base) || !sameRBDMirrorPolicy(link.pair.policyIdentities.source.selected, beforeSource.selected) ||
+				!sameRBDMirrorPolicy(link.pair.policyIdentities.destination.base, beforeDestination.base) || !sameRBDMirrorPolicy(link.pair.policyIdentities.destination.selected, beforeDestination.selected) || len(fixture.source.mutations)+len(fixture.destination.mutations) != 0 {
 				t.Fatal("monitor refresh changed pool journal enrollment or namespace mapping")
 			}
 		})
@@ -261,7 +261,7 @@ func TestRBDMirrorMonitorRefreshRejectsChangedPoliciesBeforeCopy(t *testing.T) {
 			case "malformed policy":
 				fixture.destination.infoOverride = "{"
 			case "missing control":
-				fixture.link.config.Destination = &ceph.Container{}
+				fixture.link.pair.config.Destination = &ceph.Container{}
 			}
 			calls := 0
 			if err := fixture.link.refreshRBDMirrorMonitorConfig(t.Context(), func(context.Context, *ceph.Container, testcontainers.Container) error {
@@ -285,21 +285,21 @@ func TestRBDMirrorMonitorRefreshRejectsUnavailableOwnership(t *testing.T) {
 			case "closed":
 				link.closed = true
 			case "source cluster":
-				link.config.Source = nil
+				link.pair.config.Source = nil
 			case "destination cluster":
-				link.config.Destination = nil
+				link.pair.config.Destination = nil
 			case "source client":
-				link.sourceClient = nil
+				link.pair.sourceClient = nil
 			case "destination client":
-				link.destinationClient = nil
+				link.pair.destinationClient = nil
 			case "pool identities":
-				link.poolIdentities = nil
+				link.pair.poolIdentities = nil
 			case "policy identities":
-				link.policyIdentities = nil
+				link.pair.policyIdentities = nil
 			case "nil daemon":
-				link.daemons = append(link.daemons, nil)
+				link.roster.daemons = append(link.roster.daemons, nil)
 			case "missing daemon container":
-				link.daemons[0].Container = nil
+				link.roster.daemons[0].Container = nil
 			}
 			calls := 0
 			if err := link.refreshRBDMirrorMonitorConfig(t.Context(), func(context.Context, *ceph.Container, testcontainers.Container) error {
@@ -327,9 +327,9 @@ func TestRBDMirrorMonitorRefreshNativeQueryFailureCanRetryWithoutAdoptingIdentit
 			t.Fatal("unverified native identity reached archive copying")
 		}
 	}
-	captured := fixture.link.policyIdentities
+	captured := fixture.link.pair.policyIdentities
 	control.execError = nil
-	if err := fixture.link.refreshRBDMirrorMonitorConfig(t.Context(), fixture.refresh); err != nil || fixture.link.policyIdentities != captured {
+	if err := fixture.link.refreshRBDMirrorMonitorConfig(t.Context(), fixture.refresh); err != nil || fixture.link.pair.policyIdentities != captured {
 		t.Fatalf("fresh-context retry did not retain confirmed policies: %v", err)
 	}
 }
@@ -395,7 +395,7 @@ func TestRBDMirrorMonitorRefreshCancellationRetainsCompletedFileOnly(t *testing.
 
 func TestRBDMirrorMonitorRefreshRejectsPostCopyPolicyDriftWithoutAdoptingIt(t *testing.T) {
 	fixture := newRBDConnectionRefreshFixture(t, "ns-a", "ns-b")
-	captured := fixture.link.policyIdentities
+	captured := fixture.link.pair.policyIdentities
 	err := fixture.link.refreshRBDMirrorMonitorConfig(t.Context(), func(ctx context.Context, cluster *ceph.Container, client testcontainers.Container) error {
 		if err := fixture.refresh(ctx, cluster, client); err != nil {
 			return err
@@ -405,7 +405,7 @@ func TestRBDMirrorMonitorRefreshRejectsPostCopyPolicyDriftWithoutAdoptingIt(t *t
 		}
 		return nil
 	})
-	if err == nil || fixture.link.policyIdentities != captured {
+	if err == nil || fixture.link.pair.policyIdentities != captured {
 		t.Fatalf("post-copy policy drift was adopted or reported complete: %v", err)
 	}
 	for _, client := range fixture.clients {
@@ -420,7 +420,7 @@ func TestRBDMirrorMonitorRefreshRejectsPostCopyPolicyDriftWithoutAdoptingIt(t *t
 
 func TestRBDMirrorMonitorRefreshSupportsZeroDaemonOutage(t *testing.T) {
 	fixture := newRBDConnectionRefreshFixture(t, "", "")
-	fixture.link.daemons, fixture.link.Container = nil, nil
+	fixture.link.roster.daemons, fixture.link.Container = nil, nil
 	if err := fixture.link.refreshRBDMirrorMonitorConfig(t.Context(), fixture.refresh); err != nil {
 		t.Fatal(err)
 	}

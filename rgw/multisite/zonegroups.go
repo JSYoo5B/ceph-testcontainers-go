@@ -24,7 +24,7 @@ func (f *Fixture) Zonegroups() []Zonegroup {
 		name := state.Zonegroup
 		group := groups[name]
 		if group == nil {
-			group = &Zonegroup{Name: name, ID: f.groupIDs[name], MasterZone: f.groupMasters[name]}
+			group = &Zonegroup{Name: name, ID: f.topology.groupIDs[name], MasterZone: f.topology.groupMasters[name]}
 			groups[name] = group
 		}
 		group.Zones = append(group.Zones, state.Zone)
@@ -53,7 +53,7 @@ func (f *Fixture) AddZonegroup(ctx context.Context, image string, config Zonegro
 		return nil, err
 	}
 	defer f.topologyMu.Unlock()
-	if _, exists := f.groupIDs[config.Name]; exists {
+	if _, exists := f.topology.groupIDs[config.Name]; exists {
 		return nil, fmt.Errorf("RGW zonegroup %s is already owned", config.Name)
 	}
 	zones := slices.Clone(config.Zones)
@@ -98,7 +98,7 @@ func (f *Fixture) AddZonegroup(ctx context.Context, image string, config Zonegro
 		if created != nil {
 			result.Zones = append(result.Zones, *created)
 		}
-		result.ID = f.groupIDs[config.Name]
+		result.ID = f.topology.groupIDs[config.Name]
 		if err != nil {
 			return result, err
 		}
@@ -126,7 +126,7 @@ func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 	if f.closed {
 		return multisiteInvalid(errors.New("RGW multisite is terminated"))
 	}
-	for pendingName, pending := range f.removedZones {
+	for pendingName, pending := range f.topology.removed {
 		if pendingName != name && (!pending.converged || !pending.gatewayRemoved || !pending.clientRemoved) {
 			return errors.New("finish the pending RGW zone removal before detaching another zone")
 		}
@@ -137,7 +137,7 @@ func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 	if len(states) == 0 {
 		return errors.New("RGW multisite has no attached zones")
 	}
-	period, err := f.committedPeriod(ctx, states[0])
+	period, err := f.realm.committedPeriod(ctx, states[0])
 	if err != nil {
 		return err
 	}
@@ -160,7 +160,7 @@ func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 		if err := f.waitZonePeriods(ctx, master, states); err != nil {
 			return err
 		}
-		if err := f.reloadZoneGateways(ctx, states, nil); err != nil {
+		if err := f.topology.reloadZoneGateways(ctx, states, nil); err != nil {
 			return err
 		}
 		removal.converged = true
@@ -174,17 +174,17 @@ func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 // a committed graph that differs from the owned zones only by the leaving zone
 // (a commit whose response was lost); any other difference is refused.
 func (f *Fixture) zoneRemoval(period *rgwTopologyPeriod, master *rgwZoneState, states []*rgwZoneState, name string) (*rgwZoneRemoval, error) {
-	removal := f.removedZones[name]
+	removal := f.topology.removed[name]
 	if removal == nil {
 		state, err := f.removableZone(period, master, states, name)
 		if err != nil {
 			return nil, err
 		}
 		removal = &rgwZoneRemoval{state: state}
-		if f.removedZones == nil {
-			f.removedZones = make(map[string]*rgwZoneRemoval)
+		if f.topology.removed == nil {
+			f.topology.removed = make(map[string]*rgwZoneRemoval)
 		}
-		f.removedZones[name] = removal
+		f.topology.removed[name] = removal
 	}
 	state := removal.state
 	if state.ID == period.MasterZone {
@@ -221,7 +221,7 @@ func (f *Fixture) detachZone(ctx context.Context, master, state *rgwZoneState) e
 			return err
 		}
 	}
-	groupData, err := f.adminInGroup(ctx, master.client, state.Zonegroup, state.Name, "zonegroup", "get")
+	groupData, err := f.realm.adminInGroup(ctx, master.client, state.Zonegroup, state.Name, "zonegroup", "get")
 	if err != nil {
 		return err
 	}
@@ -232,11 +232,11 @@ func (f *Fixture) detachZone(ctx context.Context, master, state *rgwZoneState) e
 		return err
 	}
 	if slices.ContainsFunc(group.Zones, func(zone struct{ ID, Name string }) bool { return zone.ID == state.ID }) {
-		if _, err := f.adminInGroup(ctx, master.client, state.Zonegroup, state.Name, "zonegroup", "remove", "--zone-id", state.ID); err != nil {
+		if _, err := f.realm.adminInGroup(ctx, master.client, state.Zonegroup, state.Name, "zonegroup", "remove", "--zone-id", state.ID); err != nil {
 			return err
 		}
 	}
-	_, err = f.admin(ctx, master.client, master.Name, "period", "update", "--commit")
+	_, err = f.realm.admin(ctx, master.client, master.Name, "period", "update", "--commit")
 	return err
 }
 

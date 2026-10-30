@@ -15,6 +15,14 @@ import (
 	"github.com/google/uuid"
 )
 
+// authStore is the cluster's native auth database view: client auth
+// commands, the read of one auth entry and a daemon's key and pending key. It
+// holds no state and takes no lock; the records of the calls that change an
+// entry stay in authState under Container.mu.
+type authStore struct {
+	conn cephConn
+}
+
 // ClientCaps contains Cephx capability expressions, passed as individual CLI
 // arguments. For example, Mon: "allow r" and OSD: "allow rw pool=data
 // namespace=tenant-a" restrict RADOS I/O to one pool and namespace. Empty fields
@@ -143,7 +151,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	if c.closed {
 		return nil, errClusterTerminated
 	}
-	control, err := c.controlContainerContext(ctx)
+	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -152,13 +160,13 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	if err := c.settleClient(ctx, entity); err != nil {
+	if err := c.authLedger().settleClient(ctx, entity); err != nil {
 		return nil, err
 	}
-	if c.authRecords.revocation(entity) != nil {
+	if c.ledger.authRecords.revocation(entity) != nil {
 		return nil, fmt.Errorf("cephx identity %q is revoked temporarily; restore it or delete it first", entity)
 	}
-	data, err := c.clientAuthCommand(ctx, "check existing identity", "auth", "ls", "--format", "json")
+	data, err := authStore{c.conn()}.clientCommand(ctx, "check existing identity", "auth", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +185,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	}
 	client := &ClientConfig{owner: c, name: entity}
 	client.config = clientConfigBytes(c.bootstrap.rawConfig(), client)
-	control, err = c.controlContainerContext(ctx)
+	control, err = c.conn().controlContainer(ctx)
 	if err != nil {
 		return client, err
 	}
@@ -185,7 +193,7 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	if err != nil || len(bytes.TrimSpace(secret)) == 0 {
 		return client, clientOperationError(ctx, "generate fresh Cephx key: command failed", err)
 	}
-	c.authRecords.addSecret(string(bytes.TrimSpace(secret)))
+	c.ledger.authRecords.addSecret(string(bytes.TrimSpace(secret)))
 	client.keyring = []byte("[" + entity + "]\nkey = " + string(bytes.TrimSpace(secret)) + "\n")
 	keyringPath := "/tmp/tc-client-" + uuid.NewString() + ".keyring"
 	defer func() {
@@ -199,12 +207,12 @@ func (c *Container) createClient(ctx context.Context, name string, caps ClientCa
 	// Supplying our fresh key makes Ceph reject a concurrently created identity
 	// with another key. An auth-add command without -i can silently reuse it.
 	args := append([]string{"auth", "add", entity, "-i", keyringPath}, capArgs...)
-	if _, err := c.clientAuthCommand(ctx, "create "+entity, args...); err != nil {
+	if _, err := (authStore{c.conn()}).clientCommand(ctx, "create "+entity, args...); err != nil {
 		return client, err
 	}
 	client.created = true
-	c.authRecords.confirmKey(entity, clientKey(client.keyring, entity))
-	keyring, err := c.clientAuthCommand(ctx, "retrieve "+entity, "auth", "get", entity)
+	c.ledger.authRecords.confirmKey(entity, clientKey(client.keyring, entity))
+	keyring, err := authStore{c.conn()}.clientCommand(ctx, "retrieve "+entity, "auth", "get", entity)
 	if err != nil {
 		return client, err
 	}
@@ -224,8 +232,8 @@ func clientConfigBytes(base []byte, client *ClientConfig) []byte {
 
 // Auth command output can contain keys, including on failure. Never include it
 // in an error returned to test logs; preserve cancellation without secret output.
-func (c *Container) clientAuthCommand(ctx context.Context, operation string, args ...string) ([]byte, error) {
-	data, err := c.cephCLI(ctx, args...)
+func (as authStore) clientCommand(ctx context.Context, operation string, args ...string) ([]byte, error) {
+	data, err := as.conn.ceph(ctx, args...)
 	if err != nil {
 		return nil, clientOperationError(ctx, operation+": Ceph command failed", err)
 	}

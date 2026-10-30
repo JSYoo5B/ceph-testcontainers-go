@@ -16,11 +16,20 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+// daemonMaps is the cluster's native MON quorum and MGR map view: the quorum
+// status, the removal of one MON from the monmap and the wait for a manager to
+// register. It holds no state and takes no lock; the roster stays on Container
+// under Container.mu.
+type daemonMaps struct {
+	conn cephConn
+}
 
 // MonitorContainer is an owned quorum member. Stop/Start preserves its store;
 // MonitorContainer.Remove explicitly removes membership and deletes the container.
@@ -50,13 +59,6 @@ func daemonName(index int) string {
 	return fmt.Sprintf("node-%d", index)
 }
 
-func (c *Container) cliContainer() testcontainers.Container {
-	if control := c.controlPlane.current(); control != nil {
-		return control
-	}
-	return c.Container
-}
-
 // ensureControlPlane is called while topology holds c.mu. Separating CLI from
 // MON a keeps topology operations available when that quorum member is stopped.
 func (c *Container) ensureControlPlane(ctx context.Context) error {
@@ -74,12 +76,12 @@ func (c *Container) ensureControlPlane(ctx context.Context) error {
 }
 
 // monitorsLocked lists the owned MONs. The caller holds c.mu.
-func (c *Container) monitorsLocked() []*MonitorContainer {
-	result := make([]*MonitorContainer, 0, c.roster.monitorCount()+1)
-	if c.Container != nil && !c.monitorTerminated {
-		result = append(result, &MonitorContainer{Container: c.Container, DaemonName: "a", owner: c, image: c.settings.essentialImage})
+func (t monitorTopology) monitorsLocked() []*MonitorContainer {
+	result := make([]*MonitorContainer, 0, t.roster.monitorCount()+1)
+	if t.firstMonitorStands() {
+		result = append(result, &MonitorContainer{Container: t.first, DaemonName: "a", owner: t.owner, image: t.settings.essentialImage})
 	}
-	for _, mon := range c.roster.eachMonitor() {
+	for _, mon := range t.roster.eachMonitor() {
 		result = append(result, mon)
 	}
 	slices.SortFunc(result, func(a, b *MonitorContainer) int { return strings.Compare(a.DaemonName, b.DaemonName) })
@@ -103,9 +105,9 @@ type QuorumStatus struct {
 	} `json:"monmap"`
 }
 
-// quorumStatus implements Observer.QuorumStatus.
-func (c *Container) quorumStatus(ctx context.Context) (QuorumStatus, error) {
-	control, err := c.controlContainerContext(ctx)
+// quorum implements Observer.QuorumStatus.
+func (dm daemonMaps) quorum(ctx context.Context) (QuorumStatus, error) {
+	control, err := dm.conn.controlContainer(ctx)
 	if err != nil {
 		return QuorumStatus{}, fmt.Errorf("select monitor quorum control: %w", err)
 	}
@@ -117,8 +119,8 @@ func (c *Container) quorumStatus(ctx context.Context) (QuorumStatus, error) {
 func (c *Container) WaitForQuorum(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	return c.poll(ctx, func() (bool, error) {
-		status, err := c.quorumStatus(ctx)
+	return clusterutil.Poll(ctx, func() (bool, error) {
+		status, err := daemonMaps{c.conn()}.quorum(ctx)
 		return len(status.MonMap.Mons) > 0 && len(status.QuorumNames) > len(status.MonMap.Mons)/2, err
 	})
 }
@@ -143,7 +145,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	if c.closed {
 		return nil, errClusterTerminated
 	}
-	if (name == "a" && !c.monitorTerminated) || c.roster.monitor(name) != nil {
+	if (name == "a" && !c.monitorTopology().firstMonitorTerminated()) || c.members.roster.monitor(name) != nil {
 		return nil, fmt.Errorf("monitor %s is already owned", name)
 	}
 	if name == "a" {
@@ -151,7 +153,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	status, err := c.quorumStatus(ctx)
+	status, err := daemonMaps{c.conn()}.quorum(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("inspect monitor membership: %w", err)
 	}
@@ -163,20 +165,20 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	if err := c.ensureControlPlane(ctx); err != nil {
 		return nil, fmt.Errorf("start independent CLI control: %w", err)
 	}
-	key, err := c.cephCLI(ctx, "auth", "get", "mon.")
+	key, err := c.conn().ceph(ctx, "auth", "get", "mon.")
 	if err != nil {
 		return nil, err
 	}
 	mapPath := "/tmp/tc-monmap-" + uuid.NewString()
-	if _, err := c.cephCLI(ctx, "mon", "getmap", "-o", mapPath); err != nil {
+	if _, err := c.conn().ceph(ctx, "mon", "getmap", "-o", mapPath); err != nil {
 		return nil, err
 	}
-	monmap, err := readFile(ctx, c.cliContainer(), mapPath)
+	monmap, err := readFile(ctx, c.conn().cliContainer(), mapPath)
 	if err != nil {
 		return nil, err
 	}
-	mon := &MonitorContainer{DaemonName: name, owner: c, image: c.daemonImage(daemon)}
-	c.roster.addMonitor(name, mon)
+	mon := &MonitorContainer{DaemonName: name, owner: c, image: c.settings.daemonImage(daemon)}
+	c.members.roster.addMonitor(name, mon)
 	attempts := 1
 	if c.settings.hostNetwork {
 		attempts = hostPortAttempts
@@ -192,7 +194,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 			}
 		}
 		config := []byte(strings.ReplaceAll(string(c.bootstrap.rawConfig()), "mon initial members = a\n", ""))
-		monEnv := c.monitorJoinEnvironment(name)
+		monEnv := c.settings.monitorJoinEnvironment(name)
 		opts := []testcontainers.ContainerCustomizer{c.adminClient(),
 			testcontainers.WithEntrypoint("/bin/sh", "/tc/mon-join.sh"), testcontainers.WithCmd(),
 			testcontainers.WithEnv(monEnv),
@@ -236,13 +238,13 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 			return mon, err
 		}
 	}
-	if err := c.poll(ctx, func() (bool, error) {
-		status, err := c.quorumStatus(ctx)
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
+		status, err := daemonMaps{c.conn()}.quorum(ctx)
 		return slices.Contains(status.QuorumNames, name), err
 	}); err != nil {
 		return mon, fmt.Errorf("join monitor %s to quorum: %w", name, err)
 	}
-	return mon, c.refreshMonitorConfig(ctx)
+	return mon, c.monitorTopology().refreshMonitorConfig(ctx)
 }
 
 // removeMonitor implements MonitorContainer.Remove, which documents the behavior. The caller
@@ -255,16 +257,24 @@ func (c *Container) removeMonitor(ctx context.Context, handle *MonitorContainer)
 	if c.closed {
 		return errClusterTerminated
 	}
+	return c.monitorTopology().retireMonitor(ctx, handle)
+}
+
+// retireMonitor removes the MON of handle from the native membership while a
+// majority quorum survives, terminates its container, refreshes the monitor
+// configuration of the survivors and drops it from the membership. The caller
+// holds c.mu and has admitted the call.
+func (t monitorTopology) retireMonitor(ctx context.Context, handle *MonitorContainer) error {
 	name := handle.DaemonName
-	mon, err := c.currentMonitor(handle)
+	mon, err := t.currentMonitor(handle)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	ctx, cancel := context.WithTimeout(ctx, t.settings.startupTimeout)
 	defer cancel()
 	var status QuorumStatus
-	if err := c.poll(ctx, func() (bool, error) {
-		current, err := c.quorumStatus(ctx)
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
+		current, err := daemonMaps{t.conn}.quorum(ctx)
 		if err != nil {
 			return false, err
 		}
@@ -310,7 +320,7 @@ func (c *Container) removeMonitor(ctx context.Context, handle *MonitorContainer)
 		if err != nil {
 			return fmt.Errorf("select surviving monitors before removing %s: %w", name, err)
 		}
-		if err := c.removeMonitorMember(ctx, hosts, name); err != nil {
+		if err := (daemonMaps{t.conn}).removeMonitorMember(ctx, hosts, name); err != nil {
 			return fmt.Errorf("remove monitor %s from native membership: %w", name, err)
 		}
 	}
@@ -325,21 +335,21 @@ func (c *Container) removeMonitor(ctx context.Context, handle *MonitorContainer)
 	// Removing a MON can elect a new leader after the membership command has
 	// committed. Keep cleanup ownership until a fresh native view confirms the
 	// remaining quorum and the control client's bootstrap addresses are copied.
-	if err := c.refreshMonitorConfigAfterRemoval(ctx, name); err != nil {
+	if err := t.refreshMonitorConfigAfterRemoval(ctx, name); err != nil {
 		return fmt.Errorf("refresh control configuration after removing monitor %s: %w", name, err)
 	}
 	if name == "a" {
-		c.monitorTerminated = true
+		t.markFirstMonitorTerminated()
 	} else {
-		c.roster.dropMonitor(name)
+		t.roster.dropMonitor(name)
 	}
 	return nil
 }
 
 // refreshMonitorConfig refreshes the control configuration after a monitor
 // change. The caller holds c.mu.
-func (c *Container) refreshMonitorConfig(ctx context.Context) error {
-	return c.refreshMonitorConfigAfterRemoval(ctx, "")
+func (t monitorTopology) refreshMonitorConfig(ctx context.Context) error {
+	return t.refreshMonitorConfigAfterRemoval(ctx, "")
 }
 
 // RefreshMonitorConfig copies the live quorum's bootstrap addresses into the
@@ -366,7 +376,7 @@ func (c *Container) RefreshMonitorConfig(ctx context.Context) error {
 	if c.closed {
 		return errClusterTerminated
 	}
-	return c.refreshMonitorConfig(ctx)
+	return c.monitorTopology().refreshMonitorConfig(ctx)
 }
 
 // Unlike Mutex.Lock, waiting for serialized topology work must respect the
@@ -378,13 +388,13 @@ func (c *Container) lockTopology(ctx context.Context) error {
 // The caller holds c.mu throughout. The topology caller supplies its existing operation deadline. Only native
 // reads are polled here; membership is never mutated or daemons restarted. Each
 // config is read through Docker's archive API, which also works when stopped.
-func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, removedName string) error {
+func (t monitorTopology) refreshMonitorConfigAfterRemoval(ctx context.Context, removedName string) error {
 	var status QuorumStatus
-	if err := c.poll(ctx, func() (bool, error) {
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		current, err := c.quorumStatus(ctx)
+		current, err := daemonMaps{t.conn}.quorum(ctx)
 		if err != nil {
 			return false, err
 		}
@@ -413,12 +423,12 @@ func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, remove
 	if err != nil {
 		return err
 	}
-	template := c.bootstrap.template()
+	template := t.bootstrap.template()
 	template, err = replaceGlobalMonitorHost(template, addresses)
 	if err != nil {
 		return fmt.Errorf("refresh future client configuration: %w", err)
 	}
-	control := c.cliContainer()
+	control := t.conn.cliContainer()
 	if control == nil {
 		return errors.New("ceph control container is unavailable")
 	}
@@ -427,9 +437,9 @@ func (c *Container) refreshMonitorConfigAfterRemoval(ctx context.Context, remove
 	}
 	// Publish after the control's current file confirms the new addresses. A
 	// later daemon copy failure must not keep new clients on removed monitors.
-	c.bootstrap.publishConfig(template)
+	t.bootstrap.publishConfig(template)
 	var errs []error
-	targets, err := c.monitorConfigTargets(ctx, control, removedName)
+	targets, err := t.monitorConfigTargets(ctx, control, removedName)
 	if err != nil {
 		return err
 	}
@@ -498,9 +508,9 @@ type monitorConfigTarget struct {
 
 // The topology caller holds c.mu. Deduplicate the generic service handles and
 // filesystem/gateway descriptors without calling accessors that re-lock c.mu.
-func (c *Container) monitorConfigTargets(ctx context.Context, control testcontainers.Container, removedName string) ([]monitorConfigTarget, error) {
+func (t monitorTopology) monitorConfigTargets(ctx context.Context, control testcontainers.Container, removedName string) ([]monitorConfigTarget, error) {
 	var candidates []monitorConfigTarget
-	client, err := c.featureClientSnapshot(ctx)
+	client, err := t.client(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -510,32 +520,31 @@ func (c *Container) monitorConfigTargets(ctx context.Context, control testcontai
 		}
 	}
 	add("client", client)
-	if !c.monitorTerminated && removedName != "a" {
-		add("mon.a", c.Container)
+	if t.firstMonitorStands() && removedName != "a" {
+		add("mon.a", t.first)
 	}
-	for name, mon := range c.roster.eachMonitor() {
+	for name, mon := range t.roster.eachMonitor() {
 		if mon != nil && name != removedName {
 			add("mon."+name, mon.Container)
 		}
 	}
-	for name, mgr := range c.roster.eachManager() {
+	for name, mgr := range t.roster.eachManager() {
 		if mgr != nil && !mgr.terminated {
 			add("mgr."+name, mgr.Container)
 		}
 	}
-	if initial := c.roster.manager("a"); initial == nil || !initial.terminated {
-		add("mgr.a", c.roster.initialManager())
+	if initial := t.roster.manager("a"); initial == nil || !initial.terminated {
+		add("mgr.a", t.roster.initialManager())
 	}
-	for id, osd := range c.osdHandles.each() {
+	for id, osd := range t.osds.osdHandles.each() {
 		if osd != nil && !osd.purged {
 			add(fmt.Sprintf("osd.%d", id), osd.Container)
 		}
 	}
-	for name, ctr := range c.roster.eachService() {
+	for name, ctr := range t.roster.eachService() {
 		add(name, ctr)
 	}
-	for _, state := range extensionsWith[serviceConfigTargets](c) {
-		targets := state.ConfigTargets()
+	for _, targets := range t.serviceTargets() {
 		for _, name := range slices.Sorted(maps.Keys(targets)) {
 			add(name, targets[name])
 		}
@@ -709,11 +718,11 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	mgr, err := c.startManager(ctx, name, c.daemonImage(daemon))
+	mgr, err := c.monitorTopology().startManager(ctx, name, c.settings.daemonImage(daemon))
 	if err != nil {
 		return mgr, err
 	}
-	if err := c.waitManagerRegistered(ctx, name); err != nil {
+	if err := (daemonMaps{c.conn()}).waitManagerRegistered(ctx, name); err != nil {
 		return mgr, err
 	}
 	if err := c.checkDualStackAddresses(ctx); err != nil {
@@ -725,11 +734,11 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 // startManager creates the identity of a new MGR and starts its container,
 // but does not wait for the MGR to register. The caller holds c.mu. The
 // returned MGR is nil when the error came before it was owned.
-func (c *Container) startManager(ctx context.Context, name, image string) (*ManagerContainer, error) {
-	if c.roster.manager(name) != nil {
+func (t monitorTopology) startManager(ctx context.Context, name, image string) (*ManagerContainer, error) {
+	if t.roster.manager(name) != nil {
 		return nil, fmt.Errorf("manager %s is already owned", name)
 	}
-	data, err := c.clientAuthCommand(ctx, "check manager identity", "auth", "ls", "--format", "json")
+	data, err := authStore{t.conn}.clientCommand(ctx, "check manager identity", "auth", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -746,39 +755,39 @@ func (c *Container) startManager(ctx context.Context, name, image string) (*Mana
 			return nil, invalid(fmt.Errorf("manager identity mgr.%s already exists", name))
 		}
 	}
-	status, err := readManagerStatus(ctx, c.cephCLI)
+	status, err := readManagerStatus(ctx, t.conn.ceph)
 	if err != nil {
 		return nil, err
 	}
 	if _, registered := managerMapGID(status, name); registered {
 		return nil, fmt.Errorf("manager %s is already registered", name)
 	}
-	key, err := c.clientAuthCommand(ctx, "create manager identity", "auth", "get-or-create", "mgr."+name, "mon", "allow profile mgr", "osd", "allow *", "mds", "allow *")
+	key, err := authStore{t.conn}.clientCommand(ctx, "create manager identity", "auth", "get-or-create", "mgr."+name, "mon", "allow profile mgr", "osd", "allow *", "mds", "allow *")
 	if err != nil {
 		return nil, err
 	}
-	mgr := &ManagerContainer{DaemonName: name, owner: c, authOwned: true, image: image}
-	c.roster.addManager(name, mgr)
-	if err := c.clearAdminSocket(ctx, "mgr."+name); err != nil {
+	mgr := &ManagerContainer{DaemonName: name, owner: t.owner, authOwned: true, image: image}
+	t.roster.addManager(name, mgr)
+	if err := t.osds.clearSocket(ctx, "mgr."+name); err != nil {
 		return mgr, err
 	}
-	mgr.Container, err = c.runDaemon(ctx, image, append([]testcontainers.ContainerCustomizer{c.adminClient(), c.startup.ownedLabel(),
+	mgr.Container, err = t.runDaemon(ctx, image, append([]testcontainers.ContainerCustomizer{t.adminClient(), t.osds.startup.ownedLabel(),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mgr.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(map[string]string{"CEPH_MGR_ID": name}),
 		testcontainers.WithFiles(scriptFile("mgr"), textFile("/etc/ceph/mgr.keyring", key, 0o600)),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mgr." + name + ".asok"}).WithStartupTimeout(c.settings.startupTimeout))},
-		c.runDir.mounts()...)...)
+		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mgr." + name + ".asok"}).WithStartupTimeout(t.settings.startupTimeout))},
+		t.osds.runDir.mounts()...)...)
 	if name == "a" {
-		c.roster.recordInitialManager(mgr.Container)
+		t.roster.recordInitialManager(mgr.Container)
 	}
 	return mgr, err
 }
 
 // waitManagerRegistered waits until the MGR is the available active MGR or a
 // standby.
-func (c *Container) waitManagerRegistered(ctx context.Context, name string) error {
-	if err := c.poll(ctx, func() (bool, error) {
-		status, err := readManagerStatus(ctx, c.cephCLI)
+func (dm daemonMaps) waitManagerRegistered(ctx context.Context, name string) error {
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
+		status, err := readManagerStatus(ctx, dm.conn.ceph)
 		if status.ActiveName == name && status.Available {
 			return true, err
 		}
@@ -808,19 +817,29 @@ func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer)
 	if c.closed {
 		return errClusterTerminated
 	}
-	mgr, err := c.currentManager(handle)
+	return c.monitorTopology().retireManager(ctx, handle)
+}
+
+// retireManager removes the owned MGR of handle once another running,
+// registered owned manager can take over: it terminates the container,
+// fails the daemon out of the manager map, waits for the replacement,
+// deletes the identity and drops it from the roster. The caller holds c.mu
+// and has admitted the call.
+func (t monitorTopology) retireManager(ctx context.Context, handle *ManagerContainer) error {
+	name := handle.DaemonName
+	mgr, err := t.roster.currentManager(handle)
 	if err != nil {
 		return err
 	}
 	if !mgr.authOwned {
 		return invalid(fmt.Errorf("manager %s is not owned", name))
 	}
-	if c.roster.managerCount() <= 1 {
+	if t.roster.managerCount() <= 1 {
 		return errors.New("cannot remove the last manager candidate; add a replacement first")
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	ctx, cancel := context.WithTimeout(ctx, t.settings.startupTimeout)
 	defer cancel()
-	status, err := readManagerStatus(ctx, c.cephCLI)
+	status, err := readManagerStatus(ctx, t.conn.ceph)
 	if err != nil {
 		return err
 	}
@@ -829,7 +848,7 @@ func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer)
 		return fmt.Errorf("manager %s has no daemon ID in the manager map", name)
 	}
 	candidates := make(map[string]bool)
-	for otherName, other := range c.roster.eachManager() {
+	for otherName, other := range t.roster.eachManager() {
 		if otherName == name || other.Container == nil || other.terminated || !other.authOwned {
 			continue
 		}
@@ -858,24 +877,24 @@ func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer)
 	if registered {
 		// Ceph interprets a numeric argument as a daemon GID, even when a
 		// daemon's name consists entirely of digits. Use the observed GID.
-		if _, err := c.cephCLI(ctx, "mgr", "fail", strconv.FormatUint(gid, 10)); err != nil {
+		if _, err := t.conn.ceph(ctx, "mgr", "fail", strconv.FormatUint(gid, 10)); err != nil {
 			return fmt.Errorf("remove manager %s from the manager map: %w", name, err)
 		}
 	}
-	if err := c.poll(ctx, func() (bool, error) {
-		status, err := readManagerStatus(ctx, c.cephCLI)
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
+		status, err := readManagerStatus(ctx, t.conn.ceph)
 		_, present := managerMapGID(status, name)
 		return !present && status.Available && candidates[status.ActiveName], err
 	}); err != nil {
 		return fmt.Errorf("wait for manager replacement after removing %s: %w", name, err)
 	}
-	if _, err := c.clientAuthCommand(ctx, "delete manager identity", "auth", "del", "mgr."+name); err != nil {
+	if _, err := (authStore{t.conn}).clientCommand(ctx, "delete manager identity", "auth", "del", "mgr."+name); err != nil {
 		return err
 	}
-	c.roster.dropManager(name)
+	t.roster.dropManager(name)
 	// The removal is complete; a replacement that advertises an unreachable
 	// address is reported, not undone.
-	return c.checkDualStackAddresses(ctx)
+	return t.checkAddresses(ctx)
 }
 
 func managerMapGID(status ManagerStatus, name string) (uint64, bool) {
@@ -909,12 +928,12 @@ const monitorRemovalObserveInterval = 500 * time.Millisecond
 // the reply forwarded to the CLI, which then waits for its deadline. While the
 // command runs, fresh membership reads that no longer list name count as the
 // commit and end the wait. The command is never resent.
-func (c *Container) removeMonitorMember(ctx context.Context, hosts, name string) error {
+func (dm daemonMaps) removeMonitorMember(ctx context.Context, hosts, name string) error {
 	command, cancel := context.WithCancel(ctx)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := c.cephCLI(command, "-m", hosts, "mon", "remove", name)
+		_, err := dm.conn.ceph(command, "-m", hosts, "mon", "remove", name)
 		done <- err
 	}()
 	ticker := time.NewTicker(monitorRemovalObserveInterval)
@@ -924,7 +943,7 @@ func (c *Container) removeMonitorMember(ctx context.Context, hosts, name string)
 		case err := <-done:
 			return err
 		case <-ticker.C:
-			status, err := c.quorumStatus(command)
+			status, err := dm.quorum(command)
 			if err != nil || len(status.MonMap.Mons) == 0 {
 				continue
 			}

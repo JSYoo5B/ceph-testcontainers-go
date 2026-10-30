@@ -85,7 +85,7 @@ func (c *Container) applyMessengerPolicy(ctx context.Context) error {
 		return err
 	}
 	for _, setting := range settings {
-		if _, err := c.configCommand(ctx, "set", setting.Section, setting.Name, setting.Value); err != nil {
+		if _, err := runConfigCommand(ctx, c.conn().ceph, "set", setting.Section, setting.Name, setting.Value); err != nil {
 			return fmt.Errorf("set %s %s: %w", setting.Section, setting.Name, err)
 		}
 	}

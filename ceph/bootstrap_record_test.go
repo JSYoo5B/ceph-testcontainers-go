@@ -250,7 +250,7 @@ var bootstrapRecordCallers = map[string]map[string]string{
 	"WithIdentity":                     {"rawConfig": "takes"},
 	"startService":                     {"isComplete": "takes"},
 	"AddMonitor":                       {"rawConfig": "takes"},
-	"Run":                              {"recordConfig": "startup", "recordKeyring": "startup"},
+	"bootstrapFirstMonitor":            {"recordConfig": "startup", "recordKeyring": "startup"},
 	"recordCephVersion":                {"recordVersion": "startup"},
 	"staticFacts":                      {"rawVersion": "lockfree"},
 	"adminClient":                      {"clones": "free"},
@@ -260,9 +260,9 @@ var bootstrapRecordCallers = map[string]map[string]string{
 	"configureDefaultCRUSHRoot":        {"applyDefaultCRUSHRule": "free"},
 	"diagnosticsSnapshot":              {"diagnosticKeyring": "free"},
 	"fullRatiosSession":                {"identity": "free"},
-	"healthDetails":                    {"identity": "free"},
-	"poolPGs":                          {"identity": "free"},
-	"poolUsage":                        {"identity": "free"},
+	"HealthDetails":                    {"identity": "free"},
+	"PGs":                              {"identity": "free"},
+	"Usage":                            {"identity": "free"},
 	"ClusterIdentity":                  {"identity": "free"},
 	"ConnectionConfig":                 {"connection": "free"},
 	"UnitState":                        {"mutex": "identity"},
@@ -341,8 +341,8 @@ func TestBootstrapRecordFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 				return true
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && bootstrapUse(sel) && isContainerReceiver(sel.X) {
-					if allowed[sel] {
+				if sel, ok := n.(*ast.SelectorExpr); ok && bootstrapUse(sel) && (isContainerReceiver(sel.X) || receiverTypeName(fn) == "monitorTopology") {
+					if allowed[sel] || monitorTopologyBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.bootstrap outside a bootstrapRecord method call")
@@ -525,7 +525,7 @@ func TestBootstrapRecordCallersAreAudited(t *testing.T) {
 					problems = append(problems, name+" calls bootstrap."+method+" but is not in bootstrapRecordCallers")
 				case mode == "takes" && (lockAt == token.NoPos || lockAt > at):
 					problems = append(problems, name+" must take the topology lock before bootstrap."+method)
-				case mode == "startup" && name != "Run" && name != "recordCephVersion":
+				case mode == "startup" && name != "bootstrapFirstMonitor" && name != "recordCephVersion":
 					problems = append(problems, name+" writes the bootstrap record outside startup")
 				case mode == "lockfree" && name != "staticFacts":
 					problems = append(problems, name+" reads the bootstrap record without a lock")

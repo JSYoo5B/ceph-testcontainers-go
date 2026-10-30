@@ -51,17 +51,3 @@ func readObjectWatchers(ctx context.Context, lookup radosClientLookup, pool, nam
 	}
 	return parseObjectWatchers(string(data))
 }
-
-// clientRadosLookup binds the lookup to this container. Each call selects the
-// client container again, as the inline code did.
-func (c *Container) clientRadosLookup() radosClientLookup {
-	return func(ctx context.Context) (radosQuery, error) {
-		client, err := c.clientContainerContext(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return func(ctx context.Context, args ...string) ([]byte, error) {
-			return command(ctx, client, args...)
-		}, nil
-	}
-}

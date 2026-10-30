@@ -49,54 +49,41 @@ type Container struct {
 	// bootstrap is the first MON's configuration, admin keyring and Ceph
 	// version and the lock that guards the first two; see bootstrapRecord.
 	bootstrap bootstrapRecord
-	// authRecords holds the records of the calls that change an auth entry; see
-	// authState for what guards them.
-	authRecords authState
-	// daemonExecs runs RotateKey's commands in daemon containers through the
-	// Docker exec API; see daemonExecutor. It has no lock: it is set before
-	// the cluster is shared and never changes.
-	daemonExecs daemonExecutor
 	// startup is the owner label ID, the first MON's key-type support and
 	// image ID, and the test seam of the labeled-container removal; see
 	// startupIdentity. It has no lock: it is written before the cluster is
 	// shared.
 	startup  startupIdentity
 	settings options
-	// roster is the added MONs, the MGR candidates, the first MGR's container
-	// and the services; see memberRoster. It has no lock of its own: mu guards
-	// it.
-	roster memberRoster
+	// ledger is the auth records and the daemon exec seam, owned by
+	// authLedger; see authLedgerState.
+	ledger authLedgerState
+	// members is the MON and MGR membership, owned by monitorTopology; see
+	// membershipState.
+	members membershipState
+	// fleet is the OSD registry, storage and device claims, owned by
+	// osdFleet; see osdFleetState.
+	fleet osdFleetState
 	// extensions is the per-cluster state of the service packages, by kind,
 	// and the lock that guards it; see extensionStore.
 	extensions extensionStore
 	// nets is the bridge state; see networkState for what guards each part.
 	nets networkState
-	// osdHandles is the OSD handle registry, owned and detached; see
-	// osdRegistry. It has no lock of its own: mu guards it.
-	osdHandles osdRegistry
-	// stores is the OSD memory and volume storage and its test seams; see
-	// osdStorageState. It has no lock of its own: mu guards it.
-	stores osdStorageState
 	// monStores is the owned MON store volumes, by MON name; see
 	// monStoreState. It has no lock of its own: mu guards it. Nothing publishes
 	// a record yet.
 	monStores monStoreState
-	// deviceClaims is the cluster-wide claim table of the host block devices
-	// of OSDs; see osdDeviceClaims. It has no lock of its own: mu guards it.
-	// Nothing publishes a claim yet.
-	deviceClaims osdDeviceClaims
 	// runDir is the shared admin-socket run directory; see runDirState for
 	// what guards each part.
 	runDir runDirState
 	// portLeases is the host-port reservations of host network mode; see
 	// portLeaseState. It has no lock of its own: mu guards it.
-	portLeases        portLeaseState
-	closed            bool
-	monitorTerminated bool
+	portLeases portLeaseState
+	closed     bool
 
-	// native is the native-command state; see nativeState. It has its own
-	// leaf lock.
-	nativeCmds nativeState
+	// native is the native-command state and the cancellation and fencing of
+	// its calls; see nativeCommands. Its state has its own leaf lock.
+	native nativeCommands
 	// faults holds the network delays, interruptions and pauses, and the
 	// bookkeeping entries of the blocklist, full ratios, configuration, OSD
 	// flag and MGR module overrides, reserved or held; see faultRegistry. It
@@ -204,6 +191,31 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	}
 	ctx, cancel := context.WithTimeout(ctx, settings.startupTimeout)
 	defer cancel()
+	c, err := newCluster(ctx, settings)
+	if err != nil {
+		return c, err
+	}
+	if err := c.bootstrapFirstMonitor(ctx, opts); err != nil {
+		return c, err
+	}
+	if err := c.configureDefaultCRUSHRoot(ctx); err != nil {
+		return c, fmt.Errorf("configure default CRUSH placement: %w", err)
+	}
+	if err := c.applyMessengerPolicy(ctx); err != nil {
+		return c, fmt.Errorf("apply messenger policy: %w", err)
+	}
+	if err := c.startInitialTopology(ctx); err != nil {
+		return c, err
+	}
+	return c, nil
+}
+
+// newCluster builds the cluster value of Run: its bridges (unless it uses the
+// host network), its startup identity and its shared run directory. A
+// returned cluster owns whatever was created, also with an error, so that
+// Terminate removes it. Run is its only caller.
+func newCluster(ctx context.Context, settings options) (*Container, error) {
+	var err error
 	var nw *testcontainers.DockerNetwork
 	if settings.hostNetwork {
 		if err := checkHostNetworkEngine(ctx); err != nil {
@@ -238,42 +250,42 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err := c.runDir.create(ctx); err != nil {
 		return c, err
 	}
-	mon, err := c.runMonitor(ctx, settings.essentialImage, uuid.NewString(), opts...)
+	return c, nil
+}
+
+// bootstrapFirstMonitor starts the first MON as the cluster's embedded
+// container and records what it bootstraps: the configuration, the Ceph
+// version, the key-type option, the image and the admin keyring. Each
+// record is written even with an error, so that a partial cluster reports
+// what it got. Run is its only caller, before the cluster is returned.
+func (c *Container) bootstrapFirstMonitor(ctx context.Context, opts []testcontainers.ContainerCustomizer) error {
+	mon, err := c.runMonitor(ctx, c.settings.essentialImage, uuid.NewString(), opts...)
 	if mon != nil {
 		c.Container = mon
 	}
 	if err != nil {
-		return c, fmt.Errorf("run ceph monitor: %w", err)
+		return fmt.Errorf("run ceph monitor: %w", err)
 	}
 	config, err := readFile(ctx, mon, "/etc/ceph/ceph.conf")
 	c.bootstrap.recordConfig(config)
 	if err != nil {
-		return c, err
+		return err
 	}
 	if err := c.recordCephVersion(ctx); err != nil {
-		return c, err
+		return err
 	}
 	keyTypeOption, err := detectKeyTypeOption(ctx, mon)
 	c.startup.recordKeyTypeOption(keyTypeOption)
 	if err != nil {
-		return c, err
+		return err
 	}
 	c.startup.recordFirstMonitorImage(containerImageID(ctx, mon))
 	keyring, err := readFile(ctx, mon, "/etc/ceph/ceph.client.admin.keyring")
 	c.bootstrap.recordKeyring(keyring)
 	if err != nil {
-		return c, err
+		return err
 	}
-	if err := c.configureDefaultCRUSHRoot(ctx); err != nil {
-		return c, fmt.Errorf("configure default CRUSH placement: %w", err)
-	}
-	if err := c.applyMessengerPolicy(ctx); err != nil {
-		return c, fmt.Errorf("apply messenger policy: %w", err)
-	}
-	if err := c.startInitialTopology(ctx); err != nil {
-		return c, err
-	}
-	return c, nil
+	return nil
 }
 
 // startInitialTopology brings a cluster whose first MON is configured to the
@@ -324,7 +336,7 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 		}
 		// MON OSDMap state is available before the first MGR. Its captured UUIDs
 		// and up/in flags do not rely on MGR-produced PG or health statistics.
-		if err := c.poll(ctx, func() (bool, error) {
+		if err := clusterutil.Poll(ctx, func() (bool, error) {
 			states, err := c.osdStates(ctx)
 			if err != nil {
 				return false, err
@@ -340,8 +352,8 @@ func (c *Container) waitForInitialDaemons(ctx context.Context) error {
 		}
 		return ctx.Err()
 	}
-	if err := c.poll(ctx, func() (bool, error) {
-		s, err := readStatus(ctx, c.cephCLI)
+	if err := clusterutil.Poll(ctx, func() (bool, error) {
+		s, err := readStatus(ctx, c.conn().ceph)
 		return s.MgrMap.Available, err
 	}); err != nil {
 		return fmt.Errorf("wait for ceph manager: %w", err)
@@ -456,9 +468,9 @@ func (c *Container) monitorEnvironment(fsid string) map[string]string {
 }
 
 // monitorJoinEnvironment returns the mon-join.sh variables of a later MON.
-func (c *Container) monitorJoinEnvironment(name string) map[string]string {
-	env := map[string]string{"CEPH_MON_ID": name, addressFamilyEnvironment: c.settings.addressFamily.String()}
-	maps.Copy(env, c.settings.messengerEnvironment())
+func (o options) monitorJoinEnvironment(name string) map[string]string {
+	env := map[string]string{"CEPH_MON_ID": name, addressFamilyEnvironment: o.addressFamily.String()}
+	maps.Copy(env, o.messengerEnvironment())
 	return env
 }
 
@@ -478,7 +490,7 @@ func (c *Container) trackHostPortLease(lease *hostPortLease) {
 func (c *Container) ManagerContainer() testcontainers.Container {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.roster.initialManager()
+	return c.members.roster.initialManager()
 }
 
 // WithClient connects another container to Ceph and copies its admin credentials.
@@ -516,16 +528,7 @@ func (c *Container) adminClient(opts ...ClientContainerOptions) testcontainers.C
 // Ceph runs the Ceph CLI in the control container. Arguments are passed directly,
 // without shell interpolation. Use --format json for machine-readable responses.
 func (c *Container) Ceph(ctx context.Context, args ...string) ([]byte, error) {
-	return c.cephCLI(ctx, args...)
-}
-
-// cephCLI runs the Ceph CLI for the module's own operations.
-func (c *Container) cephCLI(ctx context.Context, args ...string) ([]byte, error) {
-	control, err := c.controlContainerContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("select Ceph CLI container: %w", err)
-	}
-	return command(ctx, control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
+	return c.conn().ceph(ctx, args...)
 }
 
 // AddOSD registers, formats and starts a new OSD, then waits for it to be up/in.
@@ -570,17 +573,17 @@ func (c *Container) AddOSD(ctx context.Context, configs ...OSDOptions) (*OSDCont
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	launch, err := c.registerOSD(ctx, config, image, nil)
+	launch, err := c.osdFleet().registerOSD(ctx, config, image, nil)
 	if err != nil {
 		return launch.osd, err
 	}
-	if err := c.startOSD(ctx, launch); err != nil {
+	if err := c.osdFleet().startOSD(ctx, launch); err != nil {
 		return launch.osd, err
 	}
-	if err := c.waitOSDsUp(ctx, []int{launch.osd.ID}); err != nil {
+	if err := (osdMap{c.conn()}).waitUp(ctx, []int{launch.osd.ID}); err != nil {
 		return launch.osd, err
 	}
-	return launch.osd, c.assignOSDDeviceClass(ctx, launch.osd)
+	return launch.osd, osdMap{c.conn()}.assignDeviceClass(ctx, launch.osd)
 }
 
 // osdLaunch is a registered, owned OSD and its immutable creation recipe.
@@ -597,31 +600,31 @@ type osdLaunch struct {
 // creates the OSD's host bucket in its location, so that the bucket IDs
 // follow the registration order although the daemons boot concurrently. The
 // returned launch.osd is nil when the error came before the registration.
-func (c *Container) registerOSD(ctx context.Context, config OSDConfig, image string, buckets map[string]bool) (osdLaunch, error) {
-	for _, osd := range c.osdHandles.each() {
+func (f osdFleet) registerOSD(ctx context.Context, config OSDConfig, image string, buckets map[string]bool) (osdLaunch, error) {
+	for _, osd := range f.osdHandles.each() {
 		if osd.purged || osd.purgeIssued {
 			return osdLaunch{}, fmt.Errorf("finish removing osd.%d before adding another OSD", osd.ID)
 		}
 	}
-	if err := c.validateOSDPlacement(config); err != nil {
+	if err := f.validateOSDPlacement(config); err != nil {
 		return osdLaunch{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return osdLaunch{}, err
 	}
 	// Refuse an unsupported key type before allocating anything.
-	generate, err := c.generateKeyArgs(c.settings.auth.KeyType)
+	generate, err := f.keyArgs(f.settings.auth.KeyType)
 	if err != nil {
 		return osdLaunch{}, err
 	}
-	if err := c.ensureOSDVolume(ctx); err != nil {
+	if err := f.ensureOSDVolume(ctx); err != nil {
 		return osdLaunch{}, err
 	}
-	if err := c.ensureOSDMemory(ctx); err != nil {
+	if err := f.ensureOSDMemory(ctx); err != nil {
 		return osdLaunch{}, err
 	}
 	osdUUID := uuid.NewString()
-	control := c.cliContainer()
+	control := f.conn.cliContainer()
 	secret, err := command(ctx, control, generate...)
 	if err != nil {
 		return osdLaunch{}, err
@@ -634,7 +637,7 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, image str
 	if err := control.CopyToContainer(ctx, keys, keyPath, 0o600); err != nil {
 		return osdLaunch{}, fmt.Errorf("copy osd registration key: %w", err)
 	}
-	result, err := c.cephCLI(ctx, "osd", "new", osdUUID, "-i", keyPath)
+	result, err := f.conn.ceph(ctx, "osd", "new", osdUUID, "-i", keyPath)
 	if err != nil {
 		return osdLaunch{}, err
 	}
@@ -645,12 +648,12 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, image str
 	if config.Host == "" {
 		config.Host = fmt.Sprintf("osd-%d", id)
 	}
-	osd := &OSDContainer{ID: id, owner: c, nativeUUID: osdUUID, placement: config, image: image}
-	c.osdHandles.register(id, osd)
+	osd := &OSDContainer{ID: id, owner: f.owner, nativeUUID: osdUUID, placement: config, image: image}
+	f.osdHandles.register(id, osd)
 	launch := osdLaunch{osd: osd}
 	// A generated host name is known only after registration. Preserve the
 	// partial OSD descriptor if it conflicts, without moving any CRUSH bucket.
-	if err := c.validateOSDPlacement(config); err != nil {
+	if err := f.validateOSDPlacement(config); err != nil {
 		return launch, fmt.Errorf("place registered osd.%d: %w", id, err)
 	}
 	if buckets != nil && !buckets[config.Host] {
@@ -660,19 +663,19 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, image str
 		if config.Rack != "" {
 			args = append(args, "rack="+config.Rack)
 		}
-		if _, err := c.cephCLI(ctx, args...); err != nil {
+		if _, err := f.conn.ceph(ctx, args...); err != nil {
 			return launch, fmt.Errorf("create CRUSH host %s of osd.%d: %w", config.Host, id, err)
 		}
 		buckets[config.Host] = true
 	}
 	keyring := []byte(fmt.Sprintf("[osd.%d]\n\tkey = %s\n", id, strings.TrimSpace(string(secret))))
-	if err := c.stores.requireFresh(ctx, id); err != nil {
+	if err := f.stores.requireFresh(ctx, id); err != nil {
 		return launch, err
 	}
-	if err := c.clearAdminSocket(ctx, fmt.Sprintf("osd.%d", id)); err != nil {
+	if err := f.clearSocket(ctx, fmt.Sprintf("osd.%d", id)); err != nil {
 		return launch, err
 	}
-	launch.recipe = c.newOSDLaunchRecipe(osd, keyring)
+	launch.recipe = f.launchRecipe(osd, keyring)
 	return launch, nil
 }
 
@@ -680,7 +683,7 @@ func (c *Container) registerOSD(ctx context.Context, config OSDConfig, image str
 // it in the OSD's handle, also when the start then fails. It does not use
 // c.mu, so that Run can start several OSDs at once. The topology caller holds
 // c.mu until every start joins; a launch admits only one creation attempt.
-func (c *Container) startOSD(ctx context.Context, launch osdLaunch) error {
+func (f osdFleet) startOSD(ctx context.Context, launch osdLaunch) error {
 	if launch.osd == nil || launch.recipe == nil {
 		return errors.New("OSD launch preparation is incomplete")
 	}
@@ -693,7 +696,7 @@ func (c *Container) startOSD(ctx context.Context, launch osdLaunch) error {
 	if launch.osd.Container != nil {
 		return fmt.Errorf("osd.%d already has a container; do not rebind its handle", launch.osd.ID)
 	}
-	ctr, err := c.stores.runOSD(ctx, launch.recipe.image, launch.recipe)
+	ctr, err := f.stores.runOSD(ctx, launch.recipe.image, launch.recipe)
 	if ctr != nil {
 		launch.osd.Container = ctr
 	}
@@ -703,8 +706,8 @@ func (c *Container) startOSD(ctx context.Context, launch osdLaunch) error {
 	return nil
 }
 
-// assignOSDDeviceClass applies the configured class of an OSD that is up.
-func (c *Container) assignOSDDeviceClass(ctx context.Context, osd *OSDContainer) error {
+// assignDeviceClass applies the configured class of an OSD that is up.
+func (om osdMap) assignDeviceClass(ctx context.Context, osd *OSDContainer) error {
 	if osd.placement.DeviceClass == "" {
 		return nil
 	}
@@ -714,7 +717,7 @@ func (c *Container) assignOSDDeviceClass(ctx context.Context, osd *OSDContainer)
 		{"osd", "crush", "rm-device-class", fmt.Sprintf("osd.%d", osd.ID)},
 		{"osd", "crush", "set-device-class", osd.placement.DeviceClass, fmt.Sprintf("osd.%d", osd.ID)},
 	} {
-		if _, err := c.cephCLI(ctx, args...); err != nil {
+		if _, err := om.conn.ceph(ctx, args...); err != nil {
 			return fmt.Errorf("assign osd.%d device class: %w", osd.ID, err)
 		}
 	}
@@ -738,7 +741,7 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 		return err
 	}
 	id := handle.ID
-	if err := c.currentOSD(handle); err != nil {
+	if err := c.fleet.osdHandles.current(handle); err != nil {
 		return err
 	}
 	osd := handle
@@ -751,15 +754,15 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 		return err
 	}
 	name := fmt.Sprintf("osd.%d", id)
-	if err := c.checkOSDRemovable(ctx, osd); err != nil {
+	if err := c.osdFleet().checkOSDRemovable(ctx, osd); err != nil {
 		return err
 	}
 	if osd.Container != nil {
-		if err := c.fenceNativeTarget(ctx, osd.GetContainerID()); err != nil {
+		if err := c.native.fence(ctx, osd.GetContainerID()); err != nil {
 			return fmt.Errorf("stop native commands for %s: %w", name, err)
 		}
 	}
-	if err := c.drainAndPurgeOSD(ctx, osd); err != nil {
+	if err := c.osdFleet().drainAndPurgeOSD(ctx, osd); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -770,14 +773,14 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 			return fmt.Errorf("terminate %s: %w", name, err)
 		}
 	}
-	if err := c.stores.discard(ctx, id); err != nil {
+	if err := c.fleet.stores.discard(ctx, id); err != nil {
 		return err
 	}
 	// The container is gone when it was terminated above; a launch that never
 	// created one keeps no claim, and an unconfirmed lost create reply keeps it
 	// for Terminate.
-	c.deviceClaims.release(id, osd.Container != nil)
-	c.osdHandles.forget(id)
+	c.fleet.deviceClaims.release(id, osd.Container != nil)
+	c.fleet.osdHandles.forget(id)
 	return nil
 }
 
@@ -785,7 +788,7 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 // that osd is the registered native OSD this handle created and that another
 // owned OSD remains. A purge that may have committed with a lost response is
 // settled here by a fresh, strict absence. The caller holds c.mu.
-func (c *Container) checkOSDRemovable(ctx context.Context, osd *OSDContainer) error {
+func (f osdFleet) checkOSDRemovable(ctx context.Context, osd *OSDContainer) error {
 	id := osd.ID
 	if osd.purged {
 		return nil
@@ -794,7 +797,7 @@ func (c *Container) checkOSDRemovable(ctx context.Context, osd *OSDContainer) er
 	if err != nil || expected == uuid.Nil {
 		return fmt.Errorf("osd.%d registration UUID is unavailable", id)
 	}
-	dump, err := c.removalOSDDump(ctx)
+	dump, err := osdMap{f.conn}.removalDump(ctx)
 	if err != nil {
 		return err
 	}
@@ -803,15 +806,15 @@ func (c *Container) checkOSDRemovable(ctx context.Context, osd *OSDContainer) er
 		// A fresh, strict absence can settle only this handle's own request.
 		osd.purged = true
 	} else {
-		if _, err := c.ownedOSDState(dump, id); err != nil {
+		if _, err := f.osdHandles.ownedState(dump, id); err != nil {
 			return err
 		}
 		remaining := 0
-		for otherID, other := range c.osdHandles.each() {
+		for otherID, other := range f.osdHandles.each() {
 			if other == nil || other.purged {
 				continue
 			}
-			if _, err := c.ownedOSDState(dump, otherID); err == nil {
+			if _, err := f.osdHandles.ownedState(dump, otherID); err == nil {
 				remaining++
 			}
 		}
@@ -828,23 +831,23 @@ func (c *Container) checkOSDRemovable(ctx context.Context, osd *OSDContainer) er
 // before the purge request, whose lost response does not tell whether the MON
 // committed it. An already purged OSD is left alone. The caller holds c.mu and
 // has fenced the OSD's native commands.
-func (c *Container) drainAndPurgeOSD(ctx context.Context, osd *OSDContainer) error {
+func (f osdFleet) drainAndPurgeOSD(ctx context.Context, osd *OSDContainer) error {
 	id := osd.ID
 	name := fmt.Sprintf("osd.%d", id)
 	if osd.purged {
 		return nil
 	}
 	// Reweight avoids the small-cluster active+remapped case documented by Ceph.
-	if err := c.removalOSDMutation(ctx, id, "osd", "crush", "reweight", name, "0"); err != nil {
+	if err := f.removalOSDMutation(ctx, id, "osd", "crush", "reweight", name, "0"); err != nil {
 		return err
 	}
-	if err := c.removalOSDMutation(ctx, id, "osd", "out", strconv.Itoa(id)); err != nil {
+	if err := f.removalOSDMutation(ctx, id, "osd", "out", strconv.Itoa(id)); err != nil {
 		return err
 	}
-	if err := c.waitOSDRemoval(ctx, id, true); err != nil {
+	if err := f.waitOSDRemoval(ctx, id, true); err != nil {
 		return fmt.Errorf("drain %s: %w", name, err)
 	}
-	if _, err := c.removalOSDState(ctx, id); err != nil {
+	if _, err := f.removalOSDState(ctx, id); err != nil {
 		return err
 	}
 	if osd.Container != nil {
@@ -853,16 +856,16 @@ func (c *Container) drainAndPurgeOSD(ctx context.Context, osd *OSDContainer) err
 			return fmt.Errorf("stop %s: %w", name, err)
 		}
 	}
-	if err := c.waitOSDRemoval(ctx, id, false); err != nil {
+	if err := f.waitOSDRemoval(ctx, id, false); err != nil {
 		return fmt.Errorf("wait for %s down: %w", name, err)
 	}
-	if _, err := c.removalOSDState(ctx, id); err != nil {
+	if _, err := f.removalOSDState(ctx, id); err != nil {
 		return err
 	}
 	// Mark before the request because cancellation/transport failure does
 	// not establish whether the MON committed the purge.
 	osd.purgeIssued = true
-	if _, err := c.cephCLI(ctx, "osd", "purge", strconv.Itoa(id), "--yes-i-really-mean-it"); err != nil {
+	if _, err := f.conn.ceph(ctx, "osd", "purge", strconv.Itoa(id), "--yes-i-really-mean-it"); err != nil {
 		return err
 	}
 	osd.purged = true
@@ -872,11 +875,11 @@ func (c *Container) drainAndPurgeOSD(ctx context.Context, osd *OSDContainer) err
 // Native reads and each mutation remain inside the serialized removal. A
 // malformed/missing/replaced identity stops the operation immediately rather
 // than being polled until timeout and then mistaken for successful draining.
-func (c *Container) removalOSDDump(ctx context.Context) (osdPolicySnapshot, error) {
+func (om osdMap) removalDump(ctx context.Context) (osdPolicySnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return osdPolicySnapshot{}, err
 	}
-	dump, err := c.osdPolicyDump(ctx)
+	dump, err := om.policyDump(ctx)
 	if err != nil {
 		return dump, err
 	}
@@ -885,32 +888,32 @@ func (c *Container) removalOSDDump(ctx context.Context) (osdPolicySnapshot, erro
 
 // removalOSDState reads the native state of one OSD of an ongoing removal.
 // The caller holds c.mu.
-func (c *Container) removalOSDState(ctx context.Context, id int) (OSDState, error) {
-	dump, err := c.removalOSDDump(ctx)
+func (f osdFleet) removalOSDState(ctx context.Context, id int) (OSDState, error) {
+	dump, err := osdMap{f.conn}.removalDump(ctx)
 	if err != nil {
 		return OSDState{}, err
 	}
-	return c.ownedOSDState(dump, id)
+	return f.osdHandles.ownedState(dump, id)
 }
 
 // removalOSDMutation runs one mutation of a removal after re-checking the OSD.
 // The caller holds c.mu.
-func (c *Container) removalOSDMutation(ctx context.Context, id int, args ...string) error {
-	if _, err := c.removalOSDState(ctx, id); err != nil {
+func (f osdFleet) removalOSDMutation(ctx context.Context, id int, args ...string) error {
+	if _, err := f.removalOSDState(ctx, id); err != nil {
 		return err
 	}
-	_, err := c.cephCLI(ctx, args...)
+	_, err := f.conn.ceph(ctx, args...)
 	return err
 }
 
 // waitOSDRemoval waits for the drain or the stop of an OSD in removal. The
 // caller holds c.mu.
-func (c *Container) waitOSDRemoval(ctx context.Context, id int, drain bool) error {
+func (f osdFleet) waitOSDRemoval(ctx context.Context, id int, drain bool) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	var last error
 	for {
-		state, err := c.removalOSDState(ctx, id)
+		state, err := f.removalOSDState(ctx, id)
 		if err != nil {
 			return errors.Join(err, last)
 		}
@@ -918,7 +921,7 @@ func (c *Container) waitOSDRemoval(ctx context.Context, id int, drain bool) erro
 			return nil
 		}
 		if drain {
-			if _, err := c.cephCLI(ctx, "osd", "safe-to-destroy", strconv.Itoa(id)); err == nil {
+			if _, err := f.conn.ceph(ctx, "osd", "safe-to-destroy", strconv.Itoa(id)); err == nil {
 				return nil
 			} else {
 				last = err
@@ -932,17 +935,12 @@ func (c *Container) waitOSDRemoval(ctx context.Context, id int, drain bool) erro
 	}
 }
 
-// osdsLocked lists the owned OSDs. The caller holds c.mu.
-func (c *Container) osdsLocked() []*OSDContainer {
-	return c.osdHandles.sorted()
-}
-
 // ServiceContainers returns owned optional services (such as RGW or MDS),
 // sorted by service name. The cluster owns their cleanup.
 func (c *Container) ServiceContainers() []testcontainers.Container {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.roster.sortedServices()
+	return c.members.roster.sortedServices()
 }
 
 // startService registers partial failures too, so callers can always terminate
@@ -958,7 +956,7 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	if strings.TrimSpace(image) == "" {
 		return nil, invalidRequest("image is required for service %s", name)
 	}
-	if c.roster.hasService(name) {
+	if c.members.roster.hasService(name) {
 		return nil, fmt.Errorf("ceph service %s already started", name)
 	}
 	if !c.bootstrap.isComplete() {
@@ -970,7 +968,7 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 	moduleOpts = append(moduleOpts, c.startup.ownedLabel())
 	ctr, err := runContainer(ctx, image, moduleOpts...)
 	if ctr != nil {
-		c.roster.setService(name, ctr)
+		c.members.roster.setService(name, ctr)
 	}
 	if err != nil {
 		return ctr, fmt.Errorf("run ceph %s: %w", name, err)
@@ -994,7 +992,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	// Refuse and cancel native commands before waiting for the mutex: an
 	// rgw.Gateway.Admin call holds it while its command runs, and returns
 	// once that command is stopped.
-	c.cancelNativeInvocations()
+	c.native.cancelAll()
 	if err := c.lockTopology(ctx); err != nil {
 		return err
 	}
@@ -1010,66 +1008,14 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	// Stop native commands while their containers still run. Those that
 	// stay unconfirmed are retried after the teardown, which ends the ones in
 	// the cluster's own containers.
-	_ = c.stopNativeInvocations(ctx)
+	_ = c.native.stopAll(ctx)
 	errs = append(errs, c.portLeases.release(ctx)...)
 	// Stop gateways and metadata servers while their backing OSDs are alive.
-	for name, ctr := range c.roster.eachService() {
-		if err := ctr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-			errs = append(errs, fmt.Errorf("terminate service %s: %w", name, err))
-		} else {
-			c.roster.dropService(name)
-		}
-	}
-	for id, osd := range c.osdHandles.each() {
-		if osd.Container != nil {
-			if err := osd.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-				errs = append(errs, err)
-				continue
-			}
-		}
-		c.deviceClaims.release(id, osd.Container != nil)
-		c.osdHandles.forget(id)
-	}
-	memoryErr := c.stores.releaseMemory(ctx, c.osdHandles.count() == 0)
-	volumeErr := c.stores.releaseVolume(ctx, c.osdHandles.count() == 0)
-	if first := c.roster.initialManager(); first != nil {
-		if err := first.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-			errs = append(errs, err)
-		} else {
-			c.roster.clearInitialManager()
-		}
-	}
-	for name, mgr := range c.roster.eachManager() {
-		if name == "a" {
-			if c.roster.initialManager() == nil {
-				c.roster.dropManager(name)
-			}
-			continue
-		}
-		if mgr.Container != nil {
-			if err := mgr.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-				errs = append(errs, err)
-				continue
-			}
-		}
-		c.roster.dropManager(name)
-	}
-	for name, mon := range c.roster.eachMonitor() {
-		if mon.Container != nil {
-			if err := mon.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-				errs = append(errs, err)
-				continue
-			}
-		}
-		c.roster.dropMonitor(name)
-	}
-	if c.Container != nil && !c.monitorTerminated {
-		if err := c.Container.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
-			errs = append(errs, err)
-		} else {
-			c.monitorTerminated = true
-		}
-	}
+	errs = append(errs, c.monitorTopology().terminateServices(ctx, opts)...)
+	errs = append(errs, c.osdFleet().terminateOSDs(ctx, opts)...)
+	memoryErr := c.fleet.stores.releaseMemory(ctx, c.fleet.osdHandles.count() == 0)
+	volumeErr := c.fleet.stores.releaseVolume(ctx, c.fleet.osdHandles.count() == 0)
+	errs = append(errs, c.monitorTopology().terminateMembers(ctx, opts)...)
 	// The added and the primary MON containers are the users of the MON store
 	// volumes; release the stores whose attachment is gone.
 	monStoreErr := c.monStores.releaseStores(ctx)
@@ -1093,25 +1039,25 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	errs = append(errs, scanErr)
 	// The removed containers can include a storage user whose create reply
 	// was lost, such as an OSD or an owned storage helper.
-	memoryErr = c.stores.retryMemory(ctx, memoryErr, c.osdHandles.count() == 0)
-	volumeErr = c.stores.retryVolume(ctx, volumeErr, c.osdHandles.count() == 0)
+	memoryErr = c.fleet.stores.retryMemory(ctx, memoryErr, c.fleet.osdHandles.count() == 0)
+	volumeErr = c.fleet.stores.retryVolume(ctx, volumeErr, c.fleet.osdHandles.count() == 0)
 	monStoreErr = c.monStores.retryStores(ctx, monStoreErr)
 	errs = append(errs, memoryErr, volumeErr, monStoreErr,
-		c.deviceClaims.settle(scanErr == nil && c.startup.ownerID() != ""))
+		c.fleet.deviceClaims.settle(scanErr == nil && c.startup.ownerID() != ""))
 	if err := c.runDir.release(ctx); err != nil {
 		errs = append(errs, err)
 	}
 	errs = append(errs, c.nets.removeBridges(ctx, blockedNetworks)...)
-	errs = append(errs, c.stopNativeInvocations(ctx)...)
+	errs = append(errs, c.native.stopAll(ctx)...)
 	return errors.Join(errs...)
 }
 
-// waitOSDsUp waits until every OSD of ids is up and in. Its error names the
+// waitUp waits until every OSD of ids is up and in. Its error names the
 // OSDs that were not.
-func (c *Container) waitOSDsUp(ctx context.Context, ids []int) error {
+func (om osdMap) waitUp(ctx context.Context, ids []int) error {
 	pending := slices.Clone(ids)
-	err := c.poll(ctx, func() (bool, error) {
-		flags, err := c.osdUpIn(ctx)
+	err := clusterutil.Poll(ctx, func() (bool, error) {
+		flags, err := om.upIn(ctx)
 		if err != nil {
 			return false, err
 		}
@@ -1135,9 +1081,9 @@ func (c *Container) waitOSDsUp(ctx context.Context, ids []int) error {
 
 type osdFlags struct{ up, in bool }
 
-// osdUpIn returns the up and in flags of every OSD in the OSDMap.
-func (c *Container) osdUpIn(ctx context.Context) (map[int]osdFlags, error) {
-	result, err := c.cephCLI(ctx, "osd", "dump", "--format", "json")
+// upIn returns the up and in flags of every OSD in the OSDMap.
+func (om osdMap) upIn(ctx context.Context) (map[int]osdFlags, error) {
+	result, err := om.conn.ceph(ctx, "osd", "dump", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -1161,10 +1107,6 @@ func (c *Container) osdUpIn(ctx context.Context) (map[int]osdFlags, error) {
 // A gracefully stopping MDS otherwise waits about five seconds; data in a
 // terminated cluster is never read again.
 const terminationStopTimeout = 2 * time.Second
-
-func (c *Container) poll(ctx context.Context, check func() (bool, error)) error {
-	return clusterutil.Poll(ctx, check)
-}
 
 func scriptFile(name string) testcontainers.ContainerFile {
 	data, err := scripts.ReadFile("internal/scripts/" + name + ".sh")

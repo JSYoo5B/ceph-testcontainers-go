@@ -22,7 +22,9 @@ import (
 //
 // What stays on Container: the first MON (the embedded container, which the roster does
 // not own), monitorTerminated (it describes that embedded container), closed
-// (read by the terminate gate) and mu.
+// (read by the terminate gate) and mu. monitorTopology binds the roster
+// together with the first MON and monitorTerminated, and holds the membership
+// views and steps that read them.
 //
 // The first MGR's container (firstMgr) mirrors the entry "a" of managers.
 // dropManager is therefore the only way to forget a manager entry: it clears

@@ -24,6 +24,9 @@ var faultRegistryMethods = map[string][]string{
 	"openInstanceFault": {"strings.HasSuffix", "entry.complete(ctx)"},
 	"held":              {"append"},
 	"undo":              {"r.held", "mu.Unlock", "entry.undo(ctx)", "mu.Lock", "entry.undo(ctx)", "append", "fmt.Errorf", "make"},
+	// The two checks that need only the registry; the caller holds Container.mu.
+	"refuseInstanceFaults":   {"r.openInstanceFault", "fmt.Errorf"},
+	"poolDeleteOverrideHeld": {"r.holds", "configOverrideKey"},
 }
 
 func isFaultRegistryReceiver(fn *ast.FuncDecl) bool { return receiverTypeName(fn) == "faultRegistry" }
@@ -202,19 +205,19 @@ var faultRegistryCallers = map[string]struct {
 	mode    string
 	methods []string
 }{
-	"Container.terminate":            {"takes", []string{"undo"}},
-	"Container.refuseInstanceFaults": {"hook", []string{"openInstanceFault"}},
-	"Container.allowPoolDeleteHeld":  {"hook", []string{"holds"}},
-	"faultHooks.Reserve":             {"hook", []string{"reserve"}},
-	"faultHooks.Settle":              {"hook", []string{"settle"}},
-	"faultHooks.Release":             {"hook", []string{"release"}},
-	"faultHooks.Tracks":              {"hook", []string{"tracks"}},
-	"unitAccess.UnitFaults":          {"hook", []string{"handles"}},
-	"overrideHooks.Reserve":          {"hook", []string{"reserve"}},
-	"overrideHooks.Settle":           {"hook", []string{"settle"}},
-	"overrideHooks.Release":          {"hook", []string{"release"}},
-	"overrideHooks.Tracks":           {"hook", []string{"tracks"}},
-	"unitAccess.UnitHeld":            {"hook", []string{"handles"}},
+	"Container.terminate":   {"takes", []string{"undo"}},
+	"Container.detachOSD":   {"takes", []string{"refuseInstanceFaults"}},
+	"Container.deletePool":  {"hook", []string{"poolDeleteOverrideHeld"}},
+	"faultHooks.Reserve":    {"hook", []string{"reserve"}},
+	"faultHooks.Settle":     {"hook", []string{"settle"}},
+	"faultHooks.Release":    {"hook", []string{"release"}},
+	"faultHooks.Tracks":     {"hook", []string{"tracks"}},
+	"unitAccess.UnitFaults": {"hook", []string{"handles"}},
+	"overrideHooks.Reserve": {"hook", []string{"reserve"}},
+	"overrideHooks.Settle":  {"hook", []string{"settle"}},
+	"overrideHooks.Release": {"hook", []string{"release"}},
+	"overrideHooks.Tracks":  {"hook", []string{"tracks"}},
+	"unitAccess.UnitHeld":   {"hook", []string{"handles"}},
 }
 
 // TestFaultRegistryCallersAreAudited guards the callers: the set of functions
@@ -319,8 +322,10 @@ func TestTerminateUndoesFaultsFirstUnderTheClusterMutex(t *testing.T) {
 								t.Fatalf("faults.undo must receive &c.mu, got %v", x.Args)
 							}
 						}
-					case "stopNativeInvocations":
-						stop = append(stop, x.Pos())
+					case "stopAll":
+						if types.ExprString(sel.X) == "c.native" {
+							stop = append(stop, x.Pos())
+						}
 					case "release":
 						if recv, ok := sel.X.(*ast.SelectorExpr); ok && portLeaseUse(recv) {
 							release = append(release, x.Pos())

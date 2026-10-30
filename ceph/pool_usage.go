@@ -1,14 +1,11 @@
 package ceph
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
-	"github.com/google/uuid"
 )
 
 // PoolUsageSnapshot is one monitor-reported pool usage observation. StoredBytes
@@ -29,109 +26,6 @@ type PoolUsageSnapshot struct {
 	Objects            uint64
 	MaxAvailableBytes  uint64
 	UsedRatio          float64
-}
-
-// poolUsage implements Pool.Usage. It reads ceph df detail through the fixture's control CLI. It checks
-// the original bootstrap FSID and exact native pool ID/name before and after
-// the observation. A pool without a statistics row is unavailable, not empty.
-// All failures, including cancellation after a query, return a zero snapshot.
-// This method makes no writes, retries or background workers. External pool or
-// control configuration writers must not race it; the native reads are not an
-// atomic transaction. Poll with a caller deadline for eventual assertions.
-func (c *Container) poolUsage(ctx context.Context, name string, handle *Pool) (PoolUsageSnapshot, error) {
-	if err := ctx.Err(); err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	if c == nil {
-		return PoolUsageSnapshot{}, errors.New("ceph cluster is unavailable")
-	}
-	if err := validateExistingPoolName(name); err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	if err := c.lockTopology(ctx); err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	defer c.mu.Unlock()
-	if c.closed {
-		return PoolUsageSnapshot{}, errClusterTerminated
-	}
-	if err := handle.matchLocked(name, -1); err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	control, err := c.controlContainerContext(ctx)
-	if err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	if control == nil {
-		return PoolUsageSnapshot{}, errors.New("ceph control container is unavailable")
-	}
-	identity, err := c.bootstrap.identity(ctx)
-	if err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	fsid, identityErr := identity.fsid, identity.err
-	if identityErr != nil || !identity.confirmed {
-		return PoolUsageSnapshot{}, errors.New("ceph original bootstrap identity is unavailable")
-	}
-	query := func(args ...string) ([]byte, error) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		data, err := command(ctx, control, append([]string{"ceph", "--connect-timeout", "5"}, args...)...)
-		if err = errors.Join(err, ctx.Err()); err != nil {
-			return nil, fmt.Errorf("observe pool usage: %w", err)
-		}
-		return data, nil
-	}
-	checkFSID := func() error {
-		data, err := query("fsid")
-		if err != nil {
-			return err
-		}
-		native := strings.TrimSpace(string(data))
-		parsed, err := uuid.Parse(native)
-		if err != nil || parsed == uuid.Nil || parsed.String() != native || native != fsid {
-			return errors.New("native pool usage FSID differs from the original cluster")
-		}
-		return ctx.Err()
-	}
-	readID := func() (int64, error) {
-		data, err := query("osd", "pool", "ls", "detail", "--format", "json")
-		if err != nil {
-			return 0, err
-		}
-		id, err := poolUsageID(data, name)
-		return id, errors.Join(err, ctx.Err())
-	}
-	if err := checkFSID(); err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	id, err := readID()
-	if err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	if err := handle.matchLocked(name, id); err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	data, err := query("df", "detail", "--format", "json")
-	if err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	usage, err := decodePoolUsage(data, fsid, name, id)
-	if err = errors.Join(err, ctx.Err()); err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	afterID, err := readID()
-	if err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	if afterID != id {
-		return PoolUsageSnapshot{}, fmt.Errorf("pool %q was replaced during usage observation", name)
-	}
-	if err := checkFSID(); err != nil {
-		return PoolUsageSnapshot{}, err
-	}
-	return usage, nil
 }
 
 func poolUsageID(data []byte, name string) (int64, error) {

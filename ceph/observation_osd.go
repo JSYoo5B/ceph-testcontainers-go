@@ -12,7 +12,7 @@ import (
 // registrations. The exported method still takes the topology lock and the
 // liveness check, then hands this code a copy of the registrations, so the
 // ownership rules and the command order can be driven by a fake query without a
-// cluster. Container.ownedOSDState delegates here too, so there is one rule for
+// cluster. osdRegistry.ownedState delegates here too, so there is one rule for
 // what makes an OSD "owned and unchanged".
 
 // osdRegistration is the part of an owned OSD that the observation consults: the

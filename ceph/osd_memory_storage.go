@@ -94,28 +94,28 @@ func (s *osdMemoryStorage) mount(target string) testcontainers.CustomizeRequestO
 	})
 }
 
-func (c *Container) ensureOSDMemory(ctx context.Context) error {
-	if c.settings.osdMemorySize == 0 {
+func (f osdFleet) ensureOSDMemory(ctx context.Context) error {
+	if f.settings.osdMemorySize == 0 {
 		return nil
 	}
-	if s := c.stores.memoryStorage(); s != nil {
+	if s := f.stores.memoryStorage(); s != nil {
 		return s.checkKeeper(ctx)
 	}
 	// Publish before allocation: an interrupted create may have committed and
 	// the generated volume name remains owned for explicit cleanup.
-	s := c.stores.beginMemory(c.settings.osdMemorySize)
+	s := f.stores.beginMemory(f.settings.osdMemorySize)
 	if err := s.createVolume(ctx); err != nil {
 		return err
 	}
-	keeper, err := testcontainers.Run(ctx, c.settings.essentialImage,
+	keeper, err := testcontainers.Run(ctx, f.settings.essentialImage,
 		WithIdleEntrypoint(),
 		testcontainers.WithHostConfigModifier(func(host *container.HostConfig) { host.NetworkMode = "none" }),
 		testcontainers.WithLabels(map[string]string{osdMemoryOwnerLabel: s.owner}),
-		c.startup.ownedLabel(),
+		f.startup.ownedLabel(),
 		s.mount(osdMemoryKeeperPath),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"sh", "-c",
 			`awk '$5 == "/tc/osd-memory" && / - tmpfs / {found=1} END {exit !found}' /proc/self/mountinfo`,
-		}).WithStartupTimeout(c.settings.startupTimeout)),
+		}).WithStartupTimeout(f.settings.startupTimeout)),
 	)
 	if keeper != nil {
 		s.keeper = keeper

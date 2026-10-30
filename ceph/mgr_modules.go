@@ -55,14 +55,14 @@ func (c *Container) WaitMGRModuleReady(ctx context.Context, name string) error {
 			c.mu.Unlock()
 			return errors.Join(err, last)
 		}
-		modules, err := c.mgrModules(ctx)
+		modules, err := readMGRModules(ctx, c.conn().ceph)
 		module, ok := findMGRModule(modules, name)
 		if err == nil && (!ok || !module.Enabled || !module.Available || !module.CanRun) {
 			err = errors.New("MGR module is not enabled with runnable native metadata")
 		}
 		if err == nil {
 			for _, probe := range probes {
-				data, probeErr := c.cephCLI(ctx, probe...)
+				data, probeErr := c.conn().ceph(ctx, probe...)
 				if probeErr != nil {
 					err = probeErr
 					break
@@ -101,8 +101,4 @@ func findMGRModule(modules []MGRModuleState, name string) (MGRModuleState, bool)
 		}
 	}
 	return MGRModuleState{}, false
-}
-
-func (c *Container) mgrModules(ctx context.Context) ([]MGRModuleState, error) {
-	return readMGRModules(ctx, c.cephCLI)
 }

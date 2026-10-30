@@ -9,7 +9,7 @@ import (
 
 func TestRGWFreshBootstrapCanonicalizesRemoteCommitStagingWithoutCommit(t *testing.T) {
 	f, cli, a, b := newRGWSyncTestFixture()
-	f.bootstrapStagingPending = true
+	f.topology.bootstrapStagingPending = true
 	cli.current["epoch"] = json.Number("4")
 	cli.staging = syncJSONClone(cli.current)
 	cli.staging["id"] = "realm:staging"
@@ -24,7 +24,7 @@ func TestRGWFreshBootstrapCanonicalizesRemoteCommitStagingWithoutCommit(t *testi
 	if err := f.canonicalizeBootstrapStaging(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if f.bootstrapStagingPending || cli.staging["epoch"] != json.Number("4") || !syncPeriodPolicyEqual(cli.staging, before) || !reflect.DeepEqual(cli.current, before) || a.starts != 0 || b.starts != 0 {
+	if f.topology.bootstrapStagingPending || cli.staging["epoch"] != json.Number("4") || !syncPeriodPolicyEqual(cli.staging, before) || !reflect.DeepEqual(cli.current, before) || a.starts != 0 || b.starts != 0 {
 		t.Fatal("fresh canonicalization changed current topology or failed to retain both zones")
 	}
 	updates := 0
@@ -57,7 +57,7 @@ func TestRGWFreshBootstrapCanonicalizesRemoteCommitStagingWithoutCommit(t *testi
 
 func TestRGWBootstrapStagingPreflightPreservesForeignStoredPolicy(t *testing.T) {
 	f, cli, _, _ := newRGWSyncTestFixture()
-	f.bootstrapStagingPending = true
+	f.topology.bootstrapStagingPending = true
 	cli.staging = syncJSONClone(cli.current)
 	cli.group["foreign_pending"] = true
 	before := syncJSONClone(cli.staging)
@@ -75,19 +75,19 @@ func TestRGWOuterFreshTopologyCanonicalizesAllOwnedZonesBeforeClosingAdmission(t
 	f, cli, _, _ := newRGWSyncTestFixture()
 	// The two-zone constructor has completed; only the still-private outer
 	// constructor reopens bootstrap admission while assembling its fresh graph.
-	f.bootstrapStagingPending = true
+	f.topology.bootstrapStagingPending = true
 	if err := f.canonicalizeBootstrapStaging(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	f.additionalZones = map[string]*rgwZoneState{"third": {Zone: Zone{Name: "third", ID: "third-id", Zonegroup: "group", PeerEndpoint: "http://third:7480"}, client: cli}}
+	f.topology.additional = map[string]*rgwZoneState{"third": {Zone: Zone{Name: "third", ID: "third-id", Zonegroup: "group", PeerEndpoint: "http://third:7480"}, client: cli}}
 	zones := cli.group["zones"].([]any)
 	cli.group["zones"] = append(zones, map[string]any{"id": "third-id", "name": "third", "endpoints": []any{"http://third:7480"}})
 	cli.current["period_map"].(map[string]any)["zonegroups"] = []any{syncJSONClone(cli.group)}
-	f.bootstrapStagingPending = true
+	f.topology.bootstrapStagingPending = true
 	if err := f.canonicalizeBootstrapStaging(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if f.bootstrapStagingPending || len(syncPeriodGroups(cli.staging)[0]["zones"].([]any)) != 3 || !syncPeriodPolicyEqual(cli.staging, cli.current) {
+	if f.topology.bootstrapStagingPending || len(syncPeriodGroups(cli.staging)[0]["zones"].([]any)) != 3 || !syncPeriodPolicyEqual(cli.staging, cli.current) {
 		t.Fatal("outer fresh topology left earlier pair-only staging or later overwrite admission")
 	}
 }

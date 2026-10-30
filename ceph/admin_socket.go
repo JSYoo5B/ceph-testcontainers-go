@@ -140,7 +140,7 @@ func (c *Container) adminSocket(ctx context.Context, handle daemonHandle, args .
 	case !shared:
 		return nil, errors.New("this cluster has no shared run directory for admin sockets")
 	}
-	control, err := c.controlContainerContext(ctx)
+	control, err := c.conn().controlContainer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select admin socket control: %w", err)
 	}
@@ -181,23 +181,23 @@ func parseAdminSocketDaemon(daemon string) (kind, id string, err error) {
 
 // ownsDaemon reports a running-capable daemon descriptor that this cluster
 // owns. The caller holds c.mu.
-func (c *Container) ownsDaemon(kind, id string) bool {
+func (t monitorTopology) ownsDaemon(kind, id string) bool {
 	switch kind {
 	case "mon":
-		if id == "a" && c.Container != nil && !c.monitorTerminated {
+		if id == "a" && t.firstMonitorStands() {
 			return true
 		}
-		mon := c.roster.monitor(id)
+		mon := t.roster.monitor(id)
 		return mon != nil && mon.Container != nil
 	case "mgr":
-		mgr := c.roster.manager(id)
+		mgr := t.roster.manager(id)
 		return mgr != nil && mgr.Container != nil && !mgr.terminated
 	case "osd":
 		n, err := strconv.Atoi(id)
 		if err != nil {
 			return false
 		}
-		osd := c.osdHandles.get(n)
+		osd := t.osds.osdHandles.get(n)
 		return osd != nil && osd.Container != nil && !osd.purged
 	}
 	return false
@@ -210,7 +210,7 @@ func (c *Container) clearAdminSocket(ctx context.Context, daemon string) error {
 	if !c.runDir.published() {
 		return nil
 	}
-	control := c.cliContainer()
+	control := c.conn().cliContainer()
 	if control == nil {
 		return errors.New("ceph control container is unavailable")
 	}

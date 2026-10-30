@@ -30,7 +30,7 @@ func TestOSDHandleOfARemovedOSDIsRefusedAndNeverReachesASuccessor(t *testing.T) 
 	actions, stops := len(control.actions), daemon.stops
 	// A later OSD that took the ID must not be reached through the old handle.
 	successor := &OSDContainer{ID: 3, owner: cluster, nativeUUID: osdLifecycleUUID}
-	cluster.osdHandles.register(3, successor)
+	cluster.fleet.osdHandles.register(3, successor)
 	ctx := t.Context()
 	for name, call := range map[string]func() error{
 		"Remove": func() error { return removed.Remove(ctx) },
@@ -62,7 +62,7 @@ func TestOSDHandleBecomesStaleWhenDetachedOrReplacedByReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reopened == old || f.cluster.osdHandles.get(3) != reopened {
+	if reopened == old || f.cluster.fleet.osdHandles.get(3) != reopened {
 		t.Fatal("Reopen did not publish a new handle")
 	}
 	actions := len(f.control.actions)
@@ -76,7 +76,7 @@ func TestOSDHandleBecomesStaleWhenDetachedOrReplacedByReopen(t *testing.T) {
 	if _, err := old.Detach(t.Context()); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("Detach through the handle that Reopen replaced: %v", err)
 	}
-	if len(f.control.actions) != actions || reopened.purgeIssued || reopened.detaching || f.cluster.osdHandles.get(3) != reopened {
+	if len(f.control.actions) != actions || reopened.purgeIssued || reopened.detaching || f.cluster.fleet.osdHandles.get(3) != reopened {
 		t.Fatalf("the replaced handle acted on the new instance: %v", f.control.actions)
 	}
 	// The handle that Reopen returned is the one to operate on.
@@ -136,24 +136,24 @@ func TestMonitorHandleIsMatchedByNameAndContainerNotByPointer(t *testing.T) {
 		t.Fatal("a descriptor of the primary MON was not matched by name and container")
 	}
 	daemon := &monitorLifecycleDaemon{}
-	cluster.roster.addMonitor("b", &MonitorContainer{Container: daemon, DaemonName: "b", owner: cluster})
-	removed := cluster.roster.monitor("b")
+	cluster.members.roster.addMonitor("b", &MonitorContainer{Container: daemon, DaemonName: "b", owner: cluster})
+	removed := cluster.members.roster.monitor("b")
 	if err := removed.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	removals := control.removals
 	// A successor with the same name is not reachable through the old handle.
 	successor := &MonitorContainer{Container: &monitorLifecycleDaemon{}, DaemonName: "b", owner: cluster}
-	cluster.roster.addMonitor("b", successor)
+	cluster.members.roster.addMonitor("b", successor)
 	requireStale(t, "Remove of a removed monitor", removed.Remove(t.Context()))
 	if _, err := removed.AdminSocket(t.Context(), "version"); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("AdminSocket of a removed monitor: %v", err)
 	}
-	if control.removals != removals || cluster.roster.monitor("b") != successor {
+	if control.removals != removals || cluster.members.roster.monitor("b") != successor {
 		t.Fatal("a stale monitor handle acted on its successor")
 	}
 	// The primary MON's descriptor goes stale when it is gone.
-	cluster.monitorTerminated = true
+	cluster.members.monitorTerminated = true
 	requireStale(t, "Remove of a terminated primary MON", primary.Remove(t.Context()))
 }
 
@@ -162,13 +162,13 @@ func TestManagerHandleOfAReplacedManagerIsRefused(t *testing.T) {
 	cluster.runDir.volume = &runVolume{name: "run"}
 	old := managerHandle(t, t.Context(), cluster, "a")
 	successor := &ManagerContainer{Container: replacement, DaemonName: "a", owner: cluster, authOwned: true}
-	cluster.roster.addManager("a", successor)
+	cluster.members.roster.addManager("a", successor)
 	requireStale(t, "Remove of a manager that another descriptor replaced", old.Remove(t.Context()))
 	requireStale(t, "RotateKey of a manager that another descriptor replaced", old.RotateKey(t.Context()))
 	if _, err := old.AdminSocket(t.Context(), "status"); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("AdminSocket: %v", err)
 	}
-	if target.terminations != 0 || replacement.terminations != 0 || cluster.roster.manager("a") != successor {
+	if target.terminations != 0 || replacement.terminations != 0 || cluster.members.roster.manager("a") != successor {
 		t.Fatalf("a stale manager handle acted on its successor: %v", control.calls)
 	}
 }

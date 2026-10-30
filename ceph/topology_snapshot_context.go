@@ -43,8 +43,8 @@ func (c *Container) Managers(ctx context.Context) ([]*ManagerContainer, error) {
 		return nil, err
 	}
 	defer c.mu.Unlock()
-	result := make([]*ManagerContainer, 0, c.roster.managerCount())
-	for _, manager := range c.roster.eachManager() {
+	result := make([]*ManagerContainer, 0, c.members.roster.managerCount())
+	for _, manager := range c.members.roster.eachManager() {
 		result = append(result, manager)
 	}
 	slices.SortFunc(result, func(a, b *ManagerContainer) int { return strings.Compare(a.DaemonName, b.DaemonName) })
@@ -61,7 +61,7 @@ func (c *Container) Monitors(ctx context.Context) ([]*MonitorContainer, error) {
 		return nil, err
 	}
 	defer c.mu.Unlock()
-	return c.monitorsLocked(), nil
+	return c.monitorTopology().monitorsLocked(), nil
 }
 
 // OSDs returns the owned OSD descriptors sorted by ID, like OSDs,
@@ -74,26 +74,12 @@ func (c *Container) OSDs(ctx context.Context) ([]*OSDContainer, error) {
 		return nil, err
 	}
 	defer c.mu.Unlock()
-	return c.osdsLocked(), nil
+	return c.fleet.osdHandles.sorted(), nil
 }
 
 // ControlContainer returns the stable CLI handle while bounding a
 // concurrent control-plane creation or termination publication wait by ctx.
 // The cluster owns the handle; this snapshot does not promise it remains live.
 func (c *Container) ControlContainer(ctx context.Context) (testcontainers.Container, error) {
-	return c.controlContainerContext(ctx)
-}
-
-func (c *Container) controlContainerContext(ctx context.Context) (testcontainers.Container, error) {
-	if c == nil {
-		return nil, errors.New("ceph cluster is unavailable")
-	}
-	control, err := c.controlPlane.currentContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if control != nil {
-		return control, nil
-	}
-	return c.Container, nil
+	return c.conn().controlContainer(ctx)
 }

@@ -151,30 +151,30 @@ func (f *Fixture) CreateSyncGroup(ctx context.Context, scope SyncPolicyScope, co
 		return nil, err
 	}
 	if scope.Zonegroup == "" {
-		scope.Zonegroup = f.zoneGroupName(f.config.SourceZone)
+		scope.Zonegroup = f.realm.zoneGroupName(f.realm.config.SourceZone)
 	}
-	gid := f.groupIDs[scope.Zonegroup]
+	gid := f.topology.groupIDs[scope.Zonegroup]
 	if gid == "" {
 		return nil, multisiteInvalid(errors.New("RGW sync policy requires an attached owned zonegroup"))
 	}
 	g := &SyncGroup{owner: f, scope: scope, realmID: f.RealmID, groupID: gid, state: &rgwSyncGroupState{id: config.ID, period: period}}
 	if scope.Bucket != "" {
-		g.bucketID, err = f.syncBucketID(ctx, master, g)
+		g.bucketID, err = g.bucketInstanceID(ctx, master)
 		if err != nil {
 			return nil, err
 		}
 	}
-	before, _, err := f.syncPolicyDocument(ctx, master, g)
+	before, _, err := g.policyDocument(ctx, master)
 	if err != nil {
 		return nil, err
 	}
 	if syncNativeGroup(before, config.ID) != nil {
 		return nil, multisiteInvalid(errors.New("RGW sync group ID already exists; refusing adoption"))
 	}
-	if _, err := f.syncGroupCommand(ctx, master, g, "sync", "group", "create", "--group-id", config.ID, "--status", string(config.Status)); err != nil {
+	if _, err := g.command(ctx, master, "sync", "group", "create", "--group-id", config.ID, "--status", string(config.Status)); err != nil {
 		return g, err
 	}
-	after, _, err := f.syncPolicyDocument(ctx, master, g)
+	after, _, err := g.policyDocument(ctx, master)
 	if err != nil {
 		return g, err
 	}
@@ -189,12 +189,12 @@ func (f *Fixture) CreateSyncGroup(ctx context.Context, scope SyncPolicyScope, co
 // CreateFlow adds a fresh flow to an owned unchanged group. Native
 // directional identity is the exact source/destination pair, not flow-id.
 func (g *SyncGroup) CreateFlow(ctx context.Context, config SyncFlowConfig) error {
-	f, err := g.fixture()
+	_, err := g.fixture()
 	if err != nil {
 		return err
 	}
-	return f.changeSyncGroup(ctx, g, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
-		args, flow, key, err := f.syncFlowConfig(g, config)
+	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
+		args, flow, key, err := g.flowConfig(config)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -214,12 +214,12 @@ func (g *SyncGroup) CreateFlow(ctx context.Context, config SyncFlowConfig) error
 // snapshot. Symmetrical removal deletes the entire named set; directional
 // removal selects the native pair. It never changes another group's policy.
 func (g *SyncGroup) RemoveFlow(ctx context.Context, config SyncFlowConfig) error {
-	f, err := g.fixture()
+	_, err := g.fixture()
 	if err != nil {
 		return err
 	}
-	return f.changeSyncGroup(ctx, g, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
-		args, flow, key, err := f.syncFlowConfig(g, config)
+	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
+		args, flow, key, err := g.flowConfig(config)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -243,26 +243,26 @@ func (g *SyncGroup) RemoveFlow(ctx context.Context, config SyncFlowConfig) error
 // forms an upper bound for a bucket policy; a stored pipe alone does not prove
 // effective replication. Verify positive/negative writes through the S3 client.
 func (g *SyncGroup) CreatePipe(ctx context.Context, config SyncPipeConfig) error {
-	f, err := g.fixture()
+	_, err := g.fixture()
 	if err != nil {
 		return err
 	}
-	return f.changeSyncGroup(ctx, g, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
+	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
 		if !validRGWSyncID(config.ID) || strings.IndexFunc(config.Prefix, unicode.IsControl) != -1 {
 			return nil, nil, multisiteInvalid(errors.New("invalid RGW sync pipe ID or prefix"))
 		}
-		source, err := f.syncZoneIDs(g, config.SourceZones, true)
+		source, err := g.zoneIDs(config.SourceZones, true)
 		if err != nil {
 			return nil, nil, err
 		}
-		dest, err := f.syncZoneIDs(g, config.DestinationZones, true)
+		dest, err := g.zoneIDs(config.DestinationZones, true)
 		if err != nil {
 			return nil, nil, err
 		}
 		if syncNativePipe(before, config.ID) != nil {
 			return nil, nil, multisiteInvalid(errors.New("RGW sync pipe ID already exists"))
 		}
-		args, expected, err := f.syncPipeConfig(opCtx, master, g, config, source, dest)
+		args, expected, err := g.pipeConfig(opCtx, master, config, source, dest)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -283,14 +283,14 @@ func (g *SyncGroup) CreatePipe(ctx context.Context, config SyncPipeConfig) error
 // destination before writing objects that depend on the new filter. This method
 // confirms the master's stored policy, not its asynchronous import into peers.
 func (g *SyncGroup) SetPipePrefix(ctx context.Context, id, prefix string) error {
-	f, err := g.fixture()
+	_, err := g.fixture()
 	if err != nil {
 		return err
 	}
 	if !validRGWSyncID(id) || strings.IndexFunc(prefix, unicode.IsControl) != -1 {
 		return multisiteInvalid(errors.New("invalid RGW sync pipe ID or prefix"))
 	}
-	return f.changeSyncGroup(ctx, g, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
+	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
 		want := syncJSONClone(before)
 		pipe := syncNativePipe(want, id)
 		if pipe == nil {
@@ -325,14 +325,14 @@ func (g *SyncGroup) SetPipePrefix(ctx context.Context, id, prefix string) error 
 // changes, it confirms the master's stored policy, not its asynchronous
 // import into peers.
 func (g *SyncGroup) RemovePipe(ctx context.Context, id string) error {
-	f, err := g.fixture()
+	_, err := g.fixture()
 	if err != nil {
 		return err
 	}
 	if !validRGWSyncID(id) {
 		return errors.New("invalid RGW sync pipe ID")
 	}
-	return f.changeSyncGroup(ctx, g, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
+	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
 		if syncNativePipe(before, id) == nil {
 			return nil, nil, multisiteInvalid(errors.New("RGW sync pipe is absent from owned group"))
 		}
@@ -348,14 +348,14 @@ func (g *SyncGroup) RemovePipe(ctx context.Context, id string) error {
 
 // SetStatus changes an owned group's allowed/enabled/forbidden state.
 func (g *SyncGroup) SetStatus(ctx context.Context, status SyncGroupStatus) error {
-	f, err := g.fixture()
+	_, err := g.fixture()
 	if err != nil {
 		return err
 	}
 	if !validRGWSyncStatus(status) {
 		return errors.New("invalid RGW sync group status")
 	}
-	return f.changeSyncGroup(ctx, g, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
+	return g.change(ctx, func(opCtx context.Context, master *rgwZoneState, before map[string]any) ([]string, func(map[string]any) error, error) {
 		want := syncJSONClone(before)
 		want["status"] = string(status)
 		return []string{"sync", "group", "modify", "--group-id", g.ID(), "--status", string(status)}, func(after map[string]any) error {
@@ -391,10 +391,10 @@ func (g *SyncGroup) Remove(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := f.finishPendingSyncGroup(ctx, master, g); err != nil {
+	if err := g.finishPending(ctx, master); err != nil {
 		return err
 	}
-	before, _, err := f.syncPolicyDocument(ctx, master, g)
+	before, _, err := g.policyDocument(ctx, master)
 	if err != nil {
 		return err
 	}
@@ -407,10 +407,10 @@ func (g *SyncGroup) Remove(ctx context.Context) error {
 	if !reflect.DeepEqual(actual, g.state.group) {
 		return multisiteInvalid(errors.New("RGW owned sync group was externally changed; refusing removal"))
 	}
-	if _, err := f.syncGroupCommand(ctx, master, g, "sync", "group", "remove", "--group-id", g.ID()); err != nil {
+	if _, err := g.command(ctx, master, "sync", "group", "remove", "--group-id", g.ID()); err != nil {
 		return err
 	}
-	after, _, err := f.syncPolicyDocument(ctx, master, g)
+	after, _, err := g.policyDocument(ctx, master)
 	if err != nil {
 		return err
 	}
@@ -429,7 +429,7 @@ func (f *Fixture) validateSyncGroup(g *SyncGroup, allowRemoved bool) error {
 	if g == nil || g.owner != f || g.state == nil || !g.state.confirmed || (!allowRemoved && g.state.removed) {
 		return multisiteInvalid(errors.New("RGW sync group must be active and confirmed as created by this fixture"))
 	}
-	if g.realmID != f.RealmID || g.groupID != f.groupIDs[g.scope.Zonegroup] {
+	if g.realmID != f.RealmID || g.groupID != f.topology.groupIDs[g.scope.Zonegroup] {
 		return errors.New("RGW sync group realm/zonegroup identity changed")
 	}
 	return nil
@@ -437,7 +437,8 @@ func (f *Fixture) validateSyncGroup(g *SyncGroup, allowRemoved bool) error {
 
 type rgwSyncMutation func(context.Context, *rgwZoneState, map[string]any) ([]string, func(map[string]any) error, error)
 
-func (f *Fixture) changeSyncGroup(ctx context.Context, g *SyncGroup, change rgwSyncMutation) error {
+func (g *SyncGroup) change(ctx context.Context, change rgwSyncMutation) error {
+	f := g.owner
 	if f == nil {
 		return multisiteInvalid(errors.New("RGW multisite fixture is required"))
 	}
@@ -457,7 +458,7 @@ func (f *Fixture) changeSyncGroup(ctx context.Context, g *SyncGroup, change rgwS
 	if pending := g.state.pending; pending != nil {
 		requested, _, requestErr := change(ctx, master, syncJSONClone(pending.beforeGroup))
 		same := requestErr == nil && slices.Equal(requested, pending.args)
-		completed, err := f.reconcileSyncGroup(ctx, master, g)
+		completed, err := g.reconcile(ctx, master)
 		if err != nil {
 			return err
 		}
@@ -468,10 +469,10 @@ func (f *Fixture) changeSyncGroup(ctx context.Context, g *SyncGroup, change rgwS
 			if !same {
 				return errors.New("RGW sync group has an unconfirmed pending mutation; retry the same request")
 			}
-			return f.executePendingSyncGroup(ctx, master, g)
+			return g.executePending(ctx, master)
 		}
 	}
-	before, _, err := f.syncPolicyDocument(ctx, master, g)
+	before, _, err := g.policyDocument(ctx, master)
 	if err != nil {
 		return err
 	}
@@ -489,24 +490,24 @@ func (f *Fixture) changeSyncGroup(ctx context.Context, g *SyncGroup, change rgwS
 		return nil
 	}
 	g.state.pending = &rgwSyncPending{beforePolicy: syncJSONClone(before), beforeGroup: syncJSONClone(actual), args: slices.Clone(args), check: check}
-	return f.executePendingSyncGroup(ctx, master, g)
+	return g.executePending(ctx, master)
 }
 
-func (f *Fixture) executePendingSyncGroup(ctx context.Context, master *rgwZoneState, g *SyncGroup) error {
-	_, commandErr := f.syncGroupCommand(ctx, master, g, g.state.pending.args...)
+func (g *SyncGroup) executePending(ctx context.Context, master *rgwZoneState) error {
+	_, commandErr := g.command(ctx, master, g.state.pending.args...)
 	readCtx := ctx
 	cancel := func() {}
 	if commandErr != nil || ctx.Err() != nil {
 		readCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	}
-	completed, readErr := f.reconcileSyncGroup(readCtx, master, g)
+	completed, readErr := g.reconcile(readCtx, master)
 	cancel()
 	if completed && readErr == nil {
 		return nil
 	}
 	if readErr != nil && commandErr == nil {
 		checkCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		completed, readErr = f.reconcileSyncGroup(checkCtx, master, g)
+		completed, readErr = g.reconcile(checkCtx, master)
 		stop()
 		if completed && readErr == nil {
 			return nil
@@ -518,12 +519,12 @@ func (f *Fixture) executePendingSyncGroup(ctx context.Context, master *rgwZoneSt
 	return errors.Join(commandErr, readErr)
 }
 
-func (f *Fixture) reconcileSyncGroup(ctx context.Context, master *rgwZoneState, g *SyncGroup) (bool, error) {
+func (g *SyncGroup) reconcile(ctx context.Context, master *rgwZoneState) (bool, error) {
 	pending := g.state.pending
 	if pending == nil {
 		return true, nil
 	}
-	actual, _, err := f.syncPolicyDocument(ctx, master, g)
+	actual, _, err := g.policyDocument(ctx, master)
 	if err != nil {
 		return false, err
 	}
@@ -545,8 +546,8 @@ func (f *Fixture) reconcileSyncGroup(ctx context.Context, master *rgwZoneState, 
 	return true, nil
 }
 
-func (f *Fixture) finishPendingSyncGroup(ctx context.Context, master *rgwZoneState, g *SyncGroup) error {
-	completed, err := f.reconcileSyncGroup(ctx, master, g)
+func (g *SyncGroup) finishPending(ctx context.Context, master *rgwZoneState) error {
+	completed, err := g.reconcile(ctx, master)
 	if err != nil {
 		return err
 	}
@@ -587,7 +588,7 @@ func (f *Fixture) syncPolicyMaster(ctx context.Context) (*rgwZoneState, map[stri
 }
 
 func (f *Fixture) syncPolicyAdmin(ctx context.Context, zone *rgwZoneState, group string, args ...string) ([]byte, error) {
-	argv := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--realm-id", f.RealmID, "--zonegroup-id", f.groupIDs[group], "--zone-id", zone.ID, "--format", "json"}
+	argv := []string{"radosgw-admin", "--conf", "/etc/ceph/ceph.conf", "--keyring", "/etc/ceph/ceph.client.admin.keyring", "--realm-id", f.RealmID, "--zonegroup-id", f.topology.groupIDs[group], "--zone-id", zone.ID, "--format", "json"}
 	status := (len(args) >= 2 && args[0] == "sync" && args[1] == "status") || (len(args) >= 3 && args[0] == "bucket" && args[1] == "sync" && args[2] == "status")
 	data, err := syncNativeExecMode(ctx, zone.client, status, append(argv, args...)...)
 	return data, err
@@ -627,14 +628,16 @@ func syncNativeExecMode(ctx context.Context, ctr testcontainers.Container, statu
 	return stdout.Bytes(), nil
 }
 
-func (f *Fixture) syncGroupCommand(ctx context.Context, master *rgwZoneState, g *SyncGroup, args ...string) ([]byte, error) {
+func (g *SyncGroup) command(ctx context.Context, master *rgwZoneState, args ...string) ([]byte, error) {
+	f := g.owner
 	if g.scope.Bucket != "" {
 		args = append(args, "--bucket", syncScopedBucketName(g.scope), "--bucket-id", g.bucketID)
 	}
 	return f.syncPolicyAdmin(ctx, master, g.scope.Zonegroup, args...)
 }
 
-func (f *Fixture) syncBucketID(ctx context.Context, master *rgwZoneState, g *SyncGroup) (string, error) {
+func (g *SyncGroup) bucketInstanceID(ctx context.Context, master *rgwZoneState) (string, error) {
+	f := g.owner
 	args := []string{"bucket", "stats", "--bucket", syncScopedBucketName(g.scope)}
 	data, err := f.syncPolicyAdmin(ctx, master, g.scope.Zonegroup, args...)
 	if err != nil {
@@ -657,9 +660,10 @@ func syncScopedBucketName(scope SyncPolicyScope) string {
 	return scope.Bucket
 }
 
-// syncPolicyDocument reads the sync policy of g's zonegroup or, for a
+// policyDocument reads the sync policy of g's zonegroup or, for a
 // bucket-scoped group, of its exact bucket instance, which it also returns.
-func (f *Fixture) syncPolicyDocument(ctx context.Context, master *rgwZoneState, g *SyncGroup) (map[string]any, *rgwBucketInstance, error) {
+func (g *SyncGroup) policyDocument(ctx context.Context, master *rgwZoneState) (map[string]any, *rgwBucketInstance, error) {
+	f := g.owner
 	data, err := f.syncPolicyAdmin(ctx, master, g.scope.Zonegroup, "zonegroup", "get")
 	if err != nil {
 		return nil, nil, err
@@ -675,7 +679,7 @@ func (f *Fixture) syncPolicyDocument(ctx context.Context, master *rgwZoneState, 
 		policy, err := syncPolicyFromDocument(group)
 		return policy, nil, err
 	}
-	id, err := f.syncBucketID(ctx, master, g)
+	id, err := g.bucketInstanceID(ctx, master)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -754,7 +758,8 @@ func nativeObject(document map[string]any, key string) map[string]any {
 // is reports whether the member is the string want.
 func (s nativeString) is(want string) bool { return s.set && s.value == want }
 
-func (f *Fixture) syncZoneIDs(g *SyncGroup, names []string, wildcard bool) ([]string, error) {
+func (g *SyncGroup) zoneIDs(names []string, wildcard bool) ([]string, error) {
+	f := g.owner
 	if len(names) == 0 {
 		return nil, multisiteInvalid(errors.New("RGW sync zone list must not be empty"))
 	}
@@ -778,12 +783,13 @@ func (f *Fixture) syncZoneIDs(g *SyncGroup, names []string, wildcard bool) ([]st
 	return ids, nil
 }
 
-func (f *Fixture) syncFlowConfig(g *SyncGroup, c SyncFlowConfig) ([]string, map[string]any, string, error) {
+func (g *SyncGroup) flowConfig(c SyncFlowConfig) ([]string, map[string]any, string, error) {
+	f := g.owner
 	if len(c.Zones) > 0 {
 		if !validRGWSyncID(c.ID) || c.SourceZone != "" || c.DestinationZone != "" || len(c.Zones) < 2 {
 			return nil, nil, "", multisiteInvalid(errors.New("symmetrical RGW flow requires its ID and at least two zones"))
 		}
-		ids, err := f.syncZoneIDs(g, c.Zones, false)
+		ids, err := g.zoneIDs(c.Zones, false)
 		if err != nil {
 			return nil, nil, "", err
 		}
@@ -792,7 +798,7 @@ func (f *Fixture) syncFlowConfig(g *SyncGroup, c SyncFlowConfig) ([]string, map[
 	if c.ID != "" || c.SourceZone == "" || c.SourceZone == c.DestinationZone {
 		return nil, nil, "", multisiteInvalid(errors.New("directional RGW flow requires distinct owned source/destination zones and no ID"))
 	}
-	if _, err := f.syncZoneIDs(g, []string{c.SourceZone, c.DestinationZone}, false); err != nil {
+	if _, err := g.zoneIDs([]string{c.SourceZone, c.DestinationZone}, false); err != nil {
 		return nil, nil, "", err
 	}
 	var source, dest string

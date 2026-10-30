@@ -428,7 +428,7 @@ func TestMonStoreStateCallersHoldTheTopologyLock(t *testing.T) {
 // labeled-container removal and after the OSD retry stages, before the run
 // volume.
 func TestTerminateReleasesMonStoresInTheirTwoStagesInOrder(t *testing.T) {
-	for _, parsed := range parseProductionFiles(t) {
+	for _, parsed := range parseProductionFilesWithTerminateSteps(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil || !isContainerTerminate(fn) {
@@ -443,12 +443,12 @@ func TestTerminateReleasesMonStoresInTheirTwoStagesInOrder(t *testing.T) {
 			})
 			order := []string{
 				"c.lockTopology(ctx)",
-				"c.stores.releaseVolume(ctx, c.osdHandles.count() == 0)",
+				"c.fleet.stores.releaseVolume(ctx, c.fleet.osdHandles.count() == 0)",
 				"c.Container.Terminate(ctx, opts...)",
 				"c.monStores.releaseStores(ctx)",
 				"c.controlPlane.terminate(ctx, opts...)",
 				"c.startup.removeLabeledContainers(ctx)",
-				"c.stores.retryVolume(ctx, volumeErr, c.osdHandles.count() == 0)",
+				"c.fleet.stores.retryVolume(ctx, volumeErr, c.fleet.osdHandles.count() == 0)",
 				"c.monStores.retryStores(ctx, monStoreErr)",
 				"c.runDir.release(ctx)",
 			}

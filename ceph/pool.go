@@ -107,7 +107,7 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 	if c.Container == nil {
 		return nil, errors.New("ceph control container is unavailable")
 	}
-	domains := c.poolPlacementDomains(config)
+	domains := c.fleet.osdHandles.placementDomains(config)
 	needed := config.Replicas
 	if config.ErasureCode != nil {
 		needed = config.ErasureCode.K + config.ErasureCode.M
@@ -136,7 +136,7 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 		}{pool.ErasureCodeProfile, []string{"osd", "erasure-code-profile", "ls", "--format", "json"}})
 	}
 	for _, check := range checks {
-		data, err := c.cephCLI(ctx, check.args...)
+		data, err := c.conn().ceph(ctx, check.args...)
 		if err != nil {
 			return nil, fmt.Errorf("check existing pool resources: %w", err)
 		}
@@ -186,14 +186,14 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 		commands = append(commands, []string{"osd", "pool", "application", "enable", pool.Name, config.Application})
 	}
 	for _, args := range commands {
-		if _, err := c.cephCLI(ctx, args...); err != nil {
+		if _, err := c.conn().ceph(ctx, args...); err != nil {
 			return pool, fmt.Errorf("create pool %q: %w", pool.Name, err)
 		}
 	}
 	// A successful result always identifies its native pool. If the ID cannot
 	// be read, the pool exists but no handle may claim it by name later, so
 	// the result is an error that still carries the handle for cleanup.
-	state, err := c.poolState(ctx, pool.Name)
+	state, err := poolCatalog{c.conn()}.state(ctx, pool.Name)
 	if err != nil {
 		return pool, fmt.Errorf("pool %q was created but its native ID could not be read; the handle is not bound to the pool and binds to the pool of that name at its first successful operation: %w", pool.Name, err)
 	}
@@ -209,11 +209,11 @@ func replicatedCRUSHRuleCommand(config PoolConfig, rule string) []string {
 	return args
 }
 
-// poolPlacementDomains counts the owned OSD placement domains that config can
-// use. The caller holds c.mu, which serializes topology mutations.
-func (c *Container) poolPlacementDomains(config PoolConfig) int {
+// placementDomains counts the owned OSD placement domains that config can
+// use. The caller holds Container.mu, which serializes topology mutations.
+func (r *osdRegistry) placementDomains(config PoolConfig) int {
 	domains := make(map[string]struct{})
-	for _, osd := range c.osdHandles.each() {
+	for _, osd := range r.each() {
 		if osd.purged {
 			continue
 		}

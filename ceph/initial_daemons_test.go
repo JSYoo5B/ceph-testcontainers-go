@@ -200,7 +200,7 @@ func newInitialOSDCluster(settings options) (*Container, *initialOSDMon, *initia
 	if settings.startupTimeout == 0 {
 		settings.startupTimeout = 5 * time.Second
 	}
-	cluster := &Container{Container: mon, settings: settings, osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}, stores: osdStorageState{runner: runner.run}}
+	cluster := &Container{Container: mon, settings: settings, fleet: osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}, stores: osdStorageState{runner: runner.run}}}
 	return cluster, mon, runner
 }
 
@@ -227,12 +227,12 @@ func TestInitialOSDsKeepSequentialIDsAndPlacement(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if cluster.osdHandles.count() != len(layout) || sequential.osdHandles.count() != len(layout) {
-		t.Fatalf("owned %d initial and %d sequential OSDs", cluster.osdHandles.count(), sequential.osdHandles.count())
+	if cluster.fleet.osdHandles.count() != len(layout) || sequential.fleet.osdHandles.count() != len(layout) {
+		t.Fatalf("owned %d initial and %d sequential OSDs", cluster.fleet.osdHandles.count(), sequential.fleet.osdHandles.count())
 	}
 	daemons := runner.daemons()
 	for id := range layout {
-		got, want := cluster.osdHandles.get(id), sequential.osdHandles.get(id)
+		got, want := cluster.fleet.osdHandles.get(id), sequential.fleet.osdHandles.get(id)
 		if got == nil || want == nil || got.Placement() != want.Placement() {
 			t.Fatalf("osd.%d placement %+v, sequential %+v", id, got, want)
 		}
@@ -242,7 +242,7 @@ func TestInitialOSDsKeepSequentialIDsAndPlacement(t *testing.T) {
 			t.Fatalf("osd.%d container does not carry its registration: %+v", id, daemon)
 		}
 	}
-	if got := cluster.osdHandles.get(1).Placement().Host; got != "osd-1" {
+	if got := cluster.fleet.osdHandles.get(1).Placement().Host; got != "osd-1" {
 		t.Fatalf("omitted host resolved to %q", got)
 	}
 	wantBuckets := []string{"host-a host root=default rack=rack-1", "osd-1 host root=default", "host-b host root=default"}
@@ -266,11 +266,11 @@ func TestInitialOSDStartFailureKeepsEveryCreatedOSDOwned(t *testing.T) {
 		t.Fatalf("error does not name the failed OSD: %v", err)
 	}
 	daemons := runner.daemons()
-	if cluster.osdHandles.count() != 3 || len(daemons) != 3 {
-		t.Fatalf("owned %d OSDs after %d container creations", cluster.osdHandles.count(), len(daemons))
+	if cluster.fleet.osdHandles.count() != 3 || len(daemons) != 3 {
+		t.Fatalf("owned %d OSDs after %d container creations", cluster.fleet.osdHandles.count(), len(daemons))
 	}
 	for id, daemon := range daemons {
-		if cluster.osdHandles.get(id) == nil || cluster.osdHandles.get(id).Container != daemon {
+		if cluster.fleet.osdHandles.get(id) == nil || cluster.fleet.osdHandles.get(id).Container != daemon {
 			t.Fatalf("created osd.%d container is not owned", id)
 		}
 	}
@@ -282,8 +282,8 @@ func TestInitialOSDStartFailureKeepsEveryCreatedOSDOwned(t *testing.T) {
 			t.Fatalf("osd.%d terminated %d times", id, daemon.terminations)
 		}
 	}
-	if cluster.osdHandles.count() != 0 {
-		t.Fatalf("%d OSDs remain owned after Terminate", cluster.osdHandles.count())
+	if cluster.fleet.osdHandles.count() != 0 {
+		t.Fatalf("%d OSDs remain owned after Terminate", cluster.fleet.osdHandles.count())
 	}
 }
 
@@ -331,11 +331,11 @@ func TestInitialOSDStartFailureStartsNoFurtherOSD(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 	daemons := runner.daemons()
-	if further != 0 || len(daemons) != initialOSDStarts || cluster.osdHandles.count() != 6 {
-		t.Fatalf("created %d containers (%d after the failure) for %d registered OSDs", len(daemons), further, cluster.osdHandles.count())
+	if further != 0 || len(daemons) != initialOSDStarts || cluster.fleet.osdHandles.count() != 6 {
+		t.Fatalf("created %d containers (%d after the failure) for %d registered OSDs", len(daemons), further, cluster.fleet.osdHandles.count())
 	}
 	for id := range 6 {
-		if (daemons[id] != nil) != (cluster.osdHandles.get(id).Container != nil) {
+		if (daemons[id] != nil) != (cluster.fleet.osdHandles.get(id).Container != nil) {
 			t.Fatalf("osd.%d ownership does not match its container", id)
 		}
 	}
@@ -359,7 +359,7 @@ func waitOSDLauncherJoins(t *testing.T) {
 	for time.Now().Before(deadline) {
 		n := runtime.Stack(buf, true)
 		for _, g := range strings.Split(string(buf[:n]), "\n\n") {
-			if strings.Contains(g, ".(*Container).startOSDs(") && strings.Contains(g, "sync.(*WaitGroup).Wait(") {
+			if strings.Contains(g, ".osdFleet.startOSDs(") && strings.Contains(g, "sync.(*WaitGroup).Wait(") {
 				return
 			}
 		}
@@ -407,8 +407,8 @@ func TestInitialOSDCancellationStartsNoFurtherOSD(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 	daemons := runner.daemons()
-	if len(daemons) != initialOSDStarts || cluster.osdHandles.count() != 6 {
-		t.Fatalf("created %d containers for %d registered OSDs after cancellation", len(daemons), cluster.osdHandles.count())
+	if len(daemons) != initialOSDStarts || cluster.fleet.osdHandles.count() != 6 {
+		t.Fatalf("created %d containers for %d registered OSDs after cancellation", len(daemons), cluster.fleet.osdHandles.count())
 	}
 	if err := cluster.Terminate(t.Context()); err != nil {
 		t.Fatal(err)

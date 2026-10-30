@@ -26,8 +26,8 @@ type monitorSettling struct {
 }
 
 // monitorSettling runs the settling protocol through the rotation commands.
-func (c *Container) monitorSettling() monitorSettling {
-	return monitorSettling{command: c.rotationCommand, commandResult: c.rotationCommandResult}
+func (l authLedger) monitorSettling() monitorSettling {
+	return monitorSettling{command: l.conn.rotationCommand, commandResult: l.conn.rotationResult}
 }
 
 // monitorView is the quorum and monmap that settling relies on.

@@ -68,17 +68,3 @@ func readManagerMetrics(ctx context.Context, services managerServicesReader, loo
 	metrics.URL = endpoint
 	return metrics, nil
 }
-
-// controlSupervisedLookup binds the lookup to this container. Each call
-// selects the control container again, as the inline code did.
-func (c *Container) controlSupervisedLookup() supervisedLookup {
-	return func(ctx context.Context) (supervisedRun, error) {
-		control, err := c.controlContainerContext(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return func(ctx context.Context, label string, processLimit time.Duration, stdoutLimit, stderrLimit int, argv ...string) (supervised.Report, error) {
-			return supervised.Run(ctx, control, label, processLimit, stdoutLimit, stderrLimit, argv...)
-		}, nil
-	}
-}

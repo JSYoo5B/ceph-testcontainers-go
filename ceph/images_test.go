@@ -66,10 +66,10 @@ func TestRunWithImageSetAppliesServiceOverridesAfterBaseSet(t *testing.T) {
 
 func TestRADOSInspectionRequiresToolkitInsteadOfCoreFallback(t *testing.T) {
 	c := &Container{Container: &monitorLifecycleDaemon{}, settings: options{startupTimeout: time.Second, imageSet: &ImageSet{Essential: "core"}}}
-	if _, err := c.pgInconsistencies(t.Context(), "7.0"); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := (&Observer{target: c}).PGInconsistencies(t.Context(), "7.0"); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("scrub inspection fell back to core: %v", err)
 	}
-	if _, err := c.objectWatchers(t.Context(), "pool", "", "object"); !errors.Is(err, ErrInvalidRequest) {
+	if _, err := (&Observer{target: c}).ObjectWatchers(t.Context(), "pool", "", "object"); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("watcher inspection fell back to core: %v", err)
 	}
 }
@@ -80,7 +80,7 @@ func TestClientExecutorMissingAndClosedDoNotAllocate(t *testing.T) {
 		t.Fatalf("missing client: %v %v", ctr, err)
 	}
 	c.settings.imageSet.Client = "toolkit"
-	c.nativeCmds.closed = true
+	c.native.calls.closed = true
 	if ctr, err := c.ClientContainer(context.Background()); ctr != nil || !errors.Is(err, errClusterTerminated) {
 		t.Fatalf("closed client: %v %v", ctr, err)
 	}
@@ -121,8 +121,8 @@ func TestSingleImageToolkitReusesCoreWithoutAllocation(t *testing.T) {
 func TestTerminationCancelsToolkitStartup(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	c := &Container{nativeCmds: nativeState{clientStartupCancel: cancel}}
-	c.cancelNativeInvocations()
+	c := &Container{native: nativeCommands{calls: nativeState{clientStartupCancel: cancel}}}
+	c.native.cancelAll()
 	select {
 	case <-ctx.Done():
 	default:
@@ -143,7 +143,7 @@ func TestToolkitPublicationWaitHonorsCancellation(t *testing.T) {
 	defer c.toolkit.publishMu.Unlock()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := c.featureClientSnapshot(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := c.toolkit.snapshot(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("publication ignored canceled caller: %v", err)
 	}
 }

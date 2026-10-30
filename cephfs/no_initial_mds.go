@@ -26,7 +26,7 @@ type cephFSColdMDS struct {
 }
 
 func (fs *Filesystem) captureColdMDS(ctx context.Context, originalFSID string) error {
-	fsid, err := fs.readColdFSID(ctx, &cephFSColdMDS{fsid: originalFSID})
+	fsid, err := fs.volumes().readColdFSID(ctx, &cephFSColdMDS{fsid: originalFSID})
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (fs *Filesystem) scaleColdMDS(parent context.Context, active, standby int, 
 		return err
 	}
 	// Final readiness cannot authorize replacement of an original additional pool.
-	if _, err := fs.readColdFSID(ctx, cap); err != nil {
+	if _, err := fs.volumes().readColdFSID(ctx, cap); err != nil {
 		return err
 	}
 	state, err := fs.readNativePools(ctx)
@@ -122,7 +122,7 @@ func (fs *Filesystem) scaleColdMDS(parent context.Context, active, standby int, 
 			return errors.New("original cold filesystem pool was replaced")
 		}
 	}
-	if _, err := fs.readColdFSID(ctx, cap); err != nil {
+	if _, err := fs.volumes().readColdFSID(ctx, cap); err != nil {
 		return err
 	}
 	return ctx.Err()
@@ -132,7 +132,7 @@ func (fs *Filesystem) verifyColdMDS(ctx context.Context, cap *cephFSColdMDS) err
 	if cap == nil || cap.identity == nil || cap.identity != fs.nativeIdentity {
 		return errors.New("cold filesystem identity is unavailable")
 	}
-	if _, err := fs.readColdFSID(ctx, cap); err != nil {
+	if _, err := fs.volumes().readColdFSID(ctx, cap); err != nil {
 		return err
 	}
 	state, err := fs.readNativePools(ctx)
@@ -167,7 +167,7 @@ func (fs *Filesystem) verifyColdMDS(ctx context.Context, cap *cephFSColdMDS) err
 	if err := decodeColdMDSMap(data, coldMDSMapExpectation{filesystem: fs.name, reservedName: fs.roster.nextID(fs.name), native: cap.identity, dataPools: cap.dataPools}); err != nil {
 		return err
 	}
-	_, err = fs.readColdFSID(ctx, cap)
+	_, err = fs.volumes().readColdFSID(ctx, cap)
 	return err
 }
 
@@ -218,8 +218,8 @@ func coldMDSJSON(data []byte, value any) error {
 
 // MON's canonical cluster UUID may stay stable when the owned control CLI changes.
 // Pin the native identity rather than a particular exported compatibility handle.
-func (fs *Filesystem) readColdFSID(ctx context.Context, cap *cephFSColdMDS) (string, error) {
-	data, err := servicehook.AuthCommand(ctx, fs.cluster, "read original cold cluster identity", "fsid")
+func (v volumeCommands) readColdFSID(ctx context.Context, cap *cephFSColdMDS) (string, error) {
+	data, err := servicehook.AuthCommand(ctx, v.cluster, "read original cold cluster identity", "fsid")
 	if err != nil {
 		return "", err
 	}

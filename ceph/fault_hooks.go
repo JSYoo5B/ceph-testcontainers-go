@@ -93,7 +93,10 @@ func (faultHooks) Closed(c *Container) bool { return c.closed }
 
 // Owns reports a container of the cluster's own daemons. The caller holds
 // the mutex.
-func (faultHooks) Owns(c *Container, id string) bool { return c.ownsNativeTarget(id) }
+func (faultHooks) Owns(c *Container, id string) bool {
+	owned, _ := c.monitorTopology().ownsNativeTarget(context.Background(), id)
+	return owned
+}
 
 // OwnedLabel labels a helper container as owned by the cluster, so that
 // Terminate removes it when it leaked.
@@ -103,12 +106,12 @@ func (faultHooks) OwnedLabel(c *Container) testcontainers.CustomizeRequestOption
 
 // Control returns the container that runs the control CLI.
 func (faultHooks) Control(ctx context.Context, c *Container) (testcontainers.Container, error) {
-	return c.controlContainerContext(ctx)
+	return c.conn().controlContainer(ctx)
 }
 
 // CLI runs a Ceph CLI command with the admin identity.
 func (faultHooks) CLI(ctx context.Context, c *Container, args ...string) ([]byte, error) {
-	return c.cephCLI(ctx, args...)
+	return c.conn().ceph(ctx, args...)
 }
 
 // ClusterIdentity returns the bootstrap FSID and whether the configuration
@@ -123,18 +126,18 @@ func (faultHooks) PoolPolicyReady(c *Container) error { return c.poolPolicyReady
 
 // PoolState reads one pool. The caller holds the mutex.
 func (faultHooks) PoolState(ctx context.Context, c *Container, name string) (PoolState, error) {
-	return c.poolState(ctx, name)
+	return poolCatalog{c.conn()}.state(ctx, name)
 }
 
 // CheckPoolID refuses a pool that was replaced since expected was read.
 func (faultHooks) CheckPoolID(ctx context.Context, c *Container, expected PoolState) error {
-	return c.checkPoolID(ctx, expected)
+	return poolCatalog{c.conn()}.checkID(ctx, expected)
 }
 
 // OwnedOSD reports an OSD that the cluster owns and has not purged. The
 // caller holds the mutex.
 func (faultHooks) OwnedOSD(c *Container, id int) bool {
-	osd := c.osdHandles.get(id)
+	osd := c.fleet.osdHandles.get(id)
 	return osd != nil && !osd.purged
 }
 

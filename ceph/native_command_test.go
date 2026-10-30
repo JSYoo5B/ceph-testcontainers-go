@@ -510,7 +510,7 @@ func nativeCluster() *Container {
 }
 
 func registered(c *Container) int {
-	return c.nativeCmds.registered()
+	return c.native.calls.registered()
 }
 
 func TestNativeCommandRefusesMalformedCommandsBeforeRunning(t *testing.T) {
@@ -564,7 +564,7 @@ func TestNativeCommandAdmitsOnlyClusterAndAttachedContainers(t *testing.T) {
 	clusterSide := newNativeTarget(t, "cluster-client", "tc-cluster")
 	foreign := newNativeTarget(t, "foreign", "bridge", "other")
 	cluster := nativeCluster()
-	cluster.osdHandles.replace(map[int]*OSDContainer{0: {ID: 0, Container: owned}})
+	cluster.fleet.osdHandles.replace(map[int]*OSDContainer{0: {ID: 0, Container: owned}})
 	for _, target := range []*nativeTarget{owned, public, clusterSide} {
 		if result, err := cluster.RunNativeCommand(t.Context(), target, quick); !ran(result, err) {
 			t.Fatalf("%s was refused: %+v %v", target.id, result, err)
@@ -1048,7 +1048,7 @@ func TestNativeCommandReportsCancellationBeforeLaunch(t *testing.T) {
 func TestTerminateConfirmsCommandsInRemovedContainers(t *testing.T) {
 	owned := newNativeTarget(t, "osd-container")
 	cluster := nativeCluster()
-	cluster.osdHandles.replace(map[int]*OSDContainer{0: {ID: 0, Container: owned}})
+	cluster.fleet.osdHandles.replace(map[int]*OSDContainer{0: {ID: 0, Container: owned}})
 	_, _ = startUnstopped(t, cluster, owned, "owned", func(f *nativeTarget) { f.refuseCancel = true })
 	if err := cluster.Terminate(t.Context()); err != nil || registered(cluster) != 0 {
 		t.Fatalf("Terminate kept a command whose container it removed: %v", err)
@@ -1127,7 +1127,7 @@ func (f *launchUnavailableTarget) Exec(ctx context.Context, args []string, opts 
 
 func TestRedactSecretsUsesTheClusterSecrets(t *testing.T) {
 	cluster := &Container{bootstrap: bootstrapRecord{keyring: []byte("[client.admin]\n\tkey = AQBsecretadminkey==\n")}}
-	cluster.authRecords.addSecret("AQBreplacedclientkey==")
+	cluster.ledger.authRecords.addSecret("AQBreplacedclientkey==")
 	data := []byte("admin AQBsecretadminkey== client AQBreplacedclientkey== app opaque-value \x00\xff")
 	redacted, err := cluster.RedactSecrets(t.Context(), data, "opaque-value")
 	if err != nil {

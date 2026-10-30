@@ -27,10 +27,10 @@ type SyncBucketSelector struct{ Name, Tenant string }
 // cannot represent comma-containing keys/values; '=' is only allowed in values.
 type SyncObjectTag struct{ Key, Value string }
 
-// syncPipeConfig builds the native pipe-create command and the pipe document
+// pipeConfig builds the native pipe-create command and the pipe document
 // that its readback must equal. Every concrete bucket, principal and storage
 // class is confirmed against the native master before anything is returned.
-func (f *Fixture) syncPipeConfig(ctx context.Context, master *rgwZoneState, g *SyncGroup, config SyncPipeConfig, source, dest []string) ([]string, map[string]any, error) {
+func (g *SyncGroup) pipeConfig(ctx context.Context, master *rgwZoneState, config SyncPipeConfig, source, dest []string) ([]string, map[string]any, error) {
 	args := []string{"sync", "group", "pipe", "create", "--group-id", g.ID(), "--pipe-id", config.ID, "--source-zone-ids", strings.Join(source, ","), "--dest-zone-ids", strings.Join(dest, ",")}
 	filterArgs, filter, err := syncPipeFilter(config)
 	if err != nil {
@@ -39,7 +39,7 @@ func (f *Fixture) syncPipeConfig(ctx context.Context, master *rgwZoneState, g *S
 	args = append(args, filterArgs...)
 	src := map[string]any{"bucket": "*", "zones": syncStrings(source)}
 	dst := map[string]any{"bucket": "*", "zones": syncStrings(dest)}
-	bucketArgs, sourceInfo, destinationInfo, err := f.syncPipeBuckets(ctx, master, g, config, src, dst)
+	bucketArgs, sourceInfo, destinationInfo, err := g.pipeBuckets(ctx, master, config, src, dst)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -53,13 +53,13 @@ func (f *Fixture) syncPipeConfig(ctx context.Context, master *rgwZoneState, g *S
 	if config.Priority != 0 {
 		args = append(args, "--priority", strconv.FormatInt(int64(config.Priority), 10))
 	}
-	principalArgs, err := f.syncPipePrincipals(ctx, g, config, sourceInfo, destinationInfo, params, destParams)
+	principalArgs, err := g.pipePrincipals(ctx, config, sourceInfo, destinationInfo, params, destParams)
 	if err != nil {
 		return nil, nil, err
 	}
 	args = append(args, principalArgs...)
 	if config.DestinationStorageClass != "" {
-		if err := f.syncDestinationClass(ctx, g, config, destinationInfo); err != nil {
+		if err := g.destinationClass(ctx, config, destinationInfo); err != nil {
 			return nil, nil, err
 		}
 		destParams["storage_class"] = config.DestinationStorageClass
@@ -96,11 +96,11 @@ func syncPipeFilter(config SyncPipeConfig) ([]string, map[string]any, error) {
 	return args, filter, nil
 }
 
-// syncPipeBuckets pins each selected bucket to its current native instance
+// pipeBuckets pins each selected bucket to its current native instance
 // in src and dst and returns the bucket arguments with the native info of
 // both sides. Without a destination selector, a bucket-scoped group's own
 // bucket is the destination.
-func (f *Fixture) syncPipeBuckets(ctx context.Context, master *rgwZoneState, g *SyncGroup, config SyncPipeConfig, src, dst map[string]any) ([]string, *rgwBucketInstance, *rgwBucketInstance, error) {
+func (g *SyncGroup) pipeBuckets(ctx context.Context, master *rgwZoneState, config SyncPipeConfig, src, dst map[string]any) ([]string, *rgwBucketInstance, *rgwBucketInstance, error) {
 	var args []string
 	var sourceInfo, destinationInfo *rgwBucketInstance
 	for _, side := range []struct {
@@ -112,7 +112,7 @@ func (f *Fixture) syncPipeBuckets(ctx context.Context, master *rgwZoneState, g *
 		if side.selector == nil {
 			continue
 		}
-		id, info, err := f.syncSelectedBucket(ctx, master, g, *side.selector)
+		id, info, err := g.selectedBucket(ctx, master, *side.selector)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -129,20 +129,21 @@ func (f *Fixture) syncPipeBuckets(ctx context.Context, master *rgwZoneState, g *
 	}
 	if destinationInfo == nil && g.scope.Bucket != "" {
 		var err error
-		if _, destinationInfo, err = f.syncSelectedBucket(ctx, master, g, SyncBucketSelector{Name: g.scope.Bucket, Tenant: g.scope.Tenant}); err != nil {
+		if _, destinationInfo, err = g.selectedBucket(ctx, master, SyncBucketSelector{Name: g.scope.Bucket, Tenant: g.scope.Tenant}); err != nil {
 			return nil, nil, nil, err
 		}
 	}
 	return args, sourceInfo, destinationInfo, nil
 }
 
-// syncPipePrincipals confirms the destination owner and the user-mode
+// pipePrincipals confirms the destination owner and the user-mode
 // principal of a pipe, records them in params and destParams and returns
 // their arguments.
-func (f *Fixture) syncPipePrincipals(ctx context.Context, g *SyncGroup, config SyncPipeConfig, sourceInfo, destinationInfo *rgwBucketInstance, params, destParams map[string]any) ([]string, error) {
+func (g *SyncGroup) pipePrincipals(ctx context.Context, config SyncPipeConfig, sourceInfo, destinationInfo *rgwBucketInstance, params, destParams map[string]any) ([]string, error) {
+	f := g.owner
 	var args []string
 	if config.DestinationOwner != nil {
-		info, err := f.syncOwnedPrincipal(ctx, g, config.DestinationOwner)
+		info, err := g.ownedPrincipal(ctx, config.DestinationOwner)
 		if err != nil {
 			return nil, err
 		}
@@ -164,7 +165,7 @@ func (f *Fixture) syncPipePrincipals(ctx context.Context, g *SyncGroup, config S
 	if config.User == nil {
 		return args, nil
 	}
-	info, err := f.syncOwnedPrincipal(ctx, g, config.User)
+	info, err := g.ownedPrincipal(ctx, config.User)
 	if err != nil {
 		return nil, err
 	}
@@ -219,21 +220,23 @@ func normalizeSyncTags(tags []SyncObjectTag) ([]SyncObjectTag, error) {
 	return result, nil
 }
 
-func (f *Fixture) syncSelectedBucket(ctx context.Context, master *rgwZoneState, g *SyncGroup, selector SyncBucketSelector) (string, *rgwBucketInstance, error) {
+func (g *SyncGroup) selectedBucket(ctx context.Context, master *rgwZoneState, selector SyncBucketSelector) (string, *rgwBucketInstance, error) {
+	f := g.owner
 	if !validRGWSyncID(selector.Name) || selector.Name == "*" || (selector.Tenant != "" && !validRGWSyncID(selector.Tenant)) {
 		return "", nil, multisiteInvalid(errors.New("RGW sync bucket selector requires an existing concrete bucket and valid tenant"))
 	}
 	selected := &SyncGroup{owner: f, scope: SyncPolicyScope{Zonegroup: g.scope.Zonegroup, Bucket: selector.Name, Tenant: selector.Tenant}, realmID: g.realmID, groupID: g.groupID}
-	id, err := f.syncBucketID(ctx, master, selected)
+	id, err := selected.bucketInstanceID(ctx, master)
 	if err != nil {
 		return "", nil, err
 	}
 	selected.bucketID = id
-	_, info, err := f.syncPolicyDocument(ctx, master, selected)
+	_, info, err := selected.policyDocument(ctx, master)
 	return id, info, err
 }
 
-func (f *Fixture) syncOwnedPrincipal(ctx context.Context, g *SyncGroup, user *rgw.User) (rgw.UserInfo, error) {
+func (g *SyncGroup) ownedPrincipal(ctx context.Context, user *rgw.User) (rgw.UserInfo, error) {
+	f := g.owner
 	// Info enforces private creation/key identity and actual gateway scope.
 	// A replicated user handle retains its creating cluster's ownership, so
 	// it must be served by an attached owned gateway rather than adopting a
@@ -275,7 +278,8 @@ func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, in
 	return nil
 }
 
-func (f *Fixture) syncDestinationClass(ctx context.Context, g *SyncGroup, config SyncPipeConfig, info *rgwBucketInstance) error {
+func (g *SyncGroup) destinationClass(ctx context.Context, config SyncPipeConfig, info *rgwBucketInstance) error {
+	f := g.owner
 	if info == nil || len(config.DestinationPlacements) != len(config.DestinationZones) || slices.Contains(config.DestinationZones, "*") {
 		return multisiteInvalid(errors.New("RGW storage-class translation requires a concrete bucket and confirmed placements for concrete destination zones"))
 	}

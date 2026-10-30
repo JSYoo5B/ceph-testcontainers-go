@@ -16,17 +16,17 @@ type daemonHandle interface {
 
 var errHandleWithoutCluster = "the handle does not belong to a cluster; obtain it from the cluster that owns the daemon"
 
-// currentOSD checks, with c.mu held, that handle is the descriptor that the
+// current checks, with Container.mu held, that handle is the descriptor that the
 // cluster owns for its ID now. A descriptor of a removed, detached or
 // reopened OSD is stale and never acts on whatever owns the ID instead.
-func (c *Container) currentOSD(handle *OSDContainer) error {
+func (r *osdRegistry) current(handle *OSDContainer) error {
 	id := handle.ID
-	if cur := c.osdHandles.get(id); cur == handle {
+	if cur := r.get(id); cur == handle {
 		return nil
 	} else if cur != nil {
 		return invalid(fmt.Errorf("this handle of osd.%d is stale: the cluster owns another instance of the OSD, which DetachedOSD.Reopen or a later handle returns", id))
 	}
-	if c.osdHandles.detachedOf(id) != nil {
+	if r.detachedOf(id) != nil {
 		return invalid(fmt.Errorf("osd.%d is already detached; this handle is stale, reopen it with DetachedOSD.Reopen", id))
 	}
 	return invalid(fmt.Errorf("osd.%d is not owned by this cluster", id))
@@ -36,22 +36,22 @@ func (c *Container) currentOSD(handle *OSDContainer) error {
 // cluster owns under its name now and returns it. The primary MON "a" is
 // rebuilt as a fresh descriptor around the cluster's own container on every
 // listing, so it is matched by that container, not by the pointer.
-func (c *Container) currentMonitor(handle *MonitorContainer) (*MonitorContainer, error) {
+func (t monitorTopology) currentMonitor(handle *MonitorContainer) (*MonitorContainer, error) {
 	name := handle.DaemonName
-	if name == "a" && !c.monitorTerminated && c.Container != nil && handle.Container == c.Container {
+	if name == "a" && t.firstMonitorStands() && handle.Container == t.first {
 		return handle, nil
 	}
-	if cur := c.roster.monitor(name); cur != nil && cur == handle {
+	if cur := t.roster.monitor(name); cur != nil && cur == handle {
 		return cur, nil
 	}
 	return nil, invalid(fmt.Errorf("monitor %s is not owned by this cluster, or this handle is stale", name))
 }
 
-// currentManager checks, with c.mu held, that handle is the MGR that the
+// currentManager checks, with Container.mu held, that handle is the MGR that the
 // cluster owns under its name now.
-func (c *Container) currentManager(handle *ManagerContainer) (*ManagerContainer, error) {
+func (r *memberRoster) currentManager(handle *ManagerContainer) (*ManagerContainer, error) {
 	name := handle.DaemonName
-	if cur := c.roster.manager(name); cur != nil && cur == handle {
+	if cur := r.manager(name); cur != nil && cur == handle {
 		return cur, nil
 	}
 	return nil, invalid(fmt.Errorf("manager %s is not owned by this cluster, or this handle is stale", name))
@@ -61,7 +61,7 @@ func (o *OSDContainer) daemonRef() (string, string) { return "osd", strconv.Itoa
 
 // ownedBy reports, with c.mu held by the caller, whether c still owns o.
 func (o *OSDContainer) ownedBy(c *Container) bool {
-	return o != nil && c.osdHandles.get(o.ID) == o && o.Container != nil && !o.purged
+	return o != nil && c.fleet.osdHandles.get(o.ID) == o && o.Container != nil && !o.purged
 }
 
 func (m *MonitorContainer) daemonRef() (string, string) { return "mon", m.DaemonName }
@@ -70,14 +70,14 @@ func (m *MonitorContainer) ownedBy(c *Container) bool {
 	if m == nil || m.Container == nil {
 		return false
 	}
-	_, err := c.currentMonitor(m)
+	_, err := c.monitorTopology().currentMonitor(m)
 	return err == nil
 }
 
 func (m *ManagerContainer) daemonRef() (string, string) { return "mgr", m.DaemonName }
 
 func (m *ManagerContainer) ownedBy(c *Container) bool {
-	return m != nil && c.roster.manager(m.DaemonName) == m && m.Container != nil && !m.terminated
+	return m != nil && c.members.roster.manager(m.DaemonName) == m && m.Container != nil && !m.terminated
 }
 
 func (o *OSDContainer) cluster(op string) (*Container, error) {
@@ -145,16 +145,16 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if err := c.poolPolicyReady(); err != nil {
 		return err
 	}
-	if err := c.currentOSD(o); err != nil {
+	if err := c.fleet.osdHandles.current(o); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	dump, err := c.osdPolicyDump(ctx)
+	dump, err := osdMap{c.conn()}.policyDump(ctx)
 	if err != nil {
 		return err
 	}
-	state, err := c.ownedOSDState(dump, id)
+	state, err := c.fleet.osdHandles.ownedState(dump, id)
 	if err != nil {
 		return err
 	}
@@ -165,14 +165,14 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if in {
 		op = "in"
 	}
-	if _, err := c.cephCLI(ctx, "osd", op, strconv.Itoa(id)); err != nil {
+	if _, err := c.conn().ceph(ctx, "osd", op, strconv.Itoa(id)); err != nil {
 		return err
 	}
-	dump, err = c.osdPolicyDump(ctx)
+	dump, err = osdMap{c.conn()}.policyDump(ctx)
 	if err != nil {
 		return err
 	}
-	state, err = c.ownedOSDState(dump, id)
+	state, err = c.fleet.osdHandles.ownedState(dump, id)
 	if err != nil {
 		return err
 	}

@@ -140,7 +140,7 @@ func (fs *Filesystem) readOwnedPinPolicy(ctx context.Context, target cephFSPinTa
 	if err != nil {
 		return nil, err
 	}
-	policy, err := fs.readPinPolicy(ctx, base)
+	policy, err := fs.volumes().readPinPolicy(ctx, base)
 	if err != nil {
 		return nil, err
 	}
@@ -165,10 +165,10 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 		return nil, err
 	}
 	key := base + "\x00" + string(setting.Type)
-	if fs.pinOverrides[key] != nil {
+	if fs.pins.tracked(key) != nil {
 		return nil, errors.New("restore the existing directory pin override for this field first")
 	}
-	prior, err := fs.readPinPolicy(ctx, base)
+	prior, err := fs.volumes().readPinPolicy(ctx, base)
 	if err != nil {
 		return nil, err
 	}
@@ -191,14 +191,11 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 	change := &PinOverrideHandle{filesystem: fs, target: target, setting: setting, state: &cephFSPinOverrideState{
 		path: base, inode: prior.Inode, previous: cephFSPinValue(prior, setting.Type), applied: canonicalCephFSPinValue(setting),
 	}}
-	if fs.pinOverrides == nil {
-		fs.pinOverrides = make(map[string]*PinOverrideHandle)
-	}
-	fs.pinOverrides[key] = change
+	fs.pins.track(key, change)
 	if change.state.previous == change.state.applied {
 		return change, nil
 	}
-	_, setErr := fs.pinCommand(ctx, target, setting.Type, setting.Value)
+	_, setErr := fs.volumes().pinCommand(ctx, target, setting.Type, setting.Value)
 	readCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer stop()
 	current, readErr := fs.readAndCheckPinTarget(readCtx, fsID, target, base, prior.Inode)
@@ -233,7 +230,7 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 		return nil
 	}
 	key := change.state.path + "\x00" + string(change.setting.Type)
-	if tracked := fs.pinOverrides[key]; tracked == nil || tracked.state != change.state {
+	if tracked := fs.pins.tracked(key); tracked == nil || tracked.state != change.state {
 		return errors.New("directory pin override is not tracked by this filesystem")
 	}
 	current, err := fs.readAndCheckPinTarget(ctx, fsID, change.target, change.state.path, change.state.inode)
@@ -243,13 +240,13 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 	value := cephFSPinValue(current, change.setting.Type)
 	if value == change.state.previous {
 		change.state.restored = true
-		delete(fs.pinOverrides, key)
+		fs.pins.forget(key)
 		return nil
 	}
 	if value != change.state.applied {
 		return servicehook.Invalid(errors.New("directory pin policy changed outside this override; refusing restoration"))
 	}
-	if _, err := fs.pinCommand(ctx, change.target, change.setting.Type, change.state.previous); err != nil {
+	if _, err := fs.volumes().pinCommand(ctx, change.target, change.setting.Type, change.state.previous); err != nil {
 		return err
 	}
 	current, err = fs.readAndCheckPinTarget(ctx, fsID, change.target, change.state.path, change.state.inode)
@@ -260,7 +257,7 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 		return errors.New("directory pin restoration readback differs from prior policy")
 	}
 	change.state.restored = true
-	delete(fs.pinOverrides, key)
+	fs.pins.forget(key)
 	return nil
 }
 
@@ -328,13 +325,13 @@ func (fs *Filesystem) checkPinTarget(ctx context.Context, fsID int64, target cep
 	}
 	identity := target.identity
 	if target.group {
-		info, err := fs.subvolumeGroupInfo(ctx, identity.name)
+		info, err := fs.volumes().subvolumeGroupInfo(ctx, identity.name)
 		if err != nil {
 			return "", err
 		}
 		return identity.path, fs.checkVolumeIdentity(fsID, identity, info.Path, info.CreatedAt)
 	}
-	info, err := fs.subvolumeInfo(ctx, identity.name, identity.group)
+	info, err := fs.volumes().subvolumeInfo(ctx, identity.name, identity.group)
 	if err != nil {
 		return "", err
 	}
@@ -348,15 +345,15 @@ func (fs *Filesystem) checkPinTarget(ctx context.Context, fsID int64, target cep
 	return base, nil
 }
 
-func (fs *Filesystem) pinCommand(ctx context.Context, target cephFSPinTarget, kind PinType, value float64) ([]byte, error) {
+func (v volumeCommands) pinCommand(ctx context.Context, target cephFSPinTarget, kind PinType, value float64) ([]byte, error) {
 	identity := target.identity
-	args := []string{"fs", "subvolume", "pin", fs.name, identity.name, string(kind), strconv.FormatFloat(value, 'g', -1, 64)}
+	args := []string{"fs", "subvolume", "pin", v.name, identity.name, string(kind), strconv.FormatFloat(value, 'g', -1, 64)}
 	if target.group {
 		args[1] = "subvolumegroup"
 	} else {
 		args = appendSubvolumeGroup(args, identity.group)
 	}
-	return fs.cluster.Ceph(ctx, args...)
+	return v.cluster.Ceph(ctx, args...)
 }
 
 func (fs *Filesystem) readAndCheckPinTarget(ctx context.Context, fsID int64, target cephFSPinTarget, base string, inode uint64) (*PinPolicy, error) {
@@ -367,7 +364,7 @@ func (fs *Filesystem) readAndCheckPinTarget(ctx context.Context, fsID int64, tar
 	if currentBase != base {
 		return nil, errors.New("directory pin base path changed")
 	}
-	policy, err := fs.readPinPolicy(ctx, base)
+	policy, err := fs.volumes().readPinPolicy(ctx, base)
 	if err != nil {
 		return nil, err
 	}
@@ -378,12 +375,12 @@ func (fs *Filesystem) readAndCheckPinTarget(ctx context.Context, fsID int64, tar
 	return policy, err
 }
 
-func (fs *Filesystem) readPinPolicy(ctx context.Context, base string) (*PinPolicy, error) {
-	control, err := fs.cluster.ClientContainer(ctx)
+func (v volumeCommands) readPinPolicy(ctx context.Context, base string) (*PinPolicy, error) {
+	control, err := v.cluster.ClientContainer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select CephFS pin CLI container: %w", err)
 	}
-	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSPinReadScript, fs.name, base)
+	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSPinReadScript, v.name, base)
 	if err != nil {
 		return nil, fmt.Errorf("read native CephFS directory pins: %w", err)
 	}
@@ -424,3 +421,26 @@ finally:
     fs.shutdown()
     deadline.cancel()
 `
+
+// pinOverrides is the set of directory pin overrides of one filesystem that
+// are not restored yet, keyed by directory and pin field: one override per
+// field, so an override never captures another's applied value as its
+// previous one. The setup gate taken by every subvolume operation serializes
+// its use, so it has no lock of its own.
+type pinOverrides struct {
+	byField map[string]*PinOverrideHandle
+}
+
+// tracked returns the override of key, or nil.
+func (p *pinOverrides) tracked(key string) *PinOverrideHandle { return p.byField[key] }
+
+// track records change as the override of key.
+func (p *pinOverrides) track(key string, change *PinOverrideHandle) {
+	if p.byField == nil {
+		p.byField = make(map[string]*PinOverrideHandle)
+	}
+	p.byField[key] = change
+}
+
+// forget drops the override of key once it is restored.
+func (p *pinOverrides) forget(key string) { delete(p.byField, key) }

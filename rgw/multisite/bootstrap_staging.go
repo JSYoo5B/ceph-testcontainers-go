@@ -13,7 +13,7 @@ import (
 // fixture. It must never turn a later foreign staging period into permission
 // to overwrite pending configuration in SyncGroup.Apply.
 func (f *Fixture) canonicalizeBootstrapStaging(ctx context.Context) error {
-	if f == nil || f.closed || !f.bootstrapStagingPending {
+	if f == nil || f.closed || !f.topology.bootstrapStagingPending {
 		return errors.New("RGW staging canonicalization is restricted to fresh owned bootstrap")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
@@ -26,7 +26,7 @@ func (f *Fixture) canonicalizeBootstrapStaging(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if master.Name != f.config.SourceZone || master.ID != f.SourceZoneID {
+	if master.Name != f.realm.config.SourceZone || master.ID != f.SourceZoneID {
 		return errors.New("RGW fresh bootstrap staging requires its original owned metadata master")
 	}
 	for _, group := range syncPeriodGroups(current) {
@@ -70,6 +70,6 @@ func (f *Fixture) canonicalizeBootstrapStaging(ctx context.Context) error {
 	if !reflect.DeepEqual(after, current) {
 		return errors.New("RGW fresh bootstrap staging changed the active committed period")
 	}
-	f.bootstrapStagingPending = false
+	f.topology.bootstrapStagingPending = false
 	return nil
 }

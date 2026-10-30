@@ -134,7 +134,7 @@ func TestTerminateRemovesTheFeatureClientAndKeepsItRetryableOnFailure(t *testing
 	if err := c.Terminate(t.Context()); err == nil {
 		t.Fatal("a failed removal of the feature client was not reported")
 	}
-	if got, _ := c.featureClientSnapshot(t.Context()); got != daemon || daemon.terminations != 1 || !c.toolkit.ready {
+	if got, _ := c.toolkit.snapshot(t.Context()); got != daemon || daemon.terminations != 1 || !c.toolkit.ready {
 		t.Fatalf("a client that could not be removed was forgotten: %v, %d terminations, ready %t",
 			got, daemon.terminations, c.toolkit.ready)
 	}
@@ -142,7 +142,7 @@ func TestTerminateRemovesTheFeatureClientAndKeepsItRetryableOnFailure(t *testing
 	if err := c.Terminate(t.Context()); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	if got, _ := c.featureClientSnapshot(t.Context()); got != nil || daemon.terminations != 2 || c.toolkit.ready || !c.toolkit.attempted {
+	if got, _ := c.toolkit.snapshot(t.Context()); got != nil || daemon.terminations != 2 || c.toolkit.ready || !c.toolkit.attempted {
 		t.Fatalf("after the retry: client %v, %d terminations, ready %t, attempted %t",
 			got, daemon.terminations, c.toolkit.ready, c.toolkit.attempted)
 	}
@@ -198,7 +198,9 @@ func TestFeatureClientStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "toolkit" {
-					if allowed[sel] {
+					// Container.featureClient binds the state once
+					// (TestFeatureClientBindsEachStateOnce).
+					if allowed[sel] || stateBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.toolkit outside a featureClientState method call")
@@ -286,7 +288,7 @@ func isTopologyAcquire(call *ast.CallExpr) bool {
 // a function that uses a "mu held" method has taken toolkit.lock before and
 // releases it after, never takes Container.mu once it holds it, and Terminate
 // takes the topology lock before the startup lock. Only terminate and
-// clientContainerContext may hold it.
+// featureClient.startedContainer may hold it.
 func TestFeatureClientStateCallersHoldTheStartupLockInOrder(t *testing.T) {
 	holders := map[string]bool{}
 	var problems []string
@@ -355,7 +357,7 @@ func TestFeatureClientStateCallersHoldTheStartupLockInOrder(t *testing.T) {
 			}
 		}
 	}
-	if len(holders) != 2 || !holders["terminate"] || !holders["clientContainerContext"] {
+	if len(holders) != 2 || !holders["terminate"] || !holders["startedContainer"] {
 		problems = append(problems, "the holders of the startup lock changed: "+join(slices.Sorted(maps.Keys(holders))))
 	}
 	if len(problems) != 0 {

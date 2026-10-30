@@ -119,11 +119,11 @@ func TestNoInitialOSDsPreservesOldNetworkAndPlacementValidation(t *testing.T) {
 func TestNoInitialOSDsDoesNotImplyPGCleanOrPoolProvisioning(t *testing.T) {
 	for _, pgs := range []int{0, 8} {
 		control := &noInitialOSDControl{pgs: pgs}
-		cluster := &Container{Container: control, settings: options{noInitialOSDs: true, startupTimeout: time.Second, poolReplicas: 2, poolMinSize: 1}, osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}}
+		cluster := &Container{Container: control, settings: options{noInitialOSDs: true, startupTimeout: time.Second, poolReplicas: 2, poolMinSize: 1}, fleet: osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}}}
 		if pool, err := cluster.CreatePool(t.Context(), PoolConfig{Name: "before-storage"}); pool != nil || err == nil || len(control.actions) != 0 {
 			t.Fatal("empty storage bypassed existing CreatePool domain preflight")
 		}
-		if status, err := readStatus(t.Context(), cluster.cephCLI); err != nil || !status.MgrMap.Available || status.OSDMap.NumOSDs != 0 || status.PGMap.NumPGs != pgs {
+		if status, err := readStatus(t.Context(), cluster.conn().ceph); err != nil || !status.MgrMap.Available || status.OSDMap.NumOSDs != 0 || status.PGMap.NumPGs != pgs {
 			t.Fatalf("zero-storage native status fixture invalid: %v", err)
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
@@ -137,9 +137,9 @@ func TestNoInitialOSDsDoesNotImplyPGCleanOrPoolProvisioning(t *testing.T) {
 
 func TestNoInitialOSDsFirstAddHonorsOwnerDeadlineAndFreshRetry(t *testing.T) {
 	control := &noInitialOSDControl{}
-	cluster := &Container{Container: control, settings: options{noInitialOSDs: true, defaultCRUSHRoot: "osd-9", startupTimeout: time.Second}, osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}}
+	cluster := &Container{Container: control, settings: options{noInitialOSDs: true, defaultCRUSHRoot: "osd-9", startupTimeout: time.Second}, fleet: osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}}}
 	noInitialOSDQueuedCall(t, &cluster.mu, func(ctx context.Context) error { _, err := cluster.AddOSD(ctx); return err })
-	if len(control.actions) != 0 || cluster.osdHandles.count() != 0 {
+	if len(control.actions) != 0 || cluster.fleet.osdHandles.count() != 0 {
 		t.Fatal("queued first Add changed native or owned storage")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -151,14 +151,14 @@ func TestNoInitialOSDsFirstAddHonorsOwnerDeadlineAndFreshRetry(t *testing.T) {
 	// with the preselected root osd-9, returning the existing partial descriptor
 	// before any Docker OSD launch; no test-only production factory is needed.
 	osd, err := cluster.AddOSD(t.Context())
-	if err == nil || osd == nil || osd.Container != nil || osd.ID != 9 || cluster.osdHandles.get(9) != osd || osd.Placement().Host != "osd-9" {
+	if err == nil || osd == nil || osd.Container != nil || osd.ID != 9 || cluster.fleet.osdHandles.get(9) != osd || osd.Placement().Host != "osd-9" {
 		t.Fatalf("fresh first Add lost registered partial identity: osd=%v err=%v", osd, err)
 	}
 	id, parseErr := uuid.Parse(osd.nativeUUID)
 	if parseErr != nil || id == uuid.Nil || !slices.Equal(control.actions, []string{"key", "register"}) || control.copies != 1 {
 		t.Fatal("partial first Add did not retain exact UUID/native registration")
 	}
-	if err := cluster.Terminate(t.Context()); err != nil || cluster.osdHandles.count() != 0 || control.terminations != 1 {
+	if err := cluster.Terminate(t.Context()); err != nil || cluster.fleet.osdHandles.count() != 0 || control.terminations != 1 {
 		t.Fatal("whole-cluster cleanup did not dispose of partial zero-storage startup")
 	}
 }
@@ -166,11 +166,11 @@ func TestNoInitialOSDsFirstAddHonorsOwnerDeadlineAndFreshRetry(t *testing.T) {
 func TestNoInitialOSDsEmptyAndPartialControlCleanupRemainsRetryable(t *testing.T) {
 	mon := &noInitialOSDControl{}
 	mgr := &hostNetworkFixtureContainer{failTerminationOnce: true}
-	cluster := &Container{Container: mon, roster: memberRoster{firstMgr: mgr, managers: map[string]*ManagerContainer{"a": {Container: mgr, DaemonName: "a"}}}, osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}, settings: options{noInitialOSDs: true}}
-	if err := cluster.Terminate(t.Context()); err == nil || !cluster.closed || cluster.roster.initialManager() != mgr || mon.terminations != 1 {
+	cluster := &Container{Container: mon, settings: options{noInitialOSDs: true}, fleet: osdFleetState{osdHandles: osdRegistry{owned: map[int]*OSDContainer{}}}, members: membershipState{roster: memberRoster{firstMgr: mgr, managers: map[string]*ManagerContainer{"a": {Container: mgr, DaemonName: "a"}}}}}
+	if err := cluster.Terminate(t.Context()); err == nil || !cluster.closed || cluster.members.roster.initialManager() != mgr || mon.terminations != 1 {
 		t.Fatal("failed manager cleanup lost zero-storage resources")
 	}
-	if err := cluster.Terminate(t.Context()); err != nil || cluster.roster.initialManager() != nil || cluster.roster.managerCount() != 0 || mgr.terminations != 2 || mon.terminations != 1 {
+	if err := cluster.Terminate(t.Context()); err != nil || cluster.members.roster.initialManager() != nil || cluster.members.roster.managerCount() != 0 || mgr.terminations != 2 || mon.terminations != 1 {
 		t.Fatal("retry repeated completed MON cleanup or skipped partial MGR")
 	}
 	if osd, err := cluster.AddOSD(t.Context()); osd != nil || err == nil || len(mon.actions) != 0 {

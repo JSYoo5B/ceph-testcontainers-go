@@ -92,11 +92,11 @@ func TestRBDNamespaceBindingReadOnlySharedCohort(t *testing.T) {
 	for _, count := range []int{0, 2} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			h := newNamespaceBindingHarness(t, count)
-			original := h.m.policyIdentities
+			original := h.m.pair.policyIdentities
 			for _, mapping := range [][2]string{{"ns-a", "ns-b"}, {"ns-c", "ns-d"}, {"ns-e", "ns-f"}} {
 				view := namespaceBindingMustBind(t, h, mapping[0], mapping[1])
 				again := namespaceBindingMustBind(t, h, mapping[0], mapping[1])
-				if view == again || view.owner != h.m || view.scope.binding.peer != h.m.receiverPeer {
+				if view == again || view.owner != h.m || view.scope.binding.peer != h.m.receiver.peer {
 					t.Fatal("binding reused receipt or created another owner")
 				}
 				status, err := view.ReceiverStatus(t.Context())
@@ -104,12 +104,12 @@ func TestRBDNamespaceBindingReadOnlySharedCohort(t *testing.T) {
 					t.Fatalf("shared scope report: %+v %v", status, err)
 				}
 				for name, report := range status.Daemons {
-					if report.ContainerID != h.m.daemons[int(name[0]-'a')].GetContainerID() || report.ClientName != h.m.daemons[int(name[0]-'a')].ClientName {
+					if report.ContainerID != h.m.roster.daemons[int(name[0]-'a')].GetContainerID() || report.ClientName != h.m.roster.daemons[int(name[0]-'a')].ClientName {
 						t.Fatal("view borrowed/substituted an owned process")
 					}
 				}
 			}
-			if h.m.config.SourceNamespace != "ns-a" || h.m.config.DestinationNamespace != "ns-b" || h.m.policyIdentities != original || len(h.m.daemons) != count {
+			if h.m.pair.config.SourceNamespace != "ns-a" || h.m.pair.config.DestinationNamespace != "ns-b" || h.m.pair.policyIdentities != original || len(h.m.roster.daemons) != count {
 				t.Fatal("scope observation changed original owner config/capture/cohort")
 			}
 			owner, err := h.m.ReceiverStatus(t.Context())
@@ -174,7 +174,7 @@ func TestRBDNamespaceBindingAdmissionAndNativeSchema(t *testing.T) {
 			case "invalid-name":
 				sourceNS = "../ns-c"
 			case "partial-run":
-				h.m.receiverSetupConfirmed = false
+				h.m.receiver.setupConfirmed = false
 			case "closed":
 				h.m.closed = true
 			case "namespace-absent":
@@ -234,7 +234,7 @@ func TestRBDNamespaceBindingAdmissionAndNativeSchema(t *testing.T) {
 					t.Fatal("rejected admission reached native policy")
 				}
 			}
-			if h.m.receiverPeer == nil || len(h.m.daemons) != 0 {
+			if h.m.receiver.peer == nil || len(h.m.roster.daemons) != 0 {
 				t.Fatal("read-only rejection mutated bootstrap/process authority")
 			}
 		})
@@ -283,10 +283,10 @@ func TestRBDNamespaceBindingOriginalScopeDriftAndSiblingIsolation(t *testing.T) 
 				h.destination.peers[0].ClientName = "client.outside"
 			case "source-handle":
 				sub := *h.source
-				h.m.sourceClient = &sub
+				h.m.pair.sourceClient = &sub
 			case "destination-handle":
 				sub := *h.destination
-				h.m.destinationClient = &sub
+				h.m.pair.destinationClient = &sub
 			}
 			status, err := view.ReceiverStatus(t.Context())
 			if err == nil || status.Ready || !rbdReceiverPermanent(err) {
@@ -314,7 +314,7 @@ func TestRBDNamespaceBindingLateSelectedPolicyDrift(t *testing.T) {
 	for _, operation := range []string{"bind-second-read", "status-process-read"} {
 		t.Run(operation, func(t *testing.T) {
 			h := newNamespaceBindingHarness(t, 1)
-			originalOwnerPolicies, originalPeer := h.m.policyIdentities, h.m.receiverPeer
+			originalOwnerPolicies, originalPeer := h.m.pair.policyIdentities, h.m.receiver.peer
 			originalBase, originalOwnerSelected := h.source.policies["images"], h.source.policies["images/ns-a"]
 			var view *Namespace
 			if operation == "status-process-read" {
@@ -350,7 +350,7 @@ func TestRBDNamespaceBindingLateSelectedPolicyDrift(t *testing.T) {
 					t.Fatal("Status blessed selected replacement during actual process reads", err)
 				}
 			}
-			if h.m.policyIdentities != originalOwnerPolicies || h.m.receiverPeer != originalPeer || !sameRBDMirrorPolicy(h.source.policies["images"], originalBase) || !sameRBDMirrorPolicy(h.source.policies["images/ns-a"], originalOwnerSelected) || len(h.m.daemons) != 1 {
+			if h.m.pair.policyIdentities != originalOwnerPolicies || h.m.receiver.peer != originalPeer || !sameRBDMirrorPolicy(h.source.policies["images"], originalBase) || !sameRBDMirrorPolicy(h.source.policies["images/ns-a"], originalOwnerSelected) || len(h.m.roster.daemons) != 1 {
 				t.Fatal("late read rejection changed original owner authority or inventory")
 			}
 			namespaceBindingAssertReadOnly(t, h)
@@ -369,13 +369,13 @@ func TestRBDNamespaceBindingSharedCohortTopologyAndWaitWitness(t *testing.T) {
 			}
 			switch fault {
 			case "replace":
-				old := h.m.daemons[0]
+				old := h.m.roster.daemons[0]
 				d := *h.daemons[0]
 				d.cid = strings.Repeat("f", 64)
-				h.m.daemons[0] = &Daemon{Container: &d, DaemonName: old.DaemonName, ClientName: old.ClientName, receiverHandle: &d, receiverContainerID: d.cid, receiverClientName: old.receiverClientName, receiverDaemonName: old.receiverDaemonName, receiverStartupConfirmed: true}
+				h.m.roster.daemons[0] = &Daemon{Container: &d, DaemonName: old.DaemonName, ClientName: old.ClientName, receiverHandle: &d, receiverContainerID: d.cid, receiverClientName: old.receiverClientName, receiverDaemonName: old.receiverDaemonName, receiverStartupConfirmed: true}
 			case "add":
 				other := newNamespaceBindingHarness(t, 2)
-				h.m.daemons = append(h.m.daemons, other.m.daemons[1])
+				h.m.roster.daemons = append(h.m.roster.daemons, other.m.roster.daemons[1])
 			case "rebootstrap":
 				if err := h.m.Rebootstrap(t.Context()); err != nil {
 					t.Fatal(err)
@@ -400,7 +400,7 @@ func TestRBDNamespaceBindingSharedCohortTopologyAndWaitWitness(t *testing.T) {
 	if status, err := view.ReceiverStatus(t.Context(), "b"); err != nil || !status.Ready || status.LeaderDaemonName != "b" {
 		t.Fatal("explicit shared survivor rejected", err)
 	}
-	h.m.daemons = nil
+	h.m.roster.daemons = nil
 	if status, err := view.ReceiverStatus(t.Context()); err != nil || status.Ready || len(status.Daemons) != 0 {
 		t.Fatal("zero owner scope view adopted survivor", err)
 	}
@@ -427,7 +427,7 @@ func TestRBDNamespaceBindingSameCIDRestartAndFalseElection(t *testing.T) {
 			case "foreign":
 				h.daemons[0].status = receiverPatchStatus(t, h.daemons[0].status, func(row map[string]any) { row["instances"] = []string{"100", "101", "999"} })
 			case "partial":
-				h.m.daemons[0].receiverStartupConfirmed = false
+				h.m.roster.daemons[0].receiverStartupConfirmed = false
 			case "duplicate-namespace":
 				h.daemons[0].status = namespaceBindingSocket(t, h.daemons[0].status, [][2]string{{"ns-b", "ns-a"}, {"ns-d", "ns-c"}, {"ns-d", "ns-c"}})
 			case "wrong-remote":
@@ -457,8 +457,8 @@ func TestRBDNamespaceBindingOwnerAndMemberGateDeadline(t *testing.T) {
 					h.m.mu.Lock()
 					unlock = h.m.mu.Unlock
 				} else {
-					h.m.daemons[0].mu.Lock()
-					unlock = h.m.daemons[0].mu.Unlock
+					h.m.roster.daemons[0].mu.Lock()
+					unlock = h.m.roster.daemons[0].mu.Unlock
 				}
 				ctx, rawCancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
 				var once sync.Once
@@ -575,7 +575,7 @@ func TestRBDNamespaceBindingRebootstrapAttemptInvalidatesAndFreshBind(t *testing
 		t.Run(phase, func(t *testing.T) {
 			h := newNamespaceBindingHarness(t, 1)
 			view := namespaceBindingMustBind(t, h, "ns-c", "ns-d")
-			old, generation := h.m.receiverPeer, h.m.receiverPeerGeneration
+			old, generation := h.m.receiver.peer, h.m.receiver.generation
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var err error
@@ -621,7 +621,7 @@ func TestRBDNamespaceBindingRebootstrapAttemptInvalidatesAndFreshBind(t *testing
 				err = h.m.Rebootstrap(ctx)
 			}
 			if phase == "busy" || phase == "cancel" || phase == "preflight" {
-				if err == nil || h.m.receiverPeer != old || h.m.receiverPeerGeneration != generation {
+				if err == nil || h.m.receiver.peer != old || h.m.receiver.generation != generation {
 					t.Fatal("native-zero rejection invalidated bound capability", err)
 				}
 				if status, err := view.ReceiverStatus(t.Context()); err != nil || !status.Ready {
@@ -629,7 +629,7 @@ func TestRBDNamespaceBindingRebootstrapAttemptInvalidatesAndFreshBind(t *testing
 				}
 				return
 			}
-			if phase == "success" && err != nil || phase != "success" && err == nil || h.m.receiverPeer == old || h.m.receiverPeerGeneration == generation {
+			if phase == "success" && err != nil || phase != "success" && err == nil || h.m.receiver.peer == old || h.m.receiver.generation == generation {
 				t.Fatal("actual bootstrap attempt preserved old authority", err)
 			}
 			if phase == "create-lost-reply" && createSideEffects != 1 {
@@ -688,7 +688,7 @@ func TestRBDRebootstrapReadsTheUUIDThatASquidClientOmits(t *testing.T) {
 		}
 		return original(args)
 	}
-	h.m.legacyCLI = map[testcontainers.Container]bool{h.m.sourceClient: true}
+	h.m.pair.legacyCLI = map[testcontainers.Container]bool{h.m.pair.sourceClient: true}
 	if err := h.m.Rebootstrap(t.Context()); err != nil {
 		t.Fatalf("Rebootstrap with a Squid setup client: %v", err)
 	}

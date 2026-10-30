@@ -57,14 +57,14 @@ func (r *osdLaunchRecipe) seal() { r.started.CompareAndSwap(false, true) }
 // startOSD attempts the creation, and kept after any attempted or uncertain
 // creation until a confirmed container removal (removeOSD, terminate, settle).
 // The caller must not drop a claim any other way.
-func (c *Container) registerBlockDeviceOSD(ctx context.Context, config OSDConfig, image string, device osdBlockDevice, lease string) (osdLaunch, error) {
+func (f osdFleet) registerBlockDeviceOSD(ctx context.Context, config OSDConfig, image string, device osdBlockDevice, lease string) (osdLaunch, error) {
 	if err := device.validate(); err != nil {
 		return osdLaunch{}, err
 	}
 	if !osdDeviceLease.MatchString(lease) {
 		return osdLaunch{}, errors.New("OSD device launch needs a lease token of letters, digits and . _ : -")
 	}
-	launch, err := c.registerOSD(ctx, config, image, nil)
+	launch, err := f.registerOSD(ctx, config, image, nil)
 	if err != nil {
 		return launch, err
 	}
@@ -72,7 +72,7 @@ func (c *Container) registerBlockDeviceOSD(ctx context.Context, config OSDConfig
 		launch.recipe.seal()
 		return launch, err
 	}
-	if err := c.deviceClaims.claim(launch.osd.ID, lease, device, &launch.recipe.started); err != nil {
+	if err := f.deviceClaims.claim(launch.osd.ID, lease, device, &launch.recipe.started); err != nil {
 		launch.recipe.seal()
 		return launch, err
 	}

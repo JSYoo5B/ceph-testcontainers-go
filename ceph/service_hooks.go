@@ -35,14 +35,14 @@ func (serviceHooks) StartupTimeout(c *Container) time.Duration { return c.settin
 
 // CLI returns the container that runs Ceph CLI commands, or nil.
 func (serviceHooks) ClientCommand(ctx context.Context, c *Container, args ...string) ([]byte, error) {
-	target, err := c.clientContainerContext(ctx)
+	target, err := c.featureClient().startedContainer(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return command(ctx, target, args...)
 }
 
-func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.cliContainer() }
+func (serviceHooks) CLI(c *Container) testcontainers.Container { return c.conn().cliContainer() }
 
 // Closed reports a terminated cluster.
 func (serviceHooks) Closed(c *Container) bool { return c.closed }
@@ -65,12 +65,12 @@ func (serviceHooks) RunOwnedShell(ctx context.Context, c *Container, target test
 	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, stopCommand: supervised.CancelShell, done: make(chan struct{})}
 	// An owned shell has no target instance, which no fence can name, so the
 	// fence check of admit never refuses it.
-	if c.nativeCmds.admit(inv, nil) == nativeRefusedClosed {
+	if c.native.calls.admit(inv, nil) == nativeRefusedClosed {
 		return supervised.ShellReport{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
 	}
 	report, err := supervised.RunShell(runCtx, target, label, limit, argv...)
 	unstopped, _ := supervised.Unconfirmed(err)
-	c.nativeCmds.finish(inv, unstopped, unstopped != "")
+	c.native.calls.finish(inv, unstopped, unstopped != "")
 	close(inv.done)
 	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(runCtx), errNativeTerminated) {
 		err = fmt.Errorf("%s: %w: %w", label, errNativeTerminated, err)
@@ -93,27 +93,27 @@ func (serviceHooks) LockTopology(ctx context.Context, c *Container) error { retu
 // Service returns the named service container the cluster owns, or nil. The
 // caller holds the cluster mutex.
 func (serviceHooks) Service(c *Container, name string) testcontainers.Container {
-	return c.roster.service(name)
+	return c.members.roster.service(name)
 }
 
 // SetService records a service container the cluster owns and terminates.
 // The caller holds the cluster mutex.
 func (serviceHooks) SetService(c *Container, name string, ctr testcontainers.Container) {
-	c.roster.setService(name, ctr)
+	c.members.roster.setService(name, ctr)
 }
 
 // DeleteService forgets a service container. The caller holds the mutex.
-func (serviceHooks) DeleteService(c *Container, name string) { c.roster.dropService(name) }
+func (serviceHooks) DeleteService(c *Container, name string) { c.members.roster.dropService(name) }
 
 // Services returns a copy of the service containers. The caller holds the
 // cluster mutex.
 func (serviceHooks) Services(c *Container) map[string]testcontainers.Container {
-	return c.roster.serviceCopy()
+	return c.members.roster.serviceCopy()
 }
 
 // PoolStates reads the native pool map. The caller holds the cluster mutex.
 func (serviceHooks) PoolStates(ctx context.Context, c *Container) ([]PoolState, error) {
-	return c.poolStates(ctx)
+	return poolCatalog{c.conn()}.states(ctx)
 }
 
 // StartService starts a service container on the cluster's networks and
@@ -191,7 +191,7 @@ func (serviceHooks) NormalizePool(config PoolConfig) (PoolConfig, error) {
 // PoolPlacementDomains counts the owned OSD placement domains that config
 // can use. The caller holds the cluster mutex.
 func (serviceHooks) PoolPlacementDomains(c *Container, config PoolConfig) int {
-	return c.poolPlacementDomains(config)
+	return c.fleet.osdHandles.placementDomains(config)
 }
 
 // PoolPolicyReady reports whether the cluster's pool policy accepts changes.
@@ -224,7 +224,7 @@ func (serviceHooks) ClassifyExec(ctx context.Context, err error) error {
 // AuthCommand runs a Cephx command with the admin identity and reports a
 // failure by operation without the native output.
 func (serviceHooks) AuthCommand(ctx context.Context, c *Container, operation string, args ...string) ([]byte, error) {
-	return c.clientAuthCommand(ctx, operation, args...)
+	return authStore{c.conn()}.clientCommand(ctx, operation, args...)
 }
 
 // ClusterIdentity returns the FSID of the bootstrap configuration and whether
@@ -253,7 +253,7 @@ func (serviceHooks) ClientRevoked(client *ClientConfig) bool { return client.rev
 func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) {
 	client.revoked = revoked
 	if revoked {
-		client.owner.authRecords.confirmKey(client.name, "")
+		client.owner.ledger.authRecords.confirmKey(client.name, "")
 	}
 }
 
@@ -262,13 +262,13 @@ func (serviceHooks) SetClientRevoked(client *ClientConfig, revoked bool) {
 // is only settled, for the service's own reconciliation. The caller holds the
 // cluster mutex.
 func (serviceHooks) SettleClient(ctx context.Context, c *Container, client *ClientConfig) error {
-	if err := c.settleClient(ctx, client.name); err != nil {
+	if err := c.authLedger().settleClient(ctx, client.name); err != nil {
 		return err
 	}
 	if client.revoked {
 		return nil
 	}
-	return c.checkCurrentClient(client)
+	return c.authLedger().checkCurrentClient(client)
 }
 
 // MonitorAddresses returns the bootstrap addresses of the monitors in quorum.

@@ -62,7 +62,8 @@ func TestColdAndReplacementDecodersArePureFunctionsOfTheirArguments(t *testing.T
 		[]string{"decodeColdMDSMap"}, []string{"coldMDSMapExpectation"},
 		[]string{"errors", naming, "slices"})
 	assertPureDecoderFile(t, "mds_replacement_decode.go",
-		[]string{"decodeMDSReplacementMap"}, []string{"replacementMDSMap", "replacementMDSMapExpectation", "replacementMDSMapState"},
+		[]string{"decodeMDSReplacementMap", "admitReplacementMDSRow", "checkReplacementMDSMembership", "replacementMDSScope", "replacementMDSRankReady", "checkReplacementMDSStandbys"},
+		[]string{"replacementMDSFields", "replacementMDSFilesystem", "replacementMDSMap", "replacementMDSMapExpectation", "replacementMDSMapState", "replacementMDSSeen"},
 		[]string{"errors", naming, "slices", "strconv"})
 }
 
@@ -99,7 +100,7 @@ func TestColdAndReplacementReadsHaveOneDecode(t *testing.T) {
 	want := map[string][]string{
 		"decodeColdMDSMap":        {"verifyColdMDS"},
 		"decodeMDSReplacementMap": {"readMDSReplacementScope"},
-		"readMDSReplacementScope": {"addMDSReplacement", "addMDSReplacement", "observeMDSReplacement"},
+		"readMDSReplacementScope": {"addMDSReplacement", "admitMDSReplacement", "observeMDSReplacement"},
 	}
 	if !reflect.DeepEqual(callers, want) {
 		t.Errorf("caller table changed: %v, pinned %v", callers, want)

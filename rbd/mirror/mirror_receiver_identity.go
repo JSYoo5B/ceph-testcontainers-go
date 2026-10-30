@@ -173,15 +173,15 @@ func readRBDReceiverFSID(ctx context.Context, client testcontainers.Container, e
 	return nil
 }
 
-func (m *Mirror) checkRBDReceiverClusterFSIDs(ctx context.Context) error {
-	ids := m.receiverClusters
-	if ids == nil || ids.sourceCluster != m.config.Source || ids.destinationCluster != m.config.Destination || !rbdReceiverUUID(ids.source) || !rbdReceiverUUID(ids.destination) || ids.source == ids.destination {
+func (r *rbdReceiverPeer) checkClusterFSIDs(ctx context.Context, pair *rbdMirrorPair) error {
+	ids := r.clusters
+	if ids == nil || ids.sourceCluster != pair.config.Source || ids.destinationCluster != pair.config.Destination || !rbdReceiverUUID(ids.source) || !rbdReceiverUUID(ids.destination) || ids.source == ids.destination {
 		return rbdReceiverGuard("RBD original cluster identities are not confirmed")
 	}
 	for _, site := range []struct {
 		client testcontainers.Container
 		fsid   string
-	}{{m.sourceClient, ids.source}, {m.destinationClient, ids.destination}} {
+	}{{pair.sourceClient, ids.source}, {pair.destinationClient, ids.destination}} {
 		if site.client == nil {
 			return rbdReceiverGuard("RBD owned setup client is unavailable")
 		}
@@ -297,8 +297,8 @@ func readRBDReceiverPool(ctx context.Context, client testcontainers.Container, n
 }
 
 // The receiving peer is a pool-level identity, even for named namespaces.
-func (m *Mirror) checkRBDReceiverPolicies(ctx context.Context) ([]rbdMirrorPeer, error) {
-	if m.poolIdentities == nil || m.policyIdentities == nil {
+func (p *rbdMirrorPair) checkReceiverPolicies(ctx context.Context) ([]rbdMirrorPeer, error) {
+	if p.poolIdentities == nil || p.policyIdentities == nil {
 		return nil, rbdReceiverGuard("RBD original receiver pool and policies are not confirmed")
 	}
 	var destinationPeers []rbdMirrorPeer
@@ -309,19 +309,19 @@ func (m *Mirror) checkRBDReceiverPolicies(ctx context.Context) ([]rbdMirrorPeer,
 		identity    rbdMirrorSitePolicyIdentity
 		destination bool
 	}{
-		{m.sourceClient, m.poolIdentities.source, m.config.SourceNamespace, m.policyIdentities.source, false},
-		{m.destinationClient, m.poolIdentities.destination, m.config.DestinationNamespace, m.policyIdentities.destination, true},
+		{p.sourceClient, p.poolIdentities.source, p.config.SourceNamespace, p.policyIdentities.source, false},
+		{p.destinationClient, p.poolIdentities.destination, p.config.DestinationNamespace, p.policyIdentities.destination, true},
 	} {
-		if err := readRBDReceiverPool(ctx, site.client, m.config.Pool, site.id); err != nil {
+		if err := readRBDReceiverPool(ctx, site.client, p.config.Pool, site.id); err != nil {
 			return nil, err
 		}
-		base, peers, err := readRBDReceiverPolicy(ctx, site.client, m.config.Pool, "", m.legacyClient(site.client))
+		base, peers, err := readRBDReceiverPolicy(ctx, site.client, p.config.Pool, "", p.legacyClient(site.client))
 		if err != nil {
 			return nil, err
 		}
 		selected := base
 		if site.namespace != "" {
-			selected, _, err = readRBDReceiverPolicy(ctx, site.client, m.config.Pool, site.namespace, m.legacyClient(site.client))
+			selected, _, err = readRBDReceiverPolicy(ctx, site.client, p.config.Pool, site.namespace, p.legacyClient(site.client))
 			if err != nil {
 				return nil, err
 			}
@@ -332,38 +332,38 @@ func (m *Mirror) checkRBDReceiverPolicies(ctx context.Context) ([]rbdMirrorPeer,
 		if site.destination {
 			destinationPeers = peers
 		}
-		if err := readRBDReceiverPool(ctx, site.client, m.config.Pool, site.id); err != nil {
+		if err := readRBDReceiverPool(ctx, site.client, p.config.Pool, site.id); err != nil {
 			return nil, err
 		}
 	}
 	return destinationPeers, nil
 }
 
-func (m *Mirror) captureRBDReceiverPeer(ctx context.Context, bootstrap rbdBootstrapIdentity) (*rbdReceiverPeerIdentity, error) {
-	if err := m.checkRBDReceiverClusterFSIDs(ctx); err != nil {
+func (r *rbdReceiverPeer) capturePeer(ctx context.Context, pair *rbdMirrorPair, bootstrap rbdBootstrapIdentity) (*rbdReceiverPeerIdentity, error) {
+	if err := r.checkClusterFSIDs(ctx, pair); err != nil {
 		return nil, err
 	}
-	if bootstrap.FSID != m.receiverClusters.source {
+	if bootstrap.FSID != r.clusters.source {
 		return nil, rbdReceiverGuard("RBD bootstrap differs from the original source cluster")
 	}
-	peers, err := m.checkRBDReceiverPolicies(ctx)
+	peers, err := pair.checkReceiverPolicies(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var candidate *rbdReceiverPeerIdentity
 	for _, peer := range peers {
-		if peer.SiteName != m.config.SourceSite && peer.SiteName != m.receiverClusters.source {
+		if peer.SiteName != pair.config.SourceSite && peer.SiteName != r.clusters.source {
 			continue
 		}
-		if candidate != nil || !slices.Contains([]string{"rx-only", "rx-tx"}, peer.Direction) || peer.ClientName != bootstrap.ClientName || peer.MirrorUUID != "" && peer.MirrorUUID != m.policyIdentities.source.base.MirrorUUID {
+		if candidate != nil || !slices.Contains([]string{"rx-only", "rx-tx"}, peer.Direction) || peer.ClientName != bootstrap.ClientName || peer.MirrorUUID != "" && peer.MirrorUUID != pair.policyIdentities.source.base.MirrorUUID {
 			return nil, rbdReceiverGuard("RBD receiving peer readback conflicts with bootstrap identity")
 		}
-		candidate = &rbdReceiverPeerIdentity{uuid: peer.UUID, site: peer.SiteName, client: peer.ClientName, sourceMirrorUUID: m.policyIdentities.source.base.MirrorUUID}
+		candidate = &rbdReceiverPeerIdentity{uuid: peer.UUID, site: peer.SiteName, client: peer.ClientName, sourceMirrorUUID: pair.policyIdentities.source.base.MirrorUUID}
 	}
 	if candidate == nil {
 		return nil, rbdReceiverGuard("RBD receiving peer readback is unavailable")
 	}
-	if err := m.checkRBDReceiverClusterFSIDs(ctx); err != nil {
+	if err := r.checkClusterFSIDs(ctx, pair); err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -372,22 +372,22 @@ func (m *Mirror) captureRBDReceiverPeer(ctx context.Context, bootstrap rbdBootst
 	return candidate, nil
 }
 
-func (m *Mirror) checkRBDReceiverIdentities(ctx context.Context) error {
-	if err := m.checkRBDReceiverClusterFSIDs(ctx); err != nil {
+func (r *rbdReceiverPeer) checkIdentities(ctx context.Context, pair *rbdMirrorPair) error {
+	if err := r.checkClusterFSIDs(ctx, pair); err != nil {
 		return err
 	}
-	peers, err := m.checkRBDReceiverPolicies(ctx)
+	peers, err := pair.checkReceiverPolicies(ctx)
 	if err != nil {
 		return err
 	}
-	identity := m.receiverPeer
+	identity := r.peer
 	if identity == nil {
 		return rbdReceiverGuard("RBD receiving peer identity is not confirmed")
 	}
 	found := false
 	for _, peer := range peers {
 		if peer.UUID != identity.uuid {
-			if peer.SiteName == identity.site || peer.SiteName == m.config.SourceSite || peer.SiteName == m.receiverClusters.source {
+			if peer.SiteName == identity.site || peer.SiteName == pair.config.SourceSite || peer.SiteName == r.clusters.source {
 				return rbdReceiverGuard("RBD original receiving peer identity changed")
 			}
 			continue
@@ -400,7 +400,7 @@ func (m *Mirror) checkRBDReceiverIdentities(ctx context.Context) error {
 	if !found {
 		return rbdReceiverGuard("RBD original receiving peer is missing")
 	}
-	return m.checkRBDReceiverClusterFSIDs(ctx)
+	return r.checkClusterFSIDs(ctx, pair)
 }
 
 func rbdReceiverInstance(value string) bool {

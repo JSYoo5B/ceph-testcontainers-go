@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 )
 
 // InconsistentObject is one object reported by the last deep scrub of a PG.
@@ -96,14 +98,14 @@ func (c *Container) scrubPG(ctx context.Context, pgid PGID, operation string) (s
 	}
 	before, _, err := c.pgScrubReport(ctx, pgid)
 	if err == nil {
-		_, err = c.cephCLI(ctx, "pg", operation, string(pgid))
+		_, err = c.conn().ceph(ctx, "pg", operation, string(pgid))
 	}
 	c.mu.Unlock()
 	if err != nil {
 		return "", err
 	}
 	var state string
-	err = c.poll(ctx, func() (bool, error) {
+	err = clusterutil.Poll(ctx, func() (bool, error) {
 		if err := c.lockTopology(ctx); err != nil {
 			return false, err
 		}
@@ -125,7 +127,7 @@ func (c *Container) pgScrubReport(ctx context.Context, pgid PGID) (time.Time, st
 		return time.Time{}, "", err
 	}
 	poolID, _, _ := strings.Cut(string(pgid), ".")
-	pools, err := c.poolStates(ctx)
+	pools, err := poolCatalog{c.conn()}.states(ctx)
 	if err != nil {
 		return time.Time{}, "", err
 	}
@@ -138,7 +140,7 @@ func (c *Container) pgScrubReport(ctx context.Context, pgid PGID) (time.Time, st
 	if name == "" {
 		return time.Time{}, "", fmt.Errorf("pool of PG %s does not exist", pgid)
 	}
-	data, err := c.cephCLI(ctx, "pg", "ls-by-pool", name, "--format", "json")
+	data, err := c.conn().ceph(ctx, "pg", "ls-by-pool", name, "--format", "json")
 	if err != nil {
 		return time.Time{}, "", err
 	}
@@ -163,21 +165,6 @@ func (c *Container) pgScrubReport(ctx context.Context, pgid PGID) (time.Time, st
 		return stamp, pg.State, nil
 	}
 	return time.Time{}, "", fmt.Errorf("PG %s is not reported", pgid)
-}
-
-// pgInconsistencies implements Observer.PGInconsistencies.
-func (c *Container) pgInconsistencies(ctx context.Context, pgid PGID) ([]InconsistentObject, error) {
-	if err := validatePGID(string(pgid)); err != nil {
-		return nil, err
-	}
-	if err := c.lockTopology(ctx); err != nil {
-		return nil, err
-	}
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return nil, err
-	}
-	return readPGInconsistencies(ctx, c.clientRadosLookup(), pgid)
 }
 
 func decodeInconsistentObjects(data []byte) ([]InconsistentObject, error) {

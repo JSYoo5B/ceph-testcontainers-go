@@ -35,18 +35,18 @@ type rbdNamespaceBindingIdentity struct {
 	sourceClient, destinationClient testcontainers.Container
 }
 
-func (m *Mirror) originalReceiverScope() *rbdReceiverScope {
-	return &rbdReceiverScope{selection: [3]string{m.config.Pool, m.config.SourceNamespace, m.config.DestinationNamespace}, policies: m.policyIdentities}
+func (p *rbdMirrorPair) originalReceiverScope() *rbdReceiverScope {
+	return &rbdReceiverScope{selection: [3]string{p.config.Pool, p.config.SourceNamespace, p.config.DestinationNamespace}, policies: p.policyIdentities}
 }
 
 // Called with the original owner's gate held. A scope never redirects ownership
 // and never replaces the owner's configuration, policy capture or mutex.
 func (scope *rbdReceiverScope) guard(m *Mirror) error {
-	if scope == nil || scope.selection[0] != m.config.Pool || scope.policies == nil {
+	if scope == nil || scope.selection[0] != m.pair.config.Pool || scope.policies == nil {
 		return rbdReceiverGuard("RBD receiver scope is unavailable or changed")
 	}
 	if b := scope.binding; b != nil {
-		if b.owner != m || b.peer == nil || b.peer != m.receiverPeer || b.peer.generation != m.receiverPeerGeneration || b.clusters != m.receiverClusters || b.pools != m.poolIdentities || b.originalPolicies != m.policyIdentities || !sameRBDReceiverHandle(b.sourceClient, m.sourceClient) || !sameRBDReceiverHandle(b.destinationClient, m.destinationClient) {
+		if b.owner != m || b.peer == nil || b.peer != m.receiver.peer || b.peer.generation != m.receiver.generation || b.clusters != m.receiver.clusters || b.pools != m.pair.poolIdentities || b.originalPolicies != m.pair.policyIdentities || !sameRBDReceiverHandle(b.sourceClient, m.pair.sourceClient) || !sameRBDReceiverHandle(b.destinationClient, m.pair.destinationClient) {
 			return rbdReceiverGuard("RBD namespace binding original owner or bootstrap authority changed")
 		}
 	}
@@ -74,14 +74,14 @@ func (m *Mirror) BindNamespace(ctx context.Context, sourceNamespace, destination
 		return nil, rbdReceiverQuery(ctx, "admit RBD namespace binding", err)
 	}
 	defer m.mu.Unlock()
-	if _, err := m.receiverWitness(m.originalReceiverScope(), nil, nil); err != nil {
+	if _, err := m.receiverWitness(m.pair.originalReceiverScope(), nil, nil); err != nil {
 		return nil, err
 	}
-	if err := m.checkRBDReceiverIdentities(ctx); err != nil {
+	if err := m.receiver.checkIdentities(ctx, &m.pair); err != nil {
 		return nil, err
 	}
-	view := &Namespace{owner: m, scope: rbdReceiverScope{selection: [3]string{m.config.Pool, sourceNamespace, destinationNamespace}, binding: &rbdNamespaceBindingIdentity{owner: m, peer: m.receiverPeer, clusters: m.receiverClusters, pools: m.poolIdentities, originalPolicies: m.policyIdentities, sourceClient: m.sourceClient, destinationClient: m.destinationClient}}}
-	policies, err := m.readRBDNamespaceBindingPolicies(ctx, &view.scope)
+	view := &Namespace{owner: m, scope: rbdReceiverScope{selection: [3]string{m.pair.config.Pool, sourceNamespace, destinationNamespace}, binding: &rbdNamespaceBindingIdentity{owner: m, peer: m.receiver.peer, clusters: m.receiver.clusters, pools: m.pair.poolIdentities, originalPolicies: m.pair.policyIdentities, sourceClient: m.pair.sourceClient, destinationClient: m.pair.destinationClient}}}
+	policies, err := m.pair.readBindingPolicies(ctx, &view.scope)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func (v *Namespace) WaitReceiverReady(ctx context.Context, expectedDaemons ...st
 	})
 }
 
-func (m *Mirror) readRBDNamespaceBindingPolicies(ctx context.Context, scope *rbdReceiverScope) (*rbdMirrorPolicyIdentities, error) {
+func (p *rbdMirrorPair) readBindingPolicies(ctx context.Context, scope *rbdReceiverScope) (*rbdMirrorPolicyIdentities, error) {
 	policies := &rbdMirrorPolicyIdentities{}
 	for _, site := range []struct {
 		client                      testcontainers.Container
@@ -130,13 +130,13 @@ func (m *Mirror) readRBDNamespaceBindingPolicies(ctx context.Context, scope *rbd
 		base                        nativeRBDMirrorPolicy
 		result                      *rbdMirrorSitePolicyIdentity
 	}{
-		{m.sourceClient, scope.selection[1], scope.selection[2], m.config.SourceSite, m.policyIdentities.source.base, &policies.source},
-		{m.destinationClient, scope.selection[2], scope.selection[1], m.config.DestinationSite, m.policyIdentities.destination.base, &policies.destination},
+		{p.sourceClient, scope.selection[1], scope.selection[2], p.config.SourceSite, p.policyIdentities.source.base, &policies.source},
+		{p.destinationClient, scope.selection[2], scope.selection[1], p.config.DestinationSite, p.policyIdentities.destination.base, &policies.destination},
 	} {
 		if err := readRBDNamespaceBindingCatalog(ctx, site.client, scope.selection[0], site.namespace); err != nil {
 			return nil, err
 		}
-		selected, _, err := readRBDReceiverPolicy(ctx, site.client, scope.selection[0], site.namespace, m.legacyClient(site.client))
+		selected, _, err := readRBDReceiverPolicy(ctx, site.client, scope.selection[0], site.namespace, p.legacyClient(site.client))
 		if err != nil {
 			return nil, err
 		}
@@ -187,20 +187,20 @@ func (m *Mirror) checkRBDReceiverScopeIdentities(ctx context.Context, scope *rbd
 	if err := scope.guard(m); err != nil {
 		return err
 	}
-	if err := m.checkRBDReceiverIdentities(ctx); err != nil {
+	if err := m.receiver.checkIdentities(ctx, &m.pair); err != nil {
 		return err
 	}
 	if scope.binding == nil {
 		return nil // Keep the original owner observation's exact query contract.
 	}
-	current, err := m.readRBDNamespaceBindingPolicies(ctx, scope)
+	current, err := m.pair.readBindingPolicies(ctx, scope)
 	if err != nil {
 		return err
 	}
 	if !sameRBDMirrorPolicy(current.source.selected, scope.policies.source.selected) || !sameRBDMirrorPolicy(current.destination.selected, scope.policies.destination.selected) {
 		return rbdReceiverGuard("RBD namespace binding original selected policy changed")
 	}
-	if err := m.checkRBDReceiverIdentities(ctx); err != nil {
+	if err := m.receiver.checkIdentities(ctx, &m.pair); err != nil {
 		return err
 	}
 	return scope.guard(m)

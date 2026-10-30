@@ -184,8 +184,8 @@ func (fs *Filesystem) DataPools(ctx context.Context) ([]DataPoolState, error) {
 	return result, nil
 }
 
-func (fs *Filesystem) poolApplications(ctx context.Context, name string) (map[string]map[string]string, error) {
-	data, err := fs.cluster.Ceph(ctx, "osd", "pool", "application", "get", name, "--format", "json")
+func (v volumeCommands) poolApplications(ctx context.Context, name string) (map[string]map[string]string, error) {
+	data, err := v.cluster.Ceph(ctx, "osd", "pool", "application", "get", name, "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +248,7 @@ func (fs *Filesystem) AddDataPool(ctx context.Context, name string) (*DataPool, 
 	if pool.Type != "replicated" && (pool.Type != "erasure" || !slices.Contains(strings.Split(pool.Flags, ","), "ec_overwrites")) {
 		return nil, errors.New("CephFS EC data pools require allow_ec_overwrites")
 	}
-	apps, err := fs.poolApplications(ctx, name)
+	apps, err := fs.volumes().poolApplications(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +280,7 @@ func (fs *Filesystem) confirmDataPoolAttachment(ctx context.Context, identity *c
 	if err != nil || pool.ID != identity.id || !slices.Contains(state.dataPools, identity.id) {
 		return errors.New("attempted data pool registration was not confirmed with its original identity")
 	}
-	apps, err := fs.poolApplications(ctx, identity.name)
+	apps, err := fs.volumes().poolApplications(ctx, identity.name)
 	if err != nil {
 		return err
 	}
@@ -322,7 +322,7 @@ func (fs *Filesystem) checkSubvolumeDataPool(ctx context.Context, name string) e
 // unknown-success failures, so later group removal cannot erase its history.
 func (fs *Filesystem) checkSubvolumeCreationPool(ctx context.Context, name, group string) error {
 	if name == "" && group != "" && fs.nativeIdentity != nil {
-		info, err := fs.subvolumeGroupInfo(ctx, group)
+		info, err := fs.volumes().subvolumeGroupInfo(ctx, group)
 		if err != nil {
 			return err
 		}
@@ -401,15 +401,15 @@ func (attachment *DataPool) RemoveUnused(ctx context.Context) error {
 }
 
 func (fs *Filesystem) checkUnusedDataPool(ctx context.Context, name string) error {
-	if err := fs.ensureVolumesModule(ctx); err != nil {
+	if err := fs.volumes().ensureVolumesModule(ctx); err != nil {
 		return err
 	}
-	groups, err := fs.subvolumeGroupNames(ctx)
+	groups, err := fs.volumes().subvolumeGroupNames(ctx)
 	if err != nil {
 		return err
 	}
 	for _, group := range groups {
-		info, err := fs.subvolumeGroupInfo(ctx, group)
+		info, err := fs.volumes().subvolumeGroupInfo(ctx, group)
 		if err != nil {
 			return fmt.Errorf("cannot prove group pool is unused: %w", err)
 		}
@@ -418,12 +418,12 @@ func (fs *Filesystem) checkUnusedDataPool(ctx context.Context, name string) erro
 		}
 	}
 	for _, group := range append([]string{""}, groups...) {
-		names, err := fs.subvolumeNames(ctx, group)
+		names, err := fs.volumes().subvolumeNames(ctx, group)
 		if err != nil {
 			return err
 		}
 		for _, volume := range names {
-			info, err := fs.subvolumeInfo(ctx, volume, group)
+			info, err := fs.volumes().subvolumeInfo(ctx, volume, group)
 			if err != nil {
 				return fmt.Errorf("cannot prove subvolume/clone pool is unused: %w", err)
 			}
