@@ -13,6 +13,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -141,4 +142,99 @@ func undocumented(decl ast.Decl, documentedTypes map[string]bool) []string {
 		return missing
 	}
 	return nil
+}
+
+// Doc comments use Go doc comment syntax (go.dev/doc/comment), which go doc and
+// pkg.go.dev render: paragraphs, "# Heading" lines in a package doc only,
+// lists indented as gofmt writes them ("//   - item"), tab-indented code
+// blocks and [links]. Markdown leaks in easily when a README section moves
+// into godoc, and go doc then shows it as literal text, so this refuses table
+// rows, ** emphasis, ``` fences and ## headings anywhere, a # heading outside
+// a package doc, an unindented list marker (go doc joins such lines into one
+// paragraph) and a nested list (doc comments have none).
+func TestDocCommentsUseGoDocSyntax(t *testing.T) {
+	var (
+		tableRow     = regexp.MustCompile(`^\s*\|.*\|\s*$`)
+		heading      = regexp.MustCompile(`^#{1,6} \S`)
+		deepHeading  = regexp.MustCompile(`^#{2,6}( |$)`)
+		flatMarker   = regexp.MustCompile(`^([-*+]|[0-9]+[.)]) \S`)
+		nestedMarker = regexp.MustCompile(`^ {4,}([-*+]|[0-9]+[.)]) \S`)
+	)
+	for _, pkg := range publicPackages(t) {
+		matches, err := filepath.Glob(filepath.Join(root, pkg, "*.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range matches {
+			if strings.HasSuffix(path, "_test.go") {
+				continue
+			}
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, group := range docComments(file) {
+				packageDoc := group == file.Doc
+				for _, comment := range group.List {
+					text, ok := strings.CutPrefix(comment.Text, "//")
+					if !ok {
+						continue // a /* */ comment
+					}
+					if strings.HasPrefix(text, "\t") {
+						continue // a code block line
+					}
+					text = strings.TrimPrefix(text, " ")
+					var problem string
+					switch {
+					case tableRow.MatchString(text):
+						problem = "a Markdown table row"
+					case strings.Contains(text, "**"):
+						problem = "Markdown ** emphasis"
+					case strings.Contains(text, "```"):
+						problem = "a Markdown code fence"
+					case deepHeading.MatchString(text):
+						problem = "a Markdown ## heading"
+					case heading.MatchString(text) && !packageDoc:
+						problem = "a # heading outside a package doc"
+					case flatMarker.MatchString(text):
+						problem = "an unindented list marker, which go doc joins into the paragraph"
+					case nestedMarker.MatchString(text):
+						problem = "a nested list item"
+					}
+					if problem != "" {
+						t.Errorf("%s: %s: %s", fset.Position(comment.Pos()), problem, strings.TrimSpace(text))
+					}
+				}
+			}
+		}
+	}
+}
+
+// docComments returns the doc comments of a file: the package doc and those of
+// its declarations, specs and struct or interface fields.
+func docComments(file *ast.File) []*ast.CommentGroup {
+	var groups []*ast.CommentGroup
+	add := func(group *ast.CommentGroup) {
+		if group != nil {
+			groups = append(groups, group)
+		}
+	}
+	add(file.Doc)
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.FuncDecl:
+			add(node.Doc)
+		case *ast.GenDecl:
+			add(node.Doc)
+		case *ast.TypeSpec:
+			add(node.Doc)
+		case *ast.ValueSpec:
+			add(node.Doc)
+		case *ast.Field:
+			add(node.Doc)
+		}
+		return true
+	})
+	return groups
 }
