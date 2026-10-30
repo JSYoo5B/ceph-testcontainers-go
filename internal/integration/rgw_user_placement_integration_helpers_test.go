@@ -43,14 +43,14 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 		t.Fatal(err)
 	}
 	for _, quota := range []struct {
-		set   func(context.Context, *rgw.User, rgw.Quota) error
+		set   func(context.Context, rgw.Quota) error
 		value rgw.Quota
-	}{{gateway.SetUserQuota, rgw.Quota{Enabled: true, MaxSizeBytes: 4 << 20, MaxObjects: 20}}, {gateway.SetBucketQuota, rgw.Quota{Enabled: true, MaxSizeBytes: 2 << 20, MaxObjects: 10}}} {
-		if err := quota.set(ctx, user, quota.value); err != nil {
+	}{{user.SetQuota, rgw.Quota{Enabled: true, MaxSizeBytes: 4 << 20, MaxObjects: 20}}, {user.SetBucketQuota, rgw.Quota{Enabled: true, MaxSizeBytes: 2 << 20, MaxObjects: 10}}} {
+		if err := quota.set(ctx, quota.value); err != nil {
 			t.Fatal(err)
 		}
 	}
-	baseline, err := gateway.UserInfo(ctx, user)
+	baseline, err := user.Info(ctx)
 	if err != nil || baseline.DefaultPlacement != "" || len(baseline.PlacementTags) != 0 || baseline.Admin || baseline.System {
 		t.Fatal("fresh ordinary fixture user had unexpected placement policy")
 	}
@@ -91,15 +91,15 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	}
 	// Public descriptor fields cannot redirect this owned native operation.
 	placement.Name, placement.ZoneID = "caller-mutated", "caller-mutated"
-	if err := gateway.SetUserPlacement(ctx, user, placement, rgw.UserPlacementConfig{Tags: []string{"premium"}}); err != nil {
+	if err := user.SetPlacement(ctx, placement, rgw.UserPlacementConfig{Tags: []string{"premium"}}); err != nil {
 		t.Fatal(err)
 	}
 	rgwPlacementWaitCreateBucket(t, ctx, client, granted, createBody)
 	requireRGWUserBucketPlacement(t, ctx, gateway, granted, targetName)
-	if err := gateway.SetUserPlacement(ctx, user, placement, rgw.UserPlacementConfig{StorageClass: "STANDARD_IA"}); err != nil {
+	if err := user.SetPlacement(ctx, placement, rgw.UserPlacementConfig{StorageClass: "STANDARD_IA"}); err != nil {
 		t.Fatal(err)
 	}
-	info, err := gateway.UserInfo(ctx, user)
+	info, err := user.Info(ctx)
 	if err != nil || info.DefaultPlacement != targetName || info.DefaultStorageClass != "STANDARD_IA" || !slices.Equal(info.PlacementTags, []string{"premium"}) {
 		t.Fatal("user default target/class or preserved tag grant did not read back")
 	}
@@ -133,10 +133,10 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	// even after the user's default class changes.
 	requireRGWUserBucketPlacement(t, ctx, gateway, original, "default-placement")
 	requireRGWUserBucketPlacement(t, ctx, gateway, granted, targetName)
-	if err := gateway.SetUserPlacement(ctx, user, placement, rgw.UserPlacementConfig{StorageClass: "STANDARD_IA", Tags: []string{"revoked"}}); err != nil {
+	if err := user.SetPlacement(ctx, placement, rgw.UserPlacementConfig{StorageClass: "STANDARD_IA", Tags: []string{"revoked"}}); err != nil {
 		t.Fatal(err)
 	}
-	info, err = gateway.UserInfo(ctx, user)
+	info, err = user.Info(ctx)
 	if err != nil || !slices.Equal(info.PlacementTags, []string{"revoked"}) {
 		t.Fatal("matching placement grant survived nonmatching tag replacement")
 	}
@@ -157,7 +157,7 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	for _, bucket := range []string{original, granted, selected} {
 		client.request(t, ctx, http.MethodDelete, bucket, nil, http.StatusNoContent)
 	}
-	if err := gateway.RemoveUser(ctx, user); err != nil {
+	if err := user.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("fresh target tags denied ungranted creation; grant allowed explicit location; user defaults selected STANDARD_IA without S3 selectors and exact native pool payload; explicit STANDARD override worked; prior buckets stayed immutable; revoke denied new buckets while existing objects/credentials remained usable and unrelated user policy stayed intact")

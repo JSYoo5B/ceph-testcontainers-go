@@ -112,7 +112,7 @@ func TestRGWNativeTLS(t *testing.T) {
 			}
 			client.request(t, ctx, http.MethodDelete, bucket+"/data", nil, http.StatusNoContent)
 			client.request(t, ctx, http.MethodDelete, bucket, nil, http.StatusNoContent)
-			if err := gateway.RemoveUser(ctx, user); err != nil {
+			if err := user.Remove(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if err := gateway.Remove(ctx); err != nil {

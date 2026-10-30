@@ -215,7 +215,7 @@ func testMirrorInitialRBD(t *testing.T, host, journal bool) {
 		if status, _ := link.ReceiverStatus(ctx); status.Ready {
 			t.Fatal("partial startup blessed as Ready")
 		}
-		if err := link.RemoveDaemon(ctx, "partial"); err != nil {
+		if err := partial.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if link.Container != nil || len(link.Daemons()) != 0 {
@@ -376,7 +376,7 @@ func testMirrorInitialCephFS(t *testing.T, host bool) {
 	verify(seed, seedBacklog, "zero-initial-seed-replayed")
 	verify(added, addedBacklog, "zero-initial-typed-replayed")
 	verify(added, checkpoint(added, "normal-first-fresh"), "zero-initial-fresh")
-	if err := mirror.RemoveDaemon(ctx, "receiver"); err != nil {
+	if err := receiver.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	cephFSDirectoryAdditionWaitZeroWatchers(t, ctx, source, sourceFS.MetadataPool)
@@ -384,7 +384,7 @@ func testMirrorInitialCephFS(t *testing.T, host bool) {
 	if partial == nil || err == nil || len(mirror.Daemons()) != 1 || mirror.Container != nil || customizers.Load() != 2 || factoryCalls.Load() != 1 || partial.ProcessObserverBindingStatus().State != "partial-startup" {
 		t.Fatal("explicit partial startup lost cleanup/factory contract", err)
 	}
-	if err := mirror.RemoveDaemon(ctx, "partial"); err != nil {
+	if err := partial.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	cephFSDirectoryAdditionWaitZeroWatchers(t, ctx, source, sourceFS.MetadataPool)

@@ -106,6 +106,7 @@ type Daemon struct {
 	testcontainers.Container
 	DaemonName                                                  string
 	ClientName                                                  string
+	owner                                                       *Mirror
 	mu                                                          sync.Mutex
 	terminated                                                  bool
 	receiverHandle                                              testcontainers.Container
@@ -290,7 +291,7 @@ func (m *Mirror) Daemons() []*Daemon {
 // AddDaemon adds another process using the existing receiving peer, without
 // rebootstrap or image mutation. Construction customizers apply to every daemon;
 // opts are appended for this daemon only. A non-nil result on error is tracked
-// for RemoveDaemon or fixture Terminate, including partial startup failures.
+// for Daemon.Remove or fixture Terminate, including partial startup failures.
 func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontainers.ContainerCustomizer) (*Daemon, error) {
 	if m == nil {
 		return nil, errors.New("RBD mirror fixture is unavailable")
@@ -341,7 +342,7 @@ func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontain
 	ctr, err := testcontainers.Run(ctx, m.image, daemonOpts...)
 	var daemon *Daemon
 	if ctr != nil {
-		daemon = &Daemon{Container: ctr, DaemonName: name, ClientName: clientName, receiverHandle: ctr, receiverContainerID: ctr.GetContainerID(), receiverClientName: clientName, receiverDaemonName: name, receiverStartupConfirmed: err == nil}
+		daemon = &Daemon{Container: ctr, DaemonName: name, ClientName: clientName, owner: m, receiverHandle: ctr, receiverContainerID: ctr.GetContainerID(), receiverClientName: clientName, receiverDaemonName: name, receiverStartupConfirmed: err == nil}
 		m.daemons = append(m.daemons, daemon)
 		m.owned.AddContainer(daemon)
 		if m.initialDaemonName == "" {
@@ -355,14 +356,16 @@ func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontain
 	return daemon, nil
 }
 
-// RemoveDaemon terminates a daemon owned by this fixture. Removing the last
-// process deliberately pauses replication while retaining peer and image state;
-// AddDaemon can resume it. Failed cleanup retains membership for a retry. The
-// legacy embedded handle is cleared when the initial daemon is removed.
-func (m *Mirror) RemoveDaemon(ctx context.Context, name string, opts ...testcontainers.TerminateOption) error {
-	if m == nil {
-		return errors.New("RBD mirror fixture is unavailable")
+// Remove terminates this daemon and removes it from its fixture's membership.
+// Removing the last process deliberately pauses replication while retaining
+// peer and image state; AddDaemon can resume it. Failed cleanup retains
+// membership for a retry. The legacy embedded handle is cleared when the
+// initial daemon is removed.
+func (d *Daemon) Remove(ctx context.Context, opts ...testcontainers.TerminateOption) error {
+	if d == nil || d.owner == nil {
+		return servicehook.Invalid(errors.New("RBD mirror daemon is not owned by a fixture"))
 	}
+	m := d.owner
 	if err := multicluster.LockObservation(ctx, &m.mu); err != nil {
 		return err
 	}
@@ -370,20 +373,18 @@ func (m *Mirror) RemoveDaemon(ctx context.Context, name string, opts ...testcont
 	if m.closed {
 		return servicehook.Invalid(errors.New("RBD mirror fixture is terminated"))
 	}
-	for i, daemon := range m.daemons {
-		if daemon.DaemonName != name {
-			continue
-		}
-		if err := daemon.Terminate(ctx, opts...); err != nil {
-			return fmt.Errorf("remove RBD mirror daemon %s: %w", name, err)
-		}
-		m.daemons = slices.Delete(m.daemons, i, i+1)
-		if name == m.initialDaemonName {
-			m.Container = nil
-		}
-		return nil
+	i := slices.Index(m.daemons, d)
+	if i < 0 {
+		return servicehook.Invalid(fmt.Errorf("RBD mirror daemon %q is not owned by this fixture", d.DaemonName))
 	}
-	return servicehook.Invalid(fmt.Errorf("RBD mirror daemon %q is not owned by this fixture", name))
+	if err := d.Terminate(ctx, opts...); err != nil {
+		return fmt.Errorf("remove RBD mirror daemon %s: %w", d.DaemonName, err)
+	}
+	m.daemons = slices.Delete(m.daemons, i, i+1)
+	if d.DaemonName == m.initialDaemonName {
+		m.Container = nil
+	}
+	return nil
 }
 
 func validateRBDMirrorDaemonName(name string) error {

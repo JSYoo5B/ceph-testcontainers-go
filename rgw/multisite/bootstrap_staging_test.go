@@ -50,7 +50,7 @@ func TestRGWFreshBootstrapCanonicalizesRemoteCommitStagingWithoutCommit(t *testi
 	}
 	cli.staging["period_config"].(map[string]any)["foreign_pending"] = true
 	pending := syncJSONClone(cli.staging)
-	if err := f.ApplySyncGroup(t.Context(), g); err == nil || !reflect.DeepEqual(cli.staging, pending) {
+	if err := g.Apply(t.Context()); err == nil || !reflect.DeepEqual(cli.staging, pending) {
 		t.Fatal("fresh bootstrap weakened later foreign-stage protection")
 	}
 }

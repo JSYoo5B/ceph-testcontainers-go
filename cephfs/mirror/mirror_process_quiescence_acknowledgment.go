@@ -17,7 +17,7 @@ type ProcessQuiescenceAcknowledgment struct {
 }
 
 // AcknowledgeProcessQuiescence accepts interrupted removal only after callers
-// explicitly RemoveDaemon every owned original member. It requires fresh bound
+// explicitly Remove every owned original daemon. It requires fresh bound
 // full-CID absence and native original watcher retirement, and opens continued
 // fixture-use gates without claiming native Drained or replaying peer deletion.
 func (r *PeerRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (ProcessQuiescenceAcknowledgment, error) {

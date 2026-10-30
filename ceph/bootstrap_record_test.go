@@ -247,7 +247,7 @@ var bootstrapRecordWriters = map[string]string{
 //	"identity" returns the lock identity for the test state view
 var bootstrapRecordCallers = map[string]map[string]string{
 	"createClient":                     {"hasConfig": "takes", "rawConfig": "takes"},
-	"withClientIdentity":               {"rawConfig": "takes"},
+	"WithIdentity":                     {"rawConfig": "takes"},
 	"startService":                     {"isComplete": "takes"},
 	"AddMonitor":                       {"rawConfig": "takes"},
 	"Run":                              {"recordConfig": "startup", "recordKeyring": "startup"},

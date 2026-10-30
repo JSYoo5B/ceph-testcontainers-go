@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"reflect"
 	"slices"
@@ -15,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -32,6 +33,11 @@ type rgwPlacementTestContainer struct {
 	foreignDefault        bool
 	pendingRegistrations  int
 	stopCount, startCount int
+}
+
+// State reports a running gateway, so the placement handle selects it.
+func (ctr *rgwPlacementTestContainer) State(context.Context) (*container.State, error) {
+	return &container.State{Running: true}, nil
 }
 
 func (f *rgwPlacementTestContainer) GetContainerID() string { return "gateway" }
@@ -164,7 +170,7 @@ func newRGWPlacementFixture() (*Gateway, *rgwPlacementTestContainer) {
 	f.group = map[string]any{"id": "group-id", "name": "active-group", "api_name": "active-api", "realm_id": "", "zones": []any{map[string]any{"id": "zone-id"}}, "default_placement": "default-placement", "placement_targets": []any{map[string]any{"name": "default-placement", "storage_classes": []any{"STANDARD"}, "tags": []any{}}}}
 	f.zone = map[string]any{"id": "zone-id", "name": "active-zone", "realm_id": "", "system_key": map[string]any{"key": "PRIVATE-KEY"}, "placement_pools": []any{}}
 	owner := testCluster(f, testhelper.TestConfig{StartupTimeout: time.Minute}, map[string]testcontainers.Container{"rgw": f})
-	return &Gateway{Container: f, owner: owner, port: 7480, config: Config{Name: "default"}}, f
+	return registerTestGateway(&Gateway{Container: f, owner: owner, port: 7480, config: Config{Name: "default"}}), f
 }
 
 func rgwPlacementTestConfig() PlacementConfig {
@@ -207,24 +213,24 @@ func TestRGWPlacementUsesRuntimeIDsAndRetainsDefault(t *testing.T) {
 	if !p.confirmed || p.LocationConstraint != "active-api:tiered" || p.ZoneID != "zone-id" {
 		t.Fatalf("unexpected placement descriptor %+v", p)
 	}
-	state, err := g.PlacementStatus(t.Context(), p)
+	state, err := p.Status(t.Context())
 	if err != nil || !state.Confirmed || state.DefaultPlacement != "default-placement" || len(state.StorageClasses) != 2 {
 		t.Fatalf("placement status: %+v %v", state, err)
 	}
 	p.LocationConstraint = "caller-mutated:foreign"
-	if state, err := g.PlacementStatus(t.Context(), p); err != nil || state.LocationConstraint != "active-api:tiered" {
+	if state, err := p.Status(t.Context()); err != nil || state.LocationConstraint != "active-api:tiered" {
 		t.Fatal("native status trusted a mutable descriptor field")
 	}
 	state.StorageClasses[0].DataPool = "caller-mutated"
-	if state, err := g.PlacementStatus(t.Context(), p); err != nil || state.StorageClasses[0].DataPool != "data" {
+	if state, err := p.Status(t.Context()); err != nil || state.StorageClasses[0].DataPool != "data" {
 		t.Fatal("native policy snapshot aliases the owned placement configuration")
 	}
 	state.Confirmed = false
-	if current, err := g.PlacementStatus(t.Context(), p); err != nil || !current.Confirmed {
+	if current, err := p.Status(t.Context()); err != nil || !current.Confirmed {
 		t.Fatal("public status changed private creation confirmation")
 	}
 	p.confirmed = false
-	if partial, err := g.PlacementStatus(t.Context(), p); err != nil || partial.Confirmed {
+	if partial, err := p.Status(t.Context()); err != nil || partial.Confirmed {
 		t.Fatal("complete partial mapping was misreported as confirmed creation")
 	}
 	p.confirmed = true
@@ -273,7 +279,7 @@ func TestRGWPlacementRejectsECMetadataAndUnrelatedChanges(t *testing.T) {
 	}
 	f.foreignDefault = false
 	f.poolID = 99
-	if _, err := g.PlacementStatus(t.Context(), p); err == nil {
+	if _, err := p.Status(t.Context()); err == nil {
 		t.Fatal("recreated pool adopted")
 	}
 }

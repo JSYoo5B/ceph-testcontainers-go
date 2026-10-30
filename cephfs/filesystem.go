@@ -588,7 +588,15 @@ func (fs *Filesystem) publishStartedMDS(ctx context.Context, id string, ctr test
 	c := fs.cluster
 	servicehook.Lock(c)
 	daemon := &MDS{Container: ctr, ID: id, FilesystemName: fs.name}
-	daemon.identity = fs.captureMDSIdentity(ctx, daemon, ctr, startErr)
+	// A failed or canceled identity capture never loses the cleanup handle or
+	// changes the original starter's error.
+	daemon.identity = &cephFSMDSIdentity{filesystem: fs, native: fs.nativeIdentity, descriptor: daemon, container: ctr, name: id, cid: ctr.GetContainerID()}
+	if startErr == nil && daemon.identity.native != nil && cephFSMDSFullCID(daemon.identity.cid) {
+		fsid, confirmed, err := servicehook.ClusterIdentity(ctx, c)
+		if err == nil && confirmed && ctx.Err() == nil {
+			daemon.identity.fsid, daemon.identity.confirmed = fsid, true
+		}
+	}
 	fs.roster.publish(daemon)
 	if fs.Container == nil {
 		fs.Container = ctr

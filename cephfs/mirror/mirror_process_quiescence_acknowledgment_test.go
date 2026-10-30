@@ -46,7 +46,7 @@ func beginDirectoryAcknowledgmentFixture(t *testing.T, lostReply bool) (*Directo
 func removeAcknowledgmentOriginals(t *testing.T, m *Mirror, raw []*processRawFake) {
 	t.Helper()
 	for _, d := range m.Daemons() {
-		if err := m.RemoveDaemon(t.Context(), d.DaemonName); err != nil {
+		if err := d.Remove(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -147,7 +147,7 @@ func TestCephFSProcessQuiescenceAcknowledgmentRequiresRemovedInventoryAndExactCI
 					}
 				}
 			case "mixed-inventory":
-				if err := m.RemoveDaemon(t.Context(), "a"); err != nil {
+				if err := daemonNamed(t, m, "a").Remove(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 			case "inventory-cleared-without-remove":

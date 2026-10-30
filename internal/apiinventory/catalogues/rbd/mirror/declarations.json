@@ -17,6 +17,22 @@
       "decision": "baseline"
     },
     {
+      "current": "rbd/mirror.Daemon.InterruptPeerLink",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*fault.NetworkInterruption, error)",
+      "receiver": "*Daemon",
+      "proposed": "rbd/mirror.Daemon.InterruptPeerLink",
+      "decision": "baseline"
+    },
+    {
+      "current": "rbd/mirror.Daemon.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Daemon",
+      "proposed": "rbd/mirror.Daemon.Remove",
+      "decision": "baseline"
+    },
+    {
       "current": "rbd/mirror.Daemon.Status",
       "kind": "method",
       "signature": "func(ctx context.Context) (*DaemonStatus, error)",
@@ -99,14 +115,6 @@
       "decision": "baseline"
     },
     {
-      "current": "rbd/mirror.Mirror.InterruptPeerLink",
-      "kind": "method",
-      "signature": "func(ctx context.Context, daemonName string) (*fault.NetworkInterruption, error)",
-      "receiver": "*Mirror",
-      "proposed": "rbd/mirror.Mirror.InterruptPeerLink",
-      "decision": "baseline"
-    },
-    {
       "current": "rbd/mirror.Mirror.PolicyStatus",
       "kind": "method",
       "signature": "func(ctx context.Context) (Policies, error)",
@@ -136,14 +144,6 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*Mirror",
       "proposed": "rbd/mirror.Mirror.RefreshMonitorConfig",
-      "decision": "baseline"
-    },
-    {
-      "current": "rbd/mirror.Mirror.RemoveDaemon",
-      "kind": "method",
-      "signature": "func(ctx context.Context, name string, opts ...testcontainers.TerminateOption) error",
-      "receiver": "*Mirror",
-      "proposed": "rbd/mirror.Mirror.RemoveDaemon",
       "decision": "baseline"
     },
     {

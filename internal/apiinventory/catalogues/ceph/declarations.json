@@ -185,6 +185,14 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.ClientConfig.WithIdentity",
+      "kind": "method",
+      "signature": "func(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption",
+      "receiver": "*ClientConfig",
+      "proposed": "ceph.ClientConfig.WithIdentity",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.ClientContainerOptions",
       "kind": "type",
       "proposed": "ceph.ClientContainerOptions",
@@ -608,14 +616,6 @@
       "signature": "func(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption",
       "receiver": "*Container",
       "proposed": "ceph.Container.WithClient",
-      "decision": "baseline"
-    },
-    {
-      "current": "ceph.Container.WithClientIdentity",
-      "kind": "method",
-      "signature": "func(client *ClientConfig, opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption",
-      "receiver": "*Container",
-      "proposed": "ceph.Container.WithClientIdentity",
       "decision": "baseline"
     },
     {

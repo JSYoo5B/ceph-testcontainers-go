@@ -40,20 +40,6 @@ type stoppedMDSRow struct {
 	Laggy json.RawMessage `json:"laggy_since"`
 }
 
-// Called under c.mu at real nonnil service publication. Failed/canceled capture
-// never loses the cleanup handle or changes the original starter's error.
-func (fs *Filesystem) captureMDSIdentity(ctx context.Context, daemon *MDS, ctr testcontainers.Container, startErr error) *cephFSMDSIdentity {
-	i := &cephFSMDSIdentity{filesystem: fs, native: fs.nativeIdentity, descriptor: daemon, container: ctr, name: daemon.ID, cid: ctr.GetContainerID()}
-	if startErr != nil || i.native == nil || !cephFSMDSFullCID(i.cid) {
-		return i
-	}
-	fsid, confirmed, err := servicehook.ClusterIdentity(ctx, fs.cluster)
-	if err == nil && confirmed && ctx.Err() == nil {
-		i.fsid, i.confirmed = fsid, true
-	}
-	return i
-}
-
 func cephFSMDSFullCID(cid string) bool {
 	if len(cid) != 64 {
 		return false

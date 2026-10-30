@@ -55,13 +55,13 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 		t.Fatal(err)
 	}
 	symmetric := multisite.SyncFlowConfig{ID: "owned-pair", Zones: []string{"source", "destination"}}
-	if err := link.CreateSyncFlow(ctx, global, symmetric); err != nil {
+	if err := global.CreateFlow(ctx, symmetric); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, global, multisite.SyncPipeConfig{ID: "permission", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+	if err := global.CreatePipe(ctx, multisite.SyncPipeConfig{ID: "permission", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.ApplySyncGroup(ctx, global); err != nil {
+	if err := global.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	sourceEndpoint, err := link.Source.S3Endpoint(ctx)
@@ -88,10 +88,10 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, bucket, multisite.SyncPipeConfig{ID: "prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "published/"}); err != nil {
+	if err := bucket.CreatePipe(ctx, multisite.SyncPipeConfig{ID: "prefix", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, Prefix: "published/"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.ApplySyncGroup(ctx, bucket); err != nil {
+	if err := bucket.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
@@ -115,7 +115,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 		rgwAbsentObject{sourceS3, selected + "/published/reverse-excluded"},
 	)
 	t.Log("owned policy replicated matching bucket/prefix bytes and excluded another prefix, another bucket and the reverse direction during 35 seconds")
-	if err := link.SetSyncGroupStatus(ctx, bucket, multisite.SyncForbidden); err != nil {
+	if err := bucket.SetStatus(ctx, multisite.SyncForbidden); err != nil {
 		t.Fatal(err)
 	}
 	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
@@ -125,7 +125,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	if got := destinationS3.request(t, ctx, http.MethodGet, selected+"/published/selected", nil, http.StatusOK); !bytes.Equal(got, payload) {
 		t.Fatal("forbidden policy changed earlier replicated bytes")
 	}
-	if err := link.SetSyncGroupStatus(ctx, bucket, multisite.SyncEnabled); err != nil {
+	if err := bucket.SetStatus(ctx, multisite.SyncEnabled); err != nil {
 		t.Fatal(err)
 	}
 	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
@@ -138,7 +138,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	t.Log("dynamic forbidden status stopped selected future writes during 35 seconds; enabled restored exact future bytes/checkpoint and retained earlier copies")
 	// A bucket update changes future selection without committing/restarting
 	// the realm. Preserve copied objects while checking the new positive path.
-	if err := link.SetSyncPipePrefix(ctx, bucket, "prefix", "reports/"); err != nil {
+	if err := bucket.SetPipePrefix(ctx, "prefix", "reports/"); err != nil {
 		t.Fatal(err)
 	}
 	waitRGWScenarioBucketPolicyImport(t, ctx, link, bucket)
@@ -150,10 +150,10 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	sourceS3.request(t, ctx, http.MethodDelete, selected+"/reports/after-update", nil, http.StatusNoContent)
 	waitOwnedSyncObject(t, ctx, destinationS3, selected+"/reports/after-update", http.StatusNotFound, nil)
 	copy := *bucket
-	if err := link.RemoveSyncGroup(ctx, bucket); err != nil {
+	if err := bucket.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.RemoveSyncGroup(ctx, &copy); err != nil {
+	if err := (&copy).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	sourceS3.request(t, ctx, http.MethodPut, selected+"/reports/after-removal", payload, http.StatusOK)
@@ -172,7 +172,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	sourceS3.request(t, ctx, http.MethodDelete, reused, nil, http.StatusNoContent)
 	sourceS3.request(t, ctx, http.MethodPut, reused, nil, http.StatusOK)
 	sourceS3.request(t, ctx, http.MethodPut, reused+"/replacement", payload, http.StatusOK)
-	if err := link.RemoveSyncGroup(ctx, old); err == nil {
+	if err := old.Remove(ctx); err == nil {
 		t.Fatal("old owned handle removed policy on a recreated bucket name")
 	}
 	if got := sourceS3.request(t, ctx, http.MethodGet, reused+"/replacement", nil, http.StatusOK); !bytes.Equal(got, payload) {
@@ -180,16 +180,16 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 	}
 	// Directional native identity is a pair; symmetrical removal uses its
 	// owned name. Exercise both without broadening the directional pipe.
-	if err := link.CreateSyncFlow(ctx, global, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
+	if err := global.CreateFlow(ctx, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.RemoveSyncFlow(ctx, global, symmetric); err != nil {
+	if err := global.RemoveFlow(ctx, symmetric); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.RemoveSyncGroup(ctx, global); err != nil {
+	if err := global.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.ApplySyncGroup(ctx, global); err != nil {
+	if err := global.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("dynamic prefix update/deletion and owned group removal retained old replicas; recreated native bucket instance refused stale-handle removal")
@@ -198,7 +198,7 @@ func testRGWOwnedSyncPolicy(t *testing.T, opts ...testcontainers.ContainerCustom
 func waitOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup, pipe string) multisite.BucketSyncStatus {
 	t.Helper()
 	started := time.Now()
-	status, err := link.WaitBucketSyncReady(ctx, group, pipe, "source", "destination")
+	status, err := group.WaitBucketSyncReady(ctx, pipe, "source", "destination")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func waitOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multisit
 
 func reconcileOwnedBucketCheckpoint(t *testing.T, ctx context.Context, link *multisite.Fixture, group *multisite.SyncGroup, pipe string) {
 	t.Helper()
-	before, err := link.BucketSyncStatus(ctx, group, pipe, "source", "destination")
+	before, err := group.BucketSyncStatus(ctx, pipe, "source", "destination")
 	if err != nil || before.State != "incremental" || before.Shards <= 0 {
 		t.Fatalf("explicit bucket reconciliation requires its exact enabled incremental checkpoint: state=%s error=%v", before.State, err)
 	}
@@ -249,7 +249,7 @@ func waitOwnedBucketDisabled(t *testing.T, ctx context.Context, link *multisite.
 	var status multisite.BucketSyncStatus
 	var lastErr error
 	for {
-		status, lastErr = link.BucketSyncStatus(wait, group, pipe, "source", "destination")
+		status, lastErr = group.BucketSyncStatus(wait, pipe, "source", "destination")
 		if wait.Err() == nil && lastErr == nil && !status.CaughtUp && (status.State == "stopped" || status.State == "disabled_or_no_sources") {
 			t.Logf("native forbidden bucket policy observed before excluded write: elapsed=%s state=%s", time.Since(started).Round(time.Millisecond), status.State)
 			return

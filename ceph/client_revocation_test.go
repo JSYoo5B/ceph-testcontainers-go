@@ -34,7 +34,7 @@ func requireUsableClient(t *testing.T, c *Container, client *ClientConfig) {
 	if caps, err := client.Capabilities(t.Context()); err != nil || caps != (ClientCaps{Mon: "allow r", OSD: "allow rw pool=data namespace=tenant-a"}) {
 		t.Fatalf("ClientCapabilities: %+v, %v", caps, err)
 	}
-	if err := identityErr(c, client); err != nil {
+	if err := identityErr(client); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -56,7 +56,7 @@ func TestRevokeClientRestoresTheSameIdentity(t *testing.T) {
 	}
 	for name, err := range map[string]error{
 		"ClientCapabilities": func() error { _, err := client.Capabilities(t.Context()); return err }(),
-		"WithClientIdentity": identityErr(c, client),
+		"WithIdentity":       identityErr(client),
 		"UpdateClientCaps":   client.UpdateCaps(t.Context(), ClientCaps{Mon: "allow *"}),
 		"ReplaceClientKey":   func() error { _, err := client.ReplaceKey(t.Context()); return err }(),
 		"RevokeClient":       func() error { _, err := client.Revoke(t.Context()); return err }(),
@@ -187,7 +187,7 @@ func TestRevokeClientSettlesFailures(t *testing.T) {
 				t.Fatalf("the restoration returned %v", err)
 			}
 			if !restored {
-				if identityErr(c, client) == nil {
+				if identityErr(client) == nil {
 					t.Fatal("the descriptor works before the restoration was confirmed")
 				}
 				if err := revocation.Restore(t.Context()); err != nil {

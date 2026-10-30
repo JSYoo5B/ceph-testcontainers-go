@@ -24,7 +24,7 @@ type SubvolumeAuthorizationConfig struct {
 }
 
 // SubvolumeAuthorization describes an owned native volumes grant. Client
-// provides credentials for WithClientIdentity and independent Linux clients.
+// provides credentials for ClientConfig.WithIdentity and independent Linux clients.
 // Exported fields are descriptions; changing them cannot redirect mutations.
 // Copies share grant/deauthorization state. The namespace cap covers the entire
 // actual namespace, which may be shared by clones inheriting a source layout.

@@ -292,7 +292,7 @@ func testRBDNamespaceBinding(t *testing.T, host bool) {
 	if receiver.GetContainerID() != cid || restarted[0].Daemons["receiver"].InstanceID == instance {
 		t.Fatal("shared same-CID restart did not create fresh native instance")
 	}
-	if err := owner.RemoveDaemon(ctx, "receiver"); err != nil {
+	if err := receiver.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for _, view := range views {

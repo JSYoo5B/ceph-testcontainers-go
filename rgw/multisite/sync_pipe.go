@@ -94,9 +94,12 @@ func (f *Fixture) syncPipeConfig(ctx context.Context, master *rgwZoneState, g *S
 		args = append(args, "--priority", strconv.FormatInt(int64(config.Priority), 10))
 	}
 	if config.DestinationOwner != nil {
-		info, err := f.syncOrdinaryPrincipal(ctx, g, config.DestinationOwner)
+		info, err := f.syncOwnedPrincipal(ctx, g, config.DestinationOwner)
 		if err != nil {
 			return nil, nil, err
+		}
+		if info.AccountID != "" || (info.Type != "" && info.Type != "rgw") {
+			return nil, nil, multisiteInvalid(errors.New("RGW owner translation requires a confirmed ordinary user; account owner translation is unproven"))
 		}
 		if err := checkSyncPrincipalTenants(g.scope, config, info.Tenant); err != nil {
 			return nil, nil, err
@@ -191,38 +194,28 @@ func (f *Fixture) syncSelectedBucket(ctx context.Context, master *rgwZoneState, 
 	return id, info, err
 }
 
-func (f *Fixture) syncOrdinaryPrincipal(ctx context.Context, g *SyncGroup, user *rgw.User) (rgw.UserInfo, error) {
-	info, err := f.syncOwnedPrincipal(ctx, g, user)
-	if err != nil {
-		return rgw.UserInfo{}, err
+func (f *Fixture) syncOwnedPrincipal(ctx context.Context, g *SyncGroup, user *rgw.User) (rgw.UserInfo, error) {
+	// Info enforces private creation/key identity and actual gateway scope.
+	// A replicated user handle retains its creating cluster's ownership, so
+	// it must be served by an attached owned gateway rather than adopting a
+	// remote UID.
+	unconfirmed := multisiteInvalid(errors.New("RGW sync principal was not confirmed as created through an attached owned gateway"))
+	if !slices.ContainsFunc(f.zoneStates(), func(zone *rgwZoneState) bool {
+		return zone.Zonegroup == g.scope.Zonegroup && zone.Gateway != nil && user.ServedBy(zone.Gateway)
+	}) {
+		return rgw.UserInfo{}, unconfirmed
 	}
-	if info.AccountID != "" || (info.Type != "" && info.Type != "rgw") {
-		return rgw.UserInfo{}, multisiteInvalid(errors.New("RGW owner translation requires a confirmed ordinary user; account owner translation is unproven"))
+	info, err := user.Info(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return rgw.UserInfo{}, ctx.Err()
+		}
+		return rgw.UserInfo{}, unconfirmed
+	}
+	if info.ID != user.ID() || info.Namespace != "" || info.Admin || info.System {
+		return rgw.UserInfo{}, multisiteInvalid(errors.New("RGW sync principal requires a confirmed local user without global admin or system permissions"))
 	}
 	return info, nil
-}
-
-func (f *Fixture) syncOwnedPrincipal(ctx context.Context, g *SyncGroup, user *rgw.User) (rgw.UserInfo, error) {
-	// UserInfo enforces private creation/key identity and actual gateway scope.
-	// A replicated user handle retains its creating cluster's ownership, so
-	// inspect through the owning attached gateway rather than adopting a remote UID.
-	for _, zone := range f.zoneStates() {
-		if zone.Zonegroup != g.scope.Zonegroup || zone.Gateway == nil {
-			continue
-		}
-		info, err := zone.Gateway.UserInfo(ctx, user)
-		if err != nil {
-			if ctx.Err() != nil {
-				return rgw.UserInfo{}, ctx.Err()
-			}
-			continue
-		}
-		if info.ID != user.ID() || info.Namespace != "" || info.Admin || info.System {
-			return rgw.UserInfo{}, multisiteInvalid(errors.New("RGW sync principal requires a confirmed local user without global admin or system permissions"))
-		}
-		return info, nil
-	}
-	return rgw.UserInfo{}, multisiteInvalid(errors.New("RGW sync principal was not confirmed as created through an attached owned gateway"))
 }
 
 func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, info rgw.UserInfo, source, destination map[string]any) error {
@@ -236,7 +229,7 @@ func checkSyncUserModePrincipal(scope SyncPolicyScope, config SyncPipeConfig, in
 		return nil
 	}
 	// Native --uid is the canonical root user's ID, never the account ID.
-	// UserInfo has already checked its private creation account and lifetime.
+	// User.Info has already checked its private creation account and lifetime.
 	if info.Type != "root" || config.DestinationOwner != nil || config.SourceBucket == nil || config.DestinationBucket == nil || source == nil || destination == nil || source["owner"] != info.AccountID || destination["owner"] != info.AccountID {
 		return multisiteInvalid(errors.New("RGW account user mode requires its confirmed root, concrete buckets owned by the same account and no owner translation; IAM or cross-account modes are unproven"))
 	}
@@ -262,7 +255,11 @@ func (f *Fixture) syncDestinationClass(ctx context.Context, g *SyncGroup, config
 		if zone == nil || zone.Gateway == nil {
 			return multisiteInvalid(errors.New("RGW destination placement zone is not attached and owned"))
 		}
-		state, err := zone.Gateway.PlacementStatus(ctx, config.DestinationPlacements[name])
+		placement := config.DestinationPlacements[name]
+		if !placement.ServedBy(zone.Gateway) {
+			return multisiteInvalid(errors.New("RGW destination placement is not owned by the destination zone's cluster"))
+		}
+		state, err := placement.Status(ctx)
 		if err != nil {
 			return err
 		}

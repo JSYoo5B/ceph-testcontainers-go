@@ -24,7 +24,7 @@ type BucketSyncPolicyStatus struct {
 	Imported                                              bool
 }
 
-// WaitBucketSyncPolicyReady waits up to four minutes, bounded by ctx including
+// WaitBucketPolicyReady waits up to four minutes, bounded by ctx including
 // mutex queue time, for an unchanged owned bucket group's metadata to import
 // into an explicit attached destination selected by its pipes. It checks the
 // exact committed period, source-scope group snapshot, and all referenced
@@ -36,9 +36,10 @@ type BucketSyncPolicyStatus struct {
 // checkpoints, payloads or permissions, or replay objects written before the
 // policy was imported. It does not pull periods, restart gateways or mutate
 // replication state. Use it after creating pipes and before selected writes.
-func (f *Fixture) WaitBucketSyncPolicyReady(ctx context.Context, g *SyncGroup, destinationZone string) (BucketSyncPolicyStatus, error) {
-	if f == nil {
-		return BucketSyncPolicyStatus{}, errors.New("RGW multisite fixture is required")
+func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone string) (BucketSyncPolicyStatus, error) {
+	f, err := g.fixture()
+	if err != nil {
+		return BucketSyncPolicyStatus{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()

@@ -212,7 +212,7 @@ example: `rgw.Run(ctx, ceph.DefaultImage)`.
   client, cephfs, rbd-aux and rgw roles.
 - A gateway image must contain `radosgw` and `radosgw-admin`, because
   `Gateway.Admin` runs inside the gateway container. Multisite setup clients and
-  the `SourceAdmin`/`DestinationAdmin`/`ZoneAdmin` commands use the control
+  the `ZoneAdmin` command uses the control
   image of each cluster.
 - Ceph Squid works with `quay.io/ceph/ceph:v19.2.5`. Use 19.2.5 rather than
   19.2.6 for multisite (see [Ceph Squid](#ceph-squid-192x)).
@@ -463,17 +463,22 @@ Contract:
 - An existing ID is rejected; its keys and policy are not changed.
 - A non-nil handle returned with an error records an attempted or partial
   creation. If the generated keys were confirmed (for example, only the
-  capability step failed), `UserInfo` and `RemoveUser` still work with it.
+  capability step failed), `User.Info` and `User.Remove` still work with it.
 - If the creation response was lost or malformed, ownership cannot be
   confirmed. Inspect the user with `Admin` or discard the cluster; do not retry
   the same ID blindly.
-- Users remain in Ceph when the gateway that created them is removed. Another
-  gateway in the same zone can manage them.
+- Users remain in Ceph when the gateway that created them is removed. A handle
+  runs its operations through the first running registered gateway, by name,
+  in the scope of the gateway that created it, so another gateway in the same
+  zone keeps serving it. A stopped, paused or restarting gateway, or one whose
+  startup failed, is skipped; the choice is made before any command, so a
+  mutation is never replayed on another gateway. With no gateway in the scope
+  that accepts commands the call fails before reaching Ceph.
 
-#### UserInfo
+#### User.Info
 
 ```golang
-func (g *Gateway) UserInfo(ctx context.Context, user *User) (UserInfo, error)
+func (u *User) Info(ctx context.Context) (UserInfo, error)
 ```
 
 Reads the user's current policy: quotas, Admin Ops capabilities, suspension,
@@ -483,20 +488,20 @@ verifies that the key created by the fixture, the original user type and the
 original account association are still present; for an account root it also
 checks that the account is the one created by the fixture.
 
-#### SuspendUser
+#### User.Suspend
 
 ```golang
-func (g *Gateway) SuspendUser(ctx context.Context, user *User, suspended bool) error
+func (u *User) Suspend(ctx context.Context, suspended bool) error
 ```
 
 Disables (`true`) or re-enables (`false`) S3 access for the user and reads back
 the native state. Gateway metadata caches can delay the HTTP effect, so poll
 with new requests when you test suspension or re-enablement.
 
-#### RemoveUser
+#### User.Remove
 
 ```golang
-func (g *Gateway) RemoveUser(ctx context.Context, user *User) error
+func (u *User) Remove(ctx context.Context) error
 ```
 
 Removes a user created by the fixture without purging buckets or objects.
@@ -529,10 +534,10 @@ the account is owned only when its creation response and native metadata
 version were confirmed. Inspect uncertain results with `Admin` or discard the
 cluster. No existing users are migrated into the account.
 
-#### CreateAccountRootUser
+#### Account.CreateRootUser
 
 ```golang
-func (g *Gateway) CreateAccountRootUser(ctx context.Context, account *Account, config UserConfig) (*User, error)
+func (a *Account) CreateRootUser(ctx context.Context, config UserConfig) (*User, error)
 ```
 
 Creates a fresh root user inside an account created by the fixture. An empty
@@ -548,22 +553,22 @@ account, err := gateway.CreateAccount(ctx, rgw.AccountConfig{Name: "team-a"})
 if err != nil {
 	t.Fatal(err)
 }
-root, err := gateway.CreateAccountRootUser(ctx, account, rgw.UserConfig{ID: "team-a-root"})
+root, err := account.CreateRootUser(ctx, rgw.UserConfig{ID: "team-a-root"})
 ```
 
-#### AccountInfo
+#### Account.Info
 
 ```golang
-func (g *Gateway) AccountInfo(ctx context.Context, account *Account) (AccountInfo, error)
+func (a *Account) Info(ctx context.Context) (AccountInfo, error)
 ```
 
 Reads the account's native limits and quotas (see
 [`AccountInfo`](#accountinfo-type)).
 
-#### RemoveAccount
+#### Account.Remove
 
 ```golang
-func (g *Gateway) RemoveAccount(ctx context.Context, account *Account) error
+func (a *Account) Remove(ctx context.Context) error
 ```
 
 Removes an empty account created by the fixture, without purging data. Ceph
@@ -580,38 +585,38 @@ depends on native statistics and caches, so a write right after a quota change,
 or right after the quota is reached, may still be accepted. Poll with new
 writes when you test rejection.
 
-#### SetUserQuota
+#### User.SetQuota
 
 ```golang
-func (g *Gateway) SetUserQuota(ctx context.Context, user *User, quota Quota) error
+func (u *User) SetQuota(ctx context.Context, quota Quota) error
 ```
 
 Replaces the aggregate quota of an ordinary user (all of its buckets together),
 including the enabled state. Users that belong to an account are rejected; use
-`SetAccountQuota` for them. If a later native command fails, an earlier part of
-the change may already be stored: `UserInfo` reads the actual state and the
+`Account.SetQuota` for them. If a later native command fails, an earlier part of
+the change may already be stored: `User.Info` reads the actual state and the
 same request can safely be retried.
 
 ```golang
-err := gateway.SetUserQuota(ctx, user, rgw.Quota{
+err := user.SetQuota(ctx, rgw.Quota{
 	Enabled: true, MaxSizeBytes: 64 << 20, MaxObjects: 1000,
 })
 ```
 
-#### SetBucketQuota
+#### User.SetBucketQuota
 
 ```golang
-func (g *Gateway) SetBucketQuota(ctx context.Context, user *User, quota Quota) error
+func (u *User) SetBucketQuota(ctx context.Context, quota Quota) error
 ```
 
 Sets the per-bucket quota of an ordinary user: the limits apply to each bucket
 the user owns, individually. To limit one named bucket only, use `Admin` (see
 [Bucket quota and resharding](#bucket-quota-and-resharding)).
 
-#### SetAccountQuota
+#### Account.SetQuota
 
 ```golang
-func (g *Gateway) SetAccountQuota(ctx context.Context, account *Account, quota Quota) error
+func (a *Account) SetQuota(ctx context.Context, quota Quota) error
 ```
 
 Replaces the aggregate quota of an account: one limit across all of its users,
@@ -619,10 +624,10 @@ roles and buckets. Ceph stores account quota sizes in KiB, so `MaxSizeBytes`
 must be `-1`, `0` or a positive multiple of 1024. The readback confirms the
 stored policy, not cache enforcement.
 
-#### SetAccountBucketQuota
+#### Account.SetBucketQuota
 
 ```golang
-func (g *Gateway) SetAccountBucketQuota(ctx context.Context, account *Account, quota Quota) error
+func (a *Account) SetBucketQuota(ctx context.Context, quota Quota) error
 ```
 
 Sets the individual bucket quota for every bucket owned by the account,
@@ -630,10 +635,10 @@ regardless of which account identity created the bucket.
 
 ### Container Methods: Storage usage
 
-#### UserUsage
+#### User.Usage
 
 ```golang
-func (g *Gateway) UserUsage(ctx context.Context, user *User) (UserUsage, error)
+func (u *User) Usage(ctx context.Context) (UserUsage, error)
 ```
 
 Reads the current native storage counters of the user's effective owner (see
@@ -644,7 +649,7 @@ account (all users, roles and buckets), not only the objects written by that
 root user.
 
 ```golang
-usage, err := gateway.UserUsage(ctx, user)
+usage, err := user.Usage(ctx)
 if err != nil {
 	t.Fatal(err)
 }
@@ -653,7 +658,7 @@ if usage.Scope != "user" || usage.NumObjects != 4 {
 }
 ```
 
-Native statistics update asynchronously. `UserUsage` does not run
+Native statistics update asynchronously. `User.Usage` does not run
 `--sync-stats`, reset counters or flush caches, so poll until the expected
 values appear. If a test needs an explicit synchronisation step, run
 `gateway.Admin(ctx, "user", "stats", "--uid", user.ID(), "--sync-stats")` as a
@@ -707,16 +712,27 @@ Activates a confirmed new target.
 It never changes defaults, deletes resources or rolls back a partial failure.
 After an uncertain restart or commit, check the native state before retrying.
 
-#### PlacementStatus
+#### Placement.Status
 
 ```golang
-func (g *Gateway) PlacementStatus(ctx context.Context, placement *Placement) (PlacementState, error)
+func (p *Placement) Status(ctx context.Context) (PlacementState, error)
 ```
 
 Reads the exact native policy of a created or partial target (see
 [`PlacementState`](#placementstate)). Incomplete or changed mappings return an
 error; use `Admin` (`zonegroup get`, `zone get`) for detailed inspection. It
 does not claim that a running gateway has loaded the configuration.
+
+#### Placement.ServedBy
+
+```golang
+func (p *Placement) ServedBy(g *Gateway) bool
+```
+
+Reports whether `g` belongs to the cluster that owns the placement, that is,
+whether the placement's pools live where `g` runs. Matching `RealmID`,
+`ZonegroupID` and `ZoneID` do not prove this, because a period can be imported
+into another storage cluster.
 
 #### ReloadPlacement
 
@@ -730,10 +746,10 @@ locally stored committed period must contain the exact target and zone, with
 unchanged pool IDs and class mappings. It never publishes, pulls or rewrites
 the realm. Call `S3Endpoint` again afterwards.
 
-#### SetUserPlacement
+#### User.SetPlacement
 
 ```golang
-func (g *Gateway) SetUserPlacement(ctx context.Context, user *User, placement *Placement, config UserPlacementConfig) error
+func (u *User) SetPlacement(ctx context.Context, placement *Placement, config UserPlacementConfig) error
 ```
 
 Makes a confirmed target the user's default for new buckets and selects the
@@ -742,7 +758,7 @@ Optionally replaces the user's placement tags (see
 [`UserPlacementConfig`](#userplacementconfig)).
 
 ```golang
-err := gateway.SetUserPlacement(ctx, user, placement, rgw.UserPlacementConfig{
+err := user.SetPlacement(ctx, placement, rgw.UserPlacementConfig{
 	StorageClass: "STANDARD_IA",
 	Tags:         []string{"app-tier"},
 })
@@ -756,7 +772,7 @@ err := gateway.SetUserPlacement(ctx, user, placement, rgw.UserPlacementConfig{
   and class mappings are unchanged, and verifies that unrelated user policy and
   keys did not change.
 - Metadata caches can delay the effect on new S3 requests.
-- A failed readback may follow a stored change. `UserInfo` shows the actual
+- A failed readback may follow a stored change. `User.Info` shows the actual
   state, and the same request can be retried.
 
 ### Start, Remove and Gateways
@@ -862,21 +878,25 @@ configured certificate. Formatting a `TLSConfig` never prints key bytes.
 
 #### User
 
-A handle to an identity created by `CreateUser` or `CreateAccountRootUser`.
+A handle to an identity created by `CreateUser` or `Account.CreateRootUser`.
 Copies share state. Formatting a `User` never prints secrets.
 
 ```golang
 func (u *User) ID() string
 func (u *User) Credentials() (accessKey, secretKey string, err error)
+func (u *User) ServedBy(g *Gateway) bool
 ```
 
 `ID` returns the canonical native ID: `tenant$id` for a tenant user, the plain
 ID otherwise. `Credentials` returns copies of the generated S3 keys; it returns
-an error when the keys of a partial creation were never confirmed.
+an error when the keys of a partial creation were never confirmed. `ServedBy`
+reports whether a gateway belongs to the user's cluster and serves the scope of
+the gateway that created the user, that is, whether it can run the user's
+operations.
 
 #### UserInfo type
 
-`UserInfo` is the snapshot returned by `Gateway.UserInfo`.
+`UserInfo` is the snapshot returned by `User.Info`.
 
 | Field | Meaning |
 | --- | --- |
@@ -921,7 +941,9 @@ an error when the keys of a partial creation were never confirmed.
 A handle to an account created by `CreateAccount`. `ID()` returns the account
 ID. The handle records the account's native metadata version, so a deleted and
 recreated account with the same ID is not mistaken for the original. Copies
-share lifecycle state. Removing a gateway does not remove the account.
+share lifecycle state. Removing a gateway does not remove the account: its
+operations run through the first running registered gateway, by name, in the
+scope of the gateway that created it.
 
 #### AccountInfo type
 
@@ -1158,19 +1180,19 @@ beta, err := gateway.CreateUser(ctx, rgw.UserConfig{ID: "app", Tenant: "beta"})
 
 // An account with two root users and a shared quota.
 account, err := gateway.CreateAccount(ctx, rgw.AccountConfig{Name: "team"})
-rootA, err := gateway.CreateAccountRootUser(ctx, account, rgw.UserConfig{ID: "root-a"})
-rootB, err := gateway.CreateAccountRootUser(ctx, account, rgw.UserConfig{ID: "root-b"})
-err = gateway.SetAccountQuota(ctx, account, rgw.Quota{
+rootA, err := account.CreateRootUser(ctx, rgw.UserConfig{ID: "root-a"})
+rootB, err := account.CreateRootUser(ctx, rgw.UserConfig{ID: "root-b"})
+err = account.SetQuota(ctx, rgw.Quota{
 	Enabled: true, MaxSizeBytes: 1 << 20, MaxObjects: -1,
 })
 // Objects written by rootA count against the same quota as rootB's.
-usage, err := gateway.UserUsage(ctx, rootB) // Scope "account": includes rootA's objects
+usage, err := rootB.Usage(ctx) // Scope "account": includes rootA's objects
 
 // Clean up in dependency order: objects and buckets through S3, then users,
 // then the account.
-err = gateway.RemoveUser(ctx, rootA)
-err = gateway.RemoveUser(ctx, rootB)
-err = gateway.RemoveAccount(ctx, account)
+err = rootA.Remove(ctx)
+err = rootB.Remove(ctx)
+err = account.Remove(ctx)
 ```
 
 ### Make lifecycle tests fast
@@ -1641,7 +1663,7 @@ resp, err := adminRequest(ctx, http.MethodPost, endpoint, path(limit), gateway.R
 
 ### Bucket quota and resharding
 
-`SetBucketQuota` applies to every bucket of a user. To limit one named bucket,
+`User.SetBucketQuota` applies to every bucket of a user. To limit one named bucket,
 and to reshard a bucket on demand, use `Admin`:
 
 ```golang
@@ -1804,7 +1826,7 @@ To confirm where the data went, list the data pool:
 RGW object names in the data pool do not always contain the S3 key literally.
 
 With `Tags` on the target, only users with a matching placement tag can create
-buckets in it; grant the tag and a default with `SetUserPlacement`. Lifecycle
+buckets in it; grant the tag and a default with `User.SetPlacement`. Lifecycle
 transitions between classes are configured by the S3 client.
 
 In a realm, every zone needs its own mapping before the master publishes:

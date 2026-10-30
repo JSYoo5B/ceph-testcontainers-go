@@ -292,20 +292,8 @@ re-bootstrap or image change happens.
 - `name` is 1 to 63 ASCII letters, digits, `_` or `-`, not starting with `-`, and unique within the link.
 - The customizers given to `Run` apply first, then `opts` for this daemon only.
 - Startup waits up to one minute for the daemon's admin socket.
-- A non-nil result returned with an error (partial startup) is still owned by the link. Remove it with `RemoveDaemon` or let `Terminate` clean it up.
+- A non-nil result returned with an error (partial startup) is still owned by the link. Remove it with `Daemon.Remove` or let `Terminate` clean it up.
 - After `NoInitialDaemons`, the first `AddDaemon` that returns a non-nil daemon becomes the embedded compatibility handle.
-
-#### RemoveDaemon
-
-```golang
-func (m *Mirror) RemoveDaemon(ctx context.Context, name string, opts ...testcontainers.TerminateOption) error
-```
-
-Terminates an owned daemon and removes it from the link. Removing the last
-daemon pauses replication on purpose while keeping the peer and image state;
-`AddDaemon` resumes it. A failed removal keeps the daemon in the link so you
-can retry. Removing the initial daemon clears the embedded handle; later
-`AddDaemon` calls do not reassign it.
 
 #### Daemons
 
@@ -364,37 +352,6 @@ topology changes or external configuration writers. Refresh your own client
 containers with `cluster.RefreshClientMonitorConfig(ctx, client)` (see
 [`ceph`](../../ceph/README.md)).
 
-#### InterruptPeerLink
-
-```golang
-func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*fault.NetworkInterruption, error)
-```
-
-Disconnects one owned daemon from the source cluster's public bridge network
-while keeping its destination endpoint, so the daemon stays in the destination
-pool's election but cannot read from the source. The daemon keeps running and
-the peer and image policies are unchanged.
-
-```golang
-cut, err := link.InterruptPeerLink(ctx, "a")
-if cut != nil {
-	defer cut.Restore(ctx) // a non-nil handle must be restored, even with an error
-}
-if err != nil {
-	t.Fatal(err)
-}
-// Writes and checkpoints made now do not reach the destination.
-if err := cut.Restore(ctx); err != nil {
-	t.Fatal(err)
-}
-// Observe the catch-up separately (WaitReplayReady plus a data check).
-```
-
-- `Restore` reconnects the original IP address and aliases and can be retried. It does not overwrite an endpoint someone reconnected differently.
-- The link also restores outstanding interruptions during cleanup.
-- Host network mode has no bridge endpoint, so the call is rejected.
-- This disconnects a whole endpoint; it is not a per-peer packet filter. For message delays and drops, see [the fault injection guide](../../docs/guides/fault-injection.md).
-
 #### SourceRBD and DestinationRBD
 
 ```golang
@@ -440,7 +397,7 @@ for the current membership.
 
 `Namespace` is the view returned by `BindNamespace`. It has no
 `Terminate`, no container and no daemon control. Call `AddDaemon`,
-`RemoveDaemon`, `Rebootstrap` and `Terminate` on the owning `Mirror`.
+`Rebootstrap` and `Terminate` on the owning `Mirror`, and `Remove` on a `Daemon`.
 
 #### ImageStatus
 
@@ -464,7 +421,7 @@ func (v *Namespace) WaitReplayReady(ctx context.Context, imageName string) (Imag
 Waits up to four minutes, bounded by `ctx`. The owner's daemon set is pinned at
 the first observation, even when it is empty or the destination image does not
 exist yet; the image's mode and IDs are pinned when first seen. `AddDaemon`,
-`RemoveDaemon` or a replacement during the wait makes it fail; start a new wait
+`Daemon.Remove` or a replacement during the wait makes it fail; start a new wait
 afterwards. Restarting the same daemon container is allowed.
 
 #### ReceiverStatus
@@ -513,6 +470,50 @@ or its socket is unavailable. A running daemon can report no pool replayers
 until Ceph finishes discovery, so look for the pool and peer you expect. Prefer
 `ReceiverStatus` for readiness decisions.
 
+#### Remove
+
+```golang
+func (d *Daemon) Remove(ctx context.Context, opts ...testcontainers.TerminateOption) error
+```
+
+Terminates this daemon and removes it from its link. Removing the last
+daemon pauses replication on purpose while keeping the peer and image state;
+`AddDaemon` resumes it. A failed removal keeps the daemon in the link so you
+can retry. Removing the initial daemon clears the embedded handle; later
+`AddDaemon` calls do not reassign it. A daemon its link no longer lists, or one
+whose link was terminated, is refused.
+
+#### InterruptPeerLink
+
+```golang
+func (d *Daemon) InterruptPeerLink(ctx context.Context) (*fault.NetworkInterruption, error)
+```
+
+Disconnects this owned daemon from the source cluster's public bridge network
+while keeping its destination endpoint, so the daemon stays in the destination
+pool's election but cannot read from the source. The daemon keeps running and
+the peer and image policies are unchanged.
+
+```golang
+cut, err := daemon.InterruptPeerLink(ctx)
+if cut != nil {
+	defer cut.Restore(ctx) // a non-nil handle must be restored, even with an error
+}
+if err != nil {
+	t.Fatal(err)
+}
+// Writes and checkpoints made now do not reach the destination.
+if err := cut.Restore(ctx); err != nil {
+	t.Fatal(err)
+}
+// Observe the catch-up separately (WaitReplayReady plus a data check).
+```
+
+- `Restore` reconnects the original IP address and aliases and can be retried. It does not overwrite an endpoint someone reconnected differently.
+- The link also restores outstanding interruptions during cleanup.
+- Host network mode has no bridge endpoint, so the call is rejected.
+- This disconnects a whole endpoint; it is not a per-peer packet filter. For message delays and drops, see [the fault injection guide](../../docs/guides/fault-injection.md).
+
 #### Terminate
 
 ```golang
@@ -521,7 +522,7 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 
 Removes this daemon's container. A successful removal is remembered, so link
 cleanup does not repeat it; a failed one stays retryable. It does not remove
-the daemon from `Daemons()`; use `Mirror.RemoveDaemon` for that.
+the daemon from `Daemons()`; use `Remove` for that.
 
 ### Mirror status types
 

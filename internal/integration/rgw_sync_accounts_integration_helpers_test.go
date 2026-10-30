@@ -54,13 +54,13 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncFlow(ctx, permission, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
+	if err := permission.CreateFlow(ctx, multisite.SyncFlowConfig{SourceZone: "source", DestinationZone: "destination"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.CreateSyncPipe(ctx, permission, multisite.SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
+	if err := permission.CreatePipe(ctx, multisite.SyncPipeConfig{ID: "permit", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.ApplySyncGroup(ctx, permission); err != nil {
+	if err := permission.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := link.WaitSyncReady(ctx, "destination", "source"); err != nil {
@@ -78,11 +78,11 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := link.Source.CreateAccountRootUser(ctx, account, rgw.UserConfig{ID: "tc-sync-account-root", DisplayName: "tc-sync-account-root"})
+	root, err := account.CreateRootUser(ctx, rgw.UserConfig{ID: "tc-sync-account-root", DisplayName: "tc-sync-account-root"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := link.Source.UserInfo(ctx, root)
+	info, err := root.Info(ctx)
 	if err != nil || info.AccountID != account.ID() || info.Type != "root" || info.Admin || info.System {
 		t.Fatal("native root identity was not confirmed against its creation-owned account")
 	}
@@ -97,7 +97,7 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 		t.Fatal(err)
 	}
 	pipe := multisite.SyncPipeConfig{ID: "same-account-user", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(input, "/")}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(output, "/")}, Prefix: "replica/", User: root}
-	err = link.CreateSyncPipe(ctx, selected, pipe)
+	err = selected.CreatePipe(ctx, pipe)
 	// Ceph 19 drops this pipe from the destination's resolved sources and
 	// replicates nothing, so the fixture refuses it before any change. Any
 	// zone without the capability refuses it.
@@ -157,7 +157,7 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	primary.request(t, ctx, http.MethodPut, input+"/replica/after-policy-clear", payload, http.StatusOK)
 	waitOwnedSyncObject(t, ctx, secondary, output+"/replica/after-policy-clear", http.StatusOK, payload)
 	waitOwnedBucketCheckpoint(t, ctx, link, selected, pipe.ID)
-	if err := link.RemoveSyncGroup(ctx, selected); err != nil {
+	if err := selected.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if got := secondary.request(t, ctx, http.MethodGet, output+"/replica/initial", nil, http.StatusOK); !bytes.Equal(got, payload) {
@@ -165,10 +165,10 @@ func testRGWAccountRootSync(t *testing.T, opts ...testcontainers.ContainerCustom
 	}
 	t.Log("confirmed account-root canonical UID copied same-account buckets; native s3:ReplicateObject Deny blocked exact future key while normal S3 remained healthy, policy removal restored new bytes/checkpoint")
 	testRGWCrossTenantSystemSync(t, ctx, link, sourceEndpoint, destinationEndpoint)
-	if err := link.RemoveSyncGroup(ctx, permission); err != nil {
+	if err := permission.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.ApplySyncGroup(ctx, permission); err != nil {
+	if err := permission.Apply(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -269,7 +269,7 @@ func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *multi
 		t.Fatal(err)
 	}
 	pipe := multisite.SyncPipeConfig{ID: "exact-tenant-instances", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(input, "/"), Tenant: "system_alpha"}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(output, "/"), Tenant: "system_beta"}, Prefix: "system/"}
-	if err := link.CreateSyncPipe(ctx, group, pipe); err != nil {
+	if err := group.CreatePipe(ctx, pipe); err != nil {
 		t.Fatal(err)
 	}
 	// Register after the owned pipe exists: Cleanup runs before the multisite
@@ -281,7 +281,7 @@ func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *multi
 		inspect, stop := context.WithTimeout(context.Background(), time.Minute)
 		defer stop()
 		attempt, cancel := context.WithTimeout(inspect, 20*time.Second)
-		state, err := link.BucketSyncStatus(attempt, group, pipe.ID, "source", "destination")
+		state, err := group.BucketSyncStatus(attempt, pipe.ID, "source", "destination")
 		cancel()
 		t.Logf("cross-tenant bucket diagnostic realm=%s period=%s zonegroup=%s realm_epoch=%d source_zone=%s/%s source_bucket=%s/%s:%s destination_zone=%s/%s destination_bucket=%s/%s:%s state=%s shards=%d behind_shards=%d caught_up=%t status_error=%s", state.RealmID, state.PeriodID, state.ZonegroupID, state.RealmEpoch, state.SourceZone, state.SourceZoneID, state.SourceBucket.Tenant, state.SourceBucket.Name, state.SourceBucket.ID, state.Zone, state.ZoneID, state.DestinationBucket.Tenant, state.DestinationBucket.Name, state.DestinationBucket.ID, state.State, state.Shards, state.BehindShards, state.CaughtUp, rgwSyncDiagnosticError(err))
 		rgwCrossTenantObjectStatDiagnostic(t, inspect, link.Destination, state.DestinationBucket)
@@ -302,7 +302,7 @@ func testRGWCrossTenantSystemSync(t *testing.T, ctx context.Context, link *multi
 	secondaryBeta.request(t, ctx, http.MethodHead, output, nil, http.StatusOK)
 	primaryAlpha.request(t, ctx, http.MethodPut, input+"/private/excluded", payload, http.StatusOK)
 	requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{secondaryBeta, output + "/private/excluded"})
-	if err := link.RemoveSyncGroup(ctx, group); err != nil {
+	if err := group.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if got := secondaryAlpha.request(t, ctx, http.MethodGet, "/system_beta:tc-system-tenant-output/system/selected", nil, http.StatusOK); !bytes.Equal(got, payload) {

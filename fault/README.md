@@ -6,7 +6,7 @@ fixture lifetime. `NetworkPlane` and its constants remain in `ceph`.
 
 ## Ownership and scope
 
-`rbdmirror.Mirror.InterruptPeerLink`, `cephfsmirror.Mirror.InterruptPeerLink` and
+`rbdmirror.Daemon.InterruptPeerLink`, `cephfsmirror.Daemon.InterruptPeerLink` and
 `multisite.Fixture.InterruptZoneLink` return `*fault.NetworkInterruption`.
 `multisite.Fixture.ApplyZoneLinkProfile` takes `fault.NetworkProfile` and returns
 `*fault.NetworkProfileLease`. These service fixtures register cleanup.

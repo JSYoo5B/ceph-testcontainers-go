@@ -102,11 +102,10 @@ func testMultiClusterRGWMultisite(t *testing.T, options ...testcontainers.Contai
 	destinationS3.request(t, ctx, http.MethodDelete, bucket+"/reverse", nil, http.StatusNoContent)
 	waitMultisiteObject(t, ctx, sourceS3, bucket+"/reverse", http.StatusNotFound, nil)
 	t.Log("secondary -> primary: object creation and deletion replicated in active-active mode")
-	if _, err := multisite.SourceAdmin(ctx, "sync", "status"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := multisite.DestinationAdmin(ctx, "sync", "status"); err != nil {
-		t.Fatal(err)
+	for _, zone := range multisite.Zones() {
+		if _, err := multisite.ZoneAdmin(ctx, zone.Name, "sync", "status"); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	stopTimeout := 5 * time.Second

@@ -44,9 +44,10 @@ type rgwSyncBucketCheckpoint struct {
 // require a bucket-scoped group. Concrete bucket instance IDs remain fixed.
 // A caught-up checkpoint does not prove filter semantics or copied payloads;
 // applications should quiesce writes and verify their S3 bytes separately.
-func (f *Fixture) BucketSyncStatus(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
-	if f == nil {
-		return BucketSyncStatus{}, errors.New("RGW multisite fixture is required")
+func (g *SyncGroup) BucketSyncStatus(ctx context.Context, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
+	f, err := g.fixture()
+	if err != nil {
+		return BucketSyncStatus{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -67,9 +68,10 @@ func (f *Fixture) BucketSyncStatus(ctx context.Context, g *SyncGroup, pipeID, so
 // It changes no sync state, leases, permissions or object data. When the wait
 // ends without readiness, the returned status is the last one that was read,
 // so its lag survives a later attempt that failed or was canceled.
-func (f *Fixture) WaitBucketSyncReady(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
-	if f == nil {
-		return BucketSyncStatus{}, errors.New("RGW multisite fixture is required")
+func (g *SyncGroup) WaitBucketSyncReady(ctx context.Context, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
+	f, err := g.fixture()
+	if err != nil {
+		return BucketSyncStatus{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()

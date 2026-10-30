@@ -42,7 +42,7 @@ func (f *rgwSyncTranslationFixture) priority_tags_owner_class(t *testing.T) {
 		low.Priority = 1
 		low.Tags = []multisite.SyncObjectTag{{Key: "color", Value: "blue"}}
 		low.DestinationStorageClass = "STANDARD"
-		if err := link.CreateSyncPipe(ctx, selected, low); err != nil {
+		if err := selected.CreatePipe(ctx, low); err != nil {
 			t.Fatal(err)
 		}
 		high := base
@@ -50,7 +50,7 @@ func (f *rgwSyncTranslationFixture) priority_tags_owner_class(t *testing.T) {
 		high.Priority = 7
 		high.Tags = []multisite.SyncObjectTag{{Key: "color", Value: "red"}, {Key: "color", Value: "blue"}}
 		high.DestinationStorageClass = "STANDARD_IA"
-		if err := link.CreateSyncPipe(ctx, selected, high); err != nil {
+		if err := selected.CreatePipe(ctx, high); err != nil {
 			t.Fatal(err)
 		}
 		waitRGWTranslationPolicyReady(t, ctx, link, selected)
@@ -80,7 +80,7 @@ func (f *rgwSyncTranslationFixture) priority_tags_owner_class(t *testing.T) {
 		requireRGWObjectsAbsent(t, ctx, 35*time.Second, rgwAbsentObject{destB, output + "/published/green"}, rgwAbsentObject{destB, output + "/published/untagged"}, rgwAbsentObject{destB, output + "/private/blue"}, rgwAbsentObject{destB, output + "/published/from-other-bucket"}, rgwAbsentObject{b, output + "/published/reverse"})
 		// Remove only the high-priority pipe. The matching lower-priority pipe
 		// now selects STANDARD for a new write and preserves previous IA objects.
-		if err := link.RemoveSyncPipe(ctx, selected, high.ID); err != nil {
+		if err := selected.RemovePipe(ctx, high.ID); err != nil {
 			t.Fatal(err)
 		}
 		waitRGWTranslationPolicyReady(t, ctx, link, selected)
@@ -93,7 +93,7 @@ func (f *rgwSyncTranslationFixture) priority_tags_owner_class(t *testing.T) {
 		if got := destB.request(t, ctx, http.MethodGet, output+"/published/blue", nil, http.StatusOK); !bytes.Equal(got, payload) {
 			t.Fatal("priority removal changed previous replica")
 		}
-		if err := link.RemoveSyncGroup(ctx, selected); err != nil {
+		if err := selected.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 		t.Log("captured cross-bucket instances; prefix AND (blue OR red), owner translation, priority winner and fallback classes verified with S3 bytes and exact native data pools")
@@ -120,7 +120,7 @@ func (f *rgwSyncTranslationFixture) ordinary_user_denial_grant(t *testing.T) {
 		}
 		cleanupRGWTranslationSyncGroup(t, link, modeGroup, "authorized-principal")
 		modePipe := multisite.SyncPipeConfig{ID: "authorized-principal", SourceZones: []string{"source"}, DestinationZones: []string{"destination"}, SourceBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(modeInput, "/")}, DestinationBucket: &multisite.SyncBucketSelector{Name: strings.TrimPrefix(modeOutput, "/")}, Prefix: "auth/", User: ownerB, DestinationOwner: ownerB}
-		if err := link.CreateSyncPipe(ctx, modeGroup, modePipe); err != nil {
+		if err := modeGroup.CreatePipe(ctx, modePipe); err != nil {
 			t.Fatal(err)
 		}
 		// Permit the native replication GET's mandatory ACL check while still
@@ -152,7 +152,7 @@ func (f *rgwSyncTranslationFixture) ordinary_user_denial_grant(t *testing.T) {
 		a.request(t, ctx, http.MethodPut, modeInput+"/auth/after-grant", modePayload, http.StatusOK)
 		waitOwnedSyncObject(t, ctx, destB, modeOutput+"/auth/after-grant", http.StatusOK, modePayload)
 		waitOwnedBucketCheckpoint(t, ctx, link, modeGroup, modePipe.ID)
-		if err := link.RemoveSyncGroup(ctx, modeGroup); err != nil {
+		if err := modeGroup.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if got := destB.request(t, ctx, http.MethodGet, modeOutput+"/auth/after-grant", nil, http.StatusOK); !bytes.Equal(got, modePayload) {

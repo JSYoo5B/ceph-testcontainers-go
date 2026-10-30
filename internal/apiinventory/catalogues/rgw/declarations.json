@@ -2,12 +2,20 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw",
-  "count": 60,
+  "count": 62,
   "entries": [
     {
       "current": "rgw.Account",
       "kind": "type",
       "proposed": "rgw.Account",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Account.CreateRootUser",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config UserConfig) (*User, error)",
+      "receiver": "*Account",
+      "proposed": "rgw.Account.CreateRootUser",
       "decision": "baseline"
     },
     {
@@ -24,6 +32,38 @@
       "signature": "func() string",
       "receiver": "*Account",
       "proposed": "rgw.Account.ID",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Account.Info",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (AccountInfo, error)",
+      "receiver": "*Account",
+      "proposed": "rgw.Account.Info",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Account.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*Account",
+      "proposed": "rgw.Account.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Account.SetBucketQuota",
+      "kind": "method",
+      "signature": "func(ctx context.Context, quota Quota) error",
+      "receiver": "*Account",
+      "proposed": "rgw.Account.SetBucketQuota",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Account.SetQuota",
+      "kind": "method",
+      "signature": "func(ctx context.Context, quota Quota) error",
+      "receiver": "*Account",
+      "proposed": "rgw.Account.SetQuota",
       "decision": "baseline"
     },
     {
@@ -87,14 +127,6 @@
       "decision": "baseline"
     },
     {
-      "current": "rgw.Gateway.AccountInfo",
-      "kind": "method",
-      "signature": "func(ctx context.Context, a *Account) (AccountInfo, error)",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.AccountInfo",
-      "decision": "baseline"
-    },
-    {
       "current": "rgw.Gateway.Admin",
       "kind": "method",
       "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
@@ -116,14 +148,6 @@
       "signature": "func(ctx context.Context, config AccountConfig) (*Account, error)",
       "receiver": "*Gateway",
       "proposed": "rgw.Gateway.CreateAccount",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Gateway.CreateAccountRootUser",
-      "kind": "method",
-      "signature": "func(ctx context.Context, a *Account, config UserConfig) (*User, error)",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.CreateAccountRootUser",
       "decision": "baseline"
     },
     {
@@ -159,14 +183,6 @@
       "decision": "baseline"
     },
     {
-      "current": "rgw.Gateway.PlacementStatus",
-      "kind": "method",
-      "signature": "func(ctx context.Context, p *Placement) (PlacementState, error)",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.PlacementStatus",
-      "decision": "baseline"
-    },
-    {
       "current": "rgw.Gateway.ReloadPlacement",
       "kind": "method",
       "signature": "func(ctx context.Context, p *Placement) error",
@@ -180,22 +196,6 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*Gateway",
       "proposed": "rgw.Gateway.Remove",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Gateway.RemoveAccount",
-      "kind": "method",
-      "signature": "func(ctx context.Context, a *Account) error",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.RemoveAccount",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Gateway.RemoveUser",
-      "kind": "method",
-      "signature": "func(ctx context.Context, user *User) error",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.RemoveUser",
       "decision": "baseline"
     },
     {
@@ -215,75 +215,11 @@
       "decision": "baseline"
     },
     {
-      "current": "rgw.Gateway.SetAccountBucketQuota",
-      "kind": "method",
-      "signature": "func(ctx context.Context, a *Account, quota Quota) error",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.SetAccountBucketQuota",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Gateway.SetAccountQuota",
-      "kind": "method",
-      "signature": "func(ctx context.Context, a *Account, quota Quota) error",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.SetAccountQuota",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Gateway.SetBucketQuota",
-      "kind": "method",
-      "signature": "func(ctx context.Context, user *User, quota Quota) error",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.SetBucketQuota",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Gateway.SetUserPlacement",
-      "kind": "method",
-      "signature": "func(ctx context.Context, user *User, p *Placement, config UserPlacementConfig) error",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.SetUserPlacement",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Gateway.SetUserQuota",
-      "kind": "method",
-      "signature": "func(ctx context.Context, user *User, quota Quota) error",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.SetUserQuota",
-      "decision": "baseline"
-    },
-    {
       "current": "rgw.Gateway.String",
       "kind": "method",
       "signature": "func() string",
       "receiver": "Gateway",
       "proposed": "rgw.Gateway.String",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Gateway.SuspendUser",
-      "kind": "method",
-      "signature": "func(ctx context.Context, user *User, suspended bool) error",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.SuspendUser",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Gateway.UserInfo",
-      "kind": "method",
-      "signature": "func(ctx context.Context, user *User) (UserInfo, error)",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.UserInfo",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw.Gateway.UserUsage",
-      "kind": "method",
-      "signature": "func(ctx context.Context, user *User) (UserUsage, error)",
-      "receiver": "*Gateway",
-      "proposed": "rgw.Gateway.UserUsage",
       "decision": "baseline"
     },
     {
@@ -305,6 +241,22 @@
       "signature": "func() string",
       "receiver": "Placement",
       "proposed": "rgw.Placement.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Placement.ServedBy",
+      "kind": "method",
+      "signature": "func(g *Gateway) bool",
+      "receiver": "*Placement",
+      "proposed": "rgw.Placement.ServedBy",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.Placement.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (PlacementState, error)",
+      "receiver": "*Placement",
+      "proposed": "rgw.Placement.Status",
       "decision": "baseline"
     },
     {
@@ -406,11 +358,75 @@
       "decision": "baseline"
     },
     {
+      "current": "rgw.User.Info",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (UserInfo, error)",
+      "receiver": "*User",
+      "proposed": "rgw.User.Info",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*User",
+      "proposed": "rgw.User.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.ServedBy",
+      "kind": "method",
+      "signature": "func(g *Gateway) bool",
+      "receiver": "*User",
+      "proposed": "rgw.User.ServedBy",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.SetBucketQuota",
+      "kind": "method",
+      "signature": "func(ctx context.Context, quota Quota) error",
+      "receiver": "*User",
+      "proposed": "rgw.User.SetBucketQuota",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.SetPlacement",
+      "kind": "method",
+      "signature": "func(ctx context.Context, p *Placement, config UserPlacementConfig) error",
+      "receiver": "*User",
+      "proposed": "rgw.User.SetPlacement",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.SetQuota",
+      "kind": "method",
+      "signature": "func(ctx context.Context, quota Quota) error",
+      "receiver": "*User",
+      "proposed": "rgw.User.SetQuota",
+      "decision": "baseline"
+    },
+    {
       "current": "rgw.User.String",
       "kind": "method",
       "signature": "func() string",
       "receiver": "User",
       "proposed": "rgw.User.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.Suspend",
+      "kind": "method",
+      "signature": "func(ctx context.Context, suspended bool) error",
+      "receiver": "*User",
+      "proposed": "rgw.User.Suspend",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw.User.Usage",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (UserUsage, error)",
+      "receiver": "*User",
+      "proposed": "rgw.User.Usage",
       "decision": "baseline"
     },
     {

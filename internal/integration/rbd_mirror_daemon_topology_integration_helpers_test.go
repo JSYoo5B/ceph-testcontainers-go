@@ -114,7 +114,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 
 	// Delete the elected process and replace it with a new named process. This
 	// does not rebootstrap the pool or modify the existing mirrored image.
-	if err := link.RemoveDaemon(ctx, leader.DaemonName); err != nil {
+	if err := leader.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	remaining := link.Daemons()
@@ -153,7 +153,7 @@ func testMultiClusterRBDMirrorDaemonTopology(t *testing.T, opts ...testcontainer
 	// recreating any peer, pool or image. Existing replicas stay independently
 	// readable while no mirror process exists.
 	for _, daemon := range link.Daemons() {
-		if err := link.RemoveDaemon(ctx, daemon.DaemonName); err != nil {
+		if err := daemon.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

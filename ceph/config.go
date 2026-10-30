@@ -29,17 +29,6 @@ type ConfigEntry struct {
 	CanUpdateAtRuntime bool   `json:"can_update_at_runtime"`
 }
 
-// observedConfiguration implements Observer.Configuration. It takes the topology lock and refuses
-// a cluster without pool policy readiness before it reads.
-func (c *Container) observedConfiguration(ctx context.Context) ([]ConfigEntry, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return nil, err
-	}
-	return c.configuration(ctx)
-}
-
 var configNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,127}(/[a-z][a-z0-9_]{0,127})*$`)
 var configMaskKindPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,127}$`)
 var configIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)

@@ -107,14 +107,7 @@ func (fs *Filesystem) scaleColdMDS(parent context.Context, active, standby int, 
 	if err := fs.WaitReady(ctx); err != nil {
 		return err
 	}
-	if err := fs.verifyColdPoolIDs(ctx, cap); err != nil {
-		return err
-	}
-	return ctx.Err()
-}
-
-// Final readiness cannot authorize replacement of an original additional pool.
-func (fs *Filesystem) verifyColdPoolIDs(ctx context.Context, cap *cephFSColdMDS) error {
+	// Final readiness cannot authorize replacement of an original additional pool.
 	if _, err := fs.readColdFSID(ctx, cap); err != nil {
 		return err
 	}
@@ -131,8 +124,10 @@ func (fs *Filesystem) verifyColdPoolIDs(ctx context.Context, cap *cephFSColdMDS)
 			return errors.New("original cold filesystem pool was replaced")
 		}
 	}
-	_, err = fs.readColdFSID(ctx, cap)
-	return err
+	if _, err := fs.readColdFSID(ctx, cap); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (fs *Filesystem) verifyColdMDS(ctx context.Context, cap *cephFSColdMDS) error {

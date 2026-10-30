@@ -254,7 +254,7 @@ func testCephFSOriginalProcessQuiescenceRecovery(t *testing.T, host bool, kind s
 			}
 		}
 		if evidence == "container-removed" {
-			if err := mirror.RemoveDaemon(ctx, daemon.DaemonName); err != nil || len(mirror.Daemons()) != 0 {
+			if err := daemon.Remove(ctx); err != nil || len(mirror.Daemons()) != 0 {
 				t.Fatal("explicit original member removal before recovery acknowledgment", err)
 			}
 		}

@@ -55,11 +55,20 @@ type PlacementConfig struct {
 type Placement struct {
 	Name, RealmID, ZonegroupID, ZoneID, LocationConstraint string
 	owner                                                  *ceph.Container
+	gatewayScope                                           Config
 	scope                                                  rgwPlacementScope
 	config                                                 PlacementConfig
 	poolIDs                                                map[string]int64
 	group, zone, previousPeriod                            map[string]any
 	confirmed                                              bool
+}
+
+// ServedBy reports whether g belongs to the cluster that owns the placement,
+// that is, whether the placement's pools and resources live where g runs. The
+// native realm, zonegroup and zone IDs alone do not show this: a period can be
+// imported into another storage cluster.
+func (p *Placement) ServedBy(g *Gateway) bool {
+	return p != nil && g != nil && p.owner != nil && p.owner == g.owner
 }
 
 // String names the placement target.
@@ -156,7 +165,7 @@ func (g *Gateway) CreatePlacement(ctx context.Context, config PlacementConfig) (
 	if err := g.validateAdminGateway(); err != nil {
 		return nil, err
 	}
-	ctx, cancel := g.adminContext(ctx)
+	ctx, cancel := adminContext(ctx, g.owner)
 	defer cancel()
 	scope, err := g.placementRuntimeScope(ctx)
 	if err != nil {
@@ -197,7 +206,7 @@ func (g *Gateway) CreatePlacement(ctx context.Context, config PlacementConfig) (
 		poolIDs[class.DataPool] = state.ID
 	}
 	p := &Placement{Name: config.Name, RealmID: scope.realmID, ZonegroupID: scope.groupID, ZoneID: scope.zoneID,
-		LocationConstraint: fmt.Sprint(group["api_name"]) + ":" + config.Name, owner: g.owner, scope: scope, config: config, poolIDs: poolIDs}
+		LocationConstraint: fmt.Sprint(group["api_name"]) + ":" + config.Name, owner: g.owner, gatewayScope: g.config, scope: scope, config: config, poolIDs: poolIDs}
 	if apiName, ok := group["api_name"].(string); !ok || apiName == "" {
 		return nil, errors.New("RGW zonegroup has no S3 API name")
 	}
@@ -251,19 +260,22 @@ func (g *Gateway) CreatePlacement(ctx context.Context, config PlacementConfig) (
 	return p, nil
 }
 
-// PlacementStatus reads the exact native scope of a created or partial policy.
-// Incomplete or changed mappings return an error; use Admin for detailed partial
-// inspection. It does not claim a running gateway reloaded this configuration.
-func (g *Gateway) PlacementStatus(ctx context.Context, p *Placement) (PlacementState, error) {
-	if g == nil || g.owner == nil {
-		return PlacementState{}, servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
+// Status reads the exact native scope of a created or partial policy, through
+// the first running registered gateway, by name, in the scope of the gateway that
+// created it. Incomplete or changed mappings return an error; use Gateway.Admin
+// for detailed partial inspection. It does not claim a running gateway reloaded
+// this configuration.
+func (p *Placement) Status(ctx context.Context) (PlacementState, error) {
+	if p == nil || p.owner == nil {
+		return PlacementState{}, servicehook.Invalid(errors.New("RGW placement is not owned by a Ceph cluster"))
 	}
-	servicehook.Lock(g.owner)
-	defer servicehook.Unlock(g.owner)
-	if err := g.validatePlacementHandle(p); err != nil {
+	servicehook.Lock(p.owner)
+	defer servicehook.Unlock(p.owner)
+	g, err := scopeGateway(ctx, p.owner, p.gatewayScope)
+	if err != nil {
 		return PlacementState{}, err
 	}
-	ctx, cancel := g.adminContext(ctx)
+	ctx, cancel := adminContext(ctx, p.owner)
 	defer cancel()
 	if err := g.checkPlacementResources(ctx, p); err != nil {
 		return PlacementState{}, err
@@ -295,7 +307,7 @@ func (g *Gateway) ApplyPlacement(ctx context.Context, p *Placement) error {
 	if !p.confirmed {
 		return errors.New("RGW placement creation has not been confirmed")
 	}
-	ctx, cancel := g.adminContext(ctx)
+	ctx, cancel := adminContext(ctx, g.owner)
 	defer cancel()
 	if err := g.checkPlacementResources(ctx, p); err != nil {
 		return err
@@ -337,13 +349,37 @@ func (g *Gateway) ApplyPlacement(ctx context.Context, p *Placement) error {
 	if current["master_zone"] != p.scope.zoneID {
 		return errors.New("RGW placement period publication requires its realm metadata master")
 	}
-	pending, err := g.placementStagingPeriod(ctx, p.scope)
+	// Read the exact staging object directly: --epoch avoids a separate
+	// latest-epoch lookup. The native CLI returns errno 2 only for a missing
+	// object; other failures must never be interpreted as an empty staging area
+	// or leak native credentials.
+	stagingID := p.scope.realmID + ":staging"
+	code, reader, err := g.Container.Exec(ctx, rgwPlacementCommandArgs(p.scope, "period", "get", "--period", stagingID, "--epoch", "1"))
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return fmt.Errorf("read RGW staging period: %w", ctx.Err())
+		}
+		return errors.New("read RGW staging period failed; native output is redacted")
 	}
-	if pending != nil && !reflect.DeepEqual(rgwPlacementPeriodPolicy(current), rgwPlacementPeriodPolicy(pending)) {
-		if err := rgwPlacementPeriodChange(current, pending, p.scope.groupID, rgwPlacementTarget(group, p.config.Name)); err != nil {
-			return servicehook.Invalid(errors.New("RGW existing staging period contains unrelated policy; refusing to overwrite it"))
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
+		return errors.New("decode RGW staging period stream; native output is redacted")
+	}
+	if code != 0 && (code != 2 || stdout.Len() != 0) {
+		return errors.New("read RGW staging period failed; native output is redacted")
+	}
+	if code == 0 {
+		pending, err := decodeRGWPlacementObject(stdout.Bytes())
+		if err != nil {
+			return err
+		}
+		if pending["id"] != stagingID || pending["realm_id"] != p.scope.realmID {
+			return errors.New("RGW staging period identity differs from the owned realm")
+		}
+		if !reflect.DeepEqual(rgwPlacementPeriodPolicy(current), rgwPlacementPeriodPolicy(pending)) {
+			if err := rgwPlacementPeriodChange(current, pending, p.scope.groupID, rgwPlacementTarget(group, p.config.Name)); err != nil {
+				return servicehook.Invalid(errors.New("RGW existing staging period contains unrelated policy; refusing to overwrite it"))
+			}
 		}
 	}
 	data, err = g.placementCommand(ctx, p.scope, "period", "update")
@@ -393,7 +429,7 @@ func (g *Gateway) ReloadPlacement(ctx context.Context, p *Placement) error {
 	if !p.confirmed {
 		return errors.New("RGW placement creation has not been confirmed")
 	}
-	ctx, cancel := g.adminContext(ctx)
+	ctx, cancel := adminContext(ctx, g.owner)
 	defer cancel()
 	if err := g.checkPlacementResources(ctx, p); err != nil {
 		return err
@@ -612,38 +648,6 @@ func (g *Gateway) placementCommand(ctx context.Context, scope rgwPlacementScope,
 		return nil, clusterutil.Quiet(errors.New("RGW placement command failed; native output is redacted"), err)
 	}
 	return data, nil
-}
-
-// Read the exact staging object directly: --epoch avoids a separate latest-epoch
-// lookup. The native CLI returns errno 2 only for a missing object; other failures
-// must never be interpreted as an empty staging area or leak native credentials.
-func (g *Gateway) placementStagingPeriod(ctx context.Context, scope rgwPlacementScope) (map[string]any, error) {
-	id := scope.realmID + ":staging"
-	code, reader, err := g.Container.Exec(ctx, rgwPlacementCommandArgs(scope, "period", "get", "--period", id, "--epoch", "1"))
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("read RGW staging period: %w", ctx.Err())
-		}
-		return nil, errors.New("read RGW staging period failed; native output is redacted")
-	}
-	var stdout, stderr bytes.Buffer
-	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
-		return nil, errors.New("decode RGW staging period stream; native output is redacted")
-	}
-	if code == 2 && stdout.Len() == 0 {
-		return nil, nil
-	}
-	if code != 0 {
-		return nil, errors.New("read RGW staging period failed; native output is redacted")
-	}
-	period, err := decodeRGWPlacementObject(stdout.Bytes())
-	if err != nil {
-		return nil, err
-	}
-	if period["id"] != id || period["realm_id"] != scope.realmID {
-		return nil, errors.New("RGW staging period identity differs from the owned realm")
-	}
-	return period, nil
 }
 
 func (g *Gateway) placementNativeScope(ctx context.Context, scope rgwPlacementScope) (map[string]any, map[string]any, error) {

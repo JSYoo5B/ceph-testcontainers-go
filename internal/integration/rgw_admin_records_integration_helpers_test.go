@@ -44,7 +44,7 @@ func rgwRecordsRateLimit(t *testing.T, ctx context.Context, gateway *rgw.Gateway
 		return native.ID
 	}
 	limitedID, outsideID := readBucketID(limited), readBucketID(outside)
-	info, err := gateway.UserInfo(ctx, owner)
+	info, err := owner.Info(ctx)
 	if err != nil || info.UserQuota.Enabled || info.BucketQuota.Enabled {
 		t.Fatal("rate-limit fixture requires owned principal with independent quotas disabled")
 	}
@@ -152,7 +152,7 @@ func (policy rgwRecordsRatePolicy) values() url.Values {
 
 func rgwRecordsRequireCaps(t *testing.T, ctx context.Context, gateway *rgw.Gateway, user *rgw.User, permission string) {
 	t.Helper()
-	info, err := gateway.UserInfo(ctx, user)
+	info, err := user.Info(ctx)
 	if err != nil || info.ID != user.ID() || info.Admin || info.System || len(info.AdminCaps) != 2 {
 		t.Fatal("AdminOps operator must remain an owned ordinary user with exactly two explicit capability types")
 	}

@@ -46,7 +46,7 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 		if err != nil {
 			t.Fatal(err)
 		}
-		info, err := gateway.UserInfo(ctx, users[i])
+		info, err := (users[i]).Info(ctx)
 		wantID := localID
 		if tenant != "" {
 			wantID = tenant + "$" + localID
@@ -79,53 +79,53 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 		t.Fatal("existing tenant UID could be overwritten")
 	}
 	quota := rgw.Quota{Enabled: true, MaxSizeBytes: 1 << 20, MaxObjects: 8}
-	if err := gateway.SetUserQuota(ctx, users[1], quota); err != nil {
+	if err := (users[1]).SetQuota(ctx, quota); err != nil {
 		t.Fatal(err)
 	}
-	if err := gateway.SetBucketQuota(ctx, users[1], quota); err != nil {
+	if err := (users[1]).SetBucketQuota(ctx, quota); err != nil {
 		t.Fatal(err)
 	}
-	alpha, err := gateway.UserInfo(ctx, users[1])
-	beta, betaErr := gateway.UserInfo(ctx, users[2])
+	alpha, err := (users[1]).Info(ctx)
+	beta, betaErr := (users[2]).Info(ctx)
 	if err != nil || betaErr != nil || alpha.UserQuota != quota || alpha.BucketQuota != quota || beta.UserQuota == quota || beta.BucketQuota == quota {
 		t.Fatal("tenant quota operation changed the wrong native user")
 	}
 	unlimited := rgw.Quota{MaxSizeBytes: -1, MaxObjects: -1}
 	for _, user := range []*rgw.User{users[0], users[1]} {
-		if err := gateway.SetUserQuota(ctx, user, unlimited); err != nil {
+		if err := user.SetQuota(ctx, unlimited); err != nil {
 			t.Fatal(err)
 		}
-		if err := gateway.SetBucketQuota(ctx, user, unlimited); err != nil {
+		if err := user.SetBucketQuota(ctx, unlimited); err != nil {
 			t.Fatal(err)
 		}
-		info, err := gateway.UserInfo(ctx, user)
+		info, err := user.Info(ctx)
 		if err != nil || info.UserQuota != unlimited || info.BucketQuota != unlimited {
 			t.Fatalf("native legacy/tenant unlimited quota failed: error=%v user_quota=%+v bucket_quota=%+v", err, info.UserQuota, info.BucketQuota)
 		}
 	}
-	if err := gateway.SuspendUser(ctx, users[1], true); err != nil {
+	if err := (users[1]).Suspend(ctx, true); err != nil {
 		t.Fatal(err)
 	}
 	rgwFixtureWaitStatus(t, ctx, clients[1], sharedBucket+"/object", http.StatusForbidden)
 	if actual := clients[2].request(t, ctx, http.MethodGet, sharedBucket+"/object", nil, http.StatusOK); !bytes.Equal(actual, payloads[2]) {
 		t.Fatal("suspending one tenant changed another tenant")
 	}
-	if err := gateway.SuspendUser(ctx, users[1], false); err != nil {
+	if err := (users[1]).Suspend(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	if actual := rgwFixtureWaitStatus(t, ctx, clients[1], sharedBucket+"/object", http.StatusOK); !bytes.Equal(actual, payloads[1]) {
 		t.Fatal("tenant suspension lost data")
 	}
-	if err := gateway.RemoveUser(ctx, users[1]); err == nil {
+	if err := (users[1]).Remove(ctx); err == nil {
 		t.Fatal("populated tenant user removed without purge")
 	}
 	for i, user := range users {
 		clients[i].request(t, ctx, http.MethodDelete, sharedBucket+"/object", nil, http.StatusNoContent)
 		clients[i].request(t, ctx, http.MethodDelete, sharedBucket, nil, http.StatusNoContent)
-		if err := gateway.RemoveUser(ctx, user); err != nil {
+		if err := user.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if err := gateway.RemoveUser(ctx, user); err != nil {
+		if err := user.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -141,11 +141,11 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	roots := make([]*rgw.User, 2)
 	rootClients := make([]s3HTTPClient, 2)
 	for i := range roots {
-		roots[i], err = gateway.CreateAccountRootUser(ctx, account, rgw.UserConfig{ID: fmt.Sprintf("tc-account-root-%d", i), DisplayName: fmt.Sprintf("FixtureRoot%d", i)})
+		roots[i], err = account.CreateRootUser(ctx, rgw.UserConfig{ID: fmt.Sprintf("tc-account-root-%d", i), DisplayName: fmt.Sprintf("FixtureRoot%d", i)})
 		if err != nil {
 			t.Fatal(err)
 		}
-		info, err := gateway.UserInfo(ctx, roots[i])
+		info, err := (roots[i]).Info(ctx)
 		if err != nil || info.AccountID != account.ID() || info.Type != "root" || info.Tenant != "account_tenant" || info.Admin || info.System {
 			t.Fatalf("account root native identity wrong: error=%v canonicalID=%q localID=%q tenant=%q type=%q accountID=%q admin=%t system=%t", err, info.ID, info.LocalID, info.Tenant, info.Type, info.AccountID, info.Admin, info.System)
 		}
@@ -153,18 +153,18 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	}
 	accountQuota := rgw.Quota{Enabled: true, MaxSizeBytes: -1, MaxObjects: 1}
 	accountBucketQuota := rgw.Quota{Enabled: true, MaxSizeBytes: 1 << 20, MaxObjects: 8}
-	if err := gateway.SetAccountQuota(ctx, account, accountQuota); err != nil {
-		info, readErr := gateway.AccountInfo(ctx, account)
+	if err := account.SetQuota(ctx, accountQuota); err != nil {
+		info, readErr := account.Info(ctx)
 		t.Fatalf("set account quota failed: %v; readback_error=%v actual_account_quota=%+v actual_bucket_quota=%+v requested=%+v", err, readErr, info.AccountQuota, info.BucketQuota, accountQuota)
 	}
-	if err := gateway.SetAccountBucketQuota(ctx, account, accountBucketQuota); err != nil {
-		info, readErr := gateway.AccountInfo(ctx, account)
+	if err := account.SetBucketQuota(ctx, accountBucketQuota); err != nil {
+		info, readErr := account.Info(ctx)
 		t.Fatalf("set account bucket quota failed: %v; readback_error=%v actual_account_quota=%+v actual_bucket_quota=%+v requested=%+v", err, readErr, info.AccountQuota, info.BucketQuota, accountBucketQuota)
 	}
-	if err := gateway.SetUserQuota(ctx, roots[0], accountQuota); err == nil {
+	if err := (roots[0]).SetQuota(ctx, accountQuota); err == nil {
 		t.Fatal("account fixture accepted ineffective per-user quota")
 	}
-	info, err := gateway.AccountInfo(ctx, account)
+	info, err := account.Info(ctx)
 	if err != nil || info.AccountQuota != accountQuota || info.BucketQuota != accountBucketQuota {
 		t.Fatal("native account aggregate and per-bucket quota did not persist")
 	}
@@ -190,14 +190,14 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	// The two roots have different user IDs. Only root 0 wrote an object, but
 	// native user stats for either root aggregate the same account owner.
 	for _, root := range roots {
-		usage, err := gateway.UserUsage(ctx, root)
+		usage, err := root.Usage(ctx)
 		if err != nil || usage.UserID != root.ID() || usage.Tenant != "account_tenant" || usage.Scope != "account" || usage.OwnerID != account.ID() || usage.OwnerID == root.ID() || usage.NumObjects != 1 || usage.SizeBytes != uint64(len(accountPayload)) {
 			t.Fatalf("native account aggregate mislabeled as individual user: usage=%+v error=%v expected_account=%q", usage, err, account.ID())
 		}
 		t.Logf("RGW_USER_USAGE stage=account-after-write scope=%s owner_id=%q user_id=%q num_objects=%d size_bytes=%d size_actual_bytes=%d", usage.Scope, usage.OwnerID, usage.UserID, usage.NumObjects, usage.SizeBytes, usage.SizeActualBytes)
 	}
 	rgwAccountWaitAggregateQuotaDenied(t, ctx, gateway, account, rootClients[1], accountBucketB)
-	if err := gateway.RemoveAccount(ctx, account); err == nil {
+	if err := account.Remove(ctx); err == nil {
 		t.Fatal("nonempty account removed without purge")
 	}
 	if actual := rootClients[0].request(t, ctx, http.MethodGet, accountBucketA+"/one", nil, http.StatusOK); !bytes.Equal(actual, accountPayload) {
@@ -207,22 +207,22 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	rootClients[0].request(t, ctx, http.MethodDelete, accountBucketA, nil, http.StatusNoContent)
 	rootClients[1].request(t, ctx, http.MethodDelete, accountBucketB, nil, http.StatusNoContent)
 	// Even with all buckets empty, account removal must retain its root users.
-	if err := gateway.RemoveAccount(ctx, account); err == nil {
+	if err := account.Remove(ctx); err == nil {
 		t.Fatal("account with remaining roots removed")
 	}
 	for _, root := range roots {
-		if err := gateway.RemoveUser(ctx, root); err != nil {
+		if err := root.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
 	copyAccount := *account
-	if err := gateway.RemoveAccount(ctx, account); err != nil {
+	if err := account.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := gateway.RemoveAccount(ctx, &copyAccount); err != nil {
+	if err := (&copyAccount).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gateway.AccountInfo(ctx, account); err == nil {
+	if _, err := account.Info(ctx); err == nil {
 		t.Fatal("removed account handle remained active")
 	}
 	t.Log("fresh tenanted account and two non-admin/non-system roots shared account-owned bytes/ACL owner; aggregate one-object quota denied another root's write to another bucket; bucket policy read back; nonpurge removal refused while resources remained, and final cleanup was idempotent")

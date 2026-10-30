@@ -183,7 +183,7 @@ func TestMessengerSecurePolicySurvivesMonitorRefreshAndClientAttachment(t *testi
 	}
 	messengerAssertPolicy(t, string(clientConfig), MessengerV2Secure)
 	req = testcontainers.GenericContainerRequest{}
-	if err := clientCluster.WithClientIdentity(client)(&req); err != nil {
+	if err := client.WithIdentity()(&req); err != nil {
 		t.Fatal(err)
 	}
 	messengerAssertAttachedPolicy(t, req)

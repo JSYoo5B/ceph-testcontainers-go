@@ -11,16 +11,17 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 )
 
-// ApplySyncGroup publishes only this owned zonegroup policy change, pulls the
+// Apply publishes only this owned zonegroup policy change, pulls the
 // resulting period into every owned zone and reloads running gateways. Resolve
 // their S3Endpoint again afterwards: a bridge gateway's mapped port can change.
 // Bucket policy is dynamic and this method only checks its owned native snapshot.
 // Unrelated current, locally pending or staging-period edits are refused before
 // period update can overwrite them. Partial publication/reload is not rolled
 // back; retry the same handle after resolving an external failure.
-func (f *Fixture) ApplySyncGroup(ctx context.Context, g *SyncGroup) error {
-	if f == nil {
-		return errors.New("RGW multisite fixture is required")
+func (g *SyncGroup) Apply(ctx context.Context) error {
+	f, err := g.fixture()
+	if err != nil {
+		return err
 	}
 	if err := multicluster.LockObservation(ctx, &f.topologyMu); err != nil {
 		return err

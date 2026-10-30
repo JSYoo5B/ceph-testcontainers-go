@@ -51,12 +51,12 @@ func (w *rotationWorld) requireClient(t *testing.T, key string) {
 	}
 }
 
-func identityErr(c *Container, client *ClientConfig) error {
-	return c.WithClientIdentity(client)(&testcontainers.GenericContainerRequest{})
+func identityErr(client *ClientConfig) error {
+	return client.WithIdentity()(&testcontainers.GenericContainerRequest{})
 }
 
 func TestReplaceClientKeyKeepsIdentityAndCaps(t *testing.T) {
-	w, c, client := clientWorld()
+	w, _, client := clientWorld()
 	old := w.clients["client.app"].key
 	next, err := client.ReplaceKey(t.Context())
 	if err != nil {
@@ -75,7 +75,7 @@ func TestReplaceClientKeyKeepsIdentityAndCaps(t *testing.T) {
 	}
 	for name, err := range map[string]error{
 		"ClientCapabilities": func() error { _, err := client.Capabilities(t.Context()); return err }(),
-		"WithClientIdentity": identityErr(c, client),
+		"WithIdentity":       identityErr(client),
 		"DeleteClient":       client.Delete(t.Context()),
 		"UpdateClientCaps":   client.UpdateCaps(t.Context(), ClientCaps{Mon: "allow *"}),
 	} {
@@ -86,7 +86,7 @@ func TestReplaceClientKeyKeepsIdentityAndCaps(t *testing.T) {
 	if caps, err := next.Capabilities(t.Context()); err != nil || caps != (ClientCaps{Mon: "allow r", OSD: "allow rw pool=data namespace=tenant-a"}) {
 		t.Fatalf("ClientCapabilities with the new descriptor: %+v, %v", caps, err)
 	}
-	if err := identityErr(c, next); err != nil {
+	if err := identityErr(next); err != nil {
 		t.Fatal(err)
 	}
 	// Replacing the old key again finds it replaced.
@@ -227,7 +227,7 @@ func TestReplaceClientKeyResolvesAnUncertainImportLater(t *testing.T) {
 		"unstopped CLI of a prepared import, resolved by del": {hangsPrepared, 2, true, "delete"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			w, c, client := clientWorld()
+			w, _, client := clientWorld()
 			old := w.clients["client.app"].key
 			w.faults["import"] = rotationFault{occurrence: 1, effect: test.effect}
 			w.cancelFails = test.cancelFails
@@ -246,8 +246,8 @@ func TestReplaceClientKeyResolvesAnUncertainImportLater(t *testing.T) {
 			if _, err := next.ConnectionConfig(); err == nil {
 				t.Fatal("the unconfirmed descriptor returned credentials")
 			}
-			if err := identityErr(c, client); err == nil || !strings.Contains(err.Error(), "not resolved yet") {
-				t.Fatalf("WithClientIdentity while the import is uncertain returned %v", err)
+			if err := identityErr(client); err == nil || !strings.Contains(err.Error(), "not resolved yet") {
+				t.Fatalf("WithIdentity while the import is uncertain returned %v", err)
 			}
 			if _, err := next.ReplaceKey(t.Context()); err == nil {
 				t.Fatal("the unconfirmed descriptor was accepted")
@@ -500,26 +500,26 @@ func TestServicesSettleClientsFirst(t *testing.T) {
 // earlier descriptor stale.
 func TestCopiedClientDescriptorsGoStale(t *testing.T) {
 	t.Run("replacement", func(t *testing.T) {
-		_, c, client := clientWorld()
+		_, _, client := clientWorld()
 		copied := *client
 		if _, err := client.ReplaceKey(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if err := identityErr(c, &copied); err == nil || !strings.Contains(err.Error(), "stale") {
-			t.Fatalf("WithClientIdentity with a copy of the replaced descriptor returned %v", err)
+		if err := identityErr(&copied); err == nil || !strings.Contains(err.Error(), "stale") {
+			t.Fatalf("WithIdentity with a copy of the replaced descriptor returned %v", err)
 		}
 		if _, err := (&copied).Capabilities(t.Context()); err == nil {
 			t.Fatal("ClientCapabilities accepted a copy of the replaced descriptor")
 		}
 	})
 	t.Run("removal", func(t *testing.T) {
-		w, c, client := clientWorld()
+		w, _, client := clientWorld()
 		copied := *client
 		if err := (&copied).Delete(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if err := identityErr(c, client); err == nil || !strings.Contains(err.Error(), "stale") {
-			t.Fatalf("WithClientIdentity after a removal through a copy returned %v", err)
+		if err := identityErr(client); err == nil || !strings.Contains(err.Error(), "stale") {
+			t.Fatalf("WithIdentity after a removal through a copy returned %v", err)
 		}
 		removals := w.counts["remove"]
 		if err := client.Delete(t.Context()); err != nil || !client.revoked || w.counts["remove"] != removals {

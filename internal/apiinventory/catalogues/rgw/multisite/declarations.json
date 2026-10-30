@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "rgw/multisite",
-  "count": 59,
+  "count": 57,
   "entries": [
     {
       "current": "rgw/multisite.BucketSyncPolicyStatus",
@@ -51,14 +51,6 @@
       "decision": "baseline"
     },
     {
-      "current": "rgw/multisite.Fixture.ApplySyncGroup",
-      "kind": "method",
-      "signature": "func(ctx context.Context, g *SyncGroup) error",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.ApplySyncGroup",
-      "decision": "baseline"
-    },
-    {
       "current": "rgw/multisite.Fixture.ApplyZoneLinkProfile",
       "kind": "method",
       "signature": "func(ctx context.Context, zoneName, peerZone string, delay fault.NetworkProfile) (*fault.NetworkProfileLease, error)",
@@ -67,43 +59,11 @@
       "decision": "baseline"
     },
     {
-      "current": "rgw/multisite.Fixture.BucketSyncStatus",
-      "kind": "method",
-      "signature": "func(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error)",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.BucketSyncStatus",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw/multisite.Fixture.CreateSyncFlow",
-      "kind": "method",
-      "signature": "func(ctx context.Context, g *SyncGroup, config SyncFlowConfig) error",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.CreateSyncFlow",
-      "decision": "baseline"
-    },
-    {
       "current": "rgw/multisite.Fixture.CreateSyncGroup",
       "kind": "method",
       "signature": "func(ctx context.Context, scope SyncPolicyScope, config SyncGroupConfig) (*SyncGroup, error)",
       "receiver": "*Fixture",
       "proposed": "rgw/multisite.Fixture.CreateSyncGroup",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw/multisite.Fixture.CreateSyncPipe",
-      "kind": "method",
-      "signature": "func(ctx context.Context, g *SyncGroup, config SyncPipeConfig) error",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.CreateSyncPipe",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw/multisite.Fixture.DestinationAdmin",
-      "kind": "method",
-      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.DestinationAdmin",
       "decision": "baseline"
     },
     {
@@ -131,59 +91,11 @@
       "decision": "baseline"
     },
     {
-      "current": "rgw/multisite.Fixture.RemoveSyncFlow",
-      "kind": "method",
-      "signature": "func(ctx context.Context, g *SyncGroup, config SyncFlowConfig) error",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.RemoveSyncFlow",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw/multisite.Fixture.RemoveSyncGroup",
-      "kind": "method",
-      "signature": "func(ctx context.Context, g *SyncGroup) error",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.RemoveSyncGroup",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw/multisite.Fixture.RemoveSyncPipe",
-      "kind": "method",
-      "signature": "func(ctx context.Context, g *SyncGroup, id string) error",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.RemoveSyncPipe",
-      "decision": "baseline"
-    },
-    {
       "current": "rgw/multisite.Fixture.RemoveZone",
       "kind": "method",
       "signature": "func(ctx context.Context, name string) error",
       "receiver": "*Fixture",
       "proposed": "rgw/multisite.Fixture.RemoveZone",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw/multisite.Fixture.SetSyncGroupStatus",
-      "kind": "method",
-      "signature": "func(ctx context.Context, g *SyncGroup, status SyncGroupStatus) error",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.SetSyncGroupStatus",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw/multisite.Fixture.SetSyncPipePrefix",
-      "kind": "method",
-      "signature": "func(ctx context.Context, g *SyncGroup, id, prefix string) error",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.SetSyncPipePrefix",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw/multisite.Fixture.SourceAdmin",
-      "kind": "method",
-      "signature": "func(ctx context.Context, args ...string) ([]byte, error)",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.SourceAdmin",
       "decision": "baseline"
     },
     {
@@ -200,22 +112,6 @@
       "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
       "receiver": "*Fixture",
       "proposed": "rgw/multisite.Fixture.Terminate",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw/multisite.Fixture.WaitBucketSyncPolicyReady",
-      "kind": "method",
-      "signature": "func(ctx context.Context, g *SyncGroup, destinationZone string) (BucketSyncPolicyStatus, error)",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.WaitBucketSyncPolicyReady",
-      "decision": "baseline"
-    },
-    {
-      "current": "rgw/multisite.Fixture.WaitBucketSyncReady",
-      "kind": "method",
-      "signature": "func(ctx context.Context, g *SyncGroup, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error)",
-      "receiver": "*Fixture",
-      "proposed": "rgw/multisite.Fixture.WaitBucketSyncReady",
       "decision": "baseline"
     },
     {
@@ -320,6 +216,38 @@
       "decision": "baseline"
     },
     {
+      "current": "rgw/multisite.SyncGroup.Apply",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.Apply",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.BucketSyncStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error)",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.BucketSyncStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.CreateFlow",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config SyncFlowConfig) error",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.CreateFlow",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.CreatePipe",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config SyncPipeConfig) error",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.CreatePipe",
+      "decision": "baseline"
+    },
+    {
       "current": "rgw/multisite.SyncGroup.GoString",
       "kind": "method",
       "signature": "func() string",
@@ -336,11 +264,67 @@
       "decision": "baseline"
     },
     {
+      "current": "rgw/multisite.SyncGroup.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context) error",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.Remove",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.RemoveFlow",
+      "kind": "method",
+      "signature": "func(ctx context.Context, config SyncFlowConfig) error",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.RemoveFlow",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.RemovePipe",
+      "kind": "method",
+      "signature": "func(ctx context.Context, id string) error",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.RemovePipe",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.SetPipePrefix",
+      "kind": "method",
+      "signature": "func(ctx context.Context, id, prefix string) error",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.SetPipePrefix",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.SetStatus",
+      "kind": "method",
+      "signature": "func(ctx context.Context, status SyncGroupStatus) error",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.SetStatus",
+      "decision": "baseline"
+    },
+    {
       "current": "rgw/multisite.SyncGroup.String",
       "kind": "method",
       "signature": "func() string",
       "receiver": "SyncGroup",
       "proposed": "rgw/multisite.SyncGroup.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.WaitBucketPolicyReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, destinationZone string) (BucketSyncPolicyStatus, error)",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.WaitBucketPolicyReady",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/multisite.SyncGroup.WaitBucketSyncReady",
+      "kind": "method",
+      "signature": "func(ctx context.Context, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error)",
+      "receiver": "*SyncGroup",
+      "proposed": "rgw/multisite.SyncGroup.WaitBucketSyncReady",
       "decision": "baseline"
     },
     {

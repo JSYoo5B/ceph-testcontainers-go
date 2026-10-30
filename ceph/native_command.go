@@ -385,10 +385,6 @@ func validateNativeCommand(command NativeCommand) (string, error) {
 // then fails. A malformed limit or an Input that served another command fails
 // before anything runs or any input is taken.
 func (c *Container) RunNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error) {
-	return c.runNativeCommand(ctx, target, command)
-}
-
-func (c *Container) runNativeCommand(ctx context.Context, target testcontainers.Container, command NativeCommand) (NativeCommandResult, error) {
 	label, err := validateNativeCommand(command)
 	if err != nil {
 		return NativeCommandResult{}, classify(ErrInvalidRequest, err)
@@ -488,36 +484,6 @@ func (c *Container) runNativeCommand(ctx context.Context, target testcontainers.
 			result.TimedOut, result.StdoutTruncated, result.StderrTruncated)
 	}
 	return result, nil
-}
-
-// runOwnedShell runs argv in target, a container of this cluster that the
-// caller admitted while it holds the cluster mutex, under the shell
-// supervisor with limit seconds (0 for none). The invocation is tracked like
-// a RunNativeCommand's: when ctx ends first, the command is stopped before
-// runOwnedShell returns, and a stop that cannot be confirmed returns a
-// NativeCommandUnstoppedError, whose Stop and Terminate retry it. Terminate
-// cancels a running call. label names the command in errors.
-func (c *Container) runOwnedShell(ctx context.Context, target testcontainers.Container, label string, limit int, argv ...string) (supervised.ShellReport, error) {
-	runCtx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
-	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, stopCommand: supervised.CancelShell, done: make(chan struct{})}
-	// An owned shell has no target instance, which no fence can name, so the
-	// fence check of admit never refuses it.
-	if c.nativeCmds.admit(inv, nil) == nativeRefusedClosed {
-		return supervised.ShellReport{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
-	}
-	report, err := supervised.RunShell(runCtx, target, label, limit, argv...)
-	unstopped, _ := supervised.Unconfirmed(err)
-	c.nativeCmds.finish(inv, unstopped, unstopped != "")
-	close(inv.done)
-	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(runCtx), errNativeTerminated) {
-		err = fmt.Errorf("%s: %w: %w", label, errNativeTerminated, err)
-	}
-	err = safeNativeError(err)
-	if unstopped != "" {
-		return supervised.ShellReport{}, &NativeCommandUnstoppedError{invocation: inv, err: err}
-	}
-	return report, err
 }
 
 // admitNativeTarget accepts a container of this cluster, or one of the caller

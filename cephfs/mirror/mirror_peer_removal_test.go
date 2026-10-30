@@ -177,6 +177,7 @@ func newPeerRemovalFixture() (*Mirror, *peerRemovalControlFake, *peerRemovalCont
 	b := makeDaemon(strings.Repeat("b", 64), "172.20.0.9:0/5678")
 	mirror := &Mirror{source: &ceph.Container{Container: source}, destination: &ceph.Container{Container: destination}, SourceFilesystem: "source", DestinationFilesystem: "destination", SourceClientEntity: "client.owned-auth", DestinationClientEntity: "client.peer", filesystemID: 1, destinationFilesystemID: 2, metadataPool: "source-metadata", metadataPoolID: 7, destinationMetadataPoolID: 9, destinationSite: "destination-site", peerID: cephFSObserverDraftPeer, Directories: []string{"/owned"}, ownedDirectories: map[string]bool{"/owned": true}, daemonImage: "unchanged", daemonKeyring: []byte("private-fixture-secret"), daemons: []*Daemon{{Container: a, DaemonName: "a"}, {Container: b, DaemonName: "b"}}}
 	for _, d := range mirror.daemons {
+		d.owner = mirror
 		mirror.owned.AddContainer(d)
 	}
 	return mirror, source, destination, a, b
@@ -523,7 +524,7 @@ func TestCephFSPeerRemovalProductionContextLocksAndWaitRelease(t *testing.T) {
 func TestCephFSPeerRemovalProductionCleanupRetainsOriginalCohortWithoutAdoptingNew(t *testing.T) {
 	r, m, s, _, a, b := beginPeerRemovalFixture(t)
 	drainPeerRemovalDaemons(a, b)
-	if err := m.RemoveDaemon(t.Context(), "a"); err != nil {
+	if err := daemonNamed(t, m, "a").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if len(m.daemons) != 1 || len(r.cohort) != 2 || r.cohort[0].daemon.Container != a || a.terminated != 1 {

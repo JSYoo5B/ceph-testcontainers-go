@@ -62,8 +62,8 @@ func testClientRevocation(t *testing.T) {
 			if _, err := client.Capabilities(ctx); err == nil {
 				t.Fatal("ClientCapabilities accepted the revoked descriptor")
 			}
-			if err := cluster.WithClientIdentity(client)(&testcontainers.GenericContainerRequest{}); err == nil {
-				t.Fatal("WithClientIdentity accepted the revoked descriptor")
+			if err := client.WithIdentity()(&testcontainers.GenericContainerRequest{}); err == nil {
+				t.Fatal("WithIdentity accepted the revoked descriptor")
 			}
 			if _, err := cluster.CreateClient(ctx, client.Name(), caps); err == nil {
 				t.Fatal("CreateClient took the revoked name")

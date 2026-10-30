@@ -125,13 +125,51 @@ func (clone *SubvolumeClone) Cancel(ctx context.Context) error {
 	timeout := servicehook.StartupTimeout(fs.cluster)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	identity := clone.identity
 	request := true
 	for {
-		done, err := fs.cancelSubvolumeCloneStep(ctx, clone.identity, request)
+		// Each poll holds the subvolume operation gate only for its own step.
+		finished, err := func() (bool, error) {
+			ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+			if err != nil {
+				return false, err
+			}
+			defer done()
+			if err := fs.checkCloneIncarnation(ctx, identity); err != nil {
+				return false, err
+			}
+			status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
+			if err != nil {
+				return false, err
+			}
+			if status.State == "canceled" {
+				return fs.cloneSourceDetached(ctx, fsID, identity)
+			}
+			if status.State != "pending" && status.State != "in-progress" {
+				return false, fmt.Errorf("clone is %s; cannot cancel", status.State)
+			}
+			if _, err := fs.checkSnapshotIdentity(ctx, fsID, identity.source); err != nil {
+				return false, err
+			}
+			if request {
+				args := appendSubvolumeGroup([]string{"fs", "clone", "cancel", fs.name, identity.name}, identity.group)
+				if _, err := fs.cluster.Ceph(ctx, args...); err != nil {
+					return false, err
+				}
+				status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
+				if err != nil {
+					return false, err
+				}
+				if status.State == "canceled" {
+					return fs.cloneSourceDetached(ctx, fsID, identity)
+				}
+			}
+			return false, nil
+		}()
 		if err != nil {
 			return err
 		}
-		if done {
+		if finished {
 			return nil
 		}
 		request = false
@@ -141,44 +179,6 @@ func (clone *SubvolumeClone) Cancel(ctx context.Context) error {
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-}
-
-func (fs *Filesystem) cancelSubvolumeCloneStep(ctx context.Context, identity *cephFSCloneIdentity, request bool) (bool, error) {
-	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer done()
-	if err := fs.checkCloneIncarnation(ctx, identity); err != nil {
-		return false, err
-	}
-	status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
-	if err != nil {
-		return false, err
-	}
-	if status.State == "canceled" {
-		return fs.cloneSourceDetached(ctx, fsID, identity)
-	}
-	if status.State != "pending" && status.State != "in-progress" {
-		return false, fmt.Errorf("clone is %s; cannot cancel", status.State)
-	}
-	if _, err := fs.checkSnapshotIdentity(ctx, fsID, identity.source); err != nil {
-		return false, err
-	}
-	if request {
-		args := appendSubvolumeGroup([]string{"fs", "clone", "cancel", fs.name, identity.name}, identity.group)
-		if _, err := fs.cluster.Ceph(ctx, args...); err != nil {
-			return false, err
-		}
-		status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
-		if err != nil {
-			return false, err
-		}
-		if status.State == "canceled" {
-			return fs.cloneSourceDetached(ctx, fsID, identity)
-		}
-	}
-	return false, nil
 }
 
 // RemovePartial explicitly removes an owned failed or canceled

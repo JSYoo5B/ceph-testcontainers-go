@@ -38,12 +38,12 @@ readiness, not a client's protocol implementation.
 | | MONs, MGRs and OSDs accept only CRC from clients | `MessengerV2Only` with `NetworkConfig.WithMessengerPolicy(ceph.MessengerPolicy{Monitors: crc, Managers: crc, OSDs: crc})` | `TestMessengerClientProfileCRC` |
 | | MONs only CRC, MGRs only secure | `MessengerV2Only` with `MessengerPolicy{Monitors: crc, Managers: secure}` | `TestMessengerClientProfileModeRejection/monitors` |
 | | MONs only secure, MGRs only CRC | `MessengerV2Only` with `MessengerPolicy{Monitors: secure, Managers: crc}` | `TestMessengerClientProfileModeRejection/managers` |
-| Client modes | secure, CRC, or secure then CRC | `ClientContainerOptions.WithMessengerPolicy` on a `WithClient` or `WithClientIdentity` container | `TestMessengerClientProfileModeRejection`, `TestMessengerClientProfileCRC` |
+| Client modes | secure, CRC, or secure then CRC | `ClientContainerOptions.WithMessengerPolicy` on a `WithClient` or `ClientConfig.WithIdentity` container | `TestMessengerClientProfileModeRejection`, `TestMessengerClientProfileCRC` |
 | Address family | IPv4 | the default | every other profile |
 | | IPv6 | `NetworkConfig.WithAddressFamily(ceph.AddressIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv6` |
 | | IPv4-mapped IPv6 | `NetworkConfig.WithAddressFamily(ceph.AddressIPv4MappedIPv6)` | `TestMessengerClientProfileAddressFamilies/ipv4-mapped` |
 | | IPv4 and IPv6 on every daemon | `NetworkConfig.WithAddressFamily(ceph.AddressDualStack)`; MON vectors list IPv6 first, the others IPv4 first (see [Dual-stack clusters](../../ceph/README.md#dual-stack-clusters)) | `TestDualStackAddressFamily`, `TestDualStackSeparateClusterNetwork` |
-| Where the tests run | a container on the cluster network | `WithClient` or `WithClientIdentity` | every profile |
+| Where the tests run | a container on the cluster network | `WithClient` or `ClientConfig.WithIdentity` | every profile |
 | | a host process | `WithHostNetwork` (see [Host network](host-network.md)); every advertised MON, MGR and OSD address is reachable from the host | `TestMessengerClientProfileCRC/host` |
 | Client identities | full access, read-only, revocable, and one limited to the `fsid` command | `CreateClient` with `ceph.ClientCaps`, for example `{Mon: "allow command \"fsid\"", MGR: "allow r"}`; keys get the cluster's `KeyType` | `TestMessengerClientProfileSecure` |
 
