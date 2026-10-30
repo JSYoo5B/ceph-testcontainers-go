@@ -33,13 +33,13 @@ type cephFSCloneMetadata struct {
 // conservatively. No native libraries or cgo are linked by the Go module.
 // Sources: ceph v20.2.4 volumes/fs/operations/versions/{subvolume_v2,
 // metadata_manager}.py and volumes/fs/async_cloner.py.
-func (fs *Filesystem) readCloneIncarnation(ctx context.Context, identity *cephFSCloneIdentity) (*cephFSCloneIncarnation, error) {
+func (v volumeCommands) readCloneIncarnation(ctx context.Context, identity *cephFSCloneIdentity) (*cephFSCloneIncarnation, error) {
 	base := path.Join(path.Dir(path.Dir(path.Dir(identity.source.subvolume.path))), cephFSNativeGroup(identity.group), identity.name)
-	control, err := fs.cluster.ClientContainer(ctx)
+	control, err := v.cluster.ClientContainer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select CephFS clone CLI container: %w", err)
 	}
-	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSCloneIdentityScript, fs.name, base)
+	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSCloneIdentityScript, v.name, base)
 	if err != nil {
 		return nil, fmt.Errorf("read native clone incarnation: %w", err)
 	}
@@ -57,7 +57,7 @@ func (fs *Filesystem) readCloneIncarnation(ctx context.Context, identity *cephFS
 		return nil, errors.New("unsupported native clone incarnation state")
 	}
 	source := identity.source.subvolume
-	if len(metadata.Source) != 0 && (metadata.Source["volume"] != fs.name || metadata.Source["group"] != source.group || metadata.Source["subvolume"] != source.name || metadata.Source["snapshot"] != identity.source.name) {
+	if len(metadata.Source) != 0 && (metadata.Source["volume"] != v.name || metadata.Source["group"] != source.group || metadata.Source["subvolume"] != source.name || metadata.Source["snapshot"] != identity.source.name) {
 		return nil, errors.New("native clone metadata source does not match this request")
 	}
 	if metadata.State != "complete" && len(metadata.Source) == 0 {
@@ -77,7 +77,7 @@ func (fs *Filesystem) checkCloneIncarnation(ctx context.Context, identity *cephF
 	if identity.incarnation == nil {
 		return errors.New("clone has no submission-confirmed native incarnation; inspect it through Ceph")
 	}
-	current, err := fs.readCloneIncarnation(ctx, identity)
+	current, err := fs.volumes().readCloneIncarnation(ctx, identity)
 	if err != nil {
 		return err
 	}
@@ -125,47 +125,9 @@ func (clone *SubvolumeClone) Cancel(ctx context.Context) error {
 	timeout := servicehook.StartupTimeout(fs.cluster)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	identity := clone.identity
 	request := true
 	for {
-		// Each poll holds the subvolume operation gate only for its own step.
-		finished, err := func() (bool, error) {
-			ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
-			if err != nil {
-				return false, err
-			}
-			defer done()
-			if err := fs.checkCloneIncarnation(ctx, identity); err != nil {
-				return false, err
-			}
-			status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
-			if err != nil {
-				return false, err
-			}
-			if status.State == "canceled" {
-				return fs.cloneSourceDetached(ctx, fsID, identity)
-			}
-			if status.State != "pending" && status.State != "in-progress" {
-				return false, fmt.Errorf("clone is %s; cannot cancel", status.State)
-			}
-			if _, err := fs.checkSnapshotIdentity(ctx, fsID, identity.source); err != nil {
-				return false, err
-			}
-			if request {
-				args := appendSubvolumeGroup([]string{"fs", "clone", "cancel", fs.name, identity.name}, identity.group)
-				if _, err := fs.cluster.Ceph(ctx, args...); err != nil {
-					return false, err
-				}
-				status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
-				if err != nil {
-					return false, err
-				}
-				if status.State == "canceled" {
-					return fs.cloneSourceDetached(ctx, fsID, identity)
-				}
-			}
-			return false, nil
-		}()
+		finished, err := clone.cancelStep(ctx, fs, request)
 		if err != nil {
 			return err
 		}
@@ -179,6 +141,49 @@ func (clone *SubvolumeClone) Cancel(ctx context.Context) error {
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+}
+
+// cancelStep is one poll of Cancel. It holds the subvolume operation gate only
+// for its own step, sends the native cancel on the first poll alone and reports
+// whether the clone is canceled with its source detached.
+func (clone *SubvolumeClone) cancelStep(ctx context.Context, fs *Filesystem, request bool) (bool, error) {
+	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer done()
+	identity := clone.identity
+	if err := fs.checkCloneIncarnation(ctx, identity); err != nil {
+		return false, err
+	}
+	status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
+	if err != nil {
+		return false, err
+	}
+	if status.State == "canceled" {
+		return fs.cloneSourceDetached(ctx, fsID, identity)
+	}
+	if status.State != "pending" && status.State != "in-progress" {
+		return false, fmt.Errorf("clone is %s; cannot cancel", status.State)
+	}
+	if _, err := fs.checkSnapshotIdentity(ctx, fsID, identity.source); err != nil {
+		return false, err
+	}
+	if !request {
+		return false, nil
+	}
+	args := appendSubvolumeGroup([]string{"fs", "clone", "cancel", fs.name, identity.name}, identity.group)
+	if _, err := fs.cluster.Ceph(ctx, args...); err != nil {
+		return false, err
+	}
+	status, err = fs.subvolumeCloneStatus(ctx, fsID, identity)
+	if err != nil {
+		return false, err
+	}
+	if status.State == "canceled" {
+		return fs.cloneSourceDetached(ctx, fsID, identity)
+	}
+	return false, nil
 }
 
 // RemovePartial explicitly removes an owned failed or canceled
@@ -206,7 +211,7 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 	if identity.removed {
 		return nil
 	}
-	names, err := fs.subvolumeNames(ctx, identity.group)
+	names, err := fs.volumes().subvolumeNames(ctx, identity.group)
 	if err != nil {
 		return err
 	}
@@ -239,7 +244,7 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 	if _, err := fs.cluster.Ceph(ctx, append(args, "--force")...); err != nil {
 		return err
 	}
-	names, err = fs.subvolumeNames(ctx, identity.group)
+	names, err = fs.volumes().subvolumeNames(ctx, identity.group)
 	if err != nil {
 		return err
 	}

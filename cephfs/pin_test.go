@@ -59,7 +59,7 @@ func TestCephFSPinNativeBasePrivateNamesAndSharedRestore(t *testing.T) {
 		t.Fatal("overlapping same-field override accepted")
 	}
 	copy := *change
-	if err := copy.Restore(t.Context()); err != nil || len(fs.pinOverrides) != 0 || control.policies[change.state.path].ExportRank != 0 {
+	if err := copy.Restore(t.Context()); err != nil || len(fs.pins.byField) != 0 || control.policies[change.state.path].ExportRank != 0 {
 		t.Fatalf("copy did not restore shared override: %v", err)
 	}
 	testhelper.TestSetClosed(fs.cluster, true)
@@ -124,7 +124,7 @@ func TestCephFSPinRestoreRejectsOutsideFieldOrResourceChanges(t *testing.T) {
 			case "removed":
 				volume.identity.removed = true
 			}
-			if err := change.Restore(t.Context()); err == nil || len(control.mutations) != 1 || len(fs.pinOverrides) != 1 {
+			if err := change.Restore(t.Context()); err == nil || len(control.mutations) != 1 || len(fs.pins.byField) != 1 {
 				t.Fatalf("outside %s change was overwritten: error=%v mutations=%v", scenario, err, control.mutations)
 			}
 		})
@@ -164,12 +164,12 @@ func TestCephFSPinUncertainApplyAndRestoreRemainReconciliable(t *testing.T) {
 			if scenario == "restore lost reply" || scenario == "restore false success" {
 				control.lostReply = scenario == "restore lost reply"
 				control.falseSuccess = scenario == "restore false success"
-				if err := change.Restore(t.Context()); err == nil || change.state.restored || len(fs.pinOverrides) == 0 {
+				if err := change.Restore(t.Context()); err == nil || change.state.restored || len(fs.pins.byField) == 0 {
 					t.Fatal("uncertain restore was marked complete before verified readback")
 				}
 				control.lostReply, control.falseSuccess = false, false
 			}
-			if err := change.Restore(t.Context()); err != nil || !change.state.restored || len(fs.pinOverrides) != 0 || control.policies[change.state.path].ExportRank != 0 {
+			if err := change.Restore(t.Context()); err != nil || !change.state.restored || len(fs.pins.byField) != 0 || control.policies[change.state.path].ExportRank != 0 {
 				t.Fatalf("fresh-context restoration did not reconcile original policy: %v", err)
 			}
 			if scenario == "restore lost reply" && len(control.mutations) != 2 {

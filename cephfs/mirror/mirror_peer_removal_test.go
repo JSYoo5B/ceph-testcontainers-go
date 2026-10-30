@@ -276,7 +276,7 @@ func TestCephFSPeerRemovalProductionRefusesInvalidPreflightWithoutMutation(t *te
 				reader = nil
 			}
 			r, err := m.beginPeerRemoval(t.Context(), cephFSObserverDraftPeer, reader)
-			if r != nil || !errors.Is(err, errCephFSObservationGuard) || s.removals != 0 || m.peerRemoval != nil {
+			if r != nil || !errors.Is(err, errCephFSObservationGuard) || s.removals != 0 || m.ops.peerRemoval != nil {
 				t.Fatalf("preflight changed policy: receipt=%v err=%v calls=%d", r, err, s.removals)
 			}
 		})
@@ -295,7 +295,7 @@ func TestCephFSPeerRemovalProductionRetainsLostReplyAndReconcilesNativeViews(t *
 			s.removeError = errPeerRemovalTransport
 			s.applyRemoval = applied
 			r, err := m.beginPeerRemoval(t.Context(), cephFSObserverDraftPeer, peerRemovalClusterReader)
-			if r == nil || !errors.Is(err, errPeerRemovalTransport) || m.peerRemoval != r {
+			if r == nil || !errors.Is(err, errPeerRemovalTransport) || m.ops.peerRemoval != r {
 				t.Fatalf("lost response erased intent: %v %v", r, err)
 			}
 			s.removeError = nil
@@ -359,12 +359,12 @@ func TestCephFSPeerRemovalProductionOverlapGuardsAndLegacyContract(t *testing.T)
 	if st, err := r.Status(t.Context()); err != nil || !st.Drained {
 		t.Fatal(err)
 	}
-	if err := m.guardPeerRemovalOverlap(); err != nil {
+	if err := m.ops.guardPeerRemovalOverlap(); err != nil {
 		t.Fatal("completed receipt keeps import gate closed")
 	}
 	legacy, ls, _, _, _ := newPeerRemovalFixture()
 	legacy.daemons = nil
-	if err := legacy.RemovePeer(t.Context(), cephFSObserverDraftPeer); err != nil || ls.removals != 1 || legacy.peerRemoval != nil || legacy.peerID != "" {
+	if err := legacy.RemovePeer(t.Context(), cephFSObserverDraftPeer); err != nil || ls.removals != 1 || legacy.ops.peerRemoval != nil || legacy.peerID != "" {
 		t.Fatalf("legacy zero-daemon contract changed: %v", err)
 	}
 }
@@ -410,7 +410,7 @@ func TestCephFSPeerRemovalProductionOriginalIdentityAndSchemaArePermanent(t *tes
 			case "closed":
 				m.closed = true
 			case "generation-superseded":
-				m.peerGeneration++
+				m.ops.peerGeneration++
 			case "fixture-field":
 				m.DestinationFilesystem = "other"
 			case "cluster":
@@ -560,7 +560,7 @@ func TestCephFSPeerRemovalProductionSupersedesReceiptAfterNewPeerReconcile(t *te
 		t.Fatal(err)
 	}
 	id, err := m.reconcilePendingPeer(peers)
-	if err != nil || id != peerRemovalNewPeer || m.peerGeneration == r.generation {
+	if err != nil || id != peerRemovalNewPeer || m.ops.peerGeneration == r.generation {
 		t.Fatalf("new ownership did not supersede old receipt: %s %v", id, err)
 	}
 	st, err := r.Status(t.Context())
@@ -653,7 +653,7 @@ func TestCephFSPeerRemovalProductionCommonOriginalAttestationOrderingAndRetry(t 
 		return [2]string{}, err
 	}
 	status, err := r.WaitDrained(t.Context())
-	if status.Drained || !errors.Is(err, errCephFSObservationGuard) || !errors.Is(err, errPeerRemovalTransport) || m.peerRemoval != r || s.removals != 1 {
+	if status.Drained || !errors.Is(err, errCephFSObservationGuard) || !errors.Is(err, errPeerRemovalTransport) || m.ops.peerRemoval != r || s.removals != 1 {
 		t.Fatalf("common failure discarded accepted intent: %+v %v", status, err)
 	}
 	r.readClusters = peerRemovalClusterReader

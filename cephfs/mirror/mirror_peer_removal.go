@@ -88,11 +88,11 @@ func (mirror *Mirror) beginPeerRemoval(ctx context.Context, id string, readClust
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
-	if err := mirror.guardDirectoryAdditionOverlap(); err != nil {
+	if err := mirror.ops.guardDirectoryAdditionOverlap(); err != nil {
 		return nil, err
 	}
-	if mirror.peerRemoval != nil && mirror.peerRemoval.peerID == id {
-		r := mirror.peerRemoval
+	if mirror.ops.peerRemoval != nil && mirror.ops.peerRemoval.peerID == id {
+		r := mirror.ops.peerRemoval
 		if r.processQuiescenceAcknowledged {
 			return r, r.confirmAcknowledgedProcessPolicy(ctx)
 		}
@@ -101,7 +101,7 @@ func (mirror *Mirror) beginPeerRemoval(ctx context.Context, id string, readClust
 		}
 		return r, r.resume(ctx)
 	}
-	if err := mirror.guardPeerRemovalOverlap(); err != nil {
+	if err := mirror.ops.guardPeerRemovalOverlap(); err != nil {
 		return nil, err
 	}
 	if err := mirror.confirmCephFSRefreshHandle(true); err != nil {
@@ -130,7 +130,7 @@ func (mirror *Mirror) beginPeerRemoval(ctx context.Context, id string, readClust
 	r := &PeerRemoval{mirror: mirror, source: mirror.source, destination: mirror.destination,
 		sourceFilesystem: mirror.SourceFilesystem, destinationFilesystem: mirror.DestinationFilesystem, sourceClient: mirror.SourceClientEntity, metadataPool: mirror.metadataPool,
 		sourceID: mirror.filesystemID, destinationID: mirror.destinationFilesystemID, sourceMetadata: mirror.metadataPoolID, destinationMetadata: mirror.destinationMetadataPoolID,
-		peerID: id, peer: cephFSPeerIdentity{mirror.DestinationClientEntity, mirror.destinationSite, mirror.DestinationFilesystem}, generation: mirror.peerGeneration, clusters: clusters, readClusters: readClusters}
+		peerID: id, peer: cephFSPeerIdentity{mirror.DestinationClientEntity, mirror.destinationSite, mirror.DestinationFilesystem}, generation: mirror.ops.peerGeneration, clusters: clusters, readClusters: readClusters}
 	present, fsPresent, err := r.policy(ctx)
 	if err != nil {
 		return nil, err
@@ -152,25 +152,25 @@ func (mirror *Mirror) beginPeerRemoval(ctx context.Context, id string, readClust
 		return nil, err
 	}
 	// Register BEFORE mutation; a lost CLI response cannot erase the intent.
-	mirror.supersedePeerDirectoryAddition(id)
-	mirror.peerRemoval = r
+	mirror.ops.supersedePeerDirectoryAddition(id)
+	mirror.ops.peerRemoval = r
 	return r, r.resume(ctx)
 }
 
 // Called under mirror.mu. Legacy policy-only RemovePeer has no explicit receipt.
-func (mirror *Mirror) guardPeerRemovalOverlap() error {
-	if err := mirror.guardDirectoryAdditionOverlap(); err != nil {
+func (ops *mirrorOperations) guardPeerRemovalOverlap() error {
+	if err := ops.guardDirectoryAdditionOverlap(); err != nil {
 		return err
 	}
-	return mirror.guardCephFSRemovalOverlap()
+	return ops.guardCephFSRemovalOverlap()
 }
 
 // Addition resumes its own pending intent using only the removal admission gate.
-func (mirror *Mirror) guardCephFSRemovalOverlap() error {
-	if mirror.peerRemoval != nil && !mirror.peerRemoval.terminal() {
+func (ops *mirrorOperations) guardCephFSRemovalOverlap() error {
+	if ops.peerRemoval != nil && !ops.peerRemoval.terminal() {
 		return cephFSObserveGuard("explicit CephFS peer drain is incomplete")
 	}
-	return mirror.guardDirectoryRemovalOverlap()
+	return ops.guardDirectoryRemovalOverlap()
 }
 
 func (r *PeerRemoval) checkHandle() error {
@@ -178,7 +178,7 @@ func (r *PeerRemoval) checkHandle() error {
 		return cephFSObserveGuard("CephFS peer removal original identity is unavailable")
 	}
 	m := r.mirror
-	if m.closed || m.peerRemoval != r || m.peerGeneration != r.generation {
+	if m.closed || m.ops.peerRemoval != r || m.ops.peerGeneration != r.generation {
 		return cephFSObserveGuard("CephFS peer removal owner is closed or superseded")
 	}
 	if m.source != r.source || m.destination != r.destination || m.SourceFilesystem != r.sourceFilesystem || m.DestinationFilesystem != r.destinationFilesystem || m.SourceClientEntity != r.sourceClient || m.filesystemID != r.sourceID || m.destinationFilesystemID != r.destinationID || m.metadataPoolID != r.sourceMetadata || m.destinationMetadataPoolID != r.destinationMetadata || m.metadataPool != r.metadataPool || m.DestinationClientEntity != r.peer.ClientName || m.destinationSite != r.peer.SiteName || (m.peerID != "" && m.peerID != r.peerID) {

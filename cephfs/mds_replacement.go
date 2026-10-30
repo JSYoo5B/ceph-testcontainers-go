@@ -92,7 +92,7 @@ func (fs *Filesystem) addMDSReplacement(parent context.Context, stopped *MDS, st
 		servicehook.Unlock(c)
 		return nil, clusterutil.OperationError(ctx, "select MDS replacement control", err)
 	}
-	if err := fs.checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
 		servicehook.Unlock(c)
 		return nil, err
 	}
@@ -110,43 +110,7 @@ func (fs *Filesystem) addMDSReplacement(parent context.Context, stopped *MDS, st
 		return nil, err
 	}
 	admit := func(ctx context.Context, name string) (testcontainers.Container, error) {
-		// The real starter owns c.mu here. Return selected control so the first
-		// auth invocation cannot wait on another admission gate after receipt.
-		if name != r.name || i.replacement != nil {
-			return nil, errors.New("original MDS replacement reservation changed")
-		}
-		if err := fs.checkMDSReplacementOwner(stopped, i, nil); err != nil {
-			return nil, err
-		}
-		selected, err := c.ControlContainer(ctx)
-		if err != nil || selected == nil {
-			return nil, clusterutil.OperationError(ctx, "select admitted MDS replacement control", err)
-		}
-		if err := fs.checkStoppedMDSCluster(ctx, i); err != nil {
-			return nil, err
-		}
-		if missing, err := inspectStoppedMDS(ctx, i, false); err != nil || missing {
-			return nil, clusterutil.OperationError(ctx, "reattest original stopped MDS", err)
-		}
-		scope, _, err := fs.readMDSReplacementScope(ctx, i, r)
-		if err != nil || !reflect.DeepEqual(scope, r.scope) {
-			return nil, clusterutil.OperationError(ctx, "MDS replacement scope changed before startup", err)
-		}
-		if err := fs.checkMDSReplacementAuth(ctx, selected, name); err != nil {
-			return nil, err
-		}
-		data, err := servicehook.Command(ctx, selected, "ceph", "--connect-timeout", "5", "fsid")
-		if err != nil {
-			return nil, clusterutil.OperationError(ctx, "read selected MDS replacement cluster", err)
-		}
-		if _, err := coldMDSFSID(ctx, data, &cephFSColdMDS{fsid: i.fsid}); err != nil {
-			return nil, err
-		}
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		i.replacement = r // immediately before reserved name and auth invocation
-		return selected, nil
+		return fs.admitMDSReplacement(ctx, stopped, r, name)
 	}
 	published := func(daemon *MDS) {
 		r.daemon, r.identity = daemon, daemon.identity
@@ -159,34 +123,85 @@ func (fs *Filesystem) addMDSReplacement(parent context.Context, stopped *MDS, st
 	if newDaemon == nil || r.daemon != newDaemon || r.identity == nil {
 		return newDaemon, errors.New("MDS replacement service returned no confirmed owned handle")
 	}
+	return newDaemon, fs.completeMDSReplacement(ctx, stopped, r)
+}
+
+// admitMDSReplacement is the admission step of the replacement start. Owner
+// held: the real starter owns c.mu here. It reattests the stopped original,
+// the reserved name, the scope and the selected control's cluster, and
+// records the reservation immediately before the reserved name and auth
+// invocation. It returns the selected control so the first auth invocation
+// cannot wait on another admission gate after receipt.
+func (fs *Filesystem) admitMDSReplacement(ctx context.Context, stopped *MDS, r *cephFSMDSReplacement, name string) (testcontainers.Container, error) {
+	i := stopped.identity
+	if name != r.name || i.replacement != nil {
+		return nil, errors.New("original MDS replacement reservation changed")
+	}
+	if err := fs.checkMDSReplacementOwner(stopped, i, nil); err != nil {
+		return nil, err
+	}
+	selected, err := fs.cluster.ControlContainer(ctx)
+	if err != nil || selected == nil {
+		return nil, clusterutil.OperationError(ctx, "select admitted MDS replacement control", err)
+	}
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
+		return nil, err
+	}
+	if missing, err := inspectStoppedMDS(ctx, i, false); err != nil || missing {
+		return nil, clusterutil.OperationError(ctx, "reattest original stopped MDS", err)
+	}
+	scope, _, err := fs.readMDSReplacementScope(ctx, i, r)
+	if err != nil || !reflect.DeepEqual(scope, r.scope) {
+		return nil, clusterutil.OperationError(ctx, "MDS replacement scope changed before startup", err)
+	}
+	if err := fs.checkMDSReplacementAuth(ctx, selected, name); err != nil {
+		return nil, err
+	}
+	data, err := servicehook.Command(ctx, selected, "ceph", "--connect-timeout", "5", "fsid")
+	if err != nil {
+		return nil, clusterutil.OperationError(ctx, "read selected MDS replacement cluster", err)
+	}
+	if _, err := coldMDSFSID(ctx, data, &cephFSColdMDS{fsid: i.fsid}); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	i.replacement = r // immediately before reserved name and auth invocation
+	return selected, nil
+}
+
+// completeMDSReplacement waits until the new member holds the failed rank,
+// confirms it a second time and only then, under the topology lock and after
+// a final owner check, records the replacement as completed. Creation success
+// alone is never enough to convert an attempted request to completed.
+func (fs *Filesystem) completeMDSReplacement(ctx context.Context, stopped *MDS, r *cephFSMDSReplacement) error {
 	for {
 		ready, err := fs.observeMDSReplacement(ctx, stopped, r)
 		if err != nil {
-			return newDaemon, err
+			return err
 		}
 		if ready {
-			// Recheck before publishing completion; creation success alone is
-			// never enough to convert an attempted request to completed.
 			ready, err = fs.observeMDSReplacement(ctx, stopped, r)
 			if err != nil || !ready {
-				return newDaemon, clusterutil.OperationError(ctx, "confirm MDS replacement", err)
+				return clusterutil.OperationError(ctx, "confirm MDS replacement", err)
 			}
-			if err := servicehook.LockTopology(ctx, c); err != nil {
-				return newDaemon, err
+			if err := servicehook.LockTopology(ctx, fs.cluster); err != nil {
+				return err
 			}
-			err = fs.checkMDSReplacementOwner(stopped, i, r)
+			err = fs.checkMDSReplacementOwner(stopped, stopped.identity, r)
 			if err == nil {
 				err = ctx.Err()
 			}
 			if err == nil {
 				r.completed = true
 			}
-			servicehook.Unlock(c)
-			return newDaemon, err
+			servicehook.Unlock(fs.cluster)
+			return err
 		}
 		select {
 		case <-ctx.Done():
-			return newDaemon, ctx.Err()
+			return ctx.Err()
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
@@ -301,7 +316,7 @@ func (fs *Filesystem) observeMDSReplacement(ctx context.Context, stopped *MDS, r
 	if r.daemon == nil || r.identity == nil || !r.identity.confirmed {
 		return false, errors.New("replacement service creation is unconfirmed")
 	}
-	if err := fs.checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
 		return false, err
 	}
 	missing, err := inspectStoppedMDS(ctx, i, i.removed)
@@ -322,7 +337,7 @@ func (fs *Filesystem) observeMDSReplacement(ctx context.Context, stopped *MDS, r
 	if i.removed && !reflect.DeepEqual(i.scope, r.scope) {
 		return false, errors.New("completed original MDS removal scope differs from replacement")
 	}
-	if err := fs.checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
 		return false, err
 	}
 	if err := fs.checkMDSReplacementOwner(stopped, i, r); err != nil {

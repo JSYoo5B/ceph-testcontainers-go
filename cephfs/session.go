@@ -92,7 +92,7 @@ func (fs *Filesystem) SessionTimeouts(ctx context.Context) (SessionTimeouts, err
 		return SessionTimeouts{}, err
 	}
 	defer done()
-	return fs.readSessionTimeouts(ctx, fsID)
+	return fs.volumes().readSessionTimeouts(ctx, fsID)
 }
 
 // OverrideSessionTimeouts sets both limits so a test can observe evicted
@@ -112,14 +112,14 @@ func (fs *Filesystem) OverrideSessionTimeouts(ctx context.Context, requested Ses
 	if active := fs.sessionTimeouts; active != nil && !active.restored {
 		return nil, errors.New("restore the existing CephFS session timeouts override first")
 	}
-	previous, err := fs.readSessionTimeouts(ctx, fsID)
+	previous, err := fs.volumes().readSessionTimeouts(ctx, fsID)
 	if err != nil {
 		return nil, err
 	}
 	state := &cephFSSessionTimeoutsState{fsID: fsID, previous: previous, applied: requested}
 	fs.sessionTimeouts = state
 	change := &SessionTimeoutsOverrideHandle{filesystem: fs, state: state}
-	return change, fs.writeSessionTimeouts(ctx, fsID, previous, requested)
+	return change, fs.volumes().writeSessionTimeouts(ctx, fsID, previous, requested)
 }
 
 // Restore returns both limits to the values captured before the change. It is
@@ -156,7 +156,7 @@ func (change *SessionTimeoutsOverrideHandle) Restore(ctx context.Context) error 
 	if fsID != state.fsID {
 		return errors.New("CephFS filesystem identity changed since the session timeouts override")
 	}
-	current, err := fs.readSessionTimeouts(ctx, fsID)
+	current, err := fs.volumes().readSessionTimeouts(ctx, fsID)
 	if err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func (change *SessionTimeoutsOverrideHandle) Restore(ctx context.Context) error 
 		!ownedSessionValue(current.Autoclose, state.previous.Autoclose, state.applied.Autoclose) {
 		return fmt.Errorf("CephFS session timeouts changed outside this override: %+v", current)
 	}
-	if err := fs.writeSessionTimeouts(ctx, fsID, current, state.previous); err != nil {
+	if err := fs.volumes().writeSessionTimeouts(ctx, fsID, current, state.previous); err != nil {
 		return err
 	}
 	state.restored = true
@@ -260,10 +260,10 @@ func (fs *Filesystem) beginSessionOperation(ctx context.Context) (context.Contex
 	return ctx, fsID, done, nil
 }
 
-func (fs *Filesystem) readSessionTimeouts(ctx context.Context, fsID int64) (SessionTimeouts, error) {
-	data, err := fs.cluster.Ceph(ctx, "fs", "get", fs.name, "--format", "json")
+func (v volumeCommands) readSessionTimeouts(ctx context.Context, fsID int64) (SessionTimeouts, error) {
+	data, err := v.cluster.Ceph(ctx, "fs", "get", v.name, "--format", "json")
 	if err != nil {
-		return SessionTimeouts{}, fmt.Errorf("read CephFS %q session timeouts: %w", fs.name, err)
+		return SessionTimeouts{}, fmt.Errorf("read CephFS %q session timeouts: %w", v.name, err)
 	}
 	return parseCephFSSessionTimeouts(data, fsID)
 }
@@ -284,7 +284,7 @@ func parseCephFSSessionTimeouts(data []byte, fsID int64) (SessionTimeouts, error
 
 // writeSessionTimeouts changes only differing values and confirms the result
 // with a readback that survives cancellation of the caller's context.
-func (fs *Filesystem) writeSessionTimeouts(ctx context.Context, fsID int64, current, target SessionTimeouts) error {
+func (v volumeCommands) writeSessionTimeouts(ctx context.Context, fsID int64, current, target SessionTimeouts) error {
 	for _, field := range []struct {
 		name          string
 		current, want time.Duration
@@ -292,13 +292,13 @@ func (fs *Filesystem) writeSessionTimeouts(ctx context.Context, fsID int64, curr
 		if field.current == field.want {
 			continue
 		}
-		if _, err := fs.cluster.Ceph(ctx, "fs", "set", fs.name, field.name, strconv.FormatInt(int64(field.want/time.Second), 10)); err != nil {
-			return fmt.Errorf("set CephFS %q %s: %w", fs.name, field.name, err)
+		if _, err := v.cluster.Ceph(ctx, "fs", "set", v.name, field.name, strconv.FormatInt(int64(field.want/time.Second), 10)); err != nil {
+			return fmt.Errorf("set CephFS %q %s: %w", v.name, field.name, err)
 		}
 	}
 	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	stored, err := fs.readSessionTimeouts(readCtx, fsID)
+	stored, err := v.readSessionTimeouts(readCtx, fsID)
 	if err != nil {
 		return err
 	}

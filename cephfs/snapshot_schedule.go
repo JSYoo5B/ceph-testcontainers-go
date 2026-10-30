@@ -153,17 +153,10 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 		filesystem: fs, rules: map[string]int{}, cleared: map[string]bool{}}
 	// Two leases of one directory would each take the other's schedule for
 	// their own.
-	fs.snapshotScheduleMu.Lock()
-	if fs.scheduledPaths[schedule.Path] != nil {
-		fs.snapshotScheduleMu.Unlock()
+	if !fs.schedules.reserve(lease) {
 		return nil, servicehook.Invalid(fmt.Errorf("directory %s already has a snapshot schedule lease", schedule.Path))
 	}
-	if fs.scheduledPaths == nil {
-		fs.scheduledPaths = map[string]*SnapshotScheduleLease{}
-	}
-	fs.scheduledPaths[schedule.Path] = lease
-	fs.snapshotScheduleMu.Unlock()
-	existing, err := fs.snapshotScheduleStatuses(ctx, schedule.Path)
+	existing, err := fs.volumes().snapshotScheduleStatuses(ctx, schedule.Path)
 	if err == nil && len(existing) > 0 {
 		err = servicehook.Invalid(fmt.Errorf("directory %s already has %d snapshot schedules", schedule.Path, len(existing)))
 	}
@@ -215,17 +208,45 @@ func nonNil(m map[string]int) map[string]int {
 }
 
 // release lets another lease schedule the directory.
-func (l *SnapshotScheduleLease) release() {
-	l.filesystem.snapshotScheduleMu.Lock()
-	defer l.filesystem.snapshotScheduleMu.Unlock()
-	if l.filesystem.scheduledPaths[l.Path] == l {
-		delete(l.filesystem.scheduledPaths, l.Path)
+func (l *SnapshotScheduleLease) release() { l.filesystem.schedules.release(l) }
+
+// scheduleLeases is the set of directories of one filesystem that hold a
+// snapshot schedule lease not restored yet. Two leases of one directory would
+// each take the other's schedule for their own, so a directory holds at most
+// one. Its own mutex guards the set; it is a leaf lock, taken for the map
+// update alone and never while a native command runs.
+type scheduleLeases struct {
+	mu    sync.Mutex
+	paths map[string]*SnapshotScheduleLease
+}
+
+// reserve records lease for its directory and reports false when another
+// lease already holds it.
+func (s *scheduleLeases) reserve(lease *SnapshotScheduleLease) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.paths[lease.Path] != nil {
+		return false
+	}
+	if s.paths == nil {
+		s.paths = map[string]*SnapshotScheduleLease{}
+	}
+	s.paths[lease.Path] = lease
+	return true
+}
+
+// release frees the directory of lease, unless another lease holds it.
+func (s *scheduleLeases) release(lease *SnapshotScheduleLease) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.paths[lease.Path] == lease {
+		delete(s.paths, lease.Path)
 	}
 }
 
 // snapshotScheduleStatuses reads every schedule of one directory.
-func (fs *Filesystem) snapshotScheduleStatuses(ctx context.Context, dir string) ([]SnapshotScheduleStatus, error) {
-	data, err := fs.cluster.Ceph(ctx, "fs", "snap-schedule", "status", dir, "--fs", fs.name, "--format", "json")
+func (v volumeCommands) snapshotScheduleStatuses(ctx context.Context, dir string) ([]SnapshotScheduleStatus, error) {
+	data, err := v.cluster.Ceph(ctx, "fs", "snap-schedule", "status", dir, "--fs", v.name, "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("read the snapshot schedules of %s: %w", dir, err)
 	}
@@ -290,7 +311,7 @@ func parseSnapshotScheduleStatuses(data []byte, dir string) ([]SnapshotScheduleS
 // compared only when one was given. A schedule with the lease's repeat that is
 // not the lease's is ceph.ErrInvalidRequest; none is nil.
 func (l *SnapshotScheduleLease) find(ctx context.Context) (*SnapshotScheduleStatus, error) {
-	statuses, err := l.filesystem.snapshotScheduleStatuses(ctx, l.Path)
+	statuses, err := l.filesystem.volumes().snapshotScheduleStatuses(ctx, l.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +429,7 @@ func (l *SnapshotScheduleLease) Restore(ctx context.Context) error {
 	if l.restored {
 		return nil
 	}
-	statuses, err := l.filesystem.snapshotScheduleStatuses(ctx, l.Path)
+	statuses, err := l.filesystem.volumes().snapshotScheduleStatuses(ctx, l.Path)
 	if err != nil {
 		return err
 	}

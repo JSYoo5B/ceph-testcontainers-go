@@ -96,7 +96,7 @@ func (fs *Filesystem) removeStoppedMDS(parent context.Context, daemon *MDS) erro
 	if err != nil || control == nil {
 		return clusterutil.OperationError(ctx, "select stopped MDS control", err)
 	}
-	if err := fs.checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
 		return err
 	}
 	if _, err := inspectStoppedMDS(ctx, i, false); err != nil {
@@ -110,7 +110,7 @@ func (fs *Filesystem) removeStoppedMDS(parent context.Context, daemon *MDS) erro
 		return errors.New("admitted stopped MDS policy or attachments changed")
 	}
 	// Reattest original native/owner/state immediately before a Docker attempt.
-	if err := fs.checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
 		return err
 	}
 	after, err := fs.readStoppedMDSScope(ctx, i)
@@ -139,7 +139,7 @@ func (fs *Filesystem) removeStoppedMDS(parent context.Context, daemon *MDS) erro
 	if err != nil || !missing {
 		return clusterutil.OperationError(ctx, "confirm original stopped MDS removal", err)
 	}
-	if err := fs.checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
 		return err
 	}
 	after, err = fs.readStoppedMDSScope(ctx, i)
@@ -194,8 +194,8 @@ func (fs *Filesystem) checkStoppedMDSOwner(handle *MDS, i *cephFSMDSIdentity) er
 
 // Owner held. Reuse the confirmed bootstrap parser, fresh native quorum and
 // address validation, with context-aware admission to its existing cache gate.
-func (fs *Filesystem) checkStoppedMDSCluster(ctx context.Context, i *cephFSMDSIdentity) error {
-	c := fs.cluster
+func (v volumeCommands) checkStoppedMDSCluster(ctx context.Context, i *cephFSMDSIdentity) error {
+	c := v.cluster
 	fsid, confirmed, err := servicehook.ClusterIdentity(ctx, c)
 	if err != nil {
 		return err
