@@ -1,7 +1,7 @@
 {
   "schema": "ceph-api-naming-review/v2",
   "package": "rbd/mirror",
-  "declarations_sha256": "6af42c52d40f48e485695f4a8edd3bf89b0e61c81db210ea126543b8ededee44",
+  "declarations_sha256": "3b855f07d562820961b36c75621dc355a7baebf09a74d85775c1b4383a73e002",
   "members_sha256": "d427816144c6f1d52a4f0e8951b877451b0a7ea62d72bc80906ccf670d582f1e",
   "declarations": 43,
   "members": 74,
