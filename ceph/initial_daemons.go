@@ -138,7 +138,7 @@ func (c *Container) startInitialManagers(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	_, err := c.startManager(ctx, daemonName(0), c.settings.essentialImage)
+	_, err := c.monitorTopology().startManager(ctx, daemonName(0), c.settings.essentialImage)
 	return err
 }
 
@@ -162,7 +162,7 @@ func (c *Container) finishInitialManagers(ctx context.Context) error {
 	}
 	for i := 1; i < c.settings.managers; i++ {
 		name := daemonName(i)
-		if _, err := c.startManager(ctx, name, c.settings.essentialImage); err != nil {
+		if _, err := c.monitorTopology().startManager(ctx, name, c.settings.essentialImage); err != nil {
 			return err
 		}
 		if err := (daemonMaps{c.conn()}).waitManagerRegistered(ctx, name); err != nil {

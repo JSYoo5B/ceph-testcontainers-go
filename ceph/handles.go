@@ -36,12 +36,12 @@ func (r *osdRegistry) current(handle *OSDContainer) error {
 // cluster owns under its name now and returns it. The primary MON "a" is
 // rebuilt as a fresh descriptor around the cluster's own container on every
 // listing, so it is matched by that container, not by the pointer.
-func (c *Container) currentMonitor(handle *MonitorContainer) (*MonitorContainer, error) {
+func (t monitorTopology) currentMonitor(handle *MonitorContainer) (*MonitorContainer, error) {
 	name := handle.DaemonName
-	if name == "a" && !c.monitorTerminated && c.Container != nil && handle.Container == c.Container {
+	if name == "a" && t.firstMonitorStands() && handle.Container == t.first {
 		return handle, nil
 	}
-	if cur := c.roster.monitor(name); cur != nil && cur == handle {
+	if cur := t.roster.monitor(name); cur != nil && cur == handle {
 		return cur, nil
 	}
 	return nil, invalid(fmt.Errorf("monitor %s is not owned by this cluster, or this handle is stale", name))
@@ -70,7 +70,7 @@ func (m *MonitorContainer) ownedBy(c *Container) bool {
 	if m == nil || m.Container == nil {
 		return false
 	}
-	_, err := c.currentMonitor(m)
+	_, err := c.monitorTopology().currentMonitor(m)
 	return err == nil
 }
 

@@ -285,7 +285,7 @@ func TestMemberRosterFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if sel, ok := n.(*ast.SelectorExpr); ok && memberRosterUse(sel) {
-					if allowed[sel] {
+					if allowed[sel] || monitorTopologyBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.roster outside a memberRoster method call")
@@ -402,8 +402,8 @@ var memberRosterCallers = map[string]memberRosterCaller{
 	"ServiceContainers":   {"takes", []string{"sortedServices"}},
 	"Managers":            {"takes", []string{"eachManager", "managerCount"}},
 	"AddMonitor":          {"takes", []string{"addMonitor", "monitor"}},
-	"removeMonitor":       {"takes", []string{"dropMonitor"}},
-	"removeManager":       {"takes", []string{"currentManager", "dropManager", "eachManager", "managerCount"}},
+	"retireMonitor":       {"holds", []string{"dropMonitor"}},
+	"retireManager":       {"holds", []string{"currentManager", "dropManager", "eachManager", "managerCount"}},
 	"startService":        {"takes", []string{"hasService", "setService"}},
 	"terminate":           {"takes", []string{"clearInitialManager", "dropManager", "dropMonitor", "dropService", "eachManager", "eachMonitor", "eachService", "initialManager"}},
 	"diagnosticsSnapshot": {"takes", []string{"eachManager", "eachMonitor", "eachService", "initialManager"}},
@@ -553,7 +553,7 @@ func TestMemberRosterHasNoAddressTaken(t *testing.T) {
 				return true
 			}
 			ast.Inspect(un.X, func(m ast.Node) bool {
-				if sel, ok := m.(*ast.SelectorExpr); ok && (memberRosterUse(sel) || sel.Sel.Name == "firstMgr") {
+				if sel, ok := m.(*ast.SelectorExpr); ok && (memberRosterUse(sel) || sel.Sel.Name == "firstMgr") && !inMonitorTopologyBinding(parsed, un.Pos()) {
 					problems = append(problems, file+": takes the address of "+types.ExprString(un.X))
 				}
 				return true

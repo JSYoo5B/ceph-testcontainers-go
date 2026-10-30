@@ -179,7 +179,7 @@ func TestMonitorConfigInventorySkipsRemovedAndRetiredHandles(t *testing.T) {
 	cluster.roster.recordInitialManager(retiredMgr)
 	cluster.osdHandles.register(2, &OSDContainer{Container: retiredOSD, purged: true})
 	cluster.monitorTerminated = true
-	targets, err := cluster.monitorConfigTargets(ctx, control, "removed")
+	targets, err := cluster.monitorTopology().monitorConfigTargets(ctx, control, "removed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,12 +188,12 @@ func TestMonitorConfigInventorySkipsRemovedAndRetiredHandles(t *testing.T) {
 	}
 	cluster.monitorTerminated = false
 	cluster.roster.dropMonitor("removed")
-	if targets, err := cluster.monitorConfigTargets(ctx, control, "a"); err != nil || len(targets) != 0 {
+	if targets, err := cluster.monitorTopology().monitorConfigTargets(ctx, control, "a"); err != nil || len(targets) != 0 {
 		t.Fatal("a just-terminated primary was queued during RemoveMonitor")
 	}
 	cluster.Container = control
 	cluster.roster.setService("rgw.same", control)
-	if targets, err := cluster.monitorConfigTargets(ctx, control, ""); err != nil || len(targets) != 0 {
+	if targets, err := cluster.monitorTopology().monitorConfigTargets(ctx, control, ""); err != nil || len(targets) != 0 {
 		t.Fatal("control/primary/service aliases were recopied")
 	}
 }
@@ -365,7 +365,7 @@ func TestMonitorConfigInventoryIsDeterministicAndDeduplicated(t *testing.T) {
 		"rgw":    testExtension{targets: map[string]testcontainers.Container{"rgw.z": a}},
 		"cephfs": testExtension{targets: map[string]testcontainers.Container{"mds.a": b}},
 	}}
-	targets, err := cluster.monitorConfigTargets(ctx, control, "")
+	targets, err := cluster.monitorTopology().monitorConfigTargets(ctx, control, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +385,7 @@ func TestMonitorConfigInventoryBoundsToolkitPublicationWait(t *testing.T) {
 	defer cluster.toolkit.publishMu.Unlock()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
-	if targets, err := cluster.monitorConfigTargets(ctx, control, ""); !errors.Is(err, context.DeadlineExceeded) || len(targets) != 0 {
+	if targets, err := cluster.monitorTopology().monitorConfigTargets(ctx, control, ""); !errors.Is(err, context.DeadlineExceeded) || len(targets) != 0 {
 		t.Fatalf("monitor refresh ignored a blocked toolkit publication: %v %v", targets, err)
 	}
 }

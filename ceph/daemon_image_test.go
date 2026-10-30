@@ -304,11 +304,11 @@ func TestStartManagerLaunchesFromTheGivenImage(t *testing.T) {
 		images = append(images, image)
 		return &initialOSDDaemon{}, nil
 	}
-	overridden, err := cluster.startManager(t.Context(), "b", cluster.settings.daemonImage(DaemonOptions{image: "example.invalid/ceph:new", imageSet: true}))
+	overridden, err := cluster.monitorTopology().startManager(t.Context(), "b", cluster.settings.daemonImage(DaemonOptions{image: "example.invalid/ceph:new", imageSet: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ordinary, err := cluster.startManager(t.Context(), "c", cluster.settings.daemonImage(DaemonOptions{}))
+	ordinary, err := cluster.monitorTopology().startManager(t.Context(), "c", cluster.settings.daemonImage(DaemonOptions{}))
 	if err != nil {
 		t.Fatal(err)
 	}

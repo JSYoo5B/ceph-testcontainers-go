@@ -223,7 +223,7 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	add := func(role, name string, ctr testcontainers.Container) {
 		snapshot.containers = append(snapshot.containers, DiagnosticsContainer{Role: role, Name: name, Container: diagnosticContainerHandle(ctr)})
 	}
-	if c.Container != nil && (!c.monitorTerminated || c.closed) {
+	if c.Container != nil && (!c.monitorTopology().firstMonitorTerminated() || c.closed) {
 		add("mon", "a", c.Container)
 	}
 	for name, mon := range c.roster.eachMonitor() {

@@ -90,8 +90,11 @@ type Container struct {
 	runDir runDirState
 	// portLeases is the host-port reservations of host network mode; see
 	// portLeaseState. It has no lock of its own: mu guards it.
-	portLeases        portLeaseState
-	closed            bool
+	portLeases portLeaseState
+	closed     bool
+	// monitorTerminated records that the embedded first MON was terminated.
+	// It is bound only into monitorTopology and read or written only through
+	// that owner's methods; see monitorTopology.
 	monitorTerminated bool
 
 	// native is the native-command state; see nativeState. It has its own
@@ -1049,11 +1052,11 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 		}
 		c.roster.dropMonitor(name)
 	}
-	if c.Container != nil && !c.monitorTerminated {
+	if topology := c.monitorTopology(); c.Container != nil && !topology.firstMonitorTerminated() {
 		if err := c.Container.Terminate(ctx, opts...); !onlyMissingHostResource(err) {
 			errs = append(errs, err)
 		} else {
-			c.monitorTerminated = true
+			topology.markFirstMonitorTerminated()
 		}
 	}
 	// The added and the primary MON containers are the users of the MON store

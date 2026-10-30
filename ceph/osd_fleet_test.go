@@ -76,27 +76,34 @@ func TestOSDFleetBindsEachStateOnce(t *testing.T) {
 }
 
 func checkOSDFleetConstructor(fn *ast.FuncDecl) []string {
+	return checkStateBinding(fn, "osdFleet", osdFleetBound)
+}
+
+// checkStateBinding checks that fn is a single return of one literal of
+// typeName that binds each field in bound exactly once, as &c.<same field>.
+func checkStateBinding(fn *ast.FuncDecl, typeName string, bound []string) []string {
+	name := "Container." + fn.Name.Name
 	if len(fn.Body.List) != 1 {
-		return []string{"Container.osdFleet must be a single return"}
+		return []string{name + " must be a single return"}
 	}
 	ret, ok := fn.Body.List[0].(*ast.ReturnStmt)
 	if !ok || len(ret.Results) != 1 {
-		return []string{"Container.osdFleet must be a single return"}
+		return []string{name + " must be a single return"}
 	}
 	lit, ok := ret.Results[0].(*ast.CompositeLit)
 	if !ok {
-		return []string{"Container.osdFleet must return an osdFleet literal"}
+		return []string{name + " must return a " + typeName + " literal"}
 	}
 	var problems []string
-	bound := map[string]int{}
+	seen := map[string]int{}
 	for _, elt := range lit.Elts {
 		kv, ok := elt.(*ast.KeyValueExpr)
 		if !ok {
-			problems = append(problems, "osdFleet literal must be keyed")
+			problems = append(problems, typeName+" literal must be keyed")
 			continue
 		}
 		key := kv.Key.(*ast.Ident).Name
-		if !slices.Contains(osdFleetBound, key) {
+		if !slices.Contains(bound, key) {
 			continue
 		}
 		address, ok := kv.Value.(*ast.UnaryExpr)
@@ -105,19 +112,26 @@ func checkOSDFleetConstructor(fn *ast.FuncDecl) []string {
 			sel, selOK = address.X.(*ast.SelectorExpr)
 		}
 		if !selOK || sel.Sel.Name != key || !isContainerReceiver(sel.X) {
-			problems = append(problems, "osdFleet binds "+key+" to "+types.ExprString(kv.Value)+", want &c."+key)
+			problems = append(problems, typeName+" binds "+key+" to "+types.ExprString(kv.Value)+", want &c."+key)
 		}
-		bound[key]++
+		seen[key]++
 	}
-	for _, name := range osdFleetBound {
-		if bound[name] != 1 {
-			problems = append(problems, fmt.Sprintf("osdFleet binds %s %d times, want once", name, bound[name]))
+	for _, field := range bound {
+		if seen[field] != 1 {
+			problems = append(problems, fmt.Sprintf("%s binds %s %d times, want once", typeName, field, seen[field]))
 		}
 	}
 	return problems
 }
 
 func checkOSDFleetOwnerUse(file string, fn *ast.FuncDecl) []string {
+	return checkOwnerUse(file, fn, "f", "OSDContainer")
+}
+
+// checkOwnerUse checks that the methods of a binding type, whose receiver is
+// named recv, select recv.owner only as the owner of a new handle literal of
+// one of handles.
+func checkOwnerUse(file string, fn *ast.FuncDecl, recv string, handles ...string) []string {
 	var problems []string
 	allowed := map[*ast.SelectorExpr]bool{}
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -125,7 +139,7 @@ func checkOSDFleetOwnerUse(file string, fn *ast.FuncDecl) []string {
 		if !ok {
 			return true
 		}
-		if star, ok := lit.Type.(*ast.Ident); !ok || star.Name != "OSDContainer" {
+		if id, ok := lit.Type.(*ast.Ident); !ok || !slices.Contains(handles, id.Name) {
 			return true
 		}
 		for _, elt := range lit.Elts {
@@ -141,8 +155,8 @@ func checkOSDFleetOwnerUse(file string, fn *ast.FuncDecl) []string {
 	})
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "owner" {
-			if id, ok := sel.X.(*ast.Ident); ok && id.Name == "f" && !allowed[sel] {
-				problems = append(problems, file+": "+funcKey(fn)+" uses the fleet's owner beyond a new handle's owner")
+			if id, ok := sel.X.(*ast.Ident); ok && id.Name == recv && !allowed[sel] {
+				problems = append(problems, file+": "+funcKey(fn)+" uses the owner beyond a new handle's owner")
 			}
 		}
 		return true

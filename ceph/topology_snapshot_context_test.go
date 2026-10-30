@@ -125,7 +125,7 @@ func TestMonitorAndOSDSnapshotsMatchTheLockedListings(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		locked := cluster.monitorsLocked()
+		locked := cluster.monitorTopology().monitorsLocked()
 		if len(monitors) != len(locked) {
 			t.Fatalf("terminated=%v: monitors %v, locked %v", terminated, monitors, locked)
 		}

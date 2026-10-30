@@ -77,7 +77,7 @@ func TestMonitorRemovalConvergesAfterTransientNativeRead(t *testing.T) {
 	if err := monitorHandle(t, t.Context(), cluster, "a").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if control.removals != 1 || daemon.terminations != 1 || control.copies != 1 || !cluster.monitorTerminated || len(cluster.monitorsLocked()) != 0 {
+	if control.removals != 1 || daemon.terminations != 1 || control.copies != 1 || !cluster.monitorTerminated || len(cluster.monitorTopology().monitorsLocked()) != 0 {
 		t.Fatal("transient read repeated native mutation or lost primary cleanup")
 	}
 	if strings.Count(string(cluster.bootstrap.config), "[v2:") != 3 || len(control.afterRemoval) != 0 {

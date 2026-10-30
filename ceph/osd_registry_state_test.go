@@ -305,6 +305,7 @@ var osdRegistryCallers = map[string]osdRegistryCaller{
 	"Owns":                             {"hook", nil},
 	"ownsNativeTarget":                 {"holds", nil},
 	"refreshMonitorConfigAfterRemoval": {"holds", nil},
+	"retireMonitor":                    {"holds", nil},
 	"refreshMonitorConfig":             {"holds", nil},
 	"removalOSDMutation":               {"holds", nil},
 	"waitOSDRemoval":                   {"holds", nil},

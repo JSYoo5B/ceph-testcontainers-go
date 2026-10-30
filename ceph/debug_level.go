@@ -174,7 +174,7 @@ func (c *Container) openDebugTarget(ctx context.Context, daemon string) (*osdDeb
 		return nil, err
 	}
 	closed, osd := c.closed, c.osdHandles.get(n)
-	owns := c.ownsDaemon(kind, id) && osd != nil && !osd.purgeIssued && !osd.detaching
+	owns := c.monitorTopology().ownsDaemon(kind, id) && osd != nil && !osd.purgeIssued && !osd.detaching
 	c.mu.Unlock()
 	switch {
 	case closed:

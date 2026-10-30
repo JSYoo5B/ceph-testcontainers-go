@@ -193,7 +193,7 @@ func lifecycleAccesses(files map[string]*ast.File) (accesses []lifecycleAccess, 
 			if recv := receiverTypeName(fn); recv != "" {
 				name = recv + "." + name
 			}
-			if recv := receiverTypeName(fn); recv != "Container" {
+			if recv := receiverTypeName(fn); recv != "Container" && recv != "monitorTopology" {
 				// Other types have their own closed fields. Only the
 				// composite literals of Container matter here.
 				ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -219,6 +219,9 @@ func lifecycleAccesses(files map[string]*ast.File) (accesses []lifecycleAccess, 
 				switch n := n.(type) {
 				case *ast.AssignStmt:
 					for _, lhs := range n.Lhs {
+						if star, ok := lhs.(*ast.StarExpr); ok {
+							lhs = star.X
+						}
 						if sel, ok := lhs.(*ast.SelectorExpr); ok && flags[sel.Sel.Name] {
 							written[sel] = true
 						}
@@ -232,8 +235,21 @@ func lifecycleAccesses(files map[string]*ast.File) (accesses []lifecycleAccess, 
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if sel, ok := n.(*ast.SelectorExpr); ok && flags[sel.Sel.Name] {
-					if id, ok := sel.X.(*ast.Ident); ok && (id.Name == "c" || id.Name == "cluster") {
+					if id, ok := sel.X.(*ast.Ident); ok && (id.Name == "c" || id.Name == "cluster" || id.Name == "t") {
 						accesses = append(accesses, lifecycleAccess{sel.Sel.Name, name, written[sel]})
+					}
+				}
+				// The topology's accessors are the flag's only readers and
+				// writer outside the topology binding, so a call of one is an
+				// access by its caller.
+				if call, ok := n.(*ast.CallExpr); ok {
+					if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+						switch sel.Sel.Name {
+						case "firstMonitorStands", "firstMonitorTerminated":
+							accesses = append(accesses, lifecycleAccess{"monitorTerminated", name, false})
+						case "markFirstMonitorTerminated":
+							accesses = append(accesses, lifecycleAccess{"monitorTerminated", name, true})
+						}
 					}
 				}
 				return true
@@ -244,27 +260,32 @@ func lifecycleAccesses(files map[string]*ast.File) (accesses []lifecycleAccess, 
 }
 
 // lifecycleWriters are the only functions that assign the two flags. closed is
-// set once, at the top of terminate, under mu. monitorTerminated is set by
-// terminate when it removes the first MON and by removeMonitor when the first
-// MON is removed.
+// set once, at the top of terminate, under mu. monitorTerminated is bound by
+// address only in Container.monitorTopology, assigned only in
+// markFirstMonitorTerminated, and that is called by terminate when it removes
+// the first MON and by retireMonitor when the first MON is removed.
 var lifecycleWriters = []string{
 	"closed:Container.terminate",
-	"monitorTerminated:Container.removeMonitor",
+	"monitorTerminated:Container.monitorTopology",
 	"monitorTerminated:Container.terminate",
+	"monitorTerminated:monitorTopology.markFirstMonitorTerminated",
+	"monitorTerminated:monitorTopology.retireMonitor",
 }
 
 // monitorTerminatedReaders are the Container methods that read the flag, each
 // to learn whether the embedded first MON still stands. A new reader needs a
-// review of whether it holds mu. removeMonitor only writes the flag, so it is
+// review of whether it holds mu. retireMonitor only writes the flag, so it is
 // in lifecycleWriters and not here.
 var monitorTerminatedReaders = []string{
 	"Container.AddMonitor",
-	"Container.currentMonitor",
 	"Container.diagnosticsSnapshot",
-	"Container.monitorConfigTargets",
-	"Container.monitorsLocked",
-	"Container.ownsDaemon",
 	"Container.terminate",
+	"monitorTopology.currentMonitor",
+	"monitorTopology.firstMonitorStands",
+	"monitorTopology.firstMonitorTerminated",
+	"monitorTopology.monitorConfigTargets",
+	"monitorTopology.monitorsLocked",
+	"monitorTopology.ownsDaemon",
 }
 
 // unitClusterLiteral is the only Container literal that names a flag; the

@@ -341,8 +341,8 @@ func TestBootstrapRecordFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 				return true
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && bootstrapUse(sel) && isContainerReceiver(sel.X) {
-					if allowed[sel] {
+				if sel, ok := n.(*ast.SelectorExpr); ok && bootstrapUse(sel) && (isContainerReceiver(sel.X) || receiverTypeName(fn) == "monitorTopology") {
+					if allowed[sel] || monitorTopologyBinding(fn) {
 						uses++
 					} else {
 						problems = append(problems, file+": "+fn.Name.Name+" uses Container.bootstrap outside a bootstrapRecord method call")

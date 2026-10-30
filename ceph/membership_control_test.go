@@ -1,6 +1,7 @@
 package ceph
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -113,13 +114,24 @@ func unitStateResults(t *testing.T) []string {
 	return nil
 }
 
-// TestMembershipControlStateIsNeverAddressed guards that no production code in
-// the package takes the address of a membership or control field, or of
-// anything under one (c.settings.osds, c.roster.monitors["x"]). An address is how the
-// old UnitState let another package write the closed flag and the control plane
-// without a lock.
+// TestMembershipControlStateIsNeverAddressed guards that production code takes
+// the address of a membership or control field, or of anything under one
+// (c.settings.osds, c.roster.monitors["x"]), only where an owner binds it: an
+// address is how the old UnitState let another package write the closed flag
+// and the control plane without a lock. The bindings are exactly one each:
+// Container.conn binds &c.controlPlane into the transport, whose use of it is
+// pinned by TestCephConnReachesTheControlPlaneOnlyThroughItsReaders, and
+// Container.monitorTopology binds &c.roster, &c.monitorTerminated and
+// &c.bootstrap into the topology, pinned by TestMonitorTopologyBindsEachStateOnce
+// and reached afterwards only through the roster, bootstrap and lifecycle
+// guards. Every other address of membership state fails.
 func TestMembershipControlStateIsNeverAddressed(t *testing.T) {
 	var problems []string
+	bindings := map[string]int{}
+	allowed := map[string]string{
+		"controlPlane": "Container.conn", "roster": "Container.monitorTopology",
+		"monitorTerminated": "Container.monitorTopology", "bootstrap": "Container.monitorTopology",
+	}
 	for file, parsed := range parseProductionFiles(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -131,10 +143,10 @@ func TestMembershipControlStateIsNeverAddressed(t *testing.T) {
 				if !ok || u.Op != token.AND {
 					return true
 				}
-				// Container.conn hands &c.controlPlane to the transport, whose
-				// use of it is pinned by
-				// TestCephConnReachesTheControlPlaneOnlyThroughItsReaders.
-				if sel, ok := u.X.(*ast.SelectorExpr); ok && sel.Sel.Name == "controlPlane" && fn.Name.Name == "conn" && receiverTypeName(fn) == "Container" {
+				// A binding is the address of the whole field, directly on the
+				// cluster receiver, in the one function that owns that binding.
+				if sel, ok := u.X.(*ast.SelectorExpr); ok && isContainerReceiver(sel.X) && allowed[sel.Sel.Name] == funcKey(fn) {
+					bindings[sel.Sel.Name]++
 					return true
 				}
 				if name := membershipFieldUnder(u.X); name != "" {
@@ -142,6 +154,11 @@ func TestMembershipControlStateIsNeverAddressed(t *testing.T) {
 				}
 				return true
 			})
+		}
+	}
+	for field, owner := range allowed {
+		if bindings[field] != 1 {
+			problems = append(problems, fmt.Sprintf("%s binds &c.%s %d times, want once", owner, field, bindings[field]))
 		}
 	}
 	if len(problems) != 0 {

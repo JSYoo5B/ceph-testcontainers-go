@@ -61,7 +61,7 @@ func (c *Container) Monitors(ctx context.Context) ([]*MonitorContainer, error) {
 		return nil, err
 	}
 	defer c.mu.Unlock()
-	return c.monitorsLocked(), nil
+	return c.monitorTopology().monitorsLocked(), nil
 }
 
 // OSDs returns the owned OSD descriptors sorted by ID, like OSDs,
