@@ -76,17 +76,17 @@ func (c *Container) removePool(ctx context.Context, name string, skipForeign boo
 	return nil
 }
 
-// allowPoolDeleteHeld reports whether an override.SetConfig of mon_allow_pool_delete
+// poolDeleteOverrideHeld reports whether an override.SetConfig of mon_allow_pool_delete
 // is held and not restored. The caller holds c.mu.
-func (c *Container) allowPoolDeleteHeld() bool {
-	return c.faults.holds(faultConfigOverride, configOverrideKey(allowPoolDeleteSetting))
+func (r *faultRegistry) poolDeleteOverrideHeld() bool {
+	return r.holds(faultConfigOverride, configOverrideKey(allowPoolDeleteSetting))
 }
 
-// deletePool is called with c.mu held. It enables pool deletion in the
+// deletePool is called with c.mu held (the caller holds it). It enables pool deletion in the
 // central database only for this command and restores the previous entry
 // even when deletion fails.
 func (c *Container) deletePool(ctx context.Context, pool PoolState) (err error) {
-	if c.allowPoolDeleteHeld() {
+	if c.faults.poolDeleteOverrideHeld() {
 		return errors.New("restore the override.SetConfig override of mon_allow_pool_delete before Pool.Remove")
 	}
 	entries, err := readConfiguration(ctx, c.conn().ceph)

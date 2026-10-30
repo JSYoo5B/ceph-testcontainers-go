@@ -49,10 +49,10 @@ func TestWithDaemonImageValidation(t *testing.T) {
 func TestDaemonImageDefaultsToTheEssentialImageWithoutChangingIt(t *testing.T) {
 	c := &Container{settings: options{essentialImage: "example.invalid/ceph:cluster"}}
 	override, _ := resolveDaemonOptions([]DaemonOptions{DaemonOptions{}.WithImage("example.invalid/ceph:new")})
-	if got := c.daemonImage(override); got != "example.invalid/ceph:new" {
+	if got := c.settings.daemonImage(override); got != "example.invalid/ceph:new" {
 		t.Fatalf("override image %q", got)
 	}
-	if got := c.daemonImage(DaemonOptions{}); got != "example.invalid/ceph:cluster" {
+	if got := c.settings.daemonImage(DaemonOptions{}); got != "example.invalid/ceph:cluster" {
 		t.Fatalf("default image %q", got)
 	}
 	if c.settings.essentialImage != "example.invalid/ceph:cluster" || c.staticFacts().Images.Essential != "example.invalid/ceph:cluster" {
@@ -304,11 +304,11 @@ func TestStartManagerLaunchesFromTheGivenImage(t *testing.T) {
 		images = append(images, image)
 		return &initialOSDDaemon{}, nil
 	}
-	overridden, err := cluster.startManager(t.Context(), "b", cluster.daemonImage(DaemonOptions{image: "example.invalid/ceph:new", imageSet: true}))
+	overridden, err := cluster.startManager(t.Context(), "b", cluster.settings.daemonImage(DaemonOptions{image: "example.invalid/ceph:new", imageSet: true}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ordinary, err := cluster.startManager(t.Context(), "c", cluster.daemonImage(DaemonOptions{}))
+	ordinary, err := cluster.startManager(t.Context(), "c", cluster.settings.daemonImage(DaemonOptions{}))
 	if err != nil {
 		t.Fatal(err)
 	}

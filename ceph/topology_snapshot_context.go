@@ -74,7 +74,7 @@ func (c *Container) OSDs(ctx context.Context) ([]*OSDContainer, error) {
 		return nil, err
 	}
 	defer c.mu.Unlock()
-	return c.osdsLocked(), nil
+	return c.osdHandles.sorted(), nil
 }
 
 // ControlContainer returns the stable CLI handle while bounding a

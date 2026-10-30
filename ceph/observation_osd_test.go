@@ -117,11 +117,11 @@ func TestContainerOwnedOSDStateUsesRegistrations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st, err := c.ownedOSDState(dump, 0); err != nil || st.ID != 0 {
+	if st, err := c.osdHandles.ownedState(dump, 0); err != nil || st.ID != 0 {
 		t.Fatalf("owned = %+v, %v", st, err)
 	}
 	for _, id := range []int{1, 9} {
-		if _, err := c.ownedOSDState(dump, id); err == nil {
+		if _, err := c.osdHandles.ownedState(dump, id); err == nil {
 			t.Fatalf("osd.%d accepted", id)
 		}
 	}

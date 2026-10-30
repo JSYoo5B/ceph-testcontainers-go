@@ -134,10 +134,10 @@ func decodeOSDPolicyDump(data []byte) (osdPolicySnapshot, error) {
 	return result, nil
 }
 
-// ownedOSDState resolves id against a native snapshot and the OSD registry.
-// The caller holds c.mu.
-func (c *Container) ownedOSDState(dump osdPolicySnapshot, id int) (OSDState, error) {
-	return resolveOwnedOSDState(dump, id, registrationOf(c.osdHandles.get(id)))
+// ownedState resolves id against a native snapshot and the registry.
+// The caller holds Container.mu.
+func (r *osdRegistry) ownedState(dump osdPolicySnapshot, id int) (OSDState, error) {
+	return resolveOwnedOSDState(dump, id, registrationOf(r.get(id)))
 }
 
 // WaitForPGClean waits for every existing PG to be exactly active+clean. Unlike

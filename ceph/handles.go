@@ -16,17 +16,17 @@ type daemonHandle interface {
 
 var errHandleWithoutCluster = "the handle does not belong to a cluster; obtain it from the cluster that owns the daemon"
 
-// currentOSD checks, with c.mu held, that handle is the descriptor that the
+// current checks, with Container.mu held, that handle is the descriptor that the
 // cluster owns for its ID now. A descriptor of a removed, detached or
 // reopened OSD is stale and never acts on whatever owns the ID instead.
-func (c *Container) currentOSD(handle *OSDContainer) error {
+func (r *osdRegistry) current(handle *OSDContainer) error {
 	id := handle.ID
-	if cur := c.osdHandles.get(id); cur == handle {
+	if cur := r.get(id); cur == handle {
 		return nil
 	} else if cur != nil {
 		return invalid(fmt.Errorf("this handle of osd.%d is stale: the cluster owns another instance of the OSD, which DetachedOSD.Reopen or a later handle returns", id))
 	}
-	if c.osdHandles.detachedOf(id) != nil {
+	if r.detachedOf(id) != nil {
 		return invalid(fmt.Errorf("osd.%d is already detached; this handle is stale, reopen it with DetachedOSD.Reopen", id))
 	}
 	return invalid(fmt.Errorf("osd.%d is not owned by this cluster", id))
@@ -47,11 +47,11 @@ func (c *Container) currentMonitor(handle *MonitorContainer) (*MonitorContainer,
 	return nil, invalid(fmt.Errorf("monitor %s is not owned by this cluster, or this handle is stale", name))
 }
 
-// currentManager checks, with c.mu held, that handle is the MGR that the
+// currentManager checks, with Container.mu held, that handle is the MGR that the
 // cluster owns under its name now.
-func (c *Container) currentManager(handle *ManagerContainer) (*ManagerContainer, error) {
+func (r *memberRoster) currentManager(handle *ManagerContainer) (*ManagerContainer, error) {
 	name := handle.DaemonName
-	if cur := c.roster.manager(name); cur != nil && cur == handle {
+	if cur := r.manager(name); cur != nil && cur == handle {
 		return cur, nil
 	}
 	return nil, invalid(fmt.Errorf("manager %s is not owned by this cluster, or this handle is stale", name))
@@ -145,7 +145,7 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if err := c.poolPolicyReady(); err != nil {
 		return err
 	}
-	if err := c.currentOSD(o); err != nil {
+	if err := c.osdHandles.current(o); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
@@ -154,7 +154,7 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if err != nil {
 		return err
 	}
-	state, err := c.ownedOSDState(dump, id)
+	state, err := c.osdHandles.ownedState(dump, id)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func (o *OSDContainer) SetIn(ctx context.Context, in bool) error {
 	if err != nil {
 		return err
 	}
-	state, err = c.ownedOSDState(dump, id)
+	state, err = c.osdHandles.ownedState(dump, id)
 	if err != nil {
 		return err
 	}

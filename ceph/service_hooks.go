@@ -191,7 +191,7 @@ func (serviceHooks) NormalizePool(config PoolConfig) (PoolConfig, error) {
 // PoolPlacementDomains counts the owned OSD placement domains that config
 // can use. The caller holds the cluster mutex.
 func (serviceHooks) PoolPlacementDomains(c *Container, config PoolConfig) int {
-	return c.poolPlacementDomains(config)
+	return c.osdHandles.placementDomains(config)
 }
 
 // PoolPolicyReady reports whether the cluster's pool policy accepts changes.

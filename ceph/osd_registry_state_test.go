@@ -131,6 +131,11 @@ var osdRegistryMethods = map[string][]string{
 	"park":       {"make", "delete"},
 	"unpark":     {"delete", "r.register"},
 	"replace":    nil,
+	// The lookups that need only the registry: the caller holds Container.mu,
+	// as for every other method.
+	"current":          {"r.get", "r.detachedOf", "invalid", "invalid", "invalid", "fmt.Errorf", "fmt.Errorf", "fmt.Errorf"},
+	"ownedState":       {"resolveOwnedOSDState", "registrationOf", "r.get"},
+	"placementDomains": {"make", "r.each", "osd.Placement", "strconv.Itoa", "len"},
 }
 
 // osdRegistryFieldWriters pins which methods assign each field.
@@ -267,7 +272,7 @@ type osdRegistryCaller struct {
 
 var osdRegistryCallers = map[string]osdRegistryCaller{
 	// Run's composition planner: a throwaway Container no one else sees.
-	"prepareInitialComposition": {"init", []string{"count", "each", "register"}},
+	"prepareInitialComposition": {"init", []string{"count", "each", "placementDomains", "register"}},
 	"UnitCluster":               {"init", []string{"register"}},
 	"UnitReplaceOSDs":           {"hook", []string{"replace"}},
 	"UnitOSDCount":              {"hook", []string{"count"}},
@@ -275,36 +280,35 @@ var osdRegistryCallers = map[string]osdRegistryCaller{
 
 	"registerOSD":                      {"holds", []string{"each", "register"}},
 	"registerBlockDeviceOSD":           {"holds", nil},
-	"removeOSD":                        {"takes", []string{"forget"}},
-	"checkOSDRemovable":                {"holds", []string{"each"}},
+	"removeOSD":                        {"takes", []string{"current", "forget"}},
+	"checkOSDRemovable":                {"holds", []string{"each", "ownedState"}},
 	"drainAndPurgeOSD":                 {"holds", nil},
 	"terminate":                        {"takes", []string{"count", "each", "forget"}},
-	"detachOSD":                        {"takes", []string{"park"}},
+	"detachOSD":                        {"takes", []string{"current", "park"}},
 	"reopenOSD":                        {"takes", []string{"detachedOf", "get", "unpark"}},
-	"osdsLocked":                       {"holds", []string{"sorted"}},
-	"currentOSD":                       {"holds", []string{"detachedOf", "get"}},
 	"ownedBy":                          {"holds", []string{"get"}},
 	"ownsDaemon":                       {"holds", []string{"get"}},
 	"daemonKeyrings":                   {"holds", []string{"get"}},
 	"generationLocked":                 {"holds", []string{"get"}},
 	"validateOSDPlacement":             {"holds", []string{"count", "each"}},
-	"poolPlacementDomains":             {"holds", []string{"each"}},
 	"nativePoolDomains":                {"holds", []string{"get"}},
-	"ownedOSDState":                    {"holds", []string{"get"}},
 	"ownsNativeTargetContext":          {"holds", []string{"each"}},
 	"monitorConfigTargets":             {"holds", []string{"each"}},
 	"osdStates":                        {"takes", []string{"count", "each"}},
 	"WaitForClean":                     {"takes", []string{"count"}},
+	"OSDs":                             {"takes", []string{"sorted"}},
+	"CreatePool":                       {"takes", []string{"placementDomains"}},
+	"SetIn":                            {"takes", []string{"current", "ownedState"}},
 	"diagnosticsSnapshot":              {"takes", []string{"each"}},
 	"openDebugTarget":                  {"takes", []string{"get"}},
-	"PoolPlacementDomains":             {"hook", nil},
+	"PoolPlacementDomains":             {"hook", []string{"placementDomains"}},
 	"Owns":                             {"hook", nil},
 	"ownsNativeTarget":                 {"holds", nil},
 	"refreshMonitorConfigAfterRemoval": {"holds", nil},
 	"refreshMonitorConfig":             {"holds", nil},
 	"removalOSDMutation":               {"holds", nil},
 	"waitOSDRemoval":                   {"holds", nil},
-	"removalOSDState":                  {"holds", nil},
+	"removalOSDState":                  {"holds", []string{"ownedState"}},
 }
 
 // osdRegistryAcquirePos returns where fn first takes Container.mu: a

@@ -171,8 +171,8 @@ var instanceFaultNames = map[faultKind]string{
 // refuseInstanceFaults refuses an OSD container that a held network or
 // pause fault still targets: its undo needs the container OSDContainer.Detach removes.
 // The caller holds c.mu.
-func (c *Container) refuseInstanceFaults(ctx context.Context, id int, containerID string) error {
-	name, found, err := c.faults.openInstanceFault(ctx, containerID)
+func (r *faultRegistry) refuseInstanceFaults(ctx context.Context, id int, containerID string) error {
+	name, found, err := r.openInstanceFault(ctx, containerID)
 	if err != nil {
 		return err
 	}
@@ -199,7 +199,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 	if !c.settings.osdVolumeStorage || !c.stores.hasVolume() {
 		return nil, invalidRequest("OSDContainer.Detach retains stores only with OSDStorage.WithVolume")
 	}
-	if err := c.currentOSD(handle); err != nil {
+	if err := c.osdHandles.current(handle); err != nil {
 		return nil, err
 	}
 	osd := handle
@@ -221,7 +221,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 			return nil, fmt.Errorf("%s has no container to detach", name)
 		}
 		containerID := osd.GetContainerID()
-		if err := c.refuseInstanceFaults(ctx, id, containerID); err != nil {
+		if err := c.faults.refuseInstanceFaults(ctx, id, containerID); err != nil {
 			return nil, err
 		}
 		osd.detaching = true

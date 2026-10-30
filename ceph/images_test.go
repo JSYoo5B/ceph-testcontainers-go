@@ -143,7 +143,7 @@ func TestToolkitPublicationWaitHonorsCancellation(t *testing.T) {
 	defer c.toolkit.publishMu.Unlock()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := c.featureClientSnapshot(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := c.toolkit.snapshot(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("publication ignored canceled caller: %v", err)
 	}
 }

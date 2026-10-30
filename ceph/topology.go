@@ -177,7 +177,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 	if err != nil {
 		return nil, err
 	}
-	mon := &MonitorContainer{DaemonName: name, owner: c, image: c.daemonImage(daemon)}
+	mon := &MonitorContainer{DaemonName: name, owner: c, image: c.settings.daemonImage(daemon)}
 	c.roster.addMonitor(name, mon)
 	attempts := 1
 	if c.settings.hostNetwork {
@@ -194,7 +194,7 @@ func (c *Container) AddMonitor(ctx context.Context, name string, opts ...DaemonO
 			}
 		}
 		config := []byte(strings.ReplaceAll(string(c.bootstrap.rawConfig()), "mon initial members = a\n", ""))
-		monEnv := c.monitorJoinEnvironment(name)
+		monEnv := c.settings.monitorJoinEnvironment(name)
 		opts := []testcontainers.ContainerCustomizer{c.adminClient(),
 			testcontainers.WithEntrypoint("/bin/sh", "/tc/mon-join.sh"), testcontainers.WithCmd(),
 			testcontainers.WithEnv(monEnv),
@@ -502,7 +502,7 @@ type monitorConfigTarget struct {
 // filesystem/gateway descriptors without calling accessors that re-lock c.mu.
 func (c *Container) monitorConfigTargets(ctx context.Context, control testcontainers.Container, removedName string) ([]monitorConfigTarget, error) {
 	var candidates []monitorConfigTarget
-	client, err := c.featureClientSnapshot(ctx)
+	client, err := c.toolkit.snapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -711,7 +711,7 @@ func (c *Container) AddManager(ctx context.Context, name string, opts ...DaemonO
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()
-	mgr, err := c.startManager(ctx, name, c.daemonImage(daemon))
+	mgr, err := c.startManager(ctx, name, c.settings.daemonImage(daemon))
 	if err != nil {
 		return mgr, err
 	}
@@ -810,7 +810,7 @@ func (c *Container) removeManager(ctx context.Context, handle *ManagerContainer)
 	if c.closed {
 		return errClusterTerminated
 	}
-	mgr, err := c.currentManager(handle)
+	mgr, err := c.roster.currentManager(handle)
 	if err != nil {
 		return err
 	}

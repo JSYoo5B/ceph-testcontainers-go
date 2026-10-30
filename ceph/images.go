@@ -253,8 +253,3 @@ func (c *Container) clientContainerContext(ctx context.Context) (testcontainers.
 	c.toolkit.markReady(err == nil && ctr != nil)
 	return ctr, err
 }
-
-// featureClientSnapshot bounds publication waits during topology/native admission.
-func (c *Container) featureClientSnapshot(ctx context.Context) (testcontainers.Container, error) {
-	return c.toolkit.snapshot(ctx)
-}

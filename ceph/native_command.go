@@ -587,7 +587,7 @@ func (c *Container) ownsNativeTargetContext(ctx context.Context, id string) (boo
 			return true, nil
 		}
 	}
-	client, err := c.featureClientSnapshot(ctx)
+	client, err := c.toolkit.snapshot(ctx)
 	if err != nil {
 		return false, err
 	}

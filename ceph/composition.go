@@ -95,7 +95,7 @@ func prepareInitialComposition(settings *options) error {
 		return err
 	}
 	defaults := PoolConfig{CRUSHRoot: settings.defaultCRUSHRoot, FailureDomain: "osd"}
-	eligible := planned.poolPlacementDomains(defaults)
+	eligible := planned.osdHandles.placementDomains(defaults)
 	needed := settings.poolReplicas
 	if needed == 0 {
 		needed = min(2, settings.osds)
@@ -113,7 +113,7 @@ func prepareInitialComposition(settings *options) error {
 		if ec := config.ErasureCode; ec != nil {
 			needed = ec.K + ec.M
 		}
-		if domains := planned.poolPlacementDomains(config); domains < needed {
+		if domains := planned.osdHandles.placementDomains(config); domains < needed {
 			return fmt.Errorf("initial pool %q needs %d distinct %s domains, requested layout has %d", config.Name, needed, config.FailureDomain, domains)
 		}
 		return nil

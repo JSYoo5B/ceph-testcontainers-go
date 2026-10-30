@@ -456,9 +456,9 @@ func (c *Container) monitorEnvironment(fsid string) map[string]string {
 }
 
 // monitorJoinEnvironment returns the mon-join.sh variables of a later MON.
-func (c *Container) monitorJoinEnvironment(name string) map[string]string {
-	env := map[string]string{"CEPH_MON_ID": name, addressFamilyEnvironment: c.settings.addressFamily.String()}
-	maps.Copy(env, c.settings.messengerEnvironment())
+func (o options) monitorJoinEnvironment(name string) map[string]string {
+	env := map[string]string{"CEPH_MON_ID": name, addressFamilyEnvironment: o.addressFamily.String()}
+	maps.Copy(env, o.messengerEnvironment())
 	return env
 }
 
@@ -729,7 +729,7 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 		return err
 	}
 	id := handle.ID
-	if err := c.currentOSD(handle); err != nil {
+	if err := c.osdHandles.current(handle); err != nil {
 		return err
 	}
 	osd := handle
@@ -794,7 +794,7 @@ func (c *Container) checkOSDRemovable(ctx context.Context, osd *OSDContainer) er
 		// A fresh, strict absence can settle only this handle's own request.
 		osd.purged = true
 	} else {
-		if _, err := c.ownedOSDState(dump, id); err != nil {
+		if _, err := c.osdHandles.ownedState(dump, id); err != nil {
 			return err
 		}
 		remaining := 0
@@ -802,7 +802,7 @@ func (c *Container) checkOSDRemovable(ctx context.Context, osd *OSDContainer) er
 			if other == nil || other.purged {
 				continue
 			}
-			if _, err := c.ownedOSDState(dump, otherID); err == nil {
+			if _, err := c.osdHandles.ownedState(dump, otherID); err == nil {
 				remaining++
 			}
 		}
@@ -881,7 +881,7 @@ func (c *Container) removalOSDState(ctx context.Context, id int) (OSDState, erro
 	if err != nil {
 		return OSDState{}, err
 	}
-	return c.ownedOSDState(dump, id)
+	return c.osdHandles.ownedState(dump, id)
 }
 
 // removalOSDMutation runs one mutation of a removal after re-checking the OSD.
@@ -921,11 +921,6 @@ func (c *Container) waitOSDRemoval(ctx context.Context, id int, drain bool) erro
 		case <-ticker.C:
 		}
 	}
-}
-
-// osdsLocked lists the owned OSDs. The caller holds c.mu.
-func (c *Container) osdsLocked() []*OSDContainer {
-	return c.osdHandles.sorted()
 }
 
 // ServiceContainers returns owned optional services (such as RGW or MDS),

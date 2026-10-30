@@ -107,7 +107,7 @@ func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, e
 	if c.Container == nil {
 		return nil, errors.New("ceph control container is unavailable")
 	}
-	domains := c.poolPlacementDomains(config)
+	domains := c.osdHandles.placementDomains(config)
 	needed := config.Replicas
 	if config.ErasureCode != nil {
 		needed = config.ErasureCode.K + config.ErasureCode.M
@@ -209,11 +209,11 @@ func replicatedCRUSHRuleCommand(config PoolConfig, rule string) []string {
 	return args
 }
 
-// poolPlacementDomains counts the owned OSD placement domains that config can
-// use. The caller holds c.mu, which serializes topology mutations.
-func (c *Container) poolPlacementDomains(config PoolConfig) int {
+// placementDomains counts the owned OSD placement domains that config can
+// use. The caller holds Container.mu, which serializes topology mutations.
+func (r *osdRegistry) placementDomains(config PoolConfig) int {
 	domains := make(map[string]struct{})
-	for _, osd := range c.osdHandles.each() {
+	for _, osd := range r.each() {
 		if osd.purged {
 			continue
 		}

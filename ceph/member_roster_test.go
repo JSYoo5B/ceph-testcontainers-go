@@ -231,6 +231,8 @@ var memberRosterMethods = map[string][]string{
 	"serviceCopy":          {"maps.Clone"},
 	"setService":           {"make"},
 	"dropService":          {"delete"},
+	// currentManager needs only the roster; the caller holds Container.mu.
+	"currentManager": {"r.manager", "invalid", "fmt.Errorf"},
 }
 
 // memberRosterFieldWriters pins which methods assign each field, directly or
@@ -401,13 +403,12 @@ var memberRosterCallers = map[string]memberRosterCaller{
 	"Managers":            {"takes", []string{"eachManager", "managerCount"}},
 	"AddMonitor":          {"takes", []string{"addMonitor", "monitor"}},
 	"removeMonitor":       {"takes", []string{"dropMonitor"}},
-	"removeManager":       {"takes", []string{"dropManager", "eachManager", "managerCount"}},
+	"removeManager":       {"takes", []string{"currentManager", "dropManager", "eachManager", "managerCount"}},
 	"startService":        {"takes", []string{"hasService", "setService"}},
 	"terminate":           {"takes", []string{"clearInitialManager", "dropManager", "dropMonitor", "dropService", "eachManager", "eachMonitor", "eachService", "initialManager"}},
 	"diagnosticsSnapshot": {"takes", []string{"eachManager", "eachMonitor", "eachService", "initialManager"}},
 
 	"startManager":                     {"holds", []string{"addManager", "manager", "recordInitialManager"}},
-	"currentManager":                   {"holds", []string{"manager"}},
 	"currentMonitor":                   {"holds", []string{"monitor"}},
 	"ownedBy":                          {"holds", []string{"manager"}},
 	"ownsDaemon":                       {"holds", []string{"manager", "monitor"}},

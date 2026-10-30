@@ -64,7 +64,7 @@ func TestAddressFamilyBootstrapRenderingGolden(t *testing.T) {
 					maps.Copy(env, settings.messengerEnvironment())
 					env["TC_HOSTNAME_I"] = "192.0.2.12 fd00:10::12 fe80::12"
 					config, calls := messengerRunScript(t, "mon", env, nil)
-					joinEnv := c.monitorJoinEnvironment("b")
+					joinEnv := c.settings.monitorJoinEnvironment("b")
 					joinEnv["TC_HOSTNAME_I"] = "192.0.2.14 fd00:10::14"
 					maps.Copy(joinEnv, map[string]string{"CEPH_FSID": "fixture-fsid"})
 					joined, joinCalls := messengerRunScript(t, "mon-join", joinEnv, []byte(config))

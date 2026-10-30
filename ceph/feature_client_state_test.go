@@ -134,7 +134,7 @@ func TestTerminateRemovesTheFeatureClientAndKeepsItRetryableOnFailure(t *testing
 	if err := c.Terminate(t.Context()); err == nil {
 		t.Fatal("a failed removal of the feature client was not reported")
 	}
-	if got, _ := c.featureClientSnapshot(t.Context()); got != daemon || daemon.terminations != 1 || !c.toolkit.ready {
+	if got, _ := c.toolkit.snapshot(t.Context()); got != daemon || daemon.terminations != 1 || !c.toolkit.ready {
 		t.Fatalf("a client that could not be removed was forgotten: %v, %d terminations, ready %t",
 			got, daemon.terminations, c.toolkit.ready)
 	}
@@ -142,7 +142,7 @@ func TestTerminateRemovesTheFeatureClientAndKeepsItRetryableOnFailure(t *testing
 	if err := c.Terminate(t.Context()); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	if got, _ := c.featureClientSnapshot(t.Context()); got != nil || daemon.terminations != 2 || c.toolkit.ready || !c.toolkit.attempted {
+	if got, _ := c.toolkit.snapshot(t.Context()); got != nil || daemon.terminations != 2 || c.toolkit.ready || !c.toolkit.attempted {
 		t.Fatalf("after the retry: client %v, %d terminations, ready %t, attempted %t",
 			got, daemon.terminations, c.toolkit.ready, c.toolkit.attempted)
 	}
