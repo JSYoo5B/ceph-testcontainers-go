@@ -155,7 +155,7 @@ func startFilesystem(ctx context.Context, c *ceph.Container, config Config, opts
 	}
 	var coldFSID string
 	if config.NoInitialMDS {
-		coldFSID, err = fs.readColdFSID(ctx, nil)
+		coldFSID, err = fs.volumes().readColdFSID(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -946,4 +946,20 @@ func cephFSMDSID(name string, index int) string {
 		return "a"
 	}
 	return name + "-" + strconv.Itoa(index)
+}
+
+// volumeCommands runs this filesystem's native commands: volume, subvolume,
+// snapshot, pin, session and schedule reads and writes, each addressed to the
+// filesystem's authoritative name. It holds only the owning cluster and that
+// name, both fixed when the handle is published, so it needs no lock of its
+// own; admission, ownership checks and the cluster lock stay with the
+// Filesystem operation that calls it.
+type volumeCommands struct {
+	cluster *ceph.Container
+	name    string
+}
+
+// volumes returns the native command runner for this filesystem.
+func (fs *Filesystem) volumes() volumeCommands {
+	return volumeCommands{cluster: fs.cluster, name: fs.name}
 }

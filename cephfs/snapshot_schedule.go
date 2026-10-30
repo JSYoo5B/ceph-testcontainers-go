@@ -163,7 +163,7 @@ func (fs *Filesystem) AddSnapshotSchedule(ctx context.Context, schedule Snapshot
 	}
 	fs.scheduledPaths[schedule.Path] = lease
 	fs.snapshotScheduleMu.Unlock()
-	existing, err := fs.snapshotScheduleStatuses(ctx, schedule.Path)
+	existing, err := fs.volumes().snapshotScheduleStatuses(ctx, schedule.Path)
 	if err == nil && len(existing) > 0 {
 		err = servicehook.Invalid(fmt.Errorf("directory %s already has %d snapshot schedules", schedule.Path, len(existing)))
 	}
@@ -224,8 +224,8 @@ func (l *SnapshotScheduleLease) release() {
 }
 
 // snapshotScheduleStatuses reads every schedule of one directory.
-func (fs *Filesystem) snapshotScheduleStatuses(ctx context.Context, dir string) ([]SnapshotScheduleStatus, error) {
-	data, err := fs.cluster.Ceph(ctx, "fs", "snap-schedule", "status", dir, "--fs", fs.name, "--format", "json")
+func (v volumeCommands) snapshotScheduleStatuses(ctx context.Context, dir string) ([]SnapshotScheduleStatus, error) {
+	data, err := v.cluster.Ceph(ctx, "fs", "snap-schedule", "status", dir, "--fs", v.name, "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("read the snapshot schedules of %s: %w", dir, err)
 	}
@@ -290,7 +290,7 @@ func parseSnapshotScheduleStatuses(data []byte, dir string) ([]SnapshotScheduleS
 // compared only when one was given. A schedule with the lease's repeat that is
 // not the lease's is ceph.ErrInvalidRequest; none is nil.
 func (l *SnapshotScheduleLease) find(ctx context.Context) (*SnapshotScheduleStatus, error) {
-	statuses, err := l.filesystem.snapshotScheduleStatuses(ctx, l.Path)
+	statuses, err := l.filesystem.volumes().snapshotScheduleStatuses(ctx, l.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +408,7 @@ func (l *SnapshotScheduleLease) Restore(ctx context.Context) error {
 	if l.restored {
 		return nil
 	}
-	statuses, err := l.filesystem.snapshotScheduleStatuses(ctx, l.Path)
+	statuses, err := l.filesystem.volumes().snapshotScheduleStatuses(ctx, l.Path)
 	if err != nil {
 		return err
 	}

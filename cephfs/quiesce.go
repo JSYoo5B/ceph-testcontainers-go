@@ -84,7 +84,7 @@ func (fs *Filesystem) QuiesceSubvolumes(ctx context.Context, volumes []*Subvolum
 		if !identity.ready || identity.removed {
 			return nil, errors.New("quiesce member is not live and confirmed")
 		}
-		info, err := fs.subvolumeInfo(ctx, identity.name, identity.group)
+		info, err := fs.volumes().subvolumeInfo(ctx, identity.name, identity.group)
 		if err != nil {
 			return nil, err
 		}

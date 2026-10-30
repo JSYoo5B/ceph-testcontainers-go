@@ -92,7 +92,7 @@ func (fs *Filesystem) addMDSReplacement(parent context.Context, stopped *MDS, st
 		servicehook.Unlock(c)
 		return nil, clusterutil.OperationError(ctx, "select MDS replacement control", err)
 	}
-	if err := fs.checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
 		servicehook.Unlock(c)
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func (fs *Filesystem) addMDSReplacement(parent context.Context, stopped *MDS, st
 		if err != nil || selected == nil {
 			return nil, clusterutil.OperationError(ctx, "select admitted MDS replacement control", err)
 		}
-		if err := fs.checkStoppedMDSCluster(ctx, i); err != nil {
+		if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
 			return nil, err
 		}
 		if missing, err := inspectStoppedMDS(ctx, i, false); err != nil || missing {
@@ -301,7 +301,7 @@ func (fs *Filesystem) observeMDSReplacement(ctx context.Context, stopped *MDS, r
 	if r.daemon == nil || r.identity == nil || !r.identity.confirmed {
 		return false, errors.New("replacement service creation is unconfirmed")
 	}
-	if err := fs.checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
 		return false, err
 	}
 	missing, err := inspectStoppedMDS(ctx, i, i.removed)
@@ -322,7 +322,7 @@ func (fs *Filesystem) observeMDSReplacement(ctx context.Context, stopped *MDS, r
 	if i.removed && !reflect.DeepEqual(i.scope, r.scope) {
 		return false, errors.New("completed original MDS removal scope differs from replacement")
 	}
-	if err := fs.checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := fs.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
 		return false, err
 	}
 	if err := fs.checkMDSReplacementOwner(stopped, i, r); err != nil {
