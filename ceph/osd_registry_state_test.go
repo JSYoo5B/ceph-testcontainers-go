@@ -275,7 +275,9 @@ var osdRegistryCallers = map[string]osdRegistryCaller{
 
 	"registerOSD":                      {"holds", []string{"each", "register"}},
 	"registerBlockDeviceOSD":           {"holds", nil},
-	"removeOSD":                        {"takes", []string{"each", "forget"}},
+	"removeOSD":                        {"takes", []string{"forget"}},
+	"checkOSDRemovable":                {"holds", []string{"each"}},
+	"drainAndPurgeOSD":                 {"holds", nil},
 	"terminate":                        {"takes", []string{"count", "each", "forget"}},
 	"detachOSD":                        {"takes", []string{"park"}},
 	"reopenOSD":                        {"takes", []string{"detachedOf", "get", "unpark"}},
