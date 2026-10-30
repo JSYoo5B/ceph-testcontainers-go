@@ -111,5 +111,6 @@ A new or changed public function or method states its purpose tags in its
 `//purpose:` directive and in the pull request. It must pass the "belongs" test
 of at least one of its tags. A proposal that passes none, such as a
 service-operation API or a convenience that only repeats what the SUT, the test
-or a `native` API already does, is refused. Keeping an existing API that passes
-none needs a written reason in the boundary review above.
+or a `native` API already does, is refused. An existing API that passes none
+is removed, unless one of the rules in "Judging borderline APIs" applies; the
+reason then goes in that API's doc comment.
