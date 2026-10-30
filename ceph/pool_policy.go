@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
@@ -38,124 +37,6 @@ type PoolState struct {
 	ErasureCodeProfile   string
 	Flags                string
 	Quota                PoolQuota
-}
-
-// poolStatus looks up a pool by its exact native name. A non-nil handle must
-// identify that pool.
-func (c *Container) poolStatus(ctx context.Context, name string, handle *Pool) (PoolState, error) {
-	if err := validateExistingPoolName(name); err != nil {
-		return PoolState{}, err
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return PoolState{}, err
-	}
-	return c.handlePoolState(ctx, name, handle)
-}
-
-// setPoolQuota implements Pool.SetQuota. It replaces both limits, including zero values that remove a limit.
-// Commands are sequential and may partially succeed; inspect Pool.Status after
-// an error. Existing data is never removed. External pool edits must not race
-// this operation; native pool IDs are checked before each mutation.
-func (c *Container) setPoolQuota(ctx context.Context, name string, handle *Pool, quota PoolQuota) error {
-	if err := validateExistingPoolName(name); err != nil {
-		return err
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	pool, err := c.handlePoolState(ctx, name, handle)
-	if err != nil {
-		return err
-	}
-	for _, setting := range []struct {
-		name             string
-		current, desired uint64
-	}{
-		{"max_objects", pool.Quota.MaxObjects, quota.MaxObjects},
-		{"max_bytes", pool.Quota.MaxBytes, quota.MaxBytes},
-	} {
-		if setting.current == setting.desired {
-			continue
-		}
-		if err := c.checkPoolID(ctx, pool); err != nil {
-			return err
-		}
-		if _, err := c.cephCLI(ctx, "osd", "pool", "set-quota", name, setting.name, strconv.FormatUint(setting.desired, 10)); err != nil {
-			return fmt.Errorf("set pool %q %s quota (earlier settings may have changed): %w", name, setting.name, err)
-		}
-	}
-	return nil
-}
-
-// setPoolReplication implements Pool.SetReplication. It changes a replicated pool's size/min_size without changing
-// data, PG count or placement. It requires enough owned placement domains in the
-// native CRUSH rule. EC shard counts cannot be changed by this method. WaitForClean
-// waits for resulting recovery. On partial failure, inspect Pool.Status; no rollback
-// or data deletion is attempted. External pool/CRUSH edits must not race this call.
-func (c *Container) setPoolReplication(ctx context.Context, name string, handle *Pool, replicas, minSize int) error {
-	if err := validateExistingPoolName(name); err != nil {
-		return err
-	}
-	if replicas < 1 || replicas > 10 || minSize < 1 || minSize > replicas {
-		return errors.New("pool replicas must be 1..10 and min size must be 1..replicas")
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	pool, err := c.handlePoolState(ctx, name, handle)
-	if err != nil {
-		return err
-	}
-	if pool.Type != "replicated" {
-		return errors.New("replication policy requires a replicated pool")
-	}
-	placement, err := c.poolRulePlacement(ctx, pool.CRUSHRule)
-	if err != nil {
-		return err
-	}
-	domains, err := c.nativePoolDomains(ctx, placement)
-	if err != nil {
-		return err
-	}
-	if domains < replicas {
-		return fmt.Errorf("pool %q needs %d owned %s domains; native CRUSH rule has %d eligible owned domains", name, replicas, placement.FailureDomain, domains)
-	}
-	// Lower min_size before lowering size; raise size before raising min_size.
-	settings := []struct {
-		name             string
-		current, desired int
-	}{
-		{"size", pool.Size, replicas}, {"min_size", pool.MinSize, minSize},
-	}
-	if minSize < pool.MinSize {
-		settings[0], settings[1] = settings[1], settings[0]
-	}
-	for _, setting := range settings {
-		if setting.current == setting.desired {
-			continue
-		}
-		if err := c.checkPoolID(ctx, pool); err != nil {
-			return err
-		}
-		args := []string{"osd", "pool", "set", name, setting.name, strconv.Itoa(setting.desired)}
-		if setting.name == "size" && setting.desired == 1 {
-			args = append(args, "--yes-i-really-mean-it")
-		}
-		if _, err := c.cephCLI(ctx, args...); err != nil {
-			return fmt.Errorf("set pool %q %s (earlier settings may have changed): %w", name, setting.name, err)
-		}
-	}
-	return nil
 }
 
 var existingPoolNamePattern = naming.ExistingPool

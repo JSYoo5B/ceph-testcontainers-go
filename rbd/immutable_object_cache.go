@@ -33,7 +33,7 @@ const (
 type ImmutableObjectCache struct {
 	// ID is the cephx ID, client.<ID>, that the daemon uses to read the
 	// parent objects; empty means admin. The container's ceph.conf must name
-	// its keyring, as ceph.Container.WithClientIdentity does.
+	// its keyring, as ceph.ClientConfig.WithIdentity does.
 	ID string
 	// Path is the cache directory; empty means
 	// DefaultImmutableObjectCachePath. It must be absent or empty.

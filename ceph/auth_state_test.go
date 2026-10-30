@@ -282,7 +282,6 @@ var authOwnerHeld = map[string]string{
 	"Container.changeClient":            "client_key.go: changeClient",
 	"Container.ownedClientRecord":       "client_key.go: ownedClientRecord",
 	"Container.checkCurrentClient":      "client_key.go: checkCurrentClient",
-	"Container.ownedClientCapabilities": "auth_policy.go: called by the two Capabilities callers under their lock",
 	"Container.removeStrayAuthInputs":   "daemon_key_rotation.go: removeStrayAuthInputs",
 	"Container.stopEarlierAuthCommands": "daemon_key_rotation.go: stopEarlierAuthCommands",
 	"Container.settleEarlierRotation":   "daemon_key_rotation.go: settleEarlierRotation",

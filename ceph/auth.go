@@ -13,8 +13,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/google/uuid"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/network"
 )
 
 // ClientCaps contains Cephx capability expressions, passed as individual CLI
@@ -62,7 +60,7 @@ func (client ClientConfig) String() string { return "Cephx client " + client.nam
 func (client ClientConfig) GoString() string { return client.String() }
 
 // ConnectionConfig returns independent ceph.conf and keyring copies. The config
-// is a snapshot at creation; WithClientIdentity uses the current MON addresses.
+// is a snapshot at creation; ClientConfig.WithIdentity uses the current MON addresses.
 // Revocation does not erase already copied credentials or invalidate established
 // sessions immediately. Test revoked credentials with a fresh connection.
 // On error it returns the zero ConnectionConfig.
@@ -222,111 +220,6 @@ func clientConfigBytes(base []byte, client *ClientConfig) []byte {
 	config := bytes.Clone(base)
 	config = append(config, []byte("\n["+client.name+"]\nkeyring = "+client.KeyringPath()+"\n")...)
 	return config
-}
-
-// WithClientIdentity attaches a container with only the selected client keyring.
-// It rejects descriptors from another cluster, incomplete creation and revocation.
-// Caller owns the attached container and must terminate it before the cluster.
-// The options customize the container's ceph.conf.
-func (c *Container) WithClientIdentity(client *ClientConfig, opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
-	return c.withClientIdentity(client, opts...)
-}
-
-func (c *Container) withClientIdentity(client *ClientConfig, opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
-	return func(req *testcontainers.GenericContainerRequest) error {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		if c.closed {
-			return errClusterTerminated
-		}
-		if client == nil || client.owner != c || !client.ready || client.revoked || len(client.keyring) == 0 {
-			return errors.New("cephx client must be an active identity created by this cluster")
-		}
-		if err := c.checkCurrentClient(client); err != nil {
-			return err
-		}
-		if c.settings.hostNetwork {
-			if err := hostContainerCustomizer(c.settings.publicAddress).Customize(req); err != nil {
-				return err
-			}
-		} else if err := network.WithNetworkName(nil, c.staticFacts().NetworkName)(req); err != nil {
-			return err
-		}
-		config, err := clientContainerConfig(clientConfigBytes(c.bootstrap.rawConfig(), client), opts)
-		if err != nil {
-			return err
-		}
-		return testcontainers.WithFiles(
-			textFile("/etc/ceph/ceph.conf", config, 0o644),
-			textFile(client.KeyringPath(), bytes.Clone(client.keyring), 0o600),
-		)(req)
-	}
-}
-
-// deleteClient implements ClientConfig.Delete, which documents the behavior.
-func (c *Container) deleteClient(ctx context.Context, client *ClientConfig) error {
-	if err := c.lockTopology(ctx); err != nil {
-		return err
-	}
-	defer c.mu.Unlock()
-	if c.closed {
-		return errClusterTerminated
-	}
-	if client == nil || client.owner != c || !client.created {
-		return errors.New("cephx client was not created successfully by this cluster")
-	}
-	if client.revoked {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	if err := c.settleClient(ctx, client.name); err != nil {
-		return err
-	}
-	if _, ok := c.authRecords.confirmedKey(client.name); client.revoked || !ok {
-		// An earlier removal, maybe through a copy of the descriptor,
-		// turned out to have applied.
-		client.revoked = true
-		return nil
-	}
-	// The revocation belongs to the identity, whichever descriptor of the
-	// revoked key ClientConfig.Delete gets.
-	if revocation := c.authRecords.revocation(client.name); revocation != nil && client.replacedBy == nil && clientKey(client.keyring, client.name) == revocation.original.key {
-		// A temporary revocation becomes permanent.
-		deleted := func() {
-			client.revoked, revocation.deleted = true, true
-			c.authRecords.dropRevocation(client.name)
-			c.authRecords.confirmKey(client.name, "")
-		}
-		current, err := c.readClientRecord(ctx, client.name)
-		switch {
-		case err != nil:
-			return err
-		case !current.exists:
-			deleted()
-			return nil
-		case !current.equal(revocation.original):
-			return invalid(fmt.Errorf("cephx identity %s was created again with another key or other capabilities; refusing revocation", client.name))
-		}
-		_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, deleted)
-		return err
-	}
-	// A creation that failed after auth add applied can be revoked as well.
-	if err := c.checkCurrentClient(client); err != nil {
-		return err
-	}
-	current, err := c.readClientRecord(ctx, client.name)
-	if err != nil {
-		return err
-	}
-	if !current.exists || current.key != clientKey(client.keyring, client.name) {
-		return invalid(fmt.Errorf("cephx identity %s has a different key; refusing revocation", client.name))
-	}
-	_, err = c.changeClient(ctx, client.name, map[string]any{"prefix": "auth rm", "entity": client.name}, nil, current, clientRecord{}, func() {
-		client.revoked = true
-		c.authRecords.confirmKey(client.name, "")
-	})
-	return err
 }
 
 // Auth command output can contain keys, including on failure. Never include it

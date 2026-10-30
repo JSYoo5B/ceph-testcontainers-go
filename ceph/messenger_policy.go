@@ -126,7 +126,7 @@ func (policy ClientMessengerPolicy) configLines() ([]string, error) {
 }
 
 // ClientContainerOptions is the configuration that WithClient and
-// WithClientIdentity write into a client container. It is a plain value with
+// ClientConfig.WithIdentity write into a client container. It is a plain value with
 // chainable, value-returning methods; the zero value changes nothing. Within
 // one value a later call of the same method replaces the earlier one. A field
 // set by two values is refused with ErrInvalidRequest, even when they agree.

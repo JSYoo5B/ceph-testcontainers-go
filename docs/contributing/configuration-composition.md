@@ -235,7 +235,7 @@ point as every module, `Run(ctx, img string, opts ...testcontainers.ContainerCus
 ## Client entry points stay separate
 
 `Container.WithClient` copies the admin keyring and takes no lock, closed check
-or identity validation. `Container.WithClientIdentity` copies a scoped keyring,
+or identity validation. `ClientConfig.WithIdentity` copies a scoped keyring,
 takes the topology lock, and refuses a terminated cluster, a descriptor from
 another cluster, an incomplete creation, a revoked identity and a stale key; its
 input is a live `*ClientConfig` handle compared by pointer. They are different

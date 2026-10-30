@@ -90,7 +90,7 @@ func TestRBD(t *testing.T) {
 The client container is registered for cleanup after the cluster, so it is
 removed first. Ceph clients connect directly to the OSD addresses that the
 monitors advertise, so in the default bridge network mode the client must run
-in a container attached with `WithClient` or `WithClientIdentity`. A process on
+in a container attached with `WithClient` or `ClientConfig.WithIdentity`. A process on
 a macOS or Windows host cannot reach the whole cluster through a mapped MON
 port. For native clients outside Docker, see
 [the host network guide](../docs/guides/host-network.md).
@@ -220,7 +220,7 @@ packages. The `ceph.Container` methods most RBD tests use are:
 | Method | Use in RBD tests |
 | --- | --- |
 | `WithClient()` | Attach an application container with the admin keyring. |
-| `CreateClient(ctx, name, ceph.ClientCaps)`, `WithClientIdentity(client)`, `ClientConfig.Delete` | Least-privilege identities such as `profile rbd` or `profile rbd-read-only` scoped to a pool and namespace. |
+| `CreateClient(ctx, name, ceph.ClientCaps)`, `client.WithIdentity()`, `ClientConfig.Delete` | Least-privilege identities such as `profile rbd` or `profile rbd-read-only` scoped to a pool and namespace. |
 | `ConnectionConfig(ctx)` | `ceph.conf` and admin keyring for a native client outside Docker (host network mode). |
 | `CreatePool`, `Pool.Status`, `Pool.Remove`, `WaitForClean` | Pools created after `Run`; wait for `active+clean` before I/O. |
 | `Ceph(ctx, args...)`, `ClientContainer(ctx)`, `ceph.FactsOf(cluster)` | Run the `ceph` CLI, run `rbd`/`rados` in the client toolkit, read the client image from `ClusterFacts.Images`. |
@@ -455,7 +455,7 @@ Starts the daemon in `client` and waits until its socket is open. `config`
 sets:
 
 - `ID`: the cephx ID the daemon reads parent objects with; empty means
-  `admin`. A client attached with `WithClientIdentity` passes its own name.
+  `admin`. A client attached with `ClientConfig.WithIdentity` passes its own name.
   It needs read access to the parents' pool, such as
   `osd 'profile rbd pool=<pool>'`.
 - `Path`: the cache directory, `/var/cache/ceph/immutable-object-cache` by
@@ -619,7 +619,7 @@ func TestTenantNamespace(t *testing.T) {
 	// its identity's keyring at KeyringPath(). Use your application image.
 	start := func(id *ceph.ClientConfig) testcontainers.Container {
 		ctr, err := testcontainers.Run(ctx, ceph.DefaultImage,
-			cluster.WithClientIdentity(id),
+			id.WithIdentity(),
 			ceph.WithIdleEntrypoint(),
 		)
 		testcontainers.CleanupContainer(t, ctr)
@@ -675,7 +675,7 @@ import (
 )
 
 conn, _ := rados.NewConnWithUser("tenant-a-ro")
-_ = conn.ReadDefaultConfigFile() // /etc/ceph/ceph.conf written by WithClientIdentity
+_ = conn.ReadDefaultConfigFile() // /etc/ceph/ceph.conf written by ClientConfig.WithIdentity
 _ = conn.SetConfigOption("keyring", "/etc/ceph/ceph.client.tenant-a-ro.keyring") // reader.KeyringPath()
 _ = conn.Connect()
 ioctx, _ := conn.OpenIOContext("volumes")
@@ -862,7 +862,7 @@ Everything without a typed API is one native command away.
 | `ceph` CLI on a cluster | `out, err := cluster.Ceph(ctx, "osd", "pool", "get", "volumes", "all", "--format", "json")` (stdout only) |
 | `rbd` or `rados` on a cluster | `client.Exec(ctx, []string{"rbd", ...}, tcexec.Multiplexed())` with `client` from `cluster.ClientContainer(ctx)` (admin credentials) |
 | `rbd` on either side of a mirror | `link.SourceRBD(ctx, args...)`, `link.DestinationRBD(ctx, args...)` (stdout only, error on non-zero exit) |
-| `rbd` as a restricted identity | Exec in a container attached with `cluster.WithClientIdentity(id)`, passing `--id id.User()` |
+| `rbd` as a restricted identity | Exec in a container attached with `id.WithIdentity()`, passing `--id id.User()` |
 | `rbd-mirror` admin socket | `daemon.Exec(ctx, []string{"ceph", "--admin-daemon", "/tmp/rbd-mirror.asok", "rbd", "mirror", "status"}, tcexec.Multiplexed())` for a `daemon` from `link.Daemons()` |
 | Ceph options | `override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: ..., Value: ...})`, restored with `Restore` |
 | Daemon logs | `daemon.Logs(ctx)`; `rbd-mirror` logs to stderr |

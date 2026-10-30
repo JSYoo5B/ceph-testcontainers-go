@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"time"
 )
 
 // errStalePool marks an operation through a Pool handle that no longer
@@ -123,7 +125,16 @@ func (p *Pool) Status(ctx context.Context) (PoolState, error) {
 	if err != nil {
 		return PoolState{}, err
 	}
-	return c.poolStatus(ctx, p.Name, p)
+	name := p.Name
+	if err := validateExistingPoolName(name); err != nil {
+		return PoolState{}, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return PoolState{}, err
+	}
+	return c.handlePoolState(ctx, name, p)
 }
 
 // Usage reports the pool's stored bytes and objects with the original
@@ -169,7 +180,39 @@ func (p *Pool) SetPGCount(ctx context.Context, pgNum int) error {
 	if err != nil {
 		return err
 	}
-	return c.setPoolPGCount(ctx, p.Name, p, pgNum)
+	name := p.Name
+	if err := validateExistingPoolName(name); err != nil {
+		return err
+	}
+	if err := validatePoolPGCount(pgNum); err != nil {
+		return err
+	}
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	defer cancel()
+	pool, err := c.handlePoolState(ctx, name, p)
+	if err != nil {
+		return err
+	}
+	if pool.AutoscaleMode == "on" {
+		return fmt.Errorf("pool %q has PG autoscaling on; it would replace the requested PG count", name)
+	}
+	// pg_num first: native pgp_num targets cannot exceed the pg_num target.
+	for _, setting := range []string{"pg_num", "pgp_num"} {
+		if err := c.checkPoolID(ctx, pool); err != nil {
+			return err
+		}
+		if _, err := c.cephCLI(ctx, "osd", "pool", "set", name, setting, strconv.Itoa(pgNum)); err != nil {
+			return fmt.Errorf("set pool %q %s target (earlier settings may have changed): %w", name, setting, err)
+		}
+	}
+	return nil
 }
 
 // WaitForPGCount waits until the native pool reports pgNum as its current,
@@ -184,7 +227,70 @@ func (p *Pool) WaitForPGCount(ctx context.Context, pgNum int) error {
 	if err != nil {
 		return err
 	}
-	return c.waitForPoolPGCount(ctx, p.Name, p, pgNum)
+	name := p.Name
+	if err := validateExistingPoolName(name); err != nil {
+		return err
+	}
+	if err := validatePoolPGCount(pgNum); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	defer cancel()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	var last error
+	poolID := int64(-1)
+	for {
+		if err := c.lockTopology(ctx); err != nil {
+			return errors.Join(err, last)
+		}
+		if err := c.waitPolicyReady(ctx); err != nil {
+			c.mu.Unlock()
+			if ctx.Err() != nil {
+				return errors.Join(ctx.Err(), last, err)
+			}
+			return err
+		}
+		pool, err := c.handlePoolState(ctx, name, p)
+		if p != nil && err != nil && errors.Is(err, errStalePool) {
+			c.mu.Unlock()
+			return err
+		}
+		replaced := err == nil && poolID >= 0 && pool.ID != poolID
+		reported := 0
+		if err == nil && !replaced && poolPGCountReached(pool, pgNum) {
+			reported, err = c.reportedPoolPGs(ctx, pool)
+		}
+		c.mu.Unlock()
+		if replaced {
+			return fmt.Errorf("pool %q was replaced while waiting for its PG count", name)
+		}
+		if err == nil {
+			poolID = pool.ID
+			switch {
+			case pool.PGNumTarget == 0 || pool.PGPlacementNumTarget == 0 || pool.PGNumPending == 0:
+				err = fmt.Errorf("pool %q does not report native PG targets", name)
+			case !poolPGCountReached(pool, pgNum):
+				err = fmt.Errorf("pool %q PG count is %d/%d (pgp %d/%d, pending %d); waiting for %d",
+					name, pool.PGNum, pool.PGNumTarget, pool.PGPlacementNum, pool.PGPlacementNumTarget, pool.PGNumPending, pgNum)
+			case reported != pgNum:
+				err = fmt.Errorf("pool %q reports %d PGs; waiting for %d", name, reported, pgNum)
+			default:
+				return nil
+			}
+		}
+		// Keep the last observation made before the deadline; a canceled
+		// command error would hide why the count was not reached.
+		if err := ctx.Err(); err != nil {
+			return errors.Join(err, last)
+		}
+		last = err
+		select {
+		case <-ctx.Done():
+			return errors.Join(ctx.Err(), last)
+		case <-ticker.C:
+		}
+	}
 }
 
 // SetPlacement moves a replicated pool to a simple osd/host/rack CRUSH rule.
@@ -204,7 +310,59 @@ func (p *Pool) SetPlacement(ctx context.Context, placement PoolPlacement) error 
 	if err != nil {
 		return err
 	}
-	return c.setPoolPlacement(ctx, p.Name, p, placement)
+	name := p.Name
+	if err := validateExistingPoolName(name); err != nil {
+		return err
+	}
+	desired, err := normalizePoolPlacement(name, placement)
+	if err != nil {
+		return err
+	}
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	defer cancel()
+	pool, err := c.handlePoolState(ctx, name, p)
+	if err != nil {
+		return err
+	}
+	if pool.Type != "replicated" {
+		return errors.New("placement changes require a replicated pool")
+	}
+	if current, err := c.poolRulePlacement(ctx, pool.CRUSHRule); err == nil && samePoolPlacement(current, desired) {
+		return nil
+	}
+	domains, err := c.nativePoolDomains(ctx, desired)
+	if err != nil {
+		return err
+	}
+	if domains < pool.Size {
+		return fmt.Errorf("pool %q needs %d owned %s domains; native CRUSH placement has %d eligible owned domains", name, pool.Size, desired.FailureDomain, domains)
+	}
+	rule, exists, err := c.poolPlacementRule(ctx, name, desired)
+	if err != nil {
+		return err
+	}
+	if err := c.checkPoolID(ctx, pool); err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := c.cephCLI(ctx, replicatedCRUSHRuleCommand(desired, rule)...); err != nil {
+			return fmt.Errorf("create placement rule for pool %q: %w", name, err)
+		}
+	}
+	if err := c.checkPoolID(ctx, pool); err != nil {
+		return err
+	}
+	if _, err := c.cephCLI(ctx, "osd", "pool", "set", name, "crush_rule", rule); err != nil {
+		return fmt.Errorf("set pool %q CRUSH rule %q: %w", name, rule, err)
+	}
+	return nil
 }
 
 // SetQuota replaces both limits, including zero values that remove a limit.
@@ -216,7 +374,39 @@ func (p *Pool) SetQuota(ctx context.Context, quota PoolQuota) error {
 	if err != nil {
 		return err
 	}
-	return c.setPoolQuota(ctx, p.Name, p, quota)
+	name := p.Name
+	if err := validateExistingPoolName(name); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	defer cancel()
+	pool, err := c.handlePoolState(ctx, name, p)
+	if err != nil {
+		return err
+	}
+	for _, setting := range []struct {
+		name             string
+		current, desired uint64
+	}{
+		{"max_objects", pool.Quota.MaxObjects, quota.MaxObjects},
+		{"max_bytes", pool.Quota.MaxBytes, quota.MaxBytes},
+	} {
+		if setting.current == setting.desired {
+			continue
+		}
+		if err := c.checkPoolID(ctx, pool); err != nil {
+			return err
+		}
+		if _, err := c.cephCLI(ctx, "osd", "pool", "set-quota", name, setting.name, strconv.FormatUint(setting.desired, 10)); err != nil {
+			return fmt.Errorf("set pool %q %s quota (earlier settings may have changed): %w", name, setting.name, err)
+		}
+	}
+	return nil
 }
 
 // SetReplication changes a replicated pool's size/min_size without changing
@@ -230,7 +420,64 @@ func (p *Pool) SetReplication(ctx context.Context, replicas, minSize int) error 
 	if err != nil {
 		return err
 	}
-	return c.setPoolReplication(ctx, p.Name, p, replicas, minSize)
+	name := p.Name
+	if err := validateExistingPoolName(name); err != nil {
+		return err
+	}
+	if replicas < 1 || replicas > 10 || minSize < 1 || minSize > replicas {
+		return errors.New("pool replicas must be 1..10 and min size must be 1..replicas")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	defer cancel()
+	pool, err := c.handlePoolState(ctx, name, p)
+	if err != nil {
+		return err
+	}
+	if pool.Type != "replicated" {
+		return errors.New("replication policy requires a replicated pool")
+	}
+	placement, err := c.poolRulePlacement(ctx, pool.CRUSHRule)
+	if err != nil {
+		return err
+	}
+	domains, err := c.nativePoolDomains(ctx, placement)
+	if err != nil {
+		return err
+	}
+	if domains < replicas {
+		return fmt.Errorf("pool %q needs %d owned %s domains; native CRUSH rule has %d eligible owned domains", name, replicas, placement.FailureDomain, domains)
+	}
+	// Lower min_size before lowering size; raise size before raising min_size.
+	settings := []struct {
+		name             string
+		current, desired int
+	}{
+		{"size", pool.Size, replicas}, {"min_size", pool.MinSize, minSize},
+	}
+	if minSize < pool.MinSize {
+		settings[0], settings[1] = settings[1], settings[0]
+	}
+	for _, setting := range settings {
+		if setting.current == setting.desired {
+			continue
+		}
+		if err := c.checkPoolID(ctx, pool); err != nil {
+			return err
+		}
+		args := []string{"osd", "pool", "set", name, setting.name, strconv.Itoa(setting.desired)}
+		if setting.name == "size" && setting.desired == 1 {
+			args = append(args, "--yes-i-really-mean-it")
+		}
+		if _, err := c.cephCLI(ctx, args...); err != nil {
+			return fmt.Errorf("set pool %q %s (earlier settings may have changed): %w", name, setting.name, err)
+		}
+	}
+	return nil
 }
 
 // Remove deletes a pool created by CreatePool or WithPools, together with
@@ -255,5 +502,25 @@ func (p *Pool) Remove(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.removePoolByHandle(ctx, p.Name, p)
+	name := p.Name
+	if err := validateExistingPoolName(name); err != nil {
+		return err
+	}
+	if err := c.lockTopology(ctx); err != nil {
+		return err
+	}
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
+	defer cancel()
+	if err := p.matchLocked(name, -1); err != nil {
+		return err
+	}
+	if err := c.removePool(ctx, name, false, p); err != nil {
+		return err
+	}
+	p.ident.removed = true
+	return nil
 }

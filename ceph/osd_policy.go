@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -34,52 +32,6 @@ func (c *Container) osdStates(ctx context.Context) ([]OSDState, error) {
 		owned[id] = registrationOf(osd)
 	}
 	return readOwnedOSDStates(ctx, c.cephCLI, owned)
-}
-
-// setOSDIn implements OSDContainer.SetIn, which documents the behavior. The caller
-// checks the handle under the topology lock.
-func (c *Container) setOSDIn(ctx context.Context, handle *OSDContainer, in bool) error {
-	id := handle.ID
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return err
-	}
-	if err := c.currentOSD(handle); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	dump, err := c.osdPolicyDump(ctx)
-	if err != nil {
-		return err
-	}
-	state, err := c.ownedOSDState(dump, id)
-	if err != nil {
-		return err
-	}
-	if state.In == in {
-		return nil
-	}
-	op := "out"
-	if in {
-		op = "in"
-	}
-	if _, err := c.cephCLI(ctx, "osd", op, strconv.Itoa(id)); err != nil {
-		return err
-	}
-	dump, err = c.osdPolicyDump(ctx)
-	if err != nil {
-		return err
-	}
-	state, err = c.ownedOSDState(dump, id)
-	if err != nil {
-		return err
-	}
-	if state.In != in {
-		return fmt.Errorf("osd.%d membership readback differs from requested in=%v", id, in)
-	}
-	return nil
 }
 
 // OSDFlag is a global OSDMap flag token such as "noout". The constants name

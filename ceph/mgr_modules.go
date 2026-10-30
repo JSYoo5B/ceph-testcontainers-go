@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"regexp"
-	"slices"
 	"time"
 )
 
@@ -20,17 +18,6 @@ type MGRModuleState struct {
 	Enabled, AlwaysOn, ForceDisabled bool
 	Available, CanRun                bool
 	ErrorString                      string
-}
-
-// observedMGRModules implements Observer.MGRModules. It takes the topology lock and refuses
-// a cluster without pool policy readiness before it reads.
-func (c *Container) observedMGRModules(ctx context.Context) ([]MGRModuleState, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return nil, err
-	}
-	return c.mgrModules(ctx)
 }
 
 // WaitMGRModuleReady waits for enabled/can-run metadata and successful native
@@ -116,86 +103,6 @@ func findMGRModule(modules []MGRModuleState, name string) (MGRModuleState, bool)
 	return MGRModuleState{}, false
 }
 
-func (c *Container) setMGRModule(ctx context.Context, name string, enabled bool) error {
-	op := "disable"
-	if enabled {
-		op = "enable"
-	}
-	_, err := c.cephCLI(ctx, "mgr", "module", op, name)
-	return err
-}
-
-// The caller holds c.mu and supplies the existing operation deadline. Native
-// module changes can respawn the MGR after the MON has confirmed membership;
-// wait for a coherent active-MGR snapshot before capturing or restoring state.
-// Retry reads only, and do not admit a snapshot received after cancellation.
-func (c *Container) waitMGRModules(ctx context.Context) ([]MGRModuleState, error) {
-	var modules []MGRModuleState
-	err := c.poll(ctx, func() (bool, error) {
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
-		current, err := c.mgrModules(ctx)
-		if err != nil {
-			return false, err
-		}
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
-		modules = current
-		return true, nil
-	})
-	return modules, err
-}
-
-// MGR module changes can briefly restart the active manager. A transient
-// unavailable/old map is not proof that the MON membership mutation failed.
-// The caller holds c.mu; only native reads are retried, never the mutation.
-func (c *Container) waitMGRModuleMembership(ctx context.Context, name string, enabled, alwaysOn bool) error {
-	return c.poll(ctx, func() (bool, error) {
-		modules, err := c.mgrModules(ctx)
-		if err != nil {
-			return false, err
-		}
-		module, found := findMGRModule(modules, name)
-		if !found || module.AlwaysOn != alwaysOn || module.ForceDisabled || module.Enabled != enabled {
-			return false, errors.New("MGR module membership readback differs from requested state")
-		}
-		return true, nil
-	})
-}
-
 func (c *Container) mgrModules(ctx context.Context) ([]MGRModuleState, error) {
 	return readMGRModules(ctx, c.cephCLI)
-}
-
-func (c *Container) protectMGRModule(ctx context.Context, name string) error {
-	if name != "volumes" && name != "mirroring" {
-		return nil
-	}
-	ownedNeed := slices.ContainsFunc(extensionsWith[serviceModules](c), func(state serviceModules) bool { return state.RequiresMGRModule(name) })
-	if name == "volumes" && (c.settings.requiresMGRModule("volumes") || ownedNeed) {
-		return errors.New("MGR volumes module is required by configured or owned CephFS filesystems")
-	}
-	data, err := c.cephCLI(ctx, "fs", "dump", "--format", "json")
-	if err != nil {
-		return err
-	}
-	var fsmap struct {
-		Filesystems *[]struct {
-			MirrorInfo json.RawMessage `json:"mirror_info"`
-		} `json:"filesystems"`
-	}
-	if json.Unmarshal(data, &fsmap) != nil || fsmap.Filesystems == nil {
-		return errors.New("decode FSMap before disabling MGR module")
-	}
-	if name == "volumes" && len(*fsmap.Filesystems) != 0 {
-		return errors.New("MGR volumes module is required by native CephFS filesystems")
-	}
-	for _, fs := range *fsmap.Filesystems {
-		if len(fs.MirrorInfo) != 0 {
-			return fmt.Errorf("MGR %s module is required by native CephFS mirroring policy", name)
-		}
-	}
-	return nil
 }

@@ -10,7 +10,7 @@ must be networked.
 
 | Client location | Network mode | How to connect |
 | --- | --- | --- |
-| A Linux container next to the cluster | Bridge (default) | `cluster.WithClient()` or `cluster.WithClientIdentity(client)` |
+| A Linux container next to the cluster | Bridge (default) | `cluster.WithClient()` or `client.WithIdentity()` |
 | The test process on a Linux Docker host | Host | `ceph.WithHostNetwork()` and `cluster.ConnectionConfig(ctx)` |
 | The test process on macOS or Windows with Docker Desktop | Host, with Docker Desktop host networking enabled | Same as above; see [Docker Desktop](#docker-desktop) |
 | An S3 client anywhere | Either | `rgw.Gateway.S3Endpoint(ctx)` (plain HTTP) |
@@ -63,7 +63,7 @@ container stops at once instead of waiting for Docker's 10 second timeout.
 
 The admin keyring copied by `WithClient` grants full control of the test
 cluster. Give it only to trusted test containers. For a restricted identity,
-create a client and attach it with `WithClientIdentity`:
+create a client and attach it with `ClientConfig.WithIdentity`:
 
 ```golang
 reader, err := cluster.CreateClient(ctx, "reader", ceph.ClientCaps{
@@ -74,7 +74,7 @@ if err != nil {
 	t.Fatal(err)
 }
 app, err := testcontainers.Run(ctx, "registry.example.com/my-app:test",
-	cluster.WithClientIdentity(reader),
+	reader.WithIdentity(),
 )
 testcontainers.CleanupContainer(t, app)
 if err != nil {
@@ -102,7 +102,7 @@ Other bridge-mode endpoints:
 ## Host mode
 
 `ceph.WithHostNetwork()` places every daemon, and every container attached
-with `WithClient` or `WithClientIdentity`, in the Docker daemon's host network.
+with `WithClient` or `ClientConfig.WithIdentity`, in the Docker daemon's host network.
 Daemons advertise an address of the Docker host, so a process on that host can
 reach all of them.
 
@@ -262,7 +262,7 @@ private temporary files and do not log it.
 
 ### Client containers in host mode
 
-`WithClient` and `WithClientIdentity` put the container in the host network
+`WithClient` and `ClientConfig.WithIdentity` put the container in the host network
 too. They remove the request's other networks, network aliases, exposed ports
 and port bindings, because host-network containers cannot publish ports. The
 copied `ceph.conf` already points at the advertised host address.
@@ -339,7 +339,7 @@ _, _ = public, backend
 
 - [`ceph`](../../ceph/README.md): `WithHostNetwork`, `NetworkConfig.WithHostAddress`,
   `NetworkConfig.WithSeparateClusterNetwork`, `ConnectionConfig`, `WithClient`,
-  `WithClientIdentity`, `CreateClient`, `ErrHostNetworkUnavailable`.
+  `ClientConfig.WithIdentity`, `CreateClient`, `ErrHostNetworkUnavailable`.
 - [`rgw`](../../rgw/README.md): `S3Endpoint`, `S3SecureEndpoint`, `DaemonEndpoint`.
 - [Running native commands](native-commands.md): client containers and the
   CLIs available in them.

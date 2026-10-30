@@ -79,7 +79,7 @@ func authEntityKeyType(t *testing.T, ctx context.Context, cluster *ceph.Containe
 // client's keyring can authenticate and read the monmap.
 func clientAuthenticates(t *testing.T, ctx context.Context, cluster *ceph.Container, client *ceph.ClientConfig) bool {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClientIdentity(client), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), client.WithIdentity(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)

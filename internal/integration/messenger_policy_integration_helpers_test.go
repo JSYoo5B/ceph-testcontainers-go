@@ -134,7 +134,7 @@ func testMessengerPolicy(t *testing.T, opts ...testcontainers.ContainerCustomize
 	if err != nil {
 		t.Fatal(err)
 	}
-	monCRC := startPolicyClient(t, ctx, cluster, "MON and MGR crc", cluster.WithClientIdentity(reader,
+	monCRC := startPolicyClient(t, ctx, cluster, "MON and MGR crc", reader.WithIdentity(
 		ceph.ClientContainerOptions{}.WithMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeCRC})), "--id", reader.User())
 	monSecure := startPolicyClient(t, ctx, cluster, "MON and MGR secure", cluster.WithClient(
 		ceph.ClientContainerOptions{}.WithMessengerPolicy(ceph.ClientMessengerPolicy{MonitorsAndManagers: modeSecure})))

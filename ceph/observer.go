@@ -105,7 +105,12 @@ func (o *Observer) Configuration(ctx context.Context) ([]ConfigEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return c.observedConfiguration(ctx)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return nil, err
+	}
+	return c.configuration(ctx)
 }
 
 // BlocklistEntries lists exact entries and CIDR ranges without mutating them.
@@ -114,7 +119,12 @@ func (o *Observer) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, erro
 	if err != nil {
 		return nil, err
 	}
-	return c.observedBlocklistEntries(ctx)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return nil, err
+	}
+	return c.blocklistEntries(ctx)
 }
 
 // MGRModules lists configured and available modules, sorted by name. Enabled
@@ -125,7 +135,12 @@ func (o *Observer) MGRModules(ctx context.Context) ([]MGRModuleState, error) {
 	if err != nil {
 		return nil, err
 	}
-	return c.observedMGRModules(ctx)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.poolPolicyReady(); err != nil {
+		return nil, err
+	}
+	return c.mgrModules(ctx)
 }
 
 // OSDFlags lists exact global OSDMap flag tokens, including native compatibility
@@ -268,5 +283,5 @@ func (o *Observer) ManagerMetrics(ctx context.Context) (ManagerMetrics, error) {
 	if err != nil {
 		return ManagerMetrics{}, err
 	}
-	return c.managerMetrics(ctx)
+	return readManagerMetrics(ctx, c.managerServices, c.controlSupervisedLookup())
 }

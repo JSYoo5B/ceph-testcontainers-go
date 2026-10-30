@@ -61,7 +61,7 @@ func TestClientIdentities(t *testing.T) {
 			}
 			newClient := func(identity *ceph.ClientConfig) testcontainers.Container {
 				t.Helper()
-				client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClientIdentity(identity),
+				client, err := testcontainers.Run(ctx, nativeClientImage(t, image), identity.WithIdentity(),
 					ceph.WithIdleEntrypoint(),
 					testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})))
 				if client != nil {

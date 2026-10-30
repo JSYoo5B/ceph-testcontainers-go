@@ -1,7 +1,6 @@
 package ceph
 
 import (
-	"context"
 	"fmt"
 	"maps"
 	"math"
@@ -79,11 +78,6 @@ func (m ManagerMetrics) Value(name string, labels map[string]string) (float64, e
 		return 0, fmt.Errorf("%d samples of %s match %v, want one", len(selected), name, labels)
 	}
 	return selected[0].Value, nil
-}
-
-// managerMetrics implements Observer.ManagerMetrics.
-func (c *Container) managerMetrics(ctx context.Context) (ManagerMetrics, error) {
-	return readManagerMetrics(ctx, c.managerServices, c.controlSupervisedLookup())
 }
 
 // parseMetrics reads the Prometheus text exposition format.

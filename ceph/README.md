@@ -739,7 +739,7 @@ In both v2 modes:
   a v1 port. In bridge mode the MON publishes only `3300/tcp`, so
   `MappedPort(ctx, "6789/tcp")` fails; in host mode only one MON port is
   reserved.
-- Later daemons, `WithClient` and `WithClientIdentity` containers and
+- Later daemons, `WithClient` and `ClientConfig.WithIdentity` containers and
   [ConnectionConfig](#connectionconfig) inherit the policy. MON refreshes only
   rewrite `mon_host` and keep it.
 - [override.SetConfig](../override/README.md#setconfig) refuses `ms_bind_msgr1` and
@@ -882,7 +882,7 @@ reliably to its log when you call `shutdown` after the failed connect.
 The policy of a native client is set separately, in that client's own
 configuration, with `ceph.ClientContainerOptions.WithMessengerPolicy`.
 `ClientContainerOptions` is the configuration value of [WithClient](#withclient) and
-[WithClientIdentity](#withclientidentity); a field set by two values is refused. So a mode rejection test can give
+[ClientConfig.WithIdentity](#clientconfigwithidentity); a field set by two values is refused. So a mode rejection test can give
 the native reference client and the client under test different policies:
 
 ```golang
@@ -915,7 +915,7 @@ list or an unknown mode makes the container request fail with
 ceph.WithHostNetwork()
 ```
 
-Places every cluster daemon and every `WithClient`/`WithClientIdentity` container
+Places every cluster daemon and every `WithClient`/`ClientConfig.WithIdentity` container
 in the Docker daemon's host network. Ceph then advertises host addresses, so a
 native client process on the Docker host (for example a Go test using go-ceph on
 Linux) can reach MONs and OSDs directly.
@@ -1466,7 +1466,7 @@ retried. Each container gets a 2-second stop timeout instead of Docker's
 passed by the caller takes precedence.
 
 Containers you attached with [WithClient](#withclient) or
-[WithClientIdentity](#withclientidentity) are yours: terminate them before the
+[ClientConfig.WithIdentity](#clientconfigwithidentity) are yours: terminate them before the
 cluster, because Docker cannot remove a network that still has attached
 containers. If an interrupted endpoint cannot be restored, its network is kept,
 the restore failure is returned, and a later `Terminate` retries. With
@@ -2909,7 +2909,7 @@ the cluster's public network; in host mode it joins the host network.
   go-ceph binary, ...). `WithClient` installs nothing; `ceph.DefaultImage` or
   the cluster's `Images.Client` work for CLI and Python clients.
 - The admin key has full privileges on this test cluster. Use it only in trusted
-  test containers; use [WithClientIdentity](#withclientidentity) for restricted
+  test containers; use [ClientConfig.WithIdentity](#clientconfigwithidentity) for restricted
   clients.
 - Combine it with [WithIdleEntrypoint](#withidleentrypoint) for a container in
   which you run commands with `Exec`.
@@ -2925,10 +2925,10 @@ bridge mode those are container addresses, so a process on the Docker host
 MON's mapped port alone. Run the client in a `WithClient` container, or use
 [WithHostNetwork](#withhostnetwork) on Linux.
 
-#### WithClientIdentity
+#### ClientConfig.WithIdentity
 
 ```golang
-func (c *Container) WithClientIdentity(client *ceph.ClientConfig, opts ...ceph.ClientContainerOptions) testcontainers.CustomizeRequestOption
+func (client *ClientConfig) WithIdentity(opts ...ceph.ClientContainerOptions) testcontainers.CustomizeRequestOption
 ```
 
 Like [WithClient](#withclient), but copies only the keyring of a restricted
@@ -2938,8 +2938,8 @@ section pointing to the keyring) and the keyring at
 `/etc/ceph/ceph.client.<id>.keyring` (`client.KeyringPath()`). The client must
 select its identity, for example `rados --id reader ...`,
 `CEPH_ARGS="--id reader"`, librados `rados_create(&cluster, "reader")` or go-ceph
-`rados.NewConnWithUser("reader")`. Descriptors from another cluster, incomplete
-creations and revoked identities are rejected, and so are descriptors whose key
+`rados.NewConnWithUser("reader")`. Incomplete creations and revoked identities
+are rejected, and so are descriptors whose key
 [ClientConfig.ReplaceKey](#clientconfigreplacekey) replaced, whose identity
 [ClientConfig.Revoke](#clientconfigrevoke) removed until its
 `Restore`, or whose identity has a change that is not resolved yet. You own the container. The options are those of
@@ -3052,7 +3052,7 @@ stale:
 - The old descriptor's `ConnectionConfig` still returns the old credentials,
   so a test can check that they are rejected.
 - Every other operation with the old descriptor fails:
-  [WithClientIdentity](#withclientidentity),
+  [ClientConfig.WithIdentity](#clientconfigwithidentity),
   [ClientConfig.Capabilities](#clientconfigcapabilities),
   [ClientConfig.UpdateCaps](#clientconfigupdatecaps) and [ClientConfig.Delete](#clientconfigdelete).
   Use the returned descriptor for them.
@@ -3096,7 +3096,7 @@ an error, or the old one. When settling itself fails, the outcome stays open:
   outcome. `ClientConfig.ReplaceKey` with the old descriptor returns a usable
   descriptor of the attempted key once the import turns out to have applied,
   and replaces the key anew once it turns out not to have.
-- Until then, [WithClientIdentity](#withclientidentity) refuses both
+- Until then, [ClientConfig.WithIdentity](#clientconfigwithidentity) refuses both
   descriptors.
 
 [ClientConfig.UpdateCaps](#clientconfigupdatecaps) and [ClientConfig.Delete](#clientconfigdelete) are
@@ -3131,7 +3131,7 @@ While the identity is revoked:
 
 - The descriptor's `ConnectionConfig` keeps returning its credentials, which
   work again after `Restore`.
-- [WithClientIdentity](#withclientidentity),
+- [ClientConfig.WithIdentity](#clientconfigwithidentity),
   [ClientConfig.Capabilities](#clientconfigcapabilities),
   [ClientConfig.UpdateCaps](#clientconfigupdatecaps), [ClientConfig.ReplaceKey](#clientconfigreplacekey)
   and another `ClientConfig.Revoke` refuse the descriptor.
@@ -3302,7 +3302,7 @@ func (c *Container) RefreshClientMonitorConfig(ctx context.Context, client testc
 ```
 
 Updates only the global `mon_host` entry in `/etc/ceph/ceph.conf` of a container
-you own (attached with `WithClient` or `WithClientIdentity`) to the live quorum's
+you own (attached with `WithClient` or `ClientConfig.WithIdentity`) to the live quorum's
 addresses. Use it after replacing monitors: running sessions follow the monmap,
 but a restarted client reads the file. The client's FSID must match this cluster
 and its live quorum. It works on running and stopped containers through Docker
@@ -4375,7 +4375,7 @@ if err != nil {
 }
 facts, err := ceph.FactsOf(cluster)
 client, err := testcontainers.Run(ctx, facts.Images.Client,
-	cluster.WithClientIdentity(reader),
+	reader.WithIdentity(),
 	ceph.WithIdleEntrypoint(),
 )
 testcontainers.CleanupContainer(t, client)
@@ -4404,7 +4404,7 @@ if err := reader.Delete(ctx); err != nil {
 Start `ceph.Run` in each test and register the returned cluster for cleanup
 before checking the error. Use `WithPools` for bootstrap pools, or
 `CreatePool` for an explicitly owned dynamic pool. Create restricted Cephx
-identities with `CreateClient` and use `WithClientIdentity` for client containers.
+identities with `CreateClient` and use `ClientConfig.WithIdentity` for client containers.
 See the [usage example](#usage-example).
 
 ### Create an erasure-coded data pool for RBD images
@@ -5020,7 +5020,7 @@ if err != nil {
 cfg, err := cluster.ConnectionConfig(ctx)
 // Hand cfg.Conf and cfg.Keyring to the client under test (for example an
 // independent Messenger v2 implementation), or attach a container with
-// cluster.WithClient() / cluster.WithClientIdentity(...).
+// cluster.WithClient() / client.WithIdentity(...).
 ```
 
 The client must reach the advertised addresses: run it in a `WithClient`
@@ -5183,7 +5183,7 @@ attachment is serialized with MON topology changes and honors cancellation.
 The cluster owns partial/successful toolkit teardown. RBD/CephFS operations,
 `ObjectWatchers` and `PGInconsistencies` use that toolkit, while daemon-local
 sockets and process observations stay on their daemon. ClientConfig and
-WithClientIdentity keep identity/credential ownership; a separate public
+ClientConfig.WithIdentity keep identity/credential ownership; a separate public
 client lifecycle type is unnecessary.
 
 ### Copying a capture file explicitly

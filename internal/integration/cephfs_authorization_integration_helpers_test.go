@@ -83,7 +83,7 @@ finally:
 	}
 	newClient := func(identity *ceph.ClientConfig) testcontainers.Container {
 		t.Helper()
-		client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClientIdentity(identity),
+		client, err := testcontainers.Run(ctx, nativeClientImage(t, image), identity.WithIdentity(),
 			ceph.WithIdleEntrypoint(),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import cephfs, rados"})))
 		if client != nil {
@@ -151,7 +151,7 @@ finally:
 	if err != nil {
 		t.Fatal(err)
 	}
-	holder, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClientIdentity(crashed.Client),
+	holder, err := testcontainers.Run(ctx, nativeClientImage(t, image), crashed.Client.WithIdentity(),
 		testcontainers.WithEntrypoint("python3", "-c", cephFSAuthorizationKilledSession,
 			filesystem, crashed.Client.User(), crashed.Client.KeyringPath(), source.Path),
 		testcontainers.WithWaitStrategy(wait.ForLog("OWNED_CEPHFS_MOUNTED").WithStartupTimeout(time.Minute)))

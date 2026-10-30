@@ -190,7 +190,7 @@ func fuseClientImage(t *testing.T, ctx context.Context, m *cephFSSingleMDS) (str
 // result is a fuseRefusal.
 func startFuseClient(t *testing.T, ctx context.Context, m *cephFSSingleMDS, image string, identity *ceph.ClientConfig, settings fuseSettings) (testcontainers.Container, error) {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, image, m.cluster.WithClientIdentity(identity), ceph.WithIdleEntrypoint(), settings.customizer())
+	ctr, err := testcontainers.Run(ctx, image, identity.WithIdentity(), ceph.WithIdleEntrypoint(), settings.customizer())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		if settings.device {

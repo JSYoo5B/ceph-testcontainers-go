@@ -72,7 +72,7 @@ func TestClientConfigCopiesCredentialsAndUsesCurrentMonitorConfig(t *testing.T) 
 	}
 	cluster.bootstrap.config = []byte("[global]\nmon_host = new-mon\n")
 	var request testcontainers.GenericContainerRequest
-	if err := cluster.WithClientIdentity(client)(&request); err != nil {
+	if err := client.WithIdentity()(&request); err != nil {
 		t.Fatal(err)
 	}
 	if len(request.Files) != 2 {
@@ -128,7 +128,7 @@ func TestDeleteClientOnlyRevokesOwnedUnchangedIdentity(t *testing.T) {
 		t.Fatal("another cluster revoked an unowned client")
 	}
 	var request testcontainers.GenericContainerRequest
-	if err := other.WithClientIdentity(client)(&request); err == nil {
+	if err := foreign.WithIdentity()(&request); err == nil {
 		t.Fatal("another cluster attached an unowned client")
 	}
 	ctr.key = "REPLACEMENT-KEY"
@@ -143,7 +143,7 @@ func TestDeleteClientOnlyRevokesOwnedUnchangedIdentity(t *testing.T) {
 	if err := client.Delete(t.Context()); err != nil || len(ctr.calls) != before {
 		t.Fatal("repeat revocation was not a no-op")
 	}
-	if err := cluster.WithClientIdentity(client)(&request); err == nil {
+	if err := client.WithIdentity()(&request); err == nil {
 		t.Fatal("revoked identity was attached to a new client")
 	}
 }

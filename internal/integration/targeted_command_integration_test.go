@@ -141,7 +141,7 @@ func TestTargetedCommandRecipe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClientIdentity(limited), ceph.WithIdleEntrypoint(),
+	client, err := testcontainers.Run(ctx, nativeClientImage(t, image), limited.WithIdentity(), ceph.WithIdleEntrypoint(),
 		testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})))
 	if client != nil {
 		testcontainers.CleanupContainer(t, client)

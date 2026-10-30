@@ -746,7 +746,7 @@ func startClient(t *testing.T, cluster *cephfs.Container) testcontainers.Contain
 Ceph clients talk to the MON, the MDS and every OSD directly, so the client
 must reach the addresses Ceph advertises. In the default bridge mode, run the
 client in a container attached with `cluster.WithClient()` (admin credentials)
-or `cluster.WithClientIdentity(client)` (one principal). The container needs the
+or `client.WithIdentity()` (one principal). The container needs the
 client library you test; `ceph.DefaultImage` has Python libcephfs, and go-ceph
 programs can run in any Linux image with `libcephfs` installed.
 
@@ -852,7 +852,7 @@ Notes:
 ### Give each subvolume its own restricted principal
 
 Each tenant gets a namespace-isolated subvolume and a principal that can only
-reach it. The client container attached with `WithClientIdentity` holds only
+reach it. The client container attached with `ClientConfig.WithIdentity` holds only
 that principal's keyring.
 
 ```golang
@@ -898,7 +898,7 @@ if err != nil {
 	t.Fatal(err) // a non-nil grant may be partial; do not authorize the same ID again
 }
 tenant, err := testcontainers.Run(ctx, ceph.DefaultImage,
-	cluster.WithClientIdentity(grant.Client), ceph.WithIdleEntrypoint())
+	grant.Client.WithIdentity(), ceph.WithIdleEntrypoint())
 testcontainers.CleanupContainer(t, tenant)
 if err != nil {
 	t.Fatal(err)
