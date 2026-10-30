@@ -17,11 +17,27 @@
       "decision": "baseline"
     },
     {
+      "current": "cephfs/mirror.Daemon.InterruptPeerLink",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (*fault.NetworkInterruption, error)",
+      "receiver": "*Daemon",
+      "proposed": "cephfs/mirror.Daemon.InterruptPeerLink",
+      "decision": "baseline"
+    },
+    {
       "current": "cephfs/mirror.Daemon.ProcessObserverBindingStatus",
       "kind": "method",
       "signature": "func() ProcessBindingStatus",
       "receiver": "*Daemon",
       "proposed": "cephfs/mirror.Daemon.ProcessObserverBindingStatus",
+      "decision": "baseline"
+    },
+    {
+      "current": "cephfs/mirror.Daemon.Remove",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...testcontainers.TerminateOption) error",
+      "receiver": "*Daemon",
+      "proposed": "cephfs/mirror.Daemon.Remove",
       "decision": "baseline"
     },
     {
@@ -179,14 +195,6 @@
       "decision": "baseline"
     },
     {
-      "current": "cephfs/mirror.Mirror.InterruptPeerLink",
-      "kind": "method",
-      "signature": "func(ctx context.Context, daemonName string) (*fault.NetworkInterruption, error)",
-      "receiver": "*Mirror",
-      "proposed": "cephfs/mirror.Mirror.InterruptPeerLink",
-      "decision": "baseline"
-    },
-    {
       "current": "cephfs/mirror.Mirror.PeerIDs",
       "kind": "method",
       "signature": "func(ctx context.Context) ([]string, error)",
@@ -224,14 +232,6 @@
       "signature": "func(ctx context.Context) error",
       "receiver": "*Mirror",
       "proposed": "cephfs/mirror.Mirror.RefreshPeerMonitorConfig",
-      "decision": "baseline"
-    },
-    {
-      "current": "cephfs/mirror.Mirror.RemoveDaemon",
-      "kind": "method",
-      "signature": "func(ctx context.Context, daemonName string, opts ...testcontainers.TerminateOption) error",
-      "receiver": "*Mirror",
-      "proposed": "cephfs/mirror.Mirror.RemoveDaemon",
       "decision": "baseline"
     },
     {
