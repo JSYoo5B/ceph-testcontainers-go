@@ -111,7 +111,7 @@ allowlist:
   `docs/contributing/test-double-inventory.md`.
 
 Every other path runs the full Code checks, including a package's
-`README.md` (the API inventory test reads it), any non-Markdown or nested file
+`README.md` (Go tests read it), any non-Markdown or nested file
 under `docs/`, and a changed path whose old or new Git mode is not an ordinary
 file. `test_docs_only.py` fails when a Go source or `tag_scenarios.py` names a
 documentation path that is on the allowlist. Add a newly read file to
@@ -742,7 +742,7 @@ is not wired into any workflow.
 The runner passes Go's artifact flags in both execution modes
 (`-artifacts -outputdir=<native>/test-artifacts`, or the `-test.` forms for
 the binary). A test that finalizes its cluster with
-[`TerminateOnCleanup`](../../ceph/README.md#terminateoncleanup) and `Archive`
+[`TerminateOnCleanup`](../guides/ceph-operations.md#terminateoncleanup) and `Archive`
 writes its failure archive under
 `native/test-artifacts/_artifacts/<package>/<test>/<random>/ceph-<cluster>-<execution>/`
 with `diagnostics.json`, `crash-metadata.json` and `manifest.json`. A passing

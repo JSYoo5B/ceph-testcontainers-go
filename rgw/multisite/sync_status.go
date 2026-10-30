@@ -33,6 +33,8 @@ type DataSyncStatus struct {
 	BehindShards, RecoveringShards        int
 }
 
+// SyncStatus is the metadata and data sync state of one attached zone, as
+// Fixture.SyncStatus reads it.
 type SyncStatus struct {
 	RealmID, PeriodID, Zone, ZoneID, ZonegroupID string
 	RealmEpoch                                   uint64

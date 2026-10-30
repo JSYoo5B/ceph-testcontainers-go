@@ -38,6 +38,9 @@ type DirectoryRemovalStatus struct {
 	Daemons                                     map[string]DirectoryRemovalDaemonStatus
 }
 
+// DirectoryRemovalDaemonStatus is one owned mirror daemon's part of a
+// directory removal: its container and native instance, and its state or
+// problem in the removal cohort.
 type DirectoryRemovalDaemonStatus struct {
 	ContainerID, InstanceID string
 	State, Problem          string

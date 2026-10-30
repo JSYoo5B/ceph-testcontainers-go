@@ -39,6 +39,7 @@ const (
 	SyncForbidden SyncGroupStatus = "forbidden"
 )
 
+// SyncGroupConfig names a new sync group and selects its initial status.
 type SyncGroupConfig struct {
 	ID     string
 	Status SyncGroupStatus
@@ -102,6 +103,7 @@ type rgwSyncPending struct {
 	check                     func(map[string]any) error
 }
 
+// ID returns the native sync group ID, or "" for a nil handle.
 func (g *SyncGroup) ID() string {
 	if g == nil || g.state == nil {
 		return ""
