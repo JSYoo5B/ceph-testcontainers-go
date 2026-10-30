@@ -77,7 +77,7 @@ func (fs *Filesystem) checkCloneIncarnation(ctx context.Context, identity *cephF
 	if identity.incarnation == nil {
 		return errors.New("clone has no submission-confirmed native incarnation; inspect it through Ceph")
 	}
-	current, err := fs.volumes().readCloneIncarnation(ctx, identity)
+	current, err := fs.id.volumes().readCloneIncarnation(ctx, identity)
 	if err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func (clone *SubvolumeClone) Cancel(ctx context.Context) error {
 	if err := fs.validateCloneHandle(clone); err != nil {
 		return err
 	}
-	timeout := servicehook.StartupTimeout(fs.cluster)
+	timeout := servicehook.StartupTimeout(fs.id.cluster)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	request := true
@@ -172,8 +172,8 @@ func (clone *SubvolumeClone) cancelStep(ctx context.Context, fs *Filesystem, req
 	if !request {
 		return false, nil
 	}
-	args := appendSubvolumeGroup([]string{"fs", "clone", "cancel", fs.name, identity.name}, identity.group)
-	if _, err := fs.cluster.Ceph(ctx, args...); err != nil {
+	args := appendSubvolumeGroup([]string{"fs", "clone", "cancel", fs.id.name, identity.name}, identity.group)
+	if _, err := fs.id.cluster.Ceph(ctx, args...); err != nil {
 		return false, err
 	}
 	status, err = fs.subvolumeCloneStatus(ctx, fsID, identity)
@@ -211,7 +211,7 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 	if identity.removed {
 		return nil
 	}
-	names, err := fs.volumes().subvolumeNames(ctx, identity.group)
+	names, err := fs.id.volumes().subvolumeNames(ctx, identity.group)
 	if err != nil {
 		return err
 	}
@@ -240,11 +240,11 @@ func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 		return errors.New("clone source snapshot is still protected; await cancellation/worker detachment before cleanup")
 	}
 	identity.removalAttempted = true
-	args := appendSubvolumeGroup([]string{"fs", "subvolume", "rm", fs.name, identity.name}, identity.group)
-	if _, err := fs.cluster.Ceph(ctx, append(args, "--force")...); err != nil {
+	args := appendSubvolumeGroup([]string{"fs", "subvolume", "rm", fs.id.name, identity.name}, identity.group)
+	if _, err := fs.id.cluster.Ceph(ctx, append(args, "--force")...); err != nil {
 		return err
 	}
-	names, err = fs.volumes().subvolumeNames(ctx, identity.group)
+	names, err = fs.id.volumes().subvolumeNames(ctx, identity.group)
 	if err != nil {
 		return err
 	}

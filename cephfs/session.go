@@ -92,7 +92,7 @@ func (fs *Filesystem) SessionTimeouts(ctx context.Context) (SessionTimeouts, err
 		return SessionTimeouts{}, err
 	}
 	defer done()
-	return fs.volumes().readSessionTimeouts(ctx, fsID)
+	return fs.id.volumes().readSessionTimeouts(ctx, fsID)
 }
 
 // OverrideSessionTimeouts sets both limits so a test can observe evicted
@@ -112,14 +112,14 @@ func (fs *Filesystem) OverrideSessionTimeouts(ctx context.Context, requested Ses
 	if active := fs.sessionTimeouts; active != nil && !active.restored {
 		return nil, errors.New("restore the existing CephFS session timeouts override first")
 	}
-	previous, err := fs.volumes().readSessionTimeouts(ctx, fsID)
+	previous, err := fs.id.volumes().readSessionTimeouts(ctx, fsID)
 	if err != nil {
 		return nil, err
 	}
 	state := &cephFSSessionTimeoutsState{fsID: fsID, previous: previous, applied: requested}
 	fs.sessionTimeouts = state
 	change := &SessionTimeoutsOverrideHandle{filesystem: fs, state: state}
-	return change, fs.volumes().writeSessionTimeouts(ctx, fsID, previous, requested)
+	return change, fs.id.volumes().writeSessionTimeouts(ctx, fsID, previous, requested)
 }
 
 // Restore returns both limits to the values captured before the change. It is
@@ -132,12 +132,12 @@ func (change *SessionTimeoutsOverrideHandle) Restore(ctx context.Context) error 
 	fs := change.filesystem
 	state := change.state
 	// A confirmed restore stays complete after the filesystem or cluster is gone.
-	if fs.cluster != nil {
-		if err := clusterutil.LockMutex(ctx, &filesystems(fs.cluster).setupMu); err != nil {
+	if fs.id.cluster != nil {
+		if err := clusterutil.LockMutex(ctx, &filesystems(fs.id.cluster).setupMu); err != nil {
 			return err
 		}
 		restored := state.restored
-		filesystems(fs.cluster).setupMu.Unlock()
+		filesystems(fs.id.cluster).setupMu.Unlock()
 		if restored {
 			return nil
 		}
@@ -156,7 +156,7 @@ func (change *SessionTimeoutsOverrideHandle) Restore(ctx context.Context) error 
 	if fsID != state.fsID {
 		return errors.New("CephFS filesystem identity changed since the session timeouts override")
 	}
-	current, err := fs.volumes().readSessionTimeouts(ctx, fsID)
+	current, err := fs.id.volumes().readSessionTimeouts(ctx, fsID)
 	if err != nil {
 		return err
 	}
@@ -164,7 +164,7 @@ func (change *SessionTimeoutsOverrideHandle) Restore(ctx context.Context) error 
 		!ownedSessionValue(current.Autoclose, state.previous.Autoclose, state.applied.Autoclose) {
 		return fmt.Errorf("CephFS session timeouts changed outside this override: %+v", current)
 	}
-	if err := fs.volumes().writeSessionTimeouts(ctx, fsID, current, state.previous); err != nil {
+	if err := fs.id.volumes().writeSessionTimeouts(ctx, fsID, current, state.previous); err != nil {
 		return err
 	}
 	state.restored = true
@@ -192,9 +192,9 @@ func (fs *Filesystem) Sessions(ctx context.Context) ([]Session, error) {
 	}
 	var sessions []Session
 	for _, mds := range status.Active {
-		data, err := fs.cluster.Ceph(ctx, "tell", "mds."+fs.name+":"+strconv.Itoa(mds.Rank), "session", "ls", "--format", "json")
+		data, err := fs.id.cluster.Ceph(ctx, "tell", "mds."+fs.id.name+":"+strconv.Itoa(mds.Rank), "session", "ls", "--format", "json")
 		if err != nil {
-			return nil, fmt.Errorf("list sessions of CephFS %q rank %d: %w", fs.name, mds.Rank, err)
+			return nil, fmt.Errorf("list sessions of CephFS %q rank %d: %w", fs.id.name, mds.Rank, err)
 		}
 		ranked, err := parseCephFSSessions(data, mds.Rank)
 		if err != nil {
@@ -247,10 +247,10 @@ func (fs *Filesystem) beginSessionOperation(ctx context.Context) (context.Contex
 	ctx, done, err := fs.admitOperation(ctx, admissionSpec{
 		refusal: "CephFS filesystem must be an active filesystem created by this cluster",
 		check: func(context.Context) (bool, error) {
-			if !fs.registered() || fs.FilesystemName != fs.name || fs.nativeIdentity == nil {
+			if !fs.id.registered() || fs.FilesystemName != fs.id.name || fs.id.native == nil {
 				return false, nil
 			}
-			fsID = fs.nativeIdentity.id
+			fsID = fs.id.native.id
 			return true, nil
 		},
 	})

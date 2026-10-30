@@ -145,7 +145,7 @@ func TestRemoveReadFailurePreservesOwnershipBeforeAndAfterDown(t *testing.T) {
 
 func TestRemoveRefusesReplacedFilesystemBeforeShutdown(t *testing.T) {
 	cluster, f := cephFSRemovalCluster(t, true)
-	filesystems(cluster).byName["app"].nativeIdentity = &cephFSNativeIdentity{id: 99}
+	filesystems(cluster).byName["app"].id.native = &cephFSNativeIdentity{id: 99}
 	app := ownedFilesystem(t, cluster, "app")
 	if err := app.Remove(t.Context()); err == nil {
 		t.Fatal("replaced filesystem was admitted")

@@ -23,9 +23,7 @@ func subvolumeFixture() (*Filesystem, *poolFixtureContainer) {
 		"fs subvolume info fixture volume --group_name group --format json": `{"path":"/volumes/group/volume/unique-id","bytes_quota":32768,"bytes_used":8192,"data_pool":"additional","pool_namespace":"fsvolumens_group_volume","created_at":"2026-10-03 00:00:01.123456","state":"complete","type":"subvolume"}`,
 	}}
 	cluster := poolFixtureCluster(ctr, 2)
-	fs := &Filesystem{FilesystemName: "fixture", name: "fixture", MetadataPool: "metadata", DataPool: "data", AdditionalDataPools: []string{"additional"}, cluster: cluster,
-		config:         Config{Name: "fixture", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}, AdditionalDataPools: []ceph.PoolConfig{{Name: "additional"}}},
-		nativeIdentity: &cephFSNativeIdentity{id: 41, metadataPool: 1, defaultPool: 2, attachments: make(map[string]*cephFSDataPoolIdentity)}}
+	fs := &Filesystem{FilesystemName: "fixture", MetadataPool: "metadata", DataPool: "data", AdditionalDataPools: []string{"additional"}, id: filesystemIdentity{name: "fixture", cluster: cluster, config: Config{Name: "fixture", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}, AdditionalDataPools: []ceph.PoolConfig{{Name: "additional"}}}, native: &cephFSNativeIdentity{id: 41, metadataPool: 1, defaultPool: 2, attachments: make(map[string]*cephFSDataPoolIdentity)}}}
 	filesystems(cluster).byName = map[string]*Filesystem{"fixture": fs}
 	return fs, ctr
 }
@@ -45,7 +43,7 @@ func TestCephFSSubvolumeValidationPreventsCommands(t *testing.T) {
 	if _, err := fs.CreateSubvolumeGroup(t.Context(), SubvolumeGroupConfig{Name: "group", SizeBytes: -1}); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("negative group quota reached native CLI")
 	}
-	testhelper.TestSetClosed(fs.cluster, true)
+	testhelper.TestSetClosed(fs.id.cluster, true)
 	if _, err := fs.SubvolumeGroups(t.Context()); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("terminated cluster accepted subvolume operation")
 	}
@@ -58,9 +56,9 @@ func TestCephFSSubvolumeValidationSnapshotsConcurrentConfigReplacement(t *testin
 	// different revisions could reject it even though neither revision does.
 	first := Config{Name: "fixture", DataPool: ceph.PoolConfig{Name: "other"}, AdditionalDataPools: []ceph.PoolConfig{{Name: "selected"}}, ActiveMDS: 1}
 	second := Config{Name: "fixture", DataPool: ceph.PoolConfig{Name: "selected"}, AdditionalDataPools: []ceph.PoolConfig{{Name: "other"}}, ActiveMDS: 2}
-	servicehook.Lock(fs.cluster)
-	fs.config = first
-	servicehook.Unlock(fs.cluster)
+	servicehook.Lock(fs.id.cluster)
+	fs.id.config = first
+	servicehook.Unlock(fs.id.cluster)
 	var writer sync.WaitGroup
 	writer.Add(1)
 	start := make(chan struct{})
@@ -68,13 +66,13 @@ func TestCephFSSubvolumeValidationSnapshotsConcurrentConfigReplacement(t *testin
 		defer writer.Done()
 		<-start
 		for i := range 20000 {
-			servicehook.Lock(fs.cluster)
+			servicehook.Lock(fs.id.cluster)
 			if i%2 == 0 {
-				fs.config = second
+				fs.id.config = second
 			} else {
-				fs.config = first
+				fs.id.config = first
 			}
-			servicehook.Unlock(fs.cluster)
+			servicehook.Unlock(fs.id.cluster)
 		}
 	}()
 	close(start)
@@ -330,7 +328,7 @@ func TestCephFSSubvolumeEnablesVolumesAndRejectsUnavailableFilesystem(t *testing
 			t.Fatal("volume operations ran without MGR module readiness")
 		}
 	}
-	testhelper.TestSetClosed(fs.cluster, true)
+	testhelper.TestSetClosed(fs.id.cluster, true)
 	_, err := fs.SubvolumeGroups(t.Context())
 	if err == nil {
 		t.Fatal("closed filesystem accepted")

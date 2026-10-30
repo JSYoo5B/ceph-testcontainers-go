@@ -38,8 +38,7 @@ func dataPoolsFixture(t *testing.T) (*Filesystem, *cephFSDataPoolsFixture) {
 	ctr := &cephFSDataPoolsFixture{fsID: 41, metadataID: 1, defaultID: 2, targetID: 3, poolType: 1,
 		apps: map[string]map[string]string{"cephfs": {}}, output: make(map[string]string)}
 	c := testhelper.TestCluster(ctr, testhelper.TestConfig{StartupTimeout: time.Second})
-	fs := &Filesystem{FilesystemName: "fixture", name: "fixture", MetadataPool: "metadata", DataPool: "data", cluster: c,
-		config: Config{Name: "fixture", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}}}
+	fs := &Filesystem{FilesystemName: "fixture", MetadataPool: "metadata", DataPool: "data", id: filesystemIdentity{name: "fixture", cluster: c, config: Config{Name: "fixture", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}}}}
 	filesystems(c).byName["fixture"] = fs
 	if err := fs.captureNativePoolIdentity(t.Context()); err != nil {
 		t.Fatal(err)
@@ -164,14 +163,14 @@ func TestCephFSDataPoolCanceledWhileWaitingForSetupNeverStartsOperation(t *testi
 	base, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	ctx := &cephFSDataPoolWaitingContext{Context: base, firstCheck: make(chan struct{})}
-	filesystems(fs.cluster).setupMu.Lock()
+	filesystems(fs.id.cluster).setupMu.Lock()
 	locked := true
 	result := make(chan error, 1)
 	exited := make(chan struct{})
 	t.Cleanup(func() {
 		cancel()
 		if locked {
-			filesystems(fs.cluster).setupMu.Unlock()
+			filesystems(fs.id.cluster).setupMu.Unlock()
 			locked = false
 		}
 		select {
@@ -199,7 +198,7 @@ func TestCephFSDataPoolCanceledWhileWaitingForSetupNeverStartsOperation(t *testi
 		}
 	case <-time.After(500 * time.Millisecond):
 		// Release and join a regression before failing this assertion.
-		filesystems(fs.cluster).setupMu.Unlock()
+		filesystems(fs.id.cluster).setupMu.Unlock()
 		locked = false
 		select {
 		case _ = <-result:
@@ -207,11 +206,11 @@ func TestCephFSDataPoolCanceledWhileWaitingForSetupNeverStartsOperation(t *testi
 		}
 		t.Fatal("canceled waiter did not return while setup remained busy")
 	}
-	if filesystems(fs.cluster).setupMu.TryLock() {
-		filesystems(fs.cluster).setupMu.Unlock()
+	if filesystems(fs.id.cluster).setupMu.TryLock() {
+		filesystems(fs.id.cluster).setupMu.Unlock()
 		t.Fatal("canceled waiter stole or unlocked the held setup gate")
 	}
-	filesystems(fs.cluster).setupMu.Unlock()
+	filesystems(fs.id.cluster).setupMu.Unlock()
 	locked = false
 	if len(ctr.calls) != 0 {
 		t.Fatal("canceled setup waiter sent native commands", ctr.calls)
@@ -249,7 +248,7 @@ func TestCephFSDataPoolGuardsBeforeMutation(t *testing.T) {
 		t.Fatal("overwrite-enabled EC refused", err)
 	}
 	fs, c = dataPoolsFixture(t)
-	testhelper.TestSetClosed(fs.cluster, true)
+	testhelper.TestSetClosed(fs.id.cluster, true)
 	if _, err := fs.DataPools(t.Context()); err == nil || len(c.calls) != 0 {
 		t.Fatal("terminated cluster queried")
 	}
@@ -263,7 +262,7 @@ func TestCephFSDataPoolGuardsBeforeMutation(t *testing.T) {
 		t.Fatal("nil filesystem accepted")
 	}
 	fs, c = dataPoolsFixture(t)
-	fs.nativeIdentity = nil // Start failed before confirming its created FSMap.
+	fs.id.native = nil // Start failed before confirming its created FSMap.
 	if _, err := fs.DataPools(t.Context()); err == nil || len(c.calls) != 0 {
 		t.Fatal("partial filesystem adopted a native identity on first use")
 	}

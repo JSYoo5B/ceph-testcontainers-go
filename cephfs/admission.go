@@ -43,10 +43,10 @@ func (fs *Filesystem) admitOperation(ctx context.Context, spec admissionSpec) (c
 	if err := ctx.Err(); err != nil {
 		return ctx, func() {}, err
 	}
-	if fs == nil || fs.cluster == nil {
+	if fs == nil || fs.id.cluster == nil {
 		return ctx, func() {}, errors.New("CephFS filesystem is unavailable")
 	}
-	c := fs.cluster
+	c := fs.id.cluster
 	if err := clusterutil.LockMutex(ctx, &filesystems(c).setupMu); err != nil {
 		return ctx, func() {}, err
 	}
@@ -73,14 +73,4 @@ func (fs *Filesystem) admitOperation(ctx context.Context, spec admissionSpec) (c
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	return ctx, func() { cancel(); filesystems(c).setupMu.Unlock() }, nil
-}
-
-// registered reports whether fs is still the live filesystem of its name on an
-// open cluster. It is the ownership invariant that every admission predicate
-// and every MDS ownership proof shares; each site adds its own conjuncts (the
-// exported-name check of the descriptor-integrity refusals, the native identity,
-// the first-daemon container, the roster) and keeps its own refusal. The caller
-// holds the cluster topology mutex.
-func (fs *Filesystem) registered() bool {
-	return !servicehook.Closed(fs.cluster) && filesystems(fs.cluster).byName[fs.name] == fs
 }

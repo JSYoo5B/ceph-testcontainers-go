@@ -45,7 +45,7 @@ func (clone *SubvolumeClone) filesystem() (*Filesystem, error) {
 }
 
 func (grant *SubvolumeAuthorization) filesystem() (*Filesystem, error) {
-	if grant == nil || grant.identity == nil || grant.identity.volume == nil || grant.identity.volume.filesystem == nil || grant.identity.volume.filesystem.cluster == nil || !grant.identity.authorizeAttempted {
+	if grant == nil || grant.identity == nil || grant.identity.volume == nil || grant.identity.volume.filesystem == nil || grant.identity.volume.filesystem.id.cluster == nil || !grant.identity.authorizeAttempted {
 		return nil, servicehook.Invalid(errors.New("subvolume authorization must be an owned grant attempted by this filesystem"))
 	}
 	return grant.identity.volume.filesystem, nil

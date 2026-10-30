@@ -35,7 +35,7 @@ func TestCephFSPinValidationAndOwnershipBeforeCommands(t *testing.T) {
 	if _, err := (&foreign).PinPolicy(t.Context()); err == nil || len(control.calls) != 0 {
 		t.Fatal("foreign resource policy was queried")
 	}
-	testhelper.TestSetClosed(fs.cluster, true)
+	testhelper.TestSetClosed(fs.id.cluster, true)
 	if change, err := volume.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1}); change != nil || err == nil || len(control.calls) != 0 {
 		t.Fatal("closed cluster queried or changed directory pins")
 	}
@@ -62,11 +62,11 @@ func TestCephFSPinNativeBasePrivateNamesAndSharedRestore(t *testing.T) {
 	if err := copy.Restore(t.Context()); err != nil || len(fs.pins.byField) != 0 || control.policies[change.state.path].ExportRank != 0 {
 		t.Fatalf("copy did not restore shared override: %v", err)
 	}
-	testhelper.TestSetClosed(fs.cluster, true)
+	testhelper.TestSetClosed(fs.id.cluster, true)
 	if err := change.Restore(t.Context()); err != nil || len(control.mutations) != 2 {
 		t.Fatal("verified restore was not idempotent after cluster termination")
 	}
-	testhelper.TestSetClosed(fs.cluster, false)
+	testhelper.TestSetClosed(fs.id.cluster, false)
 	group.Name, group.Path = "foreign", "/foreign"
 	groupChange, err := group.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1})
 	if err != nil || !slices.Equal(control.mutations[2], []string{"fs", "subvolumegroup", "pin", "fixture", "group", "export", "1"}) {
@@ -139,7 +139,7 @@ func TestCephFSPinRankFeasibilityRequiresOwnedActiveNativeRank(t *testing.T) {
 		case "outside topology":
 			rank = 2
 		case "foreign daemon":
-			fs.roster.daemons = fs.roster.daemons[:1]
+			fs.mds.roster.daemons = fs.mds.roster.daemons[:1]
 		case "recovering daemon":
 			control.native.Output["fs dump --format json"] = strings.Replace(control.native.Output["fs dump --format json"], `"name":"b","rank":1,"gid":102,"state":"up:active"`, `"name":"b","rank":1,"gid":102,"state":"up:replay"`, 1)
 		}
@@ -215,12 +215,12 @@ type cephFSPinTestControl struct {
 func cephFSPinFixture() (*Filesystem, *cephFSPinTestControl, *Subvolume, *SubvolumeGroup) {
 	fs, native := subvolumeFixture()
 	native.Output["fs dump --format json"] = `{"filesystems":[{"id":41,"mdsmap":{"fs_name":"fixture","max_mds":2,"metadata_pool":1,"data_pools":[2,3],"info":{"a":{"name":"a","rank":0,"gid":101,"state":"up:active"},"b":{"name":"b","rank":1,"gid":102,"state":"up:active"}}}}],"standbys":[]}`
-	fs.roster.daemons = []*MDS{{ID: "a", FilesystemName: "fixture"}, {ID: "b", FilesystemName: "fixture"}}
+	fs.mds.roster.daemons = []*MDS{{ID: "a", FilesystemName: "fixture"}, {ID: "b", FilesystemName: "fixture"}}
 	control := &cephFSPinTestControl{native: native, policies: map[string]*PinPolicy{
 		"/volumes/group":        {Path: "/volumes/group", Inode: 102, ExportRank: 0},
 		"/volumes/group/volume": {Path: "/volumes/group/volume", Inode: 103, ExportRank: 0},
 	}}
-	fs.cluster.Container = control
+	fs.id.cluster.Container = control
 	volume := &Subvolume{Name: "volume", GroupName: "group", FilesystemName: "fixture", Path: "/volumes/group/volume/unique-id", identity: &cephFSVolumeIdentity{
 		filesystem: fs, filesystemID: 41, name: "volume", group: "group", path: "/volumes/group/volume/unique-id", createdAt: "2026-10-03 00:00:01.123456", ready: true,
 	}}
