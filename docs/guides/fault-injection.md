@@ -57,7 +57,7 @@ kept.
 
 ## Freezing a container
 
-[`fault.Pause`](../../fault/README.md#pause) freezes every process of a
+[`fault.Pause`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/fault#Pause) freezes every process of a
 container like `docker pause`. Sockets stay open, so peers see silence instead
 of a closed connection.
 
@@ -105,7 +105,7 @@ What Ceph does with the frozen container:
 
 ## Interrupting a network endpoint
 
-[`fault.InterruptNetwork`](../../fault/README.md#interruptnetwork) disconnects
+[`fault.InterruptNetwork`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/fault#InterruptNetwork) disconnects
 one container from one cluster bridge without stopping it. `Restore`
 reconnects the same IP addresses and aliases, so the address Ceph advertised
 stays valid. Bridge mode only.
@@ -148,7 +148,7 @@ Traps:
 
 ## Delaying packets below Ceph
 
-[`fault.ApplyNetworkProfile`](../../fault/README.md#applynetworkprofile) applies
+[`fault.ApplyNetworkProfile`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/fault#ApplyNetworkProfile) applies
 the kernel's netem qdisc to the packets one container sends on one cluster
 bridge. Ceph does not know about it: sessions stay up and peers see answers
 late, while the container's other bridge and other daemons are unaffected.
@@ -186,7 +186,7 @@ without a network. Missing support wraps `fault.ErrNetemImageUnsupported`
 (`ceph.ErrImageCapability`), `fault.ErrNetemPermissionDenied` or
 `fault.ErrNetemKernelUnsupported` (`ceph.ErrEnvironmentUnavailable`); there is
 no fallback. The full table is in the
-[`fault` reference](../../fault/README.md#applynetworkprofile), and the
+[`fault` reference](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/fault#ApplyNetworkProfile), and the
 classification in [Classified errors](errors.md#image-capabilities-and-optional-extensions).
 Rootless engines, Podman and Docker Desktop's Enhanced Container Isolation may
 refuse `NET_ADMIN` or the namespace join.
@@ -332,9 +332,9 @@ serving local clients.
 
 | API | Endpoint removed | Kept |
 | --- | --- | --- |
-| [`rbdmirror.Daemon.InterruptPeerLink`](../../rbd/mirror/README.md#interruptpeerlink) | The `rbd-mirror` daemon's endpoint on the source cluster's public bridge | Its destination endpoint, leader election, peer and image policies |
-| [`cephfsmirror.Daemon.InterruptPeerLink`](../../cephfs/mirror/README.md#daemoninterruptpeerlink) | The `cephfs-mirror` daemon's endpoint on the destination cluster's public bridge | Source filesystem, MGR registration, directory and peer policies |
-| [`multisite.Fixture.InterruptZoneLink`](../../rgw/multisite/README.md#interruptzonelink) | The gateway's endpoint on the multisite HTTP bridge | The local S3 endpoint, realm and period |
+| [`rbdmirror.Daemon.InterruptPeerLink`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/rbd/mirror#Daemon.InterruptPeerLink) | The `rbd-mirror` daemon's endpoint on the source cluster's public bridge | Its destination endpoint, leader election, peer and image policies |
+| [`cephfsmirror.Daemon.InterruptPeerLink`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/cephfs/mirror#Daemon.InterruptPeerLink) | The `cephfs-mirror` daemon's endpoint on the destination cluster's public bridge | Source filesystem, MGR registration, directory and peer policies |
+| [`multisite.Fixture.InterruptZoneLink`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite#Fixture.InterruptZoneLink) | The gateway's endpoint on the multisite HTTP bridge | The local S3 endpoint, realm and period |
 
 The handles have the `InterruptNetwork` contract, and each fixture restores
 them in its own cleanup. Host-network fixtures are refused. A restored
@@ -343,7 +343,7 @@ endpoint does not mean the backlog is replicated: wait with `WaitReplayReady`,
 
 To cut one direction instead of a whole endpoint, use `ApplyNetworkProfile`
 with a `Peer`, or for RGW
-[`multisite.Fixture.ApplyZoneLinkProfile`](../../rgw/multisite/README.md#applyzonelinkprofile),
+[`multisite.Fixture.ApplyZoneLinkProfile`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite#Fixture.ApplyZoneLinkProfile),
 which shapes only the packets one zone's gateway sends to another zone's
 gateway. The peer zone then stops receiving changes while it still pulls its
 own.
@@ -474,7 +474,7 @@ instead.
 
 ## Fencing a client session
 
-[`override.AddBlocklist`](../../override/README.md#addblocklist) blocklists one
+[`override.AddBlocklist`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/override#AddBlocklist) blocklists one
 exact session, so the OSDs reject it.
 
 ```golang
@@ -493,7 +493,7 @@ recovers is up to the client library, so most tests reconnect.
 
 ## Holding OSD map flags
 
-[`override.SetOSDFlag`](../../override/README.md#setosdflag) sets or clears one
+[`override.SetOSDFlag`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/override#SetOSDFlag) sets or clears one
 global flag (a `ceph.OSDFlag` constant) and restores its previous state.
 
 ```golang
@@ -517,7 +517,7 @@ still marks the OSD out. Per-OSD, CRUSH-node and device-class flags (such as
 
 ## Making the cluster full
 
-[`override.SetFullRatios`](../../override/README.md#setfullratios) lowers the
+[`override.SetFullRatios`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/override#SetFullRatios) lowers the
 nearfull, backfillfull and full thresholds, so a cluster with little data
 reports the full states without filling a device.
 
@@ -541,7 +541,7 @@ if err != nil {
 
 ## Damaging a replica
 
-[`fault.InjectObjectDataError`](../../fault/README.md#injectobjectdataerror)
+[`fault.InjectObjectDataError`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/fault#InjectObjectDataError)
 makes one replica of one object unreadable for scrub and recovery through
 Ceph's `injectdataerr`. No disk is touched and no OSD stops.
 
@@ -602,7 +602,7 @@ an abrupt loss, `Stop` the OSD instead.
 The MDS evicts a silent client after `session_timeout` (60 s) or
 `session_autoclose` (300 s). These are MDS map settings, so `override.SetConfig`
 cannot change them;
-[`OverrideSessionTimeouts`](../../cephfs/README.md#overridesessiontimeouts)
+[`OverrideSessionTimeouts`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/cephfs#Filesystem.OverrideSessionTimeouts)
 shortens them for one filesystem, to no less than 30 s.
 
 ```golang
@@ -642,7 +642,7 @@ if err != nil {
 
 ## Handing over an RBD exclusive lock
 
-[`rbd.ImageClients`](../../rbd/README.md#imageclients) reads an image's
+[`rbd.ImageClients`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/rbd#ImageClients) reads an image's
 watchers and locks. With `fault.Pause` and `override.AddBlocklist` it
 reproduces an unresponsive client that holds the exclusive lock.
 

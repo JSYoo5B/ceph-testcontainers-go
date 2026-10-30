@@ -134,7 +134,6 @@ give `go test` a generous `-timeout` when several clusters run in one package.
 - [Cluster operations](../docs/guides/ceph-operations.md): removing, detaching
   and reopening OSDs, the Cephx key change model, the failure archive and
   post-test verification.
-- [Recipes](../docs/guides/ceph-recipes.md): worked examples.
 - Guides: [contexts and cleanup](../docs/guides/contexts-and-cleanup.md),
   [errors](../docs/guides/errors.md),
   [fault injection](../docs/guides/fault-injection.md),

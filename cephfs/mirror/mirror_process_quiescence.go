@@ -42,6 +42,9 @@ type ProcessBindingStatus struct {
 
 // ProcessObserverBindingStatus reports local optional binding availability.
 // It does not query Docker or establish task cessation.
+//
+// State is disabled, bound, partial-startup, context-unavailable,
+// factory-error, empty-client, positive-binding-failed or closed.
 func (d *Daemon) ProcessObserverBindingStatus() ProcessBindingStatus {
 	if d == nil {
 		return ProcessBindingStatus{State: "unavailable"}

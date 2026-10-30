@@ -66,6 +66,33 @@ func notApplied(address string, cause error) (*BlocklistHandle, error) {
 // its captured expiration before removal, preserving outside renewal. An unknown
 // readback cannot authorize removal of a present entry; inspect native state or
 // terminate the disposable cluster. Natural expiry is reconciled as absence.
+//
+// Take the address from the client after it connects (librados rados_getaddrs,
+// go-ceph Conn.GetAddrs), from ceph.Observer.ObjectWatchers, from an RBD lock
+// owner (rbd.ImageClients) or from a CephFS session. An existing entry is
+// never renewed or adopted. The fenced session's operations fail (ESHUTDOWN in
+// librados) while another session from the same host keeps working;
+// ceph.Observer.BlocklistEntries shows the entry and its expiry. With librados
+// both the existing session and a new connection recover after Restore.
+//
+// Outcomes, as the handle it returns and the error:
+//   - Entry added and read back: real handle; nil.
+//   - Nil cluster: not applied handle; ceph.ErrInvalidRequest, Op
+//     override.AddBlocklist.
+//   - Invalid address: not applied handle; ceph.ErrInvalidRequest.
+//   - Duration below one second: not applied handle; plain error.
+//   - Terminated cluster or no control container: not applied handle; the
+//     cluster's own error.
+//   - This session is already held by another handle: not applied handle;
+//     plain error.
+//   - The native blocklist cannot be read before the add: not applied handle
+//     (reservation released); the native error.
+//   - The session already has a native entry: not applied handle (reservation
+//     released); ceph.ErrInvalidRequest.
+//   - The add or the readback after it fails: real handle (uncertain); the
+//     joined errors.
+//   - The add succeeds but no entry is stored: real handle (uncertain); plain
+//     error.
 func AddBlocklist(ctx context.Context, c *ceph.Container, address string, duration time.Duration) (*BlocklistHandle, error) {
 	const op = "override.AddBlocklist"
 	if c == nil {

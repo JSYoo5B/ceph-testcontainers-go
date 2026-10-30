@@ -146,7 +146,7 @@ These affect commands or client libraries you run yourself, not the typed API:
   [Daemon controls](messenger-client-fixtures.md#daemon-controls).
 - **Both releases, CephFS directory rebalancing.** External directory changes or
   mirror daemons joining or leaving can still trigger the upstream MGR hang; see
-  [CephFS limitations](../../cephfs/README.md#limitations-and-release-differences).
+  [CephFS limitations](../../cephfs/README.md#concepts-and-limits).
 
 ## Role images
 

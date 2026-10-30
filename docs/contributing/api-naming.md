@@ -67,6 +67,14 @@ The public package list is discovered: every directory outside `internal`,
 public package and needs a catalogue directory with all three files. A catalogue
 directory without a package fails as well.
 
+## Purpose before naming
+
+Naming applies to an API that belongs in the library at all. First give it its
+purpose tags from [API purpose and classification](../guides/api-purpose.md)
+and check that it passes the "belongs" test of at least one of them; an API
+that passes none, such as a service-operation or convenience-only API, is
+refused before its name is discussed.
+
 ## Naming convention
 
 1. Read the full call, including the package and receiver. Use an operation

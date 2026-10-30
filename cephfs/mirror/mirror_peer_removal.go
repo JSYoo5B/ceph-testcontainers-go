@@ -49,9 +49,12 @@ type PeerRemovalStatus struct {
 	Daemons                                     map[string]PeerRemovalDaemonStatus
 }
 
-// PeerRemovalDaemonStatus is one owned mirror daemon's part of a peer
-// removal: its container and native instance, and its state or problem in the
-// removal cohort.
+// PeerRemovalDaemonStatus is one original daemon's view of a peer removal.
+// State is unobserved, pending, awaiting-peer-removal,
+// awaiting-command-unregister, drained, stopped, unavailable, retired or
+// session-changed; drained means the daemon, in its original process and
+// session, unregistered the peer's admin command. Problem explains a state
+// other than drained.
 type PeerRemovalDaemonStatus struct {
 	ContainerID, InstanceID string
 	State, Problem          string
@@ -77,6 +80,14 @@ type cephFSPeerRemovalSession struct {
 // External native policy and direct container lifecycle writers must not race
 // this operation or its observers. The first version requires the same session;
 // stopping/restarting/removing its cohort later can prevent a drain observation.
+//
+// Drained means every original daemon, in its original process and session,
+// unregistered the peer's admin command, which Ceph does only after joining the
+// replayer's workers and unmounting the remote filesystem; it does not prove a
+// completed snapshot, a released remote lock or unchanged destination metadata.
+// After Drained, call RebootstrapPeer; the new peer supersedes the receipt,
+// whose Status then returns a guard error. See the package documentation for an
+// interrupted removal.
 func (mirror *Mirror) BeginPeerRemoval(ctx context.Context, id string) (*PeerRemoval, error) {
 	return mirror.beginPeerRemoval(ctx, id, mirror.peerRemovalClusterIdentities)
 }

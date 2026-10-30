@@ -310,7 +310,7 @@ or writing a file are logged and recorded, never retried in a loop, and do
 not stop the later phases. If `ArtifactDir` itself cannot be created, Go
 fails the test, and the cleanups and `Terminate` still run.
 
-`Finalization.TrackDebugLevel` registers an [override.SetDebugLevel](../../override/README.md#setdebuglevel)
+`Finalization.TrackDebugLevel` registers an [override.SetDebugLevel](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/override#SetDebugLevel)
 handle, including the non-nil handle that comes with an apply error. Each call
 is one window in registration order (`debug_windows[].sequence`); windows on the
 same daemon, option and generation are never merged or deduplicated. The

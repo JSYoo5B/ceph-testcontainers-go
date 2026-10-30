@@ -202,7 +202,7 @@ container on a CephFS cluster with two MONs, one MGR, two OSDs and one MDS:
 1. [AddMonitor](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#AddMonitor) `c`, then [MonitorContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#MonitorContainer.Remove) `b`;
 2. [AddOSD](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#AddOSD) (osd.2), then [OSDContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDContainer.Remove) `0`;
 3. the MDS container stopped, its GID failed with `ceph mds fail` and a new
-   MDS started with `MDS.AddReplacement` (see [cephfs](../../cephfs/README.md#mdsaddreplacement));
+   MDS started with `MDS.AddReplacement` (see [cephfs](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/cephfs#MDS.AddReplacement));
 4. [AddManager](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#AddManager) `b`, then [ManagerContainer.Remove](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#ManagerContainer.Remove) `a`.
 
 `[osd.2]`, `[mds.tc-cephfs-1]` and `[mgr.b]` set `ms bind prefer ipv4 =
@@ -245,7 +245,7 @@ identified by its name in the monmap.
 
 #### Cutting one family of a path
 
-[fault.ApplyNetworkProfile](../../fault/README.md#applynetworkprofile) with a `Peer`, a `PeerPort`
+[fault.ApplyNetworkProfile](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/fault#ApplyNetworkProfile) with a `Peer`, a `PeerPort`
 and `Loss: 100` drops every packet that one container sends to one address
 and port. On a dual-stack cluster, a `Peer` that is a daemon's IPv6 address
 cuts only that family of the path: the same daemon stays reachable over IPv4,
@@ -379,7 +379,7 @@ See [Releases and images](releases-and-images.md) for details.
   `Replicas: 2` there, and a size-2 pool created through the CLI never becomes
   clean.
 - Small `OSDStorage.WithBlockSize` values with initial OSDs make `Run` time out (see
-  [Run small OSDs](ceph-recipes.md#run-small-osds)).
+  [OSDStorage.WithBlockSize](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#OSDStorage.WithBlockSize)).
 - A key set with `WithConfigFile` cannot be changed with `override.SetConfig`;
   `mon_allow_pool_delete = false` in a config file blocks `Pool.Remove`.
 - `t.Context()` is canceled before cleanup functions run. Use a fresh context in

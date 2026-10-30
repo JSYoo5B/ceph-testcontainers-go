@@ -18,12 +18,24 @@ import (
 // ExportBackup writes a CLI-generated format-2 archive to destination. The
 // archive includes image metadata and snapshots. No mirror daemon is required.
 // The caller owns the writer and decides where to retain the backup.
+//
+// client is any container that has the rbd CLI and credentials for its own
+// cluster, such as ceph.Container.ControlContainer or a container attached
+// with WithClient, and image is an image spec such as volumes/disk or
+// volumes/tenant-a/disk. The archive is written to a temporary file under
+// /tmp in the client container and removed afterwards. The backup functions
+// never close the caller's reader or writer, and they check cancellation
+// between reads, so a reader or writer that can block indefinitely must
+// support its own cancellation.
 func ExportBackup(ctx context.Context, client testcontainers.Container, image string, destination io.Writer) error {
 	return exportRBDArchive(ctx, client, image, "", destination)
 }
 
 // ExportIncremental writes the CLI diff from fromSnapshot to image (which
 // can include @snapshot). Restore requires the matching baseline snapshot.
+// fromSnapshot is a bare snapshot name. With image@snapshot the diff ends at
+// that snapshot, and restoring it creates that snapshot on the target. The
+// client and stream rules are those of ExportBackup.
 func ExportIncremental(ctx context.Context, client testcontainers.Container, image, fromSnapshot string, destination io.Writer) error {
 	if fromSnapshot == "" || strings.ContainsAny(fromSnapshot, "/@\x00\r\n") || strings.HasPrefix(fromSnapshot, "-") {
 		return servicehook.Invalid(errors.New("incremental backup requires a valid baseline snapshot name"))
@@ -32,13 +44,18 @@ func ExportIncremental(ctx context.Context, client testcontainers.Container, ima
 }
 
 // RestoreBackup imports a format-2 archive into a new image on the client's
-// own cluster. Pool creation and archive retention belong to the caller.
+// own cluster. Pool creation and archive retention belong to the caller. It
+// first spools the reader into a private temporary file on the test host, so
+// a large archive is not held in memory, then copies it into the container;
+// the client and stream rules are those of ExportBackup.
 func RestoreBackup(ctx context.Context, client testcontainers.Container, image string, archive io.Reader) error {
 	return restoreRBDArchive(ctx, client, image, archive, false)
 }
 
 // RestoreIncremental applies a CLI diff to an existing image. Ceph checks
-// that its baseline snapshot exists; this function does not invent a baseline.
+// that its baseline snapshot exists; this function does not invent a
+// baseline. The check is by snapshot name only: nothing proves that the
+// baseline has the same content.
 func RestoreIncremental(ctx context.Context, client testcontainers.Container, image string, archive io.Reader) error {
 	return restoreRBDArchive(ctx, client, image, archive, true)
 }

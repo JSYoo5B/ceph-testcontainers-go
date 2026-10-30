@@ -742,7 +742,7 @@ is not wired into any workflow.
 The runner passes Go's artifact flags in both execution modes
 (`-artifacts -outputdir=<native>/test-artifacts`, or the `-test.` forms for
 the binary). A test that finalizes its cluster with
-[`TerminateOnCleanup`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#TerminateOnCleanup) and `Archive`
+[`TerminateOnCleanup`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.TerminateOnCleanup) and `Archive`
 writes its failure archive under
 `native/test-artifacts/_artifacts/<package>/<test>/<random>/ceph-<cluster>-<execution>/`
 with `diagnostics.json`, `crash-metadata.json` and `manifest.json`. A passing

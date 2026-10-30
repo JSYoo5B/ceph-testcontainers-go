@@ -27,8 +27,14 @@ import (
 type Mode string
 
 const (
+	// ModeSnapshot copies the image to the destination at each mirror
+	// snapshot. Enabling an image creates the first one; later changes need
+	// rbd mirror image snapshot or a snapshot schedule.
 	ModeSnapshot Mode = "snapshot"
-	ModeJournal  Mode = "journal"
+	// ModeJournal journals every write on the source and replays it on the
+	// destination. It needs the exclusive-lock feature and uses no mirror
+	// snapshots.
+	ModeJournal Mode = "journal"
 )
 
 // Option carries the Config of a mirror to Run. It is not a container
@@ -45,6 +51,15 @@ func WithConfig(config Config) Option { return Option{config: config} }
 // Config connects two existing clusters through destination-side
 // rbd-mirror daemons. Both clusters must already contain an initialized RBD Pool.
 // SourceSite and DestinationSite default to "source" and "destination".
+//
+// Pool is the same pool name on both clusters, replicated and initialized for
+// RBD on both, without namespace or option syntax. Site names must differ, must
+// not start with -, and are cluster-wide: every fixture that touches a cluster
+// uses the same name for it. Namespace names use letters, digits, _, . and -
+// and must not start with . or -. A negative DaemonCount, and NoInitialDaemons
+// with a DaemonCount above zero, are rejected; together with an already
+// cancelled context they are refused before any cluster inspection, container
+// start or customizer call.
 type Config struct {
 	Source          *ceph.Container
 	Destination     *ceph.Container
@@ -76,6 +91,14 @@ type Config struct {
 // assigning another daemon. Use Daemons for current membership. Terminate
 // removes all owned runtime containers, including partially created or
 // previously removed daemons.
+//
+// The typed methods serialize on the fixture's lock, so they do not interleave
+// on one fixture; the waits release it between polls. SourceRBD and
+// DestinationRBD do not take the lock: they are the way to run what the fixture
+// does not wrap (promote, demote, resync, mirror snapshots, peer inspection and
+// removal, extra namespace policies). Such commands are the caller's own native
+// writes; the typed methods detect and refuse changes to the policies captured
+// at setup.
 type Mirror struct {
 	testcontainers.Container
 	// pair is the mirrored source/destination pair, its setup clients and the
@@ -131,7 +154,11 @@ type rbdDaemonRoster struct {
 // config-key store. Stop and Start retain its identity and native pool state.
 type Daemon struct {
 	testcontainers.Container
-	DaemonName                                                  string
+	// DaemonName is the name inside the fixture: a, b, ... or the
+	// AddDaemon name.
+	DaemonName string
+	// ClientName is the daemon's own Cephx user on the destination,
+	// client.rbd-mirror.tc-<uuid>.
 	ClientName                                                  string
 	owner                                                       *Mirror
 	mu                                                          sync.Mutex
@@ -151,6 +178,11 @@ type DaemonStatus struct {
 // PoolReplayerStatus describes one pool/peer replayer. Image replay is
 // distributed among instances; being a pool leader does not mean replaying all
 // images locally.
+//
+// Peer is the native peer description, such as "uuid: <uuid> cluster: source
+// client: client.rbd-mirror-peer". On Ceph 19 Status decodes only the
+// pool-level fields, because the admin socket lists named namespaces by name
+// only.
 type PoolReplayerStatus struct {
 	Pool             string   `json:"pool"`
 	Peer             string   `json:"peer"`
@@ -226,6 +258,24 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 // enabling pool scope. PolicyStatus reports the current native mapping.
 // Successful setup captures default/selected namespace mirror UUIDs, scopes and
 // mappings. Later typed mutations reject replacement or changed policies.
+//
+// Run validates the configuration and context before touching either cluster,
+// checks that Pool is replicated on both and that the named namespaces exist,
+// records the native pool IDs, starts one setup CLI container per cluster
+// (each also attached to the other cluster's network), enables the selected
+// policies, creates a bootstrap token on the source (rbd mirror pool peer bootstrap
+// create), imports it on the destination as the receiving peer and starts the
+// initial daemons, each with its own destination Cephx user
+// client.rbd-mirror.tc-<uuid> (mon 'profile rbd-mirror' osd 'profile rbd').
+//
+// On Ceph 19 (Squid) a different SourceNamespace and DestinationNamespace
+// cannot be mapped, because its rbd has no --remote-namespace: Run fails before
+// any change with ceph.ErrUnsupported, and the *ceph.OperationError names the
+// side whose rbd lacks the option (a cluster, with its version and client
+// toolkit, or a setup client). A backported image that has the option maps
+// namespaces. On Squid the fixture also reads each mirror UUID from the
+// mirror_uuid omap key of the rbd_mirroring object, because rbd mirror pool
+// info does not print it.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
@@ -317,6 +367,11 @@ func (m *Mirror) Daemons() []*Daemon {
 // rebootstrap or image mutation. Construction customizers apply to every daemon;
 // opts are appended for this daemon only. A non-nil result on error is tracked
 // for Daemon.Remove or fixture Terminate, including partial startup failures.
+//
+// name is 1 to 63 ASCII letters, digits, _ or -, not starting with -, and
+// unique within the fixture. Startup waits up to one minute for the daemon's
+// admin socket. After NoInitialDaemons, the first AddDaemon that returns a
+// non-nil daemon becomes the embedded compatibility handle.
 func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontainers.ContainerCustomizer) (*Daemon, error) {
 	if m == nil {
 		return nil, errors.New("RBD mirror fixture is unavailable")
@@ -461,6 +516,14 @@ func validateRBDMirrorDaemonName(name string) error {
 // a reverse link. Native bootstrap import refreshes its monitor/key attributes
 // but does not populate an existing peer's client name or receiving direction.
 // The caller owns the policy for quiescing writes and resynchronizing images.
+//
+// After an explicit peer removal it creates a new peer with a new UUID; request
+// rbd mirror image resync on the destination for images that must catch up. The
+// previous receiver-observation state is invalidated as soon as Rebootstrap
+// reaches its first native change; a call refused earlier (busy fixture,
+// cancelled context, failed preflight) keeps it. Only a fully confirmed call
+// installs the new peer generation; waits already running never adopt it, and
+// Namespace views must be bound again.
 func (m *Mirror) Rebootstrap(ctx context.Context) (returnErr error) {
 	if m == nil {
 		return errors.New("RBD mirror setup clients are unavailable")

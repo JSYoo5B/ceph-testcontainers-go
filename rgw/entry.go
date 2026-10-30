@@ -18,6 +18,13 @@ var errNilCluster = errors.New("ceph cluster is unavailable")
 // Customizers are applied last; preserve the required command, network and
 // listener settings. A non-nil result returned with an error remains owned by
 // the cluster for cleanup.
+//
+// In host mode the port is reserved on the Docker host and released just before
+// the daemon binds it; if another process takes it in between, startup is
+// retried with a new port, up to five attempts. Server-side RGW options are
+// read when a gateway starts: set them with override.SetConfig on a cluster
+// from ceph.Run, then call Start. RGW runs as client.admin, so options in a
+// ceph.WithConfigFile file belong in [client] or [client.admin].
 func Start(ctx context.Context, c *ceph.Container, config Config, opts ...testcontainers.ContainerCustomizer) (*Gateway, error) {
 	if c == nil {
 		return nil, errNilCluster

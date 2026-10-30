@@ -19,9 +19,15 @@ import (
 type PinType string
 
 const (
-	PinExport      PinType = "export"
+	// PinExport pins the directory to one active rank held by an owned MDS;
+	// the value -1 removes the local pin.
+	PinExport PinType = "export"
+	// PinDistributed spreads the immediate children across ranks; the value
+	// is 0 or 1.
 	PinDistributed PinType = "distributed"
-	PinRandom      PinType = "random"
+	// PinRandom pins descendants to a random rank with a probability in
+	// [0, 1], further capped by mds_export_ephemeral_random_max.
+	PinRandom PinType = "random"
 )
 
 // PinSetting changes one policy field. Export accepts an integer owned

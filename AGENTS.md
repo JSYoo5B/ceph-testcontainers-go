@@ -44,6 +44,23 @@ break" does not apply to them.
 - Assume the reader knows Testcontainers for Go and Go. Do not explain its basics
   in code comments or documentation.
 
+## API purpose
+
+This is a test tool for services that use Ceph, not a Ceph implementation or
+operations library. A public API either builds the fixture state a test needs,
+independently of the SUT and the test code, or lets the test check the
+resulting state afterwards.
+
+- Every new or changed public function or method names its purpose tags
+  (Construction, Condition, Observation, Hand-off, Native access, Evidence,
+  Lifetime; one or more) in the pull request, passes the "belongs" test of at
+  least one of them in
+  [API purpose and classification](docs/guides/api-purpose.md), and is added
+  to the package's table there. Purpose tags are not build or CI scenario tags.
+- Refuse service-operation APIs and conveniences that only repeat what the SUT,
+  the test or a native command already does. Performance measurement, tuning
+  and large-scale experiments are out of scope.
+
 ## Pull requests (for agents)
 
 Implement a task as one pull request, even when it has many steps. Every pull

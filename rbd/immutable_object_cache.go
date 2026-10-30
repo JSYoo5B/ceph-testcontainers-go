@@ -66,7 +66,10 @@ type ImmutableObjectCacheStatus struct {
 }
 
 // ImmutableObjectCacheLease owns one daemon that StartImmutableObjectCache
-// started, with its socket and cache directory.
+// started, with its socket and cache directory. It signals the process only
+// while its command line holds the lease's socket, so a reused PID is never
+// stopped. To count cache use, read Status.RADOSReads: rados df read
+// counters lag behind and do not show it.
 type ImmutableObjectCacheLease struct {
 	// Config is the request with its defaults filled in.
 	Config ImmutableObjectCache
@@ -172,8 +175,10 @@ esac
 // container must have ceph-immutable-object-cache on its PATH and the librbd
 // parent_cache plugin in its plugin directory: the official Ceph image has
 // both, and an image without them is refused with ceph.ErrImageCapability.
-// An existing socket or a non-empty cache directory is refused with
-// ceph.ErrInvalidRequest, and nothing is changed.
+// An existing socket, a non-empty cache directory or an invalid path is
+// refused with ceph.ErrInvalidRequest, and nothing is changed. A daemon that
+// exits or never opens its socket fails the call with ceph.ErrNativeFailure,
+// and what it left is removed.
 func StartImmutableObjectCache(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (*ImmutableObjectCacheLease, error) {
 	config, err := normalizeImmutableObjectCache(client, config)
 	if err != nil {

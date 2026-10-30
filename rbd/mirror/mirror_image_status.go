@@ -20,6 +20,11 @@ import (
 // source-primary/destination-secondary pair. It proves neither completion of a
 // particular write nor completion of a mirror snapshot. Verify application data
 // or the application's explicit checkpoint separately.
+//
+// GlobalID is the native global mirror image ID, equal on both sides.
+// SourceMirrorState and DestinationMirrorState are the native mirroring states
+// (enabled, creating, disabling, ...). DaemonName and InstanceID name the owned
+// receiver that reports the replay.
 type ImageStatus struct {
 	Pool, SourceNamespace, DestinationNamespace, Name string
 	GlobalID, SourceImageID, DestinationImageID       string
@@ -295,6 +300,9 @@ func (o *rbdImageObservation) confirm(ctx context.Context, source, destination r
 // appears its local image identity is pinned as well.
 // Source and destination image replacements are rejected, never adopted.
 // Deadline/cancellation returns the last observation and the last query error.
+//
+// Transient query failures are retried; a successful read that proves a changed
+// pool, policy or image identity, or an invalid schema, fails immediately.
 func (m *Mirror) WaitReplayReady(ctx context.Context, imageName string) (ImageStatus, error) {
 	if err := validateRBDMirrorObservedImage(imageName); err != nil {
 		return ImageStatus{}, err

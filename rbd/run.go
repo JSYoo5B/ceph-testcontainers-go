@@ -14,6 +14,10 @@ import (
 // Bootstrap options that leave the cluster without OSDs for the pool, such as
 // ceph.ClusterConfig.WithNoInitialOSDs, are rejected; use ceph.Run for those stages.
 // A non-nil Container returned with an error must still be terminated.
+//
+// Run returns after the pools exist and their RBD metadata is initialized.
+// PG peering may still be finishing, so call WaitForClean before the first
+// client I/O.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	c, err := ceph.Run(ctx, img, append(slices.Clone(opts), defaultPool())...)
 	if c == nil {

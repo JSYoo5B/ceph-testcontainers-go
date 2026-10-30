@@ -25,6 +25,8 @@ type SyncBucketSelector struct{ Name, Tenant string }
 // SyncObjectTag matches an exact key/value. Multiple pairs are ORed and
 // repeated keys with different values are permitted. Native CLI comma parsing
 // cannot represent comma-containing keys/values; '=' is only allowed in values.
+//
+// Key is 1 to 128 characters and Value up to 256.
 type SyncObjectTag struct{ Key, Value string }
 
 // pipeConfig builds the native pipe-create command and the pipe document
