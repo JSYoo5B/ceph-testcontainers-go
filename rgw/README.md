@@ -470,10 +470,10 @@ Contract:
 - Users remain in Ceph when the gateway that created them is removed. A handle
   runs its operations through the first running registered gateway, by name,
   in the scope of the gateway that created it, so another gateway in the same
-  zone keeps serving it. A stopped gateway, or one whose startup failed, is
-  skipped; the choice is made before any command, so a mutation is never
-  replayed on another gateway. With no running gateway in the scope the call
-  fails before reaching Ceph.
+  zone keeps serving it. A stopped, paused or restarting gateway, or one whose
+  startup failed, is skipped; the choice is made before any command, so a
+  mutation is never replayed on another gateway. With no gateway in the scope
+  that accepts commands the call fails before reaching Ceph.
 
 #### User.Info
 

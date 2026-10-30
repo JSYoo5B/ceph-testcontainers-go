@@ -33,14 +33,15 @@ type rgwAdminTestContainer struct {
 	id        string
 	responses []rgwAdminResponse
 	calls     [][]string
-	// stopped makes State report an exited container.
-	stopped bool
+	// stopped makes State report an exited container; paused and restarting
+	// report a container whose Running flag stays true but refuses Exec.
+	stopped, paused, restarting bool
 }
 
 func (ctr *rgwAdminTestContainer) GetContainerID() string { return ctr.id }
 
 func (ctr *rgwAdminTestContainer) State(context.Context) (*container.State, error) {
-	return &container.State{Running: !ctr.stopped}, nil
+	return &container.State{Running: !ctr.stopped, Paused: ctr.paused, Restarting: ctr.restarting}, nil
 }
 
 func (ctr *rgwAdminTestContainer) Exec(_ context.Context, args []string, _ ...tcexec.ProcessOption) (int, io.Reader, error) {
@@ -227,35 +228,47 @@ func TestRGWOwnedUserGuardsClusterScopeAndReplacedKeys(t *testing.T) {
 	}
 }
 
-// A stopped gateway, or one whose startup failed after its container was
-// published, stays registered. The handle skips it for a running gateway in the
-// same scope, and refuses before any command when none of them runs.
-func TestRGWHandleSkipsStoppedGatewaysInItsScope(t *testing.T) {
-	native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
-	scope := Config{Realm: "a", Zonegroup: "b", Zone: "c"}
-	first, firstCtr := newRGWAdminTestGateway(Config{Name: "a-stopped", Realm: "a", Zonegroup: "b", Zone: "c"}, rgwAdminResponse{data: native})
-	firstCtr.stopped = true
-	second := &rgwAdminTestContainer{id: "running", responses: []rgwAdminResponse{{data: native}}}
-	servicehook.SetService(first.owner, rgwServiceName(Config{Name: "b-running"}), second)
-	registerTestGateway(&Gateway{Container: second, owner: first.owner, config: Config{Name: "b-running", Realm: scope.Realm, Zonegroup: scope.Zonegroup, Zone: scope.Zone}})
-	user := rgwAdminOwnedTestUser(first)
-	if info, err := user.Info(t.Context()); err != nil || info.ID != user.ID() {
-		t.Fatalf("the running same-scope gateway did not serve the handle: %v", err)
-	}
-	if len(firstCtr.calls) != 0 || len(second.calls) != 1 {
-		t.Fatalf("calls: stopped=%d running=%d, want 0 and 1", len(firstCtr.calls), len(second.calls))
-	}
+// A stopped, paused or restarting gateway, or one whose startup failed after
+// its container was published, stays registered. The handle skips it for an
+// executable gateway in the same scope, and refuses before any command when
+// none of them accepts Exec.
+func TestRGWHandleSkipsUnexecutableGatewaysInItsScope(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(*rgwAdminTestContainer)
+	}{
+		{"stopped", func(c *rgwAdminTestContainer) { c.stopped = true }},
+		{"paused", func(c *rgwAdminTestContainer) { c.paused = true }},
+		{"restarting", func(c *rgwAdminTestContainer) { c.restarting = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			native := rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{MaxSizeBytes: -1, MaxObjects: -1})
+			scope := Config{Realm: "a", Zonegroup: "b", Zone: "c"}
+			first, firstCtr := newRGWAdminTestGateway(Config{Name: "a-first", Realm: "a", Zonegroup: "b", Zone: "c"}, rgwAdminResponse{data: native})
+			tc.set(firstCtr)
+			second := &rgwAdminTestContainer{id: "second", responses: []rgwAdminResponse{{data: native}}}
+			servicehook.SetService(first.owner, rgwServiceName(Config{Name: "b-second"}), second)
+			registerTestGateway(&Gateway{Container: second, owner: first.owner, config: Config{Name: "b-second", Realm: scope.Realm, Zonegroup: scope.Zonegroup, Zone: scope.Zone}})
+			user := rgwAdminOwnedTestUser(first)
+			if info, err := user.Info(t.Context()); err != nil || info.ID != user.ID() {
+				t.Fatalf("the executable same-scope gateway did not serve the handle: %v", err)
+			}
+			if len(firstCtr.calls) != 0 || len(second.calls) != 1 {
+				t.Fatalf("calls: first=%d second=%d, want 0 and 1", len(firstCtr.calls), len(second.calls))
+			}
 
-	second.stopped = true
-	err := user.Suspend(t.Context(), true)
-	if err == nil || !strings.Contains(err.Error(), "no running RGW gateway") || !strings.Contains(err.Error(), "a-stopped, b-running") {
-		t.Fatalf("all gateways stopped: got %v", err)
-	}
-	if errors.Is(err, ceph.ErrInvalidRequest) {
-		t.Fatal("a stopped gateway is a state failure, not an invalid handle")
-	}
-	if len(firstCtr.calls) != 0 || len(second.calls) != 1 {
-		t.Fatal("a mutation reached a stopped gateway")
+			tc.set(second)
+			err := user.Suspend(t.Context(), true)
+			if err == nil || !strings.Contains(err.Error(), "no RGW gateway that accepts commands") || !strings.Contains(err.Error(), "a-first, b-second") {
+				t.Fatalf("no executable gateway: got %v", err)
+			}
+			if errors.Is(err, ceph.ErrInvalidRequest) {
+				t.Fatal("an unexecutable gateway is a state failure, not an invalid handle")
+			}
+			if len(firstCtr.calls) != 0 || len(second.calls) != 1 {
+				t.Fatal("a mutation reached an unexecutable gateway")
+			}
+		})
 	}
 }
 
