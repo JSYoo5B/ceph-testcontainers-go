@@ -45,6 +45,8 @@ type DaemonOptions struct {
 // from Docker. A client container is still refused when its release differs
 // from ClusterFacts.CephVersion. This is a building block: no mixed-version or
 // upgrade combination is claimed to work.
+//
+//purpose:construction
 func (o DaemonOptions) WithImage(image string) DaemonOptions {
 	o.image, o.imageSet = image, true
 	return o
@@ -88,6 +90,8 @@ func (c *Container) runDaemon(ctx context.Context, image string, opts ...testcon
 
 // Image returns the image this MON container was started from: the
 // DaemonOptions.WithImage override, or the cluster's essential image.
+//
+//purpose:observation
 func (m *MonitorContainer) Image() string {
 	if m == nil {
 		return ""
@@ -97,6 +101,8 @@ func (m *MonitorContainer) Image() string {
 
 // Image returns the image this MGR container was started from: the
 // DaemonOptions.WithImage override, or the cluster's essential image.
+//
+//purpose:observation
 func (m *ManagerContainer) Image() string {
 	if m == nil {
 		return ""
@@ -107,6 +113,8 @@ func (m *ManagerContainer) Image() string {
 // Image returns the image this OSD container was started from: the
 // OSDOptions.WithImage override, or the cluster's essential image. DetachedOSD.Reopen
 // starts the OSD from the same image again.
+//
+//purpose:observation
 func (o *OSDContainer) Image() string {
 	if o == nil {
 		return ""
@@ -116,6 +124,8 @@ func (o *OSDContainer) Image() string {
 
 // Image returns the image the detached OSD ran from, which DetachedOSD.Reopen
 // uses again.
+//
+//purpose:observation
 func (d *DetachedOSD) Image() string {
 	if d == nil {
 		return ""

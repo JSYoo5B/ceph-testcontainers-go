@@ -47,6 +47,8 @@ type ImageClientStatus struct {
 
 // ExclusiveOwner returns the managed exclusive lock, or nil if no client
 // holds it.
+//
+//purpose:observation
 func (status *ImageClientStatus) ExclusiveOwner() *ImageLock {
 	if status == nil {
 		return nil
@@ -62,6 +64,8 @@ func (status *ImageClientStatus) ExclusiveOwner() *ImageLock {
 // ImageClients reads which clients watch an image and which hold its
 // locks, including clients outside this fixture. Namespace is empty for the
 // default namespace. It reads native state only and grants no ownership.
+//
+//purpose:observation
 func ImageClients(ctx context.Context, c *ceph.Container, pool, namespace, image string) (*ImageClientStatus, error) {
 	if c == nil {
 		return nil, errNilCluster

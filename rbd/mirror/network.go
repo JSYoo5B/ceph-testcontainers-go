@@ -21,6 +21,8 @@ import (
 // original IP address and aliases, is retryable, and does not overwrite an
 // endpoint that someone reconnected differently. The fixture also restores
 // outstanding interruptions during cleanup.
+//
+//purpose:condition
 func (d *Daemon) InterruptPeerLink(ctx context.Context) (*fault.NetworkInterruption, error) {
 	if d == nil || d.owner == nil {
 		return nil, servicehook.Invalid(errors.New("RBD mirror daemon is not owned by a fixture"))

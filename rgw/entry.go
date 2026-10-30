@@ -25,6 +25,8 @@ var errNilCluster = errors.New("ceph cluster is unavailable")
 // read when a gateway starts: set them with override.SetConfig on a cluster
 // from ceph.Run, then call Start. RGW runs as client.admin, so options in a
 // ceph.WithConfigFile file belong in [client] or [client.admin].
+//
+//purpose:construction
 func Start(ctx context.Context, c *ceph.Container, config Config, opts ...testcontainers.ContainerCustomizer) (*Gateway, error) {
 	if c == nil {
 		return nil, errNilCluster
@@ -38,6 +40,8 @@ func Start(ctx context.Context, c *ceph.Container, config Config, opts ...testco
 // can be removed because RGW is optional. Failed cleanup remains tracked.
 // A gateway that Remove already removed, or that is not the one the cluster
 // owns for its name, returns an error.
+//
+//purpose:condition,lifetime
 func (g *Gateway) Remove(ctx context.Context) error {
 	if g == nil || g.owner == nil {
 		return errNilCluster
@@ -47,6 +51,8 @@ func (g *Gateway) Remove(ctx context.Context) error {
 
 // Gateways returns sorted owned gateway descriptors, including partial
 // startup attempts, while bounding the wait for fixture topology by ctx.
+//
+//purpose:observation
 func Gateways(ctx context.Context, c *ceph.Container) ([]*Gateway, error) {
 	if c == nil {
 		return nil, errNilCluster
@@ -62,6 +68,8 @@ func Gateways(ctx context.Context, c *ceph.Container) ([]*Gateway, error) {
 // default gateway. Repeated options replace the list. All gateways share this
 // cluster's backing zone; multisite scope is configured separately by
 // multisite.Run.
+//
+//purpose:construction
 func WithGateways(configs ...Config) ceph.Option {
 	if len(configs) == 0 {
 		configs = []Config{{}}

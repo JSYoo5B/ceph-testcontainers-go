@@ -73,6 +73,8 @@ type rgwUserCreationIdentity struct {
 
 // ID returns the canonical native ID, tenant$localID for a tenanted user.
 // Empty-tenant identities retain their existing unprefixed IDs.
+//
+//purpose:observation
 func (u *User) ID() string {
 	if u == nil {
 		return ""
@@ -82,6 +84,8 @@ func (u *User) ID() string {
 
 // Credentials returns the generated S3 access and secret keys as explicit
 // copies. Previously copied credentials are not erased by user removal.
+//
+//purpose:handoff
 func (u *User) Credentials() (accessKey, secretKey string, err error) {
 	if u == nil || u.accessKey == "" || u.secretKey == "" {
 		return "", "", errors.New("RGW S3 credentials are unavailable")
@@ -170,6 +174,8 @@ type UserInfo struct {
 // A failure keeps a *ceph.NativeFailure with the exit code and errno but no
 // reason, so errors.Is(err, fs.ErrNotExist) works; run the same command with
 // Exec to see the native text.
+//
+//purpose:native
 func (g *Gateway) Admin(ctx context.Context, args ...string) ([]byte, error) {
 	if err := validateRGWAdminArgs(args); err != nil {
 		return nil, err
@@ -383,6 +389,8 @@ func normalizeRGWUserConfig(config UserConfig) (UserConfig, error) {
 // ownership cannot be confirmed: inspect through Admin or terminate the cluster
 // rather than adopting native keys or blindly retrying the same ID.
 // Native user edits from external clients must not race this operation.
+//
+//purpose:construction,handoff
 func (g *Gateway) CreateUser(ctx context.Context, config UserConfig) (*User, error) {
 	return g.createUser(ctx, config, nil)
 }
@@ -586,6 +594,8 @@ func (u *User) withGateway(ctx context.Context, fn func(context.Context, *Gatewa
 // It verifies the created key, original native user type and original account
 // association remain present before returning the policy. Account roots also
 // require the creation-owned account's native metadata lifetime to remain valid.
+//
+//purpose:observation
 func (u *User) Info(ctx context.Context) (UserInfo, error) {
 	var info UserInfo
 	err := u.withGateway(ctx, func(_ context.Context, _ *Gateway, native *rgwNativeUser) error {
@@ -598,6 +608,8 @@ func (u *User) Info(ctx context.Context) (UserInfo, error) {
 // SetQuota replaces both user limits and the enabled state. If a later
 // native command fails, a policy change may already have persisted; Info
 // reads the authoritative state and the same request can safely be retried.
+//
+//purpose:construction,condition
 func (u *User) SetQuota(ctx context.Context, quota Quota) error {
 	return u.setQuota(ctx, "user", quota)
 }
@@ -609,6 +621,8 @@ func (u *User) SetQuota(ctx context.Context, quota Quota) error {
 // enforcement depends on native statistics and caches, so a write right after a
 // quota change, or right after the quota is reached, may still be accepted:
 // poll with new writes when testing rejection.
+//
+//purpose:construction,condition
 func (u *User) SetBucketQuota(ctx context.Context, quota Quota) error {
 	return u.setQuota(ctx, "bucket", quota)
 }
@@ -660,6 +674,8 @@ func (u *User) setQuota(ctx context.Context, scope string, quota Quota) error {
 // Suspend disables or re-enables S3 access for an owned user and reads back
 // native state. Gateway metadata caches may delay the observed HTTP response;
 // callers should poll new requests when testing suspension or re-enablement.
+//
+//purpose:condition
 func (u *User) Suspend(ctx context.Context, suspended bool) error {
 	return u.withGateway(ctx, func(ctx context.Context, g *Gateway, _ *rgwNativeUser) error {
 		action := "enable"
@@ -689,6 +705,8 @@ func (u *User) Suspend(ctx context.Context, suspended bool) error {
 // Success is idempotent across copies of a handle. After an uncertain
 // native failure, an absent user is accepted as completed removal; a user still
 // present remains tracked and its created key is verified before retrying.
+//
+//purpose:lifetime
 func (u *User) Remove(ctx context.Context) error {
 	if u == nil || u.owner == nil {
 		return servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))

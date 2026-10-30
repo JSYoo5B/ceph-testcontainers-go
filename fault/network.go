@@ -56,6 +56,8 @@ type NetworkInterruption struct {
 // restart it; call Start on its handle afterwards. With two OSDs one
 // reporter is not enough (mon_osd_min_down_reporters is 2) and the OSD stays
 // up.
+//
+//purpose:condition
 func InterruptNetwork(ctx context.Context, c *ceph.Container, ctr testcontainers.Container, plane ceph.NetworkPlane) (link *NetworkInterruption, err error) {
 	err = faulthook.WithTopology(ctx, c, func() error {
 		facts, factsErr := ceph.FactsOf(c)
@@ -99,6 +101,8 @@ func InterruptNetwork(ctx context.Context, c *ceph.Container, ctr testcontainers
 // stop a daemon, change Ceph policies or remove the network. Fixture-specific
 // helpers also register restoration with their cleanup. Host networking cannot
 // be interrupted through Docker endpoint operations.
+//
+//purpose:condition
 func InterruptLink(ctx context.Context, ctr testcontainers.Container, name string) (*NetworkInterruption, error) {
 	if ctr == nil || ctr.GetContainerID() == "" || name == "" || name == "host" || name == "none" || name == "bridge" {
 		return nil, errors.New("network interruption requires a container and a named bridge")
@@ -141,6 +145,8 @@ func (link *NetworkInterruption) isComplete(ctx context.Context) (bool, error) {
 // need no restoration. An externally reattached endpoint with a different
 // address is refused rather than overwritten, and the handle stays
 // retryable.
+//
+//purpose:condition,lifetime
 func (link *NetworkInterruption) Restore(ctx context.Context) error {
 	if err := lockMutex(ctx, &link.mu); err != nil {
 		return err

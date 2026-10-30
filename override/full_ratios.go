@@ -86,6 +86,8 @@ func notAppliedFullRatios(cause error) (*FullRatiosHandle, error) {
 //   - Any failure from the first native step on (command, readback, canceled
 //     context): real handle (uncertain, tracked before the first step); the
 //     error.
+//
+//purpose:condition
 func SetFullRatios(ctx context.Context, c *ceph.Container, requested ceph.FullRatios) (*FullRatiosHandle, error) {
 	const op = "override.SetFullRatios"
 	if c == nil {
@@ -151,6 +153,8 @@ func setFullRatiosLocked(ctx context.Context, c *ceph.Container, requested ceph.
 // pool policies and central configuration are not changed. A handle of a call
 // that was not applied returns nil without taking a lock. A cluster that has
 // been terminated refuses the restore, and the override stays registered.
+//
+//purpose:condition,lifetime
 func (change *FullRatiosHandle) Restore(ctx context.Context) error {
 	if change == nil {
 		return errors.New("full ratios override is unavailable")

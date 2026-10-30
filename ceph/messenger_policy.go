@@ -149,6 +149,8 @@ type ClientContainerOptions struct {
 // global modes, and leaves the cluster's own control CLI alone. The value keeps
 // its own copy of the lists; a nil list keeps Ceph's default and a non-nil
 // empty list is refused.
+//
+//purpose:handoff
 func (o ClientContainerOptions) WithMessengerPolicy(policy ClientMessengerPolicy) ClientContainerOptions {
 	o.messengerPolicy = ClientMessengerPolicy{MonitorsAndManagers: slices.Clone(policy.MonitorsAndManagers), OtherDaemons: slices.Clone(policy.OtherDaemons)}
 	o.messengerPolicySet = true

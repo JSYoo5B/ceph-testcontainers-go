@@ -278,6 +278,8 @@ func (f mdsFleet) daemons() []*MDS {
 }
 
 // MDSs returns a snapshot of this filesystem's owned daemons in creation order.
+//
+//purpose:observation
 func (fs *Filesystem) MDSs() []*MDS {
 	if fs == nil {
 		return nil
@@ -297,6 +299,8 @@ func (fs *Filesystem) MDSs() []*MDS {
 // or FSMap edits. An error retains desired counts and every partial resource for
 // cluster cleanup; it never deletes the filesystem, its pools or file data.
 // Scaling to zero standby leaves the filesystem's replay preference unchanged.
+//
+//purpose:construction,condition
 func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (returnErr error) {
 	if err := validateMDSCounts(active, standby); err != nil {
 		return err
@@ -310,6 +314,8 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 // MDSStatus reads one native FSMap, so rank ownership and standby state come
 // from the same epoch. Active ranks include external daemons with Owned=false;
 // standby lists contain only this fixture's daemons with matching affinity.
+//
+//purpose:observation
 func (fs *Filesystem) MDSStatus(ctx context.Context) (*FilesystemStatus, error) {
 	if fs == nil {
 		return nil, errors.New("cephfs cluster is unavailable")
@@ -322,6 +328,8 @@ func (fs *Filesystem) MDSStatus(ctx context.Context) (*FilesystemStatus, error) 
 // After a standby takes over a failed active daemon, use MDSStatus to check
 // recovered ranks or restart a daemon before WaitReady; readiness includes the
 // requested standby capacity.
+//
+//purpose:observation
 func (fs *Filesystem) WaitReady(ctx context.Context) error {
 	if fs == nil {
 		return errors.New("cephfs cluster is unavailable")

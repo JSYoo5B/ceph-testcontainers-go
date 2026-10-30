@@ -99,6 +99,8 @@ func notAppliedConfig(setting ceph.ConfigSetting, cause error) (*ConfigHandle, e
 //   - config set or the readback fails: real handle (uncertain); the joined
 //     errors.
 //   - Success without a stored entry: real handle; plain error.
+//
+//purpose:construction,condition
 func SetConfig(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) (*ConfigHandle, error) {
 	const op = "override.SetConfig"
 	if c == nil {
@@ -184,6 +186,8 @@ func setConfigLocked(ctx context.Context, c *ceph.Container, setting ceph.Config
 // first. Same value outside writes cannot be distinguished; external edits
 // must not race. A handle of a call that was not applied returns nil without
 // taking a lock. A cluster that has been terminated refuses the restore.
+//
+//purpose:condition,lifetime
 func (change *ConfigHandle) Restore(ctx context.Context) error {
 	if change == nil || change.state == nil {
 		return errors.New("configuration override is unavailable")

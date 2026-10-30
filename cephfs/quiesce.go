@@ -52,6 +52,8 @@ type cephFSQuiesceIdentity struct {
 
 // ID returns the native quiesce set ID, for example to inspect it with
 // ceph fs quiesce <fs> --set-id <id> --query.
+//
+//purpose:observation
 func (q *Quiesce) ID() string {
 	if q == nil || q.state == nil {
 		return ""
@@ -65,6 +67,8 @@ func (q *Quiesce) ID() string {
 // Existing sets and application writers remain caller-owned. Take checkpoints
 // with client/admin APIs while paused, then explicitly Release. Multiple native
 // sets can overlap paths; releasing this set does not cancel other sets.
+//
+//purpose:condition
 func (fs *Filesystem) QuiesceSubvolumes(ctx context.Context, volumes []*Subvolume, config QuiesceConfig) (*Quiesce, error) {
 	if config.Timeout < time.Second || config.Expiration < time.Second || len(volumes) == 0 {
 		return nil, errors.New("quiesce requires subvolumes and timeout/expiration of at least one second")
@@ -140,6 +144,8 @@ func quiesceNativeSeconds(duration time.Duration) float64 {
 // Status queries this set without renewing the native expiration timer. It
 // verifies filesystem and exact nonexcluded members; it does not adopt new
 // versions as permission to release an externally edited set.
+//
+//purpose:observation
 func (q *Quiesce) Status(ctx context.Context) (*QuiesceState, error) {
 	if q == nil || q.filesystem == nil || q.state == nil {
 		return nil, errors.New("quiesce handle is unavailable")
@@ -160,6 +166,8 @@ func (q *Quiesce) Status(ctx context.Context) (*QuiesceState, error) {
 // errors, so a test cannot treat an interrupted checkpoint as consistent. Lost
 // replies can be retried; confirmed RELEASED copies become no-ops. Native set
 // records are retained by the QDB and disposed of with the cluster.
+//
+//purpose:condition,lifetime
 func (q *Quiesce) Release(ctx context.Context) error {
 	if q == nil || q.filesystem == nil || q.state == nil {
 		return errors.New("quiesce handle is unavailable")

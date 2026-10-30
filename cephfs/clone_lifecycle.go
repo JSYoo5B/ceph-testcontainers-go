@@ -114,6 +114,8 @@ func (fs *Filesystem) cloneSourceDetached(ctx context.Context, fsID int64, ident
 // The original source snapshot must still exist. Native external clone/source
 // edits must not race this operation; pending UUIDs are read from version-checked
 // native volumes metadata captured immediately after submission.
+//
+//purpose:condition
 func (clone *SubvolumeClone) Cancel(ctx context.Context) error {
 	fs, err := clone.filesystem()
 	if err != nil {
@@ -194,6 +196,8 @@ func (clone *SubvolumeClone) cancelStep(ctx context.Context, fs *Filesystem, req
 // confirms logical absence, not physical purge completion. A failed command
 // retains shared retry state so an unknown successful removal can be reconciled
 // without deleting a subsequently recreated same-named target.
+//
+//purpose:lifetime
 func (clone *SubvolumeClone) RemovePartial(ctx context.Context) error {
 	fs, err := clone.filesystem()
 	if err != nil {

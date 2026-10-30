@@ -53,6 +53,8 @@ var errNilClusterFacts = invalid(errors.New("cannot capture static facts of a ni
 // empty (for example the CephVersion of a cluster that Run returned with an
 // error); an empty value does not distinguish not recorded from recorded as
 // empty, and no value reports whether the resources still exist.
+//
+//purpose:observation
 func FactsOf(c *Container) (ClusterFacts, error) {
 	if c == nil {
 		return ClusterFacts{}, errNilClusterFacts

@@ -16,6 +16,8 @@ import (
 
 // Zonegroups returns a sorted snapshot of the owned groups and their attached
 // zones. Detached zones are omitted after their removal period is committed.
+//
+//purpose:observation
 func (f *Fixture) Zonegroups() []Zonegroup {
 	f.topologyMu.Lock()
 	defer f.topologyMu.Unlock()
@@ -45,6 +47,8 @@ func (f *Fixture) Zonegroups() []Zonegroup {
 // On error, any newly created groups/zones/containers remain owned for Terminate.
 // image selects the new gateways. Setup clients use each new cluster's rgw
 // image unless the fixture was configured with SetupImage.
+//
+//purpose:construction,condition
 func (f *Fixture) AddZonegroup(ctx context.Context, image string, config ZonegroupConfig, opts ...testcontainers.ContainerCustomizer) (*Zonegroup, error) {
 	if f == nil || !validRGWZoneName(config.Name) || len(config.Zones) == 0 {
 		return nil, errors.New("RGW zonegroup requires a valid name and at least one zone")
@@ -115,6 +119,8 @@ func (f *Fixture) AddZonegroup(ctx context.Context, image string, config Zonegro
 // Partial period propagation/container cleanup can be retried with the same
 // name. Terminate also removes any remaining owned containers. Remaining gateway
 // application endpoints may change on bridge-mode reload.
+//
+//purpose:condition,lifetime
 func (f *Fixture) RemoveZone(ctx context.Context, name string) error {
 	if f == nil || !validRGWZoneName(name) {
 		return errors.New("invalid RGW fixture or zone name")

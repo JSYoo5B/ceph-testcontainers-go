@@ -219,6 +219,8 @@ func normalizeCrashMetadataConfig(config CrashMetadataConfig) (CrashMetadataConf
 // container's exit code alone does not tell a crash: a daemon that is PID 1,
 // as here, exits 1 after writing its report. It is not called automatically
 // outside TerminateOnCleanup's archive.
+//
+//purpose:evidence
 func (c *Container) CollectCrashMetadata(ctx context.Context, config CrashMetadataConfig) (*CrashMetadataReport, error) {
 	config, err := normalizeCrashMetadataConfig(config)
 	if err != nil {

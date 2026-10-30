@@ -27,6 +27,8 @@ import (
 // never close the caller's reader or writer, and they check cancellation
 // between reads, so a reader or writer that can block indefinitely must
 // support its own cancellation.
+//
+//purpose:observation,native
 func ExportBackup(ctx context.Context, client testcontainers.Container, image string, destination io.Writer) error {
 	return exportRBDArchive(ctx, client, image, "", destination)
 }
@@ -36,6 +38,8 @@ func ExportBackup(ctx context.Context, client testcontainers.Container, image st
 // fromSnapshot is a bare snapshot name. With image@snapshot the diff ends at
 // that snapshot, and restoring it creates that snapshot on the target. The
 // client and stream rules are those of ExportBackup.
+//
+//purpose:observation,native
 func ExportIncremental(ctx context.Context, client testcontainers.Container, image, fromSnapshot string, destination io.Writer) error {
 	if fromSnapshot == "" || strings.ContainsAny(fromSnapshot, "/@\x00\r\n") || strings.HasPrefix(fromSnapshot, "-") {
 		return servicehook.Invalid(errors.New("incremental backup requires a valid baseline snapshot name"))
@@ -48,6 +52,8 @@ func ExportIncremental(ctx context.Context, client testcontainers.Container, ima
 // first spools the reader into a private temporary file on the test host, so
 // a large archive is not held in memory, then copies it into the container;
 // the client and stream rules are those of ExportBackup.
+//
+//purpose:construction,native
 func RestoreBackup(ctx context.Context, client testcontainers.Container, image string, archive io.Reader) error {
 	return restoreRBDArchive(ctx, client, image, archive, false)
 }
@@ -56,6 +62,8 @@ func RestoreBackup(ctx context.Context, client testcontainers.Container, image s
 // that its baseline snapshot exists; this function does not invent a
 // baseline. The check is by snapshot name only: nothing proves that the
 // baseline has the same content.
+//
+//purpose:construction,native
 func RestoreIncremental(ctx context.Context, client testcontainers.Container, image string, archive io.Reader) error {
 	return restoreRBDArchive(ctx, client, image, archive, true)
 }

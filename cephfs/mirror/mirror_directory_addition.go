@@ -49,6 +49,8 @@ type DirectoryAdditionStatus struct {
 // the policy can be present while Registered stays false, and only a repeated
 // BeginDirectoryAddition confirms ownership. Neither flag says that a daemon
 // picked up the path.
+//
+//purpose:construction,condition
 func (mirror *Mirror) BeginDirectoryAddition(ctx context.Context, directory string) (*DirectoryAddition, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory addition fixture is unavailable")
@@ -291,6 +293,8 @@ func (r *DirectoryAddition) attempt(ctx context.Context) error {
 // Status is read-only. A visible policy after a lost reply can be reported while
 // Registered remains false until an explicit fresh Begin reconciles the intent.
 // Each observation is bounded to 30 seconds, or the caller's earlier deadline.
+//
+//purpose:observation
 func (r *DirectoryAddition) Status(ctx context.Context) (DirectoryAdditionStatus, error) {
 	result := DirectoryAdditionStatus{}
 	if r == nil || r.original == nil || r.original.mirror == nil {

@@ -59,6 +59,8 @@ func (b *poolsBootstrap) Start(ctx context.Context, c *ceph.Container) error {
 // with the autoscaler off, zero Replicas and MinSize select the cluster
 // defaults (2/1, or 1/1 with one OSD), and the placement fields are
 // validated against the OSDs like those of any other pool.
+//
+//purpose:construction
 func WithPools(configs ...ceph.PoolConfig) ceph.Option {
 	return servicehook.WithBootstrap(bootstrapKind, false, func() (servicehook.Bootstrap, error) { return newPoolsBootstrap(configs) })
 }

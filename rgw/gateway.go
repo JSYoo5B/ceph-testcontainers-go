@@ -379,6 +379,8 @@ func discardNamedAttempt(ctx context.Context, c *ceph.Container, serviceName str
 // On a ceph.AddressDualStack cluster it returns the gateway's IPv4 address; the
 // gateway listens on 0.0.0.0:7480 and [::]:7480, so clients in the cluster
 // network reach it over its IPv6 address on port 7480 too.
+//
+//purpose:handoff
 func (c *Gateway) DaemonEndpoint(ctx context.Context) (string, error) {
 	port := c.port
 	if port == 0 {
@@ -420,6 +422,8 @@ func (c *Gateway) DaemonEndpoint(ctx context.Context) (string, error) {
 // the gateway container restarts (ApplyPlacement, ReloadPlacement, multisite
 // sync group and zone changes, or the caller's own Stop and Start): call
 // S3Endpoint again afterwards.
+//
+//purpose:handoff
 func (c *Gateway) S3Endpoint(ctx context.Context) (string, error) {
 	port := c.port
 	if port == 0 {

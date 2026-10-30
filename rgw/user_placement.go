@@ -66,6 +66,8 @@ func rgwPlacementNativeTags(value any) ([]string, error) {
 // Native metadata caches may delay new S3 requests. External user/placement
 // edits must not race this operation. A failed readback may follow a persisted
 // change; Info reads native state, and the same request can be retried.
+//
+//purpose:construction,condition
 func (u *User) SetPlacement(ctx context.Context, p *Placement, config UserPlacementConfig) error {
 	if config.StorageClass == "" {
 		config.StorageClass = "STANDARD"

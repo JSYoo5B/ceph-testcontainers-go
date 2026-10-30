@@ -48,6 +48,8 @@ type rgwSyncBucketCheckpoint struct {
 // On Ceph 19 radosgw-admin ignores --format json for bucket sync status and
 // prints text; this method parses it into the same structure and reports
 // unknown lines as errors.
+//
+//purpose:observation
 func (g *SyncGroup) BucketSyncStatus(ctx context.Context, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
 	f, err := g.fixture()
 	if err != nil {
@@ -72,6 +74,8 @@ func (g *SyncGroup) BucketSyncStatus(ctx context.Context, pipeID, sourceZone, de
 // It changes no sync state, leases, permissions or object data. When the wait
 // ends without readiness, the returned status is the last one that was read,
 // so its lag survives a later attempt that failed or was canceled.
+//
+//purpose:observation
 func (g *SyncGroup) WaitBucketSyncReady(ctx context.Context, pipeID, sourceZone, destinationZone string) (BucketSyncStatus, error) {
 	f, err := g.fixture()
 	if err != nil {

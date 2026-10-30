@@ -56,6 +56,8 @@ type PGID string
 // "<pool>.<hex>", which is exactly what DeepScrubPG, RepairPG and
 // PGInconsistencies accept. Otherwise it returns an error that matches
 // ErrInvalidRequest and the zero PGID.
+//
+//purpose:observation
 func ParsePGID(s string) (PGID, error) {
 	if err := validatePGID(s); err != nil {
 		return "", err
@@ -74,6 +76,8 @@ func (p PGID) String() string { return string(p) }
 // fault.InjectObjectDataError creates a damaged replica to observe with
 // DeepScrubPG, Observer.PGInconsistencies and RepairPG; ceph osd map <pool>
 // <object> --format json reports an object's PG and acting set.
+//
+//purpose:condition,observation
 func (c *Container) DeepScrubPG(ctx context.Context, pgid PGID) error {
 	_, err := c.scrubPG(ctx, pgid, "deep-scrub")
 	return err
@@ -83,6 +87,8 @@ func (c *Container) DeepScrubPG(ctx context.Context, pgid PGID) error {
 // newer deep-scrub stamp and is no longer inconsistent. Repair rewrites bad
 // replicas from an authoritative copy; it cannot recover an object without
 // one, and the wait then ends with the PG still inconsistent.
+//
+//purpose:condition,observation
 func (c *Container) RepairPG(ctx context.Context, pgid PGID) error {
 	state, err := c.scrubPG(ctx, pgid, "repair")
 	if err == nil && strings.Contains(state, "inconsistent") {

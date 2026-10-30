@@ -163,6 +163,8 @@ func (fs *Filesystem) beginDataPoolOperation(ctx context.Context) (context.Conte
 // DataPools reads the authoritative FSMap registration and current pool IDs.
 // AdditionalDataPools in the creation descriptor describes initial settings;
 // this method also reports subsequent native attachments and removals.
+//
+//purpose:observation
 func (fs *Filesystem) DataPools(ctx context.Context) ([]DataPoolState, error) {
 	ctx, done, err := fs.beginDataPoolOperation(ctx)
 	if err != nil {
@@ -211,6 +213,8 @@ func cephFSPoolHandle(identity *cephFSDataPoolIdentity) *DataPool {
 //
 // Clear the retained tag with ceph osd pool application rm <name> cephfs data
 // before attaching a detached pool again.
+//
+//purpose:construction
 func (fs *Filesystem) AddDataPool(ctx context.Context, name string) (*DataPool, error) {
 	if err := validateExistingPool(name); err != nil {
 		return nil, err
@@ -344,6 +348,8 @@ func (fs *Filesystem) checkSubvolumeCreationPool(ctx context.Context, name, grou
 // before removal, and prevent external edits from racing it. This method does
 // not establish safety for a live workload. Default data pools are immutable.
 // A copied handle shares removal state; retry reconciles a lost command reply.
+//
+//purpose:lifetime
 func (attachment *DataPool) RemoveUnused(ctx context.Context) error {
 	fs, err := attachment.filesystem()
 	if err != nil {

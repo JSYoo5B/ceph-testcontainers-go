@@ -25,6 +25,8 @@ type MGRModuleState struct {
 // schedule lists) and volumes (volume list). Other modules need an application
 // specific command probe. Each poll releases the cluster lock; cancellation and
 // termination stop the wait. Success does not claim worker tasks have completed.
+//
+//purpose:observation
 func (c *Container) WaitMGRModuleReady(ctx context.Context, name string) error {
 	var probes [][]string
 	switch name {

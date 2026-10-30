@@ -20,6 +20,8 @@ type ProcessQuiescenceAcknowledgment struct {
 // explicitly Remove every owned original daemon. It requires fresh bound
 // full-CID absence and native original watcher retirement, and opens continued
 // fixture-use gates without claiming native Drained or replaying peer deletion.
+//
+//purpose:condition
 func (r *PeerRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (ProcessQuiescenceAcknowledgment, error) {
 	if r == nil {
 		return ProcessQuiescenceAcknowledgment{}, cephFSObserveGuard("original peer acknowledgment receipt is unavailable")
@@ -36,6 +38,8 @@ func (r *PeerRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (Process
 // AcknowledgeProcessQuiescence accepts the exact interrupted path removal after
 // explicit owned-daemon removal and fresh original process proof. It reconciles
 // only that path's desired policy and never claims native Released.
+//
+//purpose:condition
 func (r *DirectoryRemoval) AcknowledgeProcessQuiescence(ctx context.Context) (ProcessQuiescenceAcknowledgment, error) {
 	if r == nil || r.original == nil {
 		return ProcessQuiescenceAcknowledgment{}, cephFSObserveGuard("original directory acknowledgment receipt is unavailable")

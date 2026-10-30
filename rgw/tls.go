@@ -70,6 +70,8 @@ func rgwTLSOptions(port int, config *TLSConfig) []testcontainers.ContainerCustom
 // S3SecureEndpoint returns the native HTTPS listener's mapped or selected host
 // endpoint. It returns an error when TLS was not configured. This method does
 // not disable certificate verification or alter application TLS settings.
+//
+//purpose:handoff
 func (g *Gateway) S3SecureEndpoint(ctx context.Context) (string, error) {
 	if g == nil || g.Container == nil || g.tlsPort == 0 {
 		return "", errors.New("RGW native TLS listener is not configured")

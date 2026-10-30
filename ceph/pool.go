@@ -107,6 +107,8 @@ type poolIdentity struct {
 // by name and native ID, and copies share that identity: after Pool.Remove, or
 // when the name belongs to another pool, every method returns an error instead
 // of acting on the pool that now has the name.
+//
+//purpose:construction
 func (c *Container) CreatePool(ctx context.Context, config PoolConfig) (*Pool, error) {
 	config = resolvePoolDefaults(c.settings, config)
 	config, err := normalizePoolConfig(config)

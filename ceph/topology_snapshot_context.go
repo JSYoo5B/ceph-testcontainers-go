@@ -20,6 +20,8 @@ import (
 // change or configuration update. It fails after termination or before
 // bootstrap completed and then returns the zero ConnectionConfig. For a
 // restricted identity use ClientConfig.ConnectionConfig.
+//
+//purpose:handoff
 func (c *Container) ConnectionConfig(ctx context.Context) (ConnectionConfig, error) {
 	if c == nil {
 		return ConnectionConfig{}, errors.New("ceph cluster is unavailable")
@@ -47,6 +49,8 @@ func (c *Container) ConnectionConfig(ctx context.Context) (ConnectionConfig, err
 // The returned slice is independent; descriptors and containers stay owned by
 // the cluster. Stop the active manager's container (ManagerStatus names it) to
 // make a standby take over, or the only manager to test behaviour without one.
+//
+//purpose:observation
 func (c *Container) Managers(ctx context.Context) ([]*ManagerContainer, error) {
 	if c == nil {
 		return nil, errors.New("ceph cluster is unavailable")
@@ -76,6 +80,8 @@ func (c *Container) Managers(ctx context.Context) ([]*ManagerContainer, error) {
 // again; a MON whose endpoint fault.InterruptNetwork interrupted does not
 // start until it is restored. MON a waits for a quorum when it starts, so
 // after stopping all MONs start the others first.
+//
+//purpose:observation
 func (c *Container) Monitors(ctx context.Context) ([]*MonitorContainer, error) {
 	if c == nil {
 		return nil, errors.New("ceph cluster is unavailable")
@@ -98,6 +104,8 @@ func (c *Container) Monitors(ctx context.Context) ([]*MonitorContainer, error) {
 // refuses a non-empty partial store without a ready marker, and a ready store
 // must match the OSD's ID, UUID and cluster FSID; failed initialization is not
 // replayed (see docs/internals/osd-storage.md).
+//
+//purpose:observation
 func (c *Container) OSDs(ctx context.Context) ([]*OSDContainer, error) {
 	if c == nil {
 		return nil, errors.New("ceph cluster is unavailable")
@@ -118,6 +126,8 @@ func (c *Container) OSDs(ctx context.Context) ([]*OSDContainer, error) {
 // essential image, so it has the ceph CLI and bootstrap tools such as
 // ceph-authtool but not rados and rbd (use ClientContainer) or radosgw-admin
 // (use rgw.Gateway.Admin). Do not pause or stop it; fault.Pause refuses it.
+//
+//purpose:handoff,native
 func (c *Container) ControlContainer(ctx context.Context) (testcontainers.Container, error) {
 	return c.conn().controlContainer(ctx)
 }

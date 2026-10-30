@@ -78,6 +78,8 @@ type AuthConfig struct {
 // rejects auth_* keys, so set the lifetimes here. The MonMap ciphers can change
 // on a running Tentacle cluster with ceph mon set (for example
 // auth_allowed_ciphers), and ceph mon dump reports them.
+//
+//purpose:construction
 func WithAuth(config AuthConfig) Option {
 	return func(o *options) error {
 		normalized, err := normalizeAuthConfig(config)
@@ -175,6 +177,8 @@ type ClientOptions struct {
 // to authenticate. CipherAES256K needs an image with key type support (see
 // CipherAES256K); without it the operation fails before any change. An
 // unknown cipher, including the empty one, is refused.
+//
+//purpose:construction,handoff
 func (o ClientOptions) WithKeyType(cipher CephxCipher) ClientOptions {
 	o.keyType, o.keyTypeSet = cipher, true
 	return o

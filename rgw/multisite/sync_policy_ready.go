@@ -39,6 +39,8 @@ type BucketSyncPolicyStatus struct {
 //
 // Zonegroup groups, removed handles, pending mutations and zones outside the
 // pipes' destinations are refused.
+//
+//purpose:observation
 func (g *SyncGroup) WaitBucketPolicyReady(ctx context.Context, destinationZone string) (BucketSyncPolicyStatus, error) {
 	f, err := g.fixture()
 	if err != nil {

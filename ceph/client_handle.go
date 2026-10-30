@@ -31,6 +31,8 @@ func (client *ClientConfig) cluster(op string) (*Container, error) {
 // reader, CEPH_ARGS="--id reader", librados rados_create(&cluster, "reader")
 // or go-ceph rados.NewConnWithUser("reader"). It also refuses an identity that
 // Revoke removed until its Restore, or that has an unresolved change.
+//
+//purpose:handoff
 func (client *ClientConfig) WithIdentity(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
 		c, err := client.cluster("ClientConfig.WithIdentity")
@@ -68,6 +70,8 @@ func (client *ClientConfig) WithIdentity(opts ...ClientContainerOptions) testcon
 
 // Capabilities returns the current caps of this confirmed, owned identity.
 // It verifies the native key without returning auth database secrets.
+//
+//purpose:observation
 func (client *ClientConfig) Capabilities(ctx context.Context) (ClientCaps, error) {
 	c, err := client.cluster("ClientConfig.Capabilities")
 	if err != nil {
@@ -91,6 +95,8 @@ func (client *ClientConfig) Capabilities(ctx context.Context) (ClientCaps, error
 // fenced like the import of ReplaceKey: a failed call reports what the
 // MONs hold once settled, and an uncertain one is resolved by the next
 // operation on the identity.
+//
+//purpose:construction,condition
 func (client *ClientConfig) UpdateCaps(ctx context.Context, caps ClientCaps) error {
 	c, err := client.cluster("ClientConfig.UpdateCaps")
 	if err != nil {
@@ -150,6 +156,8 @@ func (client *ClientConfig) UpdateCaps(ctx context.Context, caps ClientCaps) err
 // usable descriptor of that key once the import turns out to have applied,
 // or replaces the key anew once it turns out not to have. A returned
 // descriptor never changes afterwards.
+//
+//purpose:condition
 func (client *ClientConfig) ReplaceKey(ctx context.Context, opts ...ClientOptions) (*ClientConfig, error) {
 	c, err := client.cluster("ClientConfig.ReplaceKey")
 	if err != nil {
@@ -254,6 +262,8 @@ func (client *ClientConfig) ReplaceKey(ctx context.Context, opts ...ClientOption
 // hold. When that stays uncertain, Revoke returns the
 // revocation with the error, and Restore settles first and then restores.
 // The cluster needs no Restore before Terminate.
+//
+//purpose:condition
 func (client *ClientConfig) Revoke(ctx context.Context) (*ClientRevocationHandle, error) {
 	c, err := client.cluster("ClientConfig.Revoke")
 	if err != nil {
@@ -289,6 +299,8 @@ func (client *ClientConfig) Revoke(ctx context.Context) (*ClientRevocationHandle
 // sessions may retain issued tickets. The removal is fenced like the import of
 // ReplaceKey: a failed call reports what the MONs hold once settled, and
 // an uncertain one is resolved by the next operation on the identity.
+//
+//purpose:condition,lifetime
 func (client *ClientConfig) Delete(ctx context.Context) error {
 	c, err := client.cluster("ClientConfig.Delete")
 	if err != nil {

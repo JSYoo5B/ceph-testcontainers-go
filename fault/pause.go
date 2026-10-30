@@ -47,6 +47,8 @@ type PauseLease struct {
 // resumes it during Terminate, after network faults are restored and before
 // containers are removed; resume explicitly before removing a caller-owned
 // container.
+//
+//purpose:condition
 func Pause(ctx context.Context, c *ceph.Container, ctr testcontainers.Container) (*PauseLease, error) {
 	return pauseContainerInCluster(ctx, c, ctr, func(ctx context.Context) (containerPauseClient, error) {
 		return testcontainers.NewDockerClientWithOpts(ctx)
@@ -116,6 +118,8 @@ func (pause *PauseLease) isComplete(ctx context.Context) (bool, error) {
 
 // Resume thaws the container. A removed, stopped or already unpaused container
 // needs no further action, so it completes the handle without starting it.
+//
+//purpose:condition,lifetime
 func (pause *PauseLease) Resume(ctx context.Context) error {
 	if pause == nil {
 		return errors.New("container pause is unavailable")

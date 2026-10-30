@@ -101,6 +101,8 @@ type DiagnosticsReport struct {
 // call returns. Known admin and RGW secrets and every client key the cluster
 // generated (also replaced or attempted ones) are masked with RedactValues and
 // named secret patterns.
+//
+//purpose:evidence
 func (c *Container) CollectDiagnostics(ctx context.Context, config DiagnosticsConfig) (*DiagnosticsReport, error) {
 	config, err := normalizeDiagnosticsConfig(config)
 	if err != nil {

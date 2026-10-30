@@ -154,6 +154,8 @@ func normalizeRGWPlacementConfig(config PlacementConfig) (PlacementConfig, error
 // must already exist; native IDs are rechecked before each mutation. Changes are
 // sequential and partial failure leaves inspectable configuration. On a realm,
 // all participating zones need compatible local mappings before publication.
+//
+//purpose:construction
 func (g *Gateway) CreatePlacement(ctx context.Context, config PlacementConfig) (*Placement, error) {
 	config, err := normalizeRGWPlacementConfig(config)
 	if err != nil {
@@ -302,6 +304,8 @@ func (g *Gateway) confirmPlacement(ctx context.Context, p *Placement, before map
 // created it. Incomplete or changed mappings return an error; use Gateway.Admin
 // for detailed partial inspection. It does not claim a running gateway reloaded
 // this configuration.
+//
+//purpose:observation
 func (p *Placement) Status(ctx context.Context) (PlacementState, error) {
 	if p == nil || p.owner == nil {
 		return PlacementState{}, servicehook.Invalid(errors.New("RGW placement is not owned by a Ceph cluster"))
@@ -332,6 +336,8 @@ func (p *Placement) Status(ctx context.Context) (PlacementState, error) {
 // Coordinate mappings in other zones before publishing a realm policy, import
 // the committed period into those clusters and call ReloadPlacement there. It never
 // changes defaults, deletes resources or silently rolls back a partial failure.
+//
+//purpose:construction,condition
 func (g *Gateway) ApplyPlacement(ctx context.Context, p *Placement) error {
 	if g == nil || g.owner == nil {
 		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))
@@ -490,6 +496,8 @@ func (g *Gateway) placementPeriod(ctx context.Context, scope rgwPlacementScope) 
 // the published period through the multicluster fixture before reloading another
 // cluster. This method never publishes, pulls or rewrites federation topology.
 // Resolve S3Endpoint again because Docker may assign a new mapped host port.
+//
+//purpose:construction,condition
 func (g *Gateway) ReloadPlacement(ctx context.Context, p *Placement) error {
 	if g == nil || g.owner == nil {
 		return servicehook.Invalid(errors.New("RGW gateway is not owned by a Ceph cluster"))

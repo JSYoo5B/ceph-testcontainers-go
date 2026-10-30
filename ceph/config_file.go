@@ -82,6 +82,8 @@ type userConfigSection struct {
 // rgw_zone, rgw_sync_obj_etag_verify and rgw_sync_lease_period (RGW command
 // line). ms_bind_prefer_ipv4 with any family but AddressDualStack is refused
 // with ErrInvalidRequest.
+//
+//purpose:construction
 func WithConfigFile(path string) Option {
 	return func(o *options) error {
 		file, err := os.Open(path)

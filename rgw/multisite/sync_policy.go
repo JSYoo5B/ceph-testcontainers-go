@@ -135,6 +135,8 @@ type rgwSyncPending struct {
 }
 
 // ID returns the native sync group ID, or "" for a nil handle.
+//
+//purpose:observation
 func (g *SyncGroup) ID() string {
 	if g == nil || g.state == nil {
 		return ""
@@ -163,6 +165,8 @@ func validRGWSyncStatus(status SyncGroupStatus) bool {
 // native metadata updates and need no period commit. A partial unconfirmed
 // handle cannot remove uncertain native configuration. Use Admin inspection or
 // terminate the disposable cluster after an ambiguous creation failure.
+//
+//purpose:construction,condition
 func (f *Fixture) CreateSyncGroup(ctx context.Context, scope SyncPolicyScope, config SyncGroupConfig) (*SyncGroup, error) {
 	if config.ID == "" {
 		config.ID = "tc-sync-" + uuid.NewString()
@@ -221,6 +225,8 @@ func (f *Fixture) CreateSyncGroup(ctx context.Context, scope SyncPolicyScope, co
 
 // CreateFlow adds a fresh flow to an owned unchanged group. Native
 // directional identity is the exact source/destination pair, not flow-id.
+//
+//purpose:construction,condition
 func (g *SyncGroup) CreateFlow(ctx context.Context, config SyncFlowConfig) error {
 	_, err := g.fixture()
 	if err != nil {
@@ -246,6 +252,8 @@ func (g *SyncGroup) CreateFlow(ctx context.Context, config SyncFlowConfig) error
 // RemoveFlow removes only a flow present in the owned group's exact native
 // snapshot. Symmetrical removal deletes the entire named set; directional
 // removal selects the native pair. It never changes another group's policy.
+//
+//purpose:condition
 func (g *SyncGroup) RemoveFlow(ctx context.Context, config SyncFlowConfig) error {
 	_, err := g.fixture()
 	if err != nil {
@@ -275,6 +283,8 @@ func (g *SyncGroup) RemoveFlow(ctx context.Context, config SyncFlowConfig) error
 // CreatePipe adds a fresh identity-checked pipe. Zonegroup policy
 // forms an upper bound for a bucket policy; a stored pipe alone does not prove
 // effective replication. Verify positive/negative writes through the S3 client.
+//
+//purpose:construction,condition
 func (g *SyncGroup) CreatePipe(ctx context.Context, config SyncPipeConfig) error {
 	_, err := g.fixture()
 	if err != nil {
@@ -315,6 +325,8 @@ func (g *SyncGroup) CreatePipe(ctx context.Context, config SyncPipeConfig) error
 // For a bucket-scoped group, wait for WaitBucketPolicyReady at the intended
 // destination before writing objects that depend on the new filter. This method
 // confirms the master's stored policy, not its asynchronous import into peers.
+//
+//purpose:construction,condition
 func (g *SyncGroup) SetPipePrefix(ctx context.Context, id, prefix string) error {
 	_, err := g.fixture()
 	if err != nil {
@@ -357,6 +369,8 @@ func (g *SyncGroup) SetPipePrefix(ctx context.Context, id, prefix string) error 
 // unchanged. Objects that were already replicated stay. Like the other policy
 // changes, it confirms the master's stored policy, not its asynchronous
 // import into peers.
+//
+//purpose:condition
 func (g *SyncGroup) RemovePipe(ctx context.Context, id string) error {
 	_, err := g.fixture()
 	if err != nil {
@@ -383,6 +397,8 @@ func (g *SyncGroup) RemovePipe(ctx context.Context, id string) error {
 //
 // After forbidden to enabled, earlier log entries may stay unprocessed until an
 // explicit bucket sync run through ZoneAdmin.
+//
+//purpose:construction,condition
 func (g *SyncGroup) SetStatus(ctx context.Context, status SyncGroupStatus) error {
 	_, err := g.fixture()
 	if err != nil {
@@ -406,6 +422,8 @@ func (g *SyncGroup) SetStatus(ctx context.Context, status SyncGroupStatus) error
 // Remove removes only this confirmed group's unchanged native policy.
 // Bucket/object data remains. Zonegroup removal needs Apply afterwards
 // to publish it; removal is idempotent across handle copies.
+//
+//purpose:condition,lifetime
 func (g *SyncGroup) Remove(ctx context.Context) error {
 	f, err := g.fixture()
 	if err != nil {

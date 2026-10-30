@@ -69,6 +69,8 @@ type cephFSAuthorizationIdentity struct {
 // never silently adopted by a second Authorize call; inspect through Ceph or
 // explicitly SubvolumeAuthorization.Deauthorize when its Client creation was confirmed.
 // External auth/layout edits must not race these operations.
+//
+//purpose:construction,handoff
 func (volume *Subvolume) Authorize(ctx context.Context, config SubvolumeAuthorizationConfig) (*SubvolumeAuthorization, error) {
 	fs, err := volume.filesystem()
 	if err != nil {
@@ -219,6 +221,8 @@ func (v volumeCommands) nativeAuthorizedClients(ctx context.Context, name, group
 
 // SubvolumeAuthorizedClients reads native volumes authorization metadata,
 // including principals created through raw Ceph. It grants no mutation ownership.
+//
+//purpose:observation
 func (fs *Filesystem) SubvolumeAuthorizedClients(ctx context.Context, name, group string) ([]SubvolumeAuthorizedClient, error) {
 	if err := validateCephFSVolumeName(name, false); err != nil {
 		return nil, err
@@ -417,6 +421,8 @@ func (identity *cephFSAuthorizationIdentity) withoutOwnedClauses(caps map[string
 // A lost reply keeps retry state; native metadata/caps are reconciled before
 // repeating the command. Outside edits after an uncertain result are surfaced
 // without restoring or overwriting them.
+//
+//purpose:condition,lifetime
 func (grant *SubvolumeAuthorization) Deauthorize(ctx context.Context) error {
 	fs, err := grant.filesystem()
 	if err != nil {
@@ -486,6 +492,8 @@ func (grant *SubvolumeAuthorization) Deauthorize(ctx context.Context) error {
 // across MDS ranks; a retry repeats the same owned scope.
 //
 // To remove the principal itself afterwards, call grant.Client.Delete.
+//
+//purpose:condition
 func (grant *SubvolumeAuthorization) EvictClients(ctx context.Context) error {
 	fs, err := grant.filesystem()
 	if err != nil {

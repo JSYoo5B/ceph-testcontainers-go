@@ -16,6 +16,8 @@ import (
 // bridge. Its local Ceph/S3 endpoint stays attached, allowing local operations
 // while cross-zone synchronization is interrupted. Restore reconnects the
 // original peer IP/aliases; realm/period membership is unchanged.
+//
+//purpose:condition
 func (f *Fixture) InterruptZoneLink(ctx context.Context, zoneName string) (*fault.NetworkInterruption, error) {
 	if f == nil {
 		return nil, errors.New("RGW multisite is unavailable")
@@ -46,6 +48,8 @@ func (f *Fixture) InterruptZoneLink(ctx context.Context, zoneName string) (*faul
 // delay names the helper and shaping fields, and leaves Plane,
 // Peer, PeerPort and Peers empty, which the fixture fills in. The fixture
 // restores the lease when it terminates; restore it earlier to end the fault.
+//
+//purpose:condition
 func (f *Fixture) ApplyZoneLinkProfile(ctx context.Context, zoneName, peerZone string, delay fault.NetworkProfile) (*fault.NetworkProfileLease, error) {
 	if f == nil {
 		return nil, errors.New("RGW multisite is unavailable")

@@ -23,6 +23,8 @@ import (
 // Successful writes remain on partial failure and may be retried with a fresh
 // context. External configuration writers must not race this operation: Docker
 // has no file compare-and-swap. Callers own clients and their cleanup.
+//
+//purpose:condition,handoff
 func (c *Container) RefreshClientMonitorConfig(ctx context.Context, client testcontainers.Container) error {
 	if c == nil || client == nil || client.GetContainerID() == "" {
 		return errors.New("ceph cluster and explicit client container are required")

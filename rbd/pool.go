@@ -32,9 +32,13 @@ type rbdNamespaceState struct {
 }
 
 // Name returns the namespace name used by librbd and the RBD CLI.
+//
+//purpose:observation
 func (ns *Namespace) Name() string { return ns.name }
 
 // PoolName returns the replicated metadata pool containing the namespace.
+//
+//purpose:observation
 func (ns *Namespace) PoolName() string { return ns.poolName }
 
 // initPool initializes an existing replicated pool for RBD metadata. Pools
@@ -263,6 +267,8 @@ func nativeNamespaces(ctx context.Context, c *ceph.Container, poolName string) (
 // rbd_trash object, not only by the CLI exit code. Pool names may contain
 // letters, digits, _, . and -, must not start with . or -, and are at most
 // 128 characters.
+//
+//purpose:construction
 func InitPool(ctx context.Context, c *ceph.Container, pool string) error {
 	if c == nil {
 		return errNilCluster
@@ -278,6 +284,8 @@ func InitPool(ctx context.Context, c *ceph.Container, pool string) error {
 // Namespace names follow the rules of InitPool's pool names. Namespaces need
 // not be removed for cleanup: terminating the cluster disposes of them with
 // all their data.
+//
+//purpose:construction
 func CreateNamespace(ctx context.Context, c *ceph.Container, pool, name string) (*Namespace, error) {
 	if c == nil {
 		return nil, errNilCluster
@@ -288,6 +296,8 @@ func CreateNamespace(ctx context.Context, c *ceph.Container, pool, name string) 
 // ListNamespaces returns the pool's native namespace names in sorted order,
 // including names created outside this fixture. The unnamed default namespace
 // is omitted by Ceph. Listing does not grant ownership for removal.
+//
+//purpose:observation
 func ListNamespaces(ctx context.Context, c *ceph.Container, pool string) ([]string, error) {
 	if c == nil {
 		return nil, errNilCluster
@@ -302,6 +312,8 @@ func ListNamespaces(ctx context.Context, c *ceph.Container, pool string) ([]stri
 // underlying pool is rejected. Do not delete and recreate the same named
 // namespace through another client while its descriptor is in use: native RBD
 // namespaces have no separate generation identity to distinguish replacements.
+//
+//purpose:lifetime
 func RemoveNamespace(ctx context.Context, c *ceph.Container, ns *Namespace) error {
 	if c == nil {
 		return errNilCluster

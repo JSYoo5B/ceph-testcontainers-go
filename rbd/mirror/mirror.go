@@ -46,6 +46,8 @@ func (Option) Customize(*testcontainers.GenericContainerRequest) error { return 
 
 // WithConfig is the grouped option function that carries config to Run. Run
 // takes exactly one.
+//
+//purpose:construction
 func WithConfig(config Config) Option { return Option{config: config} }
 
 // Config connects two existing clusters through destination-side
@@ -195,6 +197,8 @@ type PoolReplayerStatus struct {
 
 // Status queries native rbd-mirror election state through this daemon's admin
 // socket. It fails when the process is stopped or its socket is unavailable.
+//
+//purpose:observation
 func (d *Daemon) Status(ctx context.Context) (*DaemonStatus, error) {
 	if d == nil || d.Container == nil {
 		return nil, errors.New("RBD mirror daemon is unavailable")
@@ -216,6 +220,8 @@ func (d *Daemon) Status(ctx context.Context) (*DaemonStatus, error) {
 // Terminate removes this daemon's container. Successful removals are remembered
 // so fixture cleanup does not repeat hooks; failed removals remain retryable.
 // Peer, CephX and image configuration belongs to the disposable clusters.
+//
+//purpose:condition,lifetime
 func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	if d == nil {
 		return nil
@@ -276,6 +282,8 @@ func (d *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Terminate
 // namespaces. On Squid the fixture also reads each mirror UUID from the
 // mirror_uuid omap key of the rbd_mirroring object, because rbd mirror pool
 // info does not print it.
+//
+//purpose:construction
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Mirror, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("configure RBD mirror: %w", err)
@@ -354,6 +362,8 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 // Daemons returns a membership snapshot of this fixture's current daemons,
 // including stopped containers. It does not discover daemons owned by another
 // fixture, even if they replay the same pool.
+//
+//purpose:observation
 func (m *Mirror) Daemons() []*Daemon {
 	if m == nil {
 		return nil
@@ -372,6 +382,8 @@ func (m *Mirror) Daemons() []*Daemon {
 // unique within the fixture. Startup waits up to one minute for the daemon's
 // admin socket. After NoInitialDaemons, the first AddDaemon that returns a
 // non-nil daemon becomes the embedded compatibility handle.
+//
+//purpose:construction,condition
 func (m *Mirror) AddDaemon(ctx context.Context, name string, opts ...testcontainers.ContainerCustomizer) (*Daemon, error) {
 	if m == nil {
 		return nil, errors.New("RBD mirror fixture is unavailable")
@@ -474,6 +486,8 @@ func (r *rbdDaemonRoster) remove(d *Daemon) bool {
 // peer and image state; AddDaemon can resume it. Failed cleanup retains
 // membership for a retry. The legacy embedded handle is cleared when the
 // initial daemon is removed.
+//
+//purpose:condition,lifetime
 func (d *Daemon) Remove(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	if d == nil || d.owner == nil {
 		return servicehook.Invalid(errors.New("RBD mirror daemon is not owned by a fixture"))
@@ -524,6 +538,8 @@ func validateRBDMirrorDaemonName(name string) error {
 // cancelled context, failed preflight) keeps it. Only a fully confirmed call
 // installs the new peer generation; waits already running never adopt it, and
 // Namespace views must be bound again.
+//
+//purpose:condition
 func (m *Mirror) Rebootstrap(ctx context.Context) (returnErr error) {
 	if m == nil {
 		return errors.New("RBD mirror setup clients are unavailable")
@@ -665,6 +681,8 @@ func matchingRBDMirrorPeer(info []byte, site, fsid, mirrorUUID string) (rbdMirro
 
 // SourceRBD executes the RBD CLI in this link's source setup client. Arguments
 // are passed without shell interpolation; use --format json for state queries.
+//
+//purpose:native
 func (m *Mirror) SourceRBD(ctx context.Context, args ...string) ([]byte, error) {
 	if m == nil {
 		return nil, errors.New("RBD mirror source setup client is unavailable")
@@ -674,6 +692,8 @@ func (m *Mirror) SourceRBD(ctx context.Context, args ...string) ([]byte, error) 
 
 // DestinationRBD executes the RBD CLI in the destination setup client. It can
 // promote/demote images, request resync, and inspect or remove explicit peers.
+//
+//purpose:native
 func (m *Mirror) DestinationRBD(ctx context.Context, args ...string) ([]byte, error) {
 	if m == nil {
 		return nil, errors.New("RBD mirror destination setup client is unavailable")
@@ -800,6 +820,8 @@ func (p *rbdMirrorPair) reconcileImportedPeer(ctx context.Context, bootstrap rbd
 // command adds journaling when necessary; this method does not change the
 // image's other features or broaden the pool's mirroring scope. Callers must
 // quiesce their application before changing an existing image's mirroring.
+//
+//purpose:construction
 func (m *Mirror) EnableImage(ctx context.Context, imageName string) error {
 	if m == nil {
 		return servicehook.Invalid(errors.New("RBD mirror source setup client is unavailable"))
@@ -862,6 +884,8 @@ func (m *Mirror) EnableImage(ctx context.Context, imageName string) error {
 
 // Terminate removes the daemon and setup clients while preserving both clusters,
 // their image data, and the mirroring/auth configuration written during setup.
+//
+//purpose:lifetime
 func (m *Mirror) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	if m == nil {
 		return nil

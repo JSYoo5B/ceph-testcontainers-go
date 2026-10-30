@@ -79,6 +79,8 @@ type rbdReceiverWitness struct {
 // Ready false. A fixture with no daemons is a successful, non-ready
 // observation. Ready can be true while the destination has not yet learned the
 // remote mirror UUID: it is a discovery and election check only.
+//
+//purpose:observation
 func (m *Mirror) ReceiverStatus(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
 	status, _, err := m.receiverStatus(ctx, expectedDaemons, nil)
 	return status, err
@@ -93,6 +95,8 @@ func (m *Mirror) ReceiverStatus(ctx context.Context, expectedDaemons ...string) 
 // cleared, and only canonical context causes in the secret-safe error chain.
 //
 // With zero daemons it waits until ctx ends.
+//
+//purpose:observation
 func (m *Mirror) WaitReceiverReady(ctx context.Context, expectedDaemons ...string) (ReceiverStatus, error) {
 	if m == nil {
 		return ReceiverStatus{}, rbdReceiverGuard("RBD receiver fixture is unavailable")

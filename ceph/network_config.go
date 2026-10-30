@@ -82,6 +82,8 @@ type NetworkConfig struct {
 // removed or stopped container, so identify a daemon by its entry's nonce or
 // its GID, not by address alone. See docs/guides/ceph-configuration.md for
 // dual-stack address order and for cutting one family of a path.
+//
+//purpose:construction
 func (n NetworkConfig) WithAddressFamily(family AddressFamily) NetworkConfig {
 	n.set |= networkAddressFamily
 	n.addressFamily = family
@@ -96,6 +98,8 @@ func (n NetworkConfig) WithAddressFamily(family AddressFamily) NetworkConfig {
 // and ClusterFacts.ClusterNetworkName name them, and fault.InterruptNetwork with
 // ClusterNetworkPlane disconnects one OSD's whole cluster endpoint (both
 // families) and keeps its public one.
+//
+//purpose:construction
 func (n NetworkConfig) WithSeparateClusterNetwork() NetworkConfig {
 	n.set |= networkSeparateCluster
 	return n
@@ -106,6 +110,8 @@ func (n NetworkConfig) WithSeparateClusterNetwork() NetworkConfig {
 // must be assigned on the Docker daemon host and reachable from the test
 // process; Run verifies both. Requires WithHostNetwork. An empty, unspecified,
 // multicast, broadcast or non-IPv4 address is refused.
+//
+//purpose:construction
 func (n NetworkConfig) WithHostAddress(address string) NetworkConfig {
 	n.set |= networkHostAddress
 	n.hostAddress = address
@@ -135,6 +141,8 @@ func (n NetworkConfig) WithHostAddress(address string) NetworkConfig {
 // ClusterFacts.MessengerMode reports the selected mode, not live connections;
 // on Tentacle a daemon's messenger dump admin command reports the mode of each
 // connection.
+//
+//purpose:construction
 func (n NetworkConfig) WithMessengerMode(mode MessengerMode) NetworkConfig {
 	n.set |= networkMessengerMode
 	n.messengerMode = mode
@@ -149,6 +157,8 @@ func (n NetworkConfig) WithMessengerMode(mode MessengerMode) NetworkConfig {
 // fixes every mode. The value keeps its own copy of the lists, so changing the
 // policy's slices afterwards does not change it; a nil list keeps Ceph's
 // default and a non-nil empty list is refused.
+//
+//purpose:construction
 func (n NetworkConfig) WithMessengerPolicy(policy MessengerPolicy) NetworkConfig {
 	n.set |= networkMessengerPolicy
 	n.messengerPolicy = MessengerPolicy{Monitors: slices.Clone(policy.Monitors), Managers: slices.Clone(policy.Managers), OSDs: slices.Clone(policy.OSDs)}
@@ -158,6 +168,8 @@ func (n NetworkConfig) WithMessengerPolicy(policy MessengerPolicy) NetworkConfig
 // WithNetworkConfig is the grouped option function that carries a NetworkConfig
 // to Run. Like every Option it changes the cluster settings only and never
 // reaches a container request.
+//
+//purpose:construction
 func WithNetworkConfig(network NetworkConfig) Option {
 	return func(o *options) error { return network.apply(o) }
 }

@@ -40,6 +40,8 @@ type blocklistState struct {
 // AddBlocklist canonicalized it: the IP, port and nonce without a protocol
 // type. A call refused before the address was accepted returns the address as
 // the caller passed it.
+//
+//purpose:observation
 func (h *BlocklistHandle) Address() string {
 	if h == nil {
 		return ""
@@ -93,6 +95,8 @@ func notApplied(address string, cause error) (*BlocklistHandle, error) {
 //     joined errors.
 //   - The add succeeds but no entry is stored: real handle (uncertain); plain
 //     error.
+//
+//purpose:condition
 func AddBlocklist(ctx context.Context, c *ceph.Container, address string, duration time.Duration) (*BlocklistHandle, error) {
 	const op = "override.AddBlocklist"
 	if c == nil {
@@ -165,6 +169,8 @@ func addBlocklistLocked(ctx context.Context, c *ceph.Container, address string, 
 // A handle of a call that was not applied returns nil without taking a lock.
 // A cluster that has been terminated refuses the restore with the error of an
 // operation on a terminated cluster, and the entry stays registered.
+//
+//purpose:condition,lifetime
 func (h *BlocklistHandle) Restore(ctx context.Context) error {
 	if h == nil {
 		return errors.New("client blocklist override is unavailable")

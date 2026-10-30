@@ -37,6 +37,8 @@ type UserUsage struct {
 // Poll until the expected values appear. For an explicit synchronisation step
 // run gateway.Admin(ctx, "user", "stats", "--uid", user.ID(), "--sync-stats")
 // as separate setup.
+//
+//purpose:observation
 func (user *User) Usage(ctx context.Context) (UserUsage, error) {
 	if user == nil || user.owner == nil {
 		return UserUsage{}, servicehook.Invalid(errors.New("RGW user is not owned by a Ceph cluster"))

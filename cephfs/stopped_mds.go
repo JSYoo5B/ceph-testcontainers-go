@@ -60,6 +60,8 @@ func cephFSMDSFullCID(cid string) bool {
 // owned for cluster Terminate. An uncertain Docker removal retains the original
 // handle for explicit retry; initial arbitrary absence is not success. Direct
 // failure injection, Start/Stop and raw policy changes must not run concurrently.
+//
+//purpose:condition,lifetime
 func (daemon *MDS) RemoveStopped(ctx context.Context) error {
 	if daemon == nil || daemon.identity == nil || daemon.identity.fleet.id == nil {
 		return errors.New("original owned MDS creation identity is unavailable")

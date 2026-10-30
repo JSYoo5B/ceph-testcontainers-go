@@ -79,6 +79,8 @@ func validateInjectObjectName(name string) error {
 // The object is addressed in the default namespace. A name containing a slash
 // is refused before any native command, because the native command would
 // reinterpret the part before the first slash as a namespace.
+//
+//purpose:condition,native
 func InjectObjectDataError(ctx context.Context, c *ceph.Container, pool, object string, osdID int) error {
 	if !faulthook.BlueStore(c) {
 		return errors.New("InjectObjectDataError needs BlueStore OSDs")

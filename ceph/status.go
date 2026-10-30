@@ -42,6 +42,8 @@ type Status struct {
 // replica count exceeds the OSD count never becomes clean, and after
 // Pool.SetPGCount or Pool.SetPlacement it can pass before the new PG set is
 // reported (see Pool.WaitForPGCount and Pool.PGs).
+//
+//purpose:observation
 func (c *Container) WaitForClean(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
 	defer cancel()

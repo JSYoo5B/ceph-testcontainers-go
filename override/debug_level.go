@@ -42,6 +42,8 @@ func (h DebugLevelHandle) GoString() string { return h.String() }
 // Receipt returns a copy of the window's record. It reads only local state and
 // never queries the daemon. A handle that has no window (a nil handle or the
 // zero value) returns a receipt without a state.
+//
+//purpose:observation
 func (h *DebugLevelHandle) Receipt() ceph.DebugLevelReceipt {
 	if h == nil || h.state == nil {
 		return ceph.DebugLevelReceipt{Transitions: []ceph.DebugLevelTransition{}}
@@ -125,6 +127,8 @@ func (h *DebugLevelHandle) Receipt() ceph.DebugLevelReceipt {
 //     (apply-uncertain); the joined errors.
 //   - The generation changed during the set: real handle (target-changed); the
 //     joined errors.
+//
+//purpose:condition,evidence
 func SetDebugLevel(ctx context.Context, c *ceph.Container, setting ceph.DebugLevelSetting) (*DebugLevelHandle, error) {
 	const op = "override.SetDebugLevel"
 	if c == nil {
@@ -398,6 +402,8 @@ func openDebugLevel(ctx context.Context, registry overridehook.DebugWindows, tar
 // and the settling of a set use fresh contexts bounded by the cluster's
 // startup timeout. A handle of a call that was not applied returns nil without
 // taking a lock.
+//
+//purpose:condition,lifetime
 func (h *DebugLevelHandle) Restore(ctx context.Context) error {
 	if h == nil || h.state == nil {
 		return errors.New("debug level override is unavailable")

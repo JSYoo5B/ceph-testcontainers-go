@@ -12,6 +12,8 @@ import (
 // so termination finishes at once. Init also reaps background processes that
 // exit inside the container, such as a test server started through Exec.
 // The entrypoint and command remain sleep and infinity.
+//
+//purpose:handoff
 func WithIdleEntrypoint() testcontainers.CustomizeRequestOption {
 	return func(req *testcontainers.GenericContainerRequest) error {
 		for _, option := range []testcontainers.CustomizeRequestOption{

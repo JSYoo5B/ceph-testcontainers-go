@@ -123,6 +123,8 @@ const (
 // never skip the cleanups or Terminate. A check's error and Terminate's error
 // fail the test; collection and storage errors are logged and recorded in the
 // manifest. Nothing runs after a forced process exit or a lost runner.
+//
+//purpose:observation,lifetime
 func (c *Container) TerminateOnCleanup(t testing.TB, config FinalizationConfig) (*Finalization, error) {
 	if c == nil || t == nil {
 		return nil, invalid(errors.New("TerminateOnCleanup needs a cluster and a test"))
@@ -184,6 +186,8 @@ func newFinalization(t testing.TB, config FinalizationConfig) (*Finalization, er
 // a check may also report through the test itself, including with t.Fatal,
 // which ends only the check. Adding a check after
 // finalization has started fails the test instead.
+//
+//purpose:observation
 func (f *Finalization) Check(name string, check func(context.Context) error) {
 	f.add(&f.checks, "Check", name, check)
 }
@@ -192,6 +196,8 @@ func (f *Finalization) Check(name string, check func(context.Context) error) {
 // in reverse registration order, such as the removal of a caller-owned
 // client. Its error, or panic, fails the test; when nothing has failed
 // before, it also triggers an archive of what still runs.
+//
+//purpose:observation,lifetime
 func (f *Finalization) Cleanup(name string, cleanup func(context.Context) error) {
 	f.add(&f.cleanups, "Cleanup", name, cleanup)
 }

@@ -69,6 +69,8 @@ type DirectoryRemovalDaemonStatus struct {
 // process and session; it does not prove that worker threads exited, the remote
 // lock was released, a checkpoint completed or destination metadata is
 // unchanged. See the package documentation for an interrupted removal.
+//
+//purpose:condition,lifetime
 func (mirror *Mirror) BeginDirectoryRemoval(ctx context.Context, directory string) (*DirectoryRemoval, error) {
 	if mirror == nil {
 		return nil, cephFSObserveGuard("CephFS directory removal fixture is unavailable")
@@ -406,6 +408,8 @@ func (r *DirectoryRemoval) initialStatus() DirectoryRemovalStatus {
 // whole-map path stats observations. Schema/identity changes permanently guard;
 // native query failures remain retryable. Common attestation conservatively
 // guards non-context failures while retaining the intent for fresh-context retry.
+//
+//purpose:observation
 func (r *DirectoryRemoval) Status(ctx context.Context) (DirectoryRemovalStatus, error) {
 	return r.statusWithAdmission(ctx, nil)
 }
@@ -524,6 +528,8 @@ func (r *DirectoryRemoval) observeCohort(ctx context.Context, watchers map[strin
 // WaitReleased drops fixture/member locks after each bounded observation and
 // between polls. Deadline/cancel returns the last partial report, Released=false,
 // preserving both the caller cause and last native observation error.
+//
+//purpose:observation
 func (r *DirectoryRemoval) WaitReleased(ctx context.Context) (DirectoryRemovalStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()

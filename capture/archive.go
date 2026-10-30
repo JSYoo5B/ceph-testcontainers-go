@@ -25,6 +25,8 @@ var _ ceph.CaptureFileSource = (*Session)(nil)
 // Keep the file and its directory until the finalization returns: a
 // t.TempDir registered after TerminateOnCleanup is removed first, so create
 // it before registering the finalization or use t.ArtifactDir.
+//
+//purpose:evidence
 func (s *Session) CaptureFile(ctx context.Context) (io.ReadCloser, int64, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, 0, "", err

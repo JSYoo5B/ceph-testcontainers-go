@@ -41,6 +41,8 @@ type ImageStatus struct {
 // ownership or restarts a process. Original pool and namespace policy identities
 // are checked before and after reading the image. Source/destination global IDs
 // must agree. A non-zero partial observation can accompany an error.
+//
+//purpose:observation
 func (m *Mirror) ImageStatus(ctx context.Context, imageName string) (ImageStatus, error) {
 	var result ImageStatus
 	if err := validateRBDMirrorObservedImage(imageName); err != nil {
@@ -303,6 +305,8 @@ func (o *rbdImageObservation) confirm(ctx context.Context, source, destination r
 //
 // Transient query failures are retried; a successful read that proves a changed
 // pool, policy or image identity, or an invalid schema, fails immediately.
+//
+//purpose:observation
 func (m *Mirror) WaitReplayReady(ctx context.Context, imageName string) (ImageStatus, error) {
 	if err := validateRBDMirrorObservedImage(imageName); err != nil {
 		return ImageStatus{}, err

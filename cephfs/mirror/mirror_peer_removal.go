@@ -88,6 +88,8 @@ type cephFSPeerRemovalSession struct {
 // After Drained, call RebootstrapPeer; the new peer supersedes the receipt,
 // whose Status then returns a guard error. See the package documentation for an
 // interrupted removal.
+//
+//purpose:condition,lifetime
 func (mirror *Mirror) BeginPeerRemoval(ctx context.Context, id string) (*PeerRemoval, error) {
 	return mirror.beginPeerRemoval(ctx, id, mirror.peerRemovalClusterIdentities)
 }
@@ -271,6 +273,8 @@ func (r *PeerRemoval) initialStatus() PeerRemovalStatus {
 // retryable; schema/identity/generation changes are permanent guard failures.
 // Common MON attestation has no typed error categories: its non-context errors
 // conservatively guard this observation, retaining the intent for a fresh retry.
+//
+//purpose:observation
 func (r *PeerRemoval) Status(ctx context.Context) (PeerRemovalStatus, error) {
 	return r.statusWithAdmission(ctx, nil)
 }
@@ -376,6 +380,8 @@ func (r *PeerRemoval) observeCohort(ctx context.Context, watchers map[string]str
 
 // WaitDrained releases the fixture lock between observations. Deadline/cancel
 // returns the last report with Drained=false and preserves the last query cause.
+//
+//purpose:observation
 func (r *PeerRemoval) WaitDrained(ctx context.Context) (PeerRemovalStatus, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()

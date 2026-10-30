@@ -50,6 +50,8 @@ type ManagerMetrics struct {
 
 // Select returns the samples named name whose labels include every label in
 // labels; nil labels select every sample of that name.
+//
+//purpose:observation
 func (m ManagerMetrics) Select(name string, labels map[string]string) []MetricSample {
 	var selected []MetricSample
 	for _, sample := range m.Samples {
@@ -72,6 +74,8 @@ func (m ManagerMetrics) Select(name string, labels map[string]string) []MetricSa
 
 // Value returns the value of the one sample that Select finds; none, or more
 // than one, is an error.
+//
+//purpose:observation
 func (m ManagerMetrics) Value(name string, labels map[string]string) (float64, error) {
 	selected := m.Select(name, labels)
 	if len(selected) != 1 {

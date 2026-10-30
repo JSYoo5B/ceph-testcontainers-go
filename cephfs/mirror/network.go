@@ -20,6 +20,8 @@ import (
 // Keep a non-nil handle returned with an error: a transport error cannot prove
 // that Docker did not disconnect the endpoint. The fixture also restores it on
 // Terminate. Host networking has no bridge endpoint and is refused.
+//
+//purpose:condition
 func (daemon *Daemon) InterruptPeerLink(ctx context.Context) (*fault.NetworkInterruption, error) {
 	if daemon == nil || daemon.owner == nil {
 		return nil, servicehook.Invalid(errors.New("CephFS mirror daemon is not owned by a mirror"))

@@ -212,6 +212,8 @@ func resolveOptions(img string, opts []testcontainers.ContainerCustomizer) (opti
 // Terminate is overridden and removes the whole cluster. A non-nil Container
 // returned with an error owns every resource created so far and must still be
 // terminated; register testcontainers.CleanupContainer before checking err.
+//
+//purpose:construction
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	settings, err := resolveOptions(img, opts)
 	if err != nil {
@@ -529,6 +531,8 @@ func (c *Container) trackHostPortLease(lease *hostPortLease) {
 // which in bridge mode are container addresses, so a process on the Docker
 // host cannot reach RADOS, RBD or CephFS through the MON's mapped port alone;
 // use a WithClient container or WithHostNetwork on Linux.
+//
+//purpose:handoff
 func (c *Container) WithClient(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
 	return c.adminClient(opts...)
 }
@@ -567,6 +571,8 @@ func (c *Container) adminClient(opts ...ClientContainerOptions) testcontainers.C
 // until a MON answers, ctx ends or a minute has passed, so a stalled or
 // electing MON delays the command instead of failing it, and the command runs
 // once.
+//
+//purpose:native
 func (c *Container) Ceph(ctx context.Context, args ...string) ([]byte, error) {
 	return c.conn().ceph(ctx, args...)
 }
@@ -585,6 +591,8 @@ func (c *Container) Ceph(ctx context.Context, args ...string) ([]byte, error) {
 // serialized. An OSD returned with an error is tracked for cleanup and may be
 // inspected; no data is silently purged on failure. The image override is kept
 // in the OSD's recipe for DetachedOSD.Reopen.
+//
+//purpose:construction,condition
 func (c *Container) AddOSD(ctx context.Context, configs ...OSDOptions) (*OSDContainer, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -977,6 +985,8 @@ func (f osdFleet) waitOSDRemoval(ctx context.Context, id int, drain bool) error 
 
 // ServiceContainers returns owned optional services (such as RGW or MDS),
 // sorted by service name. The cluster owns their cleanup.
+//
+//purpose:observation
 func (c *Container) ServiceContainers() []testcontainers.Container {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1036,6 +1046,8 @@ func (c *Container) startService(ctx context.Context, name, image string, opts .
 // WithClient or ClientConfig.WithIdentity are the caller's: terminate them
 // first, because Docker cannot remove a network that still has attached
 // containers (with testcontainers.CleanupContainer, register the cluster first).
+//
+//purpose:lifetime
 func (c *Container) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	return c.terminate(ctx, opts...)
 }

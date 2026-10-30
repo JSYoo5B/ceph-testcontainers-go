@@ -48,6 +48,8 @@ type SyncStatus struct {
 // CLI is passed --format json. The structured metadata state separately guards
 // period/realm epoch and every shard. This is a point-in-time observation;
 // applications should quiesce writes and still verify their own S3 payloads.
+//
+//purpose:observation
 func (f *Fixture) SyncStatus(ctx context.Context, zoneName string) (SyncStatus, error) {
 	if f == nil {
 		return SyncStatus{}, errors.New("RGW multisite fixture is required")
@@ -76,6 +78,8 @@ func (f *Fixture) SyncStatus(ctx context.Context, zoneName string) (SyncStatus, 
 // After an abrupt gateway stop the old process's sync leases must expire (30
 // seconds for fixture gateways), and sync polls every 20 seconds by default:
 // use deadlines of several minutes.
+//
+//purpose:observation
 func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZones ...string) (SyncStatus, error) {
 	if f == nil {
 		return SyncStatus{}, errors.New("RGW multisite fixture is required")

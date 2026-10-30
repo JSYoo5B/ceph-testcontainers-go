@@ -78,6 +78,8 @@ func mgrModuleNotApplied(name string, cause error) (*MGRModuleHandle, error) {
 //     applied handle (reservation released); plain error.
 //   - The change or the readback after it fails: real handle (uncertain); the
 //     joined errors.
+//
+//purpose:construction,condition
 func SetMGRModule(ctx context.Context, c *ceph.Container, name string, enabled bool) (*MGRModuleHandle, error) {
 	const op = "override.SetMGRModule"
 	if c == nil {
@@ -161,6 +163,8 @@ func setMGRModuleLocked(ctx context.Context, c *ceph.Container, name string, ena
 // A handle of a call that was not applied returns nil without taking a lock.
 // A cluster that has been terminated refuses the restore with the error of an
 // operation on a terminated cluster, and the module stays registered.
+//
+//purpose:condition,lifetime
 func (h *MGRModuleHandle) Restore(ctx context.Context) error {
 	if h == nil {
 		return errors.New("MGR module override is unavailable")

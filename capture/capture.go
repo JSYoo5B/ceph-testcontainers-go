@@ -381,6 +381,8 @@ var pollInterval = 100 * time.Millisecond
 // After a failure Start removes the helper and the output file it created.
 // It returns a non-nil session with an error only when it could not remove
 // a probe or a helper that failed; Stop it to retry the removal.
+//
+//purpose:evidence
 func Start(ctx context.Context, target testcontainers.Container, req Request) (*Session, error) {
 	return start(ctx, dockerBackend{}, target, req)
 }
@@ -609,6 +611,8 @@ func (s *Session) removeHelper(ctx context.Context) error {
 // or delivered a file that is not valid classic pcap, and a removal error. A
 // capture that ended at MaxPackets is not an error; its End says so. After a removal error
 // Stop can be called again; it returns the same report.
+//
+//purpose:evidence,lifetime
 func (s *Session) Stop(ctx context.Context) (Report, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -882,6 +886,8 @@ var _ ceph.CaptureSettler = (*Session)(nil)
 // stop grace), whatever context Settle is given. It is what
 // ceph.Finalization.Capture admits for this session. Callers that do not use
 // a finalization call Stop instead of Settle.
+//
+//purpose:evidence
 func (s *Session) SettlementAllowance() time.Duration {
 	return s.stopGrace() + finishTimeout
 }
@@ -892,6 +898,8 @@ func (s *Session) SettlementAllowance() time.Duration {
 // It shares Stop's behavior: the context's cancellation does not shorten it,
 // it waits for a Stop that is already running, and a Stop that already
 // finished is not repeated.
+//
+//purpose:evidence,lifetime
 func (s *Session) Settle(ctx context.Context) (any, error) {
 	report, err := s.Stop(ctx)
 	if report.Output != "" {

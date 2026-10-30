@@ -43,6 +43,8 @@ type OSDStorage struct {
 // startup capacity benchmark before AddOSD; the benchmark can exhaust a small
 // file even without client data. A size below the minimum, including zero, is an
 // explicit invalid setting, not an unspecified one.
+//
+//purpose:construction
 func (o OSDStorage) WithBlockSize(size int64) OSDStorage {
 	o.set |= osdStorageBlockSize
 	o.blockSize = size
@@ -59,6 +61,8 @@ func (o OSDStorage) WithBlockSize(size int64) OSDStorage {
 // for MemStore OSDs: a stopped OSD keeps its data across Stop and Start, while
 // a killed OSD or a removed container loses it. ceph osd metadata reports
 // osd_objectstore as memstore.
+//
+//purpose:construction
 func (o OSDStorage) WithObjectStore(store OSDObjectStore) OSDStorage {
 	o.set |= osdStorageObjectStore
 	o.store = store
@@ -83,6 +87,8 @@ func (o OSDStorage) WithObjectStore(store OSDObjectStore) OSDStorage {
 // the first OSD; the cluster refuses to continue with a restarted helper.
 // OSDContainer.Remove discards the purged OSD's directory. Rootless or managed
 // engines may refuse tmpfs volumes.
+//
+//purpose:construction
 func (o OSDStorage) WithInMemory(maxBytes int64) OSDStorage {
 	o.set |= osdStorageInMemory
 	o.memoryMax = maxBytes
@@ -108,6 +114,8 @@ func (o OSDStorage) WithInMemory(maxBytes int64) OSDStorage {
 // OSDContainer.Detach retains a store and DetachedOSD.Reopen restarts it in a
 // new container; it gives no host-reboot durability, and Terminate also
 // discards detached stores.
+//
+//purpose:construction
 func (o OSDStorage) WithVolume() OSDStorage {
 	o.set |= osdStorageVolume
 	o.volumeKept = true
@@ -117,6 +125,8 @@ func (o OSDStorage) WithVolume() OSDStorage {
 // WithOSDStorage is the grouped option function that carries an OSDStorage to
 // Run. Like every Option it changes the cluster settings only and never reaches
 // a container request.
+//
+//purpose:construction
 func WithOSDStorage(storage OSDStorage) Option {
 	return func(o *options) error { return storage.apply(o) }
 }

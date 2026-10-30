@@ -74,6 +74,8 @@ func (Option) Customize(*testcontainers.GenericContainerRequest) error { return 
 // cannot use host mode. It cannot be combined with
 // NetworkConfig.WithSeparateClusterNetwork, and fault.InterruptNetwork and
 // fault.ApplyNetworkProfile are unavailable in host mode.
+//
+//purpose:construction
 func WithHostNetwork() Option {
 	return func(o *options) error {
 		o.hostNetwork = true
@@ -103,6 +105,8 @@ const (
 // operation, such as AddOSD, WaitForClean, Pool.WaitForPGCount and
 // DeepScrubPG, so a wait never outlives the shorter of the two limits.
 // Increase it for slow engines, large pools or long recovery waits.
+//
+//purpose:construction
 func WithStartupTimeout(timeout time.Duration) Option {
 	return func(o *options) error {
 		if timeout <= 0 {

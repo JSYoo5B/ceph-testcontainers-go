@@ -41,6 +41,8 @@ type cephFSMDSReplacement struct {
 // Without a standby, Ceph can keep a dead daemon registered as laggy; fail its
 // GID explicitly with ceph mds fail <gid> before calling it. Do not start, stop
 // or fail daemons by hand while it runs.
+//
+//purpose:construction,condition
 func (stopped *MDS) AddReplacement(ctx context.Context) (*MDS, error) {
 	if stopped == nil || stopped.identity == nil || stopped.identity.fleet.id == nil {
 		return nil, errors.New("original owned MDS creation identity is unavailable")

@@ -18,6 +18,8 @@ import (
 // Run returns after the pools exist and their RBD metadata is initialized.
 // PG peering may still be finishing, so call WaitForClean before the first
 // client I/O.
+//
+//purpose:construction
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	c, err := ceph.Run(ctx, img, append(slices.Clone(opts), defaultPool())...)
 	if c == nil {

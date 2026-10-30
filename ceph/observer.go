@@ -27,6 +27,8 @@ type Observer struct {
 
 // Observe returns an Observer for cluster. A nil cluster returns an error and
 // a nil Observer. Nothing is read from the cluster.
+//
+//purpose:observation
 func Observe(cluster *Container) (*Observer, error) {
 	if cluster == nil {
 		return nil, invalidRequest("observe: the cluster is nil")
@@ -53,6 +55,8 @@ func (o *Observer) resolve() (*Container, error) {
 }
 
 // Status queries the monitor's JSON API through the container-local CLI.
+//
+//purpose:observation
 func (o *Observer) Status(ctx context.Context) (Status, error) {
 	run, err := o.query()
 	if err != nil {
@@ -63,6 +67,8 @@ func (o *Observer) Status(ctx context.Context) (Status, error) {
 
 // ManagerStatus reads active ownership and registered standbys from the
 // native MGR map.
+//
+//purpose:observation
 func (o *Observer) ManagerStatus(ctx context.Context) (ManagerStatus, error) {
 	run, err := o.query()
 	if err != nil {
@@ -86,6 +92,8 @@ func (o *Observer) ManagerStatus(ctx context.Context) (ManagerStatus, error) {
 // one after another, not as one snapshot; compare the epochs when the order
 // matters. Each EntityAddress has Type (v2, v1 or any), Addr as Ceph prints it
 // and Nonce, which MONs leave at 0.
+//
+//purpose:observation
 func (o *Observer) DaemonAddresses(ctx context.Context) (DaemonAddresses, error) {
 	run, err := o.query()
 	if err != nil {
@@ -102,6 +110,8 @@ func (o *Observer) DaemonAddresses(ctx context.Context) (DaemonAddresses, error)
 // and Pool.Usage and Pool.PGs the usage and the PGs. The listing is one read of
 // the native pool map, so the pools of one result are consistent with each
 // other and later reads through them are separate observations.
+//
+//purpose:observation
 func (o *Observer) Pools(ctx context.Context) ([]*Pool, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -127,6 +137,8 @@ func (o *Observer) Pools(ctx context.Context) ([]*Pool, error) {
 // value; this method does not claim a stored setting has overridden local config.
 //
 // Entries can contain sensitive values.
+//
+//purpose:observation
 func (o *Observer) Configuration(ctx context.Context) ([]ConfigEntry, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -146,6 +158,8 @@ func (o *Observer) Configuration(ctx context.Context) ([]ConfigEntry, error) {
 // CephFS or RBD evicts a client. Range is true for a CIDR range and Until is
 // the MON's absolute expiration time. Listing grants no ownership to remove an
 // entry; override.AddBlocklist adds one.
+//
+//purpose:observation
 func (o *Observer) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -162,6 +176,8 @@ func (o *Observer) BlocklistEntries(ctx context.Context) ([]BlocklistEntry, erro
 // MGRModules lists configured and available modules, sorted by name. Enabled
 // and CanRun do not prove command readiness; WaitMGRModuleReady probes selected
 // built-in modules, and callers must probe their intended commands for others.
+//
+//purpose:observation
 func (o *Observer) MGRModules(ctx context.Context) ([]MGRModuleState, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -178,6 +194,8 @@ func (o *Observer) MGRModules(ctx context.Context) ([]MGRModuleState, error) {
 // OSDFlags lists exact global OSDMap flag tokens, including native compatibility
 // flags that are not among the OSDFlag constants. Per-OSD, CRUSH-node or
 // device-class flags are separate native state.
+//
+//purpose:observation
 func (o *Observer) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -193,6 +211,8 @@ func (o *Observer) OSDFlags(ctx context.Context) ([]OSDFlag, error) {
 
 // OSDStates returns owned OSD states sorted by native ID. It refuses an owned
 // ID that is missing, purged or now belongs to a different native UUID.
+//
+//purpose:observation
 func (o *Observer) OSDStates(ctx context.Context) ([]OSDState, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -208,6 +228,8 @@ func (o *Observer) OSDStates(ctx context.Context) ([]OSDState, error) {
 // the module bound: a container address reachable from WithClient containers
 // in bridge mode, or the configured address in host mode. They are not mapped
 // to Docker host ports. An empty map means no module advertises a service.
+//
+//purpose:observation
 func (o *Observer) ManagerServices(ctx context.Context) (map[string]string, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -231,6 +253,8 @@ func (o *Observer) ManagerServices(ctx context.Context) (map[string]string, erro
 //
 // The query runs under a 5-second process limit inside the control container,
 // so it returns an error rather than hanging while quorum is lost.
+//
+//purpose:observation
 func (o *Observer) QuorumStatus(ctx context.Context) (QuorumStatus, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -243,6 +267,8 @@ func (o *Observer) QuorumStatus(ctx context.Context) (QuorumStatus, error) {
 // address vectors, suitable for the Ceph mon_host setting. The live cluster
 // FSID must match this fixture's original bootstrap configuration. This is a
 // bounded native observation, not a network attachment or membership mutation.
+//
+//purpose:observation
 func (o *Observer) MonitorBootstrapAddresses(ctx context.Context) (string, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -274,6 +300,8 @@ func (o *Observer) MonitorBootstrapAddresses(ctx context.Context) (string, error
 // muted warnings; a sticky mute stays after its check clears. Ceph raises many
 // checks only after a delay. Messages can contain pool names, paths or other
 // application data.
+//
+//purpose:observation
 func (o *Observer) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -359,6 +387,8 @@ func (o *Observer) HealthDetails(ctx context.Context) (HealthSnapshot, error) {
 // The ratios are Ceph's float32 values, so do not compare them with float64
 // literals for equality. They are OSDMap policy, separate from central
 // configuration and pool quotas.
+//
+//purpose:observation
 func (o *Observer) FullRatios(ctx context.Context) (FullRatioSnapshot, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -391,6 +421,8 @@ func (o *Observer) FullRatios(ctx context.Context) (FullRatioSnapshot, error) {
 // PGInconsistencies lists the objects that the last deep scrub of a PG found
 // inconsistent. An empty result means that scrub found none; it is not a new
 // scrub. A PG whose results are no longer available returns an error.
+//
+//purpose:observation
 func (o *Observer) PGInconsistencies(ctx context.Context, pgid PGID) ([]InconsistentObject, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -417,6 +449,8 @@ func (o *Observer) PGInconsistencies(ctx context.Context, pgid PGID) ([]Inconsis
 // client that stops answering keeps its watch until the OSD's
 // osd_client_watch_timeout expires (30 seconds by default); until then a
 // notify on the object waits for it and times out.
+//
+//purpose:observation
 func (o *Observer) ObjectWatchers(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error) {
 	c, err := o.resolve()
 	if err != nil {
@@ -457,6 +491,8 @@ func (o *Observer) ObjectWatchers(ctx context.Context, pool, namespace, object s
 // Pool counters come from the MGR's PG statistics, so poll until an expected
 // value appears. In host mode the module first needs its own address and port
 // per manager.
+//
+//purpose:observation
 func (o *Observer) ManagerMetrics(ctx context.Context) (ManagerMetrics, error) {
 	c, err := o.resolve()
 	if err != nil {

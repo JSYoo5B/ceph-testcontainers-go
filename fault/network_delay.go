@@ -89,6 +89,8 @@ type NetworkPacketFault struct {
 }
 
 // IsZero reports whether the fault is off.
+//
+//purpose:observation
 func (f NetworkPacketFault) IsZero() bool {
 	return f == NetworkPacketFault{}
 }
@@ -937,6 +939,8 @@ func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, re
 // operation that returns the right bytes therefore does not show that a
 // packet was altered; read the receiver's kernel counters for the transport
 // effect.
+//
+//purpose:condition
 func ApplyNetworkProfile(ctx context.Context, c *ceph.Container, target testcontainers.Container, delay NetworkProfile) (*NetworkProfileLease, error) {
 	return temporaryNetworkDelay(ctx, c, target, delay, nil)
 }
@@ -974,6 +978,8 @@ func temporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testco
 // Terminate knows it. delay.Plane stays empty; every other field, check and
 // error is that of ApplyNetworkProfile, and a network that is not a bridge
 // is refused.
+//
+//purpose:condition
 func ApplyLinkProfile(ctx context.Context, ctr testcontainers.Container, network string, delay NetworkProfile) (*NetworkProfileLease, error) {
 	return temporaryLinkDelay(ctx, dockerNetemBackend{}, ctr, network, delay)
 }
@@ -1596,6 +1602,8 @@ func removeNetemHelper(ctx context.Context, backend netemBackend, helper testcon
 // are present and nothing else is under the root; Filters holds tc's filter
 // dump with each u32 filter's keys under matches. The counters are the
 // child's, so they count only selected packets.
+//
+//purpose:observation
 func (l *NetworkProfileLease) Status(ctx context.Context) (NetworkProfileStatus, error) {
 	if err := lockMutex(ctx, &l.mu); err != nil {
 		return NetworkProfileStatus{}, err
@@ -1773,6 +1781,8 @@ func (l *NetworkProfileLease) ownedPrefix(status NetworkProfileStatus) error {
 // interface is gone needs no removal. A root qdisc that someone replaced, or
 // a filter or qdisc that someone added under the lease's root, is refused,
 // not removed, and the lease stays retryable.
+//
+//purpose:condition,lifetime
 func (l *NetworkProfileLease) Restore(ctx context.Context) error {
 	if l == nil {
 		return nil

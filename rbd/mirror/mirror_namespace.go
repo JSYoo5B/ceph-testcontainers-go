@@ -48,6 +48,8 @@ type Policies struct {
 // PolicyStatus reads this link's selected namespace policies after checking the
 // original native pool IDs. External policy changes are reported as native
 // state; callers compare Scope and RemoteNamespace with their desired fixture.
+//
+//purpose:observation
 func (m *Mirror) PolicyStatus(ctx context.Context) (Policies, error) {
 	var status Policies
 	if m == nil {

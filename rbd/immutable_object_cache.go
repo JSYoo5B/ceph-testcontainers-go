@@ -179,6 +179,8 @@ esac
 // refused with ceph.ErrInvalidRequest, and nothing is changed. A daemon that
 // exits or never opens its socket fails the call with ceph.ErrNativeFailure,
 // and what it left is removed.
+//
+//purpose:construction,condition
 func StartImmutableObjectCache(ctx context.Context, client testcontainers.Container, config ImmutableObjectCache) (*ImmutableObjectCacheLease, error) {
 	config, err := normalizeImmutableObjectCache(client, config)
 	if err != nil {
@@ -267,6 +269,8 @@ func cleanAbsolute(p string) bool {
 // ClientOptions returns the Ceph options that make a librbd client in the
 // lease's container use the cache, for a ceph.conf section, the rbd CLI
 // (as --name=value) or rados.Rados(conf=...).
+//
+//purpose:handoff
 func (l *ImmutableObjectCacheLease) ClientOptions() map[string]string {
 	return map[string]string{
 		"rbd_parent_cache_enabled":    "true",
@@ -276,6 +280,8 @@ func (l *ImmutableObjectCacheLease) ClientOptions() map[string]string {
 }
 
 // Status reports the daemon and the cache directory.
+//
+//purpose:observation
 func (l *ImmutableObjectCacheLease) Status(ctx context.Context) (ImmutableObjectCacheStatus, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -311,6 +317,8 @@ func (l *ImmutableObjectCacheLease) status(ctx context.Context) (ImmutableObject
 // directory and socket file: librbd clients that open an image afterwards
 // fail to register with the cache and read the parents from RADOS. A daemon
 // that already exited needs no stop.
+//
+//purpose:condition
 func (l *ImmutableObjectCacheLease) Stop(ctx context.Context) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -336,6 +344,8 @@ func (l *ImmutableObjectCacheLease) stop(ctx context.Context) error {
 // Restore stops the daemon if it runs and removes its socket, admin socket,
 // PID file and cached objects. It removes the cache directory only when the
 // lease created it. A repeated call after success does nothing.
+//
+//purpose:construction,lifetime
 func (l *ImmutableObjectCacheLease) Restore(ctx context.Context) error {
 	if l == nil {
 		return nil
