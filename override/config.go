@@ -68,6 +68,37 @@ func notAppliedConfig(setting ceph.ConfigSetting, cause error) (*ConfigHandle, e
 // with ceph.ErrInvalidRequest and Op "override.SetConfig". A call that fails
 // after the entry was tracked, or whose write may have been applied, returns
 // the real handle with the error.
+//
+// Name can be any option, including MGR module keys such as
+// mgr/volumes/max_concurrent_clones. SetConfig verifies the stored value, not
+// its effect: local ceph.conf entries (including ceph.WithConfigFile),
+// command-line arguments and runtime overrides take precedence over the
+// database, and some options, such as osd_op_queue, apply only when a daemon
+// starts. Check a running daemon's effective value with
+// ceph.Container.Ceph(ctx, "config", "show", "osd.0", name). Configuration
+// output can contain secrets; log only selected fields.
+//
+// Outcomes, as the handle it returns and the error:
+//   - Entry written and read back: real handle; nil.
+//   - The stored value already equals the request: real handle (a lease with
+//     no write); nil.
+//   - Nil cluster: not applied handle; ceph.ErrInvalidRequest, Op
+//     override.SetConfig.
+//   - Context already ended, or ended while waiting for the topology lock: not
+//     applied handle; the context error.
+//   - Invalid section, mask, name or value: not applied handle;
+//     ceph.ErrInvalidRequest.
+//   - Option fixed by the MessengerV2Secure or MessengerV2Only bootstrap: not
+//     applied handle; ceph.ErrInvalidRequest.
+//   - Terminated cluster or no control container: not applied handle; the
+//     cluster's own error.
+//   - This cluster already holds an override of the same section, mask and
+//     name: not applied handle; plain error.
+//   - The configuration cannot be read before the write: not applied handle
+//     (reservation released); the native error.
+//   - config set or the readback fails: real handle (uncertain); the joined
+//     errors.
+//   - Success without a stored entry: real handle; plain error.
 func SetConfig(ctx context.Context, c *ceph.Container, setting ceph.ConfigSetting) (*ConfigHandle, error) {
 	const op = "override.SetConfig"
 	if c == nil {

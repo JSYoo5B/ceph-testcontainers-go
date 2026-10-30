@@ -67,6 +67,22 @@ func notAppliedOSDFlag(flag ceph.OSDFlag, cause error) (*OSDFlagHandle, error) {
 // refused with ceph.ErrInvalidRequest and Op "override.SetOSDFlag". A
 // handle returned together with an error for an uncertain outcome is real and
 // still restorable.
+//
+// Outcomes, as the handle it returns and the error:
+//   - Flag set or cleared and read back: real handle; nil.
+//   - Flag already in the requested state: real handle (a lease without a
+//     write); nil.
+//   - Nil cluster: not applied handle; ceph.ErrInvalidRequest, Op
+//     override.SetOSDFlag.
+//   - Unsupported flag: not applied handle; plain error.
+//   - Terminated cluster or no control container: not applied handle; the
+//     cluster's own error.
+//   - This flag is already held by another handle: not applied handle; plain
+//     error.
+//   - The native OSDMap cannot be read before the write: not applied handle
+//     (reservation released); the native error.
+//   - The write or the readback after it fails: real handle (uncertain); the
+//     error.
 func SetOSDFlag(ctx context.Context, c *ceph.Container, flag ceph.OSDFlag, enabled bool) (*OSDFlagHandle, error) {
 	const op = "override.SetOSDFlag"
 	if c == nil {

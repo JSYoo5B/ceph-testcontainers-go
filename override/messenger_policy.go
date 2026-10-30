@@ -48,6 +48,10 @@ func notAppliedMessengerPolicy(cause error) (*MessengerPolicyHandle, error) {
 // handle whose Restore is a no-op. A nil cluster is refused with
 // ceph.ErrInvalidRequest and Op "override.SetMessengerPolicy". When a
 // later option is refused, the handle holds the options made before it.
+//
+// To change a single daemon, such as only osd.0, use SetConfig with the
+// policy's option and the daemon name as Section; it takes precedence over the
+// daemon type's entry.
 func SetMessengerPolicy(ctx context.Context, c *ceph.Container, policy ceph.MessengerPolicy) (*MessengerPolicyHandle, error) {
 	const op = "override.SetMessengerPolicy"
 	if c == nil {

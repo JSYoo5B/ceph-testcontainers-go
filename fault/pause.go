@@ -36,12 +36,17 @@ type PauseLease struct {
 // closed connection: a frozen OSD stops answering client operations and
 // heartbeats until its peers report it down after the heartbeat grace. Hold
 // nodown with override.SetOSDFlag to keep it up and make client operations wait
-// for their own timeouts or be reported as slow. Host networking is supported.
+// for their own timeouts (rados_osd_op_timeout) or be reported as SLOW_OPS
+// (after osd_op_complaint_time, 30 seconds by default). Host networking is
+// supported.
 //
 // The container that runs this cluster's control CLI is refused because every
-// fixture command would block on it. A container that is already paused is
-// refused rather than adopted. The cluster retains the handle and resumes it
-// during Terminate; resume explicitly before removing a caller-owned container.
+// fixture command would block on it (in a single-MON cluster that is MON a).
+// A container that is already paused is refused rather than adopted, and
+// only one pause per container is allowed. The cluster retains the handle and
+// resumes it during Terminate, after network faults are restored and before
+// containers are removed; resume explicitly before removing a caller-owned
+// container.
 func Pause(ctx context.Context, c *ceph.Container, ctr testcontainers.Container) (*PauseLease, error) {
 	return pauseContainerInCluster(ctx, c, ctr, func(ctx context.Context) (containerPauseClient, error) {
 		return testcontainers.NewDockerClientWithOpts(ctx)
