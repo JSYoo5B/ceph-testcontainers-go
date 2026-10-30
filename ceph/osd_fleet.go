@@ -1,6 +1,11 @@
 package ceph
 
-import "context"
+import (
+	"context"
+	"strconv"
+
+	"github.com/testcontainers/testcontainers-go"
+)
 
 // osdFleet runs the steps of an OSD's lifecycle: registration and storage,
 // the launch recipe and start, the removal preflight, drain and purge, and
@@ -56,5 +61,15 @@ func (c *Container) osdFleet() osdFleet {
 		osdFleetState: &c.fleet, conn: c.conn(),
 		runDir: &c.runDir, startup: &c.startup, settings: c.settings,
 		owner: c, facts: c.staticFacts, keyArgs: c.generateKeyArgs, launchRecipe: c.newOSDLaunchRecipe, clearSocket: c.clearAdminSocket,
+	}
+}
+
+// diagnosticOSDs passes each OSD container to add, for a diagnostics
+// snapshot. The caller holds Container.mu.
+func (f osdFleet) diagnosticOSDs(add func(role, name string, ctr testcontainers.Container)) {
+	for id, osd := range f.osdHandles.each() {
+		if osd != nil {
+			add("osd", strconv.Itoa(id), osd.Container)
+		}
 	}
 }

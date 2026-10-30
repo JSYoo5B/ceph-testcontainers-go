@@ -280,9 +280,9 @@ var lifecycleWriters = []string{
 // in lifecycleWriters and not here.
 var monitorTerminatedReaders = []string{
 	"Container.AddMonitor",
-	"Container.diagnosticsSnapshot",
 	"Container.terminate",
 	"monitorTopology.currentMonitor",
+	"monitorTopology.diagnosticDaemons",
 	"monitorTopology.firstMonitorStands",
 	"monitorTopology.firstMonitorTerminated",
 	"monitorTopology.monitorConfigTargets",

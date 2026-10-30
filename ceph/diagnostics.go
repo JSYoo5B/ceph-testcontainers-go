@@ -223,37 +223,10 @@ func (c *Container) diagnosticsSnapshot(ctx context.Context, config DiagnosticsC
 	add := func(role, name string, ctr testcontainers.Container) {
 		snapshot.containers = append(snapshot.containers, DiagnosticsContainer{Role: role, Name: name, Container: diagnosticContainerHandle(ctr)})
 	}
-	if c.Container != nil && (!c.monitorTopology().firstMonitorTerminated() || c.closed) {
-		add("mon", "a", c.Container)
-	}
-	for name, mon := range c.members.roster.eachMonitor() {
-		if mon != nil {
-			add("mon", name, mon.Container)
-		}
-	}
-	for name, mgr := range c.members.roster.eachManager() {
-		if mgr != nil {
-			add("mgr", name, mgr.Container)
-		}
-	}
-	if first := c.members.roster.initialManager(); first != nil {
-		add("mgr", "a", first)
-	}
-	for id, osd := range c.fleet.osdHandles.each() {
-		if osd != nil {
-			add("osd", strconv.Itoa(id), osd.Container)
-		}
-	}
-	for name, ctr := range c.members.roster.eachService() {
-		role := "service"
-		if strings.HasPrefix(name, "mds.") {
-			role = "mds"
-		}
-		if name == "rgw" || strings.HasPrefix(name, "rgw:") {
-			role = "rgw"
-		}
-		add(role, name, ctr)
-	}
+	topology := c.monitorTopology()
+	topology.diagnosticDaemons(c.closed, add)
+	c.osdFleet().diagnosticOSDs(add)
+	topology.diagnosticServices(add)
 	for _, state := range extensionsWith[serviceSecrets](c) {
 		snapshot.secrets = append(snapshot.secrets, state.Secrets()...)
 	}

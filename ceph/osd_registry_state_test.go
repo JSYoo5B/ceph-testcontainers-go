@@ -299,7 +299,7 @@ var osdRegistryCallers = map[string]osdRegistryCaller{
 	"OSDs":                             {"takes", []string{"sorted"}},
 	"CreatePool":                       {"takes", []string{"placementDomains"}},
 	"SetIn":                            {"takes", []string{"current", "ownedState"}},
-	"diagnosticsSnapshot":              {"takes", []string{"each"}},
+	"diagnosticOSDs":                   {"holds", []string{"each"}},
 	"openDebugTarget":                  {"takes", []string{"get"}},
 	"PoolPlacementDomains":             {"hook", []string{"placementDomains"}},
 	"Owns":                             {"hook", nil},
