@@ -180,7 +180,38 @@ func resolveOptions(img string, opts []testcontainers.ContainerCustomizer) (opti
 // request, so a setting passed as one is never lost and never reaches a
 // container.
 // Images contain runtime tools; this module supplies cluster setup.
-// A non-nil Container returned with an error must still be terminated.
+//
+// Run builds the whole cluster before it returns, bounded by ctx and by
+// WithStartupTimeout: it validates every option together, creates the owned
+// bridge network (two with NetworkConfig.WithSeparateClusterNetwork) or checks
+// the engine in host mode, starts MON a and records its configuration, admin
+// keyring and Ceph version, adds the remaining MONs (and, with more than one,
+// the separate CLI control container), starts the MGRs (the first stays
+// active), registers and starts the OSDs and waits until they are up and in,
+// waits for an available active MGR (or, with
+// ClusterConfig.WithNoInitialManagers, for quorum and the OSDs), and finally
+// creates the ClusterConfig.WithPools pools and the resources of the service
+// options. Run does not wait for clean placement groups; call WaitForClean
+// before client I/O.
+//
+// Contradictory options fail before any Docker resource exists, regardless of
+// their order: a host address without WithHostNetwork; host networking with a
+// separate cluster network or with an address family other than AddressIPv4;
+// a Messenger policy with MessengerV2Secure; AddressIPv4MappedIPv6 with a
+// separate cluster network; one field set by two carriers of the same group;
+// no initial OSDs with initial pools or services; no initial managers with
+// initial filesystems or gateways; a default CRUSH root or an initial pool
+// that the initial layout cannot satisfy; and duplicate pool, filesystem or
+// gateway names, including the pools a filesystem creates. In host mode Run
+// fails with ErrHostNetworkUnavailable when the engine does not run Linux
+// containers, the selected address is not assigned on the Docker host, or the
+// test process cannot reach the first MON.
+//
+// The returned Container embeds the first MON's testcontainers.Container, so
+// generic methods such as Exec, Logs, Host and MappedPort address MON a;
+// Terminate is overridden and removes the whole cluster. A non-nil Container
+// returned with an error owns every resource created so far and must still be
+// terminated; register testcontainers.CleanupContainer before checking err.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	settings, err := resolveOptions(img, opts)
 	if err != nil {

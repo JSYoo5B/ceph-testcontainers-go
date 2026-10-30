@@ -270,7 +270,7 @@ refusal before any change is the contract on that release.
 
 ## Related APIs
 
-- [`ceph`](../../ceph/README.md#error-categories): the categories,
+- [`ceph`](ceph-operations.md#error-categories): the categories,
   `OperationError`, `NativeFailure` and `MaxNativeFailureReason`.
 - [Running native commands](native-commands.md): `Ceph`, `RunNativeCommand`
   and reading native output.

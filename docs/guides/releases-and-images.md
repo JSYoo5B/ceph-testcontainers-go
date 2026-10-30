@@ -255,7 +255,7 @@ provided.
 `DaemonOptions.WithImage` starts one new MON or MGR, and `OSDOptions.WithImage` one new
 OSD, from an image other than the cluster's essential image. They are options of
 `AddMonitor`, `AddManager` and `AddOSD`; see
-[Per-daemon images](../../ceph/README.md#per-daemon-images) for the full contract.
+[Per-daemon images](ceph-operations.md#per-daemon-images) for the full contract.
 
 ```golang
 osd, err := cluster.AddOSD(ctx, ceph.OSDOptions{}.WithImage("registry.example/ceph:other"))

@@ -18,9 +18,9 @@ or uses cgo.
 | A read-only snapshot for failure analysis | `cluster.CollectDiagnostics(ctx, config)` | Docker API and the control container |
 
 The API contracts are in [`ceph`](../../ceph/README.md),
-[RunNativeCommand](../../ceph/README.md#runnativecommand),
-[ControlContainer](../../ceph/README.md#controlcontainer) and
-[ClientContainer](../../ceph/README.md#clientcontainer). This guide adds the
+[RunNativeCommand](ceph-operations.md#runnativecommand),
+[ControlContainer](ceph-operations.md#controlcontainer) and
+[ClientContainer](ceph-operations.md#clientcontainer). This guide adds the
 details and traps that matter when you use them.
 
 ## The ceph CLI
@@ -120,7 +120,7 @@ These commands do not give usable JSON:
 its own native queries. Use it for oracle and probe commands whose run time
 and output must be bounded and whose process must not outlive a canceled
 call. The fields and error categories are listed in
-[RunNativeCommand](../../ceph/README.md#runnativecommand).
+[RunNativeCommand](ceph-operations.md#runnativecommand).
 
 ```golang
 result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
@@ -385,7 +385,7 @@ with `override.SetOSDFlag` meanwhile. `TestRADOSErasureCodedOutcomes` in
 | --- | --- |
 | Inspect stored central configuration | `Observer.Configuration(ctx)` |
 | Change any option for a test and restore it | [override.SetConfig](../../override/README.md#setconfig) |
-| Options that must exist at bootstrap | [WithConfigFile](../../ceph/README.md#withconfigfile) |
+| Options that must exist at bootstrap | [WithConfigFile](ceph-configuration.md#withconfigfile) |
 | A daemon's effective value | `cluster.Ceph(ctx, "config", "show", "osd.0", name)` |
 
 - `override.SetConfig` accepts any option, with a `Section` and optional
@@ -404,9 +404,9 @@ with `override.SetOSDFlag` meanwhile. `TestRADOSErasureCodedOutcomes` in
 `WithClient` attaches your container to the cluster network with `ceph.conf`
 and the admin keyring. `ClientConfig.WithIdentity` copies only a restricted
 identity's keyring, at `client.KeyringPath()`. See
-[WithClient](../../ceph/README.md#withclient),
-[ClientConfig.WithIdentity](../../ceph/README.md#clientconfigwithidentity) and
-[CreateClient](../../ceph/README.md#createclient).
+[WithClient](ceph-operations.md#withclient),
+[ClientConfig.WithIdentity](ceph-operations.md#clientconfigwithidentity) and
+[CreateClient](ceph-operations.md#createclient).
 
 ```golang
 reader, err := cluster.CreateClient(ctx, "reader", ceph.ClientCaps{
@@ -451,7 +451,7 @@ process, which normally requires `ceph.WithHostNetwork()`; see
 
 For MON, MGR and OSD daemons, use the `AdminSocket` method of
 `MonitorContainer`, `ManagerContainer` and `OSDContainer` (see
-[AdminSocket](../../ceph/README.md#adminsocket)). It reaches the socket of any
+[AdminSocket](ceph-operations.md#adminsocket)). It reaches the socket of any
 owned daemon whatever its image, without the Messenger or Cephx:
 
 ```golang
@@ -498,7 +498,7 @@ Prefer the typed observers when they cover your case:
 No admin socket command prints a daemon's own key or its rotating service
 secrets.
 
-- **The daemon's key.** After [RotateKey](../../ceph/README.md#rotatekey) of
+- **The daemon's key.** After [RotateKey](ceph-operations.md#rotatekey) of
   `OSDContainer` or `ManagerContainer`, `auth get-key` on the MONs returns the
   new key, and a restart of the daemon proves it authenticates with its
   keyring files.
@@ -577,10 +577,10 @@ runs.
 
 ## Diagnostics
 
-[CollectDiagnostics](../../ceph/README.md#collectdiagnostics) gathers a
+[CollectDiagnostics](ceph-operations.md#collectdiagnostics) gathers a
 bounded, read-only, JSON-serializable snapshot with a fixed set of Ceph
 queries, also from partially bootstrapped or terminated clusters, and
-[CollectCrashMetadata](../../ceph/README.md#collectcrashmetadata) adds the
+[CollectCrashMetadata](ceph-operations.md#collectcrashmetadata) adds the
 daemons' crash reports.
 
 - Call it with a fresh context; a canceled test context cannot collect.

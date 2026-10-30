@@ -142,6 +142,10 @@ cluster, err := ceph.Run(ctx, ceph.DefaultImage,
 
 Guides for tasks that span packages:
 
+- [Ceph cluster configuration](docs/guides/ceph-configuration.md),
+  [Ceph cluster operations](docs/guides/ceph-operations.md) and
+  [Ceph recipes](docs/guides/ceph-recipes.md): the `ceph` package's options,
+  methods and worked examples in depth, beyond its godoc.
 - [Fault injection](docs/guides/fault-injection.md): stopping, pausing and
   disconnecting daemons and clients, delaying or dropping messages, fencing,
   full clusters and damaged replicas.

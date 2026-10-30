@@ -45,9 +45,20 @@ type userConfigSection struct {
 // those. The exception is ms_bind_prefer_ipv4, which Run accepts with
 // AddressDualStack only: false in a daemon's section, such as [osd.1] or
 // [mgr.b], makes that daemon advertise its IPv6 address first, and native
-// clients then connect to it over IPv6. RGW runs as client.admin, so RGW settings belong in [client] or
-// [client.admin]. Includes, continuations and keys outside a section are
-// rejected.
+// clients then connect to it over IPv6. RGW runs as client.admin, so RGW
+// settings belong in [client] or [client.admin]. The merged file becomes
+// /etc/ceph/ceph.conf before the first MON creates its store, so
+// bootstrap-only settings work; it does not change a running cluster.
+// Spaces, '-' and '_' in key names are equivalent, as in Ceph.
+//
+// The file is validated before any container is created. Includes, lines
+// continued with a trailing backslash, keys outside a section, duplicate keys
+// within one section of one file, NUL bytes, invalid UTF-8 and files or merged
+// results larger than 64 KiB are rejected. Ceph treats '#' and ';' as comment
+// starts even inside quotes, so a value containing them is rejected unless
+// they are escaped as \# and \;. Ceph silently ignores some values (for
+// example an osd_memory_target below 896 MiB); check the effective value with
+// ceph config show.
 func WithConfigFile(path string) Option {
 	return func(o *options) error {
 		file, err := os.Open(path)

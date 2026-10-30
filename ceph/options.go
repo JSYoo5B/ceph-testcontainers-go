@@ -88,6 +88,7 @@ const (
 )
 
 // WithStartupTimeout bounds bootstrap, readiness and topology operations.
+// Run's whole bootstrap, from validation to the initial services, shares it.
 // Each operation is also bounded by the caller's context. Default: 3 minutes.
 func WithStartupTimeout(timeout time.Duration) Option {
 	return func(o *options) error {

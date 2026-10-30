@@ -16,6 +16,12 @@ import (
 // a replicated pool, with the cluster's replica/min-size defaults when omitted
 // (normally 2/1, or 1/1 for one initial OSD). Application
 // can be rados, rbd, cephfs, rgw or a custom name; empty leaves it unassigned.
+// Name uses letters, digits, '_', '.' and '-' and must not start with '.' or
+// '-'. Replicas is 1 to 10 and must be zero for an erasure-coded pool. MinSize
+// is 1 to Replicas for a replicated pool and K to K+M for an erasure-coded one.
+// FailureDomain puts each replica or shard in a distinct osd, host or rack
+// bucket. For RBD pools that need rbd pool init, use rbd.WithPools or
+// rbd.InitPool.
 type PoolConfig struct {
 	Name        string
 	PGNum       int
@@ -45,6 +51,7 @@ type PoolConfig struct {
 // MinSize of K permits I/O without any spare shard during a failure.
 // AllowOverwrites enables partial object writes and is required for RBD and
 // CephFS data pools. Their metadata must remain in a replicated pool.
+// K is at least 2, M at least 1 and K+M at most 128.
 type ErasureCodeConfig struct {
 	K               int
 	M               int

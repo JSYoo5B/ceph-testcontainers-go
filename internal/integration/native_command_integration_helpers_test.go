@@ -418,7 +418,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		}
 	})
 
-	// The recipe of ceph/README.md: a bounded rados_stat2 and read through
+	// The recipe of docs/guides/ceph-operations.md: a bounded rados_stat2 and read through
 	// librados, and ceph-dencoder on the current OSDMap.
 	t.Run("oracle_recipe", func(t *testing.T) {
 		const pool, object = "tc-native", "oracle"
@@ -653,7 +653,7 @@ with rados.Rados(conffile="/etc/ceph/ceph.conf") as cluster:
         ioctx.write_full(sys.argv[2],base64.b64decode(sys.argv[3]))
 `
 
-// nativeStatReadScript is the stat2 and read recipe of ceph/README.md.
+// nativeStatReadScript is the stat2 and read recipe of docs/guides/ceph-operations.md.
 const nativeStatReadScript = `import base64,ctypes,json,sys
 pool,name=sys.argv[1].encode(),sys.argv[2].encode()
 lib=ctypes.CDLL("librados.so.2")
