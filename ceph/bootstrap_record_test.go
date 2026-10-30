@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"go/ast"
-	"go/token"
 	"go/types"
 	"path/filepath"
 	"slices"
@@ -245,27 +244,27 @@ var bootstrapRecordWriters = map[string]string{
 //	"lockfree" the lock-free FactsOf source; the version is written only during
 //	           startup (see TestClusterFactsRecordedSourcesAreNotRewrittenOutsideStartup)
 //	"identity" returns the lock identity for the test state view
-var bootstrapRecordCallers = map[string]map[string]string{
-	"createClient":                     {"hasConfig": "takes", "rawConfig": "takes"},
-	"WithIdentity":                     {"rawConfig": "takes"},
-	"startService":                     {"isComplete": "takes"},
-	"AddMonitor":                       {"rawConfig": "takes"},
-	"bootstrapFirstMonitor":            {"recordConfig": "startup", "recordKeyring": "startup"},
-	"recordCephVersion":                {"recordVersion": "startup"},
-	"staticFacts":                      {"rawVersion": "lockfree"},
-	"adminClient":                      {"clones": "free"},
-	"currentMonitorBootstrapAddresses": {"templateAndConfirmed": "free"},
-	"newOSDLaunchRecipe":               {"launchStrings": "free"},
-	"refreshMonitorConfigAfterRemoval": {"template": "free", "publishConfig": "free"},
-	"configureDefaultCRUSHRoot":        {"applyDefaultCRUSHRule": "free"},
-	"diagnosticsSnapshot":              {"diagnosticKeyring": "free"},
-	"fullRatiosSession":                {"identity": "free"},
-	"HealthDetails":                    {"identity": "free"},
-	"PGs":                              {"identity": "free"},
-	"Usage":                            {"identity": "free"},
-	"ClusterIdentity":                  {"identity": "free"},
-	"ConnectionConfig":                 {"connection": "free"},
-	"UnitState":                        {"mutex": "identity"},
+var bootstrapRecordCallers = map[string]stateCaller{
+	"createClient":                     {"takes", []string{"hasConfig", "rawConfig"}},
+	"WithIdentity":                     {"takes", []string{"rawConfig"}},
+	"startService":                     {"takes", []string{"isComplete"}},
+	"AddMonitor":                       {"takes", []string{"rawConfig"}},
+	"bootstrapFirstMonitor":            {"startup", []string{"recordConfig", "recordKeyring"}},
+	"recordCephVersion":                {"startup", []string{"recordVersion"}},
+	"staticFacts":                      {"lockfree", []string{"rawVersion"}},
+	"adminClient":                      {"free", []string{"clones"}},
+	"currentMonitorBootstrapAddresses": {"free", []string{"templateAndConfirmed"}},
+	"newOSDLaunchRecipe":               {"free", []string{"launchStrings"}},
+	"refreshMonitorConfigAfterRemoval": {"free", []string{"publishConfig", "template"}},
+	"configureDefaultCRUSHRoot":        {"free", []string{"applyDefaultCRUSHRule"}},
+	"diagnosticsSnapshot":              {"free", []string{"diagnosticKeyring"}},
+	"fullRatiosSession":                {"free", []string{"identity"}},
+	"HealthDetails":                    {"free", []string{"identity"}},
+	"PGs":                              {"free", []string{"identity"}},
+	"Usage":                            {"free", []string{"identity"}},
+	"ClusterIdentity":                  {"free", []string{"identity"}},
+	"ConnectionConfig":                 {"free", []string{"connection"}},
+	"UnitState":                        {"identity", []string{"mutex"}},
 }
 
 func isBootstrapReceiver(fn *ast.FuncDecl) bool { return receiverTypeName(fn) == "bootstrapRecord" }
@@ -298,67 +297,25 @@ func TestContainerDeclaresNoBootstrapFieldsOrLock(t *testing.T) {
 // field the hook assigns; the lock-free FactsOf source reads only the version
 // through rawVersion; no production composite literal of Container sets it.
 func TestBootstrapRecordFieldIsOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isBootstrapReceiver(fn) {
-				continue
+	fieldAudit{label: "Container.bootstrap", use: bootstrapUse, own: isBootstrapReceiver, methods: bootstrapRecordMethods, bound: monitorTopologyBinding, literalField: "bootstrap", factsReads: []string{"rawVersion"},
+		counted: func(fn *ast.FuncDecl, sel *ast.SelectorExpr) bool {
+			return isContainerReceiver(sel.X) || receiverTypeName(fn) == "monitorTopology"
+		},
+		allow: func(_ string, fn *ast.FuncDecl, n ast.Node, allowed map[*ast.SelectorExpr]bool) []string {
+			// c.bootstrap.config = x, in a UnitSet hook only.
+			assign, ok := n.(*ast.AssignStmt)
+			if !ok || receiverTypeName(fn) != "unitAccess" || !strings.HasPrefix(fn.Name.Name, "UnitSet") {
+				return nil
 			}
-			isHook := receiverTypeName(fn) == "unitAccess" && strings.HasPrefix(fn.Name.Name, "UnitSet")
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					if method, ok := x.Fun.(*ast.SelectorExpr); ok {
-						if _, known := bootstrapRecordMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok && bootstrapUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
-				case *ast.AssignStmt:
-					// c.bootstrap.config = x, in a TestSet hook only.
-					for _, lhs := range x.Lhs {
-						if sel, ok := lhs.(*ast.SelectorExpr); ok && bootstrapFields[sel.Sel.Name] && isHook {
-							if recv, ok := sel.X.(*ast.SelectorExpr); ok && bootstrapUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
-				case *ast.CompositeLit:
-					if id, ok := x.Type.(*ast.Ident); ok && id.Name == "Container" {
-						for _, elt := range x.Elts {
-							if kv, ok := elt.(*ast.KeyValueExpr); ok {
-								if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "bootstrap" {
-									problems = append(problems, file+": "+fn.Name.Name+" sets bootstrap in a Container literal")
-								}
-							}
-						}
+			for _, lhs := range assign.Lhs {
+				if sel, ok := lhs.(*ast.SelectorExpr); ok && bootstrapFields[sel.Sel.Name] {
+					if recv, ok := sel.X.(*ast.SelectorExpr); ok && bootstrapUse(recv) {
+						allowed[recv] = true
 					}
 				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && bootstrapUse(sel) && (isContainerReceiver(sel.X) || receiverTypeName(fn) == "monitorTopology") {
-					if allowed[sel] || monitorTopologyBinding(fn) {
-						uses++
-					} else {
-						problems = append(problems, file+": "+fn.Name.Name+" uses Container.bootstrap outside a bootstrapRecord method call")
-					}
-				}
-				return true
-			})
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.bootstrap found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("bootstrap record escapes its methods: %v", problems)
-	}
+			}
+			return nil
+		}}.check(t)
 }
 
 // TestBootstrapRecordMethodsMakeOnlyTheirPinnedCalls guards the lock contract
@@ -366,55 +323,9 @@ func TestBootstrapRecordFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 // listed (no other lock, no Container call), and no method names Container,
 // closed or another mutex.
 func TestBootstrapRecordMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || !isBootstrapReceiver(fn) {
-				continue
-			}
-			name := fn.Name.Name
-			want, known := bootstrapRecordMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update bootstrapRecordMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					got = append(got, types.ExprString(x))
-				case *ast.Ident:
-					switch x.Name {
-					case "Container", "closed", "controlPlane", "settings":
-						problems = append(problems, name+" names "+x.Name)
-					}
-				case *ast.SelectorExpr:
-					switch x.Sel.Name {
-					case "mu", "controlMu", "configMu", "extensionsMu":
-						if id, ok := x.X.(*ast.Ident); !ok || id.Name != "r" {
-							problems = append(problems, name+" reads "+types.ExprString(x))
-						}
-					}
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+strings.Join(got, ",")+", pinned "+strings.Join(want, ","))
-			}
-		}
-	}
-	for name := range bootstrapRecordMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("bootstrapRecord breaks its lock contract: %v", problems)
-	}
+	methodAudit{label: "bootstrapRecord", own: isBootstrapReceiver, methods: bootstrapRecordMethods,
+		render:    func(call *ast.CallExpr) string { return types.ExprString(call) },
+		forbidden: []string{"Container", "closed", "controlPlane", "settings"}, forbiddenMembers: []string{"mu", "controlMu", "configMu", "extensionsMu"}, self: "r"}.check(t)
 }
 
 // TestBootstrapRecordWritersAreAudited pins every production function that
@@ -486,75 +397,8 @@ func TestBootstrapRecordWritersAreAudited(t *testing.T) {
 // the single "lockfree" caller, the lock identity has the single caller
 // UnitState, and a stale row fails.
 func TestBootstrapRecordCallersAreAudited(t *testing.T) {
-	found := map[string]map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isBootstrapReceiver(fn) {
-				continue
-			}
-			var lockAt token.Pos
-			uses := map[string]token.Pos{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if isTopologyAcquire(call) && lockAt == token.NoPos {
-					lockAt = call.Pos()
-				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if recv, ok := sel.X.(*ast.SelectorExpr); ok && bootstrapUse(recv) {
-						if _, seen := uses[sel.Sel.Name]; !seen {
-							uses[sel.Sel.Name] = call.Pos()
-						}
-					}
-				}
-				return true
-			})
-			name := fn.Name.Name
-			for method, at := range uses {
-				if found[name] == nil {
-					found[name] = map[string]bool{}
-				}
-				found[name][method] = true
-				mode, known := bootstrapRecordCallers[name][method]
-				switch {
-				case !known:
-					problems = append(problems, name+" calls bootstrap."+method+" but is not in bootstrapRecordCallers")
-				case mode == "takes" && (lockAt == token.NoPos || lockAt > at):
-					problems = append(problems, name+" must take the topology lock before bootstrap."+method)
-				case mode == "startup" && name != "bootstrapFirstMonitor" && name != "recordCephVersion":
-					problems = append(problems, name+" writes the bootstrap record outside startup")
-				case mode == "lockfree" && name != "staticFacts":
-					problems = append(problems, name+" reads the bootstrap record without a lock")
-				case mode == "identity" && name != "UnitState":
-					problems = append(problems, name+" publishes the bootstrap-record lock identity")
-				}
-			}
-		}
-	}
-	for name, methods := range bootstrapRecordCallers {
-		for method := range methods {
-			if !found[name][method] {
-				problems = append(problems, name+" is listed for bootstrap."+method+" but no longer calls it")
-			}
-		}
-	}
-	lockers := 0
-	for _, methods := range found {
-		if methods["mutex"] {
-			lockers++
-		}
-	}
-	if lockers != 1 || !found["UnitState"]["mutex"] {
-		problems = append(problems, "bootstrap.mutex must have the single caller UnitState")
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("bootstrap record callers break the lock contract: %v", problems)
-	}
+	callerAudit{label: "the bootstrap record", use: bootstrapUse, own: isBootstrapReceiver, callers: bootstrapRecordCallers,
+		only: map[string][]string{"startup": {"bootstrapFirstMonitor", "recordCephVersion"}, "lockfree": {"staticFacts"}, "identity": {"UnitState"}}}.check(t)
 }
 
 // TestBootstrapRecordSourceIsInTheRightFile pins the file of the component so a

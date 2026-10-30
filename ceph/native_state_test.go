@@ -170,43 +170,12 @@ func receiverTypeName(fn *ast.FuncDecl) string {
 // one of its methods, so no code reads or writes a field, or takes
 // the lock, without the method that does.
 func TestNativeStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) == "nativeState" {
-				continue
-			}
-			// Selectors that are the called method of a nativeState method.
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					if method, ok := call.Fun.(*ast.SelectorExpr); ok && nativeStateMethods[method.Sel.Name] {
-						if recv, ok := method.X.(*ast.SelectorExpr); ok {
-							allowed[recv] = true
-						}
-					}
-				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "calls" && isNativeCallsOwner(sel.X) {
-					uses++
-					if !allowed[sel] {
-						problems = append(problems, file+": "+fn.Name.Name+" uses "+types.ExprString(sel)+" outside a nativeState method call")
-					}
-				}
-				return true
-			})
-		}
+	methods := map[string][]string{}
+	for name := range nativeStateMethods {
+		methods[name] = nil
 	}
-	if uses == 0 {
-		problems = append(problems, "no use of the native calls state found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		t.Fatalf("native state escapes its methods: %v", problems)
-	}
+	fieldAudit{label: "the native calls state", own: func(fn *ast.FuncDecl) bool { return receiverTypeName(fn) == "nativeState" }, methods: methods,
+		use: func(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "calls" && isNativeCallsOwner(sel.X) }}.check(t)
 }
 
 // isNativeCallsOwner reports whether x is the nativeCommands value whose calls

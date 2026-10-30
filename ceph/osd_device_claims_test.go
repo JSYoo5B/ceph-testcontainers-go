@@ -329,77 +329,38 @@ func osdDeviceClaimIgnoredCall(call string) bool {
 	return false
 }
 
-// osdDeviceClaimCallers is the production caller table of the functions that
-// take the topology lock themselves. osdDeviceClaimHolders lists the functions
-// whose doc comment requires the caller to hold it: they must not take it, and
-// their own callers are pinned by osdDeviceWiringCallers.
-var osdDeviceClaimCallers = map[string]map[string]bool{
-	"removeOSD": {"release": true},
-	"terminate": {"settle": true},
-}
-
-var osdDeviceClaimHolders = map[string]map[string]bool{
-	"registerBlockDeviceOSD": {"claim": true},
+// osdDeviceClaimCallers is the production caller table (see stateCaller):
+// the release hooks take the topology lock themselves, the wiring step and the
+// terminate step hold it. claim has no other production caller.
+var osdDeviceClaimCallers = map[string]stateCaller{
+	"removeOSD": {"takes", []string{"release"}},
+	"terminate": {"takes", []string{"settle"}},
+	// registerBlockDeviceOSD's callers are also pinned by osdDeviceWiringCallers.
+	"registerBlockDeviceOSD": {"holds", []string{"claim"}},
 	// terminateOSDs is called only by terminate (TestTerminateStepsAreCalledOnlyByTerminate).
-	"terminateOSDs": {"release": true},
+	"terminateOSDs": {"holds", []string{"release"}},
 }
 
 func osdDeviceClaimUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "deviceClaims" }
 
 func TestOSDDeviceClaimsFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) == "osdDeviceClaims" {
-				continue
-			}
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					if method, ok := call.Fun.(*ast.SelectorExpr); ok {
-						if _, known := osdDeviceClaimMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok && osdDeviceClaimUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
-				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && osdDeviceClaimUse(sel) {
-					if allowed[sel] || osdFleetBinding(fn) {
-						uses++
-					} else {
-						problems = append(problems, file+": "+fn.Name.Name+" uses Container.deviceClaims outside an osdDeviceClaims method call")
-					}
-				}
-				return true
-			})
-			if file == "cluster_facts.go" && strings.Contains(fn.Name.Name, "Facts") {
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					if sel, ok := n.(*ast.SelectorExpr); ok && osdDeviceClaimUse(sel) {
-						problems = append(problems, "FactsOf source reads Container.deviceClaims")
-					}
-					return true
-				})
-			}
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.deviceClaims found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		t.Fatalf("OSD device claims escape their methods: %v", problems)
-	}
+	fieldAudit{label: "Container.deviceClaims", use: osdDeviceClaimUse, own: isOSDDeviceClaimsReceiver, methods: osdDeviceClaimMethods, bound: osdFleetBinding}.check(t)
+}
+
+func isOSDDeviceClaimsReceiver(fn *ast.FuncDecl) bool {
+	return receiverTypeName(fn) == "osdDeviceClaims"
 }
 
 func TestOSDDeviceClaimsMethodsMakeOnlyTheirPinnedCallsAndHaveNoMutex(t *testing.T) {
-	seen := map[string]bool{}
+	methodAudit{label: "osdDeviceClaims", own: isOSDDeviceClaimsReceiver, methods: osdDeviceClaimMethods,
+		writers: map[string][]string{"records": {"claim", "release"}},
+		render: func(call *ast.CallExpr) string {
+			if text := types.ExprString(call); !osdDeviceClaimIgnoredCall(text) {
+				return text
+			}
+			return ""
+		}}.check(t)
 	var problems []string
-	writers := map[string]bool{"claim": true, "release": true}
 	for file, parsed := range parseProductionFiles(t) {
 		if file == "osd_device_claims.go" {
 			for _, imp := range parsed.Imports {
@@ -424,44 +385,9 @@ func TestOSDDeviceClaimsMethodsMakeOnlyTheirPinnedCallsAndHaveNoMutex(t *testing
 			}
 		}
 		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) != "osdDeviceClaims" {
-				continue
+			if fn, ok := decl.(*ast.FuncDecl); ok && isOSDDeviceClaimsReceiver(fn) && fn.Name.IsExported() {
+				problems = append(problems, fn.Name.Name+" is exported")
 			}
-			name := fn.Name.Name
-			if fn.Name.IsExported() {
-				problems = append(problems, name+" is exported")
-			}
-			want, known := osdDeviceClaimMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update osdDeviceClaimMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					if text := types.ExprString(x); !osdDeviceClaimIgnoredCall(text) {
-						got = append(got, text)
-					}
-				case *ast.AssignStmt:
-					for _, lhs := range x.Lhs {
-						if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "records" && !writers[name] {
-							problems = append(problems, name+" assigns records")
-						}
-					}
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-			}
-		}
-	}
-	for name := range osdDeviceClaimMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
 		}
 	}
 	if len(problems) != 0 {
@@ -475,73 +401,7 @@ func TestOSDDeviceClaimsMethodsMakeOnlyTheirPinnedCallsAndHaveNoMutex(t *testing
 // each of those takes lockTopology before its first use. A holder never takes
 // the lock itself.
 func TestOSDDeviceClaimCallersAreTheReleaseHooksAndTheWiringStep(t *testing.T) {
-	found := map[string]map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || receiverTypeName(fn) == "osdDeviceClaims" {
-				continue
-			}
-			var lockAt, firstUse token.Pos
-			used := map[string]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if isTopologyAcquire(call) && lockAt == token.NoPos {
-					lockAt = call.Pos()
-				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if recv, ok := sel.X.(*ast.SelectorExpr); ok && osdDeviceClaimUse(recv) {
-						if firstUse == token.NoPos {
-							firstUse = call.Pos()
-						}
-						used[sel.Sel.Name] = true
-					}
-				}
-				return true
-			})
-			if len(used) == 0 {
-				continue
-			}
-			name := fn.Name.Name
-			found[name] = used
-			want, known := osdDeviceClaimCallers[name]
-			if holder, isHolder := osdDeviceClaimHolders[name]; isHolder {
-				want, known = holder, true
-				if lockAt != token.NoPos {
-					problems = append(problems, name+" is a lock holder and must not take lockTopology")
-				}
-				lockAt = firstUse
-			}
-			switch {
-			case !known:
-				problems = append(problems, name+" uses the OSD device claims but is not in osdDeviceClaimCallers")
-				continue
-			case lockAt == token.NoPos || lockAt > firstUse:
-				problems = append(problems, name+" must take lockTopology before using the OSD device claims")
-			}
-			for method := range used {
-				if !want[method] {
-					problems = append(problems, name+" calls osdDeviceClaims."+method+", which it is not listed for (claim has no production caller)")
-				}
-			}
-		}
-	}
-	for _, table := range []map[string]map[string]bool{osdDeviceClaimCallers, osdDeviceClaimHolders} {
-		for name, want := range table {
-			for method := range want {
-				if !found[name][method] {
-					problems = append(problems, name+" no longer calls osdDeviceClaims."+method)
-				}
-			}
-		}
-	}
-	if len(problems) != 0 {
-		t.Fatalf("OSD device claim callers break the contract: %v", problems)
-	}
+	callerAudit{label: "the OSD device claims", use: osdDeviceClaimUse, own: isOSDDeviceClaimsReceiver, callers: osdDeviceClaimCallers}.check(t)
 }
 
 // TestOSDDeviceClaimReleaseOrderAgainstContainerRemoval guards the release

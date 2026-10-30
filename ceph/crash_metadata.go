@@ -355,23 +355,15 @@ func readCrashArchive(content io.Reader, config CrashMetadataConfig, result *Cra
 		}
 		return nil
 	}
-	reader := tar.NewReader(counted)
-	base := path.Base(CrashDir)
-	done := map[string]bool{}
-	// directories holds each record's report directory, unredacted.
-	var directories []string
-	defer func() {
-		for i, directory := range directories {
-			result.Records[i].Done = done[directory]
-		}
-	}()
+	archive := crashArchiveReader{config: config, result: result, redact: redact, reader: tar.NewReader(counted), done: map[string]bool{}}
+	defer archive.markDone()
 	entries := 0
 	// The archive ends with two zero blocks after the last entry's content.
 	// The tar reader also reports a normal end for a stream cut at an entry
 	// boundary, or after an extended header (PAX or GNU) and its payload,
 	// which it consumes itself.
 	for {
-		header, err := reader.Next()
+		header, err := archive.reader.Next()
 		if errors.Is(err, io.EOF) {
 			if !counted.terminated() {
 				return errors.Join(overLimit(), errors.New("the crash directory archive ends without its end marker"))
@@ -385,51 +377,91 @@ func readCrashArchive(content io.Reader, config CrashMetadataConfig, result *Cra
 			return fmt.Errorf("the crash directory archive has more than %d entries", config.MaxEntries)
 		}
 		counted.follow(counted.n + (max(header.Size, 0)+511)/512*512)
-		name := header.Name
-		relative, inside := strings.CutPrefix(path.Clean(name), base+"/")
-		if path.IsAbs(name) || slices.Contains(strings.Split(name, "/"), "..") || (!inside && path.Clean(name) != base) {
-			result.Omitted = append(result.Omitted, CrashOmission{Path: redact(name), Reason: "unexpected path"})
-			continue
-		}
-		parts := strings.Split(relative, "/")
-		posted := len(parts) == 3 && parts[0] == "posted"
-		if posted {
-			parts = parts[1:]
-		}
-		report := len(parts) == 2 && parts[0] != "" && parts[0] != "posted"
-		switch {
-		case !inside && header.Typeflag != tar.TypeDir:
-			result.Omitted = append(result.Omitted, CrashOmission{Path: redact(name), Reason: "the crash directory is not a directory"})
-		case report && parts[1] == "meta" && header.Typeflag != tar.TypeReg:
-			result.Omitted = append(result.Omitted, CrashOmission{Path: redact(relative), Reason: "not a regular file"})
-		case !inside || header.Typeflag == tar.TypeDir:
-		case report && parts[1] == "meta":
-			if len(result.Records) >= config.MaxRecords {
-				result.Omitted = append(result.Omitted, CrashOmission{Path: redact(relative), Reason: fmt.Sprintf("over the limit of %d records", config.MaxRecords)})
-				continue
-			}
-			if header.Size > int64(config.MaxRecordBytes) {
-				result.Omitted = append(result.Omitted, CrashOmission{Path: redact(relative), Reason: fmt.Sprintf("larger than %d bytes", config.MaxRecordBytes)})
-				continue
-			}
-			data, err := io.ReadAll(io.LimitReader(reader, int64(config.MaxRecordBytes)+1))
-			if err != nil {
-				return errors.Join(overLimit(), fmt.Errorf("read %s: %w", redact(relative), err))
-			}
-			record, reason := crashRecord(data, relative, posted, redact)
-			if reason != "" {
-				result.Omitted = append(result.Omitted, CrashOmission{Path: redact(relative), Reason: reason})
-				continue
-			}
-			result.Records = append(result.Records, record)
-			directories = append(directories, path.Dir(relative))
-		case report && parts[1] == "done" && header.Typeflag == tar.TypeReg:
-			done[relative[:len(relative)-len("/done")]] = true
-		default:
-			result.IgnoredEntries++
+		if err := archive.entry(header); err != nil {
+			return errors.Join(overLimit(), err)
 		}
 	}
 	return overLimit()
+}
+
+// crashArchiveReader reads the entries of one crash directory archive into result.
+type crashArchiveReader struct {
+	config CrashMetadataConfig
+	result *CrashMetadataContainer
+	redact func(string) string
+	reader *tar.Reader
+	// done holds the report directories with a done marker, and directories
+	// each record's report directory, both unredacted.
+	done        map[string]bool
+	directories []string
+}
+
+// markDone marks each record whose report directory has a done marker.
+func (a *crashArchiveReader) markDone() {
+	for i, directory := range a.directories {
+		a.result.Records[i].Done = a.done[directory]
+	}
+}
+
+func (a *crashArchiveReader) omit(path, reason string) {
+	a.result.Omitted = append(a.result.Omitted, CrashOmission{Path: a.redact(path), Reason: reason})
+}
+
+// entry classifies one archive entry: a path outside the crash directory, a
+// report's metadata file or done marker, or an ignored entry. Only a failed
+// read of a metadata file's content is an error.
+func (a *crashArchiveReader) entry(header *tar.Header) error {
+	base := path.Base(CrashDir)
+	name := header.Name
+	relative, inside := strings.CutPrefix(path.Clean(name), base+"/")
+	if path.IsAbs(name) || slices.Contains(strings.Split(name, "/"), "..") || (!inside && path.Clean(name) != base) {
+		a.omit(name, "unexpected path")
+		return nil
+	}
+	parts := strings.Split(relative, "/")
+	posted := len(parts) == 3 && parts[0] == "posted"
+	if posted {
+		parts = parts[1:]
+	}
+	report := len(parts) == 2 && parts[0] != "" && parts[0] != "posted"
+	switch {
+	case !inside && header.Typeflag != tar.TypeDir:
+		a.omit(name, "the crash directory is not a directory")
+	case report && parts[1] == "meta" && header.Typeflag != tar.TypeReg:
+		a.omit(relative, "not a regular file")
+	case !inside || header.Typeflag == tar.TypeDir:
+	case report && parts[1] == "meta":
+		return a.meta(header, relative, posted)
+	case report && parts[1] == "done" && header.Typeflag == tar.TypeReg:
+		a.done[relative[:len(relative)-len("/done")]] = true
+	default:
+		a.result.IgnoredEntries++
+	}
+	return nil
+}
+
+// meta reads one metadata file into a record, or omits it with its reason.
+func (a *crashArchiveReader) meta(header *tar.Header, relative string, posted bool) error {
+	if len(a.result.Records) >= a.config.MaxRecords {
+		a.omit(relative, fmt.Sprintf("over the limit of %d records", a.config.MaxRecords))
+		return nil
+	}
+	if header.Size > int64(a.config.MaxRecordBytes) {
+		a.omit(relative, fmt.Sprintf("larger than %d bytes", a.config.MaxRecordBytes))
+		return nil
+	}
+	data, err := io.ReadAll(io.LimitReader(a.reader, int64(a.config.MaxRecordBytes)+1))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", a.redact(relative), err)
+	}
+	record, reason := crashRecord(data, relative, posted, a.redact)
+	if reason != "" {
+		a.omit(relative, reason)
+		return nil
+	}
+	a.result.Records = append(a.result.Records, record)
+	a.directories = append(a.directories, path.Dir(relative))
+	return nil
 }
 
 // crashRecord parses one metadata file, or returns why it is rejected.

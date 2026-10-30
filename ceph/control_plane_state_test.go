@@ -188,14 +188,15 @@ var controlPlaneMethods = map[string][]string{
 //	"holds"    its doc comment says the caller holds the topology lock
 //	"takes"    calls lockTopology before its first use
 //	"identity" returns the lock identity for the test state view
-var controlPlaneCallers = map[string]map[string]string{
-	"terminate":           {"terminate": "takes"},
-	"ensureControlPlane":  {"current": "holds", "publish": "holds"},
-	"cliContainer":        {"current": "free"},
-	"controlContainer":    {"currentContext": "free"},
-	"admitNativeTarget":   {"owns": "free"},
-	"diagnosticsSnapshot": {"diagnosticHandle": "free"},
-	"UnitState":           {"mutex": "identity"},
+var controlPlaneCallers = map[string]stateCaller{
+	"terminate":           {"takes", []string{"terminate"}},
+	"ensureControlPlane":  {"holds", []string{"current", "publish"}},
+	"monitorJoinMaterial": {"holds", nil},
+	"cliContainer":        {"free", []string{"current"}},
+	"controlContainer":    {"free", []string{"currentContext"}},
+	"admitNativeTarget":   {"free", []string{"owns"}},
+	"diagnosticsSnapshot": {"free", []string{"diagnosticHandle"}},
+	"UnitState":           {"identity", []string{"mutex"}},
 }
 
 // isControlPlaneHandleOwner reports whether e is the component itself: the
@@ -231,97 +232,48 @@ func isControlPlaneReceiver(fn *ast.FuncDecl) bool {
 // the owner of the handle field; the lock-free FactsOf source never mentions
 // it, and no production composite literal of Container sets it.
 func TestControlPlaneStateFieldIsOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isControlPlaneReceiver(fn) {
-				continue
-			}
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					if method, ok := x.Fun.(*ast.SelectorExpr); ok {
-						if _, known := controlPlaneMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok && controlPlaneUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
-				case *ast.SelectorExpr:
-					// c.controlPlane.handle = control, in the hook only.
-					if x.Sel.Name == "handle" && fn.Name.Name == "UnitSetControlPlane" {
-						if recv, ok := x.X.(*ast.SelectorExpr); ok && controlPlaneUse(recv) {
-							allowed[recv] = true
-						}
-					}
-				case *ast.CompositeLit:
-					// cephConn{control: &c.controlPlane}, in Container.conn only:
-					// the transport reaches the component through its pinned
-					// readers (TestCephConnReachesTheControlPlaneOnlyThroughItsReaders).
-					if id, ok := x.Type.(*ast.Ident); ok && id.Name == "cephConn" {
-						for _, elt := range x.Elts {
-							kv, ok := elt.(*ast.KeyValueExpr)
-							if !ok {
-								continue
-							}
-							if key, ok := kv.Key.(*ast.Ident); !ok || key.Name != "control" {
-								continue
-							}
-							u, ok := kv.Value.(*ast.UnaryExpr)
-							recv, isSel := ast.Expr(nil), false
-							if ok && u.Op == token.AND {
-								recv = u.X
-								_, isSel = recv.(*ast.SelectorExpr)
-							}
-							if isSel && fn.Name.Name == "conn" && receiverTypeName(fn) == "Container" && controlPlaneUse(recv.(*ast.SelectorExpr)) {
-								allowed[recv.(*ast.SelectorExpr)] = true
-							} else {
-								problems = append(problems, file+": "+fn.Name.Name+" builds a cephConn control other than &c.controlPlane in Container.conn")
-							}
-						}
-					}
-					if id, ok := x.Type.(*ast.Ident); ok && id.Name == "Container" {
-						for _, elt := range x.Elts {
-							if kv, ok := elt.(*ast.KeyValueExpr); ok {
-								if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "controlPlane" {
-									problems = append(problems, file+": "+fn.Name.Name+" sets controlPlane in a Container literal")
-								}
-							}
-						}
+	fieldAudit{label: "Container.controlPlane", use: controlPlaneUse, own: isControlPlaneReceiver, methods: controlPlaneMethods, literalField: "controlPlane",
+		counted: func(_ *ast.FuncDecl, sel *ast.SelectorExpr) bool { return isContainerReceiver(sel.X) },
+		allow: func(file string, fn *ast.FuncDecl, n ast.Node, allowed map[*ast.SelectorExpr]bool) []string {
+			switch x := n.(type) {
+			case *ast.SelectorExpr:
+				// c.controlPlane.handle = control, in the hook only.
+				if x.Sel.Name == "handle" && fn.Name.Name == "UnitSetControlPlane" {
+					if recv, ok := x.X.(*ast.SelectorExpr); ok && controlPlaneUse(recv) {
+						allowed[recv] = true
 					}
 				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && controlPlaneUse(sel) && isContainerReceiver(sel.X) {
-					if allowed[sel] {
-						uses++
+			case *ast.CompositeLit:
+				// cephConn{control: &c.controlPlane}, in Container.conn only:
+				// the transport reaches the component through its pinned
+				// readers (TestCephConnReachesTheControlPlaneOnlyThroughItsReaders).
+				if id, ok := x.Type.(*ast.Ident); !ok || id.Name != "cephConn" {
+					return nil
+				}
+				var problems []string
+				for _, elt := range x.Elts {
+					kv, ok := elt.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					if key, ok := kv.Key.(*ast.Ident); !ok || key.Name != "control" {
+						continue
+					}
+					u, ok := kv.Value.(*ast.UnaryExpr)
+					var recv *ast.SelectorExpr
+					if ok && u.Op == token.AND {
+						recv, _ = u.X.(*ast.SelectorExpr)
+					}
+					if recv != nil && fn.Name.Name == "conn" && receiverTypeName(fn) == "Container" && controlPlaneUse(recv) {
+						allowed[recv] = true
 					} else {
-						problems = append(problems, file+": "+fn.Name.Name+" uses Container.controlPlane outside a controlPlaneState method call")
+						problems = append(problems, file+": "+fn.Name.Name+" builds a cephConn control other than &c.controlPlane in Container.conn")
 					}
 				}
-				return true
-			})
-			if file == "cluster_facts.go" && strings.Contains(fn.Name.Name, "Facts") {
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					if sel, ok := n.(*ast.SelectorExpr); ok && controlPlaneUse(sel) {
-						problems = append(problems, "FactsOf source reads Container.controlPlane")
-					}
-					return true
-				})
+				return problems
 			}
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.controlPlane found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("control plane state escapes its methods: %v", problems)
-	}
+			return nil
+		}}.check(t)
 }
 
 // TestControlPlaneStateMethodsMakeOnlyTheirPinnedCalls guards the lock
@@ -330,53 +282,9 @@ func TestControlPlaneStateFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 // by publish and terminate, and no method names Container, closed or another
 // mutex.
 func TestControlPlaneStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || !isControlPlaneReceiver(fn) {
-				continue
-			}
-			name := fn.Name.Name
-			want, known := controlPlaneMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update controlPlaneMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					got = append(got, types.ExprString(x))
-				case *ast.AssignStmt:
-					for _, lhs := range x.Lhs {
-						if sel, ok := lhs.(*ast.SelectorExpr); ok && sel.Sel.Name == "handle" && name != "publish" && name != "terminate" {
-							problems = append(problems, name+" assigns handle")
-						}
-					}
-				case *ast.Ident:
-					if x.Name == "Container" || x.Name == "closed" {
-						problems = append(problems, name+" names "+x.Name)
-					}
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-			}
-		}
-	}
-	for name := range controlPlaneMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("controlPlaneState breaks its lock contract: %v", problems)
-	}
+	methodAudit{label: "controlPlaneState", own: isControlPlaneReceiver, methods: controlPlaneMethods,
+		render:  func(call *ast.CallExpr) string { return types.ExprString(call) },
+		writers: map[string][]string{"handle": {"publish", "terminate"}}, forbidden: []string{"Container", "closed"}}.check(t)
 }
 
 // TestControlPlaneStateWritersAreAudited pins the production writers of the
@@ -437,74 +345,8 @@ func TestControlPlaneStateWritersAreAudited(t *testing.T) {
 // document that the caller holds the topology lock, the lock identity has the
 // single caller UnitState, and a stale row fails.
 func TestControlPlaneStateCallersAreAudited(t *testing.T) {
-	docs := osdRegistryDocs(t)
-	found := map[string]map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isControlPlaneReceiver(fn) {
-				continue
-			}
-			var lockAt token.Pos
-			uses := map[string]token.Pos{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if isTopologyAcquire(call) && lockAt == token.NoPos {
-					lockAt = call.Pos()
-				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if recv, ok := sel.X.(*ast.SelectorExpr); ok && controlPlaneUse(recv) {
-						if _, seen := uses[sel.Sel.Name]; !seen {
-							uses[sel.Sel.Name] = call.Pos()
-						}
-					}
-				}
-				return true
-			})
-			name := fn.Name.Name
-			for method, at := range uses {
-				if found[name] == nil {
-					found[name] = map[string]bool{}
-				}
-				found[name][method] = true
-				mode, known := controlPlaneCallers[name][method]
-				switch {
-				case !known:
-					problems = append(problems, name+" calls controlPlane."+method+" but is not in controlPlaneCallers")
-				case mode == "takes" && (lockAt == token.NoPos || lockAt > at):
-					problems = append(problems, name+" must take lockTopology before controlPlane."+method)
-				case mode == "holds" && !strings.Contains(docs[name], "holds c.mu"):
-					problems = append(problems, name+" calls controlPlane."+method+" but its doc does not say the caller holds c.mu")
-				case mode == "identity" && name != "UnitState":
-					problems = append(problems, name+" publishes the control-plane lock identity")
-				}
-			}
-		}
-	}
-	for name, methods := range controlPlaneCallers {
-		for method := range methods {
-			if !found[name][method] {
-				problems = append(problems, name+" is listed for controlPlane."+method+" but no longer calls it")
-			}
-		}
-	}
-	lockers := 0
-	for _, methods := range found {
-		if methods["mutex"] {
-			lockers++
-		}
-	}
-	if lockers != 1 || !found["UnitState"]["mutex"] {
-		problems = append(problems, "controlPlane.mutex must have the single caller UnitState")
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("control plane callers break the lock contract: %v", problems)
-	}
+	callerAudit{label: "the control plane", use: controlPlaneUse, own: isControlPlaneReceiver, callers: controlPlaneCallers,
+		only: map[string][]string{"identity": {"UnitState"}}, holdsDoc: "holds c.mu"}.check(t)
 }
 
 // TestTerminateRemovesTheControlPlaneUnderTheTopologyLockBeforeTheFeatureClient

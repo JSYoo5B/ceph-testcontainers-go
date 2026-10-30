@@ -572,6 +572,38 @@ func TestCollectDiagnosticsPreservesPartialFailures(t *testing.T) {
 	}
 }
 
+// The report order is the plan's: each container's inspection and logs in
+// snapshot order, each distinct network once, the fixed Ceph queries, then the
+// container-limit inventory; concurrent workers never reorder it.
+func TestCollectDiagnosticsReportOrderIsThePlan(t *testing.T) {
+	config := diagnosticsUnitConfig(t)
+	config.Concurrency = 4
+	control := &diagnosticsTestContainer{id: "owned", exec: func(context.Context, []string, ...tcexec.ProcessOption) (int, io.Reader, error) {
+		return 0, strings.NewReader(diagnosticsSupervisorResult("native", 0, false, false)), nil
+	}}
+	docker := diagnosticsTestDocker{logs: func(context.Context, string, dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
+		return io.NopCloser(strings.NewReader("")), nil
+	}}
+	snapshot := diagnosticsSnapshot{
+		containers: []DiagnosticsContainer{{Role: "mon", Name: "a", Container: control}, {Role: "osd", Name: "missing"}},
+		networks:   []diagnosticNetwork{{id: "public", name: "public"}, {id: "public", name: "public"}, {id: "cluster", name: "cluster"}},
+		control:    control, omitted: 2,
+	}
+	report, _ := collectDiagnostics(t.Context(), config, snapshot, docker, diagnosticsUnitReport())
+	want := []string{"container-inspect/a", "container-logs/a", "container-inspect/missing", "container-logs/missing", "network-inspect/public", "network-inspect/cluster"}
+	for _, query := range diagnosticCephQueries {
+		want = append(want, "ceph/"+query.name)
+	}
+	want = append(want, "inventory/container-limit")
+	var got []string
+	for _, artifact := range report.Artifacts {
+		got = append(got, artifact.Kind+"/"+artifact.Name)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("artifact order:\n got %v\nwant %v", got, want)
+	}
+}
+
 func TestCollectDiagnosticsCanceledBeforeQueries(t *testing.T) {
 	var queries atomic.Int32
 	docker := diagnosticsTestDocker{inspect: func(context.Context, string, dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error) {

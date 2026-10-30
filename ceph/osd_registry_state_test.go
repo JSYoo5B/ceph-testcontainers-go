@@ -153,53 +153,7 @@ func isOSDRegistryReceiver(fn *ast.FuncDecl) bool { return receiverTypeName(fn) 
 // receiver of one of its methods (so no code reads or writes either map, or
 // takes its address), and the lock-free FactsOf source never mentions it.
 func TestOSDRegistryFieldIsOnlyTouchedByItsMethods(t *testing.T) {
-	var problems []string
-	uses := 0
-	for file, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || isOSDRegistryReceiver(fn) {
-				continue
-			}
-			allowed := map[*ast.SelectorExpr]bool{}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					if method, ok := call.Fun.(*ast.SelectorExpr); ok {
-						if _, known := osdRegistryMethods[method.Sel.Name]; known {
-							if recv, ok := method.X.(*ast.SelectorExpr); ok && osdRegistryUse(recv) {
-								allowed[recv] = true
-							}
-						}
-					}
-				}
-				return true
-			})
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && osdRegistryUse(sel) {
-					if allowed[sel] || osdFleetBinding(fn) {
-						uses++
-					} else {
-						problems = append(problems, file+": "+fn.Name.Name+" uses Container.osdHandles outside an osdRegistry method call")
-					}
-				}
-				return true
-			})
-			if file == "cluster_facts.go" && strings.Contains(fn.Name.Name, "Facts") {
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					if sel, ok := n.(*ast.SelectorExpr); ok && osdRegistryUse(sel) {
-						problems = append(problems, "FactsOf source reads Container.osdHandles")
-					}
-					return true
-				})
-			}
-		}
-	}
-	if uses == 0 {
-		problems = append(problems, "no use of Container.osdHandles found: the guard is vacuous")
-	}
-	if len(problems) != 0 {
-		t.Fatalf("OSD registry escapes its methods: %v", problems)
-	}
+	fieldAudit{label: "Container.osdHandles", use: osdRegistryUse, own: isOSDRegistryReceiver, methods: osdRegistryMethods, bound: osdFleetBinding}.check(t)
 }
 
 // TestOSDRegistryMethodsMakeOnlyTheirPinnedCalls guards the lock contract of
@@ -207,70 +161,14 @@ func TestOSDRegistryFieldIsOnlyTouchedByItsMethods(t *testing.T) {
 // listed (none locks or calls into Container), and each map is assigned only
 // by the methods that own the transition.
 func TestOSDRegistryMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
-	seen := map[string]bool{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || !isOSDRegistryReceiver(fn) {
-				continue
-			}
-			name := fn.Name.Name
-			want, known := osdRegistryMethods[name]
-			if !known {
-				problems = append(problems, name+" is not pinned; review the lock contract and update osdRegistryMethods")
-				continue
-			}
-			seen[name] = true
-			var got []string
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					got = append(got, types.ExprString(x.Fun))
-				case *ast.AssignStmt:
-					for _, lhs := range x.Lhs {
-						sel, ok := lhs.(*ast.SelectorExpr)
-						if !ok {
-							continue
-						}
-						if writers, field := osdRegistryFieldWriters[sel.Sel.Name]; field && !slices.Contains(writers, name) {
-							problems = append(problems, name+" assigns "+sel.Sel.Name)
-						}
-					}
-				}
-				return true
-			})
-			if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
-				problems = append(problems, name+" calls "+join(got)+", pinned "+join(want))
-			}
-		}
-	}
-	for name := range osdRegistryMethods {
-		if !seen[name] {
-			problems = append(problems, name+" is pinned but missing")
-		}
-	}
-	if len(problems) != 0 {
-		t.Fatalf("osdRegistry breaks its lock contract: %v", problems)
-	}
+	methodAudit{label: "osdRegistry", own: isOSDRegistryReceiver, methods: osdRegistryMethods, writers: osdRegistryFieldWriters}.check(t)
 }
 
-// osdRegistryCaller pins one function that uses the registry or sits between
-// such a function and its lock.
-//
-//	mode "init"   runs before the cluster is shared (the composition planner, the unit-test cluster builder)
-//	mode "takes"  acquires Container.mu itself before its first registry use
-//	mode "holds"  its doc comment requires the caller to hold Container.mu; every caller is itself an acquiring, "holds", "hook" or "init" function
-//	mode "hook"   a hook for another package whose doc comment requires the caller to hold the mutex
-//
-// methods is the registry methods the function calls directly, empty for an
-// intermediate function that only calls a "holds" function.
-type osdRegistryCaller struct {
-	mode    string
-	methods []string
-}
-
-var osdRegistryCallers = map[string]osdRegistryCaller{
+// osdRegistryCallers pins every function that uses the registry or sits
+// between such a function and its lock (see stateCaller). "init" rows run
+// before the cluster is shared: the composition planner and the unit-test
+// cluster builder.
+var osdRegistryCallers = map[string]stateCaller{
 	// Run's composition planner: a throwaway Container no one else sees.
 	"prepareInitialComposition": {"init", []string{"count", "each", "placementDomains", "register"}},
 	"UnitCluster":               {"init", []string{"register"}},
@@ -385,115 +283,7 @@ func calleeName(call *ast.CallExpr) string {
 // "hook" or "init" row of the table. This is the lock domain written on the
 // type: Container.mu, with no lock of the registry's own.
 func TestOSDRegistryCallersAreAudited(t *testing.T) {
-	type fnInfo struct {
-		decl    *ast.FuncDecl
-		methods map[string]bool
-		acquire token.Pos
-		calls   map[string][]token.Pos
-	}
-	// Functions are judged one declaration at a time: two declarations with
-	// the same name (methods of different types) are never merged, so the
-	// result does not depend on the order the files are parsed in.
-	infos := map[string][]*fnInfo{}
-	var problems []string
-	for _, parsed := range parseProductionFiles(t) {
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			info := &fnInfo{decl: fn, methods: map[string]bool{}, acquire: osdRegistryAcquirePos(fn), calls: map[string][]token.Pos{}}
-			firstUse := token.NoPos
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if name := calleeName(call); name != "" {
-					info.calls[name] = append(info.calls[name], call.Pos())
-				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if recv, ok := sel.X.(*ast.SelectorExpr); ok && osdRegistryUse(recv) && !isOSDRegistryReceiver(fn) {
-						info.methods[sel.Sel.Name] = true
-						if firstUse == token.NoPos || call.Pos() < firstUse {
-							firstUse = call.Pos()
-						}
-					}
-				}
-				return true
-			})
-			name := fn.Name.Name
-			infos[name] = append(infos[name], info)
-			if len(info.methods) == 0 {
-				continue
-			}
-			row, known := osdRegistryCallers[name]
-			switch {
-			case !known:
-				problems = append(problems, name+" uses the OSD registry but is not in osdRegistryCallers")
-				continue
-			case row.mode == "takes" && (info.acquire == token.NoPos || info.acquire > firstUse):
-				problems = append(problems, name+" must take Container.mu before using the OSD registry")
-			}
-			got := slices.Sorted(func(yield func(string) bool) {
-				for m := range info.methods {
-					if !yield(m) {
-						return
-					}
-				}
-			})
-			if !slices.Equal(got, slices.Sorted(slices.Values(row.methods))) {
-				problems = append(problems, name+" calls registry methods "+join(got)+", pinned "+join(row.methods))
-			}
-		}
-	}
-	docs := osdRegistryDocs(t)
-	for name, row := range osdRegistryCallers {
-		decls := infos[name]
-		if len(decls) == 0 {
-			problems = append(problems, name+" is listed but does not exist")
-			continue
-		}
-		using := 0
-		for _, info := range decls {
-			if len(info.methods) != 0 {
-				using++
-			}
-		}
-		if len(row.methods) != 0 && using == 0 {
-			problems = append(problems, name+" is listed but no longer uses the OSD registry")
-		}
-		if row.mode == "holds" || row.mode == "hook" {
-			if doc := docs[name]; !strings.Contains(doc, "hold") && !strings.Contains(doc, " held") {
-				problems = append(problems, name+" is a "+row.mode+" row but its doc comment does not say that the caller holds the lock")
-			}
-		}
-	}
-	// Every call to a "holds" function comes from a function that is guarded.
-	for held, row := range osdRegistryCallers {
-		if row.mode != "holds" {
-			continue
-		}
-		for caller, decls := range infos {
-			for _, info := range decls {
-				if caller == held && info.decl.Recv == nil {
-					continue
-				}
-				for _, at := range info.calls[held] {
-					callerRow, listed := osdRegistryCallers[caller]
-					acquired := info.acquire != token.NoPos && info.acquire < at
-					ok := acquired || (listed && (callerRow.mode == "holds" || callerRow.mode == "hook" || callerRow.mode == "init"))
-					if !ok {
-						problems = append(problems, caller+" calls "+held+" without taking Container.mu and is not a pinned holds, hook or init function")
-					}
-				}
-			}
-		}
-	}
-	if len(problems) != 0 {
-		slices.Sort(problems)
-		t.Fatalf("OSD registry callers break the lock contract: %v", problems)
-	}
+	callerAudit{label: "the OSD registry", use: osdRegistryUse, own: isOSDRegistryReceiver, callers: osdRegistryCallers, only: map[string][]string{"init": {"prepareInitialComposition", "UnitCluster"}}}.check(t)
 }
 
 // TestOSDRegistryHasNoAddressTakenAndTestHooksExposeNoMap guards the finding

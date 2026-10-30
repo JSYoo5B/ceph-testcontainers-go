@@ -214,85 +214,131 @@ func verificationReason(reason string, redact func(string) string) string {
 
 // observeVerification observes the window from the baseline until now.
 func observeVerification(ctx context.Context, config VerificationConfig, b *verificationBaseline, docker verificationDocker, o *verificationObservation) {
-	redact := diagnosticsRedactor(b.secrets)
-	logGap := func(source, reason string) {
-		o.logGaps = append(o.logGaps, VerificationGap{Source: source, Reason: verificationReason(reason, redact)})
-	}
-	crashGap := func(source, reason string) {
-		o.crashGap = append(o.crashGap, VerificationGap{Source: source, Reason: verificationReason(reason, redact)})
-	}
-	end, err := dockerClock(ctx, docker, config.OperationTimeout)
-	if err != nil {
-		o.gap("", verificationReason("the end of the window is unknown: "+err.Error(), redact))
-	} else if !end.After(b.start) {
-		o.gap("", fmt.Sprintf("the Docker engine's clock reads %s, not after the activation's %s, so the window is unknown",
-			end.Format(time.RFC3339Nano), b.start.Format(time.RFC3339Nano)))
-	} else {
-		o.end = end
-	}
-	if o.current != nil {
-		if o.current.omitted > 0 {
-			o.gap("", fmt.Sprintf("%d containers exceed the container limit", o.current.omitted))
-		}
-		for _, target := range verificationTargets(*o.current, config.AdditionalContainers) {
-			if !slices.ContainsFunc(b.targets, func(known verificationTarget) bool {
-				return known.id == target.id && (target.id != "" || known.source == target.source)
-			}) {
-				o.gap(target.source, "added after the activation; containers without a baseline are not covered")
-			}
-		}
-	}
+	w := verificationWindow{config: config, baseline: b, docker: docker, o: o, redact: diagnosticsRedactor(b.secrets)}
+	w.close(ctx)
+	w.checkCoverage()
 	current := make([]*verificationGeneration, len(b.targets))
 	for i, target := range b.targets {
-		source := VerificationSource{Source: target.source, Role: target.Role, Name: target.Name, ContainerID: target.id, BaselineCrashes: []string{}}
-		source.Role, source.Name, source.Source = redact(source.Role), redact(source.Name), redact(source.Source)
-		if target.generation != nil {
-			source.ImageID, source.StartedAt, source.RestartCount = target.generation.image, target.generation.startedAt, target.generation.restartCount
-			source.LogDriver = target.generation.logDriver
-		}
-		for id := range target.crashes {
-			source.BaselineCrashes = append(source.BaselineCrashes, redact(id))
-		}
-		slices.Sort(source.BaselineCrashes)
-		if target.generation == nil {
-			o.sources = append(o.sources, source)
-			continue
-		}
-		generation, err := inspectGeneration(ctx, docker, target.id, config.OperationTimeout)
-		switch {
-		case err != nil:
-			logGap(target.source, err.Error())
-			crashGap(target.source, err.Error())
-		case !generation.same(target.generation):
-			reason := fmt.Sprintf("restarted since the activation (started %s, %d restarts; at activation %s, %d restarts); only the selected generation is covered",
-				generation.startedAt, generation.restartCount, target.generation.startedAt, target.generation.restartCount)
-			logGap(target.source, reason)
-			crashGap(target.source, reason)
-		default:
-			current[i] = generation
-			source.State = generation.state
-		}
-		if current[i] != nil {
-			switch {
-			case generation.logDriver != "json-file":
-				logGap(target.source, fmt.Sprintf("log driver %q is not covered; only json-file without rotation is", generation.logDriver))
-			case generation.logRotation != "":
-				logGap(target.source, fmt.Sprintf("the json-file driver rotates at max-size %s and can drop lines", generation.logRotation))
-			default:
-				read, err := readVerificationLogs(ctx, docker, target, generation.tty, b.start, o.end, config, redact, func(e verificationEvent) {
-					o.logs = append(o.logs, e)
-				})
-				source.LogBytes = read
-				if err != nil {
-					logGap(target.source, err.Error())
-				}
-			}
-		}
-		o.sources = append(o.sources, source)
+		current[i] = w.observeSource(ctx, target)
 	}
-	crashes, err := readVerificationCrashes(ctx, config, b.targets, b.secrets, docker)
+	w.observeCrashes(ctx, current)
+}
+
+// verificationWindow is one observation of a verification's window: it
+// records into o what the baseline's targets did between the activation and
+// now. It reads the baseline and changes nothing in the cluster.
+type verificationWindow struct {
+	config   VerificationConfig
+	baseline *verificationBaseline
+	docker   verificationDocker
+	o        *verificationObservation
+	redact   func(string) string
+}
+
+func (w verificationWindow) logGap(source, reason string) {
+	w.o.logGaps = append(w.o.logGaps, VerificationGap{Source: source, Reason: verificationReason(reason, w.redact)})
+}
+
+func (w verificationWindow) crashGap(source, reason string) {
+	w.o.crashGap = append(w.o.crashGap, VerificationGap{Source: source, Reason: verificationReason(reason, w.redact)})
+}
+
+// close reads the end of the window on the Docker engine's clock; an
+// unreadable or non-advancing clock leaves the window open, as a gap.
+func (w verificationWindow) close(ctx context.Context) {
+	end, err := dockerClock(ctx, w.docker, w.config.OperationTimeout)
+	switch {
+	case err != nil:
+		w.o.gap("", verificationReason("the end of the window is unknown: "+err.Error(), w.redact))
+	case !end.After(w.baseline.start):
+		w.o.gap("", fmt.Sprintf("the Docker engine's clock reads %s, not after the activation's %s, so the window is unknown",
+			end.Format(time.RFC3339Nano), w.baseline.start.Format(time.RFC3339Nano)))
+	default:
+		w.o.end = end
+	}
+}
+
+// checkCoverage reports containers of the current snapshot that the baseline
+// does not cover.
+func (w verificationWindow) checkCoverage() {
+	if w.o.current == nil {
+		return
+	}
+	if w.o.current.omitted > 0 {
+		w.o.gap("", fmt.Sprintf("%d containers exceed the container limit", w.o.current.omitted))
+	}
+	for _, target := range verificationTargets(*w.o.current, w.config.AdditionalContainers) {
+		if !slices.ContainsFunc(w.baseline.targets, func(known verificationTarget) bool {
+			return known.id == target.id && (target.id != "" || known.source == target.source)
+		}) {
+			w.o.gap(target.source, "added after the activation; containers without a baseline are not covered")
+		}
+	}
+}
+
+// observeSource records target's source entry and, when the generation
+// selected at activation still runs, reads its logs. It returns that current
+// generation, or nil when the target is not covered.
+func (w verificationWindow) observeSource(ctx context.Context, target verificationTarget) *verificationGeneration {
+	source := w.sourceOf(target)
+	defer func() { w.o.sources = append(w.o.sources, source) }()
+	if target.generation == nil {
+		return nil
+	}
+	generation, err := inspectGeneration(ctx, w.docker, target.id, w.config.OperationTimeout)
+	switch {
+	case err != nil:
+		w.logGap(target.source, err.Error())
+		w.crashGap(target.source, err.Error())
+		return nil
+	case !generation.same(target.generation):
+		reason := fmt.Sprintf("restarted since the activation (started %s, %d restarts; at activation %s, %d restarts); only the selected generation is covered",
+			generation.startedAt, generation.restartCount, target.generation.startedAt, target.generation.restartCount)
+		w.logGap(target.source, reason)
+		w.crashGap(target.source, reason)
+		return nil
+	}
+	source.State = generation.state
+	switch {
+	case generation.logDriver != "json-file":
+		w.logGap(target.source, fmt.Sprintf("log driver %q is not covered; only json-file without rotation is", generation.logDriver))
+	case generation.logRotation != "":
+		w.logGap(target.source, fmt.Sprintf("the json-file driver rotates at max-size %s and can drop lines", generation.logRotation))
+	default:
+		read, err := readVerificationLogs(ctx, w.docker, target, generation.tty, w.baseline.start, w.o.end, w.config, w.redact, func(e verificationEvent) {
+			w.o.logs = append(w.o.logs, e)
+		})
+		source.LogBytes = read
+		if err != nil {
+			w.logGap(target.source, err.Error())
+		}
+	}
+	return generation
+}
+
+// sourceOf is target's redacted source entry with its activation generation
+// and baseline crashes.
+func (w verificationWindow) sourceOf(target verificationTarget) VerificationSource {
+	source := VerificationSource{Source: target.source, Role: target.Role, Name: target.Name, ContainerID: target.id, BaselineCrashes: []string{}}
+	source.Role, source.Name, source.Source = w.redact(source.Role), w.redact(source.Name), w.redact(source.Source)
+	if target.generation != nil {
+		source.ImageID, source.StartedAt, source.RestartCount = target.generation.image, target.generation.startedAt, target.generation.restartCount
+		source.LogDriver = target.generation.logDriver
+	}
+	for id := range target.crashes {
+		source.BaselineCrashes = append(source.BaselineCrashes, w.redact(id))
+	}
+	slices.Sort(source.BaselineCrashes)
+	return source
+}
+
+// observeCrashes reads the crash directories again and records each crash
+// absent at activation; current holds each target's still-covered generation.
+func (w verificationWindow) observeCrashes(ctx context.Context, current []*verificationGeneration) {
+	b := w.baseline
+	crashes, err := readVerificationCrashes(ctx, w.config, b.targets, b.secrets, w.docker)
 	if err != nil && len(crashes.Containers) != len(b.targets) {
-		crashGap("", err.Error())
+		w.crashGap("", err.Error())
 	}
 	for i, result := range crashes.Containers {
 		target := b.targets[i]
@@ -300,36 +346,40 @@ func observeVerification(ctx context.Context, config VerificationConfig, b *veri
 			continue
 		}
 		if reason := crashResultGap(result); reason != "" && current[i] != nil {
-			crashGap(target.source, reason)
+			w.crashGap(target.source, reason)
 		}
 		if target.crashes == nil {
 			if len(result.Records) > 0 {
-				crashGap(target.source, fmt.Sprintf("%d crash records whose presence at activation is unknown", len(result.Records)))
+				w.crashGap(target.source, fmt.Sprintf("%d crash records whose presence at activation is unknown", len(result.Records)))
 			}
 			continue
 		}
-		// One crash can be seen twice, as unposted and as posted metadata:
-		// it counts once, and is complete when any sighting has its done
-		// marker.
-		// Crashes are compared by their raw identity; the reported ID is
-		// the redacted one.
-		var order []string
-		done, reported := map[string]bool{}, map[string]string{}
-		for _, record := range result.Records {
-			if target.crashes[record.identity] {
-				continue
-			}
-			if _, ok := done[record.identity]; !ok {
-				order = append(order, record.identity)
-				reported[record.identity] = record.CrashID
-				o.crashes = append(o.crashes, crashEvent(target, record))
-			}
-			done[record.identity] = done[record.identity] || record.Done
+		w.recordNewCrashes(target, result.Records)
+	}
+}
+
+// recordNewCrashes records the crashes of records that target did not hold at
+// activation. One crash can be seen twice, as unposted and as posted
+// metadata: it counts once, and is complete when any sighting has its done
+// marker. Crashes are compared by their raw identity; the reported ID is the
+// redacted one.
+func (w verificationWindow) recordNewCrashes(target verificationTarget, records []CrashRecord) {
+	var order []string
+	done, reported := map[string]bool{}, map[string]string{}
+	for _, record := range records {
+		if target.crashes[record.identity] {
+			continue
 		}
-		for _, id := range order {
-			if !done[id] {
-				crashGap(target.source, fmt.Sprintf("crash %s has no done marker yet, so its metadata may be incomplete", reported[id]))
-			}
+		if _, ok := done[record.identity]; !ok {
+			order = append(order, record.identity)
+			reported[record.identity] = record.CrashID
+			w.o.crashes = append(w.o.crashes, crashEvent(target, record))
+		}
+		done[record.identity] = done[record.identity] || record.Done
+	}
+	for _, id := range order {
+		if !done[id] {
+			w.crashGap(target.source, fmt.Sprintf("crash %s has no done marker yet, so its metadata may be incomplete", reported[id]))
 		}
 	}
 }

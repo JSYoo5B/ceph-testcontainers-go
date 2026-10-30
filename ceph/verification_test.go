@@ -808,6 +808,43 @@ func TestVerificationConfigValidation(t *testing.T) {
 	}
 }
 
+// The refusal texts are part of the contract: each names the field at fault.
+func TestVerificationConfigRefusalMessages(t *testing.T) {
+	valid := VerificationConfig{
+		Logs:    []LogExpectation{{Name: "l", Pattern: "x", Event: LogClusterWarning, Required: true, MinCount: 2, MaxCount: 3}},
+		Crashes: []CrashExpectation{{Name: "c", Process: "ceph-osd"}},
+	}
+	for want, mutate := range map[string]func(*VerificationConfig){
+		"verification: name must be one line of at most 128 bytes":                             func(c *VerificationConfig) { c.Name = "a\nb" },
+		"verification: timeouts out of range":                                                  func(c *VerificationConfig) { c.Timeout = -time.Second },
+		"verification: limits out of range":                                                    func(c *VerificationConfig) { c.MaxFindings = 5000 },
+		"verification: more than 256 expectations of one kind":                                 func(c *VerificationConfig) { c.Logs = make([]LogExpectation, 257) },
+		"verification: too many additional containers or redaction values":                     func(c *VerificationConfig) { c.RedactValues = make([]string, 129) },
+		"verification: invalid container description":                                          func(c *VerificationConfig) { c.AdditionalContainers = []DiagnosticsContainer{{Role: "x\ny"}} },
+		"verification: redaction value exceeds 4096 bytes":                                     func(c *VerificationConfig) { c.RedactValues = []string{strings.Repeat("x", 4097)} },
+		"verification: log expectation name must be one non-empty line of at most 128 bytes":   func(c *VerificationConfig) { c.Logs[0].Name = "" },
+		"verification: crash expectation name must be one non-empty line of at most 128 bytes": func(c *VerificationConfig) { c.Crashes[0].Name = "" },
+		`verification: expectation name "l" is used twice`:                                     func(c *VerificationConfig) { c.Crashes[0].Name = "l" },
+		`verification: expectation "l" has a negative count`:                                   func(c *VerificationConfig) { c.Logs[0].MaxCount = -1 },
+		`verification: expectation "l" sets MinCount without Required`:                         func(c *VerificationConfig) { c.Logs[0].Required = false },
+		`verification: expectation "l" has an invalid criterion`:                               func(c *VerificationConfig) { c.Logs[0].Daemon = "osd\n" },
+		`verification: expectation "l" requires more events than it permits`:                   func(c *VerificationConfig) { c.Logs[0].MinCount = 4 },
+		"verification: expectation \"l\": error parsing regexp: missing closing ): `(`":        func(c *VerificationConfig) { c.Logs[0].Pattern = "(" },
+		`verification: log expectation "l" has no pattern`:                                     func(c *VerificationConfig) { c.Logs[0].Pattern = "" },
+		`verification: log expectation "l" has unknown event "info"`:                           func(c *VerificationConfig) { c.Logs[0].Event = "info" },
+		`verification: crash expectation "c" has an invalid process`:                           func(c *VerificationConfig) { c.Crashes[0].Process = "a\nb" },
+		`verification: crash expectation "c" needs a daemon, a process or a signature`:         func(c *VerificationConfig) { c.Crashes[0].Process = "" },
+	} {
+		config := valid
+		config.Logs, config.Crashes = slices.Clone(valid.Logs), slices.Clone(valid.Crashes)
+		mutate(&config)
+		_, _, _, err := normalizeVerificationConfig(config)
+		if err == nil || !strings.HasSuffix(err.Error(), want) || !errors.Is(err, ErrInvalidRequest) {
+			t.Errorf("want %q, got %v", want, err)
+		}
+	}
+}
+
 // verifyFinalization is a finalization fixture whose Verify activates over
 // a verifyFixture.
 func verifyFinalization(t *testing.T, config FinalizationConfig) (*finalizationFixture, *verifyFixture) {
