@@ -277,45 +277,46 @@ func (f *Fixture) syncBucketStatus(ctx context.Context, checkpoint *rgwSyncBucke
 	return decodeBucketSyncStatus(data, result)
 }
 
+// legacyBucketSyncStatus is the JSON document that Ceph 20 and later print
+// for bucket sync status, rebuilt from Ceph 19's text.
+type legacyBucketSyncStatus struct {
+	Realm            string             `json:"realm"`
+	Zonegroup        string             `json:"zonegroup"`
+	Zone             string             `json:"zone"`
+	Bucket           string             `json:"bucket"`
+	BucketInstanceID string             `json:"bucket_instance_id"`
+	Error            string             `json:"error,omitempty"`
+	Sources          []legacySyncSource `json:"sources"`
+}
+
+type legacySyncSource struct {
+	SourceZone     string               `json:"source_zone"`
+	SourceName     string               `json:"source_name"`
+	SourceBucket   string               `json:"source_bucket"`
+	SourceBucketID string               `json:"source_bucket_id"`
+	Status         string               `json:"status,omitempty"`
+	Error          string               `json:"error,omitempty"`
+	TotalShards    *int                 `json:"total_shards,omitempty"`
+	BehindShards   *[]legacyBehindShard `json:"behind_shards,omitempty"`
+}
+
+type legacyBehindShard struct {
+	ShardID int `json:"shard_id"`
+}
+
+var errLegacyBucketSyncText = errors.New("RGW Ceph 19 bucket sync status text is malformed")
+
 // legacyBucketSyncStatusJSON converts Ceph 19's bucket sync status, which is
 // text even with --format json, into the JSON document later releases print.
 // Bucket lines read tenant:name[instance]); the tenants must match result.
 func legacyBucketSyncStatusJSON(data []byte, result BucketSyncStatus) ([]byte, error) {
-	type source struct {
-		SourceZone     string `json:"source_zone"`
-		SourceName     string `json:"source_name"`
-		SourceBucket   string `json:"source_bucket"`
-		SourceBucketID string `json:"source_bucket_id"`
-		Status         string `json:"status,omitempty"`
-		Error          string `json:"error,omitempty"`
-		TotalShards    *int   `json:"total_shards,omitempty"`
-		BehindShards   *[]struct {
-			ShardID int `json:"shard_id"`
-		} `json:"behind_shards,omitempty"`
-	}
-	var native struct {
-		Realm            string   `json:"realm"`
-		Zonegroup        string   `json:"zonegroup"`
-		Zone             string   `json:"zone"`
-		Bucket           string   `json:"bucket"`
-		BucketInstanceID string   `json:"bucket_instance_id"`
-		Error            string   `json:"error,omitempty"`
-		Sources          []source `json:"sources"`
-	}
-	malformed := errors.New("RGW Ceph 19 bucket sync status text is malformed")
-	bucket := func(value, tenant string) (string, string, error) {
-		key, ok := strings.CutSuffix(value, "])")
-		owner, rest, found := strings.Cut(key, ":")
-		name, id, bracket := strings.Cut(rest, "[")
-		if !ok || !found || !bracket || owner != tenant || name == "" || id == "" {
-			return "", "", malformed
-		}
-		return name, id, nil
-	}
+	var native legacyBucketSyncStatus
+	// behind is the count of the last "bucket is behind on" line, until the
+	// shard list that it counts.
 	behind := -1
 	for line := range strings.Lines(string(data)) {
 		line = strings.TrimSpace(line)
-		var current *source
+		var current *legacySyncSource
 		if len(native.Sources) > 0 {
 			current = &native.Sources[len(native.Sources)-1]
 		}
@@ -331,70 +332,97 @@ func legacyBucketSyncStatusJSON(data []byte, result BucketSyncStatus) ([]byte, e
 		case current == nil && label == "zone":
 			native.Zone = id
 		case current == nil && label == "bucket":
-			native.Bucket, native.BucketInstanceID, err = bucket(value, result.DestinationBucket.Tenant)
+			native.Bucket, native.BucketInstanceID, err = legacyBucketKey(value, result.DestinationBucket.Tenant)
 		case strings.HasPrefix(line, "Sync is disabled for bucket "):
 			native.Error = line
 		case strings.HasPrefix(line, "source zone "):
 			zone, name, _ := strings.Cut(strings.TrimPrefix(line, "source zone "), " ")
-			native.Sources = append(native.Sources, source{SourceZone: zone, SourceName: strings.TrimSuffix(strings.TrimPrefix(name, "("), ")")})
+			native.Sources = append(native.Sources, legacySyncSource{SourceZone: zone, SourceName: strings.TrimSuffix(strings.TrimPrefix(name, "("), ")")})
 		case current == nil:
-			return nil, malformed
-		case strings.HasPrefix(line, "source bucket "):
-			current.SourceBucket, current.SourceBucketID, err = bucket(strings.TrimPrefix(line, "source bucket "), result.SourceBucket.Tenant)
-		case line == "does not sync from zone":
-			current.Error = line
-		case strings.HasPrefix(line, "init:"), strings.HasPrefix(line, "stopped:"), strings.HasPrefix(line, "full sync:"):
-			current.Status = line
-		case strings.HasPrefix(line, "incremental sync on "):
-			count, found := strings.CutSuffix(strings.TrimPrefix(line, "incremental sync on "), " shards")
-			shards, convErr := strconv.Atoi(count)
-			if !found || convErr != nil {
-				return nil, malformed
-			}
-			current.TotalShards = &shards
-		case line == "bucket is caught up with source":
-			current.BehindShards = &[]struct {
-				ShardID int `json:"shard_id"`
-			}{}
-		case strings.HasPrefix(line, "bucket is behind on "):
-			count, found := strings.CutSuffix(strings.TrimPrefix(line, "bucket is behind on "), " shards")
-			if behind, err = strconv.Atoi(count); !found || err != nil {
-				return nil, malformed
-			}
-		case strings.HasPrefix(line, "behind shards: ["):
-			list, found := strings.CutSuffix(strings.TrimPrefix(line, "behind shards: ["), "]")
-			if !found {
-				return nil, malformed
-			}
-			shards := []struct {
-				ShardID int `json:"shard_id"`
-			}{}
-			for _, item := range strings.Split(list, ",") {
-				if item = strings.TrimSpace(item); item == "" {
-					continue
-				}
-				shard, err := strconv.Atoi(item)
-				if err != nil {
-					return nil, malformed
-				}
-				shards = append(shards, struct {
-					ShardID int `json:"shard_id"`
-				}{shard})
-			}
-			// The count also covers shards without a remote marker, which
-			// the list omits; never report fewer shards than the count.
-			if behind <= 0 || len(shards) != behind {
-				return nil, errors.New("RGW Ceph 19 bucket sync status lists an incomplete behind shard set")
-			}
-			current.BehindShards, behind = &shards, -1
+			return nil, errLegacyBucketSyncText
 		default:
-			return nil, malformed
+			err = current.line(line, result.SourceBucket.Tenant, &behind)
 		}
 		if err != nil {
 			return nil, err
 		}
 	}
 	return json.Marshal(native)
+}
+
+// line reads one line of the source's section. behind carries the count of a
+// "bucket is behind on" line to the shard list that follows it.
+func (current *legacySyncSource) line(line, tenant string, behind *int) error {
+	var err error
+	switch {
+	case strings.HasPrefix(line, "source bucket "):
+		current.SourceBucket, current.SourceBucketID, err = legacyBucketKey(strings.TrimPrefix(line, "source bucket "), tenant)
+	case line == "does not sync from zone":
+		current.Error = line
+	case strings.HasPrefix(line, "init:"), strings.HasPrefix(line, "stopped:"), strings.HasPrefix(line, "full sync:"):
+		current.Status = line
+	case strings.HasPrefix(line, "incremental sync on "):
+		count, found := strings.CutSuffix(strings.TrimPrefix(line, "incremental sync on "), " shards")
+		shards, convErr := strconv.Atoi(count)
+		if !found || convErr != nil {
+			return errLegacyBucketSyncText
+		}
+		current.TotalShards = &shards
+	case line == "bucket is caught up with source":
+		current.BehindShards = &[]legacyBehindShard{}
+	case strings.HasPrefix(line, "bucket is behind on "):
+		count, found := strings.CutSuffix(strings.TrimPrefix(line, "bucket is behind on "), " shards")
+		if *behind, err = strconv.Atoi(count); !found || err != nil {
+			return errLegacyBucketSyncText
+		}
+	case strings.HasPrefix(line, "behind shards: ["):
+		shards, err := legacyBehindShards(line, *behind)
+		if err != nil {
+			return err
+		}
+		current.BehindShards, *behind = &shards, -1
+	default:
+		return errLegacyBucketSyncText
+	}
+	return err
+}
+
+// legacyBucketKey splits a tenant:name[instance]) bucket key whose tenant
+// must be tenant.
+func legacyBucketKey(value, tenant string) (string, string, error) {
+	key, ok := strings.CutSuffix(value, "])")
+	owner, rest, found := strings.Cut(key, ":")
+	name, id, bracket := strings.Cut(rest, "[")
+	if !ok || !found || !bracket || owner != tenant || name == "" || id == "" {
+		return "", "", errLegacyBucketSyncText
+	}
+	return name, id, nil
+}
+
+// legacyBehindShards reads a "behind shards: [...]" list, which must name
+// exactly the behind count of the line before it. The count also covers
+// shards without a remote marker, which the list omits; never report fewer
+// shards than the count.
+func legacyBehindShards(line string, behind int) ([]legacyBehindShard, error) {
+	list, found := strings.CutSuffix(strings.TrimPrefix(line, "behind shards: ["), "]")
+	if !found {
+		return nil, errLegacyBucketSyncText
+	}
+	shards := []legacyBehindShard{}
+	for _, item := range strings.Split(list, ",") {
+		if item = strings.TrimSpace(item); item == "" {
+			continue
+		}
+		shard, err := strconv.Atoi(item)
+		if err != nil {
+			return nil, errLegacyBucketSyncText
+		}
+		shards = append(shards, legacyBehindShard{shard})
+	}
+	if behind <= 0 || len(shards) != behind {
+		return nil, errors.New("RGW Ceph 19 bucket sync status lists an incomplete behind shard set")
+	}
+	return shards, nil
 }
 
 func decodeBucketSyncStatus(data []byte, result BucketSyncStatus) (BucketSyncStatus, error) {
