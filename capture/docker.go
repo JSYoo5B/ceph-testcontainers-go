@@ -65,8 +65,14 @@ func classifyDocker(ctx context.Context, err error) error { return faulthook.Cla
 
 type dockerBackend struct{}
 
+// newDockerClient opens the Docker client of every backend operation; tests
+// replace it with a client of a fake Engine API.
+var newDockerClient = func(ctx context.Context) (*testcontainers.DockerClient, error) {
+	return testcontainers.NewDockerClientWithOpts(ctx)
+}
+
 func withDocker[T any](ctx context.Context, do func(*testcontainers.DockerClient) (T, error)) (T, error) {
-	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+	docker, err := newDockerClient(ctx)
 	if err != nil {
 		var zero T
 		return zero, err
@@ -259,7 +265,7 @@ func (f tarFile) Close() error {
 }
 
 func (dockerBackend) copy(ctx context.Context, id, path string) (io.ReadCloser, error) {
-	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+	docker, err := newDockerClient(ctx)
 	if err != nil {
 		return nil, err
 	}

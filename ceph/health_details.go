@@ -1,17 +1,14 @@
 package ceph
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 	"github.com/google/uuid"
 )
 
@@ -229,100 +226,9 @@ func healthDetailsExpiry(value string) bool {
 	return err == nil
 }
 
-// Validate object keys before encoding/json's case-insensitive struct matching
-// can adopt an alias. Map keys are case-sensitive native health codes; their
-// values still receive the full nested struct validation. Unknown fields are
-// allowed, but duplicate keys, known nulls and trailing documents are not.
+// healthDetailsJSON decodes the native health, PG and full-ratio reports. Known
+// fields may not be null; map keys are case-sensitive native health codes whose
+// values still receive the full nested validation.
 func healthDetailsJSON(data []byte, value any) error {
-	if len(data) == 0 || len(data) > 4<<20 {
-		return errors.New("invalid health details JSON")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var walk func(reflect.Type, int) error
-	walk = func(expected reflect.Type, depth int) error {
-		if depth > 256 {
-			return errors.New("health details JSON nesting exceeds limit")
-		}
-		for expected != nil && expected.Kind() == reflect.Pointer {
-			expected = expected.Elem()
-		}
-		token, err := decoder.Token()
-		if err != nil {
-			return err
-		}
-		if token == nil && expected != nil {
-			return errors.New("null native health details field")
-		}
-		delim, ok := token.(json.Delim)
-		if !ok {
-			return nil
-		}
-		switch delim {
-		case '{':
-			fields := map[string]reflect.Type{}
-			if expected != nil && expected.Kind() == reflect.Struct {
-				for i := 0; i < expected.NumField(); i++ {
-					field := expected.Field(i)
-					name := strings.Split(field.Tag.Get("json"), ",")[0]
-					if name != "" && name != "-" {
-						fields[name] = field.Type
-					}
-				}
-			}
-			seen := map[string]bool{}
-			for decoder.More() {
-				key, err := decoder.Token()
-				if err != nil {
-					return err
-				}
-				name, ok := key.(string)
-				if !ok || seen[name] {
-					return errors.New("duplicate native health details field")
-				}
-				seen[name] = true
-				next := fields[name]
-				if expected != nil && expected.Kind() == reflect.Map {
-					next = expected.Elem()
-				} else if next == nil {
-					for canonical := range fields {
-						if strings.EqualFold(name, canonical) {
-							return errors.New("noncanonical native health details field")
-						}
-					}
-				}
-				if err := walk(next, depth+1); err != nil {
-					return err
-				}
-			}
-			end, err := decoder.Token()
-			if err != nil || end != json.Delim('}') {
-				return errors.New("invalid native health details object")
-			}
-		case '[':
-			var next reflect.Type
-			if expected != nil && (expected.Kind() == reflect.Slice || expected.Kind() == reflect.Array) {
-				next = expected.Elem()
-			}
-			for decoder.More() {
-				if err := walk(next, depth+1); err != nil {
-					return err
-				}
-			}
-			end, err := decoder.Token()
-			if err != nil || end != json.Delim(']') {
-				return errors.New("invalid native health details array")
-			}
-		default:
-			return errors.New("invalid native health details delimiter")
-		}
-		return nil
-	}
-	if err := walk(reflect.TypeOf(value), 0); err != nil {
-		return err
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		return errors.New("trailing native health details JSON")
-	}
-	return json.Unmarshal(data, value)
+	return strictjson.Decode(data, value, strictjson.Options{MaxBytes: 4 << 20, RejectNull: true})
 }

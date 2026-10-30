@@ -81,6 +81,7 @@ of a package.
 | `ceph/verification.go#Verification.snapshot`, `ceph/verification.go#Verification.docker`, `ceph/verification.go#Verification.now` | wired operation. `Finalization.Verify` wires the cluster's own operations; tests replace them. | Diagnostics snapshot, Docker dial and clock. | |
 | `ceph/finalization.go#Finalization.cluster`, `ceph/finalization.go#Finalization.collectDiagnostics`, `ceph/finalization.go#Finalization.collectCrash`, `ceph/finalization.go#Finalization.terminate` | wired operation. `TerminateOnCleanup` wires the cluster's methods; tests replace them. | Diagnostics, crash metadata and termination. | |
 | `capture/docker.go#backend` | dependency port. The Docker backend implements it; tests supply a model. | Docker operations of a packet capture. | Legitimate injection. |
+| `capture/docker.go#newDockerClient` | wired operation. Opens the Engine API client of every `dockerBackend` call; tests replace it with a client of a local fake Engine API. | Docker engine client. | Production uses `testcontainers.NewDockerClientWithOpts`. |
 | `fault/network_delay.go#netemBackend` | dependency port. The Docker and helper-container backend implements it; tests replace it with a model of namespaces and qdiscs. | Docker and netem helper operations. | Legitimate injection. |
 | `fault/pause.go#pauseContainerInCluster` | dependency port as a parameter. `Pause` passes the real Docker client factory. | Docker pause client. | Admission, locks and registry use the real implementation. |
 

@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"regexp"
 	"strconv"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 	"github.com/google/uuid"
 )
 
@@ -21,58 +21,14 @@ import (
 
 var monStoreJSONUint = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 
-// monStoreJSONScan walks one JSON value and rejects duplicate object keys at
-// any depth: encoding/json keeps the last of two equal keys silently.
-func monStoreJSONScan(dec *json.Decoder) error {
-	tok, err := dec.Token()
-	if err != nil {
-		return err
-	}
-	delim, ok := tok.(json.Delim)
-	if !ok {
-		return nil
-	}
-	switch delim {
-	case '{':
-		seen := map[string]bool{}
-		for dec.More() {
-			keyTok, err := dec.Token()
-			if err != nil {
-				return err
-			}
-			key, _ := keyTok.(string)
-			if seen[key] {
-				return fmt.Errorf("duplicate key %q", key)
-			}
-			seen[key] = true
-			if err := monStoreJSONScan(dec); err != nil {
-				return err
-			}
-		}
-	case '[':
-		for dec.More() {
-			if err := monStoreJSONScan(dec); err != nil {
-				return err
-			}
-		}
-	}
-	_, err = dec.Token()
-	return err
-}
-
-// monStoreJSONCheck verifies that data is exactly one JSON value.
+// monStoreJSONCheck verifies that data is exactly one JSON value without a
+// duplicate object key at any depth: encoding/json keeps the last of two equal
+// keys silently.
 func monStoreJSONCheck(data []byte) error {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return errors.New("no output")
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	if err := monStoreJSONScan(dec); err != nil {
-		return err
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return errors.New("trailing data after the JSON value")
-	}
-	return nil
+	return strictjson.Check(data, strictjson.Options{})
 }
 
 type monStoreJSONObject map[string]json.RawMessage

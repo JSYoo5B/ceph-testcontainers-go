@@ -1,17 +1,15 @@
 package cephfs
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"slices"
 	"strings"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/strictjson"
 	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -208,59 +206,11 @@ type coldMDSRow struct {
 	Join  *int64  `json:"join_fscid"`
 }
 
-// New cold absence guards reject duplicate fields and trailing documents. Never
-// return raw decode errors: native auth input can contain credentials.
+// New cold absence guards reject duplicate fields, aliases of known fields and
+// trailing documents. Never return raw decode errors: native auth input can
+// contain credentials.
 func coldMDSJSON(data []byte, value any) error {
-	if len(data) == 0 || len(data) > 4<<20 {
-		return errors.New("invalid cold native JSON")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	var walk func() error
-	walk = func() error {
-		token, err := decoder.Token()
-		if err != nil {
-			return err
-		}
-		delim, ok := token.(json.Delim)
-		if !ok {
-			return nil
-		}
-		switch delim {
-		case '{':
-			seen := map[string]bool{}
-			for decoder.More() {
-				key, err := decoder.Token()
-				if err != nil {
-					return err
-				}
-				name, ok := key.(string)
-				if !ok || seen[name] {
-					return errors.New("duplicate native field")
-				}
-				seen[name] = true
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-		case '[':
-			for decoder.More() {
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-		default:
-			return errors.New("invalid native collection")
-		}
-		_, err = decoder.Token()
-		return err
-	}
-	if walk() != nil {
-		return errors.New("invalid cold native JSON")
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return errors.New("invalid cold native JSON")
-	}
-	if json.Unmarshal(data, value) != nil {
+	if strictjson.Decode(data, value, strictjson.Options{MaxBytes: 4 << 20}) != nil {
 		return errors.New("invalid cold native JSON")
 	}
 	return nil
