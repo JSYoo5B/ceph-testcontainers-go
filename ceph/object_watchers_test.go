@@ -30,7 +30,7 @@ func TestObjectWatchersRefusesUnsafeNamesBeforeCommands(t *testing.T) {
 	// with a different error than the validation checked here.
 	cluster := &Container{}
 	for _, args := range [][3]string{{"bad pool", "", "obj"}, {"pool", "-ns", "obj"}, {"pool", "", ""}, {"pool", "", "--all"}, {"pool", "", "a\nb"}} {
-		if _, err := cluster.objectWatchers(t.Context(), args[0], args[1], args[2]); err == nil || !(strings.Contains(err.Error(), "name") || strings.Contains(err.Error(), "empty")) {
+		if _, err := (&Observer{target: cluster}).ObjectWatchers(t.Context(), args[0], args[1], args[2]); err == nil || !(strings.Contains(err.Error(), "name") || strings.Contains(err.Error(), "empty")) {
 			t.Fatalf("%q: error=%v", args, err)
 		}
 	}

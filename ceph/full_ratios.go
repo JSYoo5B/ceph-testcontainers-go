@@ -26,25 +26,6 @@ type FullRatioSnapshot struct {
 	Ratios FullRatios
 }
 
-// fullRatios implements Observer.FullRatios.
-func (c *Container) fullRatios(ctx context.Context) (FullRatioSnapshot, error) {
-	if err := ctx.Err(); err != nil {
-		return FullRatioSnapshot{}, err
-	}
-	if c == nil {
-		return FullRatioSnapshot{}, errors.New("ceph cluster is unavailable")
-	}
-	if err := c.lockTopology(ctx); err != nil {
-		return FullRatioSnapshot{}, err
-	}
-	defer c.mu.Unlock()
-	session, err := c.fullRatiosSession(ctx)
-	if err != nil {
-		return FullRatioSnapshot{}, err
-	}
-	return session.read(ctx)
-}
-
 type fullRatiosCLISession struct {
 	control testcontainers.Container
 	fsid    string

@@ -67,16 +67,6 @@ const (
 // String returns the native flag token.
 func (f OSDFlag) String() string { return string(f) }
 
-// osdFlags implements Observer.OSDFlags.
-func (c *Container) osdFlags(ctx context.Context) ([]OSDFlag, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return nil, err
-	}
-	return readOSDFlags(ctx, c.conn().ceph)
-}
-
 func (om osdMap) setFlag(ctx context.Context, flag OSDFlag, enabled bool) error {
 	op := "unset"
 	if enabled {

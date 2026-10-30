@@ -13,21 +13,6 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// monitorBootstrapAddresses implements Observer.MonitorBootstrapAddresses.
-func (c *Container) monitorBootstrapAddresses(ctx context.Context) (string, error) {
-	if c == nil {
-		return "", errors.New("ceph cluster is unavailable")
-	}
-	ctx, cancel := c.monitorClientRefreshContext(ctx)
-	defer cancel()
-	if err := c.lockTopology(ctx); err != nil {
-		return "", err
-	}
-	defer c.mu.Unlock()
-	addresses, _, err := c.currentMonitorBootstrapAddresses(ctx)
-	return addresses, err
-}
-
 // RefreshClientMonitorConfig updates only the explicit client's global mon_host
 // entry in /etc/ceph/ceph.conf. The client's global FSID must match this fixture
 // and its live quorum. Docker archive copies also work with stopped containers;

@@ -167,21 +167,6 @@ func (c *Container) pgScrubReport(ctx context.Context, pgid PGID) (time.Time, st
 	return time.Time{}, "", fmt.Errorf("PG %s is not reported", pgid)
 }
 
-// pgInconsistencies implements Observer.PGInconsistencies.
-func (c *Container) pgInconsistencies(ctx context.Context, pgid PGID) ([]InconsistentObject, error) {
-	if err := validatePGID(string(pgid)); err != nil {
-		return nil, err
-	}
-	if err := c.lockTopology(ctx); err != nil {
-		return nil, err
-	}
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return nil, err
-	}
-	return readPGInconsistencies(ctx, c.clientRadosLookup(), pgid)
-}
-
 func decodeInconsistentObjects(data []byte) ([]InconsistentObject, error) {
 	var native struct {
 		Inconsistents *[]struct {

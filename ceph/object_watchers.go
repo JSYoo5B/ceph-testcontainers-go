@@ -1,7 +1,6 @@
 package ceph
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -18,27 +17,6 @@ type ObjectWatcher struct {
 	Address  string
 	ClientID uint64
 	Cookie   uint64
-}
-
-// objectWatchers implements Observer.ObjectWatchers.
-func (c *Container) objectWatchers(ctx context.Context, pool, namespace, object string) ([]ObjectWatcher, error) {
-	if err := validateExistingPoolName(pool); err != nil {
-		return nil, err
-	}
-	if err := validateRADOSArgument("namespace", namespace, true); err != nil {
-		return nil, err
-	}
-	if err := validateRADOSArgument("object", object, false); err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.poolPolicyReady(); err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, c.settings.startupTimeout)
-	defer cancel()
-	return readObjectWatchers(ctx, c.clientRadosLookup(), pool, namespace, object)
 }
 
 // validateRADOSArgument keeps a name from being read as a rados option or

@@ -77,7 +77,7 @@ func TestOSDMembershipRejectsAbsentAndPostMutationReplacement(t *testing.T) {
 func TestOSDFlagMalformedDump(t *testing.T) {
 	for _, raw := range []string{`null`, `{}`, `{"flags":[],"osds":[]}`, `{"flags":"noout,noout","osds":[]}`, `{"flags":"noout,","osds":[]}`, `{"flags":"","osds":[{"osd":3,"up":1,"in":2,"weight":1}]}`, `{"flags":"","osds":[{"osd":3,"up":1,"in":1,"weight":1},{"osd":3,"up":1,"in":1,"weight":1}]}`} {
 		ctr := &osdPolicyFixture{raw: raw}
-		if _, err := osdPolicyCluster(ctr).osdFlags(t.Context()); err == nil {
+		if _, err := (&Observer{target: osdPolicyCluster(ctr)}).OSDFlags(t.Context()); err == nil {
 			t.Fatal("malformed native dump accepted", raw)
 		}
 	}

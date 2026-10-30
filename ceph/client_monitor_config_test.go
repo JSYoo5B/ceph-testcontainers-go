@@ -62,7 +62,7 @@ func TestMonitorBootstrapAddressesRejectsUnconfirmedOrForeignNativeCluster(t *te
 		t.Run(mutation.name, func(t *testing.T) {
 			cluster, control, client := newClientMonitorFixture()
 			mutation.apply(cluster, control)
-			if addresses, err := cluster.monitorBootstrapAddresses(t.Context()); err == nil || addresses != "" {
+			if addresses, err := (&Observer{target: cluster}).MonitorBootstrapAddresses(t.Context()); err == nil || addresses != "" {
 				t.Fatalf("adopted unconfirmed/foreign native identity: addresses=%q error=%v", addresses, err)
 			}
 			if err := cluster.RefreshClientMonitorConfig(t.Context(), client); err == nil || client.reads != 0 || client.writes != 0 {
@@ -71,7 +71,7 @@ func TestMonitorBootstrapAddressesRejectsUnconfirmedOrForeignNativeCluster(t *te
 		})
 	}
 	cluster, _, _ := newClientMonitorFixture()
-	if addresses, err := cluster.monitorBootstrapAddresses(t.Context()); err != nil || addresses != monitorConfigAddresses {
+	if addresses, err := (&Observer{target: cluster}).MonitorBootstrapAddresses(t.Context()); err != nil || addresses != monitorConfigAddresses {
 		t.Fatalf("current original quorum was not returned: %q %v", addresses, err)
 	}
 }
@@ -190,7 +190,7 @@ func TestRefreshClientMonitorConfigArchiveFailureAndCancellation(t *testing.T) {
 		cancel()
 	}
 	var cluster *Container
-	if _, err := cluster.monitorBootstrapAddresses(t.Context()); err == nil {
+	if _, err := (&Observer{target: cluster}).MonitorBootstrapAddresses(t.Context()); err == nil {
 		t.Fatal("nil cluster addresses accepted")
 	}
 	if err := cluster.RefreshClientMonitorConfig(t.Context(), nil); err == nil {
