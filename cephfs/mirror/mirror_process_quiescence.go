@@ -10,7 +10,6 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	mobycl "github.com/moby/moby/client"
-	"github.com/testcontainers/testcontainers-go"
 )
 
 // A raw binding is a positive association to a trusted ordinary Docker API
@@ -64,31 +63,6 @@ func (d *Daemon) ProcessObserverBindingStatus() ProcessBindingStatus {
 		}
 	}
 	return result
-}
-
-// Called after ordinary Run succeeds, under mirror.mu, before publication.
-// Failure is finite observable capability state; ordinary Run's result survives.
-// The configured public factory returns a raw *moby.Client, so TC cached Info
-// cannot accidentally be selected as the production identity implementation.
-func (m *Mirror) bindOriginalProcessClient(ctx context.Context, d *Daemon, c *testcontainers.DockerContainer) {
-	d.processBindingState = "positive-binding-failed"
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if ctx.Err() != nil {
-		d.processBindingState = "context-unavailable"
-		return
-	}
-	raw, err := m.originalProcessClientFactory(ctx)
-	var candidate cephFSOriginalProcessDocker
-	if raw != nil {
-		candidate = raw
-	}
-	b := bindOriginalProcessCandidate(ctx, d, c, candidate, err)
-	if b == nil {
-		return
-	}
-	// Daemon.Remove/direct daemon Terminate deliberately do not close this client.
-	m.owned.AddCleanup("close original CephFS process observer", b.close)
 }
 
 func bindOriginalProcessCandidate(ctx context.Context, d *Daemon, h cephFSOriginalProcessHandle, raw cephFSOriginalProcessDocker, factoryErr error) *cephFSBoundOriginalProcess {

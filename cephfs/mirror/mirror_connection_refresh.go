@@ -229,35 +229,6 @@ func (mirror *Mirror) readCephFSRemoteMonitorIdentity(ctx context.Context, addre
 	return cephFSRemoteMonitorIdentity{FSID: fsid, Addresses: current}, ctx.Err()
 }
 
-// Called under mirror.mu after original filesystem identities have been captured.
-// The MGR's warm rados client can report its old mon_host even after all MONs roll.
-func (mirror *Mirror) normalizeCephFSPeerBootstrap(ctx context.Context, token string) (string, error) {
-	if err := mirror.confirmCephFSRefreshHandle(false); err != nil {
-		return "", err
-	}
-	if err := mirror.checkCephFSRefreshFilesystems(ctx); err != nil {
-		return "", err
-	}
-	destination, err := ceph.Observe(mirror.destination)
-	if err != nil {
-		return "", err
-	}
-	identity, err := mirror.readCephFSRemoteMonitorIdentity(ctx, destination.MonitorBootstrapAddresses)
-	if err != nil {
-		return "", err
-	}
-	updated, err := normalizeCephFSBootstrapToken(token, cephFSPeerIdentity{
-		ClientName: mirror.DestinationClientEntity, SiteName: mirror.destinationSite, FilesystemName: mirror.DestinationFilesystem,
-	}, identity)
-	if err != nil {
-		return "", err
-	}
-	if err := mirror.checkCephFSRefreshFilesystems(ctx); err != nil {
-		return "", err
-	}
-	return updated, ctx.Err()
-}
-
 func normalizeCephFSBootstrapToken(token string, peer cephFSPeerIdentity, identity cephFSRemoteMonitorIdentity) (string, error) {
 	if len(token) > 1<<20 {
 		return "", cephFSObserveGuard("CephFS bootstrap token is oversized")

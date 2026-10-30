@@ -172,8 +172,21 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 	if err != nil {
 		return nil, err
 	}
-	if err := fs.validatePinRank(ctx, fsID, setting); err != nil {
-		return nil, err
+	if setting.Type == PinExport && setting.Value >= 0 {
+		status, err := fs.MDSStatus(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if status.FilesystemID != fsID || int(setting.Value) >= status.MaxMDS {
+			return nil, errors.New("export pin rank is outside the current filesystem topology")
+		}
+		owned := false
+		for _, active := range status.Active {
+			owned = owned || active.Rank == int(setting.Value) && active.Owned && active.State == "up:active"
+		}
+		if !owned {
+			return nil, errors.New("export pin requires a currently active MDS rank owned by this filesystem")
+		}
 	}
 	change := &PinOverrideHandle{filesystem: fs, target: target, setting: setting, state: &cephFSPinOverrideState{
 		path: base, inode: prior.Inode, previous: cephFSPinValue(prior, setting.Type), applied: canonicalCephFSPinValue(setting),
@@ -333,25 +346,6 @@ func (fs *Filesystem) checkPinTarget(ctx context.Context, fsID int64, target cep
 		return "", errors.New("owned subvolume data path does not identify the native pin base directory")
 	}
 	return base, nil
-}
-
-func (fs *Filesystem) validatePinRank(ctx context.Context, fsID int64, setting PinSetting) error {
-	if setting.Type != PinExport || setting.Value < 0 {
-		return nil
-	}
-	status, err := fs.MDSStatus(ctx)
-	if err != nil {
-		return err
-	}
-	if status.FilesystemID != fsID || int(setting.Value) >= status.MaxMDS {
-		return errors.New("export pin rank is outside the current filesystem topology")
-	}
-	for _, active := range status.Active {
-		if active.Rank == int(setting.Value) && active.Owned && active.State == "up:active" {
-			return nil
-		}
-	}
-	return errors.New("export pin requires a currently active MDS rank owned by this filesystem")
 }
 
 func (fs *Filesystem) pinCommand(ctx context.Context, target cephFSPinTarget, kind PinType, value float64) ([]byte, error) {

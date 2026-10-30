@@ -15,7 +15,7 @@ func TestSerializedMirrorMutationQueuedDeadline(t *testing.T) {
 	daemon.owner = m
 	operations := map[string]func(context.Context) error{
 		"AddDaemon":            func(ctx context.Context) error { _, err := m.AddDaemon(ctx, "queued"); return err },
-		"Remove":         func(ctx context.Context) error { return daemon.Remove(ctx) },
+		"Remove":               func(ctx context.Context) error { return daemon.Remove(ctx) },
 		"AttachManagers":       m.AttachManagers,
 		"AddDirectory":         func(ctx context.Context) error { return m.AddDirectory(ctx, "/queued") },
 		"RemoveDirectory":      func(ctx context.Context) error { return m.RemoveDirectory(ctx, "/queued") },

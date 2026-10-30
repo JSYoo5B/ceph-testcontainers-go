@@ -575,7 +575,26 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 			if err != nil {
 				daemon.processBindingState = "partial-startup"
 			} else {
-				mirror.bindOriginalProcessClient(ctx, daemon, container)
+				// Ordinary Run's result survives a binding failure, which is
+				// finite observable capability state. The configured factory
+				// returns a raw *moby.Client, so TC cached Info cannot be
+				// selected as the production identity implementation.
+				daemon.processBindingState = "positive-binding-failed"
+				bindCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				if bindCtx.Err() != nil {
+					daemon.processBindingState = "context-unavailable"
+				} else {
+					raw, err := mirror.originalProcessClientFactory(bindCtx)
+					var candidate cephFSOriginalProcessDocker
+					if raw != nil {
+						candidate = raw
+					}
+					// Daemon.Remove/direct daemon Terminate deliberately do not close this client.
+					if b := bindOriginalProcessCandidate(bindCtx, daemon, container, candidate, err); b != nil {
+						mirror.owned.AddCleanup("close original CephFS process observer", b.close)
+					}
+				}
+				cancel()
 			}
 		}
 	}
@@ -1000,7 +1019,34 @@ func (mirror *Mirror) RebalanceDirectories(ctx context.Context) error {
 	if mirror.pendingDirectoryRelease == nil {
 		mirror.pendingDirectoryRelease = make(map[string]bool)
 	}
-	return rebalanceCephFSMirrorDirectories(ctx, directories, mirror.sourceDirectories, mirror.sourceDirectoryState,
+	list := func(ctx context.Context) ([]string, error) {
+		data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", mirror.SourceFilesystem)
+		if err != nil {
+			return nil, fmt.Errorf("list CephFS mirror directories: %w", err)
+		}
+		var directories []string
+		if err := json.Unmarshal(data, &directories); err != nil || directories == nil {
+			return nil, errors.New("source did not return a CephFS mirror directory list")
+		}
+		return directories, nil
+	}
+	// state returns the state of directory in the native mirroring policy, such
+	// as "mapped" or "unmapping", or an error matching fs.ErrNotExist once the
+	// policy no longer tracks it.
+	state := func(ctx context.Context, directory string) (string, error) {
+		data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.SourceFilesystem, directory)
+		if err != nil {
+			return "", fmt.Errorf("read CephFS mirror directory %q state: %w", directory, err)
+		}
+		var status struct {
+			State string `json:"state"`
+		}
+		if err := json.Unmarshal(data, &status); err != nil || status.State == "" {
+			return "", fmt.Errorf("source did not return the state of CephFS mirror directory %q", directory)
+		}
+		return status.State, nil
+	}
+	return rebalanceCephFSMirrorDirectories(ctx, directories, list, state,
 		func(commandCtx context.Context, operation, directory string) error {
 			mirror.supersedeDirectoryAddition(directory)
 			_, err := mirror.source.Ceph(commandCtx, "fs", "snapshot", "mirror", operation, mirror.SourceFilesystem, directory)
@@ -1009,35 +1055,6 @@ func (mirror *Mirror) RebalanceDirectories(ctx context.Context) error {
 			}
 			return err
 		}, mirror.pendingDirectoryRelease, 500*time.Millisecond)
-}
-
-func (mirror *Mirror) sourceDirectories(ctx context.Context) ([]string, error) {
-	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "ls", mirror.SourceFilesystem)
-	if err != nil {
-		return nil, fmt.Errorf("list CephFS mirror directories: %w", err)
-	}
-	var directories []string
-	if err := json.Unmarshal(data, &directories); err != nil || directories == nil {
-		return nil, errors.New("source did not return a CephFS mirror directory list")
-	}
-	return directories, nil
-}
-
-// sourceDirectoryState returns the state of directory in the native mirroring
-// policy, such as "mapped" or "unmapping", or an error matching fs.ErrNotExist
-// once the policy no longer tracks it.
-func (mirror *Mirror) sourceDirectoryState(ctx context.Context, directory string) (string, error) {
-	data, err := mirror.source.Ceph(ctx, "fs", "snapshot", "mirror", "dirmap", mirror.SourceFilesystem, directory)
-	if err != nil {
-		return "", fmt.Errorf("read CephFS mirror directory %q state: %w", directory, err)
-	}
-	var status struct {
-		State string `json:"state"`
-	}
-	if err := json.Unmarshal(data, &status); err != nil || status.State == "" {
-		return "", fmt.Errorf("source did not return the state of CephFS mirror directory %q", directory)
-	}
-	return status.State, nil
 }
 
 // The intent slice is deliberately unchanged throughout partial mutation. A
@@ -1154,10 +1171,6 @@ func (mirror *Mirror) PeerIDs(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	defer mirror.mu.Unlock()
-	return mirror.peerIDs(ctx)
-}
-
-func (mirror *Mirror) peerIDs(ctx context.Context) ([]string, error) {
 	peers, err := mirror.peerRecords(ctx)
 	if err != nil {
 		return nil, err
@@ -1288,8 +1301,32 @@ func (mirror *Mirror) RebootstrapPeer(ctx context.Context) (string, error) {
 	if err := json.Unmarshal(bootstrap, &token); err != nil || token.Token == "" {
 		return "", errors.New("destination did not return a valid CephFS peer bootstrap token")
 	}
-	token.Token, err = mirror.normalizeCephFSPeerBootstrap(ctx, token.Token)
+	// The MGR's warm rados client can report its old mon_host even after all
+	// MONs roll, so the token carries the destination's current monitors.
+	if err := mirror.confirmCephFSRefreshHandle(false); err != nil {
+		return "", err
+	}
+	if err := mirror.checkCephFSRefreshFilesystems(ctx); err != nil {
+		return "", err
+	}
+	observer, err := ceph.Observe(mirror.destination)
 	if err != nil {
+		return "", err
+	}
+	monitors, err := mirror.readCephFSRemoteMonitorIdentity(ctx, observer.MonitorBootstrapAddresses)
+	if err != nil {
+		return "", err
+	}
+	token.Token, err = normalizeCephFSBootstrapToken(token.Token, cephFSPeerIdentity{
+		ClientName: mirror.DestinationClientEntity, SiteName: mirror.destinationSite, FilesystemName: mirror.DestinationFilesystem,
+	}, monitors)
+	if err != nil {
+		return "", err
+	}
+	if err := mirror.checkCephFSRefreshFilesystems(ctx); err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	// An error from Exec cannot prove the manager did not apply the command.

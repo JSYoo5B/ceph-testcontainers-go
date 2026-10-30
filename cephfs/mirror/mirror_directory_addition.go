@@ -233,7 +233,27 @@ func (r *DirectoryAddition) resume(ctx context.Context) error {
 		if !r.requestAttempted {
 			return cephFSObserveGuard("CephFS directory addition has no prior attempted intent")
 		}
-		return r.publish(ctx)
+		if err := r.checkHandle(true); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		m := r.original.mirror
+		if !slices.Contains(m.Directories, r.directory) {
+			m.Directories = append(m.Directories, r.directory)
+		}
+		if m.ownedDirectories == nil {
+			m.ownedDirectories = make(map[string]bool)
+		}
+		if m.directoryGenerations == nil {
+			m.directoryGenerations = make(map[string]uint64)
+		}
+		m.ownedDirectories[r.directory] = true
+		m.directoryGenerations[r.directory] = r.baseGeneration + 1
+		r.generation = m.directoryGenerations[r.directory]
+		r.registered = true
+		return nil
 	}
 	if r.requestAcknowledged {
 		return cephFSObserveQuery("wait for acknowledged CephFS directory addition policy convergence", nil)
@@ -258,30 +278,6 @@ func (r *DirectoryAddition) attempt(ctx context.Context) error {
 	}
 	r.requestAcknowledged = true
 	return r.resume(ctx)
-}
-
-func (r *DirectoryAddition) publish(ctx context.Context) error {
-	if err := r.checkHandle(true); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	m := r.original.mirror
-	if !slices.Contains(m.Directories, r.directory) {
-		m.Directories = append(m.Directories, r.directory)
-	}
-	if m.ownedDirectories == nil {
-		m.ownedDirectories = make(map[string]bool)
-	}
-	if m.directoryGenerations == nil {
-		m.directoryGenerations = make(map[string]uint64)
-	}
-	m.ownedDirectories[r.directory] = true
-	m.directoryGenerations[r.directory] = r.baseGeneration + 1
-	r.generation = m.directoryGenerations[r.directory]
-	r.registered = true
-	return nil
 }
 
 // Status is read-only. A visible policy after a lost reply can be reported while

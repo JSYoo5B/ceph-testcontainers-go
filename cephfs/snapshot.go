@@ -492,8 +492,46 @@ func (clone *SubvolumeClone) Wait(ctx context.Context) (*Subvolume, error) {
 	timeout := servicehook.StartupTimeout(fs.cluster)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	identity := clone.identity
 	for {
-		subvolume, complete, err := fs.advanceSubvolumeClone(ctx, clone.identity)
+		// Each poll holds the subvolume operation gate only for its own step.
+		subvolume, complete, err := func() (*Subvolume, bool, error) {
+			ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
+			if err != nil {
+				return nil, false, err
+			}
+			defer done()
+			if err := fs.checkCloneIncarnation(ctx, identity); err != nil {
+				return nil, false, err
+			}
+			status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
+			if err != nil {
+				return nil, false, err
+			}
+			if status.State == "failed" || status.State == "canceled" {
+				return nil, false, fmt.Errorf("CephFS clone %q is %s (errno %d): %s", identity.name, status.State, status.FailureErrno, status.FailureMessage)
+			}
+			if status.State != "complete" {
+				return nil, false, nil
+			}
+			if identity.subvolume == nil {
+				info, err := fs.subvolumeInfo(ctx, identity.name, identity.group)
+				if err != nil {
+					return nil, false, err
+				}
+				if info.Type != "clone" || info.State != "complete" || (identity.dataPool != "" && info.DataPool != identity.dataPool) {
+					return nil, false, errors.New("completed subvolume clone does not match requested native type, state or pool")
+				}
+				if identity.incarnation != nil && info.Path != identity.incarnation.Path {
+					return nil, false, errors.New("completed clone incarnation differs from its submission identity")
+				}
+				identity.subvolume = &Subvolume{Name: identity.name, GroupName: identity.group, FilesystemName: fs.name, Path: info.Path,
+					identity: &cephFSVolumeIdentity{filesystem: fs, filesystemID: fsID, name: identity.name, group: identity.group, path: info.Path, createdAt: info.CreatedAt, ready: true}}
+			}
+			// Return a separate public descriptor while retaining shared private lifecycle.
+			result := *identity.subvolume
+			return &result, true, nil
+		}()
 		if err != nil {
 			return nil, err
 		}
@@ -509,42 +547,4 @@ func (clone *SubvolumeClone) Wait(ctx context.Context) (*Subvolume, error) {
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-}
-
-func (fs *Filesystem) advanceSubvolumeClone(ctx context.Context, identity *cephFSCloneIdentity) (*Subvolume, bool, error) {
-	ctx, fsID, done, err := fs.beginSubvolumeOperation(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	defer done()
-	if err := fs.checkCloneIncarnation(ctx, identity); err != nil {
-		return nil, false, err
-	}
-	status, err := fs.subvolumeCloneStatus(ctx, fsID, identity)
-	if err != nil {
-		return nil, false, err
-	}
-	if status.State == "failed" || status.State == "canceled" {
-		return nil, false, fmt.Errorf("CephFS clone %q is %s (errno %d): %s", identity.name, status.State, status.FailureErrno, status.FailureMessage)
-	}
-	if status.State != "complete" {
-		return nil, false, nil
-	}
-	if identity.subvolume == nil {
-		info, err := fs.subvolumeInfo(ctx, identity.name, identity.group)
-		if err != nil {
-			return nil, false, err
-		}
-		if info.Type != "clone" || info.State != "complete" || (identity.dataPool != "" && info.DataPool != identity.dataPool) {
-			return nil, false, errors.New("completed subvolume clone does not match requested native type, state or pool")
-		}
-		if identity.incarnation != nil && info.Path != identity.incarnation.Path {
-			return nil, false, errors.New("completed clone incarnation differs from its submission identity")
-		}
-		identity.subvolume = &Subvolume{Name: identity.name, GroupName: identity.group, FilesystemName: fs.name, Path: info.Path,
-			identity: &cephFSVolumeIdentity{filesystem: fs, filesystemID: fsID, name: identity.name, group: identity.group, path: info.Path, createdAt: info.CreatedAt, ready: true}}
-	}
-	// Return a separate public descriptor while retaining shared private lifecycle.
-	result := *identity.subvolume
-	return &result, true, nil
 }
