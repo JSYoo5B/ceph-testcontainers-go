@@ -301,11 +301,7 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 		servicehook.Unlock(c)
 		return fs.scaleColdMDS(ctx, active, standby, fs.startMDS)
 	}
-	if !fs.registered() || fs.Container == nil || fs.nativeIdentity == nil {
-		servicehook.Unlock(c)
-		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
-	}
-	if err := fs.completedMDSReplacementCohort(); err != nil {
+	if err := fs.checkScaleOwner(); err != nil {
 		servicehook.Unlock(c)
 		return err
 	}
@@ -321,11 +317,7 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 	if err := servicehook.LockTopology(ctx, c); err != nil {
 		return err
 	}
-	if !fs.registered() || fs.Container == nil || fs.nativeIdentity == nil {
-		servicehook.Unlock(c)
-		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
-	}
-	if err := fs.completedMDSReplacementCohort(); err != nil {
+	if err := fs.checkScaleOwner(); err != nil {
 		servicehook.Unlock(c)
 		return err
 	}
@@ -341,12 +333,7 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 		replayPaused = true
 		defer func() {
 			if replayPaused {
-				restoreCtx, restoreCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-				defer restoreCancel()
-				_, err := c.Ceph(restoreCtx, "fs", "set", fs.name, "allow_standby_replay", "true")
-				if err != nil {
-					returnErr = errors.Join(returnErr, fmt.Errorf("restore cephfs standby replay: %w", err))
-				}
+				returnErr = errors.Join(returnErr, fs.restoreStandbyReplay(ctx))
 			}
 		}()
 		if err := fs.waitReplayFollowersStandby(ctx, status.MaxMDS); err != nil {
@@ -369,6 +356,27 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 		replayPaused = false
 	}
 	return fs.WaitReady(ctx)
+}
+
+// checkScaleOwner refuses scaling a filesystem that is not an initialized,
+// registered filesystem of a running cluster, or whose MDS replacement cohort
+// is incomplete. Owner held: the caller holds the cluster mutex.
+func (fs *Filesystem) checkScaleOwner() error {
+	if !fs.registered() || fs.Container == nil || fs.nativeIdentity == nil {
+		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
+	}
+	return fs.completedMDSReplacementCohort()
+}
+
+// restoreStandbyReplay turns standby replay back on after a failed scale,
+// with its own bound so that a cancelled scale still restores the preference.
+func (fs *Filesystem) restoreStandbyReplay(ctx context.Context) error {
+	restoreCtx, restoreCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer restoreCancel()
+	if _, err := fs.cluster.Ceph(restoreCtx, "fs", "set", fs.name, "allow_standby_replay", "true"); err != nil {
+		return fmt.Errorf("restore cephfs standby replay: %w", err)
+	}
+	return nil
 }
 
 // checkScalable is the preflight of ScaleMDS, run without the topology lock:
