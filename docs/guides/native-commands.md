@@ -579,6 +579,39 @@ configuration (`client` section) when it starts; set them with
 `override.SetConfig` on the destination before `AddDaemon`. Its logs go to
 standard error (`daemon.Logs(ctx)`).
 
+## CephFS state and settings
+
+Anything without a typed CephFS API is a `cluster.Ceph` call (no shell; add
+`--format json` for machine-readable output):
+
+```golang
+out, err := cluster.Ceph(ctx, "fs", "status", fs.FilesystemName, "--format", "json")
+out, err = cluster.Ceph(ctx, "fs", "dump", "--format", "json")
+_, err = cluster.Ceph(ctx, "fs", "set", fs.FilesystemName, "max_file_size", "1073741824")
+out, err = cluster.Ceph(ctx, "fs", "subvolume", "ls", fs.FilesystemName, "--group_name", "tenants")
+out, err = cluster.Ceph(ctx, "tell", "mds."+fs.FilesystemName+":0", "session", "ls", "--format", "json")
+out, err = cluster.Ceph(ctx, "tell", "mds."+fs.FilesystemName+":0", "dump_ops_in_flight")
+_, err = cluster.Ceph(ctx, "mds", "fail", strconv.FormatUint(gid, 10)) // GID from MDSStatus
+```
+
+- Each MDS has its admin socket at `/var/run/ceph/ceph-mds.<ID>.asok`. It runs
+  with `--mds-cache-memory-limit 134217728` (128 MiB) on its command line, so
+  central configuration cannot change that option.
+- CephFS mirror policy and assignment are `fs snapshot mirror ls`, `dirmap`,
+  `peer_list`, `daemon status` and `show distribution` on the source; each
+  mirror daemon's admin socket (`/var/run/ceph/cephfs-mirror.asok`) takes
+  `fs mirror status <fs>@<fscid>` and `fs mirror peer status <fs>@<fscid> <peer>`.
+- Retained snapshots (`fs subvolume rm --retain-snapshots`) and custom metadata
+  have no typed API. On Ceph 20.2.4 a `snapshot-retained` subvolume has no live
+  path and refuses custom metadata calls; snapshots and clones do not copy a
+  subvolume's custom metadata, and Ceph lower-cases metadata keys. Recreating a
+  retained name makes a new subvolume with a new UUID (`EAGAIN` while Ceph still
+  purges is safe to retry); typed handles do not adopt either state.
+
+Raw commands on resources that typed handles own are outside the handles'
+contract: fence other writers and do not run fixture operations on the same
+resources at the same time.
+
 ## RGW administration
 
 `rgw.Gateway.Admin` runs `radosgw-admin --format json` inside a running

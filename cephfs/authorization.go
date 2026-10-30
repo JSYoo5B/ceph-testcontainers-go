@@ -484,6 +484,8 @@ func (grant *SubvolumeAuthorization) Deauthorize(ctx context.Context) error {
 // grants are outside this native operation's scope. Eviction may blocklist the
 // client's connection address. A native error may represent partial eviction
 // across MDS ranks; a retry repeats the same owned scope.
+//
+// To remove the principal itself afterwards, call grant.Client.Delete.
 func (grant *SubvolumeAuthorization) EvictClients(ctx context.Context) error {
 	fs, err := grant.filesystem()
 	if err != nil {

@@ -208,6 +208,9 @@ func cephFSPoolHandle(identity *cephFSDataPoolIdentity) *DataPool {
 // successful command using the original native IDs. External edits must not
 // race these operations. Ceph's retained application tag after detachment must
 // be inspected and explicitly cleared through Ceph before a new attachment.
+//
+// Clear the retained tag with ceph osd pool application rm <name> cephfs data
+// before attaching a detached pool again.
 func (fs *Filesystem) AddDataPool(ctx context.Context, name string) (*DataPool, error) {
 	if err := validateExistingPool(name); err != nil {
 		return nil, err

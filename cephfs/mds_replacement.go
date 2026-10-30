@@ -37,6 +37,10 @@ type cephFSMDSReplacement struct {
 // Direct Start/Stop, native policy/failure edits and exported-field edits must
 // not run concurrently. Native name/GID and original Docker CID are independent
 // evidence; this method does not establish process-to-GID attribution.
+//
+// Without a standby, Ceph can keep a dead daemon registered as laggy; fail its
+// GID explicitly with ceph mds fail <gid> before calling it. Do not start, stop
+// or fail daemons by hand while it runs.
 func (stopped *MDS) AddReplacement(ctx context.Context) (*MDS, error) {
 	if stopped == nil || stopped.identity == nil || stopped.identity.fleet.id == nil {
 		return nil, errors.New("original owned MDS creation identity is unavailable")
