@@ -56,8 +56,27 @@ func (g *SyncGroup) Apply(ctx context.Context) error {
 	if !syncPeriodPolicyEqual(current, g.state.period) && !syncPeriodPolicyEqual(current, want) {
 		return errors.New("RGW current period changed outside this owned sync group")
 	}
-	// period update reflects every stored zonegroup, not only the selected one.
-	// Check each native config before asking it to construct the staging map.
+	if err := f.checkStoredZonegroups(ctx, master, want); err != nil {
+		return err
+	}
+	if !syncPeriodPolicyEqual(current, want) {
+		if current, err = f.publishSyncPeriod(ctx, master, current, want); err != nil {
+			return err
+		}
+	}
+	g.state.period = current
+	states := f.zoneStates()
+	if err := f.importSyncPeriod(ctx, master, states, current); err != nil {
+		return err
+	}
+	return f.reloadZoneGateways(ctx, states, nil)
+}
+
+// checkStoredZonegroups requires every zonegroup of want to be stored exactly
+// as want has it: period update reflects every stored zonegroup, not only the
+// selected one, so each native config is checked before the master is asked
+// to construct the staging map.
+func (f *Fixture) checkStoredZonegroups(ctx context.Context, master *rgwZoneState, want map[string]any) error {
 	for _, stored := range syncPeriodGroups(want) {
 		name, _ := stored["name"].(string)
 		data, err := f.syncPolicyAdmin(ctx, master, name, "zonegroup", "get")
@@ -72,41 +91,50 @@ func (g *SyncGroup) Apply(ctx context.Context) error {
 			return errors.New("RGW stored zonegroup has unrelated pending policy or topology")
 		}
 	}
-	if !syncPeriodPolicyEqual(current, want) {
-		staging, err := f.syncStagingPeriod(ctx, master)
-		if err != nil {
-			return err
-		}
-		if staging != nil && !syncPeriodPolicyEqual(staging, current) && !syncPeriodPolicyEqual(staging, want) {
-			return multisiteInvalid(errors.New("RGW existing staging period contains unrelated policy; refusing overwrite"))
-		}
-		data, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "update")
-		if err != nil {
-			return err
-		}
-		staging, err = syncJSON(data)
-		if err != nil {
-			return err
-		}
-		if !syncPeriodPolicyEqual(staging, want) {
-			// The staging period is already updated: a failed check, not a refusal.
-			return errors.New("RGW generated staging period changed unrelated policy; refusing publication")
-		}
-		if _, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "commit"); err != nil {
-			return err
-		}
-		_, current, err = f.syncPolicyMaster(ctx)
-		if err != nil {
-			return err
-		}
-		if !syncPeriodPolicyEqual(current, want) {
-			return errors.New("RGW committed sync policy differs from the owned change")
-		}
+	return nil
+}
+
+// publishSyncPeriod stages and commits want on the master and returns the
+// committed period. An existing staging period with unrelated policy is
+// refused before period update can overwrite it, and the generated staging
+// period must differ from current only by this group's policy.
+func (f *Fixture) publishSyncPeriod(ctx context.Context, master *rgwZoneState, current, want map[string]any) (map[string]any, error) {
+	staging, err := f.syncStagingPeriod(ctx, master)
+	if err != nil {
+		return nil, err
 	}
-	g.state.period = current
-	states := f.zoneStates()
-	// Use known bootstrap system credentials even before that user's metadata
-	// has arrived at a secondary. These credentials never enter returned errors.
+	if staging != nil && !syncPeriodPolicyEqual(staging, current) && !syncPeriodPolicyEqual(staging, want) {
+		return nil, multisiteInvalid(errors.New("RGW existing staging period contains unrelated policy; refusing overwrite"))
+	}
+	data, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "update")
+	if err != nil {
+		return nil, err
+	}
+	if staging, err = syncJSON(data); err != nil {
+		return nil, err
+	}
+	if !syncPeriodPolicyEqual(staging, want) {
+		// The staging period is already updated: a failed check, not a refusal.
+		return nil, errors.New("RGW generated staging period changed unrelated policy; refusing publication")
+	}
+	if _, err := f.syncPolicyAdmin(ctx, master, master.Zonegroup, "period", "commit"); err != nil {
+		return nil, err
+	}
+	_, committed, err := f.syncPolicyMaster(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !syncPeriodPolicyEqual(committed, want) {
+		return nil, errors.New("RGW committed sync policy differs from the owned change")
+	}
+	return committed, nil
+}
+
+// importSyncPeriod pulls the realm into every secondary and requires every
+// owned zone to hold exactly the committed period. It uses the known
+// bootstrap system credentials, which work even before that user's metadata
+// has arrived at a secondary and never enter returned errors.
+func (f *Fixture) importSyncPeriod(ctx context.Context, master *rgwZoneState, states []*rgwZoneState, current map[string]any) error {
 	for _, zone := range states {
 		if zone.ID != master.ID {
 			if _, err := f.syncPolicyAdmin(ctx, zone, zone.Zonegroup, "realm", "pull", "--url", master.PeerEndpoint,
@@ -126,7 +154,7 @@ func (g *SyncGroup) Apply(ctx context.Context) error {
 			return errors.New("RGW owned zone has not imported the exact committed policy period")
 		}
 	}
-	return f.reloadZoneGateways(ctx, states, nil)
+	return nil
 }
 
 func syncPeriodGroups(period map[string]any) []map[string]any {

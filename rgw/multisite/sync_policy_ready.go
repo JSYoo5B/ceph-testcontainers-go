@@ -214,21 +214,14 @@ func (f *Fixture) syncPolicyReadyStatus(ctx context.Context, g *SyncGroup, maste
 	if err != nil {
 		return result, false, err
 	}
-	metadata, err := syncJSON(data)
+	instance, matched, err := decodeBucketInstance(data, key, g)
+	if err == nil && !matched {
+		err = errors.New("RGW destination policy metadata has a different bucket instance or zonegroup")
+	}
 	if err != nil {
 		return result, true, err
 	}
-	body, _ := metadata["data"].(map[string]any)
-	info, _ := body["bucket_info"].(map[string]any)
-	bucket, _ := info["bucket"].(map[string]any)
-	if metadata["key"] != "bucket.instance:"+key || info == nil || bucket["name"] != g.scope.Bucket || bucket["tenant"] != g.scope.Tenant || bucket["bucket_id"] != g.bucketID || info["zonegroup"] != g.groupID {
-		return result, true, errors.New("RGW destination policy metadata has a different bucket instance or zonegroup")
-	}
-	policy, err := syncPolicyFromDocument(info)
-	if err != nil {
-		return result, true, err
-	}
-	result.PolicyImported = reflect.DeepEqual(syncNativeGroup(policy, g.ID()), wantGroup)
+	result.PolicyImported = reflect.DeepEqual(syncNativeGroup(instance.policy, g.ID()), wantGroup)
 	for _, bucket := range result.Buckets {
 		found, fatal, err := f.syncPolicyReadyBucket(ctx, destination, g, bucket)
 		if err != nil || !found {
@@ -252,11 +245,11 @@ func (f *Fixture) syncPolicyReadyBucket(ctx context.Context, zone *rgwZoneState,
 	if err != nil {
 		return false, true, err
 	}
-	id, _ := native["id"].(string)
+	id := nativeMember(native, "id").value
 	if id == "" {
 		return false, true, errors.New("RGW destination bucket statistics lack a native instance identity")
 	}
-	if native["bucket"] != bucket.Name || native["tenant"] != bucket.Tenant || native["zonegroup"] != g.groupID {
+	if !nativeMember(native, "bucket").is(bucket.Name) || !nativeMember(native, "tenant").is(bucket.Tenant) || !nativeMember(native, "zonegroup").is(g.groupID) {
 		return false, true, errors.New("RGW destination bucket namespace or zonegroup identity differs")
 	}
 	if id != bucket.ID {

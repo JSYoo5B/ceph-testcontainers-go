@@ -136,75 +136,108 @@ func prepareRGWTopology(ctx context.Context, image string, config TopologyConfig
 }
 
 func normalizeRGWTopology(config TopologyConfig) ([]ZoneConfig, error) {
+	var err error
 	if len(config.Zonegroups) > 0 {
 		if len(config.Zones) > 0 || config.Zonegroup != "" || config.MetadataMaster != "" {
 			return nil, multisiteInvalid(errors.New("RGW topology must use either Zones or Zonegroups"))
 		}
-		groups := slices.Clone(config.Zonegroups)
-		masterGroup := config.MasterZonegroup
-		if masterGroup == "" {
-			masterGroup = groups[0].Name
-		}
-		var zones []ZoneConfig
-		var masterName string
-		seen := make(map[string]bool)
-		for _, group := range groups {
-			if !validRGWZoneName(group.Name) || seen[group.Name] || len(group.Zones) == 0 {
-				return nil, multisiteInvalid(errors.New("RGW zonegroups require unique valid names and at least one zone"))
-			}
-			seen[group.Name] = true
-			ordered := slices.Clone(group.Zones)
-			master := group.MasterZone
-			if master == "" {
-				master = ordered[0].Name
-			}
-			index := slices.IndexFunc(ordered, func(zone ZoneConfig) bool { return zone.Name == master })
-			if index < 0 {
-				return nil, multisiteInvalid(errors.New("RGW zonegroup master must name a zone in that group"))
-			}
-			selected := ordered[index]
-			ordered = slices.Delete(ordered, index, index+1)
-			ordered = append([]ZoneConfig{selected}, ordered...)
-			for i := range ordered {
-				if ordered[i].Zonegroup != "" && ordered[i].Zonegroup != group.Name {
-					return nil, multisiteInvalid(errors.New("RGW zone has conflicting zonegroup"))
-				}
-				ordered[i].Zonegroup = group.Name
-			}
-			if group.Name == masterGroup {
-				masterName = master
-				zones = append(ordered, zones...)
-			} else {
-				zones = append(zones, ordered...)
-			}
-		}
-		if masterName == "" {
-			return nil, multisiteInvalid(errors.New("RGW master zonegroup must name a configured group"))
-		}
-		config.Zones, config.MetadataMaster = zones, masterName
+		config.Zones, config.MetadataMaster, err = flattenRGWZonegroups(config.Zonegroups, config.MasterZonegroup)
 	} else {
-		if config.MasterZonegroup != "" {
-			return nil, multisiteInvalid(errors.New("MasterZonegroup requires Zonegroups"))
+		config.Zones, err = flatRGWZones(config)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return orderRGWZones(config.Zones, config.MetadataMaster)
+}
+
+// flattenRGWZonegroups lists the zones of every group with each group's
+// master first and the master group's zones ahead of the others. It returns
+// the master group's master zone as the realm metadata master.
+func flattenRGWZonegroups(groups []ZonegroupConfig, masterGroup string) ([]ZoneConfig, string, error) {
+	groups = slices.Clone(groups)
+	if masterGroup == "" {
+		masterGroup = groups[0].Name
+	}
+	var zones []ZoneConfig
+	var masterName string
+	seen := make(map[string]bool)
+	for _, group := range groups {
+		if !validRGWZoneName(group.Name) || seen[group.Name] || len(group.Zones) == 0 {
+			return nil, "", multisiteInvalid(errors.New("RGW zonegroups require unique valid names and at least one zone"))
 		}
-		if config.Zonegroup == "" {
-			config.Zonegroup = "us-east-1"
+		seen[group.Name] = true
+		ordered, master, err := rgwZonegroupZones(group)
+		if err != nil {
+			return nil, "", err
 		}
-		if !validRGWZoneName(config.Zonegroup) {
-			return nil, multisiteInvalid(errors.New("invalid RGW zonegroup name"))
-		}
-		config.Zones = slices.Clone(config.Zones)
-		for i := range config.Zones {
-			if config.Zones[i].Zonegroup != "" && config.Zones[i].Zonegroup != config.Zonegroup {
-				return nil, multisiteInvalid(errors.New("flat RGW topology uses one zonegroup; use Zonegroups for multiple groups"))
-			}
-			config.Zones[i].Zonegroup = config.Zonegroup
+		if group.Name == masterGroup {
+			masterName = master
+			zones = append(ordered, zones...)
+		} else {
+			zones = append(zones, ordered...)
 		}
 	}
-	if len(config.Zones) < 2 {
-		return nil, multisiteInvalid(errors.New("RGW multisite topology requires at least two zones"))
+	if masterName == "" {
+		return nil, "", multisiteInvalid(errors.New("RGW master zonegroup must name a configured group"))
+	}
+	return zones, masterName, nil
+}
+
+// rgwZonegroupZones returns the group's zones, assigned to the group, with
+// its master zone (by default the first) moved to the front.
+func rgwZonegroupZones(group ZonegroupConfig) ([]ZoneConfig, string, error) {
+	ordered := slices.Clone(group.Zones)
+	master := group.MasterZone
+	if master == "" {
+		master = ordered[0].Name
+	}
+	index := slices.IndexFunc(ordered, func(zone ZoneConfig) bool { return zone.Name == master })
+	if index < 0 {
+		return nil, "", multisiteInvalid(errors.New("RGW zonegroup master must name a zone in that group"))
+	}
+	selected := ordered[index]
+	ordered = slices.Delete(ordered, index, index+1)
+	ordered = append([]ZoneConfig{selected}, ordered...)
+	for i := range ordered {
+		if ordered[i].Zonegroup != "" && ordered[i].Zonegroup != group.Name {
+			return nil, "", multisiteInvalid(errors.New("RGW zone has conflicting zonegroup"))
+		}
+		ordered[i].Zonegroup = group.Name
+	}
+	return ordered, master, nil
+}
+
+// flatRGWZones assigns every zone of a single-region topology to its
+// zonegroup.
+func flatRGWZones(config TopologyConfig) ([]ZoneConfig, error) {
+	if config.MasterZonegroup != "" {
+		return nil, multisiteInvalid(errors.New("MasterZonegroup requires Zonegroups"))
+	}
+	if config.Zonegroup == "" {
+		config.Zonegroup = "us-east-1"
+	}
+	if !validRGWZoneName(config.Zonegroup) {
+		return nil, multisiteInvalid(errors.New("invalid RGW zonegroup name"))
 	}
 	zones := slices.Clone(config.Zones)
-	master := config.MetadataMaster
+	for i := range zones {
+		if zones[i].Zonegroup != "" && zones[i].Zonegroup != config.Zonegroup {
+			return nil, multisiteInvalid(errors.New("flat RGW topology uses one zonegroup; use Zonegroups for multiple groups"))
+		}
+		zones[i].Zonegroup = config.Zonegroup
+	}
+	return zones, nil
+}
+
+// orderRGWZones requires at least two uniquely and validly named zones and
+// moves the metadata master (by default the first) to the front without
+// reordering the other sites.
+func orderRGWZones(zones []ZoneConfig, master string) ([]ZoneConfig, error) {
+	if len(zones) < 2 {
+		return nil, multisiteInvalid(errors.New("RGW multisite topology requires at least two zones"))
+	}
+	zones = slices.Clone(zones)
 	if master == "" {
 		master = zones[0].Name
 	}
@@ -225,7 +258,6 @@ func normalizeRGWTopology(config TopologyConfig) ([]ZoneConfig, error) {
 	if masterIndex < 0 {
 		return nil, multisiteInvalid(errors.New("RGW metadata master must name a configured zone"))
 	}
-	// Move the initial master to the front without reordering the other sites.
 	selected := zones[masterIndex]
 	zones = append(slices.Delete(zones, masterIndex, masterIndex+1), ZoneConfig{})
 	copy(zones[1:], zones[:len(zones)-1])
@@ -314,81 +346,156 @@ func (f *Fixture) AddZone(ctx context.Context, image string, config ZoneConfig, 
 }
 
 func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, createGroup bool, opts ...testcontainers.ContainerCustomizer) (*Zone, error) {
+	addition, err := f.admitZoneAddition(ctx, image, config, createGroup)
+	if err != nil {
+		return nil, err
+	}
+	config = addition.config
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Minute)
+	defer cancel()
+	master, err := f.additionMaster(ctx, config.Name)
+	if err != nil {
+		return nil, err
+	}
+	state := f.registerAddedZone(config)
+	peerNetwork := ""
+	if f.httpNetwork != nil {
+		peerNetwork = f.httpNetwork.Name
+	}
+	state.client, err = multicluster.RunClient(ctx, addition.clientImage, config.Cluster, peerNetwork, &f.owned)
+	if err != nil {
+		return &state.Zone, err
+	}
+	alias := "rgw-zone-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	if !addition.hostNetwork {
+		state.PeerEndpoint = "http://" + alias + ":7480"
+	}
+	newGroup := ""
+	if createGroup {
+		newGroup = config.Zonegroup
+	}
+	if err := f.joinZone(ctx, zoneJoin{client: state.client, zone: config.Name, masterURL: master.PeerEndpoint, endpoint: state.PeerEndpoint, newGroup: newGroup}); err != nil {
+		return &state.Zone, fmt.Errorf("join RGW zone %s: %w", config.Name, err)
+	}
+	state.Gateway, err = f.runGateway(ctx, image, config.Cluster, f.httpNetwork, alias, config.Name, opts...)
+	if err != nil {
+		return &state.Zone, err
+	}
+	if addition.hostNetwork {
+		if state.PeerEndpoint, err = state.Gateway.DaemonEndpoint(ctx); err != nil {
+			return &state.Zone, err
+		}
+		if err := f.publishZoneEndpoint(ctx, state.client, config.Name, state.PeerEndpoint, createGroup); err != nil {
+			return &state.Zone, err
+		}
+	}
+	if err := f.recordAddedZoneIdentity(ctx, state, createGroup); err != nil {
+		return &state.Zone, err
+	}
+	states := f.zoneStates()
+	if err := f.waitZonePeriods(ctx, master, states); err != nil {
+		return &state.Zone, err
+	}
+	if err := f.waitZoneMetadataBootstrap(ctx, master, states); err != nil {
+		return &state.Zone, err
+	}
+	if err := f.reloadZoneGateways(ctx, states, func(zone *rgwZoneState) bool { return zone == state && !addition.hostNetwork }); err != nil {
+		return &state.Zone, err
+	}
+	state.Gateway.AccessKey, state.Gateway.SecretKey = f.Source.AccessKey, f.Source.SecretKey
+	return &state.Zone, nil
+}
+
+// zoneAddition is an admitted AddZone or AddZonegroup request: the zone with
+// its zonegroup filled in and what its fresh cluster provides.
+type zoneAddition struct {
+	config      ZoneConfig
+	hostNetwork bool
+	clientImage string
+}
+
+// admitZoneAddition refuses an addition before anything is created: invalid
+// names, detached or pending removals, a zonegroup that does not match
+// createGroup, an uninitialized or closed fixture, a duplicate or incompatible
+// zone and a cluster that is not fresh. The caller holds topologyMu.
+func (f *Fixture) admitZoneAddition(ctx context.Context, image string, config ZoneConfig, createGroup bool) (zoneAddition, error) {
 	if config.Zonegroup == "" {
 		config.Zonegroup = f.config.Zonegroup
 	}
 	if !validRGWZoneName(config.Name) || !validRGWZoneName(config.Zonegroup) {
-		return nil, errors.New("invalid RGW zone or zonegroup name")
+		return zoneAddition{}, errors.New("invalid RGW zone or zonegroup name")
 	}
 	if removal := f.removedZones[config.Name]; removal != nil {
-		return nil, errors.New("detached RGW zones retain configuration and cannot be adopted as fresh zones")
+		return zoneAddition{}, errors.New("detached RGW zones retain configuration and cannot be adopted as fresh zones")
 	}
 	for _, removal := range f.removedZones {
 		if !removal.converged || !removal.gatewayRemoved || !removal.clientRemoved {
-			return nil, errors.New("finish the pending RGW zone removal before adding zones")
+			return zoneAddition{}, errors.New("finish the pending RGW zone removal before adding zones")
 		}
 		if removal.state.cluster == config.Cluster {
-			return nil, errors.New("detached RGW storage clusters retain configuration and cannot be adopted as fresh zones")
+			return zoneAddition{}, errors.New("detached RGW storage clusters retain configuration and cannot be adopted as fresh zones")
 		}
 	}
-	_, knownGroup := f.groupIDs[config.Zonegroup]
-	if knownGroup == createGroup {
-		return nil, errors.New("AddZone requires an owned zonegroup; AddZonegroup requires a fresh group name")
+	if _, knownGroup := f.groupIDs[config.Zonegroup]; knownGroup == createGroup {
+		return zoneAddition{}, errors.New("AddZone requires an owned zonegroup; AddZonegroup requires a fresh group name")
 	}
 	if f.closed || f.Source == nil || f.Destination == nil || f.RealmID == "" || f.systemAccess == "" || f.systemSecret == "" {
-		return nil, errors.New("RGW multisite must be initialized and running")
+		return zoneAddition{}, errors.New("RGW multisite must be initialized and running")
 	}
 	for _, zone := range f.zoneStates() {
 		if zone.Name == config.Name {
-			return nil, fmt.Errorf("RGW zone %s is already owned", config.Name)
+			return zoneAddition{}, fmt.Errorf("RGW zone %s is already owned", config.Name)
 		}
 		if err := multicluster.ValidatePair(ctx, image, zone.cluster, config.Cluster); err != nil {
-			return nil, err
+			return zoneAddition{}, err
 		}
 		if zone.ID == "" || zone.client == nil || zone.Gateway == nil {
-			return nil, errors.New("finish initializing existing RGW zones before adding another")
+			return zoneAddition{}, errors.New("finish initializing existing RGW zones before adding another")
 		}
 	}
 	facts, err := ceph.FactsOf(config.Cluster)
 	if err != nil {
-		return nil, err
+		return zoneAddition{}, err
 	}
 	clientImage, err := rgwSetupImage(f.config.SetupImage, facts.Images.RGW)
 	if err != nil {
-		return nil, err
+		return zoneAddition{}, err
 	}
 	if err := ensureFreshRGWCluster(ctx, config.Cluster); err != nil {
-		return nil, err
+		return zoneAddition{}, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 6*time.Minute)
-	defer cancel()
-	data, err := f.admin(ctx, f.zoneStates()[0].client, f.zoneStates()[0].Name, "period", "get", "--format", "json")
+	return zoneAddition{config: config, hostNetwork: facts.UsesHostNetwork, clientImage: clientImage}, nil
+}
+
+// additionMaster reads the committed period, verifies every owned zone in it
+// and returns the current metadata master. It refuses a zone name that the
+// period already contains.
+func (f *Fixture) additionMaster(ctx context.Context, name string) (*rgwZoneState, error) {
+	states := f.zoneStates()
+	period, err := f.committedPeriod(ctx, states[0])
 	if err != nil {
 		return nil, err
 	}
-	period, err := decodeRGWTopologyPeriod(data)
-	if err != nil {
-		return nil, err
-	}
-	var master *rgwZoneState
-	for _, zone := range f.zoneStates() {
-		if zone.ID == period.MasterZone {
-			master = zone
-		}
-	}
+	master := rgwPeriodMaster(period, states)
 	if master == nil {
 		return nil, errors.New("current RGW metadata master is not an owned zone")
 	}
-	if err := f.checkZonePeriod(period, master, f.zoneStates()); err != nil {
+	if err := f.checkZonePeriod(period, master, states); err != nil {
 		return nil, err
 	}
 	for _, group := range period.PeriodMap.Zonegroups {
 		for _, zone := range group.Zones {
-			if zone.Name == config.Name {
-				return nil, multisiteInvalid(fmt.Errorf("RGW zone %s already exists in the committed period", config.Name))
+			if zone.Name == name {
+				return nil, multisiteInvalid(fmt.Errorf("RGW zone %s already exists in the committed period", name))
 			}
 		}
 	}
+	return master, nil
+}
+
+// registerAddedZone records the new zone before its first container exists,
+// so a partial addition stays owned and visible through Zones.
+func (f *Fixture) registerAddedZone(config ZoneConfig) *rgwZoneState {
 	state := &rgwZoneState{Zone: Zone{Name: config.Name, Zonegroup: config.Zonegroup}, cluster: config.Cluster}
 	if f.additionalZones == nil {
 		f.additionalZones = make(map[string]*rgwZoneState)
@@ -400,92 +507,42 @@ func (f *Fixture) addZone(ctx context.Context, image string, config ZoneConfig, 
 	}
 	f.zoneGroups[config.Name] = config.Zonegroup
 	f.scopeMu.Unlock()
-	peerNetwork := ""
-	if f.httpNetwork != nil {
-		peerNetwork = f.httpNetwork.Name
-	}
-	state.client, err = multicluster.RunClient(ctx, clientImage, config.Cluster, peerNetwork, &f.owned)
+	return state
+}
+
+// recordAddedZoneIdentity reads the added zone's native ID and, for a new
+// zonegroup, the group's ID with the zone as its master.
+func (f *Fixture) recordAddedZoneIdentity(ctx context.Context, state *rgwZoneState, createGroup bool) error {
+	id, err := f.nativeID(ctx, state.client, state.Name, "zone")
 	if err != nil {
-		return &state.Zone, err
+		return err
 	}
-	alias := "rgw-zone-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
-	if !facts.UsesHostNetwork {
-		state.PeerEndpoint = "http://" + alias + ":7480"
+	if id == "" {
+		return errors.New("invalid added RGW zone identity")
 	}
-	commands := [][]string{
-		{"realm", "pull", "--url", master.PeerEndpoint, "--access-key", f.systemAccess, "--secret", f.systemSecret},
-		{"realm", "default"},
+	state.ID = id
+	if !createGroup {
+		return nil
 	}
-	if createGroup {
-		commands = append(commands, rgwEndpointArgs([]string{"zonegroup", "create", "--api-name", config.Zonegroup}, state.PeerEndpoint))
-	}
-	create := []string{"zone", "create", "--access-key", f.systemAccess, "--secret", f.systemSecret}
-	if createGroup {
-		create = append(create, "--master")
-	}
-	commands = append(commands, rgwEndpointArgs(create, state.PeerEndpoint), []string{"period", "update", "--commit"})
-	for _, command := range commands {
-		if _, err := f.admin(ctx, state.client, config.Name, command...); err != nil {
-			return &state.Zone, fmt.Errorf("join RGW zone %s: %w", config.Name, err)
-		}
-	}
-	state.Gateway, err = f.runGateway(ctx, image, config.Cluster, f.httpNetwork, alias, config.Name, opts...)
+	groupID, err := f.nativeID(ctx, state.client, state.Name, "zonegroup")
 	if err != nil {
-		return &state.Zone, err
+		return err
 	}
-	if facts.UsesHostNetwork {
-		state.PeerEndpoint, err = state.Gateway.DaemonEndpoint(ctx)
-		if err != nil {
-			return &state.Zone, err
-		}
-		commands := [][]string{{"zone", "modify", "--endpoints", state.PeerEndpoint}}
-		if createGroup {
-			commands = append(commands, []string{"zonegroup", "modify", "--endpoints", state.PeerEndpoint})
-		}
-		commands = append(commands, []string{"period", "update", "--commit"})
-		for _, command := range commands {
-			if _, err := f.admin(ctx, state.client, config.Name, command...); err != nil {
-				return &state.Zone, err
-			}
-		}
+	if groupID == "" {
+		return errors.New("invalid added RGW zonegroup identity")
 	}
-	identity, err := f.admin(ctx, state.client, config.Name, "zone", "get")
+	f.groupIDs[state.Zonegroup] = groupID
+	f.groupMasters[state.Zonegroup] = state.Name
+	return nil
+}
+
+// committedPeriod reads and decodes the committed period as zone sees it.
+func (f *Fixture) committedPeriod(ctx context.Context, zone *rgwZoneState) (*rgwTopologyPeriod, error) {
+	data, err := f.admin(ctx, zone.client, zone.Name, "period", "get", "--format", "json")
 	if err != nil {
-		return &state.Zone, err
+		return nil, err
 	}
-	var native struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(identity, &native); err != nil || native.ID == "" {
-		return &state.Zone, errors.New("invalid added RGW zone identity")
-	}
-	state.ID = native.ID
-	if createGroup {
-		data, err := f.admin(ctx, state.client, state.Name, "zonegroup", "get")
-		if err != nil {
-			return &state.Zone, err
-		}
-		var native struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(data, &native); err != nil || native.ID == "" {
-			return &state.Zone, errors.New("invalid added RGW zonegroup identity")
-		}
-		f.groupIDs[config.Zonegroup] = native.ID
-		f.groupMasters[config.Zonegroup] = state.Name
-	}
-	states := f.zoneStates()
-	if err := f.waitZonePeriods(ctx, master, states); err != nil {
-		return &state.Zone, err
-	}
-	if err := f.waitZoneMetadataBootstrap(ctx, master, states); err != nil {
-		return &state.Zone, err
-	}
-	if err := f.reloadZoneGateways(ctx, states, func(zone *rgwZoneState) bool { return zone == state && !facts.UsesHostNetwork }); err != nil {
-		return &state.Zone, err
-	}
-	state.Gateway.AccessKey, state.Gateway.SecretKey = f.Source.AccessKey, f.Source.SecretKey
-	return &state.Zone, nil
+	return decodeRGWTopologyPeriod(data)
 }
 
 func (f *Fixture) reloadZoneGateways(ctx context.Context, states []*rgwZoneState, skip func(*rgwZoneState) bool) error {

@@ -657,7 +657,9 @@ func syncScopedBucketName(scope SyncPolicyScope) string {
 	return scope.Bucket
 }
 
-func (f *Fixture) syncPolicyDocument(ctx context.Context, master *rgwZoneState, g *SyncGroup) (map[string]any, map[string]any, error) {
+// syncPolicyDocument reads the sync policy of g's zonegroup or, for a
+// bucket-scoped group, of its exact bucket instance, which it also returns.
+func (f *Fixture) syncPolicyDocument(ctx context.Context, master *rgwZoneState, g *SyncGroup) (map[string]any, *rgwBucketInstance, error) {
 	data, err := f.syncPolicyAdmin(ctx, master, g.scope.Zonegroup, "zonegroup", "get")
 	if err != nil {
 		return nil, nil, err
@@ -671,7 +673,7 @@ func (f *Fixture) syncPolicyDocument(ctx context.Context, master *rgwZoneState, 
 	}
 	if g.scope.Bucket == "" {
 		policy, err := syncPolicyFromDocument(group)
-		return policy, group, err
+		return policy, nil, err
 	}
 	id, err := f.syncBucketID(ctx, master, g)
 	if err != nil {
@@ -680,27 +682,77 @@ func (f *Fixture) syncPolicyDocument(ctx context.Context, master *rgwZoneState, 
 	if id != g.bucketID {
 		return nil, nil, errors.New("RGW bucket name was recreated; refusing sync policy operation")
 	}
-	key := g.scope.Bucket + ":" + g.bucketID
-	if g.scope.Tenant != "" {
-		key = g.scope.Tenant + "/" + key
-	}
+	key := syncScopedBucketName(g.scope) + ":" + g.bucketID
 	data, err = f.syncPolicyAdmin(ctx, master, g.scope.Zonegroup, "metadata", "get", "bucket.instance:"+key)
 	if err != nil {
 		return nil, nil, err
 	}
-	metadata, err := syncJSON(data)
+	instance, matched, err := decodeBucketInstance(data, key, g)
 	if err != nil {
 		return nil, nil, err
 	}
-	body, _ := metadata["data"].(map[string]any)
-	info, _ := body["bucket_info"].(map[string]any)
-	bucket, _ := info["bucket"].(map[string]any)
-	if metadata["key"] != "bucket.instance:"+key || info == nil || bucket["name"] != g.scope.Bucket || bucket["tenant"] != g.scope.Tenant || bucket["bucket_id"] != g.bucketID || info["zonegroup"] != g.groupID {
+	if !matched {
 		return nil, nil, errors.New("RGW bucket metadata instance identity differs")
 	}
-	policy, err := syncPolicyFromDocument(info)
-	return policy, info, err
+	return instance.policy, instance, nil
 }
+
+// rgwBucketInstance is a native `metadata get bucket.instance:<key>`
+// document whose identity matched. Owner and PlacementRule are read from its
+// bucket_info; policy is that bucket_info's sync policy, kept untyped because
+// it is compared with, and written back as, the exact native document.
+type rgwBucketInstance struct {
+	Owner, PlacementRule nativeString
+	policy               map[string]any
+}
+
+// decodeBucketInstance decodes the instance document of key. matched is false
+// unless the document is that key's, of g's bucket name, tenant and instance
+// ID, in g's zonegroup.
+func decodeBucketInstance(data []byte, key string, g *SyncGroup) (*rgwBucketInstance, bool, error) {
+	metadata, err := syncJSON(data)
+	if err != nil {
+		return nil, false, err
+	}
+	// Identity members are read from the decoded document by their exact
+	// native key: a typed decode would match keys case-insensitively and keep
+	// an earlier value of a repeated key.
+	info := nativeObject(nativeObject(metadata, "data"), "bucket_info")
+	bucket := nativeObject(info, "bucket")
+	if info == nil || !nativeMember(metadata, "key").is("bucket.instance:"+key) || !nativeMember(bucket, "name").is(g.scope.Bucket) ||
+		!nativeMember(bucket, "tenant").is(g.scope.Tenant) || !nativeMember(bucket, "bucket_id").is(g.bucketID) || !nativeMember(info, "zonegroup").is(g.groupID) {
+		return nil, false, nil
+	}
+	policy, err := syncPolicyFromDocument(info)
+	if err != nil {
+		return nil, true, err
+	}
+	return &rgwBucketInstance{Owner: nativeMember(info, "owner"), PlacementRule: nativeMember(info, "placement_rule"), policy: policy}, true, nil
+}
+
+// nativeString is a native JSON member that is meaningful only as a string. A
+// member that is missing, null or of another type is unset, so a comparison
+// with it fails.
+type nativeString struct {
+	value string
+	set   bool
+}
+
+// nativeMember reads the member of document named exactly key; encoding/json
+// has already kept the last of repeated keys, as the native comparison did.
+func nativeMember(document map[string]any, key string) nativeString {
+	value, ok := document[key].(string)
+	return nativeString{value: value, set: ok}
+}
+
+// nativeObject returns the object member named exactly key, or nil.
+func nativeObject(document map[string]any, key string) map[string]any {
+	value, _ := document[key].(map[string]any)
+	return value
+}
+
+// is reports whether the member is the string want.
+func (s nativeString) is(want string) bool { return s.set && s.value == want }
 
 func (f *Fixture) syncZoneIDs(g *SyncGroup, names []string, wildcard bool) ([]string, error) {
 	if len(names) == 0 {

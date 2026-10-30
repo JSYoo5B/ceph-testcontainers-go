@@ -52,8 +52,10 @@ type Container struct {
 	// authRecords holds the records of the calls that change an auth entry; see
 	// authState for what guards them.
 	authRecords authState
-	// keyRotationDocker replaces the Docker client of RotateKey in tests.
-	keyRotationDocker func(context.Context) (keyRotationExecClient, error)
+	// daemonExecs runs RotateKey's commands in daemon containers through the
+	// Docker exec API; see daemonExecutor. It has no lock: it is set before
+	// the cluster is shared and never changes.
+	daemonExecs daemonExecutor
 	// startup is the owner label ID, the first MON's key-type support and
 	// image ID, and the test seam of the labeled-container removal; see
 	// startupIdentity. It has no lock: it is written before the cluster is
@@ -128,6 +130,57 @@ type OSDContainer struct {
 	image string
 }
 
+// resolveOptions applies the Ceph options among opts over the defaults for
+// img and refuses a combination that Run cannot build. It runs before Run
+// touches Docker; every refusal is an ErrInvalidRequest.
+func resolveOptions(img string, opts []testcontainers.ContainerCustomizer) (options, error) {
+	settings := options{
+		osds: 2, monitors: 1, managers: 1, blockSize: 1 << 30, startupTimeout: 3 * time.Minute,
+		essentialImage: img, publicAddress: "127.0.0.1",
+	}
+	for _, opt := range opts {
+		if opt, ok := opt.(Option); ok {
+			if err := opt(&settings); err != nil {
+				return options{}, classify(ErrInvalidRequest, fmt.Errorf("configure ceph: %w", err))
+			}
+		}
+	}
+	if err := configureImages(&settings); err != nil {
+		return options{}, invalidRequest("image set: %v", err)
+	}
+	if settings.hostAddressSet && !settings.hostNetwork {
+		return options{}, invalidRequest("NetworkConfig.WithHostAddress requires WithHostNetwork")
+	}
+	if settings.hostNetwork && settings.separateClusterNetwork {
+		return options{}, invalidRequest("NetworkConfig.WithSeparateClusterNetwork requires bridge mode")
+	}
+	if settings.messengerMode == MessengerV2Secure && (settings.messengerPolicy.Monitors != nil || settings.messengerPolicy.Managers != nil || settings.messengerPolicy.OSDs != nil) {
+		return options{}, invalidRequest("NetworkConfig.WithMessengerPolicy cannot be combined with MessengerV2Secure, which fixes every connection mode")
+	}
+	if settings.addressFamily != AddressIPv4 && settings.hostNetwork {
+		return options{}, invalidRequest("NetworkConfig.WithAddressFamily(%s) requires bridge mode", settings.addressFamily)
+	}
+	if settings.addressFamily != AddressDualStack && userConfigSets(settings.userConfig, dualStackOrderKey) {
+		return options{}, invalidRequest("WithConfigFile sets %s, which requires NetworkConfig.WithAddressFamily(%s)", dualStackOrderKey, AddressDualStack)
+	}
+	if settings.addressFamily == AddressIPv4MappedIPv6 && settings.separateClusterNetwork {
+		return options{}, invalidRequest("NetworkConfig.WithAddressFamily(%s) cannot be combined with NetworkConfig.WithSeparateClusterNetwork", settings.addressFamily)
+	}
+	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
+		return options{}, invalidRequest("OSDStorage.WithInMemory keeps BlueStore files in memory and cannot be combined with OSDMemStore")
+	}
+	if settings.osdVolumeStorage && (settings.osdMemorySize != 0 || settings.osdObjectStore == OSDMemStore) {
+		return options{}, invalidRequest("OSDStorage.WithVolume requires classic BlueStore and cannot be combined with OSDStorage.WithInMemory")
+	}
+	if !settings.poolDefaultsSet {
+		settings.poolReplicas, settings.poolMinSize = min(2, settings.osds), 1
+	}
+	if err := prepareInitialComposition(&settings); err != nil {
+		return options{}, classify(ErrInvalidRequest, fmt.Errorf("configure initial ceph topology: %w", err))
+	}
+	return settings, nil
+}
+
 // Run creates configurable MON, MGR and OSD containers for a disposable cluster.
 // img supplies all roles unless WithImageOptions selects explicit role images
 // with ImageOptions.WithImageSet, in which case img must be empty or the set's
@@ -142,49 +195,9 @@ type OSDContainer struct {
 // Images contain runtime tools; this module supplies cluster setup.
 // A non-nil Container returned with an error must still be terminated.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
-	settings := options{
-		osds: 2, monitors: 1, managers: 1, blockSize: 1 << 30, startupTimeout: 3 * time.Minute,
-		essentialImage: img, publicAddress: "127.0.0.1",
-	}
-	for _, opt := range opts {
-		if opt, ok := opt.(Option); ok {
-			if err := opt(&settings); err != nil {
-				return nil, classify(ErrInvalidRequest, fmt.Errorf("configure ceph: %w", err))
-			}
-		}
-	}
-	if err := configureImages(&settings); err != nil {
-		return nil, invalidRequest("image set: %v", err)
-	}
-	if settings.hostAddressSet && !settings.hostNetwork {
-		return nil, invalidRequest("NetworkConfig.WithHostAddress requires WithHostNetwork")
-	}
-	if settings.hostNetwork && settings.separateClusterNetwork {
-		return nil, invalidRequest("NetworkConfig.WithSeparateClusterNetwork requires bridge mode")
-	}
-	if settings.messengerMode == MessengerV2Secure && (settings.messengerPolicy.Monitors != nil || settings.messengerPolicy.Managers != nil || settings.messengerPolicy.OSDs != nil) {
-		return nil, invalidRequest("NetworkConfig.WithMessengerPolicy cannot be combined with MessengerV2Secure, which fixes every connection mode")
-	}
-	if settings.addressFamily != AddressIPv4 && settings.hostNetwork {
-		return nil, invalidRequest("NetworkConfig.WithAddressFamily(%s) requires bridge mode", settings.addressFamily)
-	}
-	if settings.addressFamily != AddressDualStack && userConfigSets(settings.userConfig, dualStackOrderKey) {
-		return nil, invalidRequest("WithConfigFile sets %s, which requires NetworkConfig.WithAddressFamily(%s)", dualStackOrderKey, AddressDualStack)
-	}
-	if settings.addressFamily == AddressIPv4MappedIPv6 && settings.separateClusterNetwork {
-		return nil, invalidRequest("NetworkConfig.WithAddressFamily(%s) cannot be combined with NetworkConfig.WithSeparateClusterNetwork", settings.addressFamily)
-	}
-	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
-		return nil, invalidRequest("OSDStorage.WithInMemory keeps BlueStore files in memory and cannot be combined with OSDMemStore")
-	}
-	if settings.osdVolumeStorage && (settings.osdMemorySize != 0 || settings.osdObjectStore == OSDMemStore) {
-		return nil, invalidRequest("OSDStorage.WithVolume requires classic BlueStore and cannot be combined with OSDStorage.WithInMemory")
-	}
-	if !settings.poolDefaultsSet {
-		settings.poolReplicas, settings.poolMinSize = min(2, settings.osds), 1
-	}
-	if err := prepareInitialComposition(&settings); err != nil {
-		return nil, classify(ErrInvalidRequest, fmt.Errorf("configure initial ceph topology: %w", err))
+	settings, err := resolveOptions(img, opts)
+	if err != nil {
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -192,7 +205,6 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	ctx, cancel := context.WithTimeout(ctx, settings.startupTimeout)
 	defer cancel()
 	var nw *testcontainers.DockerNetwork
-	var err error
 	if settings.hostNetwork {
 		if err := checkHostNetworkEngine(ctx); err != nil {
 			return nil, err
@@ -258,37 +270,48 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 	if err := c.applyMessengerPolicy(ctx); err != nil {
 		return c, fmt.Errorf("apply messenger policy: %w", err)
 	}
-	for i := 1; i < settings.monitors; i++ {
+	if err := c.startInitialTopology(ctx); err != nil {
+		return c, err
+	}
+	return c, nil
+}
+
+// startInitialTopology brings a cluster whose first MON is configured to the
+// composition Run was asked for: the other MONs, the MGRs and OSDs, their
+// readiness, the requested pools and the registered services, in that order.
+// A failure leaves what started owned for Terminate.
+func (c *Container) startInitialTopology(ctx context.Context) error {
+	for i := 1; i < c.settings.monitors; i++ {
 		if _, err := c.AddMonitor(ctx, daemonName(i)); err != nil {
-			return c, err
+			return err
 		}
 	}
 	if err := c.startInitialManagers(ctx); err != nil {
-		return c, err
+		return err
 	}
 	if err := c.startInitialOSDs(ctx); err != nil {
-		return c, err
+		return err
 	}
 	if err := c.finishInitialManagers(ctx); err != nil {
-		return c, err
+		return err
 	}
 	if err := c.waitForInitialDaemons(ctx); err != nil {
-		return c, err
+		return err
 	}
 	if err := c.checkDualStackAddresses(ctx); err != nil {
-		return c, err
+		return err
 	}
-	for _, pool := range settings.pools {
+	for _, pool := range c.settings.pools {
 		if _, err := c.CreatePool(ctx, pool); err != nil {
-			return c, err
+			return err
 		}
 	}
-	for _, service := range settings.services {
+	for _, service := range c.settings.services {
 		if err := service.Start(ctx, c); err != nil {
-			return c, err
+			return err
 		}
 	}
-	return c, nil
+	return nil
 }
 
 func (c *Container) waitForInitialDaemons(ctx context.Context) error {
@@ -728,75 +751,16 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 		return err
 	}
 	name := fmt.Sprintf("osd.%d", id)
-	if !osd.purged {
-		expected, err := uuid.Parse(osd.nativeUUID)
-		if err != nil || expected == uuid.Nil {
-			return fmt.Errorf("osd.%d registration UUID is unavailable", id)
-		}
-		dump, err := c.removalOSDDump(ctx)
-		if err != nil {
-			return err
-		}
-		if _, exists := dump.osds[id]; !exists && osd.purgeIssued {
-			// The previous purge may have committed despite a lost response.
-			// A fresh, strict absence can settle only this handle's own request.
-			osd.purged = true
-		} else {
-			if _, err := c.ownedOSDState(dump, id); err != nil {
-				return err
-			}
-			remaining := 0
-			for otherID, other := range c.osdHandles.each() {
-				if other == nil || other.purged {
-					continue
-				}
-				if _, err := c.ownedOSDState(dump, otherID); err == nil {
-					remaining++
-				}
-			}
-			if remaining <= 1 {
-				return errors.New("cannot remove the last OSD; terminate the cluster instead")
-			}
-		}
+	if err := c.checkOSDRemovable(ctx, osd); err != nil {
+		return err
 	}
 	if osd.Container != nil {
 		if err := c.fenceNativeTarget(ctx, osd.GetContainerID()); err != nil {
 			return fmt.Errorf("stop native commands for %s: %w", name, err)
 		}
 	}
-	if !osd.purged {
-		// Reweight avoids the small-cluster active+remapped case documented by Ceph.
-		if err := c.removalOSDMutation(ctx, id, "osd", "crush", "reweight", name, "0"); err != nil {
-			return err
-		}
-		if err := c.removalOSDMutation(ctx, id, "osd", "out", strconv.Itoa(id)); err != nil {
-			return err
-		}
-		if err := c.waitOSDRemoval(ctx, id, true); err != nil {
-			return fmt.Errorf("drain %s: %w", name, err)
-		}
-		if _, err := c.removalOSDState(ctx, id); err != nil {
-			return err
-		}
-		if osd.Container != nil {
-			stopTimeout := 10 * time.Second
-			if err := osd.Stop(ctx, &stopTimeout); err != nil {
-				return fmt.Errorf("stop %s: %w", name, err)
-			}
-		}
-		if err := c.waitOSDRemoval(ctx, id, false); err != nil {
-			return fmt.Errorf("wait for %s down: %w", name, err)
-		}
-		if _, err := c.removalOSDState(ctx, id); err != nil {
-			return err
-		}
-		// Mark before the request because cancellation/transport failure does
-		// not establish whether the MON committed the purge.
-		osd.purgeIssued = true
-		if _, err := c.cephCLI(ctx, "osd", "purge", strconv.Itoa(id), "--yes-i-really-mean-it"); err != nil {
-			return err
-		}
-		osd.purged = true
+	if err := c.drainAndPurgeOSD(ctx, osd); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -814,6 +778,94 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 	// for Terminate.
 	c.deviceClaims.release(id, osd.Container != nil)
 	c.osdHandles.forget(id)
+	return nil
+}
+
+// checkOSDRemovable verifies, before removeOSD fences or changes anything,
+// that osd is the registered native OSD this handle created and that another
+// owned OSD remains. A purge that may have committed with a lost response is
+// settled here by a fresh, strict absence. The caller holds c.mu.
+func (c *Container) checkOSDRemovable(ctx context.Context, osd *OSDContainer) error {
+	id := osd.ID
+	if osd.purged {
+		return nil
+	}
+	expected, err := uuid.Parse(osd.nativeUUID)
+	if err != nil || expected == uuid.Nil {
+		return fmt.Errorf("osd.%d registration UUID is unavailable", id)
+	}
+	dump, err := c.removalOSDDump(ctx)
+	if err != nil {
+		return err
+	}
+	if _, exists := dump.osds[id]; !exists && osd.purgeIssued {
+		// The previous purge may have committed despite a lost response.
+		// A fresh, strict absence can settle only this handle's own request.
+		osd.purged = true
+	} else {
+		if _, err := c.ownedOSDState(dump, id); err != nil {
+			return err
+		}
+		remaining := 0
+		for otherID, other := range c.osdHandles.each() {
+			if other == nil || other.purged {
+				continue
+			}
+			if _, err := c.ownedOSDState(dump, otherID); err == nil {
+				remaining++
+			}
+		}
+		if remaining <= 1 {
+			return errors.New("cannot remove the last OSD; terminate the cluster instead")
+		}
+	}
+	return nil
+}
+
+// drainAndPurgeOSD takes osd out of the data placement, waits for the drain,
+// stops its container, waits until the MONs report it down and purges it,
+// rereading the owned native state between the steps. It marks purgeIssued
+// before the purge request, whose lost response does not tell whether the MON
+// committed it. An already purged OSD is left alone. The caller holds c.mu and
+// has fenced the OSD's native commands.
+func (c *Container) drainAndPurgeOSD(ctx context.Context, osd *OSDContainer) error {
+	id := osd.ID
+	name := fmt.Sprintf("osd.%d", id)
+	if osd.purged {
+		return nil
+	}
+	// Reweight avoids the small-cluster active+remapped case documented by Ceph.
+	if err := c.removalOSDMutation(ctx, id, "osd", "crush", "reweight", name, "0"); err != nil {
+		return err
+	}
+	if err := c.removalOSDMutation(ctx, id, "osd", "out", strconv.Itoa(id)); err != nil {
+		return err
+	}
+	if err := c.waitOSDRemoval(ctx, id, true); err != nil {
+		return fmt.Errorf("drain %s: %w", name, err)
+	}
+	if _, err := c.removalOSDState(ctx, id); err != nil {
+		return err
+	}
+	if osd.Container != nil {
+		stopTimeout := 10 * time.Second
+		if err := osd.Stop(ctx, &stopTimeout); err != nil {
+			return fmt.Errorf("stop %s: %w", name, err)
+		}
+	}
+	if err := c.waitOSDRemoval(ctx, id, false); err != nil {
+		return fmt.Errorf("wait for %s down: %w", name, err)
+	}
+	if _, err := c.removalOSDState(ctx, id); err != nil {
+		return err
+	}
+	// Mark before the request because cancellation/transport failure does
+	// not establish whether the MON committed the purge.
+	osd.purgeIssued = true
+	if _, err := c.cephCLI(ctx, "osd", "purge", strconv.Itoa(id), "--yes-i-really-mean-it"); err != nil {
+		return err
+	}
+	osd.purged = true
 	return nil
 }
 

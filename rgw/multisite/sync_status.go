@@ -239,109 +239,143 @@ var syncShardCount = regexp.MustCompile(`^(full|incremental) sync: ([0-9]+)/([0-
 var syncBehindCount = regexp.MustCompile(`^data is behind on ([0-9]+) shards$`)
 var syncRecoveryCount = regexp.MustCompile(`^([0-9]+) shards are recovering$`)
 
+// parseSyncStatusText reads the native text of `radosgw-admin sync status`.
+// The realm, zonegroup and zone headers must each appear once with the
+// expected IDs; data sources must be other zones of the observed zone's
+// zonegroup, each listed once. A failure, error or lag line in a section makes
+// that section, or that source, not caught up.
 func parseSyncStatusText(data []byte, expected SyncStatus, zones []*rgwZoneState) (rgwSyncText, error) {
-	var result rgwSyncText
-	identities := map[string]string{"realm": expected.RealmID, "zonegroup": expected.ZonegroupID, "zone": expected.ZoneID}
-	seen := map[string]bool{}
-	section := ""
-	var current *DataSyncStatus
-	metadataFailed := false
-	dataFailed := map[string]bool{}
+	p := syncTextParser{expected: expected, zones: zones, group: syncExpectedGroup(expected, zones),
+		identities: map[string]string{"realm": expected.RealmID, "zonegroup": expected.ZonegroupID, "zone": expected.ZoneID},
+		seen:       map[string]bool{}, dataFailed: map[string]bool{}, current: -1}
 	for _, raw := range strings.Split(string(data), "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "zonegroup features ") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if want, ok := identities[fields[0]]; ok {
-			if len(fields) < 2 || fields[1] != want || seen[fields[0]] {
-				return result, errors.New("RGW sync status native realm/zonegroup/zone identity differs")
-			}
-			seen[fields[0]] = true
-			continue
-		}
-		if strings.HasPrefix(line, "metadata sync ") {
-			section = "metadata"
-			line = strings.TrimSpace(strings.TrimPrefix(line, "metadata sync "))
-		} else if strings.HasPrefix(line, "data sync ") {
-			section = "data"
-			line = strings.TrimSpace(strings.TrimPrefix(line, "data sync "))
-		}
-		if section == "metadata" {
-			if line == "no sync (zone is master)" {
-				result.metadataMaster = true
-			}
-			if line == "metadata is caught up with master" {
-				result.metadataCaughtUp = true
-			}
-			if strings.Contains(line, "failed") || strings.Contains(line, "different period") || strings.Contains(line, "ERROR") || strings.Contains(line, "behind on") {
-				metadataFailed = true
-			}
-			continue
-		}
-		if section != "data" {
-			continue
-		}
-		if strings.HasPrefix(line, "source: ") {
-			id := strings.Fields(strings.TrimPrefix(line, "source: "))[0]
-			var source *rgwZoneState
-			for _, z := range zones {
-				if z.ID == id && z.ID != expected.ZoneID && z.Zonegroup == syncExpectedGroup(expected, zones) {
-					source = z
-				}
-			}
-			if source == nil || slices.ContainsFunc(result.data, func(s DataSyncStatus) bool { return s.SourceZoneID == id }) {
-				return result, errors.New("RGW sync status has unexpected or duplicate source zone")
-			}
-			result.data = append(result.data, DataSyncStatus{SourceZone: source.Name, SourceZoneID: id})
-			current = &result.data[len(result.data)-1]
-			continue
-		}
-		if current == nil {
-			continue
-		}
-		if line == "syncing" {
-			current.Syncing = true
-		}
-		if line == "data is caught up with source" {
-			current.CaughtUp = true
-		}
-		if strings.Contains(line, "failed") || strings.Contains(line, "ERROR") || strings.Contains(line, "not syncing") {
-			dataFailed[current.SourceZoneID] = true
-		}
-		if match := syncShardCount.FindStringSubmatch(line); match != nil {
-			count, _ := strconv.Atoi(match[2])
-			total, _ := strconv.Atoi(match[3])
-			if current.Shards != 0 && current.Shards != total {
-				dataFailed[current.SourceZoneID] = true
-			}
-			current.Shards = total
-			if match[1] == "full" {
-				current.FullShards = count
-			} else {
-				current.IncrementalShards = count
-			}
-		}
-		if match := syncBehindCount.FindStringSubmatch(line); match != nil {
-			current.BehindShards, _ = strconv.Atoi(match[1])
-		}
-		if match := syncRecoveryCount.FindStringSubmatch(line); match != nil {
-			current.RecoveringShards, _ = strconv.Atoi(match[1])
+		if err := p.line(strings.TrimSpace(raw)); err != nil {
+			return p.result, err
 		}
 	}
-	if len(seen) != len(identities) {
-		return result, errors.New("RGW native sync status is missing scoped identity headers")
+	return p.finish()
+}
+
+// syncTextParser holds the state of one parseSyncStatusText run: the section
+// being read and, in the data section, the index of the current source.
+type syncTextParser struct {
+	expected       SyncStatus
+	zones          []*rgwZoneState
+	group          string
+	identities     map[string]string
+	seen           map[string]bool
+	section        string
+	current        int
+	metadataFailed bool
+	dataFailed     map[string]bool
+	result         rgwSyncText
+}
+
+func (p *syncTextParser) line(line string) error {
+	if line == "" || strings.HasPrefix(line, "zonegroup features ") {
+		return nil
 	}
-	result.metadataCaughtUp = result.metadataCaughtUp && !metadataFailed
-	result.metadataMaster = result.metadataMaster && !metadataFailed
-	for i := range result.data {
-		s := &result.data[i]
-		s.CaughtUp = s.CaughtUp && s.Syncing && s.Shards > 0 && s.IncrementalShards == s.Shards && s.FullShards == 0 && s.BehindShards == 0 && s.RecoveringShards == 0 && !dataFailed[s.SourceZoneID]
+	fields := strings.Fields(line)
+	if want, ok := p.identities[fields[0]]; ok {
+		if len(fields) < 2 || fields[1] != want || p.seen[fields[0]] {
+			return errors.New("RGW sync status native realm/zonegroup/zone identity differs")
+		}
+		p.seen[fields[0]] = true
+		return nil
 	}
-	return result, nil
+	if rest, ok := strings.CutPrefix(line, "metadata sync "); ok {
+		p.section, line = "metadata", strings.TrimSpace(rest)
+	} else if rest, ok := strings.CutPrefix(line, "data sync "); ok {
+		p.section, line = "data", strings.TrimSpace(rest)
+	}
+	switch p.section {
+	case "metadata":
+		p.metadataLine(line)
+	case "data":
+		return p.dataLine(line)
+	}
+	return nil
+}
+
+func (p *syncTextParser) metadataLine(line string) {
+	if line == "no sync (zone is master)" {
+		p.result.metadataMaster = true
+	}
+	if line == "metadata is caught up with master" {
+		p.result.metadataCaughtUp = true
+	}
+	if strings.Contains(line, "failed") || strings.Contains(line, "different period") || strings.Contains(line, "ERROR") || strings.Contains(line, "behind on") {
+		p.metadataFailed = true
+	}
+}
+
+func (p *syncTextParser) dataLine(line string) error {
+	if rest, ok := strings.CutPrefix(line, "source: "); ok {
+		return p.source(strings.Fields(rest)[0])
+	}
+	if p.current < 0 {
+		return nil
+	}
+	current := &p.result.data[p.current]
+	if line == "syncing" {
+		current.Syncing = true
+	}
+	if line == "data is caught up with source" {
+		current.CaughtUp = true
+	}
+	if strings.Contains(line, "failed") || strings.Contains(line, "ERROR") || strings.Contains(line, "not syncing") {
+		p.dataFailed[current.SourceZoneID] = true
+	}
+	if match := syncShardCount.FindStringSubmatch(line); match != nil {
+		count, _ := strconv.Atoi(match[2])
+		total, _ := strconv.Atoi(match[3])
+		if current.Shards != 0 && current.Shards != total {
+			p.dataFailed[current.SourceZoneID] = true
+		}
+		current.Shards = total
+		if match[1] == "full" {
+			current.FullShards = count
+		} else {
+			current.IncrementalShards = count
+		}
+	}
+	if match := syncBehindCount.FindStringSubmatch(line); match != nil {
+		current.BehindShards, _ = strconv.Atoi(match[1])
+	}
+	if match := syncRecoveryCount.FindStringSubmatch(line); match != nil {
+		current.RecoveringShards, _ = strconv.Atoi(match[1])
+	}
+	return nil
+}
+
+// source starts the lines of one data source, which must be another owned
+// zone of the observed zone's zonegroup, listed once.
+func (p *syncTextParser) source(id string) error {
+	var source *rgwZoneState
+	for _, z := range p.zones {
+		if z.ID == id && z.ID != p.expected.ZoneID && z.Zonegroup == p.group {
+			source = z
+		}
+	}
+	if source == nil || slices.ContainsFunc(p.result.data, func(s DataSyncStatus) bool { return s.SourceZoneID == id }) {
+		return errors.New("RGW sync status has unexpected or duplicate source zone")
+	}
+	p.result.data = append(p.result.data, DataSyncStatus{SourceZone: source.Name, SourceZoneID: id})
+	p.current = len(p.result.data) - 1
+	return nil
+}
+
+func (p *syncTextParser) finish() (rgwSyncText, error) {
+	if len(p.seen) != len(p.identities) {
+		return p.result, errors.New("RGW native sync status is missing scoped identity headers")
+	}
+	p.result.metadataCaughtUp = p.result.metadataCaughtUp && !p.metadataFailed
+	p.result.metadataMaster = p.result.metadataMaster && !p.metadataFailed
+	for i := range p.result.data {
+		s := &p.result.data[i]
+		s.CaughtUp = s.CaughtUp && s.Syncing && s.Shards > 0 && s.IncrementalShards == s.Shards && s.FullShards == 0 && s.BehindShards == 0 && s.RecoveringShards == 0 && !p.dataFailed[s.SourceZoneID]
+	}
+	return p.result, nil
 }
 
 func syncExpectedGroup(status SyncStatus, zones []*rgwZoneState) string {

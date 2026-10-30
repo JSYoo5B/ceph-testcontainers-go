@@ -28,7 +28,10 @@ type rgwPolicyImportCLI struct {
 	policyLagReads, localReads    int
 	localMetadataID, localGroupID string
 	malformedStats                bool
-	onLocalPolicyRead             func()
+	// rawStats, when set, is served verbatim as the destination bucket stats,
+	// so a test can send repeated or case-aliased keys a map cannot hold.
+	rawStats          string
+	onLocalPolicyRead func()
 	// onExec, when set, sees each command before the wrapper serves it.
 	onExec func(context.Context, []string)
 }
@@ -40,6 +43,15 @@ func policyImportJSON(value any) io.Reader {
 	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
 	stream.Write(header[:])
 	stream.Write(data)
+	return bytes.NewReader(stream.Bytes())
+}
+
+func policyImportRaw(data string) io.Reader {
+	var stream bytes.Buffer
+	header := [8]byte{byte(stdcopy.Stdout)}
+	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
+	stream.Write(header[:])
+	stream.WriteString(data)
 	return bytes.NewReader(stream.Bytes())
 }
 
@@ -59,6 +71,10 @@ func (c *rgwPolicyImportCLI) Exec(ctx context.Context, args []string, opts ...tc
 		if c.missingBuckets[name] {
 			c.calls = append(c.calls, slices.Clone(args))
 			return 2, policyImportJSON(map[string]any{"secret": "missing native metadata secret-marker"}), nil
+		}
+		if c.rawStats != "" {
+			c.calls = append(c.calls, slices.Clone(args))
+			return 0, policyImportRaw(c.rawStats), nil
 		}
 		if c.malformedStats {
 			c.calls = append(c.calls, slices.Clone(args))
@@ -208,7 +224,7 @@ func TestRGWBucketSyncPolicyReadyWaitsForPolicyPeriodAndReferencedBucketImports(
 }
 
 func TestRGWBucketSyncPolicyReadyRefusesRecreatedForeignAndMalformedMetadata(t *testing.T) {
-	for _, scenario := range []string{"recreated-bucket", "missing-id", "foreign-group", "foreign-period", "staging-period", "metadata-id", "malformed-stats"} {
+	for _, scenario := range []string{"recreated-bucket", "missing-id", "foreign-group", "foreign-period", "staging-period", "metadata-id", "malformed-stats", "repeated-tenant-null", "case-alias-bucket"} {
 		t.Run(scenario, func(t *testing.T) {
 			_, cli, g := newRGWPolicyImportFixture(t)
 			switch scenario {
@@ -229,6 +245,12 @@ func TestRGWBucketSyncPolicyReadyRefusesRecreatedForeignAndMalformedMetadata(t *
 				cli.localMetadataID = "replacement"
 			case "malformed-stats":
 				cli.malformedStats = true
+			case "repeated-tenant-null":
+				// The later null wins; the earlier valid tenant must not.
+				cli.rawStats = `{"bucket":"bucket","tenant":"","tenant":null,"id":"bucket-original","zonegroup":"group-id"}`
+			case "case-alias-bucket":
+				// Only the exact native key names the bucket.
+				cli.rawStats = `{"bucket":"other","BUCKET":"bucket","tenant":"","id":"bucket-original","zonegroup":"group-id"}`
 			}
 			before := len(cli.calls)
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
