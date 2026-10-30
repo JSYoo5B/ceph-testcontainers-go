@@ -105,12 +105,13 @@ func TestPortLeaseStateMethodsMakeOnlyTheirPinnedCalls(t *testing.T) {
 // of its methods, with the methods it calls and how it is guarded:
 //
 //	"takes"  acquires Container.mu before its first use
+//	"holds"  its doc comment says the caller holds the lock (see stateCaller)
 //	"hook"   its doc comment says the caller holds the lock or the cluster is
 //	         not shared (the exported test state view)
 var portLeaseCallers = map[string]stateCaller{
 	"reserveTrackedHostPortsWith": {"takes", []string{"track"}},
 	"trackHostPortLease":          {"takes", []string{"track"}},
-	"AddMonitor":                  {"takes", []string{"track"}},
+	"startJoiningMonitor":         {"holds", []string{"track"}},
 	"terminate":                   {"takes", []string{"release"}},
 	"UnitState":                   {"hook", []string{"count"}},
 }

@@ -22,6 +22,33 @@ func readMGRModules(ctx context.Context, run cliQuery) ([]MGRModuleState, error)
 	if err != nil {
 		return nil, err
 	}
+	modules, err := decodeMGRModuleMembership(data)
+	if err != nil {
+		return nil, err
+	}
+	// module ls omits can_run for enabled modules. The active MGR's beacon
+	// metadata in mgr dump advertises dependency status for every loaded module.
+	data, err = run(ctx, "mgr", "dump", "--format", "json")
+	if err != nil {
+		return nil, err
+	}
+	if err := modules.applyDump(data); err != nil {
+		return nil, err
+	}
+	result := make([]MGRModuleState, 0, len(modules))
+	for _, module := range modules {
+		result = append(result, module)
+	}
+	slices.SortFunc(result, func(a, b MGRModuleState) int { return strings.Compare(a.Name, b.Name) })
+	return result, nil
+}
+
+// mgrModuleSet is the configured MGR module membership, by name.
+type mgrModuleSet map[string]MGRModuleState
+
+// decodeMGRModuleMembership reads `mgr module ls`: each module once, except
+// that an always-on module may also be force-disabled.
+func decodeMGRModuleMembership(data []byte) (mgrModuleSet, error) {
 	var listing struct {
 		Enabled       *[]string `json:"enabled_modules"`
 		AlwaysOn      *[]string `json:"always_on_modules"`
@@ -33,47 +60,49 @@ func readMGRModules(ctx context.Context, run cliQuery) ([]MGRModuleState, error)
 	if json.Unmarshal(data, &listing) != nil || listing.Enabled == nil || listing.AlwaysOn == nil || listing.Disabled == nil {
 		return nil, errors.New("decode MGR module membership: missing or invalid native listing")
 	}
-	modules := make(map[string]MGRModuleState)
-	add := func(name string, enabled, always, force bool) error {
-		if !mgrModuleNamePattern.MatchString(name) {
-			return errors.New("invalid native MGR module name")
-		}
-		module := modules[name]
-		if module.Name != "" && !force {
-			return errors.New("duplicate native MGR module membership")
-		}
-		if force && (!module.AlwaysOn || module.ForceDisabled) {
-			return errors.New("invalid force-disabled MGR module membership")
-		}
-		modules[name] = MGRModuleState{Name: name, Enabled: enabled, AlwaysOn: always, ForceDisabled: force}
-		return nil
-	}
+	modules := make(mgrModuleSet)
 	for _, name := range *listing.Enabled {
-		if err := add(name, true, false, false); err != nil {
+		if err := modules.add(name, true, false, false); err != nil {
 			return nil, err
 		}
 	}
 	for _, name := range *listing.AlwaysOn {
-		if err := add(name, true, true, false); err != nil {
+		if err := modules.add(name, true, true, false); err != nil {
 			return nil, err
 		}
 	}
 	for _, name := range listing.ForceDisabled {
-		if err := add(name, false, true, true); err != nil {
+		if err := modules.add(name, false, true, true); err != nil {
 			return nil, err
 		}
 	}
 	for _, module := range *listing.Disabled {
-		if err := add(module.Name, false, false, false); err != nil {
+		if err := modules.add(module.Name, false, false, false); err != nil {
 			return nil, err
 		}
 	}
-	// module ls omits can_run for enabled modules. The active MGR's beacon
-	// metadata in mgr dump advertises dependency status for every loaded module.
-	data, err = run(ctx, "mgr", "dump", "--format", "json")
-	if err != nil {
-		return nil, err
+	return modules, nil
+}
+
+func (modules mgrModuleSet) add(name string, enabled, always, force bool) error {
+	if !mgrModuleNamePattern.MatchString(name) {
+		return errors.New("invalid native MGR module name")
 	}
+	module := modules[name]
+	if module.Name != "" && !force {
+		return errors.New("duplicate native MGR module membership")
+	}
+	if force && (!module.AlwaysOn || module.ForceDisabled) {
+		return errors.New("invalid force-disabled MGR module membership")
+	}
+	modules[name] = MGRModuleState{Name: name, Enabled: enabled, AlwaysOn: always, ForceDisabled: force}
+	return nil
+}
+
+// applyDump records the active MGR's advertised status of each module from
+// `mgr dump`, and refuses a dump whose loaded modules differ from the
+// membership read before it.
+func (modules mgrModuleSet) applyDump(data []byte) error {
 	var dump struct {
 		Available        *bool     `json:"available"`
 		Modules          *[]string `json:"modules"`
@@ -84,20 +113,20 @@ func readMGRModules(ctx context.Context, run cliQuery) ([]MGRModuleState, error)
 		} `json:"available_modules"`
 	}
 	if json.Unmarshal(data, &dump) != nil || dump.Available == nil || dump.Modules == nil || dump.AvailableModules == nil {
-		return nil, errors.New("decode active MGR module metadata: missing or invalid native dump")
+		return errors.New("decode active MGR module metadata: missing or invalid native dump")
 	}
 	if !*dump.Available {
-		return nil, errors.New("active MGR is not available")
+		return errors.New("active MGR is not available")
 	}
 	seen := make(map[string]bool)
 	for _, native := range *dump.AvailableModules {
 		if !mgrModuleNamePattern.MatchString(native.Name) || native.CanRun == nil || seen[native.Name] {
-			return nil, errors.New("invalid or duplicate advertised MGR module metadata")
+			return errors.New("invalid or duplicate advertised MGR module metadata")
 		}
 		seen[native.Name] = true
 		module, exists := modules[native.Name]
 		if !exists {
-			return nil, errors.New("MGR module metadata differs from configured membership; retry after convergence")
+			return errors.New("MGR module metadata differs from configured membership; retry after convergence")
 		}
 		module.Available, module.CanRun, module.ErrorString = true, *native.CanRun, native.ErrorString
 		modules[native.Name] = module
@@ -106,21 +135,16 @@ func readMGRModules(ctx context.Context, run cliQuery) ([]MGRModuleState, error)
 	for _, name := range *dump.Modules {
 		module, exists := modules[name]
 		if !exists || !module.Enabled || seen[name] {
-			return nil, errors.New("MGR module membership changed while reading; retry after convergence")
+			return errors.New("MGR module membership changed while reading; retry after convergence")
 		}
 		seen[name] = true
 	}
 	for _, module := range modules {
 		if module.Enabled && !module.AlwaysOn && !seen[module.Name] {
-			return nil, errors.New("MGR module membership changed while reading; retry after convergence")
+			return errors.New("MGR module membership changed while reading; retry after convergence")
 		}
 	}
-	result := make([]MGRModuleState, 0, len(modules))
-	for _, module := range modules {
-		result = append(result, module)
-	}
-	slices.SortFunc(result, func(a, b MGRModuleState) int { return strings.Compare(a.Name, b.Name) })
-	return result, nil
+	return nil
 }
 
 func readManagerServices(ctx context.Context, run cliQuery) (map[string]string, error) {

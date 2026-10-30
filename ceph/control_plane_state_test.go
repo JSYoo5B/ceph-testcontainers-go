@@ -191,6 +191,7 @@ var controlPlaneMethods = map[string][]string{
 var controlPlaneCallers = map[string]stateCaller{
 	"terminate":           {"takes", []string{"terminate"}},
 	"ensureControlPlane":  {"holds", []string{"current", "publish"}},
+	"monitorJoinMaterial": {"holds", nil},
 	"cliContainer":        {"free", []string{"current"}},
 	"controlContainer":    {"free", []string{"currentContext"}},
 	"admitNativeTarget":   {"free", []string{"owns"}},

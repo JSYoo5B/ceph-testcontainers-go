@@ -110,7 +110,8 @@ var startupIdentityWriters = map[string]string{
 // afterwards, by the "fact" rows. A new row needs a new review of that claim.
 var startupIdentityCallers = map[string]stateCaller{
 	"bootstrapFirstMonitor":   {"record", []string{"recordFirstMonitorImage", "recordKeyTypeOption"}},
-	"AddMonitor":              {"fact", []string{"ownedLabel"}},
+	"monitorJoinOptions":      {"fact", []string{"ownedLabel"}},
+	"startJoiningMonitor":     {"fact", []string{"ownedLabel"}},
 	"OwnedLabel":              {"fact", []string{"ownedLabel"}},
 	"TerminateOnCleanup":      {"fact", []string{"ownerID"}},
 	"checkDualStackAddresses": {"fact", []string{"firstMonitorImage"}},

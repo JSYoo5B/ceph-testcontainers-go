@@ -80,7 +80,7 @@ var runDirCallers = map[string]stateCaller{
 	"runMonitor":          {"free", []string{"mounts"}},
 	"startedContainer":    {"free", []string{"mounts"}},
 	"ensureControlPlane":  {"free", []string{"mounts"}},
-	"AddMonitor":          {"free", []string{"mounts"}},
+	"monitorJoinOptions":  {"free", []string{"mounts"}},
 	"startManager":        {"free", []string{"mounts"}},
 	"clearAdminSocket":    {"free", []string{"published"}},
 	"clearStaleOSDSocket": {"free", []string{"published"}},
