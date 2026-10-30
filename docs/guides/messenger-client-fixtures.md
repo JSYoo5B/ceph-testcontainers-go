@@ -429,11 +429,49 @@ the mode and `crypto` and `comp` handler pointers (`0` means none). The
 accepting side of a lossless session reports the mode as `unknown`; its
 cipher still tells secure from CRC.
 
+Without `messenger dump` every READY line of the phase, bound to the OSD's
+container generation and log range, must also print `rev1=1`.
+
 The test also reads `con_features` from `ceph tell mon.a sessions` and checks
 names such as `SERVER_SQUID`, `MSG_ADDR2` and `CEPHX_V2` with their
 incarnation, as `HAVE_FEATURE` does: several names share a bit, and an older
 incarnation of a bit means something else. It logs
 `MESSENGER_COMPRESSION_RECEIPT`.
+
+## Session revision and reconnect
+
+With `debug_ms = 1` a daemon logs one `s=READY` line each time a msgr2
+session becomes ready, on the first connection and on every reconnect, on
+both supported releases. Set it for the daemons only, with
+`ceph.WithConfigFile` and `[mon]`, `[mgr]`, `[osd]` and `[mds]` sections;
+a `[client]` section would also change the fixture's own CLI. The line names
+the peer address and entity, the policy (`l=1` lossy, `l=0` lossless),
+`cs` (connect_seq), `pgs` (peer global sequence) and `rev1`, and ends with
+the session's `client_cookie`, `server_cookie`, `in_seq` and `out_seq`.
+Squid prints fewer fields inside `conn(...)` than Tentacle; both print these.
+`harness.ParseReadySessions` reads them and returns lines that lack one as
+unusable instead of dropping them.
+
+| Recipe | What the test observes | Proven by |
+| --- | --- | --- |
+| v2-only CephFS cluster | The MDS advertises only v2 in `fs dump` and runs with `ms_bind_msgr1` off. Every READY line of each MON, MGR, OSD and the MDS has `rev1=1`, the MDS's with a MON, a MGR, an OSD and a mounted client among them. On Tentacle every READY connection in `messenger dump` is `rev1` and each listening messenger advertises v2 only. Logs `MESSENGER_V2_SESSIONS_RECEIPT`. | `TestCephFSMessengerV2Sessions` |
+| v2-only RGW cluster | The gateway's container listens on TCP 7480 only (Docker's resolver at 127.0.0.11 aside): radosgw binds no messenger. The READY lines that the MON, MGR and OSDs logged with a peer at the gateway's address all have `rev1=1`. On Tentacle radosgw's admin socket reports messengers with no listening socket and `rev1` connections to a MON and an OSD. Logs `MESSENGER_V2_RGW_RECEIPT`. | `TestRGWMessengerV2Sessions` |
+| Client-side socket faults | A libcephfs client sets `ms_inject_socket_failures` to 40 for 2 s while it writes, fsyncs and stats records. The MDS logs reconnects of the one lossless session: the same connection object and cookies, `cs` and `pgs` growing, `in_seq` and `out_seq` never going back. The OSDs log new lossy sessions: `cs=0`, `server_cookie=0`, a new `client_cookie`, sequences at 0. On Tentacle the MDS's `messenger dump` shows the same `conn_id` with the last logged `connect_seq`. The MDS session stays `open` and another client reads every acknowledged record. Logs `MESSENGER_RECONNECT_RECEIPT`. | `TestCephFSMessengerReconnect` |
+
+```golang
+lines := harness.ContainerLogLines(t, ctx, mds) // mds is the *cephfs.MDS of the active rank
+sessions, unusable := harness.ParseReadySessions(lines[mark:])
+```
+
+The actor calls `fs.conf_set("ms_inject_socket_failures", "40")` on its own
+python-cephfs handle and clears it again from a thread that does not wait on
+the workload: a rate high enough to break handshakes keeps every operation,
+and so a clearing call behind it, waiting. `cs` can skip values,
+because an attempt that faults before READY takes one too. A connection
+object's address can be reused after it is freed, so tell lossy sessions
+apart by their client cookie. Keepalive and ACK frames themselves appear in
+neither the READY lines nor `messenger dump`; only the sequence numbers that
+a reconnected session carries show what was acknowledged.
 
 ## Targeted commands
 

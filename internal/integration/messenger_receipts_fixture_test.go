@@ -7,6 +7,8 @@ package integration_test
 import (
 	"slices"
 	"testing"
+
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 )
 
 // Native output saved from TestMessengerCompressionReceipt and
@@ -39,19 +41,19 @@ var readyLogSample = []string{
 }
 
 func TestParseMessengerDump(t *testing.T) {
-	names, err := parseMessengerCatalog([]byte(messengerCatalogSample))
+	names, err := harness.ParseMessengerCatalog([]byte(messengerCatalogSample))
 	if err != nil || !slices.Contains(names, "cluster") || len(names) != 7 {
 		t.Fatalf("catalog %v %v", names, err)
 	}
-	if _, err := parseMessengerCatalog([]byte(`{"status":{"messengers":[]}}`)); err == nil {
+	if _, err := harness.ParseMessengerCatalog([]byte(`{"status":{"messengers":[]}}`)); err == nil {
 		t.Fatal("an empty catalog was accepted")
 	}
-	cluster, err := parseMessengerConnections([]byte(compressedClusterDumpSample))
+	cluster, err := harness.ParseMessengerConnections([]byte(compressedClusterDumpSample))
 	if err != nil || len(cluster) != 1 {
 		t.Fatalf("cluster %+v %v", cluster, err)
 	}
 	c := cluster[0]
-	if !c.ready() || c.Messenger != "cluster" || c.PeerType != "osd" || !c.Revision1 || c.CompressionRx != "snappy" || c.CryptoTx != "AES-128-GCM" {
+	if !c.Ready() || c.Messenger != "cluster" || c.PeerType != "osd" || !c.Revision1 || c.CompressionRx != "snappy" || c.CryptoTx != "AES-128-GCM" {
 		t.Fatalf("cluster session %+v", c)
 	}
 	secureCompressed := compressionPhase{name: "secure-compressed", mode: "secure", compressed: true}
@@ -64,7 +66,7 @@ func TestParseMessengerDump(t *testing.T) {
 	if problems := checkDumpedSession("osd.0", c, compressionPhase{mode: "crc", compressed: true}); len(problems) != 1 {
 		t.Fatalf("a CRC expectation accepted AES-128-GCM: %v", problems)
 	}
-	clients, err := parseMessengerConnections([]byte(clientSessionDumpSample))
+	clients, err := harness.ParseMessengerConnections([]byte(clientSessionDumpSample))
 	if err != nil || len(clients) != 1 || clients[0].PeerType != "client" || clients[0].GlobalID != 4402 || clients[0].Mode != "crc" {
 		t.Fatalf("client %+v %v", clients, err)
 	}
@@ -79,11 +81,11 @@ func TestParseMessengerDump(t *testing.T) {
 }
 
 func TestParseReadyLogLines(t *testing.T) {
-	sessions := parseReadyLogLines(readyLogSample)
+	sessions := harness.ParseReadyLogLines(readyLogSample)
 	if len(sessions) != 4 {
 		t.Fatalf("%+v", sessions)
 	}
-	want := []readyLogConnection{
+	want := []harness.ReadyLogConnection{
 		{Mode: "unknown", PeerType: "osd", PeerID: "0"},
 		{Mode: "crc", Compression: true, PeerType: "osd", PeerID: "1"},
 		{Mode: "crc", PeerType: "client", PeerID: "4258"},
