@@ -1037,20 +1037,7 @@ func settleNetworkDelay(c *ceph.Container, token faulthook.Token, lease *Network
 // applyNetworkDelay checks the helper and the target, then applies the delay.
 // It returns a lease whenever the change may have reached the kernel.
 func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile) (*NetworkProfileLease, error) {
-	state, err := backend.target(ctx, id, network)
-	if err != nil {
-		return nil, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
-	}
-	if err := admitNetemTarget(state); err != nil {
-		return nil, err
-	}
-	peers := delay.selection()
-	for _, peer := range peers {
-		if peer.Addr.Is6() && !state.address6.IsValid() {
-			return nil, invalidRequest("network delay peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
-		}
-	}
-	imageID, err := preflightNetem(ctx, backend, delay.HelperImage, len(peers) > 0, delay.Rate > 0, delay.requestedFaults())
+	state, peers, imageID, err := admitNetworkDelay(ctx, backend, id, network, delay)
 	if err != nil {
 		return nil, err
 	}
@@ -1059,6 +1046,47 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 	if err != nil {
 		return nil, err
 	}
+	lease := newNetworkProfileLease(backend, helper, id, network, state, imageID, peers, delay)
+	if err := lease.locate(ctx, state); err != nil {
+		return lease.discard(ctx, err)
+	}
+	lease.handle = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
+	if keep, err := lease.runSteps(ctx, lease.plan(netemArguments(delay, lease.Rate, lease.QueueLimit))); err != nil {
+		if !keep {
+			return lease.discard(ctx, err)
+		}
+		return lease, err
+	}
+	return lease, lease.verifyApplied(ctx, delay)
+}
+
+// admitNetworkDelay checks the target's endpoint, that every IPv6 peer has an
+// IPv6 target address, and the helper image, before anything is started. It
+// returns the target, the selected peers and the checked image's ID.
+func admitNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile) (netemTarget, []NetworkPeer, string, error) {
+	state, err := backend.target(ctx, id, network)
+	if err != nil {
+		return netemTarget{}, nil, "", faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
+	}
+	if err := admitNetemTarget(state); err != nil {
+		return netemTarget{}, nil, "", err
+	}
+	peers := delay.selection()
+	for _, peer := range peers {
+		if peer.Addr.Is6() && !state.address6.IsValid() {
+			return netemTarget{}, nil, "", invalidRequest("network delay peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
+		}
+	}
+	imageID, err := preflightNetem(ctx, backend, delay.HelperImage, len(peers) > 0, delay.Rate > 0, delay.requestedFaults())
+	if err != nil {
+		return netemTarget{}, nil, "", err
+	}
+	return state, peers, imageID, nil
+}
+
+// newNetworkProfileLease records the requested profile and the target it is
+// applied to; the interface, handles and kernel state are filled in later.
+func newNetworkProfileLease(backend netemBackend, helper testcontainers.Container, id, network string, state netemTarget, imageID string, peers []NetworkPeer, delay NetworkProfile) *NetworkProfileLease {
 	lease := &NetworkProfileLease{ContainerID: id, NetworkName: network, SandboxID: state.sandboxID,
 		MACAddress: state.mac, Address: state.address, HelperImageID: imageID, Delay: delay.Delay,
 		Jitter: delay.Jitter, Peer: delay.Peer, PeerPort: delay.PeerPort, Peers: peers, Loss: delay.Loss, backend: backend, helper: helper}
@@ -1069,30 +1097,43 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 		}
 	}
 	lease.Reorder, lease.Duplicate, lease.Corrupt = delay.Reorder, delay.Duplicate, delay.Corrupt
-	discard := func(err error) (*NetworkProfileLease, error) {
-		return nil, errors.Join(err, removeNetemHelper(ctx, backend, helper))
-	}
-	report, err := inspectNetem(ctx, backend, helper, "inspect", state.address.String(), state.mac)
+	return lease
+}
+
+// discard removes the helper of a lease that changed nothing in the kernel.
+func (l *NetworkProfileLease) discard(ctx context.Context, err error) (*NetworkProfileLease, error) {
+	return nil, errors.Join(err, removeNetemHelper(ctx, l.backend, l.helper))
+}
+
+// locate finds the one interface with the target's address and MAC, requires
+// its root qdisc to be the default one and records it. It then rechecks the
+// target: a restart between the first inspection and the helper's start would
+// have given the helper a namespace without this endpoint.
+func (l *NetworkProfileLease) locate(ctx context.Context, state netemTarget) error {
+	report, err := inspectNetem(ctx, l.backend, l.helper, "inspect", state.address.String(), state.mac)
 	if err != nil {
-		return discard(err)
+		return err
 	}
 	if len(report.Links) != 1 {
-		return discard(fmt.Errorf("found %d interfaces with the target's address and MAC on %s", len(report.Links), network))
+		return fmt.Errorf("found %d interfaces with the target's address and MAC on %s", len(report.Links), l.NetworkName)
 	}
 	root, err := report.root()
 	if err != nil {
-		return discard(err)
+		return err
 	}
 	if root.Handle != "0:" {
-		return discard(invalidRequest("the target's interface has a %s root qdisc (handle %s) that the delay would replace", root.Kind, root.Handle))
+		return invalidRequest("the target's interface has a %s root qdisc (handle %s) that the delay would replace", root.Kind, root.Handle)
 	}
-	lease.Namespace, lease.Interface, lease.InterfaceIndex = report.Namespace, report.Links[0].Name, report.Links[0].Index
-	// A restart between the first inspection and the helper's start would
-	// have given the helper a namespace without this endpoint.
-	if again, err := backend.target(ctx, id, network); err != nil || again.sandboxID != state.sandboxID {
-		return discard(errors.Join(errors.New("the network delay target restarted while it was being checked"), err))
+	l.Namespace, l.Interface, l.InterfaceIndex = report.Namespace, report.Links[0].Name, report.Links[0].Index
+	if again, err := l.backend.target(ctx, l.ContainerID, l.NetworkName); err != nil || again.sandboxID != state.sandboxID {
+		return errors.Join(errors.New("the network delay target restarted while it was being checked"), err)
 	}
-	lease.handle = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
+	return nil
+}
+
+// netemArguments is the netem qdisc's parameter list for delay, with rate and
+// queueLimit as the lease resolved them.
+func netemArguments(delay NetworkProfile, rate NetworkRate, queueLimit int) []string {
 	netem := []string{"netem"}
 	// tc (iproute2 6.1, as in NetemHelperImage) sends a duplicate's
 	// correlation only together with a delay's correlation, and drops it
@@ -1116,68 +1157,86 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 			netem = append(append(netem, fault.name), strings.Fields(fault.fault.String())...)
 		}
 	}
-	if lease.Rate > 0 {
-		netem = append(netem, "rate", strconv.FormatUint(uint64(lease.Rate), 10)+"bit", "limit", strconv.Itoa(lease.QueueLimit))
+	if rate > 0 {
+		netem = append(netem, "rate", strconv.FormatUint(uint64(rate), 10)+"bit", "limit", strconv.Itoa(queueLimit))
 	}
-	steps := []netemStep{{"add the netem delay", append([]string{"tc", "qdisc", "add", "dev", lease.Interface, "root", "handle", lease.handle}, netem...)}}
-	if len(peers) > 0 {
-		// The prio root first, with every priority in band 1, so nothing is
-		// delayed until the filters, added last, select the peers' packets.
-		lease.child = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
-		for lease.child == lease.handle {
-			lease.child = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
-		}
-		priomap := slices.Repeat([]string{"0"}, 16)
-		steps = []netemStep{
-			{"add the delay's prio root", append([]string{"tc", "qdisc", "add", "dev", lease.Interface, "root", "handle", lease.handle, "prio", "bands", "3", "priomap"}, priomap...)},
-			{"add the netem delay", append([]string{"tc", "qdisc", "add", "dev", lease.Interface, "parent", lease.handle + peerBand, "handle", lease.child}, netem...)},
-		}
-		leaves := planPeerLeaves(peers)
-		for i, leaf := range leaves {
-			label := "add the peer filter"
-			if len(leaves) > 1 {
-				label = fmt.Sprintf("add peer filter %d of %d", i+1, len(leaves))
-			}
-			steps = append(steps, netemStep{label, peerFilterArgs(lease.Interface, lease.handle, leaf)})
-		}
+	return netem
+}
+
+// plan is the tc commands that install netem under the lease's root handle:
+// netem itself as the root, or, with peers, a prio root whose every priority
+// is in band 1, netem on the peer band and the peer filters added last, so
+// nothing is delayed until the filters select the peers' packets. It picks
+// the child handle.
+func (l *NetworkProfileLease) plan(netem []string) []netemStep {
+	if len(l.Peers) == 0 {
+		return []netemStep{{"add the netem delay", append([]string{"tc", "qdisc", "add", "dev", l.Interface, "root", "handle", l.handle}, netem...)}}
 	}
+	l.child = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
+	for l.child == l.handle {
+		l.child = fmt.Sprintf("%x:", 0x1000+rand.IntN(0xe000))
+	}
+	priomap := slices.Repeat([]string{"0"}, 16)
+	steps := []netemStep{
+		{"add the delay's prio root", append([]string{"tc", "qdisc", "add", "dev", l.Interface, "root", "handle", l.handle, "prio", "bands", "3", "priomap"}, priomap...)},
+		{"add the netem delay", append([]string{"tc", "qdisc", "add", "dev", l.Interface, "parent", l.handle + peerBand, "handle", l.child}, netem...)},
+	}
+	leaves := planPeerLeaves(l.Peers)
+	for i, leaf := range leaves {
+		label := "add the peer filter"
+		if len(leaves) > 1 {
+			label = fmt.Sprintf("add peer filter %d of %d", i+1, len(leaves))
+		}
+		steps = append(steps, netemStep{label, peerFilterArgs(l.Interface, l.handle, leaf)})
+	}
+	return steps
+}
+
+// runSteps runs the planned commands in order. On failure keep reports
+// whether the change may have reached the kernel, so the lease must be
+// returned; otherwise nothing changed and the helper can be discarded.
+func (l *NetworkProfileLease) runSteps(ctx context.Context, steps []netemStep) (keep bool, err error) {
 	for i, step := range steps {
-		result, err := backend.run(ctx, helper, step.label, step.argv...)
+		result, err := l.backend.run(ctx, l.helper, step.label, step.argv...)
 		if err != nil {
 			// The command may have reached the kernel; only the lease can tell.
 			if marker, unconfirmed := supervised.Unconfirmed(err); unconfirmed {
-				lease.pending = marker
+				l.pending = marker
 			}
-			return lease, fmt.Errorf("%s: %w", step.label, err)
+			return true, fmt.Errorf("%s: %w", step.label, err)
 		}
-		if result.ExitCode != 0 || result.TimedOut {
-			cause := netemCommandError(step.label, result)
-			if i > 0 {
-				// The root is the lease's; Restore removes it with the rest.
-				return lease, cause
-			}
-			// tc changes nothing when the kernel refuses the request.
-			status, statusErr := lease.read(ctx)
-			if statusErr != nil || status.Applied || status.RootHandle == lease.handle {
-				return lease, errors.Join(cause, statusErr)
-			}
-			return discard(cause)
+		if result.ExitCode == 0 && !result.TimedOut {
+			continue
 		}
+		cause := netemCommandError(step.label, result)
+		if i > 0 {
+			// The root is the lease's; Restore removes it with the rest.
+			return true, cause
+		}
+		// tc changes nothing when the kernel refuses the request.
+		status, statusErr := l.read(ctx)
+		if statusErr != nil || status.Applied || status.RootHandle == l.handle {
+			return true, errors.Join(cause, statusErr)
+		}
+		return false, cause
 	}
-	status, err := lease.read(ctx)
+	return false, nil
+}
+
+// verifyApplied reads the kernel's qdisc back and requires exactly the
+// requested delay, jitter, loss, rate, queue limit and packet faults.
+func (l *NetworkProfileLease) verifyApplied(ctx context.Context, delay NetworkProfile) error {
+	status, err := l.read(ctx)
 	if err != nil {
-		return lease, fmt.Errorf("read the netem delay: %w", err)
+		return fmt.Errorf("read the netem delay: %w", err)
 	}
 	// The kernel keeps the loss as a 32-bit probability.
 	if !status.Applied || status.Delay != delay.Delay || status.Jitter != delay.Jitter || math.Abs(status.Loss-delay.Loss) > 1e-4 ||
-		status.Rate != lease.Rate || lease.Rate > 0 && status.QueueLimit != lease.QueueLimit {
-		return lease, errors.Join(fmt.Errorf("the kernel reports root %s %s with delay %v, jitter %v, loss %v%%, rate %v and queue limit %d instead of the requested delay",
+		status.Rate != l.Rate || l.Rate > 0 && status.QueueLimit != l.QueueLimit {
+		return errors.Join(fmt.Errorf("the kernel reports root %s %s with delay %v, jitter %v, loss %v%%, rate %v and queue limit %d instead of the requested delay",
 			status.RootKind, status.RootHandle, status.Delay, status.Jitter, status.Loss, status.Rate, status.QueueLimit), status.mismatch)
 	}
-	if err := lease.checkFaults(status); err != nil {
-		return lease, err
-	}
-	return lease, nil
+	return l.checkFaults(status)
 }
 
 // checkFaults compares the kernel's packet faults and reorder gap with the
