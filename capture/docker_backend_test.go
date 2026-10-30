@@ -99,7 +99,7 @@ func withFakeEngine(t *testing.T) *fakeEngine {
 	original := newDockerClient
 	t.Cleanup(func() { newDockerClient = original })
 	newDockerClient = func(context.Context) (*testcontainers.DockerClient, error) {
-		client, err := mobycl.New(mobycl.WithHost("tcp://"+strings.TrimPrefix(server.URL, "http://")))
+		client, err := mobycl.New(mobycl.WithHost("tcp://" + strings.TrimPrefix(server.URL, "http://")))
 		if err != nil {
 			return nil, err
 		}
