@@ -19,6 +19,10 @@
 //     function whose name contains fake, mock, stub or spy (case-insensitive):
 //     such doubles are _test.go declarations or live in a test-only package.
 //
+// The harness_packages of the manifest hold integration test code that is
+// outside _test.go files only so that several test packages can share it;
+// they are read like _test.go files and not checked.
+//
 // The class lives next to the declaration rather than in a table, so changes
 // that add doubles in different packages do not edit a shared file. Package-
 // local doubles in _test.go files are not checked: they are described by
@@ -99,6 +103,7 @@ func Check(root, manifestPath string) ([]string, error) {
 	}
 	var manifest struct {
 		TestOnlyPackages []string `json:"test_only_packages"`
+		HarnessPackages  []string `json:"harness_packages"`
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return nil, fmt.Errorf("manifest: %v", err)
@@ -117,6 +122,11 @@ func Check(root, manifestPath string) ([]string, error) {
 	}
 	for _, file := range files {
 		dir := path.Dir(file)
+		if slices.Contains(manifest.HarnessPackages, dir) {
+			// Integration test code outside _test.go files only because
+			// other test packages share it; it is read like a _test.go file.
+			continue
+		}
 		helper := slices.Contains(manifest.TestOnlyPackages, dir)
 		found, err := scanFile(filepath.Join(root, filepath.FromSlash(file)), file)
 		if err != nil {

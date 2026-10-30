@@ -23,7 +23,8 @@ MODULE = "github.com/JSYoo5B/ceph-testcontainers-go"
 
 def passing_log():
     return "".join("=== RUN   " + name + "\n--- PASS: " + name + " (1.23s)\n"
-                   for name in runner.EXPECTED_TESTS) + "PASS\nok\t" + MODULE + "/internal/integration\t12.34s\n"
+                   for name in runner.EXPECTED_TESTS) + "".join("PASS\nok\t" + MODULE + "/" + package + "\t12.34s\n"
+                                                                 for package in runner.EXPECTED_PACKAGES)
 
 
 class Runtime:
@@ -544,6 +545,7 @@ class MatrixTests(unittest.TestCase):
         variants = {
             "cached": good.replace("12.34s", "(cached)"),
             "no_package": good.replace("ok\t" + MODULE + "/internal/integration\t12.34s\n", ""),
+            "package_twice": good + "ok\t" + MODULE + "/internal/integration/rbd\t1.00s\n",
             "no_start": good.replace("=== RUN   " + runner.EXPECTED_TESTS[0] + "\n", ""),
             "duplicate": good + "--- PASS: " + runner.EXPECTED_TESTS[0] + " (1.23s)\n",
             "foreign": good + "=== RUN   TestUnselected\n--- PASS: TestUnselected (0.01s)\n",

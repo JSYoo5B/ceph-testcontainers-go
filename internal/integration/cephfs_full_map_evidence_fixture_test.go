@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +40,7 @@ type fakeCluster struct {
 	fail   map[string]error
 }
 
-func (f fakeCluster) sources(osds ...int) mapEvidenceSources {
+func (f fakeCluster) sources(osds ...int) harness.MapEvidenceSources {
 	pick := func(table map[string]string, key string) ([]byte, error) {
 		if err, ok := f.fail[key]; ok {
 			return nil, err
@@ -50,7 +51,7 @@ func (f fakeCluster) sources(osds ...int) mapEvidenceSources {
 		}
 		return []byte(out), nil
 	}
-	return mapEvidenceSources{
+	return harness.MapEvidenceSources{
 		ClientAdmin: func(_ context.Context, args ...string) ([]byte, error) {
 			return pick(f.client, "client "+strings.Join(args, " "))
 		},
@@ -77,10 +78,10 @@ func healthyCluster() fakeCluster {
 }
 
 // failedWait runs a map wait that times out and returns its receipt.
-func failedWait(t *testing.T, phase string, target uint32) *retainedClientReceipt {
+func failedWait(t *testing.T, phase string, target uint32) *harness.RetainedClientReceipt {
 	t.Helper()
-	r := newRetainedClientReceipt(retainedClientID, 1099511627776, 3)
-	err := r.waitMap(context.Background(), phase, target, true, 20*time.Millisecond, time.Second, time.Millisecond, statusSequence(clientAt(retainedClientID, target-1, 20, false)))
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1099511627776, 3)
+	err := r.WaitMap(context.Background(), phase, target, true, 20*time.Millisecond, time.Second, time.Millisecond, statusSequence(clientAt(retainedClientID, target-1, 20, false)))
 	if err == nil {
 		t.Fatal("stale epoch accepted")
 	}
@@ -89,13 +90,13 @@ func failedWait(t *testing.T, phase string, target uint32) *retainedClientReceip
 
 func TestMapEvidenceRecordsClientAndOSDViewsOfAFailedWait(t *testing.T) {
 	src := healthyCluster().sources(0)
-	r := newRetainedClientReceipt(retainedClientID, 1099511627776, 3)
-	r.beginMapEvidence(context.Background(), "full map", src)
-	_ = r.waitMap(context.Background(), "full map", 26, true, 20*time.Millisecond, time.Second, time.Millisecond, statusSequence(clientAt(retainedClientID, 25, 20, false)))
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1099511627776, 3)
+	r.BeginMapEvidence(context.Background(), "full map", src)
+	_ = r.WaitMap(context.Background(), "full map", 26, true, 20*time.Millisecond, time.Second, time.Millisecond, statusSequence(clientAt(retainedClientID, 25, 20, false)))
 	// More maps reach the client between the baseline and the capture.
 	later := healthyCluster()
 	later.client["client perf dump objecter"] = `{"objecter":{"map_epoch":25,"map_full":2,"map_inc":9}}`
-	r.captureMapEvidence(context.Background(), "full map", later.sources(0))
+	r.CaptureMapEvidence(context.Background(), "full map", later.sources(0))
 	if len(r.MapEvidence) != 1 {
 		t.Fatalf("evidence = %+v", r.MapEvidence)
 	}
@@ -137,7 +138,7 @@ func TestMapEvidenceRecordsClientAndOSDViewsOfAFailedWait(t *testing.T) {
 func TestMapEvidenceDoesNotChangeTheWaitRecord(t *testing.T) {
 	r := failedWait(t, "full map", 26)
 	before := fmt.Sprintf("%+v", r.Waits)
-	r.captureMapEvidence(context.Background(), "full map", healthyCluster().sources(0))
+	r.CaptureMapEvidence(context.Background(), "full map", healthyCluster().sources(0))
 	if after := fmt.Sprintf("%+v", r.Waits); after != before {
 		t.Fatalf("wait changed:\n%s\n%s", before, after)
 	}
@@ -148,14 +149,14 @@ func TestMapEvidenceDoesNotChangeTheWaitRecord(t *testing.T) {
 
 func TestMapEvidenceKeepsTheTwoIncidentsApart(t *testing.T) {
 	r := failedWait(t, "full map", 26)
-	r.captureMapEvidence(context.Background(), "full map", healthyCluster().sources(0))
-	err := r.waitMap(context.Background(), "drained map", 31, true, 20*time.Millisecond, time.Second, time.Millisecond, statusSequence(clientAt(retainedClientID, 30, 20, false)))
+	r.CaptureMapEvidence(context.Background(), "full map", healthyCluster().sources(0))
+	err := r.WaitMap(context.Background(), "drained map", 31, true, 20*time.Millisecond, time.Second, time.Millisecond, statusSequence(clientAt(retainedClientID, 30, 20, false)))
 	if err == nil {
 		t.Fatal("stale epoch accepted")
 	}
 	drained := healthyCluster()
 	drained.client["client perf dump objecter"] = `{"objecter":{"map_epoch":30,"map_full":4,"map_inc":11}}`
-	r.captureMapEvidence(context.Background(), "drained map", drained.sources(0))
+	r.CaptureMapEvidence(context.Background(), "drained map", drained.sources(0))
 	if len(r.MapEvidence) != 2 || r.MapEvidence[0].TargetEpoch != 26 || r.MapEvidence[1].TargetEpoch != 31 || r.MapEvidence[0].Phase != "full map" || r.MapEvidence[1].Phase != "drained map" {
 		t.Fatalf("evidence = %+v", r.MapEvidence)
 	}
@@ -165,21 +166,21 @@ func TestMapEvidenceKeepsTheTwoIncidentsApart(t *testing.T) {
 }
 
 func TestMapEvidenceIsNotCapturedForAPhaseWithoutAWait(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
-	r.beginMapEvidence(context.Background(), "full map", healthyCluster().sources(0))
-	r.captureMapEvidence(context.Background(), "full map", healthyCluster().sources(0))
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
+	r.BeginMapEvidence(context.Background(), "full map", healthyCluster().sources(0))
+	r.CaptureMapEvidence(context.Background(), "full map", healthyCluster().sources(0))
 	if len(r.MapEvidence) != 0 {
 		t.Fatalf("evidence without a wait = %+v", r.MapEvidence)
 	}
 }
 
 func TestMapEvidenceAbsentOnAReachedWait(t *testing.T) {
-	r := newRetainedClientReceipt(retainedClientID, 1, 3)
-	r.beginMapEvidence(context.Background(), "full map", healthyCluster().sources(0))
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
+	r.BeginMapEvidence(context.Background(), "full map", healthyCluster().sources(0))
 	if err := waitFor(r, 24, time.Second, statusSequence(clientAt(retainedClientID, 24, 20, false))); err != nil {
 		t.Fatal(err)
 	}
-	if line := r.line(); strings.Contains(line, "map_evidence") || strings.Contains(line, "counters_at") {
+	if line := r.Line(); strings.Contains(line, "map_evidence") || strings.Contains(line, "counters_at") {
 		t.Fatalf("a passing wait carries evidence: %s", line)
 	}
 }
@@ -191,10 +192,10 @@ func TestMapEvidenceUnsupportedCommandsAreUnavailableNotEvidence(t *testing.T) {
 		"client perf dump objecter": unsupported, "client status": unsupported, "client objecter_requests": unsupported,
 		"osd dump --format json": unsupported, "osd.0 status": unsupported, "osd.0 dump_historic_ops": unsupported, "osd.0 dump_ops_in_flight": unsupported,
 	}
-	r := newRetainedClientReceipt(retainedClientID, 1099511627776, 3)
-	r.beginMapEvidence(context.Background(), "full map", cluster.sources(0))
-	_ = r.waitMap(context.Background(), "full map", 26, true, 20*time.Millisecond, time.Second, time.Millisecond, statusSequence(clientAt(retainedClientID, 25, 20, false)))
-	r.captureMapEvidence(context.Background(), "full map", cluster.sources(0))
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1099511627776, 3)
+	r.BeginMapEvidence(context.Background(), "full map", cluster.sources(0))
+	_ = r.WaitMap(context.Background(), "full map", 26, true, 20*time.Millisecond, time.Second, time.Millisecond, statusSequence(clientAt(retainedClientID, 25, 20, false)))
+	r.CaptureMapEvidence(context.Background(), "full map", cluster.sources(0))
 	ev := r.MapEvidence[0]
 	for name, unavailable := range map[string]string{
 		"baseline": ev.Baseline.Unavailable, "final": ev.Final.Unavailable, "status": ev.ClientStatus.Unavailable, "requests": ev.Requests.Unavailable,
@@ -217,7 +218,7 @@ func TestMapEvidenceCanceledContextIsUnavailable(t *testing.T) {
 	src := healthyCluster().sources(0)
 	// The reads ignore the context, as a late result would; a context that
 	// ended makes the reading unavailable all the same.
-	r.captureMapEvidence(ctx, "full map", src)
+	r.CaptureMapEvidence(ctx, "full map", src)
 	ev := r.MapEvidence[0]
 	if ev.Final.Unavailable == "" || ev.Requests.Unavailable == "" || ev.OSDs[0].Historic.Unavailable == "" {
 		t.Fatalf("a read after the context ended counts as evidence: %+v", ev)
@@ -236,34 +237,34 @@ func TestMapEvidenceCountersNeedEveryFieldWithItsType(t *testing.T) {
 		"empty":           ``,
 		"wrong top level": `[]`,
 	} {
-		if got := parseMapCounters([]byte(out)); got.Unavailable == "" || got.MapEpoch != nil || got.MapFull != nil || got.MapInc != nil {
+		if got := harness.ParseMapCounters([]byte(out)); got.Unavailable == "" || got.MapEpoch != nil || got.MapFull != nil || got.MapInc != nil {
 			t.Errorf("%s: %+v", name, got)
 		}
 	}
-	if got := parseMapCounters([]byte(perfDump)); got.Unavailable != "" || *got.MapEpoch != 25 || *got.MapFull != 2 || *got.MapInc != 7 {
+	if got := harness.ParseMapCounters([]byte(perfDump)); got.Unavailable != "" || *got.MapEpoch != 25 || *got.MapFull != 2 || *got.MapInc != 7 {
 		t.Fatalf("valid: %+v", got)
 	}
-	zero := parseMapCounters([]byte(`{"objecter":{"map_epoch":0,"map_full":0,"map_inc":0}}`))
+	zero := harness.ParseMapCounters([]byte(`{"objecter":{"map_epoch":0,"map_full":0,"map_inc":0}}`))
 	if zero.Unavailable != "" || zero.MapFull == nil || *zero.MapFull != 0 {
 		t.Fatalf("explicit zeros are values: %+v", zero)
 	}
 }
 
 func TestMapEvidenceDeltaNeedsBothReadingsAndNoReset(t *testing.T) {
-	ok := func(full, inc uint64) mapCounters {
+	ok := func(full, inc uint64) harness.MapCounters {
 		e := uint64(1)
-		return mapCounters{MapEpoch: &e, MapFull: &full, MapInc: &inc}
+		return harness.MapCounters{MapEpoch: &e, MapFull: &full, MapInc: &inc}
 	}
-	if f, i, note := counterDeltas(ok(1, 5), ok(3, 5)); f == nil || *f != 2 || *i != 0 || note != "" {
+	if f, i, note := harness.CounterDeltas(ok(1, 5), ok(3, 5)); f == nil || *f != 2 || *i != 0 || note != "" {
 		t.Fatalf("delta = %v %v %q", f, i, note)
 	}
-	for name, pair := range map[string][2]mapCounters{
+	for name, pair := range map[string][2]harness.MapCounters{
 		"baseline unavailable": {{Unavailable: "x"}, ok(3, 5)},
 		"final unavailable":    {ok(1, 5), {Unavailable: "x"}},
 		"counter decreased":    {ok(4, 5), ok(3, 5)},
 		"inc decreased":        {ok(1, 6), ok(3, 5)},
 	} {
-		if f, i, note := counterDeltas(pair[0], pair[1]); f != nil || i != nil || note == "" {
+		if f, i, note := harness.CounterDeltas(pair[0], pair[1]); f != nil || i != nil || note == "" {
 			t.Errorf("%s: %v %v %q", name, f, i, note)
 		}
 	}
@@ -276,20 +277,20 @@ func TestMapEvidenceRequestsKeepTheArrayAbsenceApart(t *testing.T) {
 		"object ops":  `{"ops":{}}`,
 		"not json":    `x`,
 	} {
-		if got := parseObjecterRequestsReading([]byte(out)); got.Unavailable == "" || got.Ops != nil {
+		if got := harness.ParseObjecterRequestsReading([]byte(out)); got.Unavailable == "" || got.Ops != nil {
 			t.Errorf("%s: %+v", name, got)
 		}
 	}
-	got := parseObjecterRequestsReading([]byte(`{"ops":[{"tid":9,"pg":"3.1","osd":0,"paused":1,"attempts":1,"age":2.5}]}`))
+	got := harness.ParseObjecterRequestsReading([]byte(`{"ops":[{"tid":9,"pg":"3.1","osd":0,"paused":1,"attempts":1,"age":2.5}]}`))
 	if got.Unavailable != "" || *got.Ops != 1 || got.CommandOps != nil || got.LingerOps != nil || *got.Pending[0].Paused != 1 || *got.Pending[0].OSD != 0 {
 		t.Fatalf("one pending op: %+v", got)
 	}
 	var ops []string
-	for i := range mapEvidenceOpLimit + 3 {
+	for i := range harness.MapEvidenceOpLimit + 3 {
 		ops = append(ops, fmt.Sprintf(`{"tid":%d}`, i))
 	}
-	long := parseObjecterRequestsReading([]byte(`{"ops":[` + strings.Join(ops, ",") + `]}`))
-	if *long.Ops != mapEvidenceOpLimit+3 || len(long.Pending) != mapEvidenceOpLimit || !long.Truncated {
+	long := harness.ParseObjecterRequestsReading([]byte(`{"ops":[` + strings.Join(ops, ",") + `]}`))
+	if *long.Ops != harness.MapEvidenceOpLimit+3 || len(long.Pending) != harness.MapEvidenceOpLimit || !long.Truncated {
 		t.Fatalf("truncation: %d listed, %d kept, truncated=%t", *long.Ops, len(long.Pending), long.Truncated)
 	}
 }
@@ -303,11 +304,11 @@ func TestMapEvidenceClientStatusNeedsEveryField(t *testing.T) {
 		"string epoch":  `{"id":1,"osd_epoch":"1","osd_epoch_barrier":1,"blocklisted":false}`,
 		"int blocklist": `{"id":1,"osd_epoch":1,"osd_epoch_barrier":1,"blocklisted":0}`,
 	} {
-		if got := parseClientStatusReading([]byte(out)); got.Unavailable == "" || got.OSDEpoch != nil {
+		if got := harness.ParseClientStatusReading([]byte(out)); got.Unavailable == "" || got.OSDEpoch != nil {
 			t.Errorf("%s: %+v", name, got)
 		}
 	}
-	if got := parseClientStatusReading([]byte(statusDump)); got.Unavailable != "" || *got.Blocklisted {
+	if got := harness.ParseClientStatusReading([]byte(statusDump)); got.Unavailable != "" || *got.Blocklisted {
 		t.Fatalf("valid: %+v", got)
 	}
 }
@@ -322,13 +323,13 @@ func TestMapEvidenceOSDMapRangeNeedsEpochs(t *testing.T) {
 		"bool newest":  `{"state":"active","oldest_map":"1","newest_map":true}`,
 		"not json":     `x`,
 	} {
-		if got := parseOSDMapRange([]byte(out)); got.Unavailable == "" || got.NewestMap != nil {
+		if got := harness.ParseOSDMapRange([]byte(out)); got.Unavailable == "" || got.NewestMap != nil {
 			t.Errorf("%s: %+v", name, got)
 		}
 	}
 	// The source prints epochs as strings; the same values as numbers are the same epochs.
 	for _, out := range []string{osdStatus, `{"state":"active","oldest_map":1,"newest_map":31}`} {
-		if got := parseOSDMapRange([]byte(out)); got.Unavailable != "" || *got.NewestMap != 31 || *got.OldestMap != 1 {
+		if got := harness.ParseOSDMapRange([]byte(out)); got.Unavailable != "" || *got.NewestMap != 31 || *got.OldestMap != 1 {
 			t.Errorf("%s: %+v", out, got)
 		}
 	}
@@ -340,43 +341,43 @@ func TestMapEvidenceOSDOpsMatchOnlyTheRetainedClientAndNeverInventAnEpoch(t *tes
 		"null ops": `{"ops":null}`,
 		"not json": `x`,
 	} {
-		if got := parseOSDOpsReading([]byte(out), 4261); got.Unavailable == "" || got.Listed != nil || got.Matching != nil {
+		if got := harness.ParseOSDOpsReading([]byte(out), 4261); got.Unavailable == "" || got.Listed != nil || got.Matching != nil {
 			t.Errorf("%s: %+v", name, got)
 		}
 	}
 	// A client whose ID only starts with the retained one's digits does not match.
 	other := `{"ops":[{"description":"osd_op(client.42610.0:1 3.1 x e9)","type_data":{"client_info":{"client":"client.42610","tid":1}}}]}`
-	if got := parseOSDOpsReading([]byte(other), 4261); got.Unavailable != "" || *got.Listed != 1 || *got.Matching != 0 || len(got.Ops) != 0 {
+	if got := harness.ParseOSDOpsReading([]byte(other), 4261); got.Unavailable != "" || *got.Listed != 1 || *got.Matching != 0 || len(got.Ops) != 0 {
 		t.Fatalf("other client: %+v", got)
 	}
 	// A description that names no epoch leaves it absent.
 	noEpoch := `{"ops":[{"description":"osd_op(client.4261.0:1 3.1 (undecoded) e)","type_data":{"client_info":{"client":"client.4261"}}},{"type_data":{"client_info":{"client":"client.4261","tid":2}}}]}`
-	got := parseOSDOpsReading([]byte(noEpoch), 4261)
+	got := harness.ParseOSDOpsReading([]byte(noEpoch), 4261)
 	if *got.Matching != 2 || got.Ops[0].Epoch != nil || got.Ops[1].Epoch != nil || got.Ops[0].TID != nil || got.Ops[1].Description != "" {
 		t.Fatalf("no epoch: %+v", got)
 	}
 	// An empty ops array is an answer, an empty list of this client's ops.
-	if got := parseOSDOpsReading([]byte(`{"ops":[],"num_ops":0}`), 4261); got.Unavailable != "" || *got.Listed != 0 || *got.Matching != 0 {
+	if got := harness.ParseOSDOpsReading([]byte(`{"ops":[],"num_ops":0}`), 4261); got.Unavailable != "" || *got.Listed != 0 || *got.Matching != 0 {
 		t.Fatalf("empty: %+v", got)
 	}
 	var ops []string
-	for i := range mapEvidenceOpLimit + 2 {
+	for i := range harness.MapEvidenceOpLimit + 2 {
 		ops = append(ops, fmt.Sprintf(`{"description":"osd_op(client.4261.0:%d 3.1 e%d)","type_data":{"client_info":{"client":"client.4261","tid":%d}}}`, i, i+1, i))
 	}
-	long := parseOSDOpsReading([]byte(`{"ops":[`+strings.Join(ops, ",")+`]}`), 4261)
-	if *long.Matching != mapEvidenceOpLimit+2 || len(long.Ops) != mapEvidenceOpLimit || !long.Truncated {
+	long := harness.ParseOSDOpsReading([]byte(`{"ops":[`+strings.Join(ops, ",")+`]}`), 4261)
+	if *long.Matching != harness.MapEvidenceOpLimit+2 || len(long.Ops) != harness.MapEvidenceOpLimit || !long.Truncated {
 		t.Fatalf("truncation: %d matching, %d kept, truncated=%t", *long.Matching, len(long.Ops), long.Truncated)
 	}
-	huge := strings.Repeat("a", 10*mapEvidenceDescLimit)
-	kept := parseOSDOpsReading([]byte(`{"ops":[{"description":"`+huge+` e5)","type_data":{"client_info":{"client":"client.4261"}}}]}`), 4261)
-	if len(kept.Ops[0].Description) != mapEvidenceDescLimit || kept.Ops[0].Epoch == nil || *kept.Ops[0].Epoch != 5 {
+	huge := strings.Repeat("a", 10*harness.MapEvidenceDescLimit)
+	kept := harness.ParseOSDOpsReading([]byte(`{"ops":[{"description":"`+huge+` e5)","type_data":{"client_info":{"client":"client.4261"}}}]}`), 4261)
+	if len(kept.Ops[0].Description) != harness.MapEvidenceDescLimit || kept.Ops[0].Epoch == nil || *kept.Ops[0].Epoch != 5 {
 		t.Fatalf("long description: %d bytes, epoch %v", len(kept.Ops[0].Description), kept.Ops[0].Epoch)
 	}
 }
 
 func TestMapEvidenceClusterEpochNeedsAnEpoch(t *testing.T) {
 	for name, out := range map[string]string{"missing": `{"fsid":"f"}`, "null": `{"epoch":null}`, "zero": `{"epoch":0}`, "text": `{"epoch":"31"}`, "not json": `x`} {
-		if got := parseClusterEpoch([]byte(out)); got.Unavailable == "" || got.Epoch != nil {
+		if got := harness.ParseClusterEpoch([]byte(out)); got.Unavailable == "" || got.Epoch != nil {
 			t.Errorf("%s: %+v", name, got)
 		}
 	}
@@ -384,7 +385,7 @@ func TestMapEvidenceClusterEpochNeedsAnEpoch(t *testing.T) {
 
 func TestMapEvidenceMissingBaselineIsUnavailable(t *testing.T) {
 	r := failedWait(t, "full map", 26)
-	r.captureMapEvidence(context.Background(), "full map", healthyCluster().sources(0))
+	r.CaptureMapEvidence(context.Background(), "full map", healthyCluster().sources(0))
 	ev := r.MapEvidence[0]
 	if !strings.Contains(ev.Baseline.Unavailable, "no baseline") || ev.MapFullDelta != nil || ev.Final.Unavailable != "" {
 		t.Fatalf("evidence = %+v", ev)

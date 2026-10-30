@@ -359,7 +359,7 @@ func (s *upgradeMonStep) execute(ctx context.Context) upgradeMonReceipt {
 		}
 		s.cfg.Sequence.halt(err)
 		event("halted: %v", err)
-		return s.finish(ctx, rc, &ledger)
+		return s.Finish(ctx, rc, &ledger)
 	}
 	cfg := s.cfg
 	seq := cfg.Sequence
@@ -468,7 +468,7 @@ func (s *upgradeMonStep) execute(ctx context.Context) upgradeMonReceipt {
 		return fail(fmt.Errorf("workload check: violations %v, inconclusive %v", rc.Workload.Violations, rc.Workload.Inconclusive))
 	}
 	event("workload exact: %d acknowledged, %d unknown", ledger.acknowledged(), len(rc.Workload.Unknown))
-	return s.finish(ctx, rc, &ledger)
+	return s.Finish(ctx, rc, &ledger)
 }
 
 // finishWithoutFault ends a run that stopped before the source was fenced.
@@ -477,11 +477,11 @@ func (s *upgradeMonStep) finishWithoutFault(ctx context.Context, rc upgradeMonRe
 		rc.Err = err
 	}
 	rc.Events = append(rc.Events, "stopped before the fault: "+err.Error())
-	return s.finish(ctx, rc, ledger)
+	return s.Finish(ctx, rc, ledger)
 }
 
 // finish emits the receipt, then cleans up.
-func (s *upgradeMonStep) finish(ctx context.Context, rc upgradeMonReceipt, ledger *upgradeWorkloadLedger) upgradeMonReceipt {
+func (s *upgradeMonStep) Finish(ctx context.Context, rc upgradeMonReceipt, ledger *upgradeWorkloadLedger) upgradeMonReceipt {
 	if rc.Transition != "" {
 		if step, err := s.cfg.Sequence.ledger.stepOf(rc.Transition); err == nil {
 			rc.Step = step

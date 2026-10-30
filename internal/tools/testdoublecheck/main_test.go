@@ -147,3 +147,16 @@ func TestDoubleNamedDeclarationOutsideTestOnlyFails(t *testing.T) {
 		t.Fatalf("_test.go double: problems %q", problems)
 	}
 }
+
+// A harness package is integration test code that is outside _test.go files
+// only so that several test packages share it; it is read like a _test.go
+// file.
+func TestHarnessPackageIsReadAsTestCode(t *testing.T) {
+	problems := run(t, variant(func(f map[string]string) {
+		f["manifest.json"] = `{"test_only_packages": ["helper", "kit"], "harness_packages": ["kit"]}`
+		f["kit/kit.go"] = "package kit\n\n// FakeCluster is replaced in tests.\ntype FakeCluster struct{}\n\nfunc Start() {}\n"
+	}))
+	if len(problems) != 0 {
+		t.Fatalf("problems %q", problems)
+	}
+}

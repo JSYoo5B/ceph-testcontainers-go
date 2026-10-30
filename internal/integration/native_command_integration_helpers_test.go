@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"io/fs"
 	"slices"
@@ -35,7 +36,7 @@ import (
 func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1))}, opts...)...)
+	cluster, client := harness.NewServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1))}, opts...)...)
 	control := clusteraccess.ControlContainer(t, cluster)
 	logNativeRuntime(t, ctx, cluster, map[string]testcontainers.Container{
 		"control": control, "mgr": clusteraccess.InitialManager(t, cluster), "osd": clusteraccess.OSDs(t, cluster)[0], "client": client,
@@ -44,7 +45,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 	// The reproduction of the issue: a read-only MGR query that hangs on a
 	// frozen MGR. A raw Ceph call leaves its CLI running; this call does not.
 	t.Run("paused_mgr_read", func(t *testing.T) {
-		mustCeph(t, ctx, cluster, "tell", "mgr.a", "version")
+		harness.MustCeph(t, ctx, cluster, "tell", "mgr.a", "version")
 		pause, err := fault.Pause(ctx, cluster, clusteraccess.InitialManager(t, cluster))
 		if err != nil {
 			if pause != nil {
@@ -71,7 +72,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 			t.Fatal(err)
 		}
 		result, err := cluster.RunNativeCommand(ctx, control, query)
-		if err != nil || result.ExitCode != 0 || !bytes.Contains(result.Stdout, []byte(staticFacts(cluster).CephVersion)) {
+		if err != nil || result.ExitCode != 0 || !bytes.Contains(result.Stdout, []byte(harness.StaticFacts(cluster).CephVersion)) {
 			t.Fatalf("MGR query after resume: %+v %v", result, err)
 		}
 		t.Logf("canceled the query to the frozen MGR while processes %s ran; none remained", nativePIDs(running))
@@ -85,7 +86,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		// The supervisor, the binding client, its child and grandchild.
 		running := waitNative(t, ctx, client, 4, token)
 		outcome := <-call.done
-		fsid := strings.TrimSpace(string(mustCeph(t, ctx, cluster, "fsid")))
+		fsid := strings.TrimSpace(string(harness.MustCeph(t, ctx, cluster, "fsid")))
 		if !errors.Is(outcome.err, ceph.ErrNativeCommandIncomplete) || !outcome.result.TimedOut || string(outcome.result.Stdout) != "fsid "+fsid+"\n" {
 			t.Fatalf("binding tree returned %q, %+v, %v", outcome.result.Stdout, outcome.result, outcome.err)
 		}
@@ -265,7 +266,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 	})
 
 	t.Run("only_the_owned_invocation", func(t *testing.T) {
-		execOutput(t, ctx, client, "sh", "-c", "python3 -c 'import time; time.sleep(300)' native-unrelated >/dev/null 2>&1 &")
+		harness.ExecOutput(t, ctx, client, "sh", "-c", "python3 -c 'import time; time.sleep(300)' native-unrelated >/dev/null 2>&1 &")
 		defer killNative(t, ctx, client, "native-unrelated")
 		first := startNative(ctx, cluster, client, nativeTree("native-first", time.Minute))
 		second := startNative(ctx, cluster, client, nativeTree("native-second", time.Minute))
@@ -323,7 +324,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		if err := pause.Resume(ctx); err != nil {
 			t.Fatal(err)
 		}
-		execOutput(t, ctx, helper, "sh", "-c", "python3 -c 'import time; time.sleep(300)' native-restarted >/dev/null 2>&1 &")
+		harness.ExecOutput(t, ctx, helper, "sh", "-c", "python3 -c 'import time; time.sleep(300)' native-restarted >/dev/null 2>&1 &")
 		if err := unstopped.Stop(ctx); err != nil {
 			t.Fatalf("Stop after a restart: %v", err)
 		}
@@ -358,7 +359,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		if supervisor < 0 {
 			t.Fatalf("no supervisor among %s", nativePIDs(running))
 		}
-		execOutput(t, ctx, helper, "python3", "-c", "import os,sys; os.kill(int(sys.argv[1]),9)", strconv.Itoa(running[supervisor].PID))
+		harness.ExecOutput(t, ctx, helper, "python3", "-c", "import os,sys; os.kill(int(sys.argv[1]),9)", strconv.Itoa(running[supervisor].PID))
 		outcome := <-call.done
 		var unstopped *ceph.NativeCommandUnstoppedError
 		if !errors.As(outcome.err, &unstopped) {
@@ -391,7 +392,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		switch {
 		case errors.Is(err, ceph.ErrImageCapability) && strings.Contains(err.Error(), "cannot run python3"):
 			t.Logf("the OSD image has no python3: %v", err)
-		case err != nil || !bytes.Contains(result.Stdout, []byte(staticFacts(cluster).CephVersion)):
+		case err != nil || !bytes.Contains(result.Stdout, []byte(harness.StaticFacts(cluster).CephVersion)):
 			t.Fatalf("OSD container: %+v %v", result, err)
 		}
 		foreign, err := testcontainers.Run(ctx, "busybox:1.37.0", ceph.WithIdleEntrypoint())
@@ -446,7 +447,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 		// The official images, and so the recipe, have ceph-dencoder.
 		dencoder, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"ceph-dencoder", "version"},
 			Timeout: time.Minute, MaxStdout: 4096, MaxStderr: 4096})
-		if err != nil || !strings.HasPrefix(string(dencoder.Stdout), staticFacts(cluster).CephVersion) {
+		if err != nil || !strings.HasPrefix(string(dencoder.Stdout), harness.StaticFacts(cluster).CephVersion) {
 			t.Fatalf("ceph-dencoder version: %q %v", dencoder.Stdout, err)
 		}
 		getmap, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{Argv: []string{"ceph", "osd", "getmap", "-o", "/tmp/tc-osdmap"},
@@ -465,7 +466,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 			FSID  string        `json:"fsid"`
 			Pools []decodedPool `json:"pools"`
 		}
-		fsid := strings.TrimSpace(string(mustCeph(t, ctx, cluster, "fsid")))
+		fsid := strings.TrimSpace(string(harness.MustCeph(t, ctx, cluster, "fsid")))
 		if err != nil || decoded.ExitCode != 0 || json.Unmarshal(decoded.Stdout, &osdmap) != nil || osdmap.FSID != fsid || osdmap.Epoch == 0 ||
 			!slices.ContainsFunc(osdmap.Pools, func(p decodedPool) bool { return p.Name == pool }) {
 			t.Fatalf("decoded OSDMap epoch %d fsid %q: exit %d, %v", osdmap.Epoch, osdmap.FSID, decoded.ExitCode, err)
@@ -500,7 +501,7 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 			missing.Capability != "tc-no-such-program" || errors.Is(err, ceph.ErrNativeFailure) {
 			t.Fatalf("a missing program returned %v", err)
 		}
-		t.Logf("Ceph %s: %v", staticFacts(cluster).CephVersion, failure)
+		t.Logf("Ceph %s: %v", harness.StaticFacts(cluster).CephVersion, failure)
 	})
 
 	t.Run("lost_receipt", func(t *testing.T) {
@@ -558,7 +559,7 @@ func logNativeRuntime(t *testing.T, ctx context.Context, cluster *ceph.Container
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("Ceph %s on %s", staticFacts(cluster).CephVersion, strings.TrimSpace(string(result.Stdout)))
+	t.Logf("Ceph %s on %s", harness.StaticFacts(cluster).CephVersion, strings.TrimSpace(string(result.Stdout)))
 }
 
 type nativeOutcome struct {
@@ -585,7 +586,7 @@ func startNative(ctx context.Context, cluster *ceph.Container, target testcontai
 // startNativeHelper starts a caller-owned container attached to the cluster.
 func startNativeHelper(t *testing.T, ctx context.Context, cluster *ceph.Container) testcontainers.Container {
 	t.Helper()
-	helper, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	helper, err := testcontainers.Run(ctx, harness.NativeClientImage(t, harness.StaticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, helper)
 	if err != nil {
 		t.Fatal(err)
@@ -759,10 +760,10 @@ func waitNative(t *testing.T, ctx context.Context, ctr testcontainers.Container,
 func nativeExisting(t *testing.T, ctx context.Context, ctr testcontainers.Container, pids []int) []int {
 	t.Helper()
 	encoded, _ := json.Marshal(pids)
-	out := execOutput(t, ctx, ctr, "python3", "-c", `import json,os,sys
+	out := harness.ExecOutput(t, ctx, ctr, "python3", "-c", `import json,os,sys
 print(json.dumps([p for p in json.loads(sys.argv[1]) if os.path.exists("/proc/%d"%p)]))`, string(encoded))
 	var left []int
-	if err := json.Unmarshal([]byte(lastLine(out)), &left); err != nil {
+	if err := json.Unmarshal([]byte(harness.LastLine(out)), &left); err != nil {
 		t.Fatalf("existing processes %q: %v", out, err)
 	}
 	return left

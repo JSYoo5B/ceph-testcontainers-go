@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"maps"
 	"slices"
 	"strconv"
@@ -34,7 +35,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = docker.Close() })
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithVolume()))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	terminated := false
@@ -76,7 +77,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "seed")
 	volume, _ := osdVolumeBacking(t, ctx, docker.Client, cluster)
-	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,14 +142,14 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	if recorder.stops.Load() != 1 || recorder.terminations.Load() != 1 {
 		t.Fatal("initial native removal call counts differ")
 	}
-	native := noInitialOSDNativeDump(t, ctx, cluster)
+	native := harness.NoInitialOSDNativeDump(t, ctx, cluster)
 	if len(native) != 1 || native[0].ID != original.ID || native[0].UUID != identities[original.ID] || native[0].Up != 0 || native[0].In != 1 {
 		t.Fatal("partial detach changed registration", native)
 	}
 	if err := original.Remove(ctx); err == nil || !strings.Contains(err.Error(), "being detached") {
 		t.Fatal("partial ownership did not refuse purge", err)
 	}
-	if !slices.Equal(native, noInitialOSDNativeDump(t, ctx, cluster)) {
+	if !slices.Equal(native, harness.NoInitialOSDNativeDump(t, ctx, cluster)) {
 		t.Fatal("purge refusal changed registration")
 	}
 	actions := partialDetachEvents(t, ctx, docker.Client, owner, before, afterFailure)
@@ -176,7 +177,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	if len(clusteraccess.OSDs(t, cluster)) != 0 || detached.ID() != original.ID || detached.UUID() != identities[original.ID] || detached.ClusterFSID() != quorum.MonMap.FSID {
 		t.Fatal("settled detached identity differs")
 	}
-	if !slices.Equal(native, noInitialOSDNativeDump(t, ctx, cluster)) {
+	if !slices.Equal(native, harness.NoInitialOSDNativeDump(t, ctx, cluster)) {
 		t.Fatal("settlement changed registration")
 	}
 	t.Logf("OSD_RETAINED_PARTIAL_SETTLEMENT osd=%d detached_handle=true marker_inode_bytes=restored stop_calls=%d terminate_calls=%d lifecycle_events=0", original.ID, recorder.stops.Load(), recorder.terminations.Load())
@@ -203,7 +204,7 @@ func TestOSDRetainedPartialDetach(t *testing.T) {
 	if current, _ := osdVolumeBacking(t, ctx, docker.Client, cluster); current != volume {
 		t.Fatal("reopened volume differs")
 	}
-	currentQuorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	currentQuorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil || currentQuorum.MonMap.FSID != quorum.MonMap.FSID {
 		t.Fatal("reopened FSID differs", err)
 	}

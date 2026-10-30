@@ -766,7 +766,7 @@ func TestMonReplacementQuorumWaitReturnsWhileTopologyIsHeld(t *testing.T) {
 	real := holdTopology(t)
 	r := newMonReplacementRecorder("source", heldTopologyMonCluster{f, real}, heldTopologyBounds)
 	err := awaitWhileHeld(t, real, 2*time.Second, func() error {
-		return r.phase(t.Context(), "check", []string{"a", "b", "c"}, func(context.Context) (string, error) { return "", nil })
+		return r.Phase(t.Context(), "check", []string{"a", "b", "c"}, func(context.Context) (string, error) { return "", nil })
 	})
 	if err == nil || !strings.Contains(err.Error(), "quorum [a b c] after check") || len(r.Phases) != 1 || r.Phases[0].QuorumProbes == 0 {
 		t.Fatalf("phase %v %+v", err, r.Phases)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"slices"
 	"strings"
@@ -35,12 +36,12 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	defer func() { _ = docker.Close() }()
 	baseline := dockerObjects(t, ctx, docker)
 
-	cluster, client := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithPoolDefaults(1, 1))}, opts...)...)
+	cluster, client := harness.NewServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithPoolDefaults(1, 1))}, opts...)...)
 
 	// A cluster whose bootstrap failed is read as far as it got. It starts
 	// after the first cluster, so that no image pull counts against its
 	// short startup timeout.
-	image, imageOpts := integrationImages(t)
+	image, imageOpts := harness.IntegrationImages(t)
 	partial, err := ceph.Run(ctx, image, append(imageOpts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)), ceph.WithStartupTimeout(3*time.Second))...)
 	if partial == nil || err == nil {
 		if partial != nil {
@@ -73,7 +74,7 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 			adminKey = strings.TrimSpace(value)
 		}
 	}
-	helper, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
+	helper, err := testcontainers.Run(ctx, harness.NativeClientImage(t, harness.StaticFacts(cluster).Images.Client), cluster.WithClient(), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, helper)
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +83,7 @@ func testCrashMetadata(t *testing.T, opts ...testcontainers.ContainerCustomizer)
 	// any package-owned crash/posted skeleton. Daemon crash files stay intact.
 	// Use its writable rootfs so Docker's archive API observes the same path
 	// as Exec, without renaming an overlay lower-layer directory.
-	execCommand(t, ctx, helper, "python3", "-c", `import os, shutil
+	harness.ExecCommand(t, ctx, helper, "python3", "-c", `import os, shutil
 p = '/var/lib/ceph/crash'
 if os.path.exists(p):
     shutil.rmtree(p)
@@ -108,7 +109,7 @@ os.makedirs(p)
 	// A caller's absent directory is read whatever it is called, also when
 	// described like the cluster's own control container. Only the empty
 	// directory created above is removed, then recreated for crash collection.
-	execCommand(t, ctx, helper, "python3", "-c", `import os; os.rmdir('/var/lib/ceph/crash')`)
+	harness.ExecCommand(t, ctx, helper, "python3", "-c", `import os; os.rmdir('/var/lib/ceph/crash')`)
 	described := ceph.CrashMetadataConfig{AdditionalContainers: []ceph.DiagnosticsContainer{{Role: "control", Name: "cli", Container: helper}}}
 	if report, err := cluster.CollectCrashMetadata(ctx, described); err != nil || !report.Complete ||
 		!slices.ContainsFunc(report.Containers, func(result ceph.CrashMetadataContainer) bool {
@@ -117,7 +118,7 @@ os.makedirs(p)
 		t.Fatalf("a caller container described as control/cli: %v; %+v", err, report)
 	}
 
-	execCommand(t, ctx, helper, "mkdir", "/var/lib/ceph/crash")
+	harness.ExecCommand(t, ctx, helper, "mkdir", "/var/lib/ceph/crash")
 
 	crashDaemon(t, ctx, clusteraccess.InitialManager(t, cluster))
 	crashDaemon(t, ctx, osds[0].Container)
@@ -142,7 +143,7 @@ os.makedirs(p)
 		started, startErr := time.Parse(time.RFC3339Nano, result.StartedAt)
 		finished, finishErr := time.Parse(time.RFC3339Nano, result.FinishedAt)
 		crashed, crashErr := time.Parse(time.RFC3339Nano, record.Timestamp)
-		if record.Entity != name || record.Process != "ceph-"+strings.Split(name, ".")[0] || !strings.HasPrefix(record.CephVersion, staticFacts(cluster).CephVersion) ||
+		if record.Entity != name || record.Process != "ceph-"+strings.Split(name, ".")[0] || !strings.HasPrefix(record.CephVersion, harness.StaticFacts(cluster).CephVersion) ||
 			!record.Done || record.Posted || errors.Join(startErr, finishErr, crashErr) != nil || crashed.Before(started) || crashed.After(finished) {
 			t.Fatalf("%s record %+v does not match the container from %s to %s", name, record, result.StartedAt, result.FinishedAt)
 		}
@@ -245,7 +246,7 @@ func lostCreate(t *testing.T, ctx context.Context, docker *testcontainers.Docker
 		t.Fatalf("the MON container has the cluster label %q and run volume mounts %v", owner, mounts)
 	}
 	if _, err := docker.ContainerCreate(ctx, mobycl.ContainerCreateOptions{
-		Config:     &container.Config{Image: staticFacts(cluster).Images.Essential, Cmd: []string{"true"}, Labels: map[string]string{"org.testcontainers.ceph.cluster": owner}},
+		Config:     &container.Config{Image: harness.StaticFacts(cluster).Images.Essential, Cmd: []string{"true"}, Labels: map[string]string{"org.testcontainers.ceph.cluster": owner}},
 		HostConfig: &container.HostConfig{Mounts: mounts},
 	}); err != nil {
 		t.Fatal(err)
@@ -256,7 +257,7 @@ func lostCreate(t *testing.T, ctx context.Context, docker *testcontainers.Docker
 // with core dumps disabled, and waits until the container has stopped.
 func crashDaemon(t *testing.T, ctx context.Context, ctr testcontainers.Container) {
 	t.Helper()
-	execOutput(t, ctx, ctr, "sh", "-c", "prlimit --pid 1 --core=0:0 && kill -SEGV 1")
+	harness.ExecOutput(t, ctx, ctr, "sh", "-c", "prlimit --pid 1 --core=0:0 && kill -SEGV 1")
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		state, err := ctr.State(ctx)

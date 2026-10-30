@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"slices"
 	"strings"
@@ -30,17 +31,17 @@ func TestOSDRecoveryAndBackfillReceipts(t *testing.T) {
 // Two single-replica OSD classes make every relocation observable: a PG is
 // either on the fast OSD or on the slow one, never already in place.
 func TestPoolPGRelocation(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()
-			image, opts := integrationImages(t)
+			image, opts := harness.IntegrationImages(t)
 			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceClusterWithOptions(t, image, opts...)
+			cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
 			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal("prepare small OSDs without startup benchmark", err)
 			}
@@ -59,7 +60,7 @@ func TestPoolPGRelocation(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			original, err := poolHandle(t, ctx, cluster, poolName).Status(ctx)
+			original, err := harness.PoolHandle(t, ctx, cluster, poolName).Status(ctx)
 			if err != nil || original.ID <= 0 || original.PGNum != 8 {
 				t.Fatal("native pool identity unavailable", original, err)
 			}
@@ -75,7 +76,7 @@ func TestPoolPGRelocation(t *testing.T) {
 				defer stop()
 				var last string
 				for {
-					snapshot, err := poolHandle(t, deadline, cluster, poolName).PGs(deadline)
+					snapshot, err := harness.PoolHandle(t, deadline, cluster, poolName).PGs(deadline)
 					if err == nil && snapshot.PoolAfter.ID != original.ID {
 						t.Fatalf("%s: pool identity changed to %d", phase, snapshot.PoolAfter.ID)
 					}
@@ -118,14 +119,14 @@ func TestPoolPGRelocation(t *testing.T) {
 			}
 			resize := func(t *testing.T, phase string, count int, osd int) {
 				t.Helper()
-				if err := poolHandle(t, ctx, cluster, poolName).SetPGCount(ctx, count); err != nil {
+				if err := harness.PoolHandle(t, ctx, cluster, poolName).SetPGCount(ctx, count); err != nil {
 					t.Fatal("set PG count", err)
 				}
-				requested, err := poolHandle(t, ctx, cluster, poolName).Status(ctx)
+				requested, err := harness.PoolHandle(t, ctx, cluster, poolName).Status(ctx)
 				if err != nil || requested.ID != original.ID || requested.PGNumTarget != count || requested.PGPlacementNumTarget != count {
 					t.Fatalf("native PG targets not recorded: %+v %v", requested, err)
 				}
-				if err := poolHandle(t, ctx, cluster, poolName).WaitForPGCount(ctx, count); err != nil {
+				if err := harness.PoolHandle(t, ctx, cluster, poolName).WaitForPGCount(ctx, count); err != nil {
 					t.Fatal("wait for PG count", err)
 				}
 				if err := cluster.WaitForClean(ctx); err != nil {
@@ -159,10 +160,10 @@ func TestPoolPGRelocation(t *testing.T) {
 						t.Fatal("hold", flag, err)
 					}
 				}
-				if err := poolHandle(t, ctx, cluster, poolName).SetPlacement(ctx, ceph.PoolPlacement{DeviceClass: "slow"}); err != nil {
+				if err := harness.PoolHandle(t, ctx, cluster, poolName).SetPlacement(ctx, ceph.PoolPlacement{DeviceClass: "slow"}); err != nil {
 					t.Fatal("move pool to slow class", err)
 				}
-				moved, err := poolHandle(t, ctx, cluster, poolName).Status(ctx)
+				moved, err := harness.PoolHandle(t, ctx, cluster, poolName).Status(ctx)
 				if err != nil || moved.ID != original.ID || moved.CRUSHRule == original.CRUSHRule || moved.Size != 1 {
 					t.Fatalf("pool rule was not replaced in place: %+v %v", moved, err)
 				}
@@ -185,19 +186,19 @@ func TestPoolPGRelocation(t *testing.T) {
 			t.Run("merge", func(t *testing.T) { resize(t, "merge", 8, slow.ID) })
 
 			t.Run("return", func(t *testing.T) {
-				if err := poolHandle(t, ctx, cluster, poolName).SetPlacement(ctx, ceph.PoolPlacement{DeviceClass: "fast"}); err != nil {
+				if err := harness.PoolHandle(t, ctx, cluster, poolName).SetPlacement(ctx, ceph.PoolPlacement{DeviceClass: "fast"}); err != nil {
 					t.Fatal("return pool to fast class", err)
 				}
-				returned, err := poolHandle(t, ctx, cluster, poolName).Status(ctx)
+				returned, err := harness.PoolHandle(t, ctx, cluster, poolName).Status(ctx)
 				if err != nil || returned.ID != original.ID || returned.CRUSHRule != original.CRUSHRule {
 					t.Fatalf("original CreatePool rule was not reused: %+v %v", returned, err)
 				}
-				if err := poolHandle(t, ctx, cluster, poolName).SetPlacement(ctx, ceph.PoolPlacement{DeviceClass: "fast"}); err != nil {
+				if err := harness.PoolHandle(t, ctx, cluster, poolName).SetPlacement(ctx, ceph.PoolPlacement{DeviceClass: "fast"}); err != nil {
 					t.Fatal("repeat matching placement", err)
 				}
 				waitPGs(t, "returned", 8, fast.ID, true)
 				probe(t, "returned")
-				final, err := poolHandle(t, ctx, cluster, poolName).Status(ctx)
+				final, err := harness.PoolHandle(t, ctx, cluster, poolName).Status(ctx)
 				if err != nil || final.ID != original.ID || final.Size != original.Size || final.MinSize != original.MinSize || final.PGNum != original.PGNum || final.Quota != original.Quota {
 					t.Fatalf("relocation changed pool identity/policy: %+v %v", final, err)
 				}

@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"strconv"
 	"testing"
@@ -84,7 +85,7 @@ func scratchReleaseOf(t *testing.T, ctx context.Context, ctr testcontainers.Cont
 func TestScratchTmpfsFillerNative(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	image := essentialImage(t)
+	image := harness.EssentialImage(t)
 	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: testcontainers.ContainerRequest{
 		Image: image, Entrypoint: []string{"sleep"}, Cmd: []string{"infinity"},
 		HostConfigModifier: func(h *container.HostConfig) {

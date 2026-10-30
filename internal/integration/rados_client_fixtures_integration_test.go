@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
 	"time"
 
@@ -17,8 +18,8 @@ import (
 // These are client operations. The fixture supplies an ordinary authenticated
 // replicated pool and native OSD classes; it does not duplicate librados CRUD.
 func TestRADOSClientFixtures(t *testing.T) {
-	parallelWhenEnabled(t)
-	for _, mode := range networkModes(t, "host", "bridge") {
+	harness.ParallelWhenEnabled(t)
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
@@ -27,12 +28,12 @@ func TestRADOSClientFixtures(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceCluster(t, opts...)
+			cluster, client := harness.NewServiceCluster(t, opts...)
 			const pool = "tc-rados-fixtures"
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", PGNum: 1}); err != nil {
 				t.Fatal(err)
 			}
-			state, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
+			state, err := harness.PoolHandle(t, ctx, cluster, pool).Status(ctx)
 			if err != nil || state.ID <= 0 {
 				t.Fatalf("native detail pool identity: %+v %v", state, err)
 			}
@@ -61,7 +62,7 @@ func TestRADOSClientFixtures(t *testing.T) {
 				t.Fatal(err)
 			}
 			outer := `import subprocess,sys; subprocess.run(["python3","-c",sys.argv[1]],check=True,timeout=100)`
-			proof := fencingExec(t, ctx, client, []string{"python3", "-c", outer, radosClientFixtureProbe})
+			proof := harness.FencingExec(t, ctx, client, []string{"python3", "-c", outer, radosClientFixtureProbe})
 			t.Log(string(proof))
 		})
 	}

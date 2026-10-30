@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"net/netip"
 	"strings"
 	"testing"
@@ -73,7 +74,7 @@ type severeRead struct {
 
 func readSevere(t *testing.T, ctx context.Context, ctr testcontainers.Container, name string, size, timeout int) severeRead {
 	t.Helper()
-	out := delayExec(t, ctx, ctr, "python3", "-c", severeReadScript, bandwidthPool, name, fmt.Sprint(size), fmt.Sprint(timeout))
+	out := harness.DelayExec(t, ctx, ctr, "python3", "-c", severeReadScript, harness.BandwidthPool, name, fmt.Sprint(size), fmt.Sprint(timeout))
 	var read severeRead
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &read); err != nil {
 		t.Fatalf("parse the read %q: %v", out, err)
@@ -92,9 +93,9 @@ func (r severeRead) complete(t *testing.T, what string, size int, sha256 string)
 // underLimit applies limit to the limited OSD, runs during, reads the
 // lease's status before and after it, and restores the lease, checking that
 // the root qdisc and the helpers are gone.
-func (f bandwidthFixture) underLimit(t *testing.T, ctx context.Context, limit fault.NetworkProfile, during func()) (fault.NetworkProfileStatus, fault.NetworkProfileStatus) {
+func underLimit(f harness.BandwidthFixture, t *testing.T, ctx context.Context, limit fault.NetworkProfile, during func()) (fault.NetworkProfileStatus, fault.NetworkProfileStatus) {
 	t.Helper()
-	lease, err := fault.ApplyNetworkProfile(ctx, f.cluster, f.limited.Container, limit)
+	lease, err := fault.ApplyNetworkProfile(ctx, f.Cluster, f.Limited.Container, limit)
 	if lease != nil {
 		defer func() { _ = lease.Restore(context.WithoutCancel(ctx)) }()
 	}
@@ -113,10 +114,10 @@ func (f bandwidthFixture) underLimit(t *testing.T, ctx context.Context, limit fa
 	if err := lease.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if root := rootQdisc(t, ctx, f.image, f.limited.Container, lease.Interface); root != "noqueue 0:" {
+	if root := harness.RootQdisc(t, ctx, f.Image, f.Limited.Container, lease.Interface); root != "noqueue 0:" {
 		t.Fatalf("root qdisc after Restore: %s", root)
 	}
-	if helpers := netemHelpers(t, ctx); helpers != 0 {
+	if helpers := harness.NetemHelpers(t, ctx); helpers != 0 {
 		t.Fatalf("%d netem helpers after Restore", helpers)
 	}
 	return before, after
@@ -130,24 +131,24 @@ func transferSeconds(size int, rate fault.NetworkRate) float64 {
 func testNetworkBandwidthSevere(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	f := newBandwidthFixture(t, ctx)
-	address, err := f.client.ContainerIP(ctx)
+	f := harness.NewBandwidthFixture(t, ctx)
+	address, err := f.Client.ContainerIP(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	peer := netip.MustParseAddr(address)
 	// Every object is written before any limit; under a limit there are
 	// only reads, which are idempotent.
-	timeoutName, timeoutSHA := putBandwidthObject(t, ctx, f.cluster, f.client, f.limited.ID, "timeout", timeoutObject)
-	slowName, slowSHA := putBandwidthObject(t, ctx, f.cluster, f.client, f.limited.ID, "slow", slowObject)
-	severe := fault.NetworkProfile{HelperImage: f.image, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: severeRate}
+	timeoutName, timeoutSHA := harness.PutBandwidthObject(t, ctx, f.Cluster, f.Client, f.Limited.ID, "timeout", timeoutObject)
+	slowName, slowSHA := harness.PutBandwidthObject(t, ctx, f.Cluster, f.Client, f.Limited.ID, "slow", slowObject)
+	severe := fault.NetworkProfile{HelperImage: f.Image, Plane: ceph.PublicNetworkPlane, Peer: peer, Rate: severeRate}
 
 	t.Run("op timeout", func(t *testing.T) {
 		// At 64 Kbit/s the 1 MiB reply needs about 131 s; the client's
 		// 10-second operation timeout ends the read first with ETIMEDOUT.
 		var failed severeRead
-		before, after := f.underLimit(t, ctx, severe, func() {
-			failed = readSevere(t, ctx, f.client, timeoutName, timeoutObject, severeOpTimeout)
+		before, after := underLimit(f, t, ctx, severe, func() {
+			failed = readSevere(t, ctx, f.Client, timeoutName, timeoutObject, severeOpTimeout)
 		})
 		sent := after.Bytes - before.Bytes
 		if failed.Errno != 110 || failed.Bytes != 0 || failed.Seconds < 0.9*severeOpTimeout || failed.Seconds > severeOpTimeout+10 {
@@ -158,10 +159,10 @@ func testNetworkBandwidthSevere(t *testing.T) {
 			t.Fatalf("netem sent %d bytes of a %d-byte reply before the timeout", sent, timeoutObject)
 		}
 		// The read is idempotent: a fresh one after Restore gets the object.
-		fresh := readSevere(t, ctx, f.client, timeoutName, timeoutObject, severeOpTimeout)
+		fresh := readSevere(t, ctx, f.Client, timeoutName, timeoutObject, severeOpTimeout)
 		fresh.complete(t, "the fresh read after Restore", timeoutObject, timeoutSHA)
 		t.Logf("NETWORK_BANDWIDTH_SEVERE_RECEIPT op-timeout osd=%d object=%d rate=%v op_timeout=%ds: errno %d after %.2f s (transfer needs %.0f s); netem sent %d bytes in %d packets, backlog %d bytes in %d packets, drops %d, overlimits %d; fresh read after Restore %.3f s with the exact SHA-256",
-			f.limited.ID, timeoutObject, severeRate, severeOpTimeout, failed.Errno, failed.Seconds, transferSeconds(timeoutObject, severeRate),
+			f.Limited.ID, timeoutObject, severeRate, severeOpTimeout, failed.Errno, failed.Seconds, transferSeconds(timeoutObject, severeRate),
 			sent, after.Packets-before.Packets, after.Backlog, after.QueueLength, after.Drops-before.Drops, after.Overlimits-before.Overlimits, fresh.Seconds)
 	})
 
@@ -169,16 +170,16 @@ func testNetworkBandwidthSevere(t *testing.T) {
 		// Without an operation timeout the 256 KiB read completes, at least
 		// as slowly as its payload alone takes at 64 Kbit/s, while the
 		// control container reads it from the same OSD at once.
-		baseline := readSevere(t, ctx, f.client, slowName, slowObject, 0)
+		baseline := readSevere(t, ctx, f.Client, slowName, slowObject, 0)
 		baseline.complete(t, "the baseline read", slowObject, slowSHA)
 		var limited, control severeRead
-		before, after := f.underLimit(t, ctx, severe, func() {
-			limited = readSevere(t, ctx, f.client, slowName, slowObject, 0)
-			control = readSevere(t, ctx, f.control, slowName, slowObject, 0)
+		before, after := underLimit(f, t, ctx, severe, func() {
+			limited = readSevere(t, ctx, f.Client, slowName, slowObject, 0)
+			control = readSevere(t, ctx, f.Control, slowName, slowObject, 0)
 		})
 		limited.complete(t, "the limited read", slowObject, slowSHA)
 		control.complete(t, "the control container's read", slowObject, slowSHA)
-		restored := readSevere(t, ctx, f.client, slowName, slowObject, 0)
+		restored := readSevere(t, ctx, f.Client, slowName, slowObject, 0)
 		restored.complete(t, "the read after Restore", slowObject, slowSHA)
 		floor := transferSeconds(slowObject, severeRate)
 		if limited.Seconds < 0.8*floor || limited.Seconds > 5*floor {
@@ -190,7 +191,7 @@ func testNetworkBandwidthSevere(t *testing.T) {
 			}
 		}
 		t.Logf("NETWORK_BANDWIDTH_SEVERE_RECEIPT slowdown osd=%d object=%d rate=%v: client %.2f s (payload needs %.1f s, %.0f times the baseline %.4f s), control %.4f s, after Restore %.4f s; netem sent %d bytes in %d packets, drops %d",
-			f.limited.ID, slowObject, severeRate, limited.Seconds, floor, limited.Seconds/baseline.Seconds, baseline.Seconds, control.Seconds, restored.Seconds,
+			f.Limited.ID, slowObject, severeRate, limited.Seconds, floor, limited.Seconds/baseline.Seconds, baseline.Seconds, control.Seconds, restored.Seconds,
 			after.Bytes-before.Bytes, after.Packets-before.Packets, after.Drops-before.Drops)
 	})
 
@@ -203,12 +204,12 @@ func testNetworkBandwidthSevere(t *testing.T) {
 		limit := severe
 		limit.Rate, limit.Delay = queueRate, queueDelay
 		var wide, narrow severeRead
-		wideBefore, wideAfter := f.underLimit(t, ctx, limit, func() {
-			wide = readSevere(t, ctx, f.client, timeoutName, timeoutObject, 0)
+		wideBefore, wideAfter := underLimit(f, t, ctx, limit, func() {
+			wide = readSevere(t, ctx, f.Client, timeoutName, timeoutObject, 0)
 		})
 		limit.QueueLimit = queueLimit
-		narrowBefore, narrowAfter := f.underLimit(t, ctx, limit, func() {
-			narrow = readSevere(t, ctx, f.client, timeoutName, timeoutObject, 0)
+		narrowBefore, narrowAfter := underLimit(f, t, ctx, limit, func() {
+			narrow = readSevere(t, ctx, f.Client, timeoutName, timeoutObject, 0)
 		})
 		wide.complete(t, "the read with the default queue", timeoutObject, timeoutSHA)
 		narrow.complete(t, "the read with the small queue", timeoutObject, timeoutSHA)
@@ -217,7 +218,7 @@ func testNetworkBandwidthSevere(t *testing.T) {
 			t.Fatalf("queue %d: %.2f s, %d drops; default queue: %.2f s, %d drops", queueLimit, narrow.Seconds, narrowDrops, wide.Seconds, wideDrops)
 		}
 		t.Logf("NETWORK_BANDWIDTH_SEVERE_RECEIPT queue osd=%d object=%d rate=%v delay=%v: default queue %d packets %.2f s (payload needs %.2f s), %d drops; queue %d packets %.2f s (%.1f times), %d drops, %d bytes sent in %d packets; both reads returned the exact SHA-256",
-			f.limited.ID, timeoutObject, queueRate, queueDelay, fault.DefaultNetworkQueueLimit, wide.Seconds, transferSeconds(timeoutObject, queueRate), wideDrops,
+			f.Limited.ID, timeoutObject, queueRate, queueDelay, fault.DefaultNetworkQueueLimit, wide.Seconds, transferSeconds(timeoutObject, queueRate), wideDrops,
 			queueLimit, narrow.Seconds, narrow.Seconds/wide.Seconds, narrowDrops, narrowAfter.Bytes-narrowBefore.Bytes, narrowAfter.Packets-narrowBefore.Packets)
 	})
 }

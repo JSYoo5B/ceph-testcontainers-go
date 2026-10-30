@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"reflect"
 	"strings"
 	"testing"
@@ -21,7 +22,7 @@ func integrationPoolPGs(t *testing.T, ctx context.Context, cluster *ceph.Contain
 	t.Helper()
 	for {
 		before := integrationNativePoolPGs(t, ctx, cluster, fsid, pool)
-		actual, err := poolHandle(t, ctx, cluster, pool).PGs(ctx)
+		actual, err := harness.PoolHandle(t, ctx, cluster, pool).PGs(ctx)
 		if err != nil {
 			t.Fatal("PoolPGs failed", phase, err)
 		}

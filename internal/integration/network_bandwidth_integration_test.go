@@ -4,18 +4,21 @@
 
 package integration_test
 
-import "testing"
+import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"testing"
+)
 
 // It needs the netem helper (CEPH_TEST_NETEM_IMAGE, by default
 // fault.NetemHelperImage) and an engine that grants it NET_ADMIN; a missing
 // one fails the test.
 func TestNetworkBandwidth(t *testing.T) {
-	testNetworkBandwidth(t)
+	harness.RunNetworkBandwidth(t)
 }
 
 // The IPv6 filter of a peer rate limit, on an IPv6 cluster.
 func TestNetworkBandwidthIPv6(t *testing.T) {
-	testNetworkBandwidthIPv6(t)
+	harness.RunNetworkBandwidthIPv6(t)
 }
 
 // Severe limits: a client operation timeout, an extreme slowdown that still

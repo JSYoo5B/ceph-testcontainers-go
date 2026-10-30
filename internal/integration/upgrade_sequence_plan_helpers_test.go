@@ -86,7 +86,7 @@ func (f upgradeClusterFacts) judge(plan []upgradeDaemonID, pair upgradeReleasePa
 		if err != nil {
 			return upgradePreflightFailed, err
 		}
-		if err := want.check(f.Baseline); err != nil {
+		if err := want.Check(f.Baseline); err != nil {
 			failed = append(failed, "baseline: "+err.Error())
 		}
 	}
@@ -275,7 +275,7 @@ func (s *upgradeSequence) settle(ev upgradeSettled) error {
 	if err != nil {
 		return err
 	}
-	if err := want.check(ev.Inventory); err != nil {
+	if err := want.Check(ev.Inventory); err != nil {
 		return err
 	}
 	if err := s.roleAvailable(d.Role, ev); err != nil {

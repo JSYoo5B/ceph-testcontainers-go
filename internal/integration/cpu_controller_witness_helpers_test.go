@@ -146,7 +146,7 @@ func parseCPUStat(data string) (cpuStatCounters, error) {
 // cgroup.controllers the witness is returned with ControllerListed false and
 // no counters, which classifies as ineligible.
 func readCPUWitness(gen containerGeneration, group string, now time.Time) (cpuWitness, error) {
-	if !gen.valid() {
+	if !gen.Valid() {
 		return cpuWitness{}, fmt.Errorf("%w: frozen generation is incomplete", errCPUWitnessGeneration)
 	}
 	read := func(name string) (string, error) {
@@ -220,7 +220,7 @@ func classifyCPUThrottle(before, after *cpuWitness, apiZero bool, checks cpuClas
 	if before == nil || after == nil {
 		return cpuVerdictUnsupported, nil
 	}
-	if !checks.skipGeneration && (!before.Generation.valid() || before.Generation != after.Generation) {
+	if !checks.skipGeneration && (!before.Generation.Valid() || before.Generation != after.Generation) {
 		return cpuVerdictIncomplete, fmt.Errorf("%w: %+v vs %+v", errCPUWitnessGeneration, before.Generation, after.Generation)
 	}
 	if before.Source != after.Source || before.Source != cpuWitnessSource {

@@ -134,7 +134,7 @@ func classifyOSDMemTransition(tr osdMemTransition, checks osdMemChecks) (osdMemV
 		return osdMemUncertain, fmt.Errorf("%w: the reply time is not recorded", errOSDOOM)
 	}
 	if !checks.skipGeneration {
-		if !tr.Generation.valid() || tr.AfterState.ID != tr.Generation.ID || tr.AfterState.StartedAt != tr.Generation.StartedAt {
+		if !tr.Generation.Valid() || tr.AfterState.ID != tr.Generation.ID || tr.AfterState.StartedAt != tr.Generation.StartedAt {
 			return osdMemUncertain, fmt.Errorf("%w: generation changed or incomplete", errOSDOOM)
 		}
 		if tr.Kernel != nil && tr.Kernel.Generation != tr.Generation {
@@ -279,7 +279,7 @@ func osdOOMIncompleteStep(format string, args ...any) (osdOOMVerdict, error) {
 // is incomplete or unsupported and never an empty value that counts as
 // evidence.
 func classifyOSDOOMStep(s osdOOMStep, checks osdOOMStepChecks) (osdOOMVerdict, error) {
-	if !s.Generation.valid() || s.PID <= 0 || s.ProcessStart == "" {
+	if !s.Generation.Valid() || s.PID <= 0 || s.ProcessStart == "" {
 		return osdOOMIncompleteStep("frozen generation or process identity is incomplete")
 	}
 	if !checks.skipProcess {
@@ -577,7 +577,7 @@ func strictlyOrdered(times ...time.Time) bool {
 func osdOOMJoin(r osdOOMRun) []string {
 	var out []string
 	id := r.Identity
-	if !id.Generation.valid() || id.PID <= 0 || id.ProcessStart == "" {
+	if !id.Generation.Valid() || id.PID <= 0 || id.ProcessStart == "" {
 		return []string{"frozen identity is incomplete"}
 	}
 	for name, tr := range map[string]osdMemTransition{"admit": r.Admit, "pressure": r.Pressure, "restore": r.Restore} {
@@ -700,7 +700,7 @@ func osdOOMRecoveryReasons(r osdOOMRun) []string {
 	if !strictlyOrdered(r.Restore.At, v.StartedAt) {
 		out = append(out, "the new generation was not observed after restoration")
 	}
-	if v.New.ID != id.Generation.ID || !v.New.valid() || v.New.StartedAt == id.Generation.StartedAt {
+	if v.New.ID != id.Generation.ID || !v.New.Valid() || v.New.StartedAt == id.Generation.StartedAt {
 		out = append(out, "the restart is not a new generation of the same container")
 	}
 	if v.NewPID <= 0 || v.NewPID == id.PID || v.NewProcess == "" || v.NewProcess == id.ProcessStart {
@@ -1094,7 +1094,7 @@ func osdOOMPressureTransition(tr osdMemTransition) error {
 	switch {
 	case tr.Requested <= 0 || tr.At.IsZero():
 		return fmt.Errorf("%w: request or reply time is not recorded", errOSDOOM)
-	case !tr.Generation.valid() || tr.AfterState.ID != tr.Generation.ID || tr.AfterState.StartedAt != tr.Generation.StartedAt:
+	case !tr.Generation.Valid() || tr.AfterState.ID != tr.Generation.ID || tr.AfterState.StartedAt != tr.Generation.StartedAt:
 		return fmt.Errorf("%w: generation changed or incomplete", errOSDOOM)
 	case tr.Kernel != nil && tr.Kernel.Generation != tr.Generation:
 		return fmt.Errorf("%w: kernel reading belongs to another generation", errOSDOOM)

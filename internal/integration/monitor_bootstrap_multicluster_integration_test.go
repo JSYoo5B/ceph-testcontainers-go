@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"strings"
 	"testing"
@@ -25,7 +26,7 @@ import (
 // mirror processes. File/peer assertions prevent address reuse or a warm
 // librados session from concealing obsolete bootstrap configuration.
 func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
@@ -34,29 +35,29 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			source, destination, sourceClient, destinationClient := newMultiClusterPair(t, opts...)
-			sourceStatus, err := observeCluster(source).Status(ctx)
+			source, destination, sourceClient, destinationClient := harness.NewMultiClusterPair(t, opts...)
+			sourceStatus, err := harness.ObserveCluster(source).Status(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			destinationStatus, err := observeCluster(destination).Status(ctx)
+			destinationStatus, err := harness.ObserveCluster(destination).Status(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
 			const pool, image, script = "tc-mon-bootstrap", "volume", "/tmp/cephfs-bootstrap.py"
-			rbdMultiClusterPool(t, ctx, source, sourceClient, pool)
-			rbdMultiClusterPool(t, ctx, destination, destinationClient, pool)
-			rbdMirror := rbdJournalRunLink(t, ctx, source, destination, pool, "source", "destination")
-			execCommand(t, ctx, sourceClient, "rbd", "create", pool+"/"+image, "--size", "8M", "--object-size", "1M", "--image-feature", "layering,exclusive-lock")
-			payload := rbdMultiClusterPayload(8<<20, 29)
-			rbdJournalWrite(t, ctx, sourceClient, sourceStatus.FSID, pool, image, 0, payload)
+			harness.RBDMultiClusterPool(t, ctx, source, sourceClient, pool)
+			harness.RBDMultiClusterPool(t, ctx, destination, destinationClient, pool)
+			rbdMirror := harness.RBDJournalRunLink(t, ctx, source, destination, pool, "source", "destination")
+			harness.ExecCommand(t, ctx, sourceClient, "rbd", "create", pool+"/"+image, "--size", "8M", "--object-size", "1M", "--image-feature", "layering,exclusive-lock")
+			payload := harness.RBDMultiClusterPayload(8<<20, 29)
+			harness.RBDJournalWrite(t, ctx, sourceClient, sourceStatus.FSID, pool, image, 0, payload)
 			if err := rbdMirror.EnableImage(ctx, image); err != nil {
 				t.Fatal(err)
 			}
-			initialRBD := rbdMirrorReplayReady(t, ctx, rbdMirror, image, rbdmirror.ModeJournal, "", "")
-			originalRBDPeer := rbdScenarioPeer(t, ctx, rbdMirror, pool)
+			initialRBD := harness.RBDMirrorReplayReady(t, ctx, rbdMirror, image, rbdmirror.ModeJournal, "", "")
+			originalRBDPeer := harness.RBDScenarioPeer(t, ctx, rbdMirror, pool)
 			originalRBDHosts, originalRBDKey := monitorBootstrapRBDPeerConfig(t, ctx, destination, pool, originalRBDPeer)
-			rbdJournalWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, image, payload)
+			harness.RBDJournalWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, image, payload)
 			sourceFS, err := cephfs.Start(ctx, source, cephfs.Config{})
 			if err != nil {
 				t.Fatal(err)
@@ -66,17 +67,17 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, client := range []testcontainers.Container{sourceClient, destinationClient} {
-				if err := client.CopyToContainer(ctx, []byte(cephFSInterClusterScript), script, 0o600); err != nil {
+				if err := client.CopyToContainer(ctx, []byte(harness.CephFSInterClusterScript), script, 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
 			fsCommand := func(client testcontainers.Container, filesystem string, args ...string) {
 				t.Helper()
 				command := append([]string{"python3", script, filesystem}, args...)
-				multiClusterExecOutput(t, ctx, client, command...)
+				harness.MultiClusterExecOutput(t, ctx, client, command...)
 			}
 			fsCommand(sourceClient, sourceFS.FilesystemName, "seed")
-			mirror, err := cephfsmirror.Run(ctx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.WithConfig(cephfsmirror.Config{
+			mirror, err := cephfsmirror.Run(ctx, harness.NativeMirrorImage(t, "cephfs", harness.StaticFacts(source).Images.CephFS), cephfsmirror.WithConfig(cephfsmirror.Config{
 				Source: source, Destination: destination, SourceFilesystem: sourceFS.FilesystemName,
 				DestinationFilesystem: destinationFS.FilesystemName, Directories: []string{"/federation"},
 			}))
@@ -85,7 +86,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 					cleanupCtx, stop := context.WithTimeout(context.Background(), 2*time.Minute)
 					defer stop()
 					if t.Failed() && mirror.Container != nil {
-						multiClusterLogContainer(t, cleanupCtx, mirror.Container)
+						harness.MultiClusterLogContainer(t, cleanupCtx, mirror.Container)
 					}
 					if err := mirror.Terminate(cleanupCtx); err != nil {
 						t.Errorf("terminate bootstrap CephFS link: %v", err)
@@ -95,19 +96,19 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			expected := cephFSObservedFilesystemIdentity(t, ctx, sourceFS, destinationFS)
+			expected := harness.CephFSObservedFilesystemIdentity(t, ctx, sourceFS, destinationFS)
 			peers, err := mirror.PeerIDs(ctx)
 			if err != nil || len(peers) != 1 {
 				t.Fatalf("initial CephFS peer count: %v error=%v", peers, err)
 			}
 			expected.PeerID = peers[0]
-			snapshot := cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, "/federation", "backup-1")
-			initialFS := cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, "/federation", snapshot)
+			snapshot := harness.CephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, "/federation", "backup-1")
+			initialFS := harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, "/federation", snapshot)
 			verifySnapshot := func(name string) {
 				t.Helper()
 				path := "/tmp/cephfs-bootstrap-" + name + ".json"
 				fsCommand(sourceClient, sourceFS.FilesystemName, "archive", "/federation/.snap/"+name, path)
-				archive := multiClusterReadFile(t, ctx, sourceClient, path)
+				archive := harness.MultiClusterReadFile(t, ctx, sourceClient, path)
 				if err := destinationClient.CopyToContainer(ctx, archive, path, 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -162,10 +163,10 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 				for _, mds := range []*cephfs.Filesystem{sourceFS, destinationFS}[i].MDSs() {
 					mdss = append(mdss, monReplacementExecDaemon{Daemon: "mds." + mds.ID, Container: mds.Container, Socket: "/var/run/ceph/ceph-mds." + mds.ID + ".asok"})
 				}
-				recorder := newMonReplacementRecorder([]string{"source", "destination"}[i], withSockets(t, cluster), monReplacementDefaultBounds, stopped...).withDaemons(mdss...)
+				recorder := newMonReplacementRecorder([]string{"source", "destination"}[i], harness.WithSockets(t, cluster), monReplacementDefaultBounds, stopped...).withDaemons(mdss...)
 				t.Cleanup(func() { finishMonReplacement(t, recorder) })
 				runMonReplacement(t, ctx, recorder, [][2]string{{"a", "d"}, {"b", "e"}, {"c", "f"}})
-				quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+				quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -198,10 +199,10 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			if err := rbdMirror.Rebootstrap(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if rbdScenarioPeer(t, ctx, rbdMirror, pool) != originalRBDPeer {
+			if harness.RBDScenarioPeer(t, ctx, rbdMirror, pool) != originalRBDPeer {
 				t.Fatal("RBD bootstrap refresh replaced the original receiving peer")
 			}
-			currentSource, err := observeCluster(source).MonitorBootstrapAddresses(ctx)
+			currentSource, err := harness.ObserveCluster(source).MonitorBootstrapAddresses(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -212,7 +213,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			if err := mirror.RefreshPeerMonitorConfig(ctx); err != nil {
 				t.Fatal(err)
 			}
-			currentDestination, err := observeCluster(destination).MonitorBootstrapAddresses(ctx)
+			currentDestination, err := harness.ObserveCluster(destination).MonitorBootstrapAddresses(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -220,7 +221,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			monitorBootstrapAssertPeerConfig(t, peerBefore, peerAfter, currentDestination)
 			for _, n := range nodes {
 				config := monitorRollingFile(t, ctx, n.ctr, "/etc/ceph/ceph.conf")
-				current, err := observeCluster(n.cluster).MonitorBootstrapAddresses(ctx)
+				current, err := harness.ObserveCluster(n.cluster).MonitorBootstrapAddresses(ctx)
 				if err != nil || monitorRollingBootstrap(config) != "mon host = "+current || monitorRollingBootstrap(config) == monitorRollingBootstrap(n.config) {
 					t.Fatalf("explicit refresh did not adopt new monitor addresses: container=%s error=%v", n.id[:12], err)
 				}
@@ -236,30 +237,30 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 				}
 			}
 			for i, client := range []testcontainers.Container{sourceClient, destinationClient} {
-				fsid := strings.TrimSpace(string(multiClusterExecOutput(t, ctx, client, "ceph", "fsid")))
+				fsid := strings.TrimSpace(string(harness.MultiClusterExecOutput(t, ctx, client, "ceph", "fsid")))
 				if fsid != []string{sourceStatus.FSID, destinationStatus.FSID}[i] {
 					t.Fatal("cold-started client connected to a different cluster")
 				}
 			}
-			restartedRBD := rbdMirrorReplayReady(t, ctx, rbdMirror, image, rbdmirror.ModeJournal, "", "")
-			if rbdScenarioPeer(t, ctx, rbdMirror, pool) != originalRBDPeer {
+			restartedRBD := harness.RBDMirrorReplayReady(t, ctx, rbdMirror, image, rbdmirror.ModeJournal, "", "")
+			if harness.RBDScenarioPeer(t, ctx, rbdMirror, pool) != originalRBDPeer {
 				t.Fatal("RBD cold restart replaced the original receiving peer")
 			}
 			if restartedRBD.GlobalID != initialRBD.GlobalID || restartedRBD.SourceImageID != initialRBD.SourceImageID || restartedRBD.DestinationImageID != initialRBD.DestinationImageID || restartedRBD.InstanceID == initialRBD.InstanceID {
 				t.Fatal("RBD cold restart changed images or retained the previous process instance")
 			}
-			restartedFS := cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, "/federation", snapshot)
+			restartedFS := harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, "/federation", snapshot)
 			if restartedFS.InstanceID == initialFS.InstanceID {
 				t.Fatal("CephFS cold restart retained the previous native watcher")
 			}
-			rbdJournalRead(t, ctx, destinationClient, destinationStatus.FSID, pool, image, payload)
-			patch := rbdMultiClusterPayload(1<<20, 79)
+			harness.RBDJournalRead(t, ctx, destinationClient, destinationStatus.FSID, pool, image, payload)
+			patch := harness.RBDMultiClusterPayload(1<<20, 79)
 			copy(payload[2<<20:], patch)
-			rbdJournalWrite(t, ctx, sourceClient, sourceStatus.FSID, pool, image, 2<<20, patch)
-			rbdJournalWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, image, payload)
+			harness.RBDJournalWrite(t, ctx, sourceClient, sourceStatus.FSID, pool, image, 2<<20, patch)
+			harness.RBDJournalWaitBytes(t, ctx, destinationClient, destinationStatus.FSID, pool, image, payload)
 			fsCommand(sourceClient, sourceFS.FilesystemName, "mutate")
-			snapshot = cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, "/federation", "backup-2")
-			cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, "/federation", snapshot)
+			snapshot = harness.CephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, "/federation", "backup-2")
+			harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, "/federation", snapshot)
 			verifySnapshot("backup-1")
 			verifySnapshot("backup-2")
 			t.Log("full MON replacement on both clusters: explicit stopped-client/local-link/remote-peer refresh retained cluster, image, filesystem, peer, container and credential identities; same cold-started daemons replayed fresh RBD and CephFS bytes")
@@ -269,7 +270,7 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 			if err := mirror.RemovePeer(ctx, oldPeer); err != nil {
 				t.Fatal(err)
 			}
-			cephFSWaitForDaemonPolicy(t, ctx, source, mirror, 1, oldPeer)
+			harness.CephFSWaitForDaemonPolicy(t, ctx, source, mirror, 1, oldPeer)
 			newPeer, err := mirror.RebootstrapPeer(ctx)
 			if err != nil || newPeer == "" || newPeer == oldPeer {
 				t.Fatalf("warm-MGR rebootstrap did not create a new peer: error=%v", err)
@@ -281,8 +282,8 @@ func TestMultiClusterMonitorBootstrapRefresh(t *testing.T) {
 				t.Fatal("warm destination MGR bootstrap imported obsolete monitor addresses")
 			}
 			fsCommand(sourceClient, sourceFS.FilesystemName, "membership-checkpoint", "mon-rebootstrap", "backup-3")
-			snapshot = cephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, "/federation", "backup-3")
-			cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, "/federation", snapshot)
+			snapshot = harness.CephFSReadSourceSnapshot(t, ctx, sourceClient, sourceFS.FilesystemName, script, "/federation", "backup-3")
+			harness.CephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, "/federation", snapshot)
 			verifySnapshot("backup-3")
 			t.Logf("warm destination MGR peer rebootstrap: old=%s new=%s; current destination monmap and independent source snapshot %d/%s with exact destination bytes", oldPeer, newPeer, snapshot.ID, snapshot.Name)
 		})

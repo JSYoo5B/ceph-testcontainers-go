@@ -1,0 +1,189 @@
+//go:build all || integration
+
+package cephfs_test
+
+import (
+	"context"
+	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"testing"
+	"time"
+
+	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs"
+	"github.com/testcontainers/testcontainers-go"
+)
+
+func testCephFSFilesystem(t *testing.T, opts ...testcontainers.ContainerCustomizer) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	defer cancel()
+	cluster, client := harness.NewServiceCluster(t, opts...)
+	fs, err := cephfs.Start(ctx, cluster, cephfs.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.WaitForClean(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertCephFSActive(t, ctx, cluster, fs.FilesystemName)
+	// libcephfs creates a userspace client session. This is real CephFS I/O,
+	// with metadata served by the MDS and file data read/written through OSDs.
+	// No /dev/fuse, CAP_SYS_ADMIN or kernel filesystem support is involved.
+	harness.ExecCommand(t, ctx, client, "python3", "-c", cephFSClientScript, fs.FilesystemName, "seed")
+	t.Log("CephFS independent client: mkdir, 16 file writes/fsync/reads/renames, temporary file unlink")
+	harness.AdvanceServiceTopology(t, ctx, cluster)
+	assertCephFSActive(t, ctx, cluster, fs.FilesystemName)
+	// A new Python process establishes a new libcephfs session so retained
+	// bytes cannot come from the first session's file cache.
+	harness.ExecCommand(t, ctx, client, "python3", "-c", cephFSClientScript, fs.FilesystemName, "after-topology")
+	t.Log("CephFS fresh session after OSD replacement: all retained bytes verified, new file write/read/rename/unlink")
+	harness.ExecCommand(t, ctx, client, "python3", "-c", cephFSClientScript, fs.FilesystemName, "final")
+	t.Log("CephFS third session verified post-topology writes and deletion visibility")
+	checkCephFSRemoval(t, ctx, cluster, fs.FilesystemName)
+}
+
+// checkCephFSRemoval adds a second filesystem, removes it and proves that
+// its MDS daemons, keys and pools are gone while the first one stays active.
+func checkCephFSRemoval(t *testing.T, ctx context.Context, cluster *ceph.Container, kept string) {
+	t.Helper()
+	removable, err := cephfs.Start(ctx, cluster, cephfs.Config{Name: "tc-removable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemons := removable.MDSs()
+	if err := removable.Remove(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := removable.Remove(ctx); err == nil {
+		t.Fatal("second removal succeeded")
+	}
+	data, err := cluster.Ceph(ctx, "fs", "ls", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var filesystems []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(data, &filesystems); err != nil || len(filesystems) != 1 || filesystems[0].Name != kept {
+		t.Fatalf("filesystems after removal = %s (%v), want only %s", data, err, kept)
+	}
+	for _, owned := range cephfs.Filesystems(cluster) {
+		if owned.FilesystemName == removable.FilesystemName {
+			t.Fatal("removed filesystem is still owned")
+		}
+	}
+	pools, err := harness.ObserveCluster(cluster).Pools(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pool := range pools {
+		if pool.Name == removable.MetadataPool || pool.Name == removable.DataPool {
+			t.Fatalf("pool %s of the removed filesystem remains", pool.Name)
+		}
+	}
+	for _, daemon := range daemons {
+		if daemon.IsRunning() {
+			t.Fatalf("mds.%s of the removed filesystem is still running", daemon.ID)
+		}
+		if _, err := cluster.Ceph(ctx, "auth", "get", "mds."+daemon.ID); err == nil {
+			t.Fatalf("key of mds.%s remains", daemon.ID)
+		}
+	}
+	assertCephFSActive(t, ctx, cluster, kept)
+	t.Logf("cephfs.Remove deleted %s with %d MDS daemons, their keys and both pools; %s stayed active", removable.FilesystemName, len(daemons), kept)
+}
+
+func assertCephFSActive(t *testing.T, ctx context.Context, cluster *ceph.Container, name string) {
+	t.Helper()
+	data, err := cluster.Ceph(ctx, "fs", "get", name, "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		MDSMap struct {
+			Info map[string]struct {
+				Rank  int    `json:"rank"`
+				State string `json:"state"`
+			} `json:"info"`
+		} `json:"mdsmap"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range result.MDSMap.Info {
+		if info.Rank == 0 && info.State == "up:active" {
+			t.Logf("CephFS %s: rank 0 MDS up:active", name)
+			return
+		}
+	}
+	t.Fatalf("CephFS has no active rank zero: %s", data)
+}
+
+const cephFSClientScript = `import cephfs
+import os
+import sys
+
+filesystem_name, phase = sys.argv[1:]
+fs = cephfs.LibCephFS(conffile='/etc/ceph/ceph.conf', auth_id='admin')
+fs.conf_set('client_mount_timeout', '30')
+fs.mount(filesystem_name=filesystem_name.encode())
+
+def expected(index):
+    return b'testcontainers-cephfs-roundtrip\n' * 2048 + bytes(range(256)) + str(index).encode()
+
+def write(path, data):
+    fd = fs.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    try:
+        assert fs.write(fd, data, 0) == len(data), 'short write: ' + path
+        fs.fsync(fd, False)
+    finally:
+        fs.close(fd)
+
+def verify(path, data):
+    fd = fs.open(path, os.O_RDONLY)
+    try:
+        actual = fs.read(fd, 0, len(data) + 1)
+        assert actual == data, 'payload mismatch: ' + path
+    finally:
+        fs.close(fd)
+
+def absent(path):
+    try:
+        fs.stat(path)
+    except cephfs.ObjectNotFound:
+        return
+    raise AssertionError('deleted path exists: ' + path)
+
+try:
+    if phase == 'seed':
+        fs.mkdir('/tc-cephfs', 0o700)
+        for i in range(16):
+            path = '/tc-cephfs/file-%02d' % i
+            write(path, expected(i))
+            verify(path, expected(i))
+            fs.rename(path, path + '.renamed')
+            absent(path)
+        write('/tc-cephfs/temporary', b'unlink-test')
+        verify('/tc-cephfs/temporary', b'unlink-test')
+        fs.unlink('/tc-cephfs/temporary')
+        absent('/tc-cephfs/temporary')
+    else:
+        for i in range(15 if phase == 'final' else 16):
+            verify('/tc-cephfs/file-%02d.renamed' % i, expected(i))
+        absent('/tc-cephfs/temporary')
+        if phase == 'after-topology':
+            fs.mkdir('/tc-cephfs/after-topology', 0o700)
+            write('/tc-cephfs/after-topology/new', b'cephfs-after-osd-replacement')
+            verify('/tc-cephfs/after-topology/new', b'cephfs-after-osd-replacement')
+            fs.rename('/tc-cephfs/after-topology/new', '/tc-cephfs/retained-after-topology')
+            fs.rmdir('/tc-cephfs/after-topology')
+            fs.unlink('/tc-cephfs/file-15.renamed')
+        elif phase == 'final':
+            verify('/tc-cephfs/retained-after-topology', b'cephfs-after-osd-replacement')
+            absent('/tc-cephfs/file-15.renamed')
+            absent('/tc-cephfs/after-topology')
+    fs.sync_fs()
+finally:
+    fs.shutdown()
+`

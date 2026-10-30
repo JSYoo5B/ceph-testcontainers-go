@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
 	"time"
 
@@ -17,8 +18,8 @@ import (
 )
 
 func TestMGRModules(t *testing.T) {
-	parallelWhenEnabled(t)
-	for _, mode := range networkModes(t, "host", "bridge") {
+	harness.ParallelWhenEnabled(t)
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
@@ -27,12 +28,12 @@ func TestMGRModules(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceCluster(t, opts...)
+			cluster, client := harness.NewServiceCluster(t, opts...)
 			lookup := func(name string) ceph.MGRModuleState {
 				t.Helper()
 				deadline := time.Now().Add(35 * time.Second)
 				for {
-					modules, err := observeCluster(cluster).MGRModules(ctx)
+					modules, err := harness.ObserveCluster(cluster).MGRModules(ctx)
 					if err == nil {
 						for _, module := range modules {
 							if module.Name == name {
@@ -92,7 +93,7 @@ func TestMGRModules(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			execCommand(t, ctx, client, "python3", "-c", mgrModuleRBDProbe, pool)
+			harness.ExecCommand(t, ctx, client, "python3", "-c", mgrModuleRBDProbe, pool)
 			copy := *rbdLease
 			if err := copy.Restore(ctx); err != nil {
 				t.Fatal(err)
@@ -116,7 +117,7 @@ func TestMGRModules(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cephCommand(t, ctx, cluster, "fs", "mirror", "enable", fs.FilesystemName)
+			harness.CephCommand(t, ctx, cluster, "fs", "mirror", "enable", fs.FilesystemName)
 			t.Cleanup(func() {
 				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
 				defer cleanupCancel()
@@ -130,7 +131,7 @@ func TestMGRModules(t *testing.T) {
 			if _, err := override.SetMGRModule(ctx, cluster, "volumes", false); err == nil {
 				t.Fatal("CephFS volumes module disable accepted")
 			}
-			cephCommand(t, ctx, cluster, "fs", "mirror", "disable", fs.FilesystemName)
+			harness.CephCommand(t, ctx, cluster, "fs", "mirror", "disable", fs.FilesystemName)
 			copy = *mirrorLease
 			if err := copy.Restore(ctx); err != nil {
 				t.Fatal(err)
@@ -138,7 +139,7 @@ func TestMGRModules(t *testing.T) {
 			if err := mirrorLease.Restore(ctx); err != nil || lookup("mirroring").Enabled {
 				t.Fatal("original disabled mirroring state was not restored", err)
 			}
-			cephCommand(t, ctx, cluster, "mgr", "module", "enable", "mirroring")
+			harness.CephCommand(t, ctx, cluster, "mgr", "module", "enable", "mirroring")
 			if !lookup("mirroring").Enabled {
 				t.Fatal("native prior enabled state did not converge")
 			}
@@ -149,7 +150,7 @@ func TestMGRModules(t *testing.T) {
 			if err := priorEnabled.Restore(ctx); err != nil || !lookup("mirroring").Enabled {
 				t.Fatal("original enabled optional module was not restored", err)
 			}
-			cephCommand(t, ctx, cluster, "mgr", "module", "disable", "mirroring")
+			harness.CephCommand(t, ctx, cluster, "mgr", "module", "disable", "mirroring")
 			t.Log("native MGR membership and dependencies, real rbd_support schedule metadata/task completion, optional-module enable/disable restoration, always-on and active mirroring-policy protection verified")
 		})
 	}

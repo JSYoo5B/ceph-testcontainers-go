@@ -153,6 +153,17 @@ native compatibility evidence. Follow the test-double guidance in
 runtime test seam declares its class with a `//testdouble:<class>` directive;
 the classes are in the [inventory](docs/contributing/test-double-inventory.md).
 
+## Integration test packages
+
+An integration test goes in the test package of its area:
+`internal/integration/rbd`, `internal/integration/cephfs` or
+`internal/integration/rgw` for one service, `internal/integration` for the
+cluster and everything else. A helper stays in its test package while only
+that package uses it; when a second package needs it, move it to
+`internal/integration/harness`, the non-test package that only test files
+import, and export it there. See
+[Writing a new integration test](docs/contributing/testing.md#writing-a-new-integration-test).
+
 ## Validation
 
 Use [Testing](docs/contributing/testing.md) and the Makefile for commands.

@@ -14,7 +14,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rbd"
-	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
 )
 
 func explicitRoleImage(t *testing.T, name string) string {

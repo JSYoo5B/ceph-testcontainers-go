@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"maps"
 	"slices"
 	"strconv"
@@ -34,7 +35,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = docker.Close() })
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithVolume()))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	terminated := false
@@ -81,7 +82,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	}
 	volume, _ := osdVolumeBacking(t, ctx, docker.Client, cluster)
 	registered := osdMemoryIdentities(t, ctx, cluster)
-	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	initial := osdMemoryInspect(t, ctx, docker.Client, osd.GetContainerID())
 	clientRaw := osdMemoryInspect(t, ctx, docker.Client, client.GetContainerID())
 	platform := osdMemoryExec(t, ctx, client, "uname", "-sm")
-	t.Logf("OSD_ABRUPT_RUNTIME ceph=%s platform=%s essential_image=%s client_image=%s cid=%s fsid=%s osd=%d uuid=%s volume=%s store=%q", staticFacts(cluster).CephVersion, platform, initial.Image, clientRaw.Image, osd.GetContainerID(), quorum.MonMap.FSID, osd.ID, registered[osd.ID], volume, store)
+	t.Logf("OSD_ABRUPT_RUNTIME ceph=%s platform=%s essential_image=%s client_image=%s cid=%s fsid=%s osd=%d uuid=%s volume=%s store=%q", harness.StaticFacts(cluster).CephVersion, platform, initial.Image, clientRaw.Image, osd.GetContainerID(), quorum.MonMap.FSID, osd.ID, registered[osd.ID], volume, store)
 	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +130,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	}
 	t.Log("OSD_ABRUPT_CONTROL presubmit=no_requests clean_stop=exit_0 independent_read=exact")
 
-	poolStatus, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
+	poolStatus, err := harness.PoolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +260,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	// With one OSD no peer reports it failed, so the MONs keep it "up" in the
 	// map until their report timeout. The dead process is the observation here,
 	// and the restart is told apart by a newer boot epoch below.
-	if status, err := observeCluster(cluster).Status(ctx); err == nil {
+	if status, err := harness.ObserveCluster(cluster).Status(ctx); err == nil {
 		t.Logf("OSD_ABRUPT_RECOVERY phase=after-kill status=%+v", status)
 	} else {
 		t.Fatal(err)
@@ -299,7 +300,7 @@ func TestOSDAbruptWriteRetainedStore(t *testing.T) {
 	if got := osdMemoryExec(t, ctx, osd, "sh", "-c", `cat "$1/whoami" "$1/fsid" "$1/ceph_fsid"; stat -c '%i:%s' "$1/block"`, "identity", storePath); string(got) != string(store) {
 		t.Fatal("recovery changed store identity or block inode/size")
 	}
-	q, err := observeCluster(cluster).QuorumStatus(ctx)
+	q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil || q.MonMap.FSID != quorum.MonMap.FSID {
 		t.Fatal("recovery changed cluster FSID", err)
 	}

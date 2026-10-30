@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"testing"
 	"time"
@@ -17,10 +18,10 @@ import (
 )
 
 func TestManagerLifecycle(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 7*time.Minute)
 	defer cancel()
-	image, options := integrationImages(t)
+	image, options := harness.IntegrationImages(t)
 	options = append(options, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithManagerCount(1)), ceph.WithStartupTimeout(3*time.Minute))
 	cluster, err := ceph.Run(ctx, image, options...)
 	if cluster != nil {
@@ -31,7 +32,7 @@ func TestManagerLifecycle(t *testing.T) {
 	}
 	checkMap := func(active string, standbys ...string) {
 		t.Helper()
-		status, err := observeCluster(cluster).ManagerStatus(ctx)
+		status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +61,7 @@ func TestManagerLifecycle(t *testing.T) {
 		t.Fatal("standby reused the active manager's container")
 	}
 	checkMap("a", "b")
-	if err := managerHandle(t, ctx, cluster, "a").Remove(ctx); err != nil {
+	if err := harness.ManagerHandle(t, ctx, cluster, "a").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	checkMap("b")
@@ -76,12 +77,12 @@ func TestManagerLifecycle(t *testing.T) {
 		t.Fatal("replacement manager did not receive a fresh container")
 	}
 	checkMap("b", "replacement")
-	if err := managerHandle(t, ctx, cluster, "replacement").Remove(ctx); err != nil {
+	if err := harness.ManagerHandle(t, ctx, cluster, "replacement").Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	checkMap("b")
 	managerLifecycleRBDReady(t, ctx, cluster)
-	if err := managerHandle(t, ctx, cluster, "b").Remove(ctx); err == nil {
+	if err := harness.ManagerHandle(t, ctx, cluster, "b").Remove(ctx); err == nil {
 		t.Fatal("last manager candidate was removed")
 	}
 	checkMap("b")

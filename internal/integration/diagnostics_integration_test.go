@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 // Diagnostics retain their capability tag for manual runs and also belong to
 // the all suite and their own CI topology batch.
 func TestClusterDiagnostics(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) { testClusterDiagnostics(t, host) })
 	}
@@ -31,7 +32,7 @@ func TestCanceledClusterDiagnostics(t *testing.T) {
 func TestPartialClusterDiagnostics(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithStartupTimeout(5*time.Second),
 		testcontainers.WithEntrypoint("/bin/sh", "-c", "exit 17"), testcontainers.WithCmd())
 	cluster, runErr := ceph.Run(ctx, image, opts...)

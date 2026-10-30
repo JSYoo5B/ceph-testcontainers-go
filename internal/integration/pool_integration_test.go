@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"testing"
 	"time"
@@ -15,10 +16,10 @@ import (
 )
 
 func TestErasureCodedPools(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	metadata, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 		Name: "tc-rbd-metadata", PGNum: 8, Replicas: 2, MinSize: 1, Application: "rbd",
 	})
@@ -84,7 +85,7 @@ func TestErasureCodedPools(t *testing.T) {
 	// Both processes use native librados/librbd. A fresh process reads the
 	// retained bytes and snapshot through a new session, then deletes them.
 	for _, phase := range []string{"seed", "verify"} {
-		execCommand(t, ctx, client, "python3", "-c", erasurePoolClientScript, metadata.Name, data.Name, phase)
+		harness.ExecCommand(t, ctx, client, "python3", "-c", erasurePoolClientScript, metadata.Name, data.Name, phase)
 	}
 	t.Log("native EC RADOS partial overwrites and RBD with replicated metadata/EC data: bytes and snapshot retained in a fresh session, then removed")
 	checkPoolRemoval(t, ctx, cluster, data, metadata)
@@ -94,7 +95,7 @@ func TestErasureCodedPools(t *testing.T) {
 // profile, then proves the names are reusable and deletion stays disabled.
 func checkPoolRemoval(t *testing.T, ctx context.Context, cluster *ceph.Container, pools ...*ceph.Pool) {
 	t.Helper()
-	if err := poolHandle(t, ctx, cluster, ".mgr").Remove(ctx); err == nil {
+	if err := harness.PoolHandle(t, ctx, cluster, ".mgr").Remove(ctx); err == nil {
 		t.Fatal("RemovePool accepted a pool that Ceph created")
 	}
 	for _, pool := range pools {
@@ -105,7 +106,7 @@ func checkPoolRemoval(t *testing.T, ctx context.Context, cluster *ceph.Container
 			t.Fatalf("second removal of %s succeeded", pool.Name)
 		}
 	}
-	states, err := observeCluster(cluster).Pools(ctx)
+	states, err := harness.ObserveCluster(cluster).Pools(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +132,7 @@ func checkPoolRemoval(t *testing.T, ctx context.Context, cluster *ceph.Container
 			t.Fatalf("pool %s left rule/profile behind: %v", pool.Name, names)
 		}
 	}
-	entries, err := observeCluster(cluster).Configuration(ctx)
+	entries, err := harness.ObserveCluster(cluster).Configuration(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

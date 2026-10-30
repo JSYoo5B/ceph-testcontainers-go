@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"net"
 	"net/netip"
@@ -71,9 +72,9 @@ func waitProfileTopology(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	var managers ceph.ManagerStatus
 	var err error
 	for deadline := time.Now().Add(3 * time.Minute); ; {
-		quorum, err = observeCluster(cluster).QuorumStatus(ctx)
+		quorum, err = harness.ObserveCluster(cluster).QuorumStatus(ctx)
 		if err == nil && len(quorum.QuorumNames) == monitors && len(quorum.MonMap.Mons) == monitors {
-			managers, err = observeCluster(cluster).ManagerStatus(ctx)
+			managers, err = harness.ObserveCluster(cluster).ManagerStatus(ctx)
 			if err == nil && (standbys < 0 || managers.Available && len(managers.Standbys) == standbys) {
 				return
 			}
@@ -98,7 +99,7 @@ func checkProfileCiphers(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	if preferred == "" {
 		preferred = auth.KeyType
 	}
-	if keyTypeOption(t, ctx, cluster) {
+	if harness.KeyTypeOption(t, ctx, cluster) {
 		allowed := auth.AllowedCiphers
 		if allowed == nil {
 			for _, cipher := range []ceph.CephxCipher{auth.KeyType, service, preferred} {
@@ -107,7 +108,7 @@ func checkProfileCiphers(t *testing.T, ctx context.Context, cluster *ceph.Contai
 				}
 			}
 		}
-		gotService, gotAllowed, gotPreferred := readMonMapCiphers(t, ctx, cluster)
+		gotService, gotAllowed, gotPreferred := harness.ReadMonMapCiphers(t, ctx, cluster)
 		var want []string
 		for _, cipher := range allowed {
 			want = append(want, string(cipher))
@@ -120,14 +121,14 @@ func checkProfileCiphers(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	}
 	cc, err := cluster.ConnectionConfig(ctx)
 	keyring := cc.Keyring
-	if err != nil || cephxKeyType(t, keyring, "client.admin") != auth.KeyType {
+	if err != nil || harness.CephxKeyType(t, keyring, "client.admin") != auth.KeyType {
 		t.Fatalf("client.admin key type: %v", err)
 	}
-	if got := authEntityKeyType(t, ctx, cluster, "mon."); got != auth.KeyType {
+	if got := harness.AuthEntityKeyType(t, ctx, cluster, "mon."); got != auth.KeyType {
 		t.Fatalf("mon. has a %s key, want %s", got, auth.KeyType)
 	}
 	for _, mgr := range clusteraccess.Managers(t, cluster) {
-		if got := authEntityKeyType(t, ctx, cluster, "mgr."+mgr.DaemonName); got != preferred {
+		if got := harness.AuthEntityKeyType(t, ctx, cluster, "mgr."+mgr.DaemonName); got != preferred {
 			t.Fatalf("mgr.%s has a %s key, want %s", mgr.DaemonName, got, preferred)
 		}
 	}
@@ -138,10 +139,10 @@ func checkProfileCiphers(t *testing.T, ctx context.Context, cluster *ceph.Contai
 func checkProfileTickets(t *testing.T, ctx context.Context, cluster *ceph.Container, monTTL, serviceTTL float64) {
 	t.Helper()
 	for _, daemon := range []string{"mon.a", "mgr." + clusteraccess.Managers(t, cluster)[0].DaemonName} {
-		if got := runningOption(t, ctx, cluster, daemon, "auth_mon_ticket_ttl"); got != monTTL {
+		if got := harness.RunningOption(t, ctx, cluster, daemon, "auth_mon_ticket_ttl"); got != monTTL {
 			t.Fatalf("%s auth_mon_ticket_ttl = %v, want %v", daemon, got, monTTL)
 		}
-		if got := runningOption(t, ctx, cluster, daemon, "auth_service_ticket_ttl"); got != serviceTTL {
+		if got := harness.RunningOption(t, ctx, cluster, daemon, "auth_service_ticket_ttl"); got != serviceTTL {
 			t.Fatalf("%s auth_service_ticket_ttl = %v, want %v", daemon, got, serviceTTL)
 		}
 	}
@@ -158,7 +159,7 @@ type profileClient struct {
 
 func startProfileClient(t *testing.T, ctx context.Context, cluster *ceph.Container, identity *ceph.ClientConfig, opts ...ceph.ClientContainerOptions) profileClient {
 	t.Helper()
-	ctr, err := testcontainers.Run(ctx, nativeClientImage(t, staticFacts(cluster).Images.Client), identity.WithIdentity(opts...), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, harness.NativeClientImage(t, harness.StaticFacts(cluster).Images.Client), identity.WithIdentity(opts...), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)
@@ -194,12 +195,12 @@ func createProfileIdentities(t *testing.T, ctx context.Context, cluster *ceph.Co
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := cephxKeyType(t, clientKeyring(t, identity), identity.Name()); got != keyType {
+		if got := harness.CephxKeyType(t, harness.ClientKeyring(t, identity), identity.Name()); got != keyType {
 			t.Fatalf("%s has a %s key, want %s", identity.Name(), got, keyType)
 		}
 		identities[name] = identity
 	}
-	status, err := observeCluster(cluster).Status(ctx)
+	status, err := harness.ObserveCluster(cluster).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +228,7 @@ func createProfileIdentities(t *testing.T, ctx context.Context, cluster *ceph.Co
 func checkProfileClientModes(t *testing.T, ctx context.Context, cluster *ceph.Container, daemon, want string) {
 	t.Helper()
 	var modes []string
-	if err := json.Unmarshal([]byte(execOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", messengerClientModes, daemon)), &modes); err != nil {
+	if err := json.Unmarshal([]byte(harness.ExecOutput(t, ctx, harness.ToolkitContainer(t, cluster), "python3", "-c", messengerClientModes, daemon)), &modes); err != nil {
 		t.Fatal(err)
 	}
 	switch {
@@ -244,7 +245,7 @@ func checkProfileClientModes(t *testing.T, ctx context.Context, cluster *ceph.Co
 // advertise addresses of the family: IPv6, or IPv4-mapped IPv6.
 func checkProfileAddressFamily(t *testing.T, ctx context.Context, cluster *ceph.Container, family ceph.AddressFamily) {
 	t.Helper()
-	native, err := observeCluster(cluster).DaemonAddresses(ctx)
+	native, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 	if err != nil || native.ActiveManager == nil {
 		t.Fatalf("daemon addresses: %+v, %v", native, err)
 	}
@@ -291,7 +292,7 @@ func checkPausedButOpen(t *testing.T, ctx context.Context, cluster *ceph.Contain
 		Open   bool   `json:"open"`
 		Banner string `json:"banner"`
 	}
-	out := execOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", probeOpenPort, address)
+	out := harness.ExecOutput(t, ctx, harness.ToolkitContainer(t, cluster), "python3", "-c", probeOpenPort, address)
 	if err := json.Unmarshal([]byte(out), &probe); err != nil || !probe.Open || probe.Banner != "" {
 		t.Fatalf("paused %s at %s: %s", name, address, out)
 	}
@@ -303,7 +304,7 @@ func waitQuorumNames(t *testing.T, ctx context.Context, cluster *ceph.Container,
 	slices.Sort(names)
 	var got []string
 	for deadline := time.Now().Add(3 * time.Minute); ; {
-		quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+		quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 		if err == nil {
 			got = slices.Clone(quorum.QuorumNames)
 			slices.Sort(got)
@@ -321,7 +322,7 @@ func waitQuorumNames(t *testing.T, ctx context.Context, cluster *ceph.Container,
 // profileMonitorAddress returns the advertised v2 address of a MON.
 func profileMonitorAddress(t *testing.T, ctx context.Context, cluster *ceph.Container, name string) string {
 	t.Helper()
-	native, err := observeCluster(cluster).DaemonAddresses(ctx)
+	native, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,11 +370,11 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 	expectClient("before the controls")
 
 	// Pause the active MGR, fail it over, then resume it as the standby.
-	before, err := observeCluster(cluster).ManagerStatus(ctx)
+	before, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil || !before.Available || len(before.Standbys) != 1 {
 		t.Fatalf("managers before the pause: %+v, %v", before, err)
 	}
-	native, err := observeCluster(cluster).DaemonAddresses(ctx)
+	native, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 	if err != nil || native.ActiveManager == nil || len(native.ActiveManager.Addrs) == 0 {
 		t.Fatalf("active MGR address: %+v, %v", native, err)
 	}
@@ -395,7 +396,7 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 		t.Fatal(err)
 	}
 	for deadline := time.Now().Add(2 * time.Minute); ; {
-		after, err := observeCluster(cluster).ManagerStatus(ctx)
+		after, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 		if err == nil && after.Available && after.ActiveName == before.Standbys[0].Name {
 			break
 		}
@@ -411,7 +412,7 @@ func exerciseProfileControls(t *testing.T, ctx context.Context, cluster *ceph.Co
 	expectClient("MGR failover")
 
 	// Stop the standby MGR and start it again.
-	status, err := observeCluster(cluster).ManagerStatus(ctx)
+	status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil || len(status.Standbys) != 1 {
 		t.Fatalf("managers: %+v, %v", status, err)
 	}
@@ -561,16 +562,16 @@ func checkProfileRenewal(t *testing.T, ctx context.Context, cluster *ceph.Contai
 func testMessengerClientSecureProfile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithNoInitialOSDs()),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	cluster, admin := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
+	cluster, admin := harness.NewServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
 	checkProfileTickets(t, ctx, cluster, 12, 12)
-	if osds, err := observeCluster(cluster).DaemonAddresses(ctx); err != nil || len(osds.OSDs) != 0 || len(clusteraccess.OSDs(t, cluster)) != 0 {
+	if osds, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx); err != nil || len(osds.OSDs) != 0 || len(clusteraccess.OSDs(t, cluster)) != 0 {
 		t.Fatalf("the profile has OSDs: %+v, %v", osds.OSDs, err)
 	}
 	daemons := profileDaemons(t, cluster)
@@ -592,11 +593,11 @@ func testMessengerClientSecureProfile(t *testing.T) {
 func testMessengerClientModeRejection(t *testing.T, monitors, managers []ceph.MessengerConnectionMode, keyType ceph.CephxCipher) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithNoInitialOSDs()),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only).WithMessengerPolicy(ceph.MessengerPolicy{Monitors: monitors, Managers: managers})))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: keyType, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	cluster, _ := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
@@ -688,27 +689,27 @@ func modeNames(modes []ceph.MessengerConnectionMode) []string {
 func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Duration, file string, options map[string]float64) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithNoInitialOSDs()),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)), ceph.WithConfigFile(profileConfigFile(t, file)))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: monTTL, ServiceTicketTTL: serviceTTL})
-	cluster, client := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileTickets(t, ctx, cluster, monTTL.Seconds(), serviceTTL.Seconds())
 	for name, want := range options {
 		for _, daemon := range []string{"mon.a", "mgr." + clusteraccess.Managers(t, cluster)[0].DaemonName} {
-			if got := runningOption(t, ctx, cluster, daemon, name); got != want {
+			if got := harness.RunningOption(t, ctx, cluster, daemon, name); got != want {
 				t.Fatalf("%s %s = %v, want %v", daemon, name, got, want)
 			}
 		}
-		out := strings.TrimSpace(execOutput(t, ctx, client, "ceph-conf", "-c", "/etc/ceph/ceph.conf", "--name", "client.admin", "--show-config-value", name))
+		out := strings.TrimSpace(harness.ExecOutput(t, ctx, client, "ceph-conf", "-c", "/etc/ceph/ceph.conf", "--name", "client.admin", "--show-config-value", name))
 		if got, err := strconv.ParseFloat(out, 64); err != nil || got != want {
 			t.Fatalf("client %s = %q, want %v: %v", name, out, want, err)
 		}
 	}
-	execCommand(t, ctx, client, "ceph", "--connect-timeout", "10", "fsid")
-	execCommand(t, ctx, client, "ceph", "--connect-timeout", "10", "pg", "stat")
+	harness.ExecCommand(t, ctx, client, "ceph", "--connect-timeout", "10", "fsid")
+	harness.ExecCommand(t, ctx, client, "ceph", "--connect-timeout", "10", "pg", "stat")
 }
 
 // testMessengerClientDelayedManagers starts three MONs with no MGR, then two
@@ -716,13 +717,13 @@ func testMessengerClientTicketProfile(t *testing.T, monTTL, serviceTTL time.Dura
 func testMessengerClientDelayedManagers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithNoInitialManagers().WithNoInitialOSDs()),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	cluster, _ := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, -1)
-	status, err := observeCluster(cluster).ManagerStatus(ctx)
+	status, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil || status.Available || status.ActiveGID != 0 || len(status.Standbys) != 0 || len(clusteraccess.Managers(t, cluster)) != 0 {
 		t.Fatalf("a MGR exists before any was started: %+v, %v", status, err)
 	}
@@ -736,7 +737,7 @@ func testMessengerClientDelayedManagers(t *testing.T) {
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
-	status, err = observeCluster(cluster).ManagerStatus(ctx)
+	status, err = harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil || status.ActiveName != "a" || status.Standbys[0].Name != "b" {
 		t.Fatalf("managers after the delayed starts: %+v, %v", status, err)
 	}
@@ -750,19 +751,19 @@ func testMessengerClientDelayedManagers(t *testing.T) {
 func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...testcontainers.ContainerCustomizer) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithOSDCount(1).WithPoolDefaults(1, 1)), ceph.WithOSDStorage(ceph.OSDStorage{}.WithObjectStore(ceph.OSDMemStore).WithBlockSize(256<<20)), legacyPoolFlags(t),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only).WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeCRC, Managers: modeCRC, OSDs: modeCRC})))
 	base = append(base, extra...)
 	auth = profileAuth(t, ctx, image, base, auth)
-	cluster, _ := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
 	monsAndMgrs := slices.DeleteFunc(profileDaemons(t, cluster), func(daemon string) bool { return strings.HasPrefix(daemon, "osd.") })
 	waitEffectiveMode(t, ctx, cluster, "ms_mon_service_mode", "crc", monsAndMgrs...)
 	waitEffectiveMode(t, ctx, cluster, "ms_service_mode", "crc", "osd.0")
-	if got := authEntityKeyType(t, ctx, cluster, "osd.0"); got != auth.KeyType {
+	if got := harness.AuthEntityKeyType(t, ctx, cluster, "osd.0"); got != auth.KeyType {
 		t.Fatalf("osd.0 has a %s key, want %s", got, auth.KeyType)
 	}
 
@@ -785,10 +786,10 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 	crc.expect(t, ctx, "crc only", "accepted", "pg", "stat")
 	crc.expect(t, ctx, "crc only", "accepted", "tell", "osd.0", "version")
 	secure.expect(t, ctx, "crc only", "rejected", "mon", "stat")
-	execCommand(t, ctx, crc.ctr, "sh", "-c", "head -c 10513 /dev/urandom > /tmp/object && rados -p "+pool.Name+" put profile /tmp/object && rados -p "+pool.Name+" stat profile && rados -p "+pool.Name+" get profile /tmp/read")
-	assertContainerFilesEqual(t, ctx, crc.ctr, "/tmp/object", "/tmp/read")
+	harness.ExecCommand(t, ctx, crc.ctr, "sh", "-c", "head -c 10513 /dev/urandom > /tmp/object && rados -p "+pool.Name+" put profile /tmp/object && rados -p "+pool.Name+" stat profile && rados -p "+pool.Name+" get profile /tmp/read")
+	harness.AssertContainerFilesEqual(t, ctx, crc.ctr, "/tmp/object", "/tmp/read")
 	checkProfileClientModes(t, ctx, cluster, "mon.a", "crc")
-	if staticFacts(cluster).UsesHostNetwork {
+	if harness.StaticFacts(cluster).UsesHostNetwork {
 		checkHostProcessReachesDaemons(t, ctx, cluster)
 	}
 	t.Logf("CRC profile: v2 only, %s keys, legacy CRUSH and pool %s without hashpspool on a MemStore OSD; a CRC-only client wrote and read an object, a secure-only client was refused", auth.KeyType, pool.Name)
@@ -800,16 +801,16 @@ func testMessengerClientCRCProfile(t *testing.T, auth ceph.AuthConfig, extra ...
 func testMessengerClientAddressProfile(t *testing.T, family ceph.AddressFamily) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithNoInitialOSDs()),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure).WithAddressFamily(family)))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	cluster, client := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileAddressFamily(t, ctx, cluster, family)
 	checkProfileCiphers(t, ctx, cluster, auth)
-	execCommand(t, ctx, client, "ceph", "--connect-timeout", "10", "pg", "stat")
+	harness.ExecCommand(t, ctx, client, "ceph", "--connect-timeout", "10", "pg", "stat")
 }
 
 // testMessengerClientWithoutKeyTypes runs the secure profile on an image
@@ -824,13 +825,13 @@ func testMessengerClientWithoutKeyTypes(t *testing.T, image string) {
 		t.Fatalf("%s has ceph-authtool --key-type", image)
 	}
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	cluster, _ := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	checkMessengerV2Only(t, ctx, cluster)
 	checkProfileCiphers(t, ctx, cluster, auth)
 	checkProfileTickets(t, ctx, cluster, 12, 12)
 	createProfileIdentities(t, ctx, cluster, ceph.CipherAES)
-	t.Logf("Ceph %s: v2-only secure profile with three MONs, two MGRs and AES keys", staticFacts(cluster).CephVersion)
+	t.Logf("Ceph %s: v2-only secure profile with three MONs, two MGRs and AES keys", harness.StaticFacts(cluster).CephVersion)
 }
 
 // checkHostProcessReachesDaemons dials every address that the MON, MGR and
@@ -838,7 +839,7 @@ func testMessengerClientWithoutKeyTypes(t *testing.T, image string) {
 // reads the Messenger v2 banner that the daemon sends first.
 func checkHostProcessReachesDaemons(t *testing.T, ctx context.Context, cluster *ceph.Container) {
 	t.Helper()
-	native, err := observeCluster(cluster).DaemonAddresses(ctx)
+	native, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 	if err != nil || native.ActiveManager == nil || len(native.ActiveManager.Addrs) == 0 {
 		t.Fatalf("daemon addresses: %+v, %v", native, err)
 	}

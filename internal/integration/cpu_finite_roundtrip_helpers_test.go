@@ -68,7 +68,7 @@ func guardedCPUUpdate(gen containerGeneration, inspectNow func() (container.Insp
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errCPUUpdateStale, err)
 	}
-	if err := state.check(gen, 0); err != nil {
+	if err := state.Check(gen, 0); err != nil {
 		return nil, fmt.Errorf("%w: %v", errCPUUpdateStale, err)
 	}
 	return dispatch()

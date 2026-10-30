@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"slices"
 	"strconv"
@@ -33,7 +34,7 @@ func TestOSDRetainedConcurrentReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = docker.Close() })
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithVolume()))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	terminated := false
@@ -72,7 +73,7 @@ func TestOSDRetainedConcurrentReopen(t *testing.T) {
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "seed")
 	volume, _ := osdVolumeBacking(t, ctx, docker.Client, cluster)
-	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +218,7 @@ eventLoop:
 	if current, _ := osdVolumeBacking(t, ctx, docker.Client, cluster); current != volume {
 		t.Fatal("replacement volume changed")
 	}
-	currentQuorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	currentQuorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil || currentQuorum.MonMap.FSID != quorum.MonMap.FSID {
 		t.Fatal("reopened FSID differs", err)
 	}

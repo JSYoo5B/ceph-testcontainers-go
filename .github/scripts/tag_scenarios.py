@@ -69,10 +69,19 @@ EXECUTIONS = (GO_TEST, TEST_BINARY)
 # The directory, under a native run's output, that Go's -artifacts flag
 # fills with each test's retained ArtifactDir.
 TEST_ARTIFACTS = "test-artifacts"
-# The package whose batches internal/tools/batchselect analyses, and its bound: the
-# first run compiles the export data of every dependency.
-DECLARATION_PACKAGE = "./internal/integration"
+# The integration test packages: ./internal/integration and the test packages
+# under it. Their runtime profiles need Ceph, and internal/tools/batchselect
+# analyses their batches together with the shared harness, whose
+# declarations join each graph. The bound covers the first run, which
+# compiles the export data of every dependency.
+INTEGRATION_ROOT = "./internal/integration"
+INTEGRATION_HARNESS = ("internal/integration/harness",)
 DECLARATION_TIMEOUT_SECONDS = 600
+
+
+def integration_package(package):
+    """Whether package is an integration test package."""
+    return package == INTEGRATION_ROOT or package.startswith(INTEGRATION_ROOT + "/")
 # The files that a build reads from each package that go list -deps -test
 # reports. The test variants of the profile's package already carry its test
 # files; the Test* fields of a dependency are not part of this build.
@@ -569,7 +578,7 @@ def discover(catalog, bugs=NO_BUGS):
         profile["profile"] = profile["category"] + "/" + profile["batch"] + "/" + profile["package"][2:].replace("/", "-")
         suffix = hashlib.sha256(profile["profile"].encode()).hexdigest()[:8]
         profile["id"] = (profile["category"] + "-" + profile["batch"])[:70] + "-" + suffix
-        profile["requires_ceph"] = profile["package"] == "./internal/integration" and profile["category"] != "code"
+        profile["requires_ceph"] = integration_package(profile["package"]) and profile["category"] != "code"
         profile["bug_compatibility"] = list(selected_bugs)
         resolve_image_roles(profile)
     return {"schema": SCHEMA, "coverage_scope": "required", "include": result,
@@ -882,8 +891,9 @@ def changed_paths(base, root=ROOT):
     return changed_comparison(base, root)[0]
 
 
-def run_batchselect(batches, base, root=ROOT, head=None, tool=None):
-    """Run internal/tools/batchselect for batches of the declaration package.
+def run_batchselect(batches, base, root=ROOT, head=None, tool=None, package=INTEGRATION_ROOT):
+    """Run internal/tools/batchselect for batches of one integration package,
+    with the shared harness in the same graph.
 
     Without head, root is a checkout and the diff ends at its working tree;
     with head, root holds that commit's exported tree and ROOT is the
@@ -892,7 +902,8 @@ def run_batchselect(batches, base, root=ROOT, head=None, tool=None):
         path = Path(directory) / "batches.json"
         path.write_text(json.dumps(batches))
         command = [str(tool)] if tool else ["go", "run", "-mod=readonly", "./internal/tools/batchselect"]
-        command += ["-root", str(root), "-base", base, "-package", DECLARATION_PACKAGE, "-batches", str(path)]
+        command += ["-root", str(root), "-base", base, "-package", package, "-with", ",".join(INTEGRATION_HARNESS),
+                    "-batches", str(path)]
         if head:
             command += ["-head", head, "-repo", str(ROOT)]
         result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True,
@@ -909,23 +920,30 @@ def declaration_selection(profiles, base, root=ROOT, runner=None):
     A profile outside the analysed package, or any failure of the analysis,
     counts as selected with the reason."""
     runner = runner or run_batchselect
-    analysed = [profile for profile in profiles if profile["package"] == DECLARATION_PACKAGE]
-    record = {"advisory": True, "base": base, "package": DECLARATION_PACKAGE, "fallback": [],
+    packages = sorted({profile["package"] for profile in profiles if integration_package(profile["package"])})
+    record = {"advisory": True, "base": base, "packages": packages, "fallback": [],
               "changed_declarations": [], "selected": {}, "excluded": {}}
     batches, unavailable = {}, ""
-    if analysed:
-        try:
-            result = runner([{"id": profile["id"], "tags": profile["tags"]} for profile in analysed], base, root)
-            batches = {batch["id"]: batch for batch in result.get("batches", [])}
-            if sorted(batches) != sorted(profile["id"] for profile in analysed):
-                raise ValueError("declaration selection does not report every analysed profile")
-            record.update(merge_base=result.get("merge_base", ""), fallback=result.get("fallback", []),
-                          changed_declarations=result.get("changed_declarations", []))
-        except (ValueError, OSError, subprocess.SubprocessError, KeyError, TypeError) as error:
-            batches, unavailable = {}, str(error)
-            record["error"] = unavailable
+    try:
+        # One graph per test package; each package's fallback selects only
+        # its own batches.
+        for package in packages:
+            analysed = [profile for profile in profiles if profile["package"] == package]
+            result = runner([{"id": profile["id"], "tags": profile["tags"]} for profile in analysed], base, root,
+                            package=package)
+            found = {batch["id"]: batch for batch in result.get("batches", [])}
+            if sorted(found) != sorted(profile["id"] for profile in analysed):
+                raise ValueError("declaration selection does not report every analysed profile of " + package)
+            batches.update(found)
+            record["merge_base"] = result.get("merge_base", "")
+            record["fallback"] += [reason for reason in result.get("fallback", []) if reason not in record["fallback"]]
+            record["changed_declarations"] += [label for label in result.get("changed_declarations", [])
+                                               if label not in record["changed_declarations"]]
+    except (ValueError, OSError, subprocess.SubprocessError, KeyError, TypeError) as error:
+        batches, unavailable = {}, str(error)
+        record["error"] = unavailable
     for profile in profiles:
-        if profile["package"] != DECLARATION_PACKAGE:
+        if not integration_package(profile["package"]):
             record["selected"][profile["id"]] = "package " + profile["package"] + " is not analysed"
         elif unavailable:
             record["selected"][profile["id"]] = "analysis unavailable: " + unavailable
@@ -1017,7 +1035,7 @@ def discover_optional(catalog, bugs=NO_BUGS):
         profile["profile"] = "optional/" + profile["batch"] + "/" + profile["package"][2:].replace("/", "-")
         suffix = hashlib.sha256(profile["profile"].encode()).hexdigest()[:8]
         profile["id"] = ("optional-" + profile["batch"])[:70] + "-" + suffix
-        profile["requires_ceph"] = bool(profile["image_roles"]) or profile["package"] == "./internal/integration"
+        profile["requires_ceph"] = bool(profile["image_roles"]) or integration_package(profile["package"])
         resolve_image_roles(profile)
     return {"schema": SCHEMA, "coverage_scope": "optional",
             "include": [profiles[key] for key in sorted(profiles)], "bug_compatibility": list(selected_bugs)}

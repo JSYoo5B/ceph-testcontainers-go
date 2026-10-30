@@ -10,7 +10,7 @@ the module's public options and lists what differs when each daemon runs in
 its own container.
 
 The profiles are derived from the ceph-msgr-go integration environment. Each
-row names a test in `internal/integration` that starts the profile and checks
+row names a test of the integration test packages that starts the profile and checks
 it with native clients and daemon observations. The tests prove fixture
 readiness, not a client's protocol implementation.
 
@@ -608,7 +608,7 @@ named test and symbol exists, covered and partial rows have cases, every test
 the daemon-to-daemon table cites is mapped, and a cited `TestName/subtest`
 runs through `t.Run` in the test, a helper or another subtest. The validator
 follows subtest names that are string literals, literal table fields in the
-same function, or `networkModes` modes; cite the top-level test otherwise. A
+same function, or `harness.NetworkModes` modes; cite the top-level test otherwise. A
 receipt marker must be in code the cited test reaches. The manifest records
 whether a recipe exists, not whether it passed. Regenerate the reference from
 a Ceph checkout at the pinned commit:

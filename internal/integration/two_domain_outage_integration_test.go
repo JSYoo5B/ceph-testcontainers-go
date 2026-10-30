@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"strconv"
 	"strings"
@@ -43,7 +44,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	for i, host := range hosts {
 		layout = append(layout, ceph.OSDConfig{Host: host, Rack: "rack-" + string(rune('a'+i)), Root: "tc-storage", DeviceClass: "fast"})
 	}
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2)), ceph.WithStartupTimeout(3*time.Minute),
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2)), ceph.WithStartupTimeout(3*time.Minute),
 		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(layout...).WithPoolDefaults(3, 2).WithDefaultCRUSHRoot("tc-storage")))
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: twoDomainPool, PGNum: 1, Application: "rados", Replicas: 3, MinSize: 2,
 		FailureDomain: "host", CRUSHRoot: "tc-storage", DeviceClass: "fast"}); err != nil {
@@ -73,7 +74,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	if len(osds) != 3 || len(monitors) != 3 || len(managers) != 2 {
 		t.Fatalf("membership: %d OSDs, %d MONs, %d MGRs", len(osds), len(monitors), len(managers))
 	}
-	states, err := observeCluster(cluster).OSDStates(ctx)
+	states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 	if err != nil || len(states) != 3 {
 		t.Fatalf("initial OSD identities: %v %+v", err, states)
 	}
@@ -102,7 +103,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 
 	// Map 2: outage membership, which also places MONs and MGRs. Nothing in
 	// Ceph says where they live; this manifest is the simulation's claim.
-	managerBefore, err := observeCluster(cluster).ManagerStatus(ctx)
+	managerBefore, err := harness.ObserveCluster(cluster).ManagerStatus(ctx)
 	if err != nil || !managerBefore.Available || len(managerBefore.Standbys) != 1 {
 		t.Fatalf("initial MGR identities: %+v %v", managerBefore, err)
 	}
@@ -188,11 +189,11 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	if len(selection.SurvivingMONs) != 1 || selection.SurvivingMONs[0] != survivorMON.Name || len(survivorContainers) != 2 {
 		t.Fatalf("survivors: %+v %+v", selection, survivorContainers)
 	}
-	rec := newMonReplacementRecorder("two-domain", withSockets(t, cluster), monReplacementBounds{
+	rec := newMonReplacementRecorder("two-domain", harness.WithSockets(t, cluster), monReplacementBounds{
 		Operation: 4 * time.Minute, Quorum: 90 * time.Second, QuorumInterval: 500 * time.Millisecond,
 		Query: 8 * time.Second, Snapshot: 30 * time.Second, Bundle: 3 * time.Minute,
 	})
-	baseline, err := captureMajorityBaseline(ctx, rec, withSockets(t, cluster), 3)
+	baseline, err := captureMajorityBaseline(ctx, rec, harness.WithSockets(t, cluster), 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +210,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		order = append(order, m.Role+"."+m.Name)
 	}
 	t.Logf("TWO_DOMAIN_OUTAGE_MANIFEST ceph=%s platform=%s essential_image=%s client_image=%s stop_order=%s survivor_mon=%s survivor_osd=%d election_epoch=%d manifest=%s",
-		staticFacts(cluster).CephVersion, strings.TrimSpace(string(topologyExecOutput(t, ctx, client, "uname", "-sm"))), imageID(t, ctx, cluster.Container), imageID(t, ctx, client),
+		harness.StaticFacts(cluster).CephVersion, strings.TrimSpace(string(harness.TopologyExecOutput(t, ctx, client, "uname", "-sm"))), harness.ImageID(t, ctx, cluster.Container), harness.ImageID(t, ctx, client),
 		strings.Join(order, ","), survivorMON.Name, survivorOSD, baseline.ElectionEpoch, manifestJSON)
 
 	// Baseline: the retained client writes under the baseline token.
@@ -280,7 +281,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	}
 	survivors, stopped := selection.SurvivingMONs, selection.LostMONs
 	rounds, err := waitStableRounds(majorityWait{Window: 20 * time.Second, Interval: 2 * time.Second, Bound: 2 * time.Minute, MinRounds: 5},
-		func() majorityRound { return observeMajorityRound(ctx, rec, withSockets(t, cluster), baseline) },
+		func() majorityRound { return observeMajorityRound(ctx, rec, harness.WithSockets(t, cluster), baseline) },
 		func(round majorityRound) []string { return evaluateSurvivorRound(round, survivors, stopped) })
 	if err != nil {
 		t.Fatal("lost majority not shown by the survivor: ", err)
@@ -290,7 +291,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		plan.Observe("mon", name)
 	}
 	t.Logf("TWO_DOMAIN_OUTAGE_QUORUM_LOST rounds=%d applied_interval_ms=%d last=%s", len(rounds), interval.Milliseconds(), last.summary())
-	management := probeMajorityManagement(ctx, withSockets(t, cluster), 20*time.Second)
+	management := probeMajorityManagement(ctx, harness.WithSockets(t, cluster), 20*time.Second)
 	t.Logf("TWO_DOMAIN_OUTAGE_MANAGEMENT quorum_query_duration=%v quorum=%v error=%q (evidence only)", management.Duration.Round(time.Millisecond), management.Quorum, management.Error)
 
 	// The token is issued once the lost majority was shown. OSD and MGR stops
@@ -302,7 +303,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 		return out.Failed >= 1
 	}, "an unacknowledged operation that began under the fully applied outage", 4*time.Minute)
 	outcomes, _ := twoDomainLedgerOutcomes(ops)
-	after := observeMajorityRound(ctx, rec, withSockets(t, cluster), baseline)
+	after := observeMajorityRound(ctx, rec, harness.WithSockets(t, cluster), baseline)
 	if reasons := evaluateSurvivorRound(after, survivors, stopped); len(reasons) > 0 {
 		t.Fatalf("the lost majority did not persist through the client observation: %v", reasons)
 	}
@@ -317,9 +318,9 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	recoverCtx, recoverCancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer recoverCancel()
 	for {
-		q, qerr := observeCluster(cluster).QuorumStatus(recoverCtx)
-		m, merr := observeCluster(cluster).ManagerStatus(recoverCtx)
-		s, serr := observeCluster(cluster).OSDStates(recoverCtx)
+		q, qerr := harness.ObserveCluster(cluster).QuorumStatus(recoverCtx)
+		m, merr := harness.ObserveCluster(cluster).ManagerStatus(recoverCtx)
+		s, serr := harness.ObserveCluster(cluster).OSDStates(recoverCtx)
 		if qerr == nil && merr == nil && serr == nil && len(q.QuorumNames) == 3 && m.Available && len(m.Standbys) == 1 &&
 			slices.EqualFunc(states, s, func(a, b ceph.OSDState) bool { return a.ID == b.ID && a.UUID == b.UUID && b.Up && b.In }) {
 			break
@@ -343,7 +344,7 @@ func TestTwoDomainLogicalOutageLedger(t *testing.T) {
 	}
 	// The survivor MON was never restarted: its uptime continues.
 	for attempt := 1; ; attempt++ {
-		round := observeMajorityRound(ctx, rec, withSockets(t, cluster), baseline)
+		round := observeMajorityRound(ctx, rec, harness.WithSockets(t, cluster), baseline)
 		var own []majoritySample
 		for _, s := range round.Samples {
 			if s.Name == survivorMON.Name {

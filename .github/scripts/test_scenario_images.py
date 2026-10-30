@@ -266,6 +266,10 @@ class ScenarioImageTests(unittest.TestCase):
         self.assertEqual(command, ["python3", ".github/scripts/tag_scenarios.py", "run",
                                    "--category", "recovery", "--batch", "container_pause",
                                    "--directory", "artifacts/scenario-recovery-container_pause"])
+        _, commands = self.dry_run("scenario", env, ("SCENARIO_PACKAGE=./internal/integration/rbd",))
+        command = commands[0]
+        self.assertEqual(command[command.index("--package") + 1], "./internal/integration/rbd")
+        self.assertEqual(command[command.index("--package") + 2], "--directory")
         for missing in ("SCENARIO_CATEGORY", "SCENARIO_BATCH"):
             with self.subTest(missing=missing):
                 result = subprocess.run(["make", "--no-print-directory", "scenario",

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"strconv"
 	"strings"
 	"testing"
@@ -257,14 +258,14 @@ type abruptWitness struct {
 // admission, because the phase would not be proven.
 func abruptFindWitness(data []byte, object, client, pg string) (abruptWitness, bool, error) {
 	var dump struct {
-		Ops []heldOp `json:"ops"`
+		Ops []harness.HeldOp `json:"ops"`
 	}
 	if err := json.Unmarshal(data, &dump); err != nil {
 		return abruptWitness{}, false, fmt.Errorf("dump_ops_in_flight: %w", err)
 	}
-	var found []heldOp
+	var found []harness.HeldOp
 	for _, op := range dump.Ops {
-		if strings.HasPrefix(op.Description, "osd_op(") && strings.HasPrefix(op.request(), client+".") {
+		if strings.HasPrefix(op.Description, "osd_op(") && strings.HasPrefix(op.Request(), client+".") {
 			found = append(found, op)
 		}
 	}
@@ -277,13 +278,13 @@ func abruptFindWitness(data []byte, object, client, pg string) (abruptWitness, b
 	}
 	op := found[0]
 	if !strings.Contains(op.Description, " "+pg+" ") || !strings.Contains(op.Description, "write") {
-		return abruptWitness{}, false, fmt.Errorf("request %q of %s is not a write to PG %s", op.request(), client, pg)
+		return abruptWitness{}, false, fmt.Errorf("request %q of %s is not a write to PG %s", op.Request(), client, pg)
 	}
 	decoded := strings.Contains(op.Description, ":::")
 	if decoded && !strings.Contains(op.Description, ":::"+object+":head") {
-		return abruptWitness{}, false, fmt.Errorf("request %q of %s names another object than %s", op.request(), client, object)
+		return abruptWitness{}, false, fmt.Errorf("request %q of %s names another object than %s", op.Request(), client, object)
 	}
-	return abruptWitness{Object: object, Client: client, Request: op.request(), Decoded: decoded, Flag: op.TypeData.FlagPoint, Events: op.events()}, true, nil
+	return abruptWitness{Object: object, Client: client, Request: op.Request(), Decoded: decoded, Flag: op.TypeData.FlagPoint, Events: op.Events()}, true, nil
 }
 
 // abruptWitness reads the OSD's in-flight operations once and returns the
@@ -292,7 +293,7 @@ func abruptFindWitness(data []byte, object, client, pg string) (abruptWitness, b
 func abruptWitnessOf(t *testing.T, ctx context.Context, cluster *ceph.Container, docker *mobycl.Client, osd *ceph.OSDContainer, daemon, pg, object, client string) (abruptWitness, bool) {
 	t.Helper()
 	before := osdMemoryInspect(t, ctx, docker, osd.GetContainerID())
-	data, err := adminSocket(t, ctx, cluster, daemon, "dump_ops_in_flight")
+	data, err := harness.AdminSocket(t, ctx, cluster, daemon, "dump_ops_in_flight")
 	if err != nil {
 		t.Fatal("abrupt in-flight observation", err)
 	}
@@ -314,7 +315,7 @@ var abruptLastDump []string
 
 func abruptDescriptions(data []byte) []string {
 	var dump struct {
-		Ops []heldOp `json:"ops"`
+		Ops []harness.HeldOp `json:"ops"`
 	}
 	_ = json.Unmarshal(data, &dump)
 	var out []string
@@ -322,7 +323,7 @@ func abruptDescriptions(data []byte) []string {
 		if len(out) == 8 {
 			break
 		}
-		out = append(out, fmt.Sprintf("%s flag=%q events=%v", op.Description, op.TypeData.FlagPoint, op.events()))
+		out = append(out, fmt.Sprintf("%s flag=%q events=%v", op.Description, op.TypeData.FlagPoint, op.Events()))
 	}
 	return out
 }
@@ -360,7 +361,7 @@ func abruptDispatchDelay(t *testing.T, ctx context.Context, cluster *ceph.Contai
 	} {
 		deadline := time.Now().Add(time.Minute)
 		for {
-			out, err := adminSocket(t, ctx, cluster, osd, "config", "get", setting.Name)
+			out, err := harness.AdminSocket(t, ctx, cluster, osd, "config", "get", setting.Name)
 			var reply map[string]string
 			if err == nil && json.Unmarshal(out, &reply) == nil && abruptSameNumber(reply[setting.Name], setting.Value) {
 				break

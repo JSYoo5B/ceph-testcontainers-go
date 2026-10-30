@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"strconv"
 	"strings"
 	"testing"
@@ -52,7 +53,7 @@ func nativeInputReceipt(t *testing.T, ctx context.Context, ctr testcontainers.Co
 	t.Helper()
 	deadline := time.Now().Add(time.Minute)
 	for {
-		if code, out, err := sessionExec(ctx, ctr, "cat", workdir+"/"+name); err == nil && code == 0 {
+		if code, out, err := harness.SessionExec(ctx, ctr, "cat", workdir+"/"+name); err == nil && code == 0 {
 			var receipt map[string]any
 			if err := json.Unmarshal([]byte(out), &receipt); err != nil || receipt["token"] != token {
 				t.Fatalf("receipt %s of another run or malformed: %v %q", name, err, out)
@@ -74,8 +75,8 @@ func nativeInputReceipt(t *testing.T, ctx context.Context, ctr testcontainers.Co
 func testNativeCommandInput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
-	cluster, client := newServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
+	image, roles := harness.IntegrationImages(t)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
 	first := []byte{0x00, 'f', 0xff, 0xfe, 0x00, '\n', 0x80, 0xc3, 0x28}
 	second := make([]byte, 300<<10)
 	if _, err := rand.Read(second); err != nil {
@@ -148,8 +149,8 @@ func testNativeCommandInput(t *testing.T) {
 func testNativeCommandInputCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
-	cluster, client := newServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
+	image, roles := harness.IntegrationImages(t)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	input := ceph.NewNativeInput()
@@ -164,7 +165,7 @@ func testNativeCommandInputCancellation(t *testing.T) {
 	}()
 	var pid string
 	for deadline := time.Now().Add(time.Minute); pid == ""; {
-		if code, out, err := sessionExec(ctx, client, "cat", "/tmp/native-input-sleeper.pid"); err == nil && code == 0 {
+		if code, out, err := harness.SessionExec(ctx, client, "cat", "/tmp/native-input-sleeper.pid"); err == nil && code == 0 {
 			pid = strings.TrimSpace(out)
 		} else if time.Now().After(deadline) {
 			t.Fatal("the sleeper did not start")
@@ -195,7 +196,7 @@ func testNativeCommandInputCancellation(t *testing.T) {
 	case <-time.After(time.Minute):
 		t.Fatal("the writer did not return after the call was canceled")
 	}
-	if code, _, err := sessionExec(ctx, client, "kill", "-0", pid); err != nil || code == 0 {
+	if code, _, err := harness.SessionExec(ctx, client, "kill", "-0", pid); err != nil || code == 0 {
 		t.Fatalf("the canceled command %s still runs: %d, %v", pid, code, err)
 	}
 	t.Logf("NATIVE_INPUT canceled sleeper pid=%s is gone and the writer returned", pid)
@@ -206,7 +207,7 @@ func testNativeCommandInputCancellation(t *testing.T) {
 // ctr.
 func checkNoSupervisedLeftovers(t *testing.T, ctx context.Context, ctr testcontainers.Container) {
 	t.Helper()
-	code, out, err := sessionExec(ctx, ctr, "sh", "-c", "ls -A /tmp/tc-supervised 2>/dev/null")
+	code, out, err := harness.SessionExec(ctx, ctr, "sh", "-c", "ls -A /tmp/tc-supervised 2>/dev/null")
 	if err != nil || strings.TrimSpace(out) != "" {
 		t.Fatalf("supervisor markers remain: %d %q %v", code, out, err)
 	}

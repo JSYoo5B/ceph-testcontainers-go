@@ -5,13 +5,14 @@
 package integration_test
 
 import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
 )
 
 // Independent cold-MGR and combined MON-only fixtures exercise first management
 // provisioning on the original cluster, including real client data before MGR.
 func TestNoInitialManagerTopology(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		if !t.Run(name, func(t *testing.T) {
 			if !t.Run("storage-before-first-manager", func(t *testing.T) { testNoInitialManager(t, host, false) }) {

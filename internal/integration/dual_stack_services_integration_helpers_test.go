@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"net/http"
 	"net/netip"
@@ -167,7 +168,7 @@ type heldResult struct {
 	err    error
 }
 
-// startHeldSession runs script in client and waits until it has listed its
+// StartHeldSession runs script in client and waits until it has listed its
 // established connections.
 func startDualStackSession(t *testing.T, ctx context.Context, client testcontainers.Container, script, tag string, args ...string) *dualStackSession {
 	t.Helper()
@@ -514,9 +515,9 @@ func bridgeAddresses(t *testing.T, ctx context.Context, cluster *ceph.Container,
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := inspection.NetworkSettings.Networks[staticFacts(cluster).NetworkName]
+	endpoint := inspection.NetworkSettings.Networks[harness.StaticFacts(cluster).NetworkName]
 	if endpoint == nil || !endpoint.IPAddress.Is4() || !endpoint.GlobalIPv6Address.Is6() {
-		t.Fatalf("endpoint of %s on %s: %+v", ctr.GetContainerID(), staticFacts(cluster).NetworkName, endpoint)
+		t.Fatalf("endpoint of %s on %s: %+v", ctr.GetContainerID(), harness.StaticFacts(cluster).NetworkName, endpoint)
 	}
 	return endpoint.IPAddress, endpoint.GlobalIPv6Address
 }
@@ -565,14 +566,14 @@ func firstV2(vector []ceph.EntityAddress) string {
 func testDualStackServices(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	const filesystem = "tc-cephfs"
 	opts := append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2).WithManagerCount(2)),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithAddressFamily(ceph.AddressDualStack)),
 		ceph.WithConfigFile(dualStackOrderConfig(t, "mgr.b", "osd.1", "mds."+filesystem+"-1")),
 		cephfs.WithFilesystems(cephfs.Config{Name: filesystem, ActiveMDS: 1, StandbyMDS: 1}),
 		rgw.WithGateways(rgw.Config{}))
-	cluster, client := newServiceClusterRun(t, cephfsRun, image, opts...)
+	cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, opts...)
 	addresses, endpoints := waitDualStackAddresses(t, ctx, cluster, 1, 2)
 	ipv6First := map[string]bool{"mgr.b": true, "osd.1": true, "mds." + filesystem + "-1": true}
 	checkOrder := func(daemon string, vector []ceph.EntityAddress) {
@@ -617,7 +618,7 @@ func testDualStackServices(t *testing.T) {
 	}
 	radosSessions("rados-first-mgr")
 	first := addresses.ActiveManager.Name
-	if err := managerHandle(t, ctx, cluster, first).Remove(ctx); err != nil {
+	if err := harness.ManagerHandle(t, ctx, cluster, first).Remove(ctx); err != nil {
 		t.Fatalf("fail over from mgr.%s: %v", first, err)
 	}
 	addresses, _ = waitDualStackAddresses(t, ctx, cluster, 1, 2)
@@ -708,10 +709,10 @@ func testDualStackServices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := s3HTTPClient{endpoint: endpoint, accessKey: gateway.AccessKey, secretKey: gateway.SecretKey, region: gateway.Region, http: &http.Client{Timeout: 45 * time.Second}}
-	if body := host.request(t, ctx, http.MethodGet, "/tc-dual-stack/ipv6", nil, http.StatusOK); len(written) != 1024 || !bytes.Equal(body, written) {
+	host := harness.S3HTTPClient{Endpoint: endpoint, AccessKey: gateway.AccessKey, SecretKey: gateway.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 45 * time.Second}}
+	if body := host.Request(t, ctx, http.MethodGet, "/tc-dual-stack/ipv6", nil, http.StatusOK); len(written) != 1024 || !bytes.Equal(body, written) {
 		t.Fatalf("host S3 read %d bytes that differ from the %d written over IPv6", len(body), len(written))
 	}
 	t.Logf("DUAL_STACK_SERVICES_RECEIPT image=%s ceph=%s sessions=%v rgw_listeners=%v s3=%v rgw_access=%q host_s3=%s",
-		staticFacts(cluster).Images.Essential, staticFacts(cluster).CephVersion, receipts, listeners, s3, accessLog, endpoint)
+		harness.StaticFacts(cluster).Images.Essential, harness.StaticFacts(cluster).CephVersion, receipts, listeners, s3, accessLog, endpoint)
 }

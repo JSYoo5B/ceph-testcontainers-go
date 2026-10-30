@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"os"
 	"testing"
 	"time"
@@ -23,17 +24,17 @@ import (
 func TestHostNetworkMultiCluster(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	image, imageOpts := integrationImages(t)
-	clusters := hostNetworkRunPair(t, ctx, image, imageOpts)
+	image, imageOpts := harness.IntegrationImages(t)
+	clusters := harness.HostNetworkRunPair(t, ctx, image, imageOpts)
 
 	fsids := make([]string, 2)
 	keyrings := make([][]byte, 2)
 	clients := make([]testcontainers.Container, 2)
 	for i, cluster := range clusters {
-		if !staticFacts(cluster).UsesHostNetwork || staticFacts(cluster).PublicAddress != "127.0.0.1" {
-			t.Fatalf("cluster %d has unexpected networking: host=%t address=%q", i, staticFacts(cluster).UsesHostNetwork, staticFacts(cluster).PublicAddress)
+		if !harness.StaticFacts(cluster).UsesHostNetwork || harness.StaticFacts(cluster).PublicAddress != "127.0.0.1" {
+			t.Fatalf("cluster %d has unexpected networking: host=%t address=%q", i, harness.StaticFacts(cluster).UsesHostNetwork, harness.StaticFacts(cluster).PublicAddress)
 		}
-		status, err := observeCluster(cluster).Status(ctx)
+		status, err := harness.ObserveCluster(cluster).Status(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,13 +49,13 @@ func TestHostNetworkMultiCluster(t *testing.T) {
 			t.Fatalf("cluster %d returned empty connection files", i)
 		}
 		keyrings[i] = keyring
-		cephCommand(t, ctx, cluster, "osd", "pool", "create", "tc-host-isolation", "8")
-		cephCommand(t, ctx, cluster, "osd", "pool", "set", "tc-host-isolation", "pg_autoscale_mode", "off")
-		cephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", "tc-host-isolation", "rados")
+		harness.CephCommand(t, ctx, cluster, "osd", "pool", "create", "tc-host-isolation", "8")
+		harness.CephCommand(t, ctx, cluster, "osd", "pool", "set", "tc-host-isolation", "pg_autoscale_mode", "off")
+		harness.CephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", "tc-host-isolation", "rados")
 		if err := cluster.WaitForClean(ctx); err != nil {
 			t.Fatal(err)
 		}
-		client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(),
+		client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), cluster.WithClient(),
 			ceph.WithIdleEntrypoint(),
 			testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados"})),
 		)
@@ -76,7 +77,7 @@ func TestHostNetworkMultiCluster(t *testing.T) {
 	if fsids[0] == "" || fsids[1] == "" || fsids[0] == fsids[1] || bytes.Equal(keyrings[0], keyrings[1]) {
 		t.Fatal("host network clusters do not have independent FSIDs and credentials")
 	}
-	hostNetworkAssertDistinctAddresses(t, ctx, clusters)
+	harness.HostNetworkAssertDistinctAddresses(t, ctx, clusters)
 	t.Logf("concurrent host network clusters: FSIDs %s and %s", fsids[0], fsids[1])
 
 	payloads := [][]byte{
@@ -84,15 +85,15 @@ func TestHostNetworkMultiCluster(t *testing.T) {
 		bytes.Repeat([]byte("host-network-cluster-B\n"), 128),
 	}
 	for i := range clients {
-		hostNetworkRadosProbe(t, ctx, clients[i], fsids[i], payloads[i], "seed")
+		harness.HostNetworkRadosProbe(t, ctx, clients[i], fsids[i], payloads[i], "seed")
 	}
 	for i := range clients {
-		hostNetworkRadosProbe(t, ctx, clients[i], fsids[i], payloads[i], "initial")
+		harness.HostNetworkRadosProbe(t, ctx, clients[i], fsids[i], payloads[i], "initial")
 	}
 	for i, cluster := range clusters {
-		hostNetworkAdvanceTopology(t, ctx, cluster, clusters)
+		harness.HostNetworkAdvanceTopology(t, ctx, cluster, clusters)
 		for j := range clients {
-			hostNetworkRadosProbe(t, ctx, clients[j], fsids[j], payloads[j], fmt.Sprintf("after-topology-%d", i))
+			harness.HostNetworkRadosProbe(t, ctx, clients[j], fsids[j], payloads[j], fmt.Sprintf("after-topology-%d", i))
 		}
 	}
 	t.Log("native Python librados: identical pool/object names remained independent after both OSD 2 -> 3 -> 2 replacements; fresh sessions read retained bytes and wrote new objects")

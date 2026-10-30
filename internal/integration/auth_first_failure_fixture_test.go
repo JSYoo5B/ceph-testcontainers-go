@@ -261,7 +261,7 @@ type heldSources struct {
 	active   int
 }
 
-func (h *heldSources) wait(ctx context.Context) error {
+func (h *heldSources) Wait(ctx context.Context) error {
 	h.mu.Lock()
 	h.active++
 	h.mu.Unlock()
@@ -282,7 +282,7 @@ func (h *heldSources) query(ctx context.Context) error {
 	if h.failFast {
 		return errors.New("container is paused")
 	}
-	return h.wait(ctx)
+	return h.Wait(ctx)
 }
 
 func (h *heldSources) AdminSocket(ctx context.Context, _ string, _ ...string) ([]byte, error) {
@@ -306,7 +306,7 @@ func (h *heldSources) RunNativeCommand(ctx context.Context, _ testcontainers.Con
 }
 
 func (h *heldSources) RedactSecrets(ctx context.Context, data []byte, _ ...string) ([]byte, error) {
-	return nil, h.wait(ctx)
+	return nil, h.Wait(ctx)
 }
 
 // A collection against a held teardown returns within its 20 ms budget,

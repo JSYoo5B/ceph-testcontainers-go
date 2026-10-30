@@ -31,7 +31,7 @@ func TestCPUEngineStateCopiesTheFenceFields(t *testing.T) {
 	if err != nil || s != want {
 		t.Fatalf("got %+v %v, want %+v", s, err, want)
 	}
-	if err := s.check(containerGeneration{ID: "c1", StartedAt: in.State.StartedAt}, 4242); !errors.Is(err, errCPUBinding) {
+	if err := s.Check(containerGeneration{ID: "c1", StartedAt: in.State.StartedAt}, 4242); !errors.Is(err, errCPUBinding) {
 		t.Fatalf("paused restarted state must be refused by the fence: %v", err)
 	}
 }

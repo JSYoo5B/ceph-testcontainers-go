@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
 	"time"
 
@@ -20,15 +21,15 @@ import (
 // records and supervised native clients; an independent client decides every
 // outcome by reading it back.
 func TestRADOSMutationOutcomes(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	const pool, namespace = "tc-outcomes", "fixture"
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", PGNum: 1}); err != nil {
 		t.Fatal(err)
 	}
-	poolState, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
+	poolState, err := harness.PoolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil || poolState.ID <= 0 {
 		t.Fatal("pool identity unavailable", err)
 	}
@@ -48,7 +49,7 @@ func TestRADOSMutationOutcomes(t *testing.T) {
 	var acked struct{}
 	receipt := phase(&acked, "acked")
 	booted := osdUpFrom(t, ctx, cluster, osd.ID)
-	signalContainer(t, ctx, osd, "KILL")
+	harness.SignalContainer(t, ctx, osd, "KILL")
 	for deadline := time.Now().Add(30 * time.Second); ; {
 		state, err := osd.State(ctx)
 		if err != nil {
@@ -199,7 +200,7 @@ func TestRADOSMutationOutcomes(t *testing.T) {
 	}
 	t.Logf("%s held %s and finished it without starting it: %+v", osdName, held.Description, discarded.TypeData.Events)
 
-	if err := poolHandle(t, ctx, cluster, pool).Remove(ctx); err != nil {
+	if err := harness.PoolHandle(t, ctx, cluster, pool).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 }

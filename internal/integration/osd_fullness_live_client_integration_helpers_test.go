@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"strings"
 	"testing"
@@ -101,7 +102,7 @@ func fullnessLiveOpsNow(ctx context.Context, cluster *ceph.Container, client tes
 func testOSDFullnessLiveClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t)
+	cluster, client := harness.NewServiceCluster(t)
 	receipt := &fullnessLiveReceipt{Retry: fullnessRetry, Ratios: ceph.FullRatios{NearFull: .0001, BackfillFull: .0002, Full: .95}}
 	type restoration struct {
 		name string
@@ -507,7 +508,7 @@ func testOSDFullnessLiveClient(t *testing.T) {
 	}
 
 	// Close the writer and the data oracle.
-	execCommand(t, ctx, client, "touch", fullnessLiveStop)
+	harness.ExecCommand(t, ctx, client, "touch", fullnessLiveStop)
 	select {
 	case done := <-actor.done:
 		actorDone = true
@@ -539,7 +540,7 @@ func testOSDFullnessLiveClient(t *testing.T) {
 	if err != nil {
 		fail("%v", err)
 	}
-	read, err := cluster.RunNativeCommand(ctx, toolkitContainer(t, cluster), secondFaultCommand("independent read", 3*time.Minute, "read", "tc-paths", string(encodedNames)))
+	read, err := cluster.RunNativeCommand(ctx, harness.ToolkitContainer(t, cluster), secondFaultCommand("independent read", 3*time.Minute, "read", "tc-paths", string(encodedNames)))
 	if err != nil || read.ExitCode != 0 || !read.Complete() {
 		fail("independent read of the writer's objects: exit %d: %v: %.2048s", read.ExitCode, err, read.Stderr)
 	}

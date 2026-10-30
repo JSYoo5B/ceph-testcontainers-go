@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"os"
 	"runtime"
 	"strings"
@@ -54,13 +55,13 @@ func TestCPUWitnessReadonly(t *testing.T) {
 	}
 	t.Logf("CPU_WITNESS_CONTROLLER euid=%d engine=%s arch=%s ncpu=%d", os.Geteuid(), info.Info.ServerVersion, runtime.GOARCH, info.Info.NCPU)
 
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialManagers().WithNoInitialOSDs()),
 		testcontainers.WithHostConfigModifier(func(h *container.HostConfig) {
 			h.NanoCPUs = cpuReadonlyNano
 			h.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyDisabled}
 		}))
-	cluster, client := newServiceClusterWithOptions(t, image, opts...)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
 	id := cluster.GetContainerID()
 
 	inspect := cpuEngineInspector(ctx, docker.Client, id)
@@ -80,7 +81,7 @@ func TestCPUWitnessReadonly(t *testing.T) {
 	if err != nil {
 		t.Skipf("eligibility incomplete before any reading: %v", err)
 	}
-	t.Log(target.receipt())
+	t.Log(target.Receipt())
 
 	before, err := target.read(inspect, time.Now)
 	if err != nil {

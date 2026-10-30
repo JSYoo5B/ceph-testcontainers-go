@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"maps"
 	"slices"
 	"strconv"
@@ -38,7 +39,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 	if err != nil || engine.Info.ID == "" {
 		t.Fatal("small-device engine identity unavailable", err)
 	}
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(size)))
 	ramCap := int64(0)
 	if ram {
@@ -73,7 +74,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 	if err != nil {
 		t.Fatal("small-device control setup failed", err)
 	}
-	q, err := observeCluster(cluster).QuorumStatus(ctx)
+	q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,7 @@ func testSmallOSDBlockSize(t *testing.T, size int64, ram, skipBenchmark bool) {
 		volume, keeper = smallOSDRAMBacking(t, ctx, docker.Client, cluster, initial, ramCap)
 		owned[keeper.ID] = true
 	}
-	nativeNetwork, err := docker.Client.NetworkInspect(ctx, staticFacts(cluster).NetworkName, mobycl.NetworkInspectOptions{})
+	nativeNetwork, err := docker.Client.NetworkInspect(ctx, harness.StaticFacts(cluster).NetworkName, mobycl.NetworkInspectOptions{})
 	if err != nil || nativeNetwork.Network.ID == "" {
 		t.Fatal("owned bridge identity unavailable", err)
 	}
@@ -312,7 +313,7 @@ func smallOSDRAMBacking(t *testing.T, ctx context.Context, docker *mobycl.Client
 
 func smallOSDData(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid, pool string, poolID int64, phase string) {
 	t.Helper()
-	state, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
+	state, err := harness.PoolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil || state.ID != poolID || state.Size != 2 || state.MinSize != 1 {
 		t.Fatal("small-device original pool changed", err)
 	}

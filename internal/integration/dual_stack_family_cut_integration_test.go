@@ -4,7 +4,10 @@
 
 package integration_test
 
-import "testing"
+import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"testing"
+)
 
 // TestDualStackFamilyCut cuts one address family of one path of an
 // AddressDualStack cluster, the client's packets to one daemon's IPv6
@@ -15,6 +18,6 @@ import "testing"
 // (CEPH_TEST_NETEM_IMAGE, by default fault.NetemHelperImage) and an engine
 // that grants it NET_ADMIN.
 func TestDualStackFamilyCut(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testDualStackFamilyCut(t)
 }

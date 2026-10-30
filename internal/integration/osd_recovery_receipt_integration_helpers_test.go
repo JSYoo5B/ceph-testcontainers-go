@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"strconv"
 	"strings"
@@ -208,7 +209,7 @@ func recoveryRun(t *testing.T, ctx context.Context, cluster *ceph.Container, ctr
 	if err != nil || result.ExitCode != 0 || !result.Complete() {
 		t.Fatalf("%s objects: exit %d: %v: %.2048s", args[0], result.ExitCode, err, result.Stderr)
 	}
-	return lastJSONLine(string(result.Stdout))
+	return harness.LastJSONLine(string(result.Stdout))
 }
 
 // readRecoveryObjects reads every object of prefixes with a client of its own
@@ -219,7 +220,7 @@ func readRecoveryObjects(t *testing.T, ctx context.Context, cluster *ceph.Contai
 		Count  int    `json:"count"`
 		SHA256 string `json:"sha256"`
 	}
-	out := recoveryRun(t, ctx, cluster, toolkitContainer(t, cluster), append([]string{"read"}, prefixes...)...)
+	out := recoveryRun(t, ctx, cluster, harness.ToolkitContainer(t, cluster), append([]string{"read"}, prefixes...)...)
 	if err := json.Unmarshal([]byte(out), &read); err != nil || read.SHA256 != expectedRecoveryDigest(prefixes...) {
 		t.Fatalf("independent read of %v: %s, %v", prefixes, out, err)
 	}
@@ -245,7 +246,7 @@ func waitPG(t *testing.T, parent context.Context, cluster *ceph.Container, what 
 	defer cancel()
 	var last string
 	for {
-		snapshot, err := poolHandle(t, ctx, cluster, "tc-paths").PGs(ctx)
+		snapshot, err := harness.PoolHandle(t, ctx, cluster, "tc-paths").PGs(ctx)
 		if err == nil && len(snapshot.PGs) == 1 {
 			if ok(snapshot.PGs[0]) {
 				return snapshot.PGs[0]
@@ -300,7 +301,7 @@ func testOSDRecoveryAndBackfill(t *testing.T, erasure bool) {
 		pool = ceph.PoolConfig{Name: "tc-paths", PGNum: 1, MinSize: 2, Application: "rados", ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1}}
 		opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	}
-	cluster, client := newServiceCluster(t, opts...)
+	cluster, client := harness.NewServiceCluster(t, opts...)
 	if _, err := cluster.CreatePool(ctx, pool); err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"net/http"
 	"strings"
@@ -61,23 +62,23 @@ func monitorRollingQuorum(t *testing.T, ctx context.Context, cluster *ceph.Conta
 	if err := cluster.WaitForQuorum(ctx); err != nil {
 		t.Fatal(err)
 	}
-	topologyWait(t, ctx, func() bool {
-		quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	harness.TopologyWait(t, ctx, func() bool {
+		quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 		return err == nil && len(quorum.QuorumNames) == count && len(quorum.MonMap.Mons) == count && len(clusteraccess.Monitors(t, cluster)) == count
 	})
 }
 
 func monitorRollingRADOS(t *testing.T, ctx context.Context, control testcontainers.Container, payload []byte) {
 	t.Helper()
-	topologyExecOutput(t, ctx, control, "rados", "-p", "tc-mon-rolling", "get", "retained", "/tmp/tc-mon-rolling-output")
+	harness.TopologyExecOutput(t, ctx, control, "rados", "-p", "tc-mon-rolling", "get", "retained", "/tmp/tc-mon-rolling-output")
 	if !bytes.Equal(payload, monitorRollingFile(t, ctx, control, "/tmp/tc-mon-rolling-output")) {
 		t.Fatal("retained RADOS bytes changed during MON replacement")
 	}
 }
 
-func monitorRollingS3(t *testing.T, ctx context.Context, client s3HTTPClient, path string, payload []byte) {
+func monitorRollingS3(t *testing.T, ctx context.Context, client harness.S3HTTPClient, path string, payload []byte) {
 	t.Helper()
-	if !bytes.Equal(payload, client.request(t, ctx, http.MethodGet, path, nil, http.StatusOK)) {
+	if !bytes.Equal(payload, client.Request(t, ctx, http.MethodGet, path, nil, http.StatusOK)) {
 		t.Fatal("retained signed S3 bytes changed during MON replacement")
 	}
 }

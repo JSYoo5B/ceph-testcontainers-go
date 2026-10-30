@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ import (
 func testSupervisedCommandCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
-	ctr, err := testcontainers.Run(ctx, essentialImage(t), ceph.WithIdleEntrypoint())
+	ctr, err := testcontainers.Run(ctx, harness.EssentialImage(t), ceph.WithIdleEntrypoint())
 	testcontainers.CleanupContainer(t, ctr)
 	if err != nil {
 		t.Fatal(err)

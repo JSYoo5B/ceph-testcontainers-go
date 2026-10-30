@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"testing"
 	"time"
@@ -17,8 +18,8 @@ import (
 )
 
 func TestNativePoolReplacement(t *testing.T) {
-	parallelWhenEnabled(t)
-	for _, mode := range networkModes(t, "host", "bridge") {
+	harness.ParallelWhenEnabled(t)
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
@@ -27,7 +28,7 @@ func TestNativePoolReplacement(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, _ := newServiceCluster(t, opts...)
+			cluster, _ := harness.NewServiceCluster(t, opts...)
 			const pool = "tc-native-replacement"
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rbd", PGNum: 1}); err != nil {
 				t.Fatal(err)
@@ -35,7 +36,7 @@ func TestNativePoolReplacement(t *testing.T) {
 			if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 				t.Fatal(err)
 			}
-			original, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
+			original, err := harness.PoolHandle(t, ctx, cluster, pool).Status(ctx)
 			if err != nil || original.ID <= 0 {
 				t.Fatal("original native pool ID unavailable", err)
 			}
@@ -56,13 +57,13 @@ func TestNativePoolReplacement(t *testing.T) {
 			}
 			// Only this test-created empty pool is replaced, deliberately outside
 			// the public handle. A recreated same-name namespace must survive.
-			cephCommand(t, ctx, cluster, "osd", "pool", "delete", pool, pool, "--yes-i-really-really-mean-it")
-			cephCommand(t, ctx, cluster, "osd", "pool", "create", pool, "1")
-			cephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", pool, "rbd")
+			harness.CephCommand(t, ctx, cluster, "osd", "pool", "delete", pool, pool, "--yes-i-really-really-mean-it")
+			harness.CephCommand(t, ctx, cluster, "osd", "pool", "create", pool, "1")
+			harness.CephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", pool, "rbd")
 			if err := rbd.InitPool(ctx, cluster, pool); err != nil {
 				t.Fatal(err)
 			}
-			replacement, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
+			replacement, err := harness.PoolHandle(t, ctx, cluster, pool).Status(ctx)
 			if err != nil || replacement.ID <= 0 || replacement.ID == original.ID {
 				t.Fatal("native replacement was not distinguished", err)
 			}

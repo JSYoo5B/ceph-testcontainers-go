@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ import (
 // ms_blackhole_client on the active MDS stops new mounts without a failover,
 // unlike a paused MDS, whose missing beacons make the MONs replace it.
 func TestMessengerFaultInjection(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
@@ -36,7 +37,7 @@ func TestMessengerFaultInjection(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceCluster(t, opts...)
+			cluster, client := harness.NewServiceCluster(t, opts...)
 			const pool = "tc-messenger-faults"
 			if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, Application: "rados", Replicas: 2, MinSize: 1}); err != nil {
 				t.Fatal(err)
@@ -58,7 +59,7 @@ func TestMessengerFaultInjection(t *testing.T) {
 				var mapping struct {
 					Primary *int `json:"acting_primary"`
 				}
-				if err := json.Unmarshal(mustCeph(t, ctx, cluster, "osd", "map", pool, object, "--format", "json"), &mapping); err != nil || mapping.Primary == nil {
+				if err := json.Unmarshal(harness.MustCeph(t, ctx, cluster, "osd", "map", pool, object, "--format", "json"), &mapping); err != nil || mapping.Primary == nil {
 					t.Fatal("native object mapping unavailable", err)
 				}
 				primaries[object], names = *mapping.Primary, append(names, object)
@@ -73,12 +74,12 @@ func TestMessengerFaultInjection(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				out := execOutput(t, ctx, client, "python3", "-c", messengerFaultProbe, pool, generation, timeout, string(encoded))
+				out := harness.ExecOutput(t, ctx, client, "python3", "-c", messengerFaultProbe, pool, generation, timeout, string(encoded))
 				var results []messengerFaultResult
-				if err := json.Unmarshal([]byte(lastLine(out)), &results); err != nil || len(results) != len(names) {
+				if err := json.Unmarshal([]byte(harness.LastLine(out)), &results); err != nil || len(results) != len(names) {
 					t.Fatalf("messenger fault probe output: %s %v", out, err)
 				}
-				t.Logf("MESSENGER_FAULT_CLIENT generation=%s results=%s", generation, lastLine(out))
+				t.Logf("MESSENGER_FAULT_CLIENT generation=%s results=%s", generation, harness.LastLine(out))
 				return results
 			}
 			allWritten := func(t *testing.T, generation string, limit float64) []float64 {
@@ -102,7 +103,7 @@ func TestMessengerFaultInjection(t *testing.T) {
 						t.Fatalf("object %s with primary osd.%d: %+v", result.Name, primaries[result.Name], result)
 					}
 				}
-				states, err := observeCluster(cluster).OSDStates(ctx)
+				states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -141,12 +142,12 @@ func TestMessengerFaultInjection(t *testing.T) {
 				}
 				mount := func(t *testing.T, phase string) messengerFaultMount {
 					t.Helper()
-					out := execOutput(t, ctx, client, "python3", "-c", messengerFaultMountProbe, fs.FilesystemName, phase)
+					out := harness.ExecOutput(t, ctx, client, "python3", "-c", messengerFaultMountProbe, fs.FilesystemName, phase)
 					var result messengerFaultMount
-					if err := json.Unmarshal([]byte(lastJSONLine(out)), &result); err != nil {
+					if err := json.Unmarshal([]byte(harness.LastJSONLine(out)), &result); err != nil {
 						t.Fatalf("CephFS mount probe output: %s %v", out, err)
 					}
-					t.Logf("MESSENGER_FAULT_MOUNT %s", lastJSONLine(out))
+					t.Logf("MESSENGER_FAULT_MOUNT %s", harness.LastJSONLine(out))
 					return result
 				}
 				active := func(t *testing.T) cephfs.MDSStatus {

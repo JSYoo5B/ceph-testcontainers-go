@@ -7,6 +7,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"net/http"
 	"strings"
 	"testing"
@@ -24,12 +25,12 @@ import (
 // from all three packages start one cluster that serves RBD, CephFS and S3
 // clients at the same time.
 func TestServicePackages(t *testing.T) {
-	parallelWhenEnabled(t)
-	image, roles := integrationImages(t)
+	harness.ParallelWhenEnabled(t)
+	image, roles := harness.IntegrationImages(t)
 	t.Run("rbd_run_default_pool", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 		defer cancel()
-		cluster, client := newServiceClusterRun(t, rbdRun, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))...)
+		cluster, client := harness.NewServiceClusterRun(t, harness.RBDRun, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))...)
 		servicePackageApplication(t, ctx, cluster, "rbd", "rbd")
 		if err := cluster.WaitForClean(ctx); err != nil {
 			t.Fatal(err)
@@ -39,7 +40,7 @@ func TestServicePackages(t *testing.T) {
 	t.Run("cephfs_run_default_filesystem", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 		defer cancel()
-		cluster, client := newServiceClusterRun(t, cephfsRun, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))...)
+		cluster, client := harness.NewServiceClusterRun(t, harness.CEPHFSRun, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))...)
 		filesystems := cephfs.Filesystems(cluster)
 		if len(filesystems) != 1 || filesystems[0].FilesystemName != "tc-cephfs" {
 			t.Fatalf("default filesystem was not created: %+v", filesystems)
@@ -52,14 +53,14 @@ func TestServicePackages(t *testing.T) {
 	t.Run("rgw_run_default_gateway", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 		defer cancel()
-		cluster, _ := newServiceClusterRun(t, rgwRun, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))...)
+		cluster, _ := harness.NewServiceClusterRun(t, harness.RGWRun, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))...)
 		gateways := clusteraccess.Gateways(t, cluster)
 		if len(gateways) != 1 || gateways[0].AccessKey == "" {
 			t.Fatalf("default gateway or its user was not created: %+v", gateways)
 		}
 		servicePackageS3(t, ctx, gateways[0], gateways[0].AccessKey, gateways[0].SecretKey, "default")
 	})
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, "combined_"+mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
@@ -72,7 +73,7 @@ func TestServicePackages(t *testing.T) {
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceClusterRun(t, ceph.Run, image, opts...)
+			cluster, client := harness.NewServiceClusterRun(t, ceph.Run, image, opts...)
 			servicePackageApplication(t, ctx, cluster, "volumes", "rbd")
 			filesystems, gateways := cephfs.Filesystems(cluster), clusteraccess.Gateways(t, cluster)
 			if len(filesystems) != 1 || filesystems[0].FilesystemName != "shared" || len(gateways) != 1 || gateways[0].GatewayName != "s3" {
@@ -90,7 +91,7 @@ func TestServicePackages(t *testing.T) {
 			servicePackageS3(t, ctx, gateways[0], gateways[0].AccessKey, gateways[0].SecretKey, name)
 			servicePackageProbe(t, ctx, client, "rbd", "volumes")
 			servicePackageProbe(t, ctx, client, "cephfs", "shared")
-			pools, err := observeCluster(cluster).Pools(ctx)
+			pools, err := harness.ObserveCluster(cluster).Pools(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,7 +113,7 @@ func TestServicePackages(t *testing.T) {
 func servicePackageApplication(t *testing.T, ctx context.Context, cluster *ceph.Container, pool, application string) {
 	t.Helper()
 	var applications map[string]any
-	if err := json.Unmarshal(mustCeph(t, ctx, cluster, "osd", "pool", "application", "get", pool, "--format", "json"), &applications); err != nil {
+	if err := json.Unmarshal(harness.MustCeph(t, ctx, cluster, "osd", "pool", "application", "get", pool, "--format", "json"), &applications); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := applications[application]; !ok || len(applications) != 1 {
@@ -124,7 +125,7 @@ func servicePackageApplication(t *testing.T, ctx context.Context, cluster *ceph.
 // verifies every object that an earlier call wrote.
 func servicePackageProbe(t *testing.T, ctx context.Context, client testcontainers.Container, kind, target string) {
 	t.Helper()
-	t.Logf("SERVICE_PACKAGES %s", execOutput(t, ctx, client, "python3", "-c", servicePackageScript, kind, target))
+	t.Logf("SERVICE_PACKAGES %s", harness.ExecOutput(t, ctx, client, "python3", "-c", servicePackageScript, kind, target))
 }
 
 func servicePackageS3(t *testing.T, ctx context.Context, gateway *rgw.Gateway, access, secret, phase string) {
@@ -133,12 +134,12 @@ func servicePackageS3(t *testing.T, ctx context.Context, gateway *rgw.Gateway, a
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := s3HTTPClient{endpoint: endpoint, accessKey: access, secretKey: secret, region: gateway.Region, http: &http.Client{Timeout: 30 * time.Second}}
+	client := harness.S3HTTPClient{Endpoint: endpoint, AccessKey: access, SecretKey: secret, Region: gateway.Region, HTTP: &http.Client{Timeout: 30 * time.Second}}
 	bucket := "/tc-service-" + strings.ReplaceAll(phase, "_", "-")
 	payload := []byte("service packages share one cluster: " + phase)
-	s3FeatureRequest(t, ctx, client, http.MethodPut, bucket, nil, nil, http.StatusOK)
-	s3FeatureRequest(t, ctx, client, http.MethodPut, bucket+"/object", payload, nil, http.StatusOK)
-	body, _ := s3FeatureRequest(t, ctx, client, http.MethodGet, bucket+"/object", nil, nil, http.StatusOK)
+	harness.S3FeatureRequest(t, ctx, client, http.MethodPut, bucket, nil, nil, http.StatusOK)
+	harness.S3FeatureRequest(t, ctx, client, http.MethodPut, bucket+"/object", payload, nil, http.StatusOK)
+	body, _ := harness.S3FeatureRequest(t, ctx, client, http.MethodGet, bucket+"/object", nil, nil, http.StatusOK)
 	if string(body) != string(payload) {
 		t.Fatalf("S3 object differs: %q", body)
 	}

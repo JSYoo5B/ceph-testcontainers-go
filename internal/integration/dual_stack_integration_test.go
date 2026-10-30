@@ -4,21 +4,24 @@
 
 package integration_test
 
-import "testing"
+import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"testing"
+)
 
 // TestDualStackAddressFamily starts a cluster with AddressDualStack and checks
 // that MONs, MGRs and OSDs advertise a concrete IPv4 and IPv6 address, and
 // that native clients pinned to the MON addresses of either family complete
 // MON, MGR and object operations.
 func TestDualStackAddressFamily(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testDualStackAddressFamily(t)
 }
 
 // TestDualStackSeparateClusterNetwork combines AddressDualStack with
 // NetworkConfig.WithSeparateClusterNetwork.
 func TestDualStackSeparateClusterNetwork(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testDualStackSeparateClusterNetwork(t)
 }
 
@@ -27,6 +30,6 @@ func TestDualStackSeparateClusterNetwork(t *testing.T) {
 // checks that native clients complete MGR commands, object I/O and CephFS I/O
 // over both families and that the gateway serves S3 over both families.
 func TestDualStackServices(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testDualStackServices(t)
 }

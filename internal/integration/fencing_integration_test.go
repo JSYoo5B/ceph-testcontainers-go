@@ -5,13 +5,14 @@
 package integration_test
 
 import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
 )
 
 func TestClientFencing(t *testing.T) {
-	parallelWhenEnabled(t)
-	for _, mode := range networkModes(t, "host", "bridge") {
+	harness.ParallelWhenEnabled(t)
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
-		t.Run(name, func(t *testing.T) { testClientFencing(t, host) })
+		t.Run(name, func(t *testing.T) { harness.RunClientFencing(t, host) })
 	}
 }

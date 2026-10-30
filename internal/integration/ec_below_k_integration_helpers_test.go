@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 	"github.com/testcontainers/testcontainers-go"
 	"slices"
@@ -43,7 +44,7 @@ func ecBelowKWait(t *testing.T, ctx context.Context, c *ceph.Container, pool str
 	defer done()
 	var last error
 	for {
-		s, err := poolHandle(t, wait, c, pool).PGs(wait)
+		s, err := harness.PoolHandle(t, wait, c, pool).PGs(wait)
 		if err == nil {
 			last = checkECBelowKPlacement(p, base, s, lost, floor)
 			if last == nil {
@@ -71,7 +72,7 @@ func ecBelowKRead(t *testing.T, ctx context.Context, c *ceph.Container, client t
 func testECBelowK(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 17*time.Minute)
 	defer cancel()
-	c, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
+	c, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	pool, err := c.CreatePool(ctx, ceph.PoolConfig{Name: "tc-below-k", Application: "rados", PGNum: 1, MinSize: 2, ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true}})
 	if err != nil {
 		t.Fatal("2+1 topology admission:", err)
@@ -85,7 +86,7 @@ func testECBelowK(t *testing.T) {
 		t.Fatalf("unsupported bounded K2 stripe %d", stripe)
 	}
 	size := int(2*stripe + 31)
-	initial, err := observeCluster(c).OSDStates(ctx)
+	initial, err := harness.ObserveCluster(c).OSDStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func testECBelowK(t *testing.T) {
 		cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer done()
 		if actor != nil {
-			if err := actor.finish(cleanup); err != nil {
+			if err := actor.Finish(cleanup); err != nil {
 				t.Errorf("actor shutdown unconfirmed; keep outcomes unknown and leave stores to Terminate: %v", err)
 				return
 			}
@@ -216,7 +217,7 @@ func testECBelowK(t *testing.T) {
 	if err != nil || checkECBelowKPlacement(p, base, belowAfter, p.Losses, oneAfter.PGs[0].ReportedEpoch) != nil {
 		t.Fatalf("below-K operation interval changed %+v %v", belowAfter, err)
 	}
-	if err := actor.finish(ctx); err != nil {
+	if err := actor.Finish(ctx); err != nil {
 		t.Fatal("shutdown before restoring stores:", err)
 	}
 	var shutdown ecFourTwoShutdown
@@ -293,7 +294,7 @@ func testECBelowK(t *testing.T) {
 			}
 		}
 	}
-	final, err := observeCluster(c).OSDStates(ctx)
+	final, err := harness.ObserveCluster(c).OSDStates(ctx)
 	if err != nil || len(final) != len(initial) {
 		t.Fatal("OSD registrations unavailable", err)
 	}

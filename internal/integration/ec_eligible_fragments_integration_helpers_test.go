@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"strings"
 	"testing"
@@ -107,11 +108,11 @@ func ecEligiblePhase(t *testing.T, ctx context.Context, cluster *ceph.Container,
 		Argv: argv, Timeout: 2 * time.Minute, MaxStdout: 1 << 16, MaxStderr: 1 << 16, Label: "EC eligible " + phase,
 	})
 	var receipt ecEligibleReceipt
-	if err != nil || !result.Complete() || result.ExitCode != 0 || json.Unmarshal([]byte(lastJSONLine(string(result.Stdout))), &receipt) != nil ||
+	if err != nil || !result.Complete() || result.ExitCode != 0 || json.Unmarshal([]byte(harness.LastJSONLine(string(result.Stdout))), &receipt) != nil ||
 		receipt.Phase != phase || receipt.Writer == 0 || receipt.Reader == 0 || receipt.Writer == receipt.Reader {
 		t.Fatalf("%s phase: exit %d, complete %t: %v\nstdout: %s\nstderr: %s", phase, result.ExitCode, result.Complete(), err, result.Stdout, result.Stderr)
 	}
-	t.Logf("EC_ELIGIBLE_CLIENT %s", lastJSONLine(string(result.Stdout)))
+	t.Logf("EC_ELIGIBLE_CLIENT %s", harness.LastJSONLine(string(result.Stdout)))
 	return receipt
 }
 
@@ -138,7 +139,7 @@ func ecObserve(t *testing.T, ctx context.Context, cluster *ceph.Container, pool 
 	t.Helper()
 	var last ecObservation
 	for attempt := 1; attempt <= 5; attempt++ {
-		snapshot, err := poolHandle(t, ctx, cluster, pool).PGs(ctx)
+		snapshot, err := harness.PoolHandle(t, ctx, cluster, pool).PGs(ctx)
 		if err != nil || len(snapshot.PGs) != 1 {
 			t.Fatalf("PGs of %s: %+v, %v", pool, snapshot.PGs, err)
 		}
@@ -201,7 +202,7 @@ func ecWaitPG(t *testing.T, parent context.Context, cluster *ceph.Container, poo
 	defer cancel()
 	var last string
 	for {
-		snapshot, err := poolHandle(t, ctx, cluster, pool).PGs(ctx)
+		snapshot, err := harness.PoolHandle(t, ctx, cluster, pool).PGs(ctx)
 		if err == nil && len(snapshot.PGs) == 1 {
 			if ok(snapshot.PGs[0]) {
 				return snapshot.PGs[0]
@@ -275,7 +276,7 @@ func ecPoolFacts(t *testing.T, ctx context.Context, cluster *ceph.Container, poo
 func testECEligibleFragments(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 		Name: "tc-ec-eligible", Application: "rados", PGNum: 1, MinSize: 2,
 		ErasureCode: &ceph.ErasureCodeConfig{K: 2, M: 1, AllowOverwrites: true},

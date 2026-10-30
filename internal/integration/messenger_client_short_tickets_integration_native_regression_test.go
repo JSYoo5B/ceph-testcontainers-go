@@ -5,6 +5,7 @@
 package integration_test
 
 import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
 	"time"
 )
@@ -17,7 +18,7 @@ import (
 // working for long with these lifetimes (see the Messenger client fixtures
 // guide).
 func TestMessengerClientProfileShortTickets(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testMessengerClientTicketProfile(t, 1500*time.Millisecond, 12*time.Second, "[global]\nmon_tick_interval = 1\n",
 		map[string]float64{"mon_tick_interval": 1})
 }

@@ -5,17 +5,18 @@
 package integration_test
 
 import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 )
 
 func TestIPv6Listeners(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testAddressFamily(t, ceph.AddressIPv6)
 }
 
 func TestIPv4MappedIPv6Listeners(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testAddressFamily(t, ceph.AddressIPv4MappedIPv6)
 }

@@ -12,6 +12,7 @@ IMAGE_PLATFORM ?=
 SCENARIO_IMAGE_LAYOUT ?= all
 SCENARIO_CATEGORY ?=
 SCENARIO_BATCH ?=
+SCENARIO_PACKAGE ?=
 SCENARIO_DIRECTORY ?= artifacts/scenario-$(SCENARIO_CATEGORY)-$(SCENARIO_BATCH)
 
 # The default clears inherited image overrides and exercises ceph.DefaultImage.
@@ -31,7 +32,7 @@ test:
 # Normal supported runtime tests and host unit tests. SDK consumers and strict
 # native upstream regressions require their additional explicit opt-in tags.
 test-all:
-	CGO_ENABLED=0 go test -mod=readonly -tags=all -count=1 -v -timeout=$(ALL_TEST_TIMEOUT) ./...
+	CGO_ENABLED=0 go test -mod=readonly -p 1 -tags=all -count=1 -v -timeout=$(ALL_TEST_TIMEOUT) ./...
 
 # Go host checks. Tag compilation does not execute Docker or native clients.
 # Image builder checks belong to ceph-testcontainers-images.
@@ -56,22 +57,25 @@ tag-compile:
 	CGO_ENABLED=0 go test -mod=readonly -tags=all,goceph,native_regression,role_images,ci_optional,ci_batch_role_routing,ci_batch_role_mirror_refresh -run '^$$' ./...
 	CGO_ENABLED=0 go test -mod=readonly -tags=all,cephfs_fuse -run '^$$' ./...
 
+# The Docker targets run the integration test packages one at a time (-p 1):
+# each starts its own clusters, and parallel packages would compete for them.
 integration:
-	CGO_ENABLED=0 go test -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
+	CGO_ENABLED=0 go test -p 1 -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration/...
 
 # Required scenarios consume selected existing images; the default is the pruned aggregate.
 # No image producer is required. Tests and clusters execute sequentially.
 scenario-default:
-	$(SCENARIO_TEST_ENV) go test -mod=readonly -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration
+	$(SCENARIO_TEST_ENV) go test -mod=readonly -p 1 -tags=integration -count=1 -v -timeout=$(INTEGRATION_TIMEOUT) ./internal/integration/...
 
 # One CI batch, with the tags, budget and pass rules that CI uses. The tag
 # runner selects its tests from the build tags and metadata of the test
 # sources, so no test list is kept here; `python3 .github/scripts/tag_scenarios.py
-# plan` lists the categories and batches.
+# plan` lists the categories, batches and packages. SCENARIO_PACKAGE picks the
+# package of a batch that several integration packages have.
 scenario:
 	@test -n '$(SCENARIO_CATEGORY)' || { echo 'SCENARIO_CATEGORY is required' >&2; exit 1; }
 	@test -n '$(SCENARIO_BATCH)' || { echo 'SCENARIO_BATCH is required' >&2; exit 1; }
-	$(SCENARIO_TEST_ENV) python3 .github/scripts/tag_scenarios.py run --category '$(SCENARIO_CATEGORY)' --batch '$(SCENARIO_BATCH)' --directory '$(SCENARIO_DIRECTORY)'
+	$(SCENARIO_TEST_ENV) python3 .github/scripts/tag_scenarios.py run --category '$(SCENARIO_CATEGORY)' --batch '$(SCENARIO_BATCH)' $(if $(SCENARIO_PACKAGE),--package '$(SCENARIO_PACKAGE)' )--directory '$(SCENARIO_DIRECTORY)'
 
 # Consume existing client/runner images prepared by the caller.
 # CEPH_TEST_GOCEPH_CLIENT_IMAGE and CEPH_TEST_GOCEPH_RUNNER_IMAGE are required.
@@ -81,7 +85,7 @@ scenario-goceph-linux:
 # Module-level representative compatibility for supplied all or role images.
 # Image checker quick/full is independent; this target never builds images.
 image-compatibility:
-	CGO_ENABLED=0 go test -mod=readonly -tags=integration,topology,multicluster -count=1 -v -timeout=$(IMAGE_COMPATIBILITY_TIMEOUT) -run '^Test(ClusterLifecycle|RBDLifecycle|CephFSFilesystem|RGWS3|ManagerLifecycle|MultiCluster(RBDBackup|RBDSnapshotMirror|CephFSSnapshotMirrorAndBackup|RGWMultisite))$$' ./internal/integration
+	CGO_ENABLED=0 go test -mod=readonly -p 1 -tags=integration,topology,multicluster -count=1 -v -timeout=$(IMAGE_COMPATIBILITY_TIMEOUT) -run '^Test(ClusterLifecycle|RBDLifecycle|CephFSFilesystem|RGWS3|ManagerLifecycle|MultiCluster(RBDBackup|RBDSnapshotMirror|CephFSSnapshotMirrorAndBackup|RGWMultisite))$$' ./internal/integration/...
 
 # Select existing official/GHCR images, freeze their IDs, then run the same Go tests.
 image-matrix:
@@ -93,10 +97,10 @@ goceph-linux:
 	python3 internal/integration/goceph/run.py
 
 hostnetwork:
-	CGO_ENABLED=0 go test -tags=integration,hostnetwork -count=1 -v -timeout=$(HOSTNETWORK_TIMEOUT) -run '^TestHostNetwork' ./internal/integration
+	CGO_ENABLED=0 go test -p 1 -tags=integration,hostnetwork -count=1 -v -timeout=$(HOSTNETWORK_TIMEOUT) -run '^TestHostNetwork' ./internal/integration/...
 
 multicluster:
-	CGO_ENABLED=0 go test -tags=integration,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^TestMultiCluster' ./internal/integration
+	CGO_ENABLED=0 go test -p 1 -tags=integration,multicluster -count=1 -v -timeout=$(MULTICLUSTER_TIMEOUT) -run '^TestMultiCluster' ./internal/integration/...
 
 vet:
 	CGO_ENABLED=0 go vet -mod=readonly ./...

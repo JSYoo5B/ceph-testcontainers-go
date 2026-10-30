@@ -108,7 +108,7 @@ func parseMemoryEventsLocal(data string) (memoryEvents, error) {
 // memory.events is never read as a substitute for memory.events.local: a
 // directory that only has the hierarchical file is unavailable.
 func readMemoryWitness(gen containerGeneration, group string, now time.Time) (memoryWitness, error) {
-	if !gen.valid() {
+	if !gen.Valid() {
 		return memoryWitness{}, fmt.Errorf("%w: frozen generation is incomplete", errMemoryWitnessGeneration)
 	}
 	read := func(name string) (string, error) {
@@ -241,7 +241,7 @@ func memoryIncomplete(format string, args ...any) (memoryPressureVerdict, error)
 // classifyMemoryPressure judges one window. Missing or unobserved evidence is
 // incomplete or unsupported and never an empty value that counts as evidence.
 func classifyMemoryPressure(r memoryPressureRecord, checks memoryPressureChecks) (memoryPressureVerdict, error) {
-	if !r.Generation.valid() {
+	if !r.Generation.Valid() {
 		return memoryIncomplete("frozen generation is incomplete")
 	}
 	if r.Before == nil {

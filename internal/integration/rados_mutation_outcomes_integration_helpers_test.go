@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"strings"
 	"testing"
 	"time"
@@ -167,7 +168,7 @@ func (op osdTrackedOp) event(name string) (time.Time, bool) {
 // PG and the flags, but not the object.
 func osdClientWrites(t *testing.T, ctx context.Context, cluster *ceph.Container, osd, command, pg string) []osdTrackedOp {
 	t.Helper()
-	out, err := adminSocket(t, ctx, cluster, osd, command)
+	out, err := harness.AdminSocket(t, ctx, cluster, osd, command)
 	if err != nil {
 		t.Fatalf("%s %s: %v", osd, command, err)
 	}

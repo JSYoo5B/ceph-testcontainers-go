@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"strconv"
 	"strings"
@@ -330,7 +331,7 @@ func pgQueryRaw(ctx context.Context, cluster *ceph.Container, pgid string) ([]by
 // min_size, and that exactly the expected OSD containers are running.
 func secondFaultReceipt(t *testing.T, ctx context.Context, cluster *ceph.Container, phase string, stopped map[int]bool) ceph.PGState {
 	t.Helper()
-	snapshot, err := poolHandle(t, ctx, cluster, "tc-paths").PGs(ctx)
+	snapshot, err := harness.PoolHandle(t, ctx, cluster, "tc-paths").PGs(ctx)
 	if err != nil || len(snapshot.PGs) != 1 || snapshot.PoolBefore.Size != 3 || snapshot.PoolAfter.Size != 3 || snapshot.PoolBefore.MinSize != 2 || snapshot.PoolAfter.MinSize != 2 {
 		t.Fatalf("%s placement and policy receipt: %+v: %v", phase, snapshot, err)
 	}
@@ -375,8 +376,8 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 22*time.Minute)
 	defer cancel()
 	const ledger, stopFile = "/tmp/tc-second-fault.jsonl", "/tmp/tc-second-fault.stop"
-	image, opts := integrationImages(t)
-	cluster, client := newServiceClusterWithOptions(t, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
+	image, opts := harness.IntegrationImages(t)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))...)
 	restore := func(name string, fn func(context.Context) error) {
 		t.Helper()
 		t.Cleanup(func() {
@@ -712,7 +713,7 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	secondFaultReceipt(t, ctx, cluster, "restored", stopped)
 
 	// Close the writer and the data oracle.
-	execCommand(t, ctx, client, "touch", stopFile)
+	harness.ExecCommand(t, ctx, client, "touch", stopFile)
 	select {
 	case outcome := <-actor.done:
 		actorDone = true
@@ -735,7 +736,7 @@ func testOSDSecondFaultPool(t *testing.T, erasure bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	read, err := cluster.RunNativeCommand(ctx, toolkitContainer(t, cluster), secondFaultCommand("independent read", 3*time.Minute, "read", "tc-paths", string(encodedNames)))
+	read, err := cluster.RunNativeCommand(ctx, harness.ToolkitContainer(t, cluster), secondFaultCommand("independent read", 3*time.Minute, "read", "tc-paths", string(encodedNames)))
 	if err != nil || read.ExitCode != 0 || !read.Complete() {
 		t.Fatalf("independent read of the writer's objects: exit %d: %v: %.2048s", read.ExitCode, err, read.Stderr)
 	}
@@ -771,7 +772,7 @@ func secondFaultWaitPG(t *testing.T, parent context.Context, cluster *ceph.Conta
 	defer cancel()
 	var seen, failure string
 	for {
-		snapshot, err := poolHandle(t, ctx, cluster, "tc-paths").PGs(ctx)
+		snapshot, err := harness.PoolHandle(t, ctx, cluster, "tc-paths").PGs(ctx)
 		if err == nil && len(snapshot.PGs) == 1 {
 			if ok(snapshot.PGs[0]) {
 				return snapshot.PGs[0]

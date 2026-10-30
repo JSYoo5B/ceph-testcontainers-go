@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"slices"
 	"strings"
@@ -31,7 +32,7 @@ import (
 func TestPostTestVerificationLogEnvelope(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))...)
 	recorder := &finalizationRecorder{TB: t}
 	var finalization *ceph.Finalization
@@ -68,7 +69,7 @@ func TestPostTestVerificationLogEnvelope(t *testing.T) {
 	// command therefore carries the marker as JSON escapes, which the MON
 	// decodes into the message but never prints as a literal marker.
 	quoteCommand := `{"prefix": "log", "logtext": ["` + token + ` quotes \u005bWRN\u005d"]}`
-	t.Logf("quote command accepted: %s", execOutput(t, ctx, cluster.Container, "python3", "-c", envelopeMonCommand, quoteCommand))
+	t.Logf("quote command accepted: %s", harness.ExecOutput(t, ctx, cluster.Container, "python3", "-c", envelopeMonCommand, quoteCommand))
 	// The real WRN entry: a set noout flag fails the OSDMAP_FLAGS check.
 	noout, err := override.SetOSDFlag(ctx, cluster, ceph.OSDFlagNoOut, true)
 	t.Cleanup(func() {

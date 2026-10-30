@@ -5,6 +5,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"maps"
 	"slices"
@@ -27,14 +28,14 @@ import (
 func testClientRevocation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
-	ciphers, auth := clientKeyCiphers(t, ctx, image)
-	cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)), ceph.WithAuth(auth))...)
-	payload := prepareHeldObject(t, ctx, cluster)
+	image, opts := harness.IntegrationImages(t)
+	ciphers, auth := harness.ClientKeyCiphers(t, ctx, image)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)), ceph.WithAuth(auth))...)
+	payload := harness.PrepareHeldObject(t, ctx, cluster)
 	if _, err := cluster.CreateClient(ctx, "bystander", ceph.ClientCaps{Mon: "allow r"}); err != nil {
 		t.Fatal(err)
 	}
-	bystander := authEntry(t, ctx, cluster, "client.bystander")
+	bystander := harness.AuthEntry(t, ctx, cluster, "client.bystander")
 	for _, cipher := range ciphers {
 		t.Run(string(cipher), func(t *testing.T) {
 			caps := ceph.ClientCaps{Mon: "allow r", MGR: "allow r", OSD: "allow rw pool=data namespace=tenant-a"}
@@ -42,10 +43,10 @@ func testClientRevocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			before := authEntry(t, ctx, cluster, client.Name())
-			holder := startClientContainer(t, ctx, cluster, client)
-			startHeldSession(t, ctx, holder, client, "reconnect")
-			revokedAt := containerTime(t, ctx, holder)
+			before := harness.AuthEntry(t, ctx, cluster, client.Name())
+			holder := harness.StartClientContainer(t, ctx, cluster, client)
+			harness.StartHeldSession(t, ctx, holder, client, "reconnect")
+			revokedAt := harness.ContainerTime(t, ctx, holder)
 			revocation, err := client.Revoke(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -53,10 +54,10 @@ func testClientRevocation(t *testing.T) {
 			if _, err := cluster.Ceph(ctx, "auth", "get", client.Name()); err == nil {
 				t.Fatal("the revoked identity is still in the auth database")
 			}
-			if code, out := clientCommand(t, ctx, holder, client, "mon", "stat"); code == 0 {
+			if code, out := harness.ClientCommand(t, ctx, holder, client, "mon", "stat"); code == 0 {
 				t.Fatalf("a fresh client of the revoked identity authenticated: %s", out)
 			}
-			if code, _ := osdRead(t, ctx, holder, client); code == 0 {
+			if code, _ := harness.OSDRead(t, ctx, holder, client); code == 0 {
 				t.Fatal("a fresh client of the revoked identity read from the OSD")
 			}
 			if _, err := client.Capabilities(ctx); err == nil {
@@ -68,39 +69,39 @@ func testClientRevocation(t *testing.T) {
 			if _, err := cluster.CreateClient(ctx, client.Name(), caps); err == nil {
 				t.Fatal("CreateClient took the revoked name")
 			}
-			rejected, failed := waitHeldRenewalRejected(t, ctx, holder, revokedAt, clientKeyMonTicketTTL+30*time.Second)
-			revokedReads := heldOSDReads(t, ctx, holder, revokedAt)
-			restoredAt := containerTime(t, ctx, holder)
+			rejected, failed := harness.WaitHeldRenewalRejected(t, ctx, holder, revokedAt, harness.ClientKeyMonTicketTTL+30*time.Second)
+			revokedReads := harness.HeldOSDReads(t, ctx, holder, revokedAt)
+			restoredAt := harness.ContainerTime(t, ctx, holder)
 			if err := revocation.Restore(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if after := authEntry(t, ctx, cluster, client.Name()); after.Key != before.Key || !maps.Equal(after.Caps, before.Caps) {
+			if after := harness.AuthEntry(t, ctx, cluster, client.Name()); after.Key != before.Key || !maps.Equal(after.Caps, before.Caps) {
 				t.Fatalf("the restored entry has caps %v (before %v), same key %t", after.Caps, before.Caps, after.Key == before.Key)
 			}
 			// The holder still has the keyring attached before the revocation.
 			for _, command := range [][]string{{"mon", "stat"}, {"pg", "stat"}} {
-				if code, out := clientCommand(t, ctx, holder, client, command...); code != 0 {
+				if code, out := harness.ClientCommand(t, ctx, holder, client, command...); code != 0 {
 					t.Fatalf("%v with the original keyring after Restore: exit %d: %s", command, code, out)
 				}
 			}
-			if code, read := osdRead(t, ctx, holder, client); code != 0 || !bytes.Equal(read, payload) {
+			if code, read := harness.OSDRead(t, ctx, holder, client); code != 0 || !bytes.Equal(read, payload) {
 				t.Fatalf("OSD read with the original keyring after Restore: exit %d, same bytes %t", code, bytes.Equal(read, payload))
 			}
 			if got, err := client.Capabilities(ctx); err != nil || got != caps {
 				t.Fatalf("ClientCapabilities after Restore: %+v, %v", got, err)
 			}
-			startClientContainer(t, ctx, cluster, client)
+			harness.StartClientContainer(t, ctx, cluster, client)
 			t.Logf("%s: container times: revocation %.3f, rejection %.3f, Restore %.3f; MON ticket TTL %v",
-				cipher, revokedAt, revokedAt+rejected, restoredAt, clientKeyMonTicketTTL)
+				cipher, revokedAt, revokedAt+rejected, restoredAt, harness.ClientKeyMonTicketTTL)
 			// The open session renews its tickets after Restore only while
 			// the MONs keep the rotating secret of its last auth ticket, so
 			// it connects anew, as a recovering client does.
 			renewed := heldRenewedWithin(t, ctx, holder, restoredAt, 5*time.Second)
-			recovered := waitHeldSessionReconnected(t, ctx, holder, reconnectHeldSession(t, ctx, holder), time.Minute)
+			recovered := harness.WaitHeldSessionReconnected(t, ctx, holder, harness.ReconnectHeldSession(t, ctx, holder), time.Minute)
 			if err := revocation.Restore(ctx); err != nil {
 				t.Fatalf("a repeated Restore: %v", err)
 			}
-			if entry := authEntry(t, ctx, cluster, "client.bystander"); entry.Key != bystander.Key || !maps.Equal(entry.Caps, bystander.Caps) {
+			if entry := harness.AuthEntry(t, ctx, cluster, "client.bystander"); entry.Key != bystander.Key || !maps.Equal(entry.Caps, bystander.Caps) {
 				t.Fatal("client.bystander changed")
 			}
 			t.Logf("%s: the MONs rejected the held session %.1fs after the revocation (its MON reads failed after that: %t; its OSD reads while revoked: %s); after Restore it renewed by itself within 5s: %t, and on a new connection it authenticated and read MON, MGR and OSD %.1fs after the request",
@@ -120,33 +121,33 @@ func testClientRevocation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		holder := startClientContainer(t, ctx, cluster, client)
-		startHeldSession(t, ctx, holder, client, "hold")
-		revokedAt := containerTime(t, ctx, holder)
+		holder := harness.StartClientContainer(t, ctx, cluster, client)
+		harness.StartHeldSession(t, ctx, holder, client, "hold")
+		revokedAt := harness.ContainerTime(t, ctx, holder)
 		revocation, err := client.Revoke(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		rejected, lost := waitHeldRenewalRejected(t, ctx, holder, revokedAt, clientKeyMonTicketTTL+30*time.Second)
+		rejected, lost := harness.WaitHeldRenewalRejected(t, ctx, holder, revokedAt, harness.ClientKeyMonTicketTTL+30*time.Second)
 		// Outlast the rotating secrets of the session's last auth ticket.
-		time.Sleep(3 * clientKeyMonTicketTTL)
-		restoredAt := containerTime(t, ctx, holder)
+		time.Sleep(3 * harness.ClientKeyMonTicketTTL)
+		restoredAt := harness.ContainerTime(t, ctx, holder)
 		if err := revocation.Restore(ctx); err != nil {
 			t.Fatal(err)
 		}
 		t.Logf("container times: revocation %.3f, rejection %.3f, Restore %.3f; MON ticket TTL %v",
-			revokedAt, revokedAt+rejected, restoredAt, clientKeyMonTicketTTL)
+			revokedAt, revokedAt+rejected, restoredAt, harness.ClientKeyMonTicketTTL)
 		if renewed := heldRenewedWithin(t, ctx, holder, restoredAt, 10*time.Second); renewed {
 			t.Fatalf("the open session renewed its tickets %.0fs after the rejection; the MONs kept an older secret than expected:\n%s",
-				restoredAt-revokedAt-rejected, heldAuthTrace(t, ctx, holder))
+				restoredAt-revokedAt-rejected, harness.HeldAuthTrace(t, ctx, holder))
 		}
 		// A session that kept its MON connection asks for renewals, which the
 		// MONs refuse for its ticket; one that lost it asks for none.
 		refusals := monitorLogLines(t, ctx, cluster, client.Name()+":  attempt to reclaim global_id", "using bad ticket")
 		if !lost && refusals == 0 {
-			t.Fatalf("the open session kept its MON connection, but the MONs logged no refusal of its ticket:\n%s", heldAuthTrace(t, ctx, holder))
+			t.Fatalf("the open session kept its MON connection, but the MONs logged no refusal of its ticket:\n%s", harness.HeldAuthTrace(t, ctx, holder))
 		}
-		recovered := waitHeldSessionReconnected(t, ctx, holder, reconnectHeldSession(t, ctx, holder), time.Minute)
+		recovered := harness.WaitHeldSessionReconnected(t, ctx, holder, harness.ReconnectHeldSession(t, ctx, holder), time.Minute)
 		t.Logf("a Restore %.0fs after the rejection left the open session unable to renew (its MON session lost at the rejection: %t; MON log lines about its bad ticket: %d); on a new connection it authenticated and read MON, MGR and OSD %.1fs after the request",
 			restoredAt-revokedAt-rejected, lost, refusals, recovered)
 	})
@@ -158,7 +159,7 @@ func testClientRevocation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		before := authEntry(t, ctx, cluster, client.Name())
+		before := harness.AuthEntry(t, ctx, cluster, client.Name())
 		revocation, err := client.Revoke(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -166,7 +167,7 @@ func testClientRevocation(t *testing.T) {
 		if err := revocation.Restore(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if after := authEntry(t, ctx, cluster, client.Name()); after.Key != before.Key || len(after.Caps) != 0 {
+		if after := harness.AuthEntry(t, ctx, cluster, client.Name()); after.Key != before.Key || len(after.Caps) != 0 {
 			t.Fatalf("restored caps %v, same key %t", after.Caps, after.Key == before.Key)
 		}
 		if _, err := client.ReplaceKey(ctx); err == nil {
@@ -175,20 +176,20 @@ func testClientRevocation(t *testing.T) {
 	})
 
 	t.Run("three MONs", func(t *testing.T) {
-		cluster, _ := newServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithMonitorCount(3)))...)
+		cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithMonitorCount(3)))...)
 		client, err := cluster.CreateClient(ctx, "recoverable", ceph.ClientCaps{Mon: "allow r", MGR: "allow r"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		original := authEntry(t, ctx, cluster, client.Name())
-		holder := startClientContainer(t, ctx, cluster, client)
-		mons := monitorOverrides(t, ctx, cluster)
+		original := harness.AuthEntry(t, ctx, cluster, client.Name())
+		holder := harness.StartClientContainer(t, ctx, cluster, client)
+		mons := harness.MonitorOverrides(t, ctx, cluster)
 		revocation, err := client.Revoke(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, mon := range mons {
-			if code, out := clientCommand(t, ctx, holder, client, "--mon_host_override", mon, "mon", "stat"); code == 0 {
+			if code, out := harness.ClientCommand(t, ctx, holder, client, "--mon_host_override", mon, "mon", "stat"); code == 0 {
 				t.Fatalf("the revoked identity authenticated through %s: %s", mon, out)
 			}
 		}
@@ -196,7 +197,7 @@ func testClientRevocation(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, mon := range mons {
-			if code, out := clientCommand(t, ctx, holder, client, "--mon_host_override", mon, "mon", "stat"); code != 0 {
+			if code, out := harness.ClientCommand(t, ctx, holder, client, "--mon_host_override", mon, "mon", "stat"); code != 0 {
 				t.Fatalf("the restored identity through %s: exit %d: %s", mon, code, out)
 			}
 		}
@@ -217,7 +218,7 @@ func testClientRevocation(t *testing.T) {
 				}
 				t.Logf("with %v: revocation returned %v, the canceled Restore %v; the next Restore finished", delay, err, canceledErr)
 			}
-			if entry := authEntry(t, ctx, cluster, client.Name()); entry.Key != original.Key || !maps.Equal(entry.Caps, original.Caps) {
+			if entry := harness.AuthEntry(t, ctx, cluster, client.Name()); entry.Key != original.Key || !maps.Equal(entry.Caps, original.Caps) {
 				t.Fatalf("after a call canceled after %v, the identity differs from the original", delay)
 			}
 			if _, err := client.Capabilities(ctx); err != nil {
@@ -232,8 +233,8 @@ func testClientRevocation(t *testing.T) {
 func heldRenewedWithin(t *testing.T, ctx context.Context, ctr testcontainers.Container, since float64, limit time.Duration) bool {
 	t.Helper()
 	for deadline := time.Now().Add(limit); ; time.Sleep(time.Second) {
-		for _, result := range heldAuthResults(t, ctx, ctr) {
-			if result.at > since && result.mon == 0 {
+		for _, result := range harness.HeldAuthResults(t, ctx, ctr) {
+			if result.At > since && result.MON == 0 {
 				return true
 			}
 		}

@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"maps"
 	"os"
@@ -57,7 +58,7 @@ const (
 // TestMonitorStoreVolumeRetention is optional: it is started by name from a
 // pull request comment and is in no default selector.
 func TestMonitorStoreVolumeRetention(t *testing.T) {
-	for _, mode := range networkModes(t, "host") {
+	for _, mode := range harness.NetworkModes(t, "host") {
 		if !t.Run(mode.Name, monitorStoreVolumeRetention) {
 			return
 		}
@@ -67,7 +68,7 @@ func TestMonitorStoreVolumeRetention(t *testing.T) {
 func monitorStoreVolumeRetention(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	dest := os.Getenv(upgradeNativeDestEnvVar)
 	label := "retention mechanism only, same-release destination, NOT upgrade evidence"
 	if dest == "" {
@@ -95,7 +96,7 @@ func monitorStoreVolumeRetention(t *testing.T) {
 		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer stop()
 		err := vol.release(cleanup, eng)
-		t.Logf("volume receipt: %+v", vol.receipt())
+		t.Logf("volume receipt: %+v", vol.Receipt())
 		if err != nil {
 			t.Errorf("release store volume: %v", err)
 		}
@@ -111,7 +112,7 @@ func monitorStoreVolumeRetention(t *testing.T) {
 			Source: testcontainers.DockerVolumeMountSource{Name: vol.name},
 			Target: testcontainers.ContainerMountTarget(storeDir),
 		}))
-	cluster, _ := newServiceClusterWithOptions(t, image, opts...)
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, opts...)
 	waitQuorumNames(t, ctx, cluster, "a", "b", "c")
 
 	view := func(ctx context.Context) (upgradeMonView, error) {
@@ -187,7 +188,7 @@ func monitorStoreVolumeRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The receipts are emitted on every outcome, before the destination is removed.
-	defer func() { t.Logf("effects receipt: %+v", eff.receipt()) }()
+	defer func() { t.Logf("effects receipt: %+v", eff.Receipt()) }()
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer stop()

@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"maps"
 	"slices"
 	"strconv"
@@ -26,7 +27,7 @@ import (
 // Recovery deliberately restarts the same Docker containers; replicated data
 // is not evidence for recovery into replacement containers without backfill.
 func TestOSDVolumeStorageTopology(t *testing.T) {
-	for _, mode := range networkModes(t, "bridge", "host") {
+	for _, mode := range harness.NetworkModes(t, "bridge", "host") {
 		if !t.Run(mode.Name, func(t *testing.T) { osdVolumeTopology(t, mode.Host) }) {
 			return
 		}
@@ -43,7 +44,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 	}
 	t.Cleanup(func() { _ = docker.Close() })
 	beforeVolumes, beforeHelpers := osdVolumeInventory(t, ctx, docker.Client)
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithVolume()))
 	if host {
 		opts = append(opts, ceph.WithHostNetwork())
@@ -66,7 +67,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	afterVolumes, afterHelpers := osdVolumeInventory(t, ctx, docker.Client)
-	if !slices.Equal(beforeVolumes, afterVolumes) || !slices.Equal(beforeHelpers, afterHelpers) || len(noInitialOSDNativeDump(t, ctx, cluster)) != 0 {
+	if !slices.Equal(beforeVolumes, afterVolumes) || !slices.Equal(beforeHelpers, afterHelpers) || len(harness.NoInitialOSDNativeDump(t, ctx, cluster)) != 0 {
 		t.Fatal("zero-OSD bootstrap allocated storage")
 	}
 	for range 2 {
@@ -125,7 +126,7 @@ func osdVolumeTopology(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "fresh-after-purge")
-	q, err := observeCluster(cluster).QuorumStatus(ctx)
+	q, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,11 +206,11 @@ print('ready')`, strconv.Itoa(id), nativeUUID, q.MonMap.FSID)
 		t.Fatal("restart changed registration")
 	}
 	osdVolumeData(t, ctx, cluster, pool.Name, "all-stopped-helper-stopped")
-	beforeRefusal := noInitialOSDNativeDump(t, ctx, cluster)
+	beforeRefusal := harness.NoInitialOSDNativeDump(t, ctx, cluster)
 	if refused, err := cluster.AddOSD(ctx); err == nil || refused != nil {
 		t.Fatal("stopped helper admitted new storage operation", err)
 	}
-	if !slices.Equal(beforeRefusal, noInitialOSDNativeDump(t, ctx, cluster)) || osdMemoryInspect(t, ctx, docker.Client, helper.ID).State.Running {
+	if !slices.Equal(beforeRefusal, harness.NoInitialOSDNativeDump(t, ctx, cluster)) || osdMemoryInspect(t, ctx, docker.Client, helper.ID).State.Running {
 		t.Fatal("helper refusal registered an OSD or restarted helper")
 	}
 	// The observer intentionally has no cluster ownership label. Docker must
@@ -238,7 +239,7 @@ print('ready')`, strconv.Itoa(id), nativeUUID, q.MonMap.FSID)
 		t.Error("owned volume remains", err)
 	}
 	if !host {
-		if _, err := docker.Client.NetworkInspect(ctx, staticFacts(cluster).NetworkName, mobycl.NetworkInspectOptions{}); !errdefs.IsNotFound(err) {
+		if _, err := docker.Client.NetworkInspect(ctx, harness.StaticFacts(cluster).NetworkName, mobycl.NetworkInspectOptions{}); !errdefs.IsNotFound(err) {
 			t.Error("owned network remains", err)
 		}
 	}

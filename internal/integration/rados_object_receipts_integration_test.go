@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"strconv"
 	"testing"
@@ -22,10 +23,10 @@ import (
 // continuation handles, namespaces and filter. A second client reads every
 // result back.
 func TestRADOSObjectReceipts(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	const objects, stats, enumerated, namespace = "tc-objects", "tc-objstats", "tc-enumeration", "receipts"
 	for _, pool := range []struct {
 		name string
@@ -121,7 +122,7 @@ func TestRADOSObjectReceipts(t *testing.T) {
 	}
 	t.Logf("RADOS_HINTS_RECEIPT %s", receipt)
 
-	pool, err := poolHandle(t, ctx, cluster, stats).Status(ctx)
+	pool, err := harness.PoolHandle(t, ctx, cluster, stats).Status(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

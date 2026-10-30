@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"math"
 	"regexp"
@@ -55,7 +56,7 @@ func (r radosLateCluster) Ceph(ctx context.Context, args ...string) ([]byte, err
 }
 
 func (r radosLateCluster) OSDAdminSocket(ctx context.Context, id int, args ...string) ([]byte, error) {
-	osd, err := findOSD(ctx, r.cluster, id)
+	osd, err := harness.FindOSD(ctx, r.cluster, id)
 	if err != nil {
 		return nil, err
 	}

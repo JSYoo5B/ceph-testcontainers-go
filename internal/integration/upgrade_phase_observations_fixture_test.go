@@ -70,7 +70,7 @@ func TestUpgradeCheckpointComparison(t *testing.T) {
 		"mgr": {"19.2.5": 2},
 		"osd": {"19.2.5": 3},
 	}
-	if err := mixed.check(inv); err != nil {
+	if err := mixed.Check(inv); err != nil {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]upgradeCheckpoint{
@@ -80,7 +80,7 @@ func TestUpgradeCheckpointComparison(t *testing.T) {
 		"unexpected osd":    {"mon": {"19.2.5": 1, "20.2.4": 2}, "mgr": {"19.2.5": 2}},
 		"early destination": {"mon": {"19.2.5": 1, "20.2.4": 2}, "mgr": {"20.2.4": 2}, "osd": {"19.2.5": 3}},
 	} {
-		if err := want.check(inv); err == nil {
+		if err := want.Check(inv); err == nil {
 			t.Errorf("%s: checkpoint accepted %v", name, inv)
 		}
 	}

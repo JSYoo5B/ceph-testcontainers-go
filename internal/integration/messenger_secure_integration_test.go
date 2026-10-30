@@ -7,6 +7,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"net/http"
 	"testing"
 	"time"
@@ -19,20 +20,20 @@ import (
 )
 
 func TestMessengerV2SecureOnly(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
-			image, opts := integrationImages(t)
+			image, opts := harness.IntegrationImages(t)
 			opts = append(opts, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			} else {
 				opts = append(opts, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithSeparateClusterNetwork()))
 			}
-			cluster, client := newServiceClusterWithOptions(t, image, opts...)
-			if staticFacts(cluster).MessengerMode != ceph.MessengerV2Secure {
+			cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
+			if harness.StaticFacts(cluster).MessengerMode != ceph.MessengerV2Secure {
 				t.Fatal("bootstrap mode accessor differs from selected policy")
 			}
 			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
@@ -49,7 +50,7 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			initial, err := poolHandle(t, ctx, cluster, "tc-messenger").Status(ctx)
+			initial, err := harness.PoolHandle(t, ctx, cluster, "tc-messenger").Status(ctx)
 			if err != nil || initial.ID <= 0 {
 				t.Fatal("native pool identity unavailable", err)
 			}
@@ -76,10 +77,10 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 			secureMessengerClient(t, ctx, cluster, client, "grown")
 			// Use identical bootstrap and credentials with a single incompatible
 			// mode. A watchdog timeout cannot satisfy the rejection assertion.
-			negative := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCRCProbe)
+			negative := harness.TopologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCRCProbe)
 			t.Logf("MSGR2_CRC_REFUSAL %s", negative)
 			secureMessengerClient(t, ctx, cluster, client, "after-crc-refusal")
-			final, err := poolHandle(t, ctx, cluster, "tc-messenger").Status(ctx)
+			final, err := harness.PoolHandle(t, ctx, cluster, "tc-messenger").Status(ctx)
 			if err != nil || final.ID != initial.ID || final.Size != initial.Size || final.PGNum != initial.PGNum {
 				t.Fatalf("secure topology changed pool identity/policy: %+v %v", final, err)
 			}
@@ -89,17 +90,17 @@ func TestMessengerV2SecureOnly(t *testing.T) {
 }
 
 func TestMessengerV2SecureServices(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
-			image, opts := integrationImages(t)
+			image, opts := harness.IntegrationImages(t)
 			opts = append(opts, ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Secure)), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceClusterWithOptions(t, image, opts...)
+			cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
 			if _, err := override.SetConfig(ctx, cluster, ceph.ConfigSetting{Section: "osd", Name: "osd_mclock_skip_benchmark", Value: "true"}); err != nil {
 				t.Fatal(err)
 			}
@@ -119,25 +120,25 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			if err := cluster.WaitForClean(ctx); err != nil {
 				t.Fatal(err)
 			}
-			data := topologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCephFSProbe, fs.FilesystemName, messengerDumpArg(t, ctx, cluster))
+			data := harness.TopologyExecOutput(t, ctx, client, "python3", "-c", secureMessengerCephFSProbe, fs.FilesystemName, harness.MessengerDumpArg(t, ctx, cluster))
 			t.Logf("MSGR2_CEPHFS %s", data)
 			endpoint, err := gateway.S3Endpoint(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			s3 := s3HTTPClient{endpoint: endpoint, accessKey: gateway.AccessKey, secretKey: gateway.SecretKey, region: gateway.Region, http: &http.Client{Timeout: 30 * time.Second}}
+			s3 := harness.S3HTTPClient{Endpoint: endpoint, AccessKey: gateway.AccessKey, SecretKey: gateway.SecretKey, Region: gateway.Region, HTTP: &http.Client{Timeout: 30 * time.Second}}
 			payload := bytes.Repeat([]byte("secure-rgw-native-data\x00"), 4096)
-			s3.request(t, ctx, http.MethodPut, "/tc-secure", nil, http.StatusOK)
-			s3.request(t, ctx, http.MethodPut, "/tc-secure/payload", payload, http.StatusOK)
-			if actual := s3.request(t, ctx, http.MethodGet, "/tc-secure/payload", nil, http.StatusOK); !bytes.Equal(actual, payload) {
+			s3.Request(t, ctx, http.MethodPut, "/tc-secure", nil, http.StatusOK)
+			s3.Request(t, ctx, http.MethodPut, "/tc-secure/payload", payload, http.StatusOK)
+			if actual := s3.Request(t, ctx, http.MethodGet, "/tc-secure/payload", nil, http.StatusOK); !bytes.Equal(actual, payload) {
 				t.Fatal("secure RGW retained bytes differ")
 			}
-			quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+			quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, mds := range fs.MDSs() {
-				data := topologyExecOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", secureMessengerDaemonProbe, "mds."+mds.ID, quorum.MonMap.FSID, "", messengerDumpArg(t, ctx, cluster))
+				data := harness.TopologyExecOutput(t, ctx, harness.ToolkitContainer(t, cluster), "python3", "-c", secureMessengerDaemonProbe, "mds."+mds.ID, quorum.MonMap.FSID, "", harness.MessengerDumpArg(t, ctx, cluster))
 				t.Logf("MSGR2_NATIVE %s", data)
 			}
 			inspection, err := gateway.Inspect(ctx)
@@ -150,10 +151,10 @@ func TestMessengerV2SecureServices(t *testing.T) {
 			}
 			// ServiceMap GID plus hostname/frontend binds server-side OSD
 			// connections to this owned gateway, not an unrelated CLI client.
-			data = topologyExecOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", secureMessengerRGWProbe, inspection.Config.Hostname, frontend, messengerDumpArg(t, ctx, cluster))
+			data = harness.TopologyExecOutput(t, ctx, harness.ToolkitContainer(t, cluster), "python3", "-c", secureMessengerRGWProbe, inspection.Config.Hostname, frontend, harness.MessengerDumpArg(t, ctx, cluster))
 			t.Logf("MSGR2_RGW %s", data)
-			s3.request(t, ctx, http.MethodDelete, "/tc-secure/payload", nil, http.StatusNoContent)
-			s3.request(t, ctx, http.MethodDelete, "/tc-secure", nil, http.StatusNoContent)
+			s3.Request(t, ctx, http.MethodDelete, "/tc-secure/payload", nil, http.StatusNoContent)
+			s3.Request(t, ctx, http.MethodDelete, "/tc-secure", nil, http.StatusNoContent)
 		})
 	}
 }

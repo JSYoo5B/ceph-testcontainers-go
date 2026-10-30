@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,13 +59,13 @@ type compressionPhaseReceipt struct {
 func TestMessengerCompressionReceipt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	config := filepath.Join(t.TempDir(), "ceph.conf")
 	// The READY lines are the evidence where messenger dump is missing.
 	if err := os.WriteFile(config, []byte("[osd]\ndebug_ms = 1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cluster, _ := newServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)),
+	cluster, _ := harness.NewServiceClusterWithOptions(t, image, append(roles, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only)), ceph.WithConfigFile(config))...)
 	const pool = "tc-compression"
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: pool, PGNum: 8, Replicas: 2, MinSize: 1}); err != nil {
@@ -77,7 +78,7 @@ func TestMessengerCompressionReceipt(t *testing.T) {
 	if len(osds) != 2 {
 		t.Fatalf("cluster has %d OSDs, want 2", len(osds))
 	}
-	dump := capabilitySupported(t, ctx, cluster, capabilityMessengerDump)
+	dump := harness.CapabilitySupported(t, ctx, cluster, harness.CapabilityMessengerDump)
 
 	force := ceph.ConfigSetting{Section: "osd", Name: "ms_osd_compress_mode", Value: "force"}
 	algorithm := ceph.ConfigSetting{Section: "osd", Name: "ms_osd_compression_algorithm", Value: "snappy"}
@@ -118,7 +119,7 @@ func TestMessengerCompressionReceipt(t *testing.T) {
 				t.Fatal(err)
 			}
 			for i, osd := range osds {
-				offsets[i] = len(containerLogLines(t, ctx, osd))
+				offsets[i] = len(harness.ContainerLogLines(t, ctx, osd))
 			}
 			if err := osds[1].Start(ctx); err != nil {
 				t.Fatal(err)
@@ -145,7 +146,7 @@ func waitOSDOption(t *testing.T, ctx context.Context, cluster *ceph.Container, d
 	t.Helper()
 	var last string
 	for deadline := time.Now().Add(2 * time.Minute); ; {
-		out, err := adminSocket(t, ctx, cluster, daemon, "config", "get", option)
+		out, err := harness.AdminSocket(t, ctx, cluster, daemon, "config", "get", option)
 		var value map[string]string
 		if err == nil && json.Unmarshal(out, &value) == nil && value[option] == want {
 			return
@@ -174,7 +175,7 @@ func observeCompressionPhase(t *testing.T, ctx context.Context, cluster *ceph.Co
 		if dump {
 			arg = "1"
 		}
-		out := execOutput(t, ctx, toolkitContainer(t, cluster), "python3", "-c", messengerCompressionProbe, pool, "compressible-"+phase.name, arg)
+		out := harness.ExecOutput(t, ctx, harness.ToolkitContainer(t, cluster), "python3", "-c", messengerCompressionProbe, pool, "compressible-"+phase.name, arg)
 		var probe struct {
 			ClientGlobalID uint64                                `json:"client_global_id"`
 			Bytes          int                                   `json:"bytes"`
@@ -254,7 +255,7 @@ func observeCompressionPhase(t *testing.T, ctx context.Context, cluster *ceph.Co
 			receipt.Evidence = "debug_ms READY lines"
 			receipt.PeerOSD, receipt.PeerOther, receipt.Client = 0, 0, ""
 			for i, osd := range osds {
-				lines := containerLogLines(t, ctx, osd)
+				lines := harness.ContainerLogLines(t, ctx, osd)
 				if offsets[i] < len(lines) {
 					lines = lines[offsets[i]:]
 				}

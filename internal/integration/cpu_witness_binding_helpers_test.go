@@ -42,7 +42,7 @@ type cpuEngineState struct {
 	RestartCount int
 }
 
-func (s cpuEngineState) check(gen containerGeneration, pid int) error {
+func (s cpuEngineState) Check(gen containerGeneration, pid int) error {
 	switch {
 	case s.ID != gen.ID:
 		return fmt.Errorf("%w: container was replaced", errCPUBinding)
@@ -123,10 +123,10 @@ func cpuProcessStart(roots cpuFSRoots, pid int) (string, error) {
 
 // bindCPUWitnessTarget freezes the identity of one running generation.
 func bindCPUWitnessTarget(roots cpuFSRoots, gen containerGeneration, state cpuEngineState, checks cpuBindChecks) (*cpuWitnessTarget, error) {
-	if !gen.valid() {
+	if !gen.Valid() {
 		return nil, fmt.Errorf("%w: %v", errCPUBinding, errCPUWitnessGeneration)
 	}
-	if err := state.check(gen, 0); err != nil {
+	if err := state.Check(gen, 0); err != nil {
 		return nil, err
 	}
 	start, err := cpuProcessStart(roots, state.PID)
@@ -146,7 +146,7 @@ func bindCPUWitnessTarget(roots cpuFSRoots, gen containerGeneration, state cpuEn
 
 // fence compares a fresh engine state and the local tree with the frozen one.
 func (t *cpuWitnessTarget) fence(state cpuEngineState) error {
-	if err := state.check(t.Generation, t.PID); err != nil {
+	if err := state.Check(t.Generation, t.PID); err != nil {
 		return err
 	}
 	if !t.checks.skipProcessStart {
@@ -206,6 +206,6 @@ func (t *cpuWitnessTarget) read(state func() (cpuEngineState, error), now func()
 
 // receipt is the public description of the binding. It carries identity
 // fields only and never the cgroup path.
-func (t *cpuWitnessTarget) receipt() string {
+func (t *cpuWitnessTarget) Receipt() string {
 	return fmt.Sprintf("CPU_WITNESS_BINDING container=%s started=%s pid=%d process_start=%s source=%s", t.Generation.ID, t.Generation.StartedAt, t.PID, t.ProcessStart, cpuWitnessSource)
 }

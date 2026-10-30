@@ -4,9 +4,12 @@
 
 package integration_test
 
-import "testing"
+import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"testing"
+)
 
 func TestClientKeyReplacement(t *testing.T) {
-	parallelWhenEnabled(t)
-	testClientKeyReplacement(t)
+	harness.ParallelWhenEnabled(t)
+	harness.RunClientKeyReplacement(t)
 }

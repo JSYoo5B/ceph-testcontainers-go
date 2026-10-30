@@ -55,6 +55,14 @@ EXPECTED_TESTS = (
     "TestMultiClusterCephFSSnapshotMirrorAndBackup",
     "TestMultiClusterRGWMultisite",
 )
+# The integration test packages that hold EXPECTED_TESTS; make
+# image-compatibility runs ./internal/integration/..., and each must pass once.
+EXPECTED_PACKAGES = (
+    "internal/integration",
+    "internal/integration/cephfs",
+    "internal/integration/rbd",
+    "internal/integration/rgw",
+)
 IMAGE_ID = re.compile(r"sha256:[a-f0-9]{64}\Z")
 DIGEST = IMAGE_ID
 RUN = re.compile(r"^=== RUN[ \t]+(Test[A-Za-z0-9_]+)(?:[ \t]*)$")
@@ -189,10 +197,10 @@ def completed_tests(path, module):
     duplicates = []
     failures = []
     skips = []
-    package_passes = 0
+    package_passes = []
     package_failure = False
-    package = re.compile(r"^ok[ \t]+" + re.escape(module + "/internal/integration")
-                         + r"[ \t]+[0-9]+(?:\.[0-9]+)?s[ \t]*$")
+    package = re.compile(r"^ok[ \t]+(" + "|".join(re.escape(module + "/" + name) for name in EXPECTED_PACKAGES)
+                         + r")[ \t]+[0-9]+(?:\.[0-9]+)?s[ \t]*$")
     with path.open(encoding="utf-8", errors="replace") as log:
         for raw in log:
             line = raw.rstrip("\r\n")
@@ -210,8 +218,9 @@ def completed_tests(path, module):
                     if name in results:
                         duplicates.append(name)
                     results[name] = status
-            if package.fullmatch(line):
-                package_passes += 1
+            passed_package = package.fullmatch(line)
+            if passed_package:
+                package_passes.append(passed_package.group(1)[len(module) + 1:])
             if re.fullmatch(r"FAIL(?:[ \t]+.*)?", line):
                 package_failure = True
     expected = set(EXPECTED_TESTS)
@@ -220,7 +229,7 @@ def completed_tests(path, module):
     passed = (not missing and not unexpected and not duplicates and not failures and not skips
               and set(runs) == expected and len(runs) == len(expected)
               and all(status == "PASS" for status in results.values())
-              and package_passes == 1 and not package_failure)
+              and sorted(package_passes) == sorted(EXPECTED_PACKAGES) and not package_failure)
     return {"expected": list(EXPECTED_TESTS), "started": runs, "results": results,
             "missing": missing, "unexpected": unexpected, "duplicates": duplicates,
             "failed": failures, "skipped": skips, "package_passes": package_passes,

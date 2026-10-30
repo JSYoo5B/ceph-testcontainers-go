@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"strings"
 	"testing"
@@ -126,7 +127,7 @@ func osdVolumeWaitState(t *testing.T, parent context.Context, cluster *ceph.Cont
 				}
 			}
 		}
-		states, err := observeCluster(cluster).OSDStates(ctx)
+		states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}

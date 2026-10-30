@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"os"
 	"os/exec"
@@ -26,7 +27,7 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, imageOpts := integrationImages(t)
+	image, imageOpts := harness.IntegrationImages(t)
 	type outcome struct {
 		index   int
 		cluster *ceph.Container
@@ -66,7 +67,7 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 	if len(failures) != 0 {
 		t.Fatal(strings.Join(failures, "; "))
 	}
-	if mode == "bridge" && staticFacts(clusters[0]).NetworkName == staticFacts(clusters[1]).NetworkName {
+	if mode == "bridge" && harness.StaticFacts(clusters[0]).NetworkName == harness.StaticFacts(clusters[1]).NetworkName {
 		t.Fatal("bridge clusters share a network")
 	}
 	const pool = "tc-goceph"
@@ -76,7 +77,7 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 	filesystems := make([]string, 2)
 	nativeArgs := make([][]string, 2)
 	for i, cluster := range clusters {
-		status, err := observeCluster(cluster).Status(ctx)
+		status, err := harness.ObserveCluster(cluster).Status(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,9 +89,9 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 			t.Fatal(err)
 		}
 		keyrings[i] = keyring
-		cephCommand(t, ctx, cluster, "osd", "pool", "create", pool, "8")
-		cephCommand(t, ctx, cluster, "osd", "pool", "set", pool, "pg_autoscale_mode", "off")
-		cephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", pool, "rbd")
+		harness.CephCommand(t, ctx, cluster, "osd", "pool", "create", pool, "8")
+		harness.CephCommand(t, ctx, cluster, "osd", "pool", "set", pool, "pg_autoscale_mode", "off")
+		harness.CephCommand(t, ctx, cluster, "osd", "pool", "application", "enable", pool, "rbd")
 		filesystem, err := cephfs.Start(ctx, cluster, cephfs.Config{})
 		if err != nil {
 			t.Fatal(err)
@@ -149,7 +150,7 @@ func goCephLinuxClusterPair(t *testing.T, mode, clientImage, goCeph string) {
 		probe(i, "verify")
 	}
 	for i, cluster := range clusters {
-		advanceServiceTopology(t, ctx, cluster)
+		harness.AdvanceServiceTopology(t, ctx, cluster)
 		for j := range clients {
 			probe(j, "verify")
 		}

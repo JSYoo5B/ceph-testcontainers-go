@@ -367,7 +367,7 @@ func TestUpgradeStoreVolumeCreateClassifiesEveryOutcome(t *testing.T) {
 			if (err != nil) != tc.err || v.state != tc.want {
 				t.Fatalf("err = %v, state = %s, want %s", err, v.state, tc.want)
 			}
-			if r := v.receipt(); len(r.Events) == 0 || r.State != tc.want.String() {
+			if r := v.Receipt(); len(r.Events) == 0 || r.State != tc.want.String() {
 				t.Fatalf("receipt = %+v", r)
 			}
 			if err := v.create(ctx, eng); err == nil {
@@ -409,7 +409,7 @@ func TestUpgradeStoreVolumeRejectsAForeignOrChangedVolume(t *testing.T) {
 		changed := eng.vols[v.name]
 		changed.CreatedAt = "2027-01-01T00:00:00Z"
 		eng.vols[v.name] = changed
-		if err := v.check(ctx, eng); err == nil {
+		if err := v.Check(ctx, eng); err == nil {
 			t.Fatal("a recreated volume passed the identity check")
 		}
 		if err := v.release(ctx, eng); err == nil || eng.count("volume-remove") != 0 {
@@ -441,7 +441,7 @@ func TestUpgradeStoreVolumeReleaseNeedsEveryUserGone(t *testing.T) {
 	if err := v.release(ctx, eng); err != nil || eng.count("volume-remove") != 2 {
 		t.Fatalf("a released volume was removed again: %v", err)
 	}
-	if got := v.receipt(); got.State != "released" || !hasEvent(got.Events, "release failed") || len(got.Users) != 1 {
+	if got := v.Receipt(); got.State != "released" || !hasEvent(got.Events, "release failed") || len(got.Users) != 1 {
 		t.Fatalf("receipt = %+v", got)
 	}
 }
@@ -671,7 +671,7 @@ func TestUpgradeVolumeEffectsFenceGuards(t *testing.T) {
 			if _, err := env.eff.Fence(context.Background(), monA()); err == nil {
 				t.Fatal("fence succeeded")
 			}
-			r := env.eff.receipt()
+			r := env.eff.Receipt()
 			if r.Fenced {
 				t.Fatal("receipt says fenced")
 			}
@@ -694,8 +694,8 @@ func TestUpgradeVolumeEffectsFenceGuards(t *testing.T) {
 		env := newEffectsEnv(t)
 		env.eng.stopErr = errors.New("timeout")
 		_, _ = env.eff.Fence(context.Background(), monA())
-		if !hasEvent(env.eff.receipt().Events, "stop returned") || env.eng.count("remove "+fakeSource) != 0 || env.eng.count("stop "+fakeSource) != 1 {
-			t.Fatalf("events %v, calls %v", env.eff.receipt().Events, env.eng.calls)
+		if !hasEvent(env.eff.Receipt().Events, "stop returned") || env.eng.count("remove "+fakeSource) != 0 || env.eng.count("stop "+fakeSource) != 1 {
+			t.Fatalf("events %v, calls %v", env.eff.Receipt().Events, env.eng.calls)
 		}
 	})
 	t.Run("fence is taken once", func(t *testing.T) {
@@ -739,7 +739,7 @@ func TestUpgradeVolumeEffectsRetainedTakesTheExactLeaseOnce(t *testing.T) {
 	if err != nil || !has || !vec.sameSet(fakeVector()) {
 		t.Fatalf("retained = %v %v %v", has, vec, err)
 	}
-	if !env.eff.receipt().LeaseHeld {
+	if !env.eff.Receipt().LeaseHeld {
 		t.Fatal("no lease is held")
 	}
 	if _, _, err := env.eff.Retained(context.Background(), monA()); err == nil || env.eng.count("lease") != 1 {
@@ -828,10 +828,10 @@ func TestUpgradeVolumeEffectsLaunchBuildsTheRetainedStart(t *testing.T) {
 			create = i
 		}
 	}
-	if release < 0 || create < 0 || release > create || env.eff.receipt().LeaseHeld {
+	if release < 0 || create < 0 || release > create || env.eff.Receipt().LeaseHeld {
 		t.Fatalf("lease release at %d, create at %d, calls %v", release, create, env.eng.calls)
 	}
-	if got := env.eff.receipt().Launches["i1"]; !strings.HasSuffix(got, "started") {
+	if got := env.eff.Receipt().Launches["i1"]; !strings.HasSuffix(got, "started") {
 		t.Fatalf("launch record = %q", got)
 	}
 	if !slices.Contains(env.vol.users, "tc-upgrade-"+fakeRunID+"-i1") {
@@ -906,7 +906,7 @@ func TestUpgradeVolumeEffectsLaunchOutcomesAreRecordedAndNeverReplayed(t *testin
 			if err := env.eff.Launch(context.Background(), "i1", goodPlan()); err == nil {
 				t.Fatal("no error")
 			}
-			rec := env.eff.receipt().Launches["i1"]
+			rec := env.eff.Receipt().Launches["i1"]
 			if !strings.Contains(rec, tc.state) {
 				t.Fatalf("record = %q, want %q", rec, tc.state)
 			}
@@ -924,7 +924,7 @@ func TestUpgradeVolumeEffectsLaunchOutcomesAreRecordedAndNeverReplayed(t *testin
 			}
 			// A lease whose release failed stays owned until a release works.
 			if name == "lease release fails" {
-				if !env.eff.receipt().LeaseHeld {
+				if !env.eff.Receipt().LeaseHeld {
 					t.Fatal("a lease whose release failed is no longer owned")
 				}
 				if err := env.eff.Dispose(context.Background(), []string{"i1"}); err == nil {
@@ -1087,7 +1087,7 @@ func TestUpgradeVolumeEffectsDisposeKeepsFailuresSeparateAndReleasesTheLease(t *
 	if err := env.eff.Dispose(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if env.eff.receipt().LeaseHeld || !env.eng.lease.released {
+	if env.eff.Receipt().LeaseHeld || !env.eng.lease.released {
 		t.Fatal("the lease was not released")
 	}
 	env2 := newEffectsEnv(t)
@@ -1095,12 +1095,12 @@ func TestUpgradeVolumeEffectsDisposeKeepsFailuresSeparateAndReleasesTheLease(t *
 	env2.eng.leaseRelEr = nil
 	env2.eng.lease.relErr = errors.New("busy")
 	err := env2.eff.Dispose(context.Background(), nil)
-	if err == nil || !env2.eff.receipt().LeaseHeld {
+	if err == nil || !env2.eff.Receipt().LeaseHeld {
 		t.Fatalf("a failed lease release was hidden: %v", err)
 	}
 	env3 := launched(t, nil)
 	env3.eng.removeErr = errors.New("busy")
-	if err := env3.eff.Dispose(context.Background(), []string{"i1"}); err == nil || !hasEvent(env3.eff.receipt().Events, "remove") {
+	if err := env3.eff.Dispose(context.Background(), []string{"i1"}); err == nil || !hasEvent(env3.eff.Receipt().Events, "remove") {
 		t.Fatalf("a failed remove was hidden: %v", err)
 	}
 }
@@ -1147,7 +1147,7 @@ func TestUpgradeVolumeEffectsDriveTheMergedStep(t *testing.T) {
 	if err := ee.vol.release(context.Background(), ee.eng); err != nil || ee.vol.state != upgradeVolumeReleased {
 		t.Fatalf("volume release: %v", err)
 	}
-	if got := ee.vol.receipt(); len(got.Users) != 2 {
+	if got := ee.vol.Receipt(); len(got.Users) != 2 {
 		t.Fatalf("volume users = %v", got.Users)
 	}
 	if ee.eng.count("create "+ee.eff.containerName(rc.Instances[0])) != 1 {
@@ -1179,7 +1179,7 @@ func TestUpgradeVolumeEffectsStopTheStepOnEveryFailure(t *testing.T) {
 				c.Effects = ee.eff
 				base := c.OnReceipt
 				c.OnReceipt = func(r upgradeMonReceipt) {
-					receipts = append(receipts, ee.eff.receipt()) // before cleanup
+					receipts = append(receipts, ee.eff.Receipt()) // before cleanup
 					base(r)
 				}
 			}).run(context.Background())
@@ -1201,7 +1201,7 @@ func TestUpgradeVolumeEffectsStopTheStepOnEveryFailure(t *testing.T) {
 			if rc.CleanupErr != nil {
 				t.Fatalf("cleanup: %v", rc.CleanupErr)
 			}
-			if ee.eff.receipt().LeaseHeld && len(rc.Instances) > 0 {
+			if ee.eff.Receipt().LeaseHeld && len(rc.Instances) > 0 {
 				t.Fatal("lease still held after cleanup")
 			}
 			if _, _, err := env.seq.admit(); err == nil {

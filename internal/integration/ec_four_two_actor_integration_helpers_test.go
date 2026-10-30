@@ -121,7 +121,7 @@ func (a *ecFourTwoActor) send(ctx context.Context, seq, value int, phase string)
 	return nil
 }
 
-func (a *ecFourTwoActor) finish(ctx context.Context) error {
+func (a *ecFourTwoActor) Finish(ctx context.Context) error {
 	if a.finished == nil {
 		if err := a.input.Close(); err != nil {
 			return err

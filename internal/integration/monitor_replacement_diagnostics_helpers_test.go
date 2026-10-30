@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"regexp"
 	"slices"
 	"strconv"
@@ -42,7 +43,7 @@ type monReplacementCluster interface {
 // monReplacementBounds bounds every step. Operation guards AddMonitor and
 // RemoveMonitor, which apply the cluster's own startup timeout inside it;
 // Quorum is the wait for the expected quorum afterwards, the 90 seconds that
-// topologyWait allowed before. Query bounds one admin socket or quorum read,
+// TopologyWait allowed before. Query bounds one admin socket or quorum read,
 // Snapshot one set of them, and Bundle the whole failure collection.
 type monReplacementBounds struct {
 	Operation, Quorum, QuorumInterval, Query, Snapshot, Bundle time.Duration
@@ -431,7 +432,7 @@ func runMonReplacement(t monReplacementReporter, ctx context.Context, r *monRepl
 		t.Fatalf("MON replacement token=%s cluster=%s phase %d %q: %v", r.Token, r.Cluster, bundle.Failed.Seq, bundle.Failed.Name, err)
 		return
 	}
-	t.Logf("%s", r.receipt())
+	t.Logf("%s", r.Receipt())
 }
 
 // monReplacementFinisher is the part of *testing.T that a cleanup reads.
@@ -532,14 +533,14 @@ func (r *monReplacementRecorder) replace(ctx context.Context, pairs [][2]string)
 	for _, pair := range pairs {
 		old, added := pair[0], pair[1]
 		members = append(members, added)
-		if err := r.phase(ctx, "add "+added, members, func(opCtx context.Context) (string, error) {
+		if err := r.Phase(ctx, "add "+added, members, func(opCtx context.Context) (string, error) {
 			mon, err := r.cluster.AddMonitor(opCtx, added)
 			return monReplacementHandle(mon), err
 		}); err != nil {
 			return err
 		}
 		members = slices.DeleteFunc(members, func(name string) bool { return name == old })
-		if err := r.phase(ctx, "remove "+old, members, func(opCtx context.Context) (string, error) {
+		if err := r.Phase(ctx, "remove "+old, members, func(opCtx context.Context) (string, error) {
 			return "", r.cluster.RemoveMonitor(opCtx, old)
 		}); err != nil {
 			return err
@@ -564,15 +565,15 @@ func monReplacementHandle(mon *ceph.MonitorContainer) string {
 // phase runs one membership operation under its bound, then waits for the
 // quorum to be exactly want. The snapshot after it is taken whether or not it
 // succeeded; a failure keeps the operation's partial handle.
-func (r *monReplacementRecorder) phase(ctx context.Context, name string, want []string, operation func(context.Context) (string, error)) error {
+func (r *monReplacementRecorder) Phase(ctx context.Context, name string, want []string, operation func(context.Context) (string, error)) error {
 	p := monReplacementPhase{Seq: len(r.Phases) + 1, Name: name, Started: time.Now()}
 	opCtx, cancel := context.WithTimeout(ctx, r.bounds.Operation)
 	handle, err := operation(opCtx)
 	cancel()
 	p.OperationEnded, p.Handle = time.Now(), handle
 	if err == nil {
-		var seen observation[ceph.QuorumStatus]
-		seen, err = observe(ctx, r.bounds.Quorum, r.bounds.Query, r.bounds.QuorumInterval, func(probeCtx context.Context) (ceph.QuorumStatus, bool, error) {
+		var seen harness.Observation[ceph.QuorumStatus]
+		seen, err = harness.Observe(ctx, r.bounds.Quorum, r.bounds.Query, r.bounds.QuorumInterval, func(probeCtx context.Context) (ceph.QuorumStatus, bool, error) {
 			status, err := r.cluster.QuorumStatus(probeCtx)
 			if err != nil {
 				// A read that fails while membership changes is not final.
@@ -1208,7 +1209,7 @@ func (s *monReplacementSnapshot) monMapEpoch() int {
 	return epoch
 }
 
-func (r *monReplacementRecorder) receipt() string {
+func (r *monReplacementRecorder) Receipt() string {
 	var phases []string
 	incomplete := len(r.Baseline.Incomplete)
 	var total time.Duration

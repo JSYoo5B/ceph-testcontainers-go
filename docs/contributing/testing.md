@@ -10,7 +10,7 @@ described in [Continuous integration](ci.md).
 | --- | --- | --- | --- |
 | Unit tests | Next to the code, no build tags | No | `go test ./...` |
 | Package examples | `examples_test.go` in `ceph`, `rbd`, `cephfs`, `rgw` | No (Docker examples are only compiled) | `go test ./...` |
-| Ceph integration tests | `internal/integration` | Yes, plus Ceph images | Build tags |
+| Ceph integration tests | `internal/integration` and its `rbd`, `cephfs` and `rgw` test packages | Yes, plus Ceph images | Build tags |
 | Docker environment tests | `internal/dockerbridge`, `*_integration_test.go` | Docker only | Build tags |
 | CI tooling tests | `.github/scripts/test_*.py` | No | `python3 -m unittest` |
 | go-ceph consumer check | `internal/integration/goceph` | Yes, prepared Linux images | `goceph` tag and a harness |
@@ -138,9 +138,9 @@ Always pass `-count=1` to Docker-backed runs.
 
 ```sh
 CGO_ENABLED=0 go test -tags=all -count=1 -v -timeout=30m \
-  -run '^TestRGWS3$' ./internal/integration
+  -run '^TestRGWS3$' ./internal/integration/rgw
 CGO_ENABLED=0 go test -tags=all -count=1 -v -timeout=90m \
-  -run '^TestMultiClusterRBDReceiverReadiness$/^bridge$' ./internal/integration
+  -run '^TestMultiClusterRBDReceiverReadiness$/^bridge$' ./internal/integration/rbd
 ```
 
 Optional tests also need their opt-in tag, for example
@@ -181,7 +181,7 @@ Optional batches use the `optional` subcommand:
 
 ```sh
 python3 .github/scripts/tag_scenarios.py optional \
-  --batch native_rgw_translation --package ./internal/integration \
+  --batch native_rgw_translation --package ./internal/integration/rgw \
   --directory artifacts/local-native-rgw
 ```
 
@@ -193,7 +193,7 @@ Docker Engine allows (see [Native regressions](ci.md#native-regressions)).
 
 ### Running tests in parallel
 
-Tests whose first statement is `parallelWhenEnabled(t)` run concurrently when
+Tests whose first statement is `harness.ParallelWhenEnabled(t)` run concurrently when
 `CEPH_TEST_PARALLEL` is an integer of 2 or more; at most that many run at once,
 each holding its slot until its cluster is terminated. Unset or `1` keeps every
 test sequential. Any other value fails the test. CI uses `2`.
@@ -212,7 +212,7 @@ the roles the test needs:
 ```sh
 CEPH_TEST_ESSENTIAL_IMAGE=registry.example.com/ceph:essential \
 CEPH_TEST_CLIENT_IMAGE=registry.example.com/ceph:client \
-  CGO_ENABLED=0 go test -tags=all -count=1 -v -run '^TestRBDLifecycle$' ./internal/integration
+  CGO_ENABLED=0 go test -tags=all -count=1 -v -run '^TestRBDLifecycle$' ./internal/integration/rbd
 ```
 
 Tentacle 20.2.x is the default. For Squid, set
@@ -279,7 +279,9 @@ control container runs the `ceph` CLI from the essential image; `rados` and
 ## Make targets
 
 Every Docker target takes a timeout override, for example
-`MULTICLUSTER_TIMEOUT=90m make multicluster`.
+`MULTICLUSTER_TIMEOUT=90m make multicluster`. The targets run
+`./internal/integration/...` with `-p 1`, one test package at a time, because
+each package starts its own clusters.
 
 | Target | What it runs | Timeout variable (default) |
 | --- | --- | --- |
@@ -301,7 +303,10 @@ python3 .github/scripts/tag_scenarios.py plan --output artifacts/plan.json
 make scenario SCENARIO_CATEGORY=recovery SCENARIO_BATCH=container_pause
 ```
 
-`plan.json` lists every category and batch. The run's logs and report go to
+`plan.json` lists every category, batch and package. A batch that several
+integration packages have (such as `short`/`default`) also needs
+`SCENARIO_PACKAGE`, for example `./internal/integration/rbd`. The run's logs
+and report go to
 `SCENARIO_DIRECTORY` (default `artifacts/scenario-<category>-<batch>`), which
 must not exist yet. To run one test, use `go test -tags=all -run` (see
 [One test](#one-test)).
@@ -324,8 +329,20 @@ module's `go.mod`, so rebuild the client image after a go-ceph update.
 
 ### Files
 
-A scenario lives in two files in `internal/integration`, package
-`integration_test`:
+A scenario lives in the test package of its area: `internal/integration/rbd`,
+`internal/integration/cephfs` or `internal/integration/rgw` when it is about
+that service, and `internal/integration` (package `integration_test`) for the
+cluster and everything else. Each package compiles and runs alone, so a change
+in one area does not edit or rebuild the others.
+
+Code that tests of more than one of these packages call lives in
+`internal/integration/harness`. Go lets a test of another package see only
+non-test files, so the harness is a non-test package that only test files may
+import (`internal/tools/testsupportcheck` enforces that), and what other
+packages use is exported. Keep a helper in its test package while only that
+package uses it, and move it into the harness when a second package needs it.
+
+In the test package, the scenario takes two files:
 
 1. `<topic>_integration_helpers_test.go` holds the scenario body as a plain
    function such as
@@ -344,12 +361,12 @@ A scenario lives in two files in `internal/integration`, package
 package integration_test
 
 func TestMyFeature(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testMyFeature(t)
 }
 
 func TestHostNetworkMyFeature(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testMyFeature(t, ceph.WithHostNetwork())
 }
 ```
@@ -445,13 +462,13 @@ differs from the source. Code checks runs it for every pull request.
   [Release differences](#release-differences)):
 
   ```golang
-  if !capabilitySupported(t, ctx, cluster, capabilityRBDNamespaceMapping) {
-  	requireCapabilityRefused(t, err, cluster, capabilityRBDNamespaceMapping, detail)
+  if !harness.CapabilitySupported(t, ctx, cluster, harness.CapabilityRBDNamespaceMapping) {
+  	harness.RequireCapabilityRefused(t, err, cluster, harness.CapabilityRBDNamespaceMapping, detail)
   	return
   }
   ```
 
-- Call `parallelWhenEnabled(t)` only if the test touches nothing but its own
+- Call `harness.ParallelWhenEnabled(t)` only if the test touches nothing but its own
   clusters and containers: not for tests that inspect engine-wide Docker
   resources or events, need fixed host ports, or call `t.Setenv`.
 - To collect evidence on failure, call `cluster.CollectDiagnostics` from
@@ -470,12 +487,12 @@ It requires `native_regression`, never compiles under plain `all`, uses the
 ### Release differences
 
 Where the expected outcome differs between releases, the test selects it from
-`releaseCapabilities` in
-`internal/integration/release_capabilities_integration_helpers_test.go`, never
-from a release prefix of its own. `capabilitySupported` first requires every
+`ReleaseCapabilities` in
+`internal/integration/harness/release_capabilities_integration_helpers.go`,
+never from a release prefix of its own. `CapabilitySupported` first requires every
 daemon to run the essential image's release, then answers from a probe or the
 release row. Unsupported cases assert the error with
-`requireCapabilityRefused` and return. A mixed-release cluster, an unparsable
+`RequireCapabilityRefused` and return. A mixed-release cluster, an unparsable
 version, or a new major release without a row fails the test; an unlisted
 patch uses its major release's row. `TestReleaseCapabilityTable` checks these
 rules without a cluster.

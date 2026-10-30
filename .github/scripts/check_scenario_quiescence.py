@@ -16,10 +16,12 @@ CASES = {"process-quiescence-" + network + "-" + kind: (network, kind)
          for network in NETWORKS for kind in KINDS}
 SELECTORS = {case: "^" + PARENT + "$/^" + network + "$/^" + kind + "$"
              for case, (network, kind) in CASES.items()}
-PACKAGE = "github.com/JSYoo5B/ceph-testcontainers-go/internal/integration"
+PACKAGE = "github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/cephfs"
+# Logs produced while the scenario was in the single integration package.
+UNSPLIT_PACKAGE = "github.com/JSYoo5B/ceph-testcontainers-go/internal/integration"
 # Logs produced before the module path took the GitHub owner's casing.
 FORMER_PACKAGE = "github.com/jsyoo5b/ceph-testcontainers-go/internal/integration"
-PACKAGES = (PACKAGE, FORMER_PACKAGE)
+PACKAGES = (PACKAGE, UNSPLIT_PACKAGE, FORMER_PACKAGE)
 PACKAGE_PATTERN = "(?:" + "|".join(map(re.escape, PACKAGES)) + ")"
 STAGES = ("exited", "later-run", "container-removed")
 DIRECTORY = "/daemon-a"

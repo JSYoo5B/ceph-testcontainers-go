@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"regexp"
 	"runtime"
 	"slices"
@@ -65,7 +66,7 @@ func registerMessengerEvidence(t *testing.T) func(map[string]any) {
 // owned separately from the cluster. Collecting evidence must not start one.
 func targetedMessengerEvidence(t *testing.T, ctx context.Context, cluster *ceph.Container, parent []byte, fsid string, executors ...testcontainers.Container) map[string]any {
 	t.Helper()
-	version := strings.TrimSpace(execOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--version"))
+	version := strings.TrimSpace(harness.ExecOutput(t, ctx, clusteraccess.ControlContainer(t, cluster), "ceph", "--version"))
 	match := regexp.MustCompile(`^ceph version ([0-9]+\.[0-9]+\.[0-9]+) `).FindStringSubmatch(version)
 	if len(match) != 2 {
 		t.Fatalf("unrecognized native Ceph version: %q", version)

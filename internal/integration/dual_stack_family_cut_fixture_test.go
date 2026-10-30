@@ -42,10 +42,10 @@ func TestFamilyCutJoinChecksPendingRead(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			started := actorRequests{}
-			if hash, err := started.check(read, familyCutReport(t, familyCutPendingReport, ""), false, want); err != nil || hash != "" {
+			if hash, err := started.Check(read, familyCutReport(t, familyCutPendingReport, ""), false, want); err != nil || hash != "" {
 				t.Fatalf("pending read: %q, %v", hash, err)
 			}
-			hash, err := started.check(join, familyCutReport(t, familyCutJoinedReport, tc.sha), true, want)
+			hash, err := started.Check(join, familyCutReport(t, familyCutJoinedReport, tc.sha), true, want)
 			if tc.errPart == "" {
 				if err != nil || hash != "osd-cut:sha256("+object+")="+want[object] {
 					t.Fatalf("joined read: %q, %v", hash, err)
@@ -61,16 +61,16 @@ func TestFamilyCutJoinChecksPendingRead(t *testing.T) {
 
 func TestFamilyCutJoinNeedsStartedOperation(t *testing.T) {
 	join := map[string]any{"id": "osd-cut", "op": "join", "wait": 90}
-	if _, err := (actorRequests{}).check(join, familyCutReport(t, familyCutJoinedReport, ""), true, nil); err == nil {
+	if _, err := (actorRequests{}).Check(join, familyCutReport(t, familyCutJoinedReport, ""), true, nil); err == nil {
 		t.Fatal("a join without a started operation was accepted")
 	}
 	// A pending MON command joined after Restore has no bytes to compare.
 	started := actorRequests{}
 	mon := map[string]any{"id": "mon-cut", "op": "mon", "wait": 8}
-	if _, err := started.check(mon, actorResult{ID: "mon-cut"}, false, nil); err != nil {
+	if _, err := started.Check(mon, actorResult{ID: "mon-cut"}, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	if hash, err := started.check(map[string]any{"id": "mon-cut", "op": "join", "wait": 90}, actorResult{ID: "mon-cut", Done: true}, true, nil); err != nil || hash != "" {
+	if hash, err := started.Check(map[string]any{"id": "mon-cut", "op": "join", "wait": 90}, actorResult{ID: "mon-cut", Done: true}, true, nil); err != nil || hash != "" {
 		t.Fatalf("joined mon command: %q, %v", hash, err)
 	}
 }

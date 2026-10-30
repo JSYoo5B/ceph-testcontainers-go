@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"strings"
 	"testing"
 	"time"
@@ -21,18 +22,18 @@ import (
 // primary reports slow operations. Without nodown its peer marks it down and
 // degraded I/O resumes. Both phases end with the same OSD rejoining.
 func TestPausedOSDFaults(t *testing.T) {
-	for _, mode := range networkModes(t, "host", "bridge") {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		host, name := mode.Host, mode.Name
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 			defer cancel()
-			image, opts := integrationImages(t)
+			image, opts := harness.IntegrationImages(t)
 			opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()), ceph.WithOSDStorage(ceph.OSDStorage{}.WithBlockSize(512<<20)))
 			if host {
 				opts = append(opts, ceph.WithHostNetwork())
 			}
-			cluster, client := newServiceClusterWithOptions(t, image, opts...)
-			fsid := strings.TrimSpace(string(mustCeph(t, ctx, cluster, "fsid")))
+			cluster, client := harness.NewServiceClusterWithOptions(t, image, opts...)
+			fsid := strings.TrimSpace(string(harness.MustCeph(t, ctx, cluster, "fsid")))
 			// Two OSDs leave one peer to report the other down, and a short
 			// complaint time makes the slow-op report observable within a phase.
 			for _, setting := range []ceph.ConfigSetting{
@@ -58,7 +59,7 @@ func TestPausedOSDFaults(t *testing.T) {
 			}
 			probe := func(t *testing.T, phase string) {
 				t.Helper()
-				t.Logf("CONTAINER_PAUSE_CLIENT %s", execOutput(t, ctx, client, "python3", "-c", pausedOSDRADOSProbe, poolName, phase))
+				t.Logf("CONTAINER_PAUSE_CLIENT %s", harness.ExecOutput(t, ctx, client, "python3", "-c", pausedOSDRADOSProbe, poolName, phase))
 			}
 			probe(t, "seed")
 			target := clusteraccess.OSDs(t, cluster)[1]
@@ -86,8 +87,8 @@ func TestPausedOSDFaults(t *testing.T) {
 					t.Fatal("overlapping pause was admitted", err)
 				}
 				probe(t, "blocked")
-				waitHealthCode(t, ctx, cluster, fsid, "SLOW_OPS", true)
-				status, err := observeCluster(cluster).Status(ctx)
+				harness.WaitHealthCode(t, ctx, cluster, fsid, "SLOW_OPS", true)
+				status, err := harness.ObserveCluster(cluster).Status(ctx)
 				if err != nil || status.OSDMap.NumUpOSDs != 2 {
 					t.Fatalf("nodown did not keep the frozen OSD up: %+v %v", status.OSDMap, err)
 				}
@@ -104,7 +105,7 @@ func TestPausedOSDFaults(t *testing.T) {
 					t.Fatal(err)
 				}
 				probe(t, "thawed")
-				waitHealthCode(t, ctx, cluster, fsid, "SLOW_OPS", false)
+				harness.WaitHealthCode(t, ctx, cluster, fsid, "SLOW_OPS", false)
 			})
 
 			t.Run("frozen_down", func(t *testing.T) {
@@ -153,7 +154,7 @@ func waitOSDsUp(t *testing.T, ctx context.Context, cluster *ceph.Container, up i
 	defer cancel()
 	started := time.Now()
 	for {
-		status, err := observeCluster(cluster).Status(phaseCtx)
+		status, err := harness.ObserveCluster(cluster).Status(phaseCtx)
 		if err == nil && status.OSDMap.NumUpOSDs == up {
 			t.Logf("CONTAINER_PAUSE up_osds=%d after=%s", up, time.Since(started).Round(time.Second))
 			return

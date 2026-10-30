@@ -4,9 +4,12 @@
 
 package integration_test
 
-import "testing"
+import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"testing"
+)
 
 func TestOSDMemStoreLegacyPlacement(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testOSDMemStoreLegacyPlacement(t)
 }

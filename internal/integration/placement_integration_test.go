@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"strconv"
 	"testing"
@@ -18,7 +19,7 @@ import (
 )
 
 func TestHostFailureDomainPool(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	layout := []ceph.OSDConfig{
@@ -26,7 +27,7 @@ func TestHostFailureDomainPool(t *testing.T) {
 		{Host: "host-b", Rack: "rack-b", Root: "tc-storage", DeviceClass: "fast"},
 		{Host: "host-c", Rack: "rack-c", Root: "tc-storage", DeviceClass: "fast"},
 	}
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(layout...).WithPoolDefaults(3, 2).WithDefaultCRUSHRoot("tc-storage")))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithInitialOSDs(layout...).WithPoolDefaults(3, 2).WithDefaultCRUSHRoot("tc-storage")))
 	pool, err := cluster.CreatePool(ctx, ceph.PoolConfig{
 		Name: "tc-host-replicated", PGNum: 8, Application: "rados",
 		FailureDomain: "host", CRUSHRoot: "tc-storage", DeviceClass: "fast",
@@ -102,7 +103,7 @@ func TestHostFailureDomainPool(t *testing.T) {
 			t.Fatalf("acting set did not span three distinct hosts: %s", output)
 		}
 	}
-	execCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, pool.Name, "seed")
+	harness.ExecCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, pool.Name, "seed")
 	failed := clusteraccess.OSDs(t, cluster)[0]
 	stopTimeout := 5 * time.Second
 	if err := failed.Stop(ctx, &stopTimeout); err != nil {
@@ -111,13 +112,13 @@ func TestHostFailureDomainPool(t *testing.T) {
 	waitPlacementOSDDown(t, ctx, cluster, failed.ID)
 	// min_size=2 permits writes with the third host unavailable. Each phase is
 	// a fresh native librados session, and verify retains the outage writes.
-	execCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, pool.Name, "outage")
+	harness.ExecCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, pool.Name, "outage")
 	if err := failed.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	execCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, pool.Name, "verify")
+	harness.ExecCommand(t, ctx, client, "python3", "-c", hostPlacementClientScript, pool.Name, "verify")
 	t.Logf("three host domains with replicas=3/min_size=2: acting sets span hosts; native reads/writes survive host %s down and recover after restart", failed.Placement().Host)
 }

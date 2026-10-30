@@ -4,17 +4,20 @@
 
 package integration_test
 
-import "testing"
+import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"testing"
+)
 
 func TestAuthCiphersAndTicketLifetimes(t *testing.T) {
-	parallelWhenEnabled(t)
-	image, imageOpts := integrationImages(t)
-	testAuthCiphers(t, image, imageOpts)
+	harness.ParallelWhenEnabled(t)
+	image, imageOpts := harness.IntegrationImages(t)
+	harness.RunAuthCiphers(t, image, imageOpts)
 }
 
 // TestAuthCiphersWithoutKeyTypeOption runs the official Tentacle 20.2.3 image
 // for every role, independently of the release under test.
 func TestAuthCiphersWithoutKeyTypeOption(t *testing.T) {
-	parallelWhenEnabled(t)
-	testAuthCiphers(t, tentacleWithoutKeyTypes, nil)
+	harness.ParallelWhenEnabled(t)
+	harness.RunAuthCiphers(t, harness.TentacleWithoutKeyTypes, nil)
 }

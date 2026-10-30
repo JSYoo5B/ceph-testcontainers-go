@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite"
 	"slices"
 	"testing"
@@ -24,7 +25,7 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	const pool = "tc-context-snapshot"
-	source, destination, sourceClient, destinationClient := newMultiClusterPair(t,
+	source, destination, sourceClient, destinationClient := harness.NewMultiClusterPair(t,
 		ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(1).WithOSDCount(1).WithPools(ceph.PoolConfig{Name: pool, Application: "rados", Replicas: 1, MinSize: 1})))
 	type state struct {
 		config, keyring []byte
@@ -57,7 +58,7 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 		if err := clients[i].CopyToContainer(ctx, payload, "/tmp/tc-context-input", 0o600); err != nil {
 			t.Fatal(err)
 		}
-		multiClusterExecOutput(t, ctx, clients[i], "rados", "-p", pool, "put", "retained", "/tmp/tc-context-input")
+		harness.MultiClusterExecOutput(t, ctx, clients[i], "rados", "-p", pool, "put", "retained", "/tmp/tc-context-input")
 	}
 	for index, busy := range clusters {
 		t.Run([]string{"source", "destination"}[index], func(t *testing.T) {
@@ -68,25 +69,25 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 					topologySnapshotQueue(t, releaseOwner, func(callCtx context.Context) (topologySnapshotPartial, error) {
 						switch kind {
 						case "rbd":
-							result, err := rbdmirror.Run(callCtx, nativeMirrorImage(t, "rbd-aux", staticFacts(source).Images.RBDAux), rbdmirror.WithConfig(rbdmirror.Config{Source: source, Destination: destination, Pool: pool}))
+							result, err := rbdmirror.Run(callCtx, harness.NativeMirrorImage(t, "rbd-aux", harness.StaticFacts(source).Images.RBDAux), rbdmirror.WithConfig(rbdmirror.Config{Source: source, Destination: destination, Pool: pool}))
 							if result == nil {
 								return nil, err
 							}
 							return result, err
 						case "cephfs":
-							result, err := cephfsmirror.Run(callCtx, nativeMirrorImage(t, "cephfs", staticFacts(source).Images.CephFS), cephfsmirror.WithConfig(cephfsmirror.Config{Source: source, Destination: destination, SourceFilesystem: "fs", DestinationFilesystem: "fs", Directories: []string{"/owned"}}))
+							result, err := cephfsmirror.Run(callCtx, harness.NativeMirrorImage(t, "cephfs", harness.StaticFacts(source).Images.CephFS), cephfsmirror.WithConfig(cephfsmirror.Config{Source: source, Destination: destination, SourceFilesystem: "fs", DestinationFilesystem: "fs", Directories: []string{"/owned"}}))
 							if result == nil {
 								return nil, err
 							}
 							return result, err
 						case "rgw":
-							result, err := multisite.Run(callCtx, staticFacts(source).Images.RGW, multisite.WithConfig(multisite.Config{Source: source, Destination: destination}))
+							result, err := multisite.Run(callCtx, harness.StaticFacts(source).Images.RGW, multisite.WithConfig(multisite.Config{Source: source, Destination: destination}))
 							if result == nil {
 								return nil, err
 							}
 							return result, err
 						default:
-							result, err := multisite.Run(callCtx, staticFacts(source).Images.RGW, multisite.WithTopology(multisite.TopologyConfig{Zones: []multisite.ZoneConfig{{Name: "a", Cluster: source}, {Name: "b", Cluster: destination}}}))
+							result, err := multisite.Run(callCtx, harness.StaticFacts(source).Images.RGW, multisite.WithTopology(multisite.TopologyConfig{Zones: []multisite.ZoneConfig{{Name: "a", Cluster: source}, {Name: "b", Cluster: destination}}}))
 							if result == nil {
 								return nil, err
 							}
@@ -128,8 +129,8 @@ func TestMultiClusterTopologySnapshotsHonorBusyOwners(t *testing.T) {
 		if err != nil || json.Unmarshal(data, &current) != nil || !slices.Equal(current, before[i].osdIDs) {
 			t.Fatalf("OSD membership changed: %v", err)
 		}
-		multiClusterExecOutput(t, ctx, clients[i], "rados", "-p", pool, "get", "retained", "/tmp/tc-context-output")
-		if !bytes.Equal(multiClusterReadFile(t, ctx, clients[i], "/tmp/tc-context-output"), payload) {
+		harness.MultiClusterExecOutput(t, ctx, clients[i], "rados", "-p", pool, "get", "retained", "/tmp/tc-context-output")
+		if !bytes.Equal(harness.MultiClusterReadFile(t, ctx, clients[i], "/tmp/tc-context-output"), payload) {
 			t.Fatal("retained RADOS bytes differ after owner admission cancellation")
 		}
 	}

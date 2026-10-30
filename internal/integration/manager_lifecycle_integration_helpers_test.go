@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func managerLifecycleRBDReady(t *testing.T, parent context.Context, cluster *cep
 	defer cancel()
 	for {
 		code, reader, err := clusteraccess.ControlContainer(t, cluster).Exec(ctx,
-			topologyCommandWithTimeout(40*time.Second, "ceph", "--connect-timeout", "5", "rbd", "task", "list", "--format", "json"), tcexec.Multiplexed())
+			harness.TopologyCommandWithTimeout(40*time.Second, "ceph", "--connect-timeout", "5", "rbd", "task", "list", "--format", "json"), tcexec.Multiplexed())
 		var output []byte
 		if err == nil {
 			output, err = io.ReadAll(reader)

@@ -255,7 +255,7 @@ func (v *upgradeStoreVolume) create(ctx context.Context, eng upgradeMonEngine) e
 }
 
 // check re-reads the volume and compares its identity.
-func (v *upgradeStoreVolume) check(ctx context.Context, eng upgradeMonEngine) error {
+func (v *upgradeStoreVolume) Check(ctx context.Context, eng upgradeMonEngine) error {
 	if v.state != upgradeVolumeCreated {
 		return fmt.Errorf("volume %s is %s, not created", v.name, v.state)
 	}
@@ -329,7 +329,7 @@ type upgradeVolumeReceipt struct {
 	Events         []string
 }
 
-func (v *upgradeStoreVolume) receipt() upgradeVolumeReceipt {
+func (v *upgradeStoreVolume) Receipt() upgradeVolumeReceipt {
 	return upgradeVolumeReceipt{Name: v.name, Identity: v.identity(), State: v.state.String(), Users: slices.Clone(v.users), Events: slices.Clone(v.events)}
 }
 
@@ -619,7 +619,7 @@ func (e *upgradeVolumeMonEffects) Fence(ctx context.Context, daemon upgradeDaemo
 	if run == "" {
 		return upgradeDaemonID{}, fmt.Errorf("source has no run volume at %s", upgradeMonRunDir)
 	}
-	if err := e.cfg.Volume.check(ctx, eng); err != nil {
+	if err := e.cfg.Volume.Check(ctx, eng); err != nil {
 		return upgradeDaemonID{}, err
 	}
 	e.cfg.Volume.attach(e.cfg.Source)
@@ -687,7 +687,7 @@ func (e *upgradeVolumeMonEffects) Retained(ctx context.Context, daemon upgradeDa
 		return false, nil, errors.New("the endpoint lease was already taken; it is taken once")
 	}
 	eng := e.cfg.Engine
-	if err := e.cfg.Volume.check(ctx, eng); err != nil {
+	if err := e.cfg.Volume.Check(ctx, eng); err != nil {
 		return false, nil, err
 	}
 	has, err := eng.ProbeStore(ctx, e.cfg.Volume.name, e.storeDir())
@@ -793,7 +793,7 @@ func (e *upgradeVolumeMonEffects) Launch(ctx context.Context, instance string, p
 	return nil
 }
 
-func (e *upgradeVolumeMonEffects) wait(ctx context.Context) error {
+func (e *upgradeVolumeMonEffects) Wait(ctx context.Context) error {
 	if e.cfg.Sleep != nil {
 		return e.cfg.Sleep(ctx, e.cfg.Poll)
 	}
@@ -847,7 +847,7 @@ func (e *upgradeVolumeMonEffects) Observe(ctx context.Context, instance string) 
 				return upgradeNativeEvidence{}, err
 			}
 		}
-		if err := e.wait(ctx); err != nil {
+		if err := e.Wait(ctx); err != nil {
 			e.note("observe: deadline: %s", last)
 			return upgradeNativeEvidence{}, fmt.Errorf("destination %s was not confirmed in time (last: %s): %w", rec.Name, last, err)
 		}
@@ -873,7 +873,7 @@ func (e *upgradeVolumeMonEffects) probe(ctx context.Context, instance string, re
 	if store != e.cfg.Volume.name {
 		return upgradeNativeEvidence{}, fmt.Errorf("%w: destination mounts %q at the store directory, not the owned volume", errUpgradeObserveFinal, store)
 	}
-	if err := e.cfg.Volume.check(ctx, e.cfg.Engine); err != nil {
+	if err := e.cfg.Volume.Check(ctx, e.cfg.Engine); err != nil {
 		return upgradeNativeEvidence{}, fmt.Errorf("%w: %v", errUpgradeObserveFinal, err)
 	}
 	out, code, err := e.cfg.Engine.Exec(ctx, rec.Name, []string{"ceph-mon", "--version"})
@@ -969,7 +969,7 @@ type upgradeVolumeMonEffectsReceipt struct {
 	Vector    upgradeMonVector
 }
 
-func (e *upgradeVolumeMonEffects) receipt() upgradeVolumeMonEffectsReceipt {
+func (e *upgradeVolumeMonEffects) Receipt() upgradeVolumeMonEffectsReceipt {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	r := upgradeVolumeMonEffectsReceipt{Events: slices.Clone(e.events), Launches: map[string]string{}, Fenced: e.fenced, LeaseHeld: e.leased, Vector: slices.Clone(e.vector)}

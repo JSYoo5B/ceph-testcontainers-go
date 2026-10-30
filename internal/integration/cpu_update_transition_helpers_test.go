@@ -105,7 +105,7 @@ func classifyCPUTransition(tr cpuTransitionRecord, checks cpuTransitionChecks) (
 		return cpuTransitionUncertain, fmt.Errorf("%w: request is not a positive finite limit", errCPUTransition)
 	}
 	if !checks.skipGeneration {
-		if !tr.Generation.valid() || tr.AfterState.ID != tr.Generation.ID || tr.AfterState.StartedAt != tr.Generation.StartedAt {
+		if !tr.Generation.Valid() || tr.AfterState.ID != tr.Generation.ID || tr.AfterState.StartedAt != tr.Generation.StartedAt {
 			return cpuTransitionUncertain, fmt.Errorf("%w: generation changed or incomplete", errCPUTransition)
 		}
 		if tr.Kernel != nil && tr.Kernel.Generation != tr.Generation {

@@ -6,6 +6,7 @@ package integration_test
 
 import (
 	"context"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"slices"
 	"strings"
 	"testing"
@@ -25,10 +26,10 @@ const crushItemNone = 2147483647
 // outcome, and an independent client reads every object back, also while a
 // shard is missing.
 func TestRADOSErasureCodedOutcomes(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	cluster, client := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(3)))
 	const appendOnly, overwrite = "tc-ec-append", "tc-ec-overwrite"
 	// MinSize 2 (K) keeps the PGs active while one shard is missing.
 	for _, config := range []ceph.PoolConfig{
@@ -48,7 +49,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	// A missing data shard: reads reconstruct the object, and a write under a
 	// snapshot context still preserves a clone. Recovery restores the shard.
 	receipt := erasureCodedPhase(t, ctx, cluster, client, "shard-write", overwrite)
-	pgs, err := poolHandle(t, ctx, cluster, overwrite).PGs(ctx)
+	pgs, err := harness.PoolHandle(t, ctx, cluster, overwrite).PGs(ctx)
 	if err != nil || len(pgs.PGs) != 1 || len(pgs.PGs[0].Acting) != 3 || slices.Contains(pgs.PGs[0].Acting, crushItemNone) {
 		t.Fatalf("PG of %s before the failure: %+v, %v", overwrite, pgs.PGs, err)
 	}
@@ -80,7 +81,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	}
 	var degraded ceph.PGState
 	for deadline := time.Now().Add(2 * time.Minute); ; {
-		pgs, err := poolHandle(t, ctx, cluster, overwrite).PGs(ctx)
+		pgs, err := harness.PoolHandle(t, ctx, cluster, overwrite).PGs(ctx)
 		if err == nil && len(pgs.PGs) == 1 {
 			degraded = pgs.PGs[0]
 			if strings.HasPrefix(degraded.State, "active+") && strings.Contains(degraded.State, "degraded") &&
@@ -103,7 +104,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	if err := cluster.WaitForClean(ctx); err != nil {
 		t.Fatal(err)
 	}
-	pgs, err = poolHandle(t, ctx, cluster, overwrite).PGs(ctx)
+	pgs, err = harness.PoolHandle(t, ctx, cluster, overwrite).PGs(ctx)
 	if err != nil || len(pgs.PGs) != 1 || !slices.Equal(pgs.PGs[0].Acting, clean.Acting) {
 		t.Fatalf("PG of %s after recovery: %+v, %v", overwrite, pgs.PGs, err)
 	}
@@ -111,7 +112,7 @@ func TestRADOSErasureCodedOutcomes(t *testing.T) {
 	t.Logf("%s served reads and a write as %s with acting %v and recovered to %v", overwrite, degraded.State, degraded.Acting, clean.Acting)
 
 	for _, pool := range []string{appendOnly, overwrite} {
-		if err := poolHandle(t, ctx, cluster, pool).Remove(ctx); err != nil {
+		if err := harness.PoolHandle(t, ctx, cluster, pool).Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

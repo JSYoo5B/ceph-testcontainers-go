@@ -4,7 +4,10 @@
 
 package integration_test
 
-import "testing"
+import (
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"testing"
+)
 
 // A K=2, M=1 pool with an explicit min_size of 2 acknowledges an overwrite
 // under a snapshot context while one non-primary fragment holder is stopped.
@@ -12,6 +15,6 @@ import "testing"
 // supply the version that each object requires: while degraded, while the
 // holder is back but recovery is held, and after recovery.
 func TestECDegradedOverwriteEligibleFragments(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	testECEligibleFragments(t)
 }

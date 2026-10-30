@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"slices"
 	"strings"
@@ -24,10 +25,10 @@ import (
 // be healthy, active, complete, or current. Pool preparation uses the raw CLI:
 // CreatePool correctly requires sufficient owned placement domains.
 func TestPoolPGReportedBoundaries(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs()))
 	cluster, err := ceph.Run(ctx, image, opts...)
 	if cluster != nil {
@@ -42,7 +43,7 @@ func TestPoolPGReportedBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	quorum, err := observeCluster(cluster).QuorumStatus(ctx)
+	quorum, err := harness.ObserveCluster(cluster).QuorumStatus(ctx)
 	if err != nil || quorum.MonMap.FSID == "" || len(clusteraccess.OSDs(t, cluster)) != 0 {
 		t.Fatal("cold PG original fixture identity unavailable", err)
 	}
@@ -58,7 +59,7 @@ func TestPoolPGReportedBoundaries(t *testing.T) {
 		{"osd", "pool", "set", erasure, "min_size", "2"},
 		{"osd", "pool", "application", "enable", erasure, "rados"},
 	} {
-		cephCommand(t, ctx, cluster, args...)
+		harness.CephCommand(t, ctx, cluster, args...)
 	}
 	identities := map[string]int64{}
 	for _, pool := range []string{replicated, erasure} {
@@ -99,7 +100,7 @@ func TestPoolPGReportedBoundaries(t *testing.T) {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClient(), ceph.WithIdleEntrypoint(), testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})))
+	client, err := testcontainers.Run(ctx, harness.NativeClientImage(t, image), cluster.WithClient(), ceph.WithIdleEntrypoint(), testcontainers.WithWaitStrategy(wait.ForExec([]string{"ceph", "--connect-timeout", "5", "status"})))
 	if client != nil {
 		testcontainers.CleanupContainer(t, client)
 	}
@@ -110,8 +111,8 @@ func TestPoolPGReportedBoundaries(t *testing.T) {
 	if err := client.CopyToContainer(ctx, payload, "/tmp/pg-payload", 0o600); err != nil {
 		t.Fatal(err)
 	}
-	execCommand(t, ctx, client, "rados", "-p", replicated, "put", "retained", "/tmp/pg-payload")
-	execCommand(t, ctx, client, "rados", "-p", replicated, "get", "retained", "/tmp/pg-result")
+	harness.ExecCommand(t, ctx, client, "rados", "-p", replicated, "put", "retained", "/tmp/pg-payload")
+	harness.ExecCommand(t, ctx, client, "rados", "-p", replicated, "get", "retained", "/tmp/pg-result")
 	r, err := client.CopyFileFromContainer(ctx, "/tmp/pg-result")
 	if err != nil {
 		t.Fatal(err)

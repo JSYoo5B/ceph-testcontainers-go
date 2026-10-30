@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"io"
 	"slices"
 	"strconv"
@@ -182,7 +183,7 @@ func osdMemoryBacking(t *testing.T, ctx context.Context, docker *mobycl.Client, 
 func osdMemoryIdentities(t *testing.T, ctx context.Context, cluster *ceph.Container) map[int]string {
 	t.Helper()
 	result := map[int]string{}
-	for _, item := range noInitialOSDNativeDump(t, ctx, cluster) {
+	for _, item := range harness.NoInitialOSDNativeDump(t, ctx, cluster) {
 		if _, exists := result[item.ID]; exists {
 			t.Fatal("duplicate native OSD ID")
 		}
@@ -212,7 +213,7 @@ func osdMemoryWaitState(t *testing.T, parent context.Context, cluster *ceph.Cont
 				}
 			}
 		}
-		states, err := observeCluster(cluster).OSDStates(ctx)
+		states, err := harness.ObserveCluster(cluster).OSDStates(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -236,7 +237,7 @@ func osdMemoryPlacement(t *testing.T, parent context.Context, cluster *ceph.Cont
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
 	for {
-		snapshot, err := poolHandle(t, ctx, cluster, pool).PGs(ctx)
+		snapshot, err := harness.PoolHandle(t, ctx, cluster, pool).PGs(ctx)
 		if err != nil || snapshot.FSID != fsid || snapshot.PoolBefore.ID != poolID || snapshot.PoolAfter.ID != poolID {
 			t.Fatal("original pool placement identity changed", err)
 		}
@@ -274,7 +275,7 @@ func osdMemoryExec(t *testing.T, parent context.Context, ctr testcontainers.Cont
 
 func osdMemoryData(t *testing.T, ctx context.Context, cluster *ceph.Container, fsid string, poolID int64, pool, phase string) {
 	t.Helper()
-	status, err := poolHandle(t, ctx, cluster, pool).Status(ctx)
+	status, err := harness.PoolHandle(t, ctx, cluster, pool).Status(ctx)
 	if err != nil || status.ID != poolID || status.Size != 2 || status.MinSize != 1 {
 		t.Fatal("retained pool identity/policy changed", err)
 	}

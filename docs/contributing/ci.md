@@ -260,8 +260,10 @@ the empty selection.
 
 ### Advisory declaration selection
 
-`internal/tools/batchselect` narrows `internal/integration` at the level of
-declarations, because its `*_helpers_test.go` files compile into every batch.
+`internal/tools/batchselect` narrows each integration test package
+(`internal/integration` and its `rbd`, `cephfs` and `rgw` packages) at the
+level of declarations, because its `*_helpers_test.go` files and the shared
+`internal/integration/harness` compile into every batch.
 By default it is only reported:
 
 ```sh
@@ -278,9 +280,11 @@ only the selected profiles and `selected_scope` is `declarations`.
 
 The tool diffs the checkout against its merge base with the base, type-checks
 the package's `all` build (and each batch build not covered by it) with
-`go/types`, and builds a graph over top-level declarations. Edges are resolved
-identifiers, interface method calls to every implementing type of the package,
-and each type to all its methods. A batch is selected when one of its roots
+`go/types`, together with the harness from source (`-with`), and builds one
+graph over the top-level declarations of both. Edges are resolved
+identifiers, interface method calls to every implementing type of the two
+packages, and each type to all its methods. A test file of another package
+is never part of the build and is ignored. A batch is selected when one of its roots
 (`Test`, `Fuzz` and `Example` functions, `init` functions and package-level
 var initializers it compiles) reaches a changed declaration. An added file
 counts as a change to each of its declarations.
@@ -289,9 +293,10 @@ Every batch is selected, with the reason, when the change touches anything
 the graph cannot attribute: a line outside every declaration (file header,
 `//go:` directive), an import of a package that no other file of the build
 imports, a deleted, untracked or non-Go file in the package, `.github/`,
-`go.mod`, `go.sum`, any path outside `internal/integration` other than
-documentation, a removed `init` or initializer, or anything that fails to
-parse or type-check. Profiles of other packages are always selected, and a
+`go.mod`, `go.sum`, any other path outside the package and the harness other
+than documentation, a removed `init` or initializer, or anything that fails to
+parse or type-check. Each package's fallback selects only that package's
+batches. Profiles outside the integration packages are always selected, and a
 tool failure selects every profile.
 
 #### Opting in to declaration selection
@@ -307,8 +312,8 @@ Adding or removing the label replaces the run in progress; later commits run
 selected while the label stays. Every other trigger and workflow runs all its
 batches, and the `main` push after a merge runs every Ceph short batch, so a
 selection miss fails there. Record a miss with its plan, failed job and
-selection evidence in a new issue. The label only helps for changes inside
-`internal/integration`.
+selection evidence in a new issue. The label only helps for changes inside the
+integration test packages and the harness.
 
 ### Running chosen batches from a comment
 
@@ -422,10 +427,10 @@ and can be requested with `/ci run`.
 ### Network modes
 
 A test that can run on the Docker bridge and on the host network declares the
-modes with `networkModes`, its default first, and runs one subtest per mode:
+modes with `harness.NetworkModes`, its default first, and runs one subtest per mode:
 
 ```go
-for _, mode := range networkModes(t, "host", "bridge") {
+for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 	host, name := mode.Host, mode.Name
 	t.Run(name, func(t *testing.T) { /* ceph.WithHostNetwork() when host */ })
 }
@@ -447,7 +452,7 @@ matrix entry sets `CEPH_TEST_NETWORK`:
 | Pull requests, `main` pushes, CI command (`networks: default`) | One, in the default mode, with all tests |
 | Ceph periodic and the release matrix (`networks: all`) | The default entry, plus one per other mode that runs only the mode-declaring tests (`--tests`), named `<batch> (<mode>)` |
 
-A test without `networkModes` runs once and ignores `CEPH_TEST_NETWORK`. Run
+A test without `harness.NetworkModes` runs once and ignores `CEPH_TEST_NETWORK`. Run
 locally with an undeclared mode, a test skips; with the variable unset, it
 runs every declared mode.
 

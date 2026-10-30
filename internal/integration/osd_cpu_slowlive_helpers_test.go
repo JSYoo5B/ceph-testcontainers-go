@@ -246,7 +246,7 @@ type osdCPUWindowChecks struct {
 // classifyOSDCPUWindow judges one window. Process death and a map-down daemon
 // outrank the kernel counters; missing evidence is incomplete or unsupported.
 func classifyOSDCPUWindow(w osdCPUWindow, checks osdCPUWindowChecks) (osdCPUWindowVerdict, error) {
-	if !w.Generation.valid() || w.PID <= 0 {
+	if !w.Generation.Valid() || w.PID <= 0 {
 		return osdWindowIncomplete, fmt.Errorf("%w: frozen generation or process is incomplete", errOSDCPUWindow)
 	}
 	views := append([]osdSlowLiveView(nil), w.Samples...)
@@ -407,7 +407,7 @@ type osdCPUWindowRef struct {
 func osdCPUJoin(r osdCPURun) []string {
 	var out []string
 	id := r.Identity
-	if !id.Generation.valid() || id.PID <= 0 {
+	if !id.Generation.Valid() || id.PID <= 0 {
 		return []string{"frozen identity is incomplete"}
 	}
 	for name, tr := range map[string]cpuTransitionRecord{"admit": r.Admit, "tighten": r.Tighten, "restore": r.Restore} {

@@ -256,3 +256,51 @@ deleted file mode 100644
 		t.Fatal("a quoted path was accepted")
 	}
 }
+
+// The declarations of a non-test package named by -with join the graph: a
+// change there selects the batches that reach it. A test file of another
+// package is never part of the build.
+func TestSelectBatchesWithCompanion(t *testing.T) {
+	for name, test := range map[string]struct {
+		change   func(t *testing.T, dir string)
+		with     []string
+		selected []string
+		fallback string
+	}{
+		"companion function of one batch": {change: func(t *testing.T, dir string) {
+			edit(t, dir, "kit/kit.go", `return "E"`, `return "E" + ""`)
+		}, with: []string{"kit"}, selected: []string{"e"}},
+		"other companion function": {change: func(t *testing.T, dir string) {
+			edit(t, dir, "kit/kit.go", "return 2", "return 1 + 1")
+		}, with: []string{"kit"}, selected: []string{"f"}},
+		"companion not analysed": {change: func(t *testing.T, dir string) {
+			edit(t, dir, "kit/kit.go", "return 2", "return 1 + 1")
+		}, fallback: "kit/kit.go: outside pkg"},
+		"test file of another package": {change: func(t *testing.T, dir string) {
+			edit(t, dir, "other/other_test.go", "func TestOther(t *testing.T) {}", "func TestOther(t *testing.T) { t.Log() }")
+		}, with: []string{"kit"}, selected: []string{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := fixture(t)
+			test.change(t, dir)
+			out, err := selectBatches(options{root: dir, base: "HEAD", pattern: "./pkg", with: test.with, unionTags: "all",
+				goos: runtime.GOOS, goarch: runtime.GOARCH, batches: []batchSpec{
+					{ID: "e", Tags: "ci,ci_batch_e"}, {ID: "f", Tags: "ci,ci_batch_f"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.fallback != "" {
+				if len(out.Fallback) == 0 || !strings.Contains(out.Fallback[0], test.fallback) {
+					t.Fatalf("fallback %q, want %q", out.Fallback, test.fallback)
+				}
+				return
+			}
+			if len(out.Fallback) > 0 {
+				t.Fatalf("fallback %q", out.Fallback)
+			}
+			if got := selected(out); !slices.Equal(got, test.selected) {
+				t.Fatalf("selected %v, want %v (%+v)", got, test.selected, out.Batches)
+			}
+		})
+	}
+}

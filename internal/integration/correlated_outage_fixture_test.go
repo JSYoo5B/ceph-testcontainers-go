@@ -104,7 +104,7 @@ func (f *outageFake) output(mode string, extra ...string) []byte {
 
 func (f *outageFake) token(value string) { f.t.Helper(); f.output("token", value) }
 
-func (f *outageFake) events() []outageEvent {
+func (f *outageFake) Events() []outageEvent {
 	f.t.Helper()
 	var events []outageEvent
 	if err := json.Unmarshal(f.output("ledger"), &events); err != nil {
@@ -115,7 +115,7 @@ func (f *outageFake) events() []outageEvent {
 
 func (f *outageFake) ops() []outageOp {
 	f.t.Helper()
-	ops, err := outageOps(f.events(), "fake-run")
+	ops, err := outageOps(f.Events(), "fake-run")
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestCorrelatedLedgerFollowsPhaseTokens(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("the actor ignored the stop token")
 	}
-	events := fake.events()
+	events := fake.Events()
 	ops, err := outageOps(events, "fake-run")
 	if err != nil {
 		t.Fatal(err)
@@ -298,7 +298,7 @@ func TestCorrelatedLedgerInFlightOperation(t *testing.T) {
 		t.Fatalf("in-flight readback: %d %v", unconfirmed, err)
 	}
 	// No stop record: the actor did not get to report one.
-	for _, event := range fake.events() {
+	for _, event := range fake.Events() {
 		if event.Event == "stopped" {
 			t.Fatal("a killed actor reported a clean stop")
 		}

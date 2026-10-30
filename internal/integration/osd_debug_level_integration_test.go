@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"strings"
 	"testing"
 	"time"
@@ -24,10 +25,10 @@ import (
 // a paused daemon that is not restored until it resumes, and a window that
 // the finalization restores before Terminate.
 func TestOSDDebugLevel(t *testing.T) {
-	parallelWhenEnabled(t)
+	harness.ParallelWhenEnabled(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	image, opts := integrationImages(t)
+	image, opts := harness.IntegrationImages(t)
 	cluster, err := ceph.Run(ctx, image, append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)))...)
 	var finalization *ceph.Finalization
 	if cluster != nil {
@@ -43,7 +44,7 @@ func TestOSDDebugLevel(t *testing.T) {
 	}
 	get := func(name string) string {
 		t.Helper()
-		out, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "get", name)
+		out, err := harness.OSDHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "get", name)
 		var value map[string]string
 		if err != nil || json.Unmarshal(out, &value) != nil || value[name] == "" {
 			t.Fatalf("osd.0 config get %s: %q %v", name, out, err)
@@ -87,14 +88,14 @@ func TestOSDDebugLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "set", "debug_ms", "3/3"); err != nil {
+	if _, err := harness.OSDHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "set", "debug_ms", "3/3"); err != nil {
 		t.Fatal(err)
 	}
 	if err := edited.Restore(ctx); err == nil || edited.Receipt().State != ceph.DebugLevelConflict || get("debug_ms") != "3/3" {
 		t.Fatalf("restore over an outside edit: %v %+v", err, edited.Receipt())
 	}
 	logReceipt(edited)
-	if _, err := osdHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "set", "debug_ms", priorMS); err != nil {
+	if _, err := harness.OSDHandle(t, ctx, cluster, 0).AdminSocket(ctx, "config", "set", "debug_ms", priorMS); err != nil {
 		t.Fatal(err)
 	}
 

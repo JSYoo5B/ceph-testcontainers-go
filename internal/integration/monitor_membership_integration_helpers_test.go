@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"net"
 	"slices"
 	"testing"
@@ -103,7 +104,7 @@ func readMonitorMembers(t *testing.T, ctx context.Context, cluster *ceph.Contain
 		Epoch   int      `json:"epoch"`
 		Members []string `json:"members"`
 	}
-	if err := json.Unmarshal([]byte(lastJSONLine(string(result.Stdout))), &dump); err != nil {
+	if err := json.Unmarshal([]byte(harness.LastJSONLine(string(result.Stdout))), &dump); err != nil {
 		t.Fatalf("fresh mon dump: %v: %.512s", err, result.Stdout)
 	}
 	slices.Sort(dump.Members)
@@ -118,18 +119,18 @@ func readMonitorMembers(t *testing.T, ctx context.Context, cluster *ceph.Contain
 func testMessengerClientUnreachableMonitor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	image, roles := integrationImages(t)
+	image, roles := harness.IntegrationImages(t)
 	base := append(slices.Clone(roles), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(3).WithManagerCount(2).WithNoInitialOSDs()),
 		ceph.WithNetworkConfig(ceph.NetworkConfig{}.WithMessengerMode(ceph.MessengerV2Only).WithMessengerPolicy(ceph.MessengerPolicy{Monitors: modeSecure, Managers: modeSecure})))
 	auth := profileAuth(t, ctx, image, base, ceph.AuthConfig{KeyType: ceph.CipherAES256K, ServiceCipher: ceph.CipherAES256K,
 		MonTicketTTL: 12 * time.Second, ServiceTicketTTL: 12 * time.Second})
-	cluster, client := newServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
+	cluster, client := harness.NewServiceClusterWithOptions(t, image, append(base, ceph.WithAuth(auth))...)
 	waitProfileTopology(t, ctx, cluster, 3, 1)
 	running := []string{"a", "b", "c"}
 	before, _ := waitMonitorMembership(t, ctx, cluster, running, running)
 
 	// Nothing listens on this port: with Messenger v2 only, MON a binds 3300.
-	addresses, err := observeCluster(cluster).DaemonAddresses(ctx)
+	addresses, err := harness.ObserveCluster(cluster).DaemonAddresses(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +139,7 @@ func testMessengerClientUnreachableMonitor(t *testing.T) {
 		t.Fatal(err)
 	}
 	spare := net.JoinHostPort(host, "33320")
-	mustCeph(t, ctx, cluster, "mon", "add", "spare", spare)
+	harness.MustCeph(t, ctx, cluster, "mon", "add", "spare", spare)
 	added, addWait := waitMonitorMembership(t, ctx, cluster, append(slices.Clone(running), "spare"), running)
 	if added.MonMap.Epoch <= before.MonMap.Epoch || added.Election <= before.Election {
 		t.Fatalf("mon add: monmap %d and election %d, before %d and %d", added.MonMap.Epoch, added.Election, before.MonMap.Epoch, before.Election)
@@ -148,7 +149,7 @@ func testMessengerClientUnreachableMonitor(t *testing.T) {
 		t.Fatalf("a new client read monmap %d %v, want %d %v", addEpoch, addMembers, added.MonMap.Epoch, added.members())
 	}
 
-	mustCeph(t, ctx, cluster, "mon", "remove", "spare")
+	harness.MustCeph(t, ctx, cluster, "mon", "remove", "spare")
 	removed, removeWait := waitMonitorMembership(t, ctx, cluster, running, running)
 	if removed.MonMap.Epoch <= added.MonMap.Epoch || removed.Election <= added.Election {
 		t.Fatalf("mon remove: monmap %d and election %d, before %d and %d", removed.MonMap.Epoch, removed.Election, added.MonMap.Epoch, added.Election)
