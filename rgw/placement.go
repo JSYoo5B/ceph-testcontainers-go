@@ -35,6 +35,8 @@ type StorageClassConfig struct {
 // changes the zonegroup default or any existing bucket's immutable placement.
 // InlineData nil preserves Ceph's true default; false separates object heads
 // and data. Native external placement/topology edits must not race these helpers.
+//
+// DataExtraPool holds incomplete multipart metadata.
 type PlacementConfig struct {
 	Name, IndexPool, DataExtraPool string
 	StorageClasses                 []StorageClassConfig

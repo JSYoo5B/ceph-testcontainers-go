@@ -633,6 +633,34 @@ stats, err := gateways[0].Admin(ctx, "bucket", "stats", "--bucket", "photos")
 - Do not modify users that the fixture created with `CreateUser` while it
   uses them.
 
+Commands that RGW tests commonly need:
+
+```golang
+stats, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", "reports")
+_, err = gateway.Admin(ctx, "lc", "process", "--bucket", "logs")
+_, err = gateway.Admin(ctx, "reshard", "add", "--bucket", "big", "--num-shards", "17")
+_, err = gateway.Admin(ctx, "quota", "set", "--quota-scope", "bucket", "--bucket", "big", "--max-objects", "100")
+_, err = gateway.Admin(ctx, "caps", "add", "--uid", user.ID(), "--caps", "usage=write")
+_, err = gateway.Admin(ctx, "role", "create", "--role-name", "reader", "--assume-role-policy-doc", trust)
+```
+
+- To see a failure's native text, run the same `radosgw-admin` command with
+  `gateway.Exec`; the container has the cluster configuration and admin keyring
+  at the default paths. The control container also has `radosgw-admin`, which
+  works for the default zone of a standalone cluster without a running gateway.
+- Admin Ops REST requests are SigV4-signed HTTP requests to the gateway
+  endpoint, signed with a dedicated user created with `UserConfig.AdminCaps`
+  (such as `"users=read;usage=read;buckets=read"`). The fixture never grants the
+  global `admin` flag.
+- Server-side RGW options go to `override.SetConfig` with section
+  `client.admin` before `rgw.Start`, or to `[client]`/`[client.admin]` of a
+  `ceph.WithConfigFile` file; many take effect only when the gateway starts, so
+  restart it and resolve `S3Endpoint` again. The Beast frontend, a thread pool of
+  4, a 1-second exit timeout and, for multisite gateways, a 30-second sync lease
+  are on the daemon command line and cannot be changed through configuration.
+- On Ceph 19 (Squid), `role get` for a missing role exits with status 2 like on
+  Tentacle but also prints one ENOENT log line.
+
 In multisite fixtures, `ZoneAdmin(ctx, name, ...)` addresses any owned zone by
 name, including those of a `multisite.WithTopology` fixture. It passes the
 zone's scope but does not add `--format json`. Do not edit periods or zones while `AddZone`,
