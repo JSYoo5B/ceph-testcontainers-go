@@ -52,8 +52,10 @@ type Container struct {
 	// authRecords holds the records of the calls that change an auth entry; see
 	// authState for what guards them.
 	authRecords authState
-	// keyRotationDocker replaces the Docker client of RotateKey in tests.
-	keyRotationDocker func(context.Context) (keyRotationExecClient, error)
+	// daemonExecs runs RotateKey's commands in daemon containers through the
+	// Docker exec API; see daemonExecutor. It has no lock: its test seam is
+	// set before the cluster is shared.
+	daemonExecs daemonExecutor
 	// startup is the owner label ID, the first MON's key-type support and
 	// image ID, and the test seam of the labeled-container removal; see
 	// startupIdentity. It has no lock: it is written before the cluster is

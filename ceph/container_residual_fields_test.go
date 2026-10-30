@@ -29,7 +29,7 @@ var residualFieldVerdicts = map[string]string{
 	"toolkit":                  "owner",
 	"bootstrap":                "owner",
 	"authRecords":              "owner",
-	"keyRotationDocker":        "seam",
+	"daemonExecs":              "owner",
 	"startup":                  "owner",
 	"settings":                 "options",
 	"roster":                   "owner",
