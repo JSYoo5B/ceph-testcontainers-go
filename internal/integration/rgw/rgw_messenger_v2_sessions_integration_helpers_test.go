@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -64,21 +66,100 @@ func gatewayAsok(t *testing.T, ctx context.Context, gateway testcontainers.Conta
 	return sockets[0]
 }
 
+// radosgwSession is one client session that a MON holds with a messenger in
+// the gateway's container: the messenger's address nonce and the global ID
+// the MON gave it.
+type radosgwSession struct {
+	Nonce    uint64 `json:"nonce"`
+	GlobalID int64  `json:"global_id"`
+}
+
+// parseGatewaySessions returns the client sessions in a MON's sessions output
+// whose socket address is in the gateway's container at address. Sampled
+// after rgw.Run has returned, when the radosgw-admin processes that created
+// the gateway's S3 user have exited, these are radosgw's own messengers.
+func parseGatewaySessions(data []byte, address string) ([]radosgwSession, error) {
+	var sessions []struct {
+		ConType    string                   `json:"con_type"`
+		SocketAddr harness.MessengerAddress `json:"socket_addr"`
+		GlobalID   int64                    `json:"global_id"`
+	}
+	if err := json.Unmarshal(data, &sessions); err != nil {
+		return nil, fmt.Errorf("decode MON sessions: %w", err)
+	}
+	var result []radosgwSession
+	for _, session := range sessions {
+		host, _, err := net.SplitHostPort(session.SocketAddr.Addr)
+		if session.ConType != "client" || err != nil || host != address {
+			continue
+		}
+		if session.SocketAddr.Nonce == 0 || session.GlobalID <= 0 {
+			return nil, fmt.Errorf("MON session from %s has nonce %d and global ID %d", address, session.SocketAddr.Nonce, session.GlobalID)
+		}
+		result = append(result, radosgwSession{Nonce: session.SocketAddr.Nonce, GlobalID: session.GlobalID})
+	}
+	return result, nil
+}
+
+// selectRadosgwReady returns the READY lines whose peer is one of sessions'
+// messengers at address. A line with a peer at address from any other
+// messenger, such as a radosgw-admin process's, is counted in others and not
+// selected. A selected line whose authenticated entity is not its session's
+// client.<global ID> is a problem; a MON logs client.? before it
+// authenticates a client.
+func selectRadosgwReady(lines []string, address string, sessions []radosgwSession) (selected []string, others int, problems []string) {
+	identities := map[uint64]string{}
+	for _, session := range sessions {
+		identities[session.Nonce] = fmt.Sprintf("client.%d", session.GlobalID)
+	}
+	for _, line := range lines {
+		_, rest, ok := strings.Cut(line, " >> ")
+		if !ok || !strings.Contains(line, " s=READY ") {
+			continue
+		}
+		peer, _, _ := strings.Cut(rest, " ")
+		hostPort, nonceText, ok := strings.Cut(peer, "/")
+		host, _, err := net.SplitHostPort(hostPort)
+		if !ok || err != nil || host != address {
+			continue
+		}
+		nonce, err := strconv.ParseUint(nonceText, 10, 64)
+		identity, owned := identities[nonce]
+		if err != nil || !owned {
+			others++
+			continue
+		}
+		_, tail, _ := strings.Cut(line, " entity=")
+		entity, _, _ := strings.Cut(tail, " ")
+		if entity != identity && entity != "client.?" {
+			problems = append(problems, fmt.Sprintf("READY session with radosgw messenger %d is %q, not %s: %s", nonce, entity, identity, line))
+			continue
+		}
+		selected = append(selected, line)
+	}
+	return selected, others, problems
+}
+
 // rgwV2Daemon is one daemon's part of the RGW v2 sessions receipt: the READY
-// sessions it logged with a peer in the gateway's container.
+// sessions it logged with radosgw's messengers, and how many READY sessions
+// it logged with other processes in the gateway's container.
 type rgwV2Daemon struct {
 	Generation string   `json:"generation"`
 	Ready      int      `json:"ready"`
+	Others     int      `json:"other_processes"`
 	Problems   []string `json:"problems,omitempty"`
 }
 
 // testRGWMessengerV2Sessions starts an RGW cluster without Messenger v1 whose
 // MONs, MGRs and OSDs log their READY sessions. The gateway's container
-// listens on the beast port only, so radosgw binds no messenger; every READY
-// session that a MON, MGR or OSD logged with a peer at the gateway's address
-// is msgr2.1, and a MON and an OSD logged at least one. With messenger dump,
-// radosgw's own messengers listen on no socket, advertise no v1 address and
-// have READY msgr2.1 connections to a MON and an OSD.
+// listens on the beast port only, so radosgw binds no messenger. radosgw's
+// messengers are the ones the MONs hold client sessions with from the
+// gateway's container; every READY session that a MON, MGR or OSD logged
+// with one of them is msgr2.1, and a MON and an OSD logged at least one.
+// Sessions of radosgw-admin, which also runs in that container, are left
+// out. With messenger dump, radosgw's own messengers are exactly the MONs'
+// sessions, listen on no socket, advertise no v1 address and have READY
+// msgr2.1 connections to a MON and an OSD.
 func testRGWMessengerV2Sessions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
@@ -148,7 +229,18 @@ func testRGWMessengerV2Sessions(t *testing.T) {
 	for _, osd := range clusteraccess.OSDs(t, cluster) {
 		owned = append(owned, daemon{fmt.Sprintf("osd.%d", osd.ID), osd.Container})
 	}
-	peer := " >> " + address + ":"
+	var sessions []radosgwSession
+	for _, mon := range clusteraccess.Monitors(t, cluster) {
+		held, err := parseGatewaySessions([]byte(harness.ExecOutput(t, ctx, mon.Container, "ceph", "daemon", "mon."+mon.DaemonName, "sessions")), address)
+		if err != nil {
+			t.Fatalf("mon.%s: %v", mon.DaemonName, err)
+		}
+		sessions = append(sessions, held...)
+	}
+	receipt["radosgw_sessions"] = sessions
+	if len(sessions) == 0 {
+		problems = append(problems, "no MON holds a client session from the gateway's container")
+	}
 	for _, d := range owned {
 		inspect, err := d.ctr.Inspect(ctx)
 		if err != nil || inspect.State == nil {
@@ -157,17 +249,14 @@ func testRGWMessengerV2Sessions(t *testing.T) {
 		entry := &rgwV2Daemon{Generation: d.ctr.GetContainerID() + "@" + inspect.State.StartedAt}
 		daemons[d.name] = entry
 		lines := harness.ContainerLogLines(t, ctx, d.ctr)
-		var selected []string
-		for _, line := range lines {
-			if strings.Contains(line, peer) {
-				selected = append(selected, line)
-			}
-		}
-		binding := harness.ReadyRevisionBinding{Daemon: d.name, Generation: entry.Generation, Capture: fmt.Sprintf("container log lines 0-%d, peer %s", len(lines), address)}
+		selected, others, attribution := selectRadosgwReady(lines, address, sessions)
+		entry.Others = others
+		binding := harness.ReadyRevisionBinding{Daemon: d.name, Generation: entry.Generation, Capture: fmt.Sprintf("container log lines 0-%d, radosgw messengers at %s", len(lines), address)}
 		observations := harness.ParseReadyRevisionLines(binding, selected)
 		entry.Ready = len(observations)
+		entry.Problems = attribution
 		if entry.Ready > 0 {
-			entry.Problems = harness.ReadyRevision1Problems(observations)
+			entry.Problems = append(entry.Problems, harness.ReadyRevision1Problems(observations)...)
 		}
 		for _, problem := range entry.Problems {
 			problems = append(problems, d.name+": "+problem)
@@ -175,7 +264,7 @@ func testRGWMessengerV2Sessions(t *testing.T) {
 	}
 	for _, kind := range []string{"mon.", "osd."} {
 		if !slices.ContainsFunc(owned, func(d daemon) bool { return strings.HasPrefix(d.name, kind) && daemons[d.name].Ready > 0 }) {
-			problems = append(problems, fmt.Sprintf("no %s daemon logged a READY session with the gateway", strings.TrimSuffix(kind, ".")))
+			problems = append(problems, fmt.Sprintf("no %s daemon logged a READY session with radosgw", strings.TrimSuffix(kind, ".")))
 		}
 	}
 
@@ -187,6 +276,7 @@ func testRGWMessengerV2Sessions(t *testing.T) {
 		}
 		peers := map[string]int{}
 		var selves []harness.MessengerSelf
+		dumped := map[uint64]bool{}
 		for _, name := range names {
 			data := []byte(harness.ExecOutput(t, ctx, gateway, "ceph", "--admin-daemon", asok, "messenger", "dump", name))
 			self, err := harness.ParseMessengerSelf(data)
@@ -194,6 +284,9 @@ func testRGWMessengerV2Sessions(t *testing.T) {
 				t.Fatal(err)
 			}
 			selves = append(selves, self)
+			for _, a := range self.Addrs {
+				dumped[a.Nonce] = true
+			}
 			if self.ListenSockets != 0 || slices.ContainsFunc(self.Addrs, func(a harness.MessengerAddress) bool { return a.Type == "v1" }) {
 				problems = append(problems, fmt.Sprintf("radosgw messenger %s listens on %d sockets with %+v", name, self.ListenSockets, self.Addrs))
 			}
@@ -212,6 +305,13 @@ func testRGWMessengerV2Sessions(t *testing.T) {
 			}
 		}
 		receipt["radosgw_messengers"], receipt["radosgw_ready_peers"] = selves, peers
+		held := map[uint64]bool{}
+		for _, session := range sessions {
+			held[session.Nonce] = true
+		}
+		if !maps.Equal(dumped, held) {
+			problems = append(problems, fmt.Sprintf("radosgw's messengers have nonces %v, but the MONs hold sessions from the gateway's container with %v", slices.Sorted(maps.Keys(dumped)), slices.Sorted(maps.Keys(held))))
+		}
 		if peers["mon"] == 0 || peers["osd"] == 0 {
 			problems = append(problems, fmt.Sprintf("radosgw's READY connections reach %v, not a MON and an OSD", peers))
 		}

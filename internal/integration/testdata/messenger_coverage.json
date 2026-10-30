@@ -35,7 +35,7 @@
         {
           "test": "TestRGWMessengerV2Sessions",
           "receipt": "MESSENGER_V2_RGW_RECEIPT",
-          "asserts": "on a v2-only RGW cluster the gateway's container listens on TCP 7480 (beast) only, apart from Docker's resolver, so radosgw binds no messenger; every READY session that a MON, MGR or OSD logged at debug_ms 1 with a peer at the gateway's address has rev1=1, with at least one on a MON and one on an OSD; where the release has messenger dump radosgw's own messengers listen on no socket, advertise no v1 address, and their READY connections reach a MON and an OSD with rev1"
+          "asserts": "on a v2-only RGW cluster the gateway's container listens on TCP 7480 (beast) only, apart from Docker's resolver, so radosgw binds no messenger; radosgw's messengers are the ones whose nonces the MONs hold client sessions with from the gateway's container after rgw.Run returned, and every READY session that a MON, MGR or OSD logged at debug_ms 1 with one of those messengers has rev1=1 and, when authenticated, that session's client global ID, with at least one on a MON and one on an OSD; READY sessions of radosgw-admin, which runs in the same container as client.admin, are counted apart and support nothing; where the release has messenger dump radosgw's own messengers have exactly those nonces, listen on no socket, advertise no v1 address, and their READY connections reach a MON and an OSD with rev1"
         }
       ]
     },
