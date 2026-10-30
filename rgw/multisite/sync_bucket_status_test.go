@@ -91,7 +91,7 @@ func TestRGWBucketSyncDecoderRefusesDisabledFullAndExitZeroErrors(t *testing.T) 
 }
 
 func TestRGWBucketCheckpointRejectsStaleUnownedAndUnpublishedInputs(t *testing.T) {
-	f, cli, g := newRGWSyncBucketStatusFixture(t)
+	_, cli, g := newRGWSyncBucketStatusFixture(t)
 	for _, request := range []struct {
 		group              *SyncGroup
 		pipe, source, dest string
@@ -115,7 +115,7 @@ func TestRGWBucketCheckpointRejectsStaleUnownedAndUnpublishedInputs(t *testing.T
 			t.Fatal("stale checkpoint reached native comparison")
 		}
 	}
-	f, cli, _, _ = newRGWSyncTestFixture()
+	f, cli, _, _ := newRGWSyncTestFixture()
 	g, err := f.CreateSyncGroup(t.Context(), SyncPolicyScope{}, SyncGroupConfig{ID: "unpublished", Status: SyncEnabled})
 	if err != nil {
 		t.Fatal(err)
