@@ -66,6 +66,16 @@ func (f *Fixture) SyncStatus(ctx context.Context, zoneName string) (SyncStatus, 
 // No sources means metadata-only readiness. Native sync leases survive abrupt
 // gateway restarts until expiration, so this method does not change lease TTLs,
 // unlock objects or restart daemons to shorten normal recovery.
+//
+// Wait for metadata in every zone after creating a bucket and before writing
+// objects into it. Otherwise RGW can lose those objects in another zone (seen
+// with Tentacle 20.2.4): that zone's data sync stores the new bucket's metadata
+// itself, a second data sync shard may sync the bucket before its index exists,
+// and RGW takes the failed index updates for deleted objects; the zone then
+// reports caught up while the objects stay missing until they change again.
+// After an abrupt gateway stop the old process's sync leases must expire (30
+// seconds for fixture gateways), and sync polls every 20 seconds by default:
+// use deadlines of several minutes.
 func (f *Fixture) WaitSyncReady(ctx context.Context, zoneName string, sourceZones ...string) (SyncStatus, error) {
 	if f == nil {
 		return SyncStatus{}, errors.New("RGW multisite fixture is required")

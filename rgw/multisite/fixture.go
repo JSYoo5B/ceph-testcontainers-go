@@ -24,6 +24,10 @@ import (
 // Config describes a two-zone realm in fresh test clusters. The
 // source is the metadata master; both zones accept object writes.
 // Setup clients use each cluster's RGW image unless SetupImage overrides it.
+//
+// Realm and the zone names default to generated names and Zonegroup to
+// us-east-1; set the zone names when the test refers to zones by name (sync
+// policies, ZoneAdmin, SyncStatus).
 type Config struct {
 	Source, Destination                           *ceph.Container
 	Realm, Zonegroup, SourceZone, DestinationZone string
@@ -116,6 +120,14 @@ func WithTopology(config TopologyConfig) Option {
 //
 // With WithTopology the initial master becomes Source and the first remaining
 // zone becomes Destination; Zones returns all sites.
+//
+// Use fresh clusters from ceph.Run, without gateways or RGW configuration.
+// WithConfig creates one ordinary S3 test user on the master; both gateways
+// expose its keys in AccessKey and SecretKey, and their Region is the zonegroup
+// name. Setup is bounded by six minutes in addition to ctx. On Ceph 19, 19.2.6
+// cannot set up multisite: the master gateway rejects realm pull from a
+// secondary with HTTP 403 ("'x-amz-content-sha256' supplied, but not in
+// CanonicalHeaders"), and no setting disables the check; use 19.2.5.
 func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustomizer) (*Fixture, error) {
 	carrier, opts, err := multicluster.SplitConfig[Option]("RGW multisite", "WithConfig or WithTopology", opts)
 	if err != nil {
