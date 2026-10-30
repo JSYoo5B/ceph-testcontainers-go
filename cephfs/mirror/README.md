@@ -264,21 +264,22 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 Starts another daemon with the fixture's credentials, peer and directories.
 Names have 1 to 63 letters, digits, `.`, `_` or `-`. The constructor's
 customizers apply first, then `opts`. A non-nil partial result stays owned; remove
-it with `RemoveDaemon` or `Terminate`. Ceph discovers the daemon and assigns
+it with `Daemon.Remove` or `Terminate`. Ceph discovers the daemon and assigns
 directories asynchronously (see `RebalanceDirectories`). Ceph's Tentacle
 documentation describes assignment and failover across several daemons but marks
 multiple mirror daemons as untested upstream.
 
-#### RemoveDaemon
+#### Daemon.Remove
 
 ```golang
-func (mirror *Mirror) RemoveDaemon(ctx context.Context, daemonName string, opts ...testcontainers.TerminateOption) error
+func (daemon *Daemon) Remove(ctx context.Context, opts ...testcontainers.TerminateOption) error
 ```
 
-Terminates an owned daemon and removes it from the fixture. Removing the last
+Terminates this daemon and removes it from its mirror. Removing the last
 daemon is allowed and models a complete replication outage; `AddDaemon` resumes
 with the same auth, peer and directories. Data is preserved. If termination
-fails, the daemon stays listed so the call can be retried.
+fails, the daemon stays listed so the call can be retried. A daemon that its
+mirror no longer lists, or one whose mirror was terminated, is refused.
 
 #### Daemon.Terminate
 
@@ -287,8 +288,8 @@ func (daemon *Daemon) Terminate(ctx context.Context, opts ...testcontainers.Term
 ```
 
 Removes the daemon's container without changing Ceph policy or fixture
-membership. Prefer `RemoveDaemon`, which also updates membership; interrupted
-removal recovery requires `RemoveDaemon`.
+membership. Prefer `Remove`, which also updates membership; interrupted
+removal recovery requires `Remove`.
 
 #### Daemon.ProcessObserverBindingStatus
 
@@ -302,6 +303,36 @@ Reports whether this daemon has the optional process observer configured by
 `partial-startup`, `context-unavailable`, `factory-error`, `empty-client`,
 `positive-binding-failed` or `closed`. It is a local value and does not contact
 Docker.
+
+#### Daemon.InterruptPeerLink
+
+```golang
+func (daemon *Daemon) InterruptPeerLink(ctx context.Context) (*fault.NetworkInterruption, error)
+```
+
+Disconnects this daemon from the destination network while it stays connected to
+the source and keeps its MGR registration. The daemon is not stopped or
+reassigned, and policies are unchanged. Restore the returned handle to let
+synchronization resume:
+
+```golang
+cut, err := daemon.InterruptPeerLink(ctx)
+if cut != nil {
+	defer cut.Restore(context.Background())
+}
+if err != nil {
+	t.Fatal(err)
+}
+// ... snapshots taken now do not arrive ...
+if err := cut.Restore(ctx); err != nil {
+	t.Fatal(err)
+}
+```
+
+Keep a non-nil handle returned with an error: a transport error cannot prove
+that Docker did not disconnect the endpoint. The fixture also restores it on
+`Terminate`. Host networking has no bridge endpoint to cut, so the call is
+refused there.
 
 ### Mirror Methods: peer and connectivity
 
@@ -351,36 +382,6 @@ destination network. Call it after `source.AddManager(ctx, name)` so the new
 candidate can reach the peer after a later failover. `RebootstrapPeer` calls it
 itself. Host-network fixtures need no attachment. Attachments the caller created
 remain the caller's.
-
-#### InterruptPeerLink
-
-```golang
-func (m *Mirror) InterruptPeerLink(ctx context.Context, daemonName string) (*fault.NetworkInterruption, error)
-```
-
-Disconnects one daemon from the destination network while it stays connected to
-the source and keeps its MGR registration. The daemon is not stopped or
-reassigned, and policies are unchanged. Restore the returned handle to let
-synchronization resume:
-
-```golang
-cut, err := mirror.InterruptPeerLink(ctx, "a")
-if cut != nil {
-	defer cut.Restore(context.Background())
-}
-if err != nil {
-	t.Fatal(err)
-}
-// ... snapshots taken now do not arrive ...
-if err := cut.Restore(ctx); err != nil {
-	t.Fatal(err)
-}
-```
-
-Keep a non-nil handle returned with an error: a transport error cannot prove
-that Docker did not disconnect the endpoint. The fixture also restores it on
-`Terminate`. Host networking has no bridge endpoint to cut, so the call is
-refused there.
 
 #### RefreshMonitorConfig
 
@@ -450,7 +451,7 @@ minutes, or to the caller's earlier deadline. All three share these rules:
   or peer UUID and a fresh context. The retry returns the same receipt, checks
   Ceph first and does not resend a request that was already applied.
 - While a receipt is pending, the fixture refuses changes that would disturb it
-  (listed per call below). `RemoveDaemon` and `Terminate` are always allowed.
+  (listed per call below). `Daemon.Remove` and `Terminate` are always allowed.
 - Query errors from `Status` and waits are retryable. A changed identity
   (cluster FSID, filesystem or metadata pool ID, peer UUID, daemon process or
   session) is a permanent guard error for that receipt.
@@ -660,7 +661,7 @@ acknowledgement, which needs the process observer:
    means every original run ended and its watcher GID left the source
    filesystem. It does not change `Drained`, `Released` or the pending gates.
 
-3. Remove every owned daemon with `RemoveDaemon` (not just
+3. Remove every owned daemon with `Daemon.Remove` (not just
    `Daemon.Terminate`), so that the fixture's inventory is empty.
 
 4. Acknowledge. `AcknowledgeProcessQuiescence(ctx)`, bounded to 30 seconds,
@@ -681,7 +682,7 @@ if receipt == nil {
 }
 // ... the test stops or restarts the original daemons here ...
 for _, daemon := range mirror.Daemons() {
-	if err := mirror.RemoveDaemon(ctx, daemon.DaemonName); err != nil {
+	if err := daemon.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1358,7 +1359,7 @@ Notes:
 - Deleting a snapshot on the source deletes it on the destination too.
   Mirroring is replication, not a backup with its own retention.
 - To test an outage, stop a daemon (`mirror.Daemons()[0].Stop`), remove all
-  daemons with `RemoveDaemon`, or cut the peer link with `InterruptPeerLink`.
+  daemons with `Daemon.Remove`, or cut the peer link with `Daemon.InterruptPeerLink`.
   Snapshots taken meanwhile arrive after recovery.
 - With `DaemonCount: 2`, a stopped daemon's directories move to the survivor.
   After `AddDaemon`, call `RebalanceDirectories` on Ceph 20.2.4.
@@ -1382,6 +1383,6 @@ Notes:
   compare them separately if they matter.
 - `WaitSnapshotSynced` waits for one exact snapshot and times out if a newer one
   is synced first.
-- `InterruptPeerLink` requires bridge networking.
+- `Daemon.InterruptPeerLink` requires bridge networking.
 - `Released`, `Drained` and the process-quiescence acknowledgement do not prove
   remote unlock, checkpoint completion or unchanged destination metadata.

@@ -67,6 +67,7 @@ func TestRBDMirrorDaemonRemovalOwnsMembershipAndRetriesFailedCleanup(t *testing.
 	failedContainer := &clustertest.TerminateRecorder{Err: errors.New("temporary cleanup failure")}
 	standby := &Daemon{Container: failedContainer, DaemonName: "b"}
 	link := &Mirror{Container: initial, daemons: []*Daemon{standby, initial}, initialDaemonName: "a"}
+	initial.owner, standby.owner = link, link
 	link.owned.AddContainer(initial)
 	link.owned.AddContainer(standby)
 	members := link.Daemons()
@@ -77,17 +78,17 @@ func TestRBDMirrorDaemonRemovalOwnsMembershipAndRetriesFailedCleanup(t *testing.
 	if link.Daemons()[0] != initial {
 		t.Fatal("membership snapshot changed fixture membership")
 	}
-	if err := link.RemoveDaemon(t.Context(), "foreign"); err == nil || initialContainer.Calls != 0 || failedContainer.Calls != 0 {
+	if err := (&Daemon{Container: initialContainer, DaemonName: "a", owner: link}).Remove(t.Context()); err == nil || initialContainer.Calls != 0 || failedContainer.Calls != 0 {
 		t.Fatal("foreign daemon removal mutated owned multicluster.Resources")
 	}
-	if err := link.RemoveDaemon(t.Context(), "b"); err == nil || len(link.Daemons()) != 2 {
+	if err := standby.Remove(t.Context()); err == nil || len(link.Daemons()) != 2 {
 		t.Fatal("failed removal lost tracked daemon")
 	}
 	failedContainer.Err = nil
-	if err := link.RemoveDaemon(t.Context(), "b"); err != nil || len(link.Daemons()) != 1 || link.Container != initial {
+	if err := standby.Remove(t.Context()); err != nil || len(link.Daemons()) != 1 || link.Container != initial {
 		t.Fatalf("retry did not remove only standby: %v", err)
 	}
-	if err := link.RemoveDaemon(t.Context(), "a"); err != nil || link.Container != nil || len(link.Daemons()) != 0 {
+	if err := initial.Remove(t.Context()); err != nil || link.Container != nil || len(link.Daemons()) != 0 {
 		t.Fatalf("last daemon removal did not pause topology and clear initial handle: %v", err)
 	}
 	if err := link.Terminate(t.Context()); err != nil || initialContainer.Calls != 1 || failedContainer.Calls != 2 {

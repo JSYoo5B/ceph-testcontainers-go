@@ -373,8 +373,17 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 			if leader.GetContainerID() != cid || restarted.Daemons[leader.DaemonName].InstanceID == instance {
 				t.Fatal("same container restart did not preserve CID/change native instance")
 			}
-			if err := link.RemoveDaemon(ctx, restarted.LeaderDaemonName); err != nil {
-				t.Fatal(err)
+			removed := false
+			for _, daemon := range link.Daemons() {
+				if daemon.DaemonName == restarted.LeaderDaemonName {
+					if err := daemon.Remove(ctx); err != nil {
+						t.Fatal(err)
+					}
+					removed = true
+				}
+			}
+			if !removed {
+				t.Fatalf("restarted leader %s is not owned", restarted.LeaderDaemonName)
 			}
 			check("leader-removed")
 			if _, err := link.AddDaemon(ctx, "replacement"); err != nil {
@@ -388,12 +397,12 @@ func testRBDReceiverReadiness(t *testing.T, host bool) {
 			if status, _ := link.ReceiverStatus(ctx); status.Ready {
 				t.Fatal("partial AddDaemon was adopted as ready")
 			}
-			if err := link.RemoveDaemon(ctx, "partial"); err != nil {
+			if err := partial.Remove(ctx); err != nil {
 				t.Fatal(err)
 			}
 			check("partial-removed")
 			for _, daemon := range link.Daemons() {
-				if err := link.RemoveDaemon(ctx, daemon.DaemonName); err != nil {
+				if err := daemon.Remove(ctx); err != nil {
 					t.Fatal(err)
 				}
 			}

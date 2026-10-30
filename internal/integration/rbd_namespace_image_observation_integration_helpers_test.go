@@ -353,7 +353,7 @@ func testRBDNamespaceImageObservation(t *testing.T, host bool) {
 		t.Fatal("same-CID restart did not retain container and create fresh task/instance")
 	}
 	verify("same-cid-restart")
-	if err := owner.RemoveDaemon(ctx, "receiver"); err != nil {
+	if err := receiver.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	rbdScopedImageRemoved(t, ctx, oracle, cid)

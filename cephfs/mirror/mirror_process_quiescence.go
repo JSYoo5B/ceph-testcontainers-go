@@ -87,7 +87,7 @@ func (m *Mirror) bindOriginalProcessClient(ctx context.Context, d *Daemon, c *te
 	if b == nil {
 		return
 	}
-	// RemoveDaemon/direct daemon Terminate deliberately do not close this client.
+	// Daemon.Remove/direct daemon Terminate deliberately do not close this client.
 	m.owned.AddCleanup("close original CephFS process observer", b.close)
 }
 

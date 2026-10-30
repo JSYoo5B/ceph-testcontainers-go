@@ -71,6 +71,7 @@ type Config struct {
 type Daemon struct {
 	testcontainers.Container
 	DaemonName          string
+	owner               *Mirror
 	mu                  sync.Mutex
 	removed             bool
 	originalProcess     *cephFSBoundOriginalProcess
@@ -79,7 +80,7 @@ type Daemon struct {
 
 // Terminate removes this process without modifying cluster policy. Successful
 // cleanup is remembered so fixture cleanup does not run container hooks twice;
-// a failed removal remains retryable. RemoveDaemon also removes its membership.
+// a failed removal remains retryable. Remove also removes its membership.
 func (daemon *Daemon) Terminate(ctx context.Context, opts ...testcontainers.TerminateOption) error {
 	if daemon == nil {
 		return nil
@@ -585,9 +586,9 @@ func (mirror *Mirror) AddDaemon(ctx context.Context, daemonName string, opts ...
 }
 
 // Called under mirror.mu. Register partial startup results before propagating
-// an error so either RemoveDaemon or Terminate can release them later.
+// an error so either Daemon.Remove or Terminate can release them later.
 func (mirror *Mirror) registerDaemonContainer(container testcontainers.Container, daemonName string) *Daemon {
-	daemon := &Daemon{Container: container, DaemonName: daemonName}
+	daemon := &Daemon{Container: container, DaemonName: daemonName, owner: mirror}
 	if !mirror.initialDaemonAssigned {
 		mirror.Container = daemon
 		mirror.initialDaemonAssigned = true
@@ -597,12 +598,17 @@ func (mirror *Mirror) registerDaemonContainer(container testcontainers.Container
 	return daemon
 }
 
-// RemoveDaemon terminates one owned process. Removing the last daemon is
-// allowed for a complete replication outage; AddDaemon resumes using the same
-// auth, peer and directory policy. Source and destination data are preserved.
-// Native MGR registration and directory reassignment are asynchronous. A failed
-// termination retains the inventory entry so removal can be retried.
-func (mirror *Mirror) RemoveDaemon(ctx context.Context, daemonName string, opts ...testcontainers.TerminateOption) error {
+// Remove terminates this owned process and removes it from its mirror's
+// membership. Removing the last daemon is allowed for a complete replication
+// outage; AddDaemon resumes using the same auth, peer and directory policy.
+// Source and destination data are preserved. Native MGR registration and
+// directory reassignment are asynchronous. A failed termination retains the
+// membership so removal can be retried.
+func (daemon *Daemon) Remove(ctx context.Context, opts ...testcontainers.TerminateOption) error {
+	if daemon == nil || daemon.owner == nil {
+		return servicehook.Invalid(errors.New("CephFS mirror daemon is not owned by a mirror"))
+	}
+	mirror := daemon.owner
 	if err := multicluster.LockObservation(ctx, &mirror.mu); err != nil {
 		return err
 	}
@@ -610,20 +616,18 @@ func (mirror *Mirror) RemoveDaemon(ctx context.Context, daemonName string, opts 
 	if mirror.closed {
 		return servicehook.Invalid(errors.New("CephFS mirror has been terminated"))
 	}
-	for index, daemon := range mirror.daemons {
-		if daemon.DaemonName != daemonName {
-			continue
-		}
-		if err := daemon.Terminate(ctx, opts...); err != nil {
-			return fmt.Errorf("remove CephFS mirror daemon %q: %w", daemonName, err)
-		}
-		if mirror.Container != nil && mirror.Container.GetContainerID() == daemon.GetContainerID() {
-			mirror.Container = nil
-		}
-		mirror.daemons = slices.Delete(mirror.daemons, index, index+1)
-		return nil
+	index := slices.Index(mirror.daemons, daemon)
+	if index < 0 {
+		return fmt.Errorf("CephFS mirror does not own daemon %q", daemon.DaemonName)
 	}
-	return fmt.Errorf("CephFS mirror does not own daemon %q", daemonName)
+	if err := daemon.Terminate(ctx, opts...); err != nil {
+		return fmt.Errorf("remove CephFS mirror daemon %q: %w", daemon.DaemonName, err)
+	}
+	if mirror.Container != nil && mirror.Container.GetContainerID() == daemon.GetContainerID() {
+		mirror.Container = nil
+	}
+	mirror.daemons = slices.Delete(mirror.daemons, index, index+1)
+	return nil
 }
 
 func validateCephFSMirrorDaemonName(name string) error {

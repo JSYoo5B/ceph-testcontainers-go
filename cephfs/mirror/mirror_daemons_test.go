@@ -60,6 +60,18 @@ func TestCephFSMirrorDaemonCountDefaultsAndValidation(t *testing.T) {
 	}
 }
 
+// daemonNamed returns the owned daemon called name.
+func daemonNamed(t *testing.T, m *Mirror, name string) *Daemon {
+	t.Helper()
+	for _, daemon := range m.Daemons() {
+		if daemon.DaemonName == name {
+			return daemon
+		}
+	}
+	t.Fatalf("CephFS mirror owns no daemon %q", name)
+	return nil
+}
+
 func TestCephFSMirrorDaemonRemovalRetainsFailedResourceAndPolicy(t *testing.T) {
 	aContainer := &cephFSMirrorDaemonFake{id: "daemon-a", terminateErr: errors.New("Docker temporarily unavailable")}
 	bContainer := &cephFSMirrorDaemonFake{id: "daemon-b"}
@@ -67,25 +79,26 @@ func TestCephFSMirrorDaemonRemovalRetainsFailedResourceAndPolicy(t *testing.T) {
 	b := &Daemon{Container: bContainer, DaemonName: "b"}
 	mirror := &Mirror{Container: aContainer, daemons: []*Daemon{a, b}, initialDaemonAssigned: true,
 		peerID: "owned-peer", SourceClientEntity: "client.owned", DestinationClientEntity: "client.peer", Directories: []string{"/data"}}
+	a.owner, b.owner = mirror, mirror
 	inventory := mirror.Daemons()
 	inventory[0] = nil
 	if mirror.Daemons()[0] != a {
 		t.Fatal("caller changed owned inventory through the returned slice")
 	}
-	if err := mirror.RemoveDaemon(t.Context(), "foreign"); err == nil || aContainer.terminateCalls != 0 || bContainer.terminateCalls != 0 {
+	if err := (&Daemon{Container: aContainer, DaemonName: "a", owner: mirror}).Remove(t.Context()); err == nil || aContainer.terminateCalls != 0 || bContainer.terminateCalls != 0 {
 		t.Fatal("removal touched an unowned daemon")
 	}
-	if err := mirror.RemoveDaemon(t.Context(), "a"); err == nil || len(mirror.Daemons()) != 2 || mirror.Container != aContainer || a.removed {
+	if err := a.Remove(t.Context()); err == nil || len(mirror.Daemons()) != 2 || mirror.Container != aContainer || a.removed {
 		t.Fatal("failed termination lost retry ownership or legacy handle")
 	}
 	aContainer.terminateErr = nil
-	if err := mirror.RemoveDaemon(t.Context(), "a"); err != nil || len(mirror.Daemons()) != 1 || mirror.Container != nil || !a.removed {
+	if err := a.Remove(t.Context()); err != nil || len(mirror.Daemons()) != 1 || mirror.Container != nil || !a.removed {
 		t.Fatalf("initial daemon removal did not clear legacy handle: %v", err)
 	}
 	// A container removed externally is already gone and may be removed from
 	// inventory. The zero-daemon topology must retain owned peer/auth/data policy.
 	bContainer.terminateErr = errdefs.ErrNotFound
-	if err := mirror.RemoveDaemon(t.Context(), "b"); err != nil || len(mirror.Daemons()) != 0 {
+	if err := b.Remove(t.Context()); err != nil || len(mirror.Daemons()) != 0 {
 		t.Fatalf("last daemon or already-missing removal failed: %v", err)
 	}
 	if mirror.peerID != "owned-peer" || mirror.SourceClientEntity != "client.owned" || mirror.DestinationClientEntity != "client.peer" || !reflect.DeepEqual(mirror.Directories, []string{"/data"}) {
@@ -104,7 +117,7 @@ func TestCephFSMirrorDaemonMutationsRefuseUninitializedAndClosedFixtures(t *test
 	if _, err := mirror.AddDaemon(t.Context(), "a"); err == nil {
 		t.Fatal("closed fixture started a daemon")
 	}
-	if err := mirror.RemoveDaemon(t.Context(), "a"); err == nil {
+	if err := (&Daemon{DaemonName: "a", owner: mirror}).Remove(t.Context()); err == nil {
 		t.Fatal("closed fixture accepted daemon removal")
 	}
 }
@@ -113,9 +126,9 @@ func TestCephFSMirrorDaemonCleanupSkipsRemovedAndRetriesFailedProcess(t *testing
 	mirror := &Mirror{}
 	a := &cephFSMirrorDaemonFake{id: "a"}
 	b := &cephFSMirrorDaemonFake{id: "b", terminateErr: errors.New("cleanup transport failed")}
-	mirror.registerDaemonContainer(a, "a")
+	first := mirror.registerDaemonContainer(a, "a")
 	mirror.registerDaemonContainer(b, "b")
-	if err := mirror.RemoveDaemon(t.Context(), "a"); err != nil {
+	if err := first.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := mirror.Terminate(t.Context()); err == nil || a.terminateCalls != 1 || b.terminateCalls != 1 {
@@ -146,7 +159,7 @@ func TestCephFSMirrorDaemonDirectTerminationAndSortedInventory(t *testing.T) {
 	if err := first.Terminate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := mirror.RemoveDaemon(t.Context(), "z"); err != nil {
+	if err := first.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := mirror.Terminate(t.Context()); err != nil {

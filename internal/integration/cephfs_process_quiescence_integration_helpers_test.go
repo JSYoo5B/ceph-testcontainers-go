@@ -213,7 +213,7 @@ func testCephFSOriginalProcessQuiescence(t *testing.T, host bool, kind string) {
 			}
 		}
 		if evidence == "container-removed" {
-			if err := mirror.RemoveDaemon(ctx, daemon.DaemonName); err != nil || len(mirror.Daemons()) != 0 {
+			if err := daemon.Remove(ctx); err != nil || len(mirror.Daemons()) != 0 {
 				t.Fatal("remove original member while retaining its process observer", err)
 			}
 		}

@@ -17,7 +17,7 @@ separate helper image alone gets `NET_ADMIN` (see
 | A daemon or client is alive but silent | `fault.Pause` | No replies, no closed connection; down only after heartbeat grace | Yes | `PauseLease.Resume` |
 | A container loses one Docker network | `fault.InterruptNetwork` | The endpoint disappears | No | `NetworkInterruption.Restore` |
 | Packets a container sends are delayed, dropped, rate-limited, reordered, duplicated or corrupted | `fault.ApplyNetworkProfile` (opt-in netem helper) | Slow or lossy replies from that container; connections stay up | No | `NetworkProfileLease.Restore` |
-| Replication between two clusters stops | `rbdmirror.Mirror.InterruptPeerLink`, `cephfsmirror.Mirror.InterruptPeerLink`, `multisite.Fixture.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
+| Replication between two clusters stops | `rbdmirror.Daemon.InterruptPeerLink`, `cephfsmirror.Daemon.InterruptPeerLink`, `multisite.Fixture.InterruptZoneLink` | Local service works, the peer link is gone | No | `NetworkInterruption.Restore` |
 | A daemon drops or delays messages from one kind of peer | `override.SetConfig` with `ms_blackhole_*` or `ms_inject_delay_*` | The daemon stays up and keeps talking to the MON | Yes | `ConfigHandle.Restore` |
 | An OSD runs a client's write after the client gave up | `override.SetConfig` with `osd_debug_inject_dispatch_delay_*` | The call ends with ETIMEDOUT; the OSD runs the write later, or discards it if the client disconnected | Yes | `ConfigHandle.Restore` |
 | One client session is fenced | `override.AddBlocklist` | The OSDs reject that session | Yes | `BlocklistHandle.Restore` |
@@ -332,8 +332,8 @@ serving local clients.
 
 | API | Endpoint removed | Kept |
 | --- | --- | --- |
-| [`rbdmirror.Mirror.InterruptPeerLink`](../../rbd/mirror/README.md#interruptpeerlink) | The `rbd-mirror` daemon's endpoint on the source cluster's public bridge | Its destination endpoint, leader election, peer and image policies |
-| [`cephfsmirror.Mirror.InterruptPeerLink`](../../cephfs/mirror/README.md#interruptpeerlink) | The `cephfs-mirror` daemon's endpoint on the destination cluster's public bridge | Source filesystem, MGR registration, directory and peer policies |
+| [`rbdmirror.Daemon.InterruptPeerLink`](../../rbd/mirror/README.md#interruptpeerlink) | The `rbd-mirror` daemon's endpoint on the source cluster's public bridge | Its destination endpoint, leader election, peer and image policies |
+| [`cephfsmirror.Daemon.InterruptPeerLink`](../../cephfs/mirror/README.md#daemoninterruptpeerlink) | The `cephfs-mirror` daemon's endpoint on the destination cluster's public bridge | Source filesystem, MGR registration, directory and peer policies |
 | [`multisite.Fixture.InterruptZoneLink`](../../rgw/multisite/README.md#interruptzonelink) | The gateway's endpoint on the multisite HTTP bridge | The local S3 endpoint, realm and period |
 
 The handles have the `InterruptNetwork` contract, and each fixture restores

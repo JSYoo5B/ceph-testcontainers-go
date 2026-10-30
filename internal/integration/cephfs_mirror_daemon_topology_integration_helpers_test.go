@@ -169,7 +169,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	cephFSWaitForDaemonSnapshots(t, ctx, destinationClient, destinationFS.FilesystemName, "owner-stopped")
 	t.Logf("native CephFS mirror owner %s stopped: four directories reassigned to the surviving instance; new snapshots and exact bytes arrived", stoppedID)
 
-	if err := mirror.RemoveDaemon(ctx, "a"); err != nil {
+	if err := daemons[0].Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if mirror.Container != nil || len(mirror.Daemons()) != 1 {
@@ -195,11 +195,11 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 
 	// Deliberately remove every process without removing its peer or directory
 	// configuration. A later AddDaemon resumes the same link and catches up.
-	if err := mirror.RemoveDaemon(ctx, "b"); err != nil {
+	if err := daemons[1].Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
-	if err := mirror.RemoveDaemon(ctx, "a"); err != nil {
+	if err := replacement.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if len(mirror.Daemons()) != 0 {
@@ -211,7 +211,8 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 	if err != nil || !slices.Equal(currentPeers, peers) {
 		t.Fatalf("daemon replacement changed owned peer: peers=%v error=%v", currentPeers, err)
 	}
-	if _, err := mirror.AddDaemon(ctx, "c"); err != nil {
+	resumed, err := mirror.AddDaemon(ctx, "c")
+	if err != nil {
 		t.Fatal(err)
 	}
 	owners = cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1, slices.Collect(maps.Values(owners))...)
@@ -229,8 +230,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 				t.Error(err)
 			}
 		})
-		daemon := mirror.Daemons()[0]
-		before, err := docker.ContainerInspect(ctx, daemon.GetContainerID(), mobycl.ContainerInspectOptions{})
+		before, err := docker.ContainerInspect(ctx, resumed.GetContainerID(), mobycl.ContainerInspectOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -240,7 +240,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 			t.Fatal("resumed mirror process and both source/destination endpoints are not live")
 		}
 		beforeOwners := cephFSWaitForMirrorDaemonAssignments(t, ctx, source, sourceFS.FilesystemName, peerID, directories, 1)
-		link, err := mirror.InterruptPeerLink(ctx, "c")
+		link, err := resumed.InterruptPeerLink(ctx)
 		if link != nil {
 			t.Cleanup(func() {
 				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
@@ -256,7 +256,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		if link.NetworkName != staticFacts(destination).NetworkName || link.OriginalAddress != peer.IPAddress {
 			t.Fatal("interruption did not identify the original destination-only endpoint")
 		}
-		isolated, err := docker.ContainerInspect(ctx, daemon.GetContainerID(), mobycl.ContainerInspectOptions{})
+		isolated, err := docker.ContainerInspect(ctx, resumed.GetContainerID(), mobycl.ContainerInspectOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +281,7 @@ func testCephFSMirrorDaemonTopology(t *testing.T, host bool, explicitRebalance .
 		if err := link.Restore(ctx); err != nil {
 			t.Fatalf("CephFS endpoint restore was not idempotent: %v", err)
 		}
-		restored, err := docker.ContainerInspect(ctx, daemon.GetContainerID(), mobycl.ContainerInspectOptions{})
+		restored, err := docker.ContainerInspect(ctx, resumed.GetContainerID(), mobycl.ContainerInspectOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -156,7 +156,7 @@ if result.err != nil {
 - A goroutine does not make fixture methods concurrent with each other. RGW
   waits keep the multisite fixture's gate while they poll, so other calls on
   the same fixture wait for them. RBD scoped waits pin the set of daemons they
-  observe on their first read; after `AddDaemon`, `RemoveDaemon` or a
+  observe on their first read; after `AddDaemon`, `Daemon.Remove` or a
   replacement, start a new wait.
 
 ## Ownership
@@ -347,7 +347,7 @@ result:
 | `InterruptNetwork`, `InterruptPeerLink`, `InterruptZoneLink` | Interruption handle | `Restore` |
 | `ApplyNetworkProfile`, `ApplyLinkProfile`, `ApplyZoneLinkProfile` | Delay lease (the change may have reached the kernel) | `Restore` |
 | `rbdmirror.Run`, `cephfsmirror.Run`, `multisite.Run` | Partial fixture | `Terminate` it |
-| `AddDaemon` on a mirror | Partial daemon | `RemoveDaemon` or the fixture's `Terminate` |
+| `AddDaemon` on a mirror | Partial daemon | `Daemon.Remove` or the fixture's `Terminate` |
 | `Multisite.AddZone`, `AddZonegroup` | Partial zone or zonegroup | `Terminate` the fixture; do not add the same name again |
 
 ## Temporary overrides
@@ -449,7 +449,7 @@ rolls back automatically. Each one keeps enough state to retry or to clean up:
 | `cephfs.Filesystem.ScaleMDS` | Desired counts and partial daemons are kept for cleanup; the filesystem and its data are never deleted. |
 | `RefreshMonitorConfig`, `RefreshClientMonitorConfig`, mirror `RefreshMonitorConfig` | Successful copies are kept; retry with a fresh context and up-to-date files are skipped. |
 | `multisite.Fixture.RemoveZone` | Retry with the same name. |
-| `RemoveDaemon` on a mirror | Membership is kept; retry. |
+| `Daemon.Remove` on a mirror | Membership is kept; retry. |
 | Mirror and multisite `Terminate` | Retry; successful removals are not repeated. |
 
 General rules:

@@ -55,7 +55,7 @@ func TestMultiClusterRBDPeerNetworkInterruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	rbdFanoutWaitBytes(t, ctx, b, destinationID, pool, name, initial)
-	cut, err := mirror.InterruptPeerLink(ctx, daemon.DaemonName)
+	cut, err := daemon.InterruptPeerLink(ctx)
 	if cut != nil {
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)

@@ -117,7 +117,7 @@ func testCephFSDirectoryAdditionIntent(t *testing.T, host bool) {
 	cephFSWaitObservedSnapshot(t, ctx, mirror, sourceClient, script, expected, seed, seedCheckpoint)
 	verify(seed, seedCheckpoint, "initial-seed")
 	for _, daemon := range mirror.Daemons() {
-		if err := mirror.RemoveDaemon(ctx, daemon.DaemonName); err != nil {
+		if err := daemon.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

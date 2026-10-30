@@ -16,7 +16,7 @@ func newDirectoryAdditionFixture(t *testing.T) (*Mirror, *directoryRemovalContro
 	m, s, d, _, _ := newDirectoryRemovalFixture()
 	m.peerGeneration = 1
 	for _, daemon := range m.Daemons() {
-		if err := m.RemoveDaemon(t.Context(), daemon.DaemonName); err != nil {
+		if err := daemon.Remove(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
