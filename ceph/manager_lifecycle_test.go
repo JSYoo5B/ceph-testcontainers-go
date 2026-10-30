@@ -69,7 +69,7 @@ func TestManagerActiveRemovalWaitsForAvailableReplacement(t *testing.T) {
 	if !slices.Equal(control.events, []string{"terminate:a", "mgr fail 101", "starting:b", "auth del mgr.a"}) {
 		t.Fatalf("active removal skipped shutdown or initialized replacement: %v", control.events)
 	}
-	if target.terminations != 1 || replacement.terminations != 0 || cluster.ManagerContainer() != nil {
+	if target.terminations != 1 || replacement.terminations != 0 || cluster.members.roster.initialManager() != nil {
 		t.Fatal("primary manager cleanup changed another daemon or retained its primary pointer")
 	}
 	if got, err := cluster.Managers(t.Context()); err != nil || len(got) != 1 || got[0].DaemonName != "b" {
@@ -88,7 +88,7 @@ func TestManagerStandbyRemovalUsesObservedGIDForNumericName(t *testing.T) {
 	if err := managerHandle(t, t.Context(), cluster, "42").Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(control.events, []string{"terminate:42", "mgr fail 202", "auth del mgr.42"}) || target.terminations != 0 || cluster.ManagerContainer() != target {
+	if !slices.Equal(control.events, []string{"terminate:42", "mgr fail 202", "auth del mgr.42"}) || target.terminations != 0 || cluster.members.roster.initialManager() != target {
 		t.Fatalf("standby removal damaged active ownership or interpreted its name as a GID: %v", control.events)
 	}
 }
@@ -107,7 +107,7 @@ func TestManagerRemovalFailureRetainsHandleAndAuthForRetry(t *testing.T) {
 				control.fail = failure
 			}
 			err := managerHandle(t, t.Context(), cluster, "a").Remove(t.Context())
-			if err == nil || cluster.members.roster.manager("a") == nil || cluster.ManagerContainer() != target {
+			if err == nil || cluster.members.roster.manager("a") == nil || cluster.members.roster.initialManager() != target {
 				t.Fatalf("failed removal lost cleanup ownership: %v", err)
 			}
 			if strings.Contains(err.Error(), "PRIVATE-MANAGER-KEY") {
@@ -130,7 +130,7 @@ func TestManagerRemovalFailureRetainsHandleAndAuthForRetry(t *testing.T) {
 			if failure == "terminate" {
 				wantTerminations++
 			}
-			if target.terminations != wantTerminations || cluster.members.roster.manager("a") != nil || cluster.ManagerContainer() != nil {
+			if target.terminations != wantTerminations || cluster.members.roster.manager("a") != nil || cluster.members.roster.initialManager() != nil {
 				t.Fatal("retry repeated completed Docker teardown or retained removed ownership")
 			}
 		})

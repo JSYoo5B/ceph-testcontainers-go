@@ -109,7 +109,7 @@ func newServiceClusterRun(t *testing.T, run clusterRun, image string, opts ...te
 				}
 				ctrs = append(ctrs, osdContainers(t, cluster)...)
 				// A MGR that did not register is a common partial bootstrap.
-				ctrs = append(ctrs, cluster.ManagerContainer())
+				ctrs = append(ctrs, clusteraccess.InitialManager(t, cluster))
 				for _, mgr := range clusteraccess.Managers(t, cluster) {
 					if mgr != nil && mgr.Container != nil {
 						ctrs = append(ctrs, mgr.Container)

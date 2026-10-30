@@ -19,7 +19,7 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/cephfs
    opts...)` creates the default filesystem `tc-cephfs` with one active MDS;
    `cephfs.WithFilesystems(cephfs.Config{...})` selects others (also on
    `ceph.Run`, `rbd.Run` and `rgw.Run`), and `cephfs.Start` adds one to a
-   running cluster. `Filesystems()` returns their handles.
+   running cluster. `cephfs.Filesystems(cluster.Container)` returns their handles.
 2. **Prepare the state** the scenario needs on a `*cephfs.Filesystem`:
    `ScaleMDS`, `AddDataPool`, `CreateSubvolumeGroup` / `CreateSubvolume`
    (quotas, data pools, RADOS namespaces), `Subvolume.CreateSnapshot` and
@@ -44,7 +44,7 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-fs := cluster.Filesystems()[0] // tc-cephfs
+fs := cephfs.Filesystems(cluster.Container)[0] // tc-cephfs
 volume, err := fs.CreateSubvolume(ctx, cephfs.SubvolumeConfig{Name: "app", SizeBytes: 64 << 20})
 if err != nil {
 	t.Fatal(err)

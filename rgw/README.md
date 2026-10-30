@@ -47,7 +47,7 @@ testcontainers.CleanupContainer(t, cluster)
 if err != nil {
 	t.Fatal(err)
 }
-gateways, err := cluster.Gateways(ctx)
+gateways, err := rgw.Gateways(ctx, cluster.Container)
 if err != nil {
 	t.Fatal(err)
 }

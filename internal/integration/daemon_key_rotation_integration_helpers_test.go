@@ -37,7 +37,7 @@ func testDaemonKeyRotation(t *testing.T) {
 	}
 	cluster, _ := newServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1)),
 		ceph.WithAuth(ceph.AuthConfig{ServiceTicketTTL: 10 * time.Second}), ceph.WithConfigFile(tick))
-	osd, mgr := clusteraccess.OSDs(t, cluster)[0], cluster.ManagerContainer()
+	osd, mgr := clusteraccess.OSDs(t, cluster)[0], clusteraccess.InitialManager(t, cluster)
 
 	// A pending key left by an interrupted rotation is the one a later call
 	// finishes with: get-or-create-pending returns it instead of a new key.

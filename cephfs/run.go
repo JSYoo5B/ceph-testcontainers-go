@@ -29,12 +29,3 @@ func Run(ctx context.Context, img string, opts ...testcontainers.ContainerCustom
 type Container struct {
 	*ceph.Container
 }
-
-// Filesystems returns the cluster's filesystems sorted by name: the package
-// function Filesystems applied to the embedded cluster.
-func (c *Container) Filesystems() []*Filesystem {
-	if c == nil {
-		return nil
-	}
-	return Filesystems(c.Container)
-}

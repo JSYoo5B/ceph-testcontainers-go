@@ -268,7 +268,6 @@ var memberRosterCallers = map[string]stateCaller{
 	"DeleteService": {"hook", []string{"dropService"}},
 	"Services":      {"hook", []string{"serviceCopy"}},
 
-	"ManagerContainer":   {"takes", []string{"initialManager"}},
 	"ServiceContainers":  {"takes", []string{"sortedServices"}},
 	"Managers":           {"takes", []string{"eachManager", "managerCount"}},
 	"AddMonitor":         {"takes", []string{"addMonitor", "monitor"}},

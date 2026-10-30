@@ -150,15 +150,11 @@ func TestFilesystemRegistryReportsOwnedState(t *testing.T) {
 	}
 }
 
-func TestContainerFilesystemsUsesTheEmbeddedCluster(t *testing.T) {
-	var missing *Container
-	if missing.Filesystems() != nil {
-		t.Fatal("nil container reported filesystems")
-	}
+func TestFilesystemsUsesTheEmbeddedCluster(t *testing.T) {
 	cluster := &Container{Container: testhelper.TestCluster(nil, testhelper.TestConfig{})}
 	beta, alpha := &Filesystem{FilesystemName: "beta", id: filesystemIdentity{name: "beta"}}, &Filesystem{FilesystemName: "alpha", id: filesystemIdentity{name: "alpha"}}
 	filesystems(cluster.Container).byName["beta"], filesystems(cluster.Container).byName["alpha"] = beta, alpha
-	if got := cluster.Filesystems(); len(got) != 2 || got[0] != alpha || got[1] != beta {
+	if got := Filesystems(cluster.Container); len(got) != 2 || got[0] != alpha || got[1] != beta {
 		t.Fatalf("Filesystems = %v", got)
 	}
 }

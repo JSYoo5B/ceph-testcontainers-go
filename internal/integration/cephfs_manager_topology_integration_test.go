@@ -10,7 +10,7 @@ import (
 
 // The mirroring module executes peer bootstrap import in the active source
 // MGR. Each standby must retain peer-network access when it becomes active;
-// source.ManagerContainer() may already be nil after removing initial MGR a.
+// clusteraccess.InitialManager(t, source) may already be nil after removing initial MGR a.
 func TestMultiClusterCephFSManagerTopology(t *testing.T) {
 	testCephFSManagerTopology(t, false)
 }

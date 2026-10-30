@@ -22,7 +22,7 @@ func ExampleRun() {
 	if err != nil {
 		panic(err)
 	}
-	gateways, err := cluster.Gateways(ctx)
+	gateways, err := rgw.Gateways(ctx, cluster.Container)
 	if err != nil {
 		panic(err)
 	}

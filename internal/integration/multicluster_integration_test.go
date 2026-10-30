@@ -46,7 +46,7 @@ func newMultiClusterPairWithContext(t *testing.T, ctx context.Context, customize
 						}
 					}
 					ctrs = append(ctrs, osdContainers(t, cluster)...)
-					ctrs = append(ctrs, cluster.ManagerContainer())
+					ctrs = append(ctrs, clusteraccess.InitialManager(t, cluster))
 					for _, mgr := range clusteraccess.Managers(t, cluster) {
 						if mgr != nil && mgr.Container != nil {
 							ctrs = append(ctrs, mgr.Container)

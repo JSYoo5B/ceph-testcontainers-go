@@ -514,20 +514,6 @@ func (c *Container) trackHostPortLease(lease *hostPortLease) {
 	c.portLeases.track(lease)
 }
 
-// ManagerContainer returns the initial MGR a for compatibility and inspection.
-// It may be nil after a is removed while another MGR remains active. Use
-// Managers and ManagerStatus for the current candidates and active identity.
-// The cluster owns its cleanup.
-//
-// It is nil when a has been removed or was never created, for example when the
-// first manager added after ClusterConfig.WithNoInitialManagers has another
-// name; use Managers and Observer.ManagerStatus for the current candidates.
-func (c *Container) ManagerContainer() testcontainers.Container {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.members.roster.initialManager()
-}
-
 // WithClient connects another container to Ceph and copies its admin credentials.
 // These privileged, ephemeral credentials are for trusted test containers only.
 // Caller owns and terminates that container before terminating the cluster.

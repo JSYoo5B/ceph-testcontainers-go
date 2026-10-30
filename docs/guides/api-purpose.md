@@ -89,7 +89,7 @@ Life = Lifetime.
 | `Observe` + every `Observer` method | Obs | Native status, MGR, MON quorum and bootstrap addresses, OSD states and flags, pools, configuration, blocklist, health, full ratios, PG inconsistencies, object watchers, MGR modules, services and metrics. |
 | `ManagerMetrics.Select`, `Value` | Obs | Selects samples from one metrics scrape. |
 | `Container.WaitForClean`, `WaitForPGClean`, `WaitForQuorum`, `WaitMGRModuleReady` | Obs | Waits for a stated native condition. |
-| `Container.Monitors`, `Managers`, `OSDs`, `ServiceContainers`, `Pool`, `ManagerContainer` | Obs | Owned descriptors and handles. |
+| `Container.Monitors`, `Managers`, `OSDs`, `ServiceContainers`, `Pool` | Obs | Owned descriptors and handles. |
 | `Pool.Status`, `Usage`, `PGs`, `WaitForPGCount` | Obs | Native pool state. |
 | `ClientConfig.Capabilities`; `*Container.Version`, `Image`, `Placement`; `DetachedOSD.*` accessors; `ClientConfig.Name`, `User`, `ClientRevocationHandle.Name` | Obs | Recorded and reported identity of handles. |
 | `FactsOf`, `ParsePGID` | Obs | Static facts of a cluster; PG ID parsing for the PG APIs. |
@@ -128,7 +128,7 @@ Life = Lifetime.
 | `SubvolumeAuthorization.Deauthorize` | Cond, Life | Revokes a grant. |
 | `SubvolumeAuthorization.EvictClients` | Cond | Evicts the grant's sessions. |
 | `SubvolumeClone.Cancel` | Cond | Interrupts a clone. |
-| `Filesystems`, `Container.Filesystems`, `Filesystem.MDSs`, `MDSStatus`, `WaitReady`, `DataPools`, `Sessions`, `SessionTimeouts` | Obs | Filesystem, MDS and session state. |
+| `Filesystems`, `Filesystem.MDSs`, `MDSStatus`, `WaitReady`, `DataPools`, `Sessions`, `SessionTimeouts` | Obs | Filesystem, MDS and session state. |
 | `Filesystem.Subvolumes`, `SubvolumeInfo`, `SubvolumeGroups`, `SubvolumeGroupInfo`, `SubvolumeSnapshotInfo`, `SubvolumeAuthorizedClients` | Obs | Native subvolume metadata. |
 | `Subvolume.Snapshots`, `PinPolicy`, `SubvolumeGroup.PinPolicy`, `SubvolumeClone.Status`, `Wait`, `Quiesce.ID`, `Status`, `SnapshotScheduleLease.Status`, `Snapshots` | Obs | Handle state. |
 | `Filesystem.Remove`, `Subvolume.Remove`, `SubvolumeGroup.Remove`, `SubvolumeSnapshot.Remove`, `SubvolumeClone.RemovePartial`, `DataPool.RemoveUnused` | Life | Removes fixture-created resources. |
@@ -192,9 +192,8 @@ Life = Lifetime.
 | `Gateway.ApplyPlacement`, `ReloadPlacement` | Cons, Cond | Activates a placement; reload restarts the gateway. |
 | `User.Suspend` | Cond | Disables or re-enables an identity's access. |
 | `Gateway.Remove` | Cond, Life | Loss of a gateway; releases it. |
-| `Gateways`, `Container.Gateways`, `User.Info`, `Usage`, `ID`, `Account.Info`, `ID`, `Placement.Status` | Obs | Native identity, policy and usage. |
-| `User.ServedBy`, `Placement.ServedBy` | Obs | Whether a gateway can serve a handle. |
-| `Gateway.S3Endpoint`, `S3SecureEndpoint`, `DaemonEndpoint`, `Container.S3Endpoint`, `User.Credentials` | Hand | Endpoints and S3 keys for the SUT. |
+| `Gateways`, `User.Info`, `Usage`, `ID`, `Account.Info`, `ID`, `Placement.Status` | Obs | Native identity, policy and usage. |
+| `Gateway.S3Endpoint`, `S3SecureEndpoint`, `DaemonEndpoint`, `User.Credentials` | Hand | Endpoints and S3 keys for the SUT. |
 | `Gateway.Admin` | Native | radosgw-admin in the gateway's scope. |
 | `User.Remove`, `Account.Remove` | Life | Removes fixture-created identities. |
 

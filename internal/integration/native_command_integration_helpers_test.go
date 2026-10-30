@@ -38,14 +38,14 @@ func testNativeCommands(t *testing.T, opts ...testcontainers.ContainerCustomizer
 	cluster, client := newServiceCluster(t, append([]testcontainers.ContainerCustomizer{ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1).WithPoolDefaults(1, 1))}, opts...)...)
 	control := clusteraccess.ControlContainer(t, cluster)
 	logNativeRuntime(t, ctx, cluster, map[string]testcontainers.Container{
-		"control": control, "mgr": cluster.ManagerContainer(), "osd": clusteraccess.OSDs(t, cluster)[0], "client": client,
+		"control": control, "mgr": clusteraccess.InitialManager(t, cluster), "osd": clusteraccess.OSDs(t, cluster)[0], "client": client,
 	})
 
 	// The reproduction of the issue: a read-only MGR query that hangs on a
 	// frozen MGR. A raw Ceph call leaves its CLI running; this call does not.
 	t.Run("paused_mgr_read", func(t *testing.T) {
 		mustCeph(t, ctx, cluster, "tell", "mgr.a", "version")
-		pause, err := fault.Pause(ctx, cluster, cluster.ManagerContainer())
+		pause, err := fault.Pause(ctx, cluster, clusteraccess.InitialManager(t, cluster))
 		if err != nil {
 			if pause != nil {
 				_ = pause.Resume(ctx)

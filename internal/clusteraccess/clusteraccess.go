@@ -47,6 +47,19 @@ func Managers(tb testing.TB, c *ceph.Container) []*ceph.ManagerContainer {
 	return managers
 }
 
+// InitialManager returns the container of MGR a, the manager Run starts, or
+// nil when no manager named a is a current candidate (it was removed, or the
+// cluster started without managers and a later one has another name).
+func InitialManager(tb testing.TB, c *ceph.Container) testcontainers.Container {
+	tb.Helper()
+	for _, manager := range Managers(tb, c) {
+		if manager.DaemonName == "a" {
+			return manager.Container
+		}
+	}
+	return nil
+}
+
 // ControlContainer returns the stable CLI container of c.
 func ControlContainer(tb testing.TB, c *ceph.Container) testcontainers.Container {
 	tb.Helper()
@@ -70,7 +83,7 @@ func Gateways(tb testing.TB, c *ceph.Container) []*rgw.Gateway {
 // RGWGateways returns the RGW gateways of the cluster started by rgw.Run.
 func RGWGateways(tb testing.TB, c *rgw.Container) []*rgw.Gateway {
 	tb.Helper()
-	gateways, err := c.Gateways(ctx(tb))
+	gateways, err := rgw.Gateways(ctx(tb), c.Container)
 	if err != nil {
 		tb.Fatalf("list gateways: %v", err)
 	}

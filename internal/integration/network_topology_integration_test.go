@@ -60,7 +60,7 @@ func separateNetworkScenario(t *testing.T, family ceph.AddressFamily) {
 	if publicSubnet.Overlaps(clusterSubnet) {
 		t.Fatal("bridge subnets overlap")
 	}
-	for _, ctr := range []testcontainers.Container{cluster.Container, cluster.ManagerContainer(), client} {
+	for _, ctr := range []testcontainers.Container{cluster.Container, clusteraccess.InitialManager(t, cluster), client} {
 		inspection, err := docker.ContainerInspect(ctx, ctr.GetContainerID(), mobycl.ContainerInspectOptions{})
 		if err != nil {
 			t.Fatal(err)
