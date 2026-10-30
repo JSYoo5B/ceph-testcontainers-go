@@ -510,7 +510,7 @@ func nativeCluster() *Container {
 }
 
 func registered(c *Container) int {
-	return c.nativeCmds.registered()
+	return c.native.calls.registered()
 }
 
 func TestNativeCommandRefusesMalformedCommandsBeforeRunning(t *testing.T) {

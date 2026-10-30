@@ -28,7 +28,7 @@ const (
 // mu is a leaf lock: no method here calls
 // out or takes another lock while holding it, and every caller invokes
 // cancellations and stops after the method returned. Terminate therefore
-// calls cancelNativeInvocations before it waits for Container.mu, and
+// calls native.cancelAll before it waits for Container.mu, and
 // featureClientState.mu is held around the short
 // critical sections of the client startup (ceph/images.go), never the other
 // way round.

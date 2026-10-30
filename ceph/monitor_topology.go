@@ -78,3 +78,38 @@ func (t monitorTopology) firstMonitorTerminated() bool { return t.monitorTermina
 
 // markFirstMonitorTerminated records that the embedded first MON is gone.
 func (t monitorTopology) markFirstMonitorTerminated() { t.monitorTerminated = true }
+
+// ownsNativeTarget reports whether id is a container of this cluster: the
+// first MON, a MON, a MGR, an OSD, a service or the feature client. The
+// caller holds Container.mu.
+func (t monitorTopology) ownsNativeTarget(ctx context.Context, id string) (bool, error) {
+	matches := func(ctr testcontainers.Container) bool { return ctr != nil && ctr.GetContainerID() == id }
+	if matches(t.first) || matches(t.roster.initialManager()) {
+		return true, nil
+	}
+	for _, mon := range t.roster.eachMonitor() {
+		if mon != nil && matches(mon.Container) {
+			return true, nil
+		}
+	}
+	for _, mgr := range t.roster.eachManager() {
+		if mgr != nil && matches(mgr.Container) {
+			return true, nil
+		}
+	}
+	for _, osd := range t.osds.osdHandles.each() {
+		if osd != nil && matches(osd.Container) {
+			return true, nil
+		}
+	}
+	for _, ctr := range t.roster.eachService() {
+		if matches(ctr) {
+			return true, nil
+		}
+	}
+	client, err := t.client(ctx)
+	if err != nil {
+		return false, err
+	}
+	return matches(client), nil
+}

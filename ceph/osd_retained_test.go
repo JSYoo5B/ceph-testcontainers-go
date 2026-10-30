@@ -149,7 +149,7 @@ func TestDetachedOSDReopensInANewContainerWithTheSameIdentity(t *testing.T) {
 	if detached.ID() != 3 || detached.UUID() != osdLifecycleUUID || detached.ClusterFSID() != retainedClusterFSID || detached.Placement() != old.placement {
 		t.Fatalf("detached identity %+v", detached)
 	}
-	if f.cluster.fleet.osdHandles.get(3) != nil || f.cluster.fleet.osdHandles.detachedOf(3) != detached || f.daemon.stops != 1 || f.daemon.terminations != 1 || !f.cluster.nativeCmds.fenced["osd-lifecycle-3"] {
+	if f.cluster.fleet.osdHandles.get(3) != nil || f.cluster.fleet.osdHandles.detachedOf(3) != detached || f.daemon.stops != 1 || f.daemon.terminations != 1 || !f.cluster.native.calls.fenced["osd-lifecycle-3"] {
 		t.Fatalf("detach state osds=%v detached=%v stops=%d terminations=%d", f.cluster.fleet.osdHandles.owned, f.cluster.fleet.osdHandles.detached, f.daemon.stops, f.daemon.terminations)
 	}
 	// Detach keeps the registration: no reweight, out, drain or purge.
@@ -281,7 +281,7 @@ func TestDetachRefusesBeforeStoppingTheOSD(t *testing.T) {
 			if scenario == "without volume storage" && !errors.Is(err, ErrInvalidRequest) {
 				t.Fatal("unsupported storage is not an invalid request:", err)
 			}
-			if f.daemon.stops != 0 || f.daemon.terminations != 0 || f.cluster.nativeCmds.fenced["osd-lifecycle-3"] || f.cluster.fleet.osdHandles.get(3) == nil || f.cluster.fleet.osdHandles.get(3).detaching {
+			if f.daemon.stops != 0 || f.daemon.terminations != 0 || f.cluster.native.calls.fenced["osd-lifecycle-3"] || f.cluster.fleet.osdHandles.get(3) == nil || f.cluster.fleet.osdHandles.get(3).detaching {
 				t.Fatalf("refusal stopped, fenced or released osd.3: %v", err)
 			}
 		})
@@ -305,7 +305,7 @@ func TestPartialDetachStaysOwnedAndResumes(t *testing.T) {
 			t.Fatal("failed removal released the store")
 		}
 		osd := f.cluster.fleet.osdHandles.get(3)
-		if osd == nil || !osd.detaching || osd.detachRemoved || f.cluster.fleet.osdHandles.detachedOf(3) != nil || !f.cluster.nativeCmds.fenced["osd-lifecycle-3"] {
+		if osd == nil || !osd.detaching || osd.detachRemoved || f.cluster.fleet.osdHandles.detachedOf(3) != nil || !f.cluster.native.calls.fenced["osd-lifecycle-3"] {
 			t.Fatalf("partial detach state %+v", osd)
 		}
 		if err := osdHandle(t, t.Context(), f.cluster, 3).Remove(t.Context()); err == nil || !strings.Contains(err.Error(), "being detached") || len(f.control.actions) != 0 {

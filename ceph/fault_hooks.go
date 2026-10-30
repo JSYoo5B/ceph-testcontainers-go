@@ -93,7 +93,10 @@ func (faultHooks) Closed(c *Container) bool { return c.closed }
 
 // Owns reports a container of the cluster's own daemons. The caller holds
 // the mutex.
-func (faultHooks) Owns(c *Container, id string) bool { return c.ownsNativeTarget(id) }
+func (faultHooks) Owns(c *Container, id string) bool {
+	owned, _ := c.monitorTopology().ownsNativeTarget(context.Background(), id)
+	return owned
+}
 
 // OwnedLabel labels a helper container as owned by the cluster, so that
 // Terminate removes it when it leaked.

@@ -311,14 +311,14 @@ func TestOSDDebugTargetUnconfirmedSetHoldsTheRemovalFence(t *testing.T) {
 			t.Fatalf("settled with a refused cancellation: %v", err)
 		}
 		// RemoveOSD and DetachOSD fence the instance before they replace it.
-		if err := c.fenceNativeTarget(t.Context(), "osd-container"); err == nil || registered(c) != 1 {
+		if err := c.native.fence(t.Context(), "osd-container"); err == nil || registered(c) != 1 {
 			t.Fatalf("the fence admitted a replacement while the set may run: %v", err)
 		}
 		control.set(func(f *nativeTarget) { f.refuseCancel = false })
 		if err := settle(t.Context()); err != nil || registered(c) != 0 {
 			t.Fatalf("settle: %v registered %d", err, registered(c))
 		}
-		if err := c.fenceNativeTarget(t.Context(), "osd-container"); err != nil {
+		if err := c.native.fence(t.Context(), "osd-container"); err != nil {
 			t.Fatal(err)
 		}
 		start()
@@ -330,7 +330,7 @@ func TestOSDDebugTargetUnconfirmedSetHoldsTheRemovalFence(t *testing.T) {
 	t.Run("drained by the fence", func(t *testing.T) {
 		c, control, settle, log, start := unconfirmedSet(t)
 		control.set(func(f *nativeTarget) { f.refuseCancel = false })
-		if err := c.fenceNativeTarget(t.Context(), "osd-container"); err != nil || registered(c) != 0 {
+		if err := c.native.fence(t.Context(), "osd-container"); err != nil || registered(c) != 0 {
 			t.Fatalf("fence: %v registered %d", err, registered(c))
 		}
 		if err := settle(t.Context()); err != nil {
@@ -344,7 +344,7 @@ func TestOSDDebugTargetUnconfirmedSetHoldsTheRemovalFence(t *testing.T) {
 	})
 	t.Run("fenced instance", func(t *testing.T) {
 		c, _, target, log := debugLevelNativeCluster(t)
-		if err := c.fenceNativeTarget(t.Context(), "osd-container"); err != nil {
+		if err := c.native.fence(t.Context(), "osd-container"); err != nil {
 			t.Fatal(err)
 		}
 		var refusal *debugLevelRefusal

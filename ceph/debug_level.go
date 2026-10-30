@@ -254,7 +254,7 @@ func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) 
 	// its fence names.
 	inv := &nativeInvocation{owner: c, target: control, targetID: t.osd.GetContainerID(), label: "admin socket",
 		cancel: cancel, stopCommand: supervised.Cancel, done: make(chan struct{})}
-	switch c.nativeCmds.admit(inv, nil) {
+	switch c.native.calls.admit(inv, nil) {
 	case nativeRefusedClosed:
 		return nil, &debugLevelRefusal{changed: true, err: errClusterTerminated}
 	case nativeRefusedFenced:
@@ -263,7 +263,7 @@ func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) 
 
 	_, err = c.adminSocketCommand(runCtx, control, t.daemon, "config", "set", name, value)
 	marker, unconfirmed := supervised.Unconfirmed(err)
-	c.nativeCmds.finish(inv, marker, unconfirmed)
+	c.native.calls.finish(inv, marker, unconfirmed)
 	close(inv.done)
 	if !unconfirmed {
 		return nil, err
@@ -272,7 +272,7 @@ func (t *osdDebugTarget) set(ctx context.Context, identity, name, value string) 
 		if err := inv.stop(ctx); err != nil {
 			return err
 		}
-		c.nativeCmds.forget(inv)
+		c.native.calls.forget(inv)
 		return nil
 	}, err
 }

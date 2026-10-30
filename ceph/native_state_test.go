@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -164,11 +165,13 @@ func receiverTypeName(fn *ast.FuncDecl) string {
 }
 
 // TestNativeStateFieldsAreOnlyTouchedByItsMethods guards the ownership written
-// on nativeState: outside this type, Container.nativeCmds is used only as the
-// receiver of one of its methods, so no code reads or writes a field, or takes
+// on nativeState: outside this type, its one instance (Container.native.calls,
+// reached as n.calls inside nativeCommands) is used only as the receiver of
+// one of its methods, so no code reads or writes a field, or takes
 // the lock, without the method that does.
 func TestNativeStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 	var problems []string
+	uses := 0
 	for file, parsed := range parseProductionFiles(t) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -188,16 +191,33 @@ func TestNativeStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
 				return true
 			})
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "nativeCmds" && !allowed[sel] {
-					problems = append(problems, file+": "+fn.Name.Name+" uses Container.nativeCmds outside a nativeState method call")
+				if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "calls" && isNativeCallsOwner(sel.X) {
+					uses++
+					if !allowed[sel] {
+						problems = append(problems, file+": "+fn.Name.Name+" uses "+types.ExprString(sel)+" outside a nativeState method call")
+					}
 				}
 				return true
 			})
 		}
 	}
+	if uses == 0 {
+		problems = append(problems, "no use of the native calls state found: the guard is vacuous")
+	}
 	if len(problems) != 0 {
 		t.Fatalf("native state escapes its methods: %v", problems)
 	}
+}
+
+// isNativeCallsOwner reports whether x is the nativeCommands value whose calls
+// field is the nativeState: c.native on the cluster, or the receiver n of a
+// nativeCommands method.
+func isNativeCallsOwner(x ast.Expr) bool {
+	if sel, ok := x.(*ast.SelectorExpr); ok && sel.Sel.Name == "native" {
+		return true
+	}
+	id, ok := x.(*ast.Ident)
+	return ok && id.Name == "n"
 }
 
 // TestNativeStateMethodsHoldOnlyTheLeafLock guards the lock-order contract:
@@ -346,8 +366,8 @@ func TestTerminateCancelsNativeInvocationsBeforeTheTopologyLock(t *testing.T) {
 				if call, ok := n.(*ast.CallExpr); ok {
 					if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 						switch sel.Sel.Name {
-						case "cancelNativeInvocations":
-							if cancelAt == token.NoPos {
+						case "cancelAll":
+							if cancelAt == token.NoPos && types.ExprString(sel.X) == "c.native" {
 								cancelAt = call.Pos()
 							}
 						case "lockTopology":
@@ -360,7 +380,7 @@ func TestTerminateCancelsNativeInvocationsBeforeTheTopologyLock(t *testing.T) {
 				return true
 			})
 			if cancelAt == token.NoPos || lockAt == token.NoPos || cancelAt > lockAt {
-				t.Fatal("terminate must call cancelNativeInvocations before lockTopology")
+				t.Fatal("terminate must call c.native.cancelAll before lockTopology")
 			}
 			return
 		}

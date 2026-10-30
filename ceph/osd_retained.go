@@ -225,7 +225,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 			return nil, err
 		}
 		osd.detaching = true
-		if err := c.fenceNativeTarget(ctx, containerID); err != nil {
+		if err := c.native.fence(ctx, containerID); err != nil {
 			return nil, fmt.Errorf("stop native commands for %s: %w", name, err)
 		}
 		stopTimeout := 10 * time.Second

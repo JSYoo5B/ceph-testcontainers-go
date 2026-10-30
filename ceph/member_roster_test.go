@@ -417,9 +417,8 @@ var memberRosterCallers = map[string]memberRosterCaller{
 	"monitorConfigTargets":             {"holds", []string{"eachManager", "eachMonitor", "eachService", "initialManager", "manager"}},
 	"Owns":                             {"hook", nil},
 	"refreshMonitorConfig":             {"holds", nil},
-	"ownsNativeTarget":                 {"holds", nil},
 	"refreshMonitorConfigAfterRemoval": {"holds", nil},
-	"ownsNativeTargetContext":          {"holds", []string{"eachManager", "eachMonitor", "eachService", "initialManager"}},
+	"ownsNativeTarget":                 {"holds", []string{"eachManager", "eachMonitor", "eachService", "initialManager"}},
 }
 
 // TestMemberRosterCallersAreAudited guards the callers. The set of functions

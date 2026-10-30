@@ -65,12 +65,12 @@ func (serviceHooks) RunOwnedShell(ctx context.Context, c *Container, target test
 	inv := &nativeInvocation{owner: c, target: target, label: label, cancel: cancel, stopCommand: supervised.CancelShell, done: make(chan struct{})}
 	// An owned shell has no target instance, which no fence can name, so the
 	// fence check of admit never refuses it.
-	if c.nativeCmds.admit(inv, nil) == nativeRefusedClosed {
+	if c.native.calls.admit(inv, nil) == nativeRefusedClosed {
 		return supervised.ShellReport{}, fmt.Errorf("%s: %w", label, errClusterTerminated)
 	}
 	report, err := supervised.RunShell(runCtx, target, label, limit, argv...)
 	unstopped, _ := supervised.Unconfirmed(err)
-	c.nativeCmds.finish(inv, unstopped, unstopped != "")
+	c.native.calls.finish(inv, unstopped, unstopped != "")
 	close(inv.done)
 	if err != nil && ctx.Err() == nil && errors.Is(context.Cause(runCtx), errNativeTerminated) {
 		err = fmt.Errorf("%s: %w: %w", label, errNativeTerminated, err)

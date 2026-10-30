@@ -81,9 +81,9 @@ type Container struct {
 	portLeases portLeaseState
 	closed     bool
 
-	// native is the native-command state; see nativeState. It has its own
-	// leaf lock.
-	nativeCmds nativeState
+	// native is the native-command state and the cancellation and fencing of
+	// its calls; see nativeCommands. Its state has its own leaf lock.
+	native nativeCommands
 	// faults holds the network delays, interruptions and pauses, and the
 	// bookkeeping entries of the blocklist, full ratios, configuration, OSD
 	// flag and MGR module overrides, reserved or held; see faultRegistry. It
@@ -733,7 +733,7 @@ func (c *Container) removeOSD(ctx context.Context, handle *OSDContainer) error {
 		return err
 	}
 	if osd.Container != nil {
-		if err := c.fenceNativeTarget(ctx, osd.GetContainerID()); err != nil {
+		if err := c.native.fence(ctx, osd.GetContainerID()); err != nil {
 			return fmt.Errorf("stop native commands for %s: %w", name, err)
 		}
 	}
@@ -967,7 +967,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	// Refuse and cancel native commands before waiting for the mutex: an
 	// rgw.Gateway.Admin call holds it while its command runs, and returns
 	// once that command is stopped.
-	c.cancelNativeInvocations()
+	c.native.cancelAll()
 	if err := c.lockTopology(ctx); err != nil {
 		return err
 	}
@@ -983,7 +983,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 	// Stop native commands while their containers still run. Those that
 	// stay unconfirmed are retried after the teardown, which ends the ones in
 	// the cluster's own containers.
-	_ = c.stopNativeInvocations(ctx)
+	_ = c.native.stopAll(ctx)
 	errs = append(errs, c.portLeases.release(ctx)...)
 	// Stop gateways and metadata servers while their backing OSDs are alive.
 	for name, ctr := range c.members.roster.eachService() {
@@ -1075,7 +1075,7 @@ func (c *Container) terminate(ctx context.Context, opts ...testcontainers.Termin
 		errs = append(errs, err)
 	}
 	errs = append(errs, c.nets.removeBridges(ctx, blockedNetworks)...)
-	errs = append(errs, c.stopNativeInvocations(ctx)...)
+	errs = append(errs, c.native.stopAll(ctx)...)
 	return errors.Join(errs...)
 }
 
