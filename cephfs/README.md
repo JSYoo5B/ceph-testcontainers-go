@@ -303,7 +303,7 @@ documented in [Ceph](../ceph/README.md). The ones CephFS tests use most are:
 | --- | --- |
 | `Ceph(ctx, args...)` | Run `ceph fs ...`, `ceph tell mds...` and other CLI commands in the control container. |
 | `WithClient()` | Attach a client container with `ceph.conf` and the admin keyring. |
-| `WithClientIdentity(client)` | Attach a client container with only one principal's keyring, for example `SubvolumeAuthorization.Client`. |
+| `client.WithIdentity()` | Attach a client container with only one principal's keyring, for example `SubvolumeAuthorization.Client`. |
 | `CreateClient`, `ClientConfig.Delete` | Create or revoke a principal with hand-written caps (`ceph.ClientCaps{MDS: "allow rw fsname=app-fs path=/app", ...}`). |
 | `ConnectionConfig(ctx)` | `ceph.conf` and admin keyring bytes for a native client in the test process (host networking). |
 | `override.SetConfig(ctx, cluster, setting)` | Change a central option for MDS daemons or clients and restore it. |
@@ -1051,7 +1051,7 @@ root-squash administration. The OSD cap covers the whole namespace; a clone that
 inherits the source layout shares it.
 
 The returned `SubvolumeAuthorization` has `Client` (a `*ceph.ClientConfig` for
-`cluster.WithClientIdentity`; `Client.User()` is the auth ID and
+`ClientConfig.WithIdentity`; `Client.User()` is the auth ID and
 `Client.KeyringPath()` the keyring path in the attached container), `AuthID`,
 `Access`, `FilesystemName`, `SubvolumeName`, `GroupName`, `Path`, `DataPool` and
 `PoolNamespace`. A non-nil result with an error can describe a partially created
@@ -1368,7 +1368,7 @@ func startClient(t *testing.T, cluster *cephfs.Container) testcontainers.Contain
 Ceph clients talk to the MON, the MDS and every OSD directly, so the client
 must reach the addresses Ceph advertises. In the default bridge mode, run the
 client in a container attached with `cluster.WithClient()` (admin credentials)
-or `cluster.WithClientIdentity(client)` (one principal). The container needs the
+or `client.WithIdentity()` (one principal). The container needs the
 client library you test; `ceph.DefaultImage` has Python libcephfs, and go-ceph
 programs can run in any Linux image with `libcephfs` installed.
 
@@ -1474,7 +1474,7 @@ Notes:
 ### Give each subvolume its own restricted principal
 
 Each tenant gets a namespace-isolated subvolume and a principal that can only
-reach it. The client container attached with `WithClientIdentity` holds only
+reach it. The client container attached with `ClientConfig.WithIdentity` holds only
 that principal's keyring.
 
 ```golang
@@ -1520,7 +1520,7 @@ if err != nil {
 	t.Fatal(err) // a non-nil grant may be partial; do not authorize the same ID again
 }
 tenant, err := testcontainers.Run(ctx, ceph.DefaultImage,
-	cluster.WithClientIdentity(grant.Client), ceph.WithIdleEntrypoint())
+	grant.Client.WithIdentity(), ceph.WithIdleEntrypoint())
 testcontainers.CleanupContainer(t, tenant)
 if err != nil {
 	t.Fatal(err)

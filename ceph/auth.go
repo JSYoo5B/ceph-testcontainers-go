@@ -13,8 +13,6 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/google/uuid"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/network"
 )
 
 // ClientCaps contains Cephx capability expressions, passed as individual CLI
@@ -62,7 +60,7 @@ func (client ClientConfig) String() string { return "Cephx client " + client.nam
 func (client ClientConfig) GoString() string { return client.String() }
 
 // ConnectionConfig returns independent ceph.conf and keyring copies. The config
-// is a snapshot at creation; WithClientIdentity uses the current MON addresses.
+// is a snapshot at creation; ClientConfig.WithIdentity uses the current MON addresses.
 // Revocation does not erase already copied credentials or invalidate established
 // sessions immediately. Test revoked credentials with a fresh connection.
 // On error it returns the zero ConnectionConfig.
@@ -222,45 +220,6 @@ func clientConfigBytes(base []byte, client *ClientConfig) []byte {
 	config := bytes.Clone(base)
 	config = append(config, []byte("\n["+client.name+"]\nkeyring = "+client.KeyringPath()+"\n")...)
 	return config
-}
-
-// WithClientIdentity attaches a container with only the selected client keyring.
-// It rejects descriptors from another cluster, incomplete creation and revocation.
-// Caller owns the attached container and must terminate it before the cluster.
-// The options customize the container's ceph.conf.
-func (c *Container) WithClientIdentity(client *ClientConfig, opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
-	return c.withClientIdentity(client, opts...)
-}
-
-func (c *Container) withClientIdentity(client *ClientConfig, opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
-	return func(req *testcontainers.GenericContainerRequest) error {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		if c.closed {
-			return errClusterTerminated
-		}
-		if client == nil || client.owner != c || !client.ready || client.revoked || len(client.keyring) == 0 {
-			return errors.New("cephx client must be an active identity created by this cluster")
-		}
-		if err := c.checkCurrentClient(client); err != nil {
-			return err
-		}
-		if c.settings.hostNetwork {
-			if err := hostContainerCustomizer(c.settings.publicAddress).Customize(req); err != nil {
-				return err
-			}
-		} else if err := network.WithNetworkName(nil, c.staticFacts().NetworkName)(req); err != nil {
-			return err
-		}
-		config, err := clientContainerConfig(clientConfigBytes(c.bootstrap.rawConfig(), client), opts)
-		if err != nil {
-			return err
-		}
-		return testcontainers.WithFiles(
-			textFile("/etc/ceph/ceph.conf", config, 0o644),
-			textFile(client.KeyringPath(), bytes.Clone(client.keyring), 0o600),
-		)(req)
-	}
 }
 
 // Auth command output can contain keys, including on failure. Never include it

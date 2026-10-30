@@ -206,7 +206,7 @@ terminated". `ceph.FactsOf` and the descriptor getters still answer.
 
 | Resource | How to clean it up |
 | --- | --- |
-| Containers attached with `WithClient` or `WithClientIdentity` | Terminate them before the cluster. The cluster's networks cannot be removed while they are attached. |
+| Containers attached with `WithClient` or `ClientConfig.WithIdentity` | Terminate them before the cluster. The cluster's networks cannot be removed while they are attached. |
 | `rbdmirror.Mirror`, `cephfsmirror.Mirror`, `multisite.Fixture` | `Terminate` before both clusters. They own their daemons, setup clients, the multisite HTTP network and the network attachments they added. Ceph-side peers, auth entities, realms and policies stay in the clusters. |
 | Handles from the package function `ceph.InterruptNetwork` | `Restore` them; no fixture tracks them. |
 | Copies from `ConnectionConfig` and `ClientConfig.ConnectionConfig`, and files you write from them | Delete them; they contain credentials. |

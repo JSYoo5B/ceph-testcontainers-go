@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/network"
 )
 
 // cluster returns the cluster that created the identity.
@@ -15,6 +18,45 @@ func (client *ClientConfig) cluster(op string) (*Container, error) {
 	}
 
 	return client.owner, nil
+}
+
+// WithIdentity attaches a container with only this client's keyring. It
+// rejects a descriptor whose creation is incomplete, that is revoked or that
+// ReplaceKey made stale. Caller owns the attached container and must terminate
+// it before the cluster. The options customize the container's ceph.conf.
+func (client *ClientConfig) WithIdentity(opts ...ClientContainerOptions) testcontainers.CustomizeRequestOption {
+	return func(req *testcontainers.GenericContainerRequest) error {
+		c, err := client.cluster("ClientConfig.WithIdentity")
+		if err != nil {
+			return err
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.closed {
+			return errClusterTerminated
+		}
+		if !client.ready || client.revoked || len(client.keyring) == 0 {
+			return errors.New("cephx client must be an active identity")
+		}
+		if err := c.checkCurrentClient(client); err != nil {
+			return err
+		}
+		if c.settings.hostNetwork {
+			if err := hostContainerCustomizer(c.settings.publicAddress).Customize(req); err != nil {
+				return err
+			}
+		} else if err := network.WithNetworkName(nil, c.staticFacts().NetworkName)(req); err != nil {
+			return err
+		}
+		config, err := clientContainerConfig(clientConfigBytes(c.bootstrap.rawConfig(), client), opts)
+		if err != nil {
+			return err
+		}
+		return testcontainers.WithFiles(
+			textFile("/etc/ceph/ceph.conf", config, 0o644),
+			textFile(client.KeyringPath(), bytes.Clone(client.keyring), 0o600),
+		)(req)
+	}
 }
 
 // Capabilities returns the current caps of this confirmed, owned identity.
@@ -188,7 +230,7 @@ func (client *ClientConfig) ReplaceKey(ctx context.Context, opts ...ClientOption
 // recovery of the same credentials. The identity must still have the key of
 // client; one changed outside the module is refused. While it is revoked,
 // the descriptor works only for ConnectionConfig, whose credentials stay
-// valid for after Restore; WithClientIdentity, Capabilities,
+// valid for after Restore; ClientConfig.WithIdentity, Capabilities,
 // UpdateCaps and ReplaceKey fail, CreateClient refuses its name,
 // and Delete makes the removal permanent.
 //

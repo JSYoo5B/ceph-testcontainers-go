@@ -106,7 +106,7 @@ func TestRBDNamespaces(t *testing.T) {
 				t.Fatalf("native RBD read-only capabilities differ: %+v error=%v", caps, err)
 			}
 			image, _ := integrationImages(t)
-			client, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClientIdentity(identity),
+			client, err := testcontainers.Run(ctx, nativeClientImage(t, image), identity.WithIdentity(),
 				ceph.WithIdleEntrypoint(),
 				testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados, rbd"})))
 			if client != nil {
@@ -122,7 +122,7 @@ func TestRBDNamespaces(t *testing.T) {
 subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, check=True)`,
 					rbdNamespaceScopedProbe, pool, identity.Name(), identity.KeyringPath())
 			}
-			readerClient, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClientIdentity(reader),
+			readerClient, err := testcontainers.Run(ctx, nativeClientImage(t, image), reader.WithIdentity(),
 				ceph.WithIdleEntrypoint(),
 				testcontainers.WithWaitStrategy(wait.ForExec([]string{"python3", "-c", "import rados, rbd"})))
 			if readerClient != nil {
@@ -156,7 +156,7 @@ subprocess.run([sys.executable, "-c", sys.argv[1], *sys.argv[2:]], timeout=40, c
 			// A crashed client is owned by this test, not a release/recycle
 			// framework. Its image is removed explicitly after native watches
 			// settle, before the namespace-removal assertions below.
-			holder, err := testcontainers.Run(ctx, nativeClientImage(t, image), cluster.WithClientIdentity(identity),
+			holder, err := testcontainers.Run(ctx, nativeClientImage(t, image), identity.WithIdentity(),
 				testcontainers.WithEntrypoint("python3", "-c", rbdNamespaceKilledHolder, pool, identity.User()),
 				testcontainers.WithWaitStrategy(wait.ForLog("RBD_NAMESPACE_HELD").WithStartupTimeout(time.Minute)))
 			if holder != nil {

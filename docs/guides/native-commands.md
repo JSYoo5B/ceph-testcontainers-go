@@ -10,7 +10,7 @@ or uses cgo.
 | `rados`, `rbd`, Python bindings | `Exec` on `cluster.ClientContainer(ctx)` | The client toolkit (client role) |
 | `ceph-authtool` | `Exec` on `cluster.ControlContainer(ctx)` | The control container (essential image) |
 | A command with bounded run time and output that must not outlive the call | `cluster.RunNativeCommand(ctx, target, command)` | The control container, a daemon container, or your attached container |
-| A workload, a restricted identity or your own client software | A container attached with `WithClient` or `WithClientIdentity` | Your container |
+| A workload, a restricted identity or your own client software | A container attached with `WithClient` or `ClientConfig.WithIdentity` | Your container |
 | A native client in the test process | `cluster.ConnectionConfig(ctx)` with host networking | Your process |
 | `radosgw-admin` | `rgw.Gateway.Admin`, or `multisite.Fixture.SourceAdmin`, `DestinationAdmin`, `ZoneAdmin` | The gateway or the zone's setup client |
 | `rbd` on either side of a mirror link | `rbdmirror.Mirror.SourceRBD`, `DestinationRBD` | The link's setup clients |
@@ -267,7 +267,7 @@ neither Ceph libraries nor cgo. For values that the CLIs and the Python
 binding do not expose, such as the nanosecond modification time of
 `rados_stat2`, call `librados.so.2` through Python `ctypes` and print one JSON
 document. `rados_create` with `None` connects as `client.admin`; pass the
-`User()` of a `WithClientIdentity` identity instead. Call `rados_shutdown` in
+`User()` of a `ClientConfig.WithIdentity` identity instead. Call `rados_shutdown` in
 `finally`: a client left to interpreter exit sometimes aborts after its work
 is done and turns the result into a nonzero exit.
 
@@ -402,10 +402,10 @@ with `override.SetOSDFlag` meanwhile. `TestRADOSErasureCodedOutcomes` in
 ## Running your own client container
 
 `WithClient` attaches your container to the cluster network with `ceph.conf`
-and the admin keyring. `WithClientIdentity` copies only a restricted
+and the admin keyring. `ClientConfig.WithIdentity` copies only a restricted
 identity's keyring, at `client.KeyringPath()`. See
 [WithClient](../../ceph/README.md#withclient),
-[WithClientIdentity](../../ceph/README.md#withclientidentity) and
+[ClientConfig.WithIdentity](../../ceph/README.md#clientconfigwithidentity) and
 [CreateClient](../../ceph/README.md#createclient).
 
 ```golang
@@ -421,7 +421,7 @@ if err != nil {
 	t.Fatal(err)
 }
 restricted, err := testcontainers.Run(ctx, facts.Images.Client,
-	cluster.WithClientIdentity(reader),
+	reader.WithIdentity(),
 	ceph.WithIdleEntrypoint(),
 )
 testcontainers.CleanupContainer(t, restricted)
