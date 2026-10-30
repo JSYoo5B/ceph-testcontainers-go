@@ -829,7 +829,7 @@ file := volume.Path + "/big"
 if out := mustExec(t, client, "python3", "-c", quotaProbe, fs.FilesystemName, file, "2097152"); out != "EDQUOT" {
 	t.Fatalf("2 MiB write into a 1 MiB quota: %s", out)
 }
-if err := fs.ResizeSubvolume(ctx, volume, 8<<20); err != nil {
+if err := volume.Resize(ctx, 8<<20); err != nil {
 	t.Fatal(err)
 }
 if out := mustExec(t, client, "python3", "-c", quotaProbe, fs.FilesystemName, file, "2097152"); out != "written" {
@@ -891,7 +891,7 @@ for _, name := range []string{"tenant-a", "tenant-b"} {
 		t.Fatal(err)
 	}
 }
-grant, err := fs.AuthorizeSubvolume(ctx, volumes["tenant-a"],
+grant, err := volumes["tenant-a"].Authorize(ctx,
 	cephfs.SubvolumeAuthorizationConfig{ClientID: "tenant-a", Access: "rw"})
 if err != nil {
 	t.Fatal(err) // a non-nil grant may be partial; do not authorize the same ID again
@@ -909,10 +909,10 @@ if out != "denied" {
 }
 
 // Revoke: new connections are refused, then established sessions are evicted.
-if err := fs.DeauthorizeSubvolume(ctx, grant); err != nil {
+if err := grant.Deauthorize(ctx); err != nil {
 	t.Fatal(err)
 }
-if err := fs.EvictSubvolumeClients(ctx, grant); err != nil {
+if err := grant.EvictClients(ctx); err != nil {
 	t.Fatal(err)
 }
 if err := grant.Client.Delete(ctx); err != nil { // optional
@@ -948,7 +948,7 @@ if err != nil {
 	t.Fatal(err)
 }
 for _, volume := range []*cephfs.Subvolume{orders, payments} {
-	if _, err := fs.CreateSubvolumeSnapshot(ctx, volume, "checkpoint-1"); err != nil {
+	if _, err := volume.CreateSnapshot(ctx, "checkpoint-1"); err != nil {
 		t.Fatal(err) // Expiration resumes I/O even if the test stops here.
 	}
 }

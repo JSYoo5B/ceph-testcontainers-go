@@ -34,6 +34,9 @@ break" does not apply to them.
   caller's `testcontainers.CleanupContainer` still terminates it. A module's
   `Container` embeds `testcontainers.Container` (a service package embeds
   `*ceph.Container`).
+- An operation on one resource handle is a method of that handle
+  (`volume.Resize(ctx, n)`), not a parent method that takes the handle; see
+  [API naming](docs/contributing/api-naming.md).
 - Container settings are testcontainers customizers. Do not build a parallel
   option, lifecycle or cleanup framework next to them.
 - An existing exception is not a precedent. When code breaks these rules, fix it;

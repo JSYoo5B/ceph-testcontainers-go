@@ -247,8 +247,7 @@ func (fs *Filesystem) beginSessionOperation(ctx context.Context) (context.Contex
 	ctx, done, err := fs.admitOperation(ctx, admissionSpec{
 		refusal: "CephFS filesystem must be an active filesystem created by this cluster",
 		check: func(context.Context) (bool, error) {
-			c := fs.cluster
-			if servicehook.Closed(c) || filesystems(c).byName[fs.name] != fs || fs.FilesystemName != fs.name || fs.nativeIdentity == nil {
+			if !fs.registered() || fs.FilesystemName != fs.name || fs.nativeIdentity == nil {
 				return false, nil
 			}
 			fsID = fs.nativeIdentity.id

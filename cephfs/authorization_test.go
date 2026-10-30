@@ -154,7 +154,7 @@ func cephFSAuthorizationFixture(t *testing.T) (*Filesystem, *cephFSAuthFixtureCo
 
 func TestCephFSSubvolumeAuthorizationFreshKeyAndCopiedRevocation(t *testing.T) {
 	fs, ctr, volume := cephFSAuthorizationFixture(t)
-	grant, err := fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,10 +169,10 @@ func TestCephFSSubvolumeAuthorizationFreshKeyAndCopiedRevocation(t *testing.T) {
 	if err != nil || !slices.Equal(listing, []SubvolumeAuthorizedClient{{AuthID: "writer", Access: "rw"}}) {
 		t.Fatal("native authorized_list shape was not decoded", listing, err)
 	}
-	if err := fs.RemoveSubvolume(t.Context(), volume); err == nil {
+	if err := volume.Remove(t.Context()); err == nil {
 		t.Fatal("subvolume removed before authorization cleanup")
 	}
-	if err := fs.EvictSubvolumeClients(t.Context(), grant); err == nil {
+	if err := grant.EvictClients(t.Context()); err == nil {
 		t.Fatal("active grant allowed premature eviction")
 	}
 	// Native deauthorization must preserve unrelated service and path/pool caps.
@@ -181,7 +181,7 @@ func TestCephFSSubvolumeAuthorizationFreshKeyAndCopiedRevocation(t *testing.T) {
 	entry.Caps["osd"] += ", allow r pool=unrelated namespace=other"
 	copy := *grant
 	copy.Client, copy.AuthID, copy.Access, copy.SubvolumeName, copy.GroupName, copy.Path = nil, "foreign", "r", "foreign", "foreign", "/foreign"
-	if err := fs.DeauthorizeSubvolume(t.Context(), &copy); err != nil {
+	if err := (&copy).Deauthorize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]string{"mon": "allow r fsname=fixture", "mgr": "allow r", "mds": "allow r path=/unrelated", "osd": "allow r pool=unrelated namespace=other"}
@@ -189,7 +189,7 @@ func TestCephFSSubvolumeAuthorizationFreshKeyAndCopiedRevocation(t *testing.T) {
 		t.Fatal("deauthorization deleted key or unrelated grants", entry.Caps)
 	}
 	before := len(ctr.Calls)
-	if err := fs.DeauthorizeSubvolume(t.Context(), grant); err != nil {
+	if err := grant.Deauthorize(t.Context()); err != nil {
 		t.Fatal("copied revoke state was not shared", err)
 	}
 	for _, call := range ctr.Calls[before:] {
@@ -197,13 +197,13 @@ func TestCephFSSubvolumeAuthorizationFreshKeyAndCopiedRevocation(t *testing.T) {
 			t.Fatal("deauthorization repeated")
 		}
 	}
-	if err := fs.EvictSubvolumeClients(t.Context(), &copy); err != nil {
+	if err := (&copy).EvictClients(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(ctr.Calls[len(ctr.Calls)-1], []string{"fs", "subvolume", "evict", "fixture", "volume", "writer", "--group_name", "group"}) {
 		t.Fatal("copied fields redirected eviction")
 	}
-	if err := fs.RemoveSubvolume(t.Context(), volume); err != nil {
+	if err := volume.Remove(t.Context()); err != nil {
 		t.Fatal("deauthorized volume could not be removed", err)
 	}
 }
@@ -211,14 +211,14 @@ func TestCephFSSubvolumeAuthorizationFreshKeyAndCopiedRevocation(t *testing.T) {
 func TestCephFSSubvolumeAuthorizationRefusesExistingAndUnisolatedPrincipals(t *testing.T) {
 	for _, test := range []string{"existing", "namespace"} {
 		t.Run(test, func(t *testing.T) {
-			fs, ctr, volume := cephFSAuthorizationFixture(t)
+			_, ctr, volume := cephFSAuthorizationFixture(t)
 			if test == "existing" {
 				ctr.auth["client.writer"] = &cephFSAuthFixtureEntry{Entity: "client.writer", Key: "EXTERNAL-KEY", Caps: map[string]string{"mon": "allow *"}}
 			} else {
 				key := "fs subvolume info fixture volume --group_name group --format json"
 				ctr.Output[key] = strings.ReplaceAll(ctr.Output[key], `"pool_namespace":"fsvolumens_group_volume"`, `"pool_namespace":""`)
 			}
-			if grant, err := fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"}); err == nil || grant != nil {
+			if grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"}); err == nil || grant != nil {
 				t.Fatal("existing principal or pool-wide layout was adopted")
 			}
 			for _, call := range ctr.Calls {
@@ -231,21 +231,21 @@ func TestCephFSSubvolumeAuthorizationRefusesExistingAndUnisolatedPrincipals(t *t
 }
 
 func TestCephFSSubvolumeAuthorizationPartialReplyAndDeauthorizeRetry(t *testing.T) {
-	fs, ctr, volume := cephFSAuthorizationFixture(t)
+	_, ctr, volume := cephFSAuthorizationFixture(t)
 	ctr.Fail, ctr.applyFail = "fs subvolume authorize fixture volume writer --group_name group --access_level rw --allow_existing_id", true
-	grant, err := fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err == nil || grant == nil || grant.identity.authorized || !grant.identity.authorizeAttempted || strings.Contains(err.Error(), "PRIVATE-KEY") {
 		t.Fatal("uncertain grant was adopted or leaked a key")
 	}
-	if err := fs.RemoveSubvolume(t.Context(), volume); err == nil {
+	if err := volume.Remove(t.Context()); err == nil {
 		t.Fatal("partial grant was discarded during volume cleanup")
 	}
 	ctr.Fail = "fs subvolume deauthorize fixture volume writer --group_name group"
-	if err := fs.DeauthorizeSubvolume(t.Context(), grant); err == nil || !grant.identity.deauthAttempted {
+	if err := grant.Deauthorize(t.Context()); err == nil || !grant.identity.deauthAttempted {
 		t.Fatal("lost revoke reply did not retain retry state")
 	}
 	ctr.Fail, ctr.Calls = "", nil
-	if err := fs.DeauthorizeSubvolume(t.Context(), grant); err != nil || !grant.identity.deauthorized {
+	if err := grant.Deauthorize(t.Context()); err != nil || !grant.identity.deauthorized {
 		t.Fatal("uncertain successful revocation did not reconcile", err)
 	}
 	for _, call := range ctr.Calls {
@@ -281,14 +281,14 @@ func TestCephFSSubvolumeAuthorizationOutsideIdentityEditsRefuseMutation(t *testi
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fs, c, volume := cephFSAuthorizationFixture(t)
-			grant, err := fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+			grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 			if err != nil {
 				t.Fatal(err)
 			}
 			test.edit(fs, c)
 			c.Calls = nil
 			before := maps.Clone(c.auth["client.writer"].Caps)
-			if err := fs.DeauthorizeSubvolume(t.Context(), grant); err == nil {
+			if err := grant.Deauthorize(t.Context()); err == nil {
 				t.Fatal("outside replacement allowed revoke")
 			}
 			if !equalAuthorizationCaps(before, c.auth["client.writer"].Caps) {
@@ -304,17 +304,17 @@ func TestCephFSSubvolumeAuthorizationOutsideIdentityEditsRefuseMutation(t *testi
 }
 
 func TestCephFSSubvolumeAuthorizationReadbackMismatchIsNotConfirmed(t *testing.T) {
-	fs, ctr, volume := cephFSAuthorizationFixture(t)
+	_, ctr, volume := cephFSAuthorizationFixture(t)
 	ctr.corruptCap = true
-	grant, err := fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err == nil || grant == nil || grant.identity.authorized {
 		t.Fatal("native pool-wide capability was accepted")
 	}
-	if err := fs.EvictSubvolumeClients(t.Context(), grant); err == nil {
+	if err := grant.EvictClients(t.Context()); err == nil {
 		t.Fatal("partial grant authorized eviction")
 	}
 	before := len(ctr.Calls)
-	if err := fs.DeauthorizeSubvolume(t.Context(), grant); err == nil {
+	if err := grant.Deauthorize(t.Context()); err == nil {
 		t.Fatal("unpaired partial native caps allowed deauthorization")
 	}
 	for _, call := range ctr.Calls[before:] {
@@ -325,18 +325,18 @@ func TestCephFSSubvolumeAuthorizationReadbackMismatchIsNotConfirmed(t *testing.T
 }
 
 func TestCephFSSubvolumeAuthorizationLostReplyPreservesLaterOutsideCaps(t *testing.T) {
-	fs, ctr, volume := cephFSAuthorizationFixture(t)
-	grant, err := fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	_, ctr, volume := cephFSAuthorizationFixture(t)
+	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctr.Fail, ctr.applyFail = "fs subvolume deauthorize fixture volume writer --group_name group", true
-	if err := fs.DeauthorizeSubvolume(t.Context(), grant); err == nil {
+	if err := grant.Deauthorize(t.Context()); err == nil {
 		t.Fatal("lost reply was not reported")
 	}
 	ctr.Fail, ctr.Calls = "", nil
 	ctr.auth["client.writer"].Caps["mgr"] = "allow r"
-	if err := fs.DeauthorizeSubvolume(t.Context(), grant); err == nil {
+	if err := grant.Deauthorize(t.Context()); err == nil {
 		t.Fatal("outside state change after lost reply was silently accepted")
 	}
 	if ctr.auth["client.writer"].Caps["mgr"] != "allow r" {
@@ -355,28 +355,28 @@ func TestCephFSSubvolumeAuthorizationDecoderAndCanceledValidation(t *testing.T) 
 			t.Fatal("invalid authorized_list accepted", data)
 		}
 	}
-	fs, ctr, volume := cephFSAuthorizationFixture(t)
+	_, ctr, volume := cephFSAuthorizationFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if grant, err := fs.AuthorizeSubvolume(ctx, volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"}); err == nil || grant != nil {
+	if grant, err := volume.Authorize(ctx, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"}); err == nil || grant != nil {
 		t.Fatal("canceled context created a principal")
 	}
 	if len(ctr.Calls) != 0 {
 		t.Fatal("canceled operation reached native commands")
 	}
 	for _, access := range []string{"", "w", "rws"} {
-		if _, err := fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: access}); err == nil {
+		if _, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: access}); err == nil {
 			t.Fatal("invalid access accepted", access)
 		}
 	}
-	if err := fs.DeauthorizeSubvolume(t.Context(), &SubvolumeAuthorization{}); err == nil {
+	if err := (&SubvolumeAuthorization{}).Deauthorize(t.Context()); err == nil {
 		t.Fatal("external descriptor allowed deauthorization")
 	}
 }
 
 func TestCephFSSubvolumeAuthorizationNativeRawIDKeepsClientPrefix(t *testing.T) {
 	fs, ctr, volume := cephFSAuthorizationFixture(t)
-	grant, err := fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "client.client.writer", Access: "r"})
+	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "client.client.writer", Access: "r"})
 	if err != nil || grant.AuthID != "client.writer" || grant.Client.Name() != "client.client.writer" {
 		t.Fatal("native raw auth ID was normalized as a qualified entity", grant, err)
 	}
@@ -384,7 +384,7 @@ func TestCephFSSubvolumeAuthorizationNativeRawIDKeepsClientPrefix(t *testing.T) 
 	if err != nil || len(listing) != 1 || listing[0].AuthID != "client.writer" {
 		t.Fatal("native raw auth ID prefix was discarded", listing, err)
 	}
-	if err := fs.DeauthorizeSubvolume(t.Context(), grant); err != nil {
+	if err := grant.Deauthorize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if ctr.auth["client.client.writer"] == nil || ctr.auth["client.writer"] != nil {
@@ -393,13 +393,13 @@ func TestCephFSSubvolumeAuthorizationNativeRawIDKeepsClientPrefix(t *testing.T) 
 }
 
 func TestCephFSSubvolumeAuthorizationPartialPrincipalDoesNotGrantOrEraseData(t *testing.T) {
-	fs, ctr, volume := cephFSAuthorizationFixture(t)
+	_, ctr, volume := cephFSAuthorizationFixture(t)
 	ctr.Fail = "auth get client.writer"
-	grant, err := fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err == nil || grant == nil || grant.Client == nil || !clientCreated(grant.Client) || clientReady(grant.Client) || grant.identity.authorizeAttempted || strings.Contains(err.Error(), "PRIVATE-KEY") {
 		t.Fatal("unconfirmed principal was granted or leaked a key")
 	}
-	if err := fs.DeauthorizeSubvolume(t.Context(), grant); err == nil {
+	if err := grant.Deauthorize(t.Context()); err == nil {
 		t.Fatal("unconfirmed principal was adopted for native grant cleanup")
 	}
 	for _, call := range ctr.Calls {
@@ -413,24 +413,24 @@ func TestCephFSSubvolumeAuthorizationPartialPrincipalDoesNotGrantOrEraseData(t *
 }
 
 func TestCephFSSubvolumeEvictionRetryAndReplacementKeyRefusal(t *testing.T) {
-	fs, ctr, volume := cephFSAuthorizationFixture(t)
-	grant, err := fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	_, ctr, volume := cephFSAuthorizationFixture(t)
+	grant, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.DeauthorizeSubvolume(t.Context(), grant); err != nil {
+	if err := grant.Deauthorize(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	ctr.Fail = "fs subvolume evict fixture volume writer --group_name group"
-	if err := fs.EvictSubvolumeClients(t.Context(), grant); err == nil || strings.Contains(err.Error(), "PRIVATE-KEY") {
+	if err := grant.EvictClients(t.Context()); err == nil || strings.Contains(err.Error(), "PRIVATE-KEY") {
 		t.Fatal("uncertain native eviction was accepted or leaked auth output")
 	}
 	ctr.Fail, ctr.Calls = "", nil
-	if err := fs.EvictSubvolumeClients(t.Context(), grant); err != nil {
+	if err := grant.EvictClients(t.Context()); err != nil {
 		t.Fatal("same scoped native eviction could not be retried", err)
 	}
 	ctr.auth["client.writer"].Key, ctr.Calls = "REPLACEMENT", nil
-	if err := fs.EvictSubvolumeClients(t.Context(), grant); err == nil {
+	if err := grant.EvictClients(t.Context()); err == nil {
 		t.Fatal("replacement principal allowed owned-session eviction")
 	}
 	for _, call := range ctr.Calls {

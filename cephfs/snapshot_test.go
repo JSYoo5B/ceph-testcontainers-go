@@ -20,7 +20,7 @@ func snapshotFixture(t *testing.T) (*Filesystem, *poolFixtureContainer, *Subvolu
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := fs.CreateSubvolumeSnapshot(t.Context(), volume, "checkpoint")
+	snapshot, err := volume.CreateSnapshot(t.Context(), "checkpoint")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,20 +29,20 @@ func snapshotFixture(t *testing.T) (*Filesystem, *poolFixtureContainer, *Subvolu
 }
 
 func TestCephFSSnapshotOwnershipAndPendingGuard(t *testing.T) {
-	fs, ctr, volume, snapshot := snapshotFixture(t)
+	_, ctr, volume, snapshot := snapshotFixture(t)
 	if snapshot.Path != "/volumes/group/volume/.snap/checkpoint/unique-id" {
 		t.Fatal("snapshot has no native frozen path")
 	}
 	ctr.Output["fs subvolume snapshot ls fixture volume --group_name group --format json"] = `[{"name":"checkpoint"}]`
-	if duplicate, err := fs.CreateSubvolumeSnapshot(t.Context(), volume, "checkpoint"); err == nil || duplicate != nil {
+	if duplicate, err := volume.CreateSnapshot(t.Context(), "checkpoint"); err == nil || duplicate != nil {
 		t.Fatal("duplicate native snapshot adopted")
 	}
-	if err := fs.RemoveSubvolumeSnapshot(t.Context(), &SubvolumeSnapshot{Name: "checkpoint"}); err == nil {
+	if err := (&SubvolumeSnapshot{Name: "checkpoint"}).Remove(t.Context()); err == nil {
 		t.Fatal("external descriptor granted snapshot removal")
 	}
 	ctr.Output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"] = `{"created_at":"2026-10-03 00:01:00.123456","data_pool":"additional","has_pending_clones":"yes","pending_clones":[{"name":"copy","target_group":"restores"}]}`
 	ctr.Calls = nil
-	if err := fs.RemoveSubvolumeSnapshot(t.Context(), snapshot); err == nil {
+	if err := snapshot.Remove(t.Context()); err == nil {
 		t.Fatal("pending clone source accepted removal")
 	}
 	for _, call := range ctr.Calls {
@@ -53,7 +53,7 @@ func TestCephFSSnapshotOwnershipAndPendingGuard(t *testing.T) {
 	snapshot.Name, snapshot.SubvolumeName, snapshot.GroupName, snapshot.Path, snapshot.FilesystemName = "foreign", "foreign", "foreign", "/foreign", "foreign"
 	ctr.Output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"] = `{"created_at":"2026-10-03 00:01:00.123456","data_pool":"additional","has_pending_clones":"no"}`
 	copyBefore := *snapshot
-	if err := fs.RemoveSubvolumeSnapshot(t.Context(), snapshot); err != nil {
+	if err := snapshot.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"fs", "subvolume", "snapshot", "rm", "fixture", "volume", "checkpoint", "--group_name", "group"}
@@ -61,7 +61,7 @@ func TestCephFSSnapshotOwnershipAndPendingGuard(t *testing.T) {
 		t.Fatal("exported descriptor redirected native mutation")
 	}
 	ctr.Calls = nil
-	if err := fs.RemoveSubvolumeSnapshot(t.Context(), &copyBefore); err != nil {
+	if err := (&copyBefore).Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if slices.ContainsFunc(ctr.Calls, func(call []string) bool {
@@ -69,14 +69,14 @@ func TestCephFSSnapshotOwnershipAndPendingGuard(t *testing.T) {
 	}) || !snapshot.identity.removed {
 		t.Fatalf("copied descriptor repeated removal or lost shared state: %v", ctr.Calls)
 	}
-	if _, err := fs.CloneSubvolumeSnapshot(t.Context(), &copyBefore, CloneConfig{Name: "copy"}); err == nil {
+	if _, err := (&copyBefore).Clone(t.Context(), CloneConfig{Name: "copy"}); err == nil {
 		t.Fatal("removed copied snapshot accepted clone")
 	}
 }
 
 func TestCephFSSnapshotReplacementAndUnknownRemoval(t *testing.T) {
 	for _, change := range []string{"snapshot-birth", "snapshot-path", "subvolume-path", "filesystem"} {
-		fs, ctr, _, snapshot := snapshotFixture(t)
+		_, ctr, _, snapshot := snapshotFixture(t)
 		switch change {
 		case "snapshot-birth":
 			ctr.Output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"] = strings.ReplaceAll(ctr.Output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"], "00:01:00", "00:01:01")
@@ -87,7 +87,7 @@ func TestCephFSSnapshotReplacementAndUnknownRemoval(t *testing.T) {
 		case "filesystem":
 			ctr.Output["fs dump --format json"] = strings.ReplaceAll(ctr.Output["fs dump --format json"], `"id":41`, `"id":42`)
 		}
-		if err := fs.RemoveSubvolumeSnapshot(t.Context(), snapshot); err == nil {
+		if err := snapshot.Remove(t.Context()); err == nil {
 			t.Fatalf("replacement %s accepted", change)
 		}
 		for _, call := range ctr.Calls {
@@ -96,16 +96,16 @@ func TestCephFSSnapshotReplacementAndUnknownRemoval(t *testing.T) {
 			}
 		}
 	}
-	fs, ctr, _, snapshot := snapshotFixture(t)
+	_, ctr, _, snapshot := snapshotFixture(t)
 	ctr.Fail = "fs subvolume snapshot rm fixture volume checkpoint --group_name group"
-	if err := fs.RemoveSubvolumeSnapshot(t.Context(), snapshot); err == nil || snapshot.identity.removed {
+	if err := snapshot.Remove(t.Context()); err == nil || snapshot.identity.removed {
 		t.Fatal("failed removal lost retry state")
 	}
 	copyBefore := *snapshot
 	ctr.Fail = ""
 	ctr.Output["fs subvolume snapshot ls fixture volume --group_name group --format json"] = `[]`
 	ctr.Calls = nil
-	if err := fs.RemoveSubvolumeSnapshot(t.Context(), &copyBefore); err != nil {
+	if err := (&copyBefore).Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	for _, call := range ctr.Calls {
@@ -125,17 +125,17 @@ func TestCephFSSnapshotPartialCreateAndCloneDuplicate(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctr.Fail = "fs subvolume snapshot create fixture volume checkpoint --group_name group"
-	snapshot, err := fs.CreateSubvolumeSnapshot(t.Context(), volume, "checkpoint")
+	snapshot, err := volume.CreateSnapshot(t.Context(), "checkpoint")
 	if err == nil || snapshot == nil || snapshot.identity.ready {
 		t.Fatal("failed snapshot create lost attempted descriptor or marked ready")
 	}
 	ctr.Calls = nil
-	if err := fs.RemoveSubvolumeSnapshot(t.Context(), snapshot); err == nil || len(ctr.Calls) != 0 {
+	if err := snapshot.Remove(t.Context()); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("partial snapshot granted removal")
 	}
 	fs, ctr, _, snapshot = snapshotFixture(t)
 	ctr.Output["fs subvolume ls fixture --group_name restores --format json"] = `[{"name":"copy"}]`
-	clone, err := fs.CloneSubvolumeSnapshot(t.Context(), snapshot, CloneConfig{Name: "copy", GroupName: "restores"})
+	clone, err := snapshot.Clone(t.Context(), CloneConfig{Name: "copy", GroupName: "restores"})
 	if err == nil || clone != nil {
 		t.Fatal("existing clone target accepted")
 	}
@@ -147,8 +147,8 @@ func TestCephFSSnapshotPartialCreateAndCloneDuplicate(t *testing.T) {
 }
 
 func TestCephFSCloneSubmissionStatusAndCompletionOwnership(t *testing.T) {
-	fs, ctr, _, snapshot := snapshotFixture(t)
-	clone, err := fs.CloneSubvolumeSnapshot(t.Context(), snapshot, CloneConfig{Name: "copy", GroupName: "restores", DataPool: "data"})
+	_, ctr, _, snapshot := snapshotFixture(t)
+	clone, err := snapshot.Clone(t.Context(), CloneConfig{Name: "copy", GroupName: "restores", DataPool: "data"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,56 +157,56 @@ func TestCephFSCloneSubmissionStatusAndCompletionOwnership(t *testing.T) {
 		t.Fatalf("clone layout or source/target group arguments changed: %v", ctr.Calls)
 	}
 	ctr.Output["fs clone status fixture copy --group_name restores --format json"] = `{"status":{"state":"pending","source":{"volume":"fixture","subvolume":"volume","group":"group","snapshot":"checkpoint"}}}`
-	status, err := fs.SubvolumeCloneStatus(t.Context(), clone)
+	status, err := clone.Status(t.Context())
 	if err != nil || status.State != "pending" || status.SourceGroup != "group" {
 		t.Fatalf("pending source not verified: %+v error=%v", status, err)
 	}
 	// A wait timeout leaves the request and source snapshot available.
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
-	if adopted, err := fs.WaitForSubvolumeClone(ctx, clone); err == nil || adopted != nil {
+	if adopted, err := clone.Wait(ctx); err == nil || adopted != nil {
 		t.Fatal("pending clone was adopted or wait ignored deadline")
 	}
 	clone.Name, clone.GroupName, clone.FilesystemName = "foreign", "foreign", "foreign"
 	ctr.Output["fs clone status fixture copy --group_name restores --format json"] = `{"status":{"state":"complete"}}`
 	ctr.Output["fs subvolume info fixture copy --group_name restores --format json"] = `{"path":"/volumes/restores/copy/10000000-0000-4000-8000-000000000001","bytes_quota":32768,"bytes_used":8192,"data_pool":"data","pool_namespace":"","created_at":"2026-10-03 00:02:00.123456","state":"complete","type":"clone"}`
-	adopted, err := fs.WaitForSubvolumeClone(t.Context(), clone)
+	adopted, err := clone.Wait(t.Context())
 	if err != nil || adopted.Path != "/volumes/restores/copy/10000000-0000-4000-8000-000000000001" || adopted.Name != "copy" || adopted.GroupName != "restores" {
 		t.Fatalf("completed clone not adopted safely: %+v error=%v", adopted, err)
 	}
 	copyClone := *clone
-	second, err := fs.WaitForSubvolumeClone(t.Context(), &copyClone)
+	second, err := (&copyClone).Wait(t.Context())
 	if err != nil || second.identity != adopted.identity || second == adopted {
 		t.Fatal("clone copies do not share adopted lifecycle or descriptors alias")
 	}
-	if err := fs.ResizeSubvolume(t.Context(), adopted, 0); err != nil {
+	if err := adopted.Resize(t.Context(), 0); err != nil {
 		t.Fatal(err)
 	}
 	ctr.Output["fs subvolume info fixture copy --group_name restores --format json"] = strings.ReplaceAll(ctr.Output["fs subvolume info fixture copy --group_name restores --format json"], "10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002")
-	if _, err := fs.WaitForSubvolumeClone(t.Context(), &copyClone); err == nil {
+	if _, err := (&copyClone).Wait(t.Context()); err == nil {
 		t.Fatal("replaced completed target was adopted")
 	}
 }
 
 func TestCephFSClonePartialSubmissionFailureAndSourceReplacement(t *testing.T) {
-	fs, ctr, _, snapshot := snapshotFixture(t)
+	_, ctr, _, snapshot := snapshotFixture(t)
 	ctr.Fail = "fs subvolume snapshot clone fixture volume checkpoint copy --group_name group"
-	clone, err := fs.CloneSubvolumeSnapshot(t.Context(), snapshot, CloneConfig{Name: "copy"})
+	clone, err := snapshot.Clone(t.Context(), CloneConfig{Name: "copy"})
 	if err == nil || clone == nil || clone.identity.submitted {
 		t.Fatal("uncertain clone submission adopted as confirmed")
 	}
 	ctr.Calls = nil
-	if _, err := fs.SubvolumeCloneStatus(t.Context(), clone); err == nil || len(ctr.Calls) != 0 {
+	if _, err := clone.Status(t.Context()); err == nil || len(ctr.Calls) != 0 {
 		t.Fatal("unconfirmed clone request granted adoption")
 	}
 	ctr.Fail = ""
-	clone, err = fs.CloneSubvolumeSnapshot(t.Context(), snapshot, CloneConfig{Name: "copy"})
+	clone, err = snapshot.Clone(t.Context(), CloneConfig{Name: "copy"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctr.Output["fs clone status fixture copy --format json"] = `{"status":{"state":"failed","source":{"volume":"fixture","subvolume":"volume","group":"group","snapshot":"checkpoint"},"failure":{"errno":"122","error_msg":"Disk quota exceeded"}}}`
 	start := time.Now()
-	if _, err := fs.WaitForSubvolumeClone(t.Context(), clone); err == nil || !strings.Contains(err.Error(), "122") || time.Since(start) > time.Second {
+	if _, err := clone.Wait(t.Context()); err == nil || !strings.Contains(err.Error(), "122") || time.Since(start) > time.Second {
 		t.Fatal("failed clone did not stop wait promptly with reason")
 	}
 	for _, call := range ctr.Calls {
@@ -215,11 +215,11 @@ func TestCephFSClonePartialSubmissionFailureAndSourceReplacement(t *testing.T) {
 		}
 	}
 	ctr.Output["fs clone status fixture copy --format json"] = `{"status":{"state":"pending","source":{"volume":"fixture","subvolume":"foreign","snapshot":"checkpoint"}}}`
-	if _, err := fs.SubvolumeCloneStatus(t.Context(), clone); err == nil {
+	if _, err := clone.Status(t.Context()); err == nil {
 		t.Fatal("foreign native source accepted")
 	}
 	ctr.Output["fs dump --format json"] = strings.ReplaceAll(ctr.Output["fs dump --format json"], `"id":41`, `"id":42`)
-	if _, err := fs.SubvolumeCloneStatus(t.Context(), clone); err == nil {
+	if _, err := clone.Status(t.Context()); err == nil {
 		t.Fatal("replaced filesystem accepted clone status")
 	}
 }

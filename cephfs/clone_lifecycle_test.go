@@ -36,7 +36,7 @@ func cloneLifecycleStatus(state string) string {
 func cloneLifecycleFixture(t *testing.T) (*Filesystem, *cloneLifecycleFixtureContainer, *SubvolumeClone) {
 	t.Helper()
 	fs, base, _, snapshot := snapshotFixture(t)
-	clone, err := fs.CloneSubvolumeSnapshot(t.Context(), snapshot, CloneConfig{Name: "copy", GroupName: "restores"})
+	clone, err := snapshot.Clone(t.Context(), CloneConfig{Name: "copy", GroupName: "restores"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,21 +50,21 @@ func cloneLifecycleFixture(t *testing.T) (*Filesystem, *cloneLifecycleFixtureCon
 }
 
 func TestCephFSCloneCancelAndExplicitPartialCleanupShareIdentity(t *testing.T) {
-	fs, ctr, clone := cloneLifecycleFixture(t)
+	_, ctr, clone := cloneLifecycleFixture(t)
 	copy := *clone
 	copy.Name, copy.GroupName, copy.FilesystemName = "other", "other", "other"
-	if err := fs.RemovePartialSubvolumeClone(t.Context(), &copy); err == nil {
+	if err := (&copy).RemovePartial(t.Context()); err == nil {
 		t.Fatal("active clone removed")
 	}
-	if err := fs.CancelSubvolumeClone(t.Context(), &copy); err != nil {
+	if err := (&copy).Cancel(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	status, err := fs.SubvolumeCloneStatus(t.Context(), clone)
+	status, err := clone.Status(t.Context())
 	if err != nil || status.State != "canceled" {
 		t.Fatalf("canceled status=%+v error=%v", status, err)
 	}
 	before := len(ctr.Calls)
-	if err := fs.CancelSubvolumeClone(t.Context(), clone); err != nil {
+	if err := clone.Cancel(t.Context()); err != nil {
 		t.Fatal("repeated cancellation not reconciled", err)
 	}
 	for _, call := range ctr.Calls[before:] {
@@ -72,11 +72,11 @@ func TestCephFSCloneCancelAndExplicitPartialCleanupShareIdentity(t *testing.T) {
 			t.Fatal("canceled clone canceled twice")
 		}
 	}
-	if err := fs.RemovePartialSubvolumeClone(t.Context(), &copy); err != nil {
+	if err := (&copy).RemovePartial(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	before = len(ctr.Calls)
-	if err := fs.RemovePartialSubvolumeClone(t.Context(), clone); err != nil {
+	if err := clone.RemovePartial(t.Context()); err != nil {
 		t.Fatal("copied removal state not shared", err)
 	}
 	for _, call := range ctr.Calls[before:] {
@@ -84,7 +84,7 @@ func TestCephFSCloneCancelAndExplicitPartialCleanupShareIdentity(t *testing.T) {
 			t.Fatal("partial target removal repeated")
 		}
 	}
-	if _, err := fs.SubvolumeCloneStatus(t.Context(), clone); err == nil {
+	if _, err := clone.Status(t.Context()); err == nil {
 		t.Fatal("removed partial target still adopted")
 	}
 	for _, call := range ctr.Calls {
@@ -95,22 +95,22 @@ func TestCephFSCloneCancelAndExplicitPartialCleanupShareIdentity(t *testing.T) {
 }
 
 func TestCephFSCloneLostCancelAndCleanupRepliesConverge(t *testing.T) {
-	fs, ctr, clone := cloneLifecycleFixture(t)
+	_, ctr, clone := cloneLifecycleFixture(t)
 	ctr.Fail = "fs clone cancel fixture copy --group_name restores"
-	if err := fs.CancelSubvolumeClone(t.Context(), clone); err == nil {
+	if err := clone.Cancel(t.Context()); err == nil {
 		t.Fatal("lost cancel reply silently accepted")
 	}
 	ctr.Fail = ""
-	if err := fs.CancelSubvolumeClone(t.Context(), clone); err != nil {
+	if err := clone.Cancel(t.Context()); err != nil {
 		t.Fatal("cancel unknown success did not reconcile", err)
 	}
 	ctr.Fail = "fs subvolume rm fixture copy --group_name restores --force"
-	if err := fs.RemovePartialSubvolumeClone(t.Context(), clone); err == nil || !clone.identity.removalAttempted {
+	if err := clone.RemovePartial(t.Context()); err == nil || !clone.identity.removalAttempted {
 		t.Fatal("lost cleanup reply not retained")
 	}
 	ctr.Fail = ""
 	copy := *clone
-	if err := fs.RemovePartialSubvolumeClone(t.Context(), &copy); err != nil || !clone.identity.removed {
+	if err := (&copy).RemovePartial(t.Context()); err != nil || !clone.identity.removed {
 		t.Fatal("unknown successful cleanup not reconciled", err)
 	}
 }
@@ -138,13 +138,13 @@ func TestCephFSCloneReplacedTargetAndSourceRefuseMutation(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			fs, c, clone := cloneLifecycleFixture(t)
+			_, c, clone := cloneLifecycleFixture(t)
 			test.edit(c, clone)
-			if err := fs.CancelSubvolumeClone(t.Context(), clone); err == nil {
+			if err := clone.Cancel(t.Context()); err == nil {
 				t.Fatal("unsafe cancellation accepted")
 			}
 			c.Output["fs clone status fixture copy --group_name restores --format json"] = cloneLifecycleStatus("failed")
-			if err := fs.RemovePartialSubvolumeClone(t.Context(), clone); err == nil {
+			if err := clone.RemovePartial(t.Context()); err == nil {
 				t.Fatal("unsafe partial cleanup accepted")
 			}
 			for _, call := range c.Calls {
@@ -159,9 +159,9 @@ func TestCephFSCloneReplacedTargetAndSourceRefuseMutation(t *testing.T) {
 func TestCephFSClonePartialCleanupRejectsProtectionAndCompletedTarget(t *testing.T) {
 	for _, state := range []string{"pending", "in-progress", "complete", "failed", "canceled"} {
 		t.Run(state, func(t *testing.T) {
-			fs, c, clone := cloneLifecycleFixture(t)
+			_, c, clone := cloneLifecycleFixture(t)
 			c.Output["fs clone status fixture copy --group_name restores --format json"] = cloneLifecycleStatus(state)
-			if err := fs.RemovePartialSubvolumeClone(t.Context(), clone); err == nil {
+			if err := clone.RemovePartial(t.Context()); err == nil {
 				t.Fatal("running/completed or source-protected clone removed")
 			}
 			for _, call := range c.Calls {
@@ -171,28 +171,28 @@ func TestCephFSClonePartialCleanupRejectsProtectionAndCompletedTarget(t *testing
 			}
 		})
 	}
-	fs, c, clone := cloneLifecycleFixture(t)
+	_, c, clone := cloneLifecycleFixture(t)
 	c.Output["fs clone status fixture copy --group_name restores --format json"] = cloneLifecycleStatus("failed")
 	c.Output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"] = `{"created_at":"2026-10-03 00:01:00.123456","data_pool":"additional","has_pending_clones":"no"}`
-	if err := fs.RemovePartialSubvolumeClone(t.Context(), clone); err != nil {
+	if err := clone.RemovePartial(t.Context()); err != nil {
 		t.Fatal("owned failed clone explicit cleanup refused", err)
 	}
 }
 
 func TestCephFSCloneCleanupLostReplyCannotRemoveRecreatedTarget(t *testing.T) {
-	fs, c, clone := cloneLifecycleFixture(t)
-	if err := fs.CancelSubvolumeClone(t.Context(), clone); err != nil {
+	_, c, clone := cloneLifecycleFixture(t)
+	if err := clone.Cancel(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	c.Fail = "fs subvolume rm fixture copy --group_name restores --force"
-	if err := fs.RemovePartialSubvolumeClone(t.Context(), clone); err == nil {
+	if err := clone.RemovePartial(t.Context()); err == nil {
 		t.Fatal("lost cleanup reply not reported")
 	}
 	c.Fail = ""
 	c.Calls = nil
 	c.Output["fs subvolume ls fixture --group_name restores --format json"] = `[{"name":"copy"}]`
 	c.Output["fixture /volumes/restores/copy"] = strings.ReplaceAll(c.Output["fixture /volumes/restores/copy"], "10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002")
-	if err := fs.RemovePartialSubvolumeClone(t.Context(), clone); err == nil {
+	if err := clone.RemovePartial(t.Context()); err == nil {
 		t.Fatal("recreated target removed after lost reply")
 	}
 	for _, call := range c.Calls {
@@ -203,11 +203,11 @@ func TestCephFSCloneCleanupLostReplyCannotRemoveRecreatedTarget(t *testing.T) {
 }
 
 func TestCephFSCloneSubmissionIdentityFailureNeverAdoptsLaterTarget(t *testing.T) {
-	fs, ctr, _, snapshot := snapshotFixture(t)
+	_, ctr, _, snapshot := snapshotFixture(t)
 	key := "fixture /volumes/restores/copy"
 	metadata := ctr.Output[key]
 	ctr.Output[key] = strings.ReplaceAll(metadata, `"version":2`, `"version":3`)
-	clone, err := fs.CloneSubvolumeSnapshot(t.Context(), snapshot, CloneConfig{Name: "copy", GroupName: "restores"})
+	clone, err := snapshot.Clone(t.Context(), CloneConfig{Name: "copy", GroupName: "restores"})
 	if err == nil || clone == nil || !clone.identity.submitted || clone.identity.incarnation != nil {
 		t.Fatal("unconfirmed submission metadata was accepted", clone, err)
 	}
@@ -217,16 +217,16 @@ func TestCephFSCloneSubmissionIdentityFailureNeverAdoptsLaterTarget(t *testing.T
 	ctr.Output["fs subvolume ls fixture --group_name restores --format json"] = `[{"name":"copy"}]`
 	ctr.Output["fs clone status fixture copy --group_name restores --format json"] = `{"status":{"state":"complete"}}`
 	ctr.Calls = nil
-	if _, err := fs.SubvolumeCloneStatus(t.Context(), clone); err == nil {
+	if _, err := clone.Status(t.Context()); err == nil {
 		t.Fatal("later status adopted an uncaptured target")
 	}
-	if _, err := fs.WaitForSubvolumeClone(t.Context(), clone); err == nil {
+	if _, err := clone.Wait(t.Context()); err == nil {
 		t.Fatal("later completion adopted an uncaptured target")
 	}
-	if err := fs.CancelSubvolumeClone(t.Context(), clone); err == nil {
+	if err := clone.Cancel(t.Context()); err == nil {
 		t.Fatal("later cancellation adopted an uncaptured target")
 	}
-	if err := fs.RemovePartialSubvolumeClone(t.Context(), clone); err == nil {
+	if err := clone.RemovePartial(t.Context()); err == nil {
 		t.Fatal("later cleanup adopted an uncaptured target")
 	}
 	if clone.identity.incarnation != nil {
@@ -243,17 +243,17 @@ func TestCephFSCloneLifecycleCanceledContextAndClosedClusterRefuseMutation(t *te
 	fs, ctr, clone := cloneLifecycleFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := fs.CancelSubvolumeClone(ctx, clone); err == nil {
+	if err := clone.Cancel(ctx); err == nil {
 		t.Fatal("cancellation ignored canceled context")
 	}
-	if err := fs.RemovePartialSubvolumeClone(ctx, clone); err == nil {
+	if err := clone.RemovePartial(ctx); err == nil {
 		t.Fatal("partial cleanup ignored canceled context")
 	}
 	testhelper.TestSetClosed(fs.cluster, true)
-	if err := fs.CancelSubvolumeClone(t.Context(), clone); err == nil {
+	if err := clone.Cancel(t.Context()); err == nil {
 		t.Fatal("closed cluster allowed cancellation")
 	}
-	if err := fs.RemovePartialSubvolumeClone(t.Context(), clone); err == nil {
+	if err := clone.RemovePartial(t.Context()); err == nil {
 		t.Fatal("closed cluster allowed partial cleanup")
 	}
 	if len(ctr.Calls) != 0 {

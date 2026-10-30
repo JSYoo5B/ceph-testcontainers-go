@@ -146,7 +146,7 @@ func (fs *Filesystem) beginSubvolumeOperation(ctx context.Context) (context.Cont
 		refusal:         "CephFS filesystem must be an active filesystem created by this cluster",
 		check: func(ctx context.Context) (bool, error) {
 			c := fs.cluster
-			if servicehook.Closed(c) || filesystems(c).byName[fs.name] != fs || fs.FilesystemName != fs.name || fs.nativeIdentity == nil {
+			if !fs.registered() || fs.FilesystemName != fs.name || fs.nativeIdentity == nil {
 				return false, nil
 			}
 			control, err := c.ControlContainer(ctx)
@@ -503,11 +503,15 @@ func cephFSResizeQuota(size int64) (string, error) {
 	return strconv.FormatInt(size, 10), nil
 }
 
-// ResizeSubvolumeGroup changes only an owned group's quota. Zero removes its
+// Resize changes only an owned group's quota. Zero removes its
 // limit. --no_shrink refuses a positive limit below native current usage; it
 // never truncates files. Directory accounting and quota enforcement are native
 // CephFS behavior and can lag concurrent writes.
-func (fs *Filesystem) ResizeSubvolumeGroup(ctx context.Context, group *SubvolumeGroup, sizeBytes int64) error {
+func (group *SubvolumeGroup) Resize(ctx context.Context, sizeBytes int64) error {
+	fs, err := group.filesystem()
+	if err != nil {
+		return err
+	}
 	quota, err := cephFSResizeQuota(sizeBytes)
 	if err != nil {
 		return err
@@ -537,9 +541,13 @@ func (fs *Filesystem) ResizeSubvolumeGroup(ctx context.Context, group *Subvolume
 	return err
 }
 
-// ResizeSubvolume changes only an owned subvolume's quota, with the same zero
-// and --no_shrink behavior as ResizeSubvolumeGroup.
-func (fs *Filesystem) ResizeSubvolume(ctx context.Context, subvolume *Subvolume, sizeBytes int64) error {
+// Resize changes only an owned subvolume's quota, with the same zero
+// and --no_shrink behavior as SubvolumeGroup.Resize.
+func (subvolume *Subvolume) Resize(ctx context.Context, sizeBytes int64) error {
+	fs, err := subvolume.filesystem()
+	if err != nil {
+		return err
+	}
 	quota, err := cephFSResizeQuota(sizeBytes)
 	if err != nil {
 		return err
@@ -570,10 +578,14 @@ func (fs *Filesystem) ResizeSubvolume(ctx context.Context, subvolume *Subvolume,
 	return err
 }
 
-// RemoveSubvolumeGroup removes an owned empty group without --force. A native
+// Remove removes an owned empty group without --force. A native
 // refusal (for example a nonempty group) preserves its handle for retry. A repeat
 // call after confirmed success is a no-op. External edits must not race removal.
-func (fs *Filesystem) RemoveSubvolumeGroup(ctx context.Context, group *SubvolumeGroup) error {
+func (group *SubvolumeGroup) Remove(ctx context.Context) error {
+	fs, err := group.filesystem()
+	if err != nil {
+		return err
+	}
 	if group == nil {
 		return errors.New("subvolume group is unavailable")
 	}
@@ -616,12 +628,16 @@ func (fs *Filesystem) RemoveSubvolumeGroup(ctx context.Context, group *Subvolume
 	return nil
 }
 
-// RemoveSubvolume removes this owned directory tree and its contents without
+// Remove removes this owned directory tree and its contents without
 // --force or --retain-snapshots. Native Ceph refuses subvolumes with snapshots;
 // use the snapshot helpers to remove owned snapshots first. Trash purging is async.
 // Repeat removal after confirmed success is a no-op; external edits must not
 // race this operation. Its filesystem, groups and pools remain available.
-func (fs *Filesystem) RemoveSubvolume(ctx context.Context, subvolume *Subvolume) error {
+func (subvolume *Subvolume) Remove(ctx context.Context) error {
+	fs, err := subvolume.filesystem()
+	if err != nil {
+		return err
+	}
 	if subvolume == nil {
 		return errors.New("subvolume is unavailable")
 	}

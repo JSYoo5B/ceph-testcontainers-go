@@ -282,7 +282,7 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 		servicehook.Unlock(c)
 		return fs.scaleColdMDS(ctx, active, standby, fs.startMDS)
 	}
-	if servicehook.Closed(c) || filesystems(c).byName[fs.name] != fs || fs.Container == nil || fs.nativeIdentity == nil {
+	if !fs.registered() || fs.Container == nil || fs.nativeIdentity == nil {
 		servicehook.Unlock(c)
 		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
 	}
@@ -321,7 +321,7 @@ func (fs *Filesystem) ScaleMDS(ctx context.Context, active, standby int) (return
 	if err := servicehook.LockTopology(ctx, c); err != nil {
 		return err
 	}
-	if servicehook.Closed(c) || filesystems(c).byName[fs.name] != fs || fs.Container == nil || fs.nativeIdentity == nil {
+	if !fs.registered() || fs.Container == nil || fs.nativeIdentity == nil {
 		servicehook.Unlock(c)
 		return errors.New("cephfs must be an initialized filesystem owned by a running cluster")
 	}
@@ -506,7 +506,7 @@ func (fs *Filesystem) admitMDSStart(ctx context.Context, admit func(context.Cont
 	if err := servicehook.LockTopology(ctx, c); err != nil {
 		return nil, err
 	}
-	if servicehook.Closed(c) || filesystems(c).byName[fs.name] != fs {
+	if !fs.registered() {
 		servicehook.Unlock(c)
 		return nil, servicehook.Invalid(errors.New("cephfs cluster is terminated or filesystem ownership changed"))
 	}

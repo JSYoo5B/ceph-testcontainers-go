@@ -127,19 +127,15 @@ func TestCephFSSubvolumeCreationOwnershipAndPrivateIdentity(t *testing.T) {
 		t.Fatalf("native creation did not preserve requested options: %v", ctr.Calls)
 	}
 	subvolume.Name, subvolume.GroupName, subvolume.Path, subvolume.FilesystemName = "foreign", "foreign", "/foreign", "foreign"
-	if err := fs.ResizeSubvolume(t.Context(), subvolume, 0); err != nil {
+	if err := subvolume.Resize(t.Context(), 0); err != nil {
 		t.Fatal(err)
 	}
 	want = []string{"fs", "subvolume", "resize", "fixture", "volume", "inf", "--group_name", "group", "--no_shrink"}
 	if !slices.Equal(ctr.Calls[len(ctr.Calls)-1], want) {
 		t.Fatalf("public descriptor edit redirected mutation: %v", ctr.Calls)
 	}
-	foreignFS, _ := subvolumeFixture()
 	before := len(ctr.Calls)
-	if err := foreignFS.RemoveSubvolume(t.Context(), subvolume); err == nil || len(ctr.Calls) != before {
-		t.Fatal("foreign filesystem accepted owned handle")
-	}
-	if err := fs.ResizeSubvolume(t.Context(), subvolume, -1); err == nil || len(ctr.Calls) != before {
+	if err := subvolume.Resize(t.Context(), -1); err == nil || len(ctr.Calls) != before {
 		t.Fatal("negative resize reached Ceph")
 	}
 }
@@ -160,7 +156,7 @@ func TestCephFSSubvolumeReplacedResourcesRefuseMutation(t *testing.T) {
 			ctr.Output["fs dump --format json"] = strings.ReplaceAll(ctr.Output["fs dump --format json"], `"id":41`, `"id":42`)
 		}
 		ctr.Calls = nil
-		if err := fs.RemoveSubvolume(t.Context(), subvolume); err == nil {
+		if err := subvolume.Remove(t.Context()); err == nil {
 			t.Fatalf("changed %s accepted for removal", changed)
 		}
 		for _, call := range ctr.Calls {
@@ -175,7 +171,7 @@ func TestCephFSSubvolumeReplacedResourcesRefuseMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctr.Output["fs subvolumegroup info fixture group --format json"] = strings.ReplaceAll(ctr.Output["fs subvolumegroup info fixture group --format json"], "00:00:00.123456", "00:00:09.123456")
-	if err := fs.ResizeSubvolumeGroup(t.Context(), group, 1); err == nil {
+	if err := group.Resize(t.Context(), 1); err == nil {
 		t.Fatal("replacement group accepted for resize")
 	}
 }
@@ -188,7 +184,7 @@ func TestCephFSSubvolumePartialCreationAndSafeRetryableRemoval(t *testing.T) {
 		t.Fatal("failed native create lost partial handle or marked it ready")
 	}
 	before := len(ctr.Calls)
-	if err := fs.RemoveSubvolume(t.Context(), subvolume); err == nil || len(ctr.Calls) != before {
+	if err := subvolume.Remove(t.Context()); err == nil || len(ctr.Calls) != before {
 		t.Fatal("unconfirmed resource was mutated")
 	}
 	ctr.Fail = ""
@@ -197,16 +193,16 @@ func TestCephFSSubvolumePartialCreationAndSafeRetryableRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctr.Fail = "fs subvolume rm fixture volume --group_name group"
-	if err := fs.RemoveSubvolume(t.Context(), subvolume); err == nil || subvolume.identity.removed {
+	if err := subvolume.Remove(t.Context()); err == nil || subvolume.identity.removed {
 		t.Fatal("failed native removal lost retry handle")
 	}
 	ctr.Fail = ""
 	ctr.Output["fs subvolume ls fixture --group_name group --format json"] = `[{"name":"volume"}]`
-	if err := fs.RemoveSubvolume(t.Context(), subvolume); err != nil {
+	if err := subvolume.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	before = len(ctr.Calls)
-	if err := fs.RemoveSubvolume(t.Context(), subvolume); err != nil {
+	if err := subvolume.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	for _, call := range ctr.Calls[before:] {
@@ -229,7 +225,7 @@ func TestCephFSSubvolumeCopiedHandlesShareRemovalAndUnknownSuccessConverges(t *t
 	}
 	copyBefore := *subvolume
 	ctr.Fail = "fs subvolume rm fixture volume --group_name group"
-	if err := fs.RemoveSubvolume(t.Context(), subvolume); err == nil {
+	if err := subvolume.Remove(t.Context()); err == nil {
 		t.Fatal("injected unknown removal result was ignored")
 	}
 	// Native deletion happened, but the command response was lost. Its empty
@@ -237,7 +233,7 @@ func TestCephFSSubvolumeCopiedHandlesShareRemovalAndUnknownSuccessConverges(t *t
 	ctr.Fail = ""
 	ctr.Output["fs subvolume ls fixture --group_name group --format json"] = `[]`
 	ctr.Calls = nil
-	if err := fs.RemoveSubvolume(t.Context(), &copyBefore); err != nil {
+	if err := (&copyBefore).Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if !subvolume.identity.removed || !copyBefore.identity.removed {
@@ -248,7 +244,7 @@ func TestCephFSSubvolumeCopiedHandlesShareRemovalAndUnknownSuccessConverges(t *t
 			t.Fatal("unknown successful deletion was repeated")
 		}
 	}
-	if err := fs.ResizeSubvolume(t.Context(), subvolume, 65536); err == nil {
+	if err := subvolume.Resize(t.Context(), 65536); err == nil {
 		t.Fatal("removed original handle accepted quota mutation")
 	}
 	group, err := fs.CreateSubvolumeGroup(t.Context(), SubvolumeGroupConfig{Name: "group", SizeBytes: 65536})
@@ -256,10 +252,10 @@ func TestCephFSSubvolumeCopiedHandlesShareRemovalAndUnknownSuccessConverges(t *t
 		t.Fatal(err)
 	}
 	copyGroup := *group
-	if err := fs.RemoveSubvolumeGroup(t.Context(), group); err != nil {
+	if err := group.Remove(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.ResizeSubvolumeGroup(t.Context(), &copyGroup, 1); err == nil {
+	if err := (&copyGroup).Resize(t.Context(), 1); err == nil {
 		t.Fatal("copied removed group accepted mutation")
 	}
 }
@@ -272,7 +268,7 @@ func TestCephFSSubvolumeSnapshotRetainedAndReplacedFSRefuseRemoval(t *testing.T)
 	}
 	ctr.Output["fs subvolume info fixture volume --group_name group --format json"] = `{"state":"snapshot-retained","type":"subvolume","features":["snapshot-retention"]}`
 	ctr.Calls = nil
-	if err := fs.RemoveSubvolume(t.Context(), subvolume); err == nil {
+	if err := subvolume.Remove(t.Context()); err == nil {
 		t.Fatal("retained snapshots accepted as active owned subvolume")
 	}
 	for _, call := range ctr.Calls {
@@ -282,7 +278,7 @@ func TestCephFSSubvolumeSnapshotRetainedAndReplacedFSRefuseRemoval(t *testing.T)
 	}
 	subvolume.identity.removalAttempted = true
 	ctr.Output["fs dump --format json"] = strings.ReplaceAll(ctr.Output["fs dump --format json"], `"id":41`, `"id":42`)
-	if err := fs.RemoveSubvolume(t.Context(), subvolume); err == nil || subvolume.identity.removed {
+	if err := subvolume.Remove(t.Context()); err == nil || subvolume.identity.removed {
 		t.Fatal("replacement FS listing falsely confirmed old removal")
 	}
 }

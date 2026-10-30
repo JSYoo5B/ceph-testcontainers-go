@@ -148,7 +148,7 @@ func (fs *Filesystem) beginDataPoolOperation(ctx context.Context) (context.Conte
 		refusal:         "filesystem must have a confirmed creation identity in this active cluster",
 		check: func(ctx context.Context) (bool, error) {
 			c := fs.cluster
-			if servicehook.Closed(c) || filesystems(c).byName[fs.name] != fs || fs.nativeIdentity == nil {
+			if !fs.registered() || fs.nativeIdentity == nil {
 				return false, nil
 			}
 			control, err := c.ControlContainer(ctx)
@@ -331,7 +331,7 @@ func (fs *Filesystem) checkSubvolumeCreationPool(ctx context.Context, name, grou
 	return fs.checkSubvolumeDataPool(ctx, name)
 }
 
-// RemoveUnusedDataPool removes only the FSMap registration of a fresh helper
+// RemoveUnused removes only the FSMap registration of a fresh helper
 // attachment. A pool selected even once by a managed group/subvolume/clone is
 // refused, including partial creations. Native groups/subvolumes must have no
 // references and every RADOS namespace must be empty; unknown clone or retained
@@ -341,7 +341,11 @@ func (fs *Filesystem) checkSubvolumeCreationPool(ctx context.Context, name, grou
 // before removal, and prevent external edits from racing it. This method does
 // not establish safety for a live workload. Default data pools are immutable.
 // A copied handle shares removal state; retry reconciles a lost command reply.
-func (fs *Filesystem) RemoveUnusedDataPool(ctx context.Context, attachment *DataPool) error {
+func (attachment *DataPool) RemoveUnused(ctx context.Context) error {
+	fs, err := attachment.filesystem()
+	if err != nil {
+		return err
+	}
 	if fs == nil || attachment == nil || attachment.identity == nil || attachment.identity.filesystem != fs {
 		return errors.New("data pool attachment must have been created by this filesystem")
 	}

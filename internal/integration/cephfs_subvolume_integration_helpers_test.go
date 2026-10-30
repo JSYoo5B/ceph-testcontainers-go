@@ -92,12 +92,12 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	cephFSSubvolumeIO(t, ctx, client, filesystem, info, "quota-denied", "tenant", 1<<20)
 	cephFSSubvolumeIO(t, ctx, client, filesystem, defaultInfo, "grow", "default", 0)
 	cephFSSubvolumeIO(t, ctx, client, filesystem, info, "verify", "tenant", 1<<20)
-	if err := fs.ResizeSubvolume(ctx, subvolume, 8<<20); err != nil {
+	if err := subvolume.Resize(ctx, 8<<20); err != nil {
 		t.Fatal(err)
 	}
 	// Once the subvolume limit is larger than the write, independently prove
 	// that its enclosing group's smaller quota also constrains the native client.
-	if err := fs.ResizeSubvolumeGroup(ctx, group, 1<<20); err != nil {
+	if err := group.Resize(ctx, 1<<20); err != nil {
 		t.Fatal(err)
 	}
 	groupInfo, err = fs.SubvolumeGroupInfo(ctx, group.Name)
@@ -111,7 +111,7 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	cephFSSubvolumeIO(t, ctx, client, filesystem, info, "group-quota-denied", "tenant", 8<<20,
 		groupInfo.Path, strconv.FormatInt(groupInfo.QuotaBytes, 10))
 	cephFSSubvolumeIO(t, ctx, client, filesystem, defaultInfo, "verify-grown", "default", 0)
-	if err := fs.ResizeSubvolumeGroup(ctx, group, 64<<20); err != nil {
+	if err := group.Resize(ctx, 64<<20); err != nil {
 		t.Fatal(err)
 	}
 	info, err = fs.SubvolumeInfo(ctx, subvolume.Name, group.Name)
@@ -135,16 +135,16 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	if err := fs.ResizeSubvolume(ctx, subvolume, 64); err == nil {
+	if err := subvolume.Resize(ctx, 64); err == nil {
 		t.Fatal("subvolume quota shrank below used bytes")
 	}
-	if err := fs.ResizeSubvolumeGroup(ctx, group, 64); err == nil {
+	if err := group.Resize(ctx, 64); err == nil {
 		t.Fatal("group quota shrank below used bytes")
 	}
-	if err := fs.ResizeSubvolume(ctx, subvolume, 0); err != nil {
+	if err := subvolume.Resize(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.ResizeSubvolumeGroup(ctx, group, 0); err != nil {
+	if err := group.Resize(ctx, 0); err != nil {
 		t.Fatal(err)
 	}
 	info, err = fs.SubvolumeInfo(ctx, subvolume.Name, group.Name)
@@ -156,29 +156,29 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 		t.Fatalf("group quota did not become unlimited: %+v error=%v", groupInfo, err)
 	}
 	cephFSSubvolumeIO(t, ctx, client, filesystem, info, "verify-grown", "tenant", 0)
-	if err := fs.RemoveSubvolumeGroup(ctx, group); err == nil {
+	if err := group.Remove(ctx); err == nil {
 		t.Fatal("nonempty group was removed")
 	}
-	if err := fs.RemoveSubvolume(ctx, &cephfs.Subvolume{Name: subvolume.Name, GroupName: group.Name, FilesystemName: filesystem, Path: subvolume.Path}); err == nil {
+	if err := (&cephfs.Subvolume{Name: subvolume.Name, GroupName: group.Name, FilesystemName: filesystem, Path: subvolume.Path}).Remove(ctx); err == nil {
 		t.Fatal("unowned public descriptor removed a native subvolume")
 	}
 
 	copyBeforeRemoval := *subvolume
-	if err := fs.RemoveSubvolume(ctx, subvolume); err != nil {
+	if err := subvolume.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.RemoveSubvolume(ctx, &copyBeforeRemoval); err != nil {
+	if err := (&copyBeforeRemoval).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.ResizeSubvolume(ctx, &copyBeforeRemoval, 1<<20); err == nil {
+	if err := (&copyBeforeRemoval).Resize(ctx, 1<<20); err == nil {
 		t.Fatal("copied removed handle accepted resize")
 	}
 	cephFSSubvolumeIO(t, ctx, client, filesystem, info, "absent", "tenant", 0)
-	if err := fs.RemoveSubvolume(ctx, defaultSubvolume); err != nil {
+	if err := defaultSubvolume.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	copyGroupBeforeRemoval := *group
-	if err := fs.RemoveSubvolumeGroup(ctx, group); err != nil {
+	if err := group.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	// Recreating a name must not let a stale copied handle affect the new group.
@@ -186,14 +186,14 @@ func testCephFSSubvolumes(t *testing.T, host bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.RemoveSubvolumeGroup(ctx, &copyGroupBeforeRemoval); err != nil {
+	if err := (&copyGroupBeforeRemoval).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	groups, err = fs.SubvolumeGroups(ctx)
 	if err != nil || !slices.Equal(groups, []string{"tenant"}) {
 		t.Fatal("stale handle affected replacement group")
 	}
-	if err := fs.RemoveSubvolumeGroup(ctx, replacementGroup); err != nil {
+	if err := replacementGroup.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	groups, err = fs.SubvolumeGroups(ctx)

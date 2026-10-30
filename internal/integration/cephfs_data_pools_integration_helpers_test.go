@@ -68,15 +68,15 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	// A namespace outside the default namespace also prevents removal. No
 	// external clients or POSIX layouts use this dedicated fresh setup pool.
 	cephFSSubvolumeExec(t, ctx, client, "rados", "-p", unused, "-N", "hidden", "put", "marker", "/etc/ceph/ceph.conf")
-	if err := fs.RemoveUnusedDataPool(ctx, unusedHandle); err == nil {
+	if err := unusedHandle.RemoveUnused(ctx); err == nil {
 		t.Fatal("non-default namespace objects were ignored")
 	}
 	cephFSSubvolumeExec(t, ctx, client, "rados", "-p", unused, "-N", "hidden", "rm", "marker")
 	copy := *unusedHandle
-	if err := fs.RemoveUnusedDataPool(ctx, &copy); err != nil {
+	if err := (&copy).RemoveUnused(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.RemoveUnusedDataPool(ctx, unusedHandle); err != nil {
+	if err := unusedHandle.RemoveUnused(ctx); err != nil {
 		t.Fatal("copied removal state did not converge", err)
 	}
 	if pool, err := poolHandle(t, ctx, cluster, unused).Status(ctx); err != nil || pool.ID != unusedHandle.ID {
@@ -107,20 +107,20 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if strings.TrimSpace(string(objects)) == "" {
 		t.Fatal("selected dynamic pool contains no actual file data")
 	}
-	if err := fs.RemoveUnusedDataPool(ctx, replicatedHandle); err == nil {
+	if err := replicatedHandle.RemoveUnused(ctx); err == nil {
 		t.Fatal("managed-use pool registration removed")
 	}
 	// Clone placement also consults the current FSMap instead of the startup
 	// AdditionalDataPools list. Actual bytes reach the overwrite-enabled EC pool.
-	snapshot, err := fs.CreateSubvolumeSnapshot(ctx, volume, "checkpoint")
+	snapshot, err := volume.CreateSnapshot(ctx, "checkpoint")
 	if err != nil {
 		t.Fatal(err)
 	}
-	clone, err := fs.CloneSubvolumeSnapshot(ctx, snapshot, cephfs.CloneConfig{Name: "ec-copy", DataPool: erasure})
+	clone, err := snapshot.Clone(ctx, cephfs.CloneConfig{Name: "ec-copy", DataPool: erasure})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cloned, err := fs.WaitForSubvolumeClone(ctx, clone)
+	cloned, err := clone.Wait(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	if strings.TrimSpace(string(objects)) == "" {
 		t.Fatal("dynamic EC pool contains no cloned file data")
 	}
-	if err := fs.RemoveUnusedDataPool(ctx, erasureHandle); err == nil {
+	if err := erasureHandle.RemoveUnused(ctx); err == nil {
 		t.Fatal("managed clone pool registration removed")
 	}
 	states, err = fs.DataPools(ctx)
@@ -186,7 +186,7 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 		t.Fatal(err)
 	}
 	cephFSSubvolumeExec(t, ctx, client, "rados", "-p", replaced, "-N", "replacement", "put", "owned-marker", "/tmp/tc-dynamic-replacement")
-	removeErr := fs.RemoveUnusedDataPool(ctx, stale)
+	removeErr := stale.RemoveUnused(ctx)
 	if removeErr == nil || !strings.Contains(removeErr.Error(), "attached pool was replaced or renamed") {
 		t.Fatalf("stale FS attachment did not refuse the replacement's native identity: %v", removeErr)
 	}
@@ -212,16 +212,16 @@ func testCephFSDynamicDataPools(t *testing.T, host bool) {
 	t.Logf("native formerly FS-attached empty pool ID %d → %d: remove=%v; add=%v; exact native registrations=%+v; replacement sentinel preserved and owned sentinel removed", stale.ID, replacement.ID, removeErr, addErr, states)
 	cephFSSubvolumeIO(t, ctx, client, filesystem, info, "verify", "dynamic-data", 0)
 	cephFSSubvolumeIO(t, ctx, client, filesystem, clonedInfo, "verify", "dynamic-data", 0)
-	if err := fs.RemoveSubvolume(ctx, cloned); err != nil {
+	if err := cloned.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.RemoveSubvolumeSnapshot(ctx, snapshot); err != nil {
+	if err := snapshot.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.RemoveSubvolume(ctx, volume); err != nil {
+	if err := volume.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.RemoveUnusedDataPool(ctx, replicatedHandle); err == nil {
+	if err := replicatedHandle.RemoveUnused(ctx); err == nil {
 		t.Fatal("historically used pool became removable after logical volume removal")
 	}
 	t.Log("dynamic replicated/EC attachment; live native pool IDs; fresh libcephfs bytes and clone placement; namespace object and managed-use guards; unused registration removal preserves pool/tag; detached layout selection and implicit tag cleanup refused")

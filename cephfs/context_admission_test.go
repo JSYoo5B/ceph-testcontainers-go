@@ -48,8 +48,8 @@ func TestCephFSContextPublicAdmissionDeadline(t *testing.T) {
 			_, err := fs.AddDataPool(ctx, "extra")
 			return err
 		},
-		"RemoveUnusedDataPool": func(ctx context.Context, fs *Filesystem, pool *DataPool) error {
-			return fs.RemoveUnusedDataPool(ctx, pool)
+		"DataPool.RemoveUnused": func(ctx context.Context, fs *Filesystem, pool *DataPool) error {
+			return pool.RemoveUnused(ctx)
 		},
 	}
 	for name, operation := range operations {
@@ -163,10 +163,10 @@ func TestCephFSContextPinAdmissionDeadline(t *testing.T) {
 				assertCephFSContextAdmissionGate(t, fs.cluster, gate, func(ctx context.Context) error {
 					switch operation {
 					case "read":
-						_, err := fs.SubvolumePinPolicy(ctx, volume)
+						_, err := volume.PinPolicy(ctx)
 						return err
 					case "temporary":
-						_, err := fs.OverrideSubvolumePin(ctx, volume, PinSetting{Type: PinDistributed, Value: 1})
+						_, err := volume.OverridePin(ctx, PinSetting{Type: PinDistributed, Value: 1})
 						return err
 					default:
 						return change.Restore(ctx)
@@ -179,7 +179,7 @@ func TestCephFSContextPinAdmissionDeadline(t *testing.T) {
 					t.Fatal("queued pin operation queried native state, changed policy or lost the recovery handle")
 				}
 				assertCephFSContextAdmissionReleased(t, fs.cluster)
-				if policy, err := fs.SubvolumePinPolicy(t.Context(), volume); err != nil || policy.ExportRank != 1 {
+				if policy, err := volume.PinPolicy(t.Context()); err != nil || policy.ExportRank != 1 {
 					t.Fatalf("fresh pin read could not reuse the original directory: policy=%+v error=%v", policy, err)
 				}
 			})

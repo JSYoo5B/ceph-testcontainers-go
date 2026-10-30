@@ -62,7 +62,7 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 	}
 	snapshots := make([]*cephfs.SubvolumeSnapshot, 2)
 	for i, volume := range volumes[:2] {
-		snapshots[i], err = fs.CreateSubvolumeSnapshot(ctx, volume, "frozen")
+		snapshots[i], err = volume.CreateSnapshot(ctx, "frozen")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,7 +83,7 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 		// This new native session reads both the changed head and frozen bytes;
 		// successful CLI state alone is insufficient checkpoint evidence.
 		fencingExec(t, ctx, client, []string{"python3", "-c", cephFSQuiesceVerifyScript, filesystem, volumes[i].Path, snapshot.Path})
-		if err := fs.RemoveSubvolumeSnapshot(ctx, snapshot); err != nil {
+		if err := snapshot.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -194,7 +194,7 @@ func testCephFSQuiesceCheckpoints(t *testing.T, host bool) {
 	quiesceWait(t, ctx, client, "finish")
 	fencingExec(t, ctx, client, []string{"python3", "-c", cephFSQuiesceTimeoutVerifyScript, filesystem, volumes[0].Path, volumes[1].Path, volumes[2].Path, "recovery"})
 	for _, volume := range volumes {
-		if err := fs.RemoveSubvolume(ctx, volume); err != nil {
+		if err := volume.Remove(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}

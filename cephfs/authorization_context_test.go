@@ -151,7 +151,7 @@ func TestCephFSAuthorizationContextCanceledAfterClientCreationReturnsClient(t *t
 		}
 	}
 	fs.cluster.Container = control
-	grant, err := fs.AuthorizeSubvolume(ctx, volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	grant, err := volume.Authorize(ctx, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if !errors.Is(err, context.Canceled) || grant == nil || grant.Client == nil ||
 		grant.Client != grant.identity.client || !clientCreated(grant.Client) || !clientReady(grant.Client) || clientRevoked(grant.Client) ||
 		clientOwner(grant.Client) != fs.cluster || grant.Client.Name() != "client.writer" ||
@@ -173,17 +173,17 @@ func TestCephFSAuthorizationContextCanceledAfterClientCreationReturnsClient(t *t
 	assertCephFSContextAdmissionReleased(t, fs.cluster)
 	// An unattempted grant cannot be adopted for native deauthorization.
 	before := len(native.Calls)
-	if err := fs.DeauthorizeSubvolume(t.Context(), grant); err == nil || len(native.Calls) != before {
+	if err := grant.Deauthorize(t.Context()); err == nil || len(native.Calls) != before {
 		t.Fatal("unattempted grant was adopted by native cleanup")
 	}
 	entry.Caps["mgr"] = "allow r"
-	if duplicate, err := fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"}); err == nil || duplicate != nil ||
+	if duplicate, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"}); err == nil || duplicate != nil ||
 		native.auth["client.writer"] != entry || entry.Caps["mgr"] != "allow r" {
 		t.Fatal("fresh retry adopted or overwrote the already-created principal")
 	}
 	// A new principal can use the same fixture; the original client remains
 	// explicitly owned and no cleanup operation revokes its independent rights.
-	fresh, err := fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "fresh", Access: "r"})
+	fresh, err := volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "fresh", Access: "r"})
 	if err != nil || fresh == nil || !fresh.identity.authorized || native.auth["client.writer"] != entry {
 		t.Fatalf("fresh context could not reuse the original subvolume safely: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestCephFSAuthorizationContextFinalReadbackPublishesAuthorizedState(t *test
 		}
 	}
 	fs.cluster.Container = control
-	grant, err := fs.AuthorizeSubvolume(ctx, volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+	grant, err := volume.Authorize(ctx, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 	if err != nil || !errors.Is(ctx.Err(), context.Canceled) || grant == nil ||
 		!grant.identity.authorizeAttempted || !grant.identity.authorized ||
 		grant.identity.deauthorized || clientRevoked(grant.Client) || len(volume.identity.authorizations) != 1 {
@@ -210,7 +210,7 @@ func TestCephFSAuthorizationContextFinalReadbackPublishesAuthorizedState(t *test
 	assertCephFSContextAdmissionReleased(t, fs.cluster)
 	copy := *grant
 	copy.Client, copy.AuthID, copy.SubvolumeName, copy.GroupName, copy.Path = nil, "foreign", "foreign", "foreign", "/foreign"
-	if err := fs.DeauthorizeSubvolume(t.Context(), &copy); err != nil || !grant.identity.deauthorized {
+	if err := (&copy).Deauthorize(t.Context()); err != nil || !grant.identity.deauthorized {
 		t.Fatalf("copied grant could not revoke its original confirmed scope: %v", err)
 	}
 	cephFSAuthorizationContextAssertForeign(t, native)
@@ -250,7 +250,7 @@ func TestCephFSAuthorizationContextFinalReadbackPublishesDeauthorization(t *test
 			fs.cluster.Container = control
 			copy := *grant
 			copy.Client, copy.AuthID, copy.Access, copy.SubvolumeName, copy.GroupName, copy.Path = nil, "foreign", "r", "foreign", "foreign", "/foreign"
-			if err := fs.DeauthorizeSubvolume(ctx, &copy); err != nil || !errors.Is(ctx.Err(), context.Canceled) ||
+			if err := (&copy).Deauthorize(ctx); err != nil || !errors.Is(ctx.Err(), context.Canceled) ||
 				!grant.identity.deauthorized || clientRevoked(grant.identity.client) != !retainNeighbor ||
 				!equalAuthorizationCaps(grant.identity.remainingCaps, remaining) {
 				t.Fatalf("final revoke readback lost its confirmed original state: %v", err)
@@ -264,11 +264,11 @@ func TestCephFSAuthorizationContextFinalReadbackPublishesDeauthorization(t *test
 			}
 			assertCephFSContextAdmissionReleased(t, fs.cluster)
 			native.Calls = nil
-			if err := fs.DeauthorizeSubvolume(t.Context(), grant); err != nil ||
+			if err := grant.Deauthorize(t.Context()); err != nil ||
 				cephFSAuthorizationContextMutationCount(native.Calls, "deauthorize") != 0 {
 				t.Fatalf("copied confirmed state repeated native deauthorization: %v", err)
 			}
-			if err := fs.EvictSubvolumeClients(t.Context(), &copy); err != nil ||
+			if err := (&copy).EvictClients(t.Context()); err != nil ||
 				cephFSAuthorizationContextMutationCount(native.Calls, "evict") != 1 {
 				t.Fatalf("fresh eviction lost its original mount/principal scope: %v", err)
 			}
@@ -300,13 +300,13 @@ func TestCephFSAuthorizationContextNativeMutationCancellationRetainsRecovery(t *
 			switch operation {
 			case "authorize":
 				var err error
-				grant, err = fs.AuthorizeSubvolume(ctx, volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+				grant, err = volume.Authorize(ctx, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 				if !errors.Is(err, context.Canceled) || grant == nil || !grant.identity.authorizeAttempted ||
 					grant.identity.authorized || len(volume.identity.authorizations) != 1 || native.grants["writer"] != "rw" {
 					t.Fatalf("unknown native grant success discarded its attempted ownership: %v", err)
 				}
 			default:
-				if err := fs.DeauthorizeSubvolume(ctx, grant); !errors.Is(err, context.Canceled) ||
+				if err := grant.Deauthorize(ctx); !errors.Is(err, context.Canceled) ||
 					!grant.identity.deauthAttempted || grant.identity.deauthorized || native.grants["writer"] != "" {
 					t.Fatalf("unknown native revoke success discarded its retry state: %v", err)
 				}
@@ -315,7 +315,7 @@ func TestCephFSAuthorizationContextNativeMutationCancellationRetainsRecovery(t *
 			copy := *grant
 			copy.Client, copy.AuthID, copy.SubvolumeName, copy.GroupName, copy.Path = nil, "foreign", "foreign", "foreign", "/foreign"
 			native.Calls = nil
-			if err := fs.DeauthorizeSubvolume(t.Context(), &copy); err != nil || !grant.identity.deauthorized {
+			if err := (&copy).Deauthorize(t.Context()); err != nil || !grant.identity.deauthorized {
 				t.Fatalf("fresh copied recovery lost the original native scope: %v", err)
 			}
 			wantRevoke := 0
@@ -351,7 +351,7 @@ func TestCephFSAuthorizationContextRecoveryRejectsReplacementScope(t *testing.T)
 				}
 			}
 			fs.cluster.Container = control
-			grant, err := fs.AuthorizeSubvolume(ctx, volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+			grant, err := volume.Authorize(ctx, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 			if !errors.Is(err, context.Canceled) || grant == nil || grant.identity.authorized || !grant.identity.authorizeAttempted {
 				t.Fatalf("test did not retain an uncertain original grant: %v", err)
 			}
@@ -375,7 +375,7 @@ func TestCephFSAuthorizationContextRecoveryRejectsReplacementScope(t *testing.T)
 			beforeGrants := maps.Clone(native.grants)
 			beforeState := cephFSAuthorizationContextGrantState(grant)
 			native.Calls = nil
-			if err := fs.DeauthorizeSubvolume(t.Context(), grant); err == nil ||
+			if err := grant.Deauthorize(t.Context()); err == nil ||
 				!reflect.DeepEqual(beforeAuth, cephFSAuthorizationContextAuthSnapshot(native)) ||
 				!maps.Equal(beforeGrants, native.grants) ||
 				!reflect.DeepEqual(beforeState, cephFSAuthorizationContextGrantState(grant)) {
@@ -420,12 +420,12 @@ func cephFSAuthorizationContextFixture(t *testing.T, operation string) (*Filesys
 	var grant *SubvolumeAuthorization
 	if operation == "deauthorize" || operation == "evict" {
 		var err error
-		grant, err = fs.AuthorizeSubvolume(t.Context(), volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+		grant, err = volume.Authorize(t.Context(), SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if operation == "evict" {
-			if err := fs.DeauthorizeSubvolume(t.Context(), grant); err != nil {
+			if err := grant.Deauthorize(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -437,7 +437,7 @@ func cephFSAuthorizationContextFixture(t *testing.T, operation string) (*Filesys
 func cephFSAuthorizationContextOperation(ctx context.Context, fs *Filesystem, volume *Subvolume, grant *SubvolumeAuthorization, operation string) (*SubvolumeAuthorization, error) {
 	switch operation {
 	case "authorize":
-		return fs.AuthorizeSubvolume(ctx, volume, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
+		return volume.Authorize(ctx, SubvolumeAuthorizationConfig{ClientID: "writer", Access: "rw"})
 	case "list":
 		_, err := fs.SubvolumeAuthorizedClients(ctx, "volume", "group")
 		return nil, err
@@ -445,9 +445,9 @@ func cephFSAuthorizationContextOperation(ctx context.Context, fs *Filesystem, vo
 		copy := *grant
 		copy.Client, copy.AuthID, copy.Access, copy.SubvolumeName, copy.GroupName, copy.Path = nil, "foreign", "r", "foreign", "foreign", "/foreign"
 		if operation == "deauthorize" {
-			return nil, fs.DeauthorizeSubvolume(ctx, &copy)
+			return nil, (&copy).Deauthorize(ctx)
 		}
-		return nil, fs.EvictSubvolumeClients(ctx, &copy)
+		return nil, (&copy).EvictClients(ctx)
 	default:
 		panic("unknown authorization context operation")
 	}
