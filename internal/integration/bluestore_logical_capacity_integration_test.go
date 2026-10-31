@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,11 +17,8 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
-	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/mount"
 	mobycl "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const (
@@ -294,73 +290,25 @@ func (e *logicalEnv) restart(t *testing.T, parent context.Context) (string, []st
 	}
 }
 
-// blueStoreExpand runs `ceph-bluestore-tool bluefs-bdev-expand` on the
-// stopped OSD's store, which lets BlueFS and the allocator take a grown block
-// file. The essential image does not ship the tool, so it runs in the official
-// Ceph image of the cluster's release with the owned volume mounted, no
-// network, and nothing else of the cluster, until the essential role ships it
-// (JSYoo5B/ceph-testcontainers-images#24).
+// expand runs `ceph-bluestore-tool bluefs-bdev-expand` on the stopped OSD's
+// store, which lets BlueFS and the allocator take a grown block file. It runs
+// in the keeper, which holds the owned volume and runs the essential image;
+// the essential role ships the tool.
 func (e *logicalEnv) expand(t *testing.T, ctx context.Context) map[string]any {
 	t.Helper()
-	version, err := e.cluster.Ceph(ctx, "version")
-	if err != nil {
-		t.Fatal(err)
-	}
-	release := logicalReleaseRE.FindSubmatch(version)
-	if release == nil {
-		t.Fatalf("no release in %q", version)
-	}
-	image := "quay.io/ceph/ceph:v" + string(release[1])
-	inspection, err := e.docker.ContainerInspect(ctx, e.keeper, mobycl.ContainerInspectOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	volume := ""
-	for _, m := range inspection.Container.Mounts {
-		if m.Destination == attachedKeeperDir && m.Type == mount.TypeVolume {
-			volume = m.Name
-		}
-	}
-	if volume == "" {
-		t.Fatal("the keeper holds no owned volume")
-	}
-	tool, err := testcontainers.Run(ctx, image,
-		testcontainers.WithEntrypoint("ceph-bluestore-tool"),
-		testcontainers.WithCmd("bluefs-bdev-expand", "--path", attachedOSDDir+"/ceph-"+strconv.Itoa(e.osd.ID)),
-		testcontainers.WithHostConfigModifier(func(host *container.HostConfig) {
-			host.NetworkMode = "none"
-			host.Mounts = append(host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: volume, Target: attachedOSDDir})
-		}),
-		testcontainers.WithWaitStrategy(wait.ForExit().WithExitTimeout(3*time.Minute)))
-	if tool != nil {
-		t.Cleanup(func() { _ = tool.Terminate(context.Background()) })
-	}
-	if err != nil {
-		t.Fatal("run ceph-bluestore-tool:", err)
-	}
-	state, err := tool.State(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reader, err := tool.Logs(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = reader.Close() }()
-	data, _ := io.ReadAll(io.LimitReader(reader, 1<<20))
+	dir := attachedKeeperDir + "/ceph-" + strconv.Itoa(e.osd.ID)
+	data := attachedDockerExec(t, ctx, e.docker, e.keeper, "ceph-bluestore-tool", "bluefs-bdev-expand", "--path", dir)
 	var kept []string
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.Contains(line, "size") || strings.Contains(line, "Expanding") {
 			kept = append(kept, strings.TrimSpace(line))
 		}
 	}
-	if state.ExitCode != 0 || !slices.ContainsFunc(kept, func(line string) bool { return strings.Contains(line, "size updated to") }) {
-		t.Fatalf("ceph-bluestore-tool exited %d: %s", state.ExitCode, data)
+	if !slices.ContainsFunc(kept, func(line string) bool { return strings.Contains(line, "size updated to") }) {
+		t.Fatalf("ceph-bluestore-tool did not expand the store: %s", data)
 	}
-	return map[string]any{"image": image, "exit_code": state.ExitCode, "output": kept}
+	return map[string]any{"output": kept}
 }
-
-var logicalReleaseRE = regexp.MustCompile(`ceph version (\d+\.\d+\.\d+)`)
 
 // recover restarts the aborted OSD. If it aborts again for lack of BlueFS
 // space, the block file is grown on the owned filesystem and expanded, and the
