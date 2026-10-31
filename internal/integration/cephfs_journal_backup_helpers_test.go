@@ -270,5 +270,69 @@ func jbHeader(start, length, writePos, unit, count, objSize uint64) []byte {
 	return buf
 }
 
-// jbBackup builds one synthetic sparse backup with a payload of repeating
-// non-zero bytes and its manifest.
+// journalPayload reads the journal range [start, end) of a one-stripe layout
+// straight from the metadata pool's 200.* objects, and whether each object
+// after the one holding end exists, up to the two import purges. It prints the
+// payload digest, final-object length and the existence of those objects. Arguments: pool, start,
+// end, object size.
+const journalPayload = `import hashlib, json, rados, sys
+pool, start, end, size = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+out = {}
+with rados.Rados(conffile="/etc/ceph/ceph.conf", conf={"rados_osd_op_timeout": "30"}) as c:
+    with c.open_ioctx(pool) as io:
+        data, pos = b"", start
+        while pos < end:
+            obj, off = pos // size, pos % size
+            n = min(size - off, end - pos)
+            chunk = io.read("200.%08x" % obj, n, off)
+            if len(chunk) != n:
+                out["short_object"] = obj
+                break
+            data, pos = data + chunk, pos + n
+        out["payload_sha256"] = hashlib.sha256(data).hexdigest()
+        last = (end - 1) // size
+        out["last_object_size"] = io.stat("200.%08x" % last)[0]
+        beyond = {}
+        for obj in range(last + 1, (end // size) + 2):
+            try:
+                io.stat("200.%08x" % obj)
+                beyond["200.%08x" % obj] = True
+            except rados.ObjectNotFound:
+                beyond["200.%08x" % obj] = False
+        out["beyond_end"] = beyond
+print(json.dumps(out))`
+
+// journalPayloadView is the offline RADOS observation after journal import.
+type journalPayloadView struct {
+	SHA256         string          `json:"payload_sha256"`
+	Short          *int            `json:"short_object"`
+	LastObjectSize *uint64         `json:"last_object_size"`
+	Beyond         map[string]bool `json:"beyond_end"`
+}
+
+// checkJournalPayload requires the imported payload and its complete physical
+// tail to match the admitted one-stripe backup before an MDS may start.
+func checkJournalPayload(v journalPayloadView, rec jbRecord) error {
+	if rec.ObjectSize == 0 || rec.PayloadEnd <= rec.Start {
+		return fmt.Errorf("journal payload has no nonempty bounded range")
+	}
+	if v.Short != nil || v.SHA256 != rec.PayloadSHA256 {
+		return fmt.Errorf("the restored journal payload differs from the backup: %+v", v)
+	}
+	last := (rec.PayloadEnd - 1) / rec.ObjectSize
+	wantSize := (rec.PayloadEnd-1)%rec.ObjectSize + 1
+	if v.LastObjectSize == nil {
+		return fmt.Errorf("journal final object 200.%08x length was not observed", last)
+	}
+	if *v.LastObjectSize != wantSize {
+		return fmt.Errorf("journal final object 200.%08x has stale/truncated tail: got %d bytes, want %d", last, *v.LastObjectSize, wantSize)
+	}
+	for obj := last + 1; obj < rec.PayloadEnd/rec.ObjectSize+2; obj++ {
+		name := fmt.Sprintf("200.%08x", obj)
+		exists, observed := v.Beyond[name]
+		if !observed || exists {
+			return fmt.Errorf("journal object %s beyond the restored end exists or was not observed", name)
+		}
+	}
+	return nil
+}

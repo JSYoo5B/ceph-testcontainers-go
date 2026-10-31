@@ -71,37 +71,6 @@ with rados.Rados(conffile="/etc/ceph/ceph.conf", conf={"rados_osd_op_timeout": "
         data = io.read("200.00000000", 1 << 20)
 print(json.dumps({"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}))`
 
-// journalPayload reads the journal range [start, end) of a one-stripe layout
-// straight from the metadata pool's 200.* objects, and whether each object
-// after the one holding end exists, up to the two import purges. It prints the
-// payload digest and the existence of those objects. Arguments: pool, start,
-// end, object size.
-const journalPayload = `import hashlib, json, rados, sys
-pool, start, end, size = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
-out = {}
-with rados.Rados(conffile="/etc/ceph/ceph.conf", conf={"rados_osd_op_timeout": "30"}) as c:
-    with c.open_ioctx(pool) as io:
-        data, pos = b"", start
-        while pos < end:
-            obj, off = pos // size, pos % size
-            n = min(size - off, end - pos)
-            chunk = io.read("200.%08x" % obj, n, off)
-            if len(chunk) != n:
-                out["short_object"] = obj
-                break
-            data, pos = data + chunk, pos + n
-        out["payload_sha256"] = hashlib.sha256(data).hexdigest()
-        last = (end - 1) // size
-        beyond = {}
-        for obj in range(last + 1, (end // size) + 2):
-            try:
-                io.stat("200.%08x" % obj)
-                beyond["200.%08x" % obj] = True
-            except rados.ObjectNotFound:
-                beyond["200.%08x" % obj] = False
-        out["beyond_end"] = beyond
-print(json.dumps(out))`
-
 // journalExport runs the export in the journal-tool helper and prints the
 // observation jeObserve reads. Argument: rank, path.
 const journalExport = `import hashlib, json, os, subprocess, sys
@@ -304,22 +273,13 @@ func TestCephFSJournalHeaderRestore(t *testing.T) {
 	// exit status and of inspect.
 	pout := harness.ExecOutput(t, ctx, client, "python3", "-c", journalPayload, fs.MetadataPool,
 		strconv.FormatUint(rec.Start, 10), strconv.FormatUint(rec.PayloadEnd, 10), strconv.FormatUint(rec.ObjectSize, 10))
-	var payload struct {
-		SHA256 string          `json:"payload_sha256"`
-		Short  *int            `json:"short_object"`
-		Beyond map[string]bool `json:"beyond_end"`
-	}
+	var payload journalPayloadView
 	if err := json.Unmarshal([]byte(harness.LastJSONLine(pout)), &payload); err != nil {
 		t.Fatalf("payload: %v: %s", err, pout)
 	}
 	receipt["payload_restored"] = payload
-	if payload.Short != nil || payload.SHA256 != rec.PayloadSHA256 {
-		t.Fatalf("the restored journal payload differs from the backup: %+v", payload)
-	}
-	for obj, exists := range payload.Beyond {
-		if exists {
-			t.Fatalf("journal object %s beyond the restored end survived the import", obj)
-		}
+	if err := checkJournalPayload(payload, rec); err != nil {
+		t.Fatal(err)
 	}
 	restored := header("read")
 	receipt["header_restored"] = restored
