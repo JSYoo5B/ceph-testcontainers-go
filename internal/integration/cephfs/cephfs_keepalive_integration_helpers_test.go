@@ -14,6 +14,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusteraccess"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // keepaliveFrames counts the keepalive and acknowledgement frames of the
@@ -98,14 +99,33 @@ publish(2, closed=True, **closing)
 // cephFSKeepaliveReceipt is the evidence of the keepalive and ack frames a
 // native client and the MDS exchanged.
 type cephFSKeepaliveReceipt struct {
-	Release    string          `json:"release"`
-	Platform   string          `json:"platform"`
-	Run        string          `json:"run,omitempty"`
-	Client     uint64          `json:"client"`
-	MDS        string          `json:"mds"`
-	ClientSide keepaliveFrames `json:"client_frames"`
-	MONSide    keepaliveFrames `json:"mon_frames"`
-	MDSSide    keepaliveFrames `json:"mds_frames"`
+	Release    string `json:"release"`
+	Platform   string `json:"platform"`
+	Run        string `json:"run,omitempty"`
+	Client     uint64 `json:"client"`
+	MDS        string `json:"mds"`
+	ClientAddr string `json:"client_addr"`
+	// ClientToMON counts the client's frames on its MON session, ClientToMDS
+	// on its MDS session; MONFromClient and MDSFromClient are the daemons'
+	// frames with the client, each filtered to the actor's own address.
+	ClientToMON   keepaliveFrames `json:"client_to_mon"`
+	ClientToMDS   keepaliveFrames `json:"client_to_mds"`
+	MONFromClient keepaliveFrames `json:"mon_from_client"`
+	MDSFromClient keepaliveFrames `json:"mds_from_client"`
+}
+
+// cephNetworkIP returns ctr's address on the cluster's Ceph network.
+func cephNetworkIP(t *testing.T, ctx context.Context, cluster *ceph.Container, ctr testcontainers.Container) string {
+	t.Helper()
+	inspect, err := ctr.Inspect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := inspect.NetworkSettings.Networks[harness.StaticFacts(cluster).NetworkName]
+	if endpoint == nil || !endpoint.IPAddress.IsValid() {
+		t.Fatal("container has no address on the Ceph network")
+	}
+	return endpoint.IPAddress.String()
 }
 
 // testCephFSMessengerKeepalive keeps one libcephfs client mounted at
@@ -164,27 +184,43 @@ func testCephFSMessengerKeepalive(t *testing.T) {
 	if err != nil || clientLog.ExitCode != 0 || !clientLog.Complete() {
 		t.Fatalf("read client log: exit %d, complete %t: %v", clientLog.ExitCode, clientLog.Complete(), err)
 	}
-	receipt.ClientSide = countKeepaliveFrames(strings.Split(string(clientLog.Stdout), "\n"), "")
+	clientLines := strings.Split(string(clientLog.Stdout), "\n")
+	// Every frame is attributed by address. The client container runs only
+	// this actor as a Ceph client, so the daemons log its sessions under the
+	// container's "<ip>:0/" address; the fixture's own CLI runs in other
+	// containers with other addresses.
+	clientIP := cephNetworkIP(t, ctx, m.Cluster, m.Client)
+	receipt.ClientAddr = clientIP + ":0/"
 
-	receipt.MDSSide = countKeepaliveFrames(harness.ContainerLogLines(t, ctx, mdsContainer(t, m)), "")
+	// The client keepalives its lossy MON session and acks the MDS's cap
+	// messages, so filter the client log by each daemon's address.
+	monIP := cephNetworkIP(t, ctx, m.Cluster, clusteraccess.Monitors(t, m.Cluster)[0].Container)
+	mdsIP := cephNetworkIP(t, ctx, m.Cluster, mdsContainer(t, m))
+	receipt.ClientToMON = countKeepaliveFrames(clientLines, "v2:"+monIP+":")
+	receipt.ClientToMDS = countKeepaliveFrames(clientLines, "v2:"+mdsIP+":")
+	// The daemons log their frames with this actor by its container address.
+	receipt.MDSFromClient = countKeepaliveFrames(harness.ContainerLogLines(t, ctx, mdsContainer(t, m)), receipt.ClientAddr)
 	for _, mon := range clusteraccess.Monitors(t, m.Cluster) {
-		receipt.MONSide = countKeepaliveFrames(harness.ContainerLogLines(t, ctx, mon.Container), "")
-		if receipt.MONSide.GotKeepalive > 0 {
+		frames := countKeepaliveFrames(harness.ContainerLogLines(t, ctx, mon.Container), receipt.ClientAddr)
+		if frames.GotKeepalive > 0 {
+			receipt.MONFromClient = frames
 			break
 		}
 	}
 
-	// The client sent keepalives and received their acks, and exchanged
-	// message acks with the MDS; a MON received the keepalives, and the MDS
-	// acknowledged the client's cap messages. Each frame type is observed.
-	if receipt.ClientSide.SentKeepalive == 0 || receipt.ClientSide.GotKeepaliveAck == 0 ||
-		receipt.ClientSide.GotMessageAck == 0 || receipt.ClientSide.SentMessageAck == 0 {
-		t.Fatalf("client keepalive/ack frames: %+v", receipt.ClientSide)
+	// On its MON session the client sent keepalives and received their acks;
+	// on its MDS session it exchanged message acks; the MON received those
+	// keepalives from this actor and the MDS acked this actor's messages.
+	if receipt.ClientToMON.SentKeepalive == 0 || receipt.ClientToMON.GotKeepaliveAck == 0 {
+		t.Fatalf("client keepalive frames to the MON %s: %+v", monIP, receipt.ClientToMON)
 	}
-	if receipt.MONSide.GotKeepalive == 0 {
-		t.Fatalf("no MON logged a KEEPALIVE2 from the client: %+v", receipt.MONSide)
+	if receipt.ClientToMDS.GotMessageAck == 0 || receipt.ClientToMDS.SentMessageAck == 0 {
+		t.Fatalf("client message-ack frames to the MDS %s: %+v", mdsIP, receipt.ClientToMDS)
 	}
-	if receipt.MDSSide.SentMessageAck == 0 {
-		t.Fatalf("the MDS logged no message ack to the client: %+v", receipt.MDSSide)
+	if receipt.MONFromClient.GotKeepalive == 0 {
+		t.Fatalf("no MON logged a KEEPALIVE2 from %s: %+v", receipt.ClientAddr, receipt.MONFromClient)
+	}
+	if receipt.MDSFromClient.SentMessageAck == 0 {
+		t.Fatalf("the MDS logged no message ack to %s: %+v", receipt.ClientAddr, receipt.MDSFromClient)
 	}
 }
