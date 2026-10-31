@@ -39,6 +39,7 @@ if rc != 0:
     print(json.dumps(out)); sys.exit(0)
 dev = mapped.decode().strip()
 out["device"] = dev
+out["kernel_attached_while_mapped"] = os.path.exists("/sys/block/%s/pid" % os.path.basename(dev))
 try:
     pattern = hashlib.sha256(b"desktop-nbd").digest() * (1 << 17)  # 4 MiB
     offset = 8 << 20
@@ -61,8 +62,14 @@ finally:
     out["unmapped"] = rc == 0
     if rc != 0:
         out["unmap_error"] = err
-rc, listed, _ = run("rbd-nbd", "list-mapped")
-out["still_mapped"] = listed.decode().strip()
+# Two independent observations of the cleanup: rbd-nbd's own enumeration,
+# whose exit status is kept (a failed query is no evidence), and the kernel's
+# per-device pid attribute, which exists only while the device is connected.
+rc, listed, err = run("rbd-nbd", "list-mapped")
+out["list_rc"], out["still_mapped"] = rc, listed.decode().strip()
+if rc != 0:
+    out["list_error"] = err
+out["kernel_attached"] = os.path.exists("/sys/block/%s/pid" % os.path.basename(dev))
 rc, exported, err = run("rbd", "export", spec, "-")
 if rc == 0:
     out["librbd_readback"] = hashlib.sha256(exported[offset:offset + len(pattern)]).hexdigest() == hashlib.sha256(pattern).hexdigest()
@@ -102,33 +109,14 @@ func TestDesktopRBDOverNBD(t *testing.T) {
 	harness.ExecOutput(t, ctx, helper, "rbd", "create", "desktop-nbd/image", "--size", "64")
 	raw := harness.ExecOutput(t, ctx, helper, "python3", "-I", "-c", desktopNBDScript, "desktop-nbd/image")
 	t.Logf("DESKTOP_NBD_RECEIPT %s", strings.TrimSpace(raw))
-	var r struct {
-		Eligible       bool   `json:"eligible"`
-		Device         string `json:"device"`
-		MapError       string `json:"map_error"`
-		DeviceReadback bool   `json:"device_readback"`
-		DeviceBytes    int64  `json:"device_bytes"`
-		Unmapped       bool   `json:"unmapped"`
-		StillMapped    string `json:"still_mapped"`
-		LibrbdReadback bool   `json:"librbd_readback"`
-		ExportError    string `json:"export_error"`
-	}
+	var r desktopNBDReceipt
 	if err := json.Unmarshal([]byte(harness.LastJSONLine(raw)), &r); err != nil {
 		t.Fatalf("receipt: %v: %s", err, raw)
 	}
 	if !r.Eligible {
 		t.Skip("the engine kernel has no NBD driver or no /dev/nbd nodes; nothing is loaded")
 	}
-	switch {
-	case r.MapError != "":
-		t.Fatalf("rbd-nbd map: %s", r.MapError)
-	case !r.DeviceReadback:
-		t.Fatalf("the pattern did not read back through %s", r.Device)
-	case r.DeviceBytes != 64<<20:
-		t.Fatalf("%s has %d bytes, want the image's 64 MiB", r.Device, r.DeviceBytes)
-	case !r.Unmapped || r.StillMapped != "":
-		t.Fatalf("unmap: unmapped=%t still mapped %q", r.Unmapped, r.StillMapped)
-	case !r.LibrbdReadback:
-		t.Fatalf("librbd did not read the pattern written through the device: %s", r.ExportError)
+	if problem := judgeDesktopNBD(r, 64<<20); problem != "" {
+		t.Fatal(problem)
 	}
 }
