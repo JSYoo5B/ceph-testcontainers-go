@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_recovery && (!ci_batch || ci_batch_scratch_tmpfs))))
 
-//ci: timeout=20m job-timeout=30 image-roles=essential
+//ci: timeout=20m job-timeout=30 image-roles=essential,client
 
 package integration_test
 
@@ -83,7 +83,9 @@ with rados.Rados(conffile="/etc/ceph/ceph.conf", conf={"client_mount_timeout": "
 print(json.dumps(out))`
 
 // attachedDockerExec runs argv in a container known only by its ID and
-// returns its standard output, failing on a nonzero exit.
+// returns its standard output. It succeeds only when the process is seen to
+// have exited with status 0: the end of its output is not its exit. Its
+// output read is bounded by the deadline through readAttachedOutput.
 func attachedDockerExec(t *testing.T, parent context.Context, docker *mobycl.Client, cid string, argv ...string) []byte {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 4*time.Minute)
@@ -96,17 +98,36 @@ func attachedDockerExec(t *testing.T, parent context.Context, docker *mobycl.Cli
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer attached.Close()
-	data, err := io.ReadAll(io.LimitReader(attached.Reader, 1<<20))
+	data, err := readAttachedOutput(ctx, attachedStream{attached.HijackedResponse})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("exec %v in %s: %v: %s", argv[:2], cid, err, data)
 	}
-	result, err := docker.ExecInspect(ctx, created.ID, mobycl.ExecInspectOptions{})
-	if err != nil || result.Running || result.ExitCode != 0 {
-		t.Fatalf("exec %v in %s: running=%v exit=%d %v: %s", argv[:2], cid, result.Running, result.ExitCode, err, data)
+	for {
+		result, err := docker.ExecInspect(ctx, created.ID, mobycl.ExecInspectOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.Running {
+			if result.ExitCode != 0 {
+				t.Fatalf("exec %v in %s exited %d: %s", argv[:2], cid, result.ExitCode, data)
+			}
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("exec %v in %s did not exit after its output ended: %v", argv[:2], cid, ctx.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 	return []byte(strings.ReplaceAll(string(data), "\r\n", "\n"))
 }
+
+// attachedStream is a hijacked exec response as the reader that
+// readAttachedOutput closes.
+type attachedStream struct{ response mobycl.HijackedResponse }
+
+func (s attachedStream) Read(p []byte) (int, error) { return s.response.Reader.Read(p) }
+func (s attachedStream) Close() error               { s.response.Close(); return nil }
 
 // attachedState is the container's inspection as JSON, for the judge's
 // State parser.
@@ -130,7 +151,7 @@ func attachedLogTail(ctx context.Context, docker *mobycl.Client, cid string) []s
 	if err != nil {
 		return []string{"logs unavailable: " + err.Error()}
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	data, _ := io.ReadAll(io.LimitReader(reader, 4<<20))
 	var kept []string
 	for _, line := range strings.Split(string(data), "\n") {

@@ -1,6 +1,6 @@
 //go:build all || (integration && (!ci || (ci_recovery && (!ci_batch || ci_batch_scratch_tmpfs))))
 
-//ci: timeout=20m job-timeout=30 image-roles=essential
+//ci: timeout=20m job-timeout=30 image-roles=essential,client
 
 package integration_test
 
