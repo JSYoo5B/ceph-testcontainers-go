@@ -1,6 +1,7 @@
 package fault
 
 import (
+	"context"
 	"errors"
 	"net/netip"
 	"slices"
@@ -268,5 +269,51 @@ func TestConnectionSetupPreflightRefusesChangedKeys(t *testing.T) {
 	}
 	if netem.eth0("osd-0").root != nil || netem.liveHelpers() != 0 {
 		t.Fatal("the target changed")
+	}
+}
+
+// With BothDirections the outer lease is held for Terminate as soon as the
+// target's endpoint is shaped, before the peer leases are published. A
+// Terminate that restores it while a peer lease is being published must not
+// race with that publication, and the peer lease published after it is still
+// restored by the outer lease's next Restore.
+func TestBothDirectionsPeerPublicationRacesWithRestore(t *testing.T) {
+	netem := newFakeNetem()
+	directionCluster(netem)
+	delay := testDelay
+	delay.Peer, delay.Direction, delay.Loss = directionPeer, BothDirections, 100
+	var outer *NetworkProfileLease
+	restored := make(chan error, 1)
+	hold := func(id string, apply func() (*NetworkProfileLease, error)) (*NetworkProfileLease, error) {
+		lease, err := apply()
+		if outer == nil {
+			outer = lease
+			return lease, err
+		}
+		// Terminate's undo of the outer lease, while this peer lease is
+		// being published.
+		go func() { restored <- outer.Restore(context.Background()) }()
+		return lease, err
+	}
+	top, err := applyDirectedDelay(t.Context(), netem, "osd-0", "tc-public", delay, hold)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-restored; err != nil {
+		t.Fatal(err)
+	}
+	if top != outer || len(top.peerLeases()) != 1 {
+		t.Fatalf("outer lease %p, returned %p, peers %d", outer, top, len(top.peerLeases()))
+	}
+	if err := top.Restore(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"osd-0", "osd-1"} {
+		if link := netem.eth0(id); link.root != nil || len(link.filters) != 0 {
+			t.Fatalf("%s after Restore: root %+v filters %v", id, link.root, link.filters)
+		}
+	}
+	if netem.liveHelpers() != 0 {
+		t.Fatalf("%d helpers left", netem.liveHelpers())
 	}
 }

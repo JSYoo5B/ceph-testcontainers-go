@@ -1183,16 +1183,32 @@ func applyDirectedDelay(ctx context.Context, backend netemBackend, id, network s
 			return applyNetworkDelay(ctx, backend, peer.id, network, profile, true)
 		})
 		if lease != nil {
-			top.PeerLeases = append(top.PeerLeases, lease)
+			top.addPeerLease(lease)
 		}
 		if err != nil {
-			if !top.shapes && len(top.PeerLeases) == 0 {
+			if !top.shapes && lease == nil && len(top.peerLeases()) == 0 {
 				return nil, err
 			}
 			return top, err
 		}
 	}
 	return top, nil
+}
+
+// addPeerLease publishes one more peer lease. With BothDirections, Terminate
+// may already hold the outer lease and restore it meanwhile, so PeerLeases is
+// written and read only under l.mu.
+func (l *NetworkProfileLease) addPeerLease(peer *NetworkProfileLease) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.PeerLeases = append(l.PeerLeases, peer)
+}
+
+// peerLeases returns the peer leases published so far.
+func (l *NetworkProfileLease) peerLeases() []*NetworkProfileLease {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.PeerLeases)
 }
 
 // planInbound resolves every selected peer address to the container that
@@ -2105,6 +2121,14 @@ func (l *NetworkProfileLease) Restore(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
+	if err := lockMutex(ctx, &l.mu); err != nil {
+		return err
+	}
+	defer l.mu.Unlock()
+	// Every peer lease is restored, even after the outer lease completed: a
+	// peer lease published after an earlier Restore is still restored here.
+	// Each peer has its own mutex, so holding l.mu keeps PeerLeases stable
+	// without nesting the same lock.
 	var inbound error
 	for _, peer := range l.PeerLeases {
 		inbound = errors.Join(inbound, peer.Restore(ctx))
@@ -2112,10 +2136,6 @@ func (l *NetworkProfileLease) Restore(ctx context.Context) error {
 	if inbound != nil {
 		return inbound
 	}
-	if err := lockMutex(ctx, &l.mu); err != nil {
-		return err
-	}
-	defer l.mu.Unlock()
 	if l.complete {
 		return nil
 	}
