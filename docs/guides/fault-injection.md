@@ -596,7 +596,39 @@ if err != nil {
 - Success verifies the map, not OSD reports: wait for the health check.
 - On a full map librados makes ordinary writes wait. To get ENOSPC (errno 28)
   or EDQUOT, set the `FULL_TRY` operation flag in your client, not
-  `FULL_FORCE`.
+  `FULL_FORCE`. A delete with `FULL_TRY` is admitted while the map is full.
+
+### The ratios are a policy, not a capacity
+
+The full ratio acts on the utilization that the OSD last reported. It does not
+reserve space. With one small OSD (`OSDStorage.WithBlockSize`), the native
+tests observed three different stops:
+
+| Workload | What stops the writes | OSD |
+| --- | --- | --- |
+| Writes paced at about 1 MiB/s, default ratios | `OSD_FULL` and `POOL_FULL`; later writes wait | Keeps running; deleting objects clears `OSD_FULL` and writes resume |
+| An unpaced burst, default ratios | BlueStore's allocator: `_do_alloc_write failed ... (28) No space left on device` | Aborts before the next report raises `OSD_FULL` |
+| Any writes with the full ratio and `osd_failsafe_full_ratio` at 1 | The allocator, as above | Aborts |
+
+An OSD that aborted this way does not start again in place: RocksDB cannot
+allocate BlueFS space at mount, and the daemon aborts in `BlueRocksEnv`.
+Lengthening the block file is not enough. `ceph-bluestore-tool
+bluefs-bdev-expand` must then run on the stopped store before the OSD boots
+and serves its acknowledged data again.
+
+So test a client's reaction to a full cluster with `SetFullRatios`, as above.
+Do not fill a device and expect `OSD_FULL` first.
+
+Two other storage layers stop differently:
+
+- A separate BlueFS DB device (`bluestore_block_db_*` before the OSD is added)
+  that fills up does not refuse writes. BlueFS moves metadata to the main
+  device and raises `BLUEFS_SPILLOVER`.
+- The MON store lives in the container's writable layer, on the engine's
+  disk, which the fixture never fills. `mon_data_avail_warn` and
+  `mon_data_avail_crit` are percentages of that filesystem's available
+  space. Setting one above the current share (`override.SetConfig`, section
+  `mon`) raises `MON_DISK_LOW` or `MON_DISK_CRIT` without writing anything.
 
 ## Damaging a replica
 
