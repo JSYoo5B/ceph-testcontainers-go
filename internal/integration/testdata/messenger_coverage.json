@@ -244,16 +244,19 @@
       "area": "messenger",
       "requirement": "The first authentication failure of a native client is recorded with its cause.",
       "symbols": [],
-      "status": "partial",
+      "status": "covered",
       "evidence": "native-state",
       "cases": [
         {
           "test": "TestAuthFirstFailureBundle",
-          "asserts": "a wrong-key client's EACCES (-13) is kept unchanged in a complete bundle with the target MGR registered and no admin key"
+          "asserts": "a wrong-key client's EACCES (-13) is kept unchanged in a complete bundle with the target MGR registered and no admin key; the bundle's cause record captures each MON's log from just before to just after the refused attempt, bound to the MON container's generation, and its cephx 'unexpected key' line for client.admin, with the derived key values masked, classifies the cause as wrong-key"
+        },
+        {
+          "test": "TestAuthFailureCauses",
+          "receipt": "AUTH_FAILURE_CAUSE_RECEIPT",
+          "asserts": "four native ceph commands are refused with their own exit code 13 and last line, and the MON log lines captured around each attempt classify it: a key for client.admin that is not its own as wrong-key (cephx 'unexpected key', derived values masked), a key for an entity that does not exist as unknown-entity (cephx 'couldn't find entity name'), a client requiring no authentication as method-mismatch (no MON line, and the client's offered and supported methods are disjoint), and an 'allow r' entity creating a pool as command-denied ('handle_command access denied'); a succeeding command establishes no cause, MON lines of two causes conflict, and a capture missing for a MON or unbound to its generation leaves the cause unavailable"
         }
-      ],
-      "gap": "The bundle keeps the refusal but leaves its cause unclassified.",
-      "owner": "#5"
+      ]
     },
     {
       "id": "messenger/fault-injection",

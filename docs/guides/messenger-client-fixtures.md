@@ -693,6 +693,35 @@ alone, so a PG-wide BLOCK never stands in for an object backoff.
 `messenger_backoff_fixture_test.go` tests the parsing and both scopes without
 Docker.
 
+## Authentication refusal causes
+
+A client sees most refusals as the same `[errno 13] RADOS permission denied`,
+and its MonClient prints release-specific text: for a wrong key Tentacle
+20.2.4 prints `failed to auth with my available methods` and Squid 19.2.5
+`allowed_methods [2] but i only support [2]`. The MON that refused it logs
+the cause at its default levels. `TestAuthFailureCauses` refuses four
+commands and logs `AUTH_FAILURE_CAUSE_RECEIPT`; `TestAuthFirstFailureBundle`
+attaches the same record to its first-failure bundle, whose cause is then
+`wrong-key`.
+
+| Refusal | MON line (level) | Cause |
+| --- | --- | --- |
+| A key that is not the entity's | `cephx server client.admin:  unexpected key: req.key=... expected_key=...` (0) | `wrong-key` |
+| An entity with no key | `cephx server <entity>: couldn't find entity name: <entity>` (0) | `unknown-entity` |
+| `--auth-client-required none` against cephx | none; the client prints `allowed_methods [2] ... support [1]` | `method-mismatch` |
+| A command beyond the entity's caps | `handle_command access denied` (1) | `command-denied` |
+
+The record counts every MON's log lines before the attempt and reads them
+again after it, so a capture belongs to one attempt and to the MON container
+generation it started in. A MON restarting in between fails the recipe. Only
+lines naming the attempted entity count, except the command refusal, which
+names none and which the capture bounds. `req.key` and `expected_key` are
+values that cephx derives from the keys, so the record masks them. One cause
+among the lines is that cause; lines of two causes, or a MON line beside
+disjoint client methods, are `conflicting`; a missing or unbound capture
+leaves the cause `unavailable`, as does a command that succeeded.
+`auth_failure_cause_fixture_test.go` tests the classification without Docker.
+
 ## Coverage manifest
 
 [`internal/integration/testdata/messenger_coverage.json`](../../internal/integration/testdata/messenger_coverage.json)

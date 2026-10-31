@@ -83,3 +83,11 @@ func TestMonitorAddressAcrossNetworkInterruption(t *testing.T) {
 func TestAuthFirstFailureBundle(t *testing.T) {
 	testAuthFirstFailureBundle(t)
 }
+
+// Four native ceph commands are refused for four reasons, a wrong key, an
+// unknown entity, no common authentication method and a command beyond the
+// entity's caps, and the MON log lines that each attempt produced classify
+// each refusal by its own cause; a command that succeeds establishes none.
+func TestAuthFailureCauses(t *testing.T) {
+	testAuthFailureCauses(t)
+}
