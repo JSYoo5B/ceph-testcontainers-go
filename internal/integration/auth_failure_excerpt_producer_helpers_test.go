@@ -11,8 +11,9 @@ import (
 	"time"
 )
 
-// authCauseUnavailable is the only cause a producer hookup can state: the
-// excerpt gives where a refusal was printed, never why it happened.
+// authCauseUnavailable is the cause of a refusal that no MON log line or
+// client methods line establishes: an excerpt gives where a refusal was
+// printed, never why it happened.
 const authCauseUnavailable = "unavailable"
 
 // authExcerptRedactionBudget bounds each redaction of a first-failure excerpt.

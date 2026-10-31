@@ -74,8 +74,11 @@ type authTestedRejection struct {
 	TicketLabel string  `json:"ticket_label,omitempty"`
 	// RefusedGlobalID is the global ID that a MON's refusal named, if any.
 	RefusedGlobalID *uint64 `json:"refused_global_id,omitempty"`
-	Result          int     `json:"result"`
-	Error           string  `json:"error"`
+	// Entity is the entity that the client authenticated as, which a cause
+	// record must name.
+	Entity string `json:"entity,omitempty"`
+	Result int    `json:"result"`
+	Error  string `json:"error"`
 }
 
 // authExpectedTarget is the identity that the caller froze when the
@@ -180,7 +183,10 @@ type authFirstFailureBundle struct {
 	Rejection  authTestedRejection `json:"first_failure"`
 	// FirstExcerpt is the redacted, bounded excerpt of the original rejected
 	// operation's own stderr, nil when the producer attached none.
-	FirstExcerpt       *authFirstExcerptRecord  `json:"first_failure_excerpt,omitempty"`
+	FirstExcerpt *authFirstExcerptRecord `json:"first_failure_excerpt,omitempty"`
+	// Cause is the MON log evidence of why the tested authentication was
+	// refused, nil when the producer captured none.
+	Cause              *authCauseRecord         `json:"cause,omitempty"`
 	Held               *authHeldSession         `json:"held_session,omitempty"`
 	Tickets            []authTicketRecord       `json:"consumer_tickets,omitempty"`
 	Monitors           []authMonitorObservation `json:"monitors"`
@@ -217,7 +223,9 @@ type authBundleVerdict struct {
 	// It is separate from the command's stderr completeness and does not make
 	// a bundle incomplete: a refusal may leave no prefix.
 	ExcerptStatus string
-	// Cause is always unavailable: no excerpt or control establishes it.
+	// Cause is what the bundle's cause record establishes with
+	// classifyAuthCause, and unavailable without one: no excerpt or control
+	// establishes a cause.
 	Cause              string
 	Result             int
 	GenerationEquality string
@@ -253,6 +261,17 @@ func classifyAuthBundle(bundle authFirstFailureBundle) authBundleVerdict {
 		verdict.ExcerptStatus = bundle.FirstExcerpt.Status
 		if err := checkAuthFirstExcerpt(*bundle.FirstExcerpt, rejection); err != nil {
 			problem("first-failure excerpt: %v", err)
+		}
+	}
+	if bundle.Cause != nil {
+		if err := checkAuthCauseBinding(*bundle.Cause, rejection); err != nil {
+			problem("cause: %v", err)
+		} else {
+			cause, problems := classifyAuthCause(*bundle.Cause, bundle.Expected.Monitors)
+			verdict.Cause = cause
+			for _, p := range problems {
+				problem("cause: %s", p)
+			}
 		}
 	}
 	for _, control := range bundle.Controls {
@@ -711,6 +730,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 	if err := client.CopyToContainer(ctx, wrongKeyring, "/tmp/wrong.keyring", 0o600); err != nil {
 		t.Fatal("copy deliberately wrong keyring failed")
 	}
+	marks := markMonitorLogs(t, ctx, cluster)
 	attempted := time.Now().UTC()
 	tested, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
 		Argv:    []string{"ceph", "--keyring", "/tmp/wrong.keyring", "--connect-timeout", "10", "tell", target, "version"},
@@ -723,7 +743,9 @@ func testAuthFirstFailureBundle(t *testing.T) {
 	}
 	ended := time.Now().UTC()
 	lines := strings.Split(strings.TrimSpace(string(tested.Stderr)), "\n")
-	rejection := authTestedRejection{Run: t.Name(), Cycle: 1, Attempt: 1, At: attempted, Target: target, TargetGID: status.ActiveGID, Result: -13, Error: lines[len(lines)-1]}
+	rejection := authTestedRejection{Run: t.Name(), Cycle: 1, Attempt: 1, At: attempted, Target: target, TargetGID: status.ActiveGID, Result: -13, Error: lines[len(lines)-1],
+		Entity: "client.admin"}
+	cause := captureAuthCause(t, ctx, authRejectionOperation(rejection), marks, rejection.Entity, string(tested.Stderr))
 	recorded := rejection
 	// The excerpt of the original operation's own stderr: client-side lines,
 	// bound to this invocation's capture in the client container instance and
@@ -762,8 +784,8 @@ func testAuthFirstFailureBundle(t *testing.T) {
 	}
 	collect := func(budget time.Duration, controlOutput int) authFirstFailureBundle {
 		collected := collectAuthFirstFailureBundle(ctx, harness.WithSockets(t, cluster), client, provenance, map[string]string{"control": image}, expected, rejection, nil, nil, budget, 15*time.Second, controlOutput)
-		attached := firstRecord
-		collected.FirstExcerpt = &attached
+		attached, caused := firstRecord, cause
+		collected.FirstExcerpt, collected.Cause = &attached, &caused
 		return collected
 	}
 	bundle := collect(time.Minute, 4096)
@@ -775,6 +797,11 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	verdict := classifyAuthBundle(bundle)
+	// The MONs that refused the wrong key logged that the entity exists and
+	// the client proved another key.
+	if verdict.Cause != authCauseWrongKey || !slices.ContainsFunc(bundle.Cause.Captures, func(c authCauseCapture) bool { return len(c.Lines) > 0 }) {
+		t.Fatalf("cause %q from %+v", verdict.Cause, bundle.Cause)
+	}
 	if !verdict.Complete || !bundle.CollectionComplete || verdict.Target != "registered" || verdict.RefusedClient != "unknown" || !verdict.ControlsSucceeded ||
 		verdict.Result != -13 || verdict.GenerationEquality != authGenerationUnavailable || len(bundle.Monitors) != 3 || len(bundle.Managers) != 2 || len(bundle.Quorum) != 3 {
 		t.Fatalf("verdict %+v for bundle %s", verdict, data)
@@ -785,7 +812,7 @@ func testAuthFirstFailureBundle(t *testing.T) {
 	// withheld one stays visible. The controls ran as other attempts and the
 	// first excerpt is unchanged.
 	if bundle.FirstExcerpt == nil || bundle.FirstExcerpt.Operation != authRejectionOperation(rejection) || verdict.ExcerptStatus != firstRecord.Status ||
-		verdict.Cause != authCauseUnavailable || !bundle.FirstExcerpt.CommandStderrComplete {
+		!bundle.FirstExcerpt.CommandStderrComplete {
 		t.Fatalf("first-failure excerpt %+v, verdict %+v", bundle.FirstExcerpt, verdict)
 	}
 	if first, ok := excerpts.First(authRejectionOperation(rejection)); !ok || first.Status != firstExcerpt.Status || excerpts.Later(authRejectionOperation(rejection)) != 0 {

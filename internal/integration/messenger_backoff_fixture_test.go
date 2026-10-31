@@ -40,7 +40,7 @@ var (
 		`2026-10-22T05:10:21.008+0000 7f0e2d7fa640  1 -- [v2:172.18.0.5:6800/1418922307,v1:172.18.0.5:6801/1418922307] <== client.4321 172.18.0.2:0/2208442118 3 ==== osd_backoff(2.0 ack-block id 1 [2:00000000::::0,MAX) e25) ==== 115+0+0 (crc 0 0 0) 0x5612d0a3fc00 con 0x5612d09f4800`,
 		`2026-10-22T05:10:30.660+0000 7f0e2cff9640  1 -- [v2:172.18.0.5:6802/1418922307,v1:172.18.0.5:6803/1418922307] <== osd.0 v2:172.18.0.4:6802/88231045 12 ==== pg_notify2(2.0 2.0 (query:27 sent:27 ...) e27/27) ==== 1065+0+0 (crc 0 0 0) 0x5612d0a41000 con 0x5612d09f6c00`,
 	}
-	backoffSampleTarget = backoffTarget{Client: "client.4321", Primary: "osd.1", PGID: "2.0", Object: "backoff-read"}
+	backoffSampleTarget = backoffTarget{Client: "client.4321", Primary: "osd.1", PGID: "2.0", Object: "backoff-read", Op: "read", Scope: "pg"}
 )
 
 // backoffLines returns lines with each of the replacements applied once.
@@ -116,7 +116,7 @@ func TestBindBackoffChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if chain.ClientAddr != "172.18.0.2:0/2208442118" || chain.Read.Tid != 3 || chain.Block.ID != 1 || chain.Block.Epoch != 25 ||
+	if chain.ClientAddr != "172.18.0.2:0/2208442118" || chain.Request.Tid != 3 || chain.Block.ID != 1 || chain.Block.Epoch != 25 ||
 		chain.AckSent == nil || chain.AckReceived.Epoch != 25 || chain.OpAtPrimary.Tid != 3 ||
 		chain.Unblock.Epoch != 27 || chain.Reply.Result != 0 || len(chain.ExtraBlocks) != 0 || len(chain.Reconnects) != 0 {
 		t.Fatalf("chain = %+v", chain)
@@ -206,5 +206,49 @@ func TestBackoffChainNoise(t *testing.T) {
 	}
 	if !peeredInactive("undersized+degraded+peered") || peeredInactive("active+undersized+degraded") || peeredInactive("peering") {
 		t.Fatal("peeredInactive misclassified a state")
+	}
+}
+
+// squidObjectBlock is the BLOCK that a client received in one Squid 19.2.5
+// run of TestOSDObjectBackoffReceipt: a backoff of backoff-write alone.
+const squidObjectBlock = `2026-10-30T23:53:59.078+0000 ffff7efdf120  1 -- 172.19.0.6:0/3579350518 <== osd.0 v2:172.19.0.4:6800/2973482461 2 ==== osd_backoff(2.0 block id 1 [2:756179b6:::backoff-write:head,2:756179b6:::backoff-write:head) e22) ==== 141+0+0 (crc 0 0 0) 0xffff80009bb0 con 0xaaaac677fe30`
+
+func TestBackoffTargetCovers(t *testing.T) {
+	events := parseBackoffLog([]string{squidObjectBlock, backoffClientSample[4]})
+	if len(events) != 2 || events[0].Kind != "backoff" || events[1].Kind != "backoff" {
+		t.Fatalf("events %+v", events)
+	}
+	objectBlock, pgBlock := events[0], events[1]
+	object := backoffTarget{PGID: "2.0", Object: "backoff-write", Op: "writefull", Scope: "object"}
+	pg := backoffTarget{PGID: "2.0", Object: "backoff-read", Op: "read", Scope: "pg"}
+	for name, c := range map[string]struct {
+		target backoffTarget
+		event  backoffEvent
+		want   bool
+	}{
+		"object block, object scope": {object, objectBlock, true},
+		"PG block, PG scope":         {pg, pgBlock, true},
+		"PG block, object scope":     {object, pgBlock, false},
+		"object block, PG scope":     {pg, objectBlock, false},
+		"another object":             {backoffTarget{PGID: "2.0", Object: "backoff", Scope: "object"}, objectBlock, false},
+		"another pool":               {backoffTarget{PGID: "3.0", Object: "backoff-write", Scope: "object"}, objectBlock, false},
+		"no scope":                   {backoffTarget{PGID: "2.0", Object: "backoff-write"}, objectBlock, false},
+	} {
+		if got := c.target.covers(c.event); got != c.want {
+			t.Errorf("%s: covers %t, want %t", name, got, c.want)
+		}
+	}
+
+	// A PG-wide BLOCK does not stand in for an object-scoped one.
+	target := backoffSampleTarget
+	target.Scope = "object"
+	if _, err := bindBackoffBlock(parseBackoffLog(backoffClientSample), parseBackoffLog(backoffPrimarySample), target); err == nil || !strings.Contains(err.Error(), "object scope") {
+		t.Fatalf("object scope bound a PG-wide BLOCK: %v", err)
+	}
+	// Nor does a held write stand in for the read.
+	target = backoffSampleTarget
+	target.Op = "writefull"
+	if _, err := bindBackoffBlock(parseBackoffLog(backoffClientSample), parseBackoffLog(backoffPrimarySample), target); err == nil || !strings.Contains(err.Error(), "no writefull") {
+		t.Fatalf("a read bound a write chain: %v", err)
 	}
 }
