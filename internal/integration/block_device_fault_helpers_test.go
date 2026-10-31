@@ -349,16 +349,23 @@ const (
 	blockDelayLost     = "delay-lost"     // a write under the delay was not acknowledged
 	blockDelayWeak     = "delay-not-seen" // the median did not slow by most of the delay
 	blockDelayLingered = "delay-lingered" // the writes after restore were still slow
+	blockRestoreLost   = "restore-lost"   // a write after restore was not acknowledged
 )
 
 // judgeBlockDelay compares the median write time under the delay with the
 // baseline's. Each write commits through at least one device write, so the
-// median must grow by at least three quarters of the configured delay.
+// median must grow by at least three quarters of the configured delay. The
+// writes of both windows must all be acknowledged: a write that failed fast
+// says nothing about the latency of the restored table.
 func judgeBlockDelay(base, delayed, restored blockTimedLedger, delayMS int) string {
-	for _, m := range delayed.Ledger {
-		if m.Outcome != mutAcked {
-			return blockDelayLost
-		}
+	acked := func(l blockTimedLedger) bool {
+		return len(l.Ledger) > 0 && !slices.ContainsFunc(l.Ledger, func(m attachMutation) bool { return m.Outcome != mutAcked })
+	}
+	if !acked(delayed) {
+		return blockDelayLost
+	}
+	if !acked(restored) {
+		return blockRestoreLost
 	}
 	d := float64(delayMS) / 1000
 	switch {

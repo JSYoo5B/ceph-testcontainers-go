@@ -77,6 +77,12 @@ func TestJudgeBlockDelayComparesMediansWithTheConfiguredDelay(t *testing.T) {
 	base := blockTimed(0.01, 0.012, 0.011)
 	lost := blockTimed(0.3, 0.31, 0.29)
 	lost.Ledger[1].Outcome = mutUnknown
+	restoredFailed := blockTimed(0.001, 0.001, 0.001)
+	for i := range restoredFailed.Ledger {
+		restoredFailed.Ledger[i].Outcome = mutFailed
+	}
+	restoredUnknown := blockTimed(0.01, 0.01, 30)
+	restoredUnknown.Ledger[2].Outcome = mutUnknown
 	cases := []struct {
 		name              string
 		delayed, restored blockTimedLedger
@@ -86,6 +92,10 @@ func TestJudgeBlockDelayComparesMediansWithTheConfiguredDelay(t *testing.T) {
 		{"not slowed", blockTimed(0.05, 0.06, 0.07), blockTimed(0.01, 0.01, 0.01), blockDelayWeak},
 		{"still slow", blockTimed(0.3, 0.3, 0.3), blockTimed(0.2, 0.25, 0.2), blockDelayLingered},
 		{"lost write", lost, blockTimed(0.01, 0.01, 0.01), blockDelayLost},
+		{"restored writes failed fast", blockTimed(0.25, 0.26, 0.25), restoredFailed, blockRestoreLost},
+		{"restored write unknown", blockTimed(0.25, 0.26, 0.25), restoredUnknown, blockRestoreLost},
+		{"no restored writes", blockTimed(0.25, 0.26, 0.25), blockTimedLedger{}, blockRestoreLost},
+		{"no delayed writes", blockTimedLedger{}, blockTimed(0.01, 0.01, 0.01), blockDelayLost},
 	}
 	for _, c := range cases {
 		if got := judgeBlockDelay(base, c.delayed, c.restored, 200); got != c.want {

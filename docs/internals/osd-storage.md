@@ -379,6 +379,8 @@ mapping of the same kind is the control.
    during the baseline writes, and the control's stay at zero.
 3. Delay. A `delay` table slows the median write by at least three quarters of
    the configured delay, and the restored linear table makes writes fast again.
+   Every write of both windows must be acknowledged, so a write that fails fast
+   never stands for a fast restored table.
    The measurement ends before the restore, because suspending a delay mapping
    flushes its queue early. The window runs only when the kernel has the
    `delay` target registered, or on a GitHub-hosted runner, where loading the
