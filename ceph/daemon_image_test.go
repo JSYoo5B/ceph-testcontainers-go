@@ -208,6 +208,50 @@ func TestReopenKeepsTheOverriddenImage(t *testing.T) {
 	}
 }
 
+// Reopen with WithImage starts the retained store from that image, records it
+// on the new handle and keeps it for a later detach. Refused options leave the
+// detached OSD reusable and create nothing.
+func TestReopenStartsTheRetainedStoreFromAnotherImage(t *testing.T) {
+	f := newRetainedFixture(t)
+	f.cluster.fleet.osdHandles.get(3).image = "example.invalid/ceph:old"
+	var images []string
+	inner := f.cluster.fleet.stores.runner
+	f.cluster.fleet.stores.runner = func(ctx context.Context, image string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
+		images = append(images, image)
+		return inner(ctx, image, opts...)
+	}
+	detached, err := osdHandle(t, t.Context(), f.cluster, 3).Detach(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, opts := range map[string][]OSDOptions{
+		"placement":  {OSDOptions{}.WithPlacement(OSDConfig{Host: "elsewhere"})},
+		"bad image":  {OSDOptions{}.WithImage("")},
+		"two images": {OSDOptions{}.WithImage("example.invalid/ceph:a"), OSDOptions{}.WithImage("example.invalid/ceph:b")},
+	} {
+		if osd, err := detached.Reopen(t.Context(), opts...); err == nil || osd != nil {
+			t.Fatalf("%s: reopen admitted: %v %v", name, osd, err)
+		}
+	}
+	if len(images) != 0 {
+		t.Fatalf("a refused reopen created containers from %v", images)
+	}
+	reopened, err := detached.Reopen(t.Context(), OSDOptions{}.WithImage("example.invalid/ceph:new"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) != 1 || images[0] != "example.invalid/ceph:new" || reopened.Image() != "example.invalid/ceph:new" {
+		t.Fatalf("reopen images %v handle %q", images, reopened.Image())
+	}
+	again, err := reopened.Detach(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Image() != "example.invalid/ceph:new" {
+		t.Fatalf("a second detach records %q", again.Image())
+	}
+}
+
 func TestDaemonImageAccessorsAreNilSafe(t *testing.T) {
 	if (*MonitorContainer)(nil).Image() != "" || (*ManagerContainer)(nil).Image() != "" || (*OSDContainer)(nil).Image() != "" || (*DetachedOSD)(nil).Image() != "" {
 		t.Fatal("a nil handle reported an image")

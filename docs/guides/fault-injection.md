@@ -610,8 +610,9 @@ tests observed three different stops:
 | An unpaced burst, default ratios | BlueStore's allocator: `_do_alloc_write failed ... (28) No space left on device` | Aborts before the next report raises `OSD_FULL` |
 | Any writes with the full ratio and `osd_failsafe_full_ratio` at 1 | The allocator, as above | Aborts |
 
-An OSD that aborted this way does not start again in place: RocksDB cannot
-allocate BlueFS space at mount, and the daemon aborts in `BlueRocksEnv`.
+An OSD that aborted this way does not start again in place: BlueFS cannot get
+space at mount, and the daemon aborts, either in `BlueRocksEnv` or in BlueFS
+itself with `bluefs enospc`. Both were observed on Tentacle 20.2.4.
 Lengthening the block file is not enough. `ceph-bluestore-tool
 bluefs-bdev-expand` must then run on the stopped store before the OSD boots
 and serves its acknowledged data again.

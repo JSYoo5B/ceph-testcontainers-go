@@ -225,6 +225,12 @@ const (
 
 const logicalSettle = 20 * time.Second
 
+// logicalBlueFSMountMarkers are the two aborts of a store that cannot give
+// BlueFS space at mount, both observed natively on Tentacle 20.2.4: RocksDB
+// through BlueRocksEnv ("unrecognized error code"), and BlueFS itself
+// (BlueFS.cc, "bluefs enospc").
+var logicalBlueFSMountMarkers = []string{"BlueRocksEnv", "bluefs enospc"}
+
 // upFrom is the OSDMap epoch from which the OSD is up, or 0 while it is down.
 func (e *logicalEnv) upFrom(t *testing.T, ctx context.Context) int {
 	t.Helper()
@@ -320,8 +326,11 @@ func (e *logicalEnv) recover(t *testing.T, ctx context.Context) map[string]any {
 	outcome, log := e.restart(t, ctx)
 	record := map[string]any{"restart": outcome, "restart_log": log}
 	if outcome == restartAborted {
-		// Expand only a store whose RocksDB could not allocate BlueFS space.
-		if !slices.ContainsFunc(log, func(line string) bool { return strings.Contains(line, "BlueRocksEnv") }) {
+		// Expand only a store that could not allocate BlueFS space at mount:
+		// RocksDB reports it through BlueRocksEnv, or BlueFS aborts itself.
+		if !slices.ContainsFunc(log, func(line string) bool {
+			return slices.ContainsFunc(logicalBlueFSMountMarkers, func(w string) bool { return strings.Contains(line, w) })
+		}) {
 			t.Fatalf("the restarted OSD aborted for another reason: %v", log)
 		}
 		dir := attachedKeeperDir + "/ceph-" + strconv.Itoa(e.osd.ID)
@@ -372,7 +381,8 @@ func logicalLogTail(ctx context.Context, docker *mobycl.Client, cid, since strin
 	}
 	defer func() { _ = reader.Close() }()
 	data, _ := io.ReadAll(io.LimitReader(reader, 16<<20))
-	words := append(slices.Clone(logicalAllocatorMarkers), "Caught signal", "failsafe", "is full", "ceph_abort_msg", "BlueRocksEnv")
+	words := append(slices.Clone(logicalAllocatorMarkers), "Caught signal", "failsafe", "is full", "ceph_abort_msg")
+	words = append(words, logicalBlueFSMountMarkers...)
 	words = append(words, extra...)
 	var kept []string
 	for _, line := range strings.Split(string(data), "\n") {

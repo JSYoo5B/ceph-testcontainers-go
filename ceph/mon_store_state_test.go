@@ -203,6 +203,7 @@ var monStoreMethods = map[string][]string{
 	"names":         {"yield(name)"},
 	"volumeName":    nil,
 	"discardFresh":  {"r.discardFresh(ctx)", "delete(s.records, mon)"},
+	"retire":        {"r.release(ctx, false)", "delete(s.records, mon)"},
 	"releaseStores": {"s.releaseEach(ctx, false)"},
 	"retryStores":   {"len(s.records)", "s.releaseEach(ctx, true)"},
 	"releaseEach":   {"s.names()", "s.records[name].release(ctx, afterScan)", "delete(s.records, name)"},
@@ -212,7 +213,18 @@ var monStoreMethods = map[string][]string{
 // of its methods in production, and how it holds Container.mu. Only terminate
 // does, and only for the two release stages: no production code publishes a
 // record in this slice.
-var monStoreCallers = map[string]stateCaller{"terminate": {"takes", []string{"releaseStores", "retryStores"}}}
+var monStoreCallers = map[string]stateCaller{
+	"terminate": {"takes", []string{"releaseStores", "retryStores"}},
+	// The first generation of a MON's store: Run before the cluster is
+	// shared, AddMonitor under the topology lock.
+	"startMonitorStore": {"holds", []string{"begin", "discardFresh"}},
+	// runMonitor starts the first MON in Run, before the cluster is shared.
+	"runMonitor":          {"init", nil},
+	"startJoiningMonitor": {"holds", nil},
+	"replaceMonitor":      {"takes", []string{"store"}},
+	// A permanent MON removal retires the removed MON's record.
+	"retireMonitor": {"holds", []string{"retire"}},
+}
 
 func monStoreUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "monStores" }
 
@@ -235,7 +247,8 @@ func monStoreIgnoredCall(call *ast.CallExpr) bool {
 // as the receiver of one of its methods, and the lock-free FactsOf source does
 // not mention it.
 func TestMonStoreStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
-	fieldAudit{label: "Container.monStores", use: monStoreUse, own: isMonStoreReceiver, methods: monStoreMethods, wholeFactsFile: true}.check(t)
+	fieldAudit{label: "Container.monStores", use: monStoreUse, own: isMonStoreReceiver, methods: monStoreMethods, wholeFactsFile: true,
+		bound: monitorTopologyBinding}.check(t)
 }
 
 // TestMonStoreStateMethodsMakeOnlyTheirPinnedCalls pins the method set and the
@@ -368,6 +381,11 @@ func TestMonStoreVolumeFieldsAreAssignedOnlyByTheirTransitions(t *testing.T) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
+				continue
+			}
+			// The container side of a generation is not the record: its
+			// Docker calls are pinned by the generation guard.
+			if receiverTypeName(fn) == "monitorGenerations" {
 				continue
 			}
 			where := receiverTypeName(fn) + "." + fn.Name.Name

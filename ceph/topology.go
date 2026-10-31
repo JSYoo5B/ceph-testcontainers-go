@@ -18,7 +18,6 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
-	"github.com/google/uuid"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -204,22 +203,7 @@ func (c *Container) monitorJoinMaterial(ctx context.Context, name string) (key, 
 			return nil, nil, fmt.Errorf("monitor %s is already registered", name)
 		}
 	}
-	if err := c.ensureControlPlane(ctx); err != nil {
-		return nil, nil, fmt.Errorf("start independent CLI control: %w", err)
-	}
-	key, err = c.conn().ceph(ctx, "auth", "get", "mon.")
-	if err != nil {
-		return nil, nil, err
-	}
-	mapPath := "/tmp/tc-monmap-" + uuid.NewString()
-	if _, err := c.conn().ceph(ctx, "mon", "getmap", "-o", mapPath); err != nil {
-		return nil, nil, err
-	}
-	monmap, err = readFile(ctx, c.conn().cliContainer(), mapPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	return key, monmap, nil
+	return c.monitorReplacementMaterial(ctx)
 }
 
 // startJoiningMonitor starts mon's container. On the host network it reserves
@@ -227,6 +211,18 @@ func (c *Container) monitorJoinMaterial(ctx context.Context, name string) (key, 
 // any other failure, or the last attempt's, returns with mon still owned. The
 // caller holds c.mu.
 func (c *Container) startJoiningMonitor(ctx context.Context, mon *MonitorContainer, join monitorJoin) error {
+	if c.settings.monitorVolume {
+		// Bridge mode only (resolveOptions): the first generation of the
+		// MON's own store volume.
+		if err := c.clearAdminSocket(ctx, "mon."+join.name); err != nil {
+			return err
+		}
+		ctr, err := c.startMonitorStore(ctx, join.name, mon.image, c.monitorGenerations(join.name, c.monitorJoinOptions(join, nil), monitorSocketReady(join.name)))
+		if ctr != nil {
+			mon.Container = ctr
+		}
+		return err
+	}
 	attempts := 1
 	if c.settings.hostNetwork {
 		attempts = hostPortAttempts
@@ -274,6 +270,11 @@ func (c *Container) startJoiningMonitor(ctx context.Context, mon *MonitorContain
 	return nil
 }
 
+// monitorSocketReady is the ready check of a joining MON: its admin socket.
+func monitorSocketReady(name string) []string {
+	return []string{"test", "-S", "/var/run/ceph/ceph-mon." + name + ".asok"}
+}
+
 // monitorJoinOptions is the container recipe of a joining MON: the join
 // script with the configuration, key and monmap, its socket wait, and either
 // the reserved host ports (created, not started) or the kept bridge address.
@@ -283,7 +284,7 @@ func (c *Container) monitorJoinOptions(join monitorJoin, lease *hostPortLease) [
 		testcontainers.WithEnv(c.settings.monitorJoinEnvironment(join.name)),
 		testcontainers.WithFiles(scriptFile("mon-join"), textFile("/etc/ceph/ceph.conf", join.config, 0o644),
 			textFile("/etc/ceph/mon.keyring", join.key, 0o600), textFile("/tc/monmap", join.monmap, 0o600)),
-		testcontainers.WithWaitStrategy(wait.ForExec([]string{"test", "-S", "/var/run/ceph/ceph-mon." + join.name + ".asok"}).WithStartupTimeout(c.settings.startupTimeout))}
+		testcontainers.WithWaitStrategy(wait.ForExec(monitorSocketReady(join.name)).WithStartupTimeout(c.settings.startupTimeout))}
 	if lease != nil {
 		portEnv := c.settings.monitorPortEnvironment(lease.Ports)
 		portEnv["CEPH_PUBLIC_ADDRESS"] = c.staticFacts().PublicAddress
@@ -386,10 +387,18 @@ func (t monitorTopology) retireMonitor(ctx context.Context, handle *MonitorConta
 	if err := t.refreshMonitorConfigAfterRemoval(ctx, name); err != nil {
 		return fmt.Errorf("refresh control configuration after removing monitor %s: %w", name, err)
 	}
-	if name == "a" {
-		t.markFirstMonitorTerminated()
-	} else {
+	// A removed MON never comes back on its store: the record is released
+	// once nothing mounts the volume, and kept with the handle for a retry
+	// while that is uncertain. A later MON of the same name gets a new store.
+	if err := t.monStores.retire(ctx, name); err != nil {
+		return fmt.Errorf("release the store of removed monitor %s: %w", name, err)
+	}
+	// MON a is the embedded first container until a replacement moved it
+	// into the roster (replaceMonitor).
+	if t.roster.monitor(name) == mon {
 		t.roster.dropMonitor(name)
+	} else if name == "a" {
+		t.markFirstMonitorTerminated()
 	}
 	return nil
 }

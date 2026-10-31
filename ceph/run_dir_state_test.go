@@ -77,7 +77,7 @@ var runDirMethods = map[string][]string{
 //	"holds"    its doc comment requires the caller to hold Container.mu
 var runDirCallers = map[string]stateCaller{
 	"newCluster":          {"init", []string{"create"}},
-	"runMonitor":          {"free", []string{"mounts"}},
+	"firstMonitorOptions": {"free", []string{"mounts"}},
 	"startedContainer":    {"free", []string{"mounts"}},
 	"ensureControlPlane":  {"free", []string{"mounts"}},
 	"monitorJoinOptions":  {"free", []string{"mounts"}},

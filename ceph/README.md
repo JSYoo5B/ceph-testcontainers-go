@@ -35,7 +35,7 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
    (or role images through `WithImageOptions`) builds and waits for the whole
    topology. Settings are grouped values, each passed through one option:
    `WithClusterConfig` (MON/MGR/OSD counts, OSD layout, CRUSH root, pool
-   defaults, initial pools), `WithOSDStorage`, `WithNetworkConfig`,
+   defaults, initial pools), `WithOSDStorage`, `WithMonitorStorage`, `WithNetworkConfig`,
    `WithImageOptions`, plus `WithAuth`, `WithConfigFile`, `WithHostNetwork` and
    `WithStartupTimeout`. Contradictory options fail before anything is created.
    Register cleanup before checking the error: a partially started cluster is
@@ -43,8 +43,8 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/ceph
 2. **Prepare the state the test needs.** `WaitForClean` before client I/O;
    `CreatePool` and the `Pool` handle (replication, quota, placement, PG count);
    `CreateClient` for a Cephx identity with exact caps; `AddOSD`, `AddMonitor`,
-   `AddManager` and the daemon handles' `Remove`, `Detach`, `SetIn` for
-   topology. The [override](../override/README.md) package changes
+   `AddManager` and the daemon handles' `Remove`, `Detach`, `Replace`, `SetIn`
+   for topology. The [override](../override/README.md) package changes
    configuration with restoration handles, the [fault](../fault/README.md)
    package injects faults, and the [rbd](../rbd/README.md),
    [cephfs](../cephfs/README.md) and [rgw](../rgw/README.md) packages add their

@@ -95,6 +95,21 @@ func (s *monStoreState) discardFresh(ctx context.Context, mon string) error {
 	return nil
 }
 
+// retire releases the store of a MON that left the membership for good, and
+// forgets the record only when the release succeeded. A MON without a record
+// has nothing to retire.
+func (s *monStoreState) retire(ctx context.Context, mon string) error {
+	r := s.records[mon]
+	if r == nil {
+		return nil
+	}
+	if err := r.release(ctx, false); err != nil {
+		return err
+	}
+	delete(s.records, mon)
+	return nil
+}
+
 // releaseStores is the first Terminate stage: it releases every store whose
 // attachment is confirmed gone, in MON name order, and forgets a record only
 // when its release succeeded. A failure does not stop the other stores.

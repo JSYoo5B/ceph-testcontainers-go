@@ -747,10 +747,17 @@ var monStoreGenerationFile = "mon_store_generation.go"
 var monStoreGenerationFiles = []string{monStoreGenerationFile, "mon_store_address.go"}
 
 // monStoreGenerationSymbols are the names the file adds. Production code
-// outside it must not mention them until a slice adds a caller and updates this
-// table in its own diff.
+// outside it mentions them only where monStoreGenerationCallers pins it.
 var monStoreGenerationSymbols = []string{"monStoreGenerations", "checkMonStoreGenerations", "startGeneration", "stopGeneration", "replaceGeneration",
 	"observeAddress", "holdAddress"}
+
+// monStoreGenerationCallers are the production uses of the path: the first
+// generation of a new store (startMonitorStore) and the replacement
+// (replaceMonitor).
+var monStoreGenerationCallers = map[string][]string{
+	"mon_store_container.go": {"startGeneration"},
+	"mon_store_replace.go":   {"replaceGeneration"},
+}
 
 func monStoreGenerationProblems(files map[string]*ast.File) (problems []string) {
 	for file, parsed := range files {
@@ -758,7 +765,7 @@ func monStoreGenerationProblems(files map[string]*ast.File) (problems []string) 
 			continue
 		}
 		ast.Inspect(parsed, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok && slices.Contains(monStoreGenerationSymbols, id.Name) {
+			if id, ok := n.(*ast.Ident); ok && slices.Contains(monStoreGenerationSymbols, id.Name) && !slices.Contains(monStoreGenerationCallers[file], id.Name) {
 				problems = append(problems, file+" mentions "+id.Name)
 			}
 			return true
@@ -767,7 +774,7 @@ func monStoreGenerationProblems(files map[string]*ast.File) (problems []string) 
 	return problems
 }
 
-func TestMonStoreGenerationsHaveNoProductionCaller(t *testing.T) {
+func TestMonStoreGenerationsHaveOnlyThePinnedProductionCallers(t *testing.T) {
 	files := parseProductionFiles(t)
 	if files[monStoreGenerationFile] == nil {
 		t.Fatalf("%s not found: the guard is vacuous", monStoreGenerationFile)

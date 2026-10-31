@@ -57,9 +57,13 @@ func (d *monStoreDockerFake) ContainerList(_ context.Context, _ mobycl.Container
 }
 
 func newMonStoreFixture() (*monStoreState, *monStoreVolume, *monStoreDockerFake) {
+	return newMonStoreFixtureFor("a")
+}
+
+func newMonStoreFixtureFor(mon string) (*monStoreState, *monStoreVolume, *monStoreDockerFake) {
 	d := &monStoreDockerFake{existing: map[string]bool{}}
 	s := &monStoreState{monDocker: func(context.Context) (monStoreDocker, error) { return d, nil }}
-	r, err := s.begin("a")
+	r, err := s.begin(mon)
 	if err != nil {
 		panic(err)
 	}

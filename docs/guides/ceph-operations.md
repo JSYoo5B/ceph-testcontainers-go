@@ -22,8 +22,31 @@ UUID, `Remove` and `Detach` fence the Docker instance against new native
 commands and drain its tracked ones, and `Remove` refuses an OSD that is being
 detached or is detached. After `Detach` and `Reopen` the old handle is stale;
 use the handle `Reopen` returns. `Reopen` starts the OSD from the image its
-launch recipe recorded. See [OSD storage](../internals/osd-storage.md) for the
-store checks.
+launch recipe recorded, or from the image of `OSDOptions.WithImage`; it refuses
+`WithPlacement`. See [OSD storage](../internals/osd-storage.md) for the store
+checks.
+
+## Replacing a MON on its store
+
+With `WithMonitorStorage(MonitorStorage{}.WithVolume())` every MON, the first
+one included, keeps its store in a Docker volume of its own that the cluster
+owns. `MonitorContainer.Replace` then moves one MON to a new container:
+
+| Step | What happens |
+| --- | --- |
+| Refusals, before the MON is touched | another majority of the monmap is not in quorum; the store is not attached to this handle's container; the store has no recorded address |
+| Old container | removed; nothing may still mount the volume |
+| New container | from the handle's image, or from `DaemonOptions.WithImage`; same volume, same IPv4 address, entrypoint in a mode that refuses to format a missing store |
+| Membership | unchanged: same name, rank and monmap entry; `Replace` waits for the MON to rejoin the quorum |
+
+The old handle is stale afterwards; use the one `Replace` returns. Replacing
+MON a removes the cluster's embedded container, as `Remove` on MON a does, and
+fixture commands then use the control container. The volume needs bridge
+networking with IPv4 addresses: `Run` refuses it with the host network or
+another address family. `MonitorContainer.Remove` releases the removed MON's
+volume, so a MON added again under that name starts on a new store.
+`Terminate` removes the volumes after the MON containers. See [MON data volumes](../internals/mon-volume-storage.md) for the
+store records and their release order.
 
 ## Cephx key changes
 
