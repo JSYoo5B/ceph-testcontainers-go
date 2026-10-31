@@ -48,10 +48,14 @@ class LibCephFS:
 const reclaimFakeLib = `
 import builtins, ctypes, io, os, sys
 here = os.path.dirname(os.path.abspath(__file__))
+_state = {}
 class _Fn:
     def __init__(self, name): self.name, self.restype, self.argtypes = name, None, None
     def __call__(self, *args):
         name = self.name
+        if name == "ceph_conf_set" and args[1] == b"log_file":
+            _state["log"] = args[2].decode()
+            real_open(_state["log"], "w").close()
         if name == "ceph_create":
             args[0]._obj.value = 0x1000 + os.getpid()
             return int(os.environ.get("FAKE_CREATE_RC", "0"))
@@ -62,6 +66,10 @@ class _Fn:
         if name == "ceph_get_instance_id":
             return int(os.environ.get("FAKE_INSTANCE", "0"))
         if name == "ceph_start_reclaim":
+            if "log" in _state:
+                with real_open(_state["log"], "a") as log:
+                    for result in filter(None, os.environ.get("FAKE_REPLIES", "").split(",")):
+                        log.write("2026-01-01T00:00:00.000+0000 7f 10 client.7001 handle_client_reclaim_reply client_reclaim_reply(%s e 0) from mds.0\n" % result)
             return int(os.environ.get("FAKE_RC", "-2"))
         if name == "ceph_read":
             data = b"reclaim-acknowledged-data\x00\xff"
@@ -182,28 +190,34 @@ func TestReclaimNativeABIProbeScript(t *testing.T) {
 	})
 }
 
-func TestReclaimNativeMissingScript(t *testing.T) {
+func TestReclaimNativeAttemptScript(t *testing.T) {
 	f := newReclaimFake(t)
-	run := func(env ...string) harness.ReclaimMissingResult {
-		out, code := f.run(harness.ReclaimMissing, env, "fs0", "target-uuid", "own-uuid")
+	log := filepath.Join(f.dir, "attempt.log")
+	run := func(flags string, env ...string) harness.ReclaimAttemptResult {
+		out, code := f.run(harness.ReclaimAttempt, env, "fs0", "target-uuid", "own-uuid", flags, log)
 		if code != 0 {
 			t.Fatalf("exit %d: %s", code, out)
 		}
-		r, err := harness.ParseReclaimMissing(out)
+		r, err := harness.ParseReclaimAttempt(out)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return r
 	}
-	r := run()
+	r := run("1", "FAKE_REPLIES=0")
 	if r.RC == nil || *r.RC != -2 || r.ReleaseRC == nil || *r.ReleaseRC != 0 || r.Flags != harness.CephReclaimReset ||
-		r.PriorReclaimCalls != 0 || !r.Initialized || r.Target != "target-uuid" || r.OwnUUID != "own-uuid" || !strings.Contains(r.Handle, ":") {
+		r.PriorReclaimCalls != 0 || !r.Initialized || r.Target != "target-uuid" || r.OwnUUID != "own-uuid" || !strings.Contains(r.Handle, ":") ||
+		len(r.MDSReplies) != 1 || r.MDSReplies[0] != 0 {
 		t.Fatalf("result: %+v", r)
 	}
-	if got := run("FAKE_RC=0"); got.RC == nil || *got.RC != 0 {
-		t.Fatalf("a return of 0 was not carried through: %+v", got)
+	if got := run("1", "FAKE_RC=0"); got.RC == nil || *got.RC != 0 || got.MDSReplies == nil || len(got.MDSReplies) != 0 {
+		t.Fatalf("a return of 0 without a logged reply was not carried through: %+v", got)
 	}
-	if _, code := f.run(harness.ReclaimMissing, []string{"FAKE_MISSING=ceph_start_reclaim"}, "fs0", "target-uuid", "own-uuid"); code == 0 {
+	// The state-preserving request: flags 0 and the MDS's -EINVAL reply.
+	if got := run("0", "FAKE_RC=-22", "FAKE_REPLIES=-22"); got.Flags != 0 || got.RC == nil || *got.RC != -22 || len(got.MDSReplies) != 1 || got.MDSReplies[0] != -22 {
+		t.Fatalf("state-preserving result: %+v", got)
+	}
+	if _, code := f.run(harness.ReclaimAttempt, []string{"FAKE_MISSING=ceph_start_reclaim"}, "fs0", "target-uuid", "own-uuid", "1", log); code == 0 {
 		t.Fatal("a missing symbol did not stop the attempt")
 	}
 }
@@ -227,15 +241,15 @@ func TestReclaimNativeReaders(t *testing.T) {
 		"flags is a bool": `RECLAIM_JSON {"flags":true}`,
 	}
 	for name, out := range missing {
-		t.Run("missing result rejects "+name, func(t *testing.T) {
-			if r, err := harness.ParseReclaimMissing(out); err == nil {
+		t.Run("attempt result rejects "+name, func(t *testing.T) {
+			if r, err := harness.ParseReclaimAttempt(out); err == nil {
 				t.Fatalf("accepted: %+v", r)
 			}
 		})
 	}
 	t.Run("a missing or null return value stays unrecorded", func(t *testing.T) {
 		for _, out := range []string{`RECLAIM_JSON {"handle":"1:2"}`, `RECLAIM_JSON {"handle":"1:2","rc":null}`} {
-			r, err := harness.ParseReclaimMissing(out)
+			r, err := harness.ParseReclaimAttempt(out)
 			if err != nil || r.RC != nil {
 				t.Fatalf("%s: %+v %v", out, r, err)
 			}
@@ -374,7 +388,7 @@ func TestReclaimNativeReclaimerScript(t *testing.T) {
 func TestReclaimNativeActorSyntax(t *testing.T) {
 	for name, script := range map[string]string{
 		"seed": harness.ReclaimSeed, "holder": string(harness.ReclaimHolder), "reclaimer": string(harness.ReclaimReclaimer),
-		"missing": harness.ReclaimMissing, "lock probe": harness.ReclaimLockProbe, "probe": harness.ReclaimABIProbe,
+		"attempt": harness.ReclaimAttempt, "lock probe": harness.ReclaimLockProbe, "probe": harness.ReclaimABIProbe,
 	} {
 		cmd := exec.Command("python3", "-I", "-c", "import sys; compile(sys.argv[1], 'script', 'exec')", script)
 		if out, err := cmd.CombinedOutput(); err != nil {

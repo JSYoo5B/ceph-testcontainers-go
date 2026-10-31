@@ -1039,10 +1039,10 @@
         {
           "test": "TestCephFSReclaimReset",
           "receipt": "RECLAIM_RESET_RECEIPT",
-          "asserts": "a killed client's session and flock stand; a fresh handle's RESET of an unused UUID returns -ENOENT and changes nothing; a second fresh handle's RESET of the killed client's UUID returns 0 and removes that session and frees its lock before any replacement mounts while an unrelated live session and lock stay; the replacement, a new client, reads the original bytes"
+          "asserts": "a killed client's session and flock stand; a fresh handle's RESET of an unused UUID returns -ENOENT and changes nothing; a second fresh handle's state-preserving request (flags 0) for the killed client's UUID returns -EINVAL with exactly one client_reclaim_reply of -22 from the MDS in its client log, and the session and flock still stand; a third fresh handle's RESET of the killed client's UUID returns 0 and removes that session and frees its lock before any replacement mounts while an unrelated live session and lock stay; the replacement, a new client, reads the original bytes"
         }
       ],
-      "gap": "Quota receipts cover directory max_files and max_bytes enforcement and relaxation on one live client; client metrics cover cumulative write counters of one writer and one idle client on rank 0; reclaim covers RESET of a dead client's session, not state-preserving reclaim. Quota and metrics messages are not decoded or counted, and other metrics, reporting latency, MDS or rank changes, blocklist effects and consumer implementations are not claimed.",
+      "gap": "Quota receipts cover directory max_files and max_bytes enforcement and relaxation on one live client; client metrics cover cumulative write counters of one writer and one idle client on rank 0, with a failed counter query retained as an unavailable sample; reclaim covers RESET of a dead client's session and the MDS's refusal of state-preserving reclaim (Server::reclaim_session answers every flag but CEPH_RECLAIM_RESET with -EINVAL at Tentacle 20.2.4 and Squid 19.2.5), so adopting the old session's capabilities and locks is not available from the official images. Quota and metrics messages are not decoded or counted, and other metrics, reporting latency, MDS or rank changes, blocklist effects and consumer implementations are not claimed.",
       "owner": "#361"
     },
     {
