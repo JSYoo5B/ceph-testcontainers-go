@@ -214,14 +214,26 @@ func attachKeeperIdentity(atAttach, atEvaluation *attachContainerState) (started
 // paths raise through abort().
 const sigabrtExit = 134
 
+// eioCrashExit is the status of Ceph's I/O-error abort. When KernelDevice's
+// aio completion gets an expected I/O error (is_expected_ioerr, which ENOSPC
+// is), it calls note_io_error_event, which sets g_eio, and then
+// ceph_abort_msg("Unexpected IO error. ..."). The fatal-signal handler then
+// skips the core dump and ends the process with _exit(EIO) (src/global/
+// signal_handler.cc at Tentacle 20.2.4 and Squid 19.2.5), so the OSD
+// container exits 5 instead of 134. The attached tmpfs run observed exactly
+// that after "_aio_thread got r=-28".
+const eioCrashExit = 5
+
 // attachDaemonState classifies the OSD container after the filler was
 // released, against the inspection taken when the daemon was attached.
 //
 //   - up: running, not paused or restarting, and the same start instant. A
 //     different start instant is another process instance, so it is unknown.
-//   - aborted: the same instance exited with status 134 and no OOM kill.
-//     Status 134 is also what an external SIGABRT yields, so the result is "the
-//     process aborted", not proof that BlueFS caused it.
+//   - aborted: the same instance exited with status 134 (SIGABRT) or 5 (Ceph's
+//     I/O-error abort, _exit(EIO)) and no OOM kill. Status 134 is also what an
+//     external SIGABRT yields, and status 5 what any exit(EIO) yields, so the
+//     result is "the process aborted", not proof of its cause; the OSD's log
+//     says which.
 //   - unknown: anything else, including 137 (SIGKILL from OOM, docker kill or
 //     the harness), OOMKilled, other exit codes and a paused or restarting
 //     container. Those are not capacity outcomes.
@@ -238,7 +250,8 @@ func attachDaemonState(attached, now *attachContainerState) (string, error) {
 	switch {
 	case now.Running && !now.Paused && !now.Restarting && !now.OOMKilled:
 		return daemonUp, nil
-	case !now.Running && !now.Paused && !now.Restarting && !now.OOMKilled && now.Status == "exited" && now.ExitCode == sigabrtExit:
+	case !now.Running && !now.Paused && !now.Restarting && !now.OOMKilled && now.Status == "exited" &&
+		(now.ExitCode == sigabrtExit || now.ExitCode == eioCrashExit):
 		return daemonAborted, nil
 	default:
 		return daemonUnknown, nil

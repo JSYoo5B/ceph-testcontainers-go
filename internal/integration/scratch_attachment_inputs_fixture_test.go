@@ -202,6 +202,9 @@ func TestAttachDaemonStateSeparatesAbortFromOtherExits(t *testing.T) {
 	}{
 		{"same instance running", attachInspect("running", true, 0, false, attachT1), daemonUp},
 		{"aborted", attachInspect("exited", false, 134, false, attachT1), daemonAborted},
+		{"I/O-error abort", attachInspect("exited", false, 5, false, attachT1), daemonAborted},
+		{"oom flag on the I/O-error status", attachInspect("exited", false, 5, true, attachT1), daemonUnknown},
+		{"I/O-error status on another instance", attachInspect("exited", false, 5, false, attachT2), daemonUnknown},
 		{"sigkill", attachInspect("exited", false, 137, false, attachT1), daemonUnknown},
 		{"oom killed", attachInspect("exited", false, 137, true, attachT1), daemonUnknown},
 		{"oom flag on abort status", attachInspect("exited", false, 134, true, attachT1), daemonUnknown},
