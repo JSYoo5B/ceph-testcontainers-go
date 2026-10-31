@@ -719,17 +719,20 @@
         "CEPH_MSG_OSD_BACKOFF",
         "CEPH_FEATURE_RADOS_BACKOFF"
       ],
-      "status": "partial",
+      "status": "covered",
       "evidence": "native-state",
       "cases": [
         {
           "test": "TestOSDBackoffReceipt",
           "receipt": "OSD_BACKOFF_RECEIPT",
           "asserts": "a PG-wide backoff: with noout and a non-primary replica of a replicas/min_size 3 pool stopped, the PG is peered but not active under the same primary; one asynchronous python-rados read gets a BLOCK of the whole PG from the primary in the client's debug_ms log, and the primary logs the client's ACK_BLOCK with the same PG, ID, range and epoch on the connection that carried the read, both before the replica starts again; the client then receives the UNBLOCK with the same PG, ID and range at the same or a later epoch on the same connection, the original read is answered only after it, and it returns the seeded length and SHA-256; extra BLOCKs and reconnects are kept in the receipt"
+        },
+        {
+          "test": "TestOSDObjectBackoffReceipt",
+          "receipt": "OSD_OBJECT_BACKOFF_RECEIPT",
+          "asserts": "an object-scoped backoff: with noout, norecover and nobackfill set, an object of a replicas 2, min_size 1 pool is rewritten while the replica is stopped, so once the replica returns the PG is active and the object degraded under the same primary; with osd_backoff_on_degraded on the primary, one asynchronous python-rados writefull gets a BLOCK of that object alone (an empty range at its head) in the client's debug_ms log, and the primary logs the client's ACK_BLOCK with the same PG, ID, range and epoch on the connection that carried the write; the client then receives the UNBLOCK with the same PG, ID and range on the same connection once the write has made the primary recover the object, the write is answered only after it with result 0, and a fresh client reads the written length and SHA-256 at a later version; a PG-wide BLOCK does not satisfy the object scope"
         }
-      ],
-      "gap": "Only the PG-wide backoff of a peered but inactive PG has a recipe. No recipe makes an OSD send an object-scoped backoff (a degraded or unfound object, osd_backoff_on_degraded), and the recipe's native result is per release: a pull request runs it on Tentacle only.",
-      "owner": "#5"
+      ]
     },
     {
       "id": "client-osd/blocklist-and-full",
@@ -1404,16 +1407,19 @@
         "MSG_OSD_PG_LEASE",
         "MSG_OSD_PG_LEASE_ACK"
       ],
-      "status": "partial",
-      "evidence": "outcome",
+      "status": "covered",
+      "evidence": "native-state",
       "cases": [
+        {
+          "test": "TestOSDPeeringMessages",
+          "receipt": "OSD_PEERING_MESSAGES_RECEIPT",
+          "asserts": "a new one-PG pool on two OSDs, written once and deep scrubbed, with the MON and the OSDs at debug_ms 1 and the OSDs at debug_osd 10: each of pg_create2 (MON to primary), pg_query2, PGlog, pg_lease and replica_scrub (primary to replica) and pg_notify2, pg_info2, pg_lease_ack and rep_scrubmap (replica to primary) about that PG is logged as sent by one daemon to a messenger of the other and as received by the other from the sender's messenger with the same printed message; in the primary's log pg_query2 is sent and pg_notify2 received between entering Peering/GetInfo and Peering/GetLog, PGlog is sent after entering Active and the replica's pg_info2 received before Active/Clean, replica_scrub is sent after the scrubber enters ActiveScrubbing and rep_scrubmap received after it enters WaitReplicas; in the replica's log PGlog is received before entering ReplicaActive and rep_scrubmap is sent after its scrubber enters ReplicaBuildingMap for the received replica_scrub; a line of these messages whose PG or v2 address cannot be read fails the test"
+        },
         {
           "test": "TestScrubInconsistency",
           "asserts": "a deep scrub finds an injected inconsistency"
         }
-      ],
-      "gap": "Peering and scrub run as outcomes; no recipe observes these messages or their per-step state.",
-      "owner": "#5"
+      ]
     }
   ]
 }

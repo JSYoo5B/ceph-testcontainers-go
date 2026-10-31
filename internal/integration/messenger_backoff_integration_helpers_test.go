@@ -145,21 +145,39 @@ func parseBackoffLog(lines []string) []backoffEvent {
 }
 
 // backoffTarget is what the chain must concern: the retained client, the
-// primary of the seeded object's PG, the PG and the object.
+// primary of the seeded object's PG, the PG and the object. Op is the held
+// request's operation, "read" or "writefull", and Scope what its BLOCK
+// covers: "pg", the whole PG of a one-PG pool, or "object", the object alone.
 type backoffTarget struct {
 	Client  string `json:"client"`
 	Primary string `json:"primary"`
 	PGID    string `json:"pgid"`
 	Object  string `json:"object"`
+	Op      string `json:"op"`
+	Scope   string `json:"scope"`
 }
 
-// backoffChain is the joined BLOCK, ACK_BLOCK and UNBLOCK of one PG backoff
-// and the read it held. Block, Unblock and Reply come from the client's log,
+// covers reports whether a backoff message covers what the target's scope
+// names: from the start of the pool's hash space to MAX for "pg", and the
+// object's head alone, as an empty range at it, for "object".
+func (t backoffTarget) covers(e backoffEvent) bool {
+	pool, _, _ := strings.Cut(t.PGID, ".")
+	switch t.Scope {
+	case "pg":
+		return e.Begin == pool+":00000000::::0" && e.End == "MAX"
+	case "object":
+		return e.Begin == e.End && strings.HasPrefix(e.Begin, pool+":") && strings.HasSuffix(e.Begin, ":::"+t.Object+":head")
+	}
+	return false
+}
+
+// backoffChain is the joined BLOCK, ACK_BLOCK and UNBLOCK of one backoff and
+// the request it held. Block, Unblock and Reply come from the client's log,
 // AckReceived and OpAtPrimary from the primary's. ExtraBlocks and Reconnects
 // keep what else happened, so that noise stays visible.
 type backoffChain struct {
 	ClientAddr  string         `json:"client_addr"`
-	Read        backoffEvent   `json:"read"`
+	Request     backoffEvent   `json:"request"`
 	Block       backoffEvent   `json:"block"`
 	AckSent     *backoffEvent  `json:"ack_sent,omitempty"`
 	OpAtPrimary backoffEvent   `json:"op_at_primary"`
@@ -175,25 +193,26 @@ func (e backoffEvent) sameRange(other backoffEvent) bool {
 	return e.PGID == other.PGID && e.ID == other.ID && e.Begin == other.Begin && e.End == other.End
 }
 
-// bindBackoffBlock joins the first half of the chain: the client sent a read
-// of the object, then received a BLOCK of the object's PG from the primary,
-// and the primary received an ACK_BLOCK with the same PG, ID, range and epoch
-// from the client's address on the connection that also carried the read.
+// bindBackoffBlock joins the first half of the chain: the client sent the
+// target's operation on the object, then received from the primary a BLOCK
+// of the object's PG covering the target's scope, and the primary received
+// an ACK_BLOCK with the same PG, ID, range and epoch from the client's
+// address on the connection that also carried the request.
 // Backoff IDs are per session, so an ID alone joins nothing.
 func bindBackoffBlock(client, primary []backoffEvent, target backoffTarget) (backoffChain, error) {
 	chain := backoffChain{ExtraBlocks: []backoffEvent{}, Reconnects: []backoffEvent{}}
-	read := slices.IndexFunc(client, func(e backoffEvent) bool {
-		return e.Kind == "osd_op" && e.Dir == "out" && e.Object == target.Object && strings.HasPrefix(e.Ops, "read ")
+	request := slices.IndexFunc(client, func(e backoffEvent) bool {
+		return e.Kind == "osd_op" && e.Dir == "out" && e.Object == target.Object && strings.HasPrefix(e.Ops, target.Op+" ")
 	})
-	if read < 0 {
-		return chain, fmt.Errorf("the client log has no read of %s", target.Object)
+	if request < 0 {
+		return chain, fmt.Errorf("the client log has no %s of %s", target.Op, target.Object)
 	}
-	chain.Read = client[read]
+	chain.Request = client[request]
 	block := slices.IndexFunc(client, func(e backoffEvent) bool {
-		return e.Line > chain.Read.Line && e.Kind == "backoff" && e.Dir == "in" && e.Op == "block" && e.Peer == target.Primary && e.PGID == target.PGID
+		return e.Line > chain.Request.Line && e.Kind == "backoff" && e.Dir == "in" && e.Op == "block" && e.Peer == target.Primary && e.PGID == target.PGID && target.covers(e)
 	})
 	if block < 0 {
-		return chain, fmt.Errorf("the client received no BLOCK of %s from %s after its read", target.PGID, target.Primary)
+		return chain, fmt.Errorf("the client received no BLOCK of %s covering the %s scope from %s after its %s", target.PGID, target.Scope, target.Primary, target.Op)
 	}
 	chain.Block, chain.ClientAddr = client[block], client[block].Local
 	for _, e := range client {
@@ -225,7 +244,7 @@ func bindBackoffBlock(client, primary []backoffEvent, target backoffTarget) (bac
 	}
 	for _, ack := range acks {
 		op := slices.IndexFunc(primary, func(e backoffEvent) bool {
-			return fromClient(e) && e.Kind == "osd_op" && e.Source == target.Client && e.Tid == chain.Read.Tid && e.Gen == ack.Gen && e.Line < ack.Line
+			return fromClient(e) && e.Kind == "osd_op" && e.Source == target.Client && e.Tid == chain.Request.Tid && e.Gen == ack.Gen && e.Line < ack.Line
 		})
 		if op < 0 {
 			continue
@@ -236,22 +255,22 @@ func bindBackoffBlock(client, primary []backoffEvent, target backoffTarget) (bac
 		chain.AckReceived, chain.OpAtPrimary = ack, primary[op]
 		return chain, nil
 	}
-	return chain, fmt.Errorf("no ACK_BLOCK id %d at %s came on the connection that carried read tid %d", chain.Block.ID, target.Primary, chain.Read.Tid)
+	return chain, fmt.Errorf("no ACK_BLOCK id %d at %s came on the connection that carried %s tid %d", chain.Block.ID, target.Primary, target.Op, chain.Request.Tid)
 }
 
 // released reports whether the client log already shows an UNBLOCK of the
-// chain's backoff or a reply to its read.
+// chain's backoff or a reply to its request.
 func (c backoffChain) released(client []backoffEvent) bool {
 	return slices.ContainsFunc(client, func(e backoffEvent) bool {
 		return e.Line > c.Block.Line && e.Dir == "in" && (e.Kind == "backoff" && e.Op == "unblock" && e.PGID == c.Block.PGID ||
-			e.Kind == "osd_op_reply" && e.Tid == c.Read.Tid)
+			e.Kind == "osd_op_reply" && e.Tid == c.Request.Tid)
 	})
 }
 
 // bindBackoffRelease completes a chain from bindBackoffBlock: the primary
 // sent an UNBLOCK with the BLOCK's PG, ID and range on the same connection,
-// at the BLOCK's epoch or a later one, and only then answered the read, with
-// result 0. A reconnect between BLOCK and UNBLOCK leaves the chain unjoined.
+// at the BLOCK's epoch or a later one, and only then answered the request,
+// with result 0. A reconnect between BLOCK and UNBLOCK leaves the chain unjoined.
 func bindBackoffRelease(chain *backoffChain, client []backoffEvent, target backoffTarget) error {
 	var others []uint64
 	unblock := slices.IndexFunc(client, func(e backoffEvent) bool {
@@ -276,17 +295,17 @@ func bindBackoffRelease(chain *backoffChain, client []backoffEvent, target backo
 	}
 	chain.Unblock = &e
 	reply := slices.IndexFunc(client, func(e backoffEvent) bool {
-		return e.Kind == "osd_op_reply" && e.Dir == "in" && e.Tid == chain.Read.Tid && e.Object == target.Object
+		return e.Kind == "osd_op_reply" && e.Dir == "in" && e.Tid == chain.Request.Tid && e.Object == target.Object
 	})
 	if reply < 0 {
-		return fmt.Errorf("the client received no reply to read tid %d", chain.Read.Tid)
+		return fmt.Errorf("the client received no reply to %s tid %d", target.Op, chain.Request.Tid)
 	}
 	r := client[reply]
 	if r.Line < e.Line {
-		return fmt.Errorf("read tid %d was answered before the UNBLOCK", chain.Read.Tid)
+		return fmt.Errorf("%s tid %d was answered before the UNBLOCK", target.Op, chain.Request.Tid)
 	}
 	if r.Peer != target.Primary || r.Result != 0 {
-		return fmt.Errorf("read tid %d answered by %s with result %d", chain.Read.Tid, r.Peer, r.Result)
+		return fmt.Errorf("%s tid %d answered by %s with result %d", target.Op, chain.Request.Tid, r.Peer, r.Result)
 	}
 	chain.Reply = &r
 	return nil
@@ -298,33 +317,49 @@ const (
 	backoffWorkdir = "/tmp/tc-backoff"
 )
 
-// backoffPayload is the seeded object's content.
-func backoffPayload() []byte {
-	payload := make([]byte, 0, 256*64)
-	for range 64 {
-		for value := range 256 {
-			payload = append(payload, byte(value))
-		}
+// backoffPayload is the object's content of one generation, as
+// backoffPython's payload makes it: 16 KiB of (i*31 + generation) mod 256.
+func backoffPayload(generation int) []byte {
+	payload := make([]byte, 16<<10)
+	for i := range payload {
+		payload[i] = byte(i*31 + generation)
 	}
 	return payload
 }
 
-// backoffSeeder writes the object once and reads it back.
-const backoffSeeder = `import json, sys, rados
-payload = bytes(range(256)) * 64
+// backoffPython is the payload function the Python actors share with
+// backoffPayload.
+const backoffPython = `
+def payload(generation):
+    return bytes((i * 31 + generation) % 256 for i in range(16 << 10))
+`
+
+// backoffSeeder writes the object's generation given as its third argument
+// with a fresh client and reads it back.
+const backoffSeeder = `import json, sys, rados` + backoffPython + `
+data = payload(int(sys.argv[3]))
 with rados.Rados(conffile="/etc/ceph/ceph.conf") as cluster:
     with cluster.open_ioctx(sys.argv[1]) as io:
-        io.write_full(sys.argv[2], payload)
-        assert io.read(sys.argv[2], len(payload) + 1, 0) == payload
+        io.write_full(sys.argv[2], data)
+        assert io.read(sys.argv[2], len(data) + 1, 0) == data
         print(json.dumps({"version": io.get_last_version()}))`
 
+// backoffVerifier reads the object with a fresh client.
+const backoffVerifier = `import hashlib, json, sys, rados
+with rados.Rados(conffile="/etc/ceph/ceph.conf") as cluster:
+    with cluster.open_ioctx(sys.argv[1]) as io:
+        data = io.read(sys.argv[2], (16 << 10) + 1, 0)
+        print(json.dumps({"size": len(data), "sha256": hashlib.sha256(data).hexdigest(), "version": io.get_last_version()}))`
+
 // backoffReader is the retained client. It stats the object, which opens
-// its session with the primary, publishes "ready", and waits for "read" on
-// its standard input. It then submits one asynchronous read with no client
-// timeout, publishes "submitted" and prints the read's result when it
-// completes. Its messenger and Objecter log go to client.log.
-const backoffReader = `import hashlib, json, os, sys, threading, time, rados
-pool, obj, workdir = sys.argv[1:4]
+// its session with the primary, publishes "ready", and waits for its
+// operation, "read" or "write", on its standard input. It then submits one
+// asynchronous read of the object, or full write of the object's generation
+// 2, with no client timeout, publishes "submitted" and prints the result
+// when it completes, with what it then reads back after a write. Its
+// messenger and Objecter log go to client.log.
+const backoffReader = `import hashlib, json, os, sys, threading, time, rados` + backoffPython + `
+pool, obj, workdir, op = sys.argv[1:5]
 os.makedirs(workdir, exist_ok=True)
 for name in ("ready", "submitted", "client.log"):
     if os.path.exists(os.path.join(workdir, name)):
@@ -340,17 +375,20 @@ with rados.Rados(conffile="/etc/ceph/ceph.conf", conf=conf) as cluster:
     with cluster.open_ioctx(pool) as io:
         size, _ = io.stat(obj)
         publish("ready", client="client.%d" % cluster.get_instance_id(), size=size, pid=os.getpid())
-        if sys.stdin.readline().strip() != "read":
-            raise SystemExit("no read signal")
+        if sys.stdin.readline().strip() != op:
+            raise SystemExit("no %s signal" % op)
         done, result = threading.Event(), {}
         def complete(completion, data):
             result["rc"], result["data"] = completion.get_return_value(), data
             done.set()
         started = time.monotonic()
-        io.aio_read(obj, size + 1, 0, complete)
+        if op == "read":
+            io.aio_read(obj, size + 1, 0, complete)
+        else:
+            io.aio_write_full(obj, payload(2), lambda completion: complete(completion, None))
         publish("submitted", pid=os.getpid())
         done.wait()
-        data = result["data"] or b""
+        data = (result["data"] if op == "read" else io.read(obj, (16 << 10) + 1, 0)) or b""
         print(json.dumps({"rc": result["rc"], "size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
                           "seconds": round(time.monotonic() - started, 3)}))`
 
@@ -426,13 +464,13 @@ func backoffDaemonLog(t *testing.T, ctx context.Context, ctr testcontainers.Cont
 }
 
 // waitBackoffPG polls the pool's only PG until ok accepts it.
-func waitBackoffPG(t *testing.T, parent context.Context, cluster *ceph.Container, what string, ok func(ceph.PGState) bool) (ceph.PGState, uint32) {
+func waitBackoffPG(t *testing.T, parent context.Context, cluster *ceph.Container, pool, what string, ok func(ceph.PGState) bool) (ceph.PGState, uint32) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
 	var last string
 	for {
-		snapshot, err := harness.PoolHandle(t, ctx, cluster, backoffPool).PGs(ctx)
+		snapshot, err := harness.PoolHandle(t, ctx, cluster, pool).PGs(ctx)
 		if err == nil && len(snapshot.PGs) == 1 {
 			if ok(snapshot.PGs[0]) {
 				return snapshot.PGs[0], snapshot.OSDMapEpochAfter
@@ -518,19 +556,19 @@ func testOSDBackoffReceipt(t *testing.T) {
 		receipt.Run = run + "/" + os.Getenv("GITHUB_RUN_ATTEMPT")
 	}
 	seed, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
-		Argv: []string{"python3", "-c", backoffSeeder, backoffPool, backoffObject}, Timeout: 2 * time.Minute,
+		Argv: []string{"python3", "-c", backoffSeeder, backoffPool, backoffObject, "0"}, Timeout: 2 * time.Minute,
 		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "backoff seed",
 	})
 	if err != nil || seed.ExitCode != 0 || !seed.Complete() {
 		t.Fatalf("seed: exit %d: %v: %.2048s", seed.ExitCode, err, seed.Stderr)
 	}
-	payload := backoffPayload()
+	payload := backoffPayload(0)
 	sum := sha256.Sum256(payload)
 	receipt.Seeded = harness.HeldReadback{Size: len(payload), SHA256: hex.EncodeToString(sum[:])}
 	if err := json.Unmarshal([]byte(harness.LastJSONLine(string(seed.Stdout))), &receipt.Seeded); err != nil || receipt.Seeded.Version == 0 {
 		t.Fatalf("seed output: %v: %.512s", err, seed.Stdout)
 	}
-	clean, epoch := waitBackoffPG(t, ctx, cluster, "clean on three OSDs", func(pg ceph.PGState) bool {
+	clean, epoch := waitBackoffPG(t, ctx, cluster, backoffPool, "clean on three OSDs", func(pg ceph.PGState) bool {
 		return pg.State == "active+clean" && len(pg.Acting) == 3 && slices.Equal(pg.Up, pg.Acting)
 	})
 	receipt.Clean = placementOf(clean, epoch)
@@ -554,7 +592,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 	if primary == nil || replica == nil {
 		t.Fatalf("no primary and replica OSD containers for %+v", clean)
 	}
-	receipt.Target = backoffTarget{Primary: fmt.Sprintf("osd.%d", primary.ID), PGID: clean.PGID.String(), Object: backoffObject}
+	receipt.Target = backoffTarget{Primary: fmt.Sprintf("osd.%d", primary.ID), PGID: clean.PGID.String(), Object: backoffObject, Op: "read", Scope: "pg"}
 	receipt.Replica = fmt.Sprintf("osd.%d", replica.ID)
 	receipt.Images.OSD, receipt.Images.Client = harness.ImageID(t, ctx, primary), harness.ImageID(t, ctx, client)
 	version := targetedJSON[map[string]string](t, ctx, cluster, "tell", receipt.Target.Primary, "version")
@@ -593,7 +631,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 	go func() {
 		defer close(reader.done)
 		reader.result, reader.err = cluster.RunNativeCommand(readCtx, client, ceph.NativeCommand{
-			Argv: []string{"python3", "-c", backoffReader, backoffPool, backoffObject, backoffWorkdir}, Timeout: 12 * time.Minute,
+			Argv: []string{"python3", "-c", backoffReader, backoffPool, backoffObject, backoffWorkdir, "read"}, Timeout: 12 * time.Minute,
 			MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "retained backoff reader", Input: reader.input, MaxInput: 64,
 		})
 	}()
@@ -626,7 +664,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 			restore(receipt.Replica+" start", replica.Start)
 		}
 	})
-	held, epoch := waitBackoffPG(t, ctx, cluster, "peered but inactive without "+receipt.Replica, func(pg ceph.PGState) bool {
+	held, epoch := waitBackoffPG(t, ctx, cluster, backoffPool, "peered but inactive without "+receipt.Replica, func(pg ceph.PGState) bool {
 		return peeredInactive(pg.State) && !slices.Contains(pg.Acting, replica.ID) && pg.ActingPrimary == primary.ID
 	})
 	receipt.Held = placementOf(held, epoch)
@@ -650,7 +688,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 	}
-	still, epoch := waitBackoffPG(t, ctx, cluster, "still held", func(pg ceph.PGState) bool { return true })
+	still, epoch := waitBackoffPG(t, ctx, cluster, backoffPool, "still held", func(pg ceph.PGState) bool { return true })
 	if !peeredInactive(still.State) || still.ActingPrimary != primary.ID || reader.finished() {
 		t.Fatalf("the hold ended before the replica returned: %s primary %d, reader done %t", still.State, still.ActingPrimary, reader.finished())
 	}
@@ -697,7 +735,7 @@ func testOSDBackoffReceipt(t *testing.T) {
 	t.Logf("OSD_BACKOFF_RAW unblock: %s", final.Unblock.Text)
 	t.Logf("OSD_BACKOFF_RAW reply: %s", final.Reply.Text)
 
-	after, epoch := waitBackoffPG(t, ctx, cluster, "clean again on three OSDs", func(pg ceph.PGState) bool {
+	after, epoch := waitBackoffPG(t, ctx, cluster, backoffPool, "clean again on three OSDs", func(pg ceph.PGState) bool {
 		return pg.State == "active+clean" && len(pg.Acting) == 3 && slices.Contains(pg.Acting, replica.ID)
 	})
 	receipt.After = placementOf(after, epoch)
@@ -711,4 +749,267 @@ func testOSDBackoffReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("OSD_BACKOFF_RECEIPT %s", data)
+}
+
+const (
+	objectBackoffPool   = "tc-object-backoff"
+	objectBackoffObject = "backoff-write"
+)
+
+// osdObjectBackoffReceipt is the evidence of one object-scoped backoff that
+// a native client observed for a write to a degraded object. It is evidence
+// for this release and image only.
+type osdObjectBackoffReceipt struct {
+	Release  string `json:"release"`
+	Platform string `json:"platform"`
+	Run      string `json:"run,omitempty"`
+	Images   struct {
+		OSD    string `json:"osd"`
+		Client string `json:"client"`
+	} `json:"images"`
+	Target   backoffTarget    `json:"target"`
+	Replica  string           `json:"replica"`
+	Clean    backoffPlacement `json:"clean"`
+	Down     backoffPlacement `json:"down"`
+	Degraded backoffPlacement `json:"degraded"`
+	// DownVersion is the object version written while the replica was down,
+	// DegradedObjects how many objects the PG reported degraded just before
+	// the held write.
+	DownVersion     uint64               `json:"down_version"`
+	DegradedObjects int64                `json:"degraded_objects"`
+	Chain           backoffChain         `json:"chain"`
+	WriteSeconds    float64              `json:"write_seconds"`
+	ReaderReadback  harness.HeldReadback `json:"reader_readback"`
+	Readback        harness.HeldReadback `json:"readback"`
+	After           backoffPlacement     `json:"after"`
+	Cleanup         []string             `json:"cleanup"`
+}
+
+// waitDaemonConfig waits until daemon runs with option set to value.
+func waitDaemonConfig(t *testing.T, ctx context.Context, cluster *ceph.Container, daemon, option, value string) {
+	t.Helper()
+	for deadline := time.Now().Add(time.Minute); ; {
+		got := targetedJSON[map[string]string](t, ctx, cluster, "tell", daemon, "config", "get", option)[option]
+		if got == value || strings.HasPrefix(got, value+"/") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s runs with %s %q", daemon, option, got)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// testOSDObjectBackoffReceipt makes the primary of a PG send an
+// object-scoped backoff to a native client and records it. The pool has two
+// replicas and min_size 1. With noout, norecover and nobackfill set, the
+// object is rewritten while the replica is stopped, so once the replica
+// returns the PG is active and the object is degraded, missing on the
+// replica. The primary runs with osd_backoff_on_degraded, so a retained
+// python-rados client's full write of the object gets a BLOCK of that object
+// alone. The primary's log must show the client's ACK_BLOCK on the
+// connection that carried the write, the client must then receive the
+// UNBLOCK, which comes once the write has made the primary recover the
+// object, and only then the write's reply, with result 0. A fresh client
+// then reads the written bytes back.
+func testOSDObjectBackoffReceipt(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
+	defer cancel()
+	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(2)))
+	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: objectBackoffPool, PGNum: 1, Replicas: 2, MinSize: 1, Application: "rados"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cluster.WaitForClean(ctx); err != nil {
+		t.Fatal(err)
+	}
+	receipt := osdObjectBackoffReceipt{Platform: runtime.GOOS + "/" + runtime.GOARCH}
+	if run := os.Getenv("GITHUB_RUN_ID"); run != "" {
+		receipt.Run = run + "/" + os.Getenv("GITHUB_RUN_ATTEMPT")
+	}
+	seed := func(generation int) uint64 {
+		result, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+			Argv: []string{"python3", "-c", backoffSeeder, objectBackoffPool, objectBackoffObject, strconv.Itoa(generation)}, Timeout: 2 * time.Minute,
+			MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: fmt.Sprintf("object backoff generation %d", generation),
+		})
+		if err != nil || result.ExitCode != 0 || !result.Complete() {
+			t.Fatalf("write generation %d: exit %d: %v: %.2048s", generation, result.ExitCode, err, result.Stderr)
+		}
+		var written struct {
+			Version uint64 `json:"version"`
+		}
+		if err := json.Unmarshal([]byte(harness.LastJSONLine(string(result.Stdout))), &written); err != nil || written.Version == 0 {
+			t.Fatalf("write generation %d output: %v: %.512s", generation, err, result.Stdout)
+		}
+		return written.Version
+	}
+	seed(0)
+	clean, epoch := waitBackoffPG(t, ctx, cluster, objectBackoffPool, "clean on two OSDs", func(pg ceph.PGState) bool {
+		return pg.State == "active+clean" && len(pg.Acting) == 2 && slices.Equal(pg.Up, pg.Acting)
+	})
+	receipt.Clean = placementOf(clean, epoch)
+	var primary, replica *ceph.OSDContainer
+	for _, osd := range clusteraccess.OSDs(t, cluster) {
+		switch {
+		case osd.ID == clean.ActingPrimary:
+			primary = osd
+		case slices.Contains(clean.Acting, osd.ID):
+			replica = osd
+		}
+	}
+	if primary == nil || replica == nil {
+		t.Fatalf("no primary and replica OSD containers for %+v", clean)
+	}
+	receipt.Target = backoffTarget{Primary: fmt.Sprintf("osd.%d", primary.ID), PGID: clean.PGID.String(), Object: objectBackoffObject, Op: "writefull", Scope: "object"}
+	receipt.Replica = fmt.Sprintf("osd.%d", replica.ID)
+	receipt.Images.OSD, receipt.Images.Client = harness.ImageID(t, ctx, primary), harness.ImageID(t, ctx, client)
+	receipt.Release = targetedJSON[map[string]string](t, ctx, cluster, "tell", receipt.Target.Primary, "version")["version"]
+
+	restore := func(what string, fn func(context.Context) error) {
+		restoreCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer stop()
+		outcome := "restored"
+		if err := fn(restoreCtx); err != nil {
+			outcome = err.Error()
+			t.Errorf("restore %s: %v", what, err)
+		}
+		receipt.Cleanup = append(receipt.Cleanup, what+": "+outcome)
+	}
+	flags := map[ceph.OSDFlag]*override.OSDFlagHandle{}
+	for _, flag := range []ceph.OSDFlag{ceph.OSDFlagNoOut, ceph.OSDFlagNoRecover, ceph.OSDFlagNoBackfill} {
+		set, err := override.SetOSDFlag(ctx, cluster, flag, true)
+		t.Cleanup(func() { restore(string(flag), set.Restore) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		flags[flag] = set
+	}
+	stopTimeout := 10 * time.Second
+	if err := replica.Stop(ctx, &stopTimeout); err != nil {
+		t.Fatal(err)
+	}
+	stopped := true
+	t.Cleanup(func() {
+		if stopped {
+			restore(receipt.Replica+" start", replica.Start)
+		}
+	})
+	down, epoch := waitBackoffPG(t, ctx, cluster, objectBackoffPool, "active without "+receipt.Replica, func(pg ceph.PGState) bool {
+		return strings.HasPrefix(pg.State, "active") && slices.Equal(pg.Acting, []int{primary.ID})
+	})
+	receipt.Down = placementOf(down, epoch)
+	receipt.DownVersion = seed(1)
+	if err := replica.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stopped = false
+	degraded, epoch := waitBackoffPG(t, ctx, cluster, objectBackoffPool, "active and degraded on two OSDs", func(pg ceph.PGState) bool {
+		return strings.HasPrefix(pg.State, "active") && strings.Contains(pg.State, "degraded") && len(pg.Acting) == 2 &&
+			pg.ActingPrimary == primary.ID && pg.Stats.ObjectsDegraded > 0
+	})
+	receipt.Degraded = placementOf(degraded, epoch)
+
+	for _, setting := range []ceph.ConfigSetting{
+		{Section: receipt.Target.Primary, Name: "debug_ms", Value: "1"},
+		{Section: receipt.Target.Primary, Name: "osd_backoff_on_degraded", Value: "true"},
+	} {
+		set, err := override.SetConfig(ctx, cluster, setting)
+		t.Cleanup(func() { restore(setting.Name+" of "+receipt.Target.Primary, set.Restore) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitDaemonConfig(t, ctx, cluster, receipt.Target.Primary, setting.Name, setting.Value)
+	}
+
+	writer := &backoffRead{input: ceph.NewNativeInput(), done: make(chan struct{})}
+	writeCtx, stopWriter := context.WithCancel(ctx)
+	go func() {
+		defer close(writer.done)
+		writer.result, writer.err = cluster.RunNativeCommand(writeCtx, client, ceph.NativeCommand{
+			Argv: []string{"python3", "-c", backoffReader, objectBackoffPool, objectBackoffObject, backoffWorkdir, "write"}, Timeout: 10 * time.Minute,
+			MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "retained backoff writer", Input: writer.input, MaxInput: 64,
+		})
+	}()
+	t.Cleanup(func() {
+		stopWriter()
+		<-writer.done
+		var unstopped *ceph.NativeCommandUnstoppedError
+		if errors.As(writer.err, &unstopped) {
+			restore("retained writer", unstopped.Stop)
+		}
+	})
+	ready := backoffMark(t, ctx, client, "ready", writer)
+	receipt.Target.Client, _ = ready["client"].(string)
+	if receipt.Target.Client == "" {
+		t.Fatalf("writer ready mark %v", ready)
+	}
+	still, _ := waitBackoffPG(t, ctx, cluster, objectBackoffPool, "still degraded", func(pg ceph.PGState) bool { return true })
+	receipt.DegradedObjects = still.Stats.ObjectsDegraded
+	if still.Stats.ObjectsDegraded == 0 || still.ActingPrimary != primary.ID {
+		t.Fatalf("the object was recovered before the write: %s, %d degraded, primary %d", still.State, still.Stats.ObjectsDegraded, still.ActingPrimary)
+	}
+	if err := writer.input.Write(ctx, []byte("write\n")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-writer.done:
+	case <-time.After(5 * time.Minute):
+		t.Fatal("the held write did not complete")
+	}
+	if writer.err != nil || writer.result.ExitCode != 0 || !writer.result.Complete() {
+		t.Fatalf("writer: exit %d, complete %t: %v: %.2048s", writer.result.ExitCode, writer.result.Complete(), writer.err, writer.result.Stderr)
+	}
+	var written struct {
+		RC      int     `json:"rc"`
+		Size    int     `json:"size"`
+		SHA256  string  `json:"sha256"`
+		Seconds float64 `json:"seconds"`
+	}
+	if err := json.Unmarshal([]byte(harness.LastJSONLine(string(writer.result.Stdout))), &written); err != nil {
+		t.Fatalf("writer output: %v: %.512s", err, writer.result.Stdout)
+	}
+	payload := backoffPayload(2)
+	sum := sha256.Sum256(payload)
+	want := hex.EncodeToString(sum[:])
+	receipt.ReaderReadback = harness.HeldReadback{Client: receipt.Target.Client, Size: written.Size, SHA256: written.SHA256}
+	receipt.WriteSeconds = written.Seconds
+	if written.RC != 0 || written.Size != len(payload) || written.SHA256 != want {
+		t.Fatalf("held write returned %+v, want rc 0 and %d bytes with SHA-256 %s", written, len(payload), want)
+	}
+
+	clientEvents := parseBackoffLog(backoffClientLog(t, ctx, client))
+	chain, err := bindBackoffBlock(clientEvents, parseBackoffLog(backoffDaemonLog(t, ctx, primary)), receipt.Target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bindBackoffRelease(&chain, clientEvents, receipt.Target); err != nil {
+		t.Fatal(err)
+	}
+	receipt.Chain = chain
+	t.Logf("OSD_OBJECT_BACKOFF_RAW block: %s", chain.Block.Text)
+	t.Logf("OSD_OBJECT_BACKOFF_RAW ack at %s: %s", receipt.Target.Primary, chain.AckReceived.Text)
+	t.Logf("OSD_OBJECT_BACKOFF_RAW unblock: %s", chain.Unblock.Text)
+	t.Logf("OSD_OBJECT_BACKOFF_RAW reply: %s", chain.Reply.Text)
+
+	read, err := cluster.RunNativeCommand(ctx, client, ceph.NativeCommand{
+		Argv: []string{"python3", "-c", backoffVerifier, objectBackoffPool, objectBackoffObject}, Timeout: 2 * time.Minute,
+		MaxStdout: 64 << 10, MaxStderr: 64 << 10, Label: "object backoff readback",
+	})
+	if err != nil || read.ExitCode != 0 || !read.Complete() {
+		t.Fatalf("readback: exit %d: %v: %.2048s", read.ExitCode, err, read.Stderr)
+	}
+	if err := json.Unmarshal([]byte(harness.LastJSONLine(string(read.Stdout))), &receipt.Readback); err != nil || receipt.Readback.SHA256 != want || receipt.Readback.Size != len(payload) || receipt.Readback.Version <= receipt.DownVersion {
+		t.Fatalf("readback %+v: %v, want %d bytes with SHA-256 %s after version %d", receipt.Readback, err, len(payload), want, receipt.DownVersion)
+	}
+	for flag, set := range flags {
+		restore(string(flag), set.Restore)
+	}
+	after, epoch := waitBackoffPG(t, ctx, cluster, objectBackoffPool, "clean again on two OSDs", func(pg ceph.PGState) bool {
+		return pg.State == "active+clean" && len(pg.Acting) == 2 && pg.Stats.ObjectsDegraded == 0
+	})
+	receipt.After = placementOf(after, epoch)
+	data, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("OSD_OBJECT_BACKOFF_RECEIPT %s", data)
 }

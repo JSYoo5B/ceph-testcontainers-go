@@ -373,7 +373,9 @@ the test splits the directory to get several requests.
 A client test that follows a request past its first daemon needs to know
 which internal paths a fixture exercises. *Native state* means the daemons
 reported the intermediate condition; *outcome* means only the result was
-checked. No test inspects the messages on these paths.
+checked. Apart from the PG messages in
+[PG creation, peering and scrub messages](#pg-creation-peering-and-scrub-messages),
+no test inspects the messages on these paths.
 
 | Path | What the test observes | Evidence | Proven by |
 | --- | --- | --- | --- |
@@ -398,6 +400,39 @@ For the backfill case shorten the PG log with `override.SetConfig` on
 with the default trim minimum of 100 a short log is never trimmed. A fault on
 one peer in one direction uses `ApplyNetworkProfile` with `Peer` and `Loss`
 100; `InterruptNetwork` cuts a whole endpoint.
+
+## PG creation, peering and scrub messages
+
+`TestOSDPeeringMessages` follows one PG's messages through its creation,
+peering, lease and deep scrub, and logs `OSD_PEERING_MESSAGES_RECEIPT`. A
+`[mon]` section with `debug_ms = 1` and an `[osd]` section with
+`debug_ms = 1` and `debug_osd = 10` in `ceph.WithConfigFile` make the MON and
+the OSDs log every message they send (`-->`) and receive (`<==`) and the OSDs
+every peering state they enter (`enter Started/...`, level 5) and scrubber
+state (`scrubber<...>: FSM: -- state -->>`, level 10). The recipe creates a
+one-PG pool with two replicas on two OSDs, writes one object, runs
+`DeepScrubPG` and joins each message's send line in one daemon's log with its
+receive line in the other's: the receiver is one of the sender's messengers,
+the sender is the receiver's peer entity and address, and the printed
+message is the same.
+
+| Message | Prints as | Direction | Placed in the logs |
+| --- | --- | --- | --- |
+| `MSG_OSD_PG_CREATE2` | `pg_create2` | MON to primary | |
+| `MSG_OSD_PG_QUERY2` | `pg_query2` | primary to replica | sent between the primary entering `Peering/GetInfo` and `Peering/GetLog` |
+| `MSG_OSD_PG_NOTIFY2` | `pg_notify2` | replica to primary | received in the same interval |
+| `MSG_OSD_PG_LOG` | `PGlog` | primary to replica | sent after the primary enters `Active`; received before the replica enters `ReplicaActive` |
+| `MSG_OSD_PG_INFO2` | `pg_info2` | replica to primary | received after `PGlog` was sent and before the primary enters `Active/Clean` |
+| `MSG_OSD_PG_LEASE`, `MSG_OSD_PG_LEASE_ACK` | `pg_lease`, `pg_lease_ack` | primary to replica, and back | |
+| `MSG_OSD_REP_SCRUB` | `replica_scrub` | primary to replica | sent after the primary's scrubber enters `ActiveScrubbing` |
+| `MSG_OSD_REP_SCRUBMAP` | `rep_scrubmap` | replica to primary | sent after the replica's scrubber enters `ReplicaBuildingMap`; received after the primary's enters `WaitReplicas` |
+
+The replica has no copy of a new PG when the primary queries it, so it
+answers `pg_notify2` with `DNE` and creates the PG from the `PGlog`. Squid
+19.2.5 and Tentacle 20.2.4 print these messages and states alike. Debug
+logging at these levels is verbose, so keep such a cluster short-lived.
+`osd_peering_messages_fixture_test.go` judges saved Squid lines and broken
+variants of them without Docker.
 
 ## Negotiated compression and features
 
@@ -630,9 +665,33 @@ The chain is joined by client address and entity, primary, PG, backoff ID and
 range; IDs count per OSD session, and a reconnect between BLOCK and UNBLOCK
 leaves the chain unjoined. ACK_BLOCK carries the BLOCK's epoch, while UNBLOCK
 may carry a later one. An interval change can also release a backoff, so the
-recipe requires the read's own result. Object-scoped backoffs are not
-covered. `OSD_BACKOFF_RAW` holds the joined log lines, and
-`messenger_backoff_fixture_test.go` tests the parsing without Docker.
+recipe requires the read's own result. `OSD_BACKOFF_RAW` holds the joined
+log lines.
+
+`TestOSDObjectBackoffReceipt` makes a primary back off one object, and logs
+`OSD_OBJECT_BACKOFF_RECEIPT`. A primary backs off a write to a degraded object
+only with `osd_backoff_on_degraded`, which is off by default:
+
+1. A one-PG pool on two OSDs, two replicas, `min_size` 1, holds one object.
+2. With `noout`, `norecover` and `nobackfill`, stop the replica, rewrite the
+   object, and start the replica again. The PG is active and the object
+   degraded, missing on the replica.
+3. Set `debug_ms` 1 and `osd_backoff_on_degraded` true on the primary. A
+   python-rados client with the same log levels submits one asynchronous full
+   write of the object.
+4. The client must log a BLOCK whose range is empty at the object's head,
+   `[2:<hash>:::<object>:head,2:<hash>:::<object>:head)`, and the primary the
+   ACK_BLOCK on the same connection. The write itself makes the primary
+   recover the object although `norecover` is set, so the UNBLOCK follows
+   within milliseconds, then the write's reply with result 0. A fresh client
+   reads the written bytes back.
+
+Both recipes share the parser and the chain judge; `backoffTarget` names the
+held operation and whether the BLOCK must cover the whole PG or the object
+alone, so a PG-wide BLOCK never stands in for an object backoff.
+`OSD_OBJECT_BACKOFF_RAW` holds the joined lines, and
+`messenger_backoff_fixture_test.go` tests the parsing and both scopes without
+Docker.
 
 ## Coverage manifest
 
