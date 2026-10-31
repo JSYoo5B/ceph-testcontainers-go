@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "ceph",
-  "count": 327,
+  "count": 331,
   "entries": [
     {
       "current": "ceph.AddressDualStack",
@@ -863,7 +863,7 @@
     {
       "current": "ceph.DetachedOSD.Reopen",
       "kind": "method",
-      "signature": "func(ctx context.Context) (*OSDContainer, error)",
+      "signature": "func(ctx context.Context, configs ...OSDOptions) (*OSDContainer, error)",
       "receiver": "*DetachedOSD",
       "proposed": "ceph.DetachedOSD.Reopen",
       "decision": "baseline"
@@ -1342,11 +1342,33 @@
       "decision": "baseline"
     },
     {
+      "current": "ceph.MonitorContainer.Replace",
+      "kind": "method",
+      "signature": "func(ctx context.Context, opts ...DaemonOptions) (*MonitorContainer, error)",
+      "receiver": "*MonitorContainer",
+      "proposed": "ceph.MonitorContainer.Replace",
+      "decision": "baseline"
+    },
+    {
       "current": "ceph.MonitorContainer.Version",
       "kind": "method",
       "signature": "func(ctx context.Context) (string, error)",
       "receiver": "*MonitorContainer",
       "proposed": "ceph.MonitorContainer.Version",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorStorage",
+      "kind": "type",
+      "proposed": "ceph.MonitorStorage",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.MonitorStorage.WithVolume",
+      "kind": "method",
+      "signature": "func() MonitorStorage",
+      "receiver": "MonitorStorage",
+      "proposed": "ceph.MonitorStorage.WithVolume",
       "decision": "baseline"
     },
     {
@@ -2245,6 +2267,13 @@
       "kind": "function",
       "signature": "func(config ImageOptions) Option",
       "proposed": "ceph.WithImageOptions",
+      "decision": "baseline"
+    },
+    {
+      "current": "ceph.WithMonitorStorage",
+      "kind": "function",
+      "signature": "func(storage MonitorStorage) Option",
+      "proposed": "ceph.WithMonitorStorage",
       "decision": "baseline"
     },
     {

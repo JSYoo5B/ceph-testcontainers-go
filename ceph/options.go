@@ -8,6 +8,9 @@ import (
 )
 
 type options struct {
+	// monitorVolume keeps every MON store in its own cluster-owned volume
+	// (WithMonitorStorage).
+	monitorVolume     bool
 	imageSet          *ImageSet
 	osds              int
 	initialOSDs       []OSDConfig

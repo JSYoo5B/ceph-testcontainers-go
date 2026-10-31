@@ -270,7 +270,7 @@ func (c *Container) detachOSD(ctx context.Context, handle *OSDContainer) (*Detac
 
 // reopenOSD implements DetachedOSD.Reopen, which documents the behavior. The caller
 // checks the handle under the topology lock.
-func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDContainer, error) {
+func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD, plan osdPlan) (*OSDContainer, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -310,7 +310,11 @@ func (c *Container) reopenOSD(ctx context.Context, detached *DetachedOSD) (*OSDC
 		return nil, err
 	}
 	detached.reopened = true
-	osd := &OSDContainer{ID: id, owner: c, nativeUUID: detached.osdUUID, placement: detached.placement, image: detached.image}
+	image := detached.image
+	if plan.imageSet {
+		image = plan.image
+	}
+	osd := &OSDContainer{ID: id, owner: c, nativeUUID: detached.osdUUID, placement: detached.placement, image: image}
 	c.fleet.osdHandles.unpark(id, osd)
 	launch := osdLaunch{osd: osd, recipe: c.newOSDLaunchRecipe(osd, []byte(detached.store.keyring))}
 	if err := c.osdFleet().startOSD(ctx, launch); err != nil {

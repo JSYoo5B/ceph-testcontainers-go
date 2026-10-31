@@ -212,7 +212,16 @@ var monStoreMethods = map[string][]string{
 // of its methods in production, and how it holds Container.mu. Only terminate
 // does, and only for the two release stages: no production code publishes a
 // record in this slice.
-var monStoreCallers = map[string]stateCaller{"terminate": {"takes", []string{"releaseStores", "retryStores"}}}
+var monStoreCallers = map[string]stateCaller{
+	"terminate": {"takes", []string{"releaseStores", "retryStores"}},
+	// The first generation of a MON's store: Run before the cluster is
+	// shared, AddMonitor under the topology lock.
+	"startMonitorStore": {"holds", []string{"begin", "discardFresh"}},
+	// runMonitor starts the first MON in Run, before the cluster is shared.
+	"runMonitor":          {"init", nil},
+	"startJoiningMonitor": {"holds", nil},
+	"replaceMonitor":      {"takes", []string{"store"}},
+}
 
 func monStoreUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "monStores" }
 
@@ -368,6 +377,11 @@ func TestMonStoreVolumeFieldsAreAssignedOnlyByTheirTransitions(t *testing.T) {
 		for _, decl := range parsed.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
+				continue
+			}
+			// The container side of a generation is not the record: its
+			// Docker calls are pinned by the generation guard.
+			if receiverTypeName(fn) == "monitorGenerations" {
 				continue
 			}
 			where := receiverTypeName(fn) + "." + fn.Name.Name

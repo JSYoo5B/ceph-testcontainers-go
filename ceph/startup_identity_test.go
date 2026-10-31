@@ -123,6 +123,7 @@ var startupIdentityCallers = map[string]stateCaller{
 	"newOSDLaunchRecipe":      {"fact", []string{"ownerID"}},
 	"reserveTrackedHostPorts": {"fact", []string{"ownedLabel"}},
 	"runMonitor":              {"fact", []string{"ownedLabel"}},
+	"Create":                  {"fact", []string{"ownedLabel"}},
 	"startManager":            {"fact", []string{"ownedLabel"}},
 	"startService":            {"fact", []string{"ownedLabel"}},
 	"startVerification":       {"fact", []string{"ownerID"}},

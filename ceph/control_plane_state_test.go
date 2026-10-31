@@ -189,14 +189,15 @@ var controlPlaneMethods = map[string][]string{
 //	"takes"    calls lockTopology before its first use
 //	"identity" returns the lock identity for the test state view
 var controlPlaneCallers = map[string]stateCaller{
-	"terminate":           {"takes", []string{"terminate"}},
-	"ensureControlPlane":  {"holds", []string{"current", "publish"}},
-	"monitorJoinMaterial": {"holds", nil},
-	"cliContainer":        {"free", []string{"current"}},
-	"controlContainer":    {"free", []string{"currentContext"}},
-	"admitNativeTarget":   {"free", []string{"owns"}},
-	"diagnosticsSnapshot": {"free", []string{"diagnosticHandle"}},
-	"UnitState":           {"identity", []string{"mutex"}},
+	"terminate":                  {"takes", []string{"terminate"}},
+	"ensureControlPlane":         {"holds", []string{"current", "publish"}},
+	"monitorReplacementMaterial": {"holds", nil},
+	"monitorJoinMaterial":        {"holds", nil},
+	"cliContainer":               {"free", []string{"current"}},
+	"controlContainer":           {"free", []string{"currentContext"}},
+	"admitNativeTarget":          {"free", []string{"owns"}},
+	"diagnosticsSnapshot":        {"free", []string{"diagnosticHandle"}},
+	"UnitState":                  {"identity", []string{"mutex"}},
 }
 
 // isControlPlaneHandleOwner reports whether e is the component itself: the

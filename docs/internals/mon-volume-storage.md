@@ -2,9 +2,10 @@
 
 Every MON of a cluster can keep its store in its own cluster-owned Docker volume,
 so that a replacement container (possibly from another image) mounts the same
-store and rejoins. The internal primitives below exist and are tested
-Docker-free; no public option selects them and no production path calls them.
-Mixed-version compatibility and native acceptance are outside this page.
+store and rejoins. `WithMonitorStorage(MonitorStorage{}.WithVolume())` selects
+it, and `MonitorContainer.Replace` moves a MON to a new container; see
+[Production wiring](#production-wiring) for what calls which primitive below.
+The identity observation and its adapters are still uncalled.
 
 Pinned source: Ceph 7f793731f1b39eb4f465e960113d2363c311b964 (Tentacle 20.2.4).
 
@@ -107,8 +108,8 @@ volume settles cleanup.
 ## Require-store mode
 
 Implemented in `ceph/internal/scripts/mon.sh` and `mon-join.sh`, tested
-Docker-free in `ceph/mon_require_store_test.go`. No Go caller sets the selector
-and no native run is claimed.
+Docker-free in `ceph/mon_require_store_test.go`. The container side sets the
+selector for every generation after the first (`monitorGenerations.Create`).
 
 - Selector: the environment variable `CEPH_MON_STORE_MODE`. Unset runs mkfs
   when `store.db` is absent. The value
@@ -308,8 +309,8 @@ replacement from starting while an inspection runs, under `Container.mu`.
 
 Implemented in `ceph/mon_store_generation.go`, tested Docker-free in
 `ceph/mon_store_generation_test.go` against a small fake of the container side
-(`monStoreGenerations`). Nothing calls it in production and no native run
-exists.
+(`monStoreGenerations`). `startMonitorStore` calls `startGeneration` for the
+first generation of a store, and `replaceMonitor` calls `replaceGeneration`.
 
 - `startGeneration`: the first generation formats a new store, a later one
   requires it. The pending attachment is published before the container is
@@ -326,15 +327,14 @@ exists.
   the volume and the record, and never formats.
 - `dispatch`: a store marked ready without an identity needs no verification;
   a store bound with an identity (`bind`) needs it.
-- What it does not establish: any real container call, that the new image
-  starts on the old store, that the monmap lets it rejoin, that the address
-  handoff below works against a real engine, the production caller (`runMonitor`, `AddMonitor`), the option and
-  `Remove`/`Terminate` wiring, and any native behavior.
+- The Docker-free tests establish the order of the steps and the refusals.
+  Real containers, the start of a new image on the old store and the rejoin
+  are the native evidence of [Production wiring](#production-wiring).
 
 ## Address handoff
 
-Implemented in `ceph/mon_store_address.go` and `startGeneration`, uncalled and
-tested Docker-free against the fake of the container side. The monmap pins the
+Implemented in `ceph/mon_store_address.go` and `startGeneration`, called
+through the generation path and tested Docker-free against the fake of the container side. The monmap pins the
 address a MON joined with, so the replacement container binds exactly that
 address, and nothing may take it between the removal of the old container and
 the start of the new one.
@@ -369,13 +369,51 @@ the start of the new one.
   stay owned and the next stage retries.
 - Container side (`monStoreGenerations`): `Create` makes the container without
   starting it, `Start`, `Observe` and `Hold` complete the port.
-- Guards: the generation and address symbols have no production caller except
+- Guards: the generation and address symbols are used in production only by
+  the pinned callers (`startGeneration` from `ceph/mon_store_container.go`,
+  `replaceGeneration` from `ceph/mon_store_replace.go`) and
   `releaseAddressHold` from `monStoreVolume.release`, the files import no `sync`,
   the container side is called only from its pinned methods, a hold is released
   only by `releaseAddressHold`, `startGeneration` holds, dispatches, creates,
   releases, starts, waits and observes in that order, and `release` frees the
   hold before it looks at the attachment or the volume.
-- Not established: how a real engine allocates ports and IPs after a removal,
-  the exact-port allocator container and the static-IP creation (not written),
-  any production caller, option, `Remove`/`Terminate` wiring for the generation
-  path and any native run.
+- Host mode is not wired: the exact-port allocator container is not written,
+  and `Run` refuses the volume with the host network. Bridge mode uses the
+  static-IP creation of `monitorGenerations.Create`.
+
+## Production wiring
+
+| Caller | Primitive | Container side |
+| --- | --- | --- |
+| `Run` (`runMonitor`, MON a) | `begin`, `create`, `startGeneration` (format) | `mon.sh` recipe of `firstMonitorOptions` |
+| `AddMonitor` and the initial MONs (`startJoiningMonitor`) | `begin`, `create`, `startGeneration` (format) | `mon-join.sh` recipe of `monitorJoinOptions` |
+| `MonitorContainer.Replace` (`replaceMonitor`) | `replaceGeneration`: checks, `stopGeneration`, `startGeneration` (require) | `mon-join.sh` recipe with fresh join material, for MON a too |
+| `Terminate` | `releaseStores`, `retryStores` | none |
+
+`monitorGenerations` (`ceph/mon_store_container.go`) is the container side for
+bridge networking with IPv4 addresses, which is all `Run` admits with the
+volume:
+
+- `Create` mounts the volume with no copy at `/var/lib/ceph/mon/ceph-<name>`,
+  sets `CEPH_MON_STORE_MODE=require` for a later generation, asks the bridge
+  for the recorded IPv4 address, and creates the container without starting
+  it. It first runs a preparation hook; the replacement clears the admin
+  socket the old daemon left in the shared run directory there.
+- `Observe` reads the container's IPv4 address on the cluster network.
+- `Hold` only checks that no container of the network has the address: every
+  container of the cluster is created under `Container.mu`, and a taken
+  address fails the creation.
+- `Remove` force-removes the container and never its volumes.
+
+`replaceMonitor` refuses, before it touches the MON, a replacement that would
+leave fewer than a majority of the monmap in quorum, a store that is not
+attached to the handle's container, and a store without a recorded address
+(the last inside `replaceGeneration`). A later generation of MON a also uses
+the join recipe, with the live mon. key and monmap, so it needs no bootstrap
+environment. Once the old container is gone, MON a is marked terminated and the
+new generation is kept in the roster under the name `a`, so listing, handle
+checks and `Terminate` treat it like an added MON.
+
+Not wired: the identity binding (`bind`, the inspector and the monmap adapter),
+host networking and address families other than IPv4, which `Run` refuses with
+the volume.

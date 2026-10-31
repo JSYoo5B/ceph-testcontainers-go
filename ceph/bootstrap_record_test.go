@@ -249,6 +249,7 @@ var bootstrapRecordCallers = map[string]stateCaller{
 	"WithIdentity":                     {"takes", []string{"rawConfig"}},
 	"startService":                     {"takes", []string{"isComplete"}},
 	"AddMonitor":                       {"takes", []string{"rawConfig"}},
+	"replaceMonitor":                   {"takes", []string{"rawConfig"}},
 	"bootstrapFirstMonitor":            {"startup", []string{"recordConfig", "recordKeyring"}},
 	"recordCephVersion":                {"startup", []string{"recordVersion"}},
 	"staticFacts":                      {"lockfree", []string{"rawVersion"}},

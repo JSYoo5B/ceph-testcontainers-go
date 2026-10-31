@@ -408,11 +408,25 @@ func (m *ManagerContainer) Remove(ctx context.Context) error {
 // ordinary bootstrap, which validates the stored identity again and never
 // formats a store that has its ready marker.
 //
+// With no option the new container runs the image the detached OSD ran.
+// OSDOptions.WithImage starts it from another image instead, for example a
+// newer release that opens the retained store; the store is not checked
+// against that image's release, and nothing makes the change reversible.
+// WithPlacement is refused: the registration keeps its placement.
+//
 //purpose:condition,lifetime
-func (d *DetachedOSD) Reopen(ctx context.Context) (*OSDContainer, error) {
+func (d *DetachedOSD) Reopen(ctx context.Context, configs ...OSDOptions) (*OSDContainer, error) {
 	if d == nil || d.cluster == nil {
 		return nil, invalidRequest("DetachedOSD.Reopen: the detached OSD does not belong to a cluster")
 	}
-
-	return d.cluster.reopenOSD(ctx, d)
+	for _, config := range configs {
+		if config.placementSet {
+			return nil, invalidRequest("DetachedOSD.Reopen: a retained OSD keeps its placement; WithPlacement is not accepted")
+		}
+	}
+	plan, err := composeOSDOptions(configs)
+	if err != nil {
+		return nil, err
+	}
+	return d.cluster.reopenOSD(ctx, d, plan)
 }
