@@ -74,8 +74,11 @@ type authTestedRejection struct {
 	TicketLabel string  `json:"ticket_label,omitempty"`
 	// RefusedGlobalID is the global ID that a MON's refusal named, if any.
 	RefusedGlobalID *uint64 `json:"refused_global_id,omitempty"`
-	Result          int     `json:"result"`
-	Error           string  `json:"error"`
+	// Entity is the entity that the client authenticated as, which a cause
+	// record must name.
+	Entity string `json:"entity,omitempty"`
+	Result int    `json:"result"`
+	Error  string `json:"error"`
 }
 
 // authExpectedTarget is the identity that the caller froze when the
@@ -261,10 +264,14 @@ func classifyAuthBundle(bundle authFirstFailureBundle) authBundleVerdict {
 		}
 	}
 	if bundle.Cause != nil {
-		cause, problems := classifyAuthCause(*bundle.Cause, bundle.Expected.Monitors)
-		verdict.Cause = cause
-		for _, p := range problems {
-			problem("cause: %s", p)
+		if err := checkAuthCauseBinding(*bundle.Cause, rejection); err != nil {
+			problem("cause: %v", err)
+		} else {
+			cause, problems := classifyAuthCause(*bundle.Cause, bundle.Expected.Monitors)
+			verdict.Cause = cause
+			for _, p := range problems {
+				problem("cause: %s", p)
+			}
 		}
 	}
 	for _, control := range bundle.Controls {
@@ -735,9 +742,10 @@ func testAuthFirstFailureBundle(t *testing.T) {
 		t.Fatalf("the tested authentication was not refused: exit=%d err=%v stderr=%.512s", tested.ExitCode, err, tested.Stderr)
 	}
 	ended := time.Now().UTC()
-	cause := captureAuthCause(t, ctx, marks, "client.admin", string(tested.Stderr))
 	lines := strings.Split(strings.TrimSpace(string(tested.Stderr)), "\n")
-	rejection := authTestedRejection{Run: t.Name(), Cycle: 1, Attempt: 1, At: attempted, Target: target, TargetGID: status.ActiveGID, Result: -13, Error: lines[len(lines)-1]}
+	rejection := authTestedRejection{Run: t.Name(), Cycle: 1, Attempt: 1, At: attempted, Target: target, TargetGID: status.ActiveGID, Result: -13, Error: lines[len(lines)-1],
+		Entity: "client.admin"}
+	cause := captureAuthCause(t, ctx, authRejectionOperation(rejection), marks, rejection.Entity, string(tested.Stderr))
 	recorded := rejection
 	// The excerpt of the original operation's own stderr: client-side lines,
 	// bound to this invocation's capture in the client container instance and

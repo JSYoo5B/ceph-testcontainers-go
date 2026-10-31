@@ -249,7 +249,7 @@
       "cases": [
         {
           "test": "TestAuthFirstFailureBundle",
-          "asserts": "a wrong-key client's EACCES (-13) is kept unchanged in a complete bundle with the target MGR registered and no admin key; the bundle's cause record captures each MON's log from just before to just after the refused attempt, bound to the MON container's generation, and its cephx 'unexpected key' line for client.admin, with the derived key values masked, classifies the cause as wrong-key"
+          "asserts": "a wrong-key client's EACCES (-13) is kept unchanged in a complete bundle with the target MGR registered and no admin key; the bundle's cause record captures each MON's log from just before to just after the refused attempt, bound to the MON container's generation and to the rejected attempt's operation identity, entity and a time window holding it, and its cephx 'unexpected key' line for client.admin, with the derived key values masked, classifies the cause as wrong-key; a record of another entity, a later attempt, a control or a window without the rejection supplies no cause"
         },
         {
           "test": "TestAuthFailureCauses",

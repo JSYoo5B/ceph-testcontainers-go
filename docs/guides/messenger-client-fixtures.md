@@ -713,7 +713,12 @@ attaches the same record to its first-failure bundle, whose cause is then
 
 The record counts every MON's log lines before the attempt and reads them
 again after it, so a capture belongs to one attempt and to the MON container
-generation it started in. A MON restarting in between fails the recipe. Only
+generation it started in. A MON restarting in between fails the recipe. The
+record also carries the attempt's operation identity, its entity and the time
+from the first count to the last read; a bundle takes a cause only from a
+record with its rejection's identity and entity whose window holds the
+rejection, so a control, a retry or another entity's refusal never supplies
+the first failure's cause. Only
 lines naming the attempted entity count, except the command refusal, which
 names none and which the capture bounds. `req.key` and `expected_key` are
 values that cephx derives from the keys, so the record masks them. One cause

@@ -63,11 +63,16 @@ type authCauseCapture struct {
 	Lines      []authCauseLine `json:"lines"`
 }
 
-// authCauseRecord is the evidence of one refusal's cause: the attempted
-// entity, a capture of every MON's log around the attempt, and the client's
-// line about the authentication methods, if it printed one.
+// authCauseRecord is the evidence of one refusal's cause: the attempt's
+// operation identity, the attempted entity, the time from before the first
+// MON log was counted to after the last was read again, a capture of every
+// MON's log around the attempt, and the client's line about the
+// authentication methods, if it printed one.
 type authCauseRecord struct {
+	Operation     string             `json:"operation"`
 	Entity        string             `json:"entity"`
+	Start         time.Time          `json:"start"`
+	End           time.Time          `json:"end"`
 	Captures      []authCauseCapture `json:"captures"`
 	ClientMethods string             `json:"client_methods,omitempty"`
 }
@@ -169,11 +174,36 @@ func classifyAuthCause(record authCauseRecord, monitors []string) (string, []str
 	return authCauseUnavailable, nil
 }
 
-// authLogMark is where one MON's log stood before an attempt.
+// checkAuthCauseBinding requires a cause record to be the rejected
+// attempt's: the same operation identity, the entity the rejection
+// authenticated as, and a capture window around the rejection's time. A
+// control, a retry or another entity's attempt never supplies the first
+// failure's cause.
+func checkAuthCauseBinding(record authCauseRecord, rejection authTestedRejection) error {
+	var problems []string
+	if want := authRejectionOperation(rejection); record.Operation != want {
+		problems = append(problems, fmt.Sprintf("record operation %q, not %q", record.Operation, want))
+	}
+	if rejection.Entity == "" || record.Entity != rejection.Entity {
+		problems = append(problems, fmt.Sprintf("record entity %q, rejection entity %q", record.Entity, rejection.Entity))
+	}
+	if record.Start.IsZero() || record.End.IsZero() || rejection.At.Before(record.Start) || rejection.At.After(record.End) {
+		problems = append(problems, fmt.Sprintf("capture window %s to %s does not hold the rejection at %s",
+			record.Start.Format(time.RFC3339Nano), record.End.Format(time.RFC3339Nano), rejection.At.Format(time.RFC3339Nano)))
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// authLogMark is where one MON's log stood before an attempt, and when it
+// was counted.
 type authLogMark struct {
 	monitor    *ceph.MonitorContainer
 	generation string
 	from       int
+	at         time.Time
 }
 
 // markMonitorLogs records how many lines each MON's log holds now.
@@ -181,24 +211,28 @@ func markMonitorLogs(t *testing.T, ctx context.Context, cluster *ceph.Container)
 	t.Helper()
 	var marks []authLogMark
 	for _, monitor := range clusteraccess.Monitors(t, cluster) {
+		at := time.Now().UTC()
 		state, err := monitor.State(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
 		lines := harness.ContainerLogLines(t, ctx, monitor.Container)
-		marks = append(marks, authLogMark{monitor: monitor, generation: monitor.GetContainerID() + "@" + state.StartedAt, from: len(lines) - 1})
+		marks = append(marks, authLogMark{monitor: monitor, generation: monitor.GetContainerID() + "@" + state.StartedAt, from: len(lines) - 1, at: at})
 	}
 	return marks
 }
 
-// captureAuthCause reads each marked MON's log again and records the cause
-// lines about entity that it gained since the mark, with the client's
-// methods line from stderr. A MON that restarted since its mark fails the
-// test: its new log would not be the attempt's.
-func captureAuthCause(t *testing.T, ctx context.Context, marks []authLogMark, entity, stderr string) authCauseRecord {
+// captureAuthCause reads each marked MON's log again and records, for the
+// attempt named operation, the cause lines about entity that it gained since
+// the mark, with the client's methods line from stderr. A MON that restarted
+// since its mark fails the test: its new log would not be the attempt's.
+func captureAuthCause(t *testing.T, ctx context.Context, operation string, marks []authLogMark, entity, stderr string) authCauseRecord {
 	t.Helper()
-	record := authCauseRecord{Entity: entity, ClientMethods: authClientMethods(stderr)}
+	record := authCauseRecord{Operation: operation, Entity: entity, ClientMethods: authClientMethods(stderr)}
 	for _, mark := range marks {
+		if record.Start.IsZero() || mark.at.Before(record.Start) {
+			record.Start = mark.at
+		}
 		state, err := mark.monitor.State(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -211,6 +245,7 @@ func captureAuthCause(t *testing.T, ctx context.Context, marks []authLogMark, en
 		record.Captures = append(record.Captures, authCauseCapture{Monitor: "mon." + mark.monitor.DaemonName, Generation: mark.generation,
 			From: mark.from, To: to, Lines: authCauseLines(entity, lines[max(mark.from, 0):to])})
 	}
+	record.End = time.Now().UTC()
 	return record
 }
 
@@ -304,7 +339,7 @@ func testAuthFailureCauses(t *testing.T) {
 		}
 		stderr := strings.TrimSpace(string(result.Stderr))
 		attempt := authCauseAttempt{Name: c.name, Entity: c.entity, ExitCode: result.ExitCode, Error: stderr[strings.LastIndex(stderr, "\n")+1:],
-			Record: captureAuthCause(t, ctx, marks, c.entity, string(result.Stderr))}
+			Record: captureAuthCause(t, ctx, t.Name()+"/"+c.name, marks, c.entity, string(result.Stderr))}
 		redacted, err := cluster.RedactSecrets(ctx, []byte(attempt.Error))
 		if err != nil {
 			t.Fatal(err)

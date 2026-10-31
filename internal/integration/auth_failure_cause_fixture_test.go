@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // MON and client lines in the format that Squid 19.2.5 and Tentacle 20.2.4
@@ -100,19 +101,28 @@ func TestClassifyAuthCause(t *testing.T) {
 }
 
 // The retained bundle has no cause record and states no cause; with the
-// record of its MONs' wrong-key lines it states wrong-key, and a record that
-// misses a MON or conflicts makes it incomplete without changing its -13.
+// record of its MONs' wrong-key lines for its own attempt it states
+// wrong-key, and a record that misses a MON, conflicts, or belongs to
+// another entity, operation or time makes it incomplete without changing
+// its -13.
 func TestAuthBundleCause(t *testing.T) {
 	bundle := retainedBundle(t)
 	if verdict := classifyAuthBundle(bundle); verdict.Cause != authCauseUnavailable || !verdict.Complete {
 		t.Fatalf("without a record: %+v", verdict)
 	}
-	record := authCauseRecord{Entity: "client.admin", ClientMethods: authClientMethods(squidWrongKey)}
-	for _, name := range bundle.Expected.Monitors {
-		record.Captures = append(record.Captures, authCauseCapture{Monitor: "mon." + name, Generation: "container-" + name + "@2026-10-15T13:11:00Z",
-			From: 100, To: 104, Lines: authCauseLines("client.admin", []string{causeOtherLine, causeKeyLine})})
+	bundle.Rejection.Entity = "client.admin"
+	at := bundle.Rejection.At
+	record := func(entity string, lines ...string) authCauseRecord {
+		r := authCauseRecord{Operation: authRejectionOperation(bundle.Rejection), Entity: entity, Start: at.Add(-time.Second), End: at.Add(time.Second),
+			ClientMethods: authClientMethods(squidWrongKey)}
+		for _, name := range bundle.Expected.Monitors {
+			r.Captures = append(r.Captures, authCauseCapture{Monitor: "mon." + name, Generation: "container-" + name + "@2026-10-15T13:11:00Z",
+				From: 100, To: 104, Lines: authCauseLines(entity, lines)})
+		}
+		return r
 	}
-	bundle.Cause = &record
+	own := record("client.admin", causeOtherLine, causeKeyLine)
+	bundle.Cause = &own
 	data, err := json.Marshal(bundle)
 	if err != nil {
 		t.Fatal(err)
@@ -124,19 +134,43 @@ func TestAuthBundleCause(t *testing.T) {
 		t.Fatal(err)
 	}
 	if verdict := classifyAuthBundle(bundle); verdict.Cause != authCauseWrongKey || !verdict.Complete || verdict.Result != -13 {
-		t.Fatalf("with a wrong-key record: %+v", verdict)
+		t.Fatalf("with its own wrong-key record: %+v", verdict)
 	}
-	partial := record
-	partial.Captures = record.Captures[1:]
-	bundle.Cause = &partial
-	if verdict := classifyAuthBundle(bundle); verdict.Cause != authCauseUnavailable || verdict.Complete || verdict.Result != -13 {
-		t.Fatalf("with a MON missing: %+v", verdict)
-	}
-	conflicting := record
-	conflicting.Captures = slices.Clone(record.Captures)
-	conflicting.Captures[0].Lines = authCauseLines("client.admin", []string{causeDeniedLine})
-	bundle.Cause = &conflicting
-	if verdict := classifyAuthBundle(bundle); verdict.Cause != authCauseConflicting || verdict.Complete || verdict.Result != -13 {
-		t.Fatalf("with conflicting lines: %+v", verdict)
+
+	unrelatedKey := strings.Replace(causeKeyLine, "client.admin:", "client.unrelated:", 1)
+	for name, c := range map[string]struct {
+		edit    func(*authFirstFailureBundle, *authCauseRecord)
+		cause   string
+		problem string
+	}{
+		"a MON missing": {func(_ *authFirstFailureBundle, r *authCauseRecord) { r.Captures = r.Captures[1:] }, authCauseUnavailable, "no log capture of mon.a"},
+		"conflicting lines": {func(_ *authFirstFailureBundle, r *authCauseRecord) {
+			r.Captures = slices.Clone(r.Captures)
+			r.Captures[0].Lines = authCauseLines("client.admin", []string{causeDeniedLine})
+		}, authCauseConflicting, "conflicting causes"},
+		"another entity's cause": {func(_ *authFirstFailureBundle, r *authCauseRecord) {
+			*r = record("client.unrelated", unrelatedKey)
+		}, authCauseUnavailable, `record entity "client.unrelated"`},
+		"a later attempt of the same entity": {func(_ *authFirstFailureBundle, r *authCauseRecord) {
+			r.Operation = authRejectionOperation(authTestedRejection{Run: bundle.Rejection.Run, Cycle: bundle.Rejection.Cycle, Attempt: bundle.Rejection.Attempt + 1})
+			r.Start, r.End = at.Add(time.Minute), at.Add(time.Minute+time.Second)
+		}, authCauseUnavailable, "record operation"},
+		"a control of the attempt": {func(_ *authFirstFailureBundle, r *authCauseRecord) {
+			r.Operation = authControlOperation(bundle.Rejection, "mgr.a")
+		}, authCauseUnavailable, "record operation"},
+		"a window without the rejection": {func(_ *authFirstFailureBundle, r *authCauseRecord) {
+			r.Start = at.Add(time.Millisecond)
+		}, authCauseUnavailable, "does not hold the rejection"},
+		"a rejection naming no entity": {func(b *authFirstFailureBundle, _ *authCauseRecord) { b.Rejection.Entity = "" }, authCauseUnavailable, `rejection entity ""`},
+	} {
+		edited := bundle
+		r := own
+		c.edit(&edited, &r)
+		edited.Cause = &r
+		verdict := classifyAuthBundle(edited)
+		if verdict.Cause != c.cause || verdict.Complete || verdict.Result != -13 ||
+			!slices.ContainsFunc(verdict.Problems, func(p string) bool { return strings.Contains(p, c.problem) }) {
+			t.Errorf("%s: %+v, want cause %q with %q", name, verdict, c.cause, c.problem)
+		}
 	}
 }
