@@ -73,7 +73,8 @@ that outcome instead of skipping on the version string; see
   output.
 - Combine only images of the same release in one cluster. Mixing releases is
   not supported: the fixture chooses command forms from the essential image and the client toolkit
-  alone.
+  alone. The one exception that has been run is the forward
+  [rolling upgrade from Squid to Tentacle](#rolling-upgrade-from-squid-to-tentacle).
 
 ## Behavioral bug compatibility policy
 
@@ -272,14 +273,43 @@ Read this scope before relying on it:
   reads the daemon's own admin socket and fails when the reply has no
   recognizable version. `Image` reports the image the container was started
   from, not its release.
-- A re-launched OSD keeps its image: `OSDContainer.Detach` and
-  `DetachedOSD.Reopen` start it from the image it ran from, and `Reopen` takes
-  no image option. MON and MGR containers are not recreated.
+- A re-launched daemon keeps its image unless the call names another:
+  `DetachedOSD.Reopen` and `MonitorContainer.Replace` (with
+  `MonitorStorage.WithVolume`) start the daemon from the image it ran from, or
+  from the one their `WithImage` option names. MGR containers are not
+  recreated; add a manager from the other image and remove the old one.
 - The release check of a separately started client container still compares
   with `CephVersion` and is unchanged.
 - Nothing checks that the image exists, has the daemon binary, or is
-  compatible with the running cluster. The option is not a supported
-  mixed-version or upgrade path, and no native run of it exists yet.
+  compatible with the running cluster. See the next section for the one
+  release transition that has been run.
+
+## Rolling upgrade from Squid to Tentacle
+
+`TestRollingUpgradeSquidToTentacle` (optional batch `rolling_upgrade`) moves a
+running 19.2.5 cluster to 20.2.4 one daemon at a time, in the upstream order,
+with the pinned official role images of both releases:
+
+1. `osd set noout`.
+2. Each of three MONs: `MonitorContainer.Replace` with the Tentacle image, on
+   the store and address the MON keeps. The monmap does not change, and
+   `min_mon_release_name` becomes `tentacle` after the last one.
+3. The MGR: a Tentacle manager is added, then the Squid one is removed.
+4. Each of three OSDs: `Detach`, then `Reopen` with the Tentacle image, so the
+   Squid-written store is opened by Tentacle.
+5. `osd require-osd-release tentacle`, `osd unset noout`, all PGs clean.
+
+After every step `ceph versions` must show exactly the expected per-role
+layout, every acknowledged write reads back with its digest, and a new batch of
+writes is acknowledged. Tentacle MONs report the `AUTH_INSECURE_*` health
+checks for the keys Squid created, so the cluster is in `HEALTH_ERR` from the
+first Tentacle MON on; the fixture rotates no key.
+
+What stays on the source release: `ClusterFacts.CephVersion`, the fixture's
+Ceph CLI in the control container and the client toolkit. Command forms are
+chosen from them, so the fixture keeps using Squid command forms against the
+upgraded daemons. Mixing releases is therefore still not a general contract:
+this is one pair, run forward only. Downgrade is not attempted.
 
 ## Related APIs
 
