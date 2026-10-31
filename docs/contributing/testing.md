@@ -54,7 +54,7 @@ in `/proc/config.gz`. Observed with kernel 7.0.14-linuxkit (arm64):
 | Need | In the Desktop kernel | Effect on the suite |
 | --- | --- | --- |
 | netem, `prio`, u32 | built in | network fault tests run |
-| loop, device-mapper `linear` and `error` | built in | `TestBlockDeviceFault` runs its attachment, error and recovery windows |
+| loop, device-mapper `linear` and `error` | built in | `TestBlockDeviceFault` runs its attachment, error and recovery windows; `TestBlockDeviceControlSupervision` runs entirely |
 | device-mapper `delay` and `flakey` | not built | the delay window of `TestBlockDeviceFault` is recorded as not eligible; it runs on GitHub-hosted runners |
 | FUSE | built in | `TestCephFSFuseMount` runs |
 | NBD | built in | `TestDesktopRBDOverNBD` (optional batch `desktop_capabilities`) maps an RBD image through `rbd-nbd` |

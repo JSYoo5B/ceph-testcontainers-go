@@ -21,8 +21,7 @@ import (
 // host's /dev. It prints one JSON object per action and exits 0 unless its own
 // arguments are wrong, so a refused kernel step is a receipt, not a crash.
 //
-//	create NAME FILE BYTES       backing file, loop, linear mapping
-//	table NAME LOOP SECTORS KIND [MS]  load linear, error or delay and swap it in
+//	create NAME FILE BYTES       backing file, loop, linear mapping with a UUID
 //	stat NAME                    the mapping's I/O counters, open count and table
 //	remove NAME LOOP FILE        remove the mapping, detach the loop, delete the file
 //	targets -                    the device-mapper targets the kernel has registered
@@ -35,15 +34,6 @@ def run(*argv):
 def number(path):
     st = os.stat(path)
     return os.major(st.st_rdev), os.minor(st.st_rdev)
-
-def table(name, loop, sectors, kind, ms):
-    if kind == "linear":
-        return "0 %d linear %s 0" % (sectors, loop)
-    if kind == "error":
-        return "0 %d error" % sectors
-    if kind == "delay":
-        return "0 %d delay %s 0 %d" % (sectors, loop, ms)
-    raise SystemExit("unknown table kind " + kind)
 
 action, name = sys.argv[1], sys.argv[2]
 out = {"action": action, "name": name}
@@ -60,7 +50,10 @@ if action == "create":
         out["loop"] = loop
         # Without udev in the keeper, --verifyudev makes dmsetup create the
         # node itself; with udev on the engine host it keeps udev's node.
-        rc, _, err = run("dmsetup", "create", "--verifyudev", name, "--table", table(name, loop, size // 512, "linear", 0))
+        # The UUID is the mapping's identity for the supervised control
+        # (blockControlScript): a name created again gets another UUID,
+        # even when the kernel gives it the same device number.
+        rc, _, err = run("dmsetup", "create", "--verifyudev", name, "--uuid", "TC-BLK-" + name, "--table", "0 %d linear %s 0" % (size // 512, loop))
         if rc != 0:
             out["error"] = "dmsetup create: " + err
         else:
@@ -72,22 +65,6 @@ if action == "create":
                 out["bytes"] = int(size_out) if rc == 0 else None
             except OSError as e:
                 out["error"] = "node: %s" % e
-elif action == "table":
-    loop, sectors, kind = sys.argv[3], int(sys.argv[4]), sys.argv[5]
-    ms = int(sys.argv[6]) if len(sys.argv) > 6 else 0
-    out["kind"] = kind
-    rc, _, err = run("dmsetup", "load", name, "--table", table(name, loop, sectors, kind, ms))
-    if rc != 0:
-        run("dmsetup", "clear", name)
-        out["loaded"], out["error"] = False, err
-    else:
-        out["loaded"] = True
-        for step in ("suspend", "resume"):
-            rc, _, err = run("dmsetup", step, name)
-            if rc != 0:
-                out["error"] = step + ": " + err
-                break
-    out["table"] = run("dmsetup", "table", name)[1]
 elif action == "stat":
     major, minor = number(node)
     with open("/sys/dev/block/%d:%d/stat" % (major, minor)) as f:
