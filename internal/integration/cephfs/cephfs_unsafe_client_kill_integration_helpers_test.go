@@ -150,8 +150,9 @@ func testCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 	completed := time.Since(killed)
 
 	// The session's states until the MDS drops it, bounded well past the
-	// shortened autoclose.
-	var states []string
+	// shortened autoclose, each sample with its time after the kill and the
+	// session's address.
+	var samples []killedSessionSample
 	var evicted time.Duration
 	deadline = time.Now().Add(3 * time.Minute)
 	for {
@@ -160,18 +161,27 @@ func testCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 			evicted = time.Since(killed)
 			break
 		}
-		if !slices.Contains(states, current.State) {
-			states = append(states, current.State)
-		}
+		samples = append(samples, killedSessionSample{State: current.State, Address: current.Address, At: time.Since(killed)})
 		if time.Now().After(deadline) {
-			t.Fatalf("the MDS kept the killed client's session, states %q", states)
+			t.Fatalf("the MDS kept the killed client's session, samples %v", samples)
 		}
 		time.Sleep(2 * time.Second)
 	}
+	states := killedSessionStates(samples)
 	// Nothing contends for the dead client's capabilities, so the MDS keeps
-	// the session open and closes it at autoclose, as for an idle client.
-	if !slices.Equal(states, []string{"open"}) || evicted < short.Timeout || evicted > short.Autoclose+15*time.Second {
-		t.Fatalf("killed client's session: states %q, gone %s after the kill, want only open and gone between %s and %s", states, evicted, short.Timeout, short.Autoclose)
+	// the session open and evicts it at autoclose, as for an idle client:
+	// kill_session journals the close in the killing state, and the session
+	// is gone once the close is safe. The state contract and the deadline are
+	// judged and reported separately.
+	stateProblem, deadlineProblem := judgeKilledSession(samples, session.Address, evicted, short.Timeout, short.Autoclose+15*time.Second)
+	if stateProblem != "" {
+		t.Errorf("killed client's session states: %s (samples %v)", stateProblem, samples)
+	}
+	if deadlineProblem != "" {
+		t.Errorf("killed client's session eviction: %s", deadlineProblem)
+	}
+	if t.Failed() {
+		t.FailNow()
 	}
 	entries, err := harness.ObserveCluster(h.Cluster).BlocklistEntries(ctx)
 	if err != nil {
@@ -189,4 +199,65 @@ func testCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 		h.Version, h.MDS.Name, h.MDS.GID, h.Baseline.Client, tid, h.Baseline.Inode, h.Renamed.ElapsedMS, before, h.Baseline.PID, exited,
 		killedState, held.Events(), restored.Round(time.Second), completed.Round(time.Second), committed.Events(), committed.Duration,
 		states, evicted.Round(time.Second), short.Timeout, short.Autoclose, session.Address, reader)
+}
+
+// killedSessionSample is one observation of the killed client's MDS session:
+// its state and address, and the time since the kill.
+type killedSessionSample struct {
+	State   string
+	Address string
+	At      time.Duration
+}
+
+func (s killedSessionSample) String() string {
+	return fmt.Sprintf("%s@%s(%s)", s.State, s.At.Round(100*time.Millisecond), s.Address)
+}
+
+// killedSessionStates is the distinct states of samples, in order.
+func killedSessionStates(samples []killedSessionSample) []string {
+	var states []string
+	for _, s := range samples {
+		if len(states) == 0 || states[len(states)-1] != s.State {
+			states = append(states, s.State)
+		}
+	}
+	return states
+}
+
+// judgeKilledSession judges the killed client's session against the
+// autoclose eviction of the MDS (Server::find_idle_sessions, then
+// kill_session, which journals the close in STATE_KILLING and drops the
+// session when the close is safe). The state contract: every sample is the
+// session of address; it is open, then possibly killing, never anything else
+// and never open again after killing; and killing starts no earlier than
+// timeout, since the eviction cannot start before the session timeout. The
+// deadline: the session is gone between timeout and latest. Each is returned
+// on its own, so that a state failure is never read as a late eviction or the
+// other way around.
+func judgeKilledSession(samples []killedSessionSample, address string, gone, timeout, latest time.Duration) (stateProblem, deadlineProblem string) {
+	killing := false
+	for _, s := range samples {
+		switch {
+		case s.Address != address:
+			stateProblem = fmt.Sprintf("a sample at %s has address %s, not the killed session's %s", s.At.Round(time.Second), s.Address, address)
+		case s.State == "open" && killing:
+			stateProblem = fmt.Sprintf("open again at %s after killing", s.At.Round(time.Second))
+		case s.State == "killing" && !killing && s.At < timeout:
+			stateProblem = fmt.Sprintf("killing at %s, before the session timeout %s", s.At.Round(time.Second), timeout)
+		case s.State == "killing":
+			killing = true
+		case s.State != "open":
+			stateProblem = fmt.Sprintf("state %q at %s is not on the autoclose eviction path", s.State, s.At.Round(time.Second))
+		}
+		if stateProblem != "" {
+			break
+		}
+	}
+	if stateProblem == "" && (len(samples) == 0 || samples[0].State != "open") {
+		stateProblem = "the session was not open after the kill"
+	}
+	if gone < timeout || gone > latest {
+		deadlineProblem = fmt.Sprintf("gone %s after the kill, want between %s and %s", gone.Round(time.Second), timeout, latest)
+	}
+	return stateProblem, deadlineProblem
 }
