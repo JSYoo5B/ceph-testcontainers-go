@@ -17,10 +17,11 @@ func (r *osdLaunchRecipe) seal() { r.started.CompareAndSwap(false, true) }
 // caller-verified device into that recipe and publishes the claim of the device
 // under the caller's lease token, and hands the launch back for startOSD. It is
 // the only caller of osdLaunchRecipe.attachBlockDevice and of
-// osdDeviceClaims.claim. It is internal: no option, no exported name and no
-// production caller (osdDeviceWiringCallers is empty). The default OSD launch,
-// AddOSD and the initial OSDs do not reach it, so their behavior is
-// unchanged, and nothing here opens a native claim.
+// osdDeviceClaims.claim. It is internal: no option and no exported name reach
+// it, and its one production caller is addBlockDeviceOSD (osd_device_launch.go,
+// osdDeviceWiringCallers), which only internal/faulthook reaches. The default
+// OSD launch, AddOSD and the initial OSDs do not reach it, so their behavior is
+// unchanged.
 //
 // Lock. The caller holds Container.mu, taken with lockTopology
 // (ceph/topology.go:380, ceph/context_lock.go:11), and keeps it through

@@ -166,3 +166,37 @@ func (faultHooks) NativeFailure(program string, code int, stdout, stderr []byte)
 // OnlyMissingHostResource reports an error that only says a container or
 // network is already gone.
 func (faultHooks) OnlyMissingHostResource(err error) bool { return onlyMissingHostResource(err) }
+
+// AddBlockDeviceOSD adds an OSD on the caller's device-mapper node under the
+// caller's lease token (addBlockDeviceOSD). The caller owns the chain.
+func (faultHooks) AddBlockDeviceOSD(ctx context.Context, c *Container, hostPath string, major, minor uint32, sizeBytes int64, lease string) (*OSDContainer, error) {
+	return c.addBlockDeviceOSD(ctx, osdBlockDevice{hostPath: hostPath, major: major, minor: minor, sizeBytes: sizeBytes}, lease)
+}
+
+// JudgeDeviceChain joins the claim table and the owner's evidence for one
+// lease (judgeDeviceChain). The evidence function returns what the owner
+// observed: the lease and device it saw, and the daemon-stopped,
+// borrows-closed and scan-complete facts as 0 (unknown), 1 (no) or 2 (yes).
+// The result names the outcome; only "clear" raises no objection.
+func (faultHooks) JudgeDeviceChain(ctx context.Context, c *Container, hostPath string, major, minor uint32, sizeBytes int64, lease string,
+	evidence func(context.Context) (lease, hostPath string, major, minor uint32, sizeBytes int64, facts [3]uint8, openers int, err error)) (outcome, detail string) {
+	device := osdBlockDevice{hostPath: hostPath, major: major, minor: minor, sizeBytes: sizeBytes}
+	var owner osdChainLeaseOwner
+	if evidence != nil {
+		owner = osdChainOwnerFunc(func(ctx context.Context, _ string) (osdChainEvidence, error) {
+			l, p, ma, mi, size, facts, openers, err := evidence(ctx)
+			if err != nil {
+				return osdChainEvidence{}, err
+			}
+			for _, f := range facts {
+				if f > uint8(osdChainYes) {
+					return osdChainEvidence{}, errors.New("chain fact out of range")
+				}
+			}
+			return osdChainEvidence{lease: l, device: osdBlockDevice{hostPath: p, major: ma, minor: mi, sizeBytes: size},
+				daemonStopped: osdChainFact(facts[0]), borrowsClosed: osdChainFact(facts[1]), scanComplete: osdChainFact(facts[2]), openers: openers}, nil
+		})
+	}
+	v := c.judgeDeviceChain(ctx, device, lease, owner)
+	return osdChainOutcomeNames[v.outcome], v.detail
+}

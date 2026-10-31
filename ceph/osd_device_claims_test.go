@@ -330,8 +330,9 @@ func osdDeviceClaimIgnoredCall(call string) bool {
 }
 
 // osdDeviceClaimCallers is the production caller table (see stateCaller):
-// the release hooks take the topology lock themselves, the wiring step and the
-// terminate step hold it. claim has no other production caller.
+// the release hooks and the chain judge take the topology lock themselves, the
+// wiring step and the terminate step hold it. claim has no other production
+// caller.
 var osdDeviceClaimCallers = map[string]stateCaller{
 	"removeOSD": {"takes", []string{"release"}},
 	"terminate": {"takes", []string{"settle"}},
@@ -339,6 +340,8 @@ var osdDeviceClaimCallers = map[string]stateCaller{
 	"registerBlockDeviceOSD": {"holds", []string{"claim"}},
 	// terminateOSDs is called only by terminate (TestTerminateStepsAreCalledOnlyByTerminate).
 	"terminateOSDs": {"holds", []string{"release"}},
+	// judgeDeviceChain's use is also pinned by osdChainReleaseCallers.
+	"judgeDeviceChain": {"takes", []string{"exclusionOf"}},
 }
 
 func osdDeviceClaimUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "deviceClaims" }

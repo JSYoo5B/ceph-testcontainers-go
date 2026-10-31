@@ -103,10 +103,13 @@ func TestOSDBootstrapRefusesAnUnverifiedBlockDeviceBeforeWriting(t *testing.T) {
 			}
 		},
 		"existing-ready-store": func(_ *testing.T, f *osdBootstrapFixture) {},
+		"ready-store-on-another-device": func(t *testing.T, f *osdBootstrapFixture) {
+			f.linkBlock(t, filepath.Join(f.root, "elsewhere"))
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newOSDBlockFixture(t)
-			if name == "existing-ready-store" {
+			if strings.HasPrefix(name, "existing-ready-store") || strings.HasPrefix(name, "ready-store-") {
 				f.ready(t)
 			}
 			mutate(t, f)
@@ -116,6 +119,29 @@ func TestOSDBootstrapRefusesAnUnverifiedBlockDeviceBeforeWriting(t *testing.T) {
 				t.Fatalf("unverified device admitted or store changed: calls=%v err=%v output=%s", calls, err, out)
 			}
 		})
+	}
+}
+
+// A container that starts again finds the store mkfs made on its device:
+// block links to the device path. The script admits it without mkfs and starts
+// the daemon, with no block arguments.
+func TestOSDBootstrapStartsTheStoreMadeOnItsBlockDeviceAgain(t *testing.T) {
+	f := newOSDBlockFixture(t)
+	f.ready(t)
+	f.linkBlock(t, filepath.Join(f.root, "dev/tc-osd-block"))
+	calls, out, err := f.run(t)
+	if err != nil || len(calls) != 2 || strings.Contains(strings.Join(calls, "\n"), "--mkfs") || strings.Contains(strings.Join(calls, "\n"), "bluestore") {
+		t.Fatalf("restart on the same device: calls=%v err=%v output=%s", calls, err, out)
+	}
+}
+
+// linkBlock replaces the ready store's block entry with a symbolic link.
+func (f *osdBootstrapFixture) linkBlock(t *testing.T, target string) {
+	t.Helper()
+	path := filepath.Join(f.root, "var/lib/ceph/osd/ceph-7/block")
+	removeAll(t, path)
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
 	}
 }
 

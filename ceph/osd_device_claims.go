@@ -18,9 +18,10 @@ var osdDeviceLease = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 // seam (osd_block_device.go) left to its first production caller. It is a
 // primitive in the shape of osdStorageState and monStoreState. Only the
 // unexported wiring step registerBlockDeviceOSD (osd_device_wiring.go) calls
-// claim, and it has no production caller, so every cluster holds no claim and
-// the two Terminate stages and the removal hook that use the table return
-// without effect.
+// claim, and its one production caller is addBlockDeviceOSD
+// (osd_device_launch.go), which only internal/faulthook reaches. A cluster that
+// never adds a device-backed OSD holds no claim, and the two Terminate stages
+// and the removal hook that use the table return without effect.
 //
 // A claim is exclusion bookkeeping inside the Go cluster and nothing more. It
 // is not the device lease: the caller still owns the file, loop and
