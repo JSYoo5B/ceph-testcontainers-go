@@ -275,7 +275,8 @@
           "asserts": "with nodown a paused OSD stays up while writes end in ETIMEDOUT and SLOW_OPS appears; without nodown it is marked down and degraded I/O works"
         }
       ],
-      "gap": "Peer, direction and phase selectors beyond whole-interface and one-peer loss remain."
+      "gap": "Peer, direction and phase selectors beyond whole-interface and one-peer loss remain.",
+      "owner": "#360"
     },
     {
       "id": "messenger/keepalive-ack-reconnect",
@@ -291,10 +292,15 @@
         {
           "test": "TestCephFSMessengerReconnect",
           "receipt": "MESSENGER_RECONNECT_RECEIPT",
-          "asserts": "a libcephfs client runs with ms_inject_socket_failures 40 for 2 s while it writes, fsyncs and stats 4 KiB records, and its messenger logs injected failures on lossless and lossy connections; the MDS's READY lines of that client after the baseline are reconnects of the one lossless session, with the same connection object and client and server cookies, a larger connect_seq and peer global sequence each time, and in_seq and out_seq that never go back and are not 0, and where the release has messenger dump the MDS's connection is the same conn_id and peer nonce with the last logged connect_seq and peer_global_seq; the OSDs' READY lines of that client are new lossy sessions, each with connect_seq 0, no server cookie, a client cookie no earlier session had and in_seq and out_seq 0, and with messenger dump an OSD has a new READY connection object of that client; the MDS session stays open under one MDS GID and an independent client reads every acknowledged record byte for byte"
+          "asserts": "a libcephfs client runs with ms_inject_socket_failures 40 for 2 s while it writes, fsyncs and stats 4 KiB records, and its messenger logs injected failures on lossless and lossy connections; the MDS's READY lines of that client after the baseline are reconnects of the one lossless session, with the same connection object and client and server cookies, a larger connect_seq and peer global sequence each time, and in_seq and out_seq that never go back and are not 0, and where the release has messenger dump the MDS's connection is the same conn_id and peer nonce with the last logged connect_seq and peer_global_seq; the OSDs' READY lines of that client are new lossy sessions, each fresh with connect_seq 0, no server cookie, a non-zero client cookie and in_seq and out_seq 0 (the fresh state marks a reset; a lossy session may reuse a client cookie for a new connection to the same peer), and with messenger dump an OSD has a new READY connection object of that client; the MDS session stays open under one MDS GID and an independent client reads every acknowledged record byte for byte"
+        },
+        {
+          "test": "TestCephFSMessengerKeepalive",
+          "receipt": "CEPHFS_KEEPALIVE_RECEIPT",
+          "asserts": "a libcephfs client mounted at debug_ms 20 that writes, fsyncs and idles in cycles logs its ProtocolV2 sessions sending KEEPALIVE2 frames (send_keepalive) and receiving KEEPALIVE2_ACK (handle_keepalive2_ack got KEEPALIVE_ACK), and both receiving and sending individual ACK frames for the MDS cap messages (handle_message_ack got ack seq, write_event try send msg ack); a MON's debug_ms 20 log shows it receiving those KEEPALIVE2 frames from the client (handle_keepalive2 got KEEPALIVE2) and the MDS's log shows it acking the client's messages; these frames are named only at debug_ms 20, not debug_ms 1 or messenger dump"
         }
       ],
-      "gap": "KEEPALIVE2 and KEEPALIVE2_ACK frames and individual ACK frames are not observed: neither debug_ms 1 nor messenger dump reports them, so acknowledgement is evidenced only by the in_seq and out_seq that a reconnected lossless session carries. Faults are injected by the client's own messenger on its MDS and OSD connections only; daemon-to-daemon sessions, server-side session resets, network-level faults and keepalive timeouts are not recorded.",
+      "gap": "KEEPALIVE2, KEEPALIVE2_ACK and individual ACK frames are observed at debug_ms 20, not decoded from the wire; keepalive runs on the client's lossy MON session, so the client-to-MDS and client-to-OSD sessions are acknowledged but not keepalived. Faults are injected by the client's own messenger on its MDS and OSD connections only; daemon-to-daemon sessions, server-side session resets, network-level faults and keepalive timeouts are not recorded.",
       "owner": "#5"
     },
     {
@@ -702,17 +708,20 @@
         "CEPH_OSD_OP_SETALLOCHINT",
         "CEPH_FEATURE_OSD_FADVISE_FLAGS"
       ],
-      "status": "partial",
+      "status": "covered",
       "evidence": "native-state",
       "cases": [
         {
           "test": "TestRADOSObjectReceipts",
           "receipt": "RADOS_HINTS_RECEIPT",
           "asserts": "rados set-alloc-hint on an existing object keeps its bytes at a new version and on a missing one creates it empty, and the decoded object info holds the hinted sizes; fadvise flags on a write_full, on a cmpext read (match and MAX_ERRNO plus offset) and on the rados cp copy-from leave exact bytes, xattrs and omap"
+        },
+        {
+          "test": "TestRBDSparseReadReceipt",
+          "receipt": "OSD_SPARSE_READ_RECEIPT",
+          "asserts": "the rbd CLI exports an image with two written extents through librbd, which reads each 4 MiB data object with CEPH_OSD_OP_SPARSE_READ; each object's request, the OSD's reply and the client's receipt join on tid, object and offset, a written object answered with result 0 and an output of exactly its data plus a one-extent map less than the 4 MiB range read, an absent object with -ENOENT and the full requested length; the export equals the written image byte for byte. python-rados and the rados CLI of the official image issue no sparse read"
         }
-      ],
-      "gap": "Sparse reads have no native receipt: neither python-rados nor the rados CLI of the official image issues CEPH_OSD_OP_SPARSE_READ (only the C++ API and librbd do).",
-      "owner": "#5"
+      ]
     },
     {
       "id": "client-osd/backoff",
@@ -904,9 +913,14 @@
           "test": "TestCephFSFcntlStandbyTakeover",
           "receipt": "CEPHFS_FCNTL_TAKEOVER_RECEIPT",
           "asserts": "two retained ceph-fuse sessions and descriptors observe an already-held POSIX write range before and after standby takeover, with independent contention and disjoint-range control before the holder-only unlock admits a verified same-fd write"
+        },
+        {
+          "test": "TestCephFSFcntlSetlkwReplay",
+          "receipt": "CEPHFS_FCNTL_SETLKW_REPLAY_RECEIPT",
+          "asserts": "through two ceph-fuse mounts of one client, a holder takes a POSIX write lock on a file's first 4096 bytes and a contender's blocking F_SETLKW for the same range waits in the active MDS (its setfilelock request at 'failed to add lock, waiting', rule 1 type 2 wait 1, naming the inode); the active MDS is killed and the standby takes over; the new MDS replays the same waiting request (same tid, still 'failed to add lock, waiting') and the contender's call has not returned; when the holder unlocks, the new MDS grants the waiting lock, the contender's F_SETLKW returns 0 and its request leaves the MDS, and an independent client reads the file; F_GETLK across the two clients reports the holder's F_WRLCK on [0,4096) but a remote l_pid of 0"
         }
       ],
-      "gap": "POSIX (fcntl) receipts require an opt-in ceph-fuse mount with /dev/fuse, CAP_SYS_ADMIN and an AppArmor allowance; standby-takeover evidence covers an already-held write range, not queued F_SETLKW replay, fairness, multiple active ranks, remote POSIX PID attribution or all native client/release combinations.",
+      "gap": "POSIX (fcntl) receipts require an opt-in ceph-fuse mount with /dev/fuse, CAP_SYS_ADMIN and an AppArmor allowance. A queued F_SETLKW is replayed across a standby takeover and granted after the holder unlocks, and F_GETLK reports a remote holder's range but not its PID (CephFS reports l_pid 0 for a lock held by another client). Fairness among several waiters, multiple active ranks and all native client/release combinations remain unobserved.",
       "owner": "#5"
     },
     {
@@ -936,9 +950,14 @@
           "test": "TestCephFSLiveSnapRealmRemoval",
           "asserts": "the snapshot is first present in the retained client's derived realm context, then absent with a newer sequence before another same-fd overwrite; HEAD reads the new bytes and the removed snapshot path returns ENOENT",
           "receipt": "CEPHFS_LIVE_REALM_REMOVAL"
+        },
+        {
+          "test": "TestCephFSSnapMessages",
+          "receipt": "CEPHFS_SNAP_MESSAGES_RECEIPT",
+          "asserts": "a retained libcephfs client holds a directory open at debug_client 10 while an independent administrator snapshots it; its dump_cache, polled until its derived SnapContext holds the snapshot, gates the read of its log, where the CEPH_MSG_CLIENT_SNAP messages are decoded and one is a split of the directory's own realm inode; the snapshot's MDS ID is in the client's derived SnapContext, and an independent reader sees the snapshot's base bytes and the head's overwritten bytes"
         }
       ],
-      "gap": "Live-client realm updates are observed only as a snapshot context derived from the client's dump_cache; the cached SnapContext is not read directly and CEPH_MSG_CLIENT_SNAP traffic is not decoded. Realm hierarchy changes beyond one added and one removed snapshot are not recorded.",
+      "gap": "CEPH_MSG_CLIENT_SNAP is decoded as the message kind and the realm inode it splits, joined to the SnapContext the client then derives from dump_cache, for one created snapshot; the specific my_snaps trace line is not always logged and is not required. Realm hierarchy changes beyond one added snapshot, and snapshot removal through client_snap, are not recorded (removal's realm-context change is covered by TestCephFSLiveSnapRealmRemoval through dump_cache).",
       "owner": "#5"
     },
     {
@@ -1024,7 +1043,7 @@
         }
       ],
       "gap": "Quota receipts cover directory max_files and max_bytes enforcement and relaxation on one live client; client metrics cover cumulative write counters of one writer and one idle client on rank 0; reclaim covers RESET of a dead client's session, not state-preserving reclaim. Quota and metrics messages are not decoded or counted, and other metrics, reporting latency, MDS or rank changes, blocklist effects and consumer implementations are not claimed.",
-      "owner": "#60"
+      "owner": "#361"
     },
     {
       "id": "rbd/image-io",

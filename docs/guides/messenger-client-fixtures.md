@@ -231,7 +231,8 @@ client container, and read every result back with a second client.
 | xattrs | `getxattrs` lists binary and empty values; `getxattr` of a removed name is `ENODATA` (61); `rmxattr` of an unset name succeeds with a new version; a missing object is `ENOENT` (2) | `TestRADOSObjectReceipts` |
 | OMAP | keys-only listings carry no values; `max_return` pages continue with `start_after` until an empty page, capped at `osd_max_omap_entries_per_request`; by-keys omits absent keys; clear also empties the header | `TestRADOSObjectReceipts` |
 | rollback | to a self-managed snapshot restores bytes, xattrs and OMAP at a new version; an object created after the snapshot is deleted | `TestRADOSObjectReceipts` |
-| hints | `set-alloc-hint` keeps existing bytes and creates a missing object empty; fadvise flags change no result. No image tool issues a sparse read | `TestRADOSObjectReceipts` |
+| hints | `set-alloc-hint` keeps existing bytes and creates a missing object empty; fadvise flags change no result | `TestRADOSObjectReceipts` |
+| sparse read | the `rbd` CLI exports an image through librbd, which reads each 4 MiB data object with `CEPH_OSD_OP_SPARSE_READ`; `TestRBDSparseReadReceipt` joins each request, the OSD's reply and the client's receipt, a written object returning only its extent and the extent map and an absent one `-ENOENT`. python-rados and the `rados` CLI issue no sparse read | `TestRBDSparseReadReceipt` |
 | statistics | pool statistics and `ceph df` follow known object sizes exactly; cluster statfs matches `ceph df` | `TestRADOSObjectReceipts` |
 
 `TestRADOSMutationContracts` runs on the CRC MemStore profile above. A
@@ -292,6 +293,7 @@ and `num_completed_requests`. Every test runs with `MessengerV2Secure`.
 | Two clients contend for `flock(LOCK_EX)` | non-blocking returns `EWOULDBLOCK` (11); blocking waits in `dump_ops_in_flight` as `setfilelock rule 2, type 2, ... wait 1` at `failed to add lock, waiting` and returns 0 after `LOCK_UN`. `dump inode` does not list flocks | `TestCephFSFlockContention` |
 | The same lock held across a standby takeover | both sessions stay `open`; the contender is still refused with `EWOULDBLOCK` and its blocking lock waits on the new MDS until `LOCK_UN` | `TestCephFSFlockAcrossMDSFailover` |
 | Two `ceph-fuse` mounts (`/dev/fuse`, `CAP_SYS_ADMIN`, `apparmor=unconfined`) contend for an `F_WRLCK` byte range; then the holder's `ceph-fuse` is killed | `F_SETLK` returns `EAGAIN` (11) and `F_GETLK` reports the holder's range; `F_SETLKW` waits as `setfilelock rule 1` (fcntl). After the kill the mount returns `ENOTCONN` (107) and the dead client's lock refuses the contender until its session is evicted. Logs `CEPHFS_FCNTL_LOCK_RECEIPT` | `TestCephFSFuseMount`, in the optional batch `cephfs_fuse` (see [CI](../contributing/ci.md#native-regressions)) |
+| A contender's `F_SETLKW` queued in the MDS, then a standby takeover | the blocking `F_SETLKW` waits in the active MDS; after the active MDS is killed and the standby takes over, the new MDS replays the same waiting request (same `tid`, still at `failed to add lock, waiting`) and the call has not returned; when the holder unlocks, the new MDS grants it and `F_SETLKW` returns 0. `F_GETLK` reports the remote holder's range but an `l_pid` of 0. Logs `CEPHFS_FCNTL_SETLKW_REPLAY_RECEIPT` | `TestCephFSFcntlSetlkwReplay`, in the optional batch `cephfs_fuse` |
 | A journaled rename, then SIGKILL of the active MDS and a standby takeover | before the crash the rename is committed and replied while the dirfrag object (`<dir ino>.00000000`) still holds only the old name; the standby's `mds_log` shows `replayed` above 0; the new name survives; after `flush journal` the dirfrag holds only the new name | `TestCephFSJournaledRenameAcrossMDSCrash` |
 | `client evict` of a client holding unfsynced data (`client_oc_max_dirty_age` 600 s) | the blocklist entry appears in OSDMap epoch E and the MDS's `osdmap_epoch_barrier` is E; the evicted client reports `blocklisted`, its fsync, write and `stat` return `ESHUTDOWN` (108), a second fsync returns 0 because the dirty data was dropped; another client reads only fsynced bytes and its own barrier becomes E | `TestCephFSBlocklistEpochBarrier` |
 | Full ratios lowered with `override.SetFullRatios`, then `Restore` | once the client holds the full map, writes return `ENOSPC` (28) at once while fsync, `mkdir` and `stat` return 0; after restore the same descriptor writes again | `TestCephFSOSDFullRetainedClient` |
@@ -324,9 +326,10 @@ What a client of your own must do, by receipt:
   with the head snapshot ID is the inode.
 - Locks: the MDS keeps flocks in memory only. Send held locks with each
   inode's caps in the reconnect, or the new MDS grants them to the next
-  contender. Waiting requests are not carried over. `cephfs.LibCephFS` cannot
-  take `fcntl` locks, so those come from `ceph-fuse` and are not tested across
-  a failover.
+  contender. A waiting `F_SETLKW`, however, is replayed across a standby
+  takeover and granted by the new MDS once the holder unlocks
+  (`TestCephFSFcntlSetlkwReplay`). `cephfs.LibCephFS` cannot take `fcntl`
+  locks, so those come from `ceph-fuse`.
 - Eviction: the MDS sends its epoch barrier with capability messages. A
   client that gets it waits for that OSDMap before more OSD ops. An evicted
   client must fail its writes and drop unfsynced data, as the native client
@@ -491,7 +494,7 @@ unusable instead of dropping them.
 | --- | --- | --- |
 | v2-only CephFS cluster | The MDS advertises only v2 in `fs dump` and runs with `ms_bind_msgr1` off. Every READY line of each MON, MGR, OSD and the MDS has `rev1=1`, the MDS's with a MON, a MGR, an OSD and a mounted client among them. On Tentacle every READY connection in `messenger dump` is `rev1` and each listening messenger advertises v2 only. Logs `MESSENGER_V2_SESSIONS_RECEIPT`. | `TestCephFSMessengerV2Sessions` |
 | v2-only RGW cluster | The gateway's container listens on TCP 7480 only (Docker's resolver at 127.0.0.11 aside): radosgw binds no messenger. radosgw's messengers are the ones the MONs' `sessions` report from the gateway's container once `rgw.Run` has returned; the READY lines that the MON, MGR and OSDs logged with those messengers' nonces all have `rev1=1`. Lines of `radosgw-admin`, which creates the S3 user from the same container, are counted apart. On Tentacle radosgw's admin socket reports exactly those nonces, messengers with no listening socket and `rev1` connections to a MON and an OSD. Logs `MESSENGER_V2_RGW_RECEIPT`. | `TestRGWMessengerV2Sessions` |
-| Client-side socket faults | A libcephfs client sets `ms_inject_socket_failures` to 40 for 2 s while it writes, fsyncs and stats records. The MDS logs reconnects of the one lossless session: the same connection object and cookies, `cs` and `pgs` growing, `in_seq` and `out_seq` never going back. The OSDs log new lossy sessions: `cs=0`, `server_cookie=0`, a new `client_cookie`, sequences at 0. On Tentacle the MDS's `messenger dump` shows the same `conn_id` with the last logged `connect_seq`. The MDS session stays `open` and another client reads every acknowledged record. Logs `MESSENGER_RECONNECT_RECEIPT`. | `TestCephFSMessengerReconnect` |
+| Client-side socket faults | A libcephfs client sets `ms_inject_socket_failures` to 40 for 2 s while it writes, fsyncs and stats records. The MDS logs reconnects of the one lossless session: the same connection object and cookies, `cs` and `pgs` growing, `in_seq` and `out_seq` never going back. The OSDs log new lossy sessions, each fresh: `cs=0`, `server_cookie=0`, a non-zero `client_cookie`, sequences at 0. The fresh state marks the reset; a lossy session may reuse a `client_cookie` for a new connection to the same peer, so cookie reuse across resets is allowed. On Tentacle the MDS's `messenger dump` shows the same `conn_id` with the last logged `connect_seq`. The MDS session stays `open` and another client reads every acknowledged record. Logs `MESSENGER_RECONNECT_RECEIPT`. | `TestCephFSMessengerReconnect` |
 
 ```golang
 lines := harness.ContainerLogLines(t, ctx, mds) // mds is the *cephfs.MDS of the active rank
@@ -640,6 +643,46 @@ through its session MON (`via`):
   MgrClient's epochs with the active address vector, and its new session.
   The failover moves the MgrMap several epochs, so do not expect consecutive
   epochs.
+
+## Snapshot realm messages
+
+`TestCephFSSnapMessages` decodes the CEPH_MSG_CLIENT_SNAP a retained client
+receives when its directory is snapshotted, and logs
+`CEPHFS_SNAP_MESSAGES_RECEIPT`. The client mounts at `debug_client 10` with an
+admin socket, holds a directory and an `O_RDWR` fd open, and an independent
+administrator creates the snapshot. The client applies `client_snap`
+asynchronously, so its own `dump_cache`, polled until its derived SnapContext
+holds the snapshot, is the readiness gate; by then the client has logged the
+`client_snap` that delivered the context. The test then reads the log and
+requires a `handle_snap client_snap(split split=0x<dir-inode> ...)` of the
+directory's own realm, joining that wire message to the SnapContext
+(`dump_cache`) that holds the snapshot's MDS ID. An overwrite and an
+independent read confirm the realm is the live one. The specific
+`my_snaps` trace line is not always logged at this level and is not required;
+`cephfs_snap_messages_fixture_test.go` tests the message parsing without
+Docker. Snapshot removal's realm-context change is covered through
+`dump_cache` by the removal recipe above.
+
+## Keepalive and acknowledgement frames
+
+A ProtocolV2 session exchanges KEEPALIVE2, KEEPALIVE2_ACK and message ACK
+frames that neither `debug_ms 1` nor `messenger dump` names; they appear only
+at `debug_ms 20`. `TestCephFSMessengerKeepalive` mounts a libcephfs client at
+`debug_ms 20`, writes, fsyncs and idles in cycles, and logs
+`CEPHFS_KEEPALIVE_RECEIPT`. From the client's own log it counts, by substring
+after the connection's `conn(...)` state:
+
+- `send_keepalive` — a KEEPALIVE2 frame written;
+- `handle_keepalive2_ack got KEEPALIVE_ACK` — its KEEPALIVE2_ACK received;
+- `handle_message_ack got ack seq` and `write_event try send msg ack` — ACK
+  frames received and sent for the MDS cap messages.
+
+Keepalive runs on the client's lossy MON session, so a MON's `debug_ms 20`
+log shows `handle_keepalive2 got KEEPALIVE2` from the client, while the MDS's
+log shows it acking the client's cap messages. The client's lossless MDS and
+OSD sessions are acknowledged but not keepalived. These frames are observed,
+not decoded from the wire; `cephfs_keepalive_fixture_test.go` tests the
+counting without Docker.
 
 ## OSD backoff
 
