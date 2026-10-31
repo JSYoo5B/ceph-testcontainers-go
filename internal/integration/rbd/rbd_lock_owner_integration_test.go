@@ -1,6 +1,6 @@
-//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_rbd_fixtures_locks))))
+//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_rbd_fixtures_basic))))
 
-//ci: timeout=25m job-timeout=35 image-roles=essential,client
+//ci: timeout=120m job-timeout=130 image-roles=essential,client
 
 package rbd_test
 

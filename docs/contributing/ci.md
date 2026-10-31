@@ -323,12 +323,12 @@ A collaborator can run chosen runtime batches on a pull request by commenting:
 /ci run <batch|profile>... [on <release|codename|all>...]
 ```
 
-For example, `/ci run rbd_mirror_bandwidth network_delay on squid` runs two
+For example, `/ci run rbd_mirror_bandwidth network_faults on squid` runs two
 batches on Squid 19.2.5 role images. The run is added beside the usual checks.
 
-- **Names.** A batch (`network_delay`), category and batch
-  (`short/network_delay`), profile name
-  (`short/network_delay/internal-integration`) or profile ID, separated by
+- **Names.** A batch (`network_faults`), category and batch
+  (`short/network_faults`), profile name
+  (`short/network_faults/internal-integration`) or profile ID, separated by
   blanks or commas. Any runtime category and the optional batches are
   allowed; `code` batches are refused. Duplicates run once.
 - **Releases.** After `on`: a release (`20.2.4`), a codename (`tentacle`,
@@ -368,7 +368,7 @@ To check a command locally on saved event and pull request JSON:
 python3 .github/scripts/tag_scenarios.py vocabulary --output artifacts/vocabulary.json
 python3 .github/scripts/ci_command.py authorize --event event.json --pull pull.json
 python3 .github/scripts/ci_command.py select \
-  --request '{"names": ["network_delay"], "selectors": ["squid"], "duplicates": [], "sha": "<head>", "pull": 1, "comment_id": 1}' \
+  --request '{"names": ["network_faults"], "selectors": ["squid"], "duplicates": [], "sha": "<head>", "pull": 1, "comment_id": 1}' \
   --vocabulary artifacts/vocabulary.json
 ```
 

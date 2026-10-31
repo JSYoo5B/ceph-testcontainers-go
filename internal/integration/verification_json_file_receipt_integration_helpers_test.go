@@ -1,4 +1,4 @@
-//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_verification_json_file_receipt))))
+//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_daemon_basics))))
 
 package integration_test
 

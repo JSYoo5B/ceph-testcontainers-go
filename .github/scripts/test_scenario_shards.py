@@ -251,9 +251,9 @@ class SourceDrivenWorkflowTests(unittest.TestCase):
             self.assertEqual(roles[0], "essential", profile["id"])
             self.assertTrue(set(roles) <= {"essential", "client", "cephfs", "rbd-aux", "rgw"}, profile["id"])
         scoped = {profile["batch"]: profile["image_roles"] for profile in profiles}
-        self.assertEqual(scoped["daemon_addresses"], "essential,client")
-        self.assertEqual(scoped["supervised_command"], "essential")
-        self.assertEqual(scoped["native_input"], "essential,client")
+        self.assertEqual(scoped["daemon_basics"], "essential,client,rbd-aux")
+        self.assertEqual(scoped["network_faults"], "essential,client")
+        self.assertEqual(scoped["cephfs_clients"], "essential,client,cephfs,rbd-aux,rgw")
         self.assertEqual(scoped["rbd_namespaces"], "essential,client,rbd-aux")
         self.assertEqual(scoped["rados_fixtures"], "essential,client,cephfs")
 

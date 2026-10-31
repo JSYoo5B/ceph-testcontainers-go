@@ -567,10 +567,24 @@ def discover(catalog, bugs=NO_BUGS):
                                   profile["category"] + "/" + profile["batch"])
     for package in sorted({profile["package"] for profile in profiles.values()}):
         same_inventory_under_bugs(catalog, package, all_tags, bugs, "all/" + package)
+    # A file that declares only testify suite methods is test code of the
+    # batches whose tests run that suite, so a change to it selects them.
+    suite_owners = defaultdict(set)
+    for file in catalog:
+        for test, kinds in file.get("suite_runs", {}).items():
+            for key, _, _ in owners.get((package_path(file), test), ()):
+                for kind in kinds:
+                    suite_owners[(package_path(file), kind)].add(key)
+    for file in catalog:
+        if file["tests"]:
+            continue
+        for case in file.get("suite_cases", ()):
+            for key in suite_owners[(package_path(file), case.split(".", 1)[0])]:
+                sources[key].add(file["path"])
     result = [profiles[key] for key in sorted(profiles)]
     for key in sorted(profiles):
-        # The files that declare the batch's tests; shared helpers are not
-        # listed because every batch compiles them.
+        # The files that declare the batch's tests or its suite methods;
+        # shared helpers are not listed because every batch compiles them.
         profiles[key]["sources"] = sorted(sources[key])
         profiles[key]["networks"] = batch_networks(key, networks[key])
         profiles[key]["network_tests"] = sorted(network_tests[key])
@@ -1091,6 +1105,26 @@ def selected_tests(catalog, package, tags):
     return sorted(tests)
 
 
+def selected_suite_cases(catalog, package, tags, expected):
+    """The testify suite methods that this execution runs, each with the
+    tests that run its suite type. suite.Run discovers the methods by
+    reflection, wherever in the package they are declared, so the native log
+    must show each one as a passed leaf under one of those tests."""
+    methods, runners = defaultdict(set), defaultdict(set)
+    for file in catalog:
+        if package_path(file) != package or not evaluate(file["constraint"], set(tags.split(","))):
+            continue
+        for case in file.get("suite_cases", ()):
+            kind, method = case.split(".", 1)
+            methods[kind].add(method)
+        for test, kinds in file.get("suite_runs", {}).items():
+            if test in expected:
+                for kind in kinds:
+                    runners[kind].add(test)
+    return sorted((tuple(sorted(runners[kind])), method)
+                  for kind in methods if runners[kind] for method in methods[kind])
+
+
 def compile_inventory(package, tags, root=ROOT):
     command = ["go", "test", "-mod=readonly", "-tags=" + tags, "-list=.", package]
     result = subprocess.run(command, cwd=root, text=True, capture_output=True, timeout=180,
@@ -1133,8 +1167,13 @@ def verify(catalog, plan, root=ROOT):
     return {"schema": SCHEMA, "passed": True, "profiles": observations}
 
 
-def completion(log, expected, package, execution=GO_TEST):
+def completion(log, expected, package, execution=GO_TEST, cases=()):
     """Check the RUN/PASS proof of one native log.
+
+    cases are (parents, method) pairs of testify suites: each method must
+    have run and passed as a leaf under one of its parents, because a suite's
+    parent can pass without running a method that a filter or a setup
+    failure skipped.
 
     A go test log ends its package with PASS and then the driver's
     "ok <package>" line. A test binary run directly prints the same results
@@ -1169,6 +1208,10 @@ def completion(log, expected, package, execution=GO_TEST):
         errors.append("native parent RUN/PASS inventory differs from the compiled profile")
     if Counter(runs) != Counter(passes) or any(count != 1 for count in Counter(runs).values()):
         errors.append("a started native test or leaf lacks exactly one completed PASS")
+    for parents, case in cases:
+        if not any(name.endswith("/" + case) and any(name.startswith(parent + "/") for parent in parents)
+                   for name in passes if name in runs):
+            errors.append("suite case " + case + " of " + "/".join(parents) + " did not run and pass")
     if failures:
         errors.append("native log contains failed tests or package failure")
     if skips:
@@ -1409,7 +1452,8 @@ def run_profile(catalog, plan, category, batch, package, directory, root=ROOT, t
     if module is None:
         raise ValueError("source go.mod has no module declaration")
     native_package = module[1] + ("/" + profile["package"][2:] if profile["package"] != "." else "")
-    completed = completion(text, expected, native_package, execution)
+    cases = selected_suite_cases(catalog, profile["package"], profile["tags"], expected)
+    completed = completion(text, expected, native_package, execution, cases)
     strict = strict_completion(text, profile, network, execution)
     result = {"schema": SCHEMA, "profile": profile, "command": command, "execution": execution,
               "network": network, "elapsed_seconds": round(time.time() - started, 3), "exit_code": exit_code,

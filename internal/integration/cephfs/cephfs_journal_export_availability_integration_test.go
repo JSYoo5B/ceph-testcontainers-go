@@ -1,6 +1,6 @@
-//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_journal_export_availability))))
+//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_clients))))
 
-//ci: timeout=20m job-timeout=30 image-roles=essential,client,cephfs,rbd-aux,rgw
+//ci: timeout=45m job-timeout=55 image-roles=essential,client,cephfs,rbd-aux,rgw
 
 package cephfs_test
 

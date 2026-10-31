@@ -39,7 +39,15 @@ type file struct {
 	// are the tests that call it.
 	Networks     []string `json:"networks"`
 	NetworkTests []string `json:"network_tests"`
-	SHA256       string   `json:"sha256"`
+	// SuiteCases are the testify suite methods the file declares, as
+	// Type.Method: methods named like a test that take and return nothing.
+	// suite.Run finds them by reflection, so the planner requires each one's
+	// leaf in the native log. SuiteRuns are, per test of the file, the types
+	// it passes to suite.Run; together they bind a method to the tests that
+	// run it, wherever in the package the method is declared.
+	SuiteCases []string            `json:"suite_cases"`
+	SuiteRuns  map[string][]string `json:"suite_runs"`
+	SHA256     string              `json:"sha256"`
 }
 
 func convert(e constraint.Expr, tags map[string]bool) *expression {
@@ -82,7 +90,7 @@ func inspect(root, path string) (file, error) {
 		return file{}, err
 	}
 	hash := sha256.Sum256(data)
-	out := file{Path: filepath.ToSlash(rel), Package: f.Name.Name, Tests: []string{}, Tags: []string{}, Metadata: []string{}, Networks: []string{}, NetworkTests: []string{}, SHA256: hex.EncodeToString(hash[:])}
+	out := file{Path: filepath.ToSlash(rel), Package: f.Name.Name, Tests: []string{}, Tags: []string{}, Metadata: []string{}, Networks: []string{}, NetworkTests: []string{}, SuiteCases: []string{}, SuiteRuns: map[string][]string{}, SHA256: hex.EncodeToString(hash[:])}
 	for _, group := range f.Comments {
 		if group.Pos() > f.Package {
 			continue
@@ -110,6 +118,13 @@ func inspect(root, path string) (file, error) {
 	}
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Recv != nil && testName(fn.Name.Name) && fn.Type.TypeParams == nil &&
+			(fn.Type.Params == nil || len(fn.Type.Params.List) == 0) && fn.Type.Results == nil && len(fn.Recv.List) == 1 {
+			if recv := receiverType(fn.Recv.List[0].Type); recv != "" {
+				out.SuiteCases = append(out.SuiteCases, recv+"."+fn.Name.Name)
+			}
+			continue
+		}
 		if !ok || fn.Recv != nil || !testName(fn.Name.Name) {
 			continue
 		}
@@ -142,14 +157,69 @@ func inspect(root, path string) (file, error) {
 			return file{}, fmt.Errorf("%s: test parameter does not refer to testing.T", rel)
 		}
 		out.Tests = append(out.Tests, fn.Name.Name)
+		if types := suiteRuns(fn.Body); len(types) > 0 {
+			out.SuiteRuns[fn.Name.Name] = types
+		}
 	}
 	sort.Strings(out.Tests)
+	sort.Strings(out.SuiteCases)
 	networks, tests, err := readNetworkModes(f)
 	if err != nil {
 		return file{}, fmt.Errorf("%s: %w", rel, err)
 	}
 	out.Networks, out.NetworkTests = networks, tests
 	return out, nil
+}
+
+// receiverType is the type name of a method receiver: T or *T.
+func receiverType(expr ast.Expr) string {
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+	}
+	if ident, ok := expr.(*ast.Ident); ok {
+		return ident.Name
+	}
+	return ""
+}
+
+// suiteRuns returns the types that body passes to suite.Run as &T{...} or
+// new(T), sorted and without duplicates.
+func suiteRuns(body *ast.BlockStmt) []string {
+	seen := map[string]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) != 2 {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "Run" {
+			return true
+		}
+		if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "suite" {
+			return true
+		}
+		switch arg := call.Args[1].(type) {
+		case *ast.UnaryExpr:
+			if lit, ok := arg.X.(*ast.CompositeLit); ok {
+				if ident, ok := lit.Type.(*ast.Ident); ok {
+					seen[ident.Name] = true
+				}
+			}
+		case *ast.CallExpr:
+			if fun, ok := arg.Fun.(*ast.Ident); ok && fun.Name == "new" && len(arg.Args) == 1 {
+				if ident, ok := arg.Args[0].(*ast.Ident); ok {
+					seen[ident.Name] = true
+				}
+			}
+		}
+		return true
+	})
+	types := make([]string, 0, len(seen))
+	for name := range seen {
+		types = append(types, name)
+	}
+	sort.Strings(types)
+	return types
 }
 
 // readNetworkModes reads the modes of every harness.NetworkModes(t, "mode", ...) call

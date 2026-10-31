@@ -61,7 +61,9 @@ Doubles declared in a `_test.go` file are compiled only by tests of their own
 package and are not listed one by one. A list of names would only restate the
 source and would conflict between concurrent changes. This section describes
 the families. The module has no generated mocks and no
-mock framework; the only `testify` reference is an indirect dependency.
+mock framework. `testify` is used only for `testify/suite` in integration
+tests (see [Suites that share one cluster](testing.md#suites-that-share-one-cluster));
+its `mock` and `assert` packages are not used.
 
 | Family | What it substitutes | Typical shape |
 | --- | --- | --- |

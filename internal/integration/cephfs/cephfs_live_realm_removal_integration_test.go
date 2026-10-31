@@ -1,6 +1,6 @@
-//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_live_realm_removal))))
+//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_clients))))
 
-//ci: timeout=25m job-timeout=35 image-roles=essential,client,cephfs
+//ci: timeout=45m job-timeout=55 image-roles=essential,client,cephfs,rbd-aux,rgw
 
 package cephfs_test
 

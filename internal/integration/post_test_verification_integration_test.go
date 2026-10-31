@@ -1,6 +1,6 @@
-//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_post_test_verification))))
+//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_daemon_basics))))
 
-//ci: timeout=25m job-timeout=35 image-roles=essential
+//ci: timeout=45m job-timeout=55 image-roles=essential,client,rbd-aux
 
 package integration_test
 
