@@ -945,9 +945,14 @@
           "test": "TestCephFSLiveSnapRealmRemoval",
           "asserts": "the snapshot is first present in the retained client's derived realm context, then absent with a newer sequence before another same-fd overwrite; HEAD reads the new bytes and the removed snapshot path returns ENOENT",
           "receipt": "CEPHFS_LIVE_REALM_REMOVAL"
+        },
+        {
+          "test": "TestCephFSSnapMessages",
+          "receipt": "CEPHFS_SNAP_MESSAGES_RECEIPT",
+          "asserts": "a retained libcephfs client holds a directory open at debug_client 10 while an independent administrator snapshots it; its dump_cache, polled until its derived SnapContext holds the snapshot, gates the read of its log, where the CEPH_MSG_CLIENT_SNAP messages are decoded and one is a split of the directory's own realm inode; the snapshot's MDS ID is in the client's derived SnapContext, and an independent reader sees the snapshot's base bytes and the head's overwritten bytes"
         }
       ],
-      "gap": "Live-client realm updates are observed only as a snapshot context derived from the client's dump_cache; the cached SnapContext is not read directly and CEPH_MSG_CLIENT_SNAP traffic is not decoded. Realm hierarchy changes beyond one added and one removed snapshot are not recorded.",
+      "gap": "CEPH_MSG_CLIENT_SNAP is decoded as the message kind and the realm inode it splits, joined to the SnapContext the client then derives from dump_cache, for one created snapshot; the specific my_snaps trace line is not always logged and is not required. Realm hierarchy changes beyond one added snapshot, and snapshot removal through client_snap, are not recorded (removal's realm-context change is covered by TestCephFSLiveSnapRealmRemoval through dump_cache).",
       "owner": "#5"
     },
     {

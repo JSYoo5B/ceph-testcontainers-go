@@ -642,6 +642,25 @@ through its session MON (`via`):
   The failover moves the MgrMap several epochs, so do not expect consecutive
   epochs.
 
+## Snapshot realm messages
+
+`TestCephFSSnapMessages` decodes the CEPH_MSG_CLIENT_SNAP a retained client
+receives when its directory is snapshotted, and logs
+`CEPHFS_SNAP_MESSAGES_RECEIPT`. The client mounts at `debug_client 10` with an
+admin socket, holds a directory and an `O_RDWR` fd open, and an independent
+administrator creates the snapshot. The client applies `client_snap`
+asynchronously, so its own `dump_cache`, polled until its derived SnapContext
+holds the snapshot, is the readiness gate; by then the client has logged the
+`client_snap` that delivered the context. The test then reads the log and
+requires a `handle_snap client_snap(split split=0x<dir-inode> ...)` of the
+directory's own realm, joining that wire message to the SnapContext
+(`dump_cache`) that holds the snapshot's MDS ID. An overwrite and an
+independent read confirm the realm is the live one. The specific
+`my_snaps` trace line is not always logged at this level and is not required;
+`cephfs_snap_messages_fixture_test.go` tests the message parsing without
+Docker. Snapshot removal's realm-context change is covered through
+`dump_cache` by the removal recipe above.
+
 ## Keepalive and acknowledgement frames
 
 A ProtocolV2 session exchanges KEEPALIVE2, KEEPALIVE2_ACK and message ACK
