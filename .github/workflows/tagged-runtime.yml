@@ -245,6 +245,15 @@ jobs:
           SCENARIO_BUG_COMPATIBILITY: ${{ inputs.bug_compatibility }}
           SCENARIO_PROFILE_TAGS: ${{ matrix.tags }}
         run: python3 .github/scripts/tag_scenarios.py compile --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --profile-tags "$SCENARIO_PROFILE_TAGS" --directory artifacts/scenario/compile
+      # The MON store and every container layer share the filesystem under
+      # Docker's data root; below 30% available a MON raises MON_DISK_LOW
+      # (issue 365). Free the runner image's unused toolchains first, and
+      # record that filesystem after the images and after the tests.
+      - name: Free the runner's preinstalled directories
+        if: matrix.requires_ceph
+        uses: ./.github/actions/runner-storage
+        with:
+          action: free
       - name: Docker baseline and engine identity
         id: docker_baseline
         uses: ./.github/actions/runtime-cleanup
@@ -260,6 +269,13 @@ jobs:
           release: ${{ inputs.release }}
           roles: ${{ matrix.image_roles }}
           digests: ${{ inputs.role_digests }}
+      - name: Record runner storage with the images
+        if: matrix.requires_ceph
+        continue-on-error: true
+        uses: ./.github/actions/runner-storage
+        with:
+          action: record
+          phase: images
       # Runs the binary that the compile step built and recorded, after
       # verifying its sha256, build key, sources and inventory; it never
       # builds again.
@@ -282,6 +298,13 @@ jobs:
           else
             python3 .github/scripts/tag_scenarios.py run --category "$SCENARIO_CATEGORY" --batch "$SCENARIO_BATCH" --package "$SCENARIO_PACKAGE" --tests "$SCENARIO_TESTS" --bug-compatibility "$SCENARIO_BUG_COMPATIBILITY" --profile-tags "$SCENARIO_PROFILE_TAGS" --binary artifacts/scenario/compile --directory artifacts/scenario/native
           fi
+      - name: Record runner storage after the tests
+        if: always() && matrix.requires_ceph
+        continue-on-error: true
+        uses: ./.github/actions/runner-storage
+        with:
+          action: record
+          phase: after
       - name: Verify owned Docker resource cleanup
         id: cleanup
         if: ${{ always() && steps.docker_baseline.outcome == 'success' }}
