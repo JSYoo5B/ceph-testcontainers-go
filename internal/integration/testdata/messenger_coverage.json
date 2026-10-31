@@ -435,7 +435,7 @@
       "evidence": "outcome",
       "cases": [
         {
-          "test": "TestRADOSClientFixtures",
+          "test": "TestRADOSPoolCases/host/TestClientFixtures",
           "asserts": "a pool snapshot freezes the object's bytes while HEAD changes"
         },
         {
@@ -458,7 +458,7 @@
       "evidence": "native-state",
       "cases": [
         {
-          "test": "TestRADOSObjectReceipts",
+          "test": "TestRADOSPoolCases/host/TestObjectReceipts",
           "receipt": "RADOS_STATS_RECEIPT",
           "asserts": "pool statistics of an empty pool, after six objects of known sizes and after removing three: object count, copies, allocated bytes and write count from librados, the rados df object count and ceph df stored bytes match exactly; cluster statfs equals ceph df's total and the sum of pool objects"
         }
@@ -568,11 +568,11 @@
       "evidence": "native-state",
       "cases": [
         {
-          "test": "TestRADOSClientFixtures",
+          "test": "TestRADOSPoolCases/host/TestClientFixtures",
           "asserts": "set_xattr inside a compound write and get_xattr of the same bytes"
         },
         {
-          "test": "TestRADOSObjectReceipts",
+          "test": "TestRADOSPoolCases/host/TestObjectReceipts",
           "receipt": "RADOS_XATTR_RECEIPT",
           "asserts": "an independent client lists binary and empty values with getxattrs, without the name rmxattr removed or the one a compound rmxattr and setxattr replaced; getxattr of a removed name is ENODATA, rmxattr of a never set name succeeds as a new version, and getxattrs, getxattr and rmxattr of a missing object are ENOENT"
         }
@@ -597,11 +597,11 @@
       "evidence": "native-state",
       "cases": [
         {
-          "test": "TestRADOSClientFixtures",
+          "test": "TestRADOSPoolCases/host/TestClientFixtures",
           "asserts": "set_omap and get_omap_vals return the stored pair"
         },
         {
-          "test": "TestRADOSObjectReceipts",
+          "test": "TestRADOSPoolCases/host/TestObjectReceipts",
           "receipt": "RADOS_OMAP_RECEIPT",
           "asserts": "keys-only listing without values; 25 keys in max_return pages of 7 continued with start_after until an empty page, also for values; with osd_max_omap_entries_per_request at 10 a request for 100 pages 10, 10, 5, 0; a prefix filter, by-keys without the absent key, a 255-byte binary header set and read by the rados CLI, single-key (librados and rados rmomapkey) and key-range removal, clear that also empties the header; reads of a missing object are ENOENT"
         }
@@ -618,7 +618,7 @@
       "evidence": "outcome",
       "cases": [
         {
-          "test": "TestRADOSClientFixtures",
+          "test": "TestRADOSPoolCases/host/TestClientFixtures",
           "asserts": "a cls_hello record_hello inside a compound write stores a greeting that the replay method returns as exactly Hello, fixture!"
         }
       ]
@@ -638,7 +638,7 @@
       "evidence": "native-state",
       "cases": [
         {
-          "test": "TestRADOSClientFixtures",
+          "test": "TestRADOSPoolCases/host/TestClientFixtures",
           "asserts": "one notify reaches the watcher with its payload"
         },
         {
@@ -668,7 +668,7 @@
           "asserts": "write contexts with older sequences, ORDERSNAP and unknown ids; listsnaps clones; reads of every snapshot by an independent client"
         },
         {
-          "test": "TestRADOSObjectReceipts",
+          "test": "TestRADOSPoolCases/host/TestObjectReceipts",
           "receipt": "RADOS_ROLLBACK_RECEIPT",
           "asserts": "rollback to a self-managed snapshot restores the snapshot's bytes, xattrs and omap on HEAD at a new version while the clone keeps its version; a later write changes HEAD only; rolling back an object created after the snapshot deletes it"
         }
@@ -701,11 +701,11 @@
       "evidence": "native-state",
       "cases": [
         {
-          "test": "TestRADOSClientFixtures",
+          "test": "TestRADOSPoolCases/host/TestClientFixtures",
           "asserts": "the pool lists no objects after cleanup in the test namespace"
         },
         {
-          "test": "TestRADOSObjectReceipts",
+          "test": "TestRADOSPoolCases/host/TestObjectReceipts",
           "receipt": "RADOS_ENUMERATION_RECEIPT",
           "asserts": "with osd_max_pgls lowered to 3 on the OSD, rados ls of one namespace in a 4-PG pool sends PGNLS requests PG by PG in bitwise hash order (client debug_ms and debug_objecter log): each request's cursor is the previous reply's handle, starting at MIN; each reply holds at most 3 entries of that namespace only; a continuation (result 0) hands back the PG's first object not yet returned (in either namespace), and the PG's last reply (result 1) the next PG's start, MAX after the last PG, after which the listing ends; each PG's entries are exactly the objects that osd map places there and that rados --pgid ls lists, and rados ls --all lists both namespaces; rados_object_list over each PG's slice in calls of 2 with a plain xattr filter sends PGNLS_FILTER requests (result 0 until the PG's last, 1) and returns only that PG's matching objects, each cursor comparing below the next and the last equal to the slice end (the pool end for the last PG); the OSD refuses an unknown filter type with EINVAL. No tool of the image sends the legacy CEPH_OSD_OP_PGLS"
         }
@@ -724,7 +724,7 @@
       "evidence": "native-state",
       "cases": [
         {
-          "test": "TestRADOSObjectReceipts",
+          "test": "TestRADOSPoolCases/host/TestObjectReceipts",
           "receipt": "RADOS_HINTS_RECEIPT",
           "asserts": "rados set-alloc-hint on an existing object keeps its bytes at a new version and on a missing one creates it empty, and the decoded object info holds the hinted sizes; fadvise flags on a write_full, on a cmpext read (match and MAX_ERRNO plus offset) and on the rados cp copy-from leave exact bytes, xattrs and omap"
         },

@@ -222,18 +222,18 @@ client container, and read every result back with a second client.
 | truncate, remove | the new size; `ENOENT` after a remove | `TestRADOSSelfManagedSnapshots`, `TestRADOSMutationContracts` |
 | create | exclusive create of an existing object fails with `EEXIST` (17), also inside a compound write, which then changes nothing; idempotent create succeeds | `TestRADOSMutationContracts` |
 | version guard | `assert_version` older fails with `ERANGE` (34), newer with `EOVERFLOW` (75); a refused write still takes a PG version | `TestRADOSMutationOutcomes` |
-| compare guards | failed `cmpext` returns `MAX_ERRNO` (4095) plus the first differing offset; failed `omap_cmp` and `cmpxattr` return `ECANCELED` (125); the whole compound op is refused | `TestRADOSMutationContracts`, `TestRADOSClientFixtures` |
+| compare guards | failed `cmpext` returns `MAX_ERRNO` (4095) plus the first differing offset; failed `omap_cmp` and `cmpxattr` return `ECANCELED` (125); the whole compound op is refused | `TestRADOSMutationContracts`, `TestRADOSPoolCases/<mode>/TestClientFixtures` |
 | acknowledged outcome | a write that returned 0 survives SIGKILL of a BlueStore OSD | `TestRADOSMutationOutcomes` |
 | unknown outcome | the client's timeout ends a delayed append, truncate, remove or guarded compound write with `ETIMEDOUT` (110); the OSD started and applied each exactly once afterwards | `TestRADOSMutationOutcomes`, `TestRADOSMutationContracts` |
 | no automatic re-execution | an unguarded retry of an uncertain append appends again; a retry guarded by the earlier version is refused | `TestRADOSMutationOutcomes` |
 | killed client | the OSD discards an op whose connection closed before it started | `TestRADOSMutationOutcomes` |
 | OSD restart | SIGKILL and restart with BlueStore; clean restart with MemStore | `TestRADOSMutationOutcomes`, `TestOSDMemStoreLegacyPlacement` |
-| xattrs | `getxattrs` lists binary and empty values; `getxattr` of a removed name is `ENODATA` (61); `rmxattr` of an unset name succeeds with a new version; a missing object is `ENOENT` (2) | `TestRADOSObjectReceipts` |
-| OMAP | keys-only listings carry no values; `max_return` pages continue with `start_after` until an empty page, capped at `osd_max_omap_entries_per_request`; by-keys omits absent keys; clear also empties the header | `TestRADOSObjectReceipts` |
-| rollback | to a self-managed snapshot restores bytes, xattrs and OMAP at a new version; an object created after the snapshot is deleted | `TestRADOSObjectReceipts` |
-| hints | `set-alloc-hint` keeps existing bytes and creates a missing object empty; fadvise flags change no result | `TestRADOSObjectReceipts` |
+| xattrs | `getxattrs` lists binary and empty values; `getxattr` of a removed name is `ENODATA` (61); `rmxattr` of an unset name succeeds with a new version; a missing object is `ENOENT` (2) | `TestRADOSPoolCases/<mode>/TestObjectReceipts` |
+| OMAP | keys-only listings carry no values; `max_return` pages continue with `start_after` until an empty page, capped at `osd_max_omap_entries_per_request`; by-keys omits absent keys; clear also empties the header | `TestRADOSPoolCases/<mode>/TestObjectReceipts` |
+| rollback | to a self-managed snapshot restores bytes, xattrs and OMAP at a new version; an object created after the snapshot is deleted | `TestRADOSPoolCases/<mode>/TestObjectReceipts` |
+| hints | `set-alloc-hint` keeps existing bytes and creates a missing object empty; fadvise flags change no result | `TestRADOSPoolCases/<mode>/TestObjectReceipts` |
 | sparse read | the `rbd` CLI exports an image through librbd, which reads each 4 MiB data object with `CEPH_OSD_OP_SPARSE_READ`; `TestRBDSparseReadReceipt` joins each request, the OSD's reply and the client's receipt, a written object returning only its extent and the extent map and an absent one `-ENOENT`. python-rados and the `rados` CLI issue no sparse read | `TestRBDSparseReadReceipt` |
-| statistics | pool statistics and `ceph df` follow known object sizes exactly; cluster statfs matches `ceph df` | `TestRADOSObjectReceipts` |
+| statistics | pool statistics and `ceph df` follow known object sizes exactly; cluster statfs matches `ceph df` | `TestRADOSPoolCases/<mode>/TestObjectReceipts` |
 
 `TestRADOSMutationContracts` runs on the CRC MemStore profile above. A
 MemStore OSD loses its data when killed, so crash durability needs BlueStore,
@@ -245,7 +245,7 @@ as in `TestRADOSMutationOutcomes`. OSD-side delays are in
 A client lists a pool PG by PG with `CEPH_OSD_OP_PGNLS`: each request carries
 a cursor, and the OSD returns at most `osd_max_pgls` entries, a handle to
 continue from, and result 1 when the PG has no more objects.
-`TestRADOSObjectReceipts` logs `RADOS_ENUMERATION_RECEIPT` for a 4-PG pool
+`TestRADOSPoolCases/<mode>/TestObjectReceipts` logs `RADOS_ENUMERATION_RECEIPT` for a 4-PG pool
 with `osd_max_pgls` lowered to 3, with namespaces `enum-a` and `enum-b` and an
 xattr `tag=blue` on some objects. It holds:
 

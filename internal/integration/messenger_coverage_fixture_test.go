@@ -98,6 +98,10 @@ type coverageSources struct {
 type coverageTest struct {
 	subtests map[string]bool
 	literals map[string]bool
+	// suiteCases are the literals of each testify suite method the test
+	// runs, by method name: a citation of that method's subtest is checked
+	// against its own literals, not those of its suite siblings.
+	suiteCases map[string]map[string]bool
 }
 
 var (
@@ -183,6 +187,7 @@ func parseCoverageSources(files map[string]string) (coverageSources, error) {
 		globals:  map[string][]*ast.ValueSpec{},
 		subtests: map[*ast.FuncDecl]map[string]bool{},
 		visiting: map[*ast.FuncDecl]bool{},
+		receiver: map[string][]*ast.FuncDecl{},
 	}
 	fset := token.NewFileSet()
 	var tests []*ast.FuncDecl
@@ -201,6 +206,11 @@ func parseCoverageSources(files map[string]string) (coverageSources, error) {
 				}
 				if decl.Recv != nil {
 					a.methods[decl.Name.Name] = append(a.methods[decl.Name.Name], decl)
+					if len(decl.Recv.List) == 1 {
+						if kind := receiverTypeName(decl.Recv.List[0].Type); kind != "" {
+							a.receiver[kind] = append(a.receiver[kind], decl)
+						}
+					}
 					continue
 				}
 				a.funcs[decl.Name.Name] = append(a.funcs[decl.Name.Name], decl)
@@ -220,9 +230,70 @@ func parseCoverageSources(files map[string]string) (coverageSources, error) {
 	}
 	sources := coverageSources{tests: map[string]*coverageTest{}}
 	for _, decl := range tests {
-		sources.tests[decl.Name.Name] = &coverageTest{subtests: a.funcSubtests(decl), literals: a.literals(decl)}
+		test := &coverageTest{subtests: a.funcSubtests(decl), literals: a.literals(decl), suiteCases: map[string]map[string]bool{}}
+		walk(decl.Body, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				for _, method := range a.suiteCases(call) {
+					test.suiteCases[method.Name.Name] = a.literals(method)
+				}
+			}
+			return true
+		})
+		sources.tests[decl.Name.Name] = test
 	}
 	return sources, nil
+}
+
+// receiverTypeName is the type name of a method receiver: T or *T.
+func receiverTypeName(expr ast.Expr) string {
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+	}
+	if ident, ok := expr.(*ast.Ident); ok {
+		return ident.Name
+	}
+	return ""
+}
+
+// suiteRun returns the methods of the type a suite.Run call runs: every
+// method of the type passed as &T{...} or new(T), and its Test* cases.
+// suite.Run reaches them by reflection, so nothing else follows them.
+func (a *coverageAnalyzer) suiteRun(call *ast.CallExpr) (all, cases []*ast.FuncDecl) {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Run" || len(call.Args) != 2 {
+		return nil, nil
+	}
+	if x, ok := sel.X.(*ast.Ident); !ok || x.Name != "suite" || !a.isImport(x) {
+		return nil, nil
+	}
+	var kind string
+	switch arg := call.Args[1].(type) {
+	case *ast.UnaryExpr:
+		if lit, ok := arg.X.(*ast.CompositeLit); ok && arg.Op == token.AND {
+			if ident, ok := lit.Type.(*ast.Ident); ok {
+				kind = ident.Name
+			}
+		}
+	case *ast.CallExpr:
+		if fun, ok := arg.Fun.(*ast.Ident); ok && fun.Name == "new" && len(arg.Args) == 1 {
+			if ident, ok := arg.Args[0].(*ast.Ident); ok {
+				kind = ident.Name
+			}
+		}
+	}
+	for _, method := range a.receiver[kind] {
+		all = append(all, method)
+		name := method.Name.Name
+		if strings.HasPrefix(name, "Test") && (method.Type.Params == nil || len(method.Type.Params.List) == 0) {
+			cases = append(cases, method)
+		}
+	}
+	return all, cases
+}
+
+func (a *coverageAnalyzer) suiteCases(call *ast.CallExpr) []*ast.FuncDecl {
+	_, cases := a.suiteRun(call)
+	return cases
 }
 
 // coverageAnalyzer holds the package-level declarations of the analysed
@@ -233,6 +304,8 @@ type coverageAnalyzer struct {
 	globals  map[string][]*ast.ValueSpec
 	subtests map[*ast.FuncDecl]map[string]bool
 	visiting map[*ast.FuncDecl]bool
+	// receiver is the methods of each named type, for suite.Run.
+	receiver map[string][]*ast.FuncDecl
 }
 
 // subtestNameConstructors are package helpers whose string arguments name
@@ -336,6 +409,12 @@ func (a *coverageAnalyzer) literals(decl *ast.FuncDecl) map[string]bool {
 			for _, spec := range specs {
 				visit(spec)
 			}
+			if call, ok := n.(*ast.CallExpr); ok {
+				all, _ := a.suiteRun(call)
+				for _, method := range all {
+					visit(method)
+				}
+			}
 			return true
 		})
 	}
@@ -364,6 +443,15 @@ func (a *coverageAnalyzer) nodeSubtests(node ast.Node) map[string]bool {
 	paths := map[string]bool{}
 	walk(node, func(n ast.Node) bool {
 		if call, ok := n.(*ast.CallExpr); ok {
+			if _, cases := a.suiteRun(call); cases != nil {
+				for _, method := range cases {
+					paths[method.Name.Name] = true
+					for path := range a.funcSubtests(method) {
+						paths[method.Name.Name+"/"+path] = true
+					}
+				}
+				return false
+			}
 			if names, bodies, ok := a.subtestCall(call); ok {
 				inner := map[string]bool{}
 				for _, body := range bodies {
@@ -563,9 +651,9 @@ func (a *coverageAnalyzer) rangeValues(x ast.Expr, keys bool, depth int) ([]ast.
 
 // hasMarker reports whether some reachable string literal contains marker
 // as a whole word, such as "HELD_REPLICATION_RECEIPT %s".
-func (c *coverageTest) hasMarker(marker string) bool {
+func hasMarker(literals map[string]bool, marker string) bool {
 	word := func(b byte) bool { return b == '_' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' }
-	for literal := range c.literals {
+	for literal := range literals {
 		for offset := 0; ; {
 			index := strings.Index(literal[offset:], marker)
 			if index < 0 {
@@ -677,8 +765,17 @@ func validateCoverage(manifest coverageManifest, reference coverageReference, so
 			if path != "" && !test.subtests[path] {
 				add("%s: subtest %q is not one that %s runs as far as its sources can be followed; cite %s", where, path, parent, parent)
 			}
-			if c.Receipt != "" && coverageMarkers.MatchString(c.Receipt) && !test.hasMarker(c.Receipt) {
-				add("%s: receipt marker %s is not emitted by code that %s reaches", where, c.Receipt, parent)
+			// A suite case's receipt must come from that method, not from a
+			// sibling of the same suite.
+			reach, owner := test.literals, parent
+			if path != "" {
+				method := path[strings.LastIndex(path, "/")+1:]
+				if literals, ok := test.suiteCases[method]; ok {
+					reach, owner = literals, parent+"/"+path
+				}
+			}
+			if c.Receipt != "" && coverageMarkers.MatchString(c.Receipt) && !hasMarker(reach, c.Receipt) {
+				add("%s: receipt marker %s is not emitted by code that %s reaches", where, c.Receipt, owner)
 			}
 		}
 	}
@@ -805,6 +902,7 @@ func TestMessengerCoverageValidator(t *testing.T) {
 		"TestNoSubtests": nil,
 		"TestOther":      {"foreign"},
 		"TestComputed":   nil,
+		"TestPools":      {"bridge", "bridge/TestCreate", "bridge/TestRemove", "host", "host/TestCreate", "host/TestRemove"},
 	} {
 		if got := slices.Sorted(maps.Keys(sources.tests[name].subtests)); !slices.Equal(got, want) {
 			t.Errorf("%s runs subtests %q, want %q", name, got, want)
@@ -835,6 +933,8 @@ func TestMessengerCoverageValidator(t *testing.T) {
 		{Test: "TestWrites", Receipt: "WRITE_RECEIPT"}, {Test: "TestWrites/host", Receipt: "WRITE_RECEIPT"},
 		{Test: "TestWrites/nested/v2"}, {Test: "TestWrites/nested/crc"}, {Test: "TestNoSubtests"},
 		{Test: "TestOther/foreign", Receipt: "OTHER_RECEIPT"}, {Test: "TestComputed"},
+		{Test: "TestPools/host/TestCreate", Receipt: "CREATE_RECEIPT"}, {Test: "TestPools/bridge/TestRemove", Receipt: "REMOVE_RECEIPT"},
+		{Test: "TestPools", Receipt: "CREATE_RECEIPT"},
 	} {
 		manifest := valid()
 		c.Asserts = "readback"
@@ -858,7 +958,12 @@ func TestMessengerCoverageValidator(t *testing.T) {
 			m.Rows[0].Cases[0].Test, m.Rows[0].Cases[0].Receipt = "TestNoSubtests", "OTHER_RECEIPT"
 		},
 			"receipt marker OTHER_RECEIPT is not emitted by code that TestNoSubtests reaches"},
-		"missing receipt":       {func(m *coverageManifest) { m.Rows[0].Cases[0].Receipt = "READ_RECEIPT" }, "receipt marker READ_RECEIPT"},
+		"missing receipt":        {func(m *coverageManifest) { m.Rows[0].Cases[0].Receipt = "READ_RECEIPT" }, "receipt marker READ_RECEIPT"},
+		"missing suite method":   {func(m *coverageManifest) { m.Rows[0].Cases[0].Test = "TestPools/host/TestGone" }, `subtest "host/TestGone"`},
+		"method of no suite run": {func(m *coverageManifest) { m.Rows[0].Cases[0].Test = "TestPools/host/TestUnrun" }, `subtest "host/TestUnrun"`},
+		"suite sibling's receipt": {func(m *coverageManifest) {
+			m.Rows[0].Cases[0].Test, m.Rows[0].Cases[0].Receipt = "TestPools/host/TestRemove", "CREATE_RECEIPT"
+		}, "receipt marker CREATE_RECEIPT is not emitted by code that TestPools/host/TestRemove reaches"},
 		"receipt prefix only":   {func(m *coverageManifest) { m.Rows[0].Cases[0].Receipt = "WRITE_RECEI" }, "receipt marker WRITE_RECEI"},
 		"unknown symbol":        {func(m *coverageManifest) { m.Rows[0].Symbols = []string{"CEPH_OSD_OP_WRITE2"} }, "not in the reference"},
 		"covered without case":  {func(m *coverageManifest) { m.Rows[0].Cases = nil }, "covered without a case"},
@@ -897,6 +1002,8 @@ const coverageValidatorSource = `package fake
 import (
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/suite"
 )
 
 func TestWrites(t *testing.T) {
@@ -928,5 +1035,23 @@ func TestOther(t *testing.T) {
 
 func TestComputed(t *testing.T) {
 	t.Run(fmt.Sprintf("n%d", 1), func(t *testing.T) { t.Run("inner", func(t *testing.T) {}) })
+}
+
+type poolSuite struct{ suite.Suite }
+
+func (s *poolSuite) SetupSuite() {}
+func (s *poolSuite) TestCreate() { createAndReport(s.T()) }
+func (s *poolSuite) TestRemove() { s.T().Log("REMOVE_RECEIPT") }
+
+func createAndReport(t *testing.T) { t.Log("CREATE_RECEIPT") }
+
+type unrunSuite struct{ suite.Suite }
+
+func (s *unrunSuite) TestUnrun() {}
+
+func TestPools(t *testing.T) {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
+		t.Run(mode.Name, func(t *testing.T) { suite.Run(t, &poolSuite{}) })
+	}
 }
 `
