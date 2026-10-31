@@ -109,30 +109,96 @@ type waitingFlock struct {
 	events      []string
 }
 
+// flockWaitingStage is the flag point of a lock request the MDS could not
+// grant and keeps waiting.
+const flockWaitingStage = "failed to add lock, waiting"
+
+// flockWait is the blocked lock request a scenario requires the MDS to hold:
+// client's blocking (wait 1) exclusive (type 2) setfilelock of rule (1 fcntl,
+// 2 flock) on inode.
+type flockWait struct {
+	client uint64
+	rule   int
+	inode  uint64
+}
+
+// find returns the stage of w's request among ops: the request whose client,
+// rule, type, wait flag and inode are w's, and whether it is at the waiting
+// stage. A setfilelock of the client that is not w's (another rule, mode or
+// inode) is returned with found false, so that a timeout reports it. A request
+// of w at an earlier stage, such as "acquired locks" while the MDS still
+// evaluates it, is found but not waiting.
+func (w flockWait) find(ops []harness.MDSRequestOp) (seen waitingFlock, found, waiting bool) {
+	prefix := fmt.Sprintf("client_request(client.%d:", w.client)
+	shape := fmt.Sprintf("rule %d, type 2,", w.rule)
+	inode := fmt.Sprintf("#0x%x ", w.inode)
+	for _, op := range ops {
+		reqid := op.TypeData.ReqID
+		if reqid.Entity.Type != "client" || reqid.Entity.Num != w.client || !strings.HasPrefix(op.Description, prefix) ||
+			!strings.Contains(op.Description, " setfilelock ") {
+			continue
+		}
+		stage := waitingFlock{tid: reqid.TID, description: op.Description, flagPoint: op.TypeData.FlagPoint, events: op.Events()}
+		if !strings.Contains(op.Description, shape) || !strings.Contains(op.Description, "wait 1 ") || !strings.Contains(op.Description, inode) {
+			seen = stage
+			continue
+		}
+		return stage, true, stage.flagPoint == flockWaitingStage
+	}
+	return seen, false, false
+}
+
+// mdsFlockOps reads the MDS's requests in flight.
+func mdsFlockOps(ctx context.Context, m *harness.CephFSSingleMDS) ([]harness.MDSRequestOp, error) {
+	data, err := m.Cluster.Ceph(ctx, "tell", "mds."+m.MDS.Name, "dump_ops_in_flight")
+	if err != nil {
+		return nil, err
+	}
+	ops, err := harness.ParseMDSRequestOps(data)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %.512s", err, data)
+	}
+	return ops, nil
+}
+
 // mdsWaitingFlock observes, bounded, the MDS's dump_ops_in_flight until it
-// holds client's setfilelock request with present, or no longer holds it
-// without present.
-func mdsWaitingFlock(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, client uint64, present bool) waitingFlock {
+// holds w's request at the waiting stage. The bounded poll itself requires the
+// stage: a request still at an earlier stage keeps the poll going, and a
+// timeout reports the last stage seen.
+func mdsWaitingFlock(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, w flockWait) waitingFlock {
 	t.Helper()
 	seen, err := harness.Observe(ctx, time.Minute, 30*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (waitingFlock, bool, error) {
-		data, err := m.Cluster.Ceph(probeCtx, "tell", "mds."+m.MDS.Name, "dump_ops_in_flight")
+		ops, err := mdsFlockOps(probeCtx, m)
 		if err != nil {
 			return waitingFlock{}, false, err
 		}
-		ops, err := harness.ParseMDSRequestOps(data)
+		stage, _, waiting := w.find(ops)
+		return stage, waiting, nil
+	})
+	if err != nil {
+		t.Fatalf("client.%d's blocking exclusive lock (rule %d) on inode %d not observed at %q: last %+v: %v", w.client, w.rule, w.inode, flockWaitingStage, seen.Value, err)
+	}
+	return seen.Value
+}
+
+// mdsFlockGone observes, bounded, the MDS's dump_ops_in_flight until it holds
+// no setfilelock request of client.
+func mdsFlockGone(t *testing.T, ctx context.Context, m *harness.CephFSSingleMDS, client uint64) {
+	t.Helper()
+	seen, err := harness.Observe(ctx, time.Minute, 30*time.Second, 500*time.Millisecond, func(probeCtx context.Context) (waitingFlock, bool, error) {
+		ops, err := mdsFlockOps(probeCtx, m)
 		if err != nil {
-			return waitingFlock{}, false, fmt.Errorf("%w: %.512s", err, data)
+			return waitingFlock{}, false, err
 		}
 		op, found := harness.FindMDSRequest(ops, client, "setfilelock", 0)
 		if !found {
-			return waitingFlock{}, !present, nil
+			return waitingFlock{}, true, nil
 		}
-		return waitingFlock{tid: op.TypeData.ReqID.TID, description: op.Description, flagPoint: op.TypeData.FlagPoint, events: op.Events()}, present, nil
+		return waitingFlock{tid: op.TypeData.ReqID.TID, description: op.Description, flagPoint: op.TypeData.FlagPoint, events: op.Events()}, false, nil
 	})
 	if err != nil {
-		t.Fatalf("client.%d setfilelock in flight=%t not observed: last %+v: %v", client, present, seen.Value, err)
+		t.Fatalf("client.%d's setfilelock is still in flight: last %+v: %v", client, seen.Value, err)
 	}
-	return seen.Value
 }
 
 // testCephFSFlockContention lets two live clients, in two containers,
@@ -166,15 +232,11 @@ func testCephFSFlockContention(t *testing.T) {
 	}
 
 	contender.start(t, ctx, 1)
-	waiting := mdsWaitingFlock(t, ctx, m, contender.client, true)
-	inode := fmt.Sprintf("#0x%x ", holder.inode)
-	if waiting.flagPoint != "failed to add lock, waiting" || !strings.Contains(waiting.description, "rule 2, type 2,") ||
-		!strings.Contains(waiting.description, "wait 1 ") || !strings.Contains(waiting.description, inode) {
-		t.Fatalf("the MDS does not hold client.%d's exclusive flock waiting on inode %d: %+v", contender.client, holder.inode, waiting)
-	}
+	wait := flockWait{client: contender.client, rule: 2, inode: holder.inode}
+	waiting := mdsWaitingFlock(t, ctx, m, wait)
 	// The MDS keeps the request waiting, and the call does not return.
 	time.Sleep(3 * time.Second)
-	if still := mdsWaitingFlock(t, ctx, m, contender.client, true); still.tid != waiting.tid || still.flagPoint != waiting.flagPoint {
+	if still := mdsWaitingFlock(t, ctx, m, wait); still.tid != waiting.tid || still.flagPoint != waiting.flagPoint {
 		t.Fatalf("waiting flock changed: %+v, before %+v", still, waiting)
 	}
 	if contender.Published(ctx, 3) {
@@ -190,7 +252,7 @@ func testCephFSFlockContention(t *testing.T) {
 		t.Fatalf("contender's blocking lock: %+v, want 0 after waiting for the unlock", granted)
 	}
 	grantedAfter := time.Since(unlocked)
-	mdsWaitingFlock(t, ctx, m, contender.client, false)
+	mdsFlockGone(t, ctx, m, contender.client)
 	reversed := holder.run(t, ctx, 2)
 	if reversed.Errno != 11 {
 		t.Fatalf("former holder's non-blocking lock while the contender holds it: %+v, want EWOULDBLOCK (11)", reversed)

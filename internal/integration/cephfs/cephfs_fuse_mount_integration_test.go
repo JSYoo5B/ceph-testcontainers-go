@@ -696,14 +696,10 @@ func testCephFSFuseMount(t *testing.T) {
 		t.Fatalf("contender's F_GETLK: %+v lock %+v, want the holder's F_WRLCK on [0, 4096)", queried, queried.Lock)
 	}
 	contender.start(t, ctx, 2)
-	waiting := mdsWaitingFlock(t, ctx, m, clientB, true)
-	inode := fmt.Sprintf("#0x%x ", holder.inode)
-	if waiting.flagPoint != "failed to add lock, waiting" || !strings.Contains(waiting.description, "rule 1, type 2,") ||
-		!strings.Contains(waiting.description, "wait 1 ") || !strings.Contains(waiting.description, inode) {
-		t.Fatalf("the MDS does not hold client.%d's fcntl write lock waiting on inode %d: %+v", clientB, holder.inode, waiting)
-	}
+	wait := flockWait{client: clientB, rule: 1, inode: holder.inode}
+	waiting := mdsWaitingFlock(t, ctx, m, wait)
 	time.Sleep(3 * time.Second)
-	if still := mdsWaitingFlock(t, ctx, m, clientB, true); still.tid != waiting.tid || still.flagPoint != waiting.flagPoint {
+	if still := mdsWaitingFlock(t, ctx, m, wait); still.tid != waiting.tid || still.flagPoint != waiting.flagPoint {
 		t.Fatalf("waiting fcntl lock changed: %+v, before %+v", still, waiting)
 	}
 	if contender.Published(ctx, 4) {
@@ -718,7 +714,7 @@ func testCephFSFuseMount(t *testing.T) {
 		t.Fatalf("contender's F_SETLKW: %+v, want 0 after waiting for the unlock", granted)
 	}
 	grantedAfter := time.Since(unlocked)
-	mdsWaitingFlock(t, ctx, m, clientB, false)
+	mdsFlockGone(t, ctx, m, clientB)
 	reversed := holder.run(t, ctx, 2)
 	if !fcntlConflict(reversed.Errno) {
 		t.Fatalf("former holder's F_SETLK while the contender holds the lock: %+v", reversed)

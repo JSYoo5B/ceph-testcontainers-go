@@ -180,11 +180,7 @@ func testCephFSFlockAcrossMDSFailover(t *testing.T) {
 	}
 
 	contender.start(t, ctx, 2)
-	waiting := mdsWaitingFlock(t, ctx, m.CephFSSingleMDS, contender.client, true)
-	if waiting.flagPoint != "failed to add lock, waiting" || !strings.Contains(waiting.description, "rule 2, type 2,") ||
-		!strings.Contains(waiting.description, "wait 1 ") || !strings.Contains(waiting.description, inode) {
-		t.Fatalf("new mds.%s does not hold client.%d's exclusive flock waiting on inode %d: %+v", m.MDS.Name, contender.client, holder.inode, waiting)
-	}
+	waiting := mdsWaitingFlock(t, ctx, m.CephFSSingleMDS, flockWait{client: contender.client, rule: 2, inode: holder.inode})
 	// The receipt is checked after the MDS showed the request waiting, so a
 	// lock granted at once would already have published it.
 	if contender.Published(ctx, 4) {
@@ -197,7 +193,7 @@ func testCephFSFlockAcrossMDSFailover(t *testing.T) {
 	if granted.Errno != 0 {
 		t.Fatalf("contender's blocking lock: %+v, want 0 after the unlock", granted)
 	}
-	mdsWaitingFlock(t, ctx, m.CephFSSingleMDS, contender.client, false)
+	mdsFlockGone(t, ctx, m.CephFSSingleMDS, contender.client)
 	reversed := holder.run(t, ctx, 2)
 	if reversed.Errno != 11 {
 		t.Fatalf("former holder's non-blocking lock while the contender holds it: %+v, want EWOULDBLOCK (11)", reversed)

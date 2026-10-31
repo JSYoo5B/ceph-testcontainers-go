@@ -22,6 +22,24 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
+// observeOSDIdentity reads the OSD map and the CRUSH tree.
+func observeOSDIdentity(t *testing.T, ctx context.Context, cluster *ceph.Container) osdIdentityView {
+	t.Helper()
+	dump, err := cluster.Ceph(ctx, "osd", "dump", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := cluster.Ceph(ctx, "osd", "tree", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := parseOSDIdentityView(dump, tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
 // Execute the real purge before losing its reply, then create a foreign native
 // registration with another owned ID. These exercise cleanup retry and UUID
 // rejection independently while preserving the same client data.
@@ -150,9 +168,9 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			harness.CephCommand(t, ctx, cluster, "osd", "purge", strconv.Itoa(foreignTarget.ID), "--yes-i-really-mean-it")
 			foreignUUID := uuid.NewString()
 			harness.CephCommand(t, ctx, cluster, "osd", "create", foreignUUID, strconv.Itoa(foreignTarget.ID))
-			before, err := cluster.Ceph(ctx, "osd", "dump", "--format", "json")
-			if err != nil || !bytes.Contains(before, []byte(foreignUUID)) {
-				t.Fatal("foreign OSD registration was not independently observed", err)
+			before := observeOSDIdentity(t, ctx, cluster)
+			if before.OSDs[foreignTarget.ID].UUID != foreignUUID {
+				t.Fatalf("foreign OSD registration was not independently observed: osd.%d %+v", foreignTarget.ID, before.OSDs[foreignTarget.ID])
 			}
 			mutations := fault.mutations.Load()
 			foreignCalls := &osdRemovalContainerCalls{Container: foreignTarget.Container}
@@ -160,9 +178,18 @@ func TestOSDRemovalLifecycle(t *testing.T) {
 			if err := foreignTarget.Remove(ctx); err == nil || !strings.Contains(err.Error(), "UUID") {
 				t.Fatalf("foreign same-ID OSD was not rejected by UUID: %v", err)
 			}
-			after, err := cluster.Ceph(ctx, "osd", "dump", "--format", "json")
-			if err != nil || !bytes.Equal(before, after) || fault.mutations.Load() != mutations || foreignCalls.stops.Load() != 0 || foreignCalls.terminations.Load() != 0 {
-				t.Fatal("foreign OSD rejection changed the native map or issued a mutation", err)
+			// Each side effect a rejected removal must not have is checked
+			// and reported on its own. The map epoch may move for unrelated
+			// reasons and is recorded, not compared.
+			after := observeOSDIdentity(t, ctx, cluster)
+			effects := osdRejectionSideEffects{MapChanges: osdIdentityChanges(before, after), Mutations: fault.mutations.Load() - mutations,
+				Stops: foreignCalls.stops.Load(), Terminations: foreignCalls.terminations.Load(), EpochBefore: before.Epoch, EpochAfter: after.Epoch}
+			t.Logf("OSD_FOREIGN_REJECTION osd.%d uuid=%s %+v", foreignTarget.ID, foreignUUID, effects)
+			for _, problem := range effects.problems() {
+				t.Errorf("foreign OSD rejection of osd.%d (uuid %s): %s", foreignTarget.ID, foreignUUID, problem)
+			}
+			if t.Failed() {
+				t.FailNow()
 			}
 			if len(clusteraccess.OSDs(t, cluster)) != 3 {
 				t.Fatal("foreign OSD rejection lost the old owned container cleanup handle")
