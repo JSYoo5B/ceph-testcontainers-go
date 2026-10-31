@@ -4,7 +4,6 @@ package cephfs_test
 
 import (
 	"fmt"
-	"slices"
 	"strconv"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
@@ -115,10 +114,6 @@ func judgeLossyResets(before, window []harness.ReadySession, client uint64) reco
 	if len(resets) == 0 {
 		return reconnectOutcome{Reason: fmt.Sprintf("no READY of a lossy session of client.%d in the window", client), Sessions: base}
 	}
-	var cookies []string
-	for _, s := range base {
-		cookies = append(cookies, s.ClientCookie)
-	}
 	for i, s := range resets {
 		switch {
 		case !s.Revision1:
@@ -128,11 +123,12 @@ func judgeLossyResets(before, window []harness.ReadySession, client uint64) reco
 				i, s.ConnectSeq, s.ServerCookie, s.InSeq, s.OutSeq), Sessions: []harness.ReadySession{s}}
 		case s.ClientCookie == "0":
 			return reconnectOutcome{Reason: fmt.Sprintf("reset %d has no client cookie to tell it from another session", i), Sessions: []harness.ReadySession{s}}
-		case slices.Contains(cookies, s.ClientCookie):
-			return reconnectOutcome{Verdict: reconnectContradicted, Reason: fmt.Sprintf("reset %d reuses client cookie %s", i, s.ClientCookie), Sessions: []harness.ReadySession{s}}
 		}
-		cookies = append(cookies, s.ClientCookie)
 	}
+	// Each reset's fresh state (cs=0, server_cookie=0, seq 0/0) proves it is a
+	// new session rather than a resumed one; a lossy client may reuse a client
+	// cookie for a new connection to the same peer, so cookie reuse across
+	// resets is not a contradiction.
 	return reconnectOutcome{Verdict: reconnectObserved, Reason: fmt.Sprintf("%d new lossy sessions", len(resets)), Sessions: append(base, resets...)}
 }
 
