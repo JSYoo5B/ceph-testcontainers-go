@@ -9,8 +9,9 @@ import (
 
 // This file types the two separate receipts that must both exist before a
 // device-backed OSD experiment can say its device chain is no longer used, and
-// the verdict that joins them. It is internal and has no production caller
-// (osdChainReleaseCallers is empty). It releases, shortens or hands over
+// the verdict that joins them. It is internal; its one production caller is
+// judgeDeviceChain (osd_device_launch.go, osdChainReleaseCallers), which only
+// internal/faulthook reaches. It releases, shortens or hands over
 // nothing: the file, loop and device-mapper chain, its identity checks and its
 // release barrier belong to the external lease owner, and no value in this file
 // can be turned into an action on them.

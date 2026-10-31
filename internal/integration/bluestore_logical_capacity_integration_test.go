@@ -95,9 +95,11 @@ v = os.statvfs(sys.argv[1])
 print(json.dumps({"total": v.f_blocks * v.f_frsize, "avail": v.f_bavail * v.f_frsize}))`
 
 // logicalEnv is one cluster with one OSD whose sparse block file stands on the
-// cluster's owned tmpfs.
+// cluster's owned tmpfs. The block-device fault test reuses its write,
+// readback and restart steps with its own OSD and pool.
 type logicalEnv struct {
 	cluster *ceph.Container
+	pool    string
 	osd     *ceph.OSDContainer
 	docker  *mobycl.Client
 	keeper  string
@@ -135,7 +137,7 @@ func newLogicalEnv(t *testing.T, ctx context.Context) *logicalEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := &logicalEnv{cluster: cluster, osd: osd, docker: docker.Client, keeper: attachedKeeper(t, ctx, docker.Client, osd), client: harness.ToolkitContainer(t, cluster)}
+	env := &logicalEnv{cluster: cluster, pool: logicalPool, osd: osd, docker: docker.Client, keeper: attachedKeeper(t, ctx, docker.Client, osd), client: harness.ToolkitContainer(t, cluster)}
 	if _, err := cluster.CreatePool(ctx, ceph.PoolConfig{Name: logicalPool, Application: "rados", Replicas: 1, MinSize: 1, PGNum: 8}); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +148,7 @@ func newLogicalEnv(t *testing.T, ctx context.Context) *logicalEnv {
 // readbacks.
 func (e *logicalEnv) write(t *testing.T, ctx context.Context, prefix string, count int, size int64, pause string) []attachMutation {
 	t.Helper()
-	out := harness.ExecOutput(t, ctx, e.client, "python3", "-c", logicalWrites, logicalPool, prefix, strconv.Itoa(count), strconv.FormatInt(size, 10), "15", "2", pause)
+	out := harness.ExecOutput(t, ctx, e.client, "python3", "-c", logicalWrites, e.pool, prefix, strconv.Itoa(count), strconv.FormatInt(size, 10), "15", "2", pause)
 	ledger, err := parseAttachLedger([]byte(attachedArrayLine(out)))
 	if err != nil {
 		t.Fatalf("%s writes: %v: %s", prefix, err, out)
@@ -202,7 +204,7 @@ func (e *logicalEnv) readback(t *testing.T, ctx context.Context) int {
 	for _, m := range e.acked {
 		keys = append(keys, m.Key)
 	}
-	out := harness.ExecOutput(t, ctx, e.client, append([]string{"python3", "-c", attachedReadback, logicalPool, "30"}, keys...)...)
+	out := harness.ExecOutput(t, ctx, e.client, append([]string{"python3", "-c", attachedReadback, e.pool, "30"}, keys...)...)
 	recovered, err := attachRecoveredOf(e.acked, []byte(attachedArrayLine(out)))
 	if err != nil {
 		t.Fatal("readback:", err)
@@ -363,7 +365,7 @@ func (e *logicalEnv) waitChecks(t *testing.T, parent context.Context, code strin
 // logicalLogTail keeps the OSD log lines that name a refusal: the allocator
 // markers, the full and failsafe states, and the abort. A nonempty since
 // limits it to the output after that instant (RFC 3339).
-func logicalLogTail(ctx context.Context, docker *mobycl.Client, cid, since string) []string {
+func logicalLogTail(ctx context.Context, docker *mobycl.Client, cid, since string, extra ...string) []string {
 	reader, err := docker.ContainerLogs(ctx, cid, mobycl.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Tail: "4000", Since: since})
 	if err != nil {
 		return []string{"logs unavailable: " + err.Error()}
@@ -371,10 +373,14 @@ func logicalLogTail(ctx context.Context, docker *mobycl.Client, cid, since strin
 	defer func() { _ = reader.Close() }()
 	data, _ := io.ReadAll(io.LimitReader(reader, 16<<20))
 	words := append(slices.Clone(logicalAllocatorMarkers), "Caught signal", "failsafe", "is full", "ceph_abort_msg", "BlueRocksEnv")
+	words = append(words, extra...)
 	var kept []string
 	for _, line := range strings.Split(string(data), "\n") {
 		// Drop the stream multiplexing header and the event index of a
 		// crash dump, so the same line from the dump and the live log match.
+		if len(line) >= 8 && (line[0] == 1 || line[0] == 2) && line[1:4] == "\x00\x00\x00" {
+			line = line[8:]
+		}
 		if i := strings.Index(line, "20"); i > 0 && i < 24 {
 			line = line[i:]
 		}

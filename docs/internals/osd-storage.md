@@ -324,3 +324,82 @@ another dispatch. The candidate is then detached with a fresh context and
 reopened once more with an exact known-byte readback. It detaches only a
 booted candidate. It does not cover cancellation during creation, readiness or detach, unsettled creation
 or failed release.
+
+## Block-device OSDs
+
+An OSD can run with a device-mapper node as its BlueStore main device. This
+path is internal: `internal/faulthook.AddBlockDeviceOSD` reaches it for the
+block-device fault tests, and no public option adds such an OSD.
+
+### Launch and claims
+
+`addBlockDeviceOSD` (`ceph/osd_device_launch.go`) is the one production caller
+of `registerBlockDeviceOSD`. It takes the topology lock and keeps it through
+registration, the device attachment, the claim, the container start and the
+up/in wait, as `AddOSD` does. The cluster must use the default OSD storage: the
+attachment refuses memory and volume storage and MemStore.
+
+The caller owns the backing file, the loop device and the mapping, and names
+them with an opaque lease token. The claim table only excludes a second OSD of
+the same cluster from the same lease, node or device number. Dropping a claim
+never authorizes releasing the chain.
+
+### Restart on the same device
+
+`osd.sh` compares the device number and size it finds in the container with the
+values the caller verified, on every start. On a fresh store it passes the
+device to mkfs, and BlueStore links `block` to the device path. When the same
+container starts again, the script admits the ready store only when `block`
+links to that device path. Any other ready store with a device configured is
+refused.
+
+### Releasing the chain
+
+`internal/faulthook.JudgeDeviceChain` (`judgeDeviceChain`) is the one
+production caller of the release gate. It collects the owner's evidence first,
+without the lock, then reads the claim table under it. It also works after
+`Terminate`. The owner reports four facts: whether the daemon stopped, whether
+every observer borrow closed, whether its opener scan was complete, and how
+many openers that scan found. Only the outcome `clear` raises no objection, and
+even `clear` is not an instruction to release anything.
+
+### Native evidence
+
+`TestBlockDeviceFault` (`scratch_tmpfs` batch) runs one OSD on a 512 MiB linear
+mapping. A privileged keeper container with the engine host's `/dev` creates
+the backing file on its own tmpfs, the loop device and the mapping. An unused
+mapping of the same kind is the control.
+
+1. Attachment. Reading `/proc` in the OSD container, the observer finds one
+   `ceph-osd` process holding read-write descriptors of the mapping's device
+   number. O_PATH references and descriptors whose flags cannot be read never
+   count. The store's `block` links to the mapped node, and its `fsid` is the
+   OSD's UUID.
+2. Exposure. The mapping's write counters in `/sys/dev/block/M:m/stat` move
+   during the baseline writes, and the control's stay at zero.
+3. Delay. A `delay` table slows the median write by at least three quarters of
+   the configured delay, and the restored linear table makes writes fast again.
+   Every write of both windows must be acknowledged, so a write that fails fast
+   never stands for a fast restored table.
+   The measurement ends before the restore, because suspending a delay mapping
+   flushes its queue early. The window runs only when the kernel has the
+   `delay` target registered, or on a GitHub-hosted runner, where loading the
+   table may load the module on demand.
+4. Error. An `error` table fails every sector. The observed outcome on
+   Tentacle 20.2.4 is an abort: `_aio_thread got r=-5 ((5) Input/output error)`,
+   then `ceph_abort_msg("Unexpected IO error ...")`, and the container exits 5.
+   The client writes time out and are never promoted to acknowledged. The judge
+   also accepts a client EIO with the OSD running, and rejects a write
+   acknowledged inside the window.
+5. Recovery. With the linear table back, the aborted OSD starts again in the
+   same container, every acknowledged write reads back with its digest, and
+   new writes are acknowledged.
+6. Release. After `Terminate`, the keeper's evidence (the OSD container gone,
+   no borrow, the kernel's open count of the mapping) and the claim table must
+   both be clear. Only then are the mapping removed, the loop detached and the
+   backing file deleted, each confirmed.
+
+The fault spans the whole main device, which also carries BlueFS, so it is a
+shared BlueStore/BlueFS fault, never a data-only one. If a test dies before its
+cleanup, the keeper container is reaped, but the mapping and loop device stay
+in the engine host's kernel until someone removes them by name (`tcblk-*`).

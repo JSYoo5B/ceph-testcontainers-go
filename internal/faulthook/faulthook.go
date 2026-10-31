@@ -89,6 +89,9 @@ type hooks interface {
 	ClassifyDocker(ctx context.Context, err error) error
 	NativeFailure(program string, code int, stdout, stderr []byte) error
 	OnlyMissingHostResource(err error) bool
+	AddBlockDeviceOSD(ctx context.Context, c *ceph.Container, hostPath string, major, minor uint32, sizeBytes int64, lease string) (*ceph.OSDContainer, error)
+	JudgeDeviceChain(ctx context.Context, c *ceph.Container, hostPath string, major, minor uint32, sizeBytes int64, lease string,
+		evidence func(context.Context) (string, string, uint32, uint32, int64, [3]uint8, int, error)) (string, string)
 }
 
 func get() hooks {
@@ -203,3 +206,62 @@ func NativeFailure(program string, code int, stdout, stderr []byte) error {
 // OnlyMissingHostResource reports an error that only says a container or
 // network is already gone.
 func OnlyMissingHostResource(err error) bool { return get().OnlyMissingHostResource(err) }
+
+// BlockDevice is the identity a lease owner verified for one device-mapper
+// node: its /dev/mapper path on the engine host, its number and its size.
+type BlockDevice struct {
+	HostPath     string
+	Major, Minor uint32
+	SizeBytes    int64
+}
+
+// AddBlockDeviceOSD adds one OSD whose BlueStore main device is device, in the
+// cluster's default placement, and waits for it to be up and in. The cluster
+// must use the default OSD storage. The caller owns the file, loop and
+// device-mapper chain behind device and keeps it until JudgeDeviceChain
+// reports ChainClear; an error here never releases it. It is internal: no
+// public option adds a device-backed OSD.
+func AddBlockDeviceOSD(ctx context.Context, c *ceph.Container, device BlockDevice, lease string) (*ceph.OSDContainer, error) {
+	return get().AddBlockDeviceOSD(ctx, c, device.HostPath, device.Major, device.Minor, device.SizeBytes, lease)
+}
+
+// Fact is a tri-state observation of the lease owner. The zero value is
+// unknown and never counts as evidence.
+type Fact uint8
+
+const (
+	FactUnknown Fact = iota
+	FactNo
+	FactYes
+)
+
+// ChainEvidence is what the lease owner observed about its chain: the lease
+// and device it saw, whether the OSD daemon ended, whether every observer
+// borrow of the device was closed, whether its opener scan was complete, and
+// how many openers that scan found.
+type ChainEvidence struct {
+	Lease                                      string
+	Device                                     BlockDevice
+	DaemonStopped, BorrowsClosed, ScanComplete Fact
+	Openers                                    int
+}
+
+// ChainClear is the one outcome of JudgeDeviceChain that raises no objection.
+// Every other outcome retains the chain: retain-unknown, retain-claim,
+// retain-identity or retain-busy.
+const ChainClear = "clear"
+
+// JudgeDeviceChain joins the cluster's claim table with the owner's evidence
+// for device and lease. It is not authority to release anything; it only
+// reports that neither receipt objects. It works after Terminate.
+func JudgeDeviceChain(ctx context.Context, c *ceph.Container, device BlockDevice, lease string, evidence func(context.Context) (ChainEvidence, error)) (outcome, detail string) {
+	var raw func(context.Context) (string, string, uint32, uint32, int64, [3]uint8, int, error)
+	if evidence != nil {
+		raw = func(ctx context.Context) (string, string, uint32, uint32, int64, [3]uint8, int, error) {
+			ev, err := evidence(ctx)
+			return ev.Lease, ev.Device.HostPath, ev.Device.Major, ev.Device.Minor, ev.Device.SizeBytes,
+				[3]uint8{uint8(ev.DaemonStopped), uint8(ev.BorrowsClosed), uint8(ev.ScanComplete)}, ev.Openers, err
+		}
+	}
+	return get().JudgeDeviceChain(ctx, c, device.HostPath, device.Major, device.Minor, device.SizeBytes, lease, raw)
+}

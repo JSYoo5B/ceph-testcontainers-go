@@ -94,7 +94,8 @@ func (f customizerFunc) Customize(req *testcontainers.GenericContainerRequest) e
 // lease to decide. Its only caller is registerBlockDeviceOSD
 // (osd_device_wiring.go), which holds the topology lock and claims the device in
 // the cluster-wide table (osd_device_claims.go) right after the attach, using
-// the recipe's started one-shot; that step has no production caller yet.
+// the recipe's started one-shot; that step's one production caller is
+// addBlockDeviceOSD (osd_device_launch.go).
 func (r *osdLaunchRecipe) attachBlockDevice(d osdBlockDevice) error {
 	if err := d.validate(); err != nil {
 		return err

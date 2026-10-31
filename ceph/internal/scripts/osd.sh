@@ -26,7 +26,8 @@ valid_uuid "${CEPH_OSD_UUID:-}" || fail 'invalid OSD UUID'
 # and size its caller verified on the host; compare them with what this
 # container was actually given before anything is written, so a node that
 # Docker resolved to another device is refused. This does not establish the
-# host lease, and the check ends here: it is not repeated after mkfs.
+# host lease. The same check runs again when the container starts again, and
+# then admits only the store that mkfs made on this device.
 block_args=
 if [ -n "${CEPH_OSD_BLOCK_DEVICE:-}" ]; then
     dev=$CEPH_OSD_BLOCK_DEVICE
@@ -64,7 +65,12 @@ if [ -e "$osd_dir" ] && [ ! -d "$osd_dir" ]; then
     fail 'OSD data path is not a directory'
 fi
 if [ -f "$osd_dir/ready" ] && [ ! -L "$osd_dir/ready" ]; then
-    [ -z "$block_args" ] || fail 'a block device is admitted only for a fresh OSD store'
+    if [ -n "$block_args" ]; then
+        # The container starting again after its own mkfs: BlueStore linked
+        # block to the device path it was given, which was verified above.
+        [ -L "$osd_dir/block" ] && [ "$(readlink "$osd_dir/block")" = "$dev" ] ||
+            fail 'a block device is admitted only for a fresh OSD store or the store made on it'
+    fi
     # This admits only an existing instance's matching local store. It does not
     # establish a retained-store lease or validate current MON registration.
     # Read configuration locally: no network lookup or mutation is needed.

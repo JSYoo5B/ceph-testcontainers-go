@@ -259,12 +259,13 @@ func TestRegisterBlockDeviceOSDTwoOSDsNeverShareADevice(t *testing.T) {
 // --- AST guards -------------------------------------------------------------
 
 // osdDeviceWiringCallers is the caller table of registerBlockDeviceOSD. The
-// single permitted caller is none in production: the step has no option, no
-// default path and no exported entry, so every launch of a cluster keeps its
-// default behavior. Its callers are tests, which take lockTopology around it
-// (wiringCluster.wire). The first production caller must be added here with the
-// lock it holds, and fails the guard until it is.
-var osdDeviceWiringCallers = map[string]bool{}
+// single permitted production caller is addBlockDeviceOSD, which holds
+// lockTopology through registerBlockDeviceOSD, startOSD and the up/in wait, as
+// AddOSD does. The step has no option, no default path and no exported entry,
+// so every other launch of a cluster keeps its default behavior. Tests take
+// lockTopology around it themselves (wiringCluster.wire). Another caller must
+// be added here with the lock it holds, and fails the guard until it is.
+var osdDeviceWiringCallers = map[string]bool{"addBlockDeviceOSD": true}
 
 // osdDeviceWiringSequence is the pinned order of the calls of the step.
 var osdDeviceWiringSequence = []string{
@@ -406,13 +407,13 @@ func osdDeviceWiringStepProblems(fn *ast.FuncDecl) []string {
 	return problems
 }
 
-func TestRegisterBlockDeviceOSDHasNoProductionCallerAndKeepsItsContract(t *testing.T) {
+func TestRegisterBlockDeviceOSDHasOneProductionCallerAndKeepsItsContract(t *testing.T) {
 	files := parseProductionFiles(t)
 	if problems := osdDeviceWiringProblems(files); len(problems) != 0 {
 		t.Fatalf("the OSD device wiring step breaks its contract: %v", problems)
 	}
-	if len(osdDeviceWiringCallers) != 0 {
-		t.Fatalf("osdDeviceWiringCallers = %v, want no production caller", osdDeviceWiringCallers)
+	if len(osdDeviceWiringCallers) != 1 || !osdDeviceWiringCallers["addBlockDeviceOSD"] {
+		t.Fatalf("osdDeviceWiringCallers = %v, want only addBlockDeviceOSD", osdDeviceWiringCallers)
 	}
 }
 

@@ -327,8 +327,10 @@ func TestOSDChainLeaseOwnerCannotActOnTheChain(t *testing.T) {
 // --- AST guards -------------------------------------------------------------
 
 // osdChainReleaseCallers is the caller table of the three entry points of the
-// gate. The single permitted production caller is none.
-var osdChainReleaseCallers = map[string]bool{}
+// gate. The single permitted production caller is judgeDeviceChain, which
+// collects the owner's evidence before it takes the topology lock and reads the
+// claim table under it.
+var osdChainReleaseCallers = map[string]bool{"judgeDeviceChain": true}
 
 var osdChainGateNames = []string{"judgeChainRelease", "collectChainEvidence", "exclusionOf"}
 
@@ -447,12 +449,12 @@ func osdChainGateFuncProblems(fn *ast.FuncDecl, judges *int) []string {
 	return problems
 }
 
-func TestOSDChainGateHasNoProductionCallerAndKeepsItsContract(t *testing.T) {
+func TestOSDChainGateHasOneProductionCallerAndKeepsItsContract(t *testing.T) {
 	if problems := osdChainGateProblems(parseProductionFiles(t)); len(problems) != 0 {
 		t.Fatalf("the OSD chain gate breaks its contract: %v", problems)
 	}
-	if len(osdChainReleaseCallers) != 0 {
-		t.Fatalf("osdChainReleaseCallers = %v, want no production caller", osdChainReleaseCallers)
+	if len(osdChainReleaseCallers) != 1 || !osdChainReleaseCallers["judgeDeviceChain"] {
+		t.Fatalf("osdChainReleaseCallers = %v, want only judgeDeviceChain", osdChainReleaseCallers)
 	}
 }
 
