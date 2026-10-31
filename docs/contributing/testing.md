@@ -47,6 +47,24 @@ process runs inside a container, set `TESTCONTAINERS_HOST_OVERRIDE` to the
 Docker host address (CI uses `127.0.0.1`). See
 [Host network](../guides/host-network.md).
 
+The Docker Desktop VM kernel decides a few more tests. It is the kernel of the
+Linux VM, not of macOS, and its configuration is readable from any container
+in `/proc/config.gz`. Observed with kernel 7.0.14-linuxkit (arm64):
+
+| Need | In the Desktop kernel | Effect on the suite |
+| --- | --- | --- |
+| netem, `prio`, u32 | built in | network fault tests run |
+| loop, device-mapper `linear` and `error` | built in | `TestBlockDeviceFault` runs its attachment, error and recovery windows |
+| device-mapper `delay` and `flakey` | not built | the delay window of `TestBlockDeviceFault` is recorded as not eligible; it runs on GitHub-hosted runners |
+| FUSE | built in | `TestCephFSFuseMount` runs |
+| NBD | built in | `TestDesktopRBDOverNBD` (optional batch `desktop_capabilities`) maps an RBD image through `rbd-nbd` |
+| kernel RBD and kernel CephFS clients | not built | the module offers neither; clients use librbd and libcephfs |
+
+No test or fixture operation loads a kernel module or changes a Desktop
+setting. Building a module for the Desktop kernel needs matching kernel headers,
+which are not published for every Desktop release; it is not a supported
+setup.
+
 ## Host checks: unit tests, race detector, vet
 
 ```sh
