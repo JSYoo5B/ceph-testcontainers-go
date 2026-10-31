@@ -13,7 +13,7 @@ for each daemon role, and what an image must contain.
 pinned to the tested native AMD64/ARM64 index digest:
 
 ```text
-ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:104315166259499ea6855fc163ac052c37fd7261faab638f13a78be4a2004a80
+ghcr.io/jsyoo5b/ceph-testcontainers-images@sha256:2e57651a5aa7a6791b2b6c67d63439a307e50a0f560f4c98323e2a17a7a9ab4b
 ```
 
 The digest is a multi-architecture manifest for `linux/amd64` and

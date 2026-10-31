@@ -1,0 +1,27 @@
+name: Runner storage
+description: Free preinstalled runner directories or record the filesystem under Docker's data root
+inputs:
+  action:
+    description: free (GitHub-hosted runners only) or record
+    required: true
+  phase:
+    description: Receipt name for record, for example images or after
+    default: ''
+  directory:
+    description: Directory for the storage receipts
+    default: artifacts/scenario/runner-storage
+runs:
+  using: composite
+  steps:
+    - name: Storage receipt
+      shell: bash
+      env:
+        STORAGE_ACTION: ${{ inputs.action }}
+        STORAGE_PHASE: ${{ inputs.phase }}
+        STORAGE_DIRECTORY: ${{ inputs.directory }}
+      run: |
+        if [ "$STORAGE_ACTION" = free ]; then
+          python3 "$GITHUB_ACTION_PATH/../../scripts/runner_storage.py" free --directory "$STORAGE_DIRECTORY"
+        else
+          python3 "$GITHUB_ACTION_PATH/../../scripts/runner_storage.py" record --phase "$STORAGE_PHASE" --directory "$STORAGE_DIRECTORY"
+        fi

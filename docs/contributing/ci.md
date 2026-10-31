@@ -381,9 +381,12 @@ Each matrix entry is one job on one `ubuntu-24.04` runner:
 | Restore the Go module and build caches | n/a | Restores what a `Plan` job saved. A build-cache miss only slows compilation. |
 | Prepare Go modules | Go module preparation | `tag_scenarios.py modules` runs `go mod download` within 300 seconds. |
 | Compile selected tagged suite | Compilation | `tag_scenarios.py compile` runs `go test -c` within 180 seconds with `GOPROXY=off`, writes `compile/<package>.test`, and records in `compile-report.json` the binary's sha256, its build key (package, tags, Go environment, version, `GOOS`, `GOARCH`), the sha256 of every source file read, and the listed tests. It first refuses a recomputed profile whose tags differ from the matrix entry's. |
+| Free the runner's preinstalled directories | n/a | Ceph batches only. `runner_storage.py free` removes the runner image's Android SDK, .NET, Haskell, CodeQL and Boost directories, which no job uses, and writes `runner-storage/storage-free.json`. It never touches Docker resources and refuses to run outside a GitHub-hosted runner. |
 | Docker baseline and engine identity | Docker baseline | Records the engine identity and every resource labelled `org.testcontainers=true`. |
 | Resolve native published Ceph roles | Published image preparation | Ceph batches only. Pulls the declared immutable role images from `ghcr.io/jsyoo5b/ceph-testcontainers-images` for `linux/amd64`, freezes local image IDs and exports the selected `CEPH_TEST_*_IMAGE` variables. Never builds. |
+| Record runner storage with the images | n/a | Ceph batches only. Writes `runner-storage/storage-images.json`. Its failure never changes the job result. |
 | Native assertions and completion proof | Native assertions and completion | `tag_scenarios.py run` (or `optional`) with `--binary` runs the compiled binary and applies the pass rules below. |
+| Record runner storage after the tests | n/a | Ceph batches only, also after a failure. Writes `runner-storage/storage-after.json`. |
 | Verify owned Docker resource cleanup | Docker resource cleanup | Runs after any failure once the baseline succeeded. Waits up to 30 seconds for Ryuk, then fails if new labelled resources remain. Never deletes anything. |
 | Show actual failure phases | n/a | Writes the phase table to the summary and `phases.json`, and annotates failed or cancelled phases. |
 | Normalize the scenario history row | n/a | Writes `history-row.json` (see [Scenario history](#scenario-history)). Its failure never changes the job result. |
@@ -682,7 +685,7 @@ never skips. Outside the tag runner, build it with
 
 | Artifact | Contents |
 | --- | --- |
-| `tag-scenario-<id>` | `modules/` and `compile/` logs and reports (the binary is not uploaded); `native/native.log`; `native/report.json`; `native/test-artifacts/` (retained test artifacts such as [failure archives](#failure-archives)); `phases.json`; `history-row.json` |
+| `tag-scenario-<id>` | `modules/` and `compile/` logs and reports (the binary is not uploaded); `native/native.log`; `native/report.json`; `native/test-artifacts/` (retained test artifacts such as [failure archives](#failure-archives)); `runner-storage/` (see below); `phases.json`; `history-row.json` |
 | `runtime-cleanup-<id>` | `before.json` and `after.json`: engine identity and labelled resources before and after |
 | `runtime-cleanup-<id>-baseline` | Only when the baseline itself failed |
 | `scenario-images-<id>` | `summary.json` with resolved role image IDs, digests and platform |
@@ -710,6 +713,16 @@ composite action) has already failed at upload time.
 succeeded but the receipt was not recorded, so the binary is not reused). A
 timed-out command is killed with its process group and has `exit_code: null`.
 
+`runner-storage/storage-<phase>.json` records the filesystem that holds
+Docker's data root: total, available and free bytes, inodes, the available
+share as a MON computes it, and `docker system df` by type. Every container
+layer and the MON store live there, so a MON raises `MON_DISK_LOW` once that
+share is below `mon_data_avail_warn` (30%), and a test that requires
+`HEALTH_OK` fails before its own assertions. Compare `storage-free.json`
+(the runner's baseline after the removal), `storage-images.json` (after the
+pulls) and `storage-after.json` (after the tests) to tell which one took the
+space.
+
 ### Typical causes by phase
 
 | Failed phase | Look at | Common causes |
@@ -718,7 +731,7 @@ timed-out command is killed with its process group and has `exit_code: null`.
 | Compilation | `compile/compile.log`, `compile/compile-report.json` | A test calls a helper that only another batch compiles; run `plan --verify` (see [Testing](testing.md#shared-helpers-must-compile-in-every-batch)). |
 | Docker baseline | the step log, `runtime-cleanup-<id>-baseline` | Docker was not ready within 60 seconds. |
 | Published image preparation | `scenario-images-<id>` | A role image is missing from the registry or could not be pulled. |
-| Native assertions and completion | `native/native.log`, `native/report.json` | An assertion failed, a Ceph wait or the batch timeout expired, or a test skipped. A `panic: test timed out` block lists the tests still running. |
+| Native assertions and completion | `native/native.log`, `native/report.json` | An assertion failed, a Ceph wait or the batch timeout expired, or a test skipped. A `panic: test timed out` block lists the tests still running. A health wait that sees only `MON_DISK_LOW` points at runner storage: read `runner-storage/`. |
 | Docker resource cleanup | `runtime-cleanup-<id>/after.json` | A test left a container, network or volume behind, for example by not registering cleanup when `Run` returned an error. |
 
 Failed integration tests print the last 16 KB of every daemon's log into
