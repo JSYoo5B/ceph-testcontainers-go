@@ -33,26 +33,72 @@ func TestClassifyDMExplainsOnlyWhatTheRecordExplains(t *testing.T) {
 		view dmControlReply
 		is   string
 	}{
-		"gone":                      {owned, ctlError, dmControlReply{Action: "observe"}, dmGone},
-		"another UUID":              {owned, ctlError, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.UUID = "TC-OTHER"; return v }(), dmIdentityChanged},
-		"another minor":             {owned, ctlError, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.Minor = 5; return v }(), dmIdentityChanged},
-		"unsettled step first":      {unsettled, ctlError, ctlView("SUSPENDED", ctlLinear, strp(ctlError)), dmStepUnsettled},
-		"identity before unsettled": {unsettled, ctlError, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.UUID = "TC-OTHER"; return v }(), dmIdentityChanged},
-		"unchanged":                 {owned, ctlError, ctlView("ACTIVE", ctlLinear, nil), dmUnchanged},
-		"trailing space":            {owned, ctlError, ctlView("ACTIVE", ctlError+" ", nil), dmApplied},
-		"loaded":                    {loaded, ctlError, ctlView("ACTIVE", ctlLinear, strp(ctlError+" ")), dmLoaded},
-		"suspended and loaded":      {loaded, ctlError, ctlView("SUSPENDED", ctlLinear, strp(ctlError)), dmSuspendedLoaded},
-		"suspended":                 {owned, ctlError, ctlView("SUSPENDED", ctlLinear, nil), dmSuspended},
-		"swapped on hold":           {owned, ctlError, ctlView("SUSPENDED", ctlError, nil), dmSwappedOnHold},
-		"inactive not loaded by us": {owned, ctlError, ctlView("ACTIVE", ctlLinear, strp(ctlError)), dmForeign},
-		"another inactive table":    {loaded, ctlError, ctlView("ACTIVE", ctlLinear, strp("0 65536 linear 7:3 0")), dmForeign},
-		"another live table":        {owned, ctlError, ctlView("ACTIVE", "0 65536 linear 7:3 0", nil), dmForeign},
-		"unknown state":             {owned, ctlError, ctlView("", ctlLinear, nil), dmForeign},
-		"no live table":             {owned, ctlError, func() dmControlReply { v := ctlView("ACTIVE", "", nil); v.Live = nil; return v }(), dmForeign},
+		"gone":                       {owned, ctlError, dmControlReply{Action: "observe"}, dmGone},
+		"another UUID":               {owned, ctlError, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.UUID = "TC-OTHER"; return v }(), dmIdentityChanged},
+		"another minor":              {owned, ctlError, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.Minor = 5; return v }(), dmIdentityChanged},
+		"unsettled step first":       {unsettled, ctlError, ctlView("SUSPENDED", ctlLinear, strp(ctlError)), dmStepUnsettled},
+		"identity before unsettled":  {unsettled, ctlError, func() dmControlReply { v := ctlView("ACTIVE", ctlLinear, nil); v.UUID = "TC-OTHER"; return v }(), dmIdentityChanged},
+		"unchanged":                  {owned, ctlError, ctlView("ACTIVE", ctlLinear, nil), dmUnchanged},
+		"trailing space":             {owned, ctlError, ctlView("ACTIVE", ctlError+" ", nil), dmApplied},
+		"loaded":                     {loaded, ctlError, ctlView("ACTIVE", ctlLinear, strp(ctlError+" ")), dmLoaded},
+		"suspended and loaded":       {loaded, ctlError, ctlView("SUSPENDED", ctlLinear, strp(ctlError)), dmSuspendedLoaded},
+		"suspended":                  {owned, ctlError, ctlView("SUSPENDED", ctlLinear, nil), dmSuspended},
+		"swapped on hold":            {owned, ctlError, ctlView("SUSPENDED", ctlError, nil), dmSwappedOnHold},
+		"inactive not loaded by us":  {owned, ctlError, ctlView("ACTIVE", ctlLinear, strp(ctlError)), dmForeign},
+		"another inactive table":     {loaded, ctlError, ctlView("ACTIVE", ctlLinear, strp("0 65536 linear 7:3 0")), dmForeign},
+		"wanted table replaced ours": {loaded, "0 65536 linear 7:3 0", ctlView("ACTIVE", ctlLinear, strp("0 65536 linear 7:3 0")), dmForeign},
+		"replaced ours, suspended":   {loaded, "0 65536 linear 7:3 0", ctlView("SUSPENDED", ctlLinear, strp("0 65536 linear 7:3 0")), dmForeign},
+		"another live table":         {owned, ctlError, ctlView("ACTIVE", "0 65536 linear 7:3 0", nil), dmForeign},
+		"unknown state":              {owned, ctlError, ctlView("", ctlLinear, nil), dmForeign},
+		"no live table":              {owned, ctlError, func() dmControlReply { v := ctlView("ACTIVE", "", nil); v.Live = nil; return v }(), dmForeign},
 	} {
 		if got := classifyDM(test.rec, test.want, test.view); got != test.is {
 			t.Errorf("%s: %s, want %s", name, got, test.is)
 		}
+	}
+}
+
+func TestDMRecordKeepsAStepUntilItsStatusSaysSo(t *testing.T) {
+	owned := dmRecord{Name: "x", UUID: "TC-CTL-x", Major: 253, Minor: 4, Live: ctlLinear}
+	view := ctlView("ACTIVE", ctlLinear, strp(ctlError))
+
+	// The reply of a dispatched load is lost: the record still holds it.
+	lost := owned
+	lost.begin("load", ctlError, "load-1")
+	if got := classifyDM(lost, ctlError, view); got != dmStepUnsettled {
+		t.Errorf("a load whose reply was lost: %s", got)
+	}
+	if verdict, _ := judgeDMRelease(lost, ctlView("ACTIVE", ctlLinear, nil)); verdict != dmReleaseHeld {
+		t.Error("a node with a load of unknown outcome was releasable")
+	}
+
+	// The load finishes after its wait: the retained table is the load.
+	late := owned
+	late.begin("load", ctlError, "load-1")
+	late.settle(dmControlReply{Done: false})
+	if late.Unsettled != "load" || late.UnsettledTable != ctlError || late.UnsettledID != "load-1" {
+		t.Fatalf("a load still running was not kept: %+v", late)
+	}
+	late.settle(dmControlReply{Done: true})
+	if late.Unsettled != "" || late.Loaded != ctlError {
+		t.Fatalf("a late load was not recorded as the control's: %+v", late)
+	}
+	if got := classifyDM(late, ctlError, view); got != dmLoaded {
+		t.Errorf("the control's late load: %s", got)
+	}
+
+	refused := owned
+	refused.begin("load", ctlError, "load-1")
+	refused.settle(dmControlReply{Done: true, RC: 1})
+	if refused.Unsettled != "" || refused.Loaded != "" {
+		t.Errorf("a refused load: %+v", refused)
+	}
+
+	swapped := late
+	swapped.begin("resume", "", "resume-1")
+	swapped.settle(dmControlReply{Done: true})
+	if swapped.Live != ctlError || swapped.Loaded != "" {
+		t.Errorf("a resume of the loaded table: %+v", swapped)
 	}
 }
 
@@ -99,17 +145,22 @@ func TestJudgeDMReleaseNeedsTheRecordedIdleNode(t *testing.T) {
 	}
 }
 
-func TestJudgeLoopReleaseNeedsTheAttachedFile(t *testing.T) {
-	own := loopIdentity{Loop: "/dev/loop3", File: "/tc-blk/a", Inode: 41}
-	if ok, why := judgeLoopRelease(own, dmControlReply{File: "/tc-blk/a", Inode: 41}); !ok {
+func TestJudgeLoopReleaseNeedsTheAttachedUnusedFile(t *testing.T) {
+	own := loopIdentity{Loop: "/dev/loop3", File: "/tc-blk/a", Inode: 41, Dev: "7:3"}
+	if ok, why := judgeLoopRelease(own, dmControlReply{File: "/tc-blk/a", Inode: 41}, nil); !ok {
 		t.Fatalf("the attached loop was held: %s", why)
 	}
-	for name, seen := range map[string]dmControlReply{
-		"another file":        {File: "/tc-blk/n", Inode: 42},
-		"same path, new file": {File: "/tc-blk/a", Inode: 43},
-		"detached":            {Error: "No such file or directory"},
+	for name, test := range map[string]struct {
+		seen dmControlReply
+		kept []string
+	}{
+		"another file":        {dmControlReply{File: "/tc-blk/n", Inode: 42}, nil},
+		"same path, new file": {dmControlReply{File: "/tc-blk/a", Inode: 43}, nil},
+		"detached":            {dmControlReply{Error: "No such file or directory"}, nil},
+		"kept mapping above":  {dmControlReply{File: "/tc-blk/a", Inode: 41}, []string{"tcctl-pl"}},
+		"held by a mapping":   {dmControlReply{File: "/tc-blk/a", Inode: 41, Holders: []string{"dm-0"}}, nil},
 	} {
-		if ok, _ := judgeLoopRelease(own, seen); ok {
+		if ok, _ := judgeLoopRelease(own, test.seen, test.kept); ok {
 			t.Errorf("%s: released", name)
 		}
 	}

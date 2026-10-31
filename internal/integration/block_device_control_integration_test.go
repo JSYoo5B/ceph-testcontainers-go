@@ -60,7 +60,9 @@ func (k dmKeeper) do(t *testing.T, ctx context.Context, action, name string, arg
 type dmControl struct {
 	keeper dmKeeper
 	rec    dmRecord
-	log    []map[string]any
+	// lower is the major:minor of the device the node maps onto.
+	lower string
+	log   []map[string]any
 	// refused is the kernel's reason for the last load it refused.
 	refused string
 }
@@ -72,36 +74,50 @@ func (c *dmControl) observe(t *testing.T, ctx context.Context) dmControlReply {
 
 func (c *dmControl) note(entry map[string]any) { c.log = append(c.log, entry) }
 
-// settleStep records the outcome of a finished step in the record.
-func (c *dmControl) settleStep(op string, r dmControlReply, table string) {
-	if !r.Done {
-		c.rec.Unsettled = op
-		return
+func (c *dmControl) dev() string { return fmt.Sprintf("%d:%d", c.rec.Major, c.rec.Minor) }
+
+// dispatch records the step with its table and the id of its status file,
+// then starts it and waits up to wait. The step may be running in the kernel
+// once the command is sent, so an error keeps it recorded as unsettled: its
+// outcome is unknown until its status file says otherwise.
+func (c *dmControl) dispatch(ctx context.Context, op, table string, wait time.Duration) (dmControlReply, error) {
+	id := randomName(op + "-")
+	c.rec.begin(op, table, id)
+	args := []string{op, strconv.FormatFloat(wait.Seconds(), 'f', 1, 64), id}
+	if op == "load" {
+		args = append(args, table)
 	}
-	c.rec.Unsettled = ""
-	if r.RC != 0 {
-		return
+	r, err := c.keeper.exec(ctx, "step", c.rec.Name, args...)
+	if err == nil && r.ID != id {
+		err = fmt.Errorf("step reply is for %q, want %q", r.ID, id)
 	}
-	switch op {
-	case "load":
-		c.rec.Loaded = table
-	case "clear":
-		c.rec.Loaded = ""
-	case "resume":
-		if c.rec.Loaded != "" {
-			c.rec.Live, c.rec.Loaded = c.rec.Loaded, ""
-		}
+	if err != nil {
+		return r, err
 	}
+	c.rec.settle(r)
+	return r, nil
+}
+
+// poll reads the status of the recorded unsettled step once and records it.
+func (c *dmControl) poll(ctx context.Context) (dmControlReply, error) {
+	r, err := c.keeper.exec(ctx, "settled", c.rec.Name, c.rec.UnsettledID)
+	if err == nil && r.ID != c.rec.UnsettledID {
+		err = fmt.Errorf("settled reply is for %q, want %q", r.ID, c.rec.UnsettledID)
+	}
+	if err != nil {
+		return r, err
+	}
+	c.rec.settle(r)
+	return r, nil
 }
 
 func (c *dmControl) step(t *testing.T, ctx context.Context, op, table string) dmControlReply {
 	t.Helper()
-	args := []string{op, strconv.FormatFloat(dmStepWait.Seconds(), 'f', 1, 64)}
-	if op == "load" {
-		args = append(args, table)
+	r, err := c.dispatch(ctx, op, table, dmStepWait)
+	if err != nil {
+		c.note(map[string]any{"step": op, "unknown": err.Error()})
+		t.Fatalf("%s %s: outcome unknown, kept as unsettled: %v", op, c.rec.Name, err)
 	}
-	r := c.keeper.do(t, ctx, "step", c.rec.Name, args...)
-	c.settleStep(op, r, table)
 	c.note(map[string]any{"step": op, "done": r.Done, "rc": r.RC, "error": r.Error})
 	if r.Done && r.RC != 0 && op != "load" {
 		t.Fatalf("%s %s failed: %s", op, c.rec.Name, r.Error)
@@ -168,8 +184,10 @@ func (c *dmControl) settle(t *testing.T, ctx context.Context, bound time.Duratio
 	t.Helper()
 	for deadline := time.Now().Add(bound); c.rec.Unsettled != ""; time.Sleep(200 * time.Millisecond) {
 		op := c.rec.Unsettled
-		r := c.keeper.do(t, ctx, "settled", c.rec.Name, op)
-		c.settleStep(op, r, "")
+		r, err := c.poll(ctx)
+		if err != nil {
+			t.Fatalf("%s %s: %v", c.rec.Name, op, err)
+		}
 		if r.Done {
 			c.note(map[string]any{"settled": op, "rc": r.RC, "error": r.Error})
 			return
@@ -206,9 +224,9 @@ func (f *dmFixture) loop(t *testing.T, ctx context.Context, name string) (loopId
 	if r.Loop == "" {
 		t.Fatalf("loop for %s: %s", name, r.Error)
 	}
-	id := loopIdentity{Loop: r.Loop, File: r.File, Inode: r.Inode}
+	id := loopIdentity{Loop: r.Loop, File: r.File, Inode: r.Inode, Dev: fmt.Sprintf("%d:%d", r.Major, r.Minor)}
 	f.loops = append(f.loops, id)
-	return id, fmt.Sprintf("%d:%d", r.Major, r.Minor)
+	return id, id.Dev
 }
 
 // node creates a linear node over lower (major:minor) and the control that
@@ -219,7 +237,7 @@ func (f *dmFixture) node(t *testing.T, ctx context.Context, name, lower string) 
 	if r := f.keeper.do(t, ctx, "create", name, uuid, lower, strconv.FormatInt(dmControlSectors, 10)); !r.Created {
 		t.Fatalf("create %s: %s", name, r.Error)
 	}
-	c := &dmControl{keeper: f.keeper, rec: dmRecord{Name: name, UUID: uuid}}
+	c := &dmControl{keeper: f.keeper, rec: dmRecord{Name: name, UUID: uuid}, lower: lower}
 	v := c.observe(t, ctx)
 	if !v.Exists || v.UUID != uuid || v.Live == nil || v.State != "ACTIVE" {
 		t.Fatalf("new node %s: %+v", name, v)
@@ -236,16 +254,18 @@ func errorTable() string { return fmt.Sprintf("0 %d error", dmControlSectors) }
 // half-done, on scratch device-mapper nodes that a privileged keeper builds
 // from loop devices over its own tmpfs. No node of the engine host is touched.
 //
-//   - Partial apply and restore: the control stops after the load and after
-//     the suspend. Each state is observed as such, the release gate keeps the
+//   - Partial apply and restore: a load outlives its wait, and the control
+//     stops after the load and after the suspend. Each state is observed as such, the release gate keeps the
 //     node, and the change is then reverted or completed from what was
 //     observed.
-//   - Foreign table changes: another actor swaps a live table, or loads an
-//     inactive one. The control refuses to act or release until the node is
+//   - Foreign table changes: another actor swaps a live table, loads an
+//     inactive one, or replaces the control's own load. The control refuses to act or release until the node is
 //     back to the state its record explains.
 //   - Identity reuse: a node of the same name created again, and a loop number
 //     given to another file, are not the owned resources and are never acted on
 //     or released as such.
+//   - Lazy loop detach: a loop kept open by a process that is no holder is
+//     detached only lazily; the file stays until the kernel releases it.
 //   - Pending I/O and a cancelled step: a write is in flight on a node whose
 //     lower node is suspended, so the control's suspend blocks past its bound.
 //     The step is left to the kernel, nothing else is started or released,
@@ -285,23 +305,44 @@ func TestBlockDeviceControlSupervision(t *testing.T) {
 	}()
 	// Registered before the keeper's Terminate, so it runs first: every node
 	// the gate allows is removed, in reverse order of creation, and then every
-	// loop that still backs its own file.
+	// loop that still backs its own file. A node that is kept, or whose state
+	// or removal is unknown, keeps every device below it: the node it maps
+	// onto, and that node's loop and file.
 	t.Cleanup(func() {
 		cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer done()
 		var held []string
+		kept := map[string][]string{}
+		keep := func(c *dmControl, why string) {
+			held = append(held, c.rec.Name+": "+why)
+			kept[c.lower] = append(kept[c.lower], c.rec.Name)
+		}
 		for i := len(f.controls) - 1; i >= 0; i-- {
 			c := f.controls[i]
+			if over := kept[c.dev()]; len(over) != 0 {
+				keep(c, fmt.Sprintf("under kept mappings %v", over))
+				continue
+			}
+			if c.rec.Unsettled != "" {
+				if _, err := c.poll(cleanup); err != nil {
+					keep(c, fmt.Sprintf("unsettled %s: %v", c.rec.Unsettled, err))
+					continue
+				}
+			}
 			v, err := f.keeper.exec(cleanup, "observe", c.rec.Name)
-			if err != nil || !v.Exists {
+			if err != nil {
+				keep(c, "observe: "+err.Error())
+				continue
+			}
+			if !v.Exists {
 				continue
 			}
 			if verdict, why := judgeDMRelease(c.rec, v); verdict != dmReleasable {
-				held = append(held, c.rec.Name+": "+why)
+				keep(c, why)
 				continue
 			}
-			if r, err := f.keeper.exec(cleanup, "step", c.rec.Name, "remove", "10"); err != nil || !r.Done || r.RC != 0 {
-				held = append(held, fmt.Sprintf("%s: remove %v %+v", c.rec.Name, err, r))
+			if r, err := c.dispatch(cleanup, "remove", "", 10*time.Second); err != nil || !r.Done || r.RC != 0 {
+				keep(c, fmt.Sprintf("remove %v %+v", err, r))
 			}
 		}
 		for _, l := range f.loops {
@@ -310,13 +351,13 @@ func TestBlockDeviceControlSupervision(t *testing.T) {
 				held = append(held, l.Loop+": "+err.Error())
 				continue
 			}
-			if ok, why := judgeLoopRelease(l, seen); !ok {
+			if ok, why := judgeLoopRelease(l, seen, kept[l.Dev]); !ok {
 				if seen.Error == "" {
 					held = append(held, why)
 				}
 				continue
 			}
-			if r, err := f.keeper.exec(cleanup, "unloop", "-", l.Loop, l.File); err != nil || !r.Detached {
+			if r, err := f.keeper.exec(cleanup, "unloop", "-", l.Loop, l.File); err != nil || !r.Detached || !r.FileRemoved {
 				held = append(held, fmt.Sprintf("%s: %v %+v", l.Loop, err, r))
 			}
 		}
@@ -330,6 +371,21 @@ func TestBlockDeviceControlSupervision(t *testing.T) {
 		_, lower := f.loop(t, ctx, prefix+"-a")
 		c := f.node(t, ctx, prefix+"-a", lower)
 		linear := c.rec.Live
+		// A load still running when its wait ends: the control keeps it as
+		// unsettled with its table, and once it finishes records the
+		// inactive table as its own load.
+		r, err := c.dispatch(ctx, "load", errorTable(), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		receipt["late_load"] = map[string]any{"done_in_wait": r.Done, "unsettled": c.rec.Unsettled}
+		c.settle(t, ctx, 30*time.Second)
+		if state := classifyDM(c.rec, errorTable(), c.observe(t, ctx)); state != dmLoaded || normTable(c.rec.Loaded) != normTable(errorTable()) {
+			t.Fatalf("after a load that finished past its wait: %s, loaded %q", state, c.rec.Loaded)
+		}
+		if state := c.revert(t, ctx, errorTable()); state != dmApplied {
+			t.Fatalf("revert of the late load: %s", state)
+		}
 		if state := c.apply(t, ctx, errorTable(), "load"); state != dmLoaded {
 			t.Fatalf("after a stop at the load: %s", state)
 		}
@@ -402,6 +458,31 @@ func TestBlockDeviceControlSupervision(t *testing.T) {
 			t.Fatalf("an inactive table the control did not load: %s", state)
 		}
 		other.step(t, ctx, "clear", "")
+		// The control loads a table of its own, and another actor replaces
+		// it with the very table the control is then asked for.
+		if state := c.apply(t, ctx, errorTable(), "load"); state != dmLoaded {
+			t.Fatalf("the control's own load: %s", state)
+		}
+		other.step(t, ctx, "clear", "")
+		other.step(t, ctx, "load", half)
+		before = c.observe(t, ctx)
+		if state := c.apply(t, ctx, half, ""); state != dmForeign {
+			t.Fatalf("an inactive table that replaced the control's load: %s", state)
+		}
+		after = c.observe(t, ctx)
+		if after.Event != before.Event || after.State != "ACTIVE" || after.Inactive == nil || normTable(*after.Inactive) != normTable(half) {
+			t.Fatalf("the control acted on a replaced load: event %d -> %d, state %s, inactive %v", before.Event, after.Event, after.State, after.Inactive)
+		}
+		if verdict, _ := c.release(t, ctx); verdict != dmReleaseHeld {
+			t.Fatal("a node with a replaced load was releasable")
+		}
+		// The other actor puts the control's table back, and the control
+		// drops its own load.
+		other.step(t, ctx, "clear", "")
+		other.step(t, ctx, "load", errorTable())
+		if state := c.revert(t, ctx, errorTable()); state != dmApplied {
+			t.Fatalf("revert of the restored load: %s", state)
+		}
 		if state := c.apply(t, ctx, linear, ""); state != dmApplied {
 			t.Fatalf("after the foreign changes were undone: %s", state)
 		}
@@ -442,7 +523,7 @@ func TestBlockDeviceControlSupervision(t *testing.T) {
 		f.loops = f.loops[:len(f.loops)-1]
 		next, _ := f.loop(t, ctx, prefix+"-n")
 		seen := f.keeper.do(t, ctx, "loopid", "-", loop.Loop)
-		ok, why := judgeLoopRelease(loop, seen)
+		ok, why := judgeLoopRelease(loop, seen, nil)
 		receipt["reused_loop"] = map[string]any{"owned": loop, "next": next, "seen": seen, "verdict": why}
 		if ok {
 			t.Fatalf("a loop number given to another file was releasable as the owned one: %s", why)
@@ -450,6 +531,38 @@ func TestBlockDeviceControlSupervision(t *testing.T) {
 		if next.Loop == loop.Loop && seen.Inode != next.Inode {
 			t.Fatalf("the reused loop %s reports inode %d, the new file has %d", loop.Loop, seen.Inode, next.Inode)
 		}
+	})
+
+	t.Run("lazy loop detach", func(t *testing.T) {
+		loop, _ := f.loop(t, ctx, prefix+"-z")
+		// An opener that is no holder keeps the loop busy: the detach is
+		// accepted lazily and the file must stay.
+		if r := f.keeper.do(t, ctx, "hold", "-", loop.Loop, "5"); !r.Started {
+			t.Fatalf("hold %s open: %+v", loop.Loop, r)
+		}
+		seen := f.keeper.do(t, ctx, "loopid", "-", loop.Loop)
+		if ok, why := judgeLoopRelease(loop, seen, nil); !ok {
+			t.Fatalf("an open loop without holders: %s", why)
+		}
+		r := f.keeper.do(t, ctx, "unloop", "-", loop.Loop, loop.File)
+		receipt["lazy_detach"] = r
+		if r.Detached || !r.Lazy || r.FileRemoved {
+			t.Fatalf("detach of a busy loop: %+v", r)
+		}
+		// The opener exits and the kernel releases the loop; only then is
+		// the file removed.
+		for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+			if f.keeper.do(t, ctx, "loopid", "-", loop.Loop).Error != "" {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s was not released after its opener exited", loop.Loop)
+			}
+		}
+		if r := f.keeper.do(t, ctx, "rmfile", "-", loop.File, strconv.FormatUint(loop.Inode, 10)); !r.FileRemoved {
+			t.Fatalf("remove %s: %+v", loop.File, r)
+		}
+		f.loops = f.loops[:len(f.loops)-1]
 	})
 
 	t.Run("pending I/O and a cancelled step", func(t *testing.T) {

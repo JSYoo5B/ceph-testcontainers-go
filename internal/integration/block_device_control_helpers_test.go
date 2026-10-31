@@ -28,14 +28,18 @@ import (
 //
 //	create  uuid lower sectors   linear mapping over lower, with the UUID
 //	observe                      the node's state (see dmControlView)
-//	step    op wait [table]      op is load, suspend, resume, clear or remove
-//	settled op                   whether an abandoned step has finished
+//	step    op wait id [table]   op is load, suspend, resume, clear or remove;
+//	                             id names this one step's status file
+//	settled id                   whether the step id has finished
 //	write   offset blocks seed   start a direct write of a known pattern
 //	written                      whether that write has finished, and its status
 //	read    offset blocks        sha256 of a direct read
 //	loop    path size            attach a new backing file to a free loop
-//	loopid  loop                 the backing file and inode of a loop
-//	unloop  loop path            detach the loop and remove the file
+//	loopid  loop                 the backing file, inode and holders of a loop
+//	hold    loop seconds         keep the loop open, without a holder, a while
+//	rmfile  path inode           remove a released loop's file of that inode
+//	unloop  loop path            detach the loop and, once the kernel has
+//	                             released it, remove the file
 const blockControlScript = `import hashlib, json, os, subprocess, sys, time
 action, name = sys.argv[1], sys.argv[2]
 work = "/tc-blk"
@@ -96,18 +100,18 @@ elif action == "observe":
         with open("/sys/dev/block/%d:%d/inflight" % (out["major"], out["minor"])) as f:
             out["in_flight"] = [int(x) for x in f.read().split()]
 elif action == "step":
-    op, wait = sys.argv[3], float(sys.argv[4])
+    op, wait, sid = sys.argv[3], float(sys.argv[4]), sys.argv[5]
     argv = ["dmsetup", op, name]
     if op == "load":
-        argv += ["--table", sys.argv[5]]
+        argv += ["--table", sys.argv[6]]
     elif op == "remove":
         argv = ["dmsetup", "remove", "--verifyudev", name]
-    out["op"] = op
-    detached(op, argv)
-    out.update(settled(op, wait))
+    out["op"], out["id"] = op, sid
+    detached("step-" + sid, argv)
+    out.update(settled("step-" + sid, wait))
 elif action == "settled":
-    out["op"] = sys.argv[3]
-    out.update(settled(sys.argv[3], 0))
+    out["id"] = sys.argv[3]
+    out.update(settled("step-" + sys.argv[3], 0))
 elif action == "write":
     offset, blocks, seed = int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
     data = pattern(seed, blocks)
@@ -140,15 +144,43 @@ elif action == "loopid":
         with open("/sys/block/%s/loop/backing_file" % os.path.basename(loop)) as f:
             out["file"] = f.read().strip()
         out["inode"] = os.stat(out["file"]).st_ino
+        out["holders"] = sorted(os.listdir("/sys/block/%s/holders" % os.path.basename(loop)))
     except OSError as e:
         out["error"] = str(e)
+elif action == "hold":
+    mark = "%s/ctl-hold-%s" % (work, os.path.basename(sys.argv[3]))
+    try:
+        os.unlink(mark)
+    except FileNotFoundError:
+        pass
+    detached("hold", ["sh", "-c", 'exec 3<"$1"; : >"$3"; sleep "$2"', "sh", sys.argv[3], sys.argv[4], mark])
+    deadline = time.monotonic() + 10
+    while not os.path.exists(mark) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    out["started"] = os.path.exists(mark)
+elif action == "rmfile":
+    path, inode = sys.argv[3], int(sys.argv[4])
+    if os.stat(path).st_ino != inode:
+        raise SystemExit("%s is not inode %d" % (path, inode))
+    os.unlink(path)
+    out["file_removed"] = True
 elif action == "unloop":
     loop, path = sys.argv[3], sys.argv[4]
-    rc, _, err = run("losetup", "-d", loop)
-    out["detached"], out["error"] = rc == 0, err
-    if rc == 0:
-        os.unlink(path)
-        out["file_removed"] = True
+    base = os.path.basename(loop)
+    holders = sorted(os.listdir("/sys/block/%s/holders" % base))
+    out["holders"] = holders
+    if holders:
+        out["detached"], out["error"] = False, "held by " + " ".join(holders)
+    else:
+        rc, _, err = run("losetup", "-d", loop)
+        out["error"] = err
+        # losetup -d on a busy loop only sets autoclear and succeeds; the
+        # loop is released once its backing file is gone from sysfs.
+        released = rc == 0 and not os.path.exists("/sys/block/%s/loop/backing_file" % base)
+        out["detached"], out["lazy"] = released, rc == 0 and not released
+        if released:
+            os.unlink(path)
+            out["file_removed"] = True
 else:
     raise SystemExit("unknown action " + action)
 print(json.dumps(out))`
@@ -172,17 +204,21 @@ type dmControlReply struct {
 	InFlight []int64 `json:"in_flight"`
 	// step, settled, written
 	Op   string `json:"op"`
+	ID   string `json:"id"`
 	Done bool   `json:"done"`
 	RC   int    `json:"rc"`
 	// write, read
 	SHA256  string `json:"sha256"`
 	Started bool   `json:"started"`
 	// loop, loopid, unloop
-	Loop        string `json:"loop"`
-	File        string `json:"file"`
-	Inode       uint64 `json:"inode"`
-	Detached    bool   `json:"detached"`
-	FileRemoved bool   `json:"file_removed"`
+	Loop        string   `json:"loop"`
+	File        string   `json:"file"`
+	Inode       uint64   `json:"inode"`
+	Detached    bool     `json:"detached"`
+	FileRemoved bool     `json:"file_removed"`
+	Holders     []string `json:"holders"`
+	// Lazy is a detach the kernel accepted for a busy loop and has not done.
+	Lazy bool `json:"lazy"`
 }
 
 func parseDMControlReply(raw []byte, action string) (dmControlReply, error) {
@@ -208,8 +244,39 @@ type dmRecord struct {
 	// Loaded is the table the control loaded into the inactive slot and has
 	// not seen swapped in, or "".
 	Loaded string
-	// Unsettled is a step the control started and has not seen finish, or "".
-	Unsettled string
+	// Unsettled is a step the control may have started and has not seen
+	// finish, or "". It is recorded before the step is dispatched, so a lost
+	// reply or an ended context leaves it here, with the table of a load
+	// (UnsettledTable) and the id of its status file (UnsettledID).
+	Unsettled, UnsettledTable, UnsettledID string
+}
+
+// begin records a step before it is dispatched.
+func (rec *dmRecord) begin(op, table, id string) {
+	rec.Unsettled, rec.UnsettledTable, rec.UnsettledID = op, table, id
+}
+
+// settle records the reply of the recorded step: nothing while it is not
+// done, and once it is, what a successful step changed.
+func (rec *dmRecord) settle(r dmControlReply) {
+	if !r.Done {
+		return
+	}
+	op, table := rec.Unsettled, rec.UnsettledTable
+	rec.begin("", "", "")
+	if r.RC != 0 {
+		return
+	}
+	switch op {
+	case "load":
+		rec.Loaded = table
+	case "clear":
+		rec.Loaded = ""
+	case "resume":
+		if rec.Loaded != "" {
+			rec.Live, rec.Loaded = rec.Loaded, ""
+		}
+	}
 }
 
 // The states of an owned node, as classified against its record and the table
@@ -263,8 +330,9 @@ func classifyDM(rec dmRecord, want string, v dmControlReply) string {
 		return dmForeign
 	case inactive != "" && inactive != wanted:
 		return dmForeign
-	case inactive != "" && rec.Loaded == "":
-		// The wanted table is inactive, but the control did not load it.
+	case inactive != "" && inactive != normTable(rec.Loaded):
+		// The wanted table is inactive, but it is not the table the control
+		// loaded: the control loaded none, or another actor replaced it.
 		return dmForeign
 	case live == wanted && inactive == "" && !suspended:
 		return dmApplied
@@ -328,23 +396,31 @@ func judgeDMRelease(rec dmRecord, v dmControlReply) (string, string) {
 	return dmReleasable, "recorded table live, idle"
 }
 
-// loopIdentity is a loop device as the control attached it: the loop node and
-// the inode of its backing file.
+// loopIdentity is a loop device as the control attached it: the loop node,
+// its device number and the inode of its backing file.
 type loopIdentity struct {
 	Loop  string
 	File  string
 	Inode uint64
+	// Dev is the loop's major:minor, the lower device of mappings over it.
+	Dev string
 }
 
 // judgeLoopRelease allows detaching loop only while it still backs the file
-// the control attached: a loop number the kernel gave to another file after a
-// release is someone else's.
-func judgeLoopRelease(own loopIdentity, seen dmControlReply) (bool, string) {
+// the control attached, nothing holds it, and no mapping the fixture built on
+// it was kept or is in an unknown state (kept): a loop number the kernel gave
+// to another file after a release is someone else's, and a loop under a
+// remaining mapping is still in use.
+func judgeLoopRelease(own loopIdentity, seen dmControlReply, kept []string) (bool, string) {
 	switch {
 	case seen.Error != "":
 		return false, "loop not readable: " + seen.Error
 	case seen.File != own.File || seen.Inode != own.Inode:
 		return false, fmt.Sprintf("%s now backs %s (inode %d), not %s (inode %d)", own.Loop, seen.File, seen.Inode, own.File, own.Inode)
+	case len(kept) != 0:
+		return false, fmt.Sprintf("%s is under kept mappings %v", own.Loop, kept)
+	case len(seen.Holders) != 0:
+		return false, fmt.Sprintf("%s is held by %v", own.Loop, seen.Holders)
 	}
-	return true, "still backs the attached file"
+	return true, "still backs the attached file, unheld"
 }
