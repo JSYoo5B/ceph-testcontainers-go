@@ -43,8 +43,9 @@ The old handle is stale afterwards; use the one `Replace` returns. Replacing
 MON a removes the cluster's embedded container, as `Remove` on MON a does, and
 fixture commands then use the control container. The volume needs bridge
 networking with IPv4 addresses: `Run` refuses it with the host network or
-another address family. `Terminate` removes the volumes after the MON
-containers. See [MON data volumes](../internals/mon-volume-storage.md) for the
+another address family. `MonitorContainer.Remove` releases the removed MON's
+volume, so a MON added again under that name starts on a new store.
+`Terminate` removes the volumes after the MON containers. See [MON data volumes](../internals/mon-volume-storage.md) for the
 store records and their release order.
 
 ## Cephx key changes

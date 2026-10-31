@@ -426,3 +426,58 @@ func (control *monitorLifecycleControl) CopyToContainer(_ context.Context, data 
 	}
 	return control.copyErr
 }
+
+// A replaced MON a lives in the roster (replaceMonitor). Removing it must drop
+// that entry: the removed a is no longer listed and its handle is stale.
+func TestMonitorRemovalOfAReplacedFirstMonitorDropsItsRosterEntry(t *testing.T) {
+	control := &monitorLifecycleControl{members: []string{"a", "b", "c"}, quorum: []string{"a", "b", "c"}}
+	cluster := monitorLifecycleFixture(control)
+	cluster.members.monitorTerminated = true
+	replaced := &MonitorContainer{Container: &monitorLifecycleDaemon{}, DaemonName: "a", owner: cluster}
+	cluster.members.roster.addMonitor("a", replaced)
+	if err := replaced.Remove(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if cluster.members.roster.monitor("a") != nil || slices.Contains(control.members, "a") {
+		t.Fatal("the removed replacement of a is still owned or a member")
+	}
+	for _, mon := range cluster.monitorTopology().monitorsLocked() {
+		if mon.DaemonName == "a" {
+			t.Fatal("the removed a is still listed")
+		}
+	}
+	if err := replaced.Remove(t.Context()); err == nil {
+		t.Fatal("the stale handle of the removed a was accepted")
+	}
+}
+
+// A permanently removed MON's store is released, so the name can be added
+// again with a new store. While the release fails, the handle and the record
+// stay owned and Remove can be retried.
+func TestMonitorRemovalRetiresTheStoreOfTheRemovedMonitor(t *testing.T) {
+	control := &monitorLifecycleControl{members: []string{"a", "b", "c"}, quorum: []string{"a", "b", "c"}}
+	cluster := monitorLifecycleFixture(control)
+	stores, record, docker := newMonStoreFixtureFor("b")
+	cluster.monStores = *stores
+	if err := record.create(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	b := &MonitorContainer{Container: &monitorLifecycleDaemon{}, DaemonName: "b", owner: cluster}
+	cluster.members.roster.addMonitor("b", b)
+	busy := errors.New("volume is in use")
+	docker.removeErr = busy
+	if err := b.Remove(t.Context()); !errors.Is(err, busy) || cluster.members.roster.monitor("b") != b || cluster.monStores.store("b") == nil {
+		t.Fatalf("a failed store release dropped ownership: %v", err)
+	}
+	docker.removeErr = nil
+	if err := b.Remove(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if cluster.members.roster.monitor("b") != nil || cluster.monStores.store("b") != nil || docker.removals != 2 {
+		t.Fatalf("store kept after removal: roster %v store %v removals %d", cluster.members.roster.monitor("b"), cluster.monStores.store("b"), docker.removals)
+	}
+	again, err := cluster.monStores.begin("b")
+	if err != nil || again.name == record.name {
+		t.Fatalf("a re-added b must get a new store: %v", err)
+	}
+}

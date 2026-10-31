@@ -388,6 +388,7 @@ the start of the new one.
 | `Run` (`runMonitor`, MON a) | `begin`, `create`, `startGeneration` (format) | `mon.sh` recipe of `firstMonitorOptions` |
 | `AddMonitor` and the initial MONs (`startJoiningMonitor`) | `begin`, `create`, `startGeneration` (format) | `mon-join.sh` recipe of `monitorJoinOptions` |
 | `MonitorContainer.Replace` (`replaceMonitor`) | `replaceGeneration`: checks, `stopGeneration`, `startGeneration` (require) | `mon-join.sh` recipe with fresh join material, for MON a too |
+| `MonitorContainer.Remove` (`retireMonitor`) | `retire`: release once nothing mounts the volume, then forget the record | none |
 | `Terminate` | `releaseStores`, `retryStores` | none |
 
 `monitorGenerations` (`ceph/mon_store_container.go`) is the container side for
@@ -412,7 +413,13 @@ attached to the handle's container, and a store without a recorded address
 the join recipe, with the live mon. key and monmap, so it needs no bootstrap
 environment. Once the old container is gone, MON a is marked terminated and the
 new generation is kept in the roster under the name `a`, so listing, handle
-checks and `Terminate` treat it like an added MON.
+checks, `Remove` and `Terminate` treat it like an added MON.
+
+A permanent removal retires the store after the membership and the container
+are gone: the record is forgotten only when the volume removal succeeded, and a
+failure keeps the handle and the record, so `Remove` can be retried. A MON added
+later under the same name gets a new store; a removed member's store is never
+reused.
 
 Not wired: the identity binding (`bind`, the inspector and the monmap adapter),
 host networking and address families other than IPv4, which `Run` refuses with

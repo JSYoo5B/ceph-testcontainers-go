@@ -272,7 +272,7 @@ var memberRosterCallers = map[string]stateCaller{
 	"Managers":           {"takes", []string{"eachManager", "managerCount"}},
 	"AddMonitor":         {"takes", []string{"addMonitor", "monitor"}},
 	"replaceMonitor":     {"takes", []string{"addMonitor", "dropMonitor"}},
-	"retireMonitor":      {"holds", []string{"dropMonitor"}},
+	"retireMonitor":      {"holds", []string{"dropMonitor", "monitor"}},
 	"retireManager":      {"holds", []string{"currentManager", "dropManager", "eachManager", "managerCount"}},
 	"startService":       {"takes", []string{"hasService", "setService"}},
 	"terminateServices":  {"holds", []string{"dropService", "eachService"}},

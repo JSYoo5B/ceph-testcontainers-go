@@ -29,6 +29,9 @@ type monitorTopology struct {
 	first testcontainers.Container
 	*membershipState
 	bootstrap *bootstrapRecord
+	// monStores is the cluster's MON store records; a permanent removal
+	// retires the removed MON's record (retireMonitor).
+	monStores *monStoreState
 	osds      osdFleet
 	settings  options
 	// owner is the cluster that the handles the topology creates belong to;
@@ -57,7 +60,7 @@ type membershipState struct {
 
 func (c *Container) monitorTopology() monitorTopology {
 	return monitorTopology{
-		conn: c.conn(), first: c.Container, membershipState: &c.members, bootstrap: &c.bootstrap,
+		conn: c.conn(), first: c.Container, membershipState: &c.members, bootstrap: &c.bootstrap, monStores: &c.monStores,
 		osds: c.osdFleet(), settings: c.settings, owner: c,
 		client: func(ctx context.Context) (testcontainers.Container, error) { return c.toolkit.snapshot(ctx) },
 		serviceTargets: func() []map[string]testcontainers.Container {

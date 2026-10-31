@@ -203,6 +203,7 @@ var monStoreMethods = map[string][]string{
 	"names":         {"yield(name)"},
 	"volumeName":    nil,
 	"discardFresh":  {"r.discardFresh(ctx)", "delete(s.records, mon)"},
+	"retire":        {"r.release(ctx, false)", "delete(s.records, mon)"},
 	"releaseStores": {"s.releaseEach(ctx, false)"},
 	"retryStores":   {"len(s.records)", "s.releaseEach(ctx, true)"},
 	"releaseEach":   {"s.names()", "s.records[name].release(ctx, afterScan)", "delete(s.records, name)"},
@@ -221,6 +222,8 @@ var monStoreCallers = map[string]stateCaller{
 	"runMonitor":          {"init", nil},
 	"startJoiningMonitor": {"holds", nil},
 	"replaceMonitor":      {"takes", []string{"store"}},
+	// A permanent MON removal retires the removed MON's record.
+	"retireMonitor": {"holds", []string{"retire"}},
 }
 
 func monStoreUse(sel *ast.SelectorExpr) bool { return sel.Sel.Name == "monStores" }
@@ -244,7 +247,8 @@ func monStoreIgnoredCall(call *ast.CallExpr) bool {
 // as the receiver of one of its methods, and the lock-free FactsOf source does
 // not mention it.
 func TestMonStoreStateFieldsAreOnlyTouchedByItsMethods(t *testing.T) {
-	fieldAudit{label: "Container.monStores", use: monStoreUse, own: isMonStoreReceiver, methods: monStoreMethods, wholeFactsFile: true}.check(t)
+	fieldAudit{label: "Container.monStores", use: monStoreUse, own: isMonStoreReceiver, methods: monStoreMethods, wholeFactsFile: true,
+		bound: monitorTopologyBinding}.check(t)
 }
 
 // TestMonStoreStateMethodsMakeOnlyTheirPinnedCalls pins the method set and the

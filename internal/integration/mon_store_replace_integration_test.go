@@ -69,7 +69,9 @@ func monmapIdentity(t *testing.T, ctx context.Context, cluster *ceph.Container) 
 // included, on its retained store with the same image. Each replacement must
 // keep the monmap exactly (epoch, members, address vectors), mount the same
 // volume in a new container, rejoin the quorum, and leave every acknowledged
-// object readable; new writes are acknowledged after each one. Before that, a
+// object readable; new writes are acknowledged after each one. Removing a
+// replaced MON then releases its store: MON c added again gets a new volume,
+// and the removed MON a is no longer listed. Before that, a
 // replacement on a one-MON cluster is refused without touching the MON, and a
 // cluster without MON volume storage refuses Replace.
 func TestMonitorStoreReplace(t *testing.T) {
@@ -168,6 +170,34 @@ func TestMonitorStoreReplace(t *testing.T) {
 		t.Fatalf("quorum %v: %v", q.QuorumNames, err)
 	}
 
+	// A replaced MON leaves for good with Remove: its store is released, and
+	// the same name added again gets a new store.
+	current := map[string]*ceph.MonitorContainer{}
+	if monitors, err = cluster.Monitors(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, mon := range monitors {
+		current[mon.DaemonName] = mon
+	}
+	oldC := monStoreMount(t, ctx, docker.Client, current["c"])
+	if err := current["c"].Remove(ctx); err != nil {
+		t.Fatal("remove the replaced mon.c:", err)
+	}
+	readded, err := cluster.AddMonitor(ctx, "c")
+	if err != nil {
+		t.Fatal("add mon.c again:", err)
+	}
+	if got := monStoreMount(t, ctx, docker.Client, readded); got == oldC {
+		t.Fatalf("the re-added mon.c mounts the removed member's store %s", got)
+	}
+	if err := current["a"].Remove(ctx); err != nil {
+		t.Fatal("remove the replaced mon.a:", err)
+	}
+	if monitors, err = cluster.Monitors(ctx); err != nil || len(monitors) != 2 || slices.ContainsFunc(monitors, func(m *ceph.MonitorContainer) bool { return m.DaemonName == "a" }) {
+		t.Fatalf("monitors after removing the replaced a: %v %v", monitors, err)
+	}
+	u.step(t, ctx, "removed-and-readded", upgradeCheckpoint{"mon": map[string]int{onlyRelease(same["mon"]): 2}, "mgr": same["mgr"], "osd": same["osd"]})
+
 	// Without the volume the call is refused.
 	plain := run(1, false)
 	mons, err = plain.Monitors(ctx)
@@ -177,4 +207,12 @@ func TestMonitorStoreReplace(t *testing.T) {
 	if _, err := mons[0].Replace(ctx); err == nil {
 		t.Fatal("Replace without MonitorStorage.WithVolume was accepted")
 	}
+}
+
+// onlyRelease is the one release of a single-release role.
+func onlyRelease(counts map[string]int) string {
+	for release := range counts {
+		return release
+	}
+	return ""
 }

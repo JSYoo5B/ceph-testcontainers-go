@@ -387,10 +387,18 @@ func (t monitorTopology) retireMonitor(ctx context.Context, handle *MonitorConta
 	if err := t.refreshMonitorConfigAfterRemoval(ctx, name); err != nil {
 		return fmt.Errorf("refresh control configuration after removing monitor %s: %w", name, err)
 	}
-	if name == "a" {
-		t.markFirstMonitorTerminated()
-	} else {
+	// A removed MON never comes back on its store: the record is released
+	// once nothing mounts the volume, and kept with the handle for a retry
+	// while that is uncertain. A later MON of the same name gets a new store.
+	if err := t.monStores.retire(ctx, name); err != nil {
+		return fmt.Errorf("release the store of removed monitor %s: %w", name, err)
+	}
+	// MON a is the embedded first container until a replacement moved it
+	// into the roster (replaceMonitor).
+	if t.roster.monitor(name) == mon {
 		t.roster.dropMonitor(name)
+	} else if name == "a" {
+		t.markFirstMonitorTerminated()
 	}
 	return nil
 }
