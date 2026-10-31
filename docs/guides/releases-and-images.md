@@ -288,12 +288,14 @@ Read this scope before relying on it:
 
 `TestRollingUpgradeSquidToTentacle` (optional batch `rolling_upgrade`) moves a
 running 19.2.5 cluster to 20.2.4 one daemon at a time, in the upstream order,
-with the pinned official role images of both releases:
+with the pinned official role images of both releases, on the host network and
+on a bridge:
 
 1. `osd set noout`.
 2. Each of three MONs: `MonitorContainer.Replace` with the Tentacle image, on
-   the store and address the MON keeps. The monmap does not change, and
-   `min_mon_release_name` becomes `tentacle` after the last one.
+   the store and address the MON keeps. The monmap's members and addresses do
+   not change; after the last MON, `min_mon_release_name` becomes `tentacle`
+   and the MONs commit a new monmap epoch for it.
 3. The MGR: a Tentacle manager is added, then the Squid one is removed.
 4. Each of three OSDs: `Detach`, then `Reopen` with the Tentacle image, so the
    Squid-written store is opened by Tentacle.
@@ -310,6 +312,24 @@ Ceph CLI in the control container and the client toolkit. Command forms are
 chosen from them, so the fixture keeps using Squid command forms against the
 upgraded daemons. Mixing releases is therefore still not a general contract:
 this is one pair, run forward only. Downgrade is not attempted.
+
+### An interrupted upgrade, resumed
+
+`TestRollingUpgradeResumesAfterInterruptions` (same batch, both network modes)
+stops the same upgrade part-way in each daemon phase and resumes it forward:
+
+| Phase | Interruption | State while stopped | Resume |
+| --- | --- | --- | --- |
+| MON | `Replace` of mon.b from an image without `ceph-mon`; the old container is already gone | quorum of a (Tentacle) and c (Squid); the monmap members and addresses are unchanged; writes are acknowledged | `Replace` on the handle the failed call returned, with the Tentacle image, on the retained store |
+| MON | mon.c (Squid) replaced on its own Squid image while mon.a runs Tentacle | a Squid MON rejoins a quorum with a Tentacle MON | mon.c later moves to Tentacle |
+| OSD | `Reopen` of osd.1 from an image without `ceph-osd` | the PGs keep two of three replicas; writes are acknowledged | `Detach` of the failed handle, then `Reopen` with the Tentacle image |
+| OSD | osd.2 reopened on Squid while the MONs and MGR run Tentacle | a Squid OSD rejoins under Tentacle MONs | osd.2 later moves to Tentacle |
+
+At the end every acknowledged write reads back, the monmap's members and
+addresses (on the host network, their ports) are the ones the Squid cluster
+started with, and the layout is all Tentacle. The monmap epoch moves once, when
+the last MON runs Tentacle and the MONs commit `min_mon_release`. A stopped step never needs anything but the call that failed:
+the retained store and the returned handle are enough to continue.
 
 ## Related APIs
 

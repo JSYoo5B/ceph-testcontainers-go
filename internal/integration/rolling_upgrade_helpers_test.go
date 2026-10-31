@@ -104,6 +104,19 @@ func (u *upgradeRun) step(t *testing.T, ctx context.Context, name string, want u
 	if err := want.Check(got); err != nil {
 		t.Fatalf("%s: %v", name, err)
 	}
+	u.write(t, ctx, name, record)
+}
+
+// write acknowledges a batch of writes, reads every acknowledged write back
+// and records health, into record, which it logs. A step whose daemon layout
+// is not a plain release count (a MON down after an interrupted replacement)
+// calls it alone.
+func (u *upgradeRun) write(t *testing.T, ctx context.Context, name string, record map[string]any) {
+	t.Helper()
+	if record == nil {
+		record = map[string]any{"step": name}
+		u.steps = append(u.steps, record)
+	}
 	out := harness.ExecOutput(t, ctx, u.client, "python3", "-c", blockTimedWrites, upgradePool, name, "8", strconv.Itoa(16<<10), "60")
 	l, err := parseBlockTimedLedger(out)
 	if err != nil {
@@ -141,6 +154,38 @@ func (u *upgradeRun) readback(t *testing.T, ctx context.Context, name string) in
 		t.Fatalf("%s readback: %v missing or different: %v", name, err, bad)
 	}
 	return len(keys)
+}
+
+// monmapIdentity is the part of the monmap a replacement must not change: the
+// epoch, the FSID and every member's name and address vector, in rank order.
+func monmapIdentity(t *testing.T, ctx context.Context, cluster *ceph.Container) string {
+	t.Helper()
+	epoch, members := monmapParts(t, ctx, cluster)
+	return strconv.Itoa(epoch) + " " + members
+}
+
+func monmapParts(t *testing.T, ctx context.Context, cluster *ceph.Container) (int, string) {
+	t.Helper()
+	raw, err := cluster.Ceph(ctx, "mon", "dump", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dump struct {
+		Epoch int    `json:"epoch"`
+		FSID  string `json:"fsid"`
+		Mons  []struct {
+			Name        string          `json:"name"`
+			PublicAddrs json.RawMessage `json:"public_addrs"`
+		} `json:"mons"`
+	}
+	if err := json.Unmarshal(raw, &dump); err != nil || dump.Epoch < 1 || len(dump.Mons) == 0 {
+		t.Fatalf("mon dump %s: %v", raw, err)
+	}
+	parts := []string{dump.FSID}
+	for _, m := range dump.Mons {
+		parts = append(parts, m.Name+"="+string(m.PublicAddrs))
+	}
+	return dump.Epoch, strings.Join(parts, " ")
 }
 
 func slicesMax(values []float64) float64 {
