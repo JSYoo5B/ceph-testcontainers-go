@@ -434,6 +434,41 @@ Squid, so a test must pass on both (see
   batches; use `flaky` for a known intermittent failure to keep measuring.
 - When a batch approaches its budget, move a long independent test into its
   own batch instead of raising the limit. Keep short related tests together.
+- A batch is one CI job, and each job pays about two minutes before and after
+  its tests (compilation, freeing runner storage, image pulls, the cleanup
+  check) plus the wait for a runner. So add a short test to an existing batch
+  of its package and image roles rather than creating a batch for it. The
+  short category groups its quick tests this way: `daemon_basics`,
+  `daemon_operations`, `network_faults`, `address_families`, `cephfs_clients`,
+  `cephfs_fixtures_admin`, `cephfs_fixtures_data`, `rbd_fixtures_basic` and
+  `rbd_fixtures_mirror` each run several tests that keep their own clusters
+  in one job, about ten minutes of tests each.
+
+### Suites that share one cluster
+
+A batch shares a job, not a cluster: every test starts and terminates its own.
+A `testify/suite` may serve several cases from one cluster when they need the
+same topology, create and name their own resources, change no daemon and
+restore what they override. `TestRADOSPoolCases`
+(`rados_pool_suite_integration_test.go`) is the example: one single-OSD
+cluster per network mode for the pool-level RADOS cases.
+
+- `SetupSuite` starts the cluster under the suite's test, so its cleanup ends
+  the cluster after the last case. Each case uses `s.T()` and its own context.
+- The suite's `sharedClusterGate` checks the cluster before every case and
+  after a failed one. Once the cluster is not clean, every later case fails at
+  once, naming the case that broke it; nothing is reset or retried.
+- No case may depend on another having run or passed. Run one case alone with
+  `-run '^TestRADOSPoolCases$/^bridge$/^TestObjectReceipts$'`.
+- Cases that stop, kill or pause daemons, change topology or fault the network
+  keep their own clusters.
+- `testify/suite` runs its cases one at a time; do not move tests that use
+  `harness.ParallelWhenEnabled` into a suite without accepting that.
+- Methods may live in other files of the batch. The catalog records each
+  `Type.Method` and the types each test passes to `suite.Run`. The planner
+  counts a methods-only file as a source of the batch, and the completion proof
+  requires every method to run and pass as a leaf of the test that runs its
+  suite.
 
 ### Shared helpers must compile in every batch
 

@@ -1,4 +1,4 @@
-//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_live_quota))))
+//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_clients))))
 
 package cephfs_test
 

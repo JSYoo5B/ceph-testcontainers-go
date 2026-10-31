@@ -49,6 +49,19 @@ def github_outputs(path):
 
 
 class TagPlannerTests(unittest.TestCase):
+    def test_a_file_of_suite_methods_is_a_source_of_the_batch_that_runs_the_suite(self):
+        entry = fixture(path="internal/integration/pool_suite_test.go", tests=("TestPools",), batch="pools")
+        entry["suite_runs"] = {"TestPools": ["poolSuite"]}
+        methods = fixture(path="internal/integration/pool_cases_test.go", tests=(), batch="pools")
+        methods["metadata"], methods["suite_cases"] = [], ["poolSuite.TestCreate"]
+        other = fixture(path="internal/integration/other_test.go", tests=("TestOther",), batch="other")
+        plan = engine.discover([entry, methods, other])
+        sources = {profile["batch"]: profile["sources"] for profile in plan["include"]}
+        self.assertEqual(sources["pools"], ["internal/integration/pool_cases_test.go", "internal/integration/pool_suite_test.go"])
+        self.assertEqual(sources["other"], ["internal/integration/other_test.go"])
+        selected = engine.select_changed_plan(plan, ["internal/integration/pool_cases_test.go"])
+        self.assertEqual([profile["batch"] for profile in selected["include"]], ["pools"])
+
     def test_new_test_and_new_file_join_existing_batch_without_ci_edit(self):
         first = fixture(tests=("TestExisting", "TestNewInSameFile"))
         second = fixture(path="internal/integration/another_test.go", tests=("TestNewInNewFile",))
@@ -726,6 +739,36 @@ class CompletionTests(unittest.TestCase):
                         good.replace("ok\t", "FAIL\t")):
             with self.subTest(log=invalid):
                 self.assertFalse(engine.completion(invalid, ["TestNewFeature"], "example/internal/integration")["passed"])
+
+    def test_every_suite_case_must_run_and_pass_under_its_parent(self):
+        package = "example/internal/integration"
+        cases = [(("TestPools",), "TestCreate"), (("TestPools",), "TestRemove")]
+        good = native_log(("TestPools", "TestPools/bridge", "TestPools/bridge/TestCreate", "TestPools/bridge/TestRemove"))
+        self.assertTrue(engine.completion(good, ["TestPools"], package, cases=cases)["passed"])
+        # A suite whose setup failed, or a filter, can leave a green parent
+        # without one of its methods.
+        missing = native_log(("TestPools", "TestPools/bridge", "TestPools/bridge/TestCreate"))
+        report = engine.completion(missing, ["TestPools"], package, cases=cases)
+        self.assertFalse(report["passed"])
+        self.assertIn("suite case TestRemove of TestPools did not run and pass", report["errors"])
+        # The same method name under another parent does not count.
+        other = native_log(("TestPools", "TestOther", "TestOther/TestCreate", "TestOther/TestRemove"))
+        self.assertFalse(engine.completion(other, ["TestPools", "TestOther"], package, cases=cases)["passed"])
+
+    def test_suite_cases_are_bound_to_the_tests_that_run_their_type(self):
+        catalog = [
+            # The entry test and its suite type in one file, two methods in another.
+            {"path": "internal/integration/a_test.go", "package": "integration_test", "constraint": {"op": "tag", "tag": "integration"},
+             "tests": ["TestPools"], "suite_cases": [], "suite_runs": {"TestPools": ["poolSuite"]}},
+            {"path": "internal/integration/b_test.go", "package": "integration_test", "constraint": {"op": "tag", "tag": "integration"},
+             "tests": [], "suite_cases": ["poolSuite.TestCreate", "poolSuite.TestRemove", "orphanSuite.TestNever"], "suite_runs": {}},
+            {"path": "internal/integration/c_test.go", "package": "integration_test", "constraint": {"op": "tag", "tag": "other"},
+             "tests": ["TestElse"], "suite_cases": ["elseSuite.TestHidden"], "suite_runs": {"TestElse": ["elseSuite"]}},
+        ]
+        cases = engine.selected_suite_cases(catalog, "./internal/integration", "integration", ["TestPools"])
+        self.assertEqual(cases, [(("TestPools",), "TestCreate"), (("TestPools",), "TestRemove")])
+        # A selection that leaves the entry test out leaves its cases out too.
+        self.assertEqual(engine.selected_suite_cases(catalog, "./internal/integration", "integration", []), [])
 
     def test_pass_before_run_or_after_package_completion_is_rejected(self):
         before = "--- PASS: TestNewFeature (1.00s)\n=== RUN   TestNewFeature\nPASS\nok\texample/internal/integration\t1.002s\n"

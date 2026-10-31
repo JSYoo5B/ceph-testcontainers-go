@@ -116,6 +116,14 @@ func TestSelectBatches(t *testing.T) {
 			edit(t, dir, "pkg/helpers_test.go", "func (fastRunner) run() int { return 1 }",
 				"func (fastRunner) run() int {\n\treturn 1\n}")
 		}, selected: []string{"b", "c"}},
+		// A suite method is called only by reflection; the entry test names
+		// its type, and a type reaches all of its methods.
+		"suite method body": {change: func(t *testing.T, dir string) {
+			edit(t, dir, "pkg/suite_c_test.go", `s.t.Fatal("create")`, `s.t.Fatalf("create %d", 1)`)
+		}, selected: []string{"c"}},
+		"helper of a suite method": {change: func(t *testing.T, dir string) {
+			edit(t, dir, "pkg/suite_c_test.go", "func helperSuite() int { return 5 }", "func helperSuite() int { return 2 + 3 }")
+		}, selected: []string{"c"}},
 		"interface declaration": {change: func(t *testing.T, dir string) {
 			edit(t, dir, "pkg/helpers_test.go", "\trun() int\n", "\trun() int // the result\n")
 		}, selected: []string{"b"}},

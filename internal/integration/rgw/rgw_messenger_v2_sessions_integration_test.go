@@ -1,6 +1,6 @@
-//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_rgw_messenger_sessions))))
+//go:build all || (integration && (!ci || (ci_short && (!ci_batch || ci_batch_default))))
 
-//ci: timeout=20m job-timeout=30 image-roles=essential,client,cephfs,rgw
+//ci: timeout=20m job-timeout=35 image-roles=essential,client,cephfs,rgw
 
 package rgw_test
 

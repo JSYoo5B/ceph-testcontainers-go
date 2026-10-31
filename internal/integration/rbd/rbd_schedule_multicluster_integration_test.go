@@ -1,4 +1,4 @@
-//go:build all || (integration && features && multicluster && (!ci || (ci_short && (!ci_batch || ci_batch_rbd_fixtures_snapshot_schedule))))
+//go:build all || (integration && features && multicluster && (!ci || (ci_short && (!ci_batch || ci_batch_rbd_fixtures_mirror))))
 
 //ci: timeout=120m job-timeout=130 image-roles=essential,client,rbd-aux
 

@@ -1,4 +1,4 @@
-//go:build all || (integration && features && (!ci || (ci_short && (!ci_batch || ci_batch_rbd_fixtures_client_setup))))
+//go:build all || (integration && features && (!ci || (ci_short && (!ci_batch || ci_batch_rbd_fixtures_basic))))
 
 //ci: timeout=120m job-timeout=130 image-roles=essential,client
 

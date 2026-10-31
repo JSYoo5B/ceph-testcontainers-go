@@ -1,14 +1,11 @@
 //go:build all || (integration && features && (!ci || (ci_short && (!ci_batch || ci_batch_rados_fixtures))))
 
-//ci: timeout=120m job-timeout=130 image-roles=essential,client,cephfs
-
 package integration_test
 
 import (
 	"context"
 	"slices"
 	"strconv"
-	"testing"
 	"time"
 
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -22,11 +19,10 @@ import (
 // against known data, and PG object enumeration with its cursors,
 // continuation handles, namespaces and filter. A second client reads every
 // result back.
-func TestRADOSObjectReceipts(t *testing.T) {
-	harness.ParallelWhenEnabled(t)
+func (s *radosPoolSuite) TestObjectReceipts() {
+	t, cluster, client := s.T(), s.cluster, s.client
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
-	cluster, client := harness.NewServiceCluster(t, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithOSDCount(1)))
 	const objects, stats, enumerated, namespace = "tc-objects", "tc-objstats", "tc-enumeration", "receipts"
 	for _, pool := range []struct {
 		name string

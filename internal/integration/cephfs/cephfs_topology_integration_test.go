@@ -1,6 +1,6 @@
-//go:build all || (integration && topology && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_fixtures_data_layout))))
+//go:build all || (integration && topology && (!ci || (ci_short && (!ci_batch || ci_batch_cephfs_fixtures_data))))
 
-//ci: timeout=40m job-timeout=50 image-roles=essential,client,cephfs
+//ci: timeout=60m job-timeout=70 image-roles=essential,client,cephfs
 
 package cephfs_test
 

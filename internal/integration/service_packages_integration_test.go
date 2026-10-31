@@ -1,6 +1,6 @@
-//go:build all || (integration && features && (!ci || (ci_short && (!ci_batch || ci_batch_service_packages))))
+//go:build all || (integration && features && (!ci || (ci_short && (!ci_batch || ci_batch_address_families))))
 
-//ci: timeout=25m job-timeout=35 image-roles=essential,client,cephfs,rgw
+//ci: timeout=50m job-timeout=60 image-roles=essential,client,cephfs,rgw
 
 package integration_test
 
