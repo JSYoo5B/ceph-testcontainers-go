@@ -6,8 +6,6 @@ package integration_test
 
 import (
 	"encoding/json"
-	"fmt"
-	"math"
 	"strings"
 	"testing"
 
@@ -131,57 +129,6 @@ func TestJournalExportAvailabilityOverallNeverInventsAbsence(t *testing.T) {
 	if v, _ := harness.JeOverall(nil); v != harness.JeInconclusive {
 		t.Fatalf("no roles: %s", v)
 	}
-}
-
-// jeOutcome classifies one captured export attempt before the admission model
-// sees any bytes.
-type jeOutcome string
-
-const (
-	jeObsInconclusive jeOutcome = "inconclusive"
-	jeObsToolFailed   jeOutcome = "tool-failed"
-	jeObsAdmission    jeOutcome = "admission-recorded"
-)
-
-// jeObserve decodes one export capture and, only for a zero exit status with
-// intact observation fields, runs the existing jbAdmit on the untouched
-// export. Any classification of jbAdmit is a valid recorded result. Fields
-// must be present with the exact JSON type; nothing is defaulted to zero.
-func jeObserve(obs []byte, export []byte) (jeOutcome, string, jbRecord) {
-	var raw map[string]any
-	if err := json.Unmarshal(obs, &raw); err != nil || raw == nil {
-		return jeObsInconclusive, "observation is not a JSON object", jbRecord{}
-	}
-	integer := func(name string) (uint64, bool) {
-		f, ok := raw[name].(float64)
-		if !ok || f < 0 || f != math.Trunc(f) || f > 1<<50 {
-			return 0, false
-		}
-		return uint64(f), true
-	}
-	text := func(name string) (string, bool) { s, ok := raw[name].(string); return s, ok }
-	exit, ok1 := raw["exit_code"].(float64)
-	_, ok2 := text("stdout")
-	_, ok3 := text("stderr")
-	size, ok4 := integer("export_size")
-	whole, ok5 := text("export_sha256")
-	if !ok1 || exit != math.Trunc(exit) || !ok2 || !ok3 || !ok4 || !ok5 || len(whole) != 64 || export == nil {
-		return jeObsInconclusive, "observation field missing, null or wrong-typed", jbRecord{}
-	}
-	if exit != 0 {
-		return jeObsToolFailed, fmt.Sprintf("exit code %d", int(exit)), jbRecord{}
-	}
-	// The payload hash is derived from the header-declared start of the same
-	// bytes; the whole-file hash and size are what the capture recorded.
-	manifest := jbManifest{FileSize: size, WholeSHA256: whole}
-	if fields, err := jbParseHeader(export[:min(len(export), jbHeaderLen)], false); err == nil && fields["start offset"] <= uint64(len(export)) {
-		manifest.PayloadSHA256 = jbSum(export[fields["start offset"]:])
-	}
-	rec := jbAdmit(append([]byte(nil), export...), manifest, jbIntact)
-	if rec.Class == jbInconclusive {
-		return jeObsInconclusive, rec.Reason, rec
-	}
-	return jeObsAdmission, string(rec.Class), rec
 }
 
 func jeObsJSON(t *testing.T, export []byte, mutate func(map[string]any)) []byte {
