@@ -14,6 +14,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,13 +38,16 @@ const (
 )
 
 // blockEnv is one cluster whose only OSD runs on the keeper's mapping, and an
-// unused control mapping of the same kind.
+// unused control mapping of the same kind. control changes the mapping's
+// table (block_device_control_helpers_test.go).
 type blockEnv struct {
 	*logicalEnv
 	keeper      testcontainers.Container
 	chain, idle blockChainState
 	device      faulthook.BlockDevice
 	sectors     int64
+	control     *dmControl
+	linear      string
 }
 
 func (b *blockEnv) keeperDo(t *testing.T, ctx context.Context, action string, args ...string) blockKeeperReply {
@@ -61,14 +65,36 @@ func (b *blockEnv) stat(t *testing.T, ctx context.Context, chain blockChainState
 	return b.keeperDo(t, ctx, "stat", chain.Name)
 }
 
-// load swaps the mapping's table. A table the kernel refuses (a target the
-// kernel does not have) leaves the old table and is reported, not fatal.
+// load swaps the mapping's table through the supervised control. A table the
+// kernel refuses (a target the kernel does not have) leaves the old table and
+// is reported, not fatal. A step that outlives its bound, such as a suspend
+// waiting for the daemon's in-flight I/O, is waited for and the change then
+// continued from what is observed; any other state stops the test with the
+// mapping kept.
 func (b *blockEnv) load(t *testing.T, ctx context.Context, kind string, ms int) blockKeeperReply {
 	t.Helper()
-	r := b.keeperDo(t, ctx, "table", b.chain.Name, b.chain.Loop, strconv.FormatInt(b.sectors, 10), kind, strconv.Itoa(ms))
-	if r.Loaded && r.Error != "" {
-		t.Fatalf("%s table swap left the mapping uncertain: %+v", kind, r)
+	lower := strings.Fields(b.linear)[3]
+	want := map[string]string{
+		"linear": b.linear,
+		"error":  fmt.Sprintf("0 %d error", b.sectors),
+		"delay":  fmt.Sprintf("0 %d delay %s 0 %d", b.sectors, lower, ms),
+	}[kind]
+	r := blockKeeperReply{Action: "table", Name: b.chain.Name, Kind: kind}
+	for range 3 {
+		switch state := b.control.apply(t, ctx, want, ""); state {
+		case dmApplied:
+			r.Loaded, r.Table = true, b.control.rec.Live
+			return r
+		case dmLoadRefused:
+			r.Error = b.control.refused
+			return r
+		case dmStepUnsettled:
+			b.control.settle(t, ctx, time.Minute)
+		default:
+			t.Fatalf("%s table: the control left the mapping %s", kind, state)
+		}
 	}
+	t.Fatalf("%s table: not applied after three settled steps", kind)
 	return r
 }
 
@@ -248,6 +274,13 @@ func TestBlockDeviceFault(t *testing.T) {
 		t.Fatalf("device chain: %+v control: %+v", created, idle)
 	}
 	b.device = faulthook.BlockDevice{HostPath: created.Path, Major: created.Major, Minor: created.Minor, SizeBytes: *created.Bytes}
+	b.control = &dmControl{keeper: dmKeeper{ctr: keeper}, rec: dmRecord{Name: b.chain.Name, UUID: "TC-BLK-" + b.chain.Name}}
+	if v := b.control.observe(t, ctx); !v.Exists || v.UUID != b.control.rec.UUID || v.Major != created.Major || v.Minor != created.Minor || v.Live == nil {
+		t.Fatalf("the OSD's mapping as the control sees it: %+v", v)
+	} else {
+		b.control.rec.Major, b.control.rec.Minor, b.control.rec.Live, b.linear = v.Major, v.Minor, *v.Live, *v.Live
+	}
+	defer func() { receipt["control"] = b.control.log }()
 	number := strconv.FormatUint(uint64(created.Major), 10) + ":" + strconv.FormatUint(uint64(created.Minor), 10)
 
 	opts = append(opts, ceph.WithClusterConfig(ceph.ClusterConfig{}.WithNoInitialOSDs().WithPoolDefaults(1, 1)))
