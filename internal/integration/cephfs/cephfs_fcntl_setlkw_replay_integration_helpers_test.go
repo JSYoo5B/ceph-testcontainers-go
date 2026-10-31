@@ -5,9 +5,7 @@ package cephfs_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -146,12 +144,8 @@ finally:
 
 	// The contender's blocking F_SETLKW waits in the active MDS.
 	contender.start(t, ctx, 1)
-	waiting := mdsWaitingFlock(t, ctx, m, clientB, true)
-	inode := fmt.Sprintf("#0x%x ", holder.inode)
-	if waiting.flagPoint != "failed to add lock, waiting" || !strings.Contains(waiting.description, "rule 1, type 2,") ||
-		!strings.Contains(waiting.description, "wait 1 ") || !strings.Contains(waiting.description, inode) {
-		t.Fatalf("the active MDS does not hold client.%d's F_SETLKW waiting on inode %d: %+v", clientB, holder.inode, waiting)
-	}
+	wait := flockWait{client: clientB, rule: 1, inode: holder.inode}
+	waiting := mdsWaitingFlock(t, ctx, m, wait)
 	receipt["waiting_before"] = map[string]any{"tid": waiting.tid, "flag_point": waiting.flagPoint, "description": waiting.description}
 	if contender.Published(ctx, 3) {
 		t.Fatal("the contender's F_SETLKW returned before the takeover")
@@ -182,8 +176,8 @@ finally:
 	// The new MDS replayed the queued request: it still holds the contender's
 	// F_SETLKW waiting, as the same request (same tid), and the call has not
 	// returned.
-	replayed := mdsWaitingFlock(t, ctx, m, clientB, true)
-	if replayed.flagPoint != "failed to add lock, waiting" || !strings.Contains(replayed.description, inode) || replayed.tid != waiting.tid {
+	replayed := mdsWaitingFlock(t, ctx, m, wait)
+	if replayed.tid != waiting.tid {
 		t.Fatalf("the new MDS does not hold client.%d's replayed F_SETLKW as tid %d: %+v", clientB, waiting.tid, replayed)
 	}
 	receipt["waiting_after"] = map[string]any{"tid": replayed.tid, "flag_point": replayed.flagPoint, "description": replayed.description}
@@ -201,7 +195,7 @@ finally:
 		t.Fatalf("contender's F_SETLKW after the unlock: %+v", granted)
 	}
 	receipt["granted_elapsed_ms"], receipt["granted_after_unlock_ms"] = granted.ElapsedMS, time.Since(unlocked).Milliseconds()
-	mdsWaitingFlock(t, ctx, m, clientB, false)
+	mdsFlockGone(t, ctx, m, clientB)
 	if released := contender.run(t, ctx, 2); released.Errno != 0 {
 		t.Fatalf("contender's F_UNLCK: %+v", released)
 	}
