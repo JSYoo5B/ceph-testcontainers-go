@@ -652,10 +652,23 @@ gh workflow run "Native regressions" --ref main -f rgw_image=ghcr.io/example/cep
 
 `cephfs_fuse` (`TestCephFSFuseMount`) mounts CephFS with `ceph-fuse` in
 client containers given `/dev/fuse`, `CAP_SYS_ADMIN` and
-`apparmor=unconfined`. It needs a native, rootful Linux Docker Engine; on an
-engine that refuses the mount it fails naming the missing requirement and
-never skips. Outside the tag runner, build it with
+`apparmor=unconfined`. It needs a rootful engine whose kernel has FUSE: a
+Linux Docker Engine, or Docker Desktop (it passed with kernel
+7.0.14-linuxkit). On an engine that refuses the mount it fails naming the
+missing requirement and never skips. Outside the tag runner, build it with
 `go test -tags all,cephfs_fuse`.
+
+`rolling_upgrade` (`TestRollingUpgradeSquidToTentacle`) upgrades a 19.2.5
+cluster to 20.2.4 one daemon at a time with the pinned official role images
+of both releases; see
+[Rolling upgrade from Squid to Tentacle](../guides/releases-and-images.md#rolling-upgrade-from-squid-to-tentacle).
+It pulls the images of both releases whatever release the profile names.
+
+`desktop_capabilities` (`TestDesktopRBDOverNBD`) maps an RBD image through
+`rbd-nbd` in a privileged helper from the official Ceph image and checks the
+bytes through the device and through librbd. It skips when the engine kernel
+has no loaded NBD driver or no `/dev/nbd` nodes, and never loads a module. It
+has been run on Docker Desktop, whose kernel has NBD built in.
 
 `failure_archive` is described in
 [Controlled failed-native download proof](#controlled-failed-native-download-proof).
