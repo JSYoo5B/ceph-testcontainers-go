@@ -18,8 +18,10 @@ type MonitorStorage struct {
 // writable layer. The volume outlives the MON's container, so
 // MonitorContainer.Replace can start a new container, from another image if
 // asked, on the same store and address. Terminate removes the volumes. It needs
-// bridge networking with IPv4 addresses: the replacement binds the address the
-// monmap pins, and only that case reserves it.
+// IPv4 addresses: the replacement binds the address the monmap pins. On a
+// bridge that is the MON's IPv4 address on the cluster network; on the host
+// network it is the public address and the MON's ports, which the replacement
+// holds from the removal of the old container until the start of the new one.
 //
 //purpose:construction
 func (s MonitorStorage) WithVolume() MonitorStorage {

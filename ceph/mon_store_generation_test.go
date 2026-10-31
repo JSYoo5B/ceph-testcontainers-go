@@ -755,7 +755,7 @@ var monStoreGenerationSymbols = []string{"monStoreGenerations", "checkMonStoreGe
 // generation of a new store (startMonitorStore) and the replacement
 // (replaceMonitor).
 var monStoreGenerationCallers = map[string][]string{
-	"mon_store_container.go": {"startGeneration"},
+	"mon_store_container.go": {"startGeneration", "stopGeneration"},
 	"mon_store_replace.go":   {"replaceGeneration"},
 }
 

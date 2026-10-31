@@ -156,8 +156,8 @@ func resolveOptions(img string, opts []testcontainers.ContainerCustomizer) (opti
 	if settings.addressFamily == AddressIPv4MappedIPv6 && settings.separateClusterNetwork {
 		return options{}, invalidRequest("NetworkConfig.WithAddressFamily(%s) cannot be combined with NetworkConfig.WithSeparateClusterNetwork", settings.addressFamily)
 	}
-	if settings.monitorVolume && (settings.hostNetwork || settings.addressFamily != AddressIPv4) {
-		return options{}, invalidRequest("MonitorStorage.WithVolume requires bridge mode with IPv4 addresses: a replacement MON must bind the address the monmap pins")
+	if settings.monitorVolume && settings.addressFamily != AddressIPv4 {
+		return options{}, invalidRequest("MonitorStorage.WithVolume requires IPv4 addresses: a replacement MON must bind the address the monmap pins, and only an IPv4 address is kept")
 	}
 	if settings.osdObjectStore == OSDMemStore && settings.osdMemorySize != 0 {
 		return options{}, invalidRequest("OSDStorage.WithInMemory keeps BlueStore files in memory and cannot be combined with OSDMemStore")
@@ -414,16 +414,22 @@ func runContainer(ctx context.Context, image string, opts ...testcontainers.Cont
 
 func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 	if c.settings.monitorVolume {
-		// Bridge mode only (resolveOptions): the first generation of the
-		// store starts the MON.
-		gens := c.monitorGenerations("a", c.firstMonitorOptions(fsid, nil, opts), firstMonitorReady)
+		// The first generation of the store starts the MON.
+		gens := c.monitorGenerations("a", func(ports []int) []testcontainers.ContainerCustomizer {
+			return c.firstMonitorOptions(fsid, ports, opts)
+		}, firstMonitorReady)
 		mon, err := c.startMonitorStore(ctx, "a", image, gens)
 		if err != nil {
 			if refusal := bootstrapRefusal(ctx, mon); refusal != nil {
 				return mon, refusal.with(ctx, err)
 			}
+			return mon, err
 		}
-		return mon, err
+		if c.settings.hostNetwork {
+			// As below: validate the environment before MGR/OSD creation.
+			return mon, verifyHostMonitor(ctx, c.settings.publicAddress, c.monStores.store("a").endpoint.ports[0])
+		}
+		return mon, nil
 	}
 	attempts := 1
 	if c.settings.hostNetwork {
@@ -439,7 +445,11 @@ func (c *Container) runMonitor(ctx context.Context, image, fsid string, opts ...
 				return nil, err
 			}
 		}
-		moduleOpts := c.firstMonitorOptions(fsid, lease, opts)
+		var ports []int
+		if lease != nil {
+			ports = lease.Ports
+		}
+		moduleOpts := c.firstMonitorOptions(fsid, ports, opts)
 		mon, err := runContainer(ctx, image, append(moduleOpts, c.startup.ownedLabel())...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
@@ -483,8 +493,9 @@ var firstMonitorReady = []string{"ceph", "--connect-timeout", "5", "status", "--
 // firstMonitorOptions is the container recipe of the first MON: mon.sh with
 // the bootstrap environment, its ready wait, the run directory, and either the
 // reserved host ports (created, not started) or the kept bridge address, then
-// the caller's options, the Messenger mode and the user configuration.
-func (c *Container) firstMonitorOptions(fsid string, lease *hostPortLease, opts []testcontainers.ContainerCustomizer) []testcontainers.ContainerCustomizer {
+// the caller's options, the Messenger mode and the user configuration. ports is
+// nil on a bridge.
+func (c *Container) firstMonitorOptions(fsid string, ports []int, opts []testcontainers.ContainerCustomizer) []testcontainers.ContainerCustomizer {
 	moduleOpts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mon.sh"),
 		testcontainers.WithCmd(),
@@ -493,11 +504,11 @@ func (c *Container) firstMonitorOptions(fsid string, lease *hostPortLease, opts 
 		testcontainers.WithWaitStrategy(wait.ForExec(firstMonitorReady).WithStartupTimeout(c.settings.startupTimeout)),
 	}
 	moduleOpts = append(moduleOpts, c.runDir.mounts()...)
-	if lease == nil {
+	if ports == nil {
 		moduleOpts = append(moduleOpts, testcontainers.WithExposedPorts(c.settings.monitorExposedPorts()...), network.WithNetwork([]string{"ceph-mon"}, c.nets.public),
 			keepMonitorAddress(c.nets.public.Name))
 	} else {
-		monEnv := c.settings.monitorPortEnvironment(lease.Ports)
+		monEnv := c.settings.monitorPortEnvironment(ports)
 		monEnv["CEPH_PUBLIC_ADDRESS"] = c.settings.publicAddress
 		moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart(),
 			testcontainers.WithEnv(monEnv))
@@ -509,7 +520,7 @@ func (c *Container) firstMonitorOptions(fsid string, lease *hostPortLease, opts 
 	if len(c.settings.userConfig) > 0 {
 		moduleOpts = append(moduleOpts, testcontainers.WithFiles(textFile(userConfigPath, renderUserConfig(c.settings.userConfig), 0o644)))
 	}
-	if lease != nil {
+	if ports != nil {
 		moduleOpts = append(moduleOpts, hostContainerCustomizer(c.settings.publicAddress), testcontainers.WithNoStart())
 	}
 	return moduleOpts

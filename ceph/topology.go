@@ -212,12 +212,14 @@ func (c *Container) monitorJoinMaterial(ctx context.Context, name string) (key, 
 // caller holds c.mu.
 func (c *Container) startJoiningMonitor(ctx context.Context, mon *MonitorContainer, join monitorJoin) error {
 	if c.settings.monitorVolume {
-		// Bridge mode only (resolveOptions): the first generation of the
-		// MON's own store volume.
-		if err := c.clearAdminSocket(ctx, "mon."+join.name); err != nil {
-			return err
-		}
-		ctr, err := c.startMonitorStore(ctx, join.name, mon.image, c.monitorGenerations(join.name, c.monitorJoinOptions(join, nil), monitorSocketReady(join.name)))
+		// The first generation of the MON's own store volume. The admin
+		// socket is cleared before every creation, so that a socket a MON
+		// that lost its host ports left cannot pass the next one's ready check.
+		gens := c.monitorGenerations(join.name, func(ports []int) []testcontainers.ContainerCustomizer {
+			return c.monitorJoinOptions(join, ports)
+		}, monitorSocketReady(join.name))
+		gens.beforeCreate = func(ctx context.Context) error { return c.clearAdminSocket(ctx, "mon."+join.name) }
+		ctr, err := c.startMonitorStore(ctx, join.name, mon.image, gens)
 		if ctr != nil {
 			mon.Container = ctr
 		}
@@ -241,7 +243,11 @@ func (c *Container) startJoiningMonitor(ctx context.Context, mon *MonitorContain
 		if err := c.clearAdminSocket(ctx, "mon."+join.name); err != nil {
 			return err
 		}
-		mon.Container, err = c.runDaemon(ctx, mon.image, c.monitorJoinOptions(join, lease)...)
+		var ports []int
+		if lease != nil {
+			ports = lease.Ports
+		}
+		mon.Container, err = c.runDaemon(ctx, mon.image, c.monitorJoinOptions(join, ports)...)
 		if lease != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseErr := lease.Release(cleanupCtx)
@@ -278,15 +284,16 @@ func monitorSocketReady(name string) []string {
 // monitorJoinOptions is the container recipe of a joining MON: the join
 // script with the configuration, key and monmap, its socket wait, and either
 // the reserved host ports (created, not started) or the kept bridge address.
-func (c *Container) monitorJoinOptions(join monitorJoin, lease *hostPortLease) []testcontainers.ContainerCustomizer {
+// ports is nil on a bridge.
+func (c *Container) monitorJoinOptions(join monitorJoin, ports []int) []testcontainers.ContainerCustomizer {
 	opts := []testcontainers.ContainerCustomizer{c.adminClient(),
 		testcontainers.WithEntrypoint("/bin/sh", "/tc/mon-join.sh"), testcontainers.WithCmd(),
 		testcontainers.WithEnv(c.settings.monitorJoinEnvironment(join.name)),
 		testcontainers.WithFiles(scriptFile("mon-join"), textFile("/etc/ceph/ceph.conf", join.config, 0o644),
 			textFile("/etc/ceph/mon.keyring", join.key, 0o600), textFile("/tc/monmap", join.monmap, 0o600)),
 		testcontainers.WithWaitStrategy(wait.ForExec(monitorSocketReady(join.name)).WithStartupTimeout(c.settings.startupTimeout))}
-	if lease != nil {
-		portEnv := c.settings.monitorPortEnvironment(lease.Ports)
+	if ports != nil {
+		portEnv := c.settings.monitorPortEnvironment(ports)
 		portEnv["CEPH_PUBLIC_ADDRESS"] = c.staticFacts().PublicAddress
 		opts = append(opts, testcontainers.WithNoStart(), testcontainers.WithEnv(portEnv))
 	} else {

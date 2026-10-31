@@ -370,16 +370,17 @@ the start of the new one.
 - Container side (`monStoreGenerations`): `Create` makes the container without
   starting it, `Start`, `Observe` and `Hold` complete the port.
 - Guards: the generation and address symbols are used in production only by
-  the pinned callers (`startGeneration` from `ceph/mon_store_container.go`,
+  the pinned callers (`startGeneration`, and `stopGeneration` for a first
+  generation that lost its host ports, from `ceph/mon_store_container.go`;
   `replaceGeneration` from `ceph/mon_store_replace.go`) and
   `releaseAddressHold` from `monStoreVolume.release`, the files import no `sync`,
   the container side is called only from its pinned methods, a hold is released
   only by `releaseAddressHold`, `startGeneration` holds, dispatches, creates,
   releases, starts, waits and observes in that order, and `release` frees the
   hold before it looks at the attachment or the volume.
-- Host mode is not wired: the exact-port allocator container is not written,
-  and `Run` refuses the volume with the host network. Bridge mode uses the
-  static-IP creation of `monitorGenerations.Create`.
+- Host mode reserves the exact ports with the allocator container of the
+  first MON (`reserveExactHostPorts`); bridge mode uses the static-IP creation
+  of `monitorGenerations.Create`.
 
 ## Production wiring
 
@@ -391,9 +392,10 @@ the start of the new one.
 | `MonitorContainer.Remove` (`retireMonitor`) | `retire`: release once nothing mounts the volume, then forget the record | none |
 | `Terminate` | `releaseStores`, `retryStores` | none |
 
-`monitorGenerations` (`ceph/mon_store_container.go`) is the container side for
-bridge networking with IPv4 addresses, which is all `Run` admits with the
-volume:
+`monitorGenerations` (`ceph/mon_store_container.go`, with the host half in
+`ceph/mon_store_host.go`) is the container side for the two cases `Run` admits
+with the volume: bridge networking with IPv4 addresses, and the host network.
+On a bridge:
 
 - `Create` mounts the volume with no copy at `/var/lib/ceph/mon/ceph-<name>`,
   sets `CEPH_MON_STORE_MODE=require` for a later generation, asks the bridge
@@ -405,6 +407,27 @@ volume:
   container of the cluster is created under `Container.mu`, and a taken
   address fails the creation.
 - `Remove` force-removes the container and never its volumes.
+
+On the host network the endpoint is the public address and the MON's ports:
+
+- `Create` of a first generation reserves ports the kernel chooses with the
+  allocator container, publishes the reservation for `Terminate`, creates the
+  container for them and releases them before it returns, right before the
+  start. A first generation whose MON lost a port in that window (the daemon
+  exits with an address-in-use error) is removed, its fresh store discarded and
+  the MON started again on a new volume and new ports, up to `hostPortAttempts`
+  times (`startMonitorStore`).
+- `Create` of a later generation uses the recorded ports, which `Hold` holds.
+- `Hold` reserves exactly the recorded ports with the allocator container. A
+  port that any process listens on fails the hold before anything is created;
+  a port with connections of the old MON in `TIME_WAIT` is taken
+  (`SO_REUSEADDR`). The reservation is published for `Terminate` as well.
+- `Observe` reads, in the running container, the listening TCP sockets of its
+  `ceph-mon` process from `/proc`: they must be exactly the created ports on
+  the public address.
+- A later generation that loses a recorded port between the release and the
+  start fails closed: the monmap pins the port, so no other port is tried, and
+  the store stays retained for another `Replace`.
 
 `replaceMonitor` refuses, before it touches the MON, a replacement that would
 leave fewer than a majority of the monmap in quorum, a store that is not
@@ -421,6 +444,5 @@ failure keeps the handle and the record, so `Remove` can be retried. A MON added
 later under the same name gets a new store; a removed member's store is never
 reused.
 
-Not wired: the identity binding (`bind`, the inspector and the monmap adapter),
-host networking and address families other than IPv4, which `Run` refuses with
-the volume.
+Not wired: the identity binding (`bind`, the inspector and the monmap adapter)
+and address families other than IPv4, which `Run` refuses with the volume.

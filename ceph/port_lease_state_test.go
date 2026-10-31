@@ -112,8 +112,15 @@ var portLeaseCallers = map[string]stateCaller{
 	"reserveTrackedHostPortsWith": {"takes", []string{"track"}},
 	"trackHostPortLease":          {"takes", []string{"track"}},
 	"startJoiningMonitor":         {"holds", []string{"track"}},
-	"terminate":                   {"takes", []string{"release"}},
-	"UnitState":                   {"hook", []string{"count"}},
+	// The host-network ports of a MON store generation, chosen ones for a
+	// first generation and the recorded ones held for a replacement, are
+	// published through the track function its constructor hands it.
+	"monitorGenerations": {"holds", []string{"track"}},
+	// runMonitor builds the first MON's generations in Run, before the
+	// cluster is shared.
+	"runMonitor": {"init", nil},
+	"terminate":  {"takes", []string{"release"}},
+	"UnitState":  {"hook", []string{"count"}},
 }
 
 // TestPortLeaseStateCallersAreAudited guards the callers: the set of

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,17 +41,24 @@ const (
 
 // The sockets live in the Docker engine's host network namespace, which may
 // differ from the Go process's namespace. Keep every socket open until the
-// caller creates its daemon container and explicitly releases the lease.
+// caller creates its daemon container and explicitly releases the lease. The
+// second argument is a port count, for ports the kernel chooses, or a JSON list
+// of the exact ports to take. An exact port may still have connections of its
+// previous listener in TIME_WAIT, which SO_REUSEADDR admits; a listening socket
+// on it still makes the bind fail.
 const hostPortAllocatorScript = `import ipaddress, json, signal, socket, sys, time
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-address, count = sys.argv[1], int(sys.argv[2])
+address, spec = sys.argv[1], json.loads(sys.argv[2])
+wanted = [0] * spec if isinstance(spec, int) else spec
 family = socket.AF_INET6 if ipaddress.ip_address(address).version == 6 else socket.AF_INET
 sockets = []
-for unused in range(count):
+for port in wanted:
     candidate = socket.socket(family, socket.SOCK_STREAM)
     if family == socket.AF_INET6:
         candidate.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-    candidate.bind((address, 0))
+    if port:
+        candidate.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    candidate.bind((address, port))
     candidate.listen(1)
     sockets.append(candidate)
 print('TC_CEPH_HOST_PORT_LEASE ' + json.dumps([candidate.getsockname()[1] for candidate in sockets]), flush=True)
@@ -111,8 +119,36 @@ func onlyMissingHostResource(err error) bool {
 }
 
 func reserveHostPorts(ctx context.Context, image, address string, count int, timeout time.Duration, opts ...testcontainers.ContainerCustomizer) (*hostPortLease, error) {
-	if strings.TrimSpace(image) == "" || count <= 0 || timeout <= 0 {
-		return nil, errors.New("host port reservation requires an image, a positive count and a positive timeout")
+	if count <= 0 {
+		return nil, errors.New("host port reservation requires a positive count")
+	}
+	return reserveHostPortSpec(ctx, image, address, strconv.Itoa(count), count, nil, timeout, opts...)
+}
+
+// reserveExactHostPorts takes exactly ports on address, in that order, and
+// fails when any of them is in use. It is the hold on the ports a replaced MON
+// listened on (mon_store_address.go).
+func reserveExactHostPorts(ctx context.Context, image, address string, ports []int, timeout time.Duration, opts ...testcontainers.ContainerCustomizer) (*hostPortLease, error) {
+	seen := map[int]bool{}
+	for _, port := range ports {
+		if port < 1 || port > 65535 || seen[port] {
+			return nil, fmt.Errorf("host port reservation requires distinct ports in 1-65535, got %v", ports)
+		}
+		seen[port] = true
+	}
+	if len(ports) == 0 {
+		return nil, errors.New("host port reservation requires at least one port")
+	}
+	spec, err := json.Marshal(ports)
+	if err != nil {
+		return nil, err
+	}
+	return reserveHostPortSpec(ctx, image, address, string(spec), len(ports), ports, timeout, opts...)
+}
+
+func reserveHostPortSpec(ctx context.Context, image, address, spec string, count int, exact []int, timeout time.Duration, opts ...testcontainers.ContainerCustomizer) (*hostPortLease, error) {
+	if strings.TrimSpace(image) == "" || timeout <= 0 {
+		return nil, errors.New("host port reservation requires an image and a positive timeout")
 	}
 	if err := validateHostAllocatorAddress(address); err != nil {
 		return nil, err
@@ -122,7 +158,7 @@ func reserveHostPorts(ctx context.Context, image, address string, count int, tim
 	ctr, err := testcontainers.Run(ctx, image, append([]testcontainers.ContainerCustomizer{
 		hostContainerCustomizer(address),
 		testcontainers.WithEntrypoint("python3"),
-		testcontainers.WithCmd("-u", "-c", hostPortAllocatorScript, address, strconv.Itoa(count)),
+		testcontainers.WithCmd("-u", "-c", hostPortAllocatorScript, address, spec),
 		testcontainers.WithWaitStrategy(wait.ForLog(hostPortLeasePrefix).WithStartupTimeout(timeout)),
 	}, opts...)...)
 	lease := &hostPortLease{ctr: ctr}
@@ -141,6 +177,9 @@ func reserveHostPorts(ctx context.Context, image, address string, count int, tim
 	_ = logs.Close()
 	if err == nil {
 		lease.Ports, err = parseHostPortLease(output, count)
+	}
+	if err == nil && exact != nil && !slices.Equal(lease.Ports, exact) {
+		err = fmt.Errorf("allocator took ports %v, requested %v", lease.Ports, exact)
 	}
 	if err != nil {
 		return cleanupFailedHostPortLease(lease, fmt.Errorf("decode host port reservations: %w", err))

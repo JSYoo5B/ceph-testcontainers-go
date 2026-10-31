@@ -6,10 +6,7 @@ package integration_test
 
 import (
 	"context"
-	"encoding/json"
 	"slices"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -39,32 +36,6 @@ func monStoreMount(t *testing.T, ctx context.Context, docker *mobycl.Client, mon
 	return ""
 }
 
-// monmapIdentity is the part of the monmap a replacement must not change: the
-// epoch, the FSID and every member's name and address vector, in rank order.
-func monmapIdentity(t *testing.T, ctx context.Context, cluster *ceph.Container) string {
-	t.Helper()
-	raw, err := cluster.Ceph(ctx, "mon", "dump", "--format", "json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var dump struct {
-		Epoch int    `json:"epoch"`
-		FSID  string `json:"fsid"`
-		Mons  []struct {
-			Name        string          `json:"name"`
-			PublicAddrs json.RawMessage `json:"public_addrs"`
-		} `json:"mons"`
-	}
-	if err := json.Unmarshal(raw, &dump); err != nil || dump.Epoch < 1 || len(dump.Mons) == 0 {
-		t.Fatalf("mon dump %s: %v", raw, err)
-	}
-	parts := []string{strconv.Itoa(dump.Epoch), dump.FSID}
-	for _, m := range dump.Mons {
-		parts = append(parts, m.Name+"="+string(m.PublicAddrs))
-	}
-	return strings.Join(parts, " ")
-}
-
 // TestMonitorStoreReplace replaces every MON of a three-MON cluster, MON a
 // included, on its retained store with the same image. Each replacement must
 // keep the monmap exactly (epoch, members, address vectors), mount the same
@@ -73,8 +44,17 @@ func monmapIdentity(t *testing.T, ctx context.Context, cluster *ceph.Container) 
 // replaced MON then releases its store: MON c added again gets a new volume,
 // and the removed MON a is no longer listed. Before that, a
 // replacement on a one-MON cluster is refused without touching the MON, and a
-// cluster without MON volume storage refuses Replace.
+// cluster without MON volume storage refuses Replace. On the host network the
+// MON address includes its ports, which each replacement must keep.
 func TestMonitorStoreReplace(t *testing.T) {
+	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
+		if !t.Run(mode.Name, func(t *testing.T) { monitorStoreReplace(t, mode.Host) }) {
+			return
+		}
+	}
+}
+
+func monitorStoreReplace(t *testing.T, host bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Minute)
 	defer cancel()
 	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
@@ -88,6 +68,9 @@ func TestMonitorStoreReplace(t *testing.T) {
 		cfg := append(slices.Clone(opts), ceph.WithClusterConfig(ceph.ClusterConfig{}.WithMonitorCount(monitors).WithOSDCount(1).WithPoolDefaults(1, 1)))
 		if volume {
 			cfg = append(cfg, ceph.WithMonitorStorage(ceph.MonitorStorage{}.WithVolume()))
+		}
+		if host {
+			cfg = append(cfg, ceph.WithHostNetwork())
 		}
 		cluster, err := ceph.Run(ctx, image, cfg...)
 		if cluster != nil {
@@ -169,6 +152,7 @@ func TestMonitorStoreReplace(t *testing.T) {
 	if err != nil || len(q.QuorumNames) != 3 {
 		t.Fatalf("quorum %v: %v", q.QuorumNames, err)
 	}
+	t.Logf("MON_STORE_REPLACE_MONMAP host=%v %s", host, identity)
 
 	// A replaced MON leaves for good with Remove: its store is released, and
 	// the same name added again gets a new store.
