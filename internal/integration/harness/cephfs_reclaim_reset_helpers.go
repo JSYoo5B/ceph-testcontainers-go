@@ -20,6 +20,10 @@ import (
 //
 //   - Server::reclaim_session accepts only flags == CEPH_RECLAIM_RESET (1) and
 //     answers anything else with -EINVAL, so flags 0 is never RESET evidence.
+//     Flags 0 is the state-preserving request (adopt the old session's
+//     capabilities and locks): the client sends it, the MDS replies -EINVAL
+//     without touching the target, and Client::start_reclaim returns that
+//     reply's result. The same check is at v19.2.5.
 //   - For a UUID that no session carries, the server sends its default success
 //     reply without target addresses. Client::start_reclaim turns that into
 //     -ENOENT only when its remembered reclaim_target_addrs is empty.
@@ -336,7 +340,9 @@ type ResetObservation struct {
 
 // ResetAttempt is one ceph_start_reclaim call on one native handle. RC is
 // nil when the return value was not recorded. PriorReclaimCalls counts the
-// reclaim calls the same handle made before this one.
+// reclaim calls the same handle made before this one. Replies holds the
+// results of the client_reclaim_reply messages that the handle's client log
+// shows arriving from the MDS, nil when the log was not read.
 type ResetAttempt struct {
 	Handle            string
 	Initialized       bool
@@ -345,6 +351,7 @@ type ResetAttempt struct {
 	Target            string
 	OwnUUID           string
 	RC                *int
+	Replies           []int
 	Start, End        time.Time
 }
 
@@ -360,6 +367,8 @@ type ResetSequence struct {
 	AfterKill      []ResetObservation
 	Missing        ResetAttempt
 	AfterMissing   []ResetObservation
+	Preserve       ResetAttempt
+	AfterPreserve  []ResetObservation
 	Reset          ResetAttempt
 	AfterReset     []ResetObservation
 	MountStart     time.Time
@@ -377,9 +386,11 @@ const (
 	// ResetInconclusive is the default, so a forgotten branch can never pass.
 	ResetInconclusive ResetVerdict = iota
 	// ResetEstablished means every oracle held: fresh-handle missing UUID gave
-	// -ENOENT with the bystanders untouched, a second fresh handle's RESET of
-	// the killed client's UUID removed exactly its session and lock before any
-	// replacement mount, and the replacement read the original bytes.
+	// -ENOENT with the bystanders untouched, a fresh handle's state-preserving
+	// request for the killed client's UUID was refused by the MDS with -EINVAL
+	// and left its session and lock standing, a third fresh handle's RESET of
+	// that UUID removed exactly its session and lock before any replacement
+	// mount, and the replacement read the original bytes.
 	ResetEstablished
 	// ResetContradicted means the evidence shows behavior the source rules out
 	// for a correct fresh-handle RESET.
@@ -401,6 +412,7 @@ func resetBad(format string, args ...any) ResetOutcome {
 
 const (
 	errnoENOENT = -2
+	errnoEINVAL = -22
 )
 
 // JudgeResetSequence applies the RESET policy.
@@ -416,6 +428,12 @@ const (
 //     RESET flags, a UUID that is neither A's, U's nor its own, and return -2.
 //     A return of 0 on a fresh handle is a contradiction. Afterwards A and U
 //     must still be present with locks held.
+//   - State-preserving request: another fresh handle, flags 0, A's UUID. It
+//     must return -22 with exactly one client_reclaim_reply of -22 from the
+//     MDS in its client log, so the refusal is the server's and not one of the
+//     client's own -EINVAL checks. A return of 0 is a contradiction (the
+//     source refuses every flag but RESET). Afterwards A and U must still be
+//     present with locks held: the refused request evicted nothing.
 //   - Positive RESET: a different fresh handle, RESET flags, A's UUID, return
 //     0. Observations that started after it returned and ended before the
 //     replacement mount began must show A's session absent, A's lock free, and
@@ -425,8 +443,9 @@ const (
 //     independent read of exactly the seeded size and SHA-256 through a new
 //     descriptor by that client.
 //
-// The judge does not observe blocklist or OSD epoch effects, does not claim
-// anything about RESET latency, and does not cover state-preserving reclaim.
+// The judge does not observe blocklist or OSD epoch effects and does not claim
+// anything about RESET latency. State-preserving reclaim is judged only as the
+// refusal the pinned source makes; no capability or lock is ever adopted.
 func JudgeResetSequence(s ResetSequence) ResetOutcome {
 	switch {
 	case s.A == 0 || s.U == 0 || s.B == 0 || s.A == s.U || s.A == s.B || s.U == s.B:
@@ -438,20 +457,30 @@ func JudgeResetSequence(s ResetSequence) ResetOutcome {
 	case s.AKilledAt.IsZero() || s.MountStart.IsZero():
 		return resetUnknown("kill or replacement mount time is missing")
 	}
-	if r := checkResetAttempt(s.Missing, "missing-UUID", s); r != nil {
+	if r := checkResetAttempt(s.Missing, "missing-UUID", CephReclaimReset); r != nil {
 		return *r
 	}
-	if r := checkResetAttempt(s.Reset, "RESET", s); r != nil {
+	if r := checkResetAttempt(s.Preserve, "state-preserving", 0); r != nil {
 		return *r
 	}
-	if s.Missing.Handle == s.Reset.Handle {
-		return resetUnknown("the missing-UUID and RESET attempts share one native handle")
+	if r := checkResetAttempt(s.Reset, "RESET", CephReclaimReset); r != nil {
+		return *r
+	}
+	if s.Missing.Handle == s.Reset.Handle || s.Missing.Handle == s.Preserve.Handle || s.Preserve.Handle == s.Reset.Handle {
+		return resetUnknown("the missing-UUID, state-preserving and RESET attempts do not each have their own native handle")
 	}
 	if s.Missing.Target == s.Reset.Target {
 		return resetUnknown("the missing-UUID attempt targets the UUID that RESET targets")
 	}
-	if s.Missing.Target == s.AUUID || s.Missing.Target == s.UUUID || s.Missing.Target == s.Missing.OwnUUID || s.Missing.Target == s.Reset.OwnUUID {
+	if s.Missing.Target == s.AUUID || s.Missing.Target == s.UUUID || s.Missing.Target == s.Missing.OwnUUID || s.Missing.Target == s.Reset.OwnUUID ||
+		s.Missing.Target == s.Preserve.OwnUUID {
 		return resetUnknown("the missing-UUID target names a live or own session")
+	}
+	if s.Preserve.Target != s.AUUID {
+		return resetUnknown("the state-preserving request does not target the killed client's UUID")
+	}
+	if s.Preserve.OwnUUID == s.AUUID || s.Preserve.OwnUUID == s.UUUID {
+		return resetUnknown("the state-preserving requester reuses a live client's UUID")
 	}
 	if s.Reset.Target != s.AUUID {
 		return resetUnknown("RESET does not target the killed client's UUID")
@@ -460,8 +489,8 @@ func JudgeResetSequence(s ResetSequence) ResetOutcome {
 		return resetUnknown("the reclaimer reuses a live client's UUID")
 	}
 	switch {
-	case s.AKilledAt.After(s.Missing.Start) || s.Missing.End.After(s.Reset.Start) || s.Reset.End.After(s.MountStart):
-		return resetUnknown("kill, missing-UUID attempt, RESET and replacement mount are out of order")
+	case s.AKilledAt.After(s.Missing.Start) || s.Missing.End.After(s.Preserve.Start) || s.Preserve.End.After(s.Reset.Start) || s.Reset.End.After(s.MountStart):
+		return resetUnknown("kill, missing-UUID attempt, state-preserving request, RESET and replacement mount are out of order")
 	}
 
 	if r := requirePhase(s.AfterKill, "after the kill", s.AKilledAt, s.Missing.Start, s, bystandersHeld); r != nil {
@@ -473,7 +502,19 @@ func JudgeResetSequence(s ResetSequence) ResetOutcome {
 	if *s.Missing.RC != errnoENOENT {
 		return resetUnknown("missing-UUID attempt returned %d, not -ENOENT", *s.Missing.RC)
 	}
-	if r := requirePhase(s.AfterMissing, "after the missing-UUID attempt", s.Missing.End, s.Reset.Start, s, bystandersHeld); r != nil {
+	if r := requirePhase(s.AfterMissing, "after the missing-UUID attempt", s.Missing.End, s.Preserve.Start, s, bystandersHeld); r != nil {
+		return *r
+	}
+	if *s.Preserve.RC == 0 {
+		return resetBad("the MDS accepted a reclaim without CEPH_RECLAIM_RESET")
+	}
+	if *s.Preserve.RC != errnoEINVAL {
+		return resetUnknown("state-preserving request returned %d, not -EINVAL", *s.Preserve.RC)
+	}
+	if len(s.Preserve.Replies) != 1 || s.Preserve.Replies[0] != errnoEINVAL {
+		return resetUnknown("state-preserving request's client log shows MDS replies %v, want exactly one -22", s.Preserve.Replies)
+	}
+	if r := requirePhase(s.AfterPreserve, "after the state-preserving request", s.Preserve.End, s.Reset.Start, s, bystandersHeld); r != nil {
 		return *r
 	}
 	if *s.Reset.RC != 0 {
@@ -493,18 +534,18 @@ func JudgeResetSequence(s ResetSequence) ResetOutcome {
 	case s.ReadByClientID != s.B:
 		return resetUnknown("the data was read by client.%d, not the replacement client.%d", s.ReadByClientID, s.B)
 	}
-	return ResetOutcome{Verdict: ResetEstablished, Reason: "fresh-handle missing UUID gave -ENOENT; RESET removed only the killed client's session and lock before the replacement read the original bytes"}
+	return ResetOutcome{Verdict: ResetEstablished, Reason: "fresh-handle missing UUID gave -ENOENT; the MDS refused the state-preserving request with -EINVAL and left the killed client's session and lock; RESET removed only that session and lock before the replacement read the original bytes"}
 }
 
-func checkResetAttempt(a ResetAttempt, name string, s ResetSequence) *ResetOutcome {
+func checkResetAttempt(a ResetAttempt, name string, flags uint) *ResetOutcome {
 	var r ResetOutcome
 	switch {
 	case a.Handle == "" || !a.Initialized:
 		r = resetUnknown("%s attempt has no initialized native handle", name)
 	case a.PriorReclaimCalls != 0:
 		r = resetUnknown("%s attempt reuses a handle that already made %d reclaim call(s)", name, a.PriorReclaimCalls)
-	case a.Flags != CephReclaimReset:
-		r = resetUnknown("%s attempt used flags %d, not CEPH_RECLAIM_RESET", name, a.Flags)
+	case a.Flags != flags:
+		r = resetUnknown("%s attempt used flags %d, not %d", name, a.Flags, flags)
 	case a.Target == "" || a.OwnUUID == "" || a.Target == a.OwnUUID:
 		r = resetUnknown("%s attempt target or own UUID is missing or identical", name)
 	case a.RC == nil:

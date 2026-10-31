@@ -26,9 +26,10 @@ import (
 // cephfs_reclaim_reset_helpers_test.go. It is test tooling only: nothing here
 // is a public helper, a product mount dependency or a stability claim.
 //
-// What it exercises is the RESET path, not state-preserving reclaim. The
-// pinned server rejects every reclaim flag except CEPH_RECLAIM_RESET, and the
-// replacement client gets a new native client ID and opens its own descriptor.
+// What it exercises is the RESET path. State-preserving reclaim appears only
+// as the refusal it gets: the pinned server rejects every reclaim flag except
+// CEPH_RECLAIM_RESET, and the recipe asks once with flags 0 to record that
+// -EINVAL from the MDS. The replacement client gets a new native client ID and opens its own descriptor.
 // No old fd, capability or lock is adopted, and no NFS grace protocol is
 // involved. The blocklist and OSD epoch effects of the eviction are not
 // observed.
@@ -90,12 +91,17 @@ def check(rc):
     if rc < 0:
         raise RuntimeError("native rc=%d" % rc)
     return rc
-def fresh(fsname):
+def fresh(fsname, log=None):
     h = C.c_void_p()
     check(lib.ceph_create(C.byref(h), None))
     try:
         check(lib.ceph_conf_read_file(h, b"/etc/ceph/ceph.conf"))
         check(lib.ceph_conf_set(h, b"client_mount_timeout", b"30"))
+        if log:
+            check(lib.ceph_conf_set(h, b"log_to_file", b"true"))
+            check(lib.ceph_conf_set(h, b"log_to_stderr", b"false"))
+            check(lib.ceph_conf_set(h, b"log_file", log.encode()))
+            check(lib.ceph_conf_set(h, b"debug_client", b"10"))
         check(lib.ceph_init(h))
         check(lib.ceph_select_filesystem(h, fsname.encode()))
         return h
@@ -186,19 +192,25 @@ lib.ceph_shutdown(h)
 publish(2, closed=True)
 `
 
-// ReclaimMissing makes one RESET attempt on a handle of its own that has not
-// made any reclaim call, for a UUID that no session carries, and releases the
-// handle. Arguments: the filesystem, the target UUID and the handle's own UUID.
-const ReclaimMissing = `
-import cephfs, json, os, sys
+// ReclaimAttempt makes one start_reclaim call with the given flags on a
+// handle of its own that has not made any reclaim call, and releases the
+// handle. The handle logs at debug_client 10 to a file of its own, and the
+// results of the client_reclaim_reply messages that arrived from the MDS
+// (handle_client_reclaim_reply) are read back from it, so a server refusal is
+// told apart from the client's own argument checks. Arguments: the
+// filesystem, the target UUID, the handle's own UUID, the flags and the log
+// path.
+const ReclaimAttempt = `
+import cephfs, json, os, re, sys
 ` + reclaimActorPreamble + `
-name, target, own = sys.argv[1:4]
-h = fresh(name)
+name, target, own, flags, log = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
+h = fresh(name, log)
 lib.ceph_set_uuid(h, own.encode())
-rc = lib.ceph_start_reclaim(h, target.encode(), 1)
+rc = lib.ceph_start_reclaim(h, target.encode(), flags)
 released = lib.ceph_release(h)
-emit({"handle": handle_id(h), "initialized": True, "prior_reclaim_calls": 0, "flags": 1,
-      "target": target, "own_uuid": own, "rc": rc, "release_rc": released})
+replies = [int(m.group(1)) for m in re.finditer(r"handle_client_reclaim_reply client_reclaim_reply\((-?\d+) e ", open(log).read())]
+emit({"handle": handle_id(h), "initialized": True, "prior_reclaim_calls": 0, "flags": flags,
+      "target": target, "own_uuid": own, "rc": rc, "release_rc": released, "mds_replies": replies})
 `
 
 // ReclaimReclaimer is the RESET client. On a handle of its own it makes one
@@ -334,8 +346,8 @@ func ReclaimJSONLine(out string) ([]byte, error) {
 	return found, nil
 }
 
-// ReclaimMissingResult is the printed result of ReclaimMissing.
-type ReclaimMissingResult struct {
+// ReclaimAttemptResult is the printed result of ReclaimAttempt.
+type ReclaimAttemptResult struct {
 	Handle            string `json:"handle"`
 	Initialized       bool   `json:"initialized"`
 	PriorReclaimCalls int    `json:"prior_reclaim_calls"`
@@ -344,12 +356,13 @@ type ReclaimMissingResult struct {
 	OwnUUID           string `json:"own_uuid"`
 	RC                *int   `json:"rc"`
 	ReleaseRC         *int   `json:"release_rc"`
+	MDSReplies        []int  `json:"mds_replies"`
 }
 
-// ParseReclaimMissing reads the missing-UUID attempt. It rejects unknown
-// fields, and a missing return value or release code stays nil.
-func ParseReclaimMissing(out string) (ReclaimMissingResult, error) {
-	var r ReclaimMissingResult
+// ParseReclaimAttempt reads one attempt. It rejects unknown fields, and a
+// missing return value, release code or reply list stays nil.
+func ParseReclaimAttempt(out string) (ReclaimAttemptResult, error) {
+	var r ReclaimAttemptResult
 	doc, err := ReclaimJSONLine(out)
 	if err != nil {
 		return r, err
@@ -357,7 +370,7 @@ func ParseReclaimMissing(out string) (ReclaimMissingResult, error) {
 	decoder := json.NewDecoder(bytes.NewReader(doc))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&r); err != nil {
-		return r, fmt.Errorf("missing-UUID result: %w", err)
+		return r, fmt.Errorf("reclaim attempt result: %w", err)
 	}
 	return r, nil
 }
@@ -397,12 +410,30 @@ func classifyReclaimLock(errno *int) ResetLock {
 	return ResetLockUnknown
 }
 
-// reclaimAttemptOf turns a missing-UUID result into the judge's attempt. The
+// reclaimAttemptOf turns an attempt result into the judge's attempt. The
 // release code is checked separately: a handle that cannot be released is not
 // a clean attempt.
-func reclaimAttemptOf(r ReclaimMissingResult, start, end time.Time) ResetAttempt {
+func reclaimAttemptOf(r ReclaimAttemptResult, start, end time.Time) ResetAttempt {
 	return ResetAttempt{Handle: r.Handle, Initialized: r.Initialized, PriorReclaimCalls: r.PriorReclaimCalls,
-		Flags: r.Flags, Target: r.Target, OwnUUID: r.OwnUUID, RC: r.RC, Start: start, End: end}
+		Flags: r.Flags, Target: r.Target, OwnUUID: r.OwnUUID, RC: r.RC, Replies: r.MDSReplies, Start: start, End: end}
+}
+
+// runReclaimAttempt runs ReclaimAttempt in the helper container, requires a
+// clean release and returns the timed attempt.
+func runReclaimAttempt(t *testing.T, ctx context.Context, m *CephFSSingleMDS, helper testcontainers.Container, name, target, own string, flags uint) ResetAttempt {
+	t.Helper()
+	log := "/tmp/reclaim-attempt-" + own + ".log"
+	start := time.Now()
+	out := ExecOutput(t, ctx, helper, "python3", "-c", ReclaimAttempt, m.FS.FilesystemName, target, own, strconv.FormatUint(uint64(flags), 10), log)
+	end := time.Now()
+	r, err := ParseReclaimAttempt(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ReleaseRC == nil || *r.ReleaseRC != 0 || r.MDSReplies == nil {
+		t.Fatalf("the %s handle was not released cleanly or its log was not read: %+v", name, r)
+	}
+	return reclaimAttemptOf(r, start, end)
 }
 
 // reclaimAttemptString renders an attempt for the receipt, with the return
@@ -412,7 +443,7 @@ func reclaimAttemptString(a ResetAttempt) string {
 	if a.RC != nil {
 		rc = strconv.Itoa(*a.RC)
 	}
-	return fmt.Sprintf("handle=%s initialized=%t prior_reclaim_calls=%d flags=%d target=%s own_uuid=%s rc=%s", a.Handle, a.Initialized, a.PriorReclaimCalls, a.Flags, a.Target, a.OwnUUID, rc)
+	return fmt.Sprintf("handle=%s initialized=%t prior_reclaim_calls=%d flags=%d target=%s own_uuid=%s rc=%s mds_replies=%v", a.Handle, a.Initialized, a.PriorReclaimCalls, a.Flags, a.Target, a.OwnUUID, rc, a.Replies)
 }
 
 var reclaimVersionRE = regexp.MustCompile(`ceph version (\d+)\.(\d+)\.(\d+) `)
@@ -539,9 +570,12 @@ func reclaimNonce(t *testing.T) string {
 //     for the RESET.
 //  4. A fresh handle asks to RESET a UUID that no session carries and must get
 //     -ENOENT, with A and U untouched.
-//  5. A second fresh handle RESETs A's UUID and must get 0. Before it mounts,
+//  5. A second fresh handle asks to reclaim A's UUID with flags 0, the
+//     state-preserving request. The MDS must refuse it with -EINVAL, and A's
+//     session and lock must still stand.
+//  6. A third fresh handle RESETs A's UUID and must get 0. Before it mounts,
 //     A's session is gone, A's lock is free and U's session and lock stand.
-//  6. The same handle finishes the reclaim, takes over the former UUID,
+//  7. The same handle finishes the reclaim, takes over the former UUID,
 //     mounts as a new client and reads the original bytes through a new
 //     descriptor.
 //
@@ -570,16 +604,16 @@ func RunCephFSReclaimReset(t *testing.T) {
 		SeedSize:   len(payload),
 		SeedSHA256: hex.EncodeToString(seedSum[:]),
 	}
-	missingTarget, missingOwn, resetOwn := "reclaim-missing-"+nonce, "reclaim-m-"+nonce, "reclaim-b-"+nonce
+	missingTarget, missingOwn, preserveOwn, resetOwn := "reclaim-missing-"+nonce, "reclaim-m-"+nonce, "reclaim-p-"+nonce, "reclaim-b-"+nonce
 	var outcome ResetOutcome
 	var killedToReset time.Duration
 	defer func() {
 		// The receipt is emitted before the cluster is torn down, whatever the
 		// outcome, so a failed run keeps the ledger.
-		t.Logf("RECLAIM_RESET_RECEIPT mds=%s executors=[%s %s; %s %s] verdict=%d reason=%q a=client.%d u=client.%d b=client.%d kill_to_reset_observed=%s missing={%s} reset={%s} observations(after_kill=%d after_missing=%d after_reset=%d); not observed: blocklist and OSD epoch effects, RESET call latency, state-preserving reclaim",
+		t.Logf("RECLAIM_RESET_RECEIPT mds=%s executors=[%s %s; %s %s] verdict=%d reason=%q a=client.%d u=client.%d b=client.%d kill_to_reset_observed=%s missing={%s} preserve={%s} reset={%s} observations(after_kill=%d after_missing=%d after_preserve=%d after_reset=%d); not observed: blocklist and OSD epoch effects, RESET call latency, any adopted capability or lock (the MDS refuses state-preserving reclaim)",
 			m.Version, executors[0].name, executors[0].probe.ImageConfigID, executors[1].name, executors[1].probe.ImageConfigID,
-			outcome.Verdict, outcome.Reason, seq.A, seq.U, seq.B, killedToReset, reclaimAttemptString(seq.Missing), reclaimAttemptString(seq.Reset),
-			len(seq.AfterKill), len(seq.AfterMissing), len(seq.AfterReset))
+			outcome.Verdict, outcome.Reason, seq.A, seq.U, seq.B, killedToReset, reclaimAttemptString(seq.Missing), reclaimAttemptString(seq.Preserve), reclaimAttemptString(seq.Reset),
+			len(seq.AfterKill), len(seq.AfterMissing), len(seq.AfterPreserve), len(seq.AfterReset))
 	}()
 
 	seedOut := ExecOutput(t, ctx, helper, "python3", "-c", ReclaimSeed, m.FS.FilesystemName, hex.EncodeToString(payload), aPath, uPath)
@@ -631,18 +665,10 @@ func RunCephFSReclaimReset(t *testing.T) {
 
 	seq.AfterKill = append(seq.AfterKill, observer.observe(t, ctx), observer.observe(t, ctx))
 
-	seq.Missing.Start = time.Now()
-	missingOut := ExecOutput(t, ctx, helper, "python3", "-c", ReclaimMissing, m.FS.FilesystemName, missingTarget, missingOwn)
-	seq.Missing.End = time.Now()
-	missing, err := ParseReclaimMissing(missingOut)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if missing.ReleaseRC == nil || *missing.ReleaseRC != 0 {
-		t.Fatalf("the missing-UUID handle was not released cleanly: %+v", missing)
-	}
-	seq.Missing = reclaimAttemptOf(missing, seq.Missing.Start, seq.Missing.End)
+	seq.Missing = runReclaimAttempt(t, ctx, m, helper, "missing-UUID", missingTarget, missingOwn, CephReclaimReset)
 	seq.AfterMissing = append(seq.AfterMissing, observer.observe(t, ctx), observer.observe(t, ctx))
+	seq.Preserve = runReclaimAttempt(t, ctx, m, helper, "state-preserving", seq.AUUID, preserveOwn, 0)
+	seq.AfterPreserve = append(seq.AfterPreserve, observer.observe(t, ctx), observer.observe(t, ctx))
 
 	resetStart := time.Now()
 	reclaimer := StartCephFSActor(t, ctx, m.Cluster, helper, ReclaimReclaimer, m.FS.FilesystemName, "/tmp/reclaim-reset", seq.AUUID, resetOwn, aPath)

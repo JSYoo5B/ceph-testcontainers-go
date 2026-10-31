@@ -19,6 +19,9 @@ func TestClientMetricsWindowRowLoss(t *testing.T) {
 	noSection := func(start, end float64) clientMetricsSample {
 		return clientMetricsSample{Start: at(start), End: at(end)}
 	}
+	unavailable := func(start, end float64) clientMetricsSample {
+		return clientMetricsSample{Start: at(start), End: at(end), Unavailable: "mds.a: timed out"}
+	}
 	const (
 		sectionLost = "row identity lost after workload: sample 1 has no metrics section"
 		writerLost  = "row identity lost after workload: sample 1 lacks the writer client.4101 row"
@@ -44,6 +47,15 @@ func TestClientMetricsWindowRowLoss(t *testing.T) {
 			"row identity lost after workload: sample 2 lacks the idle client.4102 row"},
 		{"loss then reappearance after a covering sample", window(base, sample(25, 26, tot(1, 131072), tot(0, 0)), noSection(30, 31), sample(35, 36, tot(1, 131072), tot(0, 0))), clientMetricsInconclusive,
 			"row identity lost after workload: sample 2 has no metrics section"},
+		// A failed query is retained as an unavailable sample, never dropped.
+		{"unavailable sample then both rows covering", window(base, unavailable(25, 26), covered()), clientMetricsInconclusive,
+			"row identity lost after workload: sample 1 is unavailable (mds.a: timed out)"},
+		{"unavailable sample after a covering sample", window(base, sample(25, 26, tot(1, 131072), tot(0, 0)), unavailable(30, 31)), clientMetricsInconclusive,
+			"row identity lost after workload: sample 2 is unavailable (mds.a: timed out)"},
+		{"control unavailable sample before the gate", window(unavailable(1, 2), base, sample(25, 26, tot(1, 131072), tot(0, 0))), clientMetricsAttributed,
+			"writer row covers the acknowledged write"},
+		{"control unavailable sample after the deadline", window(base, sample(25, 26, tot(1, 131072), tot(0, 0)), unavailable(61, 62)), clientMetricsAttributed,
+			"writer row covers the acknowledged write"},
 		// Positive evidence from a present row still wins over a lost row.
 		{"idle writes after a lost row stay contradicted", window(base, noSection(25, 26), sample(30, 31, tot(1, 131072), tot(1, 4096))), clientMetricsContradicted, "idle client row carries writes"},
 

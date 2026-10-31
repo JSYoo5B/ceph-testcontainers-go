@@ -128,9 +128,13 @@ func counterUint(counters map[string]json.RawMessage, name string) (uint64, erro
 
 // clientMetricsSample is one counter-dump query. Start and End bracket the
 // query, because the daemon samples its value somewhere inside that interval.
+// Unavailable holds the error of a query that returned no dump; such a sample
+// is kept in the series with an empty section rather than dropped, so a gap in
+// the evidence stays visible to the judge.
 type clientMetricsSample struct {
-	Start, End time.Time
-	Section    clientMetricsSection
+	Start, End  time.Time
+	Unavailable string
+	Section     clientMetricsSection
 }
 
 // clientMetricsWindow is everything the judge needs. GateOpened is when the
@@ -189,8 +193,10 @@ func metricsInconclusive(format string, args ...any) clientMetricsOutcome {
 //     window: the result is inconclusive with a "row identity lost after
 //     workload" reason, even when another sample covered the writer. Samples
 //     outside the acknowledgement-to-deadline window are not part of this
-//     check. This matches the experimental handoff collector, which aborts
-//     when a selected row is not ready after the workload.
+//     check. An unavailable sample in that window, a query that returned no
+//     dump, loses the row identity the same way: it is retained, not dropped.
+//     This matches the experimental handoff collector, which aborts when a
+//     selected row is not ready after the workload.
 //   - Result: every eligible observation sample is scanned. An idle
 //     row with writes in any of them is a contradiction, even after a sample
 //     that already covered the writer or after a lost row, because that row
@@ -249,6 +255,8 @@ func judgeClientMetricsWindow(w clientMetricsWindow) clientMetricsOutcome {
 		it, iok := s.Section.Rows[w.Idle]
 		if lost == "" {
 			switch {
+			case s.Unavailable != "":
+				lost = fmt.Sprintf("row identity lost after workload: sample %d is unavailable (%s)", i, s.Unavailable)
 			case !s.Section.Section:
 				lost = fmt.Sprintf("row identity lost after workload: sample %d has no metrics section", i)
 			case !wok:

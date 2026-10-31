@@ -131,13 +131,22 @@ func testCephFSClientMetrics(t *testing.T) {
 	window := clientMetricsWindow{Writer: a.Client, Idle: b.Client, MDSGIDStart: m.MDS.GID}
 	var outcome clientMetricsOutcome
 	var read cephFSMetricsFile
+	unavailable := func() []map[string]any {
+		var gaps []map[string]any
+		for i, s := range window.Samples {
+			if s.Unavailable != "" {
+				gaps = append(gaps, map[string]any{"sample": i, "start": s.Start, "end": s.End, "error": s.Unavailable})
+			}
+		}
+		return gaps
+	}
 	defer func() {
 		// The receipt is emitted before the cluster is torn down, whatever the
 		// outcome, so a failed run keeps the ledger.
 		data, err := json.Marshal(map[string]any{"filesystem": m.FS.FilesystemName, "mds": m.MDS, "native_version": m.Version,
 			"executors": executors, "writer": a, "idle": b, "acked_bytes": window.AckedBytes,
 			"gate_opened": window.GateOpened, "acked": window.Acked, "deadline": window.Deadline,
-			"mds_gid_start": window.MDSGIDStart, "mds_gid_end": window.MDSGIDEnd, "samples": len(window.Samples),
+			"mds_gid_start": window.MDSGIDStart, "mds_gid_end": window.MDSGIDEnd, "samples": len(window.Samples), "unavailable_samples": unavailable(),
 			"verdict": outcome.Verdict, "reason": outcome.Reason, "writer_totals": outcome.Writer, "idle_totals": outcome.Idle,
 			"independent_read": read,
 			"scope":            "cumulative total_write_ops/total_write_size of one writer and one idle client on rank 0; not message counts, other metrics, reporting latency or MDS/rank changes"})
@@ -153,7 +162,11 @@ func testCephFSClientMetrics(t *testing.T) {
 		dump, err := m.Cluster.Ceph(ctx, "tell", "mds."+m.MDS.Name, "counter", "dump")
 		s.End = time.Now()
 		if err != nil {
-			t.Fatalf("counter dump: %v", err)
+			// The failed query stays in the series; the judge decides what the
+			// gap means for its phase.
+			s.Unavailable = err.Error()
+			window.Samples = append(window.Samples, s)
+			return s
 		}
 		if s.Section, err = parseClientMetricsSection(dump, m.FS.FilesystemName, uint64(m.MDS.Rank), a.Client, b.Client); err != nil {
 			t.Fatalf("counter dump: %v", err)

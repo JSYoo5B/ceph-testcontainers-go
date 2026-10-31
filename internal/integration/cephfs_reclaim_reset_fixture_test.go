@@ -214,8 +214,9 @@ func rstObs(start, end float64, a, u string, aLock, uLock harness.ResetLock) har
 	return harness.ResetObservation{Start: rstAt(start), End: rstAt(end), Sessions: s, ALock: aLock, ULock: uLock}
 }
 
-// rstGood kills A at t=10, runs the missing-UUID attempt over [20,21], RESET
-// over [30,34] and mounts the replacement at t=50.
+// rstGood kills A at t=10, runs the missing-UUID attempt over [20,21], the
+// state-preserving request over [24,25], RESET over [30,34] and mounts the
+// replacement at t=50.
 func rstGood() harness.ResetSequence {
 	held := func(s, e float64) harness.ResetObservation {
 		return rstObs(s, e, "open", "open", harness.ResetLockHeld, harness.ResetLockHeld)
@@ -227,6 +228,9 @@ func rstGood() harness.ResetSequence {
 		Missing: harness.ResetAttempt{Handle: "h-missing", Initialized: true, Flags: harness.CephReclaimReset,
 			Target: "uuid-nobody", OwnUUID: "uuid-b1", RC: rstInt(-2), Start: rstAt(20), End: rstAt(21)},
 		AfterMissing: []harness.ResetObservation{held(22, 23)},
+		Preserve: harness.ResetAttempt{Handle: "h-preserve", Initialized: true, Flags: 0,
+			Target: "uuid-a", OwnUUID: "uuid-b3", RC: rstInt(-22), Replies: []int{-22}, Start: rstAt(24), End: rstAt(25)},
+		AfterPreserve: []harness.ResetObservation{held(26, 27)},
 		Reset: harness.ResetAttempt{Handle: "h-reset", Initialized: true, Flags: harness.CephReclaimReset,
 			Target: "uuid-a", OwnUUID: "uuid-b2", RC: rstInt(0), Start: rstAt(30), End: rstAt(34)},
 		AfterReset:    []harness.ResetObservation{rstObs(35, 36, "", "open", harness.ResetLockFree, harness.ResetLockHeld)},
@@ -259,13 +263,32 @@ func TestResetSequenceJudge(t *testing.T) {
 		// Handle freshness: the stale reclaim_target_addrs hazard.
 		{"missing attempt on a handle that already reclaimed", func(s *harness.ResetSequence) { s.Missing.PriorReclaimCalls = 1 }, harness.ResetInconclusive, "reuses a handle"},
 		{"RESET on a reused handle", func(s *harness.ResetSequence) { s.Reset.PriorReclaimCalls = 1 }, harness.ResetInconclusive, "reuses a handle"},
-		{"one handle for both attempts", func(s *harness.ResetSequence) { s.Reset.Handle = s.Missing.Handle }, harness.ResetInconclusive, "share one native handle"},
+		{"one handle for both attempts", func(s *harness.ResetSequence) { s.Reset.Handle = s.Missing.Handle }, harness.ResetInconclusive, "own native handle"},
 		{"uninitialized handle", func(s *harness.ResetSequence) { s.Missing.Initialized = false }, harness.ResetInconclusive, "no initialized"},
 		{"unnamed handle", func(s *harness.ResetSequence) { s.Reset.Handle = "" }, harness.ResetInconclusive, "no initialized"},
 
 		// Flags, targets, return values.
-		{"state-preserving flags 0 on RESET", func(s *harness.ResetSequence) { s.Reset.Flags = 0 }, harness.ResetInconclusive, "not CEPH_RECLAIM_RESET"},
-		{"flags 0 on the missing attempt", func(s *harness.ResetSequence) { s.Missing.Flags = 0 }, harness.ResetInconclusive, "not CEPH_RECLAIM_RESET"},
+		{"state-preserving flags 0 on RESET", func(s *harness.ResetSequence) { s.Reset.Flags = 0 }, harness.ResetInconclusive, "RESET attempt used flags 0, not 1"},
+		{"flags 0 on the missing attempt", func(s *harness.ResetSequence) { s.Missing.Flags = 0 }, harness.ResetInconclusive, "missing-UUID attempt used flags 0, not 1"},
+
+		// The state-preserving request (flags 0) and its refusal.
+		{"MDS accepts the state-preserving request", func(s *harness.ResetSequence) { s.Preserve.RC = rstInt(0) }, harness.ResetContradicted, "accepted a reclaim without CEPH_RECLAIM_RESET"},
+		{"state-preserving request with RESET flags", func(s *harness.ResetSequence) { s.Preserve.Flags = harness.CephReclaimReset }, harness.ResetInconclusive, "state-preserving attempt used flags 1, not 0"},
+		{"state-preserving request other errno", func(s *harness.ResetSequence) { s.Preserve.RC = rstInt(-1) }, harness.ResetInconclusive, "not -EINVAL"},
+		{"state-preserving return unrecorded", func(s *harness.ResetSequence) { s.Preserve.RC = nil }, harness.ResetInconclusive, "not recorded"},
+		{"client-side EINVAL without an MDS reply", func(s *harness.ResetSequence) { s.Preserve.Replies = []int{} }, harness.ResetInconclusive, "want exactly one -22"},
+		{"MDS reply not read", func(s *harness.ResetSequence) { s.Preserve.Replies = nil }, harness.ResetInconclusive, "want exactly one -22"},
+		{"MDS reply of success with a client EINVAL", func(s *harness.ResetSequence) { s.Preserve.Replies = []int{0} }, harness.ResetInconclusive, "want exactly one -22"},
+		{"two MDS replies", func(s *harness.ResetSequence) { s.Preserve.Replies = []int{-22, -22} }, harness.ResetInconclusive, "want exactly one -22"},
+		{"state-preserving request targets U", func(s *harness.ResetSequence) { s.Preserve.Target = "uuid-u" }, harness.ResetInconclusive, "does not target the killed client"},
+		{"state-preserving requester reuses U's UUID", func(s *harness.ResetSequence) { s.Preserve.OwnUUID = "uuid-u" }, harness.ResetInconclusive, "reuses a live"},
+		{"state-preserving request shares the RESET handle", func(s *harness.ResetSequence) { s.Preserve.Handle = s.Reset.Handle }, harness.ResetInconclusive, "own native handle"},
+		{"state-preserving request on a reused handle", func(s *harness.ResetSequence) { s.Preserve.PriorReclaimCalls = 1 }, harness.ResetInconclusive, "reuses a handle"},
+		{"state-preserving request overlaps RESET", func(s *harness.ResetSequence) { s.Preserve.End = rstAt(31) }, harness.ResetInconclusive, "out of order"},
+		{"no observation after the state-preserving request", func(s *harness.ResetSequence) { s.AfterPreserve = nil }, harness.ResetInconclusive, "no observation fits"},
+		{"A evicted by the refused request", func(s *harness.ResetSequence) { s.AfterPreserve[0].Sessions = harness.ResetSessions{rstU: "open"} }, harness.ResetInconclusive, "not confirmed present"},
+		{"A lock freed by the refused request", func(s *harness.ResetSequence) { s.AfterPreserve[0].ALock = harness.ResetLockFree }, harness.ResetInconclusive, "not confirmed present"},
+		{"unrelated session lost after the refused request", func(s *harness.ResetSequence) { s.AfterPreserve[0].Sessions = harness.ResetSessions{rstA: "open"} }, harness.ResetContradicted, "lost its session"},
 		{"missing target is A", func(s *harness.ResetSequence) { s.Missing.Target = "uuid-a" }, harness.ResetInconclusive, "targets the UUID that RESET"},
 		{"missing target is U", func(s *harness.ResetSequence) { s.Missing.Target = "uuid-u" }, harness.ResetInconclusive, "names a live or own"},
 		{"missing target is the reclaimer's own", func(s *harness.ResetSequence) { s.Missing.Target = s.Reset.OwnUUID }, harness.ResetInconclusive, "names a live or own"},
@@ -341,6 +364,7 @@ func TestResetSequenceJudge(t *testing.T) {
 			// Deep-copy the observation slices that mutators edit in place.
 			s.AfterKill = rstCloneObs(s.AfterKill)
 			s.AfterMissing = rstCloneObs(s.AfterMissing)
+			s.AfterPreserve = rstCloneObs(s.AfterPreserve)
 			s.AfterReset = rstCloneObs(s.AfterReset)
 			c.mutate(&s)
 			got := harness.JudgeResetSequence(s)
