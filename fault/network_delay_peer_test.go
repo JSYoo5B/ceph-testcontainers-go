@@ -154,10 +154,10 @@ const (
 
 func TestCheckPeerFilterAgainstNativeDumps(t *testing.T) {
 	v4, v6 := netip.MustParseAddr("172.19.0.3"), netip.MustParseAddr("fd62:93fe:2c9e::3")
-	if err := checkPeerFilter(json.RawMessage(nativeIPv4PeerFilter), "7e00:", []NetworkPeer{{v4, 7000}}); err != nil {
+	if err := checkPeerFilter(json.RawMessage(nativeIPv4PeerFilter), "7e00:", []NetworkPeer{{v4, 7000}}, peerMatch{}); err != nil {
 		t.Fatalf("IPv4: %v", err)
 	}
-	if err := checkPeerFilter(json.RawMessage(nativeIPv6PeerFilter), "7e00:", []NetworkPeer{{v6, 7000}}); err != nil {
+	if err := checkPeerFilter(json.RawMessage(nativeIPv6PeerFilter), "7e00:", []NetworkPeer{{v6, 7000}}, peerMatch{}); err != nil {
 		t.Fatalf("IPv6: %v", err)
 	}
 	for name, test := range map[string]struct {
@@ -179,7 +179,7 @@ func TestCheckPeerFilterAgainstNativeDumps(t *testing.T) {
 		"a foreign filter":       {strings.Replace(nativeIPv4PeerFilter, `[{"parent":"7e00:","protocol":"ip","pref":10,`, `[{"parent":"7e00:","protocol":"ip","pref":20,`, 1), "7e00:", v4, 7000},
 		"no filter":              {`[]`, "7e00:", v4, 7000},
 	} {
-		if err := checkPeerFilter(json.RawMessage(test.dump), test.root, []NetworkPeer{{test.peer, test.port}}); err == nil {
+		if err := checkPeerFilter(json.RawMessage(test.dump), test.root, []NetworkPeer{{test.peer, test.port}}, peerMatch{}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}

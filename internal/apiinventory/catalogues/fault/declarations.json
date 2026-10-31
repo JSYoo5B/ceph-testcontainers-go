@@ -2,8 +2,14 @@
   "schema": "ceph-api-naming/v2",
   "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
   "package": "fault",
-  "count": 35,
+  "count": 44,
   "entries": [
+    {
+      "current": "fault.AllPackets",
+      "kind": "const",
+      "proposed": "fault.AllPackets",
+      "decision": "baseline"
+    },
     {
       "current": "fault.ApplyLinkProfile",
       "kind": "function",
@@ -22,6 +28,18 @@
       "current": "fault.BitPerSecond",
       "kind": "const",
       "proposed": "fault.BitPerSecond",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.BothDirections",
+      "kind": "const",
+      "proposed": "fault.BothDirections",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.ConnectionSetup",
+      "kind": "const",
+      "proposed": "fault.ConnectionSetup",
       "decision": "baseline"
     },
     {
@@ -52,6 +70,12 @@
       "current": "fault.GigabitPerSecond",
       "kind": "const",
       "proposed": "fault.GigabitPerSecond",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.Inbound",
+      "kind": "const",
+      "proposed": "fault.Inbound",
       "decision": "baseline"
     },
     {
@@ -124,6 +148,20 @@
       "decision": "baseline"
     },
     {
+      "current": "fault.NetworkDirection",
+      "kind": "type",
+      "proposed": "fault.NetworkDirection",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkDirection.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "NetworkDirection",
+      "proposed": "fault.NetworkDirection.String",
+      "decision": "baseline"
+    },
+    {
       "current": "fault.NetworkInterruption",
       "kind": "type",
       "proposed": "fault.NetworkInterruption",
@@ -163,6 +201,20 @@
       "current": "fault.NetworkPeer",
       "kind": "type",
       "proposed": "fault.NetworkPeer",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkPhase",
+      "kind": "type",
+      "proposed": "fault.NetworkPhase",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.NetworkPhase.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "NetworkPhase",
+      "proposed": "fault.NetworkPhase.String",
       "decision": "baseline"
     },
     {
@@ -211,6 +263,12 @@
       "signature": "func() string",
       "receiver": "NetworkRate",
       "proposed": "fault.NetworkRate.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "fault.Outbound",
+      "kind": "const",
+      "proposed": "fault.Outbound",
       "decision": "baseline"
     },
     {

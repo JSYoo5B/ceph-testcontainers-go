@@ -193,9 +193,10 @@ refuse `NET_ADMIN` or the namespace join.
 
 What to expect:
 
-- Only egress of the target is shaped. A request and its answer cross the
-  interface once each way, so the answer arrives at least `Delay` late. To
-  shape both directions between two containers, hold one lease on each.
+- By default only egress of the target is shaped. A request and its answer
+  cross the interface once each way, so the answer arrives at least `Delay`
+  late. To shape the other direction too, set `Direction` (see
+  [Direction and phase](#direction-and-phase)).
 - `Jitter` can reorder packets of one connection, which TCP repairs at some
   cost.
 - An interface whose root qdisc is not the kernel's default is refused, and an
@@ -234,6 +235,64 @@ was lost: read the outcome back with another client before treating the
 operation as failed. Get peer addresses from a client's `ContainerIP` or from
 [`DaemonAddresses`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#DaemonAddresses). For an MDS path cut,
 see [MDS sessions](messenger-client-fixtures.md#mds-sessions).
+
+### Direction and phase
+
+`Direction` picks which side of the selected paths is shaped:
+
+| `Direction` | Shaped | Where the lease lives |
+| --- | --- | --- |
+| `fault.Outbound` (default) | What the target sends to the peers | The target's endpoint |
+| `fault.Inbound` | What each peer sends to the target | Each peer's endpoint, one lease per peer container in `lease.PeerLeases` |
+| `fault.BothDirections` | Both | The target's endpoint and each peer's |
+
+The helper can only shape what an endpoint sends, so `Inbound` and
+`BothDirections` put the same profile on each peer's own endpoint, selecting the
+packets it sends to the target. Each peer address must therefore belong to a
+running container on the same bridge, such as a daemon's address from
+`DaemonAddresses`; any other address is refused before anything changes. A
+`PeerPort` stays the peer's port in both directions: outbound it is the
+destination port, inbound the source port of what the peer sends from it, so
+one `NetworkPeer` selects both halves of a conversation with a daemon's
+Messenger port. With `Inbound` alone nothing is applied to the target:
+`lease.Status` is refused, so read each `lease.PeerLeases[i].Status`. `Restore`
+and `Terminate` restore all of them.
+
+`Phase: fault.ConnectionSetup` shapes only TCP segments with SYN set: the
+target's connection attempts, and with `Inbound` the peer's handshake answers.
+Established connections are untouched. With `Loss: 100` every session that
+exists keeps working while every new connection on the path, a reconnect
+included, never completes. It needs `Peer` or `Peers`.
+
+```golang
+// osd.0's msgr2 address: clients that are connected keep reading from it,
+// a client that connects now times out on its objects.
+setup, err := fault.ApplyNetworkProfile(ctx, cluster, client, fault.NetworkProfile{
+	HelperImage: fault.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Peer:        osd0,
+	PeerPort:    osd0Port,
+	Phase:       fault.ConnectionSetup,
+	Loss:        100,
+})
+
+// The same OSD's answers to client, cut at the OSD's endpoint.
+answers, err := fault.ApplyNetworkProfile(ctx, cluster, client, fault.NetworkProfile{
+	HelperImage: fault.NetemHelperImage,
+	Plane:       ceph.PublicNetworkPlane,
+	Peer:        osd0,
+	PeerPort:    osd0Port,
+	Direction:   fault.Inbound,
+	Loss:        100,
+})
+```
+
+Both selectors work below Ceph, on TCP. They cannot pick a Messenger frame or
+message type: msgr2 frames are not at a fixed offset of a packet, and in secure
+mode they are encrypted. To drop or delay messages by peer kind inside a
+daemon, use `ms_blackhole_*` or `ms_inject_delay_*` (see
+[Dropping or delaying messages](#dropping-or-delaying-messages)).
+`TestNetworkDirectionAndPhase` shows both selectors against two OSDs.
 
 ### Bandwidth limits
 
@@ -342,7 +401,7 @@ endpoint does not mean the backlog is replicated: wait with `WaitReplayReady`,
 `WaitSnapshotSynced` or `WaitSyncReady` and compare the data.
 
 To cut one direction instead of a whole endpoint, use `ApplyNetworkProfile`
-with a `Peer`, or for RGW
+with a `Peer` and a `Direction`, or for RGW
 [`multisite.Fixture.ApplyZoneLinkProfile`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/rgw/multisite#Fixture.ApplyZoneLinkProfile),
 which shapes only the packets one zone's gateway sends to another zone's
 gateway. The peer zone then stops receiving changes while it still pulls its
