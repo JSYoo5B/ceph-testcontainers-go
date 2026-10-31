@@ -165,11 +165,11 @@ type NetworkProfile struct {
 	// without delay. It is an IPv4 address, or an IPv6 address for an
 	// endpoint that has one, such as a daemon's address from
 	// DaemonAddresses on the same plane. Only packets that leave the target
-	// are selected: to delay the other direction, delay the peer's endpoint
-	// with the target's address.
+	// are selected, unless Direction also shapes the peer's side.
 	Peer netip.Addr
 	// PeerPort, with Peer, limits the delay further to TCP packets to this
-	// destination port, such as one of the peer's Messenger ports. Zero
+	// destination port, such as one of the peer's Messenger ports, and on
+	// the peer's side of an Inbound delay to its packets from that port. Zero
 	// selects every packet to Peer. An IPv6 packet with extension headers
 	// before its TCP header is not selected.
 	PeerPort uint16
@@ -180,6 +180,15 @@ type NetworkProfile struct {
 	// every other packet leaves without delay. It holds at most
 	// MaxNetworkPeers distinct entries, of either family.
 	Peers []NetworkPeer
+	// Direction selects which side of the paths to the selected peers is
+	// shaped: Outbound (the zero value) what the target sends, Inbound what
+	// the peers send to the target, BothDirections both. Inbound and
+	// BothDirections need a Peer or Peers; see NetworkDirection.
+	Direction NetworkDirection
+	// Phase selects which packets of a selected path are shaped: AllPackets
+	// (the zero value), or ConnectionSetup, only TCP segments with SYN set.
+	// ConnectionSetup needs a Peer or Peers; see NetworkPhase.
+	Phase NetworkPhase
 	// Loss drops this percentage of the packets that the delay applies to,
 	// at random and independently, from more than 0 to 100. With 100 every
 	// selected packet is dropped: with a Peer or Peers, the target's packets
@@ -253,6 +262,70 @@ func (d NetworkProfile) requestedFaults() []string {
 		}
 	}
 	return names
+}
+
+// NetworkDirection is the side of a profile's selected paths that it shapes.
+// The netem helper shapes only what an endpoint sends, so the other side of a
+// path is shaped at the peer's endpoint: for Inbound and BothDirections, every
+// selected peer address must belong to a running container attached to the
+// same bridge, and the lease applies the same profile there, selecting the
+// packets that the peer sends to the target's address of that family. A
+// peer's Port then selects the TCP source port of what the peer sends, so
+// both directions of a conversation with one of the peer's ports, such as a
+// Messenger port of an OSD, are selected by the same NetworkPeer.
+type NetworkDirection int
+
+const (
+	// Outbound shapes what the target sends.
+	Outbound NetworkDirection = iota
+	// Inbound shapes what the selected peers send to the target, at each
+	// peer's endpoint; nothing is applied to the target's own endpoint.
+	Inbound
+	// BothDirections shapes both, with one lease on the target's endpoint
+	// and one on each peer's.
+	BothDirections
+)
+
+func (d NetworkDirection) outbound() bool { return d == Outbound || d == BothDirections }
+func (d NetworkDirection) inbound() bool  { return d == Inbound || d == BothDirections }
+
+// String names the direction.
+func (d NetworkDirection) String() string {
+	switch d {
+	case Outbound:
+		return "outbound"
+	case Inbound:
+		return "inbound"
+	case BothDirections:
+		return "both directions"
+	}
+	return fmt.Sprintf("NetworkDirection(%d)", int(d))
+}
+
+// NetworkPhase is the part of a TCP connection that a profile shapes.
+type NetworkPhase int
+
+const (
+	// AllPackets shapes every selected packet.
+	AllPackets NetworkPhase = iota
+	// ConnectionSetup shapes only the selected TCP segments with SYN set:
+	// connection attempts, and the SYN-ACK that answers a peer's attempt.
+	// Established connections keep their packets unshaped, so with a Loss of
+	// 100 every session that exists stays up while every new connection,
+	// reconnect included, fails on that path. Its u32 key sits at the TCP
+	// flags of a header directly after a base IP header, like the port keys.
+	ConnectionSetup
+)
+
+// String names the phase.
+func (p NetworkPhase) String() string {
+	switch p {
+	case AllPackets:
+		return "all packets"
+	case ConnectionSetup:
+		return "connection setup"
+	}
+	return fmt.Sprintf("NetworkPhase(%d)", int(p))
 }
 
 // NetworkPeer selects the packets that a delay's target sends to Addr, an
@@ -361,8 +434,24 @@ type NetworkProfileLease struct {
 	QueueLimit int
 	// Reorder, Duplicate and Corrupt are the requested packet faults.
 	Reorder, Duplicate, Corrupt NetworkPacketFault
+	// Direction and Phase are the requested ones.
+	Direction NetworkDirection
+	Phase     NetworkPhase
+	// SourcePorts says that each of Peers' ports is the TCP source port of
+	// what this endpoint sends, not the destination port: it is set on the
+	// leases in PeerLeases, whose Peers are the target's addresses.
+	SourcePorts bool
+	// PeerLeases holds, for Inbound and BothDirections, one lease on each
+	// selected peer's endpoint, shaping what that peer sends to the target.
+	// Restore restores them with the rest; each has its own Status. With
+	// Inbound alone the lease applies nothing to the target's endpoint, and
+	// its own Status is refused.
+	PeerLeases []*NetworkProfileLease
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// shapes reports that the lease owns a profile on its own endpoint;
+	// an Inbound lease only holds its peers' leases.
+	shapes  bool
 	backend netemBackend
 	helper  testcontainers.Container
 	// handle is the root qdisc that the lease owns: the netem qdisc, or with
@@ -394,6 +483,9 @@ type netemBackend interface {
 	// target inspects id and its endpoint on network. A removed container
 	// returns an error for which errdefs.IsNotFound is true.
 	target(ctx context.Context, id, network string) (netemTarget, error)
+	// endpoints maps every address of the running containers attached to
+	// network to the container's ID.
+	endpoints(ctx context.Context, network string) (map[netip.Addr]string, error)
 	// startHelper starts an idle helper from image in networkMode with only
 	// NET_ADMIN. A non-nil helper returned with an error must be removed.
 	startHelper(ctx context.Context, image string, networkMode container.NetworkMode) (testcontainers.Container, error)
@@ -408,7 +500,8 @@ type netemBackend interface {
 // checks the contract and netem on the loopback of the helper's own
 // namespace, with "rate" also netem's rate, with "reorder", "duplicate" or
 // "corrupt" those packet faults with a correlation, and with "peers" the prio qdisc
-// and u32 classifier; "inspect ADDRESS MAC" finds the interface with that address and
+// and u32 classifier, its filter also with a TCP source port key with
+// "sport", and with a destination port and a SYN key with "setup"; "inspect ADDRESS MAC" finds the interface with that address and
 // MAC in the namespace the helper joined, and "index N" the interface with
 // that index; both read its qdiscs and egress filters. tc prints each u32
 // key as another "match" member of one object, so the script collects them
@@ -466,8 +559,14 @@ if sys.argv[1]=="preflight":
     if "peers" in sys.argv[2:] and out["delete"][0]==0:
      out["prio"]=run("tc","qdisc","add","dev","lo","root","handle","c7e2:","prio","bands","3","priomap",*["0"]*16)[0::2]
      if out["prio"][0]==0:
-      out["u32"]=run("tc","filter","add","dev","lo","parent","c7e2:","protocol","ip","pref","10","handle","800::1","u32","match","ip","dst","127.0.0.2/32","flowid","c7e2:3")[0::2]
-      if out["u32"][0]==0: out["u32_shown"]=run("tc","-j","filter","show","dev","lo")[1]
+      keys=["match","ip","dst","127.0.0.2/32"]
+      if "sport" in sys.argv[2:] or "setup" in sys.argv[2:]: keys+=["match","ip","protocol","6","0xff","match","ip","sport" if "sport" in sys.argv[2:] else "dport","7000","0xffff"]
+      if "setup" in sys.argv[2:]: keys+=["match","u8","0x02","0x02","at","33"]
+      out["u32"]=run("tc","filter","add","dev","lo","parent","c7e2:","protocol","ip","pref","10","handle","800::1","u32",*keys,"flowid","c7e2:3")[0::2]
+      if out["u32"][0]==0:
+       o=run("tc","-j","filter","show","dev","lo")[1]
+       try: out["u32_shown"]=json.dumps(json.loads(o,object_pairs_hook=pairs))
+       except ValueError: out["u32_shown"]=o
       out["prio_delete"]=run("tc","qdisc","del","dev","lo","root","handle","c7e2:")[0::2]
 else:
  code,o,e=run("ip","-j","address","show")
@@ -678,6 +777,14 @@ func validateDelay(delay NetworkProfile, plane bool) error {
 		return invalidRequest("network delay takes either Peer and PeerPort or Peers")
 	case delay.Peers != nil && (len(delay.Peers) == 0 || len(delay.Peers) > MaxNetworkPeers):
 		return invalidRequest("network delay Peers needs 1 to %d peers", MaxNetworkPeers)
+	case delay.Direction < Outbound || delay.Direction > BothDirections:
+		return invalidRequest("network delay Direction %v is not Outbound, Inbound or BothDirections", delay.Direction)
+	case delay.Phase < AllPackets || delay.Phase > ConnectionSetup:
+		return invalidRequest("network delay Phase %v is not AllPackets or ConnectionSetup", delay.Phase)
+	case delay.Direction != Outbound && !delay.Peer.IsValid() && delay.Peers == nil:
+		return invalidRequest("network delay Direction %v needs a Peer or Peers: the other direction is shaped at each peer's endpoint", delay.Direction)
+	case delay.Phase == ConnectionSetup && !delay.Peer.IsValid() && delay.Peers == nil:
+		return invalidRequest("network delay Phase %v needs a Peer or Peers", delay.Phase)
 	}
 	for _, fault := range []namedFault{{"Reorder", delay.Reorder}, {"Duplicate", delay.Duplicate}, {"Corrupt", delay.Corrupt}} {
 		if err := fault.fault.validate(fault.name); err != nil {
@@ -769,40 +876,78 @@ type u32Key struct {
 	Mask  uint32
 }
 
+// peerMatch is how a lease's filters read their peers: whether each port is
+// a TCP source port rather than a destination port, and whether only
+// segments with SYN set are selected.
+type peerMatch struct {
+	source, setup bool
+}
+
+// tcpFlags is the offset of the TCP flags byte in a TCP header, and tcpSYN
+// its SYN bit.
+const (
+	tcpFlags = 13
+	tcpSYN   = 0x02
+)
+
 // peerFilterKeys are the u32 keys that select packets to peer and, when port
-// is not zero, TCP packets to that port. tc aligns every key to a 32-bit word:
-// the IPv4 protocol is at offset 8, the IPv6 next header at offset 4, and the
-// destination port is the low half of the word at offset 20 (IPv4) or 40
-// (IPv6), right after a header without options or extension headers.
-func peerFilterKeys(peer netip.Addr, port uint16) []u32Key {
+// is not zero, TCP packets to that destination port, or from that source port
+// with match.source, and with match.setup only TCP segments with SYN set. tc
+// aligns every key to a 32-bit word: the IPv4 protocol is at offset 8, the
+// IPv6 next header at offset 4, the destination port is the low half and the
+// source port the high half of the word at offset 20 (IPv4) or 40 (IPv6), and
+// the SYN bit is in the word at offset 32 (52), right after a header without
+// options or extension headers.
+func peerFilterKeys(peer netip.Addr, port uint16, match peerMatch) []u32Key {
 	var keys []u32Key
 	address := peer.AsSlice()
+	tcp := 20
+	protocol := u32Key{Off: 8, Value: 6 << 16, Mask: 0xff << 16}
 	if peer.Is4() {
 		keys = append(keys, u32Key{Off: 16, Value: binary.BigEndian.Uint32(address), Mask: 0xffffffff})
-		if port != 0 {
-			keys = append(keys, u32Key{Off: 8, Value: 6 << 16, Mask: 0xff << 16}, u32Key{Off: 20, Value: uint32(port), Mask: 0xffff})
+	} else {
+		for word := range 4 {
+			keys = append(keys, u32Key{Off: 24 + 4*word, Value: binary.BigEndian.Uint32(address[4*word:]), Mask: 0xffffffff})
 		}
-		return keys
+		tcp, protocol = 40, u32Key{Off: 4, Value: 6 << 8, Mask: 0xff << 8}
 	}
-	for word := range 4 {
-		keys = append(keys, u32Key{Off: 24 + 4*word, Value: binary.BigEndian.Uint32(address[4*word:]), Mask: 0xffffffff})
+	if port != 0 || match.setup {
+		keys = append(keys, protocol)
 	}
-	if port != 0 {
-		keys = append(keys, u32Key{Off: 4, Value: 6 << 8, Mask: 0xff << 8}, u32Key{Off: 40, Value: uint32(port), Mask: 0xffff})
+	switch {
+	case port != 0 && match.source:
+		keys = append(keys, u32Key{Off: tcp, Value: uint32(port) << 16, Mask: 0xffff << 16})
+	case port != 0:
+		keys = append(keys, u32Key{Off: tcp, Value: uint32(port), Mask: 0xffff})
+	}
+	if match.setup {
+		flags := tcp + tcpFlags
+		shift := 8 * (3 - flags%4)
+		keys = append(keys, u32Key{Off: flags - flags%4, Value: tcpSYN << shift, Mask: tcpSYN << shift})
 	}
 	return keys
 }
 
 // peerFilterArgs is the tc command that adds one filter of a delay with peers.
-func peerFilterArgs(device, root string, leaf peerLeaf) []string {
-	family, bits := "ip", "/32"
+func peerFilterArgs(device, root string, leaf peerLeaf, match peerMatch) []string {
+	family, bits, tcp := "ip", "/32", 20
 	if leaf.peer.Addr.Is6() {
-		family, bits = "ip6", "/128"
+		family, bits, tcp = "ip6", "/128", 40
 	}
 	argv := []string{"tc", "filter", "add", "dev", device, "parent", root, "protocol", leaf.protocol, "pref", leaf.pref,
 		"handle", leaf.handle, "u32", "match", family, "dst", leaf.peer.Addr.String() + bits}
+	if leaf.peer.Port != 0 || match.setup {
+		argv = append(argv, "match", family, "protocol", "6", "0xff")
+	}
 	if leaf.peer.Port != 0 {
-		argv = append(argv, "match", family, "protocol", "6", "0xff", "match", family, "dport", strconv.Itoa(int(leaf.peer.Port)), "0xffff")
+		field := "dport"
+		if match.source {
+			field = "sport"
+		}
+		argv = append(argv, "match", family, field, strconv.Itoa(int(leaf.peer.Port)), "0xffff")
+	}
+	if match.setup {
+		argv = append(argv, "match", "u8", fmt.Sprintf("0x%02x", tcpSYN), fmt.Sprintf("0x%02x", tcpSYN), "at", strconv.Itoa(tcp+tcpFlags))
 	}
 	return append(argv, "flowid", root+peerBand)
 }
@@ -830,14 +975,14 @@ type netemFilter struct {
 // exactly the filters of a delay with these peers under root, or nil. Header
 // entries, which tc prints for each preference's chain and its u32 table, may
 // accompany the filters; any other filter is foreign state.
-func checkPeerFilter(data json.RawMessage, root string, peers []NetworkPeer) error {
-	return checkPeerFilters(data, root, peers, true)
+func checkPeerFilter(data json.RawMessage, root string, peers []NetworkPeer, match peerMatch) error {
+	return checkPeerFilters(data, root, peers, match, true)
 }
 
 // checkPeerFilters is checkPeerFilter that, unless required, also accepts
 // only some of the filters, or none: the state of an apply that stopped
 // before its last filter.
-func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, required bool) error {
+func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, match peerMatch, required bool) error {
 	var filters []netemFilter
 	if err := json.Unmarshal(data, &filters); err != nil {
 		return fmt.Errorf("parse tc filter output: %w", err)
@@ -880,7 +1025,7 @@ func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, re
 			}
 			got = append(got, u32Key{Off: match.Off, Value: uint32(value), Mask: uint32(mask)})
 		}
-		if want := peerFilterKeys(leaf.peer.Addr, leaf.peer.Port); !slices.Equal(got, want) {
+		if want := peerFilterKeys(leaf.peer.Addr, leaf.peer.Port, match); !slices.Equal(got, want) {
 			return fmt.Errorf("the filter %s has the keys %v, not %v", leaf.handle, got, want)
 		}
 	}
@@ -935,6 +1080,16 @@ func checkPeerFilters(data json.RawMessage, root string, peers []NetworkPeer, re
 // and 800:). They are added root first and filters last, so no packet is
 // delayed before the hierarchy is complete.
 //
+// Direction Inbound or BothDirections also shapes what each selected peer
+// sends to the target: every peer address is resolved to the running
+// container that has it on the bridge, before anything changes, and the same
+// profile is applied to that container's endpoint, selecting the target's
+// address of the peer's family and the peer's port as a TCP source port. One
+// lease per peer container is in the returned lease's PeerLeases, each reserved
+// and restored by Terminate on its own as well; with Inbound alone nothing is
+// applied to the target. Phase ConnectionSetup adds a u32 key on the TCP SYN
+// bit to every filter, so only connection setup is shaped.
+//
 // TCP absorbs packet faults before Ceph sees them: the receiver reorders
 // segments back, discards duplicates (answering with a D-SACK) and drops a
 // segment whose checksum fails, which the sender retransmits. A Ceph
@@ -957,18 +1112,148 @@ func temporaryNetworkDelay(ctx context.Context, c *ceph.Container, target testco
 	if target == nil || target.GetContainerID() == "" {
 		return nil, invalidRequest("network delay requires a container")
 	}
-	id := target.GetContainerID()
-	name, token, err := reserveNetworkDelay(ctx, c, target, delay.Plane)
+	name, err := admitNetworkDelayTarget(ctx, c, target, delay.Plane)
 	if err != nil {
 		return nil, err
 	}
-	lease, err := applyNetworkDelay(ctx, backend, id, name, delay)
-	if closed := settleNetworkDelay(c, token, lease); closed && lease != nil {
-		// Terminate ran meanwhile and did not see this delay.
-		native, _ := faulthook.Terminated()
-		return lease, errors.Join(err, native, lease.Restore(ctx))
+	// Each endpoint's lease is reserved and held for Terminate on its own,
+	// so a delay on a peer's endpoint is restored even when the lease that
+	// lists it is lost.
+	hold := func(id string, apply func() (*NetworkProfileLease, error)) (*NetworkProfileLease, error) {
+		token, err := reserveNetworkDelay(ctx, c, name, id)
+		if err != nil {
+			return nil, err
+		}
+		lease, err := apply()
+		if closed := settleNetworkDelay(c, token, lease); closed && lease != nil {
+			// Terminate ran meanwhile and did not see this delay.
+			native, _ := faulthook.Terminated()
+			return lease, errors.Join(err, native, lease.Restore(ctx))
+		}
+		return lease, err
 	}
-	return lease, err
+	return applyDirectedDelay(ctx, backend, target.GetContainerID(), name, delay, hold)
+}
+
+// endpointHold applies one endpoint's lease: for a cluster's planes it
+// reserves the endpoint and keeps the lease for Terminate, for a link it
+// only applies it.
+type endpointHold func(id string, apply func() (*NetworkProfileLease, error)) (*NetworkProfileLease, error)
+
+// inboundPeer is one selected peer's endpoint for Inbound: the container
+// that has the peer's addresses on the network, and the target's addresses
+// with the peers' ports, which select what that peer sends to the target.
+type inboundPeer struct {
+	id    string
+	peers []NetworkPeer
+}
+
+// applyDirectedDelay applies delay in its Direction: on the target's
+// endpoint for Outbound, on each selected peer's endpoint for Inbound, and
+// on both for BothDirections. Every peer is resolved before anything is
+// applied, so a peer that is not a container on the network changes
+// nothing. A non-nil lease returned with an error must be restored.
+func applyDirectedDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile, hold endpointHold) (*NetworkProfileLease, error) {
+	var inbound []inboundPeer
+	var state netemTarget
+	if delay.Direction.inbound() {
+		var err error
+		if state, inbound, err = planInbound(ctx, backend, id, network, delay); err != nil {
+			return nil, err
+		}
+	}
+	var top *NetworkProfileLease
+	if delay.Direction.outbound() {
+		lease, err := hold(id, func() (*NetworkProfileLease, error) {
+			return applyNetworkDelay(ctx, backend, id, network, delay, false)
+		})
+		if lease == nil || err != nil {
+			return lease, err
+		}
+		top = lease
+	} else {
+		top = newNetworkProfileLease(backend, nil, id, network, state, "", delay.selection(), delay)
+		top.shapes = false
+	}
+	top.Direction = delay.Direction
+	for _, peer := range inbound {
+		profile := delay
+		profile.Direction, profile.Peer, profile.PeerPort, profile.Peers = Outbound, netip.Addr{}, 0, peer.peers
+		lease, err := hold(peer.id, func() (*NetworkProfileLease, error) {
+			return applyNetworkDelay(ctx, backend, peer.id, network, profile, true)
+		})
+		if lease != nil {
+			top.addPeerLease(lease)
+		}
+		if err != nil {
+			if !top.shapes && lease == nil && len(top.peerLeases()) == 0 {
+				return nil, err
+			}
+			return top, err
+		}
+	}
+	return top, nil
+}
+
+// addPeerLease publishes one more peer lease. With BothDirections, Terminate
+// may already hold the outer lease and restore it meanwhile, so PeerLeases is
+// written and read only under l.mu.
+func (l *NetworkProfileLease) addPeerLease(peer *NetworkProfileLease) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.PeerLeases = append(l.PeerLeases, peer)
+}
+
+// peerLeases returns the peer leases published so far.
+func (l *NetworkProfileLease) peerLeases() []*NetworkProfileLease {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.PeerLeases)
+}
+
+// planInbound resolves every selected peer address to the container that
+// has it on network, and lists, per container in the order of their first
+// peer, the target's address of each peer's family with that peer's port.
+// A peer address that no running container on the network has, or that is
+// the target's own, is refused, as is an IPv6 peer of a target without an
+// IPv6 address.
+func planInbound(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile) (netemTarget, []inboundPeer, error) {
+	state, err := backend.target(ctx, id, network)
+	if err != nil {
+		return netemTarget{}, nil, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
+	}
+	if err := admitNetemTarget(state); err != nil {
+		return netemTarget{}, nil, err
+	}
+	endpoints, err := backend.endpoints(ctx, network)
+	if err != nil {
+		return netemTarget{}, nil, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the endpoints of %s: %w", network, err))
+	}
+	var plan []inboundPeer
+	for _, peer := range delay.selection() {
+		owner, ok := endpoints[peer.Addr]
+		switch {
+		case !ok:
+			return netemTarget{}, nil, invalidRequest("network delay peer %s is not the address of a running container on %s: %v is shaped at the peer's endpoint", peer.Addr, network, delay.Direction)
+		case owner == id:
+			return netemTarget{}, nil, invalidRequest("network delay peer %s is the target's own address", peer.Addr)
+		}
+		address := state.address
+		if peer.Addr.Is6() {
+			if address = state.address6; !address.IsValid() {
+				return netemTarget{}, nil, invalidRequest("network delay peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
+			}
+		}
+		i := slices.IndexFunc(plan, func(p inboundPeer) bool { return p.id == owner })
+		if i < 0 {
+			plan, i = append(plan, inboundPeer{id: owner}), len(plan)
+		}
+		selected := NetworkPeer{Addr: address, Port: peer.Port}
+		if !slices.Contains(plan[i].peers, selected) {
+			plan[i].peers = append(plan[i].peers, selected)
+		}
+	}
+	return state, plan, nil
 }
 
 // ApplyLinkProfile applies the same netem profile on another bridge than the
@@ -996,12 +1281,15 @@ func temporaryLinkDelay(ctx context.Context, backend netemBackend, ctr testconta
 	case strings.TrimSpace(network) == "":
 		return nil, invalidRequest("a link delay requires a network name")
 	}
-	return applyNetworkDelay(ctx, backend, ctr.GetContainerID(), network, delay)
+	return applyDirectedDelay(ctx, backend, ctr.GetContainerID(), network, delay,
+		func(_ string, apply func() (*NetworkProfileLease, error)) (*NetworkProfileLease, error) {
+			return apply()
+		})
 }
 
-// reserveNetworkDelay admits target for a delay on plane and reserves its
-// endpoint until settleNetworkDelay.
-func reserveNetworkDelay(ctx context.Context, c *ceph.Container, target testcontainers.Container, plane ceph.NetworkPlane) (string, faulthook.Token, error) {
+// admitNetworkDelayTarget returns the bridge of plane, after checking that
+// the cluster is open and on bridges and that target is attached to it.
+func admitNetworkDelayTarget(ctx context.Context, c *ceph.Container, target testcontainers.Container, plane ceph.NetworkPlane) (string, error) {
 	var closed, hostNetwork, owned bool
 	var name string
 	err := faulthook.WithTopology(ctx, c, func() error {
@@ -1017,40 +1305,44 @@ func reserveNetworkDelay(ctx context.Context, c *ceph.Container, target testcont
 		owned = faulthook.Owns(c, target.GetContainerID())
 		return nil
 	})
-	var token faulthook.Token
 	if err != nil {
-		return "", token, err
+		return "", err
 	}
 	_, terminated := faulthook.Terminated()
 	switch {
 	case closed:
-		return "", token, terminated
+		return "", terminated
 	case hostNetwork:
-		return "", token, invalidRequest("network delay requires a bridge cluster: a delay on a host network would delay the host")
+		return "", invalidRequest("network delay requires a bridge cluster: a delay on a host network would delay the host")
 	case name == "":
-		return "", token, invalidRequest("Ceph bridge is not initialized")
+		return "", invalidRequest("Ceph bridge is not initialized")
 	}
 	if !owned {
 		attached, err := target.Networks(ctx)
 		if err != nil {
-			return "", token, faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the container's networks: %w", err))
+			return "", faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the container's networks: %w", err))
 		}
 		if !slices.Contains(attached, name) {
-			return "", token, invalidRequest("the container is not attached to Ceph network %s", name)
+			return "", invalidRequest("the container is not attached to Ceph network %s", name)
 		}
 	}
-	err = faulthook.WithTopology(ctx, c, func() error {
+	return name, nil
+}
+
+// reserveNetworkDelay reserves the endpoint of container id on the bridge
+// name until settleNetworkDelay.
+func reserveNetworkDelay(ctx context.Context, c *ceph.Container, name, id string) (faulthook.Token, error) {
+	_, terminated := faulthook.Terminated()
+	var token faulthook.Token
+	err := faulthook.WithTopology(ctx, c, func() error {
 		if faulthook.Closed(c) {
 			return terminated
 		}
 		var reserveErr error
-		token, _, reserveErr = faulthook.Reserve(ctx, c, faulthook.NetworkDelay, name+"/"+target.GetContainerID())
+		token, _, reserveErr = faulthook.Reserve(ctx, c, faulthook.NetworkDelay, name+"/"+id)
 		return reserveErr
 	})
-	if err != nil {
-		return "", token, err
-	}
-	return name, token, nil
+	return token, err
 }
 
 // settleNetworkDelay keeps a returned lease for Terminate, or frees the
@@ -1070,8 +1362,10 @@ func settleNetworkDelay(c *ceph.Container, token faulthook.Token, lease *Network
 
 // applyNetworkDelay checks the helper and the target, then applies the delay.
 // It returns a lease whenever the change may have reached the kernel.
-func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile) (*NetworkProfileLease, error) {
-	state, peers, imageID, err := admitNetworkDelay(ctx, backend, id, network, delay)
+// With source, each peer's port is the TCP source port of what the
+// endpoint sends: the lease shapes a peer's side of an Inbound delay.
+func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile, source bool) (*NetworkProfileLease, error) {
+	state, peers, imageID, err := admitNetworkDelay(ctx, backend, id, network, delay, source)
 	if err != nil {
 		return nil, err
 	}
@@ -1081,6 +1375,7 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 		return nil, err
 	}
 	lease := newNetworkProfileLease(backend, helper, id, network, state, imageID, peers, delay)
+	lease.SourcePorts = source
 	if err := lease.locate(ctx, state); err != nil {
 		return lease.discard(ctx, err)
 	}
@@ -1097,7 +1392,7 @@ func applyNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 // admitNetworkDelay checks the target's endpoint, that every IPv6 peer has an
 // IPv6 target address, and the helper image, before anything is started. It
 // returns the target, the selected peers and the checked image's ID.
-func admitNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile) (netemTarget, []NetworkPeer, string, error) {
+func admitNetworkDelay(ctx context.Context, backend netemBackend, id, network string, delay NetworkProfile, source bool) (netemTarget, []NetworkPeer, string, error) {
 	state, err := backend.target(ctx, id, network)
 	if err != nil {
 		return netemTarget{}, nil, "", faulthook.ClassifyDocker(ctx, fmt.Errorf("inspect the network delay target: %w", err))
@@ -1111,7 +1406,8 @@ func admitNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 			return netemTarget{}, nil, "", invalidRequest("network delay peer %s is IPv6, and the target has no IPv6 address on %s", peer.Addr, network)
 		}
 	}
-	imageID, err := preflightNetem(ctx, backend, delay.HelperImage, len(peers) > 0, delay.Rate > 0, delay.requestedFaults())
+	imageID, err := preflightNetem(ctx, backend, delay.HelperImage, len(peers) > 0, delay.Rate > 0, delay.requestedFaults(),
+		peerMatch{source: source, setup: delay.Phase == ConnectionSetup})
 	if err != nil {
 		return netemTarget{}, nil, "", err
 	}
@@ -1123,7 +1419,8 @@ func admitNetworkDelay(ctx context.Context, backend netemBackend, id, network st
 func newNetworkProfileLease(backend netemBackend, helper testcontainers.Container, id, network string, state netemTarget, imageID string, peers []NetworkPeer, delay NetworkProfile) *NetworkProfileLease {
 	lease := &NetworkProfileLease{ContainerID: id, NetworkName: network, SandboxID: state.sandboxID,
 		MACAddress: state.mac, Address: state.address, HelperImageID: imageID, Delay: delay.Delay,
-		Jitter: delay.Jitter, Peer: delay.Peer, PeerPort: delay.PeerPort, Peers: peers, Loss: delay.Loss, backend: backend, helper: helper}
+		Jitter: delay.Jitter, Peer: delay.Peer, PeerPort: delay.PeerPort, Peers: peers, Loss: delay.Loss, Direction: delay.Direction,
+		Phase: delay.Phase, backend: backend, helper: helper, shapes: true}
 	if delay.Rate > 0 {
 		lease.Rate, lease.QueueLimit = delay.Rate, delay.QueueLimit
 		if lease.QueueLimit == 0 {
@@ -1163,6 +1460,11 @@ func (l *NetworkProfileLease) locate(ctx context.Context, state netemTarget) err
 		return errors.Join(errors.New("the network delay target restarted while it was being checked"), err)
 	}
 	return nil
+}
+
+// match is how the lease's filters read its peers.
+func (l *NetworkProfileLease) match() peerMatch {
+	return peerMatch{source: l.SourcePorts, setup: l.Phase == ConnectionSetup}
 }
 
 // netemArguments is the netem qdisc's parameter list for delay, with rate and
@@ -1221,7 +1523,7 @@ func (l *NetworkProfileLease) plan(netem []string) []netemStep {
 		if len(leaves) > 1 {
 			label = fmt.Sprintf("add peer filter %d of %d", i+1, len(leaves))
 		}
-		steps = append(steps, netemStep{label, peerFilterArgs(l.Interface, l.handle, leaf)})
+		steps = append(steps, netemStep{label, peerFilterArgs(l.Interface, l.handle, leaf, l.match())})
 	}
 	return steps
 }
@@ -1315,7 +1617,7 @@ func admitNetemTarget(state netemTarget) error {
 // keywords) those packet faults in tc and the kernel, and for a delay with
 // peers also the kernel's prio qdisc and u32 classifier, in a helper without
 // a network, and returns the helper's image ID.
-func preflightNetem(ctx context.Context, backend netemBackend, image string, peers, rate bool, faults []string) (string, error) {
+func preflightNetem(ctx context.Context, backend netemBackend, image string, peers, rate bool, faults []string, match peerMatch) (string, error) {
 	helper, err := backend.startHelper(ctx, image, "none")
 	if err != nil {
 		return "", errors.Join(faulthook.ClassifyDocker(ctx, fmt.Errorf("start the netem preflight helper: %w", err)), removeNetemHelper(ctx, backend, helper))
@@ -1332,6 +1634,12 @@ func preflightNetem(ctx context.Context, backend netemBackend, image string, pee
 		args = append(args, faults...)
 		if peers {
 			args = append(args, "peers")
+			if match.source {
+				args = append(args, "sport")
+			}
+			if match.setup {
+				args = append(args, "setup")
+			}
 		}
 		report, err := runNetemScript(ctx, backend, helper, "check the netem helper", args...)
 		if err != nil {
@@ -1379,7 +1687,7 @@ func preflightNetem(ctx context.Context, backend netemBackend, image string, pee
 			}
 		}
 		if peers {
-			if err := preflightPeers(report); err != nil {
+			if err := preflightPeers(report, match); err != nil {
 				return "", err
 			}
 		}
@@ -1467,7 +1775,7 @@ func preflightFaults(report netemReport, faults []string) error {
 
 // preflightPeers checks the preflight's prio root and u32 filter on the
 // helper's loopback: what a delay with peers adds above netem.
-func preflightPeers(report netemReport) error {
+func preflightPeers(report netemReport, match peerMatch) error {
 	code, text, err := netemResult(report.Prio, "prio")
 	if err != nil {
 		return err
@@ -1482,9 +1790,29 @@ func preflightPeers(report netemReport) error {
 		return classifyNetem("add a u32 filter on the helper's loopback", code, text)
 	}
 	var shown []netemFilter
-	if err := json.Unmarshal([]byte(report.U32Shown), &shown); err != nil ||
-		!slices.ContainsFunc(shown, func(filter netemFilter) bool { return filter.Kind == "u32" && filter.Options.FlowID == "c7e2:3" }) {
+	if err := json.Unmarshal([]byte(report.U32Shown), &shown); err != nil {
 		return fmt.Errorf("%w: tc did not show the u32 filter it added", ErrNetemImageUnsupported)
+	}
+	i := slices.IndexFunc(shown, func(filter netemFilter) bool { return filter.Kind == "u32" && filter.Options.FlowID == "c7e2:3" })
+	if i < 0 {
+		return fmt.Errorf("%w: tc did not show the u32 filter it added", ErrNetemImageUnsupported)
+	}
+	if match.source || match.setup {
+		// The source port and SYN keys must reach the kernel as the
+		// lease will read them back.
+		var port uint16 = 7000
+		var got []u32Key
+		for _, key := range shown[i].Options.Matches {
+			value, err1 := strconv.ParseUint(key.Value, 16, 32)
+			mask, err2 := strconv.ParseUint(key.Mask, 16, 32)
+			if err1 != nil || err2 != nil || key.OffMask != "" {
+				return fmt.Errorf("%w: tc printed the u32 key %+v", ErrNetemImageUnsupported, key)
+			}
+			got = append(got, u32Key{Off: key.Off, Value: uint32(value), Mask: uint32(mask)})
+		}
+		if want := peerFilterKeys(netip.MustParseAddr("127.0.0.2"), port, match); !slices.Equal(got, want) {
+			return fmt.Errorf("%w: the u32 filter kept the keys %v instead of %v", ErrNetemKernelUnsupported, got, want)
+		}
 	}
 	if code, text, err = netemResult(report.PrioDelete, "prio_delete"); err != nil {
 		return err
@@ -1614,6 +1942,9 @@ func (l *NetworkProfileLease) Status(ctx context.Context) (NetworkProfileStatus,
 	if l.complete {
 		return NetworkProfileStatus{}, invalidRequest("the network delay was restored")
 	}
+	if !l.shapes {
+		return NetworkProfileStatus{}, invalidRequest("an Inbound delay shapes only its peers' endpoints: read the Status of each lease in PeerLeases")
+	}
 	if err := l.settle(ctx); err != nil {
 		return NetworkProfileStatus{}, err
 	}
@@ -1706,7 +2037,7 @@ func (l *NetworkProfileLease) read(ctx context.Context) (NetworkProfileStatus, e
 				netem, children = qdisc, children+1
 			}
 		}
-		status.mismatch = checkPeerFilter(report.Filters, l.handle, l.Peers)
+		status.mismatch = checkPeerFilter(report.Filters, l.handle, l.Peers, l.match())
 		if children != 1 {
 			status.mismatch = errors.Join(status.mismatch, fmt.Errorf("the prio root has no netem child %s in band %s", l.child, l.handle+peerBand))
 		} else if err := l.ownedPrefix(status); status.mismatch == nil && err != nil {
@@ -1767,7 +2098,7 @@ func (l *NetworkProfileLease) ownedPrefix(status NetworkProfileStatus) error {
 		}
 	}
 	if len(l.Peers) > 0 {
-		return checkPeerFilters(status.Filters, l.handle, l.Peers, false)
+		return checkPeerFilters(status.Filters, l.handle, l.Peers, l.match(), false)
 	}
 	var filters []netemFilter
 	if err := json.Unmarshal(status.Filters, &filters); err != nil {
@@ -1779,10 +2110,11 @@ func (l *NetworkProfileLease) ownedPrefix(status NetworkProfileStatus) error {
 	return nil
 }
 
-// Restore removes the delay's qdisc and then the helper. A delay whose
-// interface is gone needs no removal. A root qdisc that someone replaced, or
-// a filter or qdisc that someone added under the lease's root, is refused,
-// not removed, and the lease stays retryable.
+// Restore removes the delay's qdisc and then the helper, after restoring
+// every lease in PeerLeases. A delay whose interface is gone needs no removal. A
+// root qdisc that someone replaced, or a filter or qdisc that someone added
+// under the lease's root, is refused, not removed, and the lease stays
+// retryable.
 //
 //purpose:condition,lifetime
 func (l *NetworkProfileLease) Restore(ctx context.Context) error {
@@ -1793,7 +2125,22 @@ func (l *NetworkProfileLease) Restore(ctx context.Context) error {
 		return err
 	}
 	defer l.mu.Unlock()
+	// Every peer lease is restored, even after the outer lease completed: a
+	// peer lease published after an earlier Restore is still restored here.
+	// Each peer has its own mutex, so holding l.mu keeps PeerLeases stable
+	// without nesting the same lock.
+	var inbound error
+	for _, peer := range l.PeerLeases {
+		inbound = errors.Join(inbound, peer.Restore(ctx))
+	}
+	if inbound != nil {
+		return inbound
+	}
 	if l.complete {
+		return nil
+	}
+	if !l.shapes {
+		l.complete = true
 		return nil
 	}
 	if err := l.settle(ctx); err != nil {
@@ -1875,6 +2222,27 @@ func (dockerNetemBackend) target(ctx context.Context, id, network string) (netem
 		}
 	}
 	return state, nil
+}
+
+func (dockerNetemBackend) endpoints(ctx context.Context, network string) (map[netip.Addr]string, error) {
+	docker, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = docker.Close() }()
+	inspection, err := docker.NetworkInspect(ctx, network, mobycl.NetworkInspectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	addresses := map[netip.Addr]string{}
+	for id, endpoint := range inspection.Network.Containers {
+		for _, prefix := range []netip.Prefix{endpoint.IPv4Address, endpoint.IPv6Address} {
+			if prefix.IsValid() {
+				addresses[prefix.Addr()] = id
+			}
+		}
+	}
+	return addresses, nil
 }
 
 // netemHelperOptions run an idle helper in networkMode as root, as the

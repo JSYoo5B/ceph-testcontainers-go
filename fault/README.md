@@ -58,9 +58,12 @@ if err != nil {
   caller-owned containers are the caller's: restore them before removing the
   container or bridge.
 - Whole endpoint versus selected paths: `InterruptNetwork` cuts a whole
-  endpoint; to cut one direction of selected paths use `ApplyNetworkProfile`
-  with `Peer`/`Peers` and a `Loss` of 100. Shaping applies to what the target
-  sends; delay the peer's endpoint for the other direction.
+  endpoint; to cut selected paths use `ApplyNetworkProfile` with
+  `Peer`/`Peers` and a `Loss` of 100. `Direction` picks what the target sends
+  (`Outbound`, the default), what the peers send to it (`Inbound`, applied at
+  each peer container's endpoint) or both, and `Phase: ConnectionSetup` only
+  TCP connection setup, so existing sessions keep working while new
+  connections fail.
 - Opt-in helpers: network profiles need an image that meets
   [netem contract 1](https://github.com/JSYoo5B/ceph-testcontainers-images/blob/main/docs/EXTENSIONS.md)
   (`fault.NetemHelperImage` is the published one) and an engine that grants it

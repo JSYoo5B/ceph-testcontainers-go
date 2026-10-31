@@ -263,7 +263,7 @@
       "area": "messenger",
       "requirement": "Messenger-level faults: dropped client messages, delayed delivery, paused peers.",
       "symbols": [],
-      "status": "partial",
+      "status": "covered",
       "evidence": "native-state",
       "cases": [
         {
@@ -273,10 +273,22 @@
         {
           "test": "TestPausedOSDFaults",
           "asserts": "with nodown a paused OSD stays up while writes end in ETIMEDOUT and SLOW_OPS appears; without nodown it is marked down and degraded I/O works"
+        },
+        {
+          "test": "TestNetworkDelay",
+          "asserts": "a netem profile on one OSD's public endpoint delays only that OSD's answers, and with Peer or Peers only the packets to the selected peers and ports, of either family, while other clients and the other OSD stay fast"
+        },
+        {
+          "test": "TestNetworkDirectionAndPhase/setup",
+          "receipt": "NETWORK_DIRECTION_PHASE_RECEIPT",
+          "asserts": "a ConnectionSetup profile with a Loss of 100 from a client toward one OSD's msgr2 address drops only TCP segments with SYN: a client whose sessions existed before still reads both OSDs' objects at once, a new client reads the other OSD's object and gets ETIMEDOUT on the cut OSD's, netem counts drops, and after Restore a new client reads both"
+        },
+        {
+          "test": "TestNetworkDirectionAndPhase/inbound",
+          "receipt": "NETWORK_DIRECTION_PHASE_RECEIPT",
+          "asserts": "an Inbound profile with a Loss of 100 toward one OSD's msgr2 address is applied at that OSD container's endpoint, selecting the client's address and the OSD's port as a TCP source port, while the client's root qdisc stays the default; a new client gets ETIMEDOUT on the cut OSD's object and reads the other OSD's; after Restore it reads both and no helper is left"
         }
-      ],
-      "gap": "Peer, direction and phase selectors beyond whole-interface and one-peer loss remain.",
-      "owner": "#360"
+      ]
     },
     {
       "id": "messenger/keepalive-ack-reconnect",

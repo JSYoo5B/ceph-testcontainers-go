@@ -246,15 +246,15 @@ func TestCheckPeerFiltersOfSeveralPeers(t *testing.T) {
 	first := NetworkPeer{Addr: netip.MustParseAddr("172.19.0.3"), Port: 7000}
 	second := NetworkPeer{Addr: netip.MustParseAddr("172.19.0.4")}
 	peers := []NetworkPeer{first, second}
-	if err := checkPeerFilter(json.RawMessage(nativeIPv4PeerFilters), "7e00:", peers); err != nil {
+	if err := checkPeerFilter(json.RawMessage(nativeIPv4PeerFilters), "7e00:", peers, peerMatch{}); err != nil {
 		t.Fatal(err)
 	}
 	// Only the first filter, as after an apply that stopped before the
 	// second: owned, but not applied.
-	if err := checkPeerFilters(json.RawMessage(nativeIPv4PeerFilter), "7e00:", peers, false); err != nil {
+	if err := checkPeerFilters(json.RawMessage(nativeIPv4PeerFilter), "7e00:", peers, peerMatch{}, false); err != nil {
 		t.Fatalf("a prefix: %v", err)
 	}
-	if err := checkPeerFilter(json.RawMessage(nativeIPv4PeerFilter), "7e00:", peers); err == nil {
+	if err := checkPeerFilter(json.RawMessage(nativeIPv4PeerFilter), "7e00:", peers, peerMatch{}); err == nil {
 		t.Fatal("a missing filter was accepted")
 	}
 	for name, dump := range map[string]string{
@@ -267,19 +267,19 @@ func TestCheckPeerFiltersOfSeveralPeers(t *testing.T) {
 		"second with a port":   strings.Replace(nativeIPv4PeerFilters, `"value":"ac130004","mask":"ffffffff","offmask":"","off":16}`, `"value":"ac130004","mask":"ffffffff","offmask":"","off":16},{"value":"1b58","mask":"ffff","offmask":"","off":20}`, 1),
 		"second to another IP": strings.Replace(nativeIPv4PeerFilters, `"ac130004"`, `"ac130005"`, 1),
 	} {
-		if err := checkPeerFilter(json.RawMessage(dump), "7e00:", peers); err == nil {
+		if err := checkPeerFilter(json.RawMessage(dump), "7e00:", peers, peerMatch{}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
 	// The IPv6 filter of a mixed selection is in preference 11 and table
 	// 801:, not in the single-family 10 and 800:.
 	v6 := NetworkPeer{Addr: netip.MustParseAddr("fd62:93fe:2c9e::3"), Port: 7000}
-	if err := checkPeerFilter(json.RawMessage(nativeIPv6PeerFilter), "7e00:", []NetworkPeer{first, v6}); err == nil {
+	if err := checkPeerFilter(json.RawMessage(nativeIPv6PeerFilter), "7e00:", []NetworkPeer{first, v6}, peerMatch{}); err == nil {
 		t.Fatal("an IPv6 filter in preference 10 was accepted for a mixed selection")
 	}
 	mixed := strings.TrimSuffix(nativeIPv4PeerFilter, "]") + "," + strings.TrimPrefix(
 		strings.NewReplacer(`"pref":10`, `"pref":11`, `"fh":"800::1"`, `"fh":"801::1"`, `"key_ht":"800"`, `"key_ht":"801"`).Replace(nativeIPv6PeerFilter), "[")
-	if err := checkPeerFilter(json.RawMessage(mixed), "7e00:", []NetworkPeer{first, v6}); err != nil {
+	if err := checkPeerFilter(json.RawMessage(mixed), "7e00:", []NetworkPeer{first, v6}, peerMatch{}); err != nil {
 		t.Fatalf("mixed: %v", err)
 	}
 }

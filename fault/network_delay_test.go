@@ -440,16 +440,47 @@ func fakeU32Keys(args []string) []map[string]any {
 			} else {
 				keys = append(keys, key(4, 6<<8, 0xff<<8))
 			}
-		case "dport":
+		case "dport", "sport":
 			port, _ := strconv.Atoi(args[i+3])
-			if family == "ip" {
-				keys = append(keys, key(20, uint32(port), 0xffff))
-			} else {
-				keys = append(keys, key(40, uint32(port), 0xffff))
+			off, value, mask := 20, uint32(port), uint32(0xffff)
+			if family != "ip" {
+				off = 40
+			}
+			if field == "sport" {
+				value, mask = value<<16, mask<<16
+			}
+			keys = append(keys, key(off, value, mask))
+		default:
+			// match u8 VALUE MASK at OFFSET: tc packs the byte into its word.
+			if family == "u8" {
+				value, _ := strconv.ParseUint(args[i+2], 0, 8)
+				mask, _ := strconv.ParseUint(args[i+3], 0, 8)
+				at, _ := strconv.Atoi(args[i+5])
+				shift := 8 * (3 - at%4)
+				keys = append(keys, key(at-at%4, uint32(value)<<shift, uint32(mask)<<shift))
 			}
 		}
 	}
 	return keys
+}
+
+func (n *fakeNetem) endpoints(_ context.Context, network string) (map[netip.Addr]string, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	addresses := map[netip.Addr]string{}
+	if network != "tc-public" {
+		return addresses, nil
+	}
+	for id, target := range n.targets {
+		if target.removed || !target.running || len(target.namespace.links) < 2 {
+			continue
+		}
+		addresses[target.namespace.links[1].address] = id
+		if target.address6.IsValid() {
+			addresses[target.address6] = id
+		}
+	}
+	return addresses, nil
 }
 
 func (n *fakeNetem) run(ctx context.Context, ctr testcontainers.Container, label string, argv ...string) (supervised.Report, error) {
@@ -683,8 +714,25 @@ func (n *fakeNetem) script(helper *fakeNetemHelper, args []string) (supervised.R
 					if n.noU32 {
 						out["u32"] = []any{2, "Error: TC classifier not found.\nWe have an error talking to the kernel"}
 					} else {
+						// The script's keys, as netemScript's preflight passes them.
+						keys := []string{"match", "ip", "dst", "127.0.0.2/32"}
+						sport, setup := slices.Contains(args[1:], "sport"), slices.Contains(args[1:], "setup")
+						if sport || setup {
+							field := "dport"
+							if sport {
+								field = "sport"
+							}
+							keys = append(keys, "match", "ip", "protocol", "6", "0xff", "match", "ip", field, "7000", "0xffff")
+						}
+						if setup {
+							keys = append(keys, "match", "u8", "0x02", "0x02", "at", "33")
+						}
+						options := map[string]any{"fh": "800::1", "flowid": "c7e2:3"}
+						if sport || setup {
+							options["matches"] = fakeU32Keys(keys)
+						}
 						filters, _ := json.Marshal([]map[string]any{{"parent": "c7e2:", "protocol": "ip", "pref": 10, "kind": "u32",
-							"options": map[string]any{"fh": "800::1", "flowid": "c7e2:3"}}})
+							"options": options}})
 						out["u32_shown"] = string(filters)
 					}
 					out["prio_delete"] = []any{0, ""}

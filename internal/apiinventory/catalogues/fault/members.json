@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "fault",
-  "count": 64,
+  "count": 70,
   "types": {
     "fault.NetworkInterruption": [
       "NetworkInterruption.ContainerID field string",
@@ -20,6 +20,7 @@
     "fault.NetworkProfile": [
       "NetworkProfile.Corrupt field NetworkPacketFault",
       "NetworkProfile.Delay field time.Duration",
+      "NetworkProfile.Direction field NetworkDirection",
       "NetworkProfile.Duplicate field NetworkPacketFault",
       "NetworkProfile.HelperImage field string",
       "NetworkProfile.Jitter field time.Duration",
@@ -27,6 +28,7 @@
       "NetworkProfile.Peer field netip.Addr",
       "NetworkProfile.PeerPort field uint16",
       "NetworkProfile.Peers field []NetworkPeer",
+      "NetworkProfile.Phase field NetworkPhase",
       "NetworkProfile.Plane field ceph.NetworkPlane",
       "NetworkProfile.QueueLimit field int",
       "NetworkProfile.Rate field NetworkRate",
@@ -37,6 +39,7 @@
       "NetworkProfileLease.ContainerID field string",
       "NetworkProfileLease.Corrupt field NetworkPacketFault",
       "NetworkProfileLease.Delay field time.Duration",
+      "NetworkProfileLease.Direction field NetworkDirection",
       "NetworkProfileLease.Duplicate field NetworkPacketFault",
       "NetworkProfileLease.HelperImageID field string",
       "NetworkProfileLease.Interface field string",
@@ -47,12 +50,15 @@
       "NetworkProfileLease.Namespace field string",
       "NetworkProfileLease.NetworkName field string",
       "NetworkProfileLease.Peer field netip.Addr",
+      "NetworkProfileLease.PeerLeases field []*NetworkProfileLease",
       "NetworkProfileLease.PeerPort field uint16",
       "NetworkProfileLease.Peers field []NetworkPeer",
+      "NetworkProfileLease.Phase field NetworkPhase",
       "NetworkProfileLease.QueueLimit field int",
       "NetworkProfileLease.Rate field NetworkRate",
       "NetworkProfileLease.Reorder field NetworkPacketFault",
-      "NetworkProfileLease.SandboxID field string"
+      "NetworkProfileLease.SandboxID field string",
+      "NetworkProfileLease.SourcePorts field bool"
     ],
     "fault.NetworkProfileStatus": [
       "NetworkProfileStatus.Applied field bool",

@@ -21,3 +21,10 @@ func TestNetworkDelay(t *testing.T) {
 func TestNetworkDelayPeerIPv6(t *testing.T) {
 	harness.RunNetworkDelayPeerIPv6(t)
 }
+
+// The Direction and Phase selectors: connection setup cut toward one OSD
+// while sessions that exist keep answering, and one OSD's answers cut at its
+// own endpoint through an Inbound profile.
+func TestNetworkDirectionAndPhase(t *testing.T) {
+	harness.RunNetworkDirectionAndPhase(t)
+}

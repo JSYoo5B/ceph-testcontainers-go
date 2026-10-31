@@ -29,7 +29,12 @@ func (target closingTarget) Networks(context.Context) ([]string, error) {
 func TestNetworkDelayReservationRefusesClusterClosedDuringAdmission(t *testing.T) {
 	c := testhelper.TestCluster(nil, testhelper.TestConfig{NetworkName: "public"})
 	_, terminated := faulthook.Terminated()
-	if _, token, err := reserveNetworkDelay(t.Context(), c, closingTarget{c: c}, ceph.PublicNetworkPlane); !errors.Is(err, terminated) || token != (faulthook.Token{}) || len(testhelper.TestFaults(c, faulthook.NetworkDelay)) != 0 {
+	name, err := admitNetworkDelayTarget(t.Context(), c, closingTarget{c: c}, ceph.PublicNetworkPlane)
+	var token faulthook.Token
+	if err == nil {
+		token, err = reserveNetworkDelay(t.Context(), c, name, "osd-0")
+	}
+	if !errors.Is(err, terminated) || token != (faulthook.Token{}) || len(testhelper.TestFaults(c, faulthook.NetworkDelay)) != 0 {
 		t.Fatalf("a delay was reserved on a cluster closed meanwhile: %v", err)
 	}
 }
@@ -37,7 +42,7 @@ func TestNetworkDelayReservationRefusesClusterClosedDuringAdmission(t *testing.T
 func TestClosedClusterRefusesNetworkDelayReservation(t *testing.T) {
 	c := testhelper.TestCluster(nil, testhelper.TestConfig{Closed: true})
 	_, terminated := faulthook.Terminated()
-	if _, _, err := reserveNetworkDelay(t.Context(), c, contextLockClient{}, ceph.PublicNetworkPlane); !errors.Is(err, terminated) {
+	if _, err := admitNetworkDelayTarget(t.Context(), c, contextLockClient{}, ceph.PublicNetworkPlane); !errors.Is(err, terminated) {
 		t.Fatalf("closed cluster admitted a delay: %v", err)
 	}
 }
