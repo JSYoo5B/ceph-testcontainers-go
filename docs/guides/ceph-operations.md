@@ -36,14 +36,22 @@ owns. `MonitorContainer.Replace` then moves one MON to a new container:
 | --- | --- |
 | Refusals, before the MON is touched | another majority of the monmap is not in quorum; the store is not attached to this handle's container; the store has no recorded address |
 | Old container | removed; nothing may still mount the volume |
-| New container | from the handle's image, or from `DaemonOptions.WithImage`; same volume, same IPv4 address, entrypoint in a mode that refuses to format a missing store |
+| New container | from the handle's image, or from `DaemonOptions.WithImage`; same volume, same address (on the host network, the same ports), entrypoint in a mode that refuses to format a missing store |
 | Membership | unchanged: same name, rank and monmap entry; `Replace` waits for the MON to rejoin the quorum |
 
 The old handle is stale afterwards; use the one `Replace` returns. Replacing
 MON a removes the cluster's embedded container, as `Remove` on MON a does, and
-fixture commands then use the control container. The volume needs bridge
-networking with IPv4 addresses: `Run` refuses it with the host network or
-another address family. `MonitorContainer.Remove` releases the removed MON's
+fixture commands then use the control container. The volume needs IPv4
+addresses: `Run` refuses it with another address family. On the host network
+the MON's address includes its ports. `Replace` holds them from the removal of
+the old container until right before the new one starts; a process that takes
+one of them in that window makes the new MON fail to start, and the store stays
+retained for another `Replace` on the returned handle.
+
+A `Replace` that fails after the old container is gone returns the new handle
+with the error. The MON is then down, its store is neither formatted nor
+released, and `Replace` on that handle, for example with another image,
+continues the step. `MonitorContainer.Remove` releases the removed MON's
 volume, so a MON added again under that name starts on a new store.
 `Terminate` removes the volumes after the MON containers. See [MON data volumes](../internals/mon-volume-storage.md) for the
 store records and their release order.

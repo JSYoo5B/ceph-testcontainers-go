@@ -19,20 +19,25 @@ type generationDouble struct {
 
 func (d generationDouble) GetContainerID() string { return d.id }
 
-func TestMonitorStorageVolumeNeedsBridgeIPv4AndOneCarrier(t *testing.T) {
+// noRecipe is a MON recipe with no options.
+func noRecipe([]int) []testcontainers.ContainerCustomizer { return nil }
+
+func TestMonitorStorageVolumeNeedsIPv4AndOneCarrier(t *testing.T) {
 	volume := WithMonitorStorage(MonitorStorage{}.WithVolume())
 	settings, err := resolveOptions("example.invalid/ceph:x", []testcontainers.ContainerCustomizer{volume})
 	if err != nil || !settings.monitorVolume {
 		t.Fatalf("bridge IPv4 volume: %v %v", settings.monitorVolume, err)
 	}
+	if settings, err := resolveOptions("example.invalid/ceph:x", []testcontainers.ContainerCustomizer{volume, WithHostNetwork()}); err != nil || !settings.monitorVolume {
+		t.Fatalf("host network volume: %v %v", settings.monitorVolume, err)
+	}
 	if settings, err := resolveOptions("example.invalid/ceph:x", []testcontainers.ContainerCustomizer{WithMonitorStorage(MonitorStorage{})}); err != nil || settings.monitorVolume {
 		t.Fatalf("the zero value changed the settings: %v %v", settings.monitorVolume, err)
 	}
 	for name, opts := range map[string][]testcontainers.ContainerCustomizer{
-		"twice":        {volume, volume},
-		"host network": {volume, WithHostNetwork()},
-		"IPv6":         {volume, WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressIPv6))},
-		"dual stack":   {volume, WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressDualStack))},
+		"twice":      {volume, volume},
+		"IPv6":       {volume, WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressIPv6))},
+		"dual stack": {volume, WithNetworkConfig(NetworkConfig{}.WithAddressFamily(AddressDualStack))},
 	} {
 		if _, err := resolveOptions("example.invalid/ceph:x", opts); !errors.Is(err, ErrInvalidRequest) {
 			t.Errorf("%s: %v", name, err)
@@ -55,7 +60,7 @@ func generationRequest(t *testing.T, launch monStoreLaunch) (testcontainers.Gene
 		}
 		return generationDouble{id: "gen-1"}, nil
 	}
-	gens := c.monitorGenerations("b", nil, []string{"true"})
+	gens := c.monitorGenerations("b", noRecipe, []string{"true"})
 	_, err := gens.Create(t.Context(), launch, "example.invalid/ceph:new")
 	return req, err
 }
@@ -113,7 +118,7 @@ func TestMonitorGenerationClearsBeforeCreating(t *testing.T) {
 		created++
 		return generationDouble{id: "gen-1"}, nil
 	}
-	gens := c.monitorGenerations("b", nil, []string{"true"})
+	gens := c.monitorGenerations("b", noRecipe, []string{"true"})
 	gens.beforeCreate = func(context.Context) error { return errors.New("socket busy") }
 	if _, err := gens.Create(t.Context(), monStoreLaunch{volume: "v", mode: monStoreFormat, generation: 1}, "img"); err == nil || created != 0 {
 		t.Fatalf("a failed preparation still created a container: %v %d", err, created)

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -396,5 +397,79 @@ func TestHostNetworkHintEndedContextUsesUnknownEngineFallback(t *testing.T) {
 				t.Fatalf("ended diagnostic changed fallback: got=%q want=%q", got, want)
 			}
 		})
+	}
+}
+
+// runAllocator starts the allocator script with spec and returns its port
+// lease, or the diagnostics of a script that exited without one.
+func runAllocator(t *testing.T, spec string, count int) ([]int, string) {
+	t.Helper()
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python 3 is required to exercise the container allocator script")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, python, "-u", "-c", hostPortAllocatorScript, "127.0.0.1", spec)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var diagnostics strings.Builder
+	cmd.Stderr = &diagnostics
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	scanner := bufio.NewScanner(stdout)
+	if !scanner.Scan() {
+		_ = cmd.Wait()
+		return nil, diagnostics.String()
+	}
+	ports, err := parseHostPortLease(scanner.Bytes(), count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ports, ""
+}
+
+func TestHostPortAllocatorTakesExactPortsOrFails(t *testing.T) {
+	free, _ := runAllocator(t, "2", 2)
+	if free == nil {
+		t.Skip("environment does not allow binding temporary localhost sockets")
+	}
+	// The first allocator still holds them: an exact request must fail.
+	if ports, diagnostics := runAllocator(t, "["+strconv.Itoa(free[0])+"]", 1); ports != nil || !strings.Contains(diagnostics, "Address already in use") {
+		t.Fatalf("a held port was taken again: %v %s", ports, diagnostics)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	// A connection accepted on the port leaves it in TIME_WAIT on this side
+	// once this side closes first, as a removed MON's connections do.
+	go func() {
+		if conn, err := listener.Accept(); err == nil {
+			_ = conn.Close()
+		}
+	}()
+	if conn, err := net.Dial("tcp", listener.Addr().String()); err == nil {
+		_, _ = conn.Read(make([]byte, 1))
+		_ = conn.Close()
+	}
+	_ = listener.Close()
+	ports, diagnostics := runAllocator(t, "["+strconv.Itoa(port)+"]", 1)
+	if !slices.Equal(ports, []int{port}) {
+		t.Fatalf("a released port was not taken exactly: %v %s", ports, diagnostics)
+	}
+	if _, err := reserveExactHostPorts(t.Context(), "img", "127.0.0.1", []int{port, port}, time.Second); err == nil {
+		t.Fatal("a repeated exact port was accepted")
+	}
+	if _, err := reserveExactHostPorts(t.Context(), "img", "127.0.0.1", nil, time.Second); err == nil {
+		t.Fatal("an empty exact reservation was accepted")
 	}
 }

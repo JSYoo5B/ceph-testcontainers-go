@@ -9,6 +9,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/google/uuid"
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // Replace starts this MON in a new container on the store and address it
@@ -81,7 +82,7 @@ func (c *Container) replaceMonitor(ctx context.Context, handle *MonitorContainer
 	if daemon.imageSet {
 		image = daemon.image
 	}
-	gens := c.monitorGenerations(name, c.monitorJoinOptions(join, nil), monitorSocketReady(name))
+	gens := c.monitorGenerations(name, func(ports []int) []testcontainers.ContainerCustomizer { return c.monitorJoinOptions(join, ports) }, monitorSocketReady(name))
 	gens.beforeCreate = func(ctx context.Context) error { return c.clearAdminSocket(ctx, "mon."+name) }
 	oldID := cur.GetContainerID()
 	id, err := store.replaceGeneration(ctx, gens, image)

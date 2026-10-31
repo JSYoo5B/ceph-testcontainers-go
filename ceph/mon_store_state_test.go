@@ -219,7 +219,7 @@ var monStoreCallers = map[string]stateCaller{
 	// shared, AddMonitor under the topology lock.
 	"startMonitorStore": {"holds", []string{"begin", "discardFresh"}},
 	// runMonitor starts the first MON in Run, before the cluster is shared.
-	"runMonitor":          {"init", nil},
+	"runMonitor":          {"init", []string{"store"}},
 	"startJoiningMonitor": {"holds", nil},
 	"replaceMonitor":      {"takes", []string{"store"}},
 	// A permanent MON removal retires the removed MON's record.

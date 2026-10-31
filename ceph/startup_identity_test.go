@@ -124,6 +124,7 @@ var startupIdentityCallers = map[string]stateCaller{
 	"reserveTrackedHostPorts": {"fact", []string{"ownedLabel"}},
 	"runMonitor":              {"fact", []string{"ownedLabel"}},
 	"Create":                  {"fact", []string{"ownedLabel"}},
+	"monitorGenerations":      {"fact", []string{"ownedLabel"}},
 	"startManager":            {"fact", []string{"ownedLabel"}},
 	"startService":            {"fact", []string{"ownedLabel"}},
 	"startVerification":       {"fact", []string{"ownerID"}},
