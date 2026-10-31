@@ -707,17 +707,20 @@
         "CEPH_OSD_OP_SETALLOCHINT",
         "CEPH_FEATURE_OSD_FADVISE_FLAGS"
       ],
-      "status": "partial",
+      "status": "covered",
       "evidence": "native-state",
       "cases": [
         {
           "test": "TestRADOSObjectReceipts",
           "receipt": "RADOS_HINTS_RECEIPT",
           "asserts": "rados set-alloc-hint on an existing object keeps its bytes at a new version and on a missing one creates it empty, and the decoded object info holds the hinted sizes; fadvise flags on a write_full, on a cmpext read (match and MAX_ERRNO plus offset) and on the rados cp copy-from leave exact bytes, xattrs and omap"
+        },
+        {
+          "test": "TestRBDSparseReadReceipt",
+          "receipt": "OSD_SPARSE_READ_RECEIPT",
+          "asserts": "the rbd CLI exports an image with two written extents through librbd, which reads each 4 MiB data object with CEPH_OSD_OP_SPARSE_READ; each object's request, the OSD's reply and the client's receipt join on tid, object and offset, a written object answered with result 0 and an output of exactly its data plus a one-extent map less than the 4 MiB range read, an absent object with -ENOENT and the full requested length; the export equals the written image byte for byte. python-rados and the rados CLI of the official image issue no sparse read"
         }
-      ],
-      "gap": "Sparse reads have no native receipt: neither python-rados nor the rados CLI of the official image issues CEPH_OSD_OP_SPARSE_READ (only the C++ API and librbd do).",
-      "owner": "#5"
+      ]
     },
     {
       "id": "client-osd/backoff",
