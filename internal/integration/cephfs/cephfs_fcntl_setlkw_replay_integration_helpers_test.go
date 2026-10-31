@@ -180,10 +180,11 @@ finally:
 	m.MDS = after.Active[0]
 
 	// The new MDS replayed the queued request: it still holds the contender's
-	// F_SETLKW waiting, and the call has not returned.
+	// F_SETLKW waiting, as the same request (same tid), and the call has not
+	// returned.
 	replayed := mdsWaitingFlock(t, ctx, m, clientB, true)
-	if replayed.flagPoint != "failed to add lock, waiting" || !strings.Contains(replayed.description, inode) {
-		t.Fatalf("the new MDS does not hold client.%d's replayed F_SETLKW: %+v", clientB, replayed)
+	if replayed.flagPoint != "failed to add lock, waiting" || !strings.Contains(replayed.description, inode) || replayed.tid != waiting.tid {
+		t.Fatalf("the new MDS does not hold client.%d's replayed F_SETLKW as tid %d: %+v", clientB, waiting.tid, replayed)
 	}
 	receipt["waiting_after"] = map[string]any{"tid": replayed.tid, "flag_point": replayed.flagPoint, "description": replayed.description}
 	if contender.Published(ctx, 3) {
