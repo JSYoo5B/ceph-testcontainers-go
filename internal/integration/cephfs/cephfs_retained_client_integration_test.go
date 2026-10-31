@@ -13,6 +13,7 @@ import (
 )
 
 func TestCephFSRetainedClientAcrossMDSRestart(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	for _, mode := range harness.NetworkModes(t, "host", "bridge") {
 		var opts []testcontainers.ContainerCustomizer
 		if mode.Host {
@@ -25,6 +26,7 @@ func TestCephFSRetainedClientAcrossMDSRestart(t *testing.T) {
 // A standby or the journal follower takes rank 0 while the client keeps its
 // mount, session and open file.
 func TestCephFSRetainedClientAcrossStandbyTakeover(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	t.Run("standby", func(t *testing.T) { harness.RunCephFSRetainedClient(t, harness.CephFSStandbyTakeover) })
 	t.Run("standby-replay", func(t *testing.T) { harness.RunCephFSRetainedClient(t, harness.CephFSReplayTakeover) })
 }
@@ -32,12 +34,14 @@ func TestCephFSRetainedClientAcrossStandbyTakeover(t *testing.T) {
 // With two active ranks, the standby takes over rank 1, where the client's
 // file lives in a pinned directory, while rank 0 keeps its daemon.
 func TestCephFSRetainedClientAcrossRankOneTakeover(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	harness.RunCephFSRetainedClient(t, harness.CephFSRankOneTakeover)
 }
 
 // A second client writes a file that a live client holds; the MDS revokes the
 // holder's capabilities without evicting it.
 func TestCephFSCapabilityHandoff(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	harness.RunCephFSCapabilityHandoff(t)
 }
 
@@ -45,12 +49,14 @@ func TestCephFSCapabilityHandoff(t *testing.T) {
 // MDS leases the dentry to it and recalls the lease when the second client
 // renames and then removes the directory.
 func TestCephFSDentryLeaseRecall(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	testCephFSDentryLeaseRecall(t)
 }
 
 // One native client runs a fixed sequence of metadata operations, with the
 // errno and native values of each, and a second client checks the result.
 func TestCephFSMetadataRecipe(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	testCephFSMetadataRecipe(t)
 }
 
@@ -58,36 +64,42 @@ func TestCephFSMetadataRecipe(t *testing.T) {
 // identity admitted and refused, and a required client feature that evicts
 // and refuses a client without it.
 func TestCephFSSessionAdmission(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	testCephFSSessionAdmission(t)
 }
 
 // A client that is frozen while its MDS fails over misses the reconnect window
 // and is evicted.
 func TestCephFSLateReconnect(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	harness.RunCephFSLateReconnect(t)
 }
 
 // With two active ranks, a directory moves from rank 0 to rank 1 and back
 // while a client streams fsynced records into a file in it.
 func TestCephFSLiveRankMigration(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	harness.RunCephFSLiveRankMigration(t)
 }
 
 // One rename is held between its unsafe and safe replies, and observed from
 // the MDS and from the client.
 func TestCephFSUnsafeRequestWindow(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	harness.RunCephFSUnsafeRequestWindow(t)
 }
 
 // The MDS is killed while one rename is held unsafe; after its restart the
 // client replays the request and it becomes safe.
 func TestCephFSUnsafeRequestReplay(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	harness.RunCephFSUnsafeRequestReplay(t)
 }
 
 // The MDS is killed while one cap flush waits for its ack; after its restart
 // the client's flush is acknowledged and its size and bytes survive.
 func TestCephFSFlushingCapReplay(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	harness.RunCephFSFlushingCapReplay(t)
 }
 
@@ -95,6 +107,7 @@ func TestCephFSFlushingCapReplay(t *testing.T) {
 // released the MDS commits the request, evicts and blocklists the dead
 // session, and another client finds the new name.
 func TestCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	testCephFSClientKilledDuringUnsafeRequest(t)
 }
 
@@ -103,6 +116,7 @@ func TestCephFSClientKilledDuringUnsafeRequest(t *testing.T) {
 // dirty data and fails with ESHUTDOWN, and a second live client receives the
 // barrier and reads only the fsynced bytes.
 func TestCephFSBlocklistEpochBarrier(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	harness.RunCephFSBlocklistEpochBarrier(t)
 }
 
@@ -110,6 +124,7 @@ func TestCephFSBlocklistEpochBarrier(t *testing.T) {
 // while metadata calls succeed, and after the full ratios are restored the
 // same fd writes again and another client reads every byte.
 func TestCephFSOSDFullRetainedClient(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	harness.RunCephFSOSDFullRetainedClient(t)
 }
 
@@ -117,5 +132,6 @@ func TestCephFSOSDFullRetainedClient(t *testing.T) {
 // the first holds it, waits in the MDS with a blocking lock, and gets the
 // lock when the first unlocks, without an eviction.
 func TestCephFSFlockContention(t *testing.T) {
+	harness.ParallelWhenEnabled(t)
 	testCephFSFlockContention(t)
 }

@@ -513,6 +513,17 @@ the release callers alone could. Pull request workflows are unbounded. A bound
 only delays jobs: every entry still runs with `fail-fast: false`. Batches are
 not packed into shared jobs.
 
+The order of matrix entries is not a start order. GitHub creates a matrix's
+jobs in an order of its own, and while every runner of the account is busy,
+queued jobs start roughly in that creation order, so reordering the planner's
+entries does not move a long batch forward. Ceph periodic's release callers
+are bound by their summed runner time: replaying measured durations onto their
+four slots longest-first shortens the makespan by under 1% and delays the mean
+completion by several minutes. A pull request run ends with its longest batch,
+so the batch layout sets its length, not the dispatch order (issue 388). A
+long batch whose tests are independent opts them into
+`harness.ParallelWhenEnabled` rather than adding a job.
+
 To measure runner use, fill a cache from the GitHub API and report offline:
 
 ```sh
