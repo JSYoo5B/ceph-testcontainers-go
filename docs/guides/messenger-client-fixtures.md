@@ -231,7 +231,8 @@ client container, and read every result back with a second client.
 | xattrs | `getxattrs` lists binary and empty values; `getxattr` of a removed name is `ENODATA` (61); `rmxattr` of an unset name succeeds with a new version; a missing object is `ENOENT` (2) | `TestRADOSObjectReceipts` |
 | OMAP | keys-only listings carry no values; `max_return` pages continue with `start_after` until an empty page, capped at `osd_max_omap_entries_per_request`; by-keys omits absent keys; clear also empties the header | `TestRADOSObjectReceipts` |
 | rollback | to a self-managed snapshot restores bytes, xattrs and OMAP at a new version; an object created after the snapshot is deleted | `TestRADOSObjectReceipts` |
-| hints | `set-alloc-hint` keeps existing bytes and creates a missing object empty; fadvise flags change no result. No image tool issues a sparse read | `TestRADOSObjectReceipts` |
+| hints | `set-alloc-hint` keeps existing bytes and creates a missing object empty; fadvise flags change no result | `TestRADOSObjectReceipts` |
+| sparse read | the `rbd` CLI exports an image through librbd, which reads each 4 MiB data object with `CEPH_OSD_OP_SPARSE_READ`; `TestRBDSparseReadReceipt` joins each request, the OSD's reply and the client's receipt, a written object returning only its extent and the extent map and an absent one `-ENOENT`. python-rados and the `rados` CLI issue no sparse read | `TestRBDSparseReadReceipt` |
 | statistics | pool statistics and `ceph df` follow known object sizes exactly; cluster statfs matches `ceph df` | `TestRADOSObjectReceipts` |
 
 `TestRADOSMutationContracts` runs on the CRC MemStore profile above. A
@@ -640,6 +641,27 @@ through its session MON (`via`):
   MgrClient's epochs with the active address vector, and its new session.
   The failover moves the MgrMap several epochs, so do not expect consecutive
   epochs.
+
+## Keepalive and acknowledgement frames
+
+A ProtocolV2 session exchanges KEEPALIVE2, KEEPALIVE2_ACK and message ACK
+frames that neither `debug_ms 1` nor `messenger dump` names; they appear only
+at `debug_ms 20`. `TestCephFSMessengerKeepalive` mounts a libcephfs client at
+`debug_ms 20`, writes, fsyncs and idles in cycles, and logs
+`CEPHFS_KEEPALIVE_RECEIPT`. From the client's own log it counts, by substring
+after the connection's `conn(...)` state:
+
+- `send_keepalive` — a KEEPALIVE2 frame written;
+- `handle_keepalive2_ack got KEEPALIVE_ACK` — its KEEPALIVE2_ACK received;
+- `handle_message_ack got ack seq` and `write_event try send msg ack` — ACK
+  frames received and sent for the MDS cap messages.
+
+Keepalive runs on the client's lossy MON session, so a MON's `debug_ms 20`
+log shows `handle_keepalive2 got KEEPALIVE2` from the client, while the MDS's
+log shows it acking the client's cap messages. The client's lossless MDS and
+OSD sessions are acknowledged but not keepalived. These frames are observed,
+not decoded from the wire; `cephfs_keepalive_fixture_test.go` tests the
+counting without Docker.
 
 ## OSD backoff
 
