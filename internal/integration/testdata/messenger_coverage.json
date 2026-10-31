@@ -275,7 +275,8 @@
           "asserts": "with nodown a paused OSD stays up while writes end in ETIMEDOUT and SLOW_OPS appears; without nodown it is marked down and degraded I/O works"
         }
       ],
-      "gap": "Peer, direction and phase selectors beyond whole-interface and one-peer loss remain."
+      "gap": "Peer, direction and phase selectors beyond whole-interface and one-peer loss remain.",
+      "owner": "#360"
     },
     {
       "id": "messenger/keepalive-ack-reconnect",
@@ -1032,7 +1033,7 @@
         }
       ],
       "gap": "Quota receipts cover directory max_files and max_bytes enforcement and relaxation on one live client; client metrics cover cumulative write counters of one writer and one idle client on rank 0; reclaim covers RESET of a dead client's session, not state-preserving reclaim. Quota and metrics messages are not decoded or counted, and other metrics, reporting latency, MDS or rank changes, blocklist effects and consumer implementations are not claimed.",
-      "owner": "#60"
+      "owner": "#361"
     },
     {
       "id": "rbd/image-io",
