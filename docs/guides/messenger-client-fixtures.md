@@ -293,6 +293,7 @@ and `num_completed_requests`. Every test runs with `MessengerV2Secure`.
 | Two clients contend for `flock(LOCK_EX)` | non-blocking returns `EWOULDBLOCK` (11); blocking waits in `dump_ops_in_flight` as `setfilelock rule 2, type 2, ... wait 1` at `failed to add lock, waiting` and returns 0 after `LOCK_UN`. `dump inode` does not list flocks | `TestCephFSFlockContention` |
 | The same lock held across a standby takeover | both sessions stay `open`; the contender is still refused with `EWOULDBLOCK` and its blocking lock waits on the new MDS until `LOCK_UN` | `TestCephFSFlockAcrossMDSFailover` |
 | Two `ceph-fuse` mounts (`/dev/fuse`, `CAP_SYS_ADMIN`, `apparmor=unconfined`) contend for an `F_WRLCK` byte range; then the holder's `ceph-fuse` is killed | `F_SETLK` returns `EAGAIN` (11) and `F_GETLK` reports the holder's range; `F_SETLKW` waits as `setfilelock rule 1` (fcntl). After the kill the mount returns `ENOTCONN` (107) and the dead client's lock refuses the contender until its session is evicted. Logs `CEPHFS_FCNTL_LOCK_RECEIPT` | `TestCephFSFuseMount`, in the optional batch `cephfs_fuse` (see [CI](../contributing/ci.md#native-regressions)) |
+| A contender's `F_SETLKW` queued in the MDS, then a standby takeover | the blocking `F_SETLKW` waits in the active MDS; after the active MDS is killed and the standby takes over, the new MDS replays the same waiting request (same `tid`, still at `failed to add lock, waiting`) and the call has not returned; when the holder unlocks, the new MDS grants it and `F_SETLKW` returns 0. `F_GETLK` reports the remote holder's range but an `l_pid` of 0. Logs `CEPHFS_FCNTL_SETLKW_REPLAY_RECEIPT` | `TestCephFSFcntlSetlkwReplay`, in the optional batch `cephfs_fuse` |
 | A journaled rename, then SIGKILL of the active MDS and a standby takeover | before the crash the rename is committed and replied while the dirfrag object (`<dir ino>.00000000`) still holds only the old name; the standby's `mds_log` shows `replayed` above 0; the new name survives; after `flush journal` the dirfrag holds only the new name | `TestCephFSJournaledRenameAcrossMDSCrash` |
 | `client evict` of a client holding unfsynced data (`client_oc_max_dirty_age` 600 s) | the blocklist entry appears in OSDMap epoch E and the MDS's `osdmap_epoch_barrier` is E; the evicted client reports `blocklisted`, its fsync, write and `stat` return `ESHUTDOWN` (108), a second fsync returns 0 because the dirty data was dropped; another client reads only fsynced bytes and its own barrier becomes E | `TestCephFSBlocklistEpochBarrier` |
 | Full ratios lowered with `override.SetFullRatios`, then `Restore` | once the client holds the full map, writes return `ENOSPC` (28) at once while fsync, `mkdir` and `stat` return 0; after restore the same descriptor writes again | `TestCephFSOSDFullRetainedClient` |
@@ -325,9 +326,10 @@ What a client of your own must do, by receipt:
   with the head snapshot ID is the inode.
 - Locks: the MDS keeps flocks in memory only. Send held locks with each
   inode's caps in the reconnect, or the new MDS grants them to the next
-  contender. Waiting requests are not carried over. `cephfs.LibCephFS` cannot
-  take `fcntl` locks, so those come from `ceph-fuse` and are not tested across
-  a failover.
+  contender. A waiting `F_SETLKW`, however, is replayed across a standby
+  takeover and granted by the new MDS once the holder unlocks
+  (`TestCephFSFcntlSetlkwReplay`). `cephfs.LibCephFS` cannot take `fcntl`
+  locks, so those come from `ceph-fuse`.
 - Eviction: the MDS sends its epoch barrier with capability messages. A
   client that gets it waits for that OSDMap before more OSD ops. An evicted
   client must fail its writes and drop unfsynced data, as the native client
