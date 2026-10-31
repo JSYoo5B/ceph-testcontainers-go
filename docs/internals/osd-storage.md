@@ -402,4 +402,75 @@ mapping of the same kind is the control.
 The fault spans the whole main device, which also carries BlueFS, so it is a
 shared BlueStore/BlueFS fault, never a data-only one. If a test dies before its
 cleanup, the keeper container is reaped, but the mapping and loop device stay
-in the engine host's kernel until someone removes them by name (`tcblk-*`).
+in the engine host's kernel until someone removes them by name (`tcblk-*`,
+`tcctl-*`).
+
+### Supervised table control
+
+Every table change of the windows above goes through the supervised control
+(`internal/integration/block_device_control_helpers_test.go`). A table change
+is three kernel steps: load the new table into the inactive slot, suspend the
+node, and resume it, which swaps the table in. The control keeps a record of
+the node it owns:
+
+| Field | Meaning |
+| --- | --- |
+| UUID, device number | the identity it created; the keeper gives each mapping the UUID `TC-BLK-<name>` |
+| live table | the table it last saw live after a step it confirmed |
+| loaded table | the table it loaded and has not seen swapped in |
+| unsettled step | a step it started and has not seen finish |
+
+Each `dmsetup` step runs detached in the keeper with its exit status written
+to a file, and the control waits for it up to a bound. A step still running at
+the bound is left to the kernel, never killed. Before and after every step the
+control observes the node (UUID, device number, `ACTIVE` or `SUSPENDED`, live
+and inactive tables, open count, in-flight reads and writes) and classifies it
+against the record:
+
+| State | Seen | Next step |
+| --- | --- | --- |
+| `gone`, `identity-changed` | no node, or another UUID or device number under the name | none |
+| `step-unsettled` | a step of the control has not finished | none until it settles |
+| `foreign` | a live or inactive table the record does not explain, including the wanted table loaded by someone else | none |
+| `unchanged`, `suspended` | the recorded table live, nothing inactive | load |
+| `loaded` | the recorded table live, the control's table inactive | suspend |
+| `suspended-loaded`, `swapped-on-hold` | suspended, before or after the swap | resume |
+| `applied` | the wanted table live, active, nothing inactive | done |
+
+The control only moves forward from a state the record explains, and it can
+revert a load it has not swapped in (`clear`, then `resume` if it suspended).
+A node may be removed only in `applied` with the recorded table, no opener and
+no I/O in flight. A loop may be detached only while it still backs the file
+the control attached (same path and inode).
+
+`TestBlockDeviceControlSupervision` (`scratch_tmpfs` batch) drives the control
+on scratch nodes over loop devices on the keeper's tmpfs, with `linear` and
+`error` tables only:
+
+- Partial apply and restore. The control stops after the load and after the
+  suspend, for the fault and for the restore. Each state is observed, the
+  release gate holds the node, and the change is reverted or completed. A read
+  through the applied error table fails, and data written after the restore
+  reads back.
+- Foreign table changes. Another actor swaps in a half-size linear table, so
+  only the exact table tells it apart, and later loads the very table the
+  control wants. In both cases the control does not act: the event number and
+  the live table do not change, and the gate holds the node.
+- Identity reuse. A node created again under the owned name gets another UUID.
+  On Docker Desktop's kernel it also got the same device number (253:0), so the
+  name and the device number alone would not have told them apart. A released
+  loop number was given to the next file (`/dev/loop2`), and the gate refuses
+  to detach it as the owned loop.
+- Pending I/O and a cancelled step. The lower node of a two-node stack is
+  suspended and a direct write to the top node is in flight. The control loads
+  the error table, and its suspend waits for that write past its bound. The node
+  stays `ACTIVE` with the error table inactive, one opener and one write in
+  flight. The control starts nothing else, and the gate holds the node. Once
+  the lower node resumes, the write completes on the old table, which the lower
+  node reads back, and the abandoned suspend finishes on its own. A write queued
+  on the suspended node then fails with EIO when the resume installs the error
+  table, and its bytes never reach the store.
+
+In `TestBlockDeviceFault` the same control applies the delay, error and
+restore tables to the OSD's mapping; a step that outlives its bound is waited
+for and the change continued from what is observed.
