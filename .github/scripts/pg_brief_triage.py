@@ -33,7 +33,7 @@ TRUNCATED = "truncated"
 UNPARSEABLE = "unparseable"
 INCONCLUSIVE = "inconclusive"
 
-# diagnostics.go clips each query to MaxOutputBytes (default 64 KiB).
+# diagnostics/diagnostics.go clips each query to MaxOutputBytes (default 64 KiB).
 DEFAULT_LIMIT = 64 << 10
 DEFAULT_MAX_TARGETS = 8
 SETTLED_TOKENS = frozenset({"active", "clean", "scrubbing", "deep"})

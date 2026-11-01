@@ -550,7 +550,7 @@ differs from the source. Code checks runs it for every pull request.
 - Call `harness.ParallelWhenEnabled(t)` only if the test touches nothing but its own
   clusters and containers: not for tests that inspect engine-wide Docker
   resources or events, need fixed host ports, or call `t.Setenv`.
-- To collect evidence on failure, call `cluster.CollectDiagnostics` from
+- To collect evidence on failure, call `diagnostics.Collect` from
   cleanup with a short background context.
 
 ### Optional tests

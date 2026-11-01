@@ -15,7 +15,7 @@ or uses cgo.
 | `radosgw-admin` | `rgw.Gateway.Admin`, or `multisite.Fixture.ZoneAdmin` | The gateway or the zone's setup client |
 | `rbd` on either side of a mirror link | `rbdmirror.Mirror.SourceRBD`, `DestinationRBD` | The link's setup clients |
 | A daemon's admin socket command | `AdminSocket`, `ceph tell`, or `ceph --admin-daemon` | Control container or daemon container |
-| A read-only snapshot for failure analysis | `cluster.CollectDiagnostics(ctx, config)` | Docker API and the control container |
+| A read-only snapshot for failure analysis | `diagnostics.Collect(ctx, cluster, config)` | Docker API and the control container |
 
 The API contracts are in [`ceph`](../../ceph/README.md),
 [RunNativeCommand](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.RunNativeCommand),
@@ -151,7 +151,7 @@ if err != nil || result.ExitCode != 0 {
 - A nonzero exit is not an error. Errors name the command by its label and
   never contain its arguments or output.
 - Before logging output, mask keys and your own secrets with
-  `cluster.RedactSecrets(ctx, result.Stderr, token)`. Assert on the raw bytes;
+  `diagnostics.Redact(ctx, cluster, result.Stderr, token)`. Assert on the raw bytes;
   redaction changes the data.
 
 ### Cancellation and cleanup
@@ -673,10 +673,10 @@ runs.
 
 ## Diagnostics
 
-[CollectDiagnostics](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.CollectDiagnostics) gathers a
+[diagnostics.Collect](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/diagnostics#Collect) gathers a
 bounded, read-only, JSON-serializable snapshot with a fixed set of Ceph
 queries, also from partially bootstrapped or terminated clusters, and
-[CollectCrashMetadata](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.CollectCrashMetadata) adds the
+[diagnostics.CollectCrashMetadata](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/diagnostics#CollectCrashMetadata) adds the
 daemons' crash reports.
 
 - Call it with a fresh context; a canceled test context cannot collect.
@@ -724,9 +724,13 @@ refuse to overwrite outside edits.
 
 ## Related APIs
 
-- [`ceph`](../../ceph/README.md): `Ceph`, `RunNativeCommand`, `RedactSecrets`,
+- [`ceph`](../../ceph/README.md): `Ceph`, `RunNativeCommand`,
   `ControlContainer`, `ClientContainer`, `WithClient`, `CreateClient`,
-  `ConnectionConfig`, `CollectDiagnostics`.
+  `ConnectionConfig`.
+- [`diagnostics`](../../diagnostics/README.md): `Collect`,
+  `CollectCrashMetadata`, `Redact`.
+- [`finalize`](../../finalize/README.md): `TerminateOnCleanup`, which writes
+  both reports into a failure archive.
 - [`override`](../../override/README.md): `SetConfig` and the other restorable
   changes.
 - [`rbd/mirror`](../../rbd/mirror/README.md), [`cephfs/mirror`](../../cephfs/mirror/README.md),

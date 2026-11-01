@@ -97,7 +97,7 @@ client was refused. The registered MGR has lost its MON session only when an
 owned MON logs `attempt to reclaim global_id <N> using bad ticket` (or another
 refusal naming the global ID) for N equal to the MgrMap GID, and the MGR then
 drops out of the MgrMap. The MON logs are each MON container's output;
-`CollectDiagnostics` keeps a bounded tail. Compare global IDs, not entity
+`diagnostics.Collect` keeps a bounded tail. Compare global IDs, not entity
 names.
 
 ### MGR transition receipt

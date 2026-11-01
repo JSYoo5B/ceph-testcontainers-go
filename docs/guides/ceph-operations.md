@@ -285,17 +285,18 @@ key, err := cluster.Ceph(ctx, "auth", "get-key", "osd.0") // the new key
 
 ## Failure archive and post-test verification
 
-`TerminateOnCleanup` with `FinalizationConfig.Archive` writes a failure archive
-from `CollectDiagnostics`, `CollectCrashMetadata`, verification reports and
-capture reports, and `Finalization.Verify` checks log lines and new crashes
-against expected events. The phases and their order are in the godoc of
-`Finalization`; this section describes the archive layout and the verification
-model.
+`finalize.TerminateOnCleanup` with `finalize.Config.Archive` writes a failure
+archive from `diagnostics.Collect`, `diagnostics.CollectCrashMetadata`,
+verification reports and capture reports, and `Finalization.Verify` checks log
+lines and new crashes against expected events. The phases and their order are
+in the godoc of `finalize.Finalization` and in the
+[finalize](../../finalize/README.md) package page; this section describes the
+archive layout and the verification model.
 
 ### The failure archive
 
 A passing test collects and writes nothing. In a failed test, the archive
-runs `CollectDiagnostics` and `CollectCrashMetadata` at the same time, within
+runs `diagnostics.Collect` and `diagnostics.CollectCrashMetadata` at the same time, within
 `ArchiveTimeout`, and writes each report it gets even when the collector
 returned an error, so a failed query or container leaves the rest. It writes
 into a new directory `ceph-<cluster>-<execution ID>`, where the execution ID
@@ -304,11 +305,11 @@ test never share one:
 
 | File | Contents |
 | --- | --- |
-| `diagnostics.json` | The `ceph.DiagnosticsReport`, absent when the collector returned none. |
-| `crash-metadata.json` | The `ceph.CrashMetadataReport`, absent when the collector returned none. |
-| `verification-<n>-<name>.json` | The `ceph.VerificationReport` of each [verification](#verify) whose check ran, in activation order. |
-| `capture-<n>-<name>.json` | The report of each [settled capture](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Finalization.Capture) that returned one, numbered by registration order. |
-| `capture-<n>-<name>.pcap` | The raw file of each capture registered with [`CaptureWithFile`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Finalization.CaptureWithFile), at most 16 files and 64 MiB per finalization. |
+| `diagnostics.json` | The `diagnostics.Report`, absent when the collector returned none. |
+| `crash-metadata.json` | The `diagnostics.CrashMetadataReport`, absent when the collector returned none. |
+| `verification-<n>-<name>.json` | The `finalize.VerificationReport` of each [verification](#verify) whose check ran, in activation order. |
+| `capture-<n>-<name>.json` | The report of each [settled capture](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/finalize#Finalization.Capture) that returned one, numbered by registration order. |
+| `capture-<n>-<name>.pcap` | The raw file of each capture registered with [`CaptureWithFile`](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/finalize#Finalization.CaptureWithFile), at most 16 files and 64 MiB per finalization. |
 | `manifest.json` | Schema version, test, scenario, cluster ID, execution identity, role images, trigger, phase, each check, collector, file write, cleanup, the termination outcome and each tracked debug level window (see below). |
 
 The manifest's execution identity has the Go version and platform, the VCS
@@ -327,7 +328,7 @@ apart from `failed_test`, set when the step turned a passing test into a
 failed one through the test; the trigger has both kinds for checks and for
 cleanups. Each
 collector entry has `reported`, `complete` and its error; the crash entry
-counts the containers per `ceph.CrashOutcome`, so an empty or absent crash
+counts the containers per `diagnostics.CrashOutcome`, so an empty or absent crash
 directory stays distinct from rejected metadata and found records. The
 archive is first written while the cluster runs; after the cleanups and
 `Terminate`, the manifest is replaced with their outcomes and `final` set.
@@ -353,14 +354,15 @@ cleanups (`final`), so a restoration run by `Finalization.Cleanup` is a later,
 separate record and the earlier copy still shows the raised level. The copy
 reads only the handle's local state; it never sets, restores or rereads a
 daemon, and a generic cleanup success does not stand in for `restored-verified`.
-`TrackDebugLevel` takes a `ceph.DebugLevelReceipter` (an interface with
-`Receipt() DebugLevelReceipt`), which `*override.DebugLevelHandle` implements.
+`TrackDebugLevel` takes a `finalize.DebugLevelReceipter` (an interface with
+`Receipt() override.DebugLevelReceipt`), which `*override.DebugLevelHandle`
+implements.
 A nil interface, a typed nil (an interface whose dynamic value is a nil
 pointer, map, slice, func, chan or interface; `Receipt` is never called on it,
 so a method that is not nil-safe cannot panic), a zero-value handle and any
 receipter whose receipt has an empty `State` are recorded with `present: false` and no
 receipt, never as a restored window: absence is decided by the receipt, not by
-a nil comparison of the interface. A panic raised by a foreign `Receipt` on a non-nil value is not recovered. A receipt in state `not-applied` (`DebugLevelNotApplied`) is
+a nil comparison of the interface. A panic raised by a foreign `Receipt` on a non-nil value is not recovered. A receipt in state `not-applied` (`override.DebugLevelNotApplied`) is
 recorded with `present: true` and its `reason`, redacted and bounded to 2048
 bytes like a transition error; the field is omitted for every other state. The records are
 bounded: 32 windows (`debug_windows_omitted` counts the rest), the first 16
@@ -387,22 +389,22 @@ Limits:
 Opt-in post-test verification of a dedicated cluster: the log lines and the
 new crashes of its daemons between the activation and the end of the test,
 each against its own expected events. `Verify` activates it on a
-`Finalization` from [TerminateOnCleanup](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/ceph#Container.TerminateOnCleanup) and adds a check
+`Finalization` from [finalize.TerminateOnCleanup](https://pkg.go.dev/github.com/JSYoo5B/ceph-testcontainers-go/finalize#TerminateOnCleanup) and adds a check
 named `verification <name>`, so it runs before the failure archive and the
 cleanups. A verification that is not clean fails the test, and with
 `Archive` its report is archived with the diagnostics before anything is
 removed. Runs that do not call `Verify` keep their behavior.
 
 ```golang
-finalization, err := cluster.TerminateOnCleanup(t, ceph.FinalizationConfig{Archive: true})
+finalization, err := finalize.TerminateOnCleanup(t, cluster, finalize.Config{Archive: true})
 if err != nil {
 	t.Fatal(err)
 }
 // The test crashes osd.0 on purpose: require that crash and its signal line.
-_, err = finalization.Verify(ctx, ceph.VerificationConfig{
-	Logs: []ceph.LogExpectation{{Name: "osd0-signal", Required: true, Daemon: "osd.0",
-		Event: ceph.LogFatalSignal, Pattern: `Caught signal`}},
-	Crashes: []ceph.CrashExpectation{{Name: "osd0-crash", Required: true, MaxCount: 1,
+_, err = finalization.Verify(ctx, finalize.VerificationConfig{
+	Logs: []finalize.LogExpectation{{Name: "osd0-signal", Required: true, Daemon: "osd.0",
+		Event: finalize.LogFatalSignal, Pattern: `Caught signal`}},
+	Crashes: []finalize.CrashExpectation{{Name: "osd0-crash", Required: true, MaxCount: 1,
 		Daemon: "osd.0", Process: "ceph-osd"}},
 })
 if err != nil {
@@ -423,7 +425,7 @@ the test, and can be repeated; it returns an error only when it cannot
 evaluate at all.
 
 Log events are lines of the containers' Docker log streams in the window,
-read with Docker's timestamps. A line is an event of one `ceph.LogEvent`
+read with Docker's timestamps. A line is an event of one `finalize.LogEvent`
 kind. Assertion and fatal signatures are found anywhere in a line; the
 cluster log kinds come from the severity of the line's log envelope, never
 from a marker inside its message:
@@ -460,10 +462,10 @@ lines are not evaluated.
 
 Each event goes to the first expectation of its kind (log or crash) that
 matches it and still permits one more; one that none permits is unexpected.
-A `ceph.LogExpectation` matches all of its non-empty criteria: `Daemon` (the
+A `finalize.LogExpectation` matches all of its non-empty criteria: `Daemon` (the
 source as the report names it, such as `osd.0` or `mgr.a`), `Event`, and the
 required `Pattern`, a regular expression on the redacted line. A
-`ceph.CrashExpectation` matches `Daemon`, `Process` (such as `ceph-osd`) and
+`finalize.CrashExpectation` matches `Daemon`, `Process` (such as `ceph-osd`) and
 `Signature`, a regular expression on one line of the crash's `stack_sig`,
 `assert_*` or `backtrace` fields; at least one of the three is required.
 Both have `Name`, which identifies them in the report and is unique, and:
@@ -478,7 +480,7 @@ A log expectation never matches a crash, and a crash expectation never a log
 line. Expectations do not repair, restart or archive anything, and they do
 not suppress the test's own checks.
 
-`ceph.VerificationConfig` fields (zero selects the default):
+`finalize.VerificationConfig` fields (zero selects the default):
 
 | Field | Default | Maximum | Meaning |
 | --- | --- | --- | --- |
@@ -491,23 +493,23 @@ not suppress the test's own checks.
 | `AdditionalContainers` | none | 64 | Caller-owned daemon containers, such as mirror daemons; never adopted. |
 | `RedactValues` | none | 128 | Additional secrets to remove from the report. |
 
-`ceph.VerificationReport` has `Name`, `Cluster`, `Images`, `Outcome`, the
-`Window` (`ceph.VerificationWindow`: `Phase` `test`, `StartedAt` and
+`finalize.VerificationReport` has `Name`, `Cluster`, `Images`, `Outcome`, the
+`Window` (`finalize.VerificationWindow`: `Phase` `test`, `StartedAt` and
 `EndedAt` on the engine's clock, `EvaluatedAt`), the `Sources`
-(`ceph.VerificationSource`: `Source`, `Role`, `Name`, `ContainerID`,
+(`finalize.VerificationSource`: `Source`, `Role`, `Name`, `ContainerID`,
 `ImageID`, `StartedAt`, `RestartCount`, `State`, `LogDriver`, `LogBytes` and
 the `BaselineCrashes`), the effective `LogExpectations` and
-`CrashExpectations`, `Notes` on its scope, and one `ceph.VerificationCheck`
+`CrashExpectations`, `Notes` on its scope, and one `finalize.VerificationCheck`
 each for `Logs` and `Crashes`. A check has its `Outcome`, the `Permitted`
-and `Unexpected` counts, `Findings` (`ceph.VerificationFinding`: `Source`,
+and `Unexpected` counts, `Findings` (`finalize.VerificationFinding`: `Source`,
 `ContainerID`, `Event`, `Time`, the redacted `Text` of at most 1 KiB with
 `Truncated`, `CrashID`, and the permitting `Expectation`, empty when
 unexpected), with the unexpected ones first and `OmittedFindings` beyond
-`MaxFindings`, the `Expectations` (`ceph.ExpectationResult`: `Name`,
+`MaxFindings`, the `Expectations` (`finalize.ExpectationResult`: `Name`,
 `Required`, `MinCount`, `MaxCount`, `Matched`, `Satisfied`) and the `Gaps`
-(`ceph.VerificationGap`: `Source`, `Reason`).
+(`finalize.VerificationGap`: `Source`, `Reason`).
 
-Each check's `ceph.VerificationOutcome`, and the report's, which is the worse
+Each check's `finalize.VerificationOutcome`, and the report's, which is the worse
 of the two:
 
 | Outcome | Meaning |

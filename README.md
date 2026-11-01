@@ -23,7 +23,7 @@ Documentation for a published release is available at its Git tag.
 ## Packages
 
 - [`ceph`](ceph/README.md): the cluster. MON, MGR and OSD topology, pools,
-  Cephx identities, configuration, health and diagnostics.
+  Cephx identities, configuration and health.
 - [`rbd`](rbd/README.md): RBD pools and namespaces, image watchers and locks,
   backup and restore.
   - [`rbd/mirror`](rbd/mirror/README.md): `rbd-mirror` replication between two
@@ -43,6 +43,10 @@ Documentation for a published release is available at its Git tag.
   levels, central configuration, messenger policy).
 - [`capture`](capture/README.md): opt-in packet capture on one container
   endpoint.
+- [`diagnostics`](diagnostics/README.md): read-only diagnostics reports, crash
+  metadata and secret redaction for a cluster.
+- [`finalize`](finalize/README.md): one ordered cleanup path with post-test
+  checks, log and crash verification, a failure archive and `Terminate`.
 
 Every fixture package is a Testcontainers for Go module with one
 `Run(ctx, image, opts...)`. In `ceph` and the service packages it returns a
@@ -53,8 +57,9 @@ Testcontainers containers on two existing clusters: `rbd/mirror` and
 `cephfs/mirror` return a `*Mirror` that embeds the first mirror daemon's
 `testcontainers.Container`, and `rgw/multisite` returns a `*Fixture` whose
 `Source` and `Destination` gateways are containers, while the `Fixture` itself
-embeds none. `fault`, `override` and `capture` start no fixture of their own;
-they act on or observe containers that already exist.
+embeds none. `fault`, `override`, `capture`, `diagnostics` and `finalize`
+start no fixture of their own; they act on or observe containers that already
+exist.
 
 ## Requirements
 

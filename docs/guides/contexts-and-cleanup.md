@@ -49,7 +49,7 @@ shorten:
 | `rbdmirror.Mirror.ReceiverStatus`, `BindNamespace` | 30 seconds |
 | `rbdmirror.Mirror.RefreshMonitorConfig` | 2 minutes |
 | `cephfsmirror.Run` waiting for the MGR `mirroring` module | 90 seconds |
-| `CollectDiagnostics` | `DiagnosticsConfig.Timeout` (1 minute by default) |
+| `diagnostics.Collect` | `diagnostics.Config.Timeout` (1 minute by default) |
 
 These bounds are upper limits for the fixture, not a budget for your test.
 Pass a context deadline that fits the condition you wait for, so that a
@@ -289,7 +289,7 @@ containers, networks and volumes, unless Ryuk is disabled.
 
 ### Collect diagnostics before cleanup
 
-`CollectDiagnostics` reads container state, log tails and fixed Ceph queries
+`diagnostics.Collect` reads container state, log tails and fixed Ceph queries
 without changing anything. Register it after the cluster cleanup so it runs
 first, and give it its own context:
 
@@ -300,7 +300,7 @@ t.Cleanup(func() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	report, err := cluster.CollectDiagnostics(ctx, ceph.DiagnosticsConfig{})
+	report, err := diagnostics.Collect(ctx, cluster, diagnostics.Config{})
 	if report != nil {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		t.Logf("ceph diagnostics:\n%s", data)
@@ -313,8 +313,14 @@ t.Cleanup(func() {
 
 A report is returned together with an error when some observations failed;
 keep it. See [Running native commands](native-commands.md#diagnostics) for the
-options. `CollectCrashMetadata` works the same way for the crash reports that
-daemons wrote; it also reads containers that have stopped.
+options. `diagnostics.CollectCrashMetadata` works the same way for the crash
+reports that daemons wrote; it also reads containers that have stopped.
+
+To run post-test checks, write both reports into a failure archive and remove
+caller-owned clients before `Terminate` on one ordered path, register
+[`finalize.TerminateOnCleanup`](../../finalize/README.md) right after
+`ceph.Run` instead of `testcontainers.CleanupContainer`. Each of its phases
+uses a fresh context bounded by its own timeout in `finalize.Config`.
 
 ## Handles returned with errors
 
@@ -521,7 +527,11 @@ func TestSomething(t *testing.T) {
 ## Related APIs
 
 - [`ceph`](../../ceph/README.md): `Run`, `Terminate`, `WithStartupTimeout`,
-  `RunNativeCommand`, `CollectDiagnostics`, context-aware getters.
+  `RunNativeCommand`, context-aware getters.
+- [`diagnostics`](../../diagnostics/README.md): `Collect`,
+  `CollectCrashMetadata`, `Redact`.
+- [`finalize`](../../finalize/README.md): `TerminateOnCleanup` and the
+  `Finalization` checks, cleanups and failure archive.
 - [`override`](../../override/README.md): the override calls and their
   restoration handles.
 - [`rbd`](../../rbd/README.md), [`cephfs`](../../cephfs/README.md), [`rgw`](../../rgw/README.md): service

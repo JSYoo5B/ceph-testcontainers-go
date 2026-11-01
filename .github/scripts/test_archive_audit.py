@@ -11,7 +11,7 @@ import archive_audit
 
 # The tree is the real output of the finalization producer with a writer that
 # keeps the first 17 bytes of diagnostics.json and then returns a no space
-# error (see ceph/finalization.go writeReport).
+# error (see finalize/finalization.go writeReport).
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "finalization-partial-write"
 # Real producer output with four raw capture copies (PR #118 contract): a valid
 # identity, a same-size wrong digest, a read error after all bytes and a
