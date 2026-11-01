@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -174,10 +175,14 @@ func (m *CephFSSingleMDS) epochs(ctx context.Context) (mdsEpochs, error) {
 type osdMapAt struct {
 	Epoch     uint32            `json:"epoch"`
 	Blocklist map[string]string `json:"blocklist"`
-	Pools     []struct {
-		ID    int64  `json:"pool"`
-		Flags string `json:"flags_names"`
-	} `json:"pools"`
+	Pools     []osdMapPool      `json:"pools"`
+}
+
+// osdMapPool is one pool of an OSDMap epoch.
+type osdMapPool struct {
+	ID    int64  `json:"pool"`
+	Name  string `json:"pool_name"`
+	Flags string `json:"flags_names"`
 }
 
 // cephfsOSDMapAt reads one OSDMap epoch, or the current one for 0.
@@ -418,19 +423,22 @@ publish(6, closed=True, **closing)
 `
 
 // cephFSProbeWriter writes files through a mount of its own and prints its
-// client ID. Arguments: the filesystem, the hex of the bytes and the files.
+// client ID and the files' inodes. Arguments: the filesystem, the hex of the
+// bytes and the files.
 const cephFSProbeWriter = `
 import cephfs, json, os, sys
 fs = cephfs.LibCephFS(conffile="/etc/ceph/ceph.conf")
 fs.conf_set("client_mount_timeout", "30")
 fs.mount(filesystem_name=sys.argv[1].encode())
 try:
+    inodes = []
     for path in sys.argv[3:]:
         fd = fs.open(path.encode(), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
         fs.write(fd, bytes.fromhex(sys.argv[2]), 0)
         fs.fsync(fd, 0)
+        inodes.append(fs.fstat(fd).st_ino)
         fs.close(fd)
-    print(json.dumps({"client": fs.get_instance_id()}))
+    print(json.dumps({"client": fs.get_instance_id(), "inodes": inodes}))
 finally:
     fs.unmount()
     fs.shutdown()
@@ -488,34 +496,65 @@ func waitPoolFull(t *testing.T, ctx context.Context, cluster *ceph.Container, po
 	return first
 }
 
-// waitOSDsHold observes, bounded, every OSD's own newest map until each
-// holds target or a newer epoch. An OSD shares its maps with a client whose
-// operation carries an older epoch, but only up to the epoch it holds itself,
-// so a poke sent before the OSDs hold target can leave the client below it.
-func waitOSDsHold(t *testing.T, ctx context.Context, src MapEvidenceSources, target uint32) {
+// servingPG is the PG of the first object of a file and its primary OSD,
+// which serves the client's reads of that file.
+type servingPG struct {
+	object, pgid string
+	primary      int
+}
+
+// probeServingPG maps the first object of inode in pool to its PG.
+func probeServingPG(t *testing.T, ctx context.Context, cluster *ceph.Container, pool int64, inode uint64) servingPG {
 	t.Helper()
-	seen, err := Observe(ctx, time.Minute, mapEvidenceCallBound, 500*time.Millisecond, func(probeCtx context.Context) (map[int]uint64, bool, error) {
-		held := map[int]uint64{}
-		for _, id := range src.OSDs {
-			out, err := src.OSDAdmin(probeCtx, id, "status")
-			if err != nil {
-				return held, false, nil
-			}
-			view := ParseOSDMapRange(out)
-			if view.NewestMap == nil {
-				return held, false, nil
-			}
-			held[id] = *view.NewestMap
+	dump, err := cephfsOSDMapAt(ctx, cluster, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(dump.Pools, func(p osdMapPool) bool { return p.ID == pool })
+	if i < 0 {
+		t.Fatalf("OSDMap e%d has no pool %d", dump.Epoch, pool)
+	}
+	object := fmt.Sprintf("%x.00000000", inode)
+	out, err := cluster.Ceph(ctx, "osd", "map", dump.Pools[i].Name, object, "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mapping struct {
+		PGID    string `json:"pgid"`
+		Primary *int   `json:"acting_primary"`
+	}
+	if err := json.Unmarshal(out, &mapping); err != nil || mapping.PGID == "" || mapping.Primary == nil || *mapping.Primary < 0 {
+		t.Fatalf("osd map %s %s: %v: %.512s", dump.Pools[i].Name, object, err, out)
+	}
+	return servingPG{object: object, pgid: mapping.PGID, primary: *mapping.Primary}
+}
+
+// waitServingMap waits, before a poke that reads pg's object, until pg has
+// applied target, and fails with the receipt's record otherwise.
+func waitServingMap(t *testing.T, ctx context.Context, cluster *ceph.Container, src MapEvidenceSources, receipt *RetainedClientReceipt, phase string, pg servingPG, target uint32) {
+	t.Helper()
+	err := receipt.WaitServingMap(ctx, phase, pg.object, pg.pgid, pg.primary, target, time.Minute, mapEvidenceCallBound, 500*time.Millisecond, func(probeCtx context.Context) (ServingMapView, error) {
+		var view ServingMapView
+		var errs []error
+		if out, err := src.OSDAdmin(probeCtx, pg.primary, "status"); err != nil {
+			errs = append(errs, fmt.Errorf("osd.%d status: %w", pg.primary, err))
+		} else {
+			view.NewestMap = ParseOSDMapRange(out).NewestMap
 		}
-		for _, newest := range held {
-			if newest < uint64(target) {
-				return held, false, nil
+		out, err := cluster.Ceph(probeCtx, "pg", pg.pgid, "query", "--format", "json")
+		if err == nil {
+			var epoch uint32
+			if epoch, err = ParsePGMapEpoch(out); err == nil {
+				view.PGEpoch = &epoch
 			}
 		}
-		return held, true, nil
+		if err != nil {
+			errs = append(errs, fmt.Errorf("pg %s query: %w", pg.pgid, err))
+		}
+		return view, errors.Join(errs...)
 	})
 	if err != nil {
-		t.Fatalf("OSDs holding e%d not observed (newest maps %v): %v", target, seen.Value, err)
+		t.Fatal(err)
 	}
 }
 
@@ -523,11 +562,12 @@ func waitOSDsHold(t *testing.T, ctx context.Context, src MapEvidenceSources, tar
 // while the client keeps its mount and fd. Full ratios of 0.0001, 0.0002
 // and 0.0003, through override.SetFullRatios, make the OSDs report themselves
 // full, and the MON flags the file's data pool full in OSDMap epoch F. Once
-// every OSD holds epoch F, the client reads a file that another client wrote
-// and the OSD shares the map with it; with F its write returns ENOSPC (28)
-// and its file keeps the base size; fsync, mkdir and stat, which only need
-// the MDS, return 0. After Restore the MON clears the flag in epoch D; once
-// every OSD holds D and the client holds it (it reads a second such file),
+// the PG of a file that another client wrote has applied epoch F, the client
+// reads that file and the OSD shares the map with it; with F its write
+// returns ENOSPC (28) and its file keeps the base size; fsync, mkdir and
+// stat, which only need the MDS, return 0. After Restore the MON clears the
+// flag in epoch D; once the PG of a second such file has applied D and the
+// client holds it (it reads that file),
 // the same client, without remounting, writes and fsyncs the tail with 0, a
 // client in another container reads every byte, and the client keeps its
 // session and is not blocklisted.
@@ -561,9 +601,14 @@ func RunCephFSOSDFullRetainedClient(t *testing.T) {
 		MaxStdout: 4096, MaxStderr: 64 << 10, Label: "CephFS probe writer",
 	})
 	stopWrite()
-	if err != nil || written.ExitCode != 0 || !written.Complete() {
-		t.Fatalf("probe writer: exit=%d err=%v stderr=%.2048s", written.ExitCode, err, written.Stderr)
+	var writer struct {
+		Inodes []uint64 `json:"inodes"`
 	}
+	if err != nil || written.ExitCode != 0 || !written.Complete() || json.Unmarshal([]byte(LastJSONLine(string(written.Stdout))), &writer) != nil || len(writer.Inodes) != 2 {
+		t.Fatalf("probe writer: exit=%d err=%v out=%.512s stderr=%.2048s", written.ExitCode, err, written.Stdout, written.Stderr)
+	}
+	pokePG := probeServingPG(t, ctx, m.Cluster, pool, writer.Inodes[0])
+	repokePG := probeServingPG(t, ctx, m.Cluster, pool, writer.Inodes[1])
 
 	fill, err := override.SetFullRatios(ctx, m.Cluster, ceph.FullRatios{NearFull: .0001, BackfillFull: .0002, Full: .0003})
 	t.Cleanup(func() {
@@ -580,8 +625,8 @@ func RunCephFSOSDFullRetainedClient(t *testing.T) {
 	full := waitPoolFull(t, ctx, m.Cluster, pool, true, notFull)
 	receipt.FullEpoch = &full
 	receipt.Phase("pool-full")
-	waitOSDsHold(t, ctx, mapSources, full)
-	receipt.Phase("osds-hold-full-map")
+	waitServingMap(t, ctx, m.Cluster, mapSources, receipt, "full map", pokePG, full)
+	receipt.Phase("poke-pg-applied-full-map")
 	health, err := ObserveCluster(m.Cluster).HealthDetails(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -623,8 +668,8 @@ func RunCephFSOSDFullRetainedClient(t *testing.T) {
 	drained := waitPoolFull(t, ctx, m.Cluster, pool, false, full)
 	receipt.DrainedEpoch = &drained
 	receipt.Phase("pool-drained")
-	waitOSDsHold(t, ctx, mapSources, drained)
-	receipt.Phase("osds-hold-drained-map")
+	waitServingMap(t, ctx, m.Cluster, mapSources, receipt, "drained map", repokePG, drained)
+	receipt.Phase("repoke-pg-applied-drained-map")
 	actor.Open(t, ctx, "repoke")
 	if poked := actor.Receipt(t, ctx, 4); poked.Full != hex.EncodeToString(probeBytes) {
 		t.Fatalf("repoke receipt = %+v", poked)

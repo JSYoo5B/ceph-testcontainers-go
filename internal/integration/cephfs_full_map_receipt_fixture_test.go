@@ -175,7 +175,7 @@ func TestRetainedClientReceiptKeepsUnreachedPhasesAbsent(t *testing.T) {
 	r.NotFullEpoch = &notFull
 	r.Phase("pool-not-full")
 	line := r.Line()
-	for _, absent := range []string{`"full_epoch"`, `"drained_epoch"`, `"waits"`, `"unprompted"`, `"restore_error"`, `"restore_started"`, "poke"} {
+	for _, absent := range []string{`"full_epoch"`, `"drained_epoch"`, `"waits"`, `"serving_maps"`, `"unprompted"`, `"restore_error"`, `"restore_started"`, "poke"} {
 		if strings.Contains(line, absent) {
 			t.Errorf("unreached %q appears: %s", absent, line)
 		}
@@ -198,6 +198,95 @@ func TestRetainedClientReceiptKeepsRestoreFailureBesideWaitFailure(t *testing.T)
 	for _, want := range []string{" restore-started ", `"outcome":"timeout"`, `"target_epoch":26`, `"restore_error":"restore: mon unreachable"`} {
 		if !strings.Contains(line, want) {
 			t.Errorf("line lacks %q: %s", want, line)
+		}
+	}
+}
+
+func servingAt(pg uint32, newest uint64) harness.ServingMapView {
+	return harness.ServingMapView{PGEpoch: &pg, NewestMap: &newest}
+}
+
+func servingSequence(views ...harness.ServingMapView) func(context.Context) (harness.ServingMapView, error) {
+	next := 0
+	return func(context.Context) (harness.ServingMapView, error) {
+		view := views[min(next, len(views)-1)]
+		next++
+		return view, nil
+	}
+}
+
+func waitServing(r *harness.RetainedClientReceipt, target uint32, bound time.Duration, read func(context.Context) (harness.ServingMapView, error)) error {
+	return r.WaitServingMap(context.Background(), "drained map", "10000000001.00000000", "3.5", 1, target, bound, time.Second, time.Millisecond, read)
+}
+
+// The primary stores a received map before its PGs apply it. A poke sent then
+// is answered with the PG's older map, so the received map is not enough.
+func TestServingMapWaitReceivedMapDoesNotSubstituteForTheAppliedMap(t *testing.T) {
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
+	err := waitServing(r, 31, 40*time.Millisecond, servingSequence(servingAt(30, 31), servingAt(30, 32)))
+	if err == nil {
+		t.Fatal("received newest map accepted in place of the applied one")
+	}
+	for _, want := range []string{"pg 3.5 of 10000000001.00000000 on osd.1 at e30", "primary newest e32", "want e31"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
+	}
+	if wait := r.ServingMaps[0]; wait.Outcome != "timeout" || wait.TargetEpoch != 31 || wait.Probes < 2 || *wait.Last.PGEpoch != 30 || *wait.Last.NewestMap != 32 {
+		t.Fatalf("wait = %+v", wait)
+	}
+}
+
+func TestServingMapWaitAppliedAfterTheReceivedMap(t *testing.T) {
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
+	if err := waitServing(r, 31, time.Second, servingSequence(servingAt(30, 31), servingAt(31, 31))); err != nil {
+		t.Fatal(err)
+	}
+	if wait := r.ServingMaps[0]; wait.Outcome != "applied" || wait.Probes != 2 || wait.PGID != "3.5" || wait.Primary != 1 {
+		t.Fatalf("wait = %+v", wait)
+	}
+	if line := r.Line(); !strings.Contains(line, `"serving_maps":[{"phase":"drained map"`) || !strings.Contains(line, `"outcome":"applied"`) {
+		t.Fatalf("line = %s", line)
+	}
+}
+
+func TestServingMapWaitRetriesAFailedRead(t *testing.T) {
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
+	reads := 0
+	err := waitServing(r, 31, time.Second, func(context.Context) (harness.ServingMapView, error) {
+		reads++
+		if reads == 1 {
+			newest := uint64(31)
+			return harness.ServingMapView{NewestMap: &newest}, errors.New("pg 3.5 query: timed out")
+		}
+		return servingAt(31, 31), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wait := r.ServingMaps[0]; wait.Outcome != "applied" || wait.Probes != 2 || wait.LastError != "" {
+		t.Fatalf("wait = %+v", wait)
+	}
+}
+
+func TestServingMapWaitUnreadPGIsNotApplied(t *testing.T) {
+	r := harness.NewRetainedClientReceipt(retainedClientID, 1, 3)
+	newest := uint64(40)
+	err := waitServing(r, 31, 30*time.Millisecond, func(context.Context) (harness.ServingMapView, error) {
+		return harness.ServingMapView{NewestMap: &newest}, errors.New("pg 3.5 query: timed out")
+	})
+	if err == nil || !strings.Contains(err.Error(), "at unread (primary newest e40)") || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestParsePGMapEpoch(t *testing.T) {
+	if epoch, err := harness.ParsePGMapEpoch([]byte(`{"snap_trimq":"[]","snap_trimq_len":0,"state":"active+clean","epoch":31,"up":[1,0],"acting":[1,0]}`)); err != nil || epoch != 31 {
+		t.Fatalf("epoch = %d, err = %v", epoch, err)
+	}
+	for _, malformed := range []string{`{"state":"active+clean"}`, `{"epoch":0}`, `{"epoch":"31"}`, `[]`, `not json`} {
+		if _, err := harness.ParsePGMapEpoch([]byte(malformed)); err == nil {
+			t.Errorf("%s accepted", malformed)
 		}
 	}
 }
