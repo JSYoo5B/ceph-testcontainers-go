@@ -36,7 +36,7 @@ func TestAdmissionKeepsEachOperationsOwnNameAuthority(t *testing.T) {
 	if err != nil || status.FilesystemID != 41 || len(status.Active) != 1 || status.Active[0].Name != "a" || !status.Active[0].Owned {
 		t.Fatalf("MDSStatus follows the edited exported FilesystemName instead of the creation identity: %+v %v", status, err)
 	}
-	if fs.id.config.Name != "fixture" || fs.id.name != "fixture" || fs.id.native.id != 41 {
+	if fs.config.Name != "fixture" || fs.base().Name() != "fixture" || fs.base().Native().ID != 41 {
 		t.Fatal("the stored config, name or native identity changed with the descriptor")
 	}
 
@@ -44,7 +44,7 @@ func TestAdmissionKeepsEachOperationsOwnNameAuthority(t *testing.T) {
 		done()
 		t.Fatal("session admission accepted an edited descriptor")
 	}
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 
 	before := len(control.Calls)
 	_, done, err := fs.beginDataPoolOperation(t.Context())
@@ -55,7 +55,7 @@ func TestAdmissionKeepsEachOperationsOwnNameAuthority(t *testing.T) {
 	if len(control.Calls) != before {
 		t.Fatalf("data-pool admission issued native commands: %v", control.Calls[before:])
 	}
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 
 	fs.FilesystemName = "fixture"
 	_, id, done, err := fs.beginSessionOperation(t.Context())
@@ -63,14 +63,14 @@ func TestAdmissionKeepsEachOperationsOwnNameAuthority(t *testing.T) {
 		t.Fatalf("restored descriptor was refused or lost the FSMap id: %d %v", id, err)
 	}
 	done()
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 }
 
 // The shared lifetime keeps the two differences that are not predicates: the
 // cancellation recheck after the setup gate, and the refusal text.
 func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 	fs, _, _, _ := cephFSContextAdmissionFixture()
-	fs.id.native = nil
+	fs.base().ReplaceNative(nil)
 	_, _, _, err := fs.beginSubvolumeOperation(t.Context())
 	if err == nil || err.Error() != "CephFS filesystem must be an active filesystem created by this cluster" {
 		t.Fatalf("subvolume refusal changed: %v", err)
@@ -84,7 +84,7 @@ func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 		t.Fatalf("data-pool refusal changed: %v", err)
 	}
 	done() // a no-op on refusal
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 	var nilFS *Filesystem
 	if _, done, err := nilFS.beginDataPoolOperation(t.Context()); err == nil || err.Error() != "CephFS filesystem is unavailable" {
 		t.Fatalf("nil handle refusal changed: %v", err)
@@ -102,7 +102,7 @@ func TestAdmissionKeepsRefusalTextsAndNoOpDone(t *testing.T) {
 			t.Fatalf("%s admission did not return the cancellation: %v", name, err)
 		}
 	}
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 }
 
 // TestAdmissionLifetimeHasOneOwnerAndKeepsPredicatesLocal pins the caller table

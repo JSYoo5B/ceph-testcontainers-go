@@ -43,10 +43,10 @@ func (fs *Filesystem) admitOperation(ctx context.Context, spec admissionSpec) (c
 	if err := ctx.Err(); err != nil {
 		return ctx, func() {}, err
 	}
-	if fs == nil || fs.id.cluster == nil {
+	if fs == nil || fs.base().Cluster() == nil {
 		return ctx, func() {}, errors.New("CephFS filesystem is unavailable")
 	}
-	c := fs.id.cluster
+	c := fs.base().Cluster()
 	if err := clusterutil.LockMutex(ctx, &filesystems(c).setupMu); err != nil {
 		return ctx, func() {}, err
 	}

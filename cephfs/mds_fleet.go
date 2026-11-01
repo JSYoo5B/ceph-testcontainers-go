@@ -7,6 +7,7 @@ import (
 	iofs "io/fs"
 	"strings"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -20,7 +21,8 @@ import (
 // It owns the filesystem's MDS state (mds: the roster and the cold-start
 // record) and the first-MDS slot (first: the Filesystem's embedded container,
 // which the cold start, retirement, stopped removal and teardown re-seat). It
-// acts for the filesystem through its identity (id) and reads the descriptor
+// acts for the filesystem through its foundation core (core) and its setup
+// configuration (config, whose MDS counts scaling rewrites) and reads the descriptor
 // fields a caller may edit (descriptor) only to refuse an edited descriptor. It
 // holds no pointer to the Filesystem itself: Filesystem.fleet is its only
 // constructor, binding each of these once, and an MDS creation record keeps a
@@ -31,7 +33,8 @@ import (
 // they were Filesystem methods; the roster's two-key contract, written on
 // mdsRoster, still decides which of them may read or write the MDS state.
 type mdsFleet struct {
-	id         *filesystemIdentity
+	core       *fsbase.Core
+	config     *Config
 	mds        *mdsState
 	first      *testcontainers.Container
 	descriptor filesystemDescriptor
@@ -47,7 +50,7 @@ type filesystemDescriptor struct {
 // fleet returns the MDS fleet of fs. fs is not nil.
 func (fs *Filesystem) fleet() mdsFleet {
 	return mdsFleet{
-		id: &fs.id, mds: &fs.mds, first: &fs.Container,
+		core: fsbase.Of(fs), config: &fs.config, mds: &fs.mds, first: &fs.Container,
 		descriptor: filesystemDescriptor{name: &fs.FilesystemName, metadataPool: &fs.MetadataPool, dataPool: &fs.DataPool},
 	}
 }
@@ -57,7 +60,7 @@ func (fs *Filesystem) fleet() mdsFleet {
 // clears the first-MDS slot. Owner held: removeFilesystem holds setupMu and the
 // cluster mutex and has already removed the native filesystem.
 func (f mdsFleet) removeAll(ctx context.Context) error {
-	c, name := f.id.cluster, f.id.name
+	c, name := f.core.Cluster(), f.core.Name()
 	for _, daemon := range f.mds.roster.snapshot() {
 		if daemon.Container != nil {
 			if err := daemon.Terminate(ctx); err != nil && !servicehook.OnlyMissingHostResource(err) {

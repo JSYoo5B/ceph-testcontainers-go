@@ -72,10 +72,10 @@ func Filesystems(c *ceph.Container) []*Filesystem {
 //
 //purpose:lifetime
 func (fs *Filesystem) Remove(ctx context.Context) error {
-	if fs == nil || fs.id.cluster == nil {
+	if fs == nil || fs.base().Cluster() == nil {
 		return errNilCluster
 	}
-	return removeFilesystem(ctx, fs.id.cluster, fs)
+	return removeFilesystem(ctx, fs.base().Cluster(), fs)
 }
 
 // WithFilesystems creates named filesystems and their MDS topologies during
@@ -117,7 +117,7 @@ func filesystems(c *ceph.Container) *filesystemRegistry {
 
 func (r *filesystemRegistry) sorted() []*Filesystem {
 	result := slices.Collect(maps.Values(r.byName))
-	slices.SortFunc(result, func(a, b *Filesystem) int { return strings.Compare(a.id.name, b.id.name) })
+	slices.SortFunc(result, func(a, b *Filesystem) int { return strings.Compare(a.base().Name(), b.base().Name()) })
 	return result
 }
 

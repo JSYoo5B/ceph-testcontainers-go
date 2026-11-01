@@ -45,14 +45,14 @@ func (clone *SubvolumeClone) filesystem() (*Filesystem, error) {
 }
 
 func (grant *SubvolumeAuthorization) filesystem() (*Filesystem, error) {
-	if grant == nil || grant.identity == nil || grant.identity.volume == nil || grant.identity.volume.filesystem == nil || grant.identity.volume.filesystem.id.cluster == nil || !grant.identity.authorizeAttempted {
+	if grant == nil || grant.identity == nil || grant.identity.volume == nil || grant.identity.volume.filesystem == nil || grant.identity.volume.filesystem.base().Cluster() == nil || !grant.identity.authorizeAttempted {
 		return nil, servicehook.Invalid(errors.New("subvolume authorization must be an owned grant attempted by this filesystem"))
 	}
 	return grant.identity.volume.filesystem, nil
 }
 
 func (attachment *DataPool) filesystem() (*Filesystem, error) {
-	if attachment == nil || attachment.identity == nil || attachment.identity.filesystem == nil {
+	if attachment == nil || attachment.identity.record == nil || attachment.identity.filesystem == nil {
 		return nil, servicehook.Invalid(errors.New("data pool must be an attachment created by a filesystem"))
 	}
 	return attachment.identity.filesystem, nil

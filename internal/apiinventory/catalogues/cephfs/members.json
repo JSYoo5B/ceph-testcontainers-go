@@ -2,7 +2,7 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "cephfs",
-  "count": 153,
+  "count": 154,
   "types": {
     "cephfs.CloneConfig": [
       "CloneConfig.DataPool field string",
@@ -33,6 +33,7 @@
       "DataPoolState.Name field string"
     ],
     "cephfs.Filesystem": [
+      "Filesystem embed fsHandle",
       "Filesystem embed testcontainers.Container",
       "Filesystem.AdditionalDataPools field []string",
       "Filesystem.DataPool field string",

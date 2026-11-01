@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
@@ -52,7 +53,8 @@ func sessionFilesystem(t *testing.T) (*Filesystem, *sessionFixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs := &Filesystem{FilesystemName: "app", id: filesystemIdentity{name: "app", cluster: cluster, config: config, native: &cephFSNativeIdentity{id: 7}}}
+	fs := newFilesystem(cluster, config, nil)
+	fs.base().ReplaceNative(&fsbase.NativeIdentity{ID: 7})
 	filesystems(cluster).byName = map[string]*Filesystem{"app": fs}
 	return fs, ctr
 }

@@ -8,6 +8,7 @@ import (
 	"reflect"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/mdsmap"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
@@ -19,7 +20,7 @@ import (
 type cephFSMDSIdentity struct {
 	// fleet is the MDS fleet of the filesystem that created the daemon.
 	fleet                                mdsFleet
-	native                               *cephFSNativeIdentity
+	native                               *fsbase.NativeIdentity
 	descriptor                           *MDS
 	container                            testcontainers.Container
 	name, cid, fsid                      string
@@ -51,7 +52,7 @@ func cephFSMDSFullCID(cid string) bool {
 //
 //purpose:condition,lifetime
 func (daemon *MDS) RemoveStopped(ctx context.Context) error {
-	if daemon == nil || daemon.identity == nil || daemon.identity.fleet.id == nil {
+	if daemon == nil || daemon.identity == nil || daemon.identity.fleet.core == nil {
 		return errors.New("original owned MDS creation identity is unavailable")
 	}
 	return daemon.identity.fleet.removeStoppedMDS(ctx, daemon)
@@ -63,10 +64,10 @@ func (f mdsFleet) removeStoppedMDS(parent context.Context, daemon *MDS) error {
 	if err := parent.Err(); err != nil {
 		return err
 	}
-	if f.id.cluster == nil || daemon == nil || daemon.identity == nil {
+	if f.core.Cluster() == nil || daemon == nil || daemon.identity == nil {
 		return errors.New("original owned MDS creation identity is unavailable")
 	}
-	c := f.id.cluster
+	c := f.core.Cluster()
 	ctx, cancel := context.WithTimeout(parent, servicehook.StartupTimeout(c))
 	defer cancel()
 	release, err := lockSetupThenTopology(ctx, c)
@@ -119,11 +120,11 @@ func (f mdsFleet) admitStoppedMDSRemoval(ctx context.Context, daemon *MDS) (*mds
 		return nil, err
 	}
 	// Admission to control/config precedes any Docker or native reads.
-	control, err := f.id.cluster.ControlContainer(ctx)
+	control, err := f.core.Cluster().ControlContainer(ctx)
 	if err != nil || control == nil {
 		return nil, clusterutil.OperationError(ctx, "select stopped MDS control", err)
 	}
-	if err := f.id.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := checkStoppedMDSCluster(ctx, f.core.Volumes(), i); err != nil {
 		return nil, err
 	}
 	if _, err := inspectStoppedMDS(ctx, i, false); err != nil {
@@ -144,7 +145,7 @@ func (f mdsFleet) admitStoppedMDSRemoval(ctx context.Context, daemon *MDS) (*mds
 // the container is already missing. Owner held.
 func (f mdsFleet) reattestStoppedMDS(ctx context.Context, daemon *MDS, scope *mdsmap.Scope) (bool, error) {
 	i := daemon.identity
-	if err := f.id.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := checkStoppedMDSCluster(ctx, f.core.Volumes(), i); err != nil {
 		return false, err
 	}
 	after, err := f.readStoppedMDSScope(ctx, i)
@@ -171,7 +172,7 @@ func (f mdsFleet) confirmStoppedMDSRemoved(ctx context.Context, daemon *MDS, sco
 	if err != nil || !missing {
 		return clusterutil.OperationError(ctx, "confirm original stopped MDS removal", err)
 	}
-	if err := f.id.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := checkStoppedMDSCluster(ctx, f.core.Volumes(), i); err != nil {
 		return err
 	}
 	after, err := f.readStoppedMDSScope(ctx, i)
@@ -186,11 +187,11 @@ func (f mdsFleet) confirmStoppedMDSRemoved(ctx context.Context, daemon *MDS, sco
 
 // Owner held; exported fields cannot redirect either target or survivor reads.
 func (f mdsFleet) checkStoppedMDSOwner(handle *MDS, i *cephFSMDSIdentity) error {
-	c := f.id.cluster
-	if !f.id.registered() || *f.descriptor.name != f.id.name || *f.descriptor.metadataPool != f.id.config.MetadataPool.Name || *f.descriptor.dataPool != f.id.config.DataPool.Name || i.fleet.id != f.id || !i.confirmed || i.native == nil || i.native != f.id.native || i.container == nil || i.container.GetContainerID() != i.cid || i.descriptor == nil || i.descriptor.identity != i || handle.ID != i.name || handle.FilesystemName != f.id.name || handle.Container != i.container {
+	c := f.core.Cluster()
+	if !f.core.Registered() || *f.descriptor.name != f.core.Name() || *f.descriptor.metadataPool != f.config.MetadataPool.Name || *f.descriptor.dataPool != f.config.DataPool.Name || i.fleet.core != f.core || !i.confirmed || i.native == nil || i.native != f.core.Native() || i.container == nil || i.container.GetContainerID() != i.cid || i.descriptor == nil || i.descriptor.identity != i || handle.ID != i.name || handle.FilesystemName != f.core.Name() || handle.Container != i.container {
 		return errors.New("original stopped MDS ownership changed or startup is unconfirmed")
 	}
-	if i.descriptor.ID != i.name || i.descriptor.FilesystemName != f.id.name || i.descriptor.Container != i.container {
+	if i.descriptor.ID != i.name || i.descriptor.FilesystemName != f.core.Name() || i.descriptor.Container != i.container {
 		return servicehook.Invalid(errors.New("original stopped MDS descriptor was edited"))
 	}
 	count, embedded := 0, false
@@ -214,8 +215,8 @@ func (f mdsFleet) checkStoppedMDSOwner(handle *MDS, i *cephFSMDSIdentity) error 
 
 // Owner held. Reuse the confirmed bootstrap parser, fresh native quorum and
 // address validation, with context-aware admission to its existing cache gate.
-func (v volumeCommands) checkStoppedMDSCluster(ctx context.Context, i *cephFSMDSIdentity) error {
-	c := v.cluster
+func checkStoppedMDSCluster(ctx context.Context, v fsbase.VolumeCommands, i *cephFSMDSIdentity) error {
+	c := v.Cluster()
 	fsid, confirmed, err := servicehook.ClusterIdentity(ctx, c)
 	if err != nil {
 		return err
@@ -260,26 +261,26 @@ func inspectStoppedMDS(ctx context.Context, i *cephFSMDSIdentity, requireMissing
 // Strict global absence and logical owned-survivor membership come from one
 // FSMap. This never attributes a native GID to a Docker process or adopts one.
 func (f mdsFleet) readStoppedMDSScope(ctx context.Context, target *cephFSMDSIdentity) (*mdsmap.Scope, error) {
-	state, err := f.id.readNativePools(ctx)
+	state, err := f.core.ReadNativePools(ctx)
 	if err != nil {
 		return nil, clusterutil.OperationError(ctx, "read original stopped MDS filesystem pools", err)
 	}
-	data, err := f.id.cluster.Ceph(ctx, "fs", "dump", "--format", "json")
+	data, err := f.core.Cluster().Ceph(ctx, "fs", "dump", "--format", "json")
 	if err != nil {
 		return nil, clusterutil.OperationError(ctx, "read stopped MDS global map", err)
 	}
 	return f.decodeStoppedMDSScope(ctx, target, state, data)
 }
 
-func (f mdsFleet) decodeStoppedMDSScope(ctx context.Context, target *cephFSMDSIdentity, pools *cephFSNativePools, data []byte) (*mdsmap.Scope, error) {
+func (f mdsFleet) decodeStoppedMDSScope(ctx context.Context, target *cephFSMDSIdentity, pools *fsbase.NativePools, data []byte) (*mdsmap.Scope, error) {
 	state, err := decodeStoppedMDSMap(data, stoppedMDSMapExpectation{
 		targetName:    target.name,
-		filesystem:    f.id.name,
+		filesystem:    f.core.Name(),
 		native:        target.native,
 		pools:         pools,
-		activeMDS:     f.id.config.ActiveMDS,
-		standbyMDS:    f.id.config.StandbyMDS,
-		standbyReplay: f.id.config.StandbyReplay,
+		activeMDS:     f.config.ActiveMDS,
+		standbyMDS:    f.config.StandbyMDS,
+		standbyReplay: f.config.StandbyReplay,
 	})
 	if err != nil {
 		return nil, err

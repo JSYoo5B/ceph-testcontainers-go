@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
@@ -94,7 +95,7 @@ func (fs *Filesystem) SessionTimeouts(ctx context.Context) (SessionTimeouts, err
 		return SessionTimeouts{}, err
 	}
 	defer done()
-	return fs.id.volumes().readSessionTimeouts(ctx, fsID)
+	return readSessionTimeouts(ctx, fs.base().Volumes(), fsID)
 }
 
 // OverrideSessionTimeouts sets both limits so a test can observe evicted
@@ -116,14 +117,14 @@ func (fs *Filesystem) OverrideSessionTimeouts(ctx context.Context, requested Ses
 	if active := fs.sessionTimeouts; active != nil && !active.restored {
 		return nil, errors.New("restore the existing CephFS session timeouts override first")
 	}
-	previous, err := fs.id.volumes().readSessionTimeouts(ctx, fsID)
+	previous, err := readSessionTimeouts(ctx, fs.base().Volumes(), fsID)
 	if err != nil {
 		return nil, err
 	}
 	state := &cephFSSessionTimeoutsState{fsID: fsID, previous: previous, applied: requested}
 	fs.sessionTimeouts = state
 	change := &SessionTimeoutsOverrideHandle{filesystem: fs, state: state}
-	return change, fs.id.volumes().writeSessionTimeouts(ctx, fsID, previous, requested)
+	return change, writeSessionTimeouts(ctx, fs.base().Volumes(), fsID, previous, requested)
 }
 
 // Restore returns both limits to the values captured before the change. It is
@@ -138,12 +139,12 @@ func (change *SessionTimeoutsOverrideHandle) Restore(ctx context.Context) error 
 	fs := change.filesystem
 	state := change.state
 	// A confirmed restore stays complete after the filesystem or cluster is gone.
-	if fs.id.cluster != nil {
-		if err := clusterutil.LockMutex(ctx, &filesystems(fs.id.cluster).setupMu); err != nil {
+	if fs.base().Cluster() != nil {
+		if err := clusterutil.LockMutex(ctx, &filesystems(fs.base().Cluster()).setupMu); err != nil {
 			return err
 		}
 		restored := state.restored
-		filesystems(fs.id.cluster).setupMu.Unlock()
+		filesystems(fs.base().Cluster()).setupMu.Unlock()
 		if restored {
 			return nil
 		}
@@ -162,7 +163,7 @@ func (change *SessionTimeoutsOverrideHandle) Restore(ctx context.Context) error 
 	if fsID != state.fsID {
 		return errors.New("CephFS filesystem identity changed since the session timeouts override")
 	}
-	current, err := fs.id.volumes().readSessionTimeouts(ctx, fsID)
+	current, err := readSessionTimeouts(ctx, fs.base().Volumes(), fsID)
 	if err != nil {
 		return err
 	}
@@ -170,7 +171,7 @@ func (change *SessionTimeoutsOverrideHandle) Restore(ctx context.Context) error 
 		!ownedSessionValue(current.Autoclose, state.previous.Autoclose, state.applied.Autoclose) {
 		return fmt.Errorf("CephFS session timeouts changed outside this override: %+v", current)
 	}
-	if err := fs.id.volumes().writeSessionTimeouts(ctx, fsID, current, state.previous); err != nil {
+	if err := writeSessionTimeouts(ctx, fs.base().Volumes(), fsID, current, state.previous); err != nil {
 		return err
 	}
 	state.restored = true
@@ -200,9 +201,9 @@ func (fs *Filesystem) Sessions(ctx context.Context) ([]Session, error) {
 	}
 	var sessions []Session
 	for _, mds := range status.Active {
-		data, err := fs.id.cluster.Ceph(ctx, "tell", "mds."+fs.id.name+":"+strconv.Itoa(mds.Rank), "session", "ls", "--format", "json")
+		data, err := fs.base().Cluster().Ceph(ctx, "tell", "mds."+fs.base().Name()+":"+strconv.Itoa(mds.Rank), "session", "ls", "--format", "json")
 		if err != nil {
-			return nil, fmt.Errorf("list sessions of CephFS %q rank %d: %w", fs.id.name, mds.Rank, err)
+			return nil, fmt.Errorf("list sessions of CephFS %q rank %d: %w", fs.base().Name(), mds.Rank, err)
 		}
 		ranked, err := parseCephFSSessions(data, mds.Rank)
 		if err != nil {
@@ -255,10 +256,10 @@ func (fs *Filesystem) beginSessionOperation(ctx context.Context) (context.Contex
 	ctx, done, err := fs.admitOperation(ctx, admissionSpec{
 		refusal: "CephFS filesystem must be an active filesystem created by this cluster",
 		check: func(context.Context) (bool, error) {
-			if !fs.id.registered() || fs.FilesystemName != fs.id.name || fs.id.native == nil {
+			if !fs.base().Registered() || !fs.base().DescriptorIntact() || fs.base().Native() == nil {
 				return false, nil
 			}
-			fsID = fs.id.native.id
+			fsID = fs.base().Native().ID
 			return true, nil
 		},
 	})
@@ -268,10 +269,10 @@ func (fs *Filesystem) beginSessionOperation(ctx context.Context) (context.Contex
 	return ctx, fsID, done, nil
 }
 
-func (v volumeCommands) readSessionTimeouts(ctx context.Context, fsID int64) (SessionTimeouts, error) {
-	data, err := v.cluster.Ceph(ctx, "fs", "get", v.name, "--format", "json")
+func readSessionTimeouts(ctx context.Context, v fsbase.VolumeCommands, fsID int64) (SessionTimeouts, error) {
+	data, err := v.Cluster().Ceph(ctx, "fs", "get", v.Name(), "--format", "json")
 	if err != nil {
-		return SessionTimeouts{}, fmt.Errorf("read CephFS %q session timeouts: %w", v.name, err)
+		return SessionTimeouts{}, fmt.Errorf("read CephFS %q session timeouts: %w", v.Name(), err)
 	}
 	return parseCephFSSessionTimeouts(data, fsID)
 }
@@ -292,7 +293,7 @@ func parseCephFSSessionTimeouts(data []byte, fsID int64) (SessionTimeouts, error
 
 // writeSessionTimeouts changes only differing values and confirms the result
 // with a readback that survives cancellation of the caller's context.
-func (v volumeCommands) writeSessionTimeouts(ctx context.Context, fsID int64, current, target SessionTimeouts) error {
+func writeSessionTimeouts(ctx context.Context, v fsbase.VolumeCommands, fsID int64, current, target SessionTimeouts) error {
 	for _, field := range []struct {
 		name          string
 		current, want time.Duration
@@ -300,13 +301,13 @@ func (v volumeCommands) writeSessionTimeouts(ctx context.Context, fsID int64, cu
 		if field.current == field.want {
 			continue
 		}
-		if _, err := v.cluster.Ceph(ctx, "fs", "set", v.name, field.name, strconv.FormatInt(int64(field.want/time.Second), 10)); err != nil {
-			return fmt.Errorf("set CephFS %q %s: %w", v.name, field.name, err)
+		if _, err := v.Cluster().Ceph(ctx, "fs", "set", v.Name(), field.name, strconv.FormatInt(int64(field.want/time.Second), 10)); err != nil {
+			return fmt.Errorf("set CephFS %q %s: %w", v.Name(), field.name, err)
 		}
 	}
 	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	stored, err := v.readSessionTimeouts(readCtx, fsID)
+	stored, err := readSessionTimeouts(readCtx, v, fsID)
 	if err != nil {
 		return err
 	}

@@ -19,7 +19,7 @@ func stoppedMDSDecode(t *testing.T, edit stoppedMDSEdit) (*mdsmap.Scope, error) 
 	fs, native, target, _, survivor := stoppedMDSFixture(t)
 	// The pool identity comes from the same dump, so it is read from the
 	// settled map and only the decoded bytes carry the edit.
-	pools, err := fs.id.readNativePools(t.Context())
+	pools, err := fs.base().ReadNativePools(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

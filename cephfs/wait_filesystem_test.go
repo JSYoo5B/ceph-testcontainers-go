@@ -58,7 +58,7 @@ func newWaitFixture(t *testing.T, name string) waitFixture {
 	switch name {
 	case "Ready":
 		f.fs, _, _, _ = cephFSContextAdmissionFixture()
-		f.cluster = f.fs.id.cluster
+		f.cluster = f.fs.base().Cluster()
 		f.control = &waitControl{Container: f.cluster.Container}
 		f.cluster.Container = f.control
 		f.wait = f.fs.WaitReady
@@ -68,7 +68,7 @@ func newWaitFixture(t *testing.T, name string) waitFixture {
 		f.fs, base, f.clone = cloneLifecycleFixture(t)
 		base.Output[cloneStatusQuery] = cloneLifecycleStatus("complete")
 		base.Output["fs subvolume info fixture copy --group_name restores --format json"] = `{"path":"/volumes/restores/copy/10000000-0000-4000-8000-000000000001","bytes_quota":32768,"bytes_used":8192,"data_pool":"data","pool_namespace":"","created_at":"2026-10-03 00:02:00.123456","state":"complete","type":"clone"}`
-		f.cluster = f.fs.id.cluster
+		f.cluster = f.fs.base().Cluster()
 		f.control = &waitControl{Container: base}
 		f.cluster.Container = f.control
 		f.wait = func(ctx context.Context) error { _, err := f.clone.Wait(ctx); return err }

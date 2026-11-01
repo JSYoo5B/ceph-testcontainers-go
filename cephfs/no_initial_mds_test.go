@@ -212,7 +212,7 @@ func TestNoInitialMDSCompositionAndRuntimeKeepOmittedCounts(t *testing.T) {
 	c, n := newColdMDSFixture()
 	customizers := 0
 	fs, err := startFilesystem(t.Context(), c, retained, testcontainers.CustomizeRequestOption(func(*testcontainers.GenericContainerRequest) error { customizers++; return nil }))
-	if err != nil || fs == nil || fs.Container != nil || len(fs.MDSs()) != 0 || len(servicehook.Services(c)) != 0 || customizers != 0 || fs.id.config.ActiveMDS != 1 || fs.mds.coldMDS == nil || fs.mds.coldMDS.attempted || fs.mds.coldMDS.fsid != coldMDSFixtureFSID || fs.mds.coldMDS.pools["cold-target-metadata"] != 0 || !slices.Equal(fs.mds.coldMDS.dataPools, []int64{1, 2}) || servicehook.ServiceImage(c, "cephfs") != "selected-mds-image" {
+	if err != nil || fs == nil || fs.Container != nil || len(fs.MDSs()) != 0 || len(servicehook.Services(c)) != 0 || customizers != 0 || fs.config.ActiveMDS != 1 || fs.mds.coldMDS == nil || fs.mds.coldMDS.attempted || fs.mds.coldMDS.fsid != coldMDSFixtureFSID || fs.mds.coldMDS.pools["cold-target-metadata"] != 0 || !slices.Equal(fs.mds.coldMDS.dataPools, []int64{1, 2}) || servicehook.ServiceImage(c, "cephfs") != "selected-mds-image" {
 		t.Fatalf("cold constructor did not retain exact zero topology/pool0: fs=%+v err=%v customizers=%d", fs, err, customizers)
 	}
 	if got := Filesystems(c); len(got) != 1 || got[0] != fs {
@@ -365,14 +365,14 @@ func TestNoInitialMDSStrictNativeAbsenceSchema(t *testing.T) {
 				} else {
 					m[field] = nil
 				}
-				if err := decodeColdMDSMap([]byte(coldMDSTestJSON(native)), coldMDSMapExpectation{filesystem: fs.id.config.Name, reservedName: "cold-target-0", native: fs.mds.coldMDS.identity, dataPools: fs.mds.coldMDS.dataPools}); err == nil {
+				if err := decodeColdMDSMap([]byte(coldMDSTestJSON(native)), coldMDSMapExpectation{filesystem: fs.config.Name, reservedName: "cold-target-0", native: fs.mds.coldMDS.identity, dataPools: fs.mds.coldMDS.dataPools}); err == nil {
 					t.Fatal("missing/null absence authority accepted")
 				}
 			})
 		}
 	}
 	for _, bad := range []string{good + " {}", `{"standbys":[],"standbys":[],"filesystems":[]}`, "null", "[]", `{"standbys":null,"filesystems":[]}`, `{"standbys":[],"filesystems":null}`, "never-log-this-native-secret"} {
-		if err := decodeColdMDSMap([]byte(bad), coldMDSMapExpectation{filesystem: fs.id.config.Name, reservedName: "cold-target-0", native: fs.mds.coldMDS.identity, dataPools: fs.mds.coldMDS.dataPools}); err == nil || strings.Contains(err.Error(), "never-log") {
+		if err := decodeColdMDSMap([]byte(bad), coldMDSMapExpectation{filesystem: fs.config.Name, reservedName: "cold-target-0", native: fs.mds.coldMDS.identity, dataPools: fs.mds.coldMDS.dataPools}); err == nil || strings.Contains(err.Error(), "never-log") {
 			t.Fatalf("malformed map accepted or leaked: %v", err)
 		}
 	}
@@ -495,10 +495,10 @@ func TestNoInitialMDSRealAdmissionGatesAndCancellation(t *testing.T) {
 }
 
 func coldMDSTestScaleWithService(ctx context.Context, fs *Filesystem, start func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error)) error {
-	if err := clusterutil.LockMutex(ctx, &filesystems(fs.id.cluster).setupMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &filesystems(fs.base().Cluster()).setupMu); err != nil {
 		return err
 	}
-	defer filesystems(fs.id.cluster).setupMu.Unlock()
+	defer filesystems(fs.base().Cluster()).setupMu.Unlock()
 	return fs.fleet().scaleColdMDS(ctx, 1, 0, func(ctx context.Context) error { return fs.fleet().startMDSWithService(ctx, start) })
 }
 func coldMDSTestService(t *testing.T, fs *Filesystem, n *coldMDSFixture, worker testcontainers.Container, serviceErr error, active bool) func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
@@ -516,11 +516,11 @@ func coldMDSTestService(t *testing.T, fs *Filesystem, n *coldMDSFixture, worker 
 		if request.Env["CEPH_MDS_ID"] != "cold-target-0" || request.Env["CEPH_FILESYSTEM"] != "cold-target" || !slices.Equal(request.Entrypoint, []string{"/bin/sh", "/tc/mds.sh"}) || request.WaitingFor == nil {
 			t.Fatal("existing MDS runtime contract/customizers lost")
 		}
-		servicehook.Lock(fs.id.cluster)
+		servicehook.Lock(fs.base().Cluster())
 		if worker != nil {
-			servicehook.SetService(fs.id.cluster, name, worker)
+			servicehook.SetService(fs.base().Cluster(), name, worker)
 		}
-		servicehook.Unlock(fs.id.cluster)
+		servicehook.Unlock(fs.base().Cluster())
 		if active {
 			m := n.target()
 			m["info"] = map[string]any{"gid_40": coldMDSTestRow("cold-target-0", "up:active", 40, 0, 7)}
@@ -542,13 +542,13 @@ func TestNoInitialMDSFirstPublicationAndOrdinaryScaling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := fs.id.native
+	identity := fs.base().Native()
 	beforeData := slices.Clone(fs.mds.coldMDS.dataPools)
 	worker := &mdsScaleFixtureContainer{id: "original-first-mds"}
 	if err := coldMDSTestScaleWithService(t.Context(), fs, coldMDSTestService(t, fs, n, worker, nil, true)); err != nil {
 		t.Fatalf("first provision: %v", err)
 	}
-	if customizers != 1 || fs.Container != worker || len(fs.MDSs()) != 1 || fs.MDSs()[0].ID != "cold-target-0" || servicehook.Service(c, "mds.cold-target-0") != worker || !fs.mds.coldMDS.attempted || fs.id.native != identity || fs.mds.roster.nextIndex != 1 || !slices.Equal(n.target()["data_pools"].([]int64), beforeData) {
+	if customizers != 1 || fs.Container != worker || len(fs.MDSs()) != 1 || fs.MDSs()[0].ID != "cold-target-0" || servicehook.Service(c, "mds.cold-target-0") != worker || !fs.mds.coldMDS.attempted || fs.base().Native() != identity || fs.mds.roster.nextIndex != 1 || !slices.Equal(n.target()["data_pools"].([]int64), beforeData) {
 		t.Fatal("first native daemon did not retain original resources/publication/customizer")
 	}
 	if err := fs.ScaleMDS(t.Context(), 1, 0); err != nil {
@@ -577,18 +577,18 @@ func TestNoInitialMDSPartialDaemonOwnershipAndNoImplicitRetry(t *testing.T) {
 				t.Fatalf("partial daemon failure consumed wrongly/leaked: %v", err)
 			}
 			if withHandle {
-				if fs.Container != worker || len(fs.MDSs()) != 1 || servicehook.Service(fs.id.cluster, "mds.cold-target-0") != worker {
+				if fs.Container != worker || len(fs.MDSs()) != 1 || servicehook.Service(fs.base().Cluster(), "mds.cold-target-0") != worker {
 					t.Fatal("nonnil partial handle was lost")
 				}
-			} else if fs.Container != nil || len(fs.MDSs()) != 0 || len(servicehook.Services(fs.id.cluster)) != 0 {
+			} else if fs.Container != nil || len(fs.MDSs()) != 0 || len(servicehook.Services(fs.base().Cluster())) != 0 {
 				t.Fatal("nil partial gained owned resource")
 			}
 			before := n.mutationCount()
 			if err := fs.ScaleMDS(t.Context(), 1, 0); err == nil || n.mutationCount() != before {
 				t.Fatalf("partial first daemon was automatically retried: %v", err)
 			}
-			testhelper.TestReplaceOSDs(fs.id.cluster, nil)
-			if err := fs.id.cluster.Terminate(t.Context()); err != nil || len(servicehook.Services(fs.id.cluster)) != 0 || worker.removes != btoi(withHandle) {
+			testhelper.TestReplaceOSDs(fs.base().Cluster(), nil)
+			if err := fs.base().Cluster().Terminate(t.Context()); err != nil || len(servicehook.Services(fs.base().Cluster())) != 0 || worker.removes != btoi(withHandle) {
 				t.Fatalf("partial cleanup lost handle: %v removes=%d", err, worker.removes)
 			}
 		})
@@ -604,7 +604,7 @@ func TestNoInitialMDSFinalPoolGuardRetainsAttemptedDaemon(t *testing.T) {
 		n.pools["extra"] = 99
 		return ctr, err
 	})
-	if err == nil || fs.Container != worker || len(fs.MDSs()) != 1 || !fs.mds.coldMDS.attempted || servicehook.Service(fs.id.cluster, "mds.cold-target-0") != worker {
+	if err == nil || fs.Container != worker || len(fs.MDSs()) != 1 || !fs.mds.coldMDS.attempted || servicehook.Service(fs.base().Cluster(), "mds.cold-target-0") != worker {
 		t.Fatalf("late pool replacement was adopted or lost cleanup ownership: %v", err)
 	}
 }
@@ -613,7 +613,7 @@ func TestNoInitialMDSSelectedControlAndLateAdmissionPreserveAuthority(t *testing
 	t.Run("legitimate owned CLI switch", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		other := &coldMDSFixture{pools: n.pools, native: n.native, auth: n.auth, fsid: n.fsid}
-		testhelper.TestSetControlPlane(fs.id.cluster, other)
+		testhelper.TestSetControlPlane(fs.base().Cluster(), other)
 		if err := fs.fleet().verifyColdMDS(t.Context(), fs.mds.coldMDS); err != nil || len(other.calls) == 0 {
 			t.Fatalf("stable cluster behind changed CLI was rejected: %v", err)
 		}
@@ -621,7 +621,7 @@ func TestNoInitialMDSSelectedControlAndLateAdmissionPreserveAuthority(t *testing
 	t.Run("foreign exported primary", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
 		foreign := &coldMDSFixture{pools: n.pools, native: n.native, auth: n.auth, fsid: "b011602b-37aa-496b-a8b5-b3e7a5d13ff3"}
-		fs.id.cluster.Container = foreign
+		fs.base().Cluster().Container = foreign
 		if err := fs.ScaleMDS(t.Context(), 1, 0); err == nil || foreign.mutationCount() != 0 || fs.mds.coldMDS.attempted {
 			t.Fatalf("foreign same-named FS/pool was adopted: %v", err)
 		}
@@ -710,7 +710,7 @@ func TestNoInitialMDSOrdinaryStarterKeepsLegacyPartialError(t *testing.T) {
 	worker := &mdsScaleFixtureContainer{id: "legacy-partial"}
 	cause := errors.New("ordinary native service cause")
 	err := fs.fleet().startMDSWithService(t.Context(), coldMDSTestService(t, fs, n, worker, cause, false))
-	if !errors.Is(err, cause) || fs.mds.roster.nextIndex != 1 || fs.Container != worker || len(fs.MDSs()) != 1 || servicehook.Service(fs.id.cluster, "mds.cold-target-0") != worker {
+	if !errors.Is(err, cause) || fs.mds.roster.nextIndex != 1 || fs.Container != worker || len(fs.MDSs()) != 1 || servicehook.Service(fs.base().Cluster(), "mds.cold-target-0") != worker {
 		t.Fatalf("ordinary start contract changed under private service seam: %v", err)
 	}
 }

@@ -45,11 +45,11 @@ type cephFSMDSReplacement struct {
 //
 //purpose:construction,condition
 func (stopped *MDS) AddReplacement(ctx context.Context) (*MDS, error) {
-	if stopped == nil || stopped.identity == nil || stopped.identity.fleet.id == nil {
+	if stopped == nil || stopped.identity == nil || stopped.identity.fleet.core == nil {
 		return nil, errors.New("original owned MDS creation identity is unavailable")
 	}
 	fleet := stopped.identity.fleet
-	if fleet.id.cluster == nil {
+	if fleet.core.Cluster() == nil {
 		return nil, errors.New("original MDS replacement filesystem is unavailable")
 	}
 	return fleet.addMDSReplacement(ctx, stopped, fleet.startService)
@@ -62,7 +62,7 @@ func (f mdsFleet) addMDSReplacement(parent context.Context, stopped *MDS, start 
 	if stopped == nil || stopped.identity == nil {
 		return nil, errors.New("original owned MDS creation identity is unavailable")
 	}
-	c := f.id.cluster
+	c := f.core.Cluster()
 	ctx, cancel := context.WithTimeout(parent, servicehook.StartupTimeout(c))
 	defer cancel()
 	release, err := lockSetupThenTopology(ctx, c)
@@ -99,7 +99,7 @@ func (f mdsFleet) addMDSReplacement(parent context.Context, stopped *MDS, start 
 		servicehook.Unlock(c)
 		return nil, clusterutil.OperationError(ctx, "select MDS replacement control", err)
 	}
-	if err := f.id.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := checkStoppedMDSCluster(ctx, f.core.Volumes(), i); err != nil {
 		servicehook.Unlock(c)
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func (f mdsFleet) addMDSReplacement(parent context.Context, stopped *MDS, start 
 		servicehook.Unlock(c)
 		return nil, clusterutil.OperationError(ctx, "inspect original MDS before replacement", err)
 	}
-	r := &cephFSMDSReplacement{name: f.mds.roster.nextID(f.id.name)}
+	r := &cephFSMDSReplacement{name: f.mds.roster.nextID(f.core.Name())}
 	r.scope, _, err = f.readMDSReplacementScope(ctx, i, r)
 	if err == nil {
 		err = f.checkMDSReplacementAuth(ctx, control, r.name)
@@ -147,11 +147,11 @@ func (f mdsFleet) admitMDSReplacement(ctx context.Context, stopped *MDS, r *ceph
 	if err := f.checkMDSReplacementOwner(stopped, i, nil); err != nil {
 		return nil, err
 	}
-	selected, err := f.id.cluster.ControlContainer(ctx)
+	selected, err := f.core.Cluster().ControlContainer(ctx)
 	if err != nil || selected == nil {
 		return nil, clusterutil.OperationError(ctx, "select admitted MDS replacement control", err)
 	}
-	if err := f.id.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := checkStoppedMDSCluster(ctx, f.core.Volumes(), i); err != nil {
 		return nil, err
 	}
 	if missing, err := inspectStoppedMDS(ctx, i, false); err != nil || missing {
@@ -193,7 +193,7 @@ func (f mdsFleet) completeMDSReplacement(ctx context.Context, stopped *MDS, r *c
 			if err != nil || !ready {
 				return clusterutil.OperationError(ctx, "confirm MDS replacement", err)
 			}
-			if err := servicehook.LockTopology(ctx, f.id.cluster); err != nil {
+			if err := servicehook.LockTopology(ctx, f.core.Cluster()); err != nil {
 				return err
 			}
 			err = f.checkMDSReplacementOwner(stopped, stopped.identity, r)
@@ -203,7 +203,7 @@ func (f mdsFleet) completeMDSReplacement(ctx context.Context, stopped *MDS, r *c
 			if err == nil {
 				r.completed = true
 			}
-			servicehook.Unlock(f.id.cluster)
+			servicehook.Unlock(f.core.Cluster())
 			return err
 		}
 		select {
@@ -241,7 +241,7 @@ func (f mdsFleet) checkMDSReplacementOwner(stopped *MDS, i *cephFSMDSIdentity, r
 	if err := f.checkStoppedMDSOwner(stopped, i); err != nil {
 		return err
 	}
-	if f.id.config.ActiveMDS != 1 || f.id.config.StandbyMDS != 0 || f.id.config.StandbyReplay || i.removalAttempted && (!i.removed || r == nil || !r.completed) {
+	if f.config.ActiveMDS != 1 || f.config.StandbyMDS != 0 || f.config.StandbyReplay || i.removalAttempted && (!i.removed || r == nil || !r.completed) {
 		return servicehook.Invalid(errors.New("MDS replacement requires one active, zero standby and original stopped ownership"))
 	}
 	if r == nil {
@@ -278,7 +278,7 @@ func (f mdsFleet) checkMDSReplacementPartial(old *cephFSMDSIdentity, r *cephFSMD
 		return nil
 	}
 	i := r.identity
-	if i == nil || r.daemon.identity != i || i.createdByReplacement != r || i.descriptor != r.daemon || i.fleet.id != f.id || i.native != old.native || i.name != r.name || r.daemon.ID != r.name || r.daemon.FilesystemName != f.id.name || r.daemon.Container != i.container || i.container == nil || i.container.GetContainerID() != i.cid || servicehook.Service(f.id.cluster, "mds."+r.name) != i.container || f.mds.roster.count() != 2 || f.mds.roster.at(0) != old.descriptor || f.mds.roster.at(1) != r.daemon {
+	if i == nil || r.daemon.identity != i || i.createdByReplacement != r || i.descriptor != r.daemon || i.fleet.core != f.core || i.native != old.native || i.name != r.name || r.daemon.ID != r.name || r.daemon.FilesystemName != f.core.Name() || r.daemon.Container != i.container || i.container == nil || i.container.GetContainerID() != i.cid || servicehook.Service(f.core.Cluster(), "mds."+r.name) != i.container || f.mds.roster.count() != 2 || f.mds.roster.at(0) != old.descriptor || f.mds.roster.at(1) != r.daemon {
 		return errors.New("cleanup-only original MDS replacement handle changed")
 	}
 	return nil
@@ -311,7 +311,7 @@ func (f mdsFleet) checkMDSReplacementAuth(ctx context.Context, control testconta
 }
 
 func (f mdsFleet) observeMDSReplacement(ctx context.Context, stopped *MDS, r *cephFSMDSReplacement) (bool, error) {
-	c := f.id.cluster
+	c := f.core.Cluster()
 	if err := servicehook.LockTopology(ctx, c); err != nil {
 		return false, err
 	}
@@ -323,7 +323,7 @@ func (f mdsFleet) observeMDSReplacement(ctx context.Context, stopped *MDS, r *ce
 	if r.daemon == nil || r.identity == nil || !r.identity.confirmed {
 		return false, errors.New("replacement service creation is unconfirmed")
 	}
-	if err := f.id.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := checkStoppedMDSCluster(ctx, f.core.Volumes(), i); err != nil {
 		return false, err
 	}
 	missing, err := inspectStoppedMDS(ctx, i, i.removed)
@@ -344,7 +344,7 @@ func (f mdsFleet) observeMDSReplacement(ctx context.Context, stopped *MDS, r *ce
 	if i.removed && !reflect.DeepEqual(i.scope, r.scope) {
 		return false, errors.New("completed original MDS removal scope differs from replacement")
 	}
-	if err := f.id.volumes().checkStoppedMDSCluster(ctx, i); err != nil {
+	if err := checkStoppedMDSCluster(ctx, f.core.Volumes(), i); err != nil {
 		return false, err
 	}
 	if err := f.checkMDSReplacementOwner(stopped, i, r); err != nil {
@@ -358,16 +358,16 @@ func (f mdsFleet) observeMDSReplacement(ctx context.Context, stopped *MDS, r *ce
 // decodeMDSReplacementMap, a function of its arguments. The cluster mutex is
 // held by its callers, as before the split.
 func (f mdsFleet) readMDSReplacementScope(ctx context.Context, old *cephFSMDSIdentity, r *cephFSMDSReplacement) (*mdsmap.Scope, bool, error) {
-	pools, err := f.id.readNativePools(ctx)
+	pools, err := f.core.ReadNativePools(ctx)
 	if err != nil {
 		return nil, false, clusterutil.OperationError(ctx, "read original MDS replacement pools", err)
 	}
-	data, err := f.id.cluster.Ceph(ctx, "fs", "dump", "--format", "json")
+	data, err := f.core.Cluster().Ceph(ctx, "fs", "dump", "--format", "json")
 	if err != nil {
 		return nil, false, clusterutil.OperationError(ctx, "read original MDS replacement map", err)
 	}
 	state, err := decodeMDSReplacementMap(data, replacementMDSMapExpectation{
-		oldName: old.name, filesystem: f.id.name, reservedName: r.name, workerExists: r.daemon != nil, native: old.native, pools: pools,
+		oldName: old.name, filesystem: f.core.Name(), reservedName: r.name, workerExists: r.daemon != nil, native: old.native, pools: pools,
 	})
 	if err != nil {
 		return nil, false, err

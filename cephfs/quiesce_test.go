@@ -82,7 +82,7 @@ func quiesceFixture(t *testing.T) (*Filesystem, *quiesceTestControl, *Subvolume)
 		t.Fatal(err)
 	}
 	fake := &quiesceTestControl{poolFixtureContainer: control}
-	fs.id.cluster.Container = fake
+	fs.base().Cluster().Container = fake
 	return fs, fake, volume
 }
 

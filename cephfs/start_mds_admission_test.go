@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -30,10 +31,10 @@ func startMDSTopologyFree(t *testing.T, fs *Filesystem) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if err := servicehook.LockTopology(ctx, fs.id.cluster); err != nil {
+	if err := servicehook.LockTopology(ctx, fs.base().Cluster()); err != nil {
 		t.Fatal("the topology mutex is retained after startMDSWithAdmission returned")
 	}
-	servicehook.Unlock(fs.id.cluster)
+	servicehook.Unlock(fs.base().Cluster())
 }
 
 // TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership characterizes the
@@ -46,7 +47,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 	const owner = "cephfs cluster is terminated or filesystem ownership changed"
 	t.Run("ownership/unregistered-filesystem", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
-		delete(filesystems(fs.id.cluster).byName, fs.FilesystemName)
+		delete(filesystems(fs.base().Cluster()).byName, fs.FilesystemName)
 		before := n.mutationCount()
 		d, err := fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
 		if err == nil || err.Error() != owner || d != nil || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 || n.mutationCount() != before {
@@ -56,7 +57,7 @@ func TestStartMDSAdmissionKeepsEachModesRefusalsAndOwnership(t *testing.T) {
 	})
 	t.Run("cold/identity-drift", func(t *testing.T) {
 		fs, n := coldMDSTestConstruct(t, false)
-		fs.id.native = &cephFSNativeIdentity{}
+		fs.base().ReplaceNative(&fsbase.NativeIdentity{})
 		before := len(n.calls)
 		_, err := fs.fleet().startMDSWithAdmission(t.Context(), startMDSNever(t), nil, nil)
 		if err == nil || err.Error() != "original cold MDS ownership changed before startup" || fs.mds.coldMDS.attempted || fs.mds.roster.nextIndex != 0 || len(n.calls) != before {

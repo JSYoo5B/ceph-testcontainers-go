@@ -6,15 +6,19 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 )
 
-// registered is the one place that tests the filesystem's own registry entry;
-// every admission predicate and ownership proof calls it and adds its own
-// conjuncts. A new open-coded byName[fs.name] lookup fails this test.
+// ownsRegistryEntry, the liveness predicate that newFilesystem hands to every
+// core, is the one place that tests the filesystem's own registry entry; the
+// core's Registered calls it and every admission predicate and ownership proof
+// calls Registered and adds its own conjuncts. A new open-coded
+// byName[core.Name()] lookup fails this test. fsbase's own guard pins that
+// Registered is the only caller of the predicate.
 func TestRegistryOwnershipIsReadOnlyThroughRegistered(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -48,29 +52,61 @@ func TestRegistryOwnershipIsReadOnlyThroughRegistered(t *testing.T) {
 					if key, ok := index.Index.(*ast.SelectorExpr); ok && key.Sel.Name == "name" {
 						sites = append(sites, fn.Name.Name)
 					}
+					if key, ok := index.Index.(*ast.CallExpr); ok {
+						if name, ok := key.Fun.(*ast.SelectorExpr); ok && name.Sel.Name == "Name" {
+							sites = append(sites, fn.Name.Name)
+						}
+					}
 				}
 				return true
 			})
 		}
 	}
-	if len(sites) != 1 || sites[0] != "registered" {
-		t.Fatalf("byName[fs.name] is read in %v, want only registered", sites)
+	if len(sites) != 1 || sites[0] != "ownsRegistryEntry" {
+		t.Fatalf("byName[core.Name()] is read in %v, want only ownsRegistryEntry", sites)
 	}
 }
 
 func TestRegisteredRefusesClosedAndReplacedFilesystems(t *testing.T) {
 	fs, _ := subvolumeFixture()
-	if !fs.id.registered() {
+	if !fs.base().Registered() {
 		t.Fatal("a live filesystem is not registered")
 	}
-	replacement := &Filesystem{id: filesystemIdentity{cluster: fs.id.cluster, name: fs.id.name}}
-	filesystems(fs.id.cluster).byName[fs.id.name] = replacement
-	if fs.id.registered() || !replacement.id.registered() {
+	replacement := newFilesystem(fs.base().Cluster(), Config{Name: fs.base().Name()}, nil)
+	filesystems(fs.base().Cluster()).byName[fs.base().Name()] = replacement
+	if fs.base().Registered() || !replacement.base().Registered() {
 		t.Fatal("a replaced registry entry still admits the original handle")
 	}
-	filesystems(fs.id.cluster).byName[fs.id.name] = fs
-	testhelper.TestSetClosed(fs.id.cluster, true)
-	if fs.id.registered() {
+	filesystems(fs.base().Cluster()).byName[fs.base().Name()] = fs
+	testhelper.TestSetClosed(fs.base().Cluster(), true)
+	if fs.base().Registered() {
 		t.Fatal("a closed cluster still admits its filesystem")
+	}
+}
+
+// TestNativeIdentityIsCapturedNotReplacedInProduction pins that production
+// code records the native identity only through the core's creation capture:
+// ReplaceNative is a test mutator, and createNative is the only capture.
+func TestNativeIdentityIsCapturedNotReplacedInProduction(t *testing.T) {
+	sites := map[string][]string{}
+	for _, parsed := range parseCephFSProductionFiles(t) {
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if call, ok := n.(*ast.CallExpr); ok {
+					switch name := admissionCallee(call); name {
+					case "ReplaceNative", "CaptureNativePools":
+						sites[name] = append(sites[name], fn.Name.Name)
+					}
+				}
+				return true
+			})
+		}
+	}
+	if len(sites["ReplaceNative"]) != 0 || !slices.Equal(sites["CaptureNativePools"], []string{"createNative"}) {
+		t.Fatalf("native identity writers changed: %v", sites)
 	}
 }

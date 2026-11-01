@@ -36,7 +36,7 @@ func TestCephFSPinValidationAndOwnershipBeforeCommands(t *testing.T) {
 	if _, err := (&foreign).PinPolicy(t.Context()); err == nil || len(control.calls) != 0 {
 		t.Fatal("foreign resource policy was queried")
 	}
-	testhelper.TestSetClosed(fs.id.cluster, true)
+	testhelper.TestSetClosed(fs.base().Cluster(), true)
 	if change, err := volume.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1}); change != nil || err == nil || len(control.calls) != 0 {
 		t.Fatal("closed cluster queried or changed directory pins")
 	}
@@ -63,11 +63,11 @@ func TestCephFSPinNativeBasePrivateNamesAndSharedRestore(t *testing.T) {
 	if err := copy.Restore(t.Context()); err != nil || len(fs.pins.byField) != 0 || control.policies[change.state.path].ExportRank != 0 {
 		t.Fatalf("copy did not restore shared override: %v", err)
 	}
-	testhelper.TestSetClosed(fs.id.cluster, true)
+	testhelper.TestSetClosed(fs.base().Cluster(), true)
 	if err := change.Restore(t.Context()); err != nil || len(control.mutations) != 2 {
 		t.Fatal("verified restore was not idempotent after cluster termination")
 	}
-	testhelper.TestSetClosed(fs.id.cluster, false)
+	testhelper.TestSetClosed(fs.base().Cluster(), false)
 	group.Name, group.Path = "foreign", "/foreign"
 	groupChange, err := group.OverridePin(t.Context(), PinSetting{Type: PinExport, Value: 1})
 	if err != nil || !slices.Equal(control.mutations[2], []string{"fs", "subvolumegroup", "pin", "fixture", "group", "export", "1"}) {
@@ -221,7 +221,7 @@ func cephFSPinFixture() (*Filesystem, *cephFSPinTestControl, *Subvolume, *Subvol
 		"/volumes/group":        {Path: "/volumes/group", Inode: 102, ExportRank: 0},
 		"/volumes/group/volume": {Path: "/volumes/group/volume", Inode: 103, ExportRank: 0},
 	}}
-	fs.id.cluster.Container = control
+	fs.base().Cluster().Container = control
 	volume := &Subvolume{Name: "volume", GroupName: "group", FilesystemName: "fixture", Path: "/volumes/group/volume/unique-id", identity: &cephFSVolumeIdentity{
 		filesystem: fs, filesystemID: 41, name: "volume", group: "group", path: "/volumes/group/volume/unique-id", createdAt: "2026-10-03 00:00:01.123456", ready: true,
 	}}

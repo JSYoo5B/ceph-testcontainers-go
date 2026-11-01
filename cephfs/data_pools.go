@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
 
@@ -28,118 +28,15 @@ type DataPoolState struct {
 type DataPool struct {
 	Name, FilesystemName string
 	ID                   int64
-	identity             *cephFSDataPoolIdentity
+	identity             dataPoolIdentity
 }
 
-type cephFSNativeIdentity struct {
-	id, metadataPool, defaultPool int64
-	attachments                   map[string]*cephFSDataPoolIdentity
-}
-
-type cephFSDataPoolIdentity struct {
-	filesystem                                 *Filesystem
-	name                                       string
-	id                                         int64
-	confirmed, used, removed, removalAttempted bool
-}
-
-type cephFSNativePools struct {
-	mapState         cephFSMap
-	id, metadataPool int64
-	dataPools        []int64
-	pools            []ceph.PoolState
-}
-
-// captureNativePoolIdentity is called during filesystem creation, never on
-// first use of a handle. Failed setup descriptors cannot adopt a later FS.
-func (fs *Filesystem) captureNativePoolIdentity(ctx context.Context) error {
-	state, err := fs.id.readNativePools(ctx)
-	if err != nil {
-		return err
-	}
-	if len(state.dataPools) == 0 {
-		return errors.New("created filesystem has no default data pool")
-	}
-	metadata, err := state.poolByID(state.metadataPool)
-	if err != nil {
-		return err
-	}
-	data, err := state.poolByID(state.dataPools[0])
-	if err != nil {
-		return err
-	}
-	if metadata.Name != fs.id.config.MetadataPool.Name || data.Name != fs.id.config.DataPool.Name {
-		return errors.New("created filesystem pool names do not match requested pools")
-	}
-	servicehook.Lock(fs.id.cluster)
-	fs.id.native = &cephFSNativeIdentity{id: state.id, metadataPool: metadata.ID, defaultPool: data.ID,
-		attachments: make(map[string]*cephFSDataPoolIdentity)}
-	servicehook.Unlock(fs.id.cluster)
-	return nil
-}
-
-func (id *filesystemIdentity) readNativePools(ctx context.Context) (*cephFSNativePools, error) {
-	data, err := id.cluster.Ceph(ctx, "fs", "dump", "--format", "json")
-	if err != nil {
-		return nil, err
-	}
-	var fsmap cephFSMap
-	if err := json.Unmarshal(data, &fsmap); err != nil || fsmap.Filesystems == nil {
-		return nil, errors.New("decode filesystem pool map")
-	}
-	var result *cephFSNativePools
-	for _, native := range fsmap.Filesystems {
-		if native.MDSMap.Name != id.name {
-			continue
-		}
-		if result != nil || native.ID < 0 || native.MDSMap.MetadataPool < 0 || len(native.MDSMap.DataPools) == 0 {
-			return nil, errors.New("incomplete or duplicate native filesystem pool map")
-		}
-		result = &cephFSNativePools{mapState: fsmap, id: native.ID, metadataPool: native.MDSMap.MetadataPool,
-			dataPools: slices.Clone(native.MDSMap.DataPools)}
-	}
-	if result == nil {
-		return nil, errors.New("owned filesystem is absent from FSMap")
-	}
-	result.pools, err = servicehook.PoolStates(ctx, id.cluster)
-	if err != nil {
-		return nil, err
-	}
-	if identity := id.native; identity != nil {
-		if result.id != identity.id || result.metadataPool != identity.metadataPool || result.dataPools[0] != identity.defaultPool {
-			return nil, errors.New("filesystem or its original pools were replaced; refusing operation")
-		}
-		for _, original := range []struct {
-			id   int64
-			name string
-		}{
-			{identity.metadataPool, id.config.MetadataPool.Name}, {identity.defaultPool, id.config.DataPool.Name},
-		} {
-			pool, err := result.poolByID(original.id)
-			if err != nil || pool.Name != original.name {
-				return nil, errors.New("original filesystem pool was replaced or renamed")
-			}
-		}
-	}
-	return result, nil
-}
-
-func (state *cephFSNativePools) poolByID(id int64) (ceph.PoolState, error) {
-	for _, pool := range state.pools {
-		if pool.ID == id {
-			return pool, nil
-		}
-	}
-	return ceph.PoolState{}, fmt.Errorf("native pool ID %d is absent", id)
-}
-
-func (state *cephFSNativePools) poolByName(name string) (ceph.PoolState, error) {
-	for _, pool := range state.pools {
-		if pool.Name == name {
-			return pool, nil
-		}
-	}
-	return ceph.PoolState{}, fmt.Errorf("native pool %q is absent", name)
+// dataPoolIdentity is the private identity of a DataPool handle: the
+// filesystem that recorded the attachment, and the attachment record that
+// filesystem's native identity holds, which copied handles share.
+type dataPoolIdentity struct {
+	filesystem *Filesystem
+	record     *fsbase.PoolAttachment
 }
 
 func (fs *Filesystem) beginDataPoolOperation(ctx context.Context) (context.Context, func(), error) {
@@ -147,8 +44,8 @@ func (fs *Filesystem) beginDataPoolOperation(ctx context.Context) (context.Conte
 		recheckCanceled: true,
 		refusal:         "filesystem must have a confirmed creation identity in this active cluster",
 		check: func(ctx context.Context) (bool, error) {
-			c := fs.id.cluster
-			if !fs.id.registered() || fs.id.native == nil {
+			c := fs.base().Cluster()
+			if !fs.base().Registered() || fs.base().Native() == nil {
 				return false, nil
 			}
 			control, err := c.ControlContainer(ctx)
@@ -171,13 +68,13 @@ func (fs *Filesystem) DataPools(ctx context.Context) ([]DataPoolState, error) {
 		return nil, err
 	}
 	defer done()
-	state, err := fs.id.readNativePools(ctx)
+	state, err := fs.base().ReadNativePools(ctx)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]DataPoolState, 0, len(state.dataPools))
-	for i, id := range state.dataPools {
-		pool, err := state.poolByID(id)
+	result := make([]DataPoolState, 0, len(state.DataPools))
+	for i, id := range state.DataPools {
+		pool, err := state.PoolByID(id)
 		if err != nil {
 			return nil, err
 		}
@@ -186,8 +83,8 @@ func (fs *Filesystem) DataPools(ctx context.Context) ([]DataPoolState, error) {
 	return result, nil
 }
 
-func (v volumeCommands) poolApplications(ctx context.Context, name string) (map[string]map[string]string, error) {
-	data, err := v.cluster.Ceph(ctx, "osd", "pool", "application", "get", name, "--format", "json")
+func poolApplications(ctx context.Context, v fsbase.VolumeCommands, name string) (map[string]map[string]string, error) {
+	data, err := v.Cluster().Ceph(ctx, "osd", "pool", "application", "get", name, "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -198,8 +95,10 @@ func (v volumeCommands) poolApplications(ctx context.Context, name string) (map[
 	return apps, nil
 }
 
-func cephFSPoolHandle(identity *cephFSDataPoolIdentity) *DataPool {
-	return &DataPool{Name: identity.name, ID: identity.id, FilesystemName: identity.filesystem.id.name, identity: identity}
+// cephFSPoolHandle returns a handle of the attachment record that fs's native
+// identity holds.
+func cephFSPoolHandle(fs *Filesystem, identity *fsbase.PoolAttachment) *DataPool {
+	return &DataPool{Name: identity.Name, ID: identity.ID, FilesystemName: fs.base().Name(), identity: dataPoolIdentity{filesystem: fs, record: identity}}
 }
 
 // AddDataPool attaches an existing pool with application=cephfs and no prior
@@ -224,30 +123,30 @@ func (fs *Filesystem) AddDataPool(ctx context.Context, name string) (*DataPool, 
 		return nil, err
 	}
 	defer done()
-	state, err := fs.id.readNativePools(ctx)
+	state, err := fs.base().ReadNativePools(ctx)
 	if err != nil {
 		return nil, err
 	}
-	pool, err := state.poolByName(name)
+	pool, err := state.PoolByName(name)
 	if err != nil {
 		return nil, err
 	}
-	previous := fs.id.native.attachments[name]
-	if previous != nil && !previous.removed {
-		if pool.ID != previous.id {
+	previous := fs.base().Native().Attachments[name]
+	if previous != nil && !previous.Removed {
+		if pool.ID != previous.ID {
 			return nil, errors.New("previously attempted data pool was replaced")
 		}
-		if previous.confirmed {
+		if previous.Confirmed {
 			return nil, errors.New("data pool attachment was already confirmed")
 		}
-		if slices.Contains(state.dataPools, pool.ID) {
+		if slices.Contains(state.DataPools, pool.ID) {
 			if err := fs.confirmDataPoolAttachment(ctx, previous); err != nil {
-				return cephFSPoolHandle(previous), err
+				return cephFSPoolHandle(fs, previous), err
 			}
-			return cephFSPoolHandle(previous), nil
+			return cephFSPoolHandle(fs, previous), nil
 		}
 	}
-	for _, native := range state.mapState.Filesystems {
+	for _, native := range state.Map.Filesystems {
 		if native.MDSMap.MetadataPool == pool.ID || slices.Contains(native.MDSMap.DataPools, pool.ID) {
 			return nil, errors.New("pool is already a filesystem metadata or data pool")
 		}
@@ -255,7 +154,7 @@ func (fs *Filesystem) AddDataPool(ctx context.Context, name string) (*DataPool, 
 	if pool.Type != "replicated" && (pool.Type != "erasure" || !slices.Contains(strings.Split(pool.Flags, ","), "ec_overwrites")) {
 		return nil, errors.New("CephFS EC data pools require allow_ec_overwrites")
 	}
-	apps, err := fs.id.volumes().poolApplications(ctx, name)
+	apps, err := poolApplications(ctx, fs.base().Volumes(), name)
 	if err != nil {
 		return nil, err
 	}
@@ -264,12 +163,12 @@ func (fs *Filesystem) AddDataPool(ctx context.Context, name string) (*DataPool, 
 		return nil, errors.New("pool must have only application=cephfs and no filesystem role; detached native tags require explicit inspection/cleanup")
 	}
 	identity := previous
-	if identity == nil || identity.removed {
-		identity = &cephFSDataPoolIdentity{filesystem: fs, name: name, id: pool.ID}
-		fs.id.native.attachments[name] = identity
+	if identity == nil || identity.Removed {
+		identity = &fsbase.PoolAttachment{Name: name, ID: pool.ID}
+		fs.base().Native().Attachments[name] = identity
 	}
-	handle := cephFSPoolHandle(identity)
-	if _, err := fs.id.cluster.Ceph(ctx, "fs", "add_data_pool", fs.id.name, strconv.FormatInt(pool.ID, 10)); err != nil {
+	handle := cephFSPoolHandle(fs, identity)
+	if _, err := fs.base().Cluster().Ceph(ctx, "fs", "add_data_pool", fs.base().Name(), strconv.FormatInt(pool.ID, 10)); err != nil {
 		return handle, fmt.Errorf("attach CephFS data pool: %w", err)
 	}
 	if err := fs.confirmDataPoolAttachment(ctx, identity); err != nil {
@@ -278,48 +177,48 @@ func (fs *Filesystem) AddDataPool(ctx context.Context, name string) (*DataPool, 
 	return handle, nil
 }
 
-func (fs *Filesystem) confirmDataPoolAttachment(ctx context.Context, identity *cephFSDataPoolIdentity) error {
-	state, err := fs.id.readNativePools(ctx)
+func (fs *Filesystem) confirmDataPoolAttachment(ctx context.Context, identity *fsbase.PoolAttachment) error {
+	state, err := fs.base().ReadNativePools(ctx)
 	if err != nil {
 		return err
 	}
-	pool, err := state.poolByName(identity.name)
-	if err != nil || pool.ID != identity.id || !slices.Contains(state.dataPools, identity.id) {
+	pool, err := state.PoolByName(identity.Name)
+	if err != nil || pool.ID != identity.ID || !slices.Contains(state.DataPools, identity.ID) {
 		return errors.New("attempted data pool registration was not confirmed with its original identity")
 	}
-	apps, err := fs.id.volumes().poolApplications(ctx, identity.name)
+	apps, err := poolApplications(ctx, fs.base().Volumes(), identity.Name)
 	if err != nil {
 		return err
 	}
-	if len(apps) != 1 || apps["cephfs"]["data"] != fs.id.name || apps["cephfs"]["metadata"] != "" {
+	if len(apps) != 1 || apps["cephfs"]["data"] != fs.base().Name() || apps["cephfs"]["metadata"] != "" {
 		return errors.New("attached pool's native application role was not confirmed")
 	}
-	identity.confirmed = true
+	identity.Confirmed = true
 	return nil
 }
 
 // checkSubvolumeDataPool runs while the setup gate is held. Selection is sticky even after a partial
 // native create, so removal never assumes unknown partial resources are safe.
 func (fs *Filesystem) checkSubvolumeDataPool(ctx context.Context, name string) error {
-	if fs.id.native == nil {
+	if fs.base().Native() == nil {
 		return errors.New("filesystem has no confirmed creation identity")
 	}
-	state, err := fs.id.readNativePools(ctx)
+	state, err := fs.base().ReadNativePools(ctx)
 	if err != nil {
 		return err
 	}
 	if name == "" {
 		return nil
 	}
-	pool, err := state.poolByName(name)
+	pool, err := state.PoolByName(name)
 	if err != nil {
 		return err
 	}
-	if !slices.Contains(state.dataPools, pool.ID) {
+	if !slices.Contains(state.DataPools, pool.ID) {
 		return errors.New("selected pool is not currently registered to this filesystem")
 	}
-	if identity := fs.id.native.attachments[name]; identity != nil && identity.id == pool.ID {
-		identity.used = true
+	if identity := fs.base().Native().Attachments[name]; identity != nil && identity.ID == pool.ID {
+		identity.Used = true
 	}
 	return nil
 }
@@ -328,8 +227,8 @@ func (fs *Filesystem) checkSubvolumeDataPool(ctx context.Context, name string) e
 // omit DataPool. Record that selection before the native create, including
 // unknown-success failures, so later group removal cannot erase its history.
 func (fs *Filesystem) checkSubvolumeCreationPool(ctx context.Context, name, group string) error {
-	if name == "" && group != "" && fs.id.native != nil {
-		info, err := fs.id.volumes().subvolumeGroupInfo(ctx, group)
+	if name == "" && group != "" && fs.base().Native() != nil {
+		info, err := subvolumeGroupInfo(ctx, fs.base().Volumes(), group)
 		if err != nil {
 			return err
 		}
@@ -355,7 +254,7 @@ func (attachment *DataPool) RemoveUnused(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if fs == nil || attachment == nil || attachment.identity == nil || attachment.identity.filesystem != fs {
+	if fs == nil || attachment == nil || attachment.identity.record == nil || attachment.identity.filesystem != fs {
 		return errors.New("data pool attachment must have been created by this filesystem")
 	}
 	ctx, done, err := fs.beginDataPoolOperation(ctx)
@@ -363,62 +262,62 @@ func (attachment *DataPool) RemoveUnused(ctx context.Context) error {
 		return err
 	}
 	defer done()
-	identity := attachment.identity
-	if identity.removed {
+	identity := attachment.identity.record
+	if identity.Removed {
 		return nil
 	}
-	if fs.id.native.attachments[identity.name] != identity || identity.id == fs.id.native.defaultPool || identity.used {
+	if fs.base().Native().Attachments[identity.Name] != identity || identity.ID == fs.base().Native().DefaultPool || identity.Used {
 		return errors.New("only an unused additional pool attachment may be removed")
 	}
-	state, err := fs.id.readNativePools(ctx)
+	state, err := fs.base().ReadNativePools(ctx)
 	if err != nil {
 		return err
 	}
-	pool, err := state.poolByName(identity.name)
-	if err != nil || pool.ID != identity.id {
+	pool, err := state.PoolByName(identity.Name)
+	if err != nil || pool.ID != identity.ID {
 		return errors.New("attached pool was replaced or renamed")
 	}
-	if !slices.Contains(state.dataPools, identity.id) {
-		if identity.removalAttempted {
-			identity.removed = true
+	if !slices.Contains(state.DataPools, identity.ID) {
+		if identity.RemovalAttempted {
+			identity.Removed = true
 			return nil
 		}
 		return servicehook.Invalid(errors.New("data pool was detached externally; refusing removal"))
 	}
-	if !identity.confirmed {
+	if !identity.Confirmed {
 		return errors.New("attachment must be confirmed before removal; retry AddDataPool first")
 	}
 	if err := fs.confirmDataPoolAttachment(ctx, identity); err != nil {
 		return err
 	}
-	if err := fs.checkUnusedDataPool(ctx, identity.name); err != nil {
+	if err := fs.checkUnusedDataPool(ctx, identity.Name); err != nil {
 		return err
 	}
-	identity.removalAttempted = true
-	if _, err := fs.id.cluster.Ceph(ctx, "fs", "rm_data_pool", fs.id.name, strconv.FormatInt(identity.id, 10)); err != nil {
+	identity.RemovalAttempted = true
+	if _, err := fs.base().Cluster().Ceph(ctx, "fs", "rm_data_pool", fs.base().Name(), strconv.FormatInt(identity.ID, 10)); err != nil {
 		return err
 	}
-	state, err = fs.id.readNativePools(ctx)
+	state, err = fs.base().ReadNativePools(ctx)
 	if err != nil {
 		return err
 	}
-	if slices.Contains(state.dataPools, identity.id) {
+	if slices.Contains(state.DataPools, identity.ID) {
 		return errors.New("data pool detachment was not confirmed")
 	}
-	identity.removed = true
+	identity.Removed = true
 	return nil
 }
 
 func (fs *Filesystem) checkUnusedDataPool(ctx context.Context, name string) error {
-	if err := fs.id.volumes().ensureVolumesModule(ctx); err != nil {
+	if err := ensureVolumesModule(ctx, fs.base().Volumes()); err != nil {
 		return err
 	}
-	groups, err := fs.id.volumes().subvolumeGroupNames(ctx)
+	groups, err := subvolumeGroupNames(ctx, fs.base().Volumes())
 	if err != nil {
 		return err
 	}
 	for _, group := range groups {
-		info, err := fs.id.volumes().subvolumeGroupInfo(ctx, group)
+		info, err := subvolumeGroupInfo(ctx, fs.base().Volumes(), group)
 		if err != nil {
 			return fmt.Errorf("cannot prove group pool is unused: %w", err)
 		}
@@ -427,12 +326,12 @@ func (fs *Filesystem) checkUnusedDataPool(ctx context.Context, name string) erro
 		}
 	}
 	for _, group := range append([]string{""}, groups...) {
-		names, err := fs.id.volumes().subvolumeNames(ctx, group)
+		names, err := subvolumeNames(ctx, fs.base().Volumes(), group)
 		if err != nil {
 			return err
 		}
 		for _, volume := range names {
-			info, err := fs.id.volumes().subvolumeInfo(ctx, volume, group)
+			info, err := subvolumeInfo(ctx, fs.base().Volumes(), volume, group)
 			if err != nil {
 				return fmt.Errorf("cannot prove subvolume/clone pool is unused: %w", err)
 			}
@@ -444,7 +343,7 @@ func (fs *Filesystem) checkUnusedDataPool(ctx context.Context, name string) erro
 			}
 		}
 	}
-	control, err := fs.id.cluster.ClientContainer(ctx)
+	control, err := fs.base().Cluster().ClientContainer(ctx)
 	if err != nil {
 		return fmt.Errorf("select data pool CLI container: %w", err)
 	}

@@ -82,7 +82,7 @@ type replacementMDSFixture struct {
 func newReplacementMDSFixture(t *testing.T) *replacementMDSFixture {
 	t.Helper()
 	previous, n, _, _, _ := stoppedMDSFixture(t)
-	c := previous.id.cluster
+	c := previous.base().Cluster()
 	r := &replacementMDSFixture{n: &replacementMDSControl{stoppedMDSControl: n, fsid: coldMDSFixtureFSID, auth: []any{map[string]any{"entity": "mds.target-0"}}}}
 	c.Container = r.n
 	setServices(c, map[string]testcontainers.Container{})
@@ -92,9 +92,9 @@ func newReplacementMDSFixture(t *testing.T) *replacementMDSFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.fs = &Filesystem{FilesystemName: "target", MetadataPool: config.MetadataPool.Name, DataPool: config.DataPool.Name, id: filesystemIdentity{cluster: c, config: config, name: "target"}}
+	r.fs = newFilesystem(c, config, nil)
 	filesystems(c).byName = map[string]*Filesystem{"target": r.fs}
-	if err := r.fs.captureNativePoolIdentity(t.Context()); err != nil {
+	if err := r.fs.base().CaptureNativePools(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	r.oldCID = &stoppedMDSDaemon{cid: strings.Repeat("a", 64), state: container.State{Status: "exited"}}
@@ -121,13 +121,13 @@ func (r *replacementMDSFixture) start(ctx context.Context, name, image string, o
 	}
 	// The actual startService publishes under this same owner mutex. Reaching
 	// it proves the new admission hook released the lock before service start.
-	if err := servicehook.LockTopology(ctx, r.fs.id.cluster); err != nil {
+	if err := servicehook.LockTopology(ctx, r.fs.base().Cluster()); err != nil {
 		return nil, err
 	}
 	if !r.nilResult {
-		servicehook.SetService(r.fs.id.cluster, name, r.newCID)
+		servicehook.SetService(r.fs.base().Cluster(), name, r.newCID)
 	}
-	servicehook.Unlock(r.fs.id.cluster)
+	servicehook.Unlock(r.fs.base().Cluster())
 	if !r.noPromotion {
 		r.promote("up:active")
 	}
@@ -152,12 +152,12 @@ func (r *replacementMDSFixture) assertNoAttempt(t *testing.T) {
 
 func TestMDSReplacementActualPublicationAndCompletedCopyRetry(t *testing.T) {
 	r := newReplacementMDSFixture(t)
-	beforeConfig, beforeNative := r.fs.id.config, r.fs.id.native
+	beforeConfig, beforeNative := r.fs.config, r.fs.base().Native()
 	newDaemon, err := r.add(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if newDaemon == nil || newDaemon != r.fs.mds.roster.daemons[1] || newDaemon.Container != r.newCID || !newDaemon.identity.confirmed || !r.old.identity.replacement.completed || r.old.identity.replacement.daemon != newDaemon || r.fs.Container != r.oldCID || r.fs.mds.roster.nextIndex != 2 || r.n.mutations != 1 || r.starts != 1 || r.oldCID.removes != 0 || !reflect.DeepEqual(r.fs.id.config, beforeConfig) || r.fs.id.native != beforeNative {
+	if newDaemon == nil || newDaemon != r.fs.mds.roster.daemons[1] || newDaemon.Container != r.newCID || !newDaemon.identity.confirmed || !r.old.identity.replacement.completed || r.old.identity.replacement.daemon != newDaemon || r.fs.Container != r.oldCID || r.fs.mds.roster.nextIndex != 2 || r.n.mutations != 1 || r.starts != 1 || r.oldCID.removes != 0 || !reflect.DeepEqual(r.fs.config, beforeConfig) || r.fs.base().Native() != beforeNative {
 		t.Fatal("replacement lost canonical publication, old embed, monotonic name or desired policy")
 	}
 	copy := *r.old
@@ -200,17 +200,17 @@ func TestMDSReplacementOwnerAndPublicAdmissionRejectsWithoutMutation(t *testing.
 			case "edited-original":
 				r.old.ID = "changed"
 			case "active-two":
-				r.fs.id.config.ActiveMDS = 2
+				r.fs.config.ActiveMDS = 2
 			case "standby-one":
-				r.fs.id.config.StandbyMDS = 1
+				r.fs.config.StandbyMDS = 1
 			case "replay":
-				r.fs.id.config.StandbyReplay = true
+				r.fs.config.StandbyReplay = true
 			case "partial-original":
 				r.old.identity.confirmed = false
 			case "closed":
-				testhelper.TestSetClosed(r.fs.id.cluster, true)
+				testhelper.TestSetClosed(r.fs.base().Cluster(), true)
 			case "registry":
-				servicehook.DeleteService(r.fs.id.cluster, "mds.target-0")
+				servicehook.DeleteService(r.fs.base().Cluster(), "mds.target-0")
 			case "duplicate":
 				r.fs.mds.roster.daemons = append(r.fs.mds.roster.daemons, r.old)
 			case "fs-name":
@@ -473,7 +473,7 @@ func TestMDSReplacementActualPartialStartupRetainedOnRetryAndCleanup(t *testing.
 				t.Fatal("partial attempt was completed or lost", err)
 			}
 			if fault != "nil-result" {
-				if got == nil || got != r.fs.mds.roster.daemons[1] || got != r.old.identity.replacement.daemon || got.identity.confirmed || got.identity.fsid != "" || servicehook.Service(r.fs.id.cluster, "mds.target-1") != r.newCID {
+				if got == nil || got != r.fs.mds.roster.daemons[1] || got != r.old.identity.replacement.daemon || got.identity.confirmed || got.identity.fsid != "" || servicehook.Service(r.fs.base().Cluster(), "mds.target-1") != r.newCID {
 					t.Fatal("actual partial publication lost canonical unconfirmed handle")
 				}
 			} else if got != nil || len(r.fs.mds.roster.daemons) != 1 {
@@ -484,7 +484,7 @@ func TestMDSReplacementActualPartialStartupRetainedOnRetryAndCleanup(t *testing.
 			if again != got || retryErr == nil || retryErr.Error() != "attempted MDS replacement is cleanup-only" || r.starts != 1 || r.n.mutations != 1 {
 				t.Fatal("failed receipt retry lost useful partial or resent native start", retryErr)
 			}
-			if err := r.fs.id.cluster.Terminate(t.Context()); err != nil {
+			if err := r.fs.base().Cluster().Terminate(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if r.oldCID.removes != 1 || fault != "nil-result" && r.newCID.removes != 1 {
@@ -523,7 +523,7 @@ func TestMDSReplacementServiceSuccessIsNotOperationCompletion(t *testing.T) {
 				}
 			}
 			got, err := r.add(ctx)
-			if got == nil || err == nil || !got.identity.confirmed || r.old.identity.replacement.completed || strings.Contains(err.Error(), "never-log") || got != r.fs.mds.roster.daemons[1] || servicehook.Service(r.fs.id.cluster, "mds.target-1") != r.newCID {
+			if got == nil || err == nil || !got.identity.confirmed || r.old.identity.replacement.completed || strings.Contains(err.Error(), "never-log") || got != r.fs.mds.roster.daemons[1] || servicehook.Service(r.fs.base().Cluster(), "mds.target-1") != r.newCID {
 				t.Fatal("service success/final observation error lost useful canonical creation or completed request", err)
 			}
 			again, retryErr := r.add(t.Context())
@@ -595,11 +595,11 @@ func TestMDSReplacementRecognizedRecoveryProgressAndPollOwnerRelease(t *testing.
 	case <-time.After(time.Second):
 		t.Fatal("pending recovery never observed")
 	}
-	if err := servicehook.LockTopology(admitCtx, r.fs.id.cluster); err != nil {
+	if err := servicehook.LockTopology(admitCtx, r.fs.base().Cluster()); err != nil {
 		t.Fatal("poll retained owner lock", err)
 	}
 	ownedCount := len(r.fs.mds.roster.daemons)
-	servicehook.Unlock(r.fs.id.cluster)
+	servicehook.Unlock(r.fs.base().Cluster())
 	if ownedCount != 2 {
 		t.Fatal("pending owned partial disappeared")
 	}
@@ -630,7 +630,7 @@ func TestMDSReplacementCompletedRetryReattestsOriginalIdentities(t *testing.T) {
 			case "new-export":
 				got.ID = "foreign"
 			case "new-registry":
-				servicehook.DeleteService(r.fs.id.cluster, "mds.target-1")
+				servicehook.DeleteService(r.fs.base().Cluster(), "mds.target-1")
 			case "extra-owned":
 				r.fs.mds.roster.daemons = append(r.fs.mds.roster.daemons, got)
 			case "pool":
@@ -669,7 +669,7 @@ func TestMDSReplacementRealAdmissionGatesRespectDeadline(t *testing.T) {
 	for _, gate := range []string{"setup", "owner", "control", "config"} {
 		t.Run(gate, func(t *testing.T) {
 			r := newReplacementMDSFixture(t)
-			c := r.fs.id.cluster
+			c := r.fs.base().Cluster()
 			var lock, unlock func()
 			switch gate {
 			case "setup":
@@ -742,7 +742,7 @@ func TestMDSReplacementIncompleteCreationCannotGainTypedAuthority(t *testing.T) 
 			if r.starts != 1 || r.n.mutations != 1 {
 				t.Fatal("failed request resent auth/start")
 			}
-			if err := r.fs.id.cluster.Terminate(t.Context()); err != nil || r.oldCID.removes != 1 || r.newCID.removes != 1 {
+			if err := r.fs.base().Cluster().Terminate(t.Context()); err != nil || r.oldCID.removes != 1 || r.newCID.removes != 1 {
 				t.Fatal("typed rejection lost cleanup-owned exact containers", err)
 			}
 		})
@@ -786,7 +786,7 @@ func TestMDSReplacementAttemptWithoutNewHandleRemainsCleanupOnlyAfterRestart(t *
 			if r.starts != wantedStarts || r.n.mutations != 1 || r.fs.mds.roster.nextIndex != 2 {
 				t.Fatal("restarted failed request allocated/authenticated another member")
 			}
-			if err := r.fs.id.cluster.Terminate(t.Context()); err != nil || r.oldCID.removes != 1 || r.newCID.removes != 0 {
+			if err := r.fs.base().Cluster().Terminate(t.Context()); err != nil || r.oldCID.removes != 1 || r.newCID.removes != 0 {
 				t.Fatal("cleanup lost exact original or adopted nonexistent new handle", err)
 			}
 		})
@@ -805,7 +805,7 @@ func TestMDSReplacementLegacyStarterReceiptUnchanged(t *testing.T) {
 			}
 			err := r.fs.fleet().startMDSWithService(t.Context(), func(context.Context, string, string, ...testcontainers.ContainerCustomizer) (testcontainers.Container, error) {
 				if ctr != nil {
-					servicehook.SetService(r.fs.id.cluster, "mds.target-1", ctr)
+					servicehook.SetService(r.fs.base().Cluster(), "mds.target-1", ctr)
 				}
 				return ctr, cause
 			})

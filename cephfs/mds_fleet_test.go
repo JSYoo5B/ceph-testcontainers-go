@@ -11,8 +11,9 @@ import (
 
 // mdsFleetBindings are the fields of mdsFleet and filesystemDescriptor with the
 // Filesystem field each one must be bound to, by address, in Filesystem.fleet.
+// core is bound to the Filesystem's own foundation core, fsbase.Of(fs).
 var mdsFleetBindings = map[string]string{
-	"id": "id", "mds": "mds", "first": "Container",
+	"core": "", "config": "config", "mds": "mds", "first": "Container",
 	"name": "FilesystemName", "metadataPool": "MetadataPool", "dataPool": "DataPool",
 }
 
@@ -86,8 +87,12 @@ func TestMDSFleetIsBuiltOnlyByFilesystemFleet(t *testing.T) {
 						problems = append(problems, "Filesystem.fleet binds unknown field "+key)
 						return true
 					}
-					if got := types.ExprString(kv.Value); got != "&"+recv+"."+want {
-						problems = append(problems, "Filesystem.fleet binds "+key+" to "+got+", want &"+recv+"."+want)
+					wantExpr := "&" + recv + "." + want
+					if key == "core" {
+						wantExpr = "fsbase.Of(" + recv + ")"
+					}
+					if got := types.ExprString(kv.Value); got != wantExpr {
+						problems = append(problems, "Filesystem.fleet binds "+key+" to "+got+", want "+wantExpr)
 					}
 					bound[key]++
 					return true
@@ -172,12 +177,12 @@ func TestMDSStateIsReachedOnlyThroughTheFleet(t *testing.T) {
 func TestFleetRegisteredFollowsTheFilesystem(t *testing.T) {
 	fs, _ := subvolumeFixture()
 	fleet := fs.fleet()
-	if !fleet.id.registered() {
+	if !fleet.core.Registered() {
 		t.Fatal("the fleet of a live filesystem is not registered")
 	}
-	replacement := &Filesystem{id: filesystemIdentity{cluster: fs.id.cluster, name: fs.id.name}}
-	filesystems(fs.id.cluster).byName[fs.id.name] = replacement
-	if fleet.id.registered() || !replacement.fleet().id.registered() {
+	replacement := newFilesystem(fs.base().Cluster(), Config{Name: fs.base().Name()}, nil)
+	filesystems(fs.base().Cluster()).byName[fs.base().Name()] = replacement
+	if fleet.core.Registered() || !replacement.fleet().core.Registered() {
 		t.Fatal("a replaced registry entry still admits the original fleet")
 	}
 }

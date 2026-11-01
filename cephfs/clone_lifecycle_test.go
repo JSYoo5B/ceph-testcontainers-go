@@ -45,7 +45,7 @@ func cloneLifecycleFixture(t *testing.T) (*Filesystem, *cloneLifecycleFixtureCon
 	base.Output["fs clone status fixture copy --group_name restores --format json"] = cloneLifecycleStatus("pending")
 	base.Output["fs subvolume snapshot info fixture volume checkpoint --group_name group --format json"] = `{"created_at":"2026-10-03 00:01:00.123456","data_pool":"additional","has_pending_clones":"yes","pending_clones":[{"name":"copy","target_group":"restores"}]}`
 	ctr := &cloneLifecycleFixtureContainer{poolFixtureContainer: base, cancelApplies: true, removeApplies: true}
-	fs.id.cluster.Container = ctr
+	fs.base().Cluster().Container = ctr
 	ctr.Calls = nil
 	return fs, ctr, clone
 }
@@ -250,7 +250,7 @@ func TestCephFSCloneLifecycleCanceledContextAndClosedClusterRefuseMutation(t *te
 	if err := clone.RemovePartial(ctx); err == nil {
 		t.Fatal("partial cleanup ignored canceled context")
 	}
-	testhelper.TestSetClosed(fs.id.cluster, true)
+	testhelper.TestSetClosed(fs.base().Cluster(), true)
 	if err := clone.Cancel(t.Context()); err == nil {
 		t.Fatal("closed cluster allowed cancellation")
 	}

@@ -171,7 +171,7 @@ func (f *fakeSnapSchedule) state() string {
 }
 
 func snapScheduleFilesystem(fake *fakeSnapSchedule) *Filesystem {
-	return &Filesystem{FilesystemName: "tc", id: filesystemIdentity{cluster: poolFixtureCluster(fake, 1), config: Config{Name: "tc"}, name: "tc"}}
+	return newFilesystem(poolFixtureCluster(fake, 1), Config{Name: "tc"}, nil)
 }
 
 var leaseSchedule = SnapshotSchedule{Path: "/", Repeat: "2h", Start: time.Date(2030, 3, 1, 0, 0, 0, 0, time.UTC), Retention: map[string]int{"d": 1, "n": 2}}

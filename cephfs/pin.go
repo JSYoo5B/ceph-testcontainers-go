@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
 )
@@ -155,7 +156,7 @@ func (fs *Filesystem) readOwnedPinPolicy(ctx context.Context, target cephFSPinTa
 	if err != nil {
 		return nil, err
 	}
-	policy, err := fs.id.volumes().readPinPolicy(ctx, base)
+	policy, err := readPinPolicy(ctx, fs.base().Volumes(), base)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +184,7 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 	if fs.pins.tracked(key) != nil {
 		return nil, errors.New("restore the existing directory pin override for this field first")
 	}
-	prior, err := fs.id.volumes().readPinPolicy(ctx, base)
+	prior, err := readPinPolicy(ctx, fs.base().Volumes(), base)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +211,7 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 	if change.state.previous == change.state.applied {
 		return change, nil
 	}
-	_, setErr := fs.id.volumes().pinCommand(ctx, target, setting.Type, setting.Value)
+	_, setErr := pinCommand(ctx, fs.base().Volumes(), target, setting.Type, setting.Value)
 	readCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer stop()
 	current, readErr := fs.readAndCheckPinTarget(readCtx, fsID, target, base, prior.Inode)
@@ -226,15 +227,15 @@ func (fs *Filesystem) temporaryPin(ctx context.Context, target cephFSPinTarget, 
 //
 //purpose:condition,lifetime
 func (change *PinOverrideHandle) Restore(ctx context.Context) error {
-	if change == nil || change.filesystem == nil || change.filesystem.id.cluster == nil || change.state == nil {
+	if change == nil || change.filesystem == nil || change.filesystem.base().Cluster() == nil || change.state == nil {
 		return errors.New("CephFS pin override is unavailable")
 	}
 	fs := change.filesystem
-	if err := clusterutil.LockMutex(ctx, &filesystems(fs.id.cluster).setupMu); err != nil {
+	if err := clusterutil.LockMutex(ctx, &filesystems(fs.base().Cluster()).setupMu); err != nil {
 		return err
 	}
 	restored := change.state.restored
-	filesystems(fs.id.cluster).setupMu.Unlock()
+	filesystems(fs.base().Cluster()).setupMu.Unlock()
 	if restored {
 		return nil
 	}
@@ -263,7 +264,7 @@ func (change *PinOverrideHandle) Restore(ctx context.Context) error {
 	if value != change.state.applied {
 		return servicehook.Invalid(errors.New("directory pin policy changed outside this override; refusing restoration"))
 	}
-	if _, err := fs.id.volumes().pinCommand(ctx, change.target, change.setting.Type, change.state.previous); err != nil {
+	if _, err := pinCommand(ctx, fs.base().Volumes(), change.target, change.setting.Type, change.state.previous); err != nil {
 		return err
 	}
 	current, err = fs.readAndCheckPinTarget(ctx, fsID, change.target, change.state.path, change.state.inode)
@@ -325,30 +326,30 @@ func cephFSPinValue(policy *PinPolicy, kind PinType) float64 {
 }
 
 func (fs *Filesystem) checkPinTarget(ctx context.Context, fsID int64, target cephFSPinTarget) (string, error) {
-	if err := servicehook.LockTopology(ctx, fs.id.cluster); err != nil {
+	if err := servicehook.LockTopology(ctx, fs.base().Cluster()); err != nil {
 		return "", err
 	}
-	closed := servicehook.Closed(fs.id.cluster)
-	servicehook.Unlock(fs.id.cluster)
+	closed := servicehook.Closed(fs.base().Cluster())
+	servicehook.Unlock(fs.base().Cluster())
 	if closed {
 		return "", servicehook.Invalid(errors.New("CephFS cluster is terminated"))
 	}
 	if err := fs.validateVolumeHandle(target.identity); err != nil || target.identity.removed {
 		return "", errors.New("directory pin target must remain a confirmed owned resource")
 	}
-	state, err := fs.id.readNativePools(ctx)
-	if err != nil || state.id != fsID {
+	state, err := fs.base().ReadNativePools(ctx)
+	if err != nil || state.ID != fsID {
 		return "", errors.Join(err, errors.New("filesystem identity changed during directory pin operation"))
 	}
 	identity := target.identity
 	if target.group {
-		info, err := fs.id.volumes().subvolumeGroupInfo(ctx, identity.name)
+		info, err := subvolumeGroupInfo(ctx, fs.base().Volumes(), identity.name)
 		if err != nil {
 			return "", err
 		}
 		return identity.path, fs.checkVolumeIdentity(fsID, identity, info.Path, info.CreatedAt)
 	}
-	info, err := fs.id.volumes().subvolumeInfo(ctx, identity.name, identity.group)
+	info, err := subvolumeInfo(ctx, fs.base().Volumes(), identity.name, identity.group)
 	if err != nil {
 		return "", err
 	}
@@ -362,15 +363,15 @@ func (fs *Filesystem) checkPinTarget(ctx context.Context, fsID int64, target cep
 	return base, nil
 }
 
-func (v volumeCommands) pinCommand(ctx context.Context, target cephFSPinTarget, kind PinType, value float64) ([]byte, error) {
+func pinCommand(ctx context.Context, v fsbase.VolumeCommands, target cephFSPinTarget, kind PinType, value float64) ([]byte, error) {
 	identity := target.identity
-	args := []string{"fs", "subvolume", "pin", v.name, identity.name, string(kind), strconv.FormatFloat(value, 'g', -1, 64)}
+	args := []string{"fs", "subvolume", "pin", v.Name(), identity.name, string(kind), strconv.FormatFloat(value, 'g', -1, 64)}
 	if target.group {
 		args[1] = "subvolumegroup"
 	} else {
 		args = appendSubvolumeGroup(args, identity.group)
 	}
-	return v.cluster.Ceph(ctx, args...)
+	return v.Cluster().Ceph(ctx, args...)
 }
 
 func (fs *Filesystem) readAndCheckPinTarget(ctx context.Context, fsID int64, target cephFSPinTarget, base string, inode uint64) (*PinPolicy, error) {
@@ -381,7 +382,7 @@ func (fs *Filesystem) readAndCheckPinTarget(ctx context.Context, fsID int64, tar
 	if currentBase != base {
 		return nil, errors.New("directory pin base path changed")
 	}
-	policy, err := fs.id.volumes().readPinPolicy(ctx, base)
+	policy, err := readPinPolicy(ctx, fs.base().Volumes(), base)
 	if err != nil {
 		return nil, err
 	}
@@ -392,12 +393,12 @@ func (fs *Filesystem) readAndCheckPinTarget(ctx context.Context, fsID int64, tar
 	return policy, err
 }
 
-func (v volumeCommands) readPinPolicy(ctx context.Context, base string) (*PinPolicy, error) {
-	control, err := v.cluster.ClientContainer(ctx)
+func readPinPolicy(ctx context.Context, v fsbase.VolumeCommands, base string) (*PinPolicy, error) {
+	control, err := v.Cluster().ClientContainer(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("select CephFS pin CLI container: %w", err)
 	}
-	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSPinReadScript, v.name, base)
+	data, err := servicehook.Command(ctx, control, "python3", "-c", cephFSPinReadScript, v.Name(), base)
 	if err != nil {
 		return nil, fmt.Errorf("read native CephFS directory pins: %w", err)
 	}

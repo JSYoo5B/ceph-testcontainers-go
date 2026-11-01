@@ -51,7 +51,7 @@ func TestScaleMDSOwnershipUsesCreationIdentityNotEditedDescriptor(t *testing.T) 
 	if err := fs.ScaleMDS(t.Context(), 1, 0); err != nil && err.Error() == ownership {
 		t.Fatalf("ScaleMDS ownership followed the edited FilesystemName: %v", err)
 	}
-	assertCephFSContextAdmissionReleased(t, fs.id.cluster)
+	assertCephFSContextAdmissionReleased(t, fs.base().Cluster())
 }
 
 // F5: ScaleMDS replaces the whole config struct under the cluster mutex while
@@ -65,17 +65,17 @@ func TestScheduleNameReadDoesNotRaceWithConfigReplacement(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := range 200 {
-			servicehook.Lock(fs.id.cluster)
-			desired := fs.id.config
+			servicehook.Lock(fs.base().Cluster())
+			desired := fs.config
 			desired.ActiveMDS = i%2 + 1
-			fs.id.config = desired
-			servicehook.Unlock(fs.id.cluster)
+			fs.config = desired
+			servicehook.Unlock(fs.base().Cluster())
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		for range 200 {
-			if _, err := fs.id.volumes().snapshotScheduleStatuses(t.Context(), "/"); err != nil {
+			if _, err := snapshotScheduleStatuses(t.Context(), fs.base().Volumes(), "/"); err != nil {
 				t.Errorf("status read failed: %v", err)
 				return
 			}
@@ -86,10 +86,12 @@ func TestScheduleNameReadDoesNotRaceWithConfigReplacement(t *testing.T) {
 
 // The identity is read from the identity's name everywhere. The only reads of
 // the exported copy are the descriptor-integrity refusals listed here, through
-// a Filesystem receiver or through the MDS fleet's descriptor, which
-// Filesystem.fleet binds to the exported field exactly once; no code reads the
-// name through config (an unlocked read of config is the F5 question). The list
-// is exact so a new reader is reviewed.
+// the core's DescriptorIntact (whose address newFilesystem binds once) or
+// through the MDS fleet's descriptor, which Filesystem.fleet binds to the
+// exported field exactly once; no code reads the name through config (an
+// unlocked read of config is the F5 question). The list is exact so a new
+// reader is reviewed. fsbase's own guard pins that DescriptorIntact is its only
+// read of the bound address.
 func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
 	allowedExported := []string{"beginSubvolumeOperation", "beginSessionOperation", "checkStoppedMDSOwner", "scaleColdMDS"}
 	fset := token.NewFileSet()
@@ -135,6 +137,9 @@ func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
 				if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "descriptor" && sel.Sel.Name == "name" {
 					exportedReads = append(exportedReads, fn.Name.Name)
 				}
+				if sel.Sel.Name == "DescriptorIntact" {
+					exportedReads = append(exportedReads, fn.Name.Name)
+				}
 				return true
 			})
 		}
@@ -149,7 +154,8 @@ func TestFilesystemIdentityIsReadOnlyFromImmutableName(t *testing.T) {
 			t.Errorf("%s no longer reads the exported copy; shrink the allow-list", name)
 		}
 	}
-	if !slices.Equal(bindings, []string{"fleet"}) {
-		t.Errorf("the exported FilesystemName is bound by address in %v, want only Filesystem.fleet", bindings)
+	slices.Sort(bindings)
+	if !slices.Equal(bindings, []string{"fleet", "newFilesystem"}) {
+		t.Errorf("the exported FilesystemName is bound by address in %v, want only Filesystem.fleet and newFilesystem", bindings)
 	}
 }

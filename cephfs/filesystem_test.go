@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JSYoo5B/ceph-testcontainers-go/cephfs/internal/fsbase"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
@@ -81,7 +82,7 @@ func TestCephFSUsesClusterPoolDefaultsAndPreservesPartialDescriptor(t *testing.T
 	cluster := poolFixtureCluster(ctr, 3)
 	testhelper.TestSetPoolDefaults(cluster, 3, 2)
 	fs, err := startFilesystem(t.Context(), cluster, Config{})
-	if err == nil || fs == nil || fs.id.config.MetadataPool.Replicas != 3 || fs.id.config.MetadataPool.MinSize != 2 || fs.id.config.DataPool.Replicas != 3 || fs.id.config.DataPool.MinSize != 2 {
+	if err == nil || fs == nil || fs.config.MetadataPool.Replicas != 3 || fs.config.MetadataPool.MinSize != 2 || fs.config.DataPool.Replicas != 3 || fs.config.DataPool.MinSize != 2 {
 		t.Fatalf("CephFS ignored cluster defaults or lost attempted resources: fs=%+v error=%v", fs, err)
 	}
 	owned := Filesystems(cluster)
@@ -220,7 +221,7 @@ func TestCephFSReplayStandbyIsDistinctFromActiveRank(t *testing.T) {
 func TestCephFSScaleRejectsCountsBeforeNativeCommands(t *testing.T) {
 	for _, counts := range [][2]int{{0, 0}, {-1, 0}, {257, 0}, {1, -1}, {1, int(^uint(0) >> 1)}} {
 		control := &poolFixtureContainer{}
-		fs := &Filesystem{id: filesystemIdentity{cluster: poolFixtureCluster(control, 2)}}
+		fs := newFilesystem(poolFixtureCluster(control, 2), Config{}, nil)
 		if err := fs.ScaleMDS(t.Context(), counts[0], counts[1]); err == nil || len(control.Calls) != 0 {
 			t.Fatalf("invalid count executed native commands: counts=%v error=%v calls=%v", counts, err, control.Calls)
 		}
@@ -315,7 +316,10 @@ func TestCephFSScaleDownPreservesFailuresAndRemovesOnlyOwnedStandby(t *testing.T
 			idle := &mdsScaleFixtureContainer{id: "idle", control: control, afterStop: after, removeErr: tc.removeErr}
 			active := &mdsScaleFixtureContainer{id: "active"}
 			other := &mdsScaleFixtureContainer{id: "other"}
-			fs := &Filesystem{Container: idle, FilesystemName: "tenant", id: filesystemIdentity{cluster: cluster, name: "tenant", config: Config{Name: "tenant", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}, ActiveMDS: 1, StandbyMDS: 1}, native: &cephFSNativeIdentity{id: 7, metadataPool: 1, defaultPool: 2}}, mds: mdsState{roster: mdsRoster{nextIndex: 2, daemons: []*MDS{{Container: idle, ID: "tenant-0", FilesystemName: "tenant"}, {Container: active, ID: "tenant-1", FilesystemName: "tenant"}}}}}
+			fs := newFilesystem(cluster, Config{Name: "tenant", MetadataPool: ceph.PoolConfig{Name: "metadata"}, DataPool: ceph.PoolConfig{Name: "data"}, ActiveMDS: 1, StandbyMDS: 1}, nil)
+			fs.Container = idle
+			fs.base().ReplaceNative(&fsbase.NativeIdentity{ID: 7, MetadataPool: 1, DefaultPool: 2})
+			fs.mds = mdsState{roster: mdsRoster{nextIndex: 2, daemons: []*MDS{{Container: idle, ID: "tenant-0", FilesystemName: "tenant"}, {Container: active, ID: "tenant-1", FilesystemName: "tenant"}}}}
 			filesystems(cluster).byName = map[string]*Filesystem{"tenant": fs}
 			setServices(cluster, map[string]testcontainers.Container{"mds.tenant-0": idle, "mds.tenant-1": active, "mds.other-0": other})
 			err := fs.ScaleMDS(t.Context(), 1, 0)
@@ -324,7 +328,7 @@ func TestCephFSScaleDownPreservesFailuresAndRemovesOnlyOwnedStandby(t *testing.T
 				t.Fatalf("scale-down touched active/other resources or mishandled errors: error=%v idle=%+v active=%+v other=%+v", err, idle, active, other)
 			}
 			retained := servicehook.Service(cluster, "mds.tenant-0") != nil
-			if retained != tc.retained || len(fs.MDSs()) != 1+btoi(tc.retained) || fs.id.config.ActiveMDS != 1 || fs.id.config.StandbyMDS != 0 {
+			if retained != tc.retained || len(fs.MDSs()) != 1+btoi(tc.retained) || fs.config.ActiveMDS != 1 || fs.config.StandbyMDS != 0 {
 				t.Fatal("scale-down lost a failed removal or retained an absent container")
 			}
 			if !tc.retained && fs.Container != active {
