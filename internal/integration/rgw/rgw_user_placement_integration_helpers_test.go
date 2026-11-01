@@ -19,6 +19,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -69,12 +70,12 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	client.Request(t, ctx, http.MethodPut, original, nil, http.StatusOK)
 	client.Request(t, ctx, http.MethodPut, original+"/original", oldPayload, http.StatusOK)
 	inline := false
-	placement, err := gateway.CreatePlacement(ctx, rgw.PlacementConfig{Name: "tc-user-tiered", IndexPool: "tc-user-index", DataExtraPool: "tc-user-extra", InlineData: &inline, Tags: []string{"premium"},
-		StorageClasses: []rgw.StorageClassConfig{{Name: "STANDARD", DataPool: "tc-user-standard"}, {Name: "STANDARD_IA", DataPool: "tc-user-ia"}}})
+	target, err := placement.Create(ctx, gateway, placement.Config{Name: "tc-user-tiered", IndexPool: "tc-user-index", DataExtraPool: "tc-user-extra", InlineData: &inline, Tags: []string{"premium"},
+		StorageClasses: []placement.StorageClass{{Name: "STANDARD", DataPool: "tc-user-standard"}, {Name: "STANDARD_IA", DataPool: "tc-user-ia"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := gateway.ApplyPlacement(ctx, placement); err != nil {
+	if err := target.Apply(ctx, gateway); err != nil {
 		t.Fatal(err)
 	}
 	client.Endpoint, err = gateway.S3Endpoint(ctx)
@@ -84,20 +85,20 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	if actual := rgwFixtureWaitStatus(t, ctx, client, original+"/original", http.StatusOK); !bytes.Equal(actual, oldPayload) {
 		t.Fatal("activating fresh restricted target changed an existing object")
 	}
-	location, targetName := placement.LocationConstraint, placement.Name
+	location, targetName := target.LocationConstraint, target.Name
 	createBody := []byte(`<CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><LocationConstraint>` + location + `</LocationConstraint></CreateBucketConfiguration>`)
 	requireRGWUserPlacementDenied(t, client.Request(t, ctx, http.MethodPut, "/tc-user-no-tag", createBody, http.StatusForbidden))
 	if _, err := gateway.Admin(ctx, "bucket", "stats", "--bucket", "tc-user-no-tag"); err == nil {
 		t.Fatal("denied creation left a native bucket")
 	}
 	// Public descriptor fields cannot redirect this owned native operation.
-	placement.Name, placement.ZoneID = "caller-mutated", "caller-mutated"
-	if err := user.SetPlacement(ctx, placement, rgw.UserPlacementConfig{Tags: []string{"premium"}}); err != nil {
+	target.Name, target.ZoneID = "caller-mutated", "caller-mutated"
+	if err := target.SetUserDefault(ctx, user, placement.UserDefault{Tags: []string{"premium"}}); err != nil {
 		t.Fatal(err)
 	}
 	rgwPlacementWaitCreateBucket(t, ctx, client, granted, createBody)
 	requireRGWUserBucketPlacement(t, ctx, gateway, granted, targetName)
-	if err := user.SetPlacement(ctx, placement, rgw.UserPlacementConfig{StorageClass: "STANDARD_IA"}); err != nil {
+	if err := target.SetUserDefault(ctx, user, placement.UserDefault{StorageClass: "STANDARD_IA"}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := user.Info(ctx)
@@ -134,7 +135,7 @@ func testRGWUserPlacementPolicy(t *testing.T, options ...testcontainers.Containe
 	// even after the user's default class changes.
 	requireRGWUserBucketPlacement(t, ctx, gateway, original, "default-placement")
 	requireRGWUserBucketPlacement(t, ctx, gateway, granted, targetName)
-	if err := user.SetPlacement(ctx, placement, rgw.UserPlacementConfig{StorageClass: "STANDARD_IA", Tags: []string{"revoked"}}); err != nil {
+	if err := target.SetUserDefault(ctx, user, placement.UserDefault{StorageClass: "STANDARD_IA", Tags: []string{"revoked"}}); err != nil {
 		t.Fatal(err)
 	}
 	info, err = user.Info(ctx)

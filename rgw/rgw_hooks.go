@@ -8,19 +8,14 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-// rgwHooks gives rgw/multisite, through internal/rgwhook, the handle
-// ownership checks and the host port reservation that are not public API.
+// rgwHooks gives rgw/multisite, through internal/rgwhook, the host port
+// reservation that is not public API. It needs the gateway start of this
+// package, so it cannot live in rgw/internal/gwbase.
 type rgwHooks struct{}
 
 func init() {
 	hookreg.RGW = rgwHooks{}
 }
-
-// UserServedBy reports whether g can run the operations of u.
-func (rgwHooks) UserServedBy(u *User, g *Gateway) bool { return u.servedBy(g) }
-
-// PlacementServedBy reports whether g runs in the cluster that owns p.
-func (rgwHooks) PlacementServedBy(p *Placement, g *Gateway) bool { return p.servedBy(g) }
 
 // ReserveGatewayPort reserves a host port of host-network cluster c for a
 // plain-HTTP gateway that starts later. It returns the gateway's peer

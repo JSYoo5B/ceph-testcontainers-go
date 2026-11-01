@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/naming"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"github.com/google/uuid"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/testcontainers/testcontainers-go"
@@ -27,14 +28,16 @@ import (
 // and SecretKey belong to a generated ordinary S3 user for trusted tests.
 //
 // Gateway embeds testcontainers.Container, so Stop, Start, Logs, Exec and
-// Inspect act on the gateway container. Formatting a Gateway, User, Account,
-// Placement or TLSConfig with any fmt verb, including %+v and %#v, prints only
-// an identifying label such as "RGW gateway s3"; credentials and TLS keys are
+// Inspect act on the gateway container. Formatting a Gateway, User or
+// TLSConfig with any fmt verb, including %+v and %#v, prints only an
+// identifying label such as "RGW gateway s3"; credentials and TLS keys are
 // read explicitly from the fields or User.Credentials. A gateway runs with 4
 // worker threads: enough for functional tests, not for load tests. Rate limits
-// are enforced by each gateway separately.
+// are enforced by each gateway separately. Copies of a Gateway share its
+// identity; Remove accepts only the descriptor that Start or Gateways returned.
 type Gateway struct {
 	testcontainers.Container
+	gatewayHandle
 	GatewayName string
 	AccessKey   string
 	SecretKey   string
@@ -46,7 +49,6 @@ type Gateway struct {
 	tlsPort       int
 	publicAddress string
 	networkName   string
-	owner         *ceph.Container
 	config        Config
 }
 
@@ -118,7 +120,7 @@ func startGatewayOn(ctx context.Context, c *ceph.Container, config Config, reser
 	ctr, port, tlsPort, err := startNamedDaemon(ctx, c, facts, config, reserved, opts...)
 	var rgw *Gateway
 	if ctr != nil {
-		rgw = &Gateway{Container: ctr, GatewayName: config.Name, Region: config.Region, port: port, tlsPort: tlsPort, publicAddress: facts.PublicAddress, networkName: facts.NetworkName, owner: c, config: config}
+		rgw = newGateway(c, ctr, config, port, tlsPort, facts.PublicAddress, facts.NetworkName)
 		// Publish after credential initialization, including partial error
 		// returns. Gateways readers then see an immutable descriptor. The
 		// generic service already owns the container during initialization.
@@ -191,12 +193,7 @@ func normalizeRGWConfig(config Config) (Config, error) {
 	return config, nil
 }
 
-func rgwServiceName(config Config) string {
-	if config.Name == "default" {
-		return "rgw"
-	}
-	return "rgw:" + config.Name
-}
+func rgwServiceName(config Config) string { return gwbase.ServiceName(config.Name) }
 
 func namedDaemonOptions(c *ceph.Container, facts ceph.ClusterFacts, port, tlsPort int, config Config) []testcontainers.ContainerCustomizer {
 	opts := []testcontainers.ContainerCustomizer{
@@ -500,9 +497,9 @@ func (c *Gateway) DaemonEndpoint(ctx context.Context) (string, error) {
 // Configure clients to use path-style addressing and the test credentials.
 //
 // Sign with Gateway.Region. In bridge mode the mapped port can change whenever
-// the gateway container restarts (ApplyPlacement, ReloadPlacement, multisite
-// sync group and zone changes, or the caller's own Stop and Start): call
-// S3Endpoint again afterwards.
+// the gateway container restarts (placement activation of package
+// rgw/placement, multisite sync group and zone changes, or the caller's own
+// Stop and Start): call S3Endpoint again afterwards.
 //
 //purpose:handoff
 func (c *Gateway) S3Endpoint(ctx context.Context) (string, error) {

@@ -17,6 +17,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clusterutil"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/multicluster"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -101,7 +102,7 @@ type SyncPipeConfig struct {
 	// Storage-class translation requires a concrete destination bucket and a
 	// confirmed native placement for each concrete DestinationZones entry.
 	// The caller must publish/import/reload those placements before traffic.
-	DestinationPlacements map[string]*rgw.Placement
+	DestinationPlacements map[string]*placement.Placement
 }
 
 // SyncGroup is a fresh group created by this fixture. Copies share native

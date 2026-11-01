@@ -17,7 +17,7 @@ import (
 // typed operations, not a native command such as user stats --sync-stats.
 func TestRGWAdminBudgetIsTheCallersContext(t *testing.T) {
 	gateway, ctr := newRGWAdminTestGateway(Config{}, rgwAdminResponse{data: "{}"}, rgwAdminResponse{data: "{}"})
-	testhelper.TestSetStartupTimeout(gateway.owner, 20*time.Second)
+	testhelper.TestSetStartupTimeout(gateway.base().Cluster(), 20*time.Second)
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	if _, err := gateway.Admin(ctx, "user", "stats", "--uid", "u", "--sync-stats"); err != nil {
@@ -55,19 +55,5 @@ func TestRGWAdminReportsAStoppedCommand(t *testing.T) {
 	gateway, _ = newRGWAdminTestGateway(Config{}, rgwAdminResponse{code: 127, data: "sh: radosgw-admin: not found\n"})
 	if _, err := gateway.Admin(ctx, "user", "list"); !errors.Is(err, ceph.ErrImageCapability) {
 		t.Fatalf("a missing radosgw-admin: %v", err)
-	}
-}
-
-func TestRGWAdminLimit(t *testing.T) {
-	if limit := rgwAdminLimit(context.Background()); limit != 0 {
-		t.Fatalf("no deadline: %d", limit)
-	}
-	for bound, want := range map[time.Duration][2]int{3 * time.Minute: {164, 165}, 20 * time.Second: {9, 10}, time.Second: {1, 1}} {
-		ctx, cancel := context.WithTimeout(t.Context(), bound)
-		limit := rgwAdminLimit(ctx)
-		cancel()
-		if limit < want[0] || limit > want[1] {
-			t.Errorf("bound %s: limit %d", bound, limit)
-		}
 	}
 }

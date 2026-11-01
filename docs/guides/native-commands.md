@@ -714,7 +714,7 @@ compare-and-swap for most of these changes, some conflicts go undetected.
 | `fs set max_mds`, `fs fail`, `fs rm` | `ScaleMDS`, `WaitReady`, `Filesystem.Remove` | `ScaleMDS`, `Filesystem.Remove` |
 | `fs set session_timeout`/`session_autoclose` | `session.OverrideTimeouts` | `session.OverrideTimeouts` |
 | `fs subvolume`/`subvolumegroup` changes to owned subvolumes, snapshots or clones | `cephfs/subvolume` handles, which check native identity | The `cephfs/subvolume` functions and handles |
-| `radosgw-admin` changes to fixture-created users, accounts or placement | `User.Info`, `User.Remove`, `Gateway.ApplyPlacement`, which verify keys and identity | The typed RGW helpers |
+| `radosgw-admin` changes to fixture-created users, accounts or placement | `User.Info`, `User.Remove`, `account.Account` and `placement.Placement` methods such as `Placement.Apply`, which verify keys and identity | The typed RGW helpers of `rgw`, `rgw/account` and `rgw/placement` |
 | `radosgw-admin period`/`zone`/`zonegroup` edits in a multisite fixture | `AddZone`, `RemoveZone`, `SyncGroup.Apply` | Typed topology calls, one at a time |
 | `rbd mirror pool enable`/`peer` changes on a mirrored pool | `rbdmirror.Mirror` operations, which compare captured policies | `rbdmirror.Mirror` methods, `Rebootstrap` |
 | Messenger mode and bind options with `MessengerV2Secure` | The fixed bootstrap policy; `override.SetConfig` refuses them | Choose `NetworkConfig.WithMessengerMode` at `Run` |

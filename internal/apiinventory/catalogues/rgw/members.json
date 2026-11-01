@@ -2,28 +2,8 @@
   "schema": "ceph-api-naming-members/v2",
   "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
   "package": "rgw",
-  "count": 91,
+  "count": 57,
   "types": {
-    "rgw.AccountConfig": [
-      "AccountConfig.Email field string",
-      "AccountConfig.ID field string",
-      "AccountConfig.MaxBuckets field *int",
-      "AccountConfig.Name field string",
-      "AccountConfig.Tenant field string"
-    ],
-    "rgw.AccountInfo": [
-      "AccountInfo.AccountQuota field Quota",
-      "AccountInfo.BucketQuota field Quota",
-      "AccountInfo.Email field string",
-      "AccountInfo.ID field string",
-      "AccountInfo.MaxBuckets field int",
-      "AccountInfo.MaxGroups field int",
-      "AccountInfo.MaxKeys field int",
-      "AccountInfo.MaxRoles field int",
-      "AccountInfo.MaxUsers field int",
-      "AccountInfo.Name field string",
-      "AccountInfo.Tenant field string"
-    ],
     "rgw.AdminCapability": [
       "AdminCapability.Permission field string `json:\"perm\"`",
       "AdminCapability.Type field string `json:\"type\"`"
@@ -41,50 +21,30 @@
       "Container embed *ceph.Container"
     ],
     "rgw.Gateway": [
+      "Gateway embed gatewayHandle",
       "Gateway embed testcontainers.Container",
       "Gateway.AccessKey field string",
       "Gateway.GatewayName field string",
       "Gateway.Region field string",
       "Gateway.SecretKey field string"
     ],
-    "rgw.Placement": [
-      "Placement.LocationConstraint field string",
-      "Placement.Name field string",
-      "Placement.RealmID field string",
-      "Placement.ZoneID field string",
-      "Placement.ZonegroupID field string"
-    ],
-    "rgw.PlacementConfig": [
-      "PlacementConfig.DataExtraPool field string",
-      "PlacementConfig.IndexPool field string",
-      "PlacementConfig.InlineData field *bool",
-      "PlacementConfig.Name field string",
-      "PlacementConfig.StorageClasses field []StorageClassConfig",
-      "PlacementConfig.Tags field []string"
-    ],
-    "rgw.PlacementState": [
-      "PlacementState embed PlacementConfig",
-      "PlacementState.Confirmed field bool",
-      "PlacementState.DefaultPlacement field string",
-      "PlacementState.LocationConstraint field string",
-      "PlacementState.RealmID field string",
-      "PlacementState.ZoneID field string",
-      "PlacementState.ZonegroupID field string"
-    ],
     "rgw.Quota": [
       "Quota.Enabled field bool",
       "Quota.MaxObjects field int64",
       "Quota.MaxSizeBytes field int64"
     ],
-    "rgw.StorageClassConfig": [
-      "StorageClassConfig.DataPool field string",
-      "StorageClassConfig.Name field string"
+    "rgw.RootAccount": [
+      "RootAccount embed accountOwner"
     ],
     "rgw.TLSConfig": [
       "TLSConfig.CertificatePEM field []byte",
       "TLSConfig.PrivateKeyPEM field []byte"
     ],
+    "rgw.User": [
+      "User embed userHandle"
+    ],
     "rgw.UserConfig": [
+      "UserConfig.Account field RootAccount",
       "UserConfig.AdminCaps field string",
       "UserConfig.DisplayName field string",
       "UserConfig.Email field string",
@@ -111,10 +71,6 @@
       "UserInfo.Tenant field string",
       "UserInfo.Type field string",
       "UserInfo.UserQuota field Quota"
-    ],
-    "rgw.UserPlacementConfig": [
-      "UserPlacementConfig.StorageClass field string",
-      "UserPlacementConfig.Tags field []string"
     ],
     "rgw.UserUsage": [
       "UserUsage.LastStatsSync field string",

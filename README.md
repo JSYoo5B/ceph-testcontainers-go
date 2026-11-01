@@ -44,8 +44,11 @@ Documentation for a published release is available at its Git tag.
     and their retention.
   - [`cephfs/mirror`](cephfs/mirror/README.md): snapshot mirroring between two
     clusters.
-- [`rgw`](rgw/README.md): S3 and Swift gateways, users, accounts and quotas,
-  placement and storage classes.
+- [`rgw`](rgw/README.md): S3 and Swift gateways, users, tenants and quotas.
+  - [`rgw/account`](rgw/account/README.md): accounts, their quotas and root
+    users.
+  - [`rgw/placement`](rgw/placement/README.md): placement targets, storage
+    classes and user default placement.
   - [`rgw/multisite`](rgw/multisite/README.md): realms, zonegroups and zones,
     period transfer, sync status and sync policy.
 - [`fault`](fault/README.md): container pause, network delay, loss, rate,

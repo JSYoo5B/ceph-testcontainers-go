@@ -1,0 +1,101 @@
+{
+  "schema": "ceph-api-naming/v2",
+  "scope": "Declared exports of one package; excludes struct fields, interface members, promoted/inherited methods and dependency exports",
+  "package": "rgw/placement",
+  "count": 13,
+  "entries": [
+    {
+      "current": "rgw/placement.Config",
+      "kind": "type",
+      "proposed": "rgw/placement.Config",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/placement.Create",
+      "kind": "function",
+      "signature": "func(ctx context.Context, g *rgw.Gateway, config Config) (*Placement, error)",
+      "proposed": "rgw/placement.Create",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/placement.Placement",
+      "kind": "type",
+      "proposed": "rgw/placement.Placement",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/placement.Placement.Apply",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *rgw.Gateway) error",
+      "receiver": "*Placement",
+      "proposed": "rgw/placement.Placement.Apply",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/placement.Placement.Format",
+      "kind": "method",
+      "signature": "func(f fmt.State, _ rune)",
+      "receiver": "Placement",
+      "proposed": "rgw/placement.Placement.Format",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/placement.Placement.GoString",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Placement",
+      "proposed": "rgw/placement.Placement.GoString",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/placement.Placement.Reload",
+      "kind": "method",
+      "signature": "func(ctx context.Context, g *rgw.Gateway) error",
+      "receiver": "*Placement",
+      "proposed": "rgw/placement.Placement.Reload",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/placement.Placement.SetUserDefault",
+      "kind": "method",
+      "signature": "func(ctx context.Context, u *rgw.User, config UserDefault) error",
+      "receiver": "*Placement",
+      "proposed": "rgw/placement.Placement.SetUserDefault",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/placement.Placement.Status",
+      "kind": "method",
+      "signature": "func(ctx context.Context) (State, error)",
+      "receiver": "*Placement",
+      "proposed": "rgw/placement.Placement.Status",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/placement.Placement.String",
+      "kind": "method",
+      "signature": "func() string",
+      "receiver": "Placement",
+      "proposed": "rgw/placement.Placement.String",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/placement.State",
+      "kind": "type",
+      "proposed": "rgw/placement.State",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/placement.StorageClass",
+      "kind": "type",
+      "proposed": "rgw/placement.StorageClass",
+      "decision": "baseline"
+    },
+    {
+      "current": "rgw/placement.UserDefault",
+      "kind": "type",
+      "proposed": "rgw/placement.UserDefault",
+      "decision": "baseline"
+    }
+  ]
+}

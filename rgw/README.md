@@ -4,9 +4,11 @@ Import `github.com/JSYoo5B/ceph-testcontainers-go/rgw` to give an application
 that uses S3 (or Swift) a disposable Ceph cluster with one or more gateways and
 the server-side state its integration test needs: an S3 endpoint the test can
 reach (optionally native HTTPS), users with explicit Admin Ops capabilities,
-tenants and accounts, quotas and suspension, storage counters, and placement
-targets with storage classes. Object operations belong to the S3 client under
-test; the package adds no S3 SDK. See
+tenants, quotas and suspension, and storage counters. Accounts and their root
+users are in [`rgw/account`](account/README.md), and placement targets with
+storage classes in [`rgw/placement`](placement/README.md); a test that needs
+one gateway and an S3 user reads this package alone. Object operations belong
+to the S3 client under test; the package adds no S3 SDK. See
 [API purpose and purpose tags](../docs/guides/api-purpose.md).
 
 ```
@@ -22,20 +24,21 @@ go get github.com/JSYoo5B/ceph-testcontainers-go/rgw
    clock, usage log, STS key, KMS backend), start with `ceph.Run`, apply them
    with `override.SetConfig`, then call `rgw.Start`: gateways read them at
    start.
-2. **Prepare the identities and placement** the scenario needs on a
-   `*rgw.Gateway` (from `Gateways` or `Start`): `CreateUser` (with tenant,
-   Admin Ops caps, bucket limit), `CreateAccount` and
-   `Account.CreateRootUser`, `User.SetQuota` / `SetBucketQuota`,
-   `User.Suspend`, `CreatePlacement` then `ApplyPlacement`, `User.SetPlacement`.
+2. **Prepare the identities** the scenario needs on a `*rgw.Gateway` (from
+   `Gateways` or `Start`): `CreateUser` (with tenant, Admin Ops caps, bucket
+   limit), `User.SetQuota` / `SetBucketQuota`, `User.Suspend`. For an account,
+   create it with `account.Create(ctx, gateway, cfg)` and its root user with
+   `CreateUser` and `UserConfig.Account`; for a placement target, use
+   `placement.Create(ctx, gateway, cfg)`, then `Placement.Apply` and
+   `Placement.SetUserDefault`.
 3. **Hand the endpoint to the SUT**: `S3Endpoint` (or `S3SecureEndpoint`) for a
    client on the test host, `DaemonEndpoint` for a client in the cluster
    network, with `User.Credentials` (or the gateway's own `AccessKey` /
    `SecretKey`) and `Gateway.Region`, path-style addressing.
-4. **Observe and verify**: `User.Info`, `User.Usage`, `Account.Info`,
-   `Placement.Status`, and `Gateway.Admin` for anything without a typed API.
+4. **Observe and verify**: `User.Info`, `User.Usage`, and `Gateway.Admin` for
+   anything without a typed API.
 5. **Clean up**: terminate the cluster; gateways, users and data go with it.
-   `Gateway.Remove`, `User.Remove` and `Account.Remove` are for tests of those
-   steps.
+   `Gateway.Remove` and `User.Remove` are for tests of those steps.
 
 The smallest S3 fixture keeps one daemon of each kind and single-copy pools:
 
@@ -76,11 +79,16 @@ recovery need the default two OSDs or more.
   19.2.5 is supported (use 19.2.5, not 19.2.6, for multisite). See
   [Releases and images](../docs/guides/releases-and-images.md).
 - Identities belong to the cluster and scope that created them, not to one
-  gateway: user, account and placement handles run through any running gateway
-  of their scope, and a gateway can be removed without removing them.
+  gateway: user handles, and the account and placement handles of the feature
+  packages, run through any running gateway of their scope, and a gateway can
+  be removed without removing them. Copies of a handle share its state.
+- An account's root user is an ordinary `*rgw.User` created with
+  `UserConfig.Account`; the gateway must belong to the account's cluster and
+  scope, and every later operation on the user checks the account's native
+  lifetime again.
 - Endpoints change on restart: in bridge mode a restarted gateway can get a
   new mapped host port. Resolve `S3Endpoint` again after any restart, including
-  the ones done by `ApplyPlacement`, `ReloadPlacement` and multisite changes.
+  the ones done by `Placement.Apply`, `Placement.Reload` and multisite changes.
 - Quota enforcement, suspension, placement defaults and usage counters go
   through caches and asynchronous accounting: poll with new requests instead of
   asserting right after a change. Usage log persistence is asynchronous too.

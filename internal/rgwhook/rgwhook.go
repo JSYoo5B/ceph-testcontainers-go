@@ -1,7 +1,8 @@
-// Package rgwhook gives rgw/multisite the parts of the rgw handles that are
-// not public API: whether a gateway can serve a user or placement handle, and
-// a host port reserved for a gateway before it starts. Package rgw registers
-// them in internal/hookreg when it is initialized.
+// Package rgwhook gives rgw/multisite a host port reserved for a gateway
+// before it starts, which needs the gateway start of package rgw and is not
+// public API. Package rgw registers it in internal/hookreg when it is
+// initialized. The handle ownership checks are typed accessors of
+// rgw/internal/gwbase.
 package rgwhook
 
 import (
@@ -14,8 +15,6 @@ import (
 )
 
 type hooks interface {
-	UserServedBy(*rgw.User, *rgw.Gateway) bool
-	PlacementServedBy(*rgw.Placement, *rgw.Gateway) bool
 	ReserveGatewayPort(context.Context, *ceph.Container) (string, func(context.Context, rgw.Config, ...testcontainers.ContainerCustomizer) (*rgw.Gateway, error), func(context.Context) error, error)
 }
 
@@ -41,16 +40,4 @@ func get() hooks {
 		panic("rgwhook: package rgw did not register its hooks")
 	}
 	return h
-}
-
-// UserServedBy reports whether g belongs to the cluster of u and serves the
-// scope of the gateway that created u, so that it can run u's operations.
-func UserServedBy(u *rgw.User, g *rgw.Gateway) bool { return get().UserServedBy(u, g) }
-
-// PlacementServedBy reports whether g runs in the cluster that owns p, that
-// is, where p's pools and resources live. Matching native realm, zonegroup
-// and zone IDs do not show this: a period can be imported into another
-// storage cluster.
-func PlacementServedBy(p *rgw.Placement, g *rgw.Gateway) bool {
-	return get().PlacementServedBy(p, g)
 }

@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -52,9 +54,9 @@ func newRGWUsageFixture(id string, stats string) (*Gateway, *rgwUsageTestContain
 	g, base := newRGWAdminTestGateway(Config{}, rgwAdminResponse{data: rgwUsageUserFixture(id)}, rgwAdminResponse{data: stats}, rgwAdminResponse{data: rgwUsageUserFixture(id)})
 	f := &rgwUsageTestContainer{rgwAdminTestContainer: base}
 	g.Container = f
-	servicehook.SetService(g.owner, rgwServiceName(g.config), f)
+	servicehook.SetService(g.base().Cluster(), rgwServiceName(g.config), f)
 	user := rgwAdminOwnedTestUser(g)
-	user.id = id
+	user.base().ID = id
 	return g, f, user
 }
 
@@ -100,49 +102,46 @@ func TestRGWUserUsageReportsNativeStorageAndTenantOwner(t *testing.T) {
 }
 
 type rgwUsageAccountContainer struct {
-	*rgwAccountTestContainer
+	*gwtest.AccountContainer
 	statsRaw string
 	onStats  func()
 }
 
 func (f *rgwUsageAccountContainer) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	original := args
-	args = rgwAdminArgv(args)
+	args = gwtest.Argv(args)
 	if args[0] == "radosgw-admin" && slices.Contains(args, "user") && slices.Contains(args, "stats") {
-		f.calls = append(f.calls, slices.Clone(args))
+		f.Calls = append(f.Calls, slices.Clone(args))
 		if f.onStats != nil {
 			f.onStats()
 		}
-		return rgwAdminReply(original, 0, rgwUsageStream(f.statsRaw))
+		return gwtest.Reply(original, 0, rgwUsageStream(f.statsRaw))
 	}
-	return f.rgwAccountTestContainer.Exec(ctx, original, opts...)
+	return f.AccountContainer.Exec(ctx, original, opts...)
 }
 
-func newRGWUsageAccountFixture(t *testing.T) (*Gateway, *rgwUsageAccountContainer, *Account, *User) {
+func newRGWUsageAccountFixture(t *testing.T) (*Gateway, *rgwUsageAccountContainer, RootAccount, *User) {
 	t.Helper()
 	g, base := newRGWAccountTestGateway()
-	account, err := g.CreateAccount(t.Context(), AccountConfig{ID: "RGW12345678901234567", Name: "fixture", Tenant: "team_a"})
+	account, _ := testRootAccount(g, base, "RGW12345678901234567", "team_a")
+	user, err := g.CreateUser(t.Context(), UserConfig{ID: "root", Account: account})
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := account.CreateRootUser(t.Context(), UserConfig{ID: "root"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f := &rgwUsageAccountContainer{rgwAccountTestContainer: base, statsRaw: rgwUsageFixture}
+	f := &rgwUsageAccountContainer{AccountContainer: base, statsRaw: rgwUsageFixture}
 	g.Container = f
-	servicehook.SetService(g.owner, rgwServiceName(g.config), f)
-	f.calls = nil
+	servicehook.SetService(g.base().Cluster(), rgwServiceName(g.config), f)
+	f.Calls = nil
 	return g, f, account, user
 }
 
 func TestRGWUserUsageAccountRootReportsAccountAggregate(t *testing.T) {
 	_, f, account, user := newRGWUsageAccountFixture(t)
 	usage, err := user.Usage(t.Context())
-	if err != nil || usage.Scope != "account" || usage.OwnerID != account.ID() || usage.UserID != "team_a$root" || usage.OwnerID == usage.UserID || usage.Tenant != "team_a" || usage.SizeBytes != 8193 || usage.NumObjects != 3 {
+	if err != nil || usage.Scope != "account" || usage.OwnerID != gwbase.AccountOf(account).ID || usage.UserID != "team_a$root" || usage.OwnerID == usage.UserID || usage.Tenant != "team_a" || usage.SizeBytes != 8193 || usage.NumObjects != 3 {
 		t.Fatalf("account aggregate mislabeled as per-user storage: %#v %v", usage, err)
 	}
-	assertRGWUsageReadOnlyCalls(t, f.calls, user.ID())
+	assertRGWUsageReadOnlyCalls(t, f.Calls, user.ID())
 }
 
 func TestRGWUserUsageRejectsChangedAccountLifetime(t *testing.T) {
@@ -150,15 +149,15 @@ func TestRGWUserUsageRejectsChangedAccountLifetime(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			_, f, _, user := newRGWUsageAccountFixture(t)
 			if phase == "before" {
-				f.versionTag = "recreated-account"
+				f.VersionTag = "recreated-account"
 			} else {
-				f.onStats = func() { f.versionTag = "recreated-account" }
+				f.onStats = func() { f.VersionTag = "recreated-account" }
 			}
 			usage, err := user.Usage(t.Context())
 			if err == nil || usage != (UserUsage{}) || strings.Contains(err.Error(), "PRIVATE") {
 				t.Fatalf("account lifetime change published usage: %#v %v", usage, err)
 			}
-			if phase == "before" && slices.ContainsFunc(f.calls, func(args []string) bool { return slices.Contains(args, "stats") }) {
+			if phase == "before" && slices.ContainsFunc(f.Calls, func(args []string) bool { return slices.Contains(args, "stats") }) {
 				t.Fatal("invalid account reached storage stats")
 			}
 		})
@@ -220,17 +219,21 @@ func TestRGWUserUsageStrictSchemaAndIntegerBounds(t *testing.T) {
 
 func TestRGWUserUsageRefusesUnownedOrReplacedGatewayBeforeNative(t *testing.T) {
 	cases := map[string]func(*Gateway, *User){
-		"foreign user":            func(g *Gateway, user *User) { user.owner = testCluster(nil, testhelper.TestConfig{}, nil) },
-		"unconfirmed user":        func(g *Gateway, user *User) { user.state.created = false },
-		"removed user":            func(g *Gateway, user *User) { user.state.removed = true },
-		"closed cluster":          func(g *Gateway, user *User) { testhelper.TestSetClosed(g.owner, true) },
-		"removed gateway":         func(g *Gateway, user *User) { servicehook.DeleteService(g.owner, rgwServiceName(g.config)) },
+		"foreign user": func(g *Gateway, user *User) {
+			user.base().Origin = testOrigin(testCluster(nil, testhelper.TestConfig{}, nil), Config{})
+		},
+		"unconfirmed user":        func(g *Gateway, user *User) { user.base().State.Created = false },
+		"removed user":            func(g *Gateway, user *User) { user.base().State.Removed = true },
+		"closed cluster":          func(g *Gateway, user *User) { testhelper.TestSetClosed(g.base().Cluster(), true) },
+		"removed gateway":         func(g *Gateway, user *User) { servicehook.DeleteService(g.base().Cluster(), rgwServiceName(g.config)) },
 		"same CID foreign handle": func(g *Gateway, user *User) { g.Container = &rgwAdminTestContainer{id: "gateway"} },
 		"typed nil gateway":       func(g *Gateway, user *User) { g.Container = (*rgwAdminTestContainer)(nil) },
 		"typed nil service": func(g *Gateway, user *User) {
-			servicehook.SetService(g.owner, rgwServiceName(g.config), (*rgwAdminTestContainer)(nil))
+			servicehook.SetService(g.base().Cluster(), rgwServiceName(g.config), (*rgwAdminTestContainer)(nil))
 		},
-		"changed declared scope": func(g *Gateway, user *User) { user.scope.Zone = "foreign" },
+		"changed declared scope": func(g *Gateway, user *User) {
+			user.base().Origin = testOrigin(g.base().Cluster(), Config{Zone: "foreign"})
+		},
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -301,7 +304,7 @@ func TestRGWUserUsageCancellationBeforeNativeAndAfterValidReply(t *testing.T) {
 
 func TestRGWUserUsageHeldOwnerDeadlineJoinsWithoutNative(t *testing.T) {
 	g, f, user := newRGWUsageFixture("test-user", rgwUsageFixture)
-	servicehook.Lock(g.owner)
+	servicehook.Lock(g.base().Cluster())
 	var unlock sync.Once
 	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Millisecond)
 	result := make(chan error, 1)
@@ -310,7 +313,7 @@ func TestRGWUserUsageHeldOwnerDeadlineJoinsWithoutNative(t *testing.T) {
 	// Cleanup owns exactly one cancel/unlock/join path before launch.
 	t.Cleanup(func() {
 		cancel()
-		unlock.Do(func() { servicehook.Unlock(g.owner) })
+		unlock.Do(func() { servicehook.Unlock(g.base().Cluster()) })
 		if started && !joined {
 			select {
 			case _ = <-result:
@@ -330,11 +333,11 @@ func TestRGWUserUsageHeldOwnerDeadlineJoinsWithoutNative(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("held owner worker exceeded watchdog")
 	}
-	unlock.Do(func() { servicehook.Unlock(g.owner) })
-	if !servicehook.TryLock(g.owner) {
+	unlock.Do(func() { servicehook.Unlock(g.base().Cluster()) })
+	if !servicehook.TryLock(g.base().Cluster()) {
 		t.Fatal("usage worker retained owner gate")
 	}
-	servicehook.Unlock(g.owner)
+	servicehook.Unlock(g.base().Cluster())
 }
 
 func TestRGWUserUsageRedactsNativeErrorsAndPreservesContextCause(t *testing.T) {
@@ -372,7 +375,7 @@ func TestRGWUserUsageGatewayFinalGuardDiscardsCounters(t *testing.T) {
 	g, f, user := newRGWUsageFixture("test-user", rgwUsageFixture)
 	f.hook = func(_ context.Context, _ []string, index int) {
 		if index == 2 {
-			servicehook.SetService(g.owner, rgwServiceName(g.config), &rgwAdminTestContainer{id: "gateway"})
+			servicehook.SetService(g.base().Cluster(), rgwServiceName(g.config), &rgwAdminTestContainer{id: "gateway"})
 		}
 	}
 	usage, err := user.Usage(t.Context())
@@ -390,17 +393,17 @@ func TestRGWUserUsageRejectsChangedNativeScopeAndRedactsControlFailure(t *testin
 			g, f, _, user := newRGWUsageAccountFixture(t)
 			switch phase {
 			case "before scope":
-				f.group["realm_id"] = "foreign-realm"
+				f.Group["realm_id"] = "foreign-realm"
 			case "after scope":
-				f.onStats = func() { f.group["realm_id"] = "foreign-realm" }
+				f.onStats = func() { f.Group["realm_id"] = "foreign-realm" }
 			case "control secret":
-				g.owner.Container = &rgwAdminTestContainer{id: "control", responses: []rgwAdminResponse{{code: 13, data: "PRIVATE-SECRET native service dump failure"}}}
+				g.base().Cluster().Container = &rgwAdminTestContainer{id: "control", responses: []rgwAdminResponse{{code: 13, data: "PRIVATE-SECRET native service dump failure"}}}
 			}
 			usage, err := user.Usage(t.Context())
 			if err == nil || usage != (UserUsage{}) || strings.Contains(err.Error(), "PRIVATE") {
 				t.Fatalf("invalid native scope or secret escaped: %#v %v", usage, err)
 			}
-			if phase != "after scope" && slices.ContainsFunc(f.calls, func(args []string) bool { return slices.Contains(args, "stats") }) {
+			if phase != "after scope" && slices.ContainsFunc(f.Calls, func(args []string) bool { return slices.Contains(args, "stats") }) {
 				t.Fatal("invalid runtime scope reached stats")
 			}
 		})
@@ -409,20 +412,20 @@ func TestRGWUserUsageRejectsChangedNativeScopeAndRedactsControlFailure(t *testin
 
 func TestRGWUserUsageHeldControlDeadlineReleasesOwnerAndDoesNotReadStats(t *testing.T) {
 	g, f, _, user := newRGWUsageAccountFixture(t)
-	assertSnapshotReadLockQueued(t, testhelper.TestState(g.owner).ControlMutex, func(ctx context.Context) error {
+	assertSnapshotReadLockQueued(t, testhelper.TestState(g.base().Cluster()).ControlMutex, func(ctx context.Context) error {
 		usage, err := user.Usage(ctx)
 		if usage != (UserUsage{}) {
 			t.Error("queued native scope published usage")
 		}
 		return err
 	})
-	if slices.ContainsFunc(f.calls, func(args []string) bool { return slices.Contains(args, "stats") }) {
+	if slices.ContainsFunc(f.Calls, func(args []string) bool { return slices.Contains(args, "stats") }) {
 		t.Fatal("held control gate reached stats")
 	}
-	if !servicehook.TryLock(g.owner) {
+	if !servicehook.TryLock(g.base().Cluster()) {
 		t.Fatal("queued native scope retained owner gate")
 	}
-	servicehook.Unlock(g.owner)
+	servicehook.Unlock(g.base().Cluster())
 	if _, err := user.Usage(t.Context()); err != nil {
 		t.Fatalf("fresh context could not reuse retained fixture: %v", err)
 	}

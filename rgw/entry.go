@@ -8,6 +8,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -43,10 +44,11 @@ func Start(ctx context.Context, c *ceph.Container, config Config, opts ...testco
 //
 //purpose:condition,lifetime
 func (g *Gateway) Remove(ctx context.Context) error {
-	if g == nil || g.owner == nil {
+	cluster := g.base().Cluster()
+	if cluster == nil {
 		return errNilCluster
 	}
-	return removeGateway(ctx, g.owner, g)
+	return removeGateway(ctx, cluster, g)
 }
 
 // Gateways returns sorted owned gateway descriptors, including partial
@@ -101,6 +103,18 @@ func (r *gatewayRegistry) Sorted() []*Gateway {
 	result := make([]*Gateway, 0, len(r.byName))
 	for _, name := range slices.Sorted(maps.Keys(r.byName)) {
 		result = append(result, r.byName[name])
+	}
+	return result
+}
+
+// cores returns the foundation cores of the registered gateways in name
+// order, the reader each gateway core is constructed with.
+func (r *gatewayRegistry) cores() []*gwbase.Core {
+	var result []*gwbase.Core
+	for _, g := range r.Sorted() {
+		if g != nil {
+			result = append(result, gwbase.Of(g))
+		}
 	}
 	return result
 }

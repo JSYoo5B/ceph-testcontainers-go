@@ -14,6 +14,7 @@ import (
 	ceph "github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -76,7 +77,7 @@ type rgwSyncTranslationFixture struct {
 	ctx                                  context.Context
 	source, destination                  *ceph.Container
 	link                                 *multisite.Fixture
-	primaryPlacement, secondaryPlacement *rgw.Placement
+	primaryPlacement, secondaryPlacement *placement.Placement
 	ownerA, ownerB                       *rgw.User
 	client                               func(t *testing.T, user *rgw.User, endpoint string) harness.S3HTTPClient
 	sourceEndpoint, destEndpoint         string
@@ -126,22 +127,22 @@ func newRGWSyncTranslationFixture(t *testing.T, ctx context.Context, opts ...tes
 		}
 	}
 	inline := false
-	placementConfig := rgw.PlacementConfig{Name: "tc-sync-tiered", IndexPool: "tc-sync-index", DataExtraPool: "tc-sync-extra", InlineData: &inline, StorageClasses: []rgw.StorageClassConfig{{Name: "STANDARD", DataPool: "tc-sync-standard"}, {Name: "STANDARD_IA", DataPool: "tc-sync-ia"}}}
-	primaryPlacement, err := link.Source.CreatePlacement(ctx, placementConfig)
+	placementConfig := placement.Config{Name: "tc-sync-tiered", IndexPool: "tc-sync-index", DataExtraPool: "tc-sync-extra", InlineData: &inline, StorageClasses: []placement.StorageClass{{Name: "STANDARD", DataPool: "tc-sync-standard"}, {Name: "STANDARD_IA", DataPool: "tc-sync-ia"}}}
+	primaryPlacement, err := placement.Create(ctx, link.Source, placementConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondaryPlacement, err := link.Destination.CreatePlacement(ctx, placementConfig)
+	secondaryPlacement, err := placement.Create(ctx, link.Destination, placementConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := link.Source.ApplyPlacement(ctx, primaryPlacement); err != nil {
+	if err := primaryPlacement.Apply(ctx, link.Source); err != nil {
 		t.Fatal(err)
 	}
 	if err := link.PullDestinationPeriod(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := link.Destination.ReloadPlacement(ctx, secondaryPlacement); err != nil {
+	if err := secondaryPlacement.Reload(ctx, link.Destination); err != nil {
 		t.Fatal(err)
 	}
 	global, err := link.CreateSyncGroup(ctx, multisite.SyncPolicyScope{}, multisite.SyncGroupConfig{ID: "permission", Status: multisite.SyncAllowed})

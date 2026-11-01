@@ -1,25 +1,23 @@
-package rgw
+package placement
 
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/testhelper"
 	"io"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/internal/servicehook"
-	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwbase"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/internal/gwtest"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
 type rgwUserPlacementTestContainer struct {
-	*rgwPlacementTestContainer
+	*gwtest.PlacementContainer
 	user       map[string]any
 	onModify   func(map[string]any)
 	failModify bool
@@ -27,19 +25,12 @@ type rgwUserPlacementTestContainer struct {
 
 func (f *rgwUserPlacementTestContainer) Exec(ctx context.Context, args []string, opts ...tcexec.ProcessOption) (int, io.Reader, error) {
 	original := args
-	args = rgwAdminArgv(args)
-	flag := func(name string) string {
-		for i, arg := range args {
-			if arg == name && i+1 < len(args) {
-				return args[i+1]
-			}
-		}
-		return ""
-	}
+	args = gwtest.Argv(args)
+	flag := gwtest.Flag(args)
 	if args[0] != "radosgw-admin" || !slices.Contains(args, "user") {
-		code, stream, err := f.rgwPlacementTestContainer.Exec(ctx, original, opts...)
+		code, stream, err := f.PlacementContainer.Exec(ctx, original, opts...)
 		if err == nil && code == 0 && slices.Contains(args, "zonegroup") && slices.Contains(args, "add") && flag("--tags") != "" {
-			target := rgwPlacementTarget(f.group, flag("--placement-id"))
+			target := groupTarget(f.Group, flag("--placement-id"))
 			tags := strings.Split(flag("--tags"), ",")
 			values := make([]any, len(tags))
 			for i := range tags {
@@ -49,7 +40,7 @@ func (f *rgwUserPlacementTestContainer) Exec(ctx context.Context, args []string,
 		}
 		return code, stream, err
 	}
-	f.calls = append(f.calls, slices.Clone(args))
+	f.Calls = append(f.Calls, slices.Clone(args))
 	if flag("--uid") != "test-user" || flag("--zonegroup-id") != "group-id" || flag("--zone-id") != "zone-id" {
 		return 0, nil, errors.New("unexpected native user scope")
 	}
@@ -78,25 +69,15 @@ func (f *rgwUserPlacementTestContainer) Exec(ctx context.Context, args []string,
 	if code == 0 {
 		data, _ = json.Marshal(f.user)
 	}
-	var header [8]byte
-	header[0] = byte(stdcopy.Stdout)
-	if code != 0 {
-		header[0] = byte(stdcopy.Stderr)
-	}
-	binary.BigEndian.PutUint32(header[4:], uint32(len(data)))
-	var stream bytes.Buffer
-	stream.Write(header[:])
-	stream.Write(data)
-	return rgwAdminReply(original, code, &stream)
+	return gwtest.Reply(original, code, gwtest.Stream(code != 0, data))
 }
 
-func newRGWUserPlacementFixture(t *testing.T) (*Gateway, *rgwUserPlacementTestContainer, *Placement, *User) {
+func newRGWUserPlacementFixture(t *testing.T) (*gwtest.Gateway, *rgwUserPlacementTestContainer, *Placement, *gwbase.User) {
 	t.Helper()
 	g, base := newRGWPlacementFixture()
-	f := &rgwUserPlacementTestContainer{rgwPlacementTestContainer: base}
-	g.Container = f
-	servicehook.SetService(g.owner, "rgw", f)
-	_ = json.Unmarshal([]byte(rgwAdminFixture("test-user", "PRIVATE-SECRET", false, Quota{Enabled: true, MaxSizeBytes: 98304, MaxObjects: 8})), &f.user)
+	f := &rgwUserPlacementTestContainer{PlacementContainer: base}
+	g.Replace(f)
+	_ = json.Unmarshal([]byte(gwtest.UserDocument("test-user", "PRIVATE-SECRET", false, gwbase.Quota{Enabled: true, MaxSizeBytes: 98304, MaxObjects: 8})), &f.user)
 	f.user["default_placement"] = ""
 	f.user["default_storage_class"] = ""
 	f.user["placement_tags"] = []string{}
@@ -106,44 +87,46 @@ func newRGWUserPlacementFixture(t *testing.T) (*Gateway, *rgwUserPlacementTestCo
 	f.user["path"] = "/"
 	f.user["mfa_ids"] = []string{"device-one"}
 	f.user["unknown_future_attribute"] = map[string]any{"nested": "preserve"}
-	config := rgwPlacementTestConfig()
+	config := testConfig()
 	config.Tags = []string{"writer", "premium"}
-	p, err := g.CreatePlacement(t.Context(), config)
+	p, err := create(t.Context(), g.Core, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.calls = nil
-	return g, f, p, rgwAdminOwnedTestUser(g)
+	f.Calls = nil
+	user := &gwbase.User{Origin: g.Core, ID: "test-user", AccessKey: "PRIVATE-ACCESS", SecretKey: "PRIVATE-SECRET",
+		State: &gwbase.UserState{Created: true, Identity: &gwbase.CreationIdentity{OriginalType: "rgw"}}}
+	return g, f, p, user
 }
 
 func TestRGWUserPlacementGrantsDefaultsPreservesTagsAndNativePolicy(t *testing.T) {
 	_, f, p, user := newRGWUserPlacementFixture(t)
 	p.Name, p.ZoneID, p.LocationConstraint = "foreign", "foreign", "foreign:target"
-	if err := user.SetPlacement(t.Context(), p, UserPlacementConfig{StorageClass: "STANDARD_IA", Tags: []string{"writer", "premium"}}); err != nil {
+	if err := setUserDefault(t.Context(), p, user, UserDefault{StorageClass: "STANDARD_IA", Tags: []string{"writer", "premium"}}); err != nil {
 		t.Fatal(err)
 	}
-	native, err := decodeRGWUser(mustRGWUserPlacementJSON(t, f.user))
-	if err != nil || native.info.DefaultPlacement != "tiered" || native.info.DefaultStorageClass != "STANDARD_IA" || !slices.Equal(native.info.PlacementTags, []string{"premium", "writer"}) {
+	native, err := gwbase.DecodeUser(mustRGWUserPlacementJSON(t, f.user))
+	if err != nil || native.Info.DefaultPlacement != "tiered" || native.Info.DefaultStorageClass != "STANDARD_IA" || !slices.Equal(native.Info.PlacementTags, []string{"premium", "writer"}) {
 		t.Fatal("requested user placement policy was not read back")
 	}
-	for _, args := range f.calls {
+	for _, args := range f.Calls {
 		if args[0] == "radosgw-admin" && slices.Contains(args, "user") && (!slices.Contains(args, "--zone-id") || slices.Contains(args, "foreign")) {
 			t.Fatal("mutable placement descriptor redirected native user operation")
 		}
 	}
-	before := rgwUserUnrelatedPlacementPolicy(native.document)
-	if err := user.SetPlacement(t.Context(), p, UserPlacementConfig{}); err != nil {
+	before := unrelatedUserPolicy(native.Document)
+	if err := setUserDefault(t.Context(), p, user, UserDefault{}); err != nil {
 		t.Fatal(err)
 	}
-	after, err := decodeRGWUser(mustRGWUserPlacementJSON(t, f.user))
-	if err != nil || after.info.DefaultStorageClass != "" || !slices.Equal(after.info.PlacementTags, []string{"premium", "writer"}) || !reflect.DeepEqual(before, rgwUserUnrelatedPlacementPolicy(after.document)) {
+	after, err := gwbase.DecodeUser(mustRGWUserPlacementJSON(t, f.user))
+	if err != nil || after.Info.DefaultStorageClass != "" || !slices.Equal(after.Info.PlacementTags, []string{"premium", "writer"}) || !reflect.DeepEqual(before, unrelatedUserPolicy(after.Document)) {
 		t.Fatal("nil tags or unrelated type, caps, quotas, keys and native attributes were not preserved")
 	}
-	if err := user.SetPlacement(t.Context(), p, UserPlacementConfig{Tags: []string{"unmatched"}}); err != nil {
+	if err := setUserDefault(t.Context(), p, user, UserDefault{Tags: []string{"unmatched"}}); err != nil {
 		t.Fatal(err)
 	}
-	after, _ = decodeRGWUser(mustRGWUserPlacementJSON(t, f.user))
-	if !slices.Equal(after.info.PlacementTags, []string{"unmatched"}) {
+	after, _ = gwbase.DecodeUser(mustRGWUserPlacementJSON(t, f.user))
+	if !slices.Equal(after.Info.PlacementTags, []string{"unmatched"}) {
 		t.Fatal("old grant tags survived exact nonmatching replacement")
 	}
 }
@@ -152,11 +135,11 @@ func TestRGWUserPlacementRejectsMigratedAccountIdentity(t *testing.T) {
 	_, f, p, user := newRGWUserPlacementFixture(t)
 	f.user["type"], f.user["account_id"] = "root", "RGW12345678901234567"
 	before := mustRGWUserPlacementJSON(t, f.user)
-	f.calls = nil
-	if err := user.SetPlacement(t.Context(), p, UserPlacementConfig{Tags: []string{"premium"}}); err == nil {
+	f.Calls = nil
+	if err := setUserDefault(t.Context(), p, user, UserDefault{Tags: []string{"premium"}}); err == nil {
 		t.Fatal("ordinary user's original key adopted an externally migrated account root")
 	}
-	for _, args := range f.calls {
+	for _, args := range f.Calls {
 		if slices.Contains(args, "modify") {
 			t.Fatal("account migration reached native placement mutation")
 		}
@@ -176,11 +159,11 @@ func mustRGWUserPlacementJSON(t *testing.T, document map[string]any) []byte {
 }
 
 func TestRGWUserPlacementRejectsInvalidConfigurationBeforeNativeCalls(t *testing.T) {
-	for _, config := range []UserPlacementConfig{
+	for _, config := range []UserDefault{
 		{Tags: []string{}}, {Tags: []string{""}}, {Tags: []string{"writer,other"}}, {Tags: []string{"writer\n"}}, {Tags: []string{"writer other"}}, {Tags: []string{"same", "same"}}, {StorageClass: "standard_ia"},
 	} {
 		_, f, p, user := newRGWUserPlacementFixture(t)
-		if err := user.SetPlacement(t.Context(), p, config); err == nil || len(f.calls) != 0 {
+		if err := setUserDefault(t.Context(), p, user, config); err == nil || len(f.Calls) != 0 {
 			t.Fatal("invalid/unsupported user placement request reached native command")
 		}
 	}
@@ -189,49 +172,50 @@ func TestRGWUserPlacementRejectsInvalidConfigurationBeforeNativeCalls(t *testing
 func TestRGWUserPlacementRejectsOwnershipScopePoolMappingAndKeyChanges(t *testing.T) {
 	for _, check := range []struct {
 		name string
-		edit func(*Gateway, *rgwUserPlacementTestContainer, *Placement, *User)
+		edit func(*gwtest.Gateway, *rgwUserPlacementTestContainer, *Placement, *gwbase.User)
 	}{
-		{"foreign user", func(_ *Gateway, _ *rgwUserPlacementTestContainer, _ *Placement, user *User) {
-			user.owner = testCluster(nil, testhelper.TestConfig{}, nil)
+		{"foreign user", func(_ *gwtest.Gateway, _ *rgwUserPlacementTestContainer, _ *Placement, user *gwbase.User) {
+			user.Origin = gwtest.Foreign()
 		}},
-		{"foreign scope", func(_ *Gateway, _ *rgwUserPlacementTestContainer, _ *Placement, user *User) {
-			user.scope.Zone = "elsewhere"
+		{"foreign scope", func(g *gwtest.Gateway, _ *rgwUserPlacementTestContainer, _ *Placement, user *gwbase.User) {
+			user.Origin = gwbase.NewCore(gwbase.Params{Cluster: g.Cluster, Name: "default", Scope: gwbase.Scope{Zone: "elsewhere"},
+				Gateways: func() []*gwbase.Core { return g.Registered }})
 		}},
-		{"different captured native scope", func(_ *Gateway, _ *rgwUserPlacementTestContainer, p *Placement, user *User) {
+		{"different captured native scope", func(_ *gwtest.Gateway, _ *rgwUserPlacementTestContainer, p *Placement, user *gwbase.User) {
 			scope := p.scope
-			scope.zoneID = "elsewhere"
-			user.state.nativeScope = &scope
+			scope.ZoneID = "elsewhere"
+			user.State.NativeScope = &scope
 		}},
-		{"removed user", func(_ *Gateway, _ *rgwUserPlacementTestContainer, _ *Placement, user *User) {
-			user.state.removed = true
+		{"removed user", func(_ *gwtest.Gateway, _ *rgwUserPlacementTestContainer, _ *Placement, user *gwbase.User) {
+			user.State.Removed = true
 		}},
-		{"unconfirmed placement", func(_ *Gateway, _ *rgwUserPlacementTestContainer, p *Placement, _ *User) {
+		{"unconfirmed placement", func(_ *gwtest.Gateway, _ *rgwUserPlacementTestContainer, p *Placement, _ *gwbase.User) {
 			p.confirmed = false
 		}},
-		{"foreign placement", func(_ *Gateway, _ *rgwUserPlacementTestContainer, p *Placement, _ *User) {
-			p.owner = testCluster(nil, testhelper.TestConfig{}, nil)
+		{"foreign placement", func(_ *gwtest.Gateway, _ *rgwUserPlacementTestContainer, p *Placement, _ *gwbase.User) {
+			p.origin = gwbase.NewOrigin(gwtest.Foreign())
 		}},
-		{"replaced pool", func(_ *Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *User) { f.poolID = 99 }},
-		{"changed native scope", func(_ *Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *User) {
-			f.zone["id"] = "elsewhere"
+		{"replaced pool", func(_ *gwtest.Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *gwbase.User) { f.PoolID = 99 }},
+		{"changed native scope", func(_ *gwtest.Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *gwbase.User) {
+			f.Zone["id"] = "elsewhere"
 		}},
-		{"changed mapping", func(_ *Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *User) {
-			rgwZonePlacement(f.zone, "tiered")["data_extra_pool"] = "elsewhere"
+		{"changed mapping", func(_ *gwtest.Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *gwbase.User) {
+			zonePlacement(f.Zone, "tiered")["data_extra_pool"] = "elsewhere"
 		}},
-		{"changed target tags", func(_ *Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *User) {
-			rgwPlacementTarget(f.group, "tiered")["tags"] = []any{"foreign"}
+		{"changed target tags", func(_ *gwtest.Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *gwbase.User) {
+			groupTarget(f.Group, "tiered")["tags"] = []any{"foreign"}
 		}},
-		{"replaced native keys", func(_ *Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *User) {
-			f.user["keys"] = []rgwNativeKey{{AccessKey: "REPLACED", SecretKey: "SECRET"}}
+		{"replaced native keys", func(_ *gwtest.Gateway, f *rgwUserPlacementTestContainer, _ *Placement, _ *gwbase.User) {
+			f.user["keys"] = []gwbase.NativeKey{{AccessKey: "REPLACED", SecretKey: "SECRET"}}
 		}},
 	} {
 		t.Run(check.name, func(t *testing.T) {
 			g, f, p, user := newRGWUserPlacementFixture(t)
 			check.edit(g, f, p, user)
-			if err := user.SetPlacement(t.Context(), p, UserPlacementConfig{StorageClass: "STANDARD_IA", Tags: []string{"writer"}}); err == nil {
+			if err := setUserDefault(t.Context(), p, user, UserDefault{StorageClass: "STANDARD_IA", Tags: []string{"writer"}}); err == nil {
 				t.Fatal("changed resource accepted")
 			}
-			for _, args := range f.calls {
+			for _, args := range f.Calls {
 				if args[0] == "radosgw-admin" && slices.Contains(args, "modify") {
 					t.Fatal("ownership/preflight failure changed native user")
 				}
@@ -240,10 +224,10 @@ func TestRGWUserPlacementRejectsOwnershipScopePoolMappingAndKeyChanges(t *testin
 	}
 	// A class with valid spelling still needs a mapping on this exact target.
 	_, f, p, user := newRGWUserPlacementFixture(t)
-	if err := user.SetPlacement(t.Context(), p, UserPlacementConfig{StorageClass: "COLD"}); err == nil {
+	if err := setUserDefault(t.Context(), p, user, UserDefault{StorageClass: "COLD"}); err == nil {
 		t.Fatal("absent class accepted")
 	}
-	for _, args := range f.calls {
+	for _, args := range f.Calls {
 		if slices.Contains(args, "modify") {
 			t.Fatal("unmapped class changed native user")
 		}
@@ -260,13 +244,13 @@ func TestRGWUserPlacementReportsNativeReadbackDriftAndRedactsFailures(t *testing
 	} {
 		_, f, p, user := newRGWUserPlacementFixture(t)
 		f.onModify = edit
-		if err := user.SetPlacement(t.Context(), p, UserPlacementConfig{StorageClass: "STANDARD_IA", Tags: []string{"writer"}}); err == nil || strings.Contains(err.Error(), "PRIVATE") {
+		if err := setUserDefault(t.Context(), p, user, UserDefault{StorageClass: "STANDARD_IA", Tags: []string{"writer"}}); err == nil || strings.Contains(err.Error(), "PRIVATE") {
 			t.Fatalf("native drift was hidden or keys were exposed: %v", err)
 		}
 	}
 	_, f, p, user := newRGWUserPlacementFixture(t)
 	f.failModify = true
-	if err := user.SetPlacement(t.Context(), p, UserPlacementConfig{Tags: []string{"writer"}}); err == nil || strings.Contains(err.Error(), "PRIVATE") {
+	if err := setUserDefault(t.Context(), p, user, UserDefault{Tags: []string{"writer"}}); err == nil || strings.Contains(err.Error(), "PRIVATE") {
 		t.Fatalf("native failure was hidden or keys were exposed: %v", err)
 	}
 }
@@ -282,18 +266,18 @@ func TestRGWFreshPlacementTagsAreCopiedAndGuarded(t *testing.T) {
 	if err != nil || !slices.Equal(state.Tags, []string{"premium", "writer"}) {
 		t.Fatal("target tag status aliases private configuration")
 	}
-	if err := g.ApplyPlacement(t.Context(), p); err != nil {
+	if err := apply(t.Context(), g.Core, p); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestRGWUserPlacementUsesRunningScopeAfterNativeDefaultsChange(t *testing.T) {
 	_, f, p, user := newRGWUserPlacementFixture(t)
-	f.foreignDefault = true
-	if err := user.SetPlacement(t.Context(), p, UserPlacementConfig{StorageClass: "STANDARD_IA", Tags: []string{"premium"}}); err != nil {
+	f.ForeignDefault = true
+	if err := setUserDefault(t.Context(), p, user, UserDefault{StorageClass: "STANDARD_IA", Tags: []string{"premium"}}); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range f.calls {
+	for _, args := range f.Calls {
 		if args[0] == "radosgw-admin" && slices.Contains(args, "user") && !slices.Contains(args, "--zonegroup-id") {
 			t.Fatal("user placement operation resolved changed native defaults")
 		}
@@ -304,7 +288,7 @@ func TestRGWUserPlacementPreservesCancellationBeforeNativeCalls(t *testing.T) {
 	_, f, p, user := newRGWUserPlacementFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := user.SetPlacement(ctx, p, UserPlacementConfig{Tags: []string{"writer"}}); !errors.Is(err, context.Canceled) || len(f.calls) != 0 {
+	if err := setUserDefault(ctx, p, user, UserDefault{Tags: []string{"writer"}}); !errors.Is(err, context.Canceled) || len(f.Calls) != 0 {
 		t.Fatalf("canceled request ran native commands or lost context error: %v", err)
 	}
 }

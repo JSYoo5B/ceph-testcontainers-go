@@ -27,11 +27,14 @@ import (
 //
 // Counts cover the retained standalone service callers. The 65 call sites of
 // the former cephfs package are now split across cephfs and the packages it
-// was decomposed into.
+// was decomposed into. The 64 call sites of the former rgw package are split
+// across rgw and its packages in the same way, with one more in rgw: the
+// refusal of a root user's account from another cluster or gateway scope.
 var invalidCallSites = map[string]int{
-	"rbd": 28, "cephfs": 23, "rgw": 64,
+	"rbd": 28, "cephfs": 23, "rgw": 27,
 	"cephfs/subvolume": 26, "cephfs/quiesce": 1, "cephfs/internal/fsbase": 1,
 	"cephfs/session": 2, "cephfs/snapschedule": 12,
+	"rgw/account": 11, "rgw/placement": 20, "rgw/internal/gwbase": 7,
 	"rbd/mirror": 28, "cephfs/mirror": 15,
 }
 

@@ -217,7 +217,7 @@ func TestRGWGatewayTimelineRecordsStatesAndFailedInspections(t *testing.T) {
 	}}
 	source := &replicaSourceFake{state: func(context.Context, int) (*container.State, error) { return liveSourceRunning(), nil }}
 	destination := &replicaSourceFake{state: func(context.Context, int) (*container.State, error) { return nil, errors.New("not found") }}
-	timeline.Mark("ReloadPlacement begins")
+	timeline.Mark("placement Reload begins")
 	line := timeline.Gateways(t.Context(), "after reload", time.Second,
 		map[string]rgwContainerStateReader{"source": source, "destination": destination}, []string{"source", "destination"})
 	for _, want := range []string{"2026-10-28T23:20:40Z after reload: source source-fixture status=running exit=0 oom=false started=" + liveSourceStarted,
@@ -226,7 +226,7 @@ func TestRGWGatewayTimelineRecordsStatesAndFailedInspections(t *testing.T) {
 			t.Fatalf("timeline line lacks %q: %s", want, line)
 		}
 	}
-	if got := timeline.String(); !strings.HasPrefix(got, "2026-10-28T23:20:39Z ReloadPlacement begins | ") {
+	if got := timeline.String(); !strings.HasPrefix(got, "2026-10-28T23:20:39Z placement Reload begins | ") {
 		t.Fatalf("timeline: %s", got)
 	}
 }

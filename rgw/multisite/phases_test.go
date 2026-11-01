@@ -14,6 +14,7 @@ import (
 	"github.com/JSYoo5B/ceph-testcontainers-go/fault"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/clustertest"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/placement"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
@@ -553,17 +554,17 @@ func TestRGWDestinationClassRequiresConcreteOwnedPlacements(t *testing.T) {
 	f, _, _, _ := newRGWSyncTestFixture()
 	g := &SyncGroup{owner: f, scope: SyncPolicyScope{Zonegroup: "group"}}
 	info := &rgwBucketInstance{PlacementRule: nativeString{value: "tiered/COLD", set: true}}
-	placement := map[string]*rgw.Placement{"destination": {}}
+	placements := map[string]*placement.Placement{"destination": {}}
 	for name, tc := range map[string]struct {
 		config SyncPipeConfig
 		info   *rgwBucketInstance
 	}{
-		"no bucket":         {SyncPipeConfig{DestinationZones: []string{"destination"}, DestinationPlacements: placement}, nil},
-		"count mismatch":    {SyncPipeConfig{DestinationZones: []string{"destination", "source"}, DestinationPlacements: placement}, info},
-		"wildcard zone":     {SyncPipeConfig{DestinationZones: []string{"*"}, DestinationPlacements: map[string]*rgw.Placement{"*": {}}}, info},
-		"no placement rule": {SyncPipeConfig{DestinationZones: []string{"destination"}, DestinationPlacements: placement}, &rgwBucketInstance{}},
-		"unattached zone":   {SyncPipeConfig{DestinationZones: []string{"elsewhere"}, DestinationPlacements: map[string]*rgw.Placement{"elsewhere": {}}}, info},
-		"unowned placement": {SyncPipeConfig{DestinationZones: []string{"destination"}, DestinationPlacements: placement}, info},
+		"no bucket":         {SyncPipeConfig{DestinationZones: []string{"destination"}, DestinationPlacements: placements}, nil},
+		"count mismatch":    {SyncPipeConfig{DestinationZones: []string{"destination", "source"}, DestinationPlacements: placements}, info},
+		"wildcard zone":     {SyncPipeConfig{DestinationZones: []string{"*"}, DestinationPlacements: map[string]*placement.Placement{"*": {}}}, info},
+		"no placement rule": {SyncPipeConfig{DestinationZones: []string{"destination"}, DestinationPlacements: placements}, &rgwBucketInstance{}},
+		"unattached zone":   {SyncPipeConfig{DestinationZones: []string{"elsewhere"}, DestinationPlacements: map[string]*placement.Placement{"elsewhere": {}}}, info},
+		"unowned placement": {SyncPipeConfig{DestinationZones: []string{"destination"}, DestinationPlacements: placements}, info},
 	} {
 		if err := g.destinationClass(t.Context(), tc.config, tc.info); !errors.Is(err, ceph.ErrInvalidRequest) {
 			t.Errorf("%s: %v", name, err)

@@ -1,0 +1,41 @@
+{
+  "schema": "ceph-api-naming-members/v2",
+  "scope": "Declared exported struct fields and interface methods, nested anonymous records and explicit embeddings in the public types of one package; dependency and promoted method sets are not expanded",
+  "package": "rgw/placement",
+  "count": 23,
+  "types": {
+    "rgw/placement.Config": [
+      "Config.DataExtraPool field string",
+      "Config.IndexPool field string",
+      "Config.InlineData field *bool",
+      "Config.Name field string",
+      "Config.StorageClasses field []StorageClass",
+      "Config.Tags field []string"
+    ],
+    "rgw/placement.Placement": [
+      "Placement embed origin",
+      "Placement.LocationConstraint field string",
+      "Placement.Name field string",
+      "Placement.RealmID field string",
+      "Placement.ZoneID field string",
+      "Placement.ZonegroupID field string"
+    ],
+    "rgw/placement.State": [
+      "State embed Config",
+      "State.Confirmed field bool",
+      "State.DefaultPlacement field string",
+      "State.LocationConstraint field string",
+      "State.RealmID field string",
+      "State.ZoneID field string",
+      "State.ZonegroupID field string"
+    ],
+    "rgw/placement.StorageClass": [
+      "StorageClass.DataPool field string",
+      "StorageClass.Name field string"
+    ],
+    "rgw/placement.UserDefault": [
+      "UserDefault.StorageClass field string",
+      "UserDefault.Tags field []string"
+    ]
+  }
+}

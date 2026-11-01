@@ -96,7 +96,7 @@
     "rgw/multisite.SyncPipeConfig": [
       "SyncPipeConfig.DestinationBucket field *SyncBucketSelector",
       "SyncPipeConfig.DestinationOwner field *rgw.User",
-      "SyncPipeConfig.DestinationPlacements field map[string]*rgw.Placement",
+      "SyncPipeConfig.DestinationPlacements field map[string]*placement.Placement",
       "SyncPipeConfig.DestinationStorageClass field string",
       "SyncPipeConfig.DestinationZones field []string",
       "SyncPipeConfig.ID field string",

@@ -15,6 +15,7 @@ import (
 
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/integration/harness"
 	"github.com/JSYoo5B/ceph-testcontainers-go/rgw"
+	"github.com/JSYoo5B/ceph-testcontainers-go/rgw/account"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -132,40 +133,40 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	}
 	t.Log("legacy plus two tenants reused identical local UID/bucket/object names with distinct native full IDs and bytes; explicit cross-tenant access denied; quota/suspend/removal affected only the selected identity")
 
-	account, err := gateway.CreateAccount(ctx, rgw.AccountConfig{Name: "Fixture Account", Tenant: "account_tenant"})
+	owned, err := account.Create(ctx, gateway, account.Config{Name: "Fixture Account", Tenant: "account_tenant"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gateway.CreateAccount(ctx, rgw.AccountConfig{ID: account.ID(), Name: "overwrite"}); err == nil {
+	if _, err := account.Create(ctx, gateway, account.Config{ID: owned.ID(), Name: "overwrite"}); err == nil {
 		t.Fatal("fresh account API adopted existing ID")
 	}
 	roots := make([]*rgw.User, 2)
 	rootClients := make([]harness.S3HTTPClient, 2)
 	for i := range roots {
-		roots[i], err = account.CreateRootUser(ctx, rgw.UserConfig{ID: fmt.Sprintf("tc-account-root-%d", i), DisplayName: fmt.Sprintf("FixtureRoot%d", i)})
+		roots[i], err = gateway.CreateUser(ctx, rgw.UserConfig{ID: fmt.Sprintf("tc-account-root-%d", i), DisplayName: fmt.Sprintf("FixtureRoot%d", i), Account: owned})
 		if err != nil {
 			t.Fatal(err)
 		}
 		info, err := (roots[i]).Info(ctx)
-		if err != nil || info.AccountID != account.ID() || info.Type != "root" || info.Tenant != "account_tenant" || info.Admin || info.System {
+		if err != nil || info.AccountID != owned.ID() || info.Type != "root" || info.Tenant != "account_tenant" || info.Admin || info.System {
 			t.Fatalf("account root native identity wrong: error=%v canonicalID=%q localID=%q tenant=%q type=%q accountID=%q admin=%t system=%t", err, info.ID, info.LocalID, info.Tenant, info.Type, info.AccountID, info.Admin, info.System)
 		}
 		rootClients[i] = clientFor(roots[i])
 	}
 	accountQuota := rgw.Quota{Enabled: true, MaxSizeBytes: -1, MaxObjects: 1}
 	accountBucketQuota := rgw.Quota{Enabled: true, MaxSizeBytes: 1 << 20, MaxObjects: 8}
-	if err := account.SetQuota(ctx, accountQuota); err != nil {
-		info, readErr := account.Info(ctx)
+	if err := owned.SetQuota(ctx, accountQuota); err != nil {
+		info, readErr := owned.Info(ctx)
 		t.Fatalf("set account quota failed: %v; readback_error=%v actual_account_quota=%+v actual_bucket_quota=%+v requested=%+v", err, readErr, info.AccountQuota, info.BucketQuota, accountQuota)
 	}
-	if err := account.SetBucketQuota(ctx, accountBucketQuota); err != nil {
-		info, readErr := account.Info(ctx)
+	if err := owned.SetBucketQuota(ctx, accountBucketQuota); err != nil {
+		info, readErr := owned.Info(ctx)
 		t.Fatalf("set account bucket quota failed: %v; readback_error=%v actual_account_quota=%+v actual_bucket_quota=%+v requested=%+v", err, readErr, info.AccountQuota, info.BucketQuota, accountBucketQuota)
 	}
 	if err := (roots[0]).SetQuota(ctx, accountQuota); err == nil {
 		t.Fatal("account fixture accepted ineffective per-user quota")
 	}
-	info, err := account.Info(ctx)
+	info, err := owned.Info(ctx)
 	if err != nil || info.AccountQuota != accountQuota || info.BucketQuota != accountBucketQuota {
 		t.Fatal("native account aggregate and per-bucket quota did not persist")
 	}
@@ -182,21 +183,21 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 			ID string `xml:"ID"`
 		} `xml:"Owner"`
 	}
-	if xml.Unmarshal(rootClients[1].Request(t, ctx, http.MethodGet, accountBucketA+"?acl", nil, http.StatusOK), &acl) != nil || acl.Owner.ID != account.ID() {
+	if xml.Unmarshal(rootClients[1].Request(t, ctx, http.MethodGet, accountBucketA+"?acl", nil, http.StatusOK), &acl) != nil || acl.Owner.ID != owned.ID() {
 		t.Fatal("S3 bucket owner is not the native account ID")
 	}
-	harness.RGWSyncStats(t, ctx, nil, gateway, "account", "stats", "--account-id", account.ID(), "--sync-stats")
+	harness.RGWSyncStats(t, ctx, nil, gateway, "account", "stats", "--account-id", owned.ID(), "--sync-stats")
 	// The two roots have different user IDs. Only root 0 wrote an object, but
 	// native user stats for either root aggregate the same account owner.
 	for _, root := range roots {
 		usage, err := root.Usage(ctx)
-		if err != nil || usage.UserID != root.ID() || usage.Tenant != "account_tenant" || usage.Scope != "account" || usage.OwnerID != account.ID() || usage.OwnerID == root.ID() || usage.NumObjects != 1 || usage.SizeBytes != uint64(len(accountPayload)) {
-			t.Fatalf("native account aggregate mislabeled as individual user: usage=%+v error=%v expected_account=%q", usage, err, account.ID())
+		if err != nil || usage.UserID != root.ID() || usage.Tenant != "account_tenant" || usage.Scope != "account" || usage.OwnerID != owned.ID() || usage.OwnerID == root.ID() || usage.NumObjects != 1 || usage.SizeBytes != uint64(len(accountPayload)) {
+			t.Fatalf("native account aggregate mislabeled as individual user: usage=%+v error=%v expected_account=%q", usage, err, owned.ID())
 		}
 		t.Logf("RGW_USER_USAGE stage=account-after-write scope=%s owner_id=%q user_id=%q num_objects=%d size_bytes=%d size_actual_bytes=%d", usage.Scope, usage.OwnerID, usage.UserID, usage.NumObjects, usage.SizeBytes, usage.SizeActualBytes)
 	}
-	rgwAccountWaitAggregateQuotaDenied(t, ctx, gateway, account, rootClients[1], accountBucketB)
-	if err := account.Remove(ctx); err == nil {
+	rgwAccountWaitAggregateQuotaDenied(t, ctx, gateway, owned, rootClients[1], accountBucketB)
+	if err := owned.Remove(ctx); err == nil {
 		t.Fatal("nonempty account removed without purge")
 	}
 	if actual := rootClients[0].Request(t, ctx, http.MethodGet, accountBucketA+"/one", nil, http.StatusOK); !bytes.Equal(actual, accountPayload) {
@@ -206,7 +207,7 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 	rootClients[0].Request(t, ctx, http.MethodDelete, accountBucketA, nil, http.StatusNoContent)
 	rootClients[1].Request(t, ctx, http.MethodDelete, accountBucketB, nil, http.StatusNoContent)
 	// Even with all buckets empty, account removal must retain its root users.
-	if err := account.Remove(ctx); err == nil {
+	if err := owned.Remove(ctx); err == nil {
 		t.Fatal("account with remaining roots removed")
 	}
 	for _, root := range roots {
@@ -214,14 +215,14 @@ func testRGWTenantsAndAccounts(t *testing.T, options ...testcontainers.Container
 			t.Fatal(err)
 		}
 	}
-	copyAccount := *account
-	if err := account.Remove(ctx); err != nil {
+	copyAccount := *owned
+	if err := owned.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := (&copyAccount).Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := account.Info(ctx); err == nil {
+	if _, err := owned.Info(ctx); err == nil {
 		t.Fatal("removed account handle remained active")
 	}
 	t.Log("fresh tenanted account and two non-admin/non-system roots shared account-owned bytes/ACL owner; aggregate one-object quota denied another root's write to another bucket; bucket policy read back; nonpurge removal refused while resources remained, and final cleanup was idempotent")
@@ -247,7 +248,7 @@ func rgwTenantRequest(t *testing.T, ctx context.Context, client harness.S3HTTPCl
 	return data
 }
 
-func rgwAccountWaitAggregateQuotaDenied(t *testing.T, parent context.Context, gateway *rgw.Gateway, account *rgw.Account, client harness.S3HTTPClient, bucket string) {
+func rgwAccountWaitAggregateQuotaDenied(t *testing.T, parent context.Context, gateway *rgw.Gateway, owned *account.Account, client harness.S3HTTPClient, bucket string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
@@ -283,7 +284,7 @@ func rgwAccountWaitAggregateQuotaDenied(t *testing.T, parent context.Context, ga
 		}
 		client.Request(t, ctx, http.MethodDelete, path, nil, http.StatusNoContent)
 		if attempt%4 == 0 {
-			harness.RGWSyncStats(t, ctx, nil, gateway, "account", "stats", "--account-id", account.ID(), "--sync-stats")
+			harness.RGWSyncStats(t, ctx, nil, gateway, "account", "stats", "--account-id", owned.ID(), "--sync-stats")
 		}
 		select {
 		case <-ctx.Done():
