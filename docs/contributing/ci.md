@@ -653,8 +653,11 @@ gh workflow run "Native regressions" --ref main -f rgw_image=ghcr.io/example/cep
 `mon_log_ack` (`TestMONLogAckThroughPeon`) requires every OSD's cluster log
 entries to be acknowledged in a three-MON cluster, through the leader and
 through a peon. It arranges sessions on both before measuring, restarting a
-MON if needed, and fails if the leader, election epoch or sessions change in
-the window. On 20.2.4 the peon discards the MLogAck the leader routes back
+MON if needed. The window is rejected if the leader, the election epoch or any
+OSD's session (MON and `global_id`) changed, or if an OSD's MonClient log
+shows a reset, reopen or hunt in it, even one that returns to the same MON. A
+peon-connected OSD passes only if its peon forwarded its MLog and routed the
+covering MLogAck back under that tid. On 20.2.4 the peon discards the MLogAck the leader routes back
 ("don't have routed request"), so the peon-connected OSDs are never
 acknowledged and the test fails. On `quay.io/ceph/ceph:v19.2.2` it passes:
 
