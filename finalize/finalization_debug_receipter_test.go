@@ -6,34 +6,33 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
 	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // staticReceipter is a foreign DebugLevelReceipter that returns a fixed receipt.
-type staticReceipter struct{ receipt ceph.DebugLevelReceipt }
+type staticReceipter struct{ receipt override.DebugLevelReceipt }
 
-func (s *staticReceipter) Receipt() ceph.DebugLevelReceipt { return s.receipt }
+func (s *staticReceipter) Receipt() override.DebugLevelReceipt { return s.receipt }
 
 // valueReceipter has a value-receiver Receipt, so a nil *valueReceipter in the
 // interface panics in Go's generated wrapper when Receipt is called.
-type valueReceipter struct{ receipt ceph.DebugLevelReceipt }
+type valueReceipter struct{ receipt override.DebugLevelReceipt }
 
-func (v valueReceipter) Receipt() ceph.DebugLevelReceipt { return v.receipt }
+func (v valueReceipter) Receipt() override.DebugLevelReceipt { return v.receipt }
 
 // panickyReceipter has a pointer-receiver Receipt that is NOT nil-safe.
-type panickyReceipter struct{ receipt ceph.DebugLevelReceipt }
+type panickyReceipter struct{ receipt override.DebugLevelReceipt }
 
-func (p *panickyReceipter) Receipt() ceph.DebugLevelReceipt { return p.receipt }
+func (p *panickyReceipter) Receipt() override.DebugLevelReceipt { return p.receipt }
 
-type mapReceipter map[string]ceph.DebugLevelReceipt
+type mapReceipter map[string]override.DebugLevelReceipt
 
-func (m mapReceipter) Receipt() ceph.DebugLevelReceipt { return m["x"] }
+func (m mapReceipter) Receipt() override.DebugLevelReceipt { return m["x"] }
 
-type funcReceipter func() ceph.DebugLevelReceipt
+type funcReceipter func() override.DebugLevelReceipt
 
-func (f funcReceipter) Receipt() ceph.DebugLevelReceipt { return f() }
+func (f funcReceipter) Receipt() override.DebugLevelReceipt { return f() }
 
 func TestFinalizationDebugReceipter(t *testing.T) {
 	absent := func(t *testing.T, name string, handle DebugLevelReceipter) {
@@ -69,7 +68,7 @@ func TestFinalizationDebugReceipter(t *testing.T) {
 	})
 	t.Run("foreign non-nil receipter is still read", func(t *testing.T) {
 		fx := newFinalizationFixture(t, Config{Archive: true})
-		fx.TrackDebugLevel(valueReceipter{receipt: ceph.DebugLevelReceipt{Daemon: "osd.1", State: ceph.DebugLevelNotApplied, Reason: "r"}})
+		fx.TrackDebugLevel(valueReceipter{receipt: override.DebugLevelReceipt{Daemon: "osd.1", State: override.DebugLevelNotApplied, Reason: "r"}})
 		fx.tb.Errorf("workload failed")
 		fx.run()
 		snap := readManifest(t, fx.archives(t)[0]).DebugWindows[0].Archive
@@ -83,8 +82,8 @@ func TestFinalizationDebugReceipter(t *testing.T) {
 	})
 	t.Run("not-applied receipt", func(t *testing.T) {
 		fx := newFinalizationFixture(t, Config{Archive: true, Diagnostics: diagnostics.Config{RedactValues: []string{"s3cr3t"}}})
-		fx.TrackDebugLevel(&staticReceipter{receipt: ceph.DebugLevelReceipt{Daemon: "osd.0", Name: "debug_osd", Requested: "20",
-			State: ceph.DebugLevelNotApplied, Reason: "refused s3cr3t " + strings.Repeat("x", 4*maxFinalizationDebugError)}})
+		fx.TrackDebugLevel(&staticReceipter{receipt: override.DebugLevelReceipt{Daemon: "osd.0", Name: "debug_osd", Requested: "20",
+			State: override.DebugLevelNotApplied, Reason: "refused s3cr3t " + strings.Repeat("x", 4*maxFinalizationDebugError)}})
 		fx.tb.Errorf("workload failed")
 		fx.run()
 		data := manifestText(t, fx.archives(t)[0])
@@ -97,7 +96,7 @@ func TestFinalizationDebugReceipter(t *testing.T) {
 				t.Fatalf("snapshot %+v is not present", snap)
 			}
 			r := snap.Receipt
-			if r.State != ceph.DebugLevelNotApplied || r.Daemon != "osd.0" || r.Requested != "20" || r.Applied != "" || r.Restored != "" {
+			if r.State != override.DebugLevelNotApplied || r.Daemon != "osd.0" || r.Requested != "20" || r.Applied != "" || r.Restored != "" {
 				t.Fatalf("receipt %+v", r)
 			}
 			if len(r.Reason) > maxFinalizationDebugError+len(" [truncated]") || !strings.HasSuffix(r.Reason, " [truncated]") || !strings.HasPrefix(r.Reason, "refused ") {
@@ -115,8 +114,8 @@ func TestFinalizationDebugReceipter(t *testing.T) {
 			t.Fatal("a real window wrote a reason field")
 		}
 		window := readManifest(t, fx.archives(t)[0]).DebugWindows[0]
-		if window.Archive == nil || !window.Archive.Present || window.Archive.Receipt.State != ceph.DebugLevelApplied ||
-			window.Final == nil || window.Final.Receipt.State != ceph.DebugLevelRestored {
+		if window.Archive == nil || !window.Archive.Present || window.Archive.Receipt.State != override.DebugLevelApplied ||
+			window.Final == nil || window.Final.Receipt.State != override.DebugLevelRestored {
 			t.Fatalf("window %+v", window)
 		}
 	})

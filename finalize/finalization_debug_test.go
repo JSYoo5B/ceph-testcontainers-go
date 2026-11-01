@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/diagnostics"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // trackedDebugWindow registers a fake window with a fixed clock, so that two
@@ -31,7 +31,7 @@ func restoreStep(fx *finalizationFixture, w *fakeDebugWindow, name string) {
 // debugWindowProblems is the oracle of the controls: it lists every rule
 // that the manifest's debug windows break, given the wanted registrations.
 type wantedDebugWindow struct {
-	archiveState, finalState ceph.DebugLevelState
+	archiveState, finalState override.DebugLevelState
 	absent                   bool
 }
 
@@ -48,7 +48,7 @@ func debugWindowProblems(m finalizationManifest, want []wantedDebugWindow) []str
 		for _, c := range []struct {
 			kind  string
 			snap  *finalizationDebugSnapshot
-			state ceph.DebugLevelState
+			state override.DebugLevelState
 		}{{"archive", got.Archive, w.archiveState}, {"final", got.Final, w.finalState}} {
 			switch {
 			case c.snap == nil:
@@ -73,7 +73,7 @@ func TestFinalizationSnapshotsDebugWindowsAroundCleanup(t *testing.T) {
 		fx.tb.Errorf("workload failed")
 		fx.run()
 		manifest := readManifest(t, fx.archives(t)[0])
-		if problems := debugWindowProblems(manifest, []wantedDebugWindow{{ceph.DebugLevelApplied, ceph.DebugLevelRestored, false}}); len(problems) != 0 {
+		if problems := debugWindowProblems(manifest, []wantedDebugWindow{{override.DebugLevelApplied, override.DebugLevelRestored, false}}); len(problems) != 0 {
 			t.Fatalf("%v", problems)
 		}
 		w := manifest.DebugWindows[0]
@@ -84,7 +84,7 @@ func TestFinalizationSnapshotsDebugWindowsAroundCleanup(t *testing.T) {
 		if before.Applied != "20/20" || before.Restored != "" || before.Prior != "1/5" || len(before.Transitions) != 3 {
 			t.Fatalf("pre-restore copy %+v", before)
 		}
-		if after.Restored != "1/5" || after.Applied != "20/20" || len(after.Transitions) <= len(before.Transitions) || h.Receipt().State != ceph.DebugLevelRestored {
+		if after.Restored != "1/5" || after.Applied != "20/20" || len(after.Transitions) <= len(before.Transitions) || h.Receipt().State != override.DebugLevelRestored {
 			t.Fatalf("final copy %+v", after)
 		}
 		// The copy only reads local state: the cleanup's restore is the only
@@ -100,7 +100,7 @@ func TestFinalizationSnapshotsDebugWindowsAroundCleanup(t *testing.T) {
 		h.paused = true
 		fx.run()
 		manifest := readManifest(t, fx.archives(t)[0])
-		if problems := debugWindowProblems(manifest, []wantedDebugWindow{{ceph.DebugLevelUnconfirmed, ceph.DebugLevelUnconfirmed, false}}); len(problems) != 0 {
+		if problems := debugWindowProblems(manifest, []wantedDebugWindow{{override.DebugLevelUnconfirmed, override.DebugLevelUnconfirmed, false}}); len(problems) != 0 {
 			t.Fatalf("%v", problems)
 		}
 		w := manifest.DebugWindows[0]
@@ -119,7 +119,7 @@ func TestFinalizationSnapshotsDebugWindowsAroundCleanup(t *testing.T) {
 		fx.tb.Errorf("workload failed")
 		fx.run()
 		manifest := readManifest(t, fx.archives(t)[0])
-		want := []wantedDebugWindow{{ceph.DebugLevelRestored, ceph.DebugLevelRestored, false}, {ceph.DebugLevelApplied, ceph.DebugLevelRestored, false}}
+		want := []wantedDebugWindow{{override.DebugLevelRestored, override.DebugLevelRestored, false}, {override.DebugLevelApplied, override.DebugLevelRestored, false}}
 		if problems := debugWindowProblems(manifest, want); len(problems) != 0 {
 			t.Fatalf("%v", problems)
 		}
@@ -140,7 +140,7 @@ func TestFinalizationSnapshotsDebugWindowsAroundCleanup(t *testing.T) {
 		fx.tb.Errorf("workload failed")
 		fx.run()
 		manifest := readManifest(t, fx.archives(t)[0])
-		want := []wantedDebugWindow{{absent: true}, {absent: true}, {ceph.DebugLevelApplyUncertain, ceph.DebugLevelApplyUncertain, false}}
+		want := []wantedDebugWindow{{absent: true}, {absent: true}, {override.DebugLevelApplyUncertain, override.DebugLevelApplyUncertain, false}}
 		want[0].archiveState, want[0].finalState = "-", "-"
 		want[1].archiveState, want[1].finalState = "-", "-"
 		if problems := debugWindowProblems(manifest, want); len(problems) != 0 {
@@ -192,7 +192,7 @@ func TestFinalizationDebugWindowBoundsAndRedaction(t *testing.T) {
 		fx.run()
 		receipt := readManifest(t, fx.archives(t)[0]).DebugWindows[0].Archive.Receipt
 		if len(receipt.Transitions) != maxFinalizationDebugTransitions || receipt.TransitionsOmitted != total-maxFinalizationDebugTransitions ||
-			receipt.Transitions[0].State != ceph.DebugLevelPriorRead || receipt.State != ceph.DebugLevelUnconfirmed {
+			receipt.Transitions[0].State != override.DebugLevelPriorRead || receipt.State != override.DebugLevelUnconfirmed {
 			t.Fatalf("kept %d omitted %d of %d", len(receipt.Transitions), receipt.TransitionsOmitted, total)
 		}
 	})
@@ -237,7 +237,7 @@ func TestFinalizationDebugWindowNegativeControls(t *testing.T) {
 	fx.tb.Errorf("workload failed")
 	fx.run()
 	good := readManifest(t, fx.archives(t)[0])
-	want := []wantedDebugWindow{{ceph.DebugLevelApplied, ceph.DebugLevelRestored, false}, {absent: true, archiveState: "-", finalState: "-"}}
+	want := []wantedDebugWindow{{override.DebugLevelApplied, override.DebugLevelRestored, false}, {absent: true, archiveState: "-", finalState: "-"}}
 	if problems := debugWindowProblems(good, want); len(problems) != 0 {
 		t.Fatalf("the good manifest breaks a rule: %v", problems)
 	}
@@ -267,7 +267,7 @@ func TestFinalizationDebugWindowNegativeControls(t *testing.T) {
 			m.DebugWindows[1].Final = &finalizationDebugSnapshot{Phase: "after-cleanup", Present: true, Receipt: &r}
 		},
 		"success is inferred from a cleanup success": func(m *finalizationManifest) {
-			m.DebugWindows[0].Archive.Receipt.State = ceph.DebugLevelRestored
+			m.DebugWindows[0].Archive.Receipt.State = override.DebugLevelRestored
 		},
 		"sequential windows are merged by target": func(m *finalizationManifest) { m.DebugWindows = m.DebugWindows[:1] },
 		"the sequence is not the registration order": func(m *finalizationManifest) {
@@ -293,7 +293,7 @@ func TestFinalizationDebugWindowNegativeControls(t *testing.T) {
 		if err := b.restore(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		byTarget := map[string]ceph.DebugLevelReceipt{}
+		byTarget := map[string]override.DebugLevelReceipt{}
 		for _, h := range []*fakeDebugWindow{a, b} {
 			r := h.Receipt()
 			byTarget[r.Daemon+"/"+r.Name+"/"+r.Generation+"/"+r.Transitions[0].At.Format(time.RFC3339Nano)] = r
@@ -325,7 +325,7 @@ func TestFinalizationRestoreOrder(t *testing.T) {
 			t.Fatalf("events %v, want %v", events, want)
 		}
 		manifest := readManifest(t, fx.archives(t)[0])
-		if manifest.Phase != "before-cleanup" || manifest.Cleanups[0].Name != "restore debug_osd" || manifest.Cleanups[0].Error != "" || w.Receipt().State != ceph.DebugLevelRestored {
+		if manifest.Phase != "before-cleanup" || manifest.Cleanups[0].Name != "restore debug_osd" || manifest.Cleanups[0].Error != "" || w.Receipt().State != override.DebugLevelRestored {
 			t.Fatalf("manifest %+v receipt %+v", manifest.Cleanups, w.Receipt())
 		}
 	})
@@ -345,7 +345,7 @@ func TestFinalizationRestoreOrder(t *testing.T) {
 		}
 		manifest := readManifest(t, fx.archives(t)[0])
 		if manifest.Phase != "after-cleanup" || !manifest.Trigger.CleanupFailed || !strings.Contains(manifest.Cleanups[0].Error, "paused") ||
-			manifest.Termination == nil || !manifest.Final || w.Receipt().State != ceph.DebugLevelUnconfirmed {
+			manifest.Termination == nil || !manifest.Final || w.Receipt().State != override.DebugLevelUnconfirmed {
 			t.Fatalf("manifest %+v", manifest)
 		}
 	})

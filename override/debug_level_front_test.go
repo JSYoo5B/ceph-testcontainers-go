@@ -19,12 +19,12 @@ import (
 // receipt that copies the request as given with the refusal as its reason, no
 // command, and a Restore that is a no-op.
 func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
-	good := ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "1"}
+	good := DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "1"}
 	for name, test := range map[string]struct {
 		config  *testhelper.TestConfig
 		nilC    bool
 		ctx     func() context.Context
-		setting ceph.DebugLevelSetting
+		setting DebugLevelSetting
 		kind    error
 		want    string
 	}{
@@ -34,12 +34,12 @@ func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
 			cancel()
 			return ctx
 		}},
-		"MON":            {setting: ceph.DebugLevelSetting{Daemon: "mon.a", Name: "debug_ms", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "must be an OSD"},
-		"MGR":            {setting: ceph.DebugLevelSetting{Daemon: "mgr.a", Name: "debug_ms", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "must be an OSD"},
-		"malformed":      {setting: ceph.DebugLevelSetting{Daemon: "osd.01", Name: "debug_ms", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "must be an OSD"},
-		"option":         {setting: ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_mon", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not supported"},
-		"level":          {setting: ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "100"}, kind: ceph.ErrInvalidRequest, want: "N or N/M"},
-		"unknown OSD":    {setting: ceph.DebugLevelSetting{Daemon: "osd.7", Name: "debug_osd", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not a running-capable OSD"},
+		"MON":            {setting: DebugLevelSetting{Daemon: "mon.a", Name: "debug_ms", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "must be an OSD"},
+		"MGR":            {setting: DebugLevelSetting{Daemon: "mgr.a", Name: "debug_ms", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "must be an OSD"},
+		"malformed":      {setting: DebugLevelSetting{Daemon: "osd.01", Name: "debug_ms", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "must be an OSD"},
+		"option":         {setting: DebugLevelSetting{Daemon: "osd.0", Name: "debug_mon", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not supported"},
+		"level":          {setting: DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "100"}, kind: ceph.ErrInvalidRequest, want: "N or N/M"},
+		"unknown OSD":    {setting: DebugLevelSetting{Daemon: "osd.7", Name: "debug_osd", Level: "1"}, kind: ceph.ErrInvalidRequest, want: "not a running-capable OSD"},
 		"closed cluster": {config: &testhelper.TestConfig{Closed: true, OSDs: 1}, setting: good, want: "terminated"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -74,7 +74,7 @@ func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
 				}
 			}
 			receipt := h.Receipt()
-			if receipt.State != ceph.DebugLevelNotApplied || receipt.Reason != err.Error() || receipt.Daemon != test.setting.Daemon ||
+			if receipt.State != DebugLevelNotApplied || receipt.Reason != err.Error() || receipt.Daemon != test.setting.Daemon ||
 				receipt.Name != test.setting.Name || receipt.Requested != test.setting.Level || receipt.Applied != "" || receipt.Restored != "" ||
 				receipt.Generation != "" || receipt.Prior != "" || len(receipt.Transitions) != 1 {
 				t.Errorf("receipt %+v for %v", receipt, err)
@@ -87,7 +87,7 @@ func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
 			if err := restoreWithin(ended, t, h); err != nil {
 				t.Errorf("Restore of a not-applied window: %v", err)
 			}
-			if h.Receipt().State != ceph.DebugLevelNotApplied || len(h.Receipt().Transitions) != 1 {
+			if h.Receipt().State != DebugLevelNotApplied || len(h.Receipt().Transitions) != 1 {
 				t.Errorf("Restore changed the receipt: %+v", h.Receipt())
 			}
 			if err := restoreWithin(t.Context(), t, h); err != nil {
@@ -101,7 +101,7 @@ func TestSetDebugLevelRefusalsReturnNotAppliedHandles(t *testing.T) {
 // holds no registry slot: the same window can be opened right after it.
 func TestSetDebugLevelRefusalLeavesNoSlot(t *testing.T) {
 	c := testhelper.TestCluster(nil, testhelper.TestConfig{StartupTimeout: time.Second})
-	if _, err := SetDebugLevel(t.Context(), c, ceph.DebugLevelSetting{Daemon: "osd.7", Name: "debug_osd", Level: "1"}); err == nil {
+	if _, err := SetDebugLevel(t.Context(), c, DebugLevelSetting{Daemon: "osd.7", Name: "debug_osd", Level: "1"}); err == nil {
 		t.Fatal("unknown OSD accepted")
 	}
 	registry := overridehook.DebugWindowRegistry(c)
@@ -167,7 +167,7 @@ func TestDebugLevelAfterTerminate(t *testing.T) {
 	}
 	fake.edit(func(f *debugLevelFake) { f.gen.owned = false })
 	err = h.Restore(t.Context())
-	if err == nil || !strings.Contains(err.Error(), "no longer owned by this cluster") || h.Receipt().State != ceph.DebugLevelTargetChanged ||
+	if err == nil || !strings.Contains(err.Error(), "no longer owned by this cluster") || h.Receipt().State != DebugLevelTargetChanged ||
 		h.Receipt().Restored != "" || len(fake.setCalls()) != 1 || slotHeld(registry) {
 		t.Fatalf("restore: %v receipt %+v sets %v", err, h.Receipt(), fake.setCalls())
 	}

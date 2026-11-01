@@ -28,8 +28,8 @@ type debugOverheadArm struct {
 	Trial             int                         `json:"trial"`
 	Position          int                         `json:"position"`
 	Level             string                      `json:"level"`
-	Applied           ceph.DebugLevelReceipt      `json:"applied"`
-	Restored          ceph.DebugLevelReceipt      `json:"restored"`
+	Applied           override.DebugLevelReceipt  `json:"applied"`
+	Restored          override.DebugLevelReceipt  `json:"restored"`
 	Before            debugOverheadSample         `json:"before"`
 	After             debugOverheadSample         `json:"after"`
 	CPUNanos          uint64                      `json:"cpu_delta_ns"`
@@ -162,14 +162,14 @@ func runDebugOverhead(t *testing.T, option string) {
 		for position := range 3 {
 			level := levels[(trial+position)%len(levels)]
 			arm := debugOverheadArm{Trial: trial + 1, Position: position + 1, Level: level}
-			window, applyErr := override.SetDebugLevel(ctx, cluster, ceph.DebugLevelSetting{Daemon: "osd.0", Name: option, Level: level})
+			window, applyErr := override.SetDebugLevel(ctx, cluster, override.DebugLevelSetting{Daemon: "osd.0", Name: option, Level: level})
 			finalization.TrackDebugLevel(window)
 			finalization.Cleanup(fmt.Sprintf("restore trial %d position %d", trial+1, position+1), window.Restore)
 			if applyErr != nil {
 				t.Fatal(applyErr)
 			}
 			arm.Applied = window.Receipt()
-			if arm.Applied.State != ceph.DebugLevelApplied || arm.Applied.Applied != level || arm.Applied.Prior != prior ||
+			if arm.Applied.State != override.DebugLevelApplied || arm.Applied.Applied != level || arm.Applied.Prior != prior ||
 				arm.Applied.Generation != gen.ID+"@"+gen.StartedAt || get(option) != level {
 				t.Fatalf("window was not admitted on the selected generation: %+v", arm.Applied)
 			}
@@ -214,7 +214,7 @@ func runDebugOverhead(t *testing.T, option string) {
 			err = window.Restore(restore)
 			done()
 			arm.Restored = window.Receipt()
-			if err != nil || arm.Restored.State != ceph.DebugLevelRestored || arm.Restored.Restored != prior || get(option) != prior {
+			if err != nil || arm.Restored.State != override.DebugLevelRestored || arm.Restored.Restored != prior || get(option) != prior {
 				t.Fatalf("prior %s was not restored: %+v %v", option, arm.Restored, err)
 			}
 			if warmup.SHA256 != arm.Workload.SHA256 {

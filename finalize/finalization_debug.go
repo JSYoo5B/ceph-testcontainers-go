@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
 	"github.com/JSYoo5B/ceph-testcontainers-go/internal/evidence"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 const (
@@ -27,7 +27,7 @@ const (
 // pointer, cannot panic), or when Receipt returns the zero receipt (State is
 // empty). Absence is not decided by a nil comparison of the interface alone.
 type DebugLevelReceipter interface {
-	Receipt() ceph.DebugLevelReceipt
+	Receipt() override.DebugLevelReceipt
 }
 
 // TrackDebugLevel registers a debug level window for the manifest. Every
@@ -85,14 +85,14 @@ type finalizationDebugSnapshot struct {
 }
 
 type finalizationDebugReceipt struct {
-	Daemon     string               `json:"daemon"`
-	Name       string               `json:"name"`
-	Generation string               `json:"generation"`
-	Requested  string               `json:"requested"`
-	Prior      string               `json:"prior"`
-	Applied    string               `json:"applied,omitempty"`
-	Restored   string               `json:"restored,omitempty"`
-	State      ceph.DebugLevelState `json:"state"`
+	Daemon     string                   `json:"daemon"`
+	Name       string                   `json:"name"`
+	Generation string                   `json:"generation"`
+	Requested  string                   `json:"requested"`
+	Prior      string                   `json:"prior"`
+	Applied    string                   `json:"applied,omitempty"`
+	Restored   string                   `json:"restored,omitempty"`
+	State      override.DebugLevelState `json:"state"`
 	// Reason is the redacted, bounded reason of a not-applied window.
 	Reason string `json:"reason,omitempty"`
 	// Transitions keeps the first and last transitions of a long record;
@@ -102,10 +102,10 @@ type finalizationDebugReceipt struct {
 }
 
 type finalizationDebugTransition struct {
-	State    ceph.DebugLevelState `json:"state"`
-	At       time.Time            `json:"at"`
-	Readback string               `json:"readback,omitempty"`
-	Error    string               `json:"error,omitempty"`
+	State    override.DebugLevelState `json:"state"`
+	At       time.Time                `json:"at"`
+	Readback string                   `json:"readback,omitempty"`
+	Error    string                   `json:"error,omitempty"`
 }
 
 // snapshotDebugWindows adds one copy per registered window to the manifest.
@@ -145,15 +145,15 @@ func (f *Finalization) debugSnapshot(handle DebugLevelReceipter, phase string) f
 	field := func(s string) string { return f.debugField(s, maxFinalizationDebugField) }
 	out := &finalizationDebugReceipt{Daemon: field(receipt.Daemon), Name: field(receipt.Name), Generation: field(receipt.Generation),
 		Requested: field(receipt.Requested), Prior: field(receipt.Prior), Applied: field(receipt.Applied), Restored: field(receipt.Restored),
-		State: ceph.DebugLevelState(field(string(receipt.State))), Reason: f.debugField(receipt.Reason, maxFinalizationDebugError), Transitions: []finalizationDebugTransition{}}
+		State: override.DebugLevelState(field(string(receipt.State))), Reason: f.debugField(receipt.Reason, maxFinalizationDebugError), Transitions: []finalizationDebugTransition{}}
 	transitions := receipt.Transitions
 	if len(transitions) > maxFinalizationDebugTransitions {
 		half := maxFinalizationDebugTransitions / 2
 		out.TransitionsOmitted = len(transitions) - 2*half
-		transitions = append(append([]ceph.DebugLevelTransition{}, transitions[:half]...), transitions[len(transitions)-half:]...)
+		transitions = append(append([]override.DebugLevelTransition{}, transitions[:half]...), transitions[len(transitions)-half:]...)
 	}
 	for _, transition := range transitions {
-		out.Transitions = append(out.Transitions, finalizationDebugTransition{State: ceph.DebugLevelState(field(string(transition.State))),
+		out.Transitions = append(out.Transitions, finalizationDebugTransition{State: override.DebugLevelState(field(string(transition.State))),
 			At: transition.At, Readback: field(transition.Readback), Error: f.debugField(transition.Error, maxFinalizationDebugError)})
 	}
 	snapshot.Present, snapshot.Receipt = true, out

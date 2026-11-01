@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/JSYoo5B/ceph-testcontainers-go/ceph"
+	"github.com/JSYoo5B/ceph-testcontainers-go/override"
 )
 
 // fakeDebugWindow is a DebugLevelReceipter that records the receipt of a
@@ -19,7 +19,7 @@ import (
 // is covered only by the native debug level scenario.
 type fakeDebugWindow struct {
 	mu      sync.Mutex
-	receipt ceph.DebugLevelReceipt
+	receipt override.DebugLevelReceipt
 	// paused makes restore end unconfirmed, as a paused daemon does.
 	paused   bool
 	restores int
@@ -27,7 +27,7 @@ type fakeDebugWindow struct {
 
 var fakeDebugClock = time.Unix(0, 0).UTC()
 
-func (w *fakeDebugWindow) Receipt() ceph.DebugLevelReceipt {
+func (w *fakeDebugWindow) Receipt() override.DebugLevelReceipt {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	receipt := w.receipt
@@ -35,9 +35,9 @@ func (w *fakeDebugWindow) Receipt() ceph.DebugLevelReceipt {
 	return receipt
 }
 
-func (w *fakeDebugWindow) step(state ceph.DebugLevelState, readback string, err error) {
+func (w *fakeDebugWindow) step(state override.DebugLevelState, readback string, err error) {
 	w.receipt.State = state
-	transition := ceph.DebugLevelTransition{State: state, At: fakeDebugClock, Readback: readback}
+	transition := override.DebugLevelTransition{State: state, At: fakeDebugClock, Readback: readback}
 	if err != nil {
 		transition.Error = err.Error()
 	}
@@ -46,12 +46,12 @@ func (w *fakeDebugWindow) step(state ceph.DebugLevelState, readback string, err 
 
 // newFakeDebugWindow returns a window that was applied and verified.
 func newFakeDebugWindow(level string) *fakeDebugWindow {
-	w := &fakeDebugWindow{receipt: ceph.DebugLevelReceipt{Daemon: "osd.0", Name: "debug_osd", Generation: "osd0@start-1",
-		Requested: level, Prior: "1/5", Transitions: []ceph.DebugLevelTransition{}}}
-	w.step(ceph.DebugLevelPriorRead, "1/5", nil)
-	w.step(ceph.DebugLevelApplyAttempted, "", nil)
+	w := &fakeDebugWindow{receipt: override.DebugLevelReceipt{Daemon: "osd.0", Name: "debug_osd", Generation: "osd0@start-1",
+		Requested: level, Prior: "1/5", Transitions: []override.DebugLevelTransition{}}}
+	w.step(override.DebugLevelPriorRead, "1/5", nil)
+	w.step(override.DebugLevelApplyAttempted, "", nil)
 	w.receipt.Applied = "20/20"
-	w.step(ceph.DebugLevelApplied, "20/20", nil)
+	w.step(override.DebugLevelApplied, "20/20", nil)
 	return w
 }
 
@@ -59,7 +59,7 @@ func newFakeDebugWindow(level string) *fakeDebugWindow {
 func newUncertainFakeDebugWindow(err error) *fakeDebugWindow {
 	w := newFakeDebugWindow("20")
 	w.receipt.Transitions = w.receipt.Transitions[:2]
-	w.step(ceph.DebugLevelApplyUncertain, "20/20", err)
+	w.step(override.DebugLevelApplyUncertain, "20/20", err)
 	return w
 }
 
@@ -69,17 +69,17 @@ func (w *fakeDebugWindow) restore(context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.restores++
-	if w.receipt.State == ceph.DebugLevelRestored {
+	if w.receipt.State == override.DebugLevelRestored {
 		return nil
 	}
-	w.step(ceph.DebugLevelRestoreAttempted, "", nil)
+	w.step(override.DebugLevelRestoreAttempted, "", nil)
 	if w.paused {
 		err := errors.New("osd.0 is paused")
-		w.step(ceph.DebugLevelUnconfirmed, "", err)
+		w.step(override.DebugLevelUnconfirmed, "", err)
 		return err
 	}
 	w.receipt.Restored = w.receipt.Prior
-	w.step(ceph.DebugLevelRestored, w.receipt.Prior, nil)
+	w.step(override.DebugLevelRestored, w.receipt.Prior, nil)
 	return nil
 }
 

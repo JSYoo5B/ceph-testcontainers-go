@@ -65,7 +65,7 @@ func TestFailureArchiveProof(t *testing.T) {
 			if err := json.Unmarshal(out, &nativeOSDs); err != nil || len(nativeOSDs) != 1 || nativeOSDs[0] != 0 {
 				t.Fatalf("native one-OSD control: %q %v", out, err)
 			}
-			window, applyErr := override.SetDebugLevel(ctx, cluster, ceph.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "1/1"})
+			window, applyErr := override.SetDebugLevel(ctx, cluster, override.DebugLevelSetting{Daemon: "osd.0", Name: "debug_osd", Level: "1/1"})
 			finalization.TrackDebugLevel(window)
 			finalization.Cleanup("restore controlled debug window", window.Restore)
 			if applyErr != nil {
